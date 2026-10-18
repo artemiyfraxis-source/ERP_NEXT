@@ -13,6 +13,7 @@ import { formatMinutes, type EtkPfGroup } from "./etkRoute";
 import type { WireBlankEnd } from "./harness/WireBlankCatalog";
 import { coreColor } from "./pinoutCheck";
 import { coresWord, type WireThumb } from "./routeCards";
+import { harnessModel, harnessOverview, harnessTubeDrawing, spliceDrawing, spliceSketches, spliceSketchesPlain, tubeShort, type Drawing, type TubeBranch } from "./etkPfScheme";
 import { setCustomColors } from "./wireColors";
 
 type Row = Record<string, unknown>;
@@ -48,6 +49,10 @@ function esc(value: unknown): string {
 
 function cut(text: string, size: number): string {
   return text.length > size ? `${text.slice(0, size - 1)}…` : text;
+}
+
+function drawn(drawing: Drawing): string {
+  return svg(drawing.width, drawing.height, drawing.body);
 }
 
 function svg(width: number, height: number, body: string): string {
@@ -184,22 +189,6 @@ function wireColors(operations: Row[]): string[] {
     .filter(Boolean);
   const colors = [...new Set(names.map((name) => etkWireColor(name)))];
   return colors.length ? colors : ["#2b2b2b", "#d7322d"];
-}
-
-/** Сросток: провода сходятся в спай под термоусадочной трубкой и выходят с другой стороны. */
-export function pfSpliceSvg(colors: string[], count: string, tube: string): string {
-  const cy = 62, left = colors.slice(0, 3), right = colors.length > 3 ? colors.slice(3, 5) : colors.slice(0, 2);
-  const fan = (list: string[], from: number, to: number) => list.map((color, index) => {
-    const y = cy + (index - (list.length - 1) / 2) * 26, y2 = cy + (index - (list.length - 1) / 2) * 4;
-    const d = `M${from},${y} C${(from + to) / 2},${y} ${(from + to) / 2},${y2} ${to},${y2}`;
-    return `<path d="${d}" fill="none" stroke="${INK}" stroke-width="9" stroke-linecap="round"/><path d="${d}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round"/>`;
-  }).join("");
-  const body = fan(left, 24, 250) + fan(right.map((color) => color), 616, 390) +
-    `<rect x="244" y="${cy - 7}" width="152" height="14" rx="3" fill="#c88954" stroke="${INK}" stroke-width=".8"/>` +
-    `<rect x="228" y="${cy - 17}" width="184" height="34" rx="9" fill="#2f3b40" opacity=".9" stroke="${INK}" stroke-width="1"/>` +
-    `<text x="320" y="${cy + 5}" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">${esc(`сросток${count ? ` ${count}` : ""}`)}</text>` +
-    (tube ? `<text x="320" y="${cy + 42}" text-anchor="middle" font-size="13" fill="${MUTED}">${esc(`под ${tube}`)}</text>` : "");
-  return svg(640, cy + 50, body);
 }
 
 /** Трубка сростка: из входа ПФ («ТТК 4,8/1,6 ×3») или из комплектующих его операций. */
@@ -447,6 +436,46 @@ export function pfBranchSvg(branch: PfBranch): string {
   return svg(W, H, head + wires + body);
 }
 
+/** Сростки ПФ: по эскизу на каждый — провода в своих цветах, трубка поверх. Какие провода в каком сростке и куда идут их
+ *  концы — по снимку формы генератора (`build_config.gen_state`); без него — по числу сростков и цветам входа. */
+function spliceArt(operations: Row[], source: (operation: Row) => Row, config: Row, inputs: string[], topology: EtkTopologyData): string {
+  const own = operations.map((operation) => source(operation)).find((item) => str(item.type) === "splice") ?? {};
+  const names = [...str(own.branch).matchAll(/[СC]\s*(\d+)/g)].map((match) => `С${match[1]}`);
+  const label = str(own.label), model = harnessModel(config);
+  const tubeText = spliceTube(inputs, operations);
+  const tube = tubeText ? tubeShort(tubeText) : model?.spliceTube ?? "";
+  const len = model?.spliceTubeLen ?? "";
+  const tubeLabel = [tube, len && `${len} мм`].filter(Boolean).join(" · ");
+  const sketches = model && names.length ? spliceSketches(model, names) : [];
+  if (sketches.length) return drawn(spliceDrawing(sketches, tubeLabel));
+  const count = Math.round(num(own.units)) || Math.round(num(spliceCount(topology).replace("×", ""))) || names.length || 1;
+  const size = Math.round(num(label.match(/по\s+(\d+)\s+провод/)?.[1])) || 2;
+  const shown = names.length ? names : Array.from({ length: count }, (_, index) => `С${index + 1}`);
+  return drawn(spliceDrawing(spliceSketchesPlain(shown, size, wireColors(operations)), tubeLabel));
+}
+
+/** ПФ «ТУТ на месте Б»: ветви (разъёмы стороны А с цветами проводов) сходятся под одну трубку на жгуте, справа выходят
+ *  провода к разъёмам стороны Б. Разъёмы и провода — из операций монтажа в `build_config.ops`; нет ветвей — null. */
+function harnessTubeArt(operations: Row[], source: (operation: Row) => Row, config: Row, batch: number): string | null {
+  const branches = (side: string): TubeBranch[] => {
+    const seen = new Set<string>();
+    return rows(config.ops).flatMap((op) => {
+      const ep = obj(op.ep), label = str(ep.label).trim();
+      if (str(op.type) !== "insTerm" || str(op.side) !== side || !label || seen.has(label)) return [];
+      seen.add(label);
+      return [{ label, colors: rows(op.wires).map((wire) => etkWireColor(str(wire.art || wire.name))) }];
+    });
+  };
+  const left = branches("A"), right = branches("B");
+  if (!left.length || !right.length) return null;
+  const parts = operations.flatMap((operation) => rows(operation.components)).find((row) => /ТТК|ТУТ|трубк|термоус/i.test(`${str(row.art)} ${str(row.name)}`));
+  const heat = operations.map((operation) => str(source(operation).label)).join(" ");
+  const model = harnessModel(config);
+  const tube = parts ? tubeShort(material(parts)) : model?.harnessTube || (heat ? tubeShort(heat) : "");
+  const len = model?.harnessTubeLen || (parts ? perUnit(parts, batch).replace(/\s*мм$/, "") : "");
+  return drawn(harnessTubeDrawing(left, right, tube, /^\d/.test(len) ? len : ""));
+}
+
 /** Эскиз ПФ. `operations` — операции ПФ в порядке работы; `inputs` — что приходит из других ПФ (текст стрелок);
  *  `pins` — распиновка по узлу схемы (для изделия); `image` — своя картинка технолога у операции. */
 export function etkPfArt({ group, operations, inputs = [], document, pins = {}, batch = 1, image = () => "" }: {
@@ -460,13 +489,21 @@ export function etkPfArt({ group, operations, inputs = [], document, pins = {}, 
   // Изделие — схема жгута целиком.
   let main: PfMain | null = null;
   if (group.final) {
-    const harness = etkDrawHarness(topology, pins);
+    // Плоский обзор жгута по снимку генератора; нет снимка — схема жгута по топологии.
+    const model = harnessModel(config);
+    const harness = model ? drawn(harnessOverview(model)) : etkDrawHarness(topology, pins);
     if (harness) main = { svg: harness };
   }
   // Ветвь — разъём с проводами и всем, что на них надето, одним рисунком (слоёв под ним нет: они на рисунке).
-  const branch = group.final || kinds.includes("splice") ? null : pfBranch(operations, etkConfigOp(document), config, batch);
+  const source = etkConfigOp(document);
+  // ПФ «ТУТ на месте Б» — трубка на жгуте (операции с флагом `harness`): ветви сходятся под одну трубку.
+  if (!group.final && !kinds.includes("splice") && operations.some((operation) => source(operation).harness)) {
+    const tubes = harnessTubeArt(operations, source, config, batch);
+    if (tubes) return { main: { svg: tubes }, layers: "" };
+  }
+  const branch = group.final || kinds.includes("splice") ? null : pfBranch(operations, source, config, batch);
   if (branch) return { main: { svg: pfBranchSvg(branch) }, layers: "" };
-  if (!main && kinds.includes("splice")) main = { svg: pfSpliceSvg(wireColors(operations), spliceCount(topology), spliceTube(inputs, operations)) };
+  if (!main && kinds.includes("splice")) main = { svg: spliceArt(operations, source, config, inputs, topology) };
   // Иначе — рисунок последней операции, у которой он есть: состояние ПФ на выходе.
   for (let index = operations.length - 1; !main && index >= 0; index -= 1) {
     const cable = etkCutCable(operations[index], config);
