@@ -60,10 +60,10 @@ FAMILIES: tuple[dict[str, Any], ...] = (
          body_by=((r"^NSHR-0*2V", {"extra": 4.0}),)),
     _jst("jst-xh", "XH", r"^XHP-(\d+)", 2.5, "ramp", conf="high", src="JST eXH, Housing", model="frame",
          note="по чертежу JST eXH: защёлка сверху, контакт 1 слева",
-         body={"extra": 4.8, "h": 4.1, "len": 7.75, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.2), "cav": {"kind": "bevel", "w": 1.2, "h": 1.2}}),
+         body={"extra": 4.8, "h": 4.1, "len": 7.75, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.6)}),
     _jst("jst-ph", "PH", r"^PHR-(\d+)", 2.0, "windows", conf="high", src="JST ePH, Housing", model="slots",
          note="по чертежу JST ePH: окна фиксаторов снизу, контакт 1 слева",
-         body={"extra": 3.8, "h": 4.5, "len": 6.85, "win": (0.9, 2.1), "cav": {"kind": "slot", "w": 0.9, "h": 2.1}}),
+         body={"extra": 3.8, "h": 4.5, "len": 6.85, "win": (1.0, 1.6)}),
     # EH — JST eEH «Housing»: front view with the wire end up shows the face with the contact windows and the moulded
     # circuit numbers (2, 3, … left to right; No. 1 circuit on the left); the locks are ramps on the ends (side view and
     # the header's end-wall hooks), not on a face. Turned to the wire side with that face down: contact 1 on the LEFT,
