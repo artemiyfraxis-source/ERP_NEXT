@@ -920,12 +920,25 @@ def test_linear_operation_time_comes_from_machine_nodes_for_the_wire_length():
     from decimal import Decimal
     from app.modules.techcards.etk_builder import linear_seconds
 
-    # L = 0,1 м: 0,1 / 3 + 0,2 × 5 = 1,0333 с на штуку; ручные работы в машинное время не входят.
+    # L = 0,1 м: 0,1 / 3 + 0,2 × 5 = 1,0333 с на штуку.
     seconds = linear_seconds({"rollSpeed": "3", "toolSeconds": "0,2", "toolOps": "5"}, Decimal("0.1"))
     assert seconds is not None and round(seconds, 4) == Decimal("1.0333")
     # Партия 600: 1,0333 × 600 / 60 = 10,33 мин вместо 4 с × 600 = 40 мин по «Время операции».
-    assert _linear_time(_linear_record()) == "10,33"
-    assert _linear_time(_linear_record(), length=1000) == "13,33"
+    record = {key: value for key, value in _linear_record().items() if not key.startswith("Время ручных")}
+    assert _linear_time(record) == "10,33"
+    assert _linear_time(record, length=1000) == "13,33"
+
+
+def test_linear_operation_time_is_the_longer_of_the_machine_and_the_hands_as_the_cyclogram_counts():
+    from decimal import Decimal
+    from app.modules.techcards.etk_builder import linear_seconds
+
+    # Циклограмма (владелец 18.10): руки 4 + 2 + 1 = 7 с дольше машины 1,0333 с — берутся руки; на 10 м машина 4,33 с.
+    timing = {"rollSpeed": "3", "toolSeconds": "0,2", "toolOps": "5", "takeSeconds": "4", "manualSeconds": "2", "putSeconds": "1"}
+    assert linear_seconds(timing, Decimal("0.1")) == Decimal(7)
+    assert round(linear_seconds({**timing, "takeSeconds": "1", "manualSeconds": "", "putSeconds": "1"}, Decimal("10")), 4) == Decimal("4.3333")
+    # Взять ПФ 7 с из записи БД.ОП: 7 × 600 / 60 = 70 мин на партию.
+    assert _linear_time(_linear_record()) == "70"
 
 
 def test_linear_operation_without_roll_speed_and_static_operation_keep_the_operation_norm():
@@ -941,5 +954,5 @@ def test_linear_timing_is_dropped_when_the_record_lost_its_node_speeds():
     config = {"ops": [{"type": "cutWire", "opNum": "CUT_WIRE+1crimp", "linearTiming": {"rollSpeed": "3"}}, {"type": "twist"}]}
     assert "linearTiming" not in enrich_linear_timing(config, [_linear_record(kind="Статичный")])["ops"][0]
     timed = enrich_linear_timing(config, [_linear_record()])["ops"]
-    assert timed[0]["linearTiming"] == {"rollSpeed": "3", "toolSeconds": "0,2", "toolOps": "5"}
+    assert timed[0]["linearTiming"] == {"rollSpeed": "3", "toolSeconds": "0,2", "toolOps": "5", "takeSeconds": "7"}
     assert "linearTiming" not in timed[1]

@@ -3,7 +3,7 @@
 // оснастка, дефекты) и параметры строки БД.ОП, каждая часть по своему праву (erptctpl / erpref).
 import { useMemo, useState, type ReactNode } from "react";
 import { referencesApi, type OperationCardDetail, type OperationRecordEdit, type TechOperationRecord } from "./api";
-import { changedFields, groupOpFields, hasValue, linearPiece, normBasis, OP_TYPES, opTypeHint, timeUnit, type OpField, type OpGroup } from "./opFields";
+import { changedFields, groupOpFields, withCycleTimes, hasValue, linearPiece, normBasis, OP_TYPES, opTypeHint, timeUnit, type OpField, type OpGroup } from "./opFields";
 import { DefectsView, ToolingBySection, editDraft } from "./ProjectEtk";
 import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
 
@@ -59,15 +59,17 @@ function LinearCalc({ fields }: { fields: Fields }) {
   if (!piece) return <p className="op-calc">Скорость проката не задана — время ЭТК для резки берётся из «Время операции».</p>;
   return <div className="op-calc" aria-live="polite">
     <span>На 1 шт при <label htmlFor="op-calc-l">L</label> = <input id="op-calc-l" type="number" inputMode="decimal" min={0} step={10} value={length} onChange={(event) => setLength(event.target.value)} /> мм:{" "}
-      <b>{seconds2(piece.total)} с</b> (подача {seconds2(piece.feed)} с + инструмент {seconds2(piece.tool)} с)</span>
-    <small>Для резки провода ЭТК считает время по узлам станка, «Время операции» не применяется.</small>
+      <b>{seconds2(piece.total)} с</b> {piece.hands > piece.feed + piece.tool
+        ? `(ручные работы ${seconds2(piece.hands)} с дольше машины ${seconds2(piece.feed + piece.tool)} с)`
+        : `(подача ${seconds2(piece.feed)} с + инструмент ${seconds2(piece.tool)} с)`}</span>
+    <small>ЭТК считает время по длине провода, «Время операции» не применяется.</small>
   </div>;
 }
 
 /** «Параметры операции»: строка БД.ОП по группам; `draft` — режим правки. Исходные данные расчёта — свёрнуты. */
 function OpParams({ fields, draft, onChange, hideName }: { fields: Fields; draft?: Fields; onChange?: (key: string, value: string) => void; hideName?: boolean }) {
   const groups = useMemo(() => {
-    const all = groupOpFields(draft ?? fields);
+    const all = groupOpFields(draft ? withCycleTimes(draft) : fields);
     // В правке с шаблоном название правится в заголовке формы — второе поле «Название» только сбивало бы.
     return hideName ? all.map((group) => ({ ...group, fields: group.fields.filter((field) => field.label !== "Название") })) : all;
   }, [fields, draft, hideName]);
@@ -132,7 +134,7 @@ export function OperationCard({ code, name, template, op, canEditTemplate, canEd
   /** Сохраняет только изменённые поля строки БД.ОП; возвращает, было ли что менять. */
   async function saveOp(): Promise<void> {
     if (!op || !opEditable) return;
-    const edits = changedFields(op.fields, draft);
+    const edits = changedFields(op.fields, withCycleTimes(draft));
     if (edits.length) onOpSaved(await referencesApi.editRecord(op.id, edits));
   }
 

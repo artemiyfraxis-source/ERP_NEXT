@@ -626,6 +626,47 @@ it("edits БД.ОП right in the operations table: the time cell and the machine
   expect(patches[1]).toEqual({ id: "o2", edits: [{ field: "Машина", old: "Лазер", value: "EW-09" }] });
 });
 
+it("«Операции»: the cyclogram is open in the table — «Подготовка» first, a cell edit writes the recomputed time with it, the time cell then is a formula (owner 18.10)", async () => {
+  const patches: Array<{ id: string; edits: Array<Record<string, string>> }> = [];
+  const crimp = { id: "o3", tab: "op", display_text: "Опрессовка", source_sheet: "БД.ОП", fields: {
+    opNumber: "PRS_TERMINAL_auto", opName: "Опрессовка", tOp: "6,00", tPrep: "120", "Номер": "PRS_TERMINAL_auto", "Название": "Опрессовка",
+    "Время Операции": "6,00", "Время подготовки, сек": "120", "Время Чел, сек/оп; сек/м": "6,00", "Время машины, сек/оп; сек/м": "3,00",
+    "Время ручных работ для взятия полуфабриката": "4", "Время ручных работ": "", "Время ручных работ для снятия полуфабриката": "2",
+    "Скорость проката, сек/м": "", "Скорость работы инструмента": "3,0", "Кол-во операций инструмента": "1" } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?tab=ob")) return json({ metadata: null, records: [] });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [...opRows, crimp] });
+    if (path.endsWith("/tech-operations/o3") && init?.method === "PATCH") {
+      patches.push({ id: "o3", ...JSON.parse(String(init.body)) });
+      return json(crimp);
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  const row = (await screen.findByText("PRS_TERMINAL_auto")).closest("tr") as HTMLElement;
+  const keys = [...row.querySelectorAll("td[data-col]")].map((td) => td.getAttribute("data-col"));
+  // Правятся ячейки циклограммы; «Время, с» при заполненной циклограмме — формула, не правится.
+  expect(keys).toEqual(["prep", "cycle:take", "cycle:manual", "cycle:put", "cycle:roll", "cycle:tool", "cycle:toolOps"]);
+  const heads = screen.getAllByRole("columnheader").map((th) => th.textContent ?? "");
+  const at = (title: string) => heads.findIndex((text) => text.startsWith(title));
+  expect(heads.some((text) => /Инструмент|Аппликаторы/.test(text))).toBe(false);
+  expect(heads.slice(at("Подготовка, с"), at("Время, с") + 1).map((text) => text.replace(/[▲▼↑↓]/g, "").trim()))
+    .toEqual(["Подготовка, с", "Взять ПФ, с", "Ручные, с", "Снять ПФ, с", "Прокат, м/с", "Ход инстр., с", "Ходов", "Время, с"]);
+  const cell = (key: string) => row.querySelector(`td[data-col="${key}"]`) as HTMLElement;
+  fireEvent.doubleClick(cell("cycle:manual"));
+  const manual = within(row).getByRole("textbox");
+  fireEvent.change(manual, { target: { value: "10" } });
+  fireEvent.keyDown(manual, { key: "Enter" });
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].edits).toEqual([
+    { field: "Время Операции", old: "6,00", value: "16,00" },
+    { field: "Время Чел, сек/оп; сек/м", old: "6,00", value: "16,00" },
+    { field: "Время ручных работ", old: "", value: "10" },
+  ]);
+});
+
 it("an operation without a template opens, edits its parameters and sends only the changed fields", async () => {
   const patches: Array<{ edits: Array<Record<string, string>> }> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
