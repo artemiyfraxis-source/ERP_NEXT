@@ -12,6 +12,7 @@ import { terminalArticleLabel } from "./terminal-article-label";
 import { clearDecorationSpans } from "./e4-decoration-spans";
 import { wireBlankEnds, type WireBlankEnd } from "../WireBlankCatalog";
 import type { ConnectorHousing } from "../../connectorArt";
+import { housingFace, housingFaceEntry } from "./housing-face";
 
 export type EditorView = "e4" | "drawing";
 
@@ -283,6 +284,9 @@ export interface ConnectorInstance {
   readonly libraryBinding?: ConnectorLibraryBinding;
   /** Корпус из базы разъёмов (свободный соединитель): на чертеже рисуется его вид сверху. */
   readonly housing?: ConnectorHousing;
+  /** Как корпус рисуется на чертеже: вид сверху (по умолчанию, каталог) или торец с гнёздами, из которых идут провода
+   *  (чертёж генератора ТК: housing-face.ts). */
+  readonly housingView?: "top" | "face";
 }
 
 export interface ConnectorTerminalCatalog {
@@ -1157,6 +1161,9 @@ export function connectorContactPosition(
     const point = connectorE4TableGeometry(connector).contactPoints[contactId];
     return point ? { x: origin.x + point.x, y: origin.y + point.y } : null;
   }
+  const face = connector.housing && connector.housingView === "face" ? housingFace(connector.housing) : null;
+  const pin = face ? housingFaceEntry(face, connector.contacts[index]!.number, connector.schematic.orientation === "contacts-left") : undefined;
+  if (pin) return { x: origin.x + pin.x, y: origin.y + pin.y };
   return { x: origin.x + 118, y: origin.y + 28 + index * 16 };
 }
 
@@ -1250,6 +1257,7 @@ function parseConnector(value: unknown): ConnectorInstance {
     },
     libraryBinding,
     ...(record.housing === undefined ? {} : { housing: parseConnectorHousing(record.housing) }),
+    ...(record.housingView === "face" || record.housingView === "top" ? { housingView: record.housingView } : {}),
   };
   validateConnectorLibraryMetadata(connector);
   connector = restoreTemplateContactNumbers(connector);

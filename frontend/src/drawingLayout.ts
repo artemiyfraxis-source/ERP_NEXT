@@ -37,6 +37,8 @@ const FAN_MIN = 120, FAN_SLOPE = 0.8;
 const SPLICE_GAP = 120, TRUNK_MIN = 220;
 /** Хвост на чертеже: от сростка или выхода разъёма до свободного конца; соседний хвост того же узла — веером. */
 const TAIL = 80, TAIL_FAN = 28;
+/** Зона сростков (владелец 18.10, как на СБ: «С1–С4» одним прямоугольником под общей трубкой): длина зоны по стволу. */
+export const ZONE_PX = 76;
 
 /** Ширина веера под разброс выходов по вертикали относительно ствола. */
 export function fanWidth(offsets: readonly number[]): number {
@@ -54,11 +56,12 @@ export interface TrunkGeometry {
 
 /** Ствол по выходам разъёмов А и числу сростков на нём. */
 export function trunkGeometry(aExits: readonly Point[], splices: number): TrunkGeometry {
+  // `splices` — число мест на стволе: сросток — одно, зона сростков (вход, трубка, выход, жгут хвостов) — полтора.
   const ys = aExits.map((p) => p.y);
   const trunkY = Math.round(ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 0);
   const exitX = Math.max(0, ...aExits.map((p) => p.x));
   const startX = aExits.length > 1 ? exitX + fanWidth(ys.map((y) => y - trunkY)) : exitX;
-  return { trunkY, startX, endX: startX + Math.max(TRUNK_MIN, (splices + 1) * SPLICE_GAP) };
+  return { trunkY, startX, endX: startX + Math.round(Math.max(TRUNK_MIN, (splices + 1) * SPLICE_GAP)) };
 }
 
 export interface TrunkInput {
@@ -75,6 +78,21 @@ export interface TrunkInput {
   readonly sideOf: (connectorId: string) => Side | null;
   /** Узлы двойного обжима (второй провод в контакте): не сросток на стволе, а выход своего разъёма — узел трассы. */
   readonly atConnector?: ReadonlyMap<string, string>;
+  /** Зоны сростков: узлы соединения (id узла схемы), которые физически лежат вместе — одна зона на стволе вместо цепочки
+   *  сростков. Провода с разъёмов А кончаются у входа зоны, провода к В и хвосты начинаются у её выхода; хвосты зоны
+   *  идут одним жгутом. Сростки вне зон — по одному на стволе, как раньше. */
+  readonly zones?: ReadonlyArray<readonly string[]>;
+  /** Куда выложить, что построено (для размеров и подписей поверх): участки и узлы зон, ветвей и жгутов хвостов. */
+  readonly out?: TrunkParts;
+}
+
+export interface TrunkParts {
+  /** Участок первой ветви А: выход разъёма → начало ствола (нет разъёмов А кроме одного — пусто). */
+  aBranches: Array<{ segmentId: string; exit: string }>;
+  /** Участки ветвей к разъёмам В: конец ствола → выход разъёма. */
+  bBranches: Array<{ segmentId: string; exit: string }>;
+  /** Зоны: узлы входа/выхода, участок под трубку и жгут хвостов (если он есть). */
+  zones: Array<{ index: number; left: string; right: string; segmentId: string; tail?: { segmentId: string; node: string } }>;
 }
 
 /** Сторона сростка: 0 — провода только со стороны А, 1 — с обеих, 2 — только с В (по стволу от А к В). */
@@ -89,7 +107,8 @@ function spliceRank(doc: HarnessDesignDocument, junctionId: string, sideOf: Trun
 /** Ствол, веера к разъёмам, сростки на стволе и хвосты; трассы проводов сростков и хвостов (провода с разъёма на разъём
  *  трассирует редактор). Меняет `nodes` и `segments`. */
 export function trunkTopology(input: TrunkInput): PhysicalRoute[] {
-  const { doc, nodes, segments, aExits, bExits, geometry, sideOf, atConnector = new Map<string, string>() } = input;
+  const { doc, nodes, segments, aExits, bExits, geometry, sideOf, atConnector = new Map<string, string>(), zones = [] } = input;
+  const out: TrunkParts = input.out ?? { aBranches: [], bBranches: [], zones: [] };
   const { trunkY } = geometry;
   const nodeById = (id: string) => nodes.find((n) => n.id === id)!;
   const at = (id: string) => physicalNodePoint(doc, nodeById(id));
@@ -106,7 +125,7 @@ export function trunkTopology(input: TrunkInput): PhysicalRoute[] {
   if (aExits.length > 1) {
     start = "gen-j0";
     nodes.push({ id: start, position: { x: geometry.startX, y: trunkY } });
-    aExits.forEach((exit) => straight(exit, start!));
+    aExits.forEach((exit) => out.aBranches.push({ segmentId: straight(exit, start!).id, exit }));
   }
   let end: string | undefined = bExits[0];
   if (bExits.length > 1) {
@@ -114,30 +133,72 @@ export function trunkTopology(input: TrunkInput): PhysicalRoute[] {
     nodes.push({ id: end, position: { x: geometry.endX, y: trunkY } });
   }
 
-  // Сростки на стволе: со стороны А — ближе к А, с обеих сторон — дальше, только со стороны В — у конца ствола.
-  const splices = doc.junctions.filter((j) => !atConnector.has(j.id)).map((j, index) => ({ id: j.id, index, rank: spliceRank(doc, j.id, sideOf) }))
-    .sort((x, y) => x.rank - y.rank || x.index - y.index);
+  // Сростки на стволе: со стороны А — ближе к А, с обеих сторон — дальше, только со стороны В — у конца ствола. Зона
+  // сростков — один блок на стволе (вход и выход, между ними трубка), сросток вне зоны — один узел.
+  const zoned = new Set(zones.flat());
+  type Unit = { kind: "splice"; id: string; index: number; rank: number } | { kind: "zone"; zone: number; index: number; rank: number };
+  const units: Unit[] = [
+    ...doc.junctions.filter((j) => !atConnector.has(j.id) && !zoned.has(j.id)).map((j, index): Unit => ({ kind: "splice", id: j.id, index, rank: spliceRank(doc, j.id, sideOf) })),
+    ...zones.map((ids, zone): Unit => ({ kind: "zone", zone, index: 1000 + zone, rank: Math.min(...ids.map((id) => spliceRank(doc, id, sideOf))) })),
+  ].sort((x, y) => x.rank - y.rank || x.index - y.index);
   const spliceNode = new Map<string, string>(atConnector);
+  const zoneNodes = new Map<string, { left: string; right: string; tail: () => string }>();
   const outward = new Map<string, Point>();
   const fromX = start ? at(start).x : geometry.startX, toX = end ? at(end).x : geometry.endX;
-  splices.forEach((sp, k) => {
-    const id = `gen-n-${sp.id}`;
-    spliceNode.set(sp.id, id);
-    nodes.push({ id, position: { x: Math.round(fromX + ((toX - fromX) * (k + 1)) / (splices.length + 1)), y: trunkY } });
-    // Хвосты — поперёк ствола, у соседних сростков в разные стороны.
-    outward.set(id, { x: 0, y: k % 2 ? 1 : -1 });
+  const chain: string[] = start ? [start] : [];
+  const zoneSegments: Array<{ unit: number; left: string; right: string }> = [];
+  units.forEach((unit, k) => {
+    const cx = Math.round(fromX + ((toX - fromX) * (k + 1)) / (units.length + 1));
+    if (unit.kind === "splice") {
+      const id = `gen-n-${unit.id}`;
+      spliceNode.set(unit.id, id);
+      nodes.push({ id, position: { x: cx, y: trunkY } });
+      // Хвосты — поперёк ствола, у соседних сростков в разные стороны.
+      outward.set(id, { x: 0, y: k % 2 ? 1 : -1 });
+      chain.push(id);
+      return;
+    }
+    const left = `gen-z${unit.zone + 1}-in`, right = `gen-z${unit.zone + 1}-out`, tip = `gen-z${unit.zone + 1}-tail`;
+    nodes.push({ id: left, position: { x: cx - Math.round(ZONE_PX / 2), y: trunkY } }, { id: right, position: { x: cx + Math.round(ZONE_PX / 2), y: trunkY } });
+    let tipMade = false;
+    const dir = k % 2 ? 1 : -1;
+    const tail = () => {
+      if (!tipMade) { tipMade = true; nodes.push({ id: tip, position: { x: cx + Math.round(ZONE_PX / 2), y: trunkY + dir * TAIL } }); }
+      return tip;
+    };
+    zones[unit.zone]!.forEach((id) => zoneNodes.set(id, { left, right, tail }));
+    chain.push(left, right);
+    zoneSegments.push({ unit: unit.zone, left, right });
   });
-  const chain = [start, ...splices.map((sp) => spliceNode.get(sp.id)!), end].filter((id): id is string => !!id);
-  chain.slice(1).forEach((to, k) => straight(chain[k]!, to));
-  if (bExits.length > 1) bExits.forEach((exit) => straight(end!, exit));
+  if (end) chain.push(end);
+  chain.slice(1).forEach((to, k) => {
+    const segment = straight(chain[k]!, to);
+    const zone = zoneSegments.find((z) => z.left === chain[k] && z.right === to);
+    if (zone) out.zones.push({ index: zone.unit, left: zone.left, right: zone.right, segmentId: segment.id });
+  });
+  if (bExits.length > 1) bExits.forEach((exit) => out.bBranches.push({ segmentId: straight(end!, exit).id, exit }));
+  else if (bExits.length === 1 && start && chain.length > 1) out.bBranches.push({ segmentId: segments.at(-1)!.id, exit: bExits[0]! });
 
   // Хвосты: от сростка — поперёк ствола; от выхода разъёма — наружу от ствола под 45°; несколько у одного узла — веером.
+  // Хвосты зоны сростков — одним жгутом от выхода зоны.
   const tipNode = new Map<string, string>();
   const fan = new Map<string, number>();
+  const bundled = new Set<string>();
   doc.wires.forEach((wire) => {
     const free = isFreeEndpoint(wire.from) ? "from" : isFreeEndpoint(wire.to) ? "to" : null;
     if (!free) return;
     const other = free === "from" ? wire.to : wire.from;
+    if (isJunctionEndpoint(other) && zoneNodes.has(other.junctionId)) {
+      const zone = zoneNodes.get(other.junctionId)!;
+      const node = zone.tail();
+      if (!bundled.has(node)) {
+        bundled.add(node);
+        const zoneOut = out.zones.find((z) => z.right === zone.right)!;
+        zoneOut.tail = { segmentId: straight(zone.right, node).id, node };
+      }
+      tipNode.set(wire.id, node);
+      return;
+    }
     const base = isJunctionEndpoint(other) ? spliceNode.get(other.junctionId)
       : nodes.find((n) => n.connectorId === other.connectorId && (!n.wireIds || n.wireIds.includes(wire.id)))?.id;
     if (!base) return;
@@ -157,15 +218,20 @@ export function trunkTopology(input: TrunkInput): PhysicalRoute[] {
   });
 
   // Трассы проводов сростков и хвостов: кратчайший путь по участкам; через выход чужого разъёма провод не идёт.
-  const endNodes = (wireId: string, wireEnd: WireEndpoint) => {
-    if (isJunctionEndpoint(wireEnd)) return [spliceNode.get(wireEnd.junctionId)].filter((id): id is string => !!id);
+  const endNodes = (wireId: string, wireEnd: WireEndpoint, otherEnd: WireEndpoint) => {
+    if (isJunctionEndpoint(wireEnd)) {
+      const zone = zoneNodes.get(wireEnd.junctionId);
+      // Зона: провод с разъёма А кончается у её входа, провод к В и хвост — у выхода.
+      if (zone) return [!isJunctionEndpoint(otherEnd) && !isFreeEndpoint(otherEnd) && sideOf(otherEnd.connectorId) === "A" ? zone.left : zone.right];
+      return [spliceNode.get(wireEnd.junctionId)].filter((id): id is string => !!id);
+    }
     if (isFreeEndpoint(wireEnd)) return [tipNode.get(wireId)].filter((id): id is string => !!id);
     return nodes.filter((n) => n.connectorId === wireEnd.connectorId && (!n.wireIds || n.wireIds.includes(wireId))).map((n) => n.id);
   };
   const routes: PhysicalRoute[] = [];
   doc.wires.forEach((wire) => {
     if (![wire.from, wire.to].some((e) => isJunctionEndpoint(e) || isFreeEndpoint(e))) return;
-    const sources = endNodes(wire.id, wire.from), targets = new Set(endNodes(wire.id, wire.to));
+    const sources = endNodes(wire.id, wire.from, wire.to), targets = new Set(endNodes(wire.id, wire.to, wire.from));
     const previous = new Map<string, { node: string; step: PhysicalStep }>();
     const queue = [...sources];
     const seen = new Set(sources);

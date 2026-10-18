@@ -64,6 +64,8 @@ const DARK_WIRE = /#(222|2463c7|7a4a24|7b4bb3|d7322d|2e9e4f|6b7c86)/;
 /** Цвет жилы по слову в наименовании, null — цвета в наименовании нет (схема соединений подписывает такой провод). */
 export function wireColorKnown(name: unknown): string | null {
   const text = name == null ? "" : String(name);
+  // Готовый цвет (#RRGGBB, #RGB) — как есть: чертёж жгута подкрашивает гнёзда точным цветом жилы.
+  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(text.trim())) return text.trim();
   for (const [pattern, color] of WIRE_COLORS) if (pattern.test(text)) return color;
   return null;
 }
