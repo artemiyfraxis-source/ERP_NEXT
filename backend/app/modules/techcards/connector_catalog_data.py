@@ -191,7 +191,11 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # face cue is the ▽, as DF11 (the lock was drawn as a ramp before; on DF13 the locks sit on the back face).
     _family("hirose-df13-2r", "Hirose DF13 (2 ряда)", r"^DF13-(\d+)DS-1[.,]25C", 1.25, rows=2, order="col", latch="mark",
             conf="high", src="Hirose DF13, каталог, Double Row Socket",
-            note="по каталогу Hirose DF13: метка ▽ контакта 1 слева на лицевой грани, № 2 за № 1; ▽ сверху — 1 слева вверху, 2 под ним"),
+            note="по каталогу Hirose DF13: метка ▽ контакта 1 слева на лицевой грани, № 2 за № 1; ▽ сверху — 1 слева вверху, 2 под ним",
+            # DF13 2-row (catalogue B244: A = B + 5.4, 5.2 deep): the series' wire end is the comb of narrow open slots seen on the
+            # single-row photo (LCSC C88348), ~0.56 of the pitch wide; in two rows the slot is as tall as one row pitch allows.
+            body={"extra": 5.4, "h": 5.2, "len": 4.0, "lock_inset": 0.6, "lock_h": 0.5, "win": (0.7, 1.0), "win_y": 2.6,
+                  "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C88348.html", "geom_of": "hirose-df13"}),
     # DF19 — catalogue 01.01.2024 «Single Row Socket (Cable Type)»: the face view has the cable end up (p. 2 «Cable
     # Type»: the cable leaves the socket away from the vertical header) and the «Contact No. 1 Indicator» ▽ at the right
     # of the mating edge; the view under it is the mating end. From the wire side, ▽ face up: contact 1 on the LEFT.
@@ -217,12 +221,20 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # «Contact No1. mark» (front face) up, the bottom view keeps left and right: contact 1 on the LEFT.
     _family("hirose-df1b", "Hirose DF1B (гнездовой корпус)", r"^DF1B-(\d+)S-2[.,]5RC?$", 2.5, latch="mark", conf="high",
             src=DF1B_SRC.format("Single Row Socket"),
-            note="по каталогу Hirose DF1B: метка ① контакта 1 на лицевой грани у торца проводов; со стороны проводов этой гранью вверх — контакт 1 слева"),
+            note="по каталогу Hirose DF1B: метка ① контакта 1 на лицевой грани у торца проводов; со стороны проводов этой гранью вверх — контакт 1 слева",
+            # DF1B (catalogue Jul. 2020: A = n · 2.5, 3.5 deep, 11.5 long) has no wire-end view or photo; the 2.5 mm crimp housing
+            # of the same layout as JST XH: the XH photo (LCSC C493084, black XHP-4-BK) — open cavity ~0.72 of the pitch wide.
+            body={"extra": 2.5, "h": 3.5, "len": 11.5, "win": (1.8, 2.0), "win_y": 2.0,
+                  "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C493084.html", "geom_of": "jst-xh"}),
     # DS: «1» on the front face over the first column; the mating DF1BZ-*DP header numbers No. 1 / No. 2 across the rows
     # of one column (and DES prints 1, 3, 5 … over 2, 4, 6 …), so 2 is under 1.
     _family("hirose-df1b-2r", "Hirose DF1B (гнездовой корпус, 2 ряда)", r"^DF1B-(\d+)DS-2[.,]5RC$", 2.5, rows=2,
             order="col", latch="mark", conf="high", src=DF1B_SRC.format("Double Row Socket + Double Row Straight Pin Header"),
-            note="по каталогу Hirose DF1B: «1» на лицевой грани, у ответной вилки № 1 и № 2 в одном столбце; со стороны проводов этой гранью вверх — 1 слева вверху, 2 под ним"),
+            note="по каталогу Hirose DF1B: «1» на лицевой грани, у ответной вилки № 1 и № 2 в одном столбце; со стороны проводов этой гранью вверх — 1 слева вверху, 2 под ним",
+            # DF1B (catalogue Jul. 2020: A = n · 2.5, 8.0 deep, 11.5 long) has no wire-end view or photo; the 2.5 mm crimp housing
+            # of the same layout as JST XH: the XH photo (LCSC C493084, black XHP-4-BK) — open cavity ~0.72 of the pitch wide.
+            body={"extra": 2.5, "h": 8.0, "len": 11.5, "win": (1.8, 2.0), "win_y": 4.0,
+                  "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C493084.html", "geom_of": "jst-xh"}),
     # ES: the wire-end view prints 1, 2, 3 … n from the left along the front-face edge; the lock hook is on the back face.
     _family("hirose-df1b-es", "Hirose DF1B (гнездовой корпус на провод)", r"^DF1B-(\d+)ES-2[.,]5RC$", 2.5,
             latch="mark", conf="high", src=DF1B_SRC.format("Single Row In-line Socket (Full Lock Type)"),
@@ -275,8 +287,12 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED,
             # C-DS1072 «Female Housing»: (N−1)·3.96 + 4.24 wide, 6.2 high end view, entries ~2.6 × 4.4 (±0.3, read off the drawing).
             body={"extra": 4.24, "h": 6.2, "len": 16.2, "lock_inset": 0, "lock_h": 0.7, "win": (2.6, 4.4), "geom": "drawing", "geom_url": "https://www.connfly.com/static/upload/file/pdf/DS1072.pdf", "cav": {"kind": "bevel", "w": 2.6, "h": 4.4}}),
-    _family("connfly-ds1073", "Connfly DS1073", r"^I-DS1073-SC[A-Z]0(\d{2})$", 3.96, latch="lever", note=UNCHECKED),
-    _family("connfly-ds1074", "Connfly DS1074", r"^I-DS1074-SC[A-Z]0(\d{2})$", 5.08, latch="ramp", color="#e6e8ea", note=UNCHECKED),
+    _family("connfly-ds1073", "Connfly DS1073", r"^I-DS1073-SC[A-Z]0(\d{2})$", 3.96, latch="lever", note=UNCHECKED,
+            # DS1073 is the 3.96 mm VH-type housing (the C-DS1073 sheet repeats eVH: 5.7 / 7.2 / 10.4): wire end as the VH photo.
+            body={"extra": 3.9, "h": 5.7, "len": 13.4, "lock_w": 7.9, "lock_h": 1.8, "win": (2.8, 3.4), "win_y": 3.2, "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C274380.html", "geom_of": "jst-vh"}),
+    _family("connfly-ds1074", "Connfly DS1074", r"^I-DS1074-SC[A-Z]0(\d{2})$", 5.08, latch="ramp", color="#e6e8ea", note=UNCHECKED,
+            # DS1074 (5.08 mm, 7.6 mm thick): no wire-end view anywhere; the VH photo scaled by the pitch (cavity 0.7 × pitch).
+            body={"extra": 5.08, "h": 7.6, "len": 16.0, "lock_inset": 0, "lock_h": 0.8, "win": (3.5, 4.4), "win_y": 4.3, "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C274380.html", "geom_of": "jst-vh"}),
     # DS1071-01 (Dupont 2,0): rows × holes per row in the part number, like DS1071. The sheet draws it symmetric; the real
     # part (owner, 17.10.2026): lance windows on top, circuit-1 arrow at the left end.
     _family("connfly-ds1071-01", "Connfly DS1071-01 (Dupont 2,0)", r"^I-DS1071-01-SC[A-Z]0?(\d)X0?(\d{1,2})", 2.0, grid=True,

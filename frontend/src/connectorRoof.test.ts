@@ -255,6 +255,32 @@ describe("вилка и розетка одной серии нарисован�
     expect((of("molex-microfit").body!.win as number[])[0] / 3.0).toBeCloseTo(0.8, 5);
   });
 
+  it("every series with a wire-end face names its source: drawing, photo or an equivalent family that has one", () => {
+    const of = (id: string) => items.find((i) => i.family === id)!.housing;
+    const photo = ["jst-xh", "jst-ph", "jst-vh"];
+    const equivalent: Record<string, string> = {
+      "connfly-ds1066": "jst-ph", "connfly-ds1069": "jst-xh", "connfly-ds1073": "jst-vh", "connfly-ds1074": "jst-vh",
+      "jst-eh": "jst-xh", "jst-zh": "jst-ph", "jst-gh": "jst-ph", "jst-sh": "jst-ph", "jst-nsh": "jst-ph",
+      "hirose-df13-2r": "hirose-df13", "hirose-df1b": "jst-xh", "hirose-df1b-2r": "jst-xh",
+    };
+    for (const id of photo) expect(of(id).body!.geom, id).toBe("photo");
+    for (const [id, base] of Object.entries(equivalent)) {
+      const b = of(id).body!;
+      expect(b.geom, id).toBe("equivalent");
+      expect(b.geom_of, id).toBe(base);
+      expect(b.geom_url, id).toMatch(/^https:\/\//);
+      // эквивалент ссылается на серию, у которой источник «photo» или «drawing»
+      expect(["photo", "drawing"]).toContain(of(base).body!.geom);
+      // торец проводов нарисован полостями крупнее старых «эскизных» окон каждой серии и в пределах корпуса
+      const [w, h] = b.win as number[];
+      expect(w).toBeLessThan(of(id).pitch!);
+      expect(h).toBeLessThan(b.h);
+    }
+    // VH: у вилки с рычагом полости в нижней части грани под рычагом, номера читаются на крупных окнах.
+    expect(of("jst-vh").body!.win).toEqual([2.8, 3.4]);
+    expect(connectorFace(of("jst-vh"), 0, 0, 44, null).body).toContain('data-top="latch"');
+  });
+
   it("draws Molex Micro-Fit by the Molex sheets: 43025 — гнёзда и защёлка, 43020 — штыри в кожухе с упором", () => {
     const mf = pairs.find((p) => p.series === "Molex Micro-Fit 3.0 (2 ряда)")!;
     expect(mf.a!.mate).toMatchObject({ gender: "receptacle", contacts: "socket", shell: "inner", lock: "arm" });
