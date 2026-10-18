@@ -19,15 +19,15 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "d016c8368ef84e69d49e",
-    "c5f2d44e696a3273f600",
-    "a851618a3a6da8b573ae",
-    "7a81c2dd1f9d172940a8",
-    "81da1801ebe862dbc0a3",
-    "9825c630d0e39b0814f4",
-    "5cc0539586d6136f9a53",
-    "6e28d5f67997eb32f24f",
-    "a8d64519011e1fb1dce0"
+    "1dbdbd44bc61869205e4",
+    "9595c7515ff3c4b1a52b",
+    "554b84b6f50c16886e4a",
+    "c22eea68c4db40a50405",
+    "1faaf9137de5ec45f683",
+    "6694eade6d2c0882b62d",
+    "5f007020ab583cdb6a2b",
+    "3c5c04a79bbe786deca6",
+    "9683875f3387b6469db8"
    ]
   },
   "591К.5-КБ2": {
@@ -48,16 +48,16 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "da598f493221f8a3f28e",
-    "4f4885a2de0a20b9cddb",
-    "53e8800daf2c9ae4acc4",
-    "c8819d92c35070ddd46a",
-    "8716707616e813a04c4d",
-    "56f5e14f9d844505bf8d",
-    "b5876aeaf0510f31aa5c",
-    "48f7cd0dff77d7e3d462",
-    "afe19d394e992be74e59",
-    "bc9b9a73cd5487a22569"
+    "e3c482d761f395c04b2d",
+    "93e0595bd724c9be212d",
+    "ea79ddbb24fe3541cc2b",
+    "478bce568cdc142165dd",
+    "ae9d3a9e8f2ba0eb7723",
+    "d19246ad1d3bf262e82d",
+    "05bb06dbe038aa21ff98",
+    "5b8d0bc7d89cac67a7e4",
+    "518a3c5de5e4da210536",
+    "b712df56907acd502472"
    ]
   },
   "708К.2-КБ1": {
@@ -78,21 +78,21 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "9e734b0c5a2969b9eb67",
-    "0120bd29b3b7476152a7",
-    "9a18fd52dd0395c5ff15",
-    "2324c366d2a05d3613a9",
-    "afc27cf3d421e074c732",
-    "c48bcec18e5d49b2315b",
-    "cbd7ffd779734f7a9107",
-    "6989bc53e4067998096c",
-    "d1cb7e34bff780bef93b",
-    "49477f2029403322e410",
-    "7be972c3010a63d970ab",
-    "7c43d290eba786c54e5d",
-    "bc86f69a2ef69cc7e722",
-    "d737c69b20d998e661b0",
-    "df52abf87255f235587b"
+    "c0b593f7190dc15b6c56",
+    "a334a6084dd1c9e87f46",
+    "d7f042c35976576a7fd6",
+    "5ae3f3f57b2cb8df279f",
+    "7d351d2024f44d13b61d",
+    "cfda124bde4467ad0b59",
+    "f23ec6c21a528f045b4a",
+    "b367a951722545437cdb",
+    "46d9fa293d43b487cff2",
+    "03699d25d78a44dec1dc",
+    "5f771c36078bb6c2b38d",
+    "e62b398d9d7cafce420e",
+    "b51609215c0f9b96c154",
+    "92341aa50cff12ecd828",
+    "44201dbd0744f4809cc7"
    ]
   },
   "708К.2-КБ1 без длины": {
@@ -113,21 +113,21 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "9e734b0c5a2969b9eb67",
-    "0120bd29b3b7476152a7",
-    "9a18fd52dd0395c5ff15",
-    "2324c366d2a05d3613a9",
-    "afc27cf3d421e074c732",
-    "c48bcec18e5d49b2315b",
-    "cbd7ffd779734f7a9107",
-    "6989bc53e4067998096c",
-    "d1cb7e34bff780bef93b",
-    "49477f2029403322e410",
-    "7be972c3010a63d970ab",
-    "7c43d290eba786c54e5d",
-    "bc86f69a2ef69cc7e722",
-    "d737c69b20d998e661b0",
-    "df52abf87255f235587b"
+    "c0b593f7190dc15b6c56",
+    "a334a6084dd1c9e87f46",
+    "d7f042c35976576a7fd6",
+    "5ae3f3f57b2cb8df279f",
+    "7d351d2024f44d13b61d",
+    "cfda124bde4467ad0b59",
+    "f23ec6c21a528f045b4a",
+    "b367a951722545437cdb",
+    "46d9fa293d43b487cff2",
+    "03699d25d78a44dec1dc",
+    "5f771c36078bb6c2b38d",
+    "e62b398d9d7cafce420e",
+    "b51609215c0f9b96c154",
+    "92341aa50cff12ecd828",
+    "44201dbd0744f4809cc7"
    ]
   },
   "708К.5-КБ1": {
@@ -148,21 +148,21 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "7fcb22be8a2dcbcea324",
-    "e0c38295fa91eba07116",
-    "7836b8229721f8e58659",
-    "4cb0c0b4e376d85d24de",
-    "52a836b0fa83e5fedfd0",
-    "e2509287d7f409ccbcfb",
-    "89d4a11f682f414b201e",
-    "7a77de71c46f65bca370",
-    "cb6f8549a8b66f937136",
-    "8dbe97416969f05822f7",
-    "ff01e9a72f7705ce1432",
-    "5c19f759eb5a283e4fde",
-    "055a2ee88a17338faf2a",
-    "ce788a5637318596289e",
-    "492ba83865ea866f525f"
+    "69fbb321b0086864258c",
+    "2112b50fc792bc4e3ba7",
+    "fc75eff3cead681a455f",
+    "b3a37df5eedf381a2799",
+    "89dbc75adfa22807d592",
+    "a65219b432d5a35440b7",
+    "e324cbcdbfd04bbc7b9d",
+    "66bd7d28c21343a93fce",
+    "ffd477831a83c145bcac",
+    "f3e7d540cfe2c105ba1d",
+    "71800c751fee47bc7865",
+    "6644070c3ac9d5c9bdc9",
+    "b0314e0795fc679eb047",
+    "1f8dde5d5a94b4310fcf",
+    "69eadc88489a069fe64f"
    ]
   },
   "708К.5-КБ1 нормы терминалов": {
@@ -183,21 +183,21 @@
     "source": "5966769930d591c116fa"
    },
    "operations": [
-    "7fcb22be8a2dcbcea324",
-    "e0c38295fa91eba07116",
-    "7836b8229721f8e58659",
-    "4cb0c0b4e376d85d24de",
-    "52a836b0fa83e5fedfd0",
-    "5e929116ccd1c9538231",
-    "89d4a11f682f414b201e",
-    "7a77de71c46f65bca370",
-    "7006139247d19bf08d1f",
-    "8dbe97416969f05822f7",
-    "810aec228193d58f268f",
-    "5c19f759eb5a283e4fde",
-    "0fce7ec6597571db6b36",
-    "ce788a5637318596289e",
-    "492ba83865ea866f525f"
+    "69fbb321b0086864258c",
+    "2112b50fc792bc4e3ba7",
+    "fc75eff3cead681a455f",
+    "b3a37df5eedf381a2799",
+    "89dbc75adfa22807d592",
+    "df209bc352fe053d6963",
+    "e324cbcdbfd04bbc7b9d",
+    "66bd7d28c21343a93fce",
+    "eeb783f71dc27bf02fe5",
+    "f3e7d540cfe2c105ba1d",
+    "a917a28f0c6345806e3a",
+    "6644070c3ac9d5c9bdc9",
+    "14a5e42fe5583f3b2566",
+    "1f8dde5d5a94b4310fcf",
+    "69eadc88489a069fe64f"
    ]
   },
   "720К.-КБ1": {
@@ -218,11 +218,11 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "f72286607d01d308f7e2",
-    "b1319126a238725a002e",
-    "c86c1a3db87b65867470",
-    "b21fa7ac65176477aefa",
-    "3456d15d2160fff4fd61"
+    "4df2e5b2b76633bb8ec7",
+    "82dd11198832f3b0d6ff",
+    "a36dfd1a33c27490792f",
+    "2601d5dda30c2e57d83d",
+    "2063f3c5151ca4d19e14"
    ]
   },
   "720К.-КБ1 нет шаблона": {
@@ -243,11 +243,11 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "23218b6e8215b7f51204",
-    "b1319126a238725a002e",
-    "c86c1a3db87b65867470",
-    "b21fa7ac65176477aefa",
-    "3456d15d2160fff4fd61"
+    "8acff480eee48587358d",
+    "82dd11198832f3b0d6ff",
+    "a36dfd1a33c27490792f",
+    "2601d5dda30c2e57d83d",
+    "2063f3c5151ca4d19e14"
    ]
   },
   "720К.-КБ1 нормы терминалов": {
@@ -268,11 +268,11 @@
     "source": "5966769930d591c116fa"
    },
    "operations": [
-    "f72286607d01d308f7e2",
-    "8e32835a3c2d170e102e",
-    "c86c1a3db87b65867470",
-    "7e8783e3ef3bcb25837a",
-    "3456d15d2160fff4fd61"
+    "4df2e5b2b76633bb8ec7",
+    "07fe8cf904a838aae4ea",
+    "a36dfd1a33c27490792f",
+    "09040830efc2c0c5574e",
+    "2063f3c5151ca4d19e14"
    ]
   },
   "720К.-КБ1 распиновка": {
@@ -293,11 +293,11 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "f72286607d01d308f7e2",
-    "b1319126a238725a002e",
-    "f3f004f5d2adddf6dde8",
-    "b21fa7ac65176477aefa",
-    "3456d15d2160fff4fd61"
+    "4df2e5b2b76633bb8ec7",
+    "82dd11198832f3b0d6ff",
+    "d809ec73c2df0c3388f3",
+    "2601d5dda30c2e57d83d",
+    "2063f3c5151ca4d19e14"
    ]
   },
   "720К.-КБ1 соединения": {
@@ -320,11 +320,11 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "f72286607d01d308f7e2",
-    "b1319126a238725a002e",
-    "c708c3373354c7cd7ff1",
-    "b21fa7ac65176477aefa",
-    "83f8b15a3cff4c40026d"
+    "4df2e5b2b76633bb8ec7",
+    "82dd11198832f3b0d6ff",
+    "3884643e173a6b16fb36",
+    "2601d5dda30c2e57d83d",
+    "b782b44c700a2a2fdbfc"
    ]
   },
   "720К.1.2-КБ1": {
@@ -345,10 +345,10 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "0d61b868beef962badbf",
-    "76bbbc428a723a350d50",
-    "3aa65c579f81412a52a8",
-    "c54262a45e8b516ef802"
+    "27119628f0c5eae78e1b",
+    "381993ffa60522df4745",
+    "f910ca5d3cd336e142f4",
+    "884ae79601f3a18863b3"
    ]
   },
   "720К.1.2-КБ1 нормы терминалов": {
@@ -369,10 +369,10 @@
     "source": "5966769930d591c116fa"
    },
    "operations": [
-    "ec4cd86c2b005b948601",
-    "76bbbc428a723a350d50",
-    "d2eb052c52f1ee3fc41f",
-    "c54262a45e8b516ef802"
+    "9c009349a9062bddfc61",
+    "381993ffa60522df4745",
+    "444ac779f7b6ee2a553d",
+    "884ae79601f3a18863b3"
    ]
   },
   "729К.2-КБ1": {
@@ -393,12 +393,12 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "b783957a8abeb8ef08d4",
-    "8207b5312a06cc0726a2",
-    "1fb08a991614707f2808",
-    "886364d39b846dbda920",
-    "2a1e3de3f1074fd46307",
-    "617b3a84650c594ebafb"
+    "8dccdc2c01d912b2cc91",
+    "420592b1605f57062145",
+    "b1dff89707d4b9694399",
+    "a5ac629ad3bf01ff86a2",
+    "6a296649211fb3926208",
+    "5206d9e2684e44eaa886"
    ]
   },
   "коаксиал": {
@@ -462,7 +462,7 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "ca814102f330decd3a75",
+    "3848885695a81ed0d8f8",
     "44446c389b5e72c4f88a"
    ]
   },
@@ -484,7 +484,7 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "3c83bf8ae37e3c44aeb1",
+    "f55355251f7d21ee5480",
     "b3ab4102284a134ac62d"
    ]
   },
@@ -506,7 +506,7 @@
     "source": "d3a5a409f348cff48fc8"
    },
    "operations": [
-    "171f4dcd7394d2364d52",
+    "57e5eb24539d15108f16",
     "fd084aec9575693b7ccf"
    ]
   },

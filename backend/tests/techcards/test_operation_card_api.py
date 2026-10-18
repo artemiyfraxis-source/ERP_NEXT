@@ -190,7 +190,7 @@ def test_auto_builds_a_persistent_project_etk_from_the_imported_library(operatio
     document = built.json()["document"]
     assert document["operations"][0]["code"] == "OP_ONE"
     assert document["operations"][0]["card"]["steps"][0]["text"] == "Выполнить операцию"
-    assert document["operations"][0]["time"][0]["norm"] == "3,5"
+    assert document["operations"][0]["time"][0]["norm"] == "2,5"
     assert document["source"]["operation_library_commit"] == SOURCE_COMMIT
 
 

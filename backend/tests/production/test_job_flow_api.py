@@ -61,10 +61,9 @@ def test_job_plan_panel_reads_the_flow_in_shop_dates(production_api):
     assert [mode["value"] for mode in body["modes"]] == ["sequential", "parallel", "mixed"]
     assert body["thresholds"] == {"notice": "5", "limit": "15"}
     assert [step["stage"] for step in body["plan"]["steps"]] == ["Резка", "Опрессовка", "Сборка"]
-    # Без партии — вся партия целиком: 120 + 600, 60 + 300, 900 чистых секунд одним человеком; подготовку второго
-    # этапа (60 с) делают, пока первый ещё режет.
+    # Без партии — вся партия целиком: 600, 300, 900 чистых секунд одним человеком; подготовка в плане не считается.
     assert body["plan"]["transfer_batch"] == 10
-    assert body["plan"]["work_seconds"] == 720 + 300 + 900
+    assert body["plan"]["work_seconds"] == 600 + 300 + 900
     assert body["plan"]["anchor"].startswith("2026-09-22T09:00")
     assert body["norms"]["outdated"] is False and body["norms"]["current_revision"] == 1
 
@@ -128,7 +127,7 @@ def test_norms_refresh_from_the_etk_only_by_the_button(production_api):
     after = refreshed.json()["task"]
     assert after["techcard_revision"] == 2
     assert [item["seconds_per_unit"] for item in after["operations"]] == ["120", "60", "180"]
-    assert after["operations"][0]["norm_seconds"] == 120 + 1200
+    assert after["operations"][0]["norm_seconds"] == 1200  # 120 с × 10 шт., без подготовки
 
 
 def test_norms_are_not_refreshed_when_the_etk_steps_changed(production_api):

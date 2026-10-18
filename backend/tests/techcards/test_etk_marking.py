@@ -87,9 +87,9 @@ def test_flag_marking_prints_on_the_flag_machine_installs_fixes_and_checks():
     assert not any("термо" in step["text"].lower() or "трубк" in step["text"] for step in steps)
     assert op["card"]["defects"].splitlines() == ["Хлястик:", *(f"{name}: {cause}" for name, cause in TYPES[0]["defects"])]
     assert _equipment(op) == [("ZCUT-RT430 | Маркиратор проводов флашковый", "ОБ.101")]
-    # Монтаж 20 с × 1 × 38 + 120 с = 14,67 мин; печать INS_MARK_AUTO 4 с × 38 + 600 с = 12,53 мин.
-    assert [(row["name"], row["norm"]) for row in op["time"][1:]] == [("Печать хлястиков", "12,53")]
-    assert op["time"][0]["norm"] == "14,67"
+    # Монтаж 20 с × 1 × 38 = 12,67 мин; печать INS_MARK_AUTO 4 с × 38 = 2,53 мин (подготовка в норму не входит).
+    assert [(row["name"], row["norm"]) for row in op["time"][1:]] == [("Печать хлястиков", "2,53")]
+    assert op["time"][0]["norm"] == "12,67"
     assert warnings == []
 
 
@@ -110,9 +110,9 @@ def test_heat_shrink_tube_is_printed_cut_put_on_before_termination_and_shrunk():
         ("Автомат мерной резки гофрированных и термоусаживаемых трубок", "ОБ.018"),
         ("8620DX-Pro | Станция паяльная термовоздушная", "ОБ.070.1"),
     ]
-    # 3 трубки на изделие × 38: печать 2 с + 600, резка 1 с + 300, усадка 9 с + 120.
+    # 3 трубки на изделие × 38: печать 2 с, резка 1 с, усадка 9 с (без подготовки).
     assert [(row["name"], row["norm"]) for row in op["time"][1:]] == [
-        ("Печать на трубках", "13,8"), ("Нарезка трубок", "6,9"), ("Усадка трубок", "19,1"),
+        ("Печать на трубках", "3,8"), ("Нарезка трубок", "1,9"), ("Усадка трубок", "17,1"),
     ]
 
 

@@ -125,15 +125,15 @@ def test_coax_tut_pieces_are_a_side_input_of_putting_them_on():
 
 def test_coax_time_is_for_the_batch_not_for_one_piece():
     times = [operation["time"][0]["norm"] for operation in _build(_prod_config())["operations"]]
-    # Пайка: 25 с × 20 шт. / 60 + 2 мин подготовки; ТУТ и втулки — по две на изделие; резка — tOp, без узлов станка.
-    assert times == ["4,17", "13,33", "13,33", "5,67", "10,33", "10,33", "4", "2", "5,33", "5,33", "7,33", "8"]
+    # Пайка: 25 с × 20 шт. / 60; ТУТ и втулки — по две на изделие; резка — tOp, без узлов станка; подготовка в норму не входит (ETK 4).
+    assert times == ["1,17", "3,33", "3,33", "0,67", "8,33", "8,33", "2", "2", "3,33", "3,33", "5,33", "6"]
 
 
 def test_coax_cut_of_a_linear_card_counts_by_the_machine_nodes():
     timing = {"rollSpeed": "3", "toolSeconds": "0,5", "toolOps": "1"}
     operations = _build(_prod_config(coaxCut={"linearTiming": timing}, coaxCutTut={"linearTiming": {**timing, "rollSpeed": "0,5"}}))["operations"]
-    # 1,01 м / 3 м/с + 0,5 с = 0,837 с × 20 + 3 мин; ТУТ 0,02 м / 0,5 + 0,5 = 0,54 с × 2 × 20 + 5 мин.
-    assert (operations[0]["time"][0]["norm"], operations[3]["time"][0]["norm"]) == ("3,28", "5,36")
+    # 1,01 м / 3 м/с + 0,5 с = 0,837 с × 20; ТУТ 0,02 м / 0,5 + 0,5 = 0,54 с × 2 × 20 (без подготовки).
+    assert (operations[0]["time"][0]["norm"], operations[3]["time"][0]["norm"]) == ("0,28", "0,36")
 
 
 def test_coax_operations_carry_what_their_sketch_draws():

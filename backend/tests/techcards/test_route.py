@@ -48,7 +48,7 @@ def test_linear_card_is_a_chain_of_one_operation_blocks_ending_in_the_product():
     document = build(config)
     route = document["route"]
 
-    assert document["schema_version"] == ETK_VERSION == 3
+    assert document["schema_version"] == ETK_VERSION == 4
     assert route["source"] == "derived" and route["final"] == "b5"
     assert [(block["key"], block["ops"], block["final"]) for block in route["blocks"]] == [
         ("b1", [1], False), ("b2", [2], False), ("b3", [3], False), ("b4", [4], False), ("b5", [5], True),
@@ -272,7 +272,8 @@ def test_supplymap_etk_without_generator_types_reads_as_a_chain_timed_from_secon
     route = document_route(document)
     assert [(block["key"], block["name"]) for block in route["blocks"]] == [("b1", "Резка"), ("b2", "Опрессовка")]
     assert edges(route) == [("b1", "b2", 1)]
-    assert blocks(route)["b1"]["minutes"] == 1.2083 and blocks(route)["b2"]["rolled_minutes"] == 1.3417
+    # Без норм-строк время = секунды на изделие × партия, подготовка (setup_seconds) не считается (ETK 4).
+    assert blocks(route)["b1"]["minutes"] == 0.2083 and blocks(route)["b2"]["rolled_minutes"] == 0.3417
 
 
 def test_read_survives_documents_without_operations_or_with_odd_time():

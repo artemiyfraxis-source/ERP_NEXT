@@ -121,9 +121,9 @@ def test_grid_shows_press_load_by_day_with_units_from_reference(client):
     [press] = body["machines"]
     assert (press["machine"], press["label"], press["units"], press["known"]) == ("ОБ.027", "ОБ.027 Пресс", 2, True)
     tuesday = press["days"][1]
-    # 1800 с подготовки + 12 с машинного × 50 шт = 2400 с из 2 × 7 ч смены.
+    # 12 с машинного × 50 шт = 600 с из 2 × 7 ч смены (подготовка 1800 с станок не занимает, владелец 18.10).
     assert tuesday["day"] == "2026-09-22" and tuesday["capacity_seconds"] == 2 * 7 * 3600
-    assert tuesday["busy_seconds"] == pytest.approx(2400, abs=60) and tuesday["percent"] == 5 and not tuesday["over"]
+    assert tuesday["busy_seconds"] == pytest.approx(600, abs=60) and tuesday["percent"] == 1 and not tuesday["over"]
     assert press["days"][5]["percent"] is None  # суббота
     [item] = press["items"]
     assert (item["task_number"], item["stage"], item["operator_names"]) == (first["number"], "Опрессовка терминалов", ["Анна"])

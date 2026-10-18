@@ -162,7 +162,8 @@ it("takes operation norms from the stored ETK only while it was built from the s
       { type: "prsTerm", times: { operation_seconds: "6", setup_seconds: "60" } },
     ],
   };
-  expect(documentMinutes(document, ["cutWire", "prsTerm"])).toEqual({ minutes: [11.54, 1.5], quantity: 5 });
+  // Без строк времени — секунды на штуку × партия, без подготовки (ETK 4): 6 с × 5 шт = 0,5 мин.
+  expect(documentMinutes(document, ["cutWire", "prsTerm"])).toEqual({ minutes: [11.54, 0.5], quantity: 5 });
   expect(documentMinutes(document, ["cutWire"])).toBeNull();
   expect(documentMinutes(document, ["cutWire", "insTerm"])).toBeNull();
   expect(documentMinutes(null, ["cutWire"])).toBeNull();

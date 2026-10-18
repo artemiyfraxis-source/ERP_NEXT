@@ -25,7 +25,10 @@ from .project_cards import CUSTOM_OP
 # 3: `route` — the block scheme of semi-finished products (domain/route.py); nothing else changed. An older document
 #    gets its route derived on read (`document_route`), so a version-2 ETK is not stale: `refresh` rebuilds only
 #    documents below ETK_REBUILD_VERSION and the route alone makes no new revision.
-ETK_VERSION = 3
+# 4: time norms without the card's setup (tPrep): the operator starts a task only once everything is ready, so planning
+#    counts no preparation (owner 18.10). tPrep stays on the operation as information. Older documents keep their
+#    norms; production takes the setup out of them (`norms_include_setup`).
+ETK_VERSION = 4
 ETK_REBUILD_VERSION = 2
 NO_COMPONENTS = {
     "SDR_tin", "INS_TUT", "PRS_SLEEVE_coax", "TWIST", "HEAT_TYT_short",
@@ -779,12 +782,10 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
     wires = _wires(op, config)
     quantity = _part_quantity(config)
     operation_minutes = _decimal(op.get("tOp")) / 60
-    setup_minutes = _decimal(op.get("tPrep")) / 60
     if (operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"} or kind) and wires:
         units = lambda wire: _number(wire.get("qty"), Decimal(1)) * (_number(wire.get("cores"), Decimal(1)) if kind else 1)
         if kind in {"ins", "sdr"} or (kind == "prs" and op.get("side") == "B"):
-            return [{"name": result_name, "norm": _format(operation_minutes * sum(map(units, wires)) * quantity + setup_minutes, 2)}]
-        setup_per_wire = setup_minutes / len(wires)
+            return [{"name": result_name, "norm": _format(operation_minutes * sum(map(units, wires)) * quantity, 2)}]
         terminal = _cut_terminal(op) if operation_type == "cutWireCrimp" or kind else ""
 
         def piece_minutes(wire: Mapping[str, Any]) -> Decimal:
@@ -794,7 +795,7 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
             return operation_minutes or Decimal(1)
         return [{
             "name": _wire_result_name(wire, terminal, bool(op.get("tin"))),
-            "norm": _format(piece_minutes(wire) * units(wire) * quantity + setup_per_wire, 2),
+            "norm": _format(piece_minutes(wire) * units(wire) * quantity, 2),
         } for wire in wires]
     if operation_type.startswith("coax"):
         # Коакс (владелец 15.10, «0,06 мин» на партию): время на партию, как у провода — штука × units × партия + подготовка;
@@ -803,7 +804,7 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
         length = {"coaxCut": coax.get("cableLength"), "coaxCutTut": coax.get("tutLength")}.get(operation_type)
         linear = linear_seconds(op.get("linearTiming"), _decimal(length) / 1000) if length is not None else None
         piece = linear / 60 if linear is not None else operation_minutes
-        return [{"name": result_name, "norm": _format(piece * _coax_units(op) * quantity + setup_minutes, 2)}]
+        return [{"name": result_name, "norm": _format(piece * _coax_units(op) * quantity, 2)}]
     twist =config.get("twist") if isinstance(config.get("twist"), Mapping) else {}
     config_wires = config.get("wires") if isinstance(config.get("wires"), list) else []
     twist_count = Decimal(1)
@@ -832,7 +833,7 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
         "insHousing": _number(op.get("units"), Decimal(1)),
     }
     count = counters.get(operation_type)
-    norm = operation_minutes * count * quantity + setup_minutes if count is not None else operation_minutes
+    norm = operation_minutes * count * quantity if count is not None else operation_minutes
     return [{"name": result_name, "norm": _format(norm, 2)}]
 
 
@@ -1578,12 +1579,12 @@ def _row_minutes(operation: Mapping[str, Any]) -> Decimal | None:
 
 def _operation_minutes(operation: Mapping[str, Any], quantity: Decimal) -> Decimal:
     """The ETK time norm of the operation, minutes per batch; an operation without time rows (moved from SUPPLYMAP)
-    counts its seconds per unit × batch + setup."""
+    counts its seconds per unit × batch (no setup, ETK_VERSION 4)."""
     minutes = _row_minutes(operation)
     if minutes is not None:
         return minutes
     times = operation.get("times") if isinstance(operation.get("times"), Mapping) else {}
-    return (_decimal(times.get("operation_seconds")) * quantity + _decimal(times.get("setup_seconds"))) / 60
+    return _decimal(times.get("operation_seconds")) * quantity / 60
 
 
 def _document_batch(document: Mapping[str, Any]) -> Decimal:
@@ -1603,6 +1604,11 @@ def operation_norms(document: Mapping[str, Any] | None) -> tuple[Decimal, tuple[
         return Decimal(1), ()
     operations = [item for item in _list(document.get("operations")) if isinstance(item, Mapping)]
     return _document_batch(document), tuple(_row_minutes(operation) for operation in operations)
+
+
+def norms_include_setup(document: Mapping[str, Any] | None) -> bool:
+    """An ETK built before ETK_VERSION 4 has the card's setup (tPrep) inside its time norms."""
+    return isinstance(document, Mapping) and int(_decimal(document.get("schema_version"))) < 4
 
 
 def _route_ops(document: Mapping[str, Any], *, strict: bool) -> tuple[list[RouteOp], str, Decimal]:
@@ -2049,7 +2055,7 @@ def _build_manual(
                 is_last=block.final and item.position == order[-1], seq=seqs[item.position - 1], warnings=warnings,
             ))
             continue
-        norm = (item.operation_seconds * item.quantity * quantity + item.setup_seconds) / 60
+        norm = item.operation_seconds * item.quantity * quantity / 60
         if not norm:
             warnings.append(f"Операция {item.position} ({item.label}): не задана норма времени")
         if item.card is not None:

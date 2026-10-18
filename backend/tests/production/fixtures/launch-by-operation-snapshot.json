@@ -6,8 +6,8 @@
    "stage": "CUT_WIRE_auto | Резка",
    "description": "CUT_WIRE_auto | Резка",
    "seconds_per_unit": "48.996000",
-   "setup_seconds": "180",
-   "norm_seconds": 12429,
+   "setup_seconds": "0",
+   "norm_seconds": 12249,
    "stage_key": "b1",
    "inputs": []
   },
@@ -17,8 +17,8 @@
    "stage": "PRS_TERMINAL_auto | Опрессовка терминалов (A)",
    "description": "PRS_TERMINAL_auto | Опрессовка терминалов (A) (ст. A)",
    "seconds_per_unit": "84.000000",
-   "setup_seconds": "1800",
-   "norm_seconds": 22800,
+   "setup_seconds": "0",
+   "norm_seconds": 21000,
    "stage_key": "b2",
    "inputs": [
     [
@@ -33,8 +33,8 @@
    "stage": "INS_terminal_1.00 | Монтаж терминалов (A)",
    "description": "INS_terminal_1.00 | Монтаж терминалов (A) (ст. A)",
    "seconds_per_unit": "139.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 35120,
+   "setup_seconds": "0",
+   "norm_seconds": 35000,
    "stage_key": "b3",
    "inputs": [
     [
@@ -49,8 +49,8 @@
    "stage": "PRS_TERMINAL_auto | Опрессовка терминалов (B)",
    "description": "PRS_TERMINAL_auto | Опрессовка терминалов (B) (ст. B)",
    "seconds_per_unit": "84.000000",
-   "setup_seconds": "1800",
-   "norm_seconds": 22800,
+   "setup_seconds": "0",
+   "norm_seconds": 21000,
    "stage_key": "b4",
    "inputs": [
     [
@@ -65,8 +65,8 @@
    "stage": "INS_terminal_1.00 | Монтаж терминалов (B)",
    "description": "INS_terminal_1.00 | Монтаж терминалов (B) (ст. B)",
    "seconds_per_unit": "139.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 35120,
+   "setup_seconds": "0",
+   "norm_seconds": 35000,
    "stage_key": "b5",
    "inputs": [
     [
@@ -83,8 +83,8 @@
    "stage": "CUT_WIRE+1crimp | Автомат резка + опрессовка",
    "description": "CUT_WIRE+1crimp | Автомат резка + опрессовка (ст. A)",
    "seconds_per_unit": "56.004000",
-   "setup_seconds": "3600",
-   "norm_seconds": 17601,
+   "setup_seconds": "0",
+   "norm_seconds": 14001,
    "stage_key": "b1",
    "inputs": []
   },
@@ -94,8 +94,8 @@
    "stage": "INS_terminal_1.00 | Монтаж терминалов (A)",
    "description": "INS_terminal_1.00 | Монтаж терминалов (A) (ст. A)",
    "seconds_per_unit": "139.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 35120,
+   "setup_seconds": "0",
+   "norm_seconds": 35000,
    "stage_key": "b2",
    "inputs": [
     [
@@ -110,8 +110,8 @@
    "stage": "PRS_TERMINAL_auto | Опрессовка терминалов (B)",
    "description": "PRS_TERMINAL_auto | Опрессовка терминалов (B) (ст. B)",
    "seconds_per_unit": "84.000000",
-   "setup_seconds": "1800",
-   "norm_seconds": 22800,
+   "setup_seconds": "0",
+   "norm_seconds": 21000,
    "stage_key": "b3",
    "inputs": [
     [
@@ -126,8 +126,8 @@
    "stage": "INS_terminal_1.00 | Монтаж терминалов (B)",
    "description": "INS_terminal_1.00 | Монтаж терминалов (B) (ст. B)",
    "seconds_per_unit": "139.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 35120,
+   "setup_seconds": "0",
+   "norm_seconds": 35000,
    "stage_key": "b4",
    "inputs": [
     [
@@ -143,9 +143,9 @@
    "code": "CUT_WIRE_auto",
    "stage": "CUT_WIRE_auto | Резка",
    "description": "CUT_WIRE_auto | Резка",
-   "seconds_per_unit": "49.020000",
-   "setup_seconds": "180",
-   "norm_seconds": 12435,
+   "seconds_per_unit": "48.972000",
+   "setup_seconds": "0",
+   "norm_seconds": 12243,
    "stage_key": "b1",
    "inputs": []
   },
@@ -155,8 +155,8 @@
    "stage": "CUT_TUT_short | Резка",
    "description": "CUT_TUT_short | Резка",
    "seconds_per_unit": "3.000000",
-   "setup_seconds": "300",
-   "norm_seconds": 1050,
+   "setup_seconds": "0",
+   "norm_seconds": 750,
    "stage_key": "b2",
    "inputs": [
     [
@@ -171,8 +171,8 @@
    "stage": "INS_TUT | Монтаж",
    "description": "INS_TUT | Монтаж",
    "seconds_per_unit": "9.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 2370,
+   "setup_seconds": "0",
+   "norm_seconds": 2250,
    "stage_key": "b3",
    "inputs": [
     [
@@ -187,8 +187,8 @@
    "stage": "US_WELD | УЗ сварка",
    "description": "US_WELD | УЗ сварка",
    "seconds_per_unit": "75.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 18870,
+   "setup_seconds": "0",
+   "norm_seconds": 18750,
    "stage_key": "b4",
    "inputs": [
     [
@@ -203,8 +203,8 @@
    "stage": "HEAT_TTK_short | Усадка",
    "description": "HEAT_TTK_short | Усадка",
    "seconds_per_unit": "45.000000",
-   "setup_seconds": "600",
-   "norm_seconds": 11850,
+   "setup_seconds": "0",
+   "norm_seconds": 11250,
    "stage_key": "b5",
    "inputs": [
     [
@@ -219,8 +219,8 @@
    "stage": "PRS_TERMINAL_auto | Опрессовка терминалов (A)",
    "description": "PRS_TERMINAL_auto | Опрессовка терминалов (A) (ст. A)",
    "seconds_per_unit": "60.000000",
-   "setup_seconds": "1800",
-   "norm_seconds": 16800,
+   "setup_seconds": "0",
+   "norm_seconds": 15000,
    "stage_key": "b6",
    "inputs": [
     [
@@ -235,8 +235,8 @@
    "stage": "INS_terminal_1.00 | Монтаж терминалов (A)",
    "description": "INS_terminal_1.00 | Монтаж терминалов (A) (ст. A)",
    "seconds_per_unit": "100.002000",
-   "setup_seconds": "120",
-   "norm_seconds": 25121,
+   "setup_seconds": "0",
+   "norm_seconds": 25001,
    "stage_key": "b7",
    "inputs": [
     [
@@ -251,8 +251,8 @@
    "stage": "TWIST | Свивка",
    "description": "TWIST | Свивка",
    "seconds_per_unit": "33.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 8370,
+   "setup_seconds": "0",
+   "norm_seconds": 8250,
    "stage_key": "b8",
    "inputs": [
     [
@@ -267,8 +267,8 @@
    "stage": "INS_WRAP | Монтаж",
    "description": "INS_WRAP | Монтаж",
    "seconds_per_unit": "30.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 7620,
+   "setup_seconds": "0",
+   "norm_seconds": 7500,
    "stage_key": "b9",
    "inputs": [
     [
@@ -283,8 +283,8 @@
    "stage": "INS_BRAID | Монтаж оплётки",
    "description": "INS_BRAID | Монтаж оплётки",
    "seconds_per_unit": "19.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 5120,
+   "setup_seconds": "0",
+   "norm_seconds": 5000,
    "stage_key": "b10",
    "inputs": [
     [
@@ -299,8 +299,8 @@
    "stage": "INS_BRAID | Монтаж оплётки",
    "description": "INS_BRAID | Монтаж оплётки",
    "seconds_per_unit": "19.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 5120,
+   "setup_seconds": "0",
+   "norm_seconds": 5000,
    "stage_key": "b11",
    "inputs": [
     [
@@ -315,8 +315,8 @@
    "stage": "INS_MARK | Монтаж маркировки",
    "description": "INS_MARK | Монтаж маркировки",
    "seconds_per_unit": "480.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 120120,
+   "setup_seconds": "0",
+   "norm_seconds": 120000,
    "stage_key": "b12",
    "inputs": [
     [
@@ -331,8 +331,8 @@
    "stage": "PRS_TERMINAL_auto | Опрессовка терминалов (B)",
    "description": "PRS_TERMINAL_auto | Опрессовка терминалов (B) (ст. B)",
    "seconds_per_unit": "60.000000",
-   "setup_seconds": "1800",
-   "norm_seconds": 16800,
+   "setup_seconds": "0",
+   "norm_seconds": 15000,
    "stage_key": "b13",
    "inputs": [
     [
@@ -347,8 +347,8 @@
    "stage": "INS_terminal_1.00 | Монтаж терминалов (B)",
    "description": "INS_terminal_1.00 | Монтаж терминалов (B) (ст. B)",
    "seconds_per_unit": "100.002000",
-   "setup_seconds": "120",
-   "norm_seconds": 25121,
+   "setup_seconds": "0",
+   "norm_seconds": 25001,
    "stage_key": "b14",
    "inputs": [
     [
@@ -363,8 +363,8 @@
    "stage": "INS_WRAP | Монтаж",
    "description": "INS_WRAP | Монтаж",
    "seconds_per_unit": "30.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 7620,
+   "setup_seconds": "0",
+   "norm_seconds": 7500,
    "stage_key": "b15",
    "inputs": [
     [
@@ -381,8 +381,8 @@
    "stage": "CUT_WIRE_auto | Резка",
    "description": "CUT_WIRE_auto | Резка",
    "seconds_per_unit": "45.498000",
-   "setup_seconds": "180",
-   "norm_seconds": 11555,
+   "setup_seconds": "0",
+   "norm_seconds": 11375,
    "stage_key": "b1",
    "inputs": []
   },
@@ -392,8 +392,8 @@
    "stage": "CUT_TUT_short | Резка",
    "description": "CUT_TUT_short | Резка",
    "seconds_per_unit": "1.998000",
-   "setup_seconds": "300",
-   "norm_seconds": 800,
+   "setup_seconds": "0",
+   "norm_seconds": 500,
    "stage_key": "b2",
    "inputs": [
     [
@@ -408,8 +408,8 @@
    "stage": "INS_TUT | Монтаж",
    "description": "INS_TUT | Монтаж",
    "seconds_per_unit": "6.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 1620,
+   "setup_seconds": "0",
+   "norm_seconds": 1500,
    "stage_key": "b3",
    "inputs": [
     [
@@ -424,8 +424,8 @@
    "stage": "SDR_W_W | Пайка",
    "description": "SDR_W_W | Пайка",
    "seconds_per_unit": "15.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 3870,
+   "setup_seconds": "0",
+   "norm_seconds": 3750,
    "stage_key": "b4",
    "inputs": [
     [
@@ -440,8 +440,8 @@
    "stage": "HEAT_TTK_short | Усадка",
    "description": "HEAT_TTK_short | Усадка",
    "seconds_per_unit": "30.000000",
-   "setup_seconds": "600",
-   "norm_seconds": 8100,
+   "setup_seconds": "0",
+   "norm_seconds": 7500,
    "stage_key": "b5",
    "inputs": [
     [
@@ -456,8 +456,8 @@
    "stage": "PRS_TERMINAL_auto | Опрессовка терминалов (A)",
    "description": "PRS_TERMINAL_auto | Опрессовка терминалов (A) (ст. A)",
    "seconds_per_unit": "78.000000",
-   "setup_seconds": "1800",
-   "norm_seconds": 21300,
+   "setup_seconds": "0",
+   "norm_seconds": 19500,
    "stage_key": "b6",
    "inputs": [
     [
@@ -472,8 +472,8 @@
    "stage": "INS_terminal_2,54-6,3 | Монтаж терминалов (A)",
    "description": "INS_terminal_2,54-6,3 | Монтаж терминалов (A) (ст. A)",
    "seconds_per_unit": "103.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 26120,
+   "setup_seconds": "0",
+   "norm_seconds": 26000,
    "stage_key": "b7",
    "inputs": [
     [
@@ -488,8 +488,8 @@
    "stage": "TWIST | Свивка",
    "description": "TWIST | Свивка",
    "seconds_per_unit": "10.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 2870,
+   "setup_seconds": "0",
+   "norm_seconds": 2750,
    "stage_key": "b8",
    "inputs": [
     [
@@ -504,8 +504,8 @@
    "stage": "PRS_TERMINAL_auto | Опрессовка терминалов (B)",
    "description": "PRS_TERMINAL_auto | Опрессовка терминалов (B) (ст. B)",
    "seconds_per_unit": "78.000000",
-   "setup_seconds": "1800",
-   "norm_seconds": 21300,
+   "setup_seconds": "0",
+   "norm_seconds": 19500,
    "stage_key": "b9",
    "inputs": [
     [
@@ -520,8 +520,8 @@
    "stage": "INS_terminal_1.00 | Монтаж терминалов (B)",
    "description": "INS_terminal_1.00 | Монтаж терминалов (B) (ст. B)",
    "seconds_per_unit": "130.002000",
-   "setup_seconds": "120",
-   "norm_seconds": 32621,
+   "setup_seconds": "0",
+   "norm_seconds": 32501,
    "stage_key": "b10",
    "inputs": [
     [
@@ -536,8 +536,8 @@
    "stage": "PRS_TERMINAL_auto | Опрессовка терминалов (B)",
    "description": "PRS_TERMINAL_auto | Опрессовка терминалов (B) (ст. B)",
    "seconds_per_unit": "78.000000",
-   "setup_seconds": "1800",
-   "norm_seconds": 21300,
+   "setup_seconds": "0",
+   "norm_seconds": 19500,
    "stage_key": "b11",
    "inputs": [
     [
@@ -552,8 +552,8 @@
    "stage": "INS_terminal_2,54-6,3 | Монтаж терминалов (B)",
    "description": "INS_terminal_2,54-6,3 | Монтаж терминалов (B) (ст. B)",
    "seconds_per_unit": "103.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 26120,
+   "setup_seconds": "0",
+   "norm_seconds": 26000,
    "stage_key": "b12",
    "inputs": [
     [
@@ -568,8 +568,8 @@
    "stage": "PRS_TERMINAL_auto | Опрессовка терминалов (B)",
    "description": "PRS_TERMINAL_auto | Опрессовка терминалов (B) (ст. B)",
    "seconds_per_unit": "78.000000",
-   "setup_seconds": "1800",
-   "norm_seconds": 21300,
+   "setup_seconds": "0",
+   "norm_seconds": 19500,
    "stage_key": "b13",
    "inputs": [
     [
@@ -584,8 +584,8 @@
    "stage": "INS_terminal_2,54-6,3 | Монтаж терминалов (B)",
    "description": "INS_terminal_2,54-6,3 | Монтаж терминалов (B) (ст. B)",
    "seconds_per_unit": "103.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 26120,
+   "setup_seconds": "0",
+   "norm_seconds": 26000,
    "stage_key": "b14",
    "inputs": [
     [
@@ -600,8 +600,8 @@
    "stage": "INS_WRAP | Монтаж",
    "description": "INS_WRAP | Монтаж",
    "seconds_per_unit": "30.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 7620,
+   "setup_seconds": "0",
+   "norm_seconds": 7500,
    "stage_key": "b15",
    "inputs": [
     [
@@ -618,8 +618,8 @@
    "stage": "CUT_WIRE+2strip | Резка с разделкой",
    "description": "CUT_WIRE+2strip | Резка с разделкой",
    "seconds_per_unit": "12.996000",
-   "setup_seconds": "600",
-   "norm_seconds": 3849,
+   "setup_seconds": "0",
+   "norm_seconds": 3249,
    "stage_key": "b1",
    "inputs": []
   },
@@ -628,9 +628,9 @@
    "code": "CUT_WIRE+1strip",
    "stage": "CUT_WIRE+1strip | Резка с разделкой",
    "description": "CUT_WIRE+1strip | Резка с разделкой",
-   "seconds_per_unit": "44.976000",
-   "setup_seconds": "600",
-   "norm_seconds": 11844,
+   "seconds_per_unit": "44.982000",
+   "setup_seconds": "0",
+   "norm_seconds": 11246,
    "stage_key": "b2",
    "inputs": [
     [
@@ -645,8 +645,8 @@
    "stage": "CUT_TUT_short | Резка",
    "description": "CUT_TUT_short | Резка",
    "seconds_per_unit": "24.000000",
-   "setup_seconds": "300",
-   "norm_seconds": 6300,
+   "setup_seconds": "0",
+   "norm_seconds": 6000,
    "stage_key": "b3",
    "inputs": [
     [
@@ -661,8 +661,8 @@
    "stage": "INS_TUT | Монтаж",
    "description": "INS_TUT | Монтаж",
    "seconds_per_unit": "72.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 18120,
+   "setup_seconds": "0",
+   "norm_seconds": 18000,
    "stage_key": "b4",
    "inputs": [
     [
@@ -677,8 +677,8 @@
    "stage": "SDR_XT60 | Пайка",
    "description": "SDR_XT60 | Пайка (ст. A)",
    "seconds_per_unit": "70.002000",
-   "setup_seconds": "120",
-   "norm_seconds": 17621,
+   "setup_seconds": "0",
+   "norm_seconds": 17501,
    "stage_key": "b5",
    "inputs": [
     [
@@ -692,9 +692,9 @@
    "code": "PRS_TERMINAL_auto",
    "stage": "PRS_TERMINAL_auto | Опрессовка терминалов (A)",
    "description": "PRS_TERMINAL_auto | Опрессовка терминалов (A) (ст. A)",
-   "seconds_per_unit": "53.982000",
-   "setup_seconds": "1800",
-   "norm_seconds": 15296,
+   "seconds_per_unit": "54.000000",
+   "setup_seconds": "0",
+   "norm_seconds": 13500,
    "stage_key": "b6",
    "inputs": [
     [
@@ -709,8 +709,8 @@
    "stage": "INS_terminal_2,54-6,3 | Монтаж терминалов (A)",
    "description": "INS_terminal_2,54-6,3 | Монтаж терминалов (A) (ст. A)",
    "seconds_per_unit": "72.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 18120,
+   "setup_seconds": "0",
+   "norm_seconds": 18000,
    "stage_key": "b7",
    "inputs": [
     [
@@ -725,8 +725,8 @@
    "stage": "SDR_PCB | Пайка на плату",
    "description": "SDR_PCB | Пайка на плату (ст. B)",
    "seconds_per_unit": "165.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 41370,
+   "setup_seconds": "0",
+   "norm_seconds": 41250,
    "stage_key": "b8",
    "inputs": [
     [
@@ -741,8 +741,8 @@
    "stage": "SDR_PCB | Пайка на плату",
    "description": "SDR_PCB | Пайка на плату (ст. B)",
    "seconds_per_unit": "165.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 41370,
+   "setup_seconds": "0",
+   "norm_seconds": 41250,
    "stage_key": "b9",
    "inputs": [
     [
@@ -757,8 +757,8 @@
    "stage": "HEAT_TYT_short | Усадка",
    "description": "HEAT_TYT_short | Усадка",
    "seconds_per_unit": "216.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 54120,
+   "setup_seconds": "0",
+   "norm_seconds": 54000,
    "stage_key": "b10",
    "inputs": [
     [
@@ -775,8 +775,8 @@
    "stage": "CUT_WIRE+2strip | Резка с разделкой",
    "description": "CUT_WIRE+2strip | Резка с разделкой",
    "seconds_per_unit": "6.498000",
-   "setup_seconds": "600",
-   "norm_seconds": 2225,
+   "setup_seconds": "0",
+   "norm_seconds": 1625,
    "stage_key": "b1",
    "inputs": []
   },
@@ -786,8 +786,8 @@
    "stage": "CUT_TUT_short | Резка",
    "description": "CUT_TUT_short | Резка",
    "seconds_per_unit": "1.998000",
-   "setup_seconds": "300",
-   "norm_seconds": 800,
+   "setup_seconds": "0",
+   "norm_seconds": 500,
    "stage_key": "b2",
    "inputs": [
     [
@@ -802,8 +802,8 @@
    "stage": "INS_TUT | Монтаж",
    "description": "INS_TUT | Монтаж",
    "seconds_per_unit": "6.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 1620,
+   "setup_seconds": "0",
+   "norm_seconds": 1500,
    "stage_key": "b3",
    "inputs": [
     [
@@ -818,8 +818,8 @@
    "stage": "INS_RJ_cat5 | Монтаж RJ",
    "description": "INS_RJ_cat5 | Монтаж RJ (ст. A)",
    "seconds_per_unit": "45.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 11370,
+   "setup_seconds": "0",
+   "norm_seconds": 11250,
    "stage_key": "b4",
    "inputs": [
     [
@@ -834,8 +834,8 @@
    "stage": "INS_RJ_cat5 | Монтаж RJ",
    "description": "INS_RJ_cat5 | Монтаж RJ (ст. B)",
    "seconds_per_unit": "45.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 11370,
+   "setup_seconds": "0",
+   "norm_seconds": 11250,
    "stage_key": "b5",
    "inputs": [
     [
@@ -850,8 +850,8 @@
    "stage": "HEAT_TYT_short | Усадка",
    "description": "HEAT_TYT_short | Усадка",
    "seconds_per_unit": "18.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 4620,
+   "setup_seconds": "0",
+   "norm_seconds": 4500,
    "stage_key": "b6",
    "inputs": [
     [
@@ -868,8 +868,8 @@
    "stage": "CUT_WIRE+2strip | Резка с разделкой",
    "description": "CUT_WIRE+2strip | Резка с разделкой",
    "seconds_per_unit": "6.498000",
-   "setup_seconds": "600",
-   "norm_seconds": 2225,
+   "setup_seconds": "0",
+   "norm_seconds": 1625,
    "stage_key": "b1",
    "inputs": []
   },
@@ -879,8 +879,8 @@
    "stage": "CUT_TUT_short | Резка",
    "description": "CUT_TUT_short | Резка",
    "seconds_per_unit": "1.998000",
-   "setup_seconds": "300",
-   "norm_seconds": 800,
+   "setup_seconds": "0",
+   "norm_seconds": 500,
    "stage_key": "b2",
    "inputs": [
     [
@@ -895,8 +895,8 @@
    "stage": "INS_TUT | Монтаж",
    "description": "INS_TUT | Монтаж",
    "seconds_per_unit": "6.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 1620,
+   "setup_seconds": "0",
+   "norm_seconds": 1500,
    "stage_key": "b3",
    "inputs": [
     [
@@ -911,8 +911,8 @@
    "stage": "SDR_BANANA | Пайка",
    "description": "SDR_BANANA | Пайка (ст. A)",
    "seconds_per_unit": "19.998000",
-   "setup_seconds": "120",
-   "norm_seconds": 5120,
+   "setup_seconds": "0",
+   "norm_seconds": 5000,
    "stage_key": "b4",
    "inputs": [
     [
@@ -927,8 +927,8 @@
    "stage": "CUT_TUT_short | Резка",
    "description": "CUT_TUT_short | Резка",
    "seconds_per_unit": "1.002000",
-   "setup_seconds": "300",
-   "norm_seconds": 551,
+   "setup_seconds": "0",
+   "norm_seconds": 251,
    "stage_key": "b5",
    "inputs": [
     [
@@ -943,8 +943,8 @@
    "stage": "INS_TUT | Монтаж",
    "description": "INS_TUT | Монтаж",
    "seconds_per_unit": "3.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 870,
+   "setup_seconds": "0",
+   "norm_seconds": 750,
    "stage_key": "b6",
    "inputs": [
     [
@@ -959,8 +959,8 @@
    "stage": "HEAT_TTK_short | Усадка",
    "description": "HEAT_TTK_short | Усадка",
    "seconds_per_unit": "15.000000",
-   "setup_seconds": "600",
-   "norm_seconds": 4350,
+   "setup_seconds": "0",
+   "norm_seconds": 3750,
    "stage_key": "b7",
    "inputs": [
     [
@@ -975,8 +975,8 @@
    "stage": "SDR_НК | Пайка",
    "description": "SDR_НК | Пайка (ст. B)",
    "seconds_per_unit": "15.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 3870,
+   "setup_seconds": "0",
+   "norm_seconds": 3750,
    "stage_key": "b8",
    "inputs": [
     [
@@ -991,8 +991,8 @@
    "stage": "HEAT_TYT_short | Усадка",
    "description": "HEAT_TYT_short | Усадка",
    "seconds_per_unit": "18.000000",
-   "setup_seconds": "120",
-   "norm_seconds": 4620,
+   "setup_seconds": "0",
+   "norm_seconds": 4500,
    "stage_key": "b9",
    "inputs": [
     [
