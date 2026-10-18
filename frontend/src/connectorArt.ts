@@ -40,8 +40,10 @@ export type HousingBody = {
   win_y?: number;
   /** Вид полости на торце проводов по чертежу: funnel — квадратная воронка с внутренним отверстием со срезанными углами у стороны
    *  «от защёлки» (Molex Mini-Fit Jr, SD-5557-003: w × h воронки, отверстие hole, срез chamfer, мм); bevel — двойной квадрат окна
-   *  и трапеция окна фиксатора под ним (JST XH); slot — паз со скруглённым верхом (JST PH). */
-  cav?: { kind: "funnel" | "bevel" | "slot"; w: number; h: number; hole?: [number, number]; chamfer?: number };
+   *  с внутренним контуром (Connfly DS1070, DS1072). */
+  cav?: {
+    kind: "funnel" | "bevel"; w: number; h: number; hole?: [number, number]; chamfer?: number;
+  };
   lock_w?: number; lock_inset?: number; lock_h?: number;
   /** Длина замка вдоль корпуса от стыковочного торца, мм (JST SM: рычаг SMR 14,5, упор SMP 1,3). */
   lock_len?: number;
@@ -574,15 +576,10 @@ function cavityShape(c: NonNullable<HousingBody["cav"]>, cx: number, cy: number,
         `<line x1="${f(ax)}" y1="${f(ay)}" x2="${f(bx)}" y2="${f(by)}" stroke="${EDGE}" stroke-width=".8"/>`).join("") +
       `<polygon points="${d}" fill="${hole}" stroke="${EDGE}" stroke-width="1"/></g>`;
   }
-  if (c.kind === "bevel") {
-    // XH: окно ввода — квадрат с внутренним квадратом (скос), под ним трапеция окна фиксатора контакта.
-    const ix = w * 0.2, iy = h * 0.2, ty = y0 + h + k * 0.28, tw = w * 1.05, th = k * 0.5;
-    return `<g data-cavity="bevel"><rect x="${f(x0)}" y="${f(y0)}" width="${f(w)}" height="${f(h)}" fill="${hole}" stroke="${EDGE}" stroke-width="1"/>` +
-      `<rect x="${f(x0 + ix)}" y="${f(y0 + iy)}" width="${f(w - 2 * ix)}" height="${f(h - 2 * iy)}" fill="${rim}" stroke="${EDGE}" stroke-width=".8"/>` +
-      `<path d="M${f(cx - tw / 2)},${f(ty + th)} L${f(cx - tw * 0.38)},${f(ty)} L${f(cx + tw * 0.38)},${f(ty)} L${f(cx + tw / 2)},${f(ty + th)} z" fill="${hole}" stroke="${EDGE}" stroke-width=".8"/></g>`;
-  }
-  const r = w / 2;
-  return `<path data-cavity="slot" d="M${f(x0)},${f(y0 + h)} L${f(x0)},${f(y0 + r)} A${f(r)},${f(r)} 0 0 1 ${f(x0 + w)},${f(y0 + r)} L${f(x0 + w)},${f(y0 + h)} z" fill="${hole}" stroke="${EDGE}" stroke-width="1"/>`;
+  // Двойной квадрат: вход контакта с внутренним контуром (Connfly DS1070, DS1072).
+  const ix = w * 0.2, iy = h * 0.2;
+  return `<g data-cavity="bevel"><rect x="${f(x0)}" y="${f(y0)}" width="${f(w)}" height="${f(h)}" fill="${hole}" stroke="${EDGE}" stroke-width="1"/>` +
+    `<rect x="${f(x0 + ix)}" y="${f(y0 + iy)}" width="${f(w - 2 * ix)}" height="${f(h - 2 * iy)}" fill="${rim}" stroke="${EDGE}" stroke-width=".8"/></g>`;
 }
 
 /** Торец корпуса по чертежу (JST SH, GH, XH, PH, ZH, Micro-Fit): прямоугольник B × h, выступы по бокам, защёлка на

@@ -203,29 +203,34 @@ describe("вилка и розетка одной серии нарисован�
     expect(smr).toMatch(/data-lock="arm"><rect/);
   });
 
-  it("draws JST SUH by eSUH: tall lance cavities in the lower part of the 3.1 mm face, not squares", () => {
+  it("draws JST SUH by its end view A × 1.25 (eSUH side view), not by the 3.1 mm front view with lance slots", () => {
     const hs = items.find((i) => i.family === "jst-suh")!.housing;
-    expect(hs.body).toMatchObject({ h: 3.1, win: [0.6, 1.7], win_y: 2.25 });
-    const svg = connectorFace(hs, 0, 0, 44, null).body;
-    const holes = [...svg.matchAll(/<rect x="[\d.-]+" y="([\d.-]+)" width="([\d.]+)" height="([\d.]+)"[^>]*fill="#2f3336"/g)];
-    expect(holes).toHaveLength(hs.cols);
-    expect(Number(holes[0][3]) / Number(holes[0][2])).toBeCloseTo(1.7 / 0.6, 1);
+    expect(hs.body).toMatchObject({ h: 1.25, win: [0.6, 0.8] });
+    expect(hs.body!.win_y).toBeUndefined();
+    const box = connectorFace(hs, 0, 0, 44, null);
+    // Торец плоский: ширина A = (n−1)·0,8 + 1,6 мм при толщине 1,25 мм — в 3 раза шире высоты.
+    expect(box.w / (box.h - 7 - 6)).toBeGreaterThan(3);
   });
 
-  it("draws wire-end cavities by the maker drawings: Mini-Fit Jr funnel, XH bevelled window with a lance trapezoid, PH slot with a round top", () => {
+  it("draws wire-end cavities by the maker drawings: Mini-Fit Jr funnel (SD-5557-003), Connfly DS1070 / DS1072 entries", () => {
     const of = (id: string) => items.find((i) => i.family === id)!.housing;
-    const mj = of("molex-minifit-jr"), xh = of("jst-xh"), ph = of("jst-ph");
+    const mj = of("molex-minifit-jr");
     // Molex SD-5557-003: воронка 3,6 мм при шаге 4,2 (0,86 шага), отверстие 1,9 × 2,1 со срезанными углами.
     expect(mj.body!.cav).toMatchObject({ kind: "funnel", w: 3.6, h: 3.6, chamfer: 0.7 });
     const funnel = connectorFace(mj, 0, 0, 42, null).body;
     expect(funnel.match(/data-cavity="funnel"/g)).toHaveLength(mj.cols * mj.rows);
     expect(funnel).toMatch(/<polygon points="(?:[\d.-]+,[\d.-]+ ){5}[\d.-]+,[\d.-]+"/); // шестиугольник: два среза
     const side = Number(/data-cavity="funnel"><rect x="[\d.-]+" y="[\d.-]+" width="([\d.]+)"/.exec(funnel)![1]);
-    expect(side / 42 * 4.2 / 4.2).toBeCloseTo(3.6 / 4.2, 1);
-    // JST eXH: окно ввода + трапеция окна фиксатора; JST ePH: паз 0,9 × 2,1 со скруглённым верхом.
-    expect(connectorFace(xh, 0, 0, 30, null).body.match(/data-cavity="bevel"/g)).toHaveLength(xh.cols);
-    expect(connectorFace(ph, 0, 0, 30, null).body.match(/data-cavity="slot"[^>]* d="[^"]* A/g)).toHaveLength(ph.cols);
-    expect(ph.body!.win).toEqual([0.9, 2.1]);
+    expect(side / 42).toBeCloseTo(3.6 / 4.2, 1);
+    // Connfly «Female Housing»: ширина корпуса (N−1)·шаг + extra и вход контакта по листу — крупнее прежнего квадрата 0,8 шага.
+    const widths: Record<string, number> = { "connfly-ds1070": 3.2, "connfly-ds1072": 4.24 };
+    for (const [id, extra] of Object.entries(widths)) {
+      const hs = of(id);
+      expect(hs.body!.extra).toBe(extra);
+      expect(hs.body!.cav!.kind).toBe("bevel");
+      expect(hs.body!.cav!.h).toBeGreaterThan(hs.body!.cav!.w);
+      expect(connectorFace(hs, 0, 0, 30, null).body.match(/data-cavity="bevel"/g)).toHaveLength(hs.cols);
+    }
   });
 
   it("draws Molex Micro-Fit by the Molex sheets: 43025 — гнёзда и защёлка, 43020 — штыри в кожухе с упором", () => {

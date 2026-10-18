@@ -103,10 +103,10 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # of that face -> from the wire side, ▽ face up, contact 1 on the RIGHT (as SH).
     _family("jst-suh", "JST SUH", r"^SUHR-0*(\d+)V-S", 0.8, start="TR", latch="mark", conf="high",
             src="JST eSUH, Housing", note="по чертежу JST eSUH: метка ▽ контакта 1 — со стороны проводов ▽ сверху, контакт 1 справа",
-            # eSUH p. 2 «Housing»: B = (n−1)·0.8 contact span, A = B + 1.6 (no protrusions), C = A + 2.0 with the -B protrusions;
-            # 3.1 high at the wire end, the open lance cavities are 1.7 tall in its lower part (the top 1.4 carries the ▽ mark)
-            # and ~0.6 wide between 0.2 walls; 1.25 deep.
-            body={"extra": 1.6, "h": 3.1, "len": 1.25, "win": (0.6, 1.7), "win_y": 2.25},
+            # eSUH p. 2 «Housing»: B = (n−1)·0.8 contact span, A = B + 1.6 (no protrusions), C = A + 2.0 with the -B protrusions.
+            # The sheet's front view looks across the wire axis (3.1 long, lance slots 1.7 tall); the end view the generator shows is
+            # A × 1.25 (the side view), and the SSUH contact (0.83 wide) gives the cavity ~0.6 × 0.8, not the slots of the front view.
+            body={"extra": 1.6, "h": 1.25, "len": 3.1, "win": (0.6, 0.8)},
             body_by=((r"V-S-B", {"ears": 1.0}),)),
     _family("jst-lbt", "JST LBT (2 силовых + сигнальные)", r"^LBTAR-0*(\d+)V-2K-K", 1.0, latch="ramp",
             note="2 силовых контакта по краям и сигнальные с шагом 1,0 — рисунок условный; метка контакта 1 на лицевой грани (JST eLBT)"),
@@ -268,8 +268,13 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             color="#b9c0c6", conf="high", src="JAE SJ103279 (FI-RE※※HL)",
             note="по чертежу JAE SJ103279: на торце проводов два ряда в шахматку, NO.1 и нечётные — в ряду дальше от верхней грани; верхней гранью вверх — 1 справа внизу, 2 над ним"),
     # Connfly (drawings C-DS10xx: the female housing is drawn without a circuit-1 mark that can be placed)
-    _family("connfly-ds1070", "Connfly DS1070", r"^I-DS1070-SC[A-Z](\d{2})$", 2.54, latch="ramp", note=UNCHECKED),
-    _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED),
+    _family("connfly-ds1070", "Connfly DS1070", r"^I-DS1070-SC[A-Z](\d{2})$", 2.54, latch="ramp", note=UNCHECKED,
+            # C-DS1070 sheet 2 «Female Housing»: N·2.54 + 0.66 wide, 4.9 high end view; contact entries ~1.95 × 3.1 (read off the drawing, ±0.2).
+            body={"extra": 3.2, "h": 4.9, "len": 13.2, "win": (1.95, 3.1), "win_y": 2.6,
+                  "cav": {"kind": "bevel", "w": 1.95, "h": 3.1}}),
+    _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED,
+            # C-DS1072 «Female Housing»: (N−1)·3.96 + 4.24 wide, 6.2 high end view, entries ~2.6 × 4.4 (±0.3, read off the drawing).
+            body={"extra": 4.24, "h": 6.2, "len": 16.2, "lock_inset": 0, "lock_h": 0.7, "win": (2.6, 4.4), "cav": {"kind": "bevel", "w": 2.6, "h": 4.4}}),
     _family("connfly-ds1073", "Connfly DS1073", r"^I-DS1073-SC[A-Z]0(\d{2})$", 3.96, latch="lever", note=UNCHECKED),
     _family("connfly-ds1074", "Connfly DS1074", r"^I-DS1074-SC[A-Z]0(\d{2})$", 5.08, latch="ramp", color="#e6e8ea", note=UNCHECKED),
     # DS1071-01 (Dupont 2,0): rows × holes per row in the part number, like DS1071. The sheet draws it symmetric; the real
