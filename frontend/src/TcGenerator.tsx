@@ -1048,6 +1048,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const splMethod = gen.splMethod_();
   const sleeveComps = gen.spliceSleeveComps_();
   const spliceSlots = gen.spliceSlots_();
+  const spliceRows = complex ? gen.spliceRows_() : [];
   const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.hsComp_(row.compId), skip: gen.hsRowSkip_(row) }));
   const hsOptions = gen.hsTubeOptions_();
   const marks = gen.markComps_();
@@ -1189,14 +1190,22 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <Field label="Материал обжима из состава" hint="необязательно" className="span2">{selectComps(sleeveComps, S.spl.band || "",
           (id) => update((current) => ({ ...current, spl: { ...current.spl, band: id } })), "Материал ленточного обжима")}</Field>
       </div>}
-      <div className="opt-grid">
+      {spliceRows.length ? <div className="spl-rows" role="list" aria-label="Сростки схемы">
+        {spliceRows.map((row) => <div className="spl-row" role="listitem" key={row.id}>
+          <b>{row.label}</b><span className="spl-size">{row.size} {plural(row.size, "провод", "провода", "проводов")}</span>
+          <span className="spl-wires">{row.wires.map((w, i) => <span key={i}>{w.art || "провод"}{w.from ? ` ${w.from.startsWith("к ") ? "" : "от "}${w.from}` : ""}</span>)}</span>
+        </div>)}
+        <p className="opt-note">Сростки задаются на схеме</p>
+      </div> : <div className="opt-grid">
         <Field label="Сростков на изделие"><input type="number" min={1} value={S.spl.count} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, count: event.target.value } }))} /></Field>
-        <Field label="Проводов в сростке" hint="разные — через запятую"><input value={S.spl.wires} placeholder="3 или 4, 2, 2" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, wires: event.target.value } }))} /></Field>
+        <Field label="Проводов в сростке" hint="разные — через запятую" className="span2"><input value={S.spl.wires} placeholder="3 или 4, 2, 2" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, wires: event.target.value } }))} /></Field>
+      </div>}
+      <div className="opt-grid">
         <Field label="Трубка сростка, длина"><UnitInput unit="мм" value={S.spl.tut} placeholder="40" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, tut: event.target.value } }))} /></Field>
-        <Field label="Трубка сростка из состава" className="span2">{selectComps(capTubes, S.spl.tutMat, (id) => update((current) => ({ ...current, spl: { ...current.spl, tutMat: id } })), "Трубка сростка")}</Field>
         <Field label="Зачистка под сросток"><UnitInput unit="мм" aria-label="Зачистка под сросток" value={S.spl.strip} placeholder={SPLICE_STRIP_MM_} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, strip: event.target.value } }))} /></Field>
+        <Field label="Трубка сростка из состава" className="span2">{selectComps(capTubes, S.spl.tutMat, (id) => update((current) => ({ ...current, spl: { ...current.spl, tutMat: id } })), "Трубка сростка")}</Field>
       </div>
-      <div className="chip-row"><Chip checked={S.spl.fold} onChange={(on) => update((current) => ({ ...current, spl: { ...current.spl, fold: on } }))}>Складывание жилы перед гильзой<small>663К.1 КБ4: ГС 2,5, «Схема увеличения сечения»</small></Chip></div>
+      {splMethod === "sleeve" && <div className="chip-row"><Chip checked={S.spl.fold} onChange={(on) => update((current) => ({ ...current, spl: { ...current.spl, fold: on } }))}>Складывание жилы перед гильзой</Chip></div>}
     </Toggle>,
     <Toggle key="hs" checked={S.hs.enabled} title="Термоусадка на жгут" hint="концы оплётки — ТТК/ТУТ из состава"
       onChange={(on) => update((current) => ({ ...current, hs: { ...current.hs, enabled: on, manual: true } }))}>

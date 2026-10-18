@@ -90,7 +90,17 @@ it("713К.4 КБ1: the owner sets the processing through the form and gets the s
   type("Шаг свивки", "20");
   // Сростки пайкой, трубка ТТК 3/1 по 20 мм.
   switchOn("Сростки");
+  // Сростки нарисованы на схеме — список «С1…С4» вместо набранных чисел; складывание жилы — только при опрессовке гильзой.
+  const rows = [...document.querySelectorAll(".spl-row")].map((el) => el.textContent || "");
+  expect(rows).toHaveLength(4);
+  expect(rows.map((t) => t.match(/^С(\d)(\d) пров/)?.slice(1, 3).join(":"))).toEqual(["1:4", "2:4", "3:3", "4:3"]);
+  expect(rows[0]).toMatch(/от .*конт\. \d/);
+  expect(document.querySelector(".spl-rows")).toHaveTextContent("Сростки задаются на схеме");
+  expect(screen.queryByLabelText("Проводов в сростке")).toBeNull();
+  expect(screen.queryByLabelText("Сростков на изделие")).toBeNull();
+  expect(screen.getByText("Складывание жилы перед гильзой")).toBeTruthy();
   radio("Способ сростка", "Пайка");
+  expect(screen.queryByText("Складывание жилы перед гильзой")).toBeNull();
   type("Трубка сростка, длина", "20");
   type("Трубка сростка", "ttk3");
   // Оплётка XP-3 до термоусадки, по ветвям 120/110/110/120 мм.
