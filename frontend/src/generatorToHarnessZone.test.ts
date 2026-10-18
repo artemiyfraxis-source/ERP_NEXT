@@ -9,7 +9,7 @@ import { buildHarnessDocument, planFromGenerator, type ConnectorSource } from ".
 import type { ConnectorHousing } from "./connectorArt";
 import { designToScene } from "./harness/editor/HarnessDesignEditor";
 import { connectorContactPosition, parseHarnessDesignDocument } from "./harness/editor/model";
-import { housingFace } from "./harness/editor/housing-face";
+import { HOUSING_PX_PER_MM, housingFace, housingSizeMm } from "./harness/editor/housing-face";
 import { physicalNodePoint } from "./harness/editor/physical-ports";
 import { collectStripCallouts } from "./harness/editor/strip-callouts";
 
@@ -102,9 +102,14 @@ describe("713К.4 КБ1: схема жгута как на СБ", () => {
     const labels = scene.filter((o) => o.kind === "object-index");
     expect(labels.map((o) => o.label).sort()).toEqual(["X1", "X2", "X3", "X4", "X5", "X6"]);
     const callouts = doc.drawingDocuments!.graphics!.filter((g) => g.kind === "text").map((g) => g.text!);
-    // Одинаковые оболочки на нескольких ветвях — одна выноска с линиями к каждому месту (СБ: «Трубка ТТК 8/2, 3 места»).
-    expect(callouts).toEqual(expect.arrayContaining(["Трубка ТТК 8/2, 3 места", "Трубка ТТК 12/4, 30 мм", "Трубка ТТК 12/4, 15 мм", "Оплётка XP-3, 4 места", "Маркировка «5»", "Маркировка «A6»"]));
-    expect(doc.drawingDocuments!.graphics!.filter((g) => g.kind === "line")).toHaveLength(3 + 4 + 1 + 1 + 4);
+    // Одинаковые оболочки — выноска «Трубка ТТК 8/2, 2 места» с линиями к каждому месту; места, до которых чисто не достать, берёт
+    // следующая подпись той же оболочки. Сумма мест по подписям — все места формы.
+    const places = (prefix: string) => callouts.filter((text) => text.startsWith(prefix)).reduce((sum, text) => sum + Number(/, (\d+) мест/.exec(text)?.[1] ?? 1), 0);
+    expect([places("Трубка ТТК 8/2"), places("Трубка ТТК 12/4, 15"), places("Оплётка XP-3"), places("Маркировка")]).toEqual([3, 1, 4, 4]);
+    expect(callouts).toContain("Трубка ТТК 12/4, 30 мм");
+    expect(callouts).toEqual(expect.arrayContaining(["Маркировка «5»", "Маркировка «A6»"]));
+    // Линия на каждое место: 3 + 1 + 4 + 4 + зона.
+    expect(doc.drawingDocuments!.graphics!.filter((g) => g.kind === "line")).toHaveLength(3 + 1 + 4 + 4 + 1);
   });
 
   it("callouts and notes do not overlap each other or the connectors", () => {
@@ -145,7 +150,7 @@ describe("разъёмы из базы разъёмов — вид сверху,
       expect(face.top).toBe(true);
       // Тот же рисунок, что в ПФ 2 (connectorTopView): сторона А — оси меняются местами, сторона В — поворот на 90° по часовой.
       expect(svg).toContain('data-view="top"');
-      expect(svg).toContain(left ? 'transform="matrix(0,1,-1,0,' : 'transform="matrix(0,1,1,0,0,0)"');
+      expect(svg).toContain(left ? 'transform="matrix(0,1,-1,0,' : 'transform="matrix(0,1,1,0,0,0)');
       expect([object.width, object.height]).toEqual([face.width, face.height]);
       // Провода встают на край торца со стороны жгута: А — справа, В — слева; контакт 1 — сверху, дальше вниз.
       const entries = connector.contacts.map((contact) => connectorContactPosition(connector, contact.id, "drawing")!);
@@ -227,5 +232,83 @@ describe("размеры ветвей по КД и точка «Б»", () => {
     const without = planFromGenerator(data, { ...S, hs: { ...S.hs, enabled: false } });
     const sources = Object.fromEntries(without.connectors.map((c) => [c.key, { kind: "free", contactCount: null, libraryCode: null } as ConnectorSource]));
     expect(buildHarnessDocument(without, sources).document.drawingDocuments!.graphics!.some((g) => g.kind === "ellipse")).toBe(false);
+  });
+});
+
+describe("выноски и масштаб разъёмов", () => {
+  type Pt = { x: number; y: number };
+  const cross = (a: Pt, b: Pt, c: Pt, d: Pt) => {
+    const o = (p: Pt, q: Pt, r: Pt) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    return o(a, b, c) * o(a, b, d) < -1e-9 && o(c, d, a) * o(c, d, b) < -1e-9;
+  };
+
+  it("no leader line crosses a branch, another leader or a label; each reaches its place from the edge of its label", () => {
+    const { document: doc } = build(true);
+    const topology = doc.physicalTopology!;
+    const point = (id: string) => physicalNodePoint(doc, topology.nodes.find((n) => n.id === id)!);
+    const branches = topology.segments.map((segment) => [point(segment.from), point(segment.to)] as const);
+    const graphics = doc.drawingDocuments!.graphics!;
+    const leaders = graphics.filter((g) => g.kind === "line").map((g) => [g.points[0]!, g.points[1]!] as const);
+    expect(leaders.length).toBeGreaterThan(10);
+    // Линия подходит к своей ветви с края — на последних 2 px (точка на самой ветви) пересечения не считаются.
+    const shortened = leaders.map(([from, to]) => {
+      const length = Math.hypot(to.x - from.x, to.y - from.y) || 1, t = Math.max(0, 1 - 2 / length);
+      return [from, { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }] as const;
+    });
+    const crossingBranch = shortened.flatMap(([a, b], i) => branches.filter(([c, d]) => cross(a, b, c, d)).map(() => `leader ${i}`));
+    expect(crossingBranch).toEqual([]);
+    const crossingLeaders = shortened.flatMap(([a, b], i) => shortened.slice(i + 1).filter(([c, d]) => cross(a, b, c, d)).map(() => `leaders ${i}`));
+    expect(crossingLeaders).toEqual([]);
+    // Линия не идёт сквозь подписи и корпуса разъёмов.
+    const boxes = [
+      ...graphics.filter((g) => g.kind === "text").map((g) => ({ x: g.points[0]!.x, y: g.points[0]!.y - 12, width: g.text!.length * 6.2, height: 14 })),
+      ...designToScene(doc, "drawing").filter((o) => o.kind === "connector").map((o) => ({ x: o.x, y: o.y, width: o.width, height: o.height })),
+    ];
+    const through = leaders.filter(([from, to]) => boxes.some((box) => Array.from({ length: 12 }, (_, k) => ({ x: from.x + ((to.x - from.x) * (k + 2)) / 14, y: from.y + ((to.y - from.y) * (k + 2)) / 14 }))
+      .some((p) => p.x > box.x + 1 && p.x < box.x + box.width - 1 && p.y > box.y + 1 && p.y < box.y + box.height - 1)));
+    expect(through).toEqual([]);
+    // Веер: у подписи с несколькими местами линии выходят из одной точки её края.
+    const origins = new Map<string, number>();
+    leaders.forEach(([from]) => origins.set(`${from.x},${from.y}`, (origins.get(`${from.x},${from.y}`) ?? 0) + 1));
+    expect([...origins.values()].some((n) => n > 1)).toBe(true);
+  });
+
+  it("every connector is drawn at one mm-to-px scale from its real housing size, so relative sizes match reality", () => {
+    const { document: doc } = build(true);
+    const faces = doc.connectors.map((connector) => {
+      const left = connector.schematic.orientation === "contacts-left";
+      const face = housingFace(connector.housing!, null, left)!;
+      const size = housingSizeMm(connector.housing!)!;
+      return { name: connector.designation, face, size };
+    });
+    expect(faces).toHaveLength(6);
+    // Один масштаб на всех шестерых.
+    expect(new Set(faces.map(({ face }) => face.pxPerMm))).toEqual(new Set([HOUSING_PX_PER_MM]));
+    for (const { name, face, size } of faces) {
+      // Ширина поперёк контактов — точно в масштабе; длина вдоль проводов — в масштабе с допуском на тень и фаски модели.
+      expect(face.height / size.width, `${name} width`).toBeCloseTo(HOUSING_PX_PER_MM, 0);
+      expect(face.width / size.length / HOUSING_PX_PER_MM, `${name} length`).toBeGreaterThan(0.85);
+      expect(face.width / size.length / HOUSING_PX_PER_MM, `${name} length`).toBeLessThan(1.35);
+    }
+    // Размеры по чертежу: DS1071 — корпус 14 мм, SM — 18,2 мм (вилка) и 11,7 мм (розетка): отношения те же, что у деталей.
+    const by = Object.fromEntries(faces.map((f) => [f.name, f]));
+    expect(by.X5!.size.length).toBe(14);
+    expect(by.X6!.size.length).toBe(14);
+    // Одна длина корпуса (14 мм) — почти одна длина рисунка (у двухрядного ещё виден торец толщиной 5,2 мм).
+    expect(Math.abs(by.X5!.face.width - by.X6!.face.width) / by.X5!.face.width).toBeLessThan(0.25);
+    expect(by.X5!.face.width).toBeLessThan(by.X1!.face.width);
+    expect(by.X5!.face.height).toBeLessThan(by.X4!.face.height);
+    // Не «в разы больше»: X5/X6 не крупнее самых больших X1–X4.
+    expect(Math.max(by.X5!.face.width, by.X6!.face.width)).toBeLessThan(Math.max(...["X1", "X2", "X3", "X4"].map((n) => by[n]!.face.width)));
+  });
+
+  it("the rear-face dimension of side B uses the real DS1071 depth (14 мм from the maker drawing)", () => {
+    const plan = planFromGenerator(data, form());
+    const sources = Object.fromEntries(plan.connectors.map((c) => [c.key, { kind: "free", contactCount: null, libraryCode: null, housing: housingOf(c.article) } as ConnectorSource]));
+    const { document: doc } = buildHarnessDocument(plan, sources);
+    const lengths = doc.drawingDocuments!.dimensions!.map((d) => d.lengthMm!).sort((a, b) => a - b);
+    // Провод 180 и 200 мм минус половина зоны 15 и глубина корпуса 14: 151 и 171; без глубины было бы 165 и 185.
+    expect(lengths.filter((value) => value === 151 || value === 171)).toEqual([151, 171]);
+    expect(lengths.filter((value) => value === 165 || value === 185)).toEqual([]);
   });
 });

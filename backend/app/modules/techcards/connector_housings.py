@@ -180,7 +180,11 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # either way round, so contact 1 is set by the board's marking, not by the housing: the numbering stays unchecked.
     {"id": "connfly-ds1071", "title": "Connfly DS1071 (Dupont 2,54)", "pattern": r"^I-DS1071-SC[BW]0?(\d)X0?(\d{1,2})", "grid": True, "pitch": 2.54, "order": "col", "start": "TL", "latch": "none", "color": BLACK, "conf": "high",
      "src": OWNER_PART,
-     "note": "сверено владельцем по детали 17.10.2026: прорезями вверх контакт 1 слева — у стрелки на корпусе"},
+     "note": "сверено владельцем по детали 17.10.2026: прорезями вверх контакт 1 слева — у стрелки на корпусе",
+     # Размеры корпуса — Connfly C-DS1071-XXXXX-B, лист «FEMALE Housing» (read 18.10.2026): B = N·2,54 (A = (N−1)·2,54), 14,00 мм
+     # вдоль проводов, 2,54 в один ряд и 5,20 в два (вид сбоку). Нужны схеме жгута: все разъёмы рисуются в одном масштабе мм → px.
+     "body": {"extra": 2.54, "h": 2.54, "len": 14.0, "geom": "drawing", "geom_url": "https://connfly.com/static/upload/file/pdf/DS1071.pdf"},
+     "body_by": ((r"^I-DS1071-SC[BW]0?2X", {"h": 5.2}),)},
     # DS1069 — Connfly C-DS1069-XXXXX-E p. 2 «Female Housing» (connfly.com/static/upload/file//DS1069.pdf): front view =
     # face with the lock, wire end up; the bottom (mating) view puts «Circuit No.1 Mark» at the right end -> from the
     # wire side, lock up, contact 1 on the LEFT, exactly as JST eXH. Same sizes as XH: B = N·2.5 + 2.3, 4.1 thick
