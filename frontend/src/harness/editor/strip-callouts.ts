@@ -100,6 +100,10 @@ export function collectStripCallouts(objects: readonly EditorSceneObject[]): Str
       if (seen.has(id)) continue;
       seen.add(id);
       const tip = end === "from" ? points[0]! : points.at(-1)!;
+      // Концы в одной точке (жгут хвостов зоны сростков, сростки одной зоны у её входа и выхода) — одна подпись на точку.
+      const twin = pending.some((c) => c.kind === kind && c.lengthMm === lengthMm && c.tinned === (object.metadata?.[`strip${key}Tin`] === "true")
+        && Math.hypot(c.tip.x - tip.x, c.tip.y - tip.y) < 2);
+      if (twin && kind !== "end") continue;
       const inward = (end === "from" ? points.slice(1) : points.slice(0, -1).reverse()).find((p) => Math.hypot(p.x - tip.x, p.y - tip.y) > 1e-6);
       const length = inward ? Math.hypot(inward.x - tip.x, inward.y - tip.y) : 1;
       const direction = inward ? { x: (inward.x - tip.x) / length, y: (inward.y - tip.y) / length } : { x: 1, y: 0 };

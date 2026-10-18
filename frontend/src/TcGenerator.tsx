@@ -637,7 +637,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const diaOld = gen.twistDiaOld_();
 
   function selectComps(list: Comp[], value: string, onChange: (id: string) => void, label: string, empty = "— нет —") {
-    return <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+    const picked = list.find((c) => c.id === value);
+    return <select aria-label={label} title={picked ? picked.art || picked.name : undefined} value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">{empty}</option>
       {list.map((c) => <option key={c.id} value={c.id}>{c.art || c.name}</option>)}
     </select>;
@@ -1047,6 +1048,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const splMethod = gen.splMethod_();
   const sleeveComps = gen.spliceSleeveComps_();
   const spliceSlots = gen.spliceSlots_();
+  const spliceRows = complex ? gen.spliceRows_() : [];
   const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.hsComp_(row.compId), skip: gen.hsRowSkip_(row) }));
   const hsOptions = gen.hsTubeOptions_();
   const marks = gen.markComps_();
@@ -1056,6 +1058,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const sidesFull = !epsA.length || !epsB.length;
   // «Жил» видно всегда: кабель без записи в БД.ПРОВ и без «4x0,5» в названии иначе нельзя сделать многожильным.
   const anyCores = S.wires.length > 0;
+  /** Ветви с оплёткой «Сложной сборки»: позиционное обозначение разъёма и его собственный отрезок (пусто — поровну). */
+  const braidCuts = complex ? S.endpoints.filter(gen.braidEp_).map((ep) => ({ name: ep.label || sideRu_(ep.side) + gen.endpointOrdinal_(ep), own: (ep.braidLen || "").trim().replace(",", ".") })) : [];
   const wireCols = `wire-row${S.advancedLength ? " adv" : ""}${anyCores ? " cores" : ""}`;
   const warning = typical ? gen.complexWarning() : "";
   const opsCount = manualTab ? manual.ops.length : ops.length;
@@ -1186,14 +1190,22 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <Field label="Материал обжима из состава" hint="необязательно" className="span2">{selectComps(sleeveComps, S.spl.band || "",
           (id) => update((current) => ({ ...current, spl: { ...current.spl, band: id } })), "Материал ленточного обжима")}</Field>
       </div>}
-      <div className="opt-grid">
+      {spliceRows.length ? <div className="spl-rows" role="list" aria-label="Сростки схемы">
+        {spliceRows.map((row) => <div className="spl-row" role="listitem" key={row.id}>
+          <b>{row.label}</b><span className="spl-size">{row.size} {plural(row.size, "провод", "провода", "проводов")}</span>
+          <span className="spl-wires">{row.wires.map((w, i) => <span key={i}>{w.art || "провод"}{w.from ? ` ${w.from.startsWith("к ") ? "" : "от "}${w.from}` : ""}</span>)}</span>
+        </div>)}
+        <p className="opt-note">Сростки задаются на схеме</p>
+      </div> : <div className="opt-grid">
         <Field label="Сростков на изделие"><input type="number" min={1} value={S.spl.count} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, count: event.target.value } }))} /></Field>
-        <Field label="Проводов в сростке" hint="разные — через запятую"><input value={S.spl.wires} placeholder="3 или 4, 2, 2" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, wires: event.target.value } }))} /></Field>
+        <Field label="Проводов в сростке" hint="разные — через запятую" className="span2"><input value={S.spl.wires} placeholder="3 или 4, 2, 2" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, wires: event.target.value } }))} /></Field>
+      </div>}
+      <div className="opt-grid">
         <Field label="Трубка сростка, длина"><UnitInput unit="мм" value={S.spl.tut} placeholder="40" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, tut: event.target.value } }))} /></Field>
-        <Field label="Трубка сростка из состава" className="span2">{selectComps(capTubes, S.spl.tutMat, (id) => update((current) => ({ ...current, spl: { ...current.spl, tutMat: id } })), "Трубка сростка")}</Field>
         <Field label="Зачистка под сросток"><UnitInput unit="мм" aria-label="Зачистка под сросток" value={S.spl.strip} placeholder={SPLICE_STRIP_MM_} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, strip: event.target.value } }))} /></Field>
+        <Field label="Трубка сростка из состава" className="span2">{selectComps(capTubes, S.spl.tutMat, (id) => update((current) => ({ ...current, spl: { ...current.spl, tutMat: id } })), "Трубка сростка")}</Field>
       </div>
-      <div className="chip-row"><Chip checked={S.spl.fold} onChange={(on) => update((current) => ({ ...current, spl: { ...current.spl, fold: on } }))}>Складывание жилы перед гильзой<small>663К.1 КБ4: ГС 2,5, «Схема увеличения сечения»</small></Chip></div>
+      {splMethod === "sleeve" && <div className="chip-row"><Chip checked={S.spl.fold} onChange={(on) => update((current) => ({ ...current, spl: { ...current.spl, fold: on } }))}>Складывание жилы перед гильзой</Chip></div>}
     </Toggle>,
     <Toggle key="hs" checked={S.hs.enabled} title="Термоусадка на жгут" hint="концы оплётки — ТТК/ТУТ из состава"
       onChange={(on) => update((current) => ({ ...current, hs: { ...current.hs, enabled: on, manual: true } }))}>
@@ -1220,7 +1232,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </Toggle>,
     <Toggle key="wrap" checked={S.wrap.enabled} title="Лента / оплётка на жгут"
       onChange={(on) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, enabled: on } }))}>
-      {S.wrap.slots.map((slot, i) => (i === 0 || complex) && <div className="opt-grid" key={WRAP_SLOTS_[i] || "1"}>
+      {/* Второй–четвёртый материал — по одному, следующий появляется, когда выбран предыдущий (владелец 18.10). */}
+      {S.wrap.slots.map((slot, i) => (i === 0 || (complex && !!(slot.mat || S.wrap.slots[i - 1].mat))) && <div className="opt-grid" key={WRAP_SLOTS_[i] || "1"}>
         <Field label={["Материал из состава", "Второй материал", "Третий материал", "Четвёртый материал"][i]} hint={i ? "необязательно" : undefined} className="span2">
           {selectComps(wrapOpts, slot.mat, (id) => update((current) => {
             const c = makeGen(D, current).getCompById(id);
@@ -1228,9 +1241,24 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             const slots = current.wrap.slots.map((s, j) => (j === i ? { mat: id, kind: c ? g.guessWrapKind_(c) : s.kind, len: g.prefillWrapLen_(c) } : s));
             return syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots } });
           }), `Материал ${i + 1}`)}</Field>
-        <Field label="Вид" className="span2"><select value={slot.kind} onChange={(event) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, kind: event.target.value as WrapKind } : s)) } }))}>
-          {WRAP_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-        <Field label="Длина на изделие"><UnitInput unit="мм" value={slot.len} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, len: event.target.value } : s)) } }))} /></Field>
+        {(i === 0 || slot.mat) && <Field label="Вид" className="span2"><select value={slot.kind} onChange={(event) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, kind: event.target.value as WrapKind } : s)) } }))}>
+          {WRAP_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>}
+        {(() => {
+          const lenField = (hint?: string) => <Field label="Длина на изделие" hint={hint}><UnitInput unit="мм" value={slot.len} placeholder="по КД"
+            onChange={(event) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, len: event.target.value } : s)) } }))} /></Field>;
+          if (!slot.mat) return null;
+          if (!braidCuts.length || slot.kind !== "braid") return lenField();
+          // Оплётка на «Сложной сборке» режется отрезком на ветвь (разъём стороны А). «Длина на изделие» лишь делится поровну на ветви
+          // без своего отрезка — когда отрезки заданы у всех, поле ни на что не влияет и не показывается (владелец 18.10: «почему 460»).
+          const cuts = braidCuts.map((c) => ({ ...c, len: parseDecimal_(c.own || gen.braidLenDefault_(slot.len)) }));
+          const total = cuts.reduce((sum, c) => sum + c.len, 0);
+          const allOwn = braidCuts.every((c) => c.own);
+          return <>
+            {!allOwn && lenField("поровну на ветви без своего отрезка")}
+            <p className="opt-note span-all">{`Отрезки по ветвям: ${cuts.map((c) => `${c.name} ${c.len || "—"}`).join(" · ")} мм${total ? `, всего ${total} мм` : ""}.`}
+              <br />Свой отрезок задаётся в разъёме стороны А — «Оплётка ветви, отрезок».</p>
+          </>;
+        })()}
       </div>)}
     </Toggle>,
   ].filter(Boolean);

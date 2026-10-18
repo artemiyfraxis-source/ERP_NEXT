@@ -82,6 +82,7 @@ import {
   freeConnectorTemplateCatalogId,
 } from "./connector-series-demo";
 import { connectorTopView } from "../../connectorTopView";
+import { housingFace, housingFaceEntry } from "./housing-face";
 import type { ConnectorHousing } from "../../connectorArt";
 import type { E4DifferentialPairState, E4ScreenState } from "./e4-wire-selection-state";
 import { builtInWireColors, createCustomWireColor, resolveWireColorHex } from "./wire-reference-catalog";
@@ -363,6 +364,7 @@ function contactPointForWire(
     : connector;
   const point = connectorContactPosition(fallbackConnector, contactId, view);
   if (!point) return null;
+  if (view === "drawing" && connector.housing && connector.housingView === "face") return point; // торец разъёма: провод идёт из центра гнезда
   const height = Math.max(72, 44 + connector.contacts.length * 16);
   const useLeft = other ? other.positions[view].x < connector.positions[view].x : false;
   return {
@@ -458,8 +460,19 @@ export function designToScene(
         ...(diagnosticObjectIds.has(connector.id) ? { diagnostic: "error" } : {}),
       });
     }
-    const topView = view === "drawing" && connector.housing ? housingTopViewSvg(connector.housing) : null;
-    if (topView) metadata.topViewSvg = topView;
+    // Чертёж генератора: торец разъёма, из гнёзд которого идут провода (цвета жил — на гнёздах); иначе вид сверху корпуса.
+    const faceColors = Object.fromEntries(connector.contacts.filter((contact) => contact.color).map((contact) => [contact.number, contact.color]));
+    const face = view === "drawing" && connector.housing && connector.housingView === "face" ? housingFace(connector.housing, faceColors) : null;
+    const topView = view === "drawing" && connector.housing && !face ? housingTopViewSvg(connector.housing) : null;
+    if (face) {
+      metadata.faceSvg = face.svg;
+      const left = connector.schematic.orientation === "contacts-left", direction = left ? "left" : "right";
+      metadata.materializedContactPoints = JSON.stringify(connector.contacts.map((contact) => {
+        const pin = housingFaceEntry(face, contact.number, left);
+        return pin ? { x: pin.x, y: pin.y, direction, status: contact.connectionStatus } : null;
+      }));
+    }
+    else if (topView) metadata.topViewSvg = topView;
     return {
       id: connector.id,
       layerId: connector.layerIds[view],
@@ -467,8 +480,8 @@ export function designToScene(
       label: connector.designation,
       x: connector.positions[view].x,
       y: connector.positions[view].y,
-      width: geometry?.width ?? (topView ? 300 : 118),
-      height: geometry?.height ?? Math.max(topView ? 230 : 72, 44 + connector.contacts.length * 16),
+      width: geometry?.width ?? face?.width ?? (topView ? 300 : 118),
+      height: geometry?.height ?? face?.height ?? Math.max(topView ? 230 : 72, 44 + connector.contacts.length * 16),
       color: "#416579",
       metadata,
     };
@@ -523,7 +536,7 @@ export function designToScene(
         freeFrom: String(!!wire.drawingEndpoints && !document.connectors.some(connector => connector.id === wire.from.connectorId)),
         freeTo: String(!!wire.drawingEndpoints && !document.connectors.some(connector => connector.id === wire.to.connectorId)),
         detachedDrawing: String(!!wire.drawingEndpoints),
-        ...openWireEndMetadata(wire),
+        ...openWireEndMetadata(wire, !document.drawingDocuments?.hideObjectIndices),
         ...(view === "drawing" ? stripEndMetadata(wire) : {}),
         drawingPairId: document.diffPairs.find(pair => pair.wireIds.includes(wire.id))?.id ?? "",
         drawingPairWireIds: JSON.stringify(document.diffPairs.find(pair => pair.wireIds.includes(wire.id))?.wireIds ?? []),

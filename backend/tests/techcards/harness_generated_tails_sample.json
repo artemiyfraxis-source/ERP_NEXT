@@ -472,7 +472,7 @@
      "y": 148
     },
     "drawing": {
-     "x": 1167,
+     "x": 1047,
      "y": 184
     }
    },
@@ -599,7 +599,7 @@
      "y": 344
     },
     "drawing": {
-     "x": 1167,
+     "x": 1047,
      "y": 366
     }
    },
@@ -1671,64 +1671,50 @@
    {
     "id": "gen-j1",
     "position": {
-     "x": 987,
-     "y": 337
-    }
-   },
-   {
-    "id": "gen-n-gen-sp3",
-    "position": {
-     "x": 507,
-     "y": 337
-    }
-   },
-   {
-    "id": "gen-n-gen-sp4",
-    "position": {
-     "x": 627,
-     "y": 337
-    }
-   },
-   {
-    "id": "gen-n-gen-sp1",
-    "position": {
-     "x": 747,
-     "y": 337
-    }
-   },
-   {
-    "id": "gen-n-gen-sp2",
-    "position": {
      "x": 867,
      "y": 337
     }
    },
    {
-    "id": "gen-n-gen-sp1-w4",
+    "id": "gen-z2-in",
     "position": {
-     "x": 747,
-     "y": 257
+     "x": 509,
+     "y": 337
     }
    },
    {
-    "id": "gen-n-gen-sp2-w4",
+    "id": "gen-z2-out",
     "position": {
-     "x": 867,
+     "x": 585,
+     "y": 337
+    }
+   },
+   {
+    "id": "gen-z1-in",
+    "position": {
+     "x": 669,
+     "y": 337
+    }
+   },
+   {
+    "id": "gen-z1-out",
+    "position": {
+     "x": 745,
+     "y": 337
+    }
+   },
+   {
+    "id": "gen-z1-tail",
+    "position": {
+     "x": 745,
      "y": 417
     }
    },
    {
-    "id": "gen-n-gen-sp3-w3",
+    "id": "gen-z2-tail",
     "position": {
-     "x": 507,
+     "x": 585,
      "y": 257
-    }
-   },
-   {
-    "id": "gen-n-gen-sp4-w3",
-    "position": {
-     "x": 627,
-     "y": 417
     }
    }
   ],
@@ -1776,7 +1762,7 @@
    {
     "id": "gen-s5",
     "from": "gen-j0",
-    "to": "gen-n-gen-sp3",
+    "to": "gen-z2-in",
     "path": {
      "kind": "polyline",
      "points": []
@@ -1785,8 +1771,8 @@
    },
    {
     "id": "gen-s6",
-    "from": "gen-n-gen-sp3",
-    "to": "gen-n-gen-sp4",
+    "from": "gen-z2-in",
+    "to": "gen-z2-out",
     "path": {
      "kind": "polyline",
      "points": []
@@ -1795,8 +1781,8 @@
    },
    {
     "id": "gen-s7",
-    "from": "gen-n-gen-sp4",
-    "to": "gen-n-gen-sp1",
+    "from": "gen-z2-out",
+    "to": "gen-z1-in",
     "path": {
      "kind": "polyline",
      "points": []
@@ -1805,8 +1791,8 @@
    },
    {
     "id": "gen-s8",
-    "from": "gen-n-gen-sp1",
-    "to": "gen-n-gen-sp2",
+    "from": "gen-z1-in",
+    "to": "gen-z1-out",
     "path": {
      "kind": "polyline",
      "points": []
@@ -1815,7 +1801,7 @@
    },
    {
     "id": "gen-s9",
-    "from": "gen-n-gen-sp2",
+    "from": "gen-z1-out",
     "to": "gen-j1",
     "path": {
      "kind": "polyline",
@@ -1845,8 +1831,8 @@
    },
    {
     "id": "gen-s12",
-    "from": "gen-n-gen-sp1",
-    "to": "gen-n-gen-sp1-w4",
+    "from": "gen-z1-out",
+    "to": "gen-z1-tail",
     "path": {
      "kind": "polyline",
      "points": []
@@ -1855,28 +1841,8 @@
    },
    {
     "id": "gen-s13",
-    "from": "gen-n-gen-sp2",
-    "to": "gen-n-gen-sp2-w4",
-    "path": {
-     "kind": "polyline",
-     "points": []
-    },
-    "opacity": 0
-   },
-   {
-    "id": "gen-s14",
-    "from": "gen-n-gen-sp3",
-    "to": "gen-n-gen-sp3-w3",
-    "path": {
-     "kind": "polyline",
-     "points": []
-    },
-    "opacity": 0
-   },
-   {
-    "id": "gen-s15",
-    "from": "gen-n-gen-sp4",
-    "to": "gen-n-gen-sp4-w3",
+    "from": "gen-z2-out",
+    "to": "gen-z2-tail",
     "path": {
      "kind": "polyline",
      "points": []
@@ -1910,10 +1876,6 @@
     "wireId": "gen-sp1-w3",
     "steps": [
      {
-      "segmentId": "gen-s8",
-      "reverse": false
-     },
-     {
       "segmentId": "gen-s9",
       "reverse": false
      },
@@ -1926,10 +1888,6 @@
    {
     "wireId": "gen-sp1-w2",
     "steps": [
-     {
-      "segmentId": "gen-s8",
-      "reverse": false
-     },
      {
       "segmentId": "gen-s9",
       "reverse": false
@@ -1967,10 +1925,6 @@
      {
       "segmentId": "gen-s7",
       "reverse": false
-     },
-     {
-      "segmentId": "gen-s8",
-      "reverse": false
      }
     ]
    },
@@ -2004,7 +1958,7 @@
     "wireId": "gen-sp2-w4",
     "steps": [
      {
-      "segmentId": "gen-s13",
+      "segmentId": "gen-s12",
       "reverse": false
      }
     ]
@@ -2026,7 +1980,7 @@
     "wireId": "gen-sp3-w3",
     "steps": [
      {
-      "segmentId": "gen-s14",
+      "segmentId": "gen-s13",
       "reverse": false
      }
     ]
@@ -2054,10 +2008,6 @@
      {
       "segmentId": "gen-s5",
       "reverse": false
-     },
-     {
-      "segmentId": "gen-s6",
-      "reverse": false
      }
     ]
    },
@@ -2065,7 +2015,7 @@
     "wireId": "gen-sp4-w3",
     "steps": [
      {
-      "segmentId": "gen-s15",
+      "segmentId": "gen-s13",
       "reverse": false
      }
     ]
@@ -2079,10 +2029,6 @@
      },
      {
       "segmentId": "gen-s5",
-      "reverse": false
-     },
-     {
-      "segmentId": "gen-s6",
       "reverse": false
      }
     ]
@@ -2196,6 +2142,135 @@
   "leaders": [],
   "bomOrder": [],
   "volumeShading": false,
+  "showDimensions": true,
+  "dimensions": [
+   {
+    "id": "gen-d1",
+    "segmentId": "gen-s1",
+    "from": 0,
+    "to": 1,
+    "pointCount": 2,
+    "routeKey": "[\"gen-s1\",\"gen-n1\",\"gen-j0\",0]",
+    "mode": "horizontal",
+    "modeOverride": true,
+    "offset": 40,
+    "lengthMm": 150,
+    "auxiliary": true
+   },
+   {
+    "id": "gen-d2",
+    "segmentId": "gen-s10",
+    "from": 0,
+    "to": 1,
+    "pointCount": 2,
+    "routeKey": "[\"gen-s10\",\"gen-j1\",\"gen-n5\",0]",
+    "mode": "horizontal",
+    "modeOverride": true,
+    "offset": -179,
+    "lengthMm": 160,
+    "auxiliary": true
+   },
+   {
+    "id": "gen-d3",
+    "segmentId": "gen-s11",
+    "from": 0,
+    "to": 1,
+    "pointCount": 2,
+    "routeKey": "[\"gen-s11\",\"gen-j1\",\"gen-n6\",0]",
+    "mode": "horizontal",
+    "modeOverride": true,
+    "offset": 150,
+    "lengthMm": 180,
+    "auxiliary": true
+   },
+   {
+    "id": "gen-d4",
+    "segmentId": "gen-s12",
+    "from": 0,
+    "to": 1,
+    "pointCount": 2,
+    "routeKey": "[\"gen-s12\",\"gen-z1-out\",\"gen-z1-tail\",0]",
+    "mode": "aligned",
+    "modeOverride": true,
+    "offset": -30,
+    "lengthMm": 60,
+    "auxiliary": true
+   },
+   {
+    "id": "gen-d5",
+    "segmentId": "gen-s13",
+    "from": 0,
+    "to": 1,
+    "pointCount": 2,
+    "routeKey": "[\"gen-s13\",\"gen-z2-out\",\"gen-z2-tail\",0]",
+    "mode": "aligned",
+    "modeOverride": true,
+    "offset": 30,
+    "lengthMm": 60,
+    "auxiliary": true
+   }
+  ],
+  "graphics": [
+   {
+    "id": "gen-g1",
+    "view": "drawing",
+    "kind": "text",
+    "points": [
+     {
+      "x": 687,
+      "y": 307
+     }
+    ],
+    "text": "С1, С2",
+    "fontSize": 13,
+    "color": "#17384b",
+    "fontFamily": "Arial"
+   },
+   {
+    "id": "gen-g2",
+    "view": "drawing",
+    "kind": "text",
+    "points": [
+     {
+      "x": 755,
+      "y": 447
+     }
+    ],
+    "text": "Своб. концы от С1, С2",
+    "fontSize": 12,
+    "color": "#17384b"
+   },
+   {
+    "id": "gen-g3",
+    "view": "drawing",
+    "kind": "text",
+    "points": [
+     {
+      "x": 527,
+      "y": 379
+     }
+    ],
+    "text": "С3, С4",
+    "fontSize": 13,
+    "color": "#17384b",
+    "fontFamily": "Arial"
+   },
+   {
+    "id": "gen-g4",
+    "view": "drawing",
+    "kind": "text",
+    "points": [
+     {
+      "x": 595,
+      "y": 245
+     }
+    ],
+    "text": "Своб. концы от С3, С4",
+    "fontSize": 12,
+    "color": "#17384b"
+   }
+  ],
+  "hideObjectIndices": true,
   "indexOffsets": {
    "gen-x1": {
     "x": -156.5,
@@ -2212,74 +2287,6 @@
    "gen-x4": {
     "x": -165,
     "y": 35.85
-   },
-   "gen-sp1-w4": {
-    "x": -2,
-    "y": -1
-   },
-   "gen-sp2-w4": {
-    "x": -47.5,
-    "y": -1
-   },
-   "gen-sp3-w3": {
-    "x": -2,
-    "y": -1
-   },
-   "gen-sp4-w3": {
-    "x": -47.5,
-    "y": -1
-   },
-   "gen-sp3-w2": {
-    "x": -6.07,
-    "y": 12.68
-   },
-   "gen-sp3-w1": {
-    "x": -16.22,
-    "y": 25.08
-   },
-   "gen-sp2-w3": {
-    "x": -21.65,
-    "y": 23.89
-   },
-   "gen-sp2-w2": {
-    "x": -3.97,
-    "y": 11.44
-   },
-   "gen-sp4-w2": {
-    "x": 41.92,
-    "y": 7.83
-   },
-   "gen-sp4-w1": {
-    "x": -47.25,
-    "y": -37.43
-   },
-   "gen-sp1-w3": {
-    "x": -3.97,
-    "y": 11.44
-   },
-   "gen-sp1-w2": {
-    "x": -33.29,
-    "y": -20.84
-   },
-   "gen-sp1-w1": {
-    "x": -42.33,
-    "y": -65.47
-   },
-   "gen-sp2-w1": {
-    "x": -8,
-    "y": -19
-   },
-   "gen-w2": {
-    "x": -69.72,
-    "y": 13
-   },
-   "gen-w3": {
-    "x": 175.21,
-    "y": 11.63
-   },
-   "gen-w1": {
-    "x": 51.7,
-    "y": 10.25
    }
   }
  }

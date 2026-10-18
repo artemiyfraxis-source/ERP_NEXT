@@ -26,6 +26,9 @@ PLUG, LUGS, RF = "Питание и штекеры", "Наконечники и 
 TOP, SIDE = "Вилка на плату, вертикальная", "Вилка на плату, угловая"
 TOP_SMT, SIDE_SMT = "Вилка на плату SMD, вертикальная", "Вилка на плату SMD, угловая"
 IVORY, BLACK = "#efe6cf", "#2b2b2b"
+# Mini-Fit Jr (Molex SD-5557-003, wire-end view): a 3.6 mm square funnel per contact (pitch 4.2), the opening 1.9 × 2.1 with
+# the corners cut 0.7 on the side away from the latch. The mating-face polarisation chamfers are not on the wire end.
+MINIFIT_CAV = {"kind": "funnel", "w": 3.6, "h": 3.6, "hole": (1.9, 2.1), "chamfer": 0.7}
 
 JST_PDF = "https://www.jst-mfg.com/product/pdf/eng/{}.pdf"
 CONNFLY_PDF = "https://www.connfly.com/static/upload/file/pdf/{}.pdf"
@@ -99,7 +102,12 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # SUH — eSUH «Housing» is drawn as eSH: the wire end with the protrusions at the top, «Circuit No.1» ▽ on the left
     # of that face -> from the wire side, ▽ face up, contact 1 on the RIGHT (as SH).
     _family("jst-suh", "JST SUH", r"^SUHR-0*(\d+)V-S", 0.8, start="TR", latch="mark", conf="high",
-            src="JST eSUH, Housing", note="по чертежу JST eSUH: метка ▽ контакта 1 — со стороны проводов ▽ сверху, контакт 1 справа"),
+            src="JST eSUH, Housing", note="по чертежу JST eSUH: метка ▽ контакта 1 — со стороны проводов ▽ сверху, контакт 1 справа",
+            # eSUH p. 2 «Housing»: B = (n−1)·0.8 contact span, A = B + 1.6 (no protrusions), C = A + 2.0 with the -B protrusions.
+            # The sheet's front view looks across the wire axis (3.1 long, lance slots 1.7 tall); the end view the generator shows is
+            # A × 1.25 (the side view), and the SSUH contact (0.83 wide) gives the cavity ~0.6 × 0.8, not the slots of the front view.
+            body={"extra": 1.6, "h": 1.25, "len": 3.1, "win": (0.6, 0.8)},
+            body_by=((r"V-S-B", {"ears": 1.0}),)),
     _family("jst-lbt", "JST LBT (2 силовых + сигнальные)", r"^LBTAR-0*(\d+)V-2K-K", 1.0, latch="ramp",
             note="2 силовых контакта по краям и сигнальные с шагом 1,0 — рисунок условный; метка контакта 1 на лицевой грани (JST eLBT)"),
     # PUD, ZPD, NSHD (sheets read 16.10.2026 from jst-mfg.com): the housing front view is the lock face with the flanged
@@ -260,8 +268,13 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             color="#b9c0c6", conf="high", src="JAE SJ103279 (FI-RE※※HL)",
             note="по чертежу JAE SJ103279: на торце проводов два ряда в шахматку, NO.1 и нечётные — в ряду дальше от верхней грани; верхней гранью вверх — 1 справа внизу, 2 над ним"),
     # Connfly (drawings C-DS10xx: the female housing is drawn without a circuit-1 mark that can be placed)
-    _family("connfly-ds1070", "Connfly DS1070", r"^I-DS1070-SC[A-Z](\d{2})$", 2.54, latch="ramp", note=UNCHECKED),
-    _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED),
+    _family("connfly-ds1070", "Connfly DS1070", r"^I-DS1070-SC[A-Z](\d{2})$", 2.54, latch="ramp", note=UNCHECKED,
+            # C-DS1070 sheet 2 «Female Housing»: N·2.54 + 0.66 wide, 4.9 high end view; contact entries ~1.95 × 3.1 (read off the drawing, ±0.2).
+            body={"extra": 3.2, "h": 4.9, "len": 13.2, "win": (1.95, 3.1), "win_y": 2.6,
+                  "cav": {"kind": "bevel", "w": 1.95, "h": 3.1}}),
+    _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED,
+            # C-DS1072 «Female Housing»: (N−1)·3.96 + 4.24 wide, 6.2 high end view, entries ~2.6 × 4.4 (±0.3, read off the drawing).
+            body={"extra": 4.24, "h": 6.2, "len": 16.2, "lock_inset": 0, "lock_h": 0.7, "win": (2.6, 4.4), "cav": {"kind": "bevel", "w": 2.6, "h": 4.4}}),
     _family("connfly-ds1073", "Connfly DS1073", r"^I-DS1073-SC[A-Z]0(\d{2})$", 3.96, latch="lever", note=UNCHECKED),
     _family("connfly-ds1074", "Connfly DS1074", r"^I-DS1074-SC[A-Z]0(\d{2})$", 5.08, latch="ramp", color="#e6e8ea", note=UNCHECKED),
     # DS1071-01 (Dupont 2,0): rows × holes per row in the part number, like DS1071. The sheet draws it symmetric; the real
@@ -336,7 +349,7 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-minifit-jr-bk", "Molex Mini-Fit Jr. (чёрный)", r"^39-?03-?9(\d{2})2$", 4.2, rows=2, start="BR",
             latch="lever", color=BLACK, conf="high", src="Molex SD-5557-003",
             note="по чертежу Molex SD-5557-003: защёлка сверху, контакт 1 внизу справа, ряд 1…n дальше от защёлки",
-            body={"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4)}),
+            body={"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4), "cav": MINIFIT_CAV}),
     # Nano-Fit 105307 — the front view (latch face, towers of the mating end up) has «CIRCUIT 1» at its right on the
     # wire-end edge; the bottom view (wire end) keeps it there -> latch up, contact 1 on the RIGHT.
     _family("molex-nanofit-1r", "Molex Nano-Fit", r"^105307-?[12]2(\d{2})$", 2.5, start="TR", latch="lever", color=BLACK,

@@ -170,7 +170,7 @@ it("places a connector from the component library by its article", async () => {
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
 });
 
-it("puts a solder TUT on every wire at its contact (not one tube over the bundle) and the braid over the whole harness", () => {
+it("puts a solder TUT on every wire at its contact (not one tube over the bundle) and the braid on its branch", () => {
   const S = threeEnded();
   const solder = updateEndpoint(D, S, "a1", { method: "solder", tutLen: "15" });
   const braided = { ...solder, wrap: { enabled: true, slots: [{ mat: "w", kind: "braid" as const, len: "320" }, ...solder.wrap.slots.slice(1)] } };
@@ -192,7 +192,8 @@ it("puts a solder TUT on every wire at its contact (not one tube over the bundle
     ["ТУТ на пайку XS1 · конт. 2", "heat-shrink", 15, ["gen-s2"]],
     ["ТУТ на пайку XS1 · конт. 3", "heat-shrink", 15, ["gen-s3"]],
     ["ТУТ на пайку XS1 · конт. 4", "heat-shrink", 15, ["gen-s4"]],
-    ["МГТФ 0,12 белый", "braid", 320, ["gen-s5", "gen-s6", "gen-s7"]],
+    // Оплётка ветви («Оплётка ветви» формы) — на ветви разъёма XS1 длиной по форме, а не на весь жгут.
+    ["МГТФ 0,12 белый · XS1", "braid", 320, ["gen-s5"]],
   ]);
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
 });

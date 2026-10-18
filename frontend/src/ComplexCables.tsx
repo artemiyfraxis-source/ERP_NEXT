@@ -13,13 +13,15 @@ export function ComplexCables({ wires, anyCores, coresOf, select, update }: {
   update: (patch: (current: GenState) => GenState) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
-  const cls = `cc-row${anyCores ? " cores" : ""}`;
+  // «Жил» и «Разделка» — только когда в списке есть кабель с жилами: пустые колонки сжимали название провода до «НВ4» (владелец 18.10).
+  const showCores = anyCores && wires.some((w) => coresOf(w) > 1 || !!w.cores);
+  const cls = `cc-row${showCores ? " cores" : ""}`;
   const focusLength = (n: number) => {
     const next = box.current?.querySelectorAll<HTMLInputElement>("input[data-cc-length]")[n];
     next?.focus(); next?.select();
   };
   return <div className="wire-list" ref={box}>
-    {wires.length > 0 && <div className={`${cls} head`} aria-hidden="true"><span>Кабель</span><span>Длина по чертежу</span><span>Кол-во</span>{anyCores && <><span>Жил</span><span>Разделка</span></>}<span /><span /><span /></div>}
+    {wires.length > 0 && <div className={`${cls} head`} aria-hidden="true"><span>Кабель</span><span>Длина по чертежу</span><span>Кол-во</span>{showCores && <><span>Жил</span><span>Разделка</span></>}<span /><span /><span /></div>}
     {!wires.length && <div className="gempty">Нет кабелей — добавьте кабель из состава</div>}
     {wires.map((w, n) => {
       const cores = coresOf(w);
@@ -31,7 +33,7 @@ export function ComplexCables({ wires, anyCores, coresOf, select, update }: {
           onChange={(event) => update((current) => updateWire(current, w.idx, { length: parseDecimal_(event.target.value) || 0 }))}
           onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); focusLength(n + 1); } }} />
         <input aria-label={`Кол-во кабеля ${n + 1}`} type="number" min={1} value={w.qty || 1} onChange={(event) => update((current) => updateWire(current, w.idx, { qty: parseDecimal_(event.target.value) || 1 }))} />
-        {anyCores && (hasCores ? <>
+        {showCores && (hasCores ? <>
           <input aria-label={`Жил в кабеле ${n + 1}`} type="number" min={1} value={cores} onChange={(event) => update((current) => updateWire(current, w.idx, { cores: parseDecimal_(event.target.value) || 1 }))} />
           <UnitInput unit="мм" aria-label={`Разделка кабеля ${n + 1}`} type="number" min={1} value={w.jacket || JACKET_STRIP_MM_} onChange={(event) => update((current) => updateWire(current, w.idx, { jacket: event.target.value.trim() }))} />
         </> : <><span /><span /></>)}

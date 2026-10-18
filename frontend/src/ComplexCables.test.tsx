@@ -35,6 +35,20 @@ it("shows a length field in every row and no common field or toggle", () => {
   expect(screen.queryByText(/раздельная длина/)).toBeNull();
 });
 
+it("«Жил» and «Разделка» columns show only when some cable has cores — they no longer squeeze the cable name", () => {
+  const rows = [row(0, "w1", 100), row(1, "w2", 90)];
+  const draw = (coresOf: (w: WireEntry) => number) => render(<ComplexCables wires={rows} anyCores coresOf={coresOf} update={() => undefined}
+    select={(w, n) => <select aria-label={`Кабель ${n + 1}`} value={w.compId} onChange={() => undefined}><option value={w.compId}>{w.compId}</option></select>} />);
+  const { container, unmount } = draw(() => 1);
+  expect(container.querySelector(".cc-row.cores")).toBeNull();
+  expect(screen.queryByText("Жил")).toBeNull();
+  unmount();
+  draw((w) => (w.compId === "w2" ? 4 : 1));
+  expect(screen.getByText("Жил")).toBeTruthy();
+  expect(screen.getByLabelText("Жил в кабеле 2")).toHaveValue(4);
+  expect(screen.queryByLabelText("Жил в кабеле 1")).toBeNull();
+});
+
 it("«⧉» duplicates the row right below with the same cable, length and quantity", () => {
   let last!: GenState;
   render(<Harness start={stateOf([row(0, "w1", 120, 3), row(1, "w2", 50)])} spy={(S) => { last = S; }} />);

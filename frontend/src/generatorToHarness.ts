@@ -17,8 +17,11 @@
  *  • buildGeneratorDrawing — всё вместе для кнопки.
  */
 import { wireColorKnown, type ConnectorHousing } from "./connectorArt";
+import { hasTopView } from "./connectorTopView";
+import { housingFace } from "./harness/editor/housing-face";
 import { endJoined, JACKET_STRIP_MM_, makeGen, parseDecimal_, sideRu_, spliceStripMm, tailStripMm, type GenData, type GenState, type Side } from "./tcGenLogic";
 import { spliceLabel, spliceOf } from "./tcGenSplices";
+import { markSpecs } from "./tcGenMarks";
 import { coreColor, SHIELD_COLOR, wireSectionOf } from "./pinoutCheck";
 import { planTwist } from "./twistGroups";
 import { withTwistNotes } from "./twistDrawing";
@@ -29,6 +32,8 @@ import {
 } from "./harness/editor/component-template-placement";
 import { normalizeConnectorArticle } from "./harness/editor/connector-pitch";
 import { segmentDimensionKey, type DrawingDimension } from "./harness/editor/drawing-dimensions";
+import type { DrawingDocuments } from "./harness/editor/drawing-documents";
+import { zoneAnnotations } from "./generatorDrawingNotes";
 import { DRAWING_VIEW_PLACEMENT_ID } from "./harness/editor/drawing-scale";
 import { selectMaterializedContactRepresentation } from "./harness/editor/materialized-contact-representation";
 import {
@@ -52,7 +57,7 @@ import type { CoveringKind, PhysicalCovering } from "./harness/editor/physical-c
 import { physicalNodeLocalPoint, physicalNodePoint } from "./harness/editor/physical-ports";
 import type { PhysicalNode, PhysicalRoute, PhysicalSegment, PhysicalTopology } from "./harness/editor/physical-topology-model";
 import { routePhysicalWires } from "./harness/editor/physical-wire-routing";
-import { fanWidth, orderByPartners, placeDrawingLabels, trunkGeometry, trunkTopology, type TrunkGeometry } from "./drawingLayout";
+import { fanWidth, orderByPartners, placeDrawingLabels, trunkGeometry, trunkTopology, type TrunkGeometry, type TrunkParts } from "./drawingLayout";
 import type { ComponentTemplateApi, ComponentTemplateSummary } from "./harness/component-library/component-template-api";
 
 // ── План: что рисовать ──────────────────────────────────────────────────────────────────────────────────────────
@@ -69,6 +74,12 @@ export interface PlanConnector {
   readonly terminal: string;
   /** ТУТ на концах пайки: длина, мм (null — длина не задана); undefined — ТУТ нет. */
   readonly tutLengthMm?: number | null;
+  /** Трубка на разъёме ветви (ТТК поверх разъёма, форма «Трубка на разъёме»): наименование и длина, мм. */
+  readonly shrink?: { readonly name: string; readonly lengthMm: number | null };
+  /** Оплётка на ветви разъёма А («Оплётка ветви»): наименование и длина, мм. */
+  readonly braid?: { readonly name: string; readonly lengthMm: number | null };
+  /** Маркировка у разъёма (строки «Маркировка» с местом «У разъёма»): текст, материал, длина отрезка, мм. */
+  readonly marks?: readonly { readonly text: string; readonly name: string; readonly lengthMm: number | null }[];
 }
 
 export interface PlanWire {
@@ -101,7 +112,9 @@ export interface PlanCable {
 }
 
 export interface PlanCovering {
-  readonly kind: "tut" | "sleeve" | "wrap";
+  /** `zone` — общая трубка на зону сростков (по КД «ТУТ на месте Б»): `zone` — номер зоны. */
+  readonly kind: "tut" | "sleeve" | "wrap" | "zone";
+  readonly zone?: number;
   readonly name: string;
   readonly lengthMm: number | null;
   /** Конец жгута (разъём), у которого лежит отрезок; у оплётки/ленты — весь жгут. */
@@ -137,6 +150,8 @@ export interface GeneratorDrawingPlan {
   readonly wires: readonly PlanWire[];
   /** Сростки «Сложной сборки»; нет — пусто. */
   readonly splices?: readonly PlanSplice[];
+  /** Зоны сростков — ключи сростков, лежащих физически вместе: на чертеже одна зона «С1–С4» вместо цепочки узлов. */
+  readonly zones?: readonly (readonly string[])[];
   /** Провода с контакта в свободный конец (хвост без сростка): `end` — контакт, `side` — его сторона. */
   readonly tails?: readonly PlanSpliceWire[];
   /** Кабели в оболочке (на форме — кабель с числом жил больше одной). */
@@ -188,7 +203,17 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
     const record = term ? gen.findTerRecord_(term.art || term.name) : null;
     if (term && !record) warnings.push(`${sideRu_(ep.side)}${gen.endpointOrdinal_(ep)}: терминала «${term.art || term.name}» нет в БД.ТЕР — в таблице контактов он не указан.`);
     const tut = ep.method === "solder" && !ep.tutOff ? { tutLengthMm: positive(ep.tutLen) } : {};
-    return { key: ep.id, side: ep.side, designation: label || `XS${index + 1}`, article: compText(ep.connId), terminal: record?.article ?? "", ...tut };
+    const designation = label || `XS${index + 1}`;
+    const sh = ep.side === "A" ? gen.shrinkOf_(ep) : null;
+    const slot = ep.side === "A" && gen.braidEp_(ep) ? S.wrap.slots.find((sl) => sl.kind === "braid" && sl.mat && gen.getCompById(sl.mat)) : undefined;
+    const braidComp = slot ? gen.getCompById(slot.mat) : null;
+    const braidLen = slot ? positive(ep.braidLen) ?? positive(gen.braidLenDefault_(slot.len)) : null;
+    const marks = (S.mark ? markSpecs(S.markRows || [], D.components) : []).filter((m) => m.placeKind === "conn" && m.target.split(/[\s()]+/).includes(designation))
+      .map((m) => ({ text: m.text, name: m.name, lengthMm: m.lengthMm ?? null }));
+    return { key: ep.id, side: ep.side, designation, article: compText(ep.connId), terminal: record?.article ?? "", ...tut,
+      ...(sh ? { shrink: { name: sh.comp.art || sh.comp.name || "", lengthMm: positive(sh.len) } } : {}),
+      ...(braidComp ? { braid: { name: braidComp.art || braidComp.name || "", lengthMm: braidLen } } : {}),
+      ...(marks.length ? { marks } : {}) };
   });
 
   const active = gen.activeWires_();
@@ -285,23 +310,43 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
     if (c.tutLengthMm === undefined) return;
     coverings.push({ kind: "tut", name: `ТУТ на пайку ${c.designation}`, lengthMm: c.tutLengthMm, at: c.key, coveringKind: "heat-shrink" });
   });
+  // Сростки одной зоны: с одних разъёмов стороны А — одна группа ПФ («Пайка С1, С2»); есть общая термоусадка на жгут
+  // («ТУТ на месте Б») — все сростки под одной трубкой, одна зона. Зона нужна уже здесь: общая трубка садится на неё.
+  const zoneKeys = (list: readonly PlanSplice[]): string[][] => {
+    if (!list.length) return [];
+    if (S.hs.enabled && S.hs.rows.some((row) => gen.getCompById(row.compId) && parseInt(row.cnt, 10) > 0)) return [list.map((sp) => sp.key)];
+    const groups = new Map<string, string[]>();
+    list.forEach((sp) => {
+      const ids = [...new Set(sp.wires.filter((w) => w.side === "A").map((w) => w.end.connector))].sort();
+      const ids2 = [...new Set(sp.wires.filter((w) => w.side === "B").map((w) => w.end.connector))].sort();
+      const key = ids.length ? `A:${ids.join(",")}` : ids2.length ? `B:${ids2.join(",")}` : `S:${sp.key}`;
+      groups.set(key, [...(groups.get(key) ?? []), sp.key]);
+    });
+    return [...groups.values()];
+  };
+  const planSplicesEarly = [...splices].flatMap(([id, got]) => (got.wires.length ? [{ key: id, label: spliceLabel(S, id), wires: got.wires, tails: got.tails }] : []));
+  const zones = zoneKeys(planSplicesEarly);
   if (S.hs.enabled) {
     const ends = connectors.map((c) => c.key);
-    let next = 0;
+    let next = 0, zoned = 0;
     S.hs.rows.forEach((row) => {
       const comp = gen.getCompById(row.compId);
       const count = Math.max(0, parseInt(row.cnt, 10) || 0);
       if (!comp || !count) return;
       for (let i = 0; i < count; i++) {
+        // Первые трубки — по одной на зону сростков, остальные — у концов жгута.
+        if (zoned < zones.length) { coverings.push({ kind: "zone", zone: zoned++, name: comp.art || comp.name, lengthMm: positive(row.len), coveringKind: "heat-shrink" }); continue; }
         coverings.push({ kind: "sleeve", name: comp.art || comp.name, lengthMm: positive(row.len), at: ends[next % Math.max(1, ends.length)], coveringKind: "heat-shrink" });
         next++;
       }
     });
   }
+  // Оплётка на ветвях разъёмов (форма «Оплётка ветви») рисуется на ветвях; общая на весь жгут — только когда ветвей с ней нет.
+  const braidOnBranches = connectors.some((c) => c.braid);
   if (S.wrap.enabled) {
     S.wrap.slots.forEach((slot) => {
       const comp = slot.mat ? gen.getCompById(slot.mat) : null;
-      if (!comp) return;
+      if (!comp || (braidOnBranches && slot.kind === "braid")) return;
       coverings.push({ kind: "wrap", name: comp.art || comp.name, lengthMm: positive(slot.len), coveringKind: slot.kind === "braid" ? "braid" : "tape" });
     });
   }
@@ -313,7 +358,7 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
   });
   const tailed = tails.length > 0 || planSplices.some((sp) => sp.tails.length > 0);
   return { connectors, wires, cables, pairs, ...(twist.groups.length ? { twistGroups: twist.groups } : {}), twistPitchMm: positive(S.twist.pitch), coverings, warnings,
-    ...(planSplices.length ? { splices: planSplices, spliceStripMm: positive(spliceStripMm(S)) } : {}), ...(tails.length ? { tails } : {}),
+    ...(planSplices.length ? { splices: planSplices, zones: zoneKeys(planSplices), spliceStripMm: positive(spliceStripMm(S)) } : {}), ...(tails.length ? { tails } : {}),
     ...(tailed && S.tailTin?.enabled ? { tailStripMm: positive(tailStripMm(S)) } : {}) };
 }
 
@@ -321,7 +366,7 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
 
 export type ConnectorSource =
   | { readonly kind: "template"; readonly template: ComponentTemplatePlacementEnvelope; readonly articleVariantId: string }
-  | { readonly kind: "free"; readonly contactCount: number | null; readonly libraryCode: string | null };
+  | { readonly kind: "free"; readonly contactCount: number | null; readonly libraryCode: string | null; readonly housing?: ConnectorHousing | null };
 
 const sameArticle = (left: string, right: string) => {
   const a = normalizeConnectorArticle(left);
@@ -350,7 +395,8 @@ export async function resolveConnectorSources(
   const sources: Record<string, ConnectorSource> = {};
   for (const connector of plan.connectors) {
     const housing = connector.article ? housings[connector.article] ?? null : null;
-    const free: ConnectorSource = { kind: "free", contactCount: housing?.n ?? null, libraryCode: housing?.title?.trim() || housing?.family?.trim() || null };
+    const free: ConnectorSource = { kind: "free", contactCount: housing?.n ?? null, libraryCode: housing?.title?.trim() || housing?.family?.trim() || null,
+      ...(housing && hasTopView(housing) ? { housing } : {}) };
     const summary = connector.article && templates ? findTemplateFor(connector.article, summaries) : null;
     if (summary && templates) {
       const key = `${summary.templateId}@${summary.version}`;
@@ -385,6 +431,10 @@ export interface GeneratorDrawing {
 /** Свободный корпус на чертеже: прямоугольник 118 в ширину, контакты по правому краю через 16 (как его рисует редактор). */
 const FREE_WIDTH = 118;
 const freeHeight = (contacts: number) => Math.max(72, 44 + contacts * 16);
+/** Корпус из базы разъёмов (торец с гнёздами) — размеры рисунка; обычная рамка — null. */
+const faceOf = (connector: ConnectorInstance) => (connector.housing && connector.housingView === "face" ? housingFace(connector.housing) : null);
+/** Выход провода от торца разъёма из базы: короче, чем от рамки (провода уже идут из гнёзд). */
+const FACE_EXIT = 56;
 /** Раскладка Э4: колонка А слева, колонка В справа (просвет — по ступеньке на провод), между разъёмами по вертикали — 48.
  *  Всё в положительных координатах: редактор открывается с началом координат в левом верхнем углу поля. */
 const E4_GAP_X = 240, E4_GAP_Y = 48;
@@ -467,11 +517,13 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
       }
     }
     if (!connector) {
-      const free = source?.kind === "free" ? source : { contactCount: null, libraryCode: null };
+      const free: Extract<ConnectorSource, { kind: "free" }> = source?.kind === "free" ? source : { kind: "free", contactCount: null, libraryCode: null };
       const count = Math.max(free.contactCount ?? 0, maxPin(c.key), 1);
       const base = createConnector(id, c.designation, count, { x: 0, y: 0 }, { x: 0, y: 0 }, c.article || c.designation);
       // Таблица как у Василия: №, Цепь, Терминал, Марка, Сечение, Цвет — «Тип» у свободного корпуса пуст, скрыт.
-      connector = { ...base, libraryCode: free.libraryCode || "FREE", schematic: { ...base.schematic,
+      // Корпус из базы разъёмов — торец серии с гнёздами (тот же рисунок, что в «Распиновке»), провода идут из гнёзд; нет гнёзд — рамка.
+      const face = free.housing && housingFace(free.housing) ? { housing: free.housing, housingView: "face" as const } : {};
+      connector = { ...base, libraryCode: free.libraryCode || "FREE", ...face, schematic: { ...base.schematic,
         baseColumns: base.schematic.baseColumns.map((column) => (column.key === "contactType" ? { ...column, visible: false } : column)) } };
       warnings.push(`${label(c)}: нет в библиотеке компонентов — нарисован свободным корпусом на ${count} конт.${free.contactCount ? "" : " (число контактов — по распиновке)"}`);
     }
@@ -529,7 +581,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   }
   const extent = (c: PlanConnector) => {
     const connector = connectorOf(c.key);
-    if (connector.libraryBinding?.mode !== "template") return { top: 0, height: freeHeight(connector.contacts.length) };
+    if (connector.libraryBinding?.mode !== "template") return { top: 0, height: faceOf(connector)?.height ?? freeHeight(connector.contacts.length) };
     const ys = connector.contacts.map((contact) => connectorContactPosition(connector, contact.id, "drawing")?.y ?? 0)
       .map((y) => y - connector.positions.drawing.y);
     return { top: Math.min(...ys) - 30, height: Math.max(...ys) - Math.min(...ys) + 60 };
@@ -742,19 +794,28 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     const points = touched.flatMap((contact) => { const p = connectorContactPosition(connector, contact.id, "drawing"); return p ? [p] : []; });
     const centre = points.length ? points.reduce((sum, p) => sum + p.y, 0) / points.length : connector.positions.drawing.y + extent(c).height / 2;
     const free = connector.libraryBinding?.mode !== "template";
+    const face = faceOf(connector);
+    const out = face ? FACE_EXIT : EXIT;
     const x = c.side === "A"
-      ? (free ? connector.positions.drawing.x + FREE_WIDTH : Math.max(...points.map((p) => p.x))) + EXIT
-      : (free ? connector.positions.drawing.x : Math.min(...points.map((p) => p.x))) - EXIT;
+      ? (free ? connector.positions.drawing.x + (face?.width ?? FREE_WIDTH) : Math.max(...points.map((p) => p.x))) + out
+      : (free ? connector.positions.drawing.x : Math.min(...points.map((p) => p.x))) - out;
     const stub = (c.tutLengthMm !== undefined || crimpAt.has(c.key)) && touched.length ? (c.side === "A" ? TUT_STUB : -TUT_STUB) : 0;
     return { connector, wiresAt, touched, centre, free, x, common: { x: x + stub, y: centre } };
   };
   // Жгут с несколькими разъёмами А, сростками или хвостами — один ствол (drawingLayout.ts): колонка В встаёт за концом
   // ствола, веером вокруг его линии (один разъём В — прямо на линии ствола).
   const aSide = sideOf("A"), bSide = sideOf("B");
+  // Зоны сростков: узлы схемы, которые физически лежат вместе (plan.zones) — одна зона на стволе вместо цепочки узлов.
+  const spliceTag = new Map((plan.splices || []).map((sp, i) => [sp.key, `gen-sp${i + 1}`]));
+  const zonePlan = (plan.zones || []).map((keys, index) => ({ index, keys, junctions: keys.map((k) => spliceTag.get(k)!).filter((id) => doc.junctions.some((j) => j.id === id) && !crimpNodes.has(id)) }))
+    .filter((zone) => zone.junctions.length > 0);
+  const zoneJunctions = zonePlan.map((zone) => zone.junctions);
+  const zonedJunctions = new Set(zoneJunctions.flat());
+  const parts: TrunkParts = { aBranches: [], bBranches: [], zones: [] };
   const trunked = aSide.length > 1 || doc.junctions.length > 0 || doc.wires.some((wire) => isFreeEndpoint(wire.from) || isFreeEndpoint(wire.to));
   let geometry: TrunkGeometry | null = null;
   if (trunked) {
-    const trunk = trunkGeometry(columns[0].map((c) => exitOf(c).common), doc.junctions.filter((j) => !crimpNodes.has(j.id)).length);
+    const trunk = trunkGeometry(columns[0].map((c) => exitOf(c).common), doc.junctions.filter((j) => !crimpNodes.has(j.id) && !zonedJunctions.has(j.id)).length + zoneJunctions.length * 1.5);
     geometry = trunk;
     const column = columns[1], boxes = column.map(extent);
     let y = Math.max(DRAWING_TOP, trunk.trunkY - drawingTotal(column) / 2);
@@ -801,7 +862,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   if (geometry) {
     spliceRoutes = trunkTopology({ doc, nodes, segments, geometry, sideOf: sideOfId,
       atConnector: new Map([...crimpNodes].map(([junction, key]) => [junction, nodeOf.get(key)!])),
-      aExits: columns[0].map((c) => nodeOf.get(c.key)!), bExits: columns[1].map((c) => nodeOf.get(c.key)!) });
+      aExits: columns[0].map((c) => nodeOf.get(c.key)!), bExits: columns[1].map((c) => nodeOf.get(c.key)!), zones: zoneJunctions, out: parts });
   } else if (aSide.length === 1 && bSide.length === 1) {
     segments.push(routed(nodeOf.get(aSide[0].key)!, nodeOf.get(bSide[0].key)!));
   } else {
@@ -837,21 +898,37 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   const unrouted = doc.wires.filter((wire) => !topology.routes.some((route) => route.wireId === wire.id)).length;
   if (unrouted) warnings.push(`${unrouted} провод(а) без трассы на чертеже — проложите их в редакторе.`);
 
-  // 7. Оболочки: ТУТ на пайку — трубка на каждый провод у своего контакта; отрезки термоусадки — у своего конца поверх
-  //    пучка; оплётка/лента — по всему жгуту.
+  // 7. Оболочки: ТУТ на пайку — трубка на каждый провод у своего контакта; общая трубка — на зону сростков; трубка, маркировка
+  //    и оплётка ветви — на ветви своего разъёма А (маркировка у разъёма, за ней трубка, оплётка поверх); отрезки
+  //    термоусадки на жгут — у своего конца поверх пучка; оплётка/лента на жгут — по всему жгуту.
   const coverings: PhysicalCovering[] = [];
-  const endSpan = (key: string, share: number) => {
+  const branchSegment = (key: string) => {
     const node = nodeOf.get(key);
-    const segment = main.find((s) => s.from === node || s.to === node);
-    if (!segment) return null;
-    return segment.from === node ? { segmentId: segment.id, from: 0, to: share } : { segmentId: segment.id, from: 1 - share, to: 1 };
+    return main.find((s) => s.from === node || s.to === node) ?? null;
   };
+  const spanOf = (key: string, from: number, to: number) => {
+    const segment = branchSegment(key);
+    if (!segment) return null;
+    return segment.from === nodeOf.get(key) ? { segmentId: segment.id, from, to } : { segmentId: segment.id, from: 1 - to, to: 1 - from };
+  };
+  const endSpan = (key: string, share: number) => spanOf(key, 0, share);
+  /** Выноски поверх чертежа: текст → участок и доля его длины, где лежит оболочка. */
+  const callouts: Array<{ text: string; segmentId: string; at: number }> = [];
+  const tubeShort = (name: string) => { const m = /^(.*?\d+(?:[.,]\d+)?\s*\/\s*\d+(?:[.,]\d+)?)/.exec(name); return (m ? m[1] : name).replace(/\s+/g, " ").trim(); };
+  const mmText = (mm: number | null) => (mm === null ? "" : `, ${String(mm).replace(".", ",")} мм`);
   const stacked = new Map<string, number>();
   plan.coverings.forEach((covering) => {
     const length = covering.lengthMm === null ? { lengthMode: "auto" as const, lengthMm: null } : { lengthMode: "manual" as const, lengthMm: covering.lengthMm };
     const common = () => ({ id: `gen-c${coverings.length + 1}`, name: covering.name, kind: covering.coveringKind, width: 0, color: COVER_COLOR[covering.coveringKind], ...length });
     if (covering.kind === "wrap") {
       coverings.push({ ...common(), spans: main.map((s) => ({ segmentId: s.id, from: 0, to: 1 })) });
+      return;
+    }
+    if (covering.kind === "zone") {
+      const zone = parts.zones.find((z) => z.index === zonePlan.findIndex((p) => p.index === covering.zone));
+      if (!zone) return;
+      coverings.push({ ...common(), spans: [{ segmentId: zone.segmentId, from: 0, to: 1 }] });
+      callouts.push({ text: `Трубка ${tubeShort(covering.name)}${mmText(covering.lengthMm)}`, segmentId: zone.segmentId, at: 0.5 });
       return;
     }
     if (!covering.at || !ids.has(covering.at)) return;
@@ -865,6 +942,19 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     const span = endSpan(covering.at, Math.min(0.45, 0.14 + layer * 0.06));
     if (span) coverings.push({ ...common(), spans: [span] });
   });
+  used.forEach((c) => {
+    const lay = (name: string, kind: CoveringKind, lengthMm: number | null, from: number, to: number, text: string) => {
+      const span = spanOf(c.key, from, to);
+      if (!span) return;
+      const length = lengthMm === null ? { lengthMode: "auto" as const, lengthMm: null } : { lengthMode: "manual" as const, lengthMm };
+      coverings.push({ id: `gen-c${coverings.length + 1}`, name: `${name} · ${c.designation}`, kind, width: 0, color: COVER_COLOR[kind], ...length, spans: [span] });
+      callouts.push({ text, segmentId: span.segmentId, at: (span.from + span.to) / 2 });
+    };
+    const marks = c.marks ?? [];
+    marks.forEach((mark, i) => lay(mark.name || "Маркировка", "heat-shrink", mark.lengthMm, 0.03 + i * 0.07, 0.09 + i * 0.07, `Маркировка «${mark.text}»`));
+    if (c.shrink) lay(c.shrink.name, "heat-shrink", c.shrink.lengthMm, 0.11 + marks.length * 0.07, 0.3 + marks.length * 0.07, `Трубка ${tubeShort(c.shrink.name)}${mmText(c.shrink.lengthMm)}`);
+    if (c.braid) lay(c.braid.name, "braid", c.braid.lengthMm, 0.14, 0.97, `Оплётка ${c.braid.name}${mmText(c.braid.lengthMm)}`);
+  });
   if (coverings.length) doc = run(doc, { type: "set-physical-topology", topology: { ...doc.physicalTopology!, coverings } });
 
   // Жилы без оболочки — голые цветные провода: без объёмной подсветки (она сереет цвета) и, если есть свивка, покрупнее,
@@ -872,22 +962,26 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   const bare = !doc.physicalTopology!.segments.some((segment) => segment.specificationItemId);
   const strands = bare ? { volumeShading: false, ...(plan.pairs.length ? { physicalScale: 1.8 } : {}) } : {};
 
-  // 8. Размер: один участок А → В и одна длина у всех проводов — размер на участке (длины проводов идут от него).
+  // 8. Размеры. Зона сростков (СБ владельца): размеры от центра ветвления — ветвь А, зона, ветви к В и жгут свободных
+  //    концов; длины — из генератора (длины резки проводов зоны, длина общей трубки), провод доходит до середины зоны.
+  //    Иначе — один участок А → В и одна длина у всех проводов: размер на участке (длины проводов идут от него).
   const lengths = [...new Set(doc.wires.map((wire) => wire.lengthMm))];
   const trunk = main.length === 1 ? doc.physicalTopology!.segments.find((segment) => segment.id === main[0].id) : undefined;
-  if (trunk && lengths.length === 1 && lengths[0] !== null) {
+  // Пустые документы чертежа: без них редактор рисует «старые» размеры каждого провода косыми линиями через поле.
+  let documents: DrawingDocuments = { tables: [], leaders: [], bomOrder: [], ...strands };
+  if (zonePlan.length && parts.zones.length) {
+    documents = { ...documents, ...zoneAnnotations({ doc, plan, zones: zonePlan, parts, trunkY: geometry!.trunkY, callouts,
+      connectorAt: (exitNode) => used.find((c) => nodeOf.get(c.key) === exitNode) }) };
+  } else if (trunk && lengths.length === 1 && lengths[0] !== null) {
     const dimension: DrawingDimension = {
       id: "gen-d1", segmentId: trunk.id, from: 0, to: trunk.path.points.length + 1, pointCount: trunk.path.points.length + 2,
       routeKey: segmentDimensionKey(doc, trunk.id), mode: "aligned", modeOverride: false, offset: 40, lengthMm: lengths[0],
     };
-    doc = run(doc, { type: "set-drawing-documents", documents: { tables: [], leaders: [], bomOrder: [], showDimensions: true, dimensions: [dimension], ...strands } });
-  } else {
-    // Пустые документы чертежа: без них редактор рисует «старые» размеры каждого провода косыми линиями через поле.
-    doc = run(doc, { type: "set-drawing-documents", documents: { tables: [], leaders: [], bomOrder: [], ...strands } });
-    if (main.length > 1 && lengths.some((length) => length !== null)) {
-      warnings.push("Длины ствола и веток генератор не знает — размеры на чертеже не проставлены, длины проводов перенесены.");
-    }
+    documents = { ...documents, showDimensions: true, dimensions: [dimension] };
+  } else if (main.length > 1 && lengths.some((length) => length !== null)) {
+    warnings.push("Длины ствола и веток генератор не знает — размеры на чертеже не проставлены, длины проводов перенесены.");
   }
+  doc = run(doc, { type: "set-drawing-documents", documents });
 
   const twisted = withTwistNotes(doc, plan);
   doc = twisted.document;

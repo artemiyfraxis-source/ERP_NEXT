@@ -22,7 +22,7 @@ it("orders side-B connectors by their partners on side A; without partners — l
 });
 
 it("the owner's harness: A connectors in a column on the left, B on the right, one trunk with the splices on it", () => {
-  const { drawing } = build();
+  const { plan, drawing } = build();
   const doc = drawing.document, topology = doc.physicalTopology!;
   const at = (designation: string) => doc.connectors.find((c) => c.designation === designation)!.positions.drawing;
   const aCol = ["5", "I3", "C", "A6"].map(at), bCol = doc.connectors.filter((c) => c.schematic.orientation === "contacts-left").map((c) => c.positions.drawing);
@@ -30,17 +30,25 @@ it("the owner's harness: A connectors in a column on the left, B on the right, o
   expect(aCol.map((p) => p.y)).toEqual([...aCol.map((p) => p.y)].sort((x, y) => x - y));
   expect(new Set(bCol.map((p) => p.x)).size).toBe(1);
   expect(Math.min(...bCol.map((p) => p.x))).toBeGreaterThan(aCol[0]!.x + 600);
-  // Сход жгутов А — один узел (gen-j0), от него ствол через четыре сростка до узла ветвления к разъёмам В (gen-j1).
+  // Сход жгутов А — один узел (gen-j0), от него ствол через зоны сростков (вход и выход, между ними трубка) до узла ветвления
+  // к разъёмам В (gen-j1). Сростки не стоят цепочкой на стволе: на СБ они одной зоной. Без общей трубки на жгут зона — сростки
+  // с одних разъёмов А (одна группа ПФ): здесь две зоны — «С1, С2» и «С3, С4».
   const point = (id: string) => physicalNodePoint(doc, topology.nodes.find((n) => n.id === id)!);
-  const splices = doc.junctions.map((j) => point(`gen-n-${j.id}`));
+  expect(plan.zones).toHaveLength(2);
+  expect(topology.nodes.filter((n) => n.id.startsWith("gen-n-gen-sp"))).toEqual([]);
   const trunkY = point("gen-j0").y;
-  expect([point("gen-j1").y, ...splices.map((p) => p.y)]).toEqual(Array(5).fill(trunkY));
-  const xs = [point("gen-j0").x, ...splices.map((p) => p.x).sort((a, b) => a - b), point("gen-j1").x];
-  expect(xs).toEqual([...xs].sort((a, b) => a - b));
-  // Хвост — поперёк ствола от своего сростка; у соседних сростков — в разные стороны.
-  const tips = doc.wires.filter((w) => "freeEnd" in w.to).map((w) => point(`gen-n-${w.id}`));
-  expect(tips.every((tip) => splices.some((sp) => sp.x === tip.x && Math.abs(sp.y - tip.y) === 80))).toBe(true);
-  expect(new Set(tips.map((tip) => Math.sign(tip.y - trunkY)))).toEqual(new Set([-1, 1]));
+  const trunk = ["gen-j0", "gen-z1-in", "gen-z1-out", "gen-z2-in", "gen-z2-out", "gen-j1"].map(point);
+  expect(trunk.map((p) => p.y)).toEqual(Array(6).fill(trunkY));
+  const inner = trunk.slice(1, 5).map((p) => p.x);
+  expect(Math.min(...inner)).toBeGreaterThan(trunk[0]!.x);
+  expect(Math.max(...inner)).toBeLessThan(trunk[5]!.x);
+  expect(trunk[1]!.x).toBeLessThan(trunk[2]!.x);
+  expect(trunk[3]!.x).toBeLessThan(trunk[4]!.x);
+  // Хвосты зоны — одним жгутом поперёк ствола от выхода зоны, а не по одному от каждого сростка; у соседних зон — в разные стороны.
+  expect(topology.nodes.filter((n) => n.id.startsWith("gen-n-gen-w") || n.id.startsWith("gen-n-gen-t"))).toEqual([]);
+  const tips = ["gen-z1", "gen-z2"].map((zone) => ({ out: point(`${zone}-out`), tip: point(`${zone}-tail`) }));
+  tips.forEach(({ out, tip }) => expect([tip.x, Math.abs(tip.y - trunkY)]).toEqual([out.x, 80]));
+  expect(new Set(tips.map(({ tip }) => Math.sign(tip.y - trunkY)))).toEqual(new Set([-1, 1]));
 });
 
 it("the owner's harness: splice and junction nodes stand apart, labels do not overlap", () => {
@@ -51,9 +59,10 @@ it("the owner's harness: splice and junction nodes stand apart, labels do not ov
     expect(Math.hypot(a.x - b.x, a.y - b.y), `${a.id} ↔ ${b.id}`).toBeGreaterThanOrEqual(60);
   }
   const scene = designToScene(doc, "drawing");
-  const boxes: LabelBox[] = [...indexLabelBoxes(scene), ...openEndLabelBoxes(scene)];
-  // Подписи всех 17 проводов, 6 разъёмов и 4 хвостов.
-  expect(boxes).toHaveLength(17 + 6 + 4);
+  // Обзорный чертёж без индексов проводов W1… и оболочек: остаются подписи 6 разъёмов; размеры длины хвостов — размером жгута.
+  const boxes: LabelBox[] = [...indexLabelBoxes(scene)];
+  expect(boxes).toHaveLength(6);
+  expect(scene.filter((o) => o.kind === "object-index" && o.metadata?.indexObjectId?.startsWith("gen-w"))).toEqual([]);
   const crossing = boxes.flatMap((a, i) => boxes.slice(i + 1).filter((b) =>
     Math.min(a.x + a.width, b.x + b.width) > Math.max(a.x, b.x) && Math.min(a.y + a.height, b.y + b.height) > Math.max(a.y, b.y)).map((b) => `${a.id} ↔ ${b.id}`));
   expect(crossing).toEqual([]);

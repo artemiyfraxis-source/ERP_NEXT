@@ -90,16 +90,31 @@ it("713К.4 КБ1: the owner sets the processing through the form and gets the s
   type("Шаг свивки", "20");
   // Сростки пайкой, трубка ТТК 3/1 по 20 мм.
   switchOn("Сростки");
+  // Сростки нарисованы на схеме — список «С1…С4» вместо набранных чисел; складывание жилы — только при опрессовке гильзой.
+  const rows = [...document.querySelectorAll(".spl-row")].map((el) => el.textContent || "");
+  expect(rows).toHaveLength(4);
+  expect(rows.map((t) => t.match(/^С(\d)(\d) пров/)?.slice(1, 3).join(":"))).toEqual(["1:4", "2:4", "3:3", "4:3"]);
+  expect(rows[0]).toMatch(/от .*конт\. \d/);
+  expect(document.querySelector(".spl-rows")).toHaveTextContent("Сростки задаются на схеме");
+  expect(screen.queryByLabelText("Проводов в сростке")).toBeNull();
+  expect(screen.queryByLabelText("Сростков на изделие")).toBeNull();
+  expect(screen.getByText("Складывание жилы перед гильзой")).toBeTruthy();
   radio("Способ сростка", "Пайка");
+  expect(screen.queryByText("Складывание жилы перед гильзой")).toBeNull();
   type("Трубка сростка, длина", "20");
   type("Трубка сростка", "ttk3");
   // Оплётка XP-3 до термоусадки, по ветвям 120/110/110/120 мм.
   switchOn("Лента / оплётка на жгут");
   type((screen.getAllByLabelText("Материал 1") as HTMLSelectElement[]).find((el) => [...el.options].some((o) => o.value === "xp3"))!, "xp3");
   type(screen.getAllByLabelText("Вид")[0], "braid");
-  type(screen.getAllByLabelText("Длина на изделие")[0], "460");
+  type(screen.getAllByLabelText(/^Длина на изделие/)[0], "460");
   const braid: Record<string, string> = { "А1": "120", "А2": "110", "А3": "110", "А4": "120" };
   Object.entries(braid).forEach(([end, len]) => type(`Оплётка ветви ${end}, отрезок`, len));
+  // Владелец 18.10 («почему 460»): у всех ветвей свой отрезок — общей длины нет, видны отрезки и их сумма; материалы — по одному.
+  expect(screen.getByText(/^Отрезки по ветвям: .*120 · .*110 · .*110 · .*120 мм, всего 460 мм\./)).toBeInTheDocument();
+  expect(screen.queryAllByLabelText(/^Длина на изделие/)).toHaveLength(0);
+  expect(screen.getByLabelText("Материал 2")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Материал 3")).toBeNull();
   // ТТК 8/2 поверх разъёмов X1–X3 по 15 мм.
   ["А1", "А2", "А3"].forEach((end) => {
     const box = block(`Термоусадка поверх разъёма ${end}`);
