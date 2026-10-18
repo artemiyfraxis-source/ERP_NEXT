@@ -13,6 +13,14 @@ const art = (name: string) => {
   const result = etkPfArt({ group, operations: group.ops.map((position) => operations[position - 1]), inputs: INPUTS_713K4[name], document });
   return { svg: result?.main && "svg" in result.main ? result.main.svg : "", layers: result?.layers ?? "" };
 };
+/** Все шесть разъёмов — видом сверху (как на ПФ 2), без плоских контуров с подписью; А слева, Б справа (зеркально). */
+const topViews = (svg: string) => {
+  expect(svg.match(/data-part="connector"/g)).toHaveLength(6);
+  expect(svg.match(/data-part="connector" data-view="top"/g)).toHaveLength(6);
+  expect(svg.match(/data-part="connector" data-view="top" data-side="A"/g)).toHaveLength(4);
+  expect(svg.match(/data-part="connector" data-view="top" data-side="B"/g)).toHaveLength(2);
+  expect(svg).not.toContain('fill="#f3f8f7"');
+};
 const sizes = (svg: string) => [...svg.matchAll(/font-size="([\d.]+)"/g)].map((match) => Number(match[1]));
 
 describe("ПФ 713К.4: картинки на карточке схемы ПФ", () => {
@@ -52,6 +60,7 @@ describe("ПФ 713К.4: картинки на карточке схемы ПФ",
     const { svg, layers } = art("ТУТ на месте Б");
     expect(svg.match(/data-part="harness-tube"/g)).toHaveLength(1);
     ["X1", "X2", "X3", "X4", "X5", "X6"].forEach((name) => expect(svg).toContain(`>${name}<`));
+    topViews(svg);
     expect(svg).toContain(">ТТК 12/4<");
     expect(svg).toContain(">30 мм<");
     expect(svg).not.toContain("Термоусадка");
@@ -62,7 +71,7 @@ describe("ПФ 713К.4: картинки на карточке схемы ПФ",
 
   it("изделие: плоский обзор — разъёмы X1–X6, сростки С1–С4 под трубками, зона под ТТК 12/4, оплётка и легенда, без 3D", () => {
     const { svg } = art("Кабельная сборка");
-    expect(svg.match(/data-part="connector"/g)).toHaveLength(6);
+    topViews(svg);
     expect(svg.match(/data-part="splice-tube"/g)).toHaveLength(4);
     expect(svg.match(/data-part="harness-tube"/g)).toHaveLength(1);
     ["X1", "X2", "X3", "X4", "X5", "X6", "С1", "С2", "С3", "С4"].forEach((name) => expect(svg).toContain(`>${name}<`));
