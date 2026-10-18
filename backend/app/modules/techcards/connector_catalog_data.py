@@ -99,7 +99,12 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # SUH — eSUH «Housing» is drawn as eSH: the wire end with the protrusions at the top, «Circuit No.1» ▽ on the left
     # of that face -> from the wire side, ▽ face up, contact 1 on the RIGHT (as SH).
     _family("jst-suh", "JST SUH", r"^SUHR-0*(\d+)V-S", 0.8, start="TR", latch="mark", conf="high",
-            src="JST eSUH, Housing", note="по чертежу JST eSUH: метка ▽ контакта 1 — со стороны проводов ▽ сверху, контакт 1 справа"),
+            src="JST eSUH, Housing", note="по чертежу JST eSUH: метка ▽ контакта 1 — со стороны проводов ▽ сверху, контакт 1 справа",
+            # eSUH p. 2 «Housing»: B = (n−1)·0.8 contact span, A = B + 1.6 (no protrusions), C = A + 2.0 with the -B protrusions;
+            # 3.1 high at the wire end, the open lance cavities are 1.7 tall in its lower part (the top 1.4 carries the ▽ mark)
+            # and ~0.6 wide between 0.2 walls; 1.25 deep.
+            body={"extra": 1.6, "h": 3.1, "len": 1.25, "win": (0.6, 1.7), "win_y": 2.25},
+            body_by=((r"V-S-B", {"ears": 1.0}),)),
     _family("jst-lbt", "JST LBT (2 силовых + сигнальные)", r"^LBTAR-0*(\d+)V-2K-K", 1.0, latch="ramp",
             note="2 силовых контакта по краям и сигнальные с шагом 1,0 — рисунок условный; метка контакта 1 на лицевой грани (JST eLBT)"),
     # PUD, ZPD, NSHD (sheets read 16.10.2026 from jst-mfg.com): the housing front view is the lock face with the flanged
