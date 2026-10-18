@@ -35,7 +35,8 @@ it("strip bands follow the drawing's length scale and the callouts stay clear of
       const tail = (g.end === "from" ? wire.metadata?.openFrom : wire.metadata?.openTo) !== undefined;
       if (tail) { tails += 1; expect(g.totalLength).toBeLessThanOrEqual(Math.max(4, route * (3 / 60)) + 1e-6); expect(g.totalLength).toBeGreaterThanOrEqual(4 - 1e-6); }
       else { splices += 1; expect(g.totalLength).toBeLessThanOrEqual(4 + 1e-6); }
-      expect(g.primitives[0]!.polygon.some((p, i, all) => Math.hypot(p.x - all[(i + 1) % 4]!.x, p.y - all[(i + 1) % 4]!.y) > 6)).toBe(false);
+      // Полоса — не шире 6 px и не длиннее своей длины в масштабе чертежа (хвост зоны идёт вдоль веера: его трасса длинная).
+      expect(g.primitives[0]!.polygon.some((p, i, all) => Math.hypot(p.x - all[(i + 1) % 4]!.x, p.y - all[(i + 1) % 4]!.y) > Math.max(6, g.totalLength + 1e-6))).toBe(false);
     }
   }
   expect([tails, splices]).toEqual([4, 14]);

@@ -967,6 +967,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <UnitInput unit="мм" aria-label={`Оплётка ветви ${name}, отрезок`} value={ep.braidLen ?? ""} placeholder={gen.braidLenDefault_() || "по КД"}
             onChange={(event) => set({ braidLen: event.target.value })} /></Field>
       </div>}
+      {/* Размер ветви на схеме жгута по КД (владелец 18.10): только чертёж, длины резки и операции не меняет. */}
+      {complex && conn && <div className="ep-ter" aria-label={`Ветвь по КД ${name}`}>
+        <Field label="Ветвь по КД" className="mid" hint={ep.kdBranch?.trim() ? undefined : "по длинам проводов"}>
+          <UnitInput unit="мм" aria-label={`Ветвь по КД ${name}, мм`} value={ep.kdBranch ?? ""} placeholder="по длинам"
+            onChange={(event) => set({ kdBranch: event.target.value })} /></Field>
+      </div>}
       {cableLines.map((line) => <div className="ep-cable" key={line.key} aria-label={`Кабель ${line.name} на ${name}`}>
         <span>Кабель <b>{line.name}</b>: жил здесь <b>{line.here}</b> из {line.total}{line.others.length > 0 && ` · остальные — ${line.others.join(", ")}`}</span>
         {line.shieldHere.length > 0 && <span>экран — на контакт <b>{line.shieldHere.join(", ")}</b></span>}

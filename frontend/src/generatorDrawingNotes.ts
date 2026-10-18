@@ -23,7 +23,9 @@ export interface ZoneNotesInput {
   readonly parts: TrunkParts;
   readonly trunkY: number;
   /** Выноски оболочек: текст → участок и доля его длины. */
-  readonly callouts: ReadonlyArray<{ readonly text: string; readonly segmentId: string; readonly at: number }>;
+  readonly callouts: ReadonlyArray<{ readonly text: string; readonly label: string; readonly segmentId: string; readonly at: number }>;
+  /** Глубина корпуса разъёма по базе разъёмов, мм (длина корпуса вдоль проводов); нет — null. */
+  readonly depthMm?: (connector: PlanConnector) => number | null;
   /** Разъём плана по узлу выхода. */
   readonly connectorAt: (exitNode: string) => PlanConnector | undefined;
 }
@@ -34,7 +36,7 @@ const overlaps = (a: Box, b: Box, gap = 3) => a.x < b.x + b.width + gap && b.x <
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
 export function zoneAnnotations(input: ZoneNotesInput): Pick<DrawingDocuments, "showDimensions" | "dimensions" | "graphics" | "hideObjectIndices"> {
-  const { doc, plan, zones, parts, trunkY, callouts, connectorAt } = input;
+  const { doc, plan, zones, parts, trunkY, callouts, connectorAt, depthMm = () => null } = input;
   const topology = doc.physicalTopology!;
   const nodeAt = (id: string): Point => physicalNodePoint(doc, topology.nodes.find((n) => n.id === id)!);
   const ends = (segmentId: string): [Point, Point] => {
@@ -95,67 +97,97 @@ export function zoneAnnotations(input: ZoneNotesInput): Pick<DrawingDocuments, "
     text({ x: (left.x + right.x) / 2 - (label.length * CHAR) / 2, y: trunkY + side * (zoneMm ? 64 : 30) + (side > 0 ? 12 : 0) }, label, 13, true);
 
     const aLength = (key: string) => longest(members.flatMap((sp) => sp.wires.filter((w) => w.side === "A" && w.end.connector === key).map((w) => w.lengthMm)));
+    // Ветви — от центра ветвления до торца разъёма (СБ: «до переднего торца X1–X4, до заднего торца X5, X6»). «Ветвь по КД» формы
+    // — размер как есть; нет её — длина самого длинного провода сростка на разъёме без половины зоны, для стороны В ещё и без
+    // глубины корпуса (провод кончается у переднего торца, задний — на глубину корпуса ближе), если база разъёмов её знает.
     if (k === 0) {
-      const branch = [...parts.aBranches].reverse().find((b) => { const c = connectorAt(b.exit); return c && aLength(c.key) !== null; });
-      if (branch) dim(branch.segmentId, "horizontal", 40, visible(aLength(connectorAt(branch.exit)!.key)));
+      const own = (c: PlanConnector) => c.kdBranchMm ?? visible(aLength(c.key));
+      const branch = [...parts.aBranches].reverse().find((b) => { const c = connectorAt(b.exit); return c && own(c) !== null; });
+      if (branch) dim(branch.segmentId, "horizontal", 40, own(connectorAt(branch.exit)!));
     }
     parts.bBranches.forEach((branch) => {
       const c = connectorAt(branch.exit);
       if (!c) return;
       const mine = longest(members.flatMap((sp) => sp.wires.filter((w) => w.side === "B" && w.end.connector === c.key).map((w) => w.lengthMm)));
+      const depth = depthMm(c);
+      const computed = mine === null ? null : round2(Math.max(1, mine - half - (depth ?? 0)));
       // Размер по горизонтали от центра ветвления до торца разъёма (как на СБ), с внешней стороны ветви: над верхней, под нижней.
       const up = nodeAt(branch.exit).y < trunkY;
       const box = boxes.get(topology.nodes.find((n) => n.id === branch.exit)?.connectorId ?? "");
-      dim(branch.segmentId, "horizontal", box ? (up ? box.y - 26 - trunkY : box.y + box.height + 26 - box.y) : up ? -80 : 40, visible(mine));
+      dim(branch.segmentId, "horizontal", box ? (up ? box.y - 26 - trunkY : box.height + 26) : up ? -80 : 40, c.kdBranchMm ?? computed);
     });
     if (part.tail) {
       const tip = nodeAt(part.tail.node);
-      dim(part.tail.segmentId, "aligned", tailUp ? 30 : -30, visible(longest(members.flatMap((sp) => sp.tails.map((t) => t.lengthMm)))));
-      // Подпись жгута — справа от него, выше подписи зачистки хвоста (strip-callouts.ts стоит у конца справа, посередине).
-      text({ x: tip.x + 10, y: tip.y + (tailUp ? -12 : 30) }, `Своб. концы от ${label}`, 12);
+      // Жгут свободных концов — третья ветвь веера, размер от центра ветвления до концов проводов отвода, под нижним разъёмом В.
+      dim(part.tail.segmentId, "horizontal", 34, visible(longest(members.flatMap((sp) => sp.tails.map((t) => t.lengthMm)))));
+      // Подпись — справа от конца жгута, выше подписи зачистки хвоста (strip-callouts.ts): жгут подходит слева сверху.
+      text({ x: tip.x + 14, y: tip.y - 32 }, `Своб. концы от ${label}`, 12);
+    }
+    // Точка «Б» — на нижней кромке зоны, у общей трубки («ТУТ на месте Б» по КД).
+    if (tube) {
+      const mid = { x: (left.x + right.x) / 2, y: trunkY + 14 };
+      graphics.push({ id: `gen-g${graphics.length + 1}`, view: "drawing", kind: "ellipse", points: [{ x: Math.round(mid.x - 3), y: Math.round(mid.y - 3) }, { x: Math.round(mid.x + 3), y: Math.round(mid.y + 3) }],
+        color: NOTE, width: 2 });
+      taken.push({ x: mid.x - 6, y: mid.y - 6, width: 12, height: 12 });
+      text({ x: mid.x + 8, y: mid.y + 14 }, "Б", 13, true);
     }
   });
 
-  // Выноски оболочек: текст рядом с оболочкой, наружу от ствола, на первом месте без наложений на линии, размеры и разъёмы.
-  callouts.forEach((callout) => {
-    const [a, b] = ends(callout.segmentId);
-    const length = Math.hypot(b.x - a.x, b.y - a.y) || 1, dir = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
-    const at = (t: number) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
-    const anchor = at(callout.at);
-    const away = Math.abs(anchor.y - trunkY) > 8 ? Math.sign(anchor.y - trunkY) : -1;
-    let normal = { x: -dir.y, y: dir.x };
-    if (Math.abs(normal.y) < 0.2 ? normal.x < 0 : normal.y * away < 0) normal = { x: -normal.x, y: -normal.y };
-    const width = callout.text.length * CHAR + 4;
-    let best: { box: Box; from: Point; cost: number } | null = null;
-    // Лучшее место по цене: наложение на занятое и на линии — дорого, выноска поперёк линий — дорого, длинная выноска, сдвиг
-    // вдоль оболочки и сторона против «наружу от ствола» — немного.
-    for (const flip of [1, -1]) {
-      for (const d of [20, 34, 50, 68, 90, 116]) {
-        for (const shift of [0, 0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4]) {
-          const t = Math.min(0.97, Math.max(0.03, callout.at + shift));
-          const from = at(t), nx = normal.x * flip, ny = normal.y * flip, q = { x: from.x + nx * d, y: from.y + ny * d };
-          const box: Box = { x: nx < -0.35 ? q.x - width : nx < 0.35 ? q.x - width / 2 : q.x, y: ny > 0.35 ? q.y : ny < -0.35 ? q.y - LINE : q.y - LINE / 2, width, height: LINE };
-          const near = { x: Math.max(box.x, Math.min(from.x, box.x + box.width)), y: from.y < box.y ? box.y : from.y > box.y + box.height ? box.y + box.height : from.y };
-          let crossings = 0;
-          const steps = Math.max(1, Math.ceil(Math.hypot(near.x - from.x, near.y - from.y) / 5));
-          for (let i = 3; i <= steps; i++) {
-            const p = { x: from.x + ((near.x - from.x) * i) / steps, y: from.y + ((near.y - from.y) * i) / steps };
-            if (lines.some((l) => Math.hypot(l.x - p.x, l.y - p.y) < 5 && Math.hypot(l.x - from.x, l.y - from.y) > 12)) crossings++;
+  // Выноски оболочек: одинаковые на нескольких ветвях — одна выноска «Трубка ТТК 8/2, 3 места» с линиями к каждому месту (СБ).
+  // Текст — на лучшем месте по цене: наложение на занятое и на линии — дорого, выноска поперёк линий — дорого, длинные
+  // выноски и сторона против «наружу от ствола» — немного.
+  const groups = new Map<string, Array<(typeof callouts)[number]>>();
+  callouts.forEach((callout) => groups.set(callout.text, [...(groups.get(callout.text) ?? []), callout]));
+  groups.forEach((members) => {
+    const many = members.length > 1;
+    const text = many ? `${members[0]!.label}, ${members.length} ${members.length < 5 ? "места" : "мест"}` : members[0]!.text;
+    const width = text.length * CHAR + 4;
+    const geometry = members.map((m) => {
+      const [a, b] = ends(m.segmentId);
+      const length = Math.hypot(b.x - a.x, b.y - a.y) || 1, dir = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
+      const at = (t: number) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      const away = Math.abs(at(m.at).y - trunkY) > 8 ? Math.sign(at(m.at).y - trunkY) : -1;
+      let normal = { x: -dir.y, y: dir.x };
+      if (Math.abs(normal.y) < 0.2 ? normal.x < 0 : normal.y * away < 0) normal = { x: -normal.x, y: -normal.y };
+      return { at, normal, t0: m.at };
+    });
+    const nearOf = (box: Box, from: Point) => ({ x: Math.max(box.x, Math.min(from.x, box.x + box.width)), y: from.y < box.y ? box.y : from.y > box.y + box.height ? box.y + box.height : from.y });
+    const legCost = (box: Box, from: Point) => {
+      const near = nearOf(box, from);
+      let crossings = 0;
+      const steps = Math.max(1, Math.ceil(Math.hypot(near.x - from.x, near.y - from.y) / 5));
+      for (let i = 3; i <= steps; i++) {
+        const p = { x: from.x + ((near.x - from.x) * i) / steps, y: from.y + ((near.y - from.y) * i) / steps };
+        if (lines.some((l) => Math.hypot(l.x - p.x, l.y - p.y) < 5 && Math.hypot(l.x - from.x, l.y - from.y) > 12)) crossings++;
+      }
+      return crossings * 25 + Math.hypot(near.x - from.x, near.y - from.y) * 0.15;
+    };
+    let best: { box: Box; cost: number } | null = null;
+    geometry.forEach((g, primary) => {
+      for (const flip of [1, -1]) {
+        for (const d of [20, 34, 50, 68, 90, 116]) {
+          for (const shift of [0, 0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4]) {
+            const t = Math.min(0.97, Math.max(0.03, g.t0 + shift));
+            const from = g.at(t), nx = g.normal.x * flip, ny = g.normal.y * flip, q = { x: from.x + nx * d, y: from.y + ny * d };
+            const box: Box = { x: nx < -0.35 ? q.x - width : nx < 0.35 ? q.x - width / 2 : q.x, y: ny > 0.35 ? q.y : ny < -0.35 ? q.y - LINE : q.y - LINE / 2, width, height: LINE };
+            let cost = taken.filter((other) => overlaps(box, other)).length * 100 +
+              lines.filter((p) => p.x > box.x - 3 && p.x < box.x + box.width + 3 && p.y > box.y - 3 && p.y < box.y + box.height + 3).length * 3 +
+              Math.abs(shift) * 30 + (flip < 0 ? 12 : 0) + (primary > 0 ? 6 : 0);
+            geometry.forEach((other, i) => { cost += legCost(box, other.at(i === primary ? t : other.t0)); });
+            if (!best || cost < best.cost) best = { box, cost };
           }
-          const cost = taken.filter((other) => overlaps(box, other)).length * 100 +
-            lines.filter((p) => p.x > box.x - 3 && p.x < box.x + box.width + 3 && p.y > box.y - 3 && p.y < box.y + box.height + 3).length * 3 +
-            crossings * 25 + d * 0.15 + Math.abs(shift) * 30 + (flip < 0 ? 12 : 0);
-          if (!best || cost < best.cost) best = { box, from, cost };
         }
       }
-    }
+    });
     if (!best) return;
-    const { box, from } = best;
+    const { box } = best as { box: Box };
     taken.push(box);
-    const near = { x: Math.max(box.x, Math.min(from.x, box.x + box.width)), y: from.y < box.y ? box.y : from.y > box.y + box.height ? box.y + box.height : from.y };
-    graphics.push({ id: `gen-g${graphics.length + 1}`, view: "drawing", kind: "line", points: [{ x: Math.round(from.x), y: Math.round(from.y) }, { x: Math.round(near.x), y: Math.round(near.y) }],
-      color: LEADER, width: 1 });
-    graphics.push({ id: `gen-g${graphics.length + 1}`, view: "drawing", kind: "text", points: [{ x: Math.round(box.x + 2), y: Math.round(box.y + LINE - 3) }], text: callout.text, fontSize: 12, color: NOTE });
+    geometry.forEach((g) => {
+      const from = g.at(g.t0), near = nearOf(box, from);
+      graphics.push({ id: `gen-g${graphics.length + 1}`, view: "drawing", kind: "line", points: [{ x: Math.round(from.x), y: Math.round(from.y) }, { x: Math.round(near.x), y: Math.round(near.y) }],
+        color: LEADER, width: 1 });
+    });
+    graphics.push({ id: `gen-g${graphics.length + 1}`, view: "drawing", kind: "text", points: [{ x: Math.round(box.x + 2), y: Math.round(box.y + LINE - 3) }], text, fontSize: 12, color: NOTE });
   });
 
   return { showDimensions: true, dimensions, graphics, hideObjectIndices: true };

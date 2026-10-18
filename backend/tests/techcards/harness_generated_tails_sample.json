@@ -1706,15 +1706,15 @@
    {
     "id": "gen-z1-tail",
     "position": {
-     "x": 745,
-     "y": 417
+     "x": 1127,
+     "y": 674
     }
    },
    {
     "id": "gen-z2-tail",
     "position": {
-     "x": 585,
-     "y": 257
+     "x": 1127,
+     "y": 584
     }
    }
   ],
@@ -1831,7 +1831,7 @@
    },
    {
     "id": "gen-s12",
-    "from": "gen-z1-out",
+    "from": "gen-j1",
     "to": "gen-z1-tail",
     "path": {
      "kind": "polyline",
@@ -1841,7 +1841,7 @@
    },
    {
     "id": "gen-s13",
-    "from": "gen-z2-out",
+    "from": "gen-j1",
     "to": "gen-z2-tail",
     "path": {
      "kind": "polyline",
@@ -1902,6 +1902,10 @@
     "wireId": "gen-sp1-w4",
     "steps": [
      {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
+     {
       "segmentId": "gen-s12",
       "reverse": false
      }
@@ -1958,6 +1962,10 @@
     "wireId": "gen-sp2-w4",
     "steps": [
      {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
+     {
       "segmentId": "gen-s12",
       "reverse": false
      }
@@ -1979,6 +1987,18 @@
    {
     "wireId": "gen-sp3-w3",
     "steps": [
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
      {
       "segmentId": "gen-s13",
       "reverse": false
@@ -2014,6 +2034,18 @@
    {
     "wireId": "gen-sp4-w3",
     "steps": [
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
      {
       "segmentId": "gen-s13",
       "reverse": false
@@ -2189,10 +2221,10 @@
     "from": 0,
     "to": 1,
     "pointCount": 2,
-    "routeKey": "[\"gen-s12\",\"gen-z1-out\",\"gen-z1-tail\",0]",
-    "mode": "aligned",
+    "routeKey": "[\"gen-s12\",\"gen-j1\",\"gen-z1-tail\",0]",
+    "mode": "horizontal",
     "modeOverride": true,
-    "offset": -30,
+    "offset": 34,
     "lengthMm": 60,
     "auxiliary": true
    },
@@ -2202,10 +2234,10 @@
     "from": 0,
     "to": 1,
     "pointCount": 2,
-    "routeKey": "[\"gen-s13\",\"gen-z2-out\",\"gen-z2-tail\",0]",
-    "mode": "aligned",
+    "routeKey": "[\"gen-s13\",\"gen-j1\",\"gen-z2-tail\",0]",
+    "mode": "horizontal",
     "modeOverride": true,
-    "offset": 30,
+    "offset": 34,
     "lengthMm": 60,
     "auxiliary": true
    }
@@ -2232,8 +2264,8 @@
     "kind": "text",
     "points": [
      {
-      "x": 755,
-      "y": 447
+      "x": 1141,
+      "y": 642
      }
     ],
     "text": "Своб. концы от С1, С2",
@@ -2247,7 +2279,7 @@
     "points": [
      {
       "x": 527,
-      "y": 379
+      "y": 307
      }
     ],
     "text": "С3, С4",
@@ -2261,8 +2293,8 @@
     "kind": "text",
     "points": [
      {
-      "x": 595,
-      "y": 245
+      "x": 1141,
+      "y": 552
      }
     ],
     "text": "Своб. концы от С3, С4",

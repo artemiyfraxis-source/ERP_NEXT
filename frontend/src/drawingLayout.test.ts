@@ -44,11 +44,17 @@ it("the owner's harness: A connectors in a column on the left, B on the right, o
   expect(Math.max(...inner)).toBeLessThan(trunk[5]!.x);
   expect(trunk[1]!.x).toBeLessThan(trunk[2]!.x);
   expect(trunk[3]!.x).toBeLessThan(trunk[4]!.x);
-  // Хвосты зоны — одним жгутом поперёк ствола от выхода зоны, а не по одному от каждого сростка; у соседних зон — в разные стороны.
+  // Хвосты зоны — одним жгутом, а не по одному от каждого сростка; жгут уходит вправо вместе с ветвями к разъёмам В (СБ): третья
+  // ветвь веера от конца ствола, ниже нижнего выхода В и правее выходов; жгуты соседних зон — друг под другом.
   expect(topology.nodes.filter((n) => n.id.startsWith("gen-n-gen-w") || n.id.startsWith("gen-n-gen-t"))).toEqual([]);
-  const tips = ["gen-z1", "gen-z2"].map((zone) => ({ out: point(`${zone}-out`), tip: point(`${zone}-tail`) }));
-  tips.forEach(({ out, tip }) => expect([tip.x, Math.abs(tip.y - trunkY)]).toEqual([out.x, 80]));
-  expect(new Set(tips.map(({ tip }) => Math.sign(tip.y - trunkY)))).toEqual(new Set([-1, 1]));
+  const exits = topology.nodes.filter((n) => n.connectorId && doc.connectors.find((c) => c.id === n.connectorId)?.schematic.orientation === "contacts-left").map((n) => physicalNodePoint(doc, n));
+  const tips = ["gen-z1", "gen-z2"].map((zone) => point(`${zone}-tail`));
+  tips.forEach((tip) => {
+    expect(tip.y).toBeGreaterThan(Math.max(...exits.map((p) => p.y)));
+    expect(tip.x).toBeGreaterThan(Math.max(...exits.map((p) => p.x)));
+  });
+  expect(new Set(tips.map((tip) => tip.y)).size).toBe(2);
+  expect(topology.segments.filter((s) => s.to.endsWith("-tail")).map((s) => s.from)).toEqual(["gen-j1", "gen-j1"]);
 });
 
 it("the owner's harness: splice and junction nodes stand apart, labels do not overlap", () => {

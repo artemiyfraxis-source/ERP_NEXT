@@ -1161,8 +1161,8 @@ export function connectorContactPosition(
     const point = connectorE4TableGeometry(connector).contactPoints[contactId];
     return point ? { x: origin.x + point.x, y: origin.y + point.y } : null;
   }
-  const face = connector.housing && connector.housingView === "face" ? housingFace(connector.housing) : null;
-  const pin = face ? housingFaceEntry(face, connector.contacts[index]!.number, connector.schematic.orientation === "contacts-left") : undefined;
+  const face = connector.housing && connector.housingView === "face" ? housingFace(connector.housing, null, connector.schematic.orientation === "contacts-left") : null;
+  const pin = face ? housingFaceEntry(face, connector.contacts[index]!.number) : undefined;
   if (pin) return { x: origin.x + pin.x, y: origin.y + pin.y };
   return { x: origin.x + 118, y: origin.y + 28 + index * 16 };
 }

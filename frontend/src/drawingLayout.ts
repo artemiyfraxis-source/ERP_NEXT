@@ -39,6 +39,12 @@ const SPLICE_GAP = 120, TRUNK_MIN = 220;
 const TAIL = 80, TAIL_FAN = 28;
 /** Зона сростков (владелец 18.10, как на СБ: «С1–С4» одним прямоугольником под общей трубкой): длина зоны по стволу. */
 export const ZONE_PX = 76;
+/** Жгут свободных концов зоны — ниже нижнего выхода разъёма В на столько (корпус разъёма В — до половины своей высоты). */
+const TAIL_BELOW = 150;
+/** …и правее выходов разъёмов В на столько: жгут идёт вправо вместе с ветвями, не пересекая размер нижнего разъёма В в его середине. */
+const TAIL_RIGHT = 140;
+/** Жгуты хвостов соседних зон — друг под другом через столько. */
+const TAIL_ROW = 90;
 
 /** Ширина веера под разброс выходов по вертикали относительно ствола. */
 export function fanWidth(offsets: readonly number[]): number {
@@ -146,6 +152,7 @@ export function trunkTopology(input: TrunkInput): PhysicalRoute[] {
   const outward = new Map<string, Point>();
   const fromX = start ? at(start).x : geometry.startX, toX = end ? at(end).x : geometry.endX;
   const chain: string[] = start ? [start] : [];
+  let tailsMade = 0;
   const zoneSegments: Array<{ unit: number; left: string; right: string }> = [];
   units.forEach((unit, k) => {
     const cx = Math.round(fromX + ((toX - fromX) * (k + 1)) / (units.length + 1));
@@ -161,9 +168,17 @@ export function trunkTopology(input: TrunkInput): PhysicalRoute[] {
     const left = `gen-z${unit.zone + 1}-in`, right = `gen-z${unit.zone + 1}-out`, tip = `gen-z${unit.zone + 1}-tail`;
     nodes.push({ id: left, position: { x: cx - Math.round(ZONE_PX / 2), y: trunkY } }, { id: right, position: { x: cx + Math.round(ZONE_PX / 2), y: trunkY } });
     let tipMade = false;
-    const dir = k % 2 ? 1 : -1;
+    const dir = k % 2 ? 1 : -1, row = tailsMade++;
     const tail = () => {
-      if (!tipMade) { tipMade = true; nodes.push({ id: tip, position: { x: cx + Math.round(ZONE_PX / 2), y: trunkY + dir * TAIL } }); }
+      if (!tipMade) {
+        tipMade = true;
+        // Жгут свободных концов (СБ): уходит вправо вместе с ветвями к разъёмам В — третья ветвь веера от конца ствола, под
+        // нижним разъёмом В; разъёмов В один — поперёк ствола от выхода зоны.
+        const exits = bExits.length > 1 ? bExits.map((id) => at(id)) : [];
+        nodes.push({ id: tip, position: exits.length
+          ? { x: Math.round(Math.max(...exits.map((p) => p.x)) + TAIL_RIGHT), y: Math.round(Math.max(...exits.map((p) => p.y)) + TAIL_BELOW + row * TAIL_ROW) }
+          : { x: cx + Math.round(ZONE_PX / 2), y: trunkY + dir * TAIL } });
+      }
       return tip;
     };
     zones[unit.zone]!.forEach((id) => zoneNodes.set(id, { left, right, tail }));
@@ -194,7 +209,7 @@ export function trunkTopology(input: TrunkInput): PhysicalRoute[] {
       if (!bundled.has(node)) {
         bundled.add(node);
         const zoneOut = out.zones.find((z) => z.right === zone.right)!;
-        zoneOut.tail = { segmentId: straight(zone.right, node).id, node };
+        zoneOut.tail = { segmentId: straight(bExits.length > 1 ? end! : zone.right, node).id, node };
       }
       tipNode.set(wire.id, node);
       return;
