@@ -7,10 +7,10 @@ const lengthText = (mm: number | null) => (mm === null ? "хвост" : `${Strin
 
 /** Scene metadata of a wire: `openFrom`/`openTo` — the open end's label (its length), `spliceFrom`/`spliceTo` — the end
  *  sits in a splice. */
-export function openWireEndMetadata(wire: Pick<WireInstance, "from" | "to" | "lengthMm">): Record<string, string> {
+export function openWireEndMetadata(wire: Pick<WireInstance, "from" | "to" | "lengthMm">, withLength = true): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [end, key] of [[wire.from, "From"], [wire.to, "To"]] as const) {
-    if (isFreeEndpoint(end)) result[`open${key}`] = lengthText(wire.lengthMm);
+    if (isFreeEndpoint(end)) result[`open${key}`] = withLength ? lengthText(wire.lengthMm) : "";
     else if (isJunctionEndpoint(end)) result[`splice${key}`] = "true";
   }
   return result;

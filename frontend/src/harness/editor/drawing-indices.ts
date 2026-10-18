@@ -142,6 +142,7 @@ export function drawingObjectIndexScene(
   const generated = buildDrawingObjectIndices(baseObjects);
   return baseObjects.flatMap(object => {
     if (object.kind !== "connector" && object.kind !== "wire" && object.kind !== "physical-covering") return [];
+    if ((object.kind === "wire" || object.kind === "physical-covering") && docs?.hideObjectIndices) return [];
     const position = defaultIndexPosition(object);
     if (!position) return [];
     const label = byBom.get(object.id) ?? generated.get(object.id) ?? (object.kind === "connector" ? object.label : undefined);

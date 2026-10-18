@@ -2358,6 +2358,14 @@ export function drawEditorSceneObject(
       context.restore();
       return;
     }
+    const faceSvg = view === "drawing" ? object.metadata?.faceSvg : undefined;
+    if (faceSvg) { // торец разъёма из базы разъёмов без рамки: провода идут из центров его гнёзд (housing-face.ts)
+      const entry = componentTemplateImageCache.get("data:image/svg+xml;charset=utf-8," + encodeURIComponent(faceSvg));
+      if (entry.state === "loaded") context.drawImage(entry.image, object.x, object.y, object.width, object.height);
+      if (selected) { context.strokeStyle = "#087bb4"; context.lineWidth = 2; context.strokeRect(object.x, object.y, object.width, object.height); }
+      context.restore();
+      return;
+    }
     roundedRectangle(context, object.x, object.y, object.width, object.height, 7);
     context.fillStyle = "#ffffff";
     context.fill();
