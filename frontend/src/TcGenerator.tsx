@@ -637,7 +637,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const diaOld = gen.twistDiaOld_();
 
   function selectComps(list: Comp[], value: string, onChange: (id: string) => void, label: string, empty = "— нет —") {
-    return <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+    const picked = list.find((c) => c.id === value);
+    return <select aria-label={label} title={picked ? picked.art || picked.name : undefined} value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">{empty}</option>
       {list.map((c) => <option key={c.id} value={c.id}>{c.art || c.name}</option>)}
     </select>;
@@ -1056,6 +1057,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const sidesFull = !epsA.length || !epsB.length;
   // «Жил» видно всегда: кабель без записи в БД.ПРОВ и без «4x0,5» в названии иначе нельзя сделать многожильным.
   const anyCores = S.wires.length > 0;
+  /** Ветви с оплёткой «Сложной сборки»: позиционное обозначение разъёма и его собственный отрезок (пусто — поровну). */
+  const braidCuts = complex ? S.endpoints.filter(gen.braidEp_).map((ep) => ({ name: ep.label || sideRu_(ep.side) + gen.endpointOrdinal_(ep), own: (ep.braidLen || "").trim().replace(",", ".") })) : [];
   const wireCols = `wire-row${S.advancedLength ? " adv" : ""}${anyCores ? " cores" : ""}`;
   const warning = typical ? gen.complexWarning() : "";
   const opsCount = manualTab ? manual.ops.length : ops.length;
@@ -1220,7 +1223,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </Toggle>,
     <Toggle key="wrap" checked={S.wrap.enabled} title="Лента / оплётка на жгут"
       onChange={(on) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, enabled: on } }))}>
-      {S.wrap.slots.map((slot, i) => (i === 0 || complex) && <div className="opt-grid" key={WRAP_SLOTS_[i] || "1"}>
+      {/* Второй–четвёртый материал — по одному, следующий появляется, когда выбран предыдущий (владелец 18.10). */}
+      {S.wrap.slots.map((slot, i) => (i === 0 || (complex && !!(slot.mat || S.wrap.slots[i - 1].mat))) && <div className="opt-grid" key={WRAP_SLOTS_[i] || "1"}>
         <Field label={["Материал из состава", "Второй материал", "Третий материал", "Четвёртый материал"][i]} hint={i ? "необязательно" : undefined} className="span2">
           {selectComps(wrapOpts, slot.mat, (id) => update((current) => {
             const c = makeGen(D, current).getCompById(id);
@@ -1228,9 +1232,24 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             const slots = current.wrap.slots.map((s, j) => (j === i ? { mat: id, kind: c ? g.guessWrapKind_(c) : s.kind, len: g.prefillWrapLen_(c) } : s));
             return syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots } });
           }), `Материал ${i + 1}`)}</Field>
-        <Field label="Вид" className="span2"><select value={slot.kind} onChange={(event) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, kind: event.target.value as WrapKind } : s)) } }))}>
-          {WRAP_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-        <Field label="Длина на изделие"><UnitInput unit="мм" value={slot.len} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, len: event.target.value } : s)) } }))} /></Field>
+        {(i === 0 || slot.mat) && <Field label="Вид" className="span2"><select value={slot.kind} onChange={(event) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, kind: event.target.value as WrapKind } : s)) } }))}>
+          {WRAP_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>}
+        {(() => {
+          const lenField = (hint?: string) => <Field label="Длина на изделие" hint={hint}><UnitInput unit="мм" value={slot.len} placeholder="по КД"
+            onChange={(event) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, len: event.target.value } : s)) } }))} /></Field>;
+          if (!slot.mat) return null;
+          if (!braidCuts.length || slot.kind !== "braid") return lenField();
+          // Оплётка на «Сложной сборке» режется отрезком на ветвь (разъём стороны А). «Длина на изделие» лишь делится поровну на ветви
+          // без своего отрезка — когда отрезки заданы у всех, поле ни на что не влияет и не показывается (владелец 18.10: «почему 460»).
+          const cuts = braidCuts.map((c) => ({ ...c, len: parseDecimal_(c.own || gen.braidLenDefault_(slot.len)) }));
+          const total = cuts.reduce((sum, c) => sum + c.len, 0);
+          const allOwn = braidCuts.every((c) => c.own);
+          return <>
+            {!allOwn && lenField("поровну на ветви без своего отрезка")}
+            <p className="opt-note span-all">{`Отрезки по ветвям: ${cuts.map((c) => `${c.name} ${c.len || "—"}`).join(" · ")} мм${total ? `, всего ${total} мм` : ""}.`}
+              <br />Свой отрезок задаётся в разъёме стороны А — «Оплётка ветви, отрезок».</p>
+          </>;
+        })()}
       </div>)}
     </Toggle>,
   ].filter(Boolean);
