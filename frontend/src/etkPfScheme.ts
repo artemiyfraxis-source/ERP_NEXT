@@ -3,7 +3,8 @@
 // жгута (разъёмы с обозначениями, ветви, зона сростков, трубки). Рисуются в масштабе 1:1 карточки (~320 px шириной):
 // подписи не мельче 10 px. Данные — из конфигурации сборки: `build_config.ops` (разъёмы, провода) и `build_config.gen_state`
 // (снимок формы генератора: какие провода в каком сростке, хвосты, трубки). Без снимка — эскиз по тому, что есть.
-import { etkWireColor } from "./etkDraw";
+import { connectorTopView } from "./connectorTopView";
+import { etkWireColor, type EtkHousing } from "./etkDraw";
 
 type Row = Record<string, unknown>;
 export type Drawing = { width: number; height: number; body: string };
@@ -66,7 +67,27 @@ function strands(x1: number, y1: number, x2: number, y2: number, colors: string[
 function connectorBox(x: number, y: number, w: number, h: number, label: string): string {
   return `<rect data-part="connector" x="${f(x)}" y="${f(y)}" width="${w}" height="${h}" rx="4" fill="#f3f8f7" stroke="${TEAL}" stroke-width="1.3"/>` +
     `<rect x="${f(x + w / 2 - 5)}" y="${f(y - 3)}" width="10" height="4" rx="1.5" fill="#f3f8f7" stroke="${TEAL}" stroke-width="1.1"/>` +
-    text(x + w / 2, y + h / 2 + 4, cut(label, 5), 11, 800, INK);
+    (label ? text(x + w / 2, y + h / 2 + 4, cut(label, 5), 11, 800, INK) : "");
+}
+
+/** Разъём видом сверху — как на ПФ 2 (pfBranchSvg): модель корпуса `connectorTopView`, развёрнутая так, чтобы выход проводов
+ *  смотрел на жгут. Сторона А — слева от жгута: провода уходят вправо (та же развёртка, что на ПФ 2); сторона Б — справа,
+ *  провода влево (зеркально по вертикали). `edge` — внешний край разъёма (левый у А, правый у Б), `cy` — середина по высоте.
+ *  Корпуса нет или вида сверху у серии нет — null. `wireX` — где провода выходят, `pinY(pin)` — высота контакта. */
+export type TopConnector = { svg: string; wireX: number; top: number; height: number; pinY: (pin: number) => number };
+export function topConnector(housing: EtkHousing | null | undefined, byPin: Record<number, string>, side: "A" | "B",
+  edge: number, cy: number, maxDepth: number, maxWidth: number): TopConnector | null {
+  const view = housing ? connectorTopView(housing, maxWidth, maxDepth, byPin) : null;
+  if (!housing || !view) return null;
+  const fy = cy - view.w / 2, x0 = side === "A" ? edge : edge - view.h;
+  const matrix = side === "A" ? `0,1,1,0,${f(x0)},${f(fy)}` : `0,1,-1,0,${f(x0 + view.h)},${f(fy)}`;
+  const columns = housing.grid.map((row) => row.length), cols = Math.max(1, housing.cols, ...columns);
+  const pinY = (pin: number) => {
+    const col = housing.grid.map((row) => row.indexOf(pin)).find((index) => index >= 0);
+    return col === undefined ? cy : fy + ((col + 0.5) / cols) * view.w;
+  };
+  return { svg: `<g data-part="connector" data-view="top" data-side="${side}" transform="matrix(${matrix})">${view.body}</g>`,
+    wireX: side === "A" ? x0 + view.h : x0, top: fy, height: view.w, pinY };
 }
 
 // ── Модель жгута из снимка генератора ──
@@ -76,13 +97,15 @@ export type HarnessModel = {
   wires: Array<{ name: string; color: string; length: number }>;
   /** Что на конце провода: `endA[idx]` — на стороне А, `endB[idx]` — на стороне Б. */
   endA: Record<number, Target>; endB: Record<number, Target>;
-  conns: Array<{ label: string; side: "A" | "B"; wires: number[]; braidLen: string; tube: string; tubeLen: string }>;
+  conns: Array<{ label: string; side: "A" | "B"; wires: number[]; braidLen: string; tube: string; tubeLen: string;
+    /** Контакт каждого провода (по номеру провода) и цвет по контакту — для вида сверху; корпус — из операции монтажа. */
+    pins: Record<number, number>; byPin: Record<number, string>; housing: EtkHousing | null }>;
   splices: Array<{ id: string; name: string; ends: Array<{ idx: number; side: "A" | "B" }> }>;
   braid: string; spliceTube: string; spliceTubeLen: string; harnessTube: string; harnessTubeLen: string;
 };
 
 /** Модель жгута по `build_config.gen_state`; нет снимка формы (или в нём нет проводов и разъёмов) — null. */
-export function harnessModel(config: Row): HarnessModel | null {
+export function harnessModel(config: Row, housingOf: (label: string) => EtkHousing | null = () => null): HarnessModel | null {
   const gen = obj(config.gen_state), S = obj(gen.S);
   const wireRows = rows(S.wires), endpoints = rows(S.endpoints);
   if (!wireRows.length || !endpoints.length) return null;
@@ -100,8 +123,13 @@ export function harnessModel(config: Row): HarnessModel | null {
     const list = (Array.isArray(ep.wireIdxs) ? ep.wireIdxs : []).map((idx) => Math.round(num(idx)));
     list.forEach((idx) => put(ep.side, idx, { kind: "conn", label }));
     const shrink = ep.shrinkOn ? nameOf(ep.shrinkMat) : "";
+    const pins: Record<number, number> = {}, byPin: Record<number, string> = {};
+    Object.entries(obj(ep.pins)).forEach(([idx, pin]) => {
+      const number = Math.round(num(pin));
+      if (number > 0) { pins[Math.round(num(idx))] = number; byPin[number] = wires[Math.round(num(idx))]?.name ?? ""; }
+    });
     return { label, side: (str(ep.side) === "A" ? "A" : "B") as "A" | "B", wires: list, braidLen: str(ep.braidLen).trim(),
-      tube: shrink ? tubeShort(shrink) : "", tubeLen: shrink ? str(ep.shrinkLen).trim() : "" };
+      tube: shrink ? tubeShort(shrink) : "", tubeLen: shrink ? str(ep.shrinkLen).trim() : "", pins, byPin, housing: housingOf(label) };
   });
   const splices = rows(S.splices).map((splice, index) => {
     const ends = rows(splice.ends).map((end) => ({ idx: Math.round(num(end.idx)), side: (str(end.side) === "A" ? "A" : "B") as "A" | "B" }));
@@ -203,27 +231,39 @@ export function spliceDrawing(sketches: SpliceSketch[], tube: string): Drawing {
 
 // ── ПФ «ТУТ на месте Б»: ветви сходятся под одну трубку ──
 
-export type TubeBranch = { label: string; colors: string[] };
+/** Ветвь на рисунке: обозначение разъёма, его провода (цвет и контакт), корпус — как в операции монтажа. */
+export type TubeBranch = { label: string; wires: Array<{ color: string; pin: number }>; housing?: EtkHousing | null; byPin?: Record<number, string> };
 
-/** Ветви слева (обозначения разъёмов, цвета их проводов) сходятся пучком под одну трубку на жгуте; справа пучок расходится
- *  к своим разъёмам. На трубке — материал и длина. */
+/** Обозначение рядом с разъёмом: у А — слева от него, у Б — справа. */
+const designator = (side: "A" | "B", x: number, cy: number, label: string) =>
+  text(x, cy + 4, cut(label, 4), 11, 800, INK, side === "A" ? "start" : "end");
+
+/** Ветви слева (разъёмы стороны А видом сверху, провода выходят вправо) сходятся пучком под одну трубку на жгуте; справа
+ *  пучок расходится к разъёмам стороны Б (провода выходят влево). Каждый провод — от своего контакта своим цветом.
+ *  На трубке — материал и длина; обозначения — рядом с разъёмами. */
 export function harnessTubeDrawing(left: TubeBranch[], right: TubeBranch[], tube: string, len: string): Drawing {
-  const rowH = 26, rowsCount = Math.max(left.length, right.length, 3), W = 320, bodyH = rowsCount * rowH + 6, cy = 3 + bodyH / 2;
-  const unique = (colors: string[]) => [...new Set(colors)].slice(0, 3);
+  const rowH = 30, rowsCount = Math.max(left.length, right.length, 3), W = 320, bodyH = rowsCount * rowH + 6, cy = 3 + bodyH / 2;
   let body = "";
-  const side = (list: TubeBranch[], mirror: boolean) => {
-    const bx = mirror ? W - 35 : 1, edge = mirror ? bx : bx + 34, inner = mirror ? 208 : 116;
-    const all = list.flatMap((item) => unique(item.colors));
+  const side = (list: TubeBranch[], kind: "A" | "B") => {
+    const mirror = kind === "B", inner = mirror ? 208 : 116, total = list.reduce((n, item) => n + item.wires.length, 0);
     let used = 0;
     list.forEach((item, index) => {
-      const y = 3 + (bodyH * (index + 0.5)) / list.length, colors = unique(item.colors);
-      const bundleY = cy + (used + (colors.length - 1) / 2 - (all.length - 1) / 2) * 2.4;
-      used += colors.length;
-      body += strands(edge + (mirror ? -2 : 2), y, inner, bundleY, colors, 2.4) + connectorBox(bx, y - 10, 34, 20, item.label);
+      const y = 3 + (bodyH * (index + 0.5)) / list.length;
+      const conn = topConnector(item.housing, item.byPin ?? {}, kind, mirror ? W - 24 : 24, y, 36, 26);
+      const exit = conn ? conn.wireX : mirror ? W - 24 - 34 : 24 + 34;
+      body += conn ? conn.svg : connectorBox(mirror ? W - 24 - 34 : 24, y - 10, 34, 20, "");
+      body += designator(kind, mirror ? W - 1 : 1, y, item.label);
+      const wires = [...item.wires].sort((a, b) => a.pin - b.pin);
+      wires.forEach((wire, k) => {
+        const from = conn && wire.pin > 0 ? conn.pinY(wire.pin) : y + (k - (wires.length - 1) / 2) * 3;
+        const to = cy + (used + k - (total - 1) / 2) * 2.6;
+        body += strands(exit + (mirror ? -1 : 1), from, inner, to, [wire.color], 2.2);
+      });
+      used += wires.length;
     });
   };
-  side(left, false);
-  side(right, true);
+  side(left, "A");
+  side(right, "B");
   body += `<rect data-part="harness-tube" x="116" y="${f(cy - 18)}" width="92" height="36" rx="11" fill="${TUBE}" fill-opacity=".94" stroke="${INK}" stroke-width="1.3"/>` +
     text(162, cy - 2, tube || "Термоусадка", 12, 800, "#fff") + (len ? text(162, cy + 12, `${len} мм`, 11, 600, "#e4ecea") : "");
   return { width: W, height: Math.round(bodyH + 8), body };
@@ -237,28 +277,48 @@ export function harnessOverview(model: HarnessModel): Drawing {
   const W = 320, top = 26, rowH = 30;
   const left = model.conns.filter((conn) => conn.side === "A"), right = model.conns.filter((conn) => conn.side === "B");
   const lines = Math.max(left.length, model.splices.length, right.length, 1);
-  const cyOf = (index: number) => top + rowH / 2 + index * rowH;
   const spread = (count: number, index: number) => top + (lines * rowH * (index + 0.5)) / count;
-  const at: Record<string, { x: number; y: number }> = {}, hasLeaf: Record<string, boolean> = {};
+  type Place = { x: number; y: number; conn?: TopConnector | null; pins?: Record<number, number> };
+  const at: Record<string, Place> = {}, hasLeaf: Record<string, boolean> = {};
   const key = (target: Target) => (target.kind === "conn" ? `c:${target.label}` : target.kind === "splice" ? `s:${target.id}` : "t");
-  left.forEach((conn, index) => { at[`c:${conn.label}`] = { x: 56, y: spread(left.length, index) }; });
-  right.forEach((conn, index) => { at[`c:${conn.label}`] = { x: 284, y: spread(right.length, index) }; });
-  model.splices.forEach((splice, index) => { at[`s:${splice.id}`] = { x: 118, y: spread(model.splices.length, index) }; });
   let body = "", back = "", wiresBody = "";
-  // Провода: по паре (откуда, куда) — пучок своих цветов; хвост — короткий отросток от сростка.
-  const edges = new Map<string, { from: string; to: string; colors: string[] }>();
+  // Разъёмы видом сверху, как на ПФ 2: А слева (провода вправо, оплётка и трубка у разъёма), Б справа (провода влево);
+  // обозначение рядом; нет корпуса — плоский контур.
+  left.forEach((conn, index) => {
+    const y = spread(left.length, index), tc = topConnector(conn.housing, conn.byPin, "A", 24, y, 34, 26);
+    const exit = tc ? tc.wireX : 24 + 32;
+    body += (tc ? tc.svg : connectorBox(24, y - 11, 32, 22, "")) + designator("A", 1, y, conn.label);
+    if (conn.braidLen) body += `<rect data-part="braid" x="${f(exit + 1)}" y="${f(y - 6)}" width="16" height="12" rx="4" fill="url(#pfBraid)" stroke="${INK}" stroke-width=".9"/>`;
+    if (conn.tube) body += `<rect data-part="branch-tube" x="${f(exit + 1)}" y="${f(y - 7)}" width="8" height="14" rx="3" fill="${TUBE}" stroke="${INK}" stroke-width=".9"/>`;
+    at[`c:${conn.label}`] = { x: exit + (conn.braidLen ? 18 : 3), y, conn: tc, pins: conn.pins };
+  });
+  right.forEach((conn, index) => {
+    const y = spread(right.length, index), tc = topConnector(conn.housing, conn.byPin, "B", W - 24, y, 34, 26);
+    const exit = tc ? tc.wireX : W - 24 - 32;
+    body += (tc ? tc.svg : connectorBox(W - 24 - 32, y - 11, 32, 22, "")) + designator("B", W - 1, y, conn.label);
+    at[`c:${conn.label}`] = { x: exit - 2, y, conn: tc, pins: conn.pins };
+  });
+  model.splices.forEach((splice, index) => { at[`s:${splice.id}`] = { x: 118, y: spread(model.splices.length, index) }; });
+  // Провода: по паре (откуда, куда) — пучок своих цветов, у разъёма — на высоте его контактов; хвост — отросток от сростка.
+  const edges = new Map<string, { from: string; to: string; colors: string[]; idxs: number[] }>();
   model.wires.forEach((wire, idx) => {
     const a = model.endA[idx], b = model.endB[idx];
     if (!wire || !a || !b) return;
     if (a.kind === "tail" || b.kind === "tail") { hasLeaf[key(a.kind === "tail" ? b : a)] = true; return; }
     const id = `${key(a)}>${key(b)}`;
-    (edges.get(id) ?? edges.set(id, { from: key(a), to: key(b), colors: [] }).get(id)!).colors.push(wire.color);
+    const edge = edges.get(id) ?? edges.set(id, { from: key(a), to: key(b), colors: [], idxs: [] }).get(id)!;
+    edge.colors.push(wire.color);
+    edge.idxs.push(idx);
   });
+  const anchorY = (place: Place, idxs: number[]) => {
+    const ys = idxs.map((idx) => place.pins?.[idx]).filter((pin): pin is number => !!pin && !!place.conn).map((pin) => place.conn!.pinY(pin));
+    return ys.length ? ys.reduce((sum, y) => sum + y, 0) / ys.length : place.y;
+  };
   edges.forEach((edge) => {
     const from = at[edge.from], to = at[edge.to];
     if (!from || !to) return;
     const out = edge.from.startsWith("s:") ? 28 : 0, into = edge.to.startsWith("s:") ? -2 : 0;
-    wiresBody += strands(from.x + out, from.y, to.x + into, to.y, edge.colors.slice(0, 4), 2.4);
+    wiresBody += strands(from.x + out, anchorY(from, edge.idxs), to.x + into, anchorY(to, edge.idxs), edge.colors.slice(0, 4), 2.4);
   });
   // Зона сростков под одной трубкой на жгуте.
   if (model.splices.length) {
@@ -275,13 +335,6 @@ export function harnessOverview(model: HarnessModel): Drawing {
         `<circle cx="${f(p.x + 55)}" cy="${f(p.y)}" r="2.4" fill="#d8dde0" stroke="${INK}" stroke-width=".8"/>` + text(p.x + 31, p.y + 14, "хвост", 10, 600, MUTED, "start");
     }
   });
-  left.forEach((conn) => {
-    const p = at[`c:${conn.label}`];
-    body += connectorBox(1, p.y - 11, 32, 22, conn.label);
-    if (conn.braidLen) body += `<rect data-part="braid" x="35" y="${f(p.y - 6)}" width="20" height="12" rx="4" fill="url(#pfBraid)" stroke="${INK}" stroke-width=".9"/>`;
-    if (conn.tube) body += `<rect data-part="branch-tube" x="35" y="${f(p.y - 7)}" width="9" height="14" rx="3" fill="${TUBE}" stroke="${INK}" stroke-width=".9"/>`;
-  });
-  right.forEach((conn) => { body += connectorBox(286, at[`c:${conn.label}`].y - 11, 32, 22, conn.label); });
   // Легенда: что значат штриховка и тёмная вставка.
   const y0 = top + lines * rowH + 18;
   const mm = (len: string) => (len ? ` · ${len} мм` : "");

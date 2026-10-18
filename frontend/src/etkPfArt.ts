@@ -436,6 +436,19 @@ export function pfBranchSvg(branch: PfBranch): string {
   return svg(W, H, head + wires + body);
 }
 
+/** Корпус разъёма по обозначению («X1»): из операции монтажа ЭТК (`operation.housing`) той же позиции, что строка генератора
+ *  с этим разъёмом (`build_config.ops[].ep.label`); списки не совпадают или корпуса нет — null (рисуется контур). */
+function housingsOf(document: Row | null | undefined): (label: string) => EtkHousing | null {
+  const own = rows(obj(document?.build_config).ops), real = rows(document?.operations), map = new Map<string, EtkHousing>();
+  if (own.length && own.length === real.length) {
+    own.forEach((op, index) => {
+      const label = str(obj(op.ep).label).trim(), housing = real[index].housing;
+      if (label && housing && typeof housing === "object" && !map.has(label)) map.set(label, housing as EtkHousing);
+    });
+  }
+  return (label) => map.get(label) ?? null;
+}
+
 /** Сростки ПФ: по эскизу на каждый — провода в своих цветах, трубка поверх. Какие провода в каком сростке и куда идут их
  *  концы — по снимку формы генератора (`build_config.gen_state`); без него — по числу сростков и цветам входа. */
 function spliceArt(operations: Row[], source: (operation: Row) => Row, config: Row, inputs: string[], topology: EtkTopologyData): string {
@@ -456,14 +469,20 @@ function spliceArt(operations: Row[], source: (operation: Row) => Row, config: R
 
 /** ПФ «ТУТ на месте Б»: ветви (разъёмы стороны А с цветами проводов) сходятся под одну трубку на жгуте, справа выходят
  *  провода к разъёмам стороны Б. Разъёмы и провода — из операций монтажа в `build_config.ops`; нет ветвей — null. */
-function harnessTubeArt(operations: Row[], source: (operation: Row) => Row, config: Row, batch: number): string | null {
+function harnessTubeArt(operations: Row[], source: (operation: Row) => Row, config: Row, batch: number, housingOf: (label: string) => EtkHousing | null): string | null {
   const branches = (side: string): TubeBranch[] => {
     const seen = new Set<string>();
     return rows(config.ops).flatMap((op) => {
       const ep = obj(op.ep), label = str(ep.label).trim();
       if (str(op.type) !== "insTerm" || str(op.side) !== side || !label || seen.has(label)) return [];
       seen.add(label);
-      return [{ label, colors: rows(op.wires).map((wire) => etkWireColor(str(wire.art || wire.name))) }];
+      const pins = Array.isArray(op.pins) ? op.pins : [], byPin: Record<number, string> = {};
+      const wires = rows(op.wires).map((wire, index) => {
+        const name = str(wire.art || wire.name), pin = Math.round(num(pins[index]));
+        if (pin > 0) byPin[pin] = name;
+        return { color: etkWireColor(name), pin };
+      });
+      return [{ label, wires, housing: housingOf(label), byPin }];
     });
   };
   const left = branches("A"), right = branches("B");
@@ -484,25 +503,25 @@ export function etkPfArt({ group, operations, inputs = [], document, pins = {}, 
 }): PfArt | null {
   const config = obj(document?.build_config);
   const topology = obj(document?.topology) as EtkTopologyData;
+  const source = etkConfigOp(document), housingOf = housingsOf(document);
   const kinds = operations.map(kindOf);
   const figures = operations.map((operation) => etkFigure(operation));
   // Изделие — схема жгута целиком.
   let main: PfMain | null = null;
   if (group.final) {
     // Плоский обзор жгута по снимку генератора; нет снимка — схема жгута по топологии.
-    const model = harnessModel(config);
+    const model = harnessModel(config, housingOf);
     const harness = model ? drawn(harnessOverview(model)) : etkDrawHarness(topology, pins);
     if (harness) main = { svg: harness };
   }
   // Ветвь — разъём с проводами и всем, что на них надето, одним рисунком (слоёв под ним нет: они на рисунке).
-  const source = etkConfigOp(document);
   const branch = group.final || kinds.includes("splice") ? null : pfBranch(operations, source, config, batch);
   if (branch) return { main: { svg: pfBranchSvg(branch) }, layers: "" };
   // ПФ «ТУТ на месте Б» — трубка на жгуте (операции с флагом `harness`): ветви сходятся под одну трубку. Проверяется после
   // ветви: у ветви (монтаж в разъём) ТТК тоже с флагом `harness` — её ПФ рисуется ветвью, как раньше (владелец 18.10).
   if (!group.final && !kinds.includes("splice") && operations.some((operation) => source(operation).harness)
     && !operations.some((operation) => str(source(operation).type) === "insTerm")) {
-    const tubes = harnessTubeArt(operations, source, config, batch);
+    const tubes = harnessTubeArt(operations, source, config, batch, housingOf);
     if (tubes) return { main: { svg: tubes }, layers: "" };
   }
   if (!main && kinds.includes("splice")) main = { svg: spliceArt(operations, source, config, inputs, topology) };
