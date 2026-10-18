@@ -127,11 +127,11 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     _jst("jst-sm-r", "SM (вилка)", r"^SMR-0*(\d+)V", 2.5, "lever", max=12, start="TL", conf="high", color_by=((r"V-B", BLACK),),
          src="JST eSM, Housing", model="hood",
          body={"extra": 3.0, "h": 6.0, "len": 18.2, "win": (1.0, 1.0), "lock_w": 3.8, "lock_h": 1.2, "lock_len": 14.5,
-               "hood": {"extra": 5.5, "h": 7.5, "len": 8.0, "wall": 0.8}}),
+               "hood": {"extra": 5.5, "h": 7.5, "len": 8.0, "wall": 0.8}, "geom": "drawing", "geom_url": "https://www.jst-mfg.com/product/pdf/eng/eSM.pdf"}),
     _jst("jst-sm-p", "SM (розетка)", r"^SMP-0*(\d+)V", 2.5, "lever", max=12, start="TR", conf="high", color_by=((r"V-B", BLACK),),
          src="JST eSM, Housing", model="arms",
          body={"extra": 3.0, "h": 7.4, "len": 11.7, "win": (1.1, 1.1), "lock_w": 3.0, "lock_h": 0.6, "lock_len": 1.3,
-               "nose_h": 5.2, "front_len": 1.4, "wings": {"out": 3.2, "w": 4.0, "root": 4.3, "tip": 1.1}}),
+               "nose_h": 5.2, "front_len": 1.4, "wings": {"out": 3.2, "w": 4.0, "root": 4.3, "tip": 1.1}, "geom": "drawing", "geom_url": "https://www.jst-mfg.com/product/pdf/eng/eSM.pdf"}),
     # PicoBlade 51021 — Molex 510210000-SD (third angle): the top view is the wire end, with the face of the contact
     # windows (front view) at the bottom, the friction-lock bumps on the opposite face and CIRCUIT 1 (moulded «1» mark)
     # on the right; the bottom view has CIRCUIT 1 on the right too. From the wire side, windows down: contact 1 on the
@@ -152,13 +152,15 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # 19.6 long, latch 5.4 wide and 2.8 proud (measured on the 4:1 drawing); `win` is a sketch size.
     {"id": "molex-minifit-jr", "title": "Molex Mini-Fit Jr.", "pattern": r"^39-?01-?2(\d{2})\d$|^5557-(\d{2})R", "count_groups": (1, 2), "pitch": 4.2, "rows": 2, "order": "row", "start": "BR", "latch": "lever", "color": IVORY, "conf": "high",
      "src": "Molex SD-5557-003", "note": "по чертежу Molex SD-5557-003: защёлка сверху, контакт 1 внизу справа, ряд 1…n дальше от защёлки",
-     "body": {"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4), "cav": MINIFIT_CAV}},
+     "body": {"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4), "cav": MINIFIT_CAV,
+              "geom": "drawing", "geom_url": "https://www.molex.com/pdm_docs/sd/039012080_sd.pdf"}},
     # Micro-Fit 43025 — Molex sales drawing SDA-43025: mating view (top view, latch up) has circuit 1 bottom-left and the
     # last circuit top-right; from the wire side that mirrors to 1 bottom-right, rows counted right to left (as before).
     # Width (A) = 3.00 per column + 0.85, 6.86 across the rows, 14.0 long, latch 3.86 wide.
     {"id": "molex-microfit", "title": "Molex Micro-Fit 3.0", "pattern": r"^43025-?(\d{2})0\d$", "pitch": 3.0, "rows": 2, "order": "row", "start": "BR", "latch": "lever", "color": BLACK, "conf": "high",
      "src": "Molex SDA-43025", "note": "по чертежу Molex SDA-43025: защёлка сверху, контакт 1 внизу справа",
-     "body": {"extra": 3.85, "h": 6.86, "len": 14.0, "lock_w": 3.86, "lock_h": 1.4, "win": (2.2, 2.2)}},
+     "body": {"extra": 3.85, "h": 6.86, "len": 14.0, "lock_w": 3.86, "lock_h": 1.4, "win": (2.4, 2.4),
+              "geom": "photo", "geom_url": "https://www.lcsc.com/product-detail/C122417.html"}},
     # Micro-Fit 43645 — Molex 436450000-SD (replaces SDA-43645; third angle): the front view is the latch face with the
     # wire end up, the view under it (mating towers, latch at its top edge) has CIRCUIT #1 at the left, and the rear view
     # carries the FIRST CIRCUIT IDENTIFIER rib on that side. From the wire side, latch up: contact 1 on the RIGHT.
@@ -255,7 +257,11 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # DF13 — EDC3-083675: «POLARIZATION MARKING» ▽ and «MARKING ON EVERY FIVE CONTACTS» on the front face count
     # contacts from the left; the locks (flag 1) sit on the BACK face -> from the wire side, locks up, contact 1 RIGHT.
     {"id": "hirose-df13", "title": "Hirose DF13", "pattern": r"^DF13-(\d+)S-1[.,]25C", "pitch": 1.25, "rows": 1, "order": "row", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "high",
-     "src": "Hirose EDC3-083675 (DF13-*S-1.25C)", "note": "по чертежу Hirose DF13: защёлки сверху, метка ▽ снизу — контакт 1 справа"},
+     "src": "Hirose EDC3-083675 (DF13-*S-1.25C)", "note": "по чертежу Hirose DF13: защёлки сверху, метка ▽ снизу — контакт 1 справа",
+     # Catalogue B244 «Single Row Socket»: B = A + 2.9, 3.2 deep. Photo (LCSC C88348, back): the wire end is a comb of tall open
+     # slots ~0.7 mm wide, ~2.0 tall, under the lock bar on top.
+     "body": {"extra": 2.9, "h": 3.2, "len": 4.0, "lock_inset": 0.6, "lock_h": 0.5, "win": (0.7, 2.0), "win_y": 1.9,
+              "geom": "photo", "geom_url": "https://www.lcsc.com/product-detail/C88348.html"}},
     # DF14 — EDC3-160306-01: «CONTACT NO. 1» ▽ at the left of the front face, and the lock (flag 2) is on that same front
     # face -> from the wire side, lock up, contact 1 LEFT.
     {"id": "hirose-df14", "title": "Hirose DF14", "pattern": r"^DF14-(\d+)S-1[.,]25C", "pitch": 1.25, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "high",
@@ -266,7 +272,10 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # A = B + 4.0 (B = (columns − 1)·2), 5.0 thick, 7.3 long.
     {"id": "hirose-df11", "title": "Hirose DF11 (2 ряда)", "pattern": r"^DF11-(\d+)DS", "pitch": 2.0, "rows": 2, "order": "col", "start": "TL", "latch": "mark", "color": IVORY, "erp_only": True, "conf": "high",
      "src": "Hirose EDC-162389-00-01 (DF11-*DS-2C)", "note": "по чертежу Hirose DF11: метка ▽ и цифра 1 сверху — контакт 1 вверху слева, чётные снизу",
-     "body": {"extra": 4.0, "h": 5.0, "len": 7.3, "win": (1.2, 1.2)}},
+     "body": {"extra": 4.0, "h": 5.0, "len": 7.3, "win": (1.7, 1.7), "geom": "photo",
+              # wire end of DF11-4DS-2C: 2 × 2 open square crimp cavities ~1.7 mm with thin walls (the catalogue's 1.2 mm squares are the
+              # mating-face pin entries); photo front/back of LCSC C185144.
+              "geom_url": "https://www.lcsc.com/product-detail/C185144.html"}},
     # FI-X — the only maker drawing reachable is JAE SJ111287 (FI-X30HL-B, via datasheet.lcsc.com; jae.com 404s): it
     # shows the housing and lock levers but no contact numbers, so the numbering stays unchecked.
     {"id": "jae-fix", "title": "JAE FI-X", "pattern": r"^FI-X(\d+)H", "pitch": 1.0, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": "#b9c0c6", "erp_only": True, "conf": "low",
