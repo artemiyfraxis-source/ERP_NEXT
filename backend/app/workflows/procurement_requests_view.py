@@ -5,7 +5,8 @@ hands it, for a list of lines and on the caller's session (read-only, a few inde
 - the lines' places in the requests for quotes (purchasing `rfq_line_states`) as `RfqState`;
 - the free stock of each line's item: warehouse lots with something available (balance − reserve), the same part
   number (else the same name) and unit — RB «На складе: свободно N»;
-- the last UPD purchase of the item (purchasing `line_purchases`, with option references.price_book on).
+- the last UPD purchase of the line's nomenclature item (matched as the request pool does; purchasing
+  `line_purchases`, with option references.price_book on).
 And the request-for-quotes half of «Разделить» (`PurchasingRfqSplitter`), inside the procurement command's transaction."""
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ from app.modules.procurement.requests_view import LastPurchase, RfqState, ViewLi
 from app.modules.purchasing import line_purchases, rfq_line_states, rfq_split
 from app.modules.warehouse.infrastructure import StockLotRow
 from app.shared import stage_options
+# The request pool's attribution of a procurement line to a nomenclature item (link, part number, names).
+from app.workflows.purchasing_rfq_stats import _Nomenclature
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
@@ -83,7 +86,12 @@ def last_purchases(
     result = dict(paid)
     if not stage_options.enabled(PRICE_BOOK_OPTION) or not lines:
         return result
-    wanted = [line_purchases.Wanted(line.id, line.article, line.name, line.unit) for line in lines]
+    nomenclature = _Nomenclature(session)
+    wanted = []
+    for line in lines:
+        item_id, _how = nomenclature.match(line.id, line.article, line.name)
+        if item_id is not None:
+            wanted.append(line_purchases.Wanted(line.id, item_id, line.unit))
     for line_id, upd in line_purchases.last_purchases(session, wanted).items():
         on = _day(upd.date)
         known = result.get(line_id)
