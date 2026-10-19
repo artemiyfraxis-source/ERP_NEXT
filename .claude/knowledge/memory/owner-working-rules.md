@@ -17,6 +17,7 @@ metadata:
 - New routines only on request. Effort/model levels follow brain `_global/CLAUDE.md`.
 - Commits/PRs carry no Claude attribution (ERP_NEXT `CLAUDE.md`).
 - 2026-10-06: «реши сам, это тяжко мне» — process/rules/deploy decisions are the agent's; priorities in order: real production data is never lost, quality, low token cost. Don't send him diffs to approve — decide, then report 2–5 lines.
+- 2026-10-18 «не мне а тебе»: never end a slice with «выпускать — решать вам». Once the gate and CI are green, merge and run `update-server.yml` yourself, then check the screen on the server.
 - Batched releases (2026-10-06, «жди окончания параллельных и выпускай вместе»): while parallel work in the session is still running, merge each green PR into `main` as it lands, but run `update-server.yml` ONCE after the last of them is merged — one server update per batch, not one per PR. Exception: an urgent production fix that can't wait for the batch.
 - Back to VS Code (2026-10-02): the owner wants a planning orchestrator that hands out tasks. Local main session = orchestrator (`CLAUDE.md` «Orchestrator mode», skill `orchestrate`, agents `erp-planner` / `erp-worker` / `erp-verifier`). Owner's Claude account is used only from his PC through a proxy — cloud sessions don't replace the local one.
 
