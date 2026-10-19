@@ -589,6 +589,16 @@ table.ship-lines td:first-child { width: 1%; }
 .cable-clip { display: block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cable-card { padding: 4px 0; }
 .cable-card small { font-size: 11px; text-transform: none; }
+.cable-sheet { display: grid; gap: 12px; min-width: 0; font-variant-numeric: tabular-nums; }
+.cable-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cable-sheet-head h2 { margin: 0; font-size: 18px; }
+.cable-sheet-actions { display: flex; gap: 8px; }
+.cable-sheet-sec { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--sheet-line); }
+.cable-sheet-sec h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.cable-sheet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 20px; margin: 0; }
+.cable-sheet-grid > div { display: grid; gap: 1px; min-width: 0; }
+.cable-sheet-grid dt { color: var(--muted-foreground); font-size: 12px; }
+.cable-sheet-grid dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
 /* Structured cable reference (10.10.2026): the coax card a tester reads at the VNA, «разобрать позже». */
 .hookup-form select { min-width: 0; }
 /* Wire form in short sections (12.10.2026): small heading, dense grid, list fields as swatches / chips. */

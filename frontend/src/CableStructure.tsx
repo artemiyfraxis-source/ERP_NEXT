@@ -28,10 +28,10 @@ export const CABLE_KIND_LABELS: Record<CableKind, string> = {
 /** A number as the shop reads it: comma decimal, no trailing zeros. */
 export const num = (value: number | null | undefined): string =>
   value === null || value === undefined ? "" : String(value).replace(".", ",");
-const freq = (mhz: number | null): string =>
+export const freq = (mhz: number | null): string =>
   mhz === null ? "" : mhz >= 1000 ? `${num(Math.round(mhz / 10) / 100)} ГГц` : `${num(mhz)} МГц`;
 const signed = (value: number | null) => value === null ? "" : value > 0 ? `+${value}` : String(value).replace("-", "−");
-const range = (low: number | null, high: number | null) =>
+export const range = (low: number | null, high: number | null) =>
   low === null && high === null ? "" : `${low === null ? "…" : signed(low)} … ${high === null ? "…" : signed(high)}`;
 const TEMP_NUMBER = /^[+-]?\d+(?:[.,]\d+)?$/;
 /** Temperature typed into one cell as the table shows it — «−60 … +200», also «-60...200», «от -60 до +200», «-60 – 200»,
