@@ -82,6 +82,17 @@ def test_a_d_value_is_refused_and_an_emptied_d_leaves_the_row(base):
         edit_record(EditRecordCommand(record.id, (FieldEdit("D1", "9", ""),), ACTOR, NOW), base())
 
 
+def test_a_card_column_is_written_into_a_row_that_does_not_carry_it_yet(base):
+    # Owner 19.10: частота и КСВ правятся в ячейке любой строки, и у разъёма из листа, где этих полей нет.
+    record = _old_row(base)
+    assert "КСВ" not in record.fields and "Частота до, ГГц" not in record.fields
+    updated = edit_record(EditRecordCommand(record.id, (FieldEdit("КСВ", "", "≤1,25"), FieldEdit("Частота до, ГГц", "", "6")),
+                                            ACTOR, NOW), base())
+    assert updated.fields["КСВ"] == "≤1,25" and updated.fields["Частота до, ГГц"] == "6"
+    with pytest.raises(StaleRecordError, match="Цвет: поля нет в записи"):
+        edit_record(EditRecordCommand(record.id, (FieldEdit("Цвет", "", "красный"),), ACTOR, NOW), base())
+
+
 def test_a_new_row_takes_no_d(base):
     with pytest.raises(ReferenceValidationError, match="Коаксиальные кабели"):
         create_record(CreateRecordCommand(TechOperationTab.COAX, {"Артикул": "SMA-NEW", "Провод": "RG-178", "D1": "1"},

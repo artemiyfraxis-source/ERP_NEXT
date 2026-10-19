@@ -269,7 +269,8 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
         if edit.field not in record.fields and own_columns is None:
             own_columns = custom_columns(record.tab, uow)
         known = (edit.field in record.fields or edit.field in stored or edit.field in (own_columns or ())
-                 or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS))
+                 or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS)
+                 or (record.tab == TechOperationTab.COAX and edit.field in _coax_card_columns()))
         if not known:
             refused.append(f"{edit.field}: поля нет в записи")
             continue
@@ -339,6 +340,12 @@ def custom_columns(tab: TechOperationTab, uow: UnitOfWork) -> list[str]:
     prefix = f"{tab.value}:"
     own = [entry for entry in references.list() if entry.kind == ReferenceKind.CUSTOM_COLUMN and entry.key.startswith(prefix)]
     return [entry.value for entry in sorted(own, key=lambda entry: entry.position)]
+
+
+def _coax_card_columns() -> tuple[str, ...]:
+    """БД.КОАКС card columns (a load may bring them before a row has them): a cell of any row takes them."""
+    from .importers import COAX_CARD_COLUMNS
+    return COAX_CARD_COLUMNS
 
 
 def _check_column_tab(tab: TechOperationTab) -> None:

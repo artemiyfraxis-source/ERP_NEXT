@@ -128,7 +128,7 @@ const PRESETS: DataPreset<TechOperationRecord>[] = [
 
 // Поля, у которых в таблице своя колонка: такой же «свой столбец» («+ Столбец») второй раз не показывается.
 const BUILT_IN = new Set(["Артикул поставщика", "HEX обжима, мм", "Ссылка", "Цена, ₽", "Дата цены", "Монтаж", "Производитель",
-  "Волновое сопротивление, Ом", "Частота до, ГГц", "Наименование", "Источник данных", "Тип пина", "Тип экрана"].map((name) => name.toLowerCase()));
+  "Волновое сопротивление, Ом", "Частота до, ГГц", "КСВ", "Наименование", "Источник данных", "Тип пина", "Тип экрана"].map((name) => name.toLowerCase()));
 
 /** Ссылка на карточку товара: видно сайт, полный адрес — в подсказке; клик открывает карточку, строку не выбирает. */
 function SiteLink({ href }: { href: string }) {
@@ -156,6 +156,8 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
   const text = (name: string, ...more: string[]) => (record: TechOperationRecord) => pick(record.fields, name, ...more);
   // Ячейка пишет колонку листа (сервер переносит её в ключ схемы, который читает генератор); нет колонки у записи — нет правки.
   const cell = (name: string) => canEdit ? fieldCellEdit<TechOperationRecord>(name, (record) => record) : undefined;
+  // Поле карточки (частота, КСВ) правится и у строки, где его ещё нет (сервер принимает поля карточки БД.КОАКС).
+  const cardCell = (name: string) => canEdit ? fieldCellEdit<TechOperationRecord>(name, (record) => record, true) : undefined;
   const length = (name: "L1" | "L2" | "L3"): DataColumn<TechOperationRecord> => ({
     key: name, title: name, hint: `Разделка ${name}, мм`, numeric: true, value: text(name, name.toLowerCase()), edit: cell(name),
   });
@@ -173,6 +175,10 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
     // Разделка — тремя колонками: каждую длину можно вписать прямо в таблицу; HEX обжима втулки — сразу за ними.
     length("L1"), length("L2"), length("L3"),
     { key: "hex", title: "HEX, мм", hint: "HEX обжима втулки экрана, мм", numeric: true, value: text("HEX обжима, мм"), edit: cell("HEX обжима, мм") },
+    // Частотный диапазон и КСВ из карточки — сразу за HEX (владелец 19.10).
+    { key: "ghz", title: "Частота, ГГц", hint: "Рабочая частота до, ГГц — из карточки разъёма", numeric: true, value: text("Частота до, ГГц"),
+      render: (record) => pick(record.fields, "Частота до, ГГц") ? `до ${pick(record.fields, "Частота до, ГГц")}` : "—", edit: cardCell("Частота до, ГГц") },
+    { key: "vswr", title: "КСВ", hint: "КСВН по карточке поставщика", value: text("КСВ"), wrap: true, maxWidth: 140, edit: cardCell("КСВ") },
     { key: "mfr", title: "Производитель", value: (record) => coaxMaker(record.fields), render: (record) => coaxMaker(record.fields) || "—", wrap: true, maxWidth: 120, edit: cell("Производитель") },
     { key: "supplier", title: "Поставщик", value: (record) => coaxSupplier(record.fields), render: (record) => coaxSupplier(record.fields) || "—", wrap: true, maxWidth: 130 },
     { key: "vendorArticle", title: "Артикул поставщика", value: text("Артикул поставщика"), wrap: true, maxWidth: 160, edit: cell("Артикул поставщика") },
@@ -184,7 +190,6 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
     },
     { key: "priceDate", title: "Дата цены", value: text("Дата цены"), hidden: true, edit: cell("Дата цены") },
     { key: "ohm", title: "Ом", value: text("Волновое сопротивление, Ом"), numeric: true, hidden: true, edit: cell("Волновое сопротивление, Ом") },
-    { key: "ghz", title: "До, ГГц", value: text("Частота до, ГГц"), numeric: true, hidden: true, edit: cell("Частота до, ГГц") },
     { key: "name", title: "Наименование", value: text("Наименование"), hidden: true, edit: cell("Наименование") },
     { key: "source", title: "Источник данных", value: text("Источник данных"), hidden: true, edit: cell("Источник данных") },
     ...ownColumns.filter((name) => !BUILT_IN.has(name.trim().toLowerCase())).map((name): DataColumn<TechOperationRecord> => ({
@@ -243,6 +248,7 @@ const CARD_ROWS: Array<[string, (fields: Fields) => string, boolean?]> = [
   ["Крепление экрана", (fields) => pick(fields, "Крепление экрана")],
   ["Волновое сопротивление", (fields) => (pick(fields, "Волновое сопротивление, Ом") ? `${pick(fields, "Волновое сопротивление, Ом")} Ом` : "")],
   ["Частота до", (fields) => (pick(fields, "Частота до, ГГц") ? `${pick(fields, "Частота до, ГГц")} ГГц` : "")],
+  ["КСВ", (fields) => pick(fields, "КСВ")],
   ["Материал корпуса", (fields) => pick(fields, "Материал корпуса")],
   ["Покрытие", (fields) => pick(fields, "Покрытие")],
   ["Габариты", (fields) => pick(fields, "Габариты")],
