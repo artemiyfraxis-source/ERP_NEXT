@@ -27,6 +27,8 @@ import { hasFullAccess } from "./navigation";
 import { EtkFold, EtkFoldScope, useEtkFold } from "./etkFold";
 import { EtkHarnessE4, wireMapModel } from "./EtkHarnessE4";
 import { etkLinkScheme } from "./etkLinkScheme";
+import { changesByOperation, changeValue, revisionActor, revisionChanges } from "./etkRevisions";
+import { PageWindow } from "./PageWindow";
 import { pinCoreColor, withCoreColors } from "./etkCoreColors";
 import { LinkSchemeView, type LinkScheme } from "./PinoutLinks";
 import { EtkPfList } from "./EtkPfList";
@@ -750,6 +752,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
   const list = operations(card.document);
   const issued = card.status === "Выдана";
   const [sketches, setSketches] = useState<OperationSketch[]>([]);
+  const [changed, setChanged] = useState<TechcardRevision | null>(null);
   useEffect(() => {
     void techcardsApi.revisions(card.id).then((result) => setRevisions(result.items)).catch(() => setRevisions([]));
   }, [card.id, card.version]);
@@ -785,6 +788,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+    {card.review_note && <div className="warning-inline etk-review" role="status"><strong>Нужна проверка технолога:</strong> {card.review_note}</div>}
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
     <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)}
@@ -798,9 +802,33 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     }} />
     {!list.length && <div className="etk-empty">ЭТК ещё не собрана — откройте «Генератор» и нажмите «Создать».</div>}
     {revisions.length > 0 && <EtkFold block="revs" className="etk-revs" summary={`Журнал ревизий · ${revisions.length}`}>
-      {revisions.map((revision) => <div key={revision.id}><span>Ревизия {revision.revision} · {revision.reason}</span><span className="muted">{revision.actor_name} · {stamp(revision.occurred_at)}</span></div>)}
+      {revisions.map((revision) => <div key={revision.id} className="etk-rev-row">
+        <span><strong>Ревизия {revision.revision}</strong> · {revision.reason}</span>
+        <span className="muted">{stamp(revision.occurred_at)} · {revisionActor(revision)}</span>
+        {revisionChanges(revision.diff).length > 0 && <button type="button" className="secondary small" onClick={() => setChanged(revision)}>Что изменилось</button>}
+      </div>)}
     </EtkFold>}
+    {changed && <RevisionChangesWindow revision={changed} close={() => setChanged(null)} />}
   </div></EtkFoldScope></MarkSerialContext.Provider>;
+}
+
+/** «Что изменилось» в ревизии: по операциям — поле, было → стало. */
+function RevisionChangesWindow({ revision, close }: { revision: TechcardRevision; close: () => void }) {
+  const groups = changesByOperation(revisionChanges(revision.diff));
+  return <PageWindow label={`Что изменилось в ревизии ${revision.revision}`} width={820} dismissable close={close}><div className="panel etk-changes">
+    <div className="etk-changes-head">
+      <h2>Ревизия {revision.revision}: что изменилось</h2>
+      <button type="button" className="secondary small" onClick={close}>Закрыть</button>
+    </div>
+    <p className="muted">{stamp(revision.occurred_at)} · {revisionActor(revision)} · {revision.reason}</p>
+    {groups.map((group) => <section key={group.key} className="etk-changes-op">
+      <h3>{group.label}</h3>
+      <table><thead><tr><th>Поле</th><th>Было</th><th>Стало</th></tr></thead>
+        <tbody>{group.items.map((item, index) => <tr key={index}>
+          <td>{item.field}</td><td className="etk-change-old">{changeValue(item.old)}</td><td className="etk-change-new">{changeValue(item.new)}</td>
+        </tr>)}</tbody></table>
+    </section>)}
+  </div></PageWindow>;
 }
 
 /** «Генератор» сборки: форма и ОДНА кнопка. Нет ТК — «Создать» (сборка ЭТК и выдача сразу, как файл техкарты в

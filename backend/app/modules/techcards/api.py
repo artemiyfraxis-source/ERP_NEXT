@@ -347,6 +347,8 @@ def _revision_result(revision: TechcardRevision) -> dict:
         "reason": revision.reason,
         "actor_name": revision.actor_name,
         "occurred_at": revision.occurred_at.isoformat(),
+        "source": revision.source,
+        "diff": revision.diff,
         "document": revision.document,
     }
 
