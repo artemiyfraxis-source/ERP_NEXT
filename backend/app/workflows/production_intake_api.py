@@ -40,6 +40,9 @@ def list_intake(
         "remaining": _number(row.remaining),
         "good_id": str(row.good.id) if row.good else None, "good_version": row.good.version if row.good else None,
         "grn": row.good.grn if row.good else None, "location": row.location,
+        "acts": [{
+            "grn": act.grn, "quantity": _number(act.net), "received_at": act.received_at.isoformat(), "location": act.location,
+        } for act in row.acts],
         "tasks": [{
             "number": task.number, "status": task.status, "site": task.site, "quantity": task.quantity,
             "delivered": _number(task.delivered),

@@ -46,7 +46,7 @@ from app.modules.production.plan import (
     summarize_kit_marks,
 )
 from app.modules.production.traceability import BoxStatus
-from app.modules.shipping.domain import FinishedGood
+from app.modules.shipping.domain import AcceptanceAct, FinishedGood
 from app.modules.shipping.infrastructure import SqlAlchemyFinishedGoodsRepository
 from app.modules.techcards.infrastructure import ProjectTechcardRow
 from app.modules.techcards.kitset_infrastructure import SqlAlchemyKitsetRepository
@@ -90,6 +90,7 @@ class IntakeRow:
     sent: Decimal
     good: FinishedGood | None = None
     tasks: tuple[TaskShare, ...] = ()
+    acts: tuple[AcceptanceAct, ...] = ()
 
     @property
     def remaining(self) -> Decimal:
@@ -139,6 +140,7 @@ class IntakeFacts:
     tasks: tuple[ProductionTask, ...] = ()
     production: Mapping[str, KbProduction] = field(default_factory=dict)
     goods: tuple[FinishedGood, ...] = ()
+    acts: Mapping[UUID, tuple[AcceptanceAct, ...]] = field(default_factory=dict)
     kit_requests: tuple[KitRequestFact, ...] = ()
     boxes: tuple[BoxFact, ...] = ()
     inspected: Collection[UUID] = frozenset()
@@ -235,6 +237,7 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
                 needed=needed, launched=kb.run if kb else ZERO, delivered=kb.delivered if kb else ZERO,
                 accepted=good.accepted if good else ZERO, packed=good.shipped if good else ZERO, sent=sent,
                 good=good, tasks=kb.tasks if kb else (),
+                acts=tuple(act for act in facts.acts.get(good.id, ()) if act.net > 0) if good else (),
             ))
     return sorted(rows, key=lambda row: (
         row.deadline is None, row.deadline or date.max, normalize_project_number(row.project), natural_key(row.item_index),
@@ -329,6 +332,7 @@ def read_intake(uow) -> IntakeFacts:
         return IntakeFacts(projects=projects, events=events)
     tasks = tuple(uow.live_tasks(active))
     task_ids = [task.id for task in tasks]
+    goods = tuple(good for good in uow.goods.list(limit=1_000_000) if normalize_project_number(good.project) in active)
     return IntakeFacts(
         projects=projects, events=events,
         kitsets=tuple(uow.kitsets.for_projects(
@@ -337,7 +341,7 @@ def read_intake(uow) -> IntakeFacts:
         cards=tuple(uow.cards(active)),
         tasks=tasks,
         production=read_delivered(uow, tasks),
-        goods=tuple(good for good in uow.goods.list(limit=1_000_000) if normalize_project_number(good.project) in active),
+        goods=goods, acts=uow.goods.acts([good.id for good in goods]),
         kit_requests=tuple(uow.kit_requests()),
         boxes=tuple(uow.boxes(task_ids)),
         inspected=frozenset(uow.qc.inspected_box_ids()),

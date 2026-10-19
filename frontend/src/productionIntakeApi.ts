@@ -4,6 +4,9 @@ import { api, type ProjectAddressee } from "./api";
 
 export interface IntakeTask { number: string; status: string; site: string; quantity: number | string; delivered: string }
 
+/** Акт приёмки КБ складом: свой ГРН, штуки с учётом откатов, дата и место. */
+export interface IntakeAct { grn: string; quantity: string; received_at: string; location: string }
+
 export interface IntakeRow {
   project: string;
   customer: string;
@@ -25,6 +28,7 @@ export interface IntakeRow {
   grn: string | null;
   location: string;
   tasks: IntakeTask[];
+  acts?: IntakeAct[];
 }
 
 export type UpdType = "ЭДО" | "БУМАГА" | "БЕЗ УПД";

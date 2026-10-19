@@ -10,7 +10,7 @@ import { formatDate, formatDayMonth } from "./format";
 import { StatusChip as SharedChip } from "./StatusChip";
 import { isoDay } from "./Gantt";
 import { daysUntil } from "./productionGraph";
-import { GoodsStateBar, goodsPieces, sumPieces } from "./FinishedGoodsStates";
+import { goodsPieces } from "./FinishedGoodsStates";
 import { DispatchFields, changedDispatch, dispatchDraft, readFile, type DispatchDraft } from "./DispatchCard";
 import "./shipping.css";
 
@@ -235,6 +235,7 @@ function locationsOf(row: ProjectRow) {
 function StockTab(context: Context & { rows: ProjectRow[] }) {
   const { rows, canManage, busy, mutate } = context;
   const [adding, setAdding] = useState(false);
+  const menu = useRef<HTMLDetailsElement>(null);
   const columns: DataColumn<ProjectRow>[] = [
     { key: "project", title: "Проект", value: (row) => row.project, render: (row) => <strong>{row.project}</strong> },
     { key: "customer", title: "Заказчик", value: (row) => row.customer, filter: true, hidden: true },
@@ -242,8 +243,6 @@ function StockTab(context: Context & { rows: ProjectRow[] }) {
     { key: "location", title: "Место хранения", value: (row) => locationsOf(row), wrap: true, render: (row) => locationsOf(row) || <span className="muted">—</span> },
     { key: "ready", title: "Принято складом", value: (row) => row.ready, numeric: true, hint: "Лежит на складе, ещё не упаковано",
       render: (row) => <strong className="tone-ok">{row.ready}</strong> },
-    { key: "states", title: "Статус КБ", value: (row) => row.ready, wrap: true,
-      render: (row) => <GoodsStateBar pieces={sumPieces(row.lines.map((line) => goodsPieces(line.good)))} /> },
     { key: "due", title: "Срок", value: (row) => row.due ?? "", render: (row) => <Due day={row.due} late={row.late} /> },
     { key: "point", title: "Куда", value: (row) => row.point, wrap: true,
       render: (row) => row.point || <span className="tone-danger">адрес не указан</span> },
@@ -252,7 +251,8 @@ function StockTab(context: Context & { rows: ProjectRow[] }) {
     {adding && <RegisterGood busy={busy} mutate={mutate} onDone={() => setAdding(false)} />}
     <DataTable label="На складе" storageKey="shipping-stock" rows={rows} columns={columns} rowKey={(row) => row.project}
       groupBy={(row) => row.customer || "Заказчик не указан"} exportName="Отгрузка — на складе"
-      toolbar={canManage && !adding ? <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Добавить КБ проекта</button> : undefined}
+      toolbar={canManage && !adding ? <details className="ship-menu" ref={menu}><summary className="secondary small">Ещё</summary>
+        <div className="ship-menu-list"><button type="button" className="secondary small" onClick={() => { menu.current?.removeAttribute("open"); setAdding(true); }}>+ Добавить КБ проекта</button></div></details> : undefined}
       emptyText="На складе ничего не ждёт упаковки — примите готовое в разделе «Приёмка с производства»."
       renderDetail={(row) => <ShipPanel key={`${row.project}:${row.ready}:${row.packed}:${context.addressees.find((item) => item.project === row.project)?.version ?? 0}`} {...context} row={row} />} />
   </>;
@@ -372,12 +372,12 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
         <DispatchFields project={row.project} draft={card} onChange={setCard} editable={editCard} card={stored} suffix={` проекта ${row.project}`}
           onCardSaved={(saved, message) => void mutate(`addressee:${row.project}`, async () => saved, message)} />
       </div>
-      {canManage && <div className="ship-form ship-pack-docs">
-        <label>№ УПД<input aria-label={`№ УПД проекта ${row.project}`} value={docs.upd_number} onChange={(event) => setDocs({ ...docs, upd_number: event.target.value })} /></label>
-        <label>Дата УПД<input aria-label={`Дата УПД проекта ${row.project}`} type="date" value={docs.upd_date} onChange={(event) => setDocs({ ...docs, upd_date: event.target.value })} /></label>
-        <label>Отгрузить до<input aria-label={`Отгрузить до: проект ${row.project}`} type="date" min={today()} value={docs.deadline} onChange={(event) => setDocs({ ...docs, deadline: event.target.value })} /></label>
-      </div>}
-      <details className="ship-more"><summary>Ещё: контакт, доставка, план{canManage ? ", реквизиты" : ""} <span className="muted">· {filled.length ? filled.join(" · ") : "не заполнены"}</span></summary>
+      <details className="ship-more"><summary>Ещё: {canManage ? "УПД, " : ""}контакт, доставка, план{canManage ? ", реквизиты" : ""} <span className="muted">· {filled.length ? filled.join(" · ") : "не заполнены"}</span></summary>
+        {canManage && <div className="ship-form ship-pack-docs">
+          <label>№ УПД<input aria-label={`№ УПД проекта ${row.project}`} value={docs.upd_number} onChange={(event) => setDocs({ ...docs, upd_number: event.target.value })} /></label>
+          <label>Дата УПД<input aria-label={`Дата УПД проекта ${row.project}`} type="date" value={docs.upd_date} onChange={(event) => setDocs({ ...docs, upd_date: event.target.value })} /></label>
+          <label>Отгрузить до<input aria-label={`Отгрузить до: проект ${row.project}`} type="date" min={today()} value={docs.deadline} onChange={(event) => setDocs({ ...docs, deadline: event.target.value })} /></label>
+        </div>}
         <div className="ship-form">
           {MORE_FIELDS.map(([key, label, placeholder]) => <label key={key}>{label}
             <input aria-label={`${label} проекта ${row.project}`} disabled={!editCard} placeholder={editCard ? placeholder : ""} value={more[key]} onChange={(event) => setMore({ ...more, [key]: event.target.value })} /></label>)}
