@@ -218,7 +218,8 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
         rows={rows}
         columns={columns}
         rowKey={(record) => record.id}
-        storageKey="db:coax-connectors"
+        // «-2»: раскладка до 19.10 прятала «Частоту» (была скрыта по умолчанию) и показывала новый «источник заглубления».
+        storageKey="db:coax-connectors-2"
         exportName="Коаксиальные разъёмы"
         presets={PRESETS}
         groupBy={(record) => coaxTypeGroup(record.fields)}
