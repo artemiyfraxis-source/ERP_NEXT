@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, failureText } from "./api";
 
 /** Опции стенда (Витя, 05.10.2026): гибридные блоки включаются по одному — «Было» или «Новое». На проде список
@@ -50,6 +50,14 @@ function useStageOptions(): Payload | null {
 export function useStageOption(key: string): boolean {
   const payload = useStageOptions();
   return Boolean(payload?.options?.find((option) => option.key === key)?.enabled);
+}
+
+/** The keys switched to «Новое» (empty off the stage) — for things that open on any of several options, like a
+ *  menu section. A key the backend does not know is simply never in the set. */
+export function useEnabledStageOptions(): ReadonlySet<string> {
+  const payload = useStageOptions();
+  const keys = (payload?.options ?? []).filter((option) => option.enabled).map((option) => option.key).sort().join("\n");
+  return useMemo(() => new Set(keys ? keys.split("\n") : []), [keys]);
 }
 
 export function StageOptionsPanel({ canSwitch }: { canSwitch: boolean }) {
