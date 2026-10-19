@@ -212,6 +212,26 @@ describe("коакс: резка с разделкой на роторном с�
     expect(ops.some((op) => op.machine)).toBe(false);
   });
 
+  it("a crimped centre contact («Тип пина» = обжим in БД.КОАКС) is pressed by its own operation, not soldered (19.10)", () => {
+    const rec = coaxFromFields({ coaxArticle: "SMA-JW3", coaxWire: "RG-316", coaxType: "SMA-male R/A", "Тип пина": "обжим", "Тип экрана": "обжим",
+      L1: "2,6", L2: "5,5", L3: "12" });
+    const kit = [
+      { id: "k", type: "Кабель", name: "RG-316", art: "RG-316", qty: 0.3 },
+      { id: "a", type: "Соед", name: "SMA-JW3", art: "SMA-JW3", qty: 1 },
+      { id: "b", type: "Соед", name: "N-Male RG316", art: "N-Male RG316", qty: 1 },
+    ];
+    const D: GenData = { ...data(kit, "Кабельная сборка SMA-JW3 RG-316 0,3m"), templates: coaxTemplates, coaxRecords: [rec] };
+    const S = initState(D);
+    expect(S.coax.pinA).toBe("обжим");
+    const ops = opsOf(D, S);
+    const crimp = ops.filter((op) => op.type === "coaxPinCrimp");
+    expect(crimp.map((op) => [op.side, op.label])).toEqual([["A", "Опрессовка центрального контакта (А)"]]);
+    // Своей карты PRS_PIN_coax ещё нет — карта опрессовки коакса, с пометкой, какой карты не хватает.
+    expect(crimp[0]).toMatchObject({ tmplWant: "PRS_PIN_coax" });
+    expect(ops.filter((op) => op.type === "coaxPin").map((op) => op.side)).toEqual(["B"]);
+    expect((makeGen(D, S).buildConfig() as Record<string, any>).coax.sideA.pinType).toBe("обжим");
+  });
+
   it("a collet centre contact (N-111C/8D × 8D-FB) is not soldered: no pin solder, the housing says why", () => {
     // gsm-repiteri.ru 3300: «центральный контакт - цанговый и не требует пайки»; «Тип пина» в БД.КОАКС пуст.
     const rec = coaxFromFields({ coaxArticle: "N-111C/8D", coaxWire: "8D-FB", coaxType: "N-male", "Тип экрана": "обжим",

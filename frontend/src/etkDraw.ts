@@ -393,9 +393,9 @@ function coaxPin(x0: number, xEnd: number, cy: number, solder: boolean): string 
 function coaxEndSketch(operation: Row): string {
   const end = obj(obj(operation.fields).coaxEnd), type = str(operation.type), cy = 70, x0 = 150, span = 300;
   const g = coaxEndGeometry(end, x0, span), xPin = x0 + (g.x1 - x0) * 0.8;
-  const crimp = /обжим/i.test(str(end.pinType));
+  const crimp = type === "coaxPinCrimp" || /обжим/i.test(str(end.pinType));
   let body = caption(20, 18, sideCaption(end), "start", 600, CX.ink);
-  if (type === "coaxPin") {
+  if (type === "coaxPin" || type === "coaxPinCrimp") {
     body += coaxEndBase(end, x0, span, cy) + coaxPin(x0, xPin, cy, !crimp) +
       `<line x1="${xPin}" y1="${cy + 10}" x2="${xPin}" y2="${cy + 34}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
       `<line x1="${g.x1}" y1="${cy + 12}" x2="${g.x1}" y2="${cy + 34}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +

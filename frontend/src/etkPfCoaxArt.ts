@@ -175,6 +175,6 @@ export function coaxPfArt(group: EtkPfGroup, operations: Row[], config: Row): st
   if (group.final) return coaxAssemblyDrawing(end("A"), end("B"), assemblyLength(config, group.name), tube, str(coax.cableArt || coax.cableName) || "кабель");
   const last = operations[operations.length - 1], side: Side = str(last.side) === "B" ? "B" : "A";
   if (types.includes("coaxHousing")) return coaxMountedDrawing(side, end(side), tube);
-  if (types.every((type) => type === "coaxPin")) return coaxContactDrawing(side, end(side));
+  if (types.every((type) => type === "coaxPin" || type === "coaxPinCrimp")) return coaxContactDrawing(side, end(side));
   return null;
 }

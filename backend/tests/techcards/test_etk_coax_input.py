@@ -229,3 +229,20 @@ def test_housing_of_a_collet_contact_does_not_speak_of_a_soldered_pin():
     assert housing_a["fields"]["collet"] is True and "collet" not in housing_b["fields"]
     assert "центральный контакт (цанговый, без пайки)" in text_a and "припаянн" not in text_a
     assert "припаянный центральный контакт" in text_b
+
+
+def test_a_crimped_centre_contact_is_its_own_pressing_operation_with_the_connector_and_its_end():
+    # Владелец 19.10: тип пина «обжим» (SMA-JW3 и др. в БД.КОАКС) — опрессовка центрального контакта, не пайка.
+    cards = {card.code: card for card in CARDS}
+    config = {"mode": "coax", "partQty": 20, "coax": {
+        "cableLength": 300, "cableArt": "RG316", "cableName": "Кабель RG316",
+        "sideA": {"article": "SMA-JW3", "connName": "Разъём SMA-JW3", "pinType": "обжим", "l1": "2,6", "l2": "5,5", "l3": "12"},
+    }, "ops": [
+        {"type": "coaxCut", "side": "", "units": 1, "templateId": cards["CUT_WIRE_auto"].source_id},
+        {"type": "coaxPinCrimp", "side": "A", "units": 1, "templateId": cards["PRS_SLEEVE_coax"].source_id},
+        {"type": "coaxHousing", "side": "A", "units": 1, "templateId": cards["INS_housing_COAX"].source_id},
+    ]}
+    operations = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"]
+    crimp = next(operation for operation in operations if operation["type"] == "coaxPinCrimp")
+    assert _inputs(crimp) == {"SMA-JW3": ("20", "Шт.")}
+    assert crimp["fields"]["coaxEnd"]["pinType"] == "обжим"

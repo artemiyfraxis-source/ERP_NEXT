@@ -524,7 +524,7 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
             sides["strip"] |= {side for side in ("A", "B") if side in _list(step.get("stripSides"))}
         elif kind == "coaxStrip":
             sides["strip"].add(end)
-        elif kind == "coaxPin":
+        elif kind in ("coaxPin", "coaxPinCrimp"):
             sides["pin"].add(end)
         elif kind == "coaxHousing":
             sides["housing"].add(end)
@@ -635,9 +635,11 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
         # Sleeves of the splices — by the method, whatever the card (PRS_COPPER of the band crimp lists no parts).
         return [{"art": row["art"], "name": row["name"], "norm": _format(row["count"] * quantity), "unit": "Шт."}
                 for row in _splice_parts(op)]
-    if code in NO_COMPONENTS:
-        return []
     operation_type = str(op.get("type") or "")
+    # Опрессовка центрального контакта (владелец 19.10) идёт картой опрессовки коакса, пока своей нет: её вход —
+    # разъём своей стороны, какой бы картой она ни шла.
+    if code in NO_COMPONENTS and operation_type != "coaxPinCrimp":
+        return []
     if operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
         rows = _group_cut_components(_wires(op, config), quantity)
         endpoint = _endpoint(op)
@@ -708,7 +710,7 @@ def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[d
         return row("tutArt", "tutName", units * quantity, "Шт.")
     if operation_type == "coaxInsSleeve":
         return row("sleeveArt", "sleeveName", units * quantity, "Шт.")
-    if operation_type == "coaxPin":
+    if operation_type in ("coaxPin", "coaxPinCrimp"):
         side = coax.get("sideB" if op.get("side") == "B" else "sideA")
         article = str(side.get("article") or "").strip() if isinstance(side, Mapping) else ""
         if not article:
@@ -1091,7 +1093,7 @@ def with_coax_connectors(op: Mapping[str, Any], config: Mapping[str, Any]) -> Ma
     return {**op, "fields": patched} if patched != dict(fields) else op
 
 
-COAX_END_TYPES = frozenset({"coaxPin", "coaxHousing", "coaxSolderShield", "coaxCapCrimp", "coaxCapScrew"})
+COAX_END_TYPES = frozenset({"coaxPin", "coaxPinCrimp", "coaxHousing", "coaxSolderShield", "coaxCapCrimp", "coaxCapScrew"})
 
 
 def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
@@ -1913,7 +1915,7 @@ TOOL_SECTIONS = ("Инструмент", "Оборудование", "Расхо
 GENERATOR_TYPES = frozenset({
     "cutWire", "cutWireStrip", "cutWireCrimp", "cutTut", "insTut", "heatTut", "endCap", "foldCore", "stripCable",
     "twist", "tin", "insMark", "seal", "insWrap", "prsTerm", "insTerm", "solderConn", "splice", "insHousing",
-    "coaxCut", "coaxCutTut", "coaxStrip", "coaxPin", "coaxShield", "coaxSolderShield", "coaxInsSleeve", "coaxInsTut",
+    "coaxCut", "coaxCutTut", "coaxStrip", "coaxPin", "coaxPinCrimp", "coaxShield", "coaxSolderShield", "coaxInsSleeve", "coaxInsTut",
     "coaxHeat", "coaxHousing", "coaxCapCrimp", "coaxCapScrew",
 })
 

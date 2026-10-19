@@ -321,6 +321,10 @@ const SHIELD_CODE_ = "TWST_SHILED";
 export const COAX_CUT_CODE_ = "CUT_COAX_auto";
 /** Тип пина коакс-разъёма с цанговым центральным контактом: жила зажимается цангой, пайки центрального контакта нет. */
 export const COAX_PIN_COLLET = "цанга";
+/** Тип пина «обжим» (владелец 19.10): центральный контакт опрессовывается на жилу — своя операция, не пайка. */
+export const COAX_PIN_CRIMP = "обжим";
+/** Карта опрессовки центрального контакта; пока её нет в БД.ОП — карта опрессовки коакса (втулки), с пометкой. */
+const COAX_PIN_CRIMP_CODE_ = "PRS_PIN_coax";
 const COLLET_RE_ = /цанг/i;
 
 /** Русское название операции генератора по её `type` (как `OPERATION_TYPE_NAMES` на сервере): когда в конфиге нет `label`. */
@@ -332,7 +336,7 @@ const OP_TYPE_NAMES: Record<string, string> = {
   tin: "Лужение", twist: "Свивка", splice: "Сращивание", seal: "Герметизация", solderConn: "Пайка разъёма",
   stripCable: "Разделка кабеля", foldCore: "Загибка жил", endCap: "Установка заглушек", coaxCut: "Резка кабеля",
   coaxCutTut: "Резка ТУТ", coaxStrip: "Разделка коаксиала", coaxShield: "Опрессовка втулки экрана",
-  coaxSolderShield: "Пайка экрана", coaxPin: "Пайка центрального контакта", coaxCapCrimp: "Монтаж крышки (обжим)",
+  coaxSolderShield: "Пайка экрана", coaxPin: "Пайка центрального контакта", coaxPinCrimp: "Опрессовка центрального контакта", coaxCapCrimp: "Монтаж крышки (обжим)",
   coaxCapScrew: "Монтаж крышки (винт)", coaxHousing: "Монтаж корпуса", coaxInsSleeve: "Монтаж втулки экрана",
   coaxInsTut: "Монтаж ТУТ", coaxHeat: "Усадка ТУТ",
 };
@@ -1724,8 +1728,15 @@ export function makeGen(D: GenData, S: GenState) {
     }
     if (tutOn) ops.push({ type: "coaxCutTut", opKey: "coaxCutTut", label: `Резка ТУТ${x(nSides)}`, units: nSides, tmplHint: "CUT_TUT_short" });
     const pinOp = (sd: Side, pin: string): OpSpec => ({ type: "coaxPin", side: sd, opKey: "coaxPin" + sd, label: `Пайка центрального контакта (${sd === "B" ? "B" : "А"})`, tmplHint: pinHint(pin) });
+    // Обжимной центральный контакт (владелец 19.10) — опрессовка на жилу своей операцией, не пайка.
+    const crimpOp = (sd: Side): OpSpec => ({ type: "coaxPinCrimp", side: sd, opKey: "coaxPinCrimp" + sd,
+      label: `Опрессовка центрального контакта (${sd === "B" ? "B" : "А"})`,
+      tmplHint: hasOperation_(COAX_PIN_CRIMP_CODE_) ? COAX_PIN_CRIMP_CODE_ : "PRS_SLEEVE_coax", tmplWant: COAX_PIN_CRIMP_CODE_ });
     // Цанговый центральный контакт (владелец 16.10, «не требует пайки») — пайки пина нет, жилу зажимает корпус.
-    const pushPin = (sd: Side, pin: string) => { if (pin !== COAX_PIN_COLLET) ops.push(pinOp(sd, pin)); };
+    const pushPin = (sd: Side, pin: string) => {
+      if (pin === COAX_PIN_CRIMP) ops.push(crimpOp(sd));
+      else if (pin !== COAX_PIN_COLLET) ops.push(pinOp(sd, pin));
+    };
     const housingLabel = (sd: Side, pin: string) => `Монтаж корпуса (${sd === "B" ? "B" : "А"})${pin === COAX_PIN_COLLET ? " — цанговый контакт, без пайки" : ""}`;
     const insTutOp = (): OpSpec | null => (tutOn ? { type: "coaxInsTut", opKey: "coaxInsTut", label: `Монтаж ТУТ${x(nSides)}`, units: nSides, tmplHint: "INS_TUT" } : null);
     const sleeveOp = (): OpSpec => ({ type: "coaxInsSleeve", opKey: "coaxInsSleeve", label: `Монтаж втулки экрана${x(nSides)}`, units: nSides, tmplHint: "INS_SLEEVE_coax" });
@@ -3410,7 +3421,7 @@ export function onCoaxConnChange(D: GenData, S: GenState, side: Side): GenState 
     const pinKey = side === "A" ? "pinA" : "pinB";
     if (!(rec && rec.pinType) && /r\s*\/\s*a\b|угл/i.test(`${s.art} ${s.name || ""}`)) coax = { ...coax, [pinKey]: "внутри корпуса" };
     if (rec) {
-      if (rec.pinType) coax = { ...coax, [pinKey]: /внутри/i.test(rec.pinType) ? "внутри корпуса" : "пайка" };
+      if (rec.pinType) coax = { ...coax, [pinKey]: /внутри/i.test(rec.pinType) ? "внутри корпуса" : /обжим/i.test(rec.pinType) ? COAX_PIN_CRIMP : "пайка" };
       // Пустой «Тип пина» не значит «пайка»: цанговый центральный контакт (N-111C/8D…) не паяется.
       if (!/внутри/i.test(rec.pinType) && COLLET_RE_.test(rec.centerContact || "")) coax = { ...coax, [pinKey]: COAX_PIN_COLLET };
       if (side === "A" && rec.shieldType) coax = { ...coax, shield: /пайк/i.test(rec.shieldType) ? "пайка" : "обжим" };

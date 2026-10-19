@@ -156,6 +156,22 @@ it("a collet centre contact from БД.КОАКС selects «Цанга, без п
   expect(screen.getAllByText("Монтаж корпуса (А) — цанговый контакт, без пайки")[0]).toBeInTheDocument();
 });
 
+it("a crimped centre contact from БД.КОАКС selects «Обжим» and the pin is pressed, not soldered (19.10)", async () => {
+  mockApi((path) => (path.startsWith("/api/references/tech-operations?") && path.includes("tab=coax") ? json({ metadata: null, columns: [],
+    records: [{ id: "c1", tab: "coax", display_text: "SMA-JW3", source_sheet: "", fields: {
+      coaxArticle: "SMA-JW3", coaxWire: "RG-316", "Тип пина": "обжим", "Тип экрана": "обжим", L1: "2,6" } }] }) : undefined));
+  render(<TcGenerator card={{ ...card, product_name: "Сборка RG-316 0,3m" }} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Сборка RG-316 0,3m", [
+    { type: "Кабель", name: "RG-316", art: "RG-316", qty: 1 },
+    { type: "Соед", name: "SMA", art: "SMA-JW3", qty: 1 },
+  ])} />);
+
+  const pin = await screen.findByRole("radiogroup", { name: "Тип пина А" });
+  expect(within(pin).getAllByRole("radio").map((radio) => radio.textContent)).toEqual(["Пайка", "Пайка внутри корпуса", "Обжим", "Цанга, без пайки"]);
+  await waitFor(() => expect(within(pin).getByRole("radio", { name: "Обжим" })).toHaveAttribute("aria-checked", "true"));
+  expect(screen.getAllByText("Опрессовка центрального контакта (А)")[0]).toBeInTheDocument();
+  expect(screen.queryByText("Пайка центрального контакта (А)")).toBeNull();
+});
+
 it("takes cut lengths and tinning from the КБn sheet of the calculation (tcCalcOps_)", async () => {
   mockApi();
   const onBuild = vi.fn();
