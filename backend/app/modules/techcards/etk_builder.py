@@ -1167,11 +1167,21 @@ SHIELD_CLAMP = "прижим"
 
 
 def coax_end_shield(end: Mapping[str, Any]) -> str:
-    """Тип экрана конца коакс-сборки словами генератора: «прижим» (зажим, clamp), «пайка», иначе «обжим» (прежний тип по умолчанию)."""
+    """Тип экрана конца коакс-сборки словами генератора: «прижим» (зажим, clamp), «пайка», «компрессия» (компрессионное
+    кольцо — как обжим, но без HEX), «накрутка» и «самообжим» (Push-On) — без операции по экрану, иначе «обжим» (прежний тип
+    по умолчанию). Как `coaxShieldKind_` в tcGenLogic.ts."""
     text = str(end.get("shield") or "").casefold()
     if re.search(r"прижим|зажим|clamp", text):
         return SHIELD_CLAMP
-    return "пайка" if re.search(r"пайк|паян|solder", text) else "обжим"
+    if re.search(r"пайк|паян|solder", text):
+        return "пайка"
+    if re.search(r"компресс|compress", text):
+        return "компрессия"
+    if re.search(r"накру[тч]|резьб|twist", text):
+        return "накрутка"
+    if re.search(r"самообжим|push-?on", text):
+        return "самообжим"
+    return "обжим"
 
 
 def coax_crimp_hex(config: Mapping[str, Any]) -> list[dict[str, str]]:
@@ -1299,7 +1309,11 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
                 fields["coaxB"] = side_b
     fields.update(coax_sketch_fields(op, config))
     if operation_type == "coaxShield":
-        fields["crimpHex"] = coax_crimp_hex(config)
+        hexes = coax_crimp_hex(config)
+        if not hexes and any(coax_end_shield(end) == "компрессия" for end in (_coax(config).get(k) for k in ("sideA", "sideB")) if isinstance(end, Mapping)):
+            fields["compression"] = True  # только компрессионные разъёмы: матрицы HEX нет, ЭТК говорит про компрессионный инструмент
+        else:
+            fields["crimpHex"] = hexes
     if operation_type == "coaxHousing" and (depth := str(_coax_end(op, config).get("contactDepth") or "").strip()):
         fields["contactDepth"] = depth  # заглубление контакта от торца корпуса (БД.КОАКС) — в шаг «Контроль» карты
     if operation_type == "coaxHousing" and "цанг" in str(_coax_end(op, config).get("pinType") or "").casefold():
@@ -1546,6 +1560,8 @@ def _resolve_card(
             tolerance = "по КД"
         if fields.get("collet"):
             text = _COLLET_PIN.sub("центральный контакт (цанговый, без пайки)", text)
+        if fields.get("compression") and step.kind == "Контроль" and "hex" in text.casefold():
+            text = f"{text.rstrip()} Компрессионный разъём: компрессионный инструмент, матрица HEX не применяется."
         if isinstance(fields.get("crimpHex"), list) and step.kind == "Контроль" and "hex" in text.casefold():
             # Обжим втулки экрана: размер HEX по разъёму и кабелю из БД.КОАКС, нет — явно «не задан».
             text = f"{text.rstrip()} Размер: {_hex_phrase(fields['crimpHex'])}."
