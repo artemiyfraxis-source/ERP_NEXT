@@ -371,6 +371,14 @@ it("lists no compatible connectors when БД.КОАКС has none for the cable, 
   expect(within(screen.getByRole("table", { name: "Совместимые разъёмы" })).getByText("Разъёмов в БД.КОАКС нет")).toBeInTheDocument();
 });
 
+it("names the family when a variant borrows its compatible connectors", async () => {
+  const connector = (id: string, fields: Record<string, string>) => ({ id, fields: { coaxWire: "RG-316", ...fields } });
+  mockApi([], [{ ...ROWS[0], connectors: [connector("k1", { coaxArticle: "S-111L", coaxType: "SMA-male" })], connectors_family: "RG-316" }, ...ROWS.slice(1)]);
+  render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+  fireEvent.click(await screen.findByText("RG316"));
+  expect(within(screen.getByRole("table", { name: "Совместимые разъёмы" })).getByText("из БД.КОАКС · как у RG-316 · 1")).toBeInTheDocument();
+});
+
 it("structures a hook-up wire from its БД.ПРОВ suggestion and edits a size row", async () => {
   const calls = mockApi();
   render(<ReferencesPage principal={admin} initialTab="cab_wire" />);
