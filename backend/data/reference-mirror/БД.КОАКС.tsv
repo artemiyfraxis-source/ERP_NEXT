@@ -15,9 +15,9 @@ MMCX-male RG-174	MMCX-male 	RG-174	LenoRF		0,48	1,52	1,9	1,8	4,5	10			пайка
 MMCX-male RG-178	MMCX-male 	RG-178	LenoRF		0,25	0,87	1,3	1,8	4,5	9,5
 MMCX-male RG-316	MMCX-male 	RG-316	LenoRF		0,5	1,48	1,95	1,8	4,5	10			пайка	обжим
 MMCX-male R/A RG-174	MMCX-male R/A 	RG-174	LenoRF		0,48	1,52	1,9	0,5	3	7,5			пайка	обжим
-N-female RG-142	N-female 	RG-142	LenoRF		0,94	3	3,95	4	8	16,5
-N-female RG-223	N-female 	RG-223	LenoRF		0,94	2,98	3,95	4	8	16,5			обжим	обжим
-N-female RG-400	N-female 	RG-400	LenoRF		1	2,95	3,95	4	8	16,5			обжим	обжим
+N-female RG-142	N-female 	RG-142	LenoRF		0,94	3	3,95	4	8	16,5					3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
+N-female RG-223	N-female 	RG-223	LenoRF		0,94	2,98	3,95	4	8	16,5			обжим	обжим	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
+N-female RG-400	N-female 	RG-400	LenoRF		1	2,95	3,95	4	8	16,5			обжим	обжим	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
 N-female RG58	N-female 	RG58	LenoRF		1	2,95	3,5	4	8	16,5			обжим	обжим
 N-C58P	N-male	RG58	RUICHI		1	2,95	3,5	3,5	3	11			пайка	обжим
 N-male RG-142	N-male 	RG-142	LenoRF		0,94	3	3,95	2	7,5	15,5
@@ -66,7 +66,7 @@ S-M111C	SMA-male	5D-FB	Kroks		1,8	4,9	5,64						пайка	обжим	0,38…1,1
 T-111/5D	TNC-male	5D-FB	gsm-repiteri		1,8	4,9	5,64						пайка	обжим
 Kroks-412	MMCX-male R/A	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим
 SMA-C58J GOLD	SMA-female bulkhead	RG58	RUICHI		1	2,95	3,5						пайка	обжим	1,88…2,41	radiolab.ru, SMA, розетка: H+I+J = (1,88+0,00+0,00)…(1,98+0,25+0,18) = 1,88…2,41 мм, торец → REF (H) → изолятор (I) → контакт (J); стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
-N-212/8D	N-female	8D-FB	gsm-repiteri		2,56	7,35	8,25						пайка	обжим
+N-212/8D	N-female	8D-FB	gsm-repiteri		2,56	7,35	8,25						пайка	обжим	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
 Kroks-1440	MMCX-male	RG-174	Kroks		0,48	1,52	1,9						обжим	обжим
 Kroks-1440	MMCX-male	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим
 SMA-C58P-GOLD	SMA-male	RG58	RUICHI		1	2,95	3,5						пайка	обжим	0,38…1,14	radiolab.ru, SMA, вилка: E = 0,38…1,14 мм от торца корпуса до контакта; стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
@@ -74,9 +74,9 @@ SMA-LC58P	SMA-male R/A	RG58	RUICHI		1	2,95	3,5						пайка внутри ко
 11_SMA-50-2-112/133_NE	SMA-male	RG-316D	Huber+Suhner		0,5	1,52	2,4	2,2	3,6	8,6			пайка	обжим	0,38…1,14	radiolab.ru, SMA, вилка: E = 0,38…1,14 мм от торца корпуса до контакта; стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
 16_N-50-3-27/133_NE	N-male R/A	RG-223	Huber+Suhner		0,94	2,98	3,95	2,7	11,6	19			пайка внутри корпуса	обжим
 16_SMA-50-2-106/111_NE	SMA-male R/A	RG-316D	Huber+Suhner		0,5	1,52	2,4	3,5	5,5	10			пайка внутри корпуса	обжим
-Nf_F4_086_RG405_C26_PRO	N-female flange	RG-405	Linkmag		0,51	1,68	2,2						пайка	пайка
-N-KF2.5DY	N-female flange	RG-316D	АМЭЛ		0,5	1,52	2,4
-N-KY3DY	N-female bulkhead	RG-316D	АМЭЛ		0,5	1,52	2,4	4,5	6,5	12			пайка	обжим
+Nf_F4_086_RG405_C26_PRO	N-female flange	RG-405	Linkmag		0,51	1,68	2,2						пайка	пайка	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
+N-KF2.5DY	N-female flange	RG-316D	АМЭЛ		0,5	1,52	2,4								3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
+N-KY3DY	N-female bulkhead	RG-316D	АМЭЛ		0,5	1,52	2,4	4,5	6,5	12			пайка	обжим	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
 N-111B	N-male	LMR-400	gsm-repiteri		2,74	7,24	8,13						пайка	обжим
 Kroks-2950	QMA-male	5D-FB	Kroks		1,8	4,9	5,64						пайка	обжим
 SMA-LC174P	SMA-male R/A	RG-174	RUICHI		0,48	1,52	1,9						пайка внутри корпуса	обжим
@@ -104,13 +104,13 @@ MCX-male R/A RG-405	MCX-male R/A	RG-405	Kroks		0,51	1,68	2,2						пайка	п�
 20278-112R-18	MHF1-plug (Lock)	RG-178	I-PEX		0,25	0,87	1,3						обжим	обжим
 MMCX-JW3	MMCX-male R/A	RG-316			0,5	1,48	1,95						обжим	обжим
 MMCX-male R/A RG-178	MMCX-male R/A	RG-178			0,25	0,87	1,3
-N-211/5D	N-female	5D-FB	Kroks		1,8	4,9	5,64						пайка	обжим
-N-245-141	N-female flange	RG-402			0,92	2,98	3,58						пайка	пайка
+N-211/5D	N-female	5D-FB	Kroks		1,8	4,9	5,64						пайка	обжим	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
+N-245-141	N-female flange	RG-402			0,92	2,98	3,58						пайка	пайка	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
 N-50-2-14/133 NE	N-female flange	RG-223	Huber+Suhner		0,94	2,98	3,95						пайка	пайка
 N-50-3-9/133 NE	N-female flange	RG-223	Huber+Suhner		0,94	2,98	3,95						пайка	пайка
-N-female RG-316	N-female	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим
-N-female RG-402	N-female	RG-402			0,92	2,98	3,58						пайка	пайка
-N-female RG-405	N-female	RG-405	Kroks		0,51	1,68	2,2						пайка	пайка
+N-female RG-316	N-female	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
+N-female RG-402	N-female	RG-402			0,92	2,98	3,58						пайка	пайка	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
+N-female RG-405	N-female	RG-405	Kroks		0,51	1,68	2,2						пайка	пайка	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
 N-111/10D	N-male	10D-FB			3,5	10	10,8						пайка	обжим
 N-111C/8D	N-male	8D-FB			2,56	7,35	8,25						пайка	обжим
 N-112/8D	N-male	8D-FB	Kroks		2,56	7,35	8,25						пайка	обжим
@@ -156,9 +156,9 @@ SMP-KW3	SMP-female R/A	RG-174	АМЭЛ		0,48	1,52	1,9
 SSMC-Female 6GHz	SSMC-female				Не найдено
 TNC-C58J	TNC-female	RG58	RUICHI		1	2,95	3,5						пайка	обжим
 TNC-C58P	TNC-male	RG58	RUICHI		1	2,95	3,5						пайка	обжим
-TNC-Female RG316	TNC-female bulkhead	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим
+TNC-Female RG316	TNC-female bulkhead	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим	3,08…3,79	radiolab.ru, TNC, розетка: G − H = (8,31 − 5,23)…(8,51 − 4,72) = 3,08…3,79 (торец → REF минус контакт → REF; стандарт TNC, общий для серии); https://www.radiolab.ru/ru/attach_file/tncradiolab.pdf
 TNC-Female RG58	TNC-female	RG58			1	2,95	3,5						обжим	обжим
-TNC-Fermale приборно-кабельный	TNC-female bulkhead	RG-405	АМЭЛ		0,51	1,68	2,2
+TNC-Fermale приборно-кабельный	TNC-female bulkhead	RG-405	АМЭЛ		0,51	1,68	2,2								3,08…3,79	radiolab.ru, TNC, розетка: G − H = (8,31 − 5,23)…(8,51 − 4,72) = 3,08…3,79 (торец → REF минус контакт → REF; стандарт TNC, общий для серии); https://www.radiolab.ru/ru/attach_file/tncradiolab.pdf
 TNC-JW3Y	TNC-male R/A	RG-316			0,5	1,48	1,95						обжим	обжим
 TNC-Male RG58	TNC-male	RG58	RUICHI		1	2,95	3,5						пайка	обжим
 UHF PL259	UHF-male	5D-FB	Kroks		1,8	4,9	5,64
