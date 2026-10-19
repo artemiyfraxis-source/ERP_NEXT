@@ -556,14 +556,9 @@ it("lets the master hand out operations of issued projects to installers and lau
 
   fireEvent.click(await screen.findByRole("button", { name: "← Все проекты" }));
   await openBoardProject("708К.4");
-  const create = await screen.findByRole("button", { name: "Создать задание" });
-  expect(create).toHaveAttribute("title", expect.stringContaining("Автоплан создаёт задания сам"));
-  expect(screen.getByText(/техкарта выдана, задания ещё нет/)).toBeInTheDocument();
-  fireEvent.click(create);
-  await waitFor(() => expect(bodies.at(-1)).toEqual({
-    path: "/api/production/tasks",
-    body: { techcard_id: "80000000-0000-0000-0000-000000000009", quantity: 5, deadline: "2026-10-10", fulfillment_request_id: null },
-  }));
+  // КБ без задания — справкой, без кнопки «Создать задание» (владелец 19.10): задания создаёт автоплан.
+  expect(await screen.findByText(/техкарта выдана, задания ещё нет/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Создать задание" })).toBeNull();
   vi.useRealTimers();
 });
 

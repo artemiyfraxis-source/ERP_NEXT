@@ -236,6 +236,8 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
         exportName="Коаксиальные разъёмы"
         presets={PRESETS}
         groupBy={(record) => coaxTypeGroup(record.fields)}
+        // Щелчок по заголовку сортирует внутри каждой группы, порядок групп (SMA-female, SMA-male…) не меняется (владелец 19.10).
+        groupSort
         onRowClick={(record) => setSelectedId(record.id === selectedId ? "" : record.id)}
         rowTitle={(record) => `Карточка: ${coaxArticle(record.fields)} · ${coaxWire(record.fields)}`}
         rowClassName={(record) => (record.id === selectedId ? "coax-row-active" : "")}
