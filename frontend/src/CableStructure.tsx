@@ -193,25 +193,28 @@ const hookupPayload = (wire: Partial<HookupWire> | null | undefined): HookupPayl
   outer_d_mm: num(wire?.outer_d_mm), voltage_v: num(wire?.voltage_v), temp_min_c: num(wire?.temp_min_c), temp_max_c: num(wire?.temp_max_c),
 });
 
+// One colour per line, its dot and its name (owner 19.10.2026: «каждый цвет новой строчкой и текстом»).
 function WireColors({ text }: { text: string }) {
   const names = parseColors(text);
   if (!names.length) return <span className="muted">—</span>;
-  return <span className="wire-dots" title={names.join(", ")}>
+  return <ul className="wire-colors" aria-label="Цвета">
     {names.map((name) => {
       const background = colorBackground(name);
-      return background
-        ? <i key={name} className="wire-dot" style={{ background }} role="img" aria-label={name} title={name} />
-        : <span key={name} className="wire-dot-name">{name}</span>;
+      return <li key={name}>{background ? <i className="wire-dot" style={{ background }} aria-hidden="true" /> : <i className="wire-dot wire-dot-none" aria-hidden="true" />}{name}</li>;
     })}
-  </span>;
+  </ul>;
 }
 
 const UNPARSED = "Не разобраны";
 // A wire's own set (owner 15.10.2026: «у монтажных мне надо материал жилы и материал оболочки»): the core and jacket
 // materials, the standard, the maker and the supply columns; the structured «Изоляция» and the other lists' materials
 // (dielectric, core insulation, screen) stay in «Колонки», hidden.
-const WIRE_SHOWN = new Set(["Материал жилы", "Материал оболочки", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
+const LINK = "Ссылка";
+const SUPPLY = ["Поставщик", "Артикул поставщика", LINK, "Цена поставщика, ₽/м", "Дата цены"];
+const WIRE_SHOWN = new Set(["Материал жилы", "Материал оболочки", "Стандарт", "Производители", ...SUPPLY]);
 const OTHER_LISTS = new Set(["Материал диэлектрика", "Материал изоляции жилы", "Материал экрана"]);
+// The coax parameters (owner 19.10.2026: «эти параметры для монтажных не нужны») are not columns of this list at all.
+const COAX_ONLY = new Set(["Погонная ёмкость, пФ/м", "Радиус изгиба неподвижно, мм", "Радиус изгиба многократно, мм"]);
 const CORE_MATERIAL = "Материал жилы";
 const JACKET_MATERIAL = "Материал оболочки";
 type Shared = { jacket?: string; voltage?: string; temp?: string };
@@ -268,6 +271,15 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   const gaugeOf = (row: CableRow) => row.hookup ? byId.get(row.hookup.gauge_id) ?? null : null;
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
   const clip = (text: string) => <span className="cable-clip" title={text}>{text}</span>;
+  // «открыть» — the supplier's page of the wire, as on the coax lists.
+  const supplierLink = (row: CableRow) => {
+    const href = field(row, LINK).trim();
+    if (!href) return null;
+    return /^https?:\/\//i.test(href)
+      ? <a href={href} target="_blank" rel="noreferrer" title={href} aria-label={`Открыть страницу ${row.cable} у поставщика`}
+        onClick={(event) => event.stopPropagation()}>открыть</a>
+      : clip(href);
+  };
   const own = data.custom_columns ?? [];
   // Every value of a parsed wire is written from its cell the way the wire's window writes it: the whole structure with
   // the old values (the server refuses it when the wire changed meanwhile). The size is a pick from «Сечения AWG ↔ мм²»,
@@ -327,10 +339,10 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     // Colours as dots; typed as text («красный, синий») they go by the palette, the picker stays in the wire's window.
     { key: "colors", title: "Цвета", value: (row) => field(row, COLORS), render: (row) => <WireColors text={field(row, COLORS)} />,
       edit: canEdit ? fieldCellEdit<CableRow>(COLORS, (row) => row.record, own.includes(COLORS), normalizeColors) : undefined },
-    ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
+    ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name) && !COAX_ONLY.has(name)).map((name): DataColumn<CableRow> => ({
       key: name, title: name, value: (row) => field(row, name), hidden: !WIRE_SHOWN.has(name) && (!own.includes(name) || OTHER_LISTS.has(name)),
       // The series' common jacket material is in the group header (owner 15.10: «Изоляция» — a rudiment).
-      render: (row) => name === JACKET_MATERIAL && sharedOf(row)?.jacket ? null : clip(field(row, name)),
+      render: (row) => name === JACKET_MATERIAL && sharedOf(row)?.jacket ? null : name === LINK ? supplierLink(row) : clip(field(row, name)),
       // «Тип провода» is free text as in the window; the list a wire is in — the «Вкладка» cell.
       edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldCellEdit<CableRow>(name, (row) => row.record),
       remove: own.includes(name) ? removeColumn?.(name) : undefined,
@@ -338,11 +350,15 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     kindColumn(canEdit, onSaved),
     { key: "__reason", title: "Почему здесь", computed: true, value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
-  // The materials right after «Ø наружный» (owner 16.10: «материалы после наружного диаметра»).
+  // The materials right after «Ø наружный» (owner 16.10: «материалы после наружного диаметра»); the supply columns
+  // together, in the order of the coax lists.
   const materials = base.filter((column) => column.key === CORE_MATERIAL || column.key === JACKET_MATERIAL);
-  const rest = base.filter((column) => !materials.includes(column));
+  const supply = SUPPLY.map((name) => base.find((column) => column.key === name)).filter((column): column is DataColumn<CableRow> => Boolean(column));
+  const rest = base.filter((column) => !materials.includes(column) && !supply.includes(column));
   const outer = rest.findIndex((column) => column.key === "outer");
-  const columns = [...rest.slice(0, outer + 1), ...materials, ...rest.slice(outer + 1)];
+  const tail = rest.findIndex((column) => column.key === "__kind");
+  const after = tail < 0 ? rest.length : tail;
+  const columns = [...rest.slice(0, outer + 1), ...materials, ...rest.slice(outer + 1, after), ...supply, ...rest.slice(after)];
   const detail = (row: CableRow) => canEdit
     ? <HookupEditor key={`${row.id}:${JSON.stringify(row.hookup ?? null)}:${JSON.stringify(row.record?.fields ?? {})}:${row.kind}`}
       row={row} columns={data.columns} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
