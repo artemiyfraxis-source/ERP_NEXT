@@ -87,3 +87,43 @@ describe("ПФ коаксиальной сборки: картинка на ра
     expect(art("Нарезанный и разделанный кабель")).toContain("Сторона А — SMA-Male (вилка), SMA-C174P");
   });
 });
+
+describe("эскизы операций «Надеть» и «Монтаж корпуса» (владелец 19.10)", () => {
+  const tube = operations.find((operation) => operation.type === "coaxInsTut")!;
+  const sleeve = operations.find((operation) => operation.type === "coaxInsSleeve")!;
+  const housings = operations.filter((operation) => operation.type === "coaxHousing");
+  const texts = (svg: string) => [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+  const sizes = (svg: string) => [...svg.matchAll(/font-size="([\d.]+)"/g)].map((match) => Number(match[1]));
+
+  it.each([["ТУТ", tube, "tube", "Надеть: ТУТ 4/2мм, черная × 2"], ["втулка", sleeve, "sleeve", "Надеть: втулка экрана × 2"]])(
+    "%s: оба конца со своими разъёмами, знак разрыва, стрелка со свободного конца", (_name, operation, part, title) => {
+      const svg = etkFigure(operation);
+      expect(texts(svg)).toEqual(expect.arrayContaining([title, "Сторона А — SMA-Male (вилка)", "Сторона В — SMA-Female bulkhead (розетка)",
+        "контакт, припой", "оплётка", "диэлектрик", "надвинуть со свободного конца"]));
+      expect(svg.match(/data-part="break"/g)).toHaveLength(2);
+      expect(svg.match(new RegExp(`data-part="${part}"`, "g"))).toHaveLength(2);
+      expect(texts(svg).filter((text) => text === "отодвинуть от торца оболочки")).toHaveLength(2);
+      expect(Math.min(...sizes(svg))).toBeGreaterThanOrEqual(12);
+    });
+
+  it("расстояние от торца оболочки — числом, когда оно есть в данных", () => {
+    const withOffset = { ...tube, fields: { ...(tube.fields as object), coaxParts: { ...(tube.fields as { coaxParts: object }).coaxParts, offset: "15" } } };
+    expect(texts(etkFigure(withOffset))).toContain("отодвинуть на 15 мм от торца оболочки");
+  });
+
+  it("без данных о концах (выданный до 19.10 ЭТК без чтения) — прежний эскиз, а не пустота", () => {
+    const old = { ...tube, fields: { coaxParts: { ...(tube.fields as { coaxParts: object }).coaxParts, ends: [] } } };
+    expect(etkFigure(old)).toContain("до монтажа корпусов, отодвинуть от концов");
+  });
+
+  it("монтаж корпуса: у вилки накидная гайка, у розетки резьбовой корпус; контакт в изоляторе, оплётка по хвостовику", () => {
+    const [a, b] = housings.map((operation) => etkFigure(operation));
+    expect(a).toContain('data-part="male-body"');
+    expect(b).toContain('data-part="female-body"');
+    expect(a).not.toContain("female-body");
+    expect(texts(a)).toEqual(expect.arrayContaining(["Сторона А — SMA-Male (вилка), SMA-C174P", "накидная гайка", "изолятор", "контакт входит в изолятор",
+      "Корпус надвинуть до упора: контакт зафиксирован в изоляторе", "оплётка расправлена по хвостовику,", "внутрь не завёрнута"]));
+    expect(texts(b)).toEqual(expect.arrayContaining(["Сторона В — SMA-Female bulkhead (розетка), SMA-C316F", "резьбовой корпус", "изолятор"]));
+    expect(Math.min(...sizes(a), ...sizes(b))).toBeGreaterThanOrEqual(12);
+  });
+});

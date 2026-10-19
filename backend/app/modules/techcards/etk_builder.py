@@ -991,6 +991,12 @@ def with_coax_connectors(op: Mapping[str, Any], config: Mapping[str, Any]) -> Ma
         kind, gender = coax_connector_kind(_coax(config).get("sideB" if side == "B" else "sideA") or {})
         if kind:
             patched[key] = {**end, "connectorType": kind, "gender": gender}
+    parts = fields.get("coaxParts")
+    if isinstance(parts, Mapping) and "ends" not in parts and _coax(config).get("sideA"):
+        # ТУТ / втулки экрана надеваются на оба конца — эскиз рисует каждый разделанный конец со своим разъёмом.
+        patched["coaxParts"] = {**parts, "ends": [
+            {**_coax_strip_sizes(config, side), "side": "А" if side == "A" else "В", "pinType": str(_coax(config).get(f"side{side}", {}).get("pinType") or "")}
+            for side in ("A", "B") if _coax(config).get(f"side{side}")]}
     return {**op, "fields": patched} if patched != dict(fields) else op
 
 
