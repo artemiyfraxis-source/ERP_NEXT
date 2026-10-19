@@ -336,7 +336,7 @@ export function CompatibleConnectors({ row }: { row: CableRow }) {
   }, [row.connectors]);
   const total = row.connectors?.length ?? 0;
   return <table className="coax-mini coax-connectors" aria-label="Совместимые разъёмы">
-    <caption>Совместимые разъёмы{total > 0 && <small>из БД.КОАКС · {total}</small>}</caption>
+    <caption>Совместимые разъёмы{total > 0 && <small>из БД.КОАКС{row.connectors_family ? ` · как у ${row.connectors_family}` : ""} · {total}</small>}</caption>
     {groups.length > 0 && <thead><tr><th>Серия</th><th>Тип</th><th>Монтаж</th><th>Поставщик</th><th className="num">Цена, ₽</th><th className="num" title="Разъёмов этого типа в БД.КОАКС">Шт.</th></tr></thead>}
     <tbody>{groups.length === 0
       ? <tr><td colSpan={6} className="muted">Разъёмов в БД.КОАКС нет</td></tr>

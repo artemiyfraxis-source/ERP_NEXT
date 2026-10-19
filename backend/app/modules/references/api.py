@@ -437,10 +437,12 @@ def _cable_json(row: CableRow, catalog: CableCatalog | None = None) -> dict:
         "card": _card_json(row.card), "card_exact": row.card_exact,
     }
     if catalog is not None and row.kind == CableKind.COAX:
+        connectors, family = compatible_connectors(row, catalog.connectors)
         result["connectors"] = [
             {"id": str(record.id), "fields": {name: record.fields[name] for name in CONNECTOR_FIELDS if record.fields.get(name)}}
-            for record in compatible_connectors(row, catalog.connectors)
+            for record in connectors
         ]
+        result["connectors_family"] = family
     if catalog is not None and row.kind == CableKind.WIRE:
         wire = catalog.hookups.get(row.key)
         result["hookup"] = _hookup_json(wire)

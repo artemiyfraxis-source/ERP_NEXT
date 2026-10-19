@@ -1488,6 +1488,8 @@ export interface CableRow {
   /** Coax: the БД.КОАКС rows made for this cable (by its mark, the exact card's name and aliases), only the cells the
       card shows — «Совместимые разъёмы» (owner 19.10.2026). */
   connectors?: Array<{ id: string; fields: Record<string, string> }>;
+  /** The connectors are the family card's («5D-FB» for «5D-FB CCA PE AL PE»): its name; "" — the row's own. */
+  connectors_family?: string;
   /** Монтажный wire: its structure, or — not structured yet — why, and what the БД.ПРОВ row suggests. */
   hookup?: HookupWire | null;
   hookup_problem?: string;
