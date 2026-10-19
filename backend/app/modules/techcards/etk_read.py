@@ -69,8 +69,15 @@ def card_view(
     housings and the route scheme; operation cards nobody edited by hand come from their `templates` as they are now
     (etk_live), each operation says where its card came from. `frozen` — the document is a stored revision: shown as
     it was issued, without the live templates."""
-    document = card.document if frozen else live_document(
-        card.document, manual_keys=card.manual_operation_keys, templates=templates, built_at=card.updated_at)
+    issued = card.status is TechcardStatus.ISSUED
+    if frozen:
+        document = card.document
+    else:
+        # An issued card never changes silently: its stored revision is shown, the labels read the stored stamps;
+        # a template change reaches it as a revision (automatic or by hand). A draft follows its templates live.
+        document = live_document(
+            card.document, manual_keys=card.manual_operation_keys, templates=templates, built_at=card.updated_at,
+            stored=issued)
     return {
         "id": str(card.id),
         "version": card.version,
@@ -86,6 +93,7 @@ def card_view(
         "created_at": card.created_at.isoformat(),
         "updated_at": card.updated_at.isoformat(),
         "issued_at": card.issued_at.isoformat() if card.issued_at else None,
+        "review_note": card.review_note or None,
     }
 
 
