@@ -18,9 +18,9 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validat
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.project_number import normalize_project_number
 from .domain import (
-    ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
+    ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, AcceptanceAct, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
     MoveKind, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, StoredFile, UpdType,
-    balance_moves,
+    acceptance_act, balance_moves, roll_back_acts,
 )
 
 
@@ -205,6 +205,28 @@ def _move(row: FinishedGoodMoveRow) -> GoodMove:
     )
 
 
+class FinishedGoodsActRow(Base):
+    """Акт приёмки ГП (0128): один на ход «принято» журнала, свой ГРН. Пишется вместе с ходом
+    (`SqlAlchemyFinishedGoodsRepository.record_act`); Σ штук актов КБ = Σ ходов «принято» − отгружено до ERP."""
+
+    __tablename__ = "finished_goods_acts"
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_finished_goods_acts_quantity"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    finished_good_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("finished_goods.id", ondelete="RESTRICT"), nullable=False, index=True,
+    )
+    move_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("finished_goods_moves.id", ondelete="RESTRICT"), nullable=False, unique=True,
+    )
+    grn: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    received_at: Mapped[date] = mapped_column(Date(), nullable=False)
+    location: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ProjectAddresseeRow(Base):
     """Project card's shipping defaults; a shipment copies them at creation."""
 
@@ -305,6 +327,49 @@ class SqlAlchemyFinishedGoodsRepository:
                 actor=item.actor, actor_id=item.actor_id, occurred_at=item.occurred_at, reason=item.reason,
             ))
         return moves
+    def record_act(self, good: FinishedGood, moves: tuple[GoodMove, ...]) -> AcceptanceAct | None:
+        """Акт приёмки к ходу «принято» из `moves` (то, что вернул `add` для принятой КБ `good`), в той же транзакции.
+        Первый акт КБ берёт ГРН самой КБ, следующий — новый номер «ГП.YY.» года хода. Нет хода «принято» — нет акта."""
+        move = next((item for item in moves if item.kind is MoveKind.ACCEPT), None)
+        if move is None:
+            return None
+        first = good.grn and self.session.scalar(
+            select(func.count()).select_from(FinishedGoodsActRow).where(FinishedGoodsActRow.finished_good_id == good.id)
+        ) == 0
+        act = acceptance_act(good, (move,), good.grn if first else self.reserve_grn(move.occurred_at.year))
+        self.session.add(FinishedGoodsActRow(
+            id=act.id, finished_good_id=act.finished_good_id, move_id=act.move_id, grn=act.grn, quantity=act.quantity,
+            received_at=act.received_at, location=act.location, actor=act.actor, created_at=act.created_at,
+        ))
+        return act
+    def acts(self, good_ids) -> dict[UUID, tuple[AcceptanceAct, ...]]:
+        """Акты приёмки по КБ, старые первыми, с откатами «принято → в производство» (`roll_back_acts`): `net` —
+        сколько штук акта ещё числится принятым."""
+        ids = list(good_ids)
+        if not ids:
+            return {}
+        found: dict[UUID, list[AcceptanceAct]] = {}
+        for row in self.session.scalars(select(FinishedGoodsActRow).where(
+            FinishedGoodsActRow.finished_good_id.in_(ids),
+        ).order_by(FinishedGoodsActRow.created_at, FinishedGoodsActRow.grn)):
+            found.setdefault(row.finished_good_id, []).append(AcceptanceAct(
+                id=row.id, finished_good_id=row.finished_good_id, move_id=row.move_id, grn=row.grn,
+                quantity=Decimal(row.quantity), received_at=row.received_at, location=row.location or "",
+                actor=row.actor, created_at=row.created_at,
+            ))
+        rollbacks: dict[UUID, list[tuple[datetime, Decimal]]] = {}
+        for good_id, when, quantity in self.session.execute(select(
+            FinishedGoodMoveRow.finished_good_id, FinishedGoodMoveRow.occurred_at, FinishedGoodMoveRow.quantity,
+        ).where(
+            FinishedGoodMoveRow.finished_good_id.in_(list(found)),
+            FinishedGoodMoveRow.from_state == GoodsState.ACCEPTED.value,
+            FinishedGoodMoveRow.to_state == GoodsState.PRODUCTION.value,
+        )):
+            rollbacks.setdefault(good_id, []).append((when, Decimal(quantity)))
+        return {
+            good_id: roll_back_acts(tuple(items), tuple(rollbacks.get(good_id, ())))
+            for good_id, items in found.items()
+        }
     def in_journal(self, good_ids) -> set[UUID]:
         if not good_ids: return set()
         return set(self.session.scalars(select(FinishedGoodMoveRow.finished_good_id).where(FinishedGoodMoveRow.finished_good_id.in_(list(good_ids))).distinct()))

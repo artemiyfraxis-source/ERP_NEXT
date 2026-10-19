@@ -11,7 +11,8 @@
   the same exception;
 - a counted defect grew: negative quantities, РЕЗЕРВ over the lot balance, holders (kit lines, techcard reserves,
   «Со склада») over the lot РЕЗЕРВ, holders on a missing lot, duplicate lot keys (warehouse, ГРН, упаковка), the
-  lot key constraint missing, rows whose foreign key points nowhere, foreign keys left NOT VALID (PostgreSQL);
+  lot key constraint missing, rows whose foreign key points nowhere, foreign keys left NOT VALID (PostgreSQL), KBs
+  whose finished-goods acceptance acts don't sum to their «принято» moves less what was shipped before ERP;
 - the revision after is not the head of the migrations directory.
 New tables and new rows are fine.
 
@@ -83,7 +84,14 @@ _COUNT_LABELS = {
     "duplicate_lot_keys": "повторы ключа партии (склад, ГРН, упаковка)",
     "lot_key_constraint_missing": f"нет ограничения уникальности {LOT_KEY_CONSTRAINT}",
     "fk_not_validated": "внешние ключи без проверки (NOT VALID)",
+    "finished_goods_acts_mismatch":
+        "КБ, где штуки актов приёмки ГП не равны ходам «принято» без отгруженного до ERP",
 }
+
+# Акты приёмки ГП (0128) сверяются с журналом ГП.
+GOODS = "finished_goods"
+GOOD_MOVES = "finished_goods_moves"
+GOOD_ACTS = "finished_goods_acts"
 _SUM_LABELS = {
     "stock_total": "сумма остатков по партиям (ПРИХОД − СПИСАНО)",
     "reserved_total": "сумма РЕЗЕРВА по партиям",
@@ -197,6 +205,21 @@ def _invariants(connection: Connection, schema: _Schema) -> tuple[dict[str, int]
             f"SELECT count(*) FROM (SELECT 1 FROM {q(LOTS)} GROUP BY {key} HAVING count(*) > 1) d"
         ))
         counts["lot_key_constraint_missing"] = 0 if _has_lot_key(schema) else 1
+
+    if schema.has(GOODS, "id", "before_erp") and schema.has(GOOD_MOVES, "finished_good_id", "kind", "quantity") \
+            and schema.has(GOOD_ACTS, "finished_good_id", "quantity"):
+        # Акты приёмки ГП (0128): Σ штук актов КБ = Σ ходов «принято» без отгруженного до ERP (у него актов нет).
+        acts = f"COALESCE((SELECT sum(a.{q('quantity')}) FROM {q(GOOD_ACTS)} a WHERE a.{q('finished_good_id')} = g.{q('id')}), 0)"
+        accepted = (
+            f"COALESCE((SELECT sum(m.{q('quantity')}) FROM {q(GOOD_MOVES)} m WHERE m.{q('finished_good_id')} = g.{q('id')}"
+            f" AND m.{q('kind')} = 'accept'), 0)"
+        )
+        # Ходов «принято» меньше, чем отгружено до ERP, у живой КБ не бывает (только в выдуманных строках сеялки CI):
+        # тогда актов просто нет.
+        due = f"({accepted} - g.{q('before_erp')})"
+        counts["finished_goods_acts_mismatch"] = int(scalar(
+            f"SELECT count(*) FROM {q(GOODS)} g WHERE abs({acts} - CASE WHEN {due} > 0 THEN {due} ELSE 0 END) > {_EPS}"
+        ))
 
     orphans = _foreign_key_orphans(connection, schema)
     counts.update(orphans)

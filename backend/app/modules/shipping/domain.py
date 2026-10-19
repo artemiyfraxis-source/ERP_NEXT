@@ -341,7 +341,62 @@ def balance_moves(
     return tuple(moves)
 
 
-ADDRESSEE_CONTACT_FIELDS = ("shipping_point", "contact", "phone")
+@dataclass(frozen=True)
+class AcceptanceAct:
+    """Акт приёмки ГП (владелец 19.10.2026): каждая приёмка КБ складом — свой ГРН «ГП.YY.NNNNNNN», даже когда КБ
+    принимают частями. Первый акт КБ носит ГРН самой КБ (`FinishedGood.grn` — его видят этикетки, PL/DN, строки
+    отправок), следующие — новые номера. Акт ровно один на ход «принято» журнала (`move_id`); отгруженное до ERP
+    акта не получает. `rolled_back` — сколько штук акта вернул в производство откат руководителя (`roll_back_acts`)."""
+
+    id: UUID
+    finished_good_id: UUID
+    move_id: UUID
+    grn: str
+    quantity: Decimal
+    received_at: date
+    location: str
+    actor: str
+    created_at: datetime
+    rolled_back: Decimal = Decimal("0")
+
+    @property
+    def net(self) -> Decimal:
+        """Штук акта на складе с учётом откатов «принято → в производство»."""
+        return self.quantity - self.rolled_back
+
+
+def acceptance_act(good: FinishedGood, moves: tuple[GoodMove, ...], grn: str) -> AcceptanceAct | None:
+    """Акт для хода «принято» из `moves` (ходы одного `FinishedGoodsRepository.add`); нет такого хода — нет акта."""
+    move = next((item for item in moves if item.kind is MoveKind.ACCEPT), None)
+    if move is None:
+        return None
+    return AcceptanceAct(
+        id=uuid5(move.id, "acceptance-act"), finished_good_id=good.id, move_id=move.id, grn=_text(grn, "ГРН"),
+        quantity=move.quantity, received_at=good.received_at or move.occurred_at.date(), location=good.location,
+        actor=move.actor, created_at=move.occurred_at,
+    )
+
+
+def roll_back_acts(
+    acts: tuple[AcceptanceAct, ...], rollbacks: tuple[tuple[datetime, Decimal], ...],
+) -> tuple[AcceptanceAct, ...]:
+    """Акты КБ (старые первыми) за вычетом откатов «принято → в производство» [(когда, штук)]: откат снимает штуки
+    с самого нового акта, принятого к его моменту, остаток — с предыдущего. Акт и откат в один момент — акт раньше."""
+    taken = [Decimal("0")] * len(acts)
+    order = sorted(range(len(acts)), key=lambda index: acts[index].created_at)
+    for when, quantity in sorted(rollbacks, key=lambda item: item[0]):
+        left = Decimal(quantity)
+        for index in reversed([index for index in order if acts[index].created_at <= when]):
+            take = min(left, acts[index].quantity - taken[index])
+            if take > 0:
+                taken[index] += take
+                left -= take
+            if left <= 0:
+                break
+    return tuple(replace(act, rolled_back=taken[index]) if taken[index] else act for index, act in enumerate(acts))
+
+
+ADDRESSEE_CONTACT_FIELDS =("shipping_point", "contact", "phone")
 ADDRESSEE_CARD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type")
 # Шапка отправки, которую правят руками (`SHIP_HEAD_FIELDS_` без УПД и трека — они в «Документах»).
 SHIPMENT_HEAD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "deadline", "note")
