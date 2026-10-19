@@ -4,14 +4,14 @@ import { ComboBox, type ComboOption } from "./ComboBox";
 import { purposeLabel } from "./purposeLabels";
 import type { ItemRow } from "./purchasingItemsApi";
 import { RequestGridV2 } from "./RequestGridV2";
-import { openSection } from "./navigation";
+import { openSection, urlParam } from "./navigation";
 import { useStageOption } from "./StageOptions";
 import {
   GRID_LIMIT, applyPaste, isBlankRow, positionsWord, type Draft, type GridKey,
 } from "./requestGridLogic";
 import {
   CREATE_INTERNAL_KEY, applyHeaderToAll, chooseProject, customerKey, emptyHeader, emptyLine,
-  hasErrors, internalKey, internalProjectKey, payloadV2, pointLabel, validateForm, type Header,
+  hasErrors, internalKey, internalProjectKey, payloadV2, pointLabel, projectKeyFor, validateForm, type Header,
 } from "./requestFormV2Logic";
 
 type Props = {
@@ -50,6 +50,16 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
         : [{ value: CREATE_INTERNAL_KEY, label: "Создать внутренний проект…", group: "Внутренние проекты" }])
       : purposes.map((purpose) => ({ value: internalKey(purpose), label: purposeLabel(purpose), group: "Внутренние проекты" }))),
   ], [schema, purposes, internal, internalOn]);
+
+  // «Новая заявка» from «Заявки» закупщика comes with `?project=`: the project is chosen once the lists are in.
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || !schema) return;
+    prefilled.current = true;
+    const key = projectKeyFor(urlParam("project"), schema.projects ?? [], purposes, internal, internalOn);
+    if (key) setHeader((current) => (current.project ? current : chooseProject(current, key, internal)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schema]);
 
   function pickProject(key: string) {
     if (key === CREATE_INTERNAL_KEY) { openSection("projects", { tab: "internal" }); return; }

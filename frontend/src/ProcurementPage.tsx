@@ -20,6 +20,7 @@ import { DataTable, readSaved, writeSaved, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
 import { ProcurementKpi } from "./ProcurementKpi";
+import { ProcurementRequests } from "./ProcurementRequests";
 import { ProcurementToday } from "./ProcurementToday";
 import { projectLabel, useInternalProjects } from "./internalProjects";
 import { useStageOption } from "./StageOptions";
@@ -47,7 +48,7 @@ import { LineDocumentsForm, readBase64 } from "./ProcurementLineDocuments";
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
 
-type ProcurementTab = "today" | "queues" | "sheet" | "suppliers" | "kpi" | "rfq" | "directory" | "items" | "catalog" | "settings"
+type ProcurementTab = "today" | "requests" | "queues" | "sheet" | "suppliers" | "kpi" | "rfq" | "directory" | "items" | "catalog" | "settings"
   | "upd" | "invoices" | "chain" | "docsearch";
 
 // «Мои позиции» (владелец, 05.10) — один блок «В работе»: строки к запросу (с «Готов к запросу») по поставщикам,
@@ -141,7 +142,7 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
 ];
 
 const TABS: readonly ProcurementTab[] = [
-  "today", "queues", "sheet", "suppliers", "kpi", "rfq", "directory", "items", "catalog", "settings", "upd", "invoices", "chain",
+  "today", "requests", "queues", "sheet", "suppliers", "kpi", "rfq", "directory", "items", "catalog", "settings", "upd", "invoices", "chain",
   "docsearch",
 ];
 /** `?tab=` (the global search lands on a tab); an unknown or switched-off tab falls back to the default below. */
@@ -158,6 +159,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the project columns
   const todayOn = useStageOption("procurement.today") && !readOnly;
   const kpiOn = useStageOption("procurement.kpi");
+  const requestsOn = useStageOption("procurement.requests_rb"); // «Заявки» закупщика (Roller_Buyer)
   const rfqOn = useStageOption("procurement.rfq");
   const directoryOn = useStageOption("references.suppliers");
   const itemsOn = useStageOption("references.items");
@@ -166,7 +168,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   const chainOn = useStageOption("documents.chain");
   const settingsOn = rfqOn || directoryOn || itemsOn;
   const shown: Record<string, boolean> = {
-    today: todayOn, kpi: kpiOn, rfq: rfqOn, directory: directoryOn, items: itemsOn, catalog: priceBookOn, settings: settingsOn,
+    today: todayOn, requests: requestsOn, kpi: kpiOn, rfq: rfqOn, directory: directoryOn, items: itemsOn, catalog: priceBookOn, settings: settingsOn,
     upd: updOn, invoices: chainOn, chain: chainOn, docsearch: chainOn,
   };
   const [picked, setPicked] = useState<ProcurementTab | null>(initialTab);
@@ -189,7 +191,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   const tab: ProcurementTab = picked && shown[picked] === false ? "queues"
     : autoOpened && todayOn ? "today" : picked ?? (todayOn ? "today" : "queues");
   const groups: Array<Array<[ProcurementTab, string, boolean]>> = [
-    [["today", "Сегодня", todayOn], ["queues", "Очереди", true], ["sheet", "Весь лист", true], ["suppliers", "По поставщикам", true], ["kpi", "Показатели", kpiOn]],
+    [["today", "Сегодня", todayOn], ["requests", "Заявки", requestsOn], ["queues", "Очереди", true], ["sheet", "Весь лист", true], ["suppliers", "По поставщикам", true], ["kpi", "Показатели", kpiOn]],
     [["rfq", "Запросы КП", rfqOn]],
     [["directory", "Поставщики", directoryOn], ["items", "Номенклатура", itemsOn], ["catalog", "Каталог закупок", priceBookOn], ["settings", "Настройки", settingsOn]],
     [["upd", "УПД", updOn], ["invoices", "Счета", chainOn], ["chain", "Цепочка документов", chainOn], ["docsearch", "Поиск по документам", chainOn]],
@@ -211,6 +213,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
       </div>
       {tab === "sheet" && autoOpened && <p className="page-sub procurement-auto-note">У вас нет позиций в работе и свободных позиций нет — показан весь лист. Свои позиции появятся во вкладке «Очереди».</p>}
       {tab === "today" && <ProcurementToday onOpenQueues={() => pick("queues")} onOpenRfq={rfqOn ? (id) => { setRfqFocus(id); pick("rfq"); } : undefined} />}
+      {tab === "requests" && <ProcurementRequests readOnly={readOnly} />}
       {tab === "kpi" && <ProcurementKpi />}
       {tab === "rfq" && <PurchasingRfq readOnly={readOnly} focusId={rfqFocus} />}
       {tab === "directory" && <PurchasingSuppliers readOnly={readOnly} onOpenUpd={openUpd} />}

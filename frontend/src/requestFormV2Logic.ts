@@ -3,6 +3,7 @@
    value is the override; an empty line value means «as in the header». The server fills what is omitted
    (apply_draft_defaults). The purpose is a property of the PROJECT, never chosen here; there is no категория. */
 import type { InternalProjectBrief } from "./api";
+import { normalizeProjectNumber } from "./projectNumber";
 import {
   isBlankRow, validateRow, type Common, type Draft, type RowErrors,
 } from "./requestGridLogic";
@@ -60,6 +61,30 @@ export function chooseProject(header: Header, key: string, internal: InternalPro
   if (key.startsWith("i:")) return { ...header, project: key, project_reference: "", purpose: key.slice(2) };
   if (key.startsWith("c:")) return { ...header, project: key, project_reference: key.slice(2), purpose: COMMERCIAL_PURPOSE };
   return { ...header, project: "", project_reference: "", purpose: "" };
+}
+
+/** `?project=` of «Новая заявка» in «Заявки» закупщика: the project option it names — a customer project by its number, an
+ *  internal «ВП-…» (option projects.internal on; an internal purpose → its only internal project), or an internal purpose
+ *  (option off). "" — nothing matches, the field stays empty. */
+export function projectKeyFor(
+  param: string, projects: string[], purposes: string[], internal: InternalProjectBrief[], internalOn: boolean,
+): string {
+  const text = param.trim();
+  if (!text) return "";
+  const number = normalizeProjectNumber(text);
+  if (internalOn) {
+    const found = internal.find((item) => item.number.toUpperCase() === number);
+    if (found) return internalProjectKey(found.number);
+    const byPurpose = internal.filter((item) => item.purpose.toLowerCase() === text.toLowerCase());
+    if (byPurpose.length === 1) return internalProjectKey(byPurpose[0].number);
+  }
+  const customer = projects.find((item) => normalizeProjectNumber(item) === number && !(internalOn && /^ВП-\d+$/.test(item)));
+  if (customer) return customerKey(customer);
+  if (!internalOn) {
+    const purpose = purposes.find((item) => item.toLowerCase() === text.toLowerCase());
+    if (purpose) return internalKey(purpose);
+  }
+  return "";
 }
 
 /** «Применить ко всем строкам»: the lines forget their own док. качества / план. дату and follow the header. */
