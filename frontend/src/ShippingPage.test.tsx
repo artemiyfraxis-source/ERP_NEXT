@@ -160,8 +160,12 @@ describe("ShippingPage", () => {
     expect(within(dispatch).getByLabelText("УПД проекта 591К.3")).toHaveValue("БУМАГА");
     expect(within(dispatch).getByRole("link", { name: "УПД 591К.3.pdf" })).toHaveAttribute("href", "/api/shipping/files/f1");
     expect(within(dispatch).queryByLabelText("Контактное лицо проекта 591К.3")).not.toBeInTheDocument();
-    const more = screen.getByText(/^Ещё: контакт, доставка, план/).closest("details")!;
+    const more = screen.getByText(/^Ещё: УПД, контакт, доставка, план/).closest("details")!;
     expect(more).not.toHaveAttribute("open");
+    expect(within(more).getByLabelText("№ УПД проекта 591К.3")).toBeInTheDocument();
+    expect(within(more).getByLabelText("Дата УПД проекта 591К.3")).toBeInTheDocument();
+    expect(within(more).getByLabelText("Отгрузить до: проект 591К.3")).toBeInTheDocument();
+    expect(within(dispatch).queryByLabelText("№ УПД проекта 591К.3")).not.toBeInTheDocument();
     expect(within(more).getByLabelText("Контактное лицо проекта 591К.3")).toHaveValue("Иван");
     expect(within(more).getByLabelText("Условия доставки проекта 591К.3")).toHaveValue("САМОВЫВОЗ");
   });
@@ -305,7 +309,11 @@ describe("ShippingPage", () => {
   it("gives the manager the manual КБ registration and requests", async () => {
     render(<ShippingPage principal={{ ...principal, roles: ["commercial"], access_level: "commercial", permissions: { shipping: "edit" } }} />);
     await screen.findByText("591К.3", { selector: "strong" });
-    expect(await screen.findByRole("button", { name: "+ Добавить КБ проекта" })).toBeInTheDocument();
+    const menu = screen.getByText("Ещё", { selector: ".ship-menu > summary" }).closest("details")!;
+    expect(menu).not.toHaveAttribute("open");
+    expect(within(menu).getByRole("button", { name: "+ Добавить КБ проекта" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Статус КБ" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Куда" })).toBeInTheDocument();
     tab(/^Отправки/);
     expect(await screen.findByRole("button", { name: "+ Заявка на отгрузку" })).toBeInTheDocument();
   });

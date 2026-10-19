@@ -21,3 +21,11 @@
 .ship-docs-cell { white-space: nowrap; color: var(--muted-foreground); }
 .ship-docs-cell .ship-doc-link { min-height: 0; padding: 0; color: var(--foreground); vertical-align: baseline; }
 .ship-upd-link { color: var(--primary); white-space: nowrap; }
+/* «Ещё» в панели инструментов «На складе»: редкие действия под одной кнопкой. */
+.ship-menu { position: relative; display: inline-block; }
+.ship-menu > summary { display: inline-flex; align-items: center; cursor: pointer; list-style: none; min-height: 32px; box-sizing: border-box; }
+.ship-menu > summary::-webkit-details-marker { display: none; }
+.ship-menu > summary::after { content: "▾"; margin-left: 4px; font-size: 11px; }
+.ship-menu-list { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; min-width: 200px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 4px 12px rgb(0 0 0 / 12%); }
+.ship-menu-list button { width: 100%; text-align: left; border: 0; }
+.ship-more > .ship-pack-docs { margin: 8px 0; }
