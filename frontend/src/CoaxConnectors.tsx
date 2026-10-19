@@ -6,7 +6,7 @@ import { fieldCellEdit, ownCellEdit } from "./CustomColumn";
 import "./coaxConnectors.css";
 
 /* «База данных → Коаксиальные разъёмы» (owner 13.10.2026): БД.КОАКС — разъёмы базы и 311 разъёмов gsm-repiteri.ru —
-   одной плотной таблицей по сериям (SMA, N, TNC…), строка = разъём × кабель, как в листе. Клик по строке — карточка
+   одной плотной таблицей по типам (SMA-female, SMA-male, RP-SMA-…, N…), строка = разъём × кабель, как в листе. Клик по строке — карточка
    разъёма окном поверх таблицы (владелец 14.10: правка и карточки — окнами, не панелью сбоку): тип, подходящий кабель, разделка, пин и экран, параметры сайта, ссылка, другие кабели того же
    артикула; правка — кнопкой в карточке. D1–D3 в этой таблице нет (владелец 17.10): они у кабеля, вкладка «Коаксиальные кабели».
    HEX обжима — сразу после L1–L3; ссылка на карточку товара и цена поставщика — своими колонками (владелец 17.10).
@@ -80,15 +80,29 @@ export const coaxMaker = (fields: Fields) => pick(fields, "coaxMfr", "Произ
 const joinDots = (values: string[]) => (values.some(Boolean) ? values.map((value) => value || "—").join(" · ") : "");
 const stripping = (fields: Fields) => joinDots([pick(fields, "L1", "l1"), pick(fields, "L2", "l2"), pick(fields, "L3", "l3")]);
 
-// Внутри серии: тип без «RP-», обычная полярность раньше обратной (SMA-female, затем RP-SMA-female).
-const typeOrder = (fields: Fields) => coaxType(fields).replace(/^RP[-\s]?/i, "") + (/^RP/i.test(coaxType(fields)) ? " ~RP" : "");
+const reversed = (fields: Fields) => /^RP[-\s]?/i.test(coaxType(fields));
+const GENDER_WORDS = ["female", "male", "plug", "jack"];
+const genderWord = (fields: Fields) => coaxType(fields).match(/(female|male|plug|jack)/i)?.[1].toLowerCase() ?? "";
 
+/** Группа таблицы — тип разъёма (владелец 19.10: «сортировка по типу SMA-female и т. д.»): серия, полярность и пол —
+    «SMA-female», «RP-SMA-male», «Fakra-female»; угловые, фланцевые и проходные — внутри своей группы. */
+export function coaxTypeGroup(fields: Fields): string {
+  const series = coaxSeries(fields);
+  if (series === NO_SERIES) return NO_SERIES;
+  const word = genderWord(fields);
+  return `${reversed(fields) ? "RP-" : ""}${series}${word ? `-${word}` : ""}`;
+}
+
+// Серия (порядок цеха) → обычная полярность раньше RP → female, male → полный тип (прямой раньше R/A) → артикул → кабель.
 function sortRows(records: TechOperationRecord[]) {
+  const genderRank = (fields: Fields) => { const at = GENDER_WORDS.indexOf(genderWord(fields)); return at < 0 ? GENDER_WORDS.length : at; };
   return [...records].sort((a, b) => {
     const sa = coaxSeries(a.fields);
     const sb = coaxSeries(b.fields);
     return seriesRank(sa) - seriesRank(sb) || sa.localeCompare(sb, "ru")
-      || typeOrder(a.fields).localeCompare(typeOrder(b.fields), "ru")
+      || Number(reversed(a.fields)) - Number(reversed(b.fields))
+      || genderRank(a.fields) - genderRank(b.fields)
+      || coaxType(a.fields).localeCompare(coaxType(b.fields), "ru")
       || coaxArticle(a.fields).localeCompare(coaxArticle(b.fields), "ru", { numeric: true })
       || coaxWire(a.fields).localeCompare(coaxWire(b.fields), "ru", { numeric: true });
   });
@@ -137,7 +151,7 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
   const columns: DataColumn<TechOperationRecord>[] = [
     // Длинные артикулы, типы и кабели («1/2″ SuperFlex (⌀13,5 мм)») переносятся, а не раздвигают таблицу за край ноутбука.
     { key: "article", title: "Артикул", value: (record) => coaxArticle(record.fields), render: (record) => <strong>{coaxArticle(record.fields) || "—"}</strong>, wrap: true, maxWidth: 170 },
-    { key: "type", title: "Тип", value: (record) => coaxType(record.fields), wrap: true, maxWidth: 130, edit: cell("Тип/Серия") },
+    { key: "type", title: "Тип", value: (record) => coaxType(record.fields), wrap: true, maxWidth: 130, filter: true, edit: cell("Тип/Серия") },
     { key: "wire", title: "Кабель", value: (record) => coaxWire(record.fields), wrap: true, maxWidth: 100 },
     { key: "gender", title: "Пол", value: (record) => coaxGender(record.fields), hidden: true },
     { key: "angle", title: "Исполнение", value: (record) => coaxAngle(record.fields) },
@@ -179,7 +193,7 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
         storageKey="db:coax-connectors"
         exportName="Коаксиальные разъёмы"
         presets={PRESETS}
-        groupBy={(record) => coaxSeries(record.fields)}
+        groupBy={(record) => coaxTypeGroup(record.fields)}
         onRowClick={(record) => setSelectedId(record.id === selectedId ? "" : record.id)}
         rowTitle={(record) => `Карточка: ${coaxArticle(record.fields)} · ${coaxWire(record.fields)}`}
         rowClassName={(record) => (record.id === selectedId ? "coax-row-active" : "")}
