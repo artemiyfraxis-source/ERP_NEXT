@@ -335,12 +335,27 @@ const COAX_PIN_CRIMP_CODE_ = "PRS_PIN_coax";
 const COLLET_RE_ = /цанг/i;
 /** Тип экрана разъёма на сборку: обжим втулки, пайка экрана, прижимной (зажим: оплётка отогнута на зажимное кольцо, гайка). */
 export const COAX_SHIELD_CLAMP = "прижим";
-export const COAX_SHIELD_OPTIONS: ReadonlyArray<readonly [string, string]> = [["обжим", "Обжим втулки"], ["пайка", "Пайка экрана"], ["прижим", "Прижимной (зажим)"]];
-/** «Тип экрана» БД.КОАКС любыми словами → обжим / пайка / прижим; не распознано (или пусто) — "" (тип не выбирается по базе). */
-export function coaxShieldKind_(text: string | undefined | null): "обжим" | "пайка" | "прижим" | "" {
+/** Компрессионный разъём (F): кольцо обжимается компрессионным инструментом — как обжим втулки, но без матрицы HEX (19.10). */
+export const COAX_SHIELD_COMPRESS = "компрессия";
+/** Накручивающийся / резьбовой разъём: экран зажимает сам разъём при накручивании — операции по экрану нет (19.10). */
+export const COAX_SHIELD_TWIST = "накрутка";
+/** Push-On (самообжим): надевается без инструмента — операции по экрану нет (19.10). */
+export const COAX_SHIELD_PUSH = "самообжим";
+export const COAX_SHIELD_OPTIONS: ReadonlyArray<readonly [string, string]> = [
+  ["обжим", "Обжим втулки"], ["пайка", "Пайка экрана"], ["прижим", "Прижимной (зажим)"],
+  ["компрессия", "Компрессионный"], ["накрутка", "Накручивающийся"], ["самообжим", "Push-On (самообжим)"],
+];
+/** Типы экрана, у которых нет операции по экрану: разъём садится сам. */
+const COAX_SHIELD_NO_OP_ = [COAX_SHIELD_TWIST, COAX_SHIELD_PUSH];
+export type CoaxShieldKind = "обжим" | "пайка" | "прижим" | "компрессия" | "накрутка" | "самообжим" | "";
+/** «Тип экрана» БД.КОАКС любыми словами → обжим / пайка / прижим / компрессия / накрутка / самообжим; не распознано (или пусто) — "" (тип не выбирается по базе). */
+export function coaxShieldKind_(text: string | undefined | null): CoaxShieldKind {
   const t = String(text || "").toLowerCase();
   if (/прижим|зажим|clamp/.test(t)) return COAX_SHIELD_CLAMP;
   if (/пайк|паян|solder/.test(t)) return "пайка";
+  if (/компресс|compress/.test(t)) return COAX_SHIELD_COMPRESS;
+  if (/накру[тч]|резьб|twist/.test(t)) return COAX_SHIELD_TWIST;
+  if (/самообжим|push-?on/.test(t)) return COAX_SHIELD_PUSH;
   if (/обжим|crimp/.test(t)) return "обжим";
   return "";
 }
@@ -1758,17 +1773,22 @@ export function makeGen(D: GenData, S: GenState) {
       if (pin === COAX_PIN_CRIMP) ops.push(crimpOp(sd));
       else if (pin !== COAX_PIN_COLLET) ops.push(pinOp(sd, pin));
     };
-    const housingLabel = (sd: Side, pin: string) => `Монтаж корпуса (${sd === "B" ? "B" : "А"})${pin === COAX_PIN_COLLET ? " — цанговый контакт, без пайки" : ""}`;
+    const housingLabel = (sd: Side, pin: string) => `Монтаж корпуса (${sd === "B" ? "B" : "А"})${pin === COAX_PIN_COLLET ? " — цанговый контакт, без пайки" : ""}${
+      (sd === "A" ? shieldA : shieldB) === COAX_SHIELD_TWIST ? " — накручивается на кабель, экран зажимает разъём"
+        : (sd === "A" ? shieldA : shieldB) === COAX_SHIELD_PUSH ? " — Push-On, без инструмента" : ""}`;
     const insTutOp = (): OpSpec | null => (tutOn ? { type: "coaxInsTut", opKey: "coaxInsTut", label: `Монтаж ТУТ${x(nSides)}`, units: nSides, tmplHint: "INS_TUT" } : null);
     const shieldA = coaxShieldOf_("A"), shieldB = sideB ? coaxShieldOf_("B") : "";
     const sidesOf = (kind: string) => (["A", "B"] as Side[]).filter((sd) => (sd === "A" ? shieldA : shieldB) === kind);
     const clampSides = sidesOf(COAX_SHIELD_CLAMP), solderSides = sidesOf("пайка");
+    const noOpSides = (["A", "B"] as Side[]).filter((sd) => COAX_SHIELD_NO_OP_.includes(sd === "A" ? shieldA : shieldB));
+    const compressSides = sidesOf(COAX_SHIELD_COMPRESS);
     // Обжим — всё, что не пайка и не прижим (прежнее поведение: тип по умолчанию «обжим»).
-    const nCrimp = (["A", ...(sideB ? ["B"] : [])] as Side[]).filter((sd) => !clampSides.includes(sd) && !solderSides.includes(sd)).length;
+    // Накрутка и Push-On садятся сами — ни втулки, ни опрессовки; компрессия идёт как обжим (свой инструмент, без HEX).
+    const nCrimp = (["A", ...(sideB ? ["B"] : [])] as Side[]).filter((sd) => !clampSides.includes(sd) && !solderSides.includes(sd) && !noOpSides.includes(sd)).length;
     const nClamp = clampSides.length;
     // «Надеть» (владелец 19.10): на обжимной стороне — втулка экрана, на прижимной — гайка, шайба и уплотнитель; одной операцией на обе стороны.
     const sdName = (sd: Side) => (sd === "B" ? "B" : "А");
-    const crimpSides = (["A", ...(sideB ? ["B"] : [])] as Side[]).filter((sd) => !clampSides.includes(sd) && !solderSides.includes(sd));
+    const crimpSides = (["A", ...(sideB ? ["B"] : [])] as Side[]).filter((sd) => !clampSides.includes(sd) && !solderSides.includes(sd) && !noOpSides.includes(sd));
     const putOnLabel = !nClamp ? `Монтаж втулки экрана${x(nCrimp)}`
       : !nCrimp ? `Надеть гайку, шайбу, уплотнитель и зажимное кольцо${x(nClamp)}`
         : `Надеть втулку экрана (${crimpSides.map(sdName).join(", ")}) и гайку, шайбу, уплотнитель, зажимное кольцо (${clampSides.map(sdName).join(", ")})`;
@@ -1789,7 +1809,7 @@ export function makeGen(D: GenData, S: GenState) {
     if (pinA !== "внутри корпуса") ops.push({ type: "coaxHousing", side: "A", opKey: "coaxHousingA", label: housingLabel("A", pinA), tmplHint: "INS_housing_COAX", ...clampHousing("A", pinA) });
     if (sideB && pinB !== "внутри корпуса") ops.push({ type: "coaxHousing", side: "B", opKey: "coaxHousingB", label: housingLabel("B", pinB), tmplHint: "INS_housing_COAX", ...clampHousing("B", pinB) });
     solderSides.forEach((sd) => ops.push({ type: "coaxSolderShield", side: sd, opKey: "coaxSolderShield" + sd, label: `Пайка экрана (${sdName(sd)})`, tmplHint: "SDR_COAX_housing" }));
-    if (nCrimp > 0) ops.push({ type: "coaxShield", opKey: "coaxShield", label: `Опрессовка втулки экрана${x(nCrimp)}`, units: nCrimp, tmplHint: "PRS_SLEEVE_coax" });
+    if (nCrimp > 0) ops.push({ type: "coaxShield", opKey: "coaxShield", label: `Опрессовка втулки экрана${x(nCrimp)}${compressSides.length ? ` — компрессия: ${compressSides.map(sdName).join(", ")} (компрессионный инструмент, без HEX)` : ""}`, units: nCrimp, tmplHint: "PRS_SLEEVE_coax" });
     if (tutOn) ops.push({ type: "coaxHeat", opKey: "coaxHeat", label: `Усадка ТУТ${x(nSides)}`, units: nSides, tmplHint: "HEAT_TYT_short" });
     const caps: Record<string, number> = {};
     ([["A", pinA, S.coax.coverA], ["B", sideB ? pinB : "", S.coax.coverB]] as const).forEach(([, pin, cover]) => {
