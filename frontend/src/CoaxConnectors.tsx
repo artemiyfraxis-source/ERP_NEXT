@@ -202,8 +202,6 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
       render: (record) => pick(record.fields, DEPTH)
         ? <span title={pick(record.fields, DEPTH_SOURCE) || undefined}>{pick(record.fields, DEPTH)}</span> : "—",
       edit: canEdit ? ownCellEdit<TechOperationRecord>(DEPTH, (record) => record) : undefined },
-    { key: "depthSource", title: "Заглубление, источник", value: text(DEPTH_SOURCE), hidden: true, wrap: true, maxWidth: 220,
-      edit: canEdit ? ownCellEdit<TechOperationRecord>(DEPTH_SOURCE, (record) => record) : undefined },
     { key: "mfr", title: "Производитель", value: (record) => coaxMaker(record.fields), render: (record) => coaxMaker(record.fields) || "—", wrap: true, maxWidth: 120, edit: cell("Производитель") },
     { key: "supplier", title: "Поставщик", value: (record) => coaxSupplier(record.fields), render: (record) => coaxSupplier(record.fields) || "—", wrap: true, maxWidth: 130 },
     { key: "vendorArticle", title: "Артикул поставщика", value: text("Артикул поставщика"), wrap: true, maxWidth: 160, edit: cell("Артикул поставщика") },
@@ -217,7 +215,9 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
     { key: "ohm", title: "Ом", value: text("Волновое сопротивление, Ом"), numeric: true, hidden: true, edit: cell("Волновое сопротивление, Ом") },
     { key: "name", title: "Наименование", value: text("Наименование"), hidden: true, edit: cell("Наименование") },
     { key: "source", title: "Источник данных", value: text("Источник данных"), hidden: true, edit: cell("Источник данных") },
-    ...ownColumns.filter((name) => !BUILT_IN.has(name.trim().toLowerCase())).map((name): DataColumn<TechOperationRecord> => ({
+    // Источник заглубления в таблице не нужен вовсе (владелец 19.10: «источник заглубления я всё ещё вижу») — только подсказкой
+    // на значении; любой «свой» столбец «Заглубление контакта…» отсекается, как бы он ни был записан.
+    ...ownColumns.filter((name) => !BUILT_IN.has(name.trim().toLowerCase()) && !/^заглублени/i.test(name.trim())).map((name): DataColumn<TechOperationRecord> => ({
       key: `own:${name}`, title: name, value: text(name), wrap: true, maxWidth: 140,
       edit: canEdit ? ownCellEdit<TechOperationRecord>(name, (record) => record) : undefined,
       remove: removeColumn?.(name),
