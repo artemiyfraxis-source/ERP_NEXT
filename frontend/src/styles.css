@@ -4050,6 +4050,21 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .rfq-lines-editor input[type="checkbox"] { width: auto; margin: 0; }
 .rfq-lines-editor small { color: var(--muted-foreground); font-size: 11px; white-space: nowrap; }
 /* «Письма поставщикам», «Запросы счетов» (Roller_Buyer RfqLetters / InvoiceRequests): text to copy into the mail. */
+/* The comparison matrix (Roller_Buyer renderOfferCell): how the seller sells it, what covering the need takes. */
+.rfq-matrix td small { font-size: 11.5px; line-height: 1.35; }
+.rfq-offer-terms { color: var(--muted-foreground); font-size: 11.5px; line-height: 1.35; white-space: normal; max-width: 220px; }
+.rfq-buy { color: var(--tone-warn); }
+.rfq-buy.exact { color: var(--muted-foreground); }
+.rfq-delta.over { color: var(--tone-danger); }
+.rfq-delta.under { color: var(--tone-ok); }
+.rfq-delta { display: block; }
+.rfq-nobody { color: var(--tone-danger); font-weight: 600; }
+.rfq-struck { text-decoration: line-through; }
+.rfq-row-cancelled td { color: var(--muted-foreground); }
+.rfq-row-picked td { background: color-mix(in srgb, var(--primary) 7%, var(--card)); }
+.rfq-cell-unasked { color: var(--muted-foreground); font-size: 12px; }
+.rfq-plan-link { display: block; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rfq-split { padding: 0; font-size: 11.5px; }
 .rfq-quote-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
 .rfq-quote-head .rfq-quote-note input { width: 260px; }
 .rfq-input-bad { border-color: var(--tone-danger) !important; }

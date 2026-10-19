@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { failureText } from "./api";
 import { formatDay } from "./format";
 import {
   decisionViolations,
   quoteCell,
   rfqApi,
-  unasked,
   type DecisionField,
-  type RfqCell,
   type RfqLine,
   type RfqMatrix,
   type RfqSummary,
@@ -20,42 +18,14 @@ import { rfqLinkState, syncRfqUrl } from "./rfqLinks";
 import { QuoteDialog } from "./RfqQuoteDialog";
 import { Dialog, money, number, quantity } from "./rfqUi";
 import { RfqLetters } from "./RfqLetters";
+import { chip, gateHint, gateText, MatrixTable } from "./RfqMatrix";
 
 /** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
  *  reasons the gate asks for → supplier and quantity go into the procurement line. */
 
-const REASONS: Record<string, string> = {
-  key: "ключевой", category: "по категории", rotation: "давно не спрашивали", plan: "указан в строке", manual: "вручную",
-};
 const GATE_PRESETS = ["Срочно", "Единственный производитель или поставщик", "Повторная закупка по свежему КП"];
 const PRICIER_PRESETS = ["Срок", "Наличие", "Минимальная партия", "Качество или происхождение"];
-
-// Sticky first columns of the matrix: Позиция, Артикул, Кол-во, Бюджет с НДС, КП.
-// The article sits under the name: one sticky column less leaves room for the suppliers on a 16" screen.
-const STICKY_WIDTHS = [250, 76, 108, 64];
-const STICKY_LEFT = STICKY_WIDTHS.map((_, index) => STICKY_WIDTHS.slice(0, index).reduce((sum, width) => sum + width, 0));
-const sticky = (index: number, head = false): CSSProperties => ({
-  position: "sticky", left: STICKY_LEFT[index], zIndex: head ? 3 : 1, minWidth: STICKY_WIDTHS[index],
-  maxWidth: STICKY_WIDTHS[index], background: head ? "var(--accent)" : "var(--card)", whiteSpace: "normal",
-  boxShadow: index === STICKY_WIDTHS.length - 1 ? "1px 0 0 var(--border)" : undefined,
-});
-const groupEdge: CSSProperties = { borderLeft: "1px solid var(--border)" };
-const chip = (tone: "ok" | "warn" | "neutral"): CSSProperties => ({
-  display: "inline-block", borderRadius: 999, padding: "1px 7px", fontSize: 11, fontWeight: 600,
-  color: `var(--tone-${tone === "neutral" ? "ok" : tone})`,
-  background: tone === "warn" ? "var(--warn-soft)" : "color-mix(in srgb, var(--tone-ok) 12%, transparent)",
-});
-
-function gateText(line: RfqLine) {
-  return `КП ${line.gate.priced}/${line.gate.required}`;
-}
-
-function gateHint(line: RfqLine) {
-  const parts = [`КП с ценой: ${line.gate.priced} из ${line.gate.required} нужных`];
-  if (line.gate.require_non_key && !line.gate.has_non_key) parts.push("нет КП от неключевого поставщика");
-  return parts.join("; ");
-}
 
 export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {}) {
   // `?rfq=<id>[&letters=1|&invoices=1]` (CONTRACTS.md): the request to open and the panel to open with it.
@@ -241,78 +211,21 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       {suppliers.length === 0 && (
         <div className="empty">Поставщиков в запросе нет{editable ? " — «Подобрать поставщиков» или добавьте по названию" : ""}.</div>
       )}
-      <div className="inwork-scroll" style={{ maxHeight: "68vh" }}>
-        <table className="inwork-table" aria-label={`Матрица ${rfq.number}`} style={{ borderCollapse: "separate", borderSpacing: 0 }}>
-          <thead>
-            <tr>
-              {["Позиция", "Кол-во", "Бюджет с НДС", "КП"].map((title, index) => (
-                <th key={title} rowSpan={2} style={sticky(index, true)}>{title}</th>
-              ))}
-              {suppliers.map((supplier) => (
-                <th key={supplier.supplier_id} colSpan={2} style={{ ...groupEdge, verticalAlign: "top", minWidth: 190, whiteSpace: "normal", fontWeight: 400 }}>
-                  <SupplierHead
-                    supplier={supplier} editable={editable} total={lines.length} onLines={() => setLinesFor(supplier)}
-                    onSent={() => void act(() => rfqApi.markSent(id, supplier.supplier_id), `«${supplier.name}»: запрос отправлен`, "Не отмечено")}
-                    onQuote={() => setQuoteFor({ supplier })}
-                    onDeclined={() => {
-                      const note = window.prompt(`«${supplier.name}» отказался отвечать. Комментарий (необязательно):`, "");
-                      if (note !== null) void act(() => rfqApi.markDeclined(id, supplier.supplier_id, note), `«${supplier.name}»: отказ отмечен`, "Не отмечено");
-                    }}
-                    onRemove={() => void act(() => rfqApi.removeSupplier(id, supplier.supplier_id), `«${supplier.name}» убран из запроса`, "Поставщик не убран")}
-                  />
-                </th>
-              ))}
-            </tr>
-            <tr>
-              {suppliers.map((supplier) => [
-                <th key={`${supplier.supplier_id}-p`} style={groupEdge}>Цена с НДС</th>,
-                <th key={`${supplier.supplier_id}-t`}>Сумма</th>,
-              ])}
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((line) => (
-              <tr key={line.id}>
-                <td style={sticky(0)}>
-                  <strong>{line.name}</strong>
-                  <small className="muted" style={{ display: "block" }}>
-                    {line.article ? `${line.article} · ` : ""}{line.legacy_id ?? ""}{line.status ? ` · ${line.status}` : ""}{line.need_by ? ` · к ${formatDay(line.need_by)}` : ""}
-                  </small>
-                </td>
-                <td style={sticky(1)}>{quantity(line.quantity)} {line.unit}</td>
-                <td style={sticky(2)}>
-                  {money(line.budget_unit_gross)}
-                  {line.delta_pct !== null && (
-                    <small className={Number(line.delta_pct) > 0 ? "tone-danger" : "tone-ok"} style={{ display: "block" }}>
-                      Δ {Number(line.delta_pct) > 0 ? "+" : ""}{number(line.delta_pct, 1)}%
-                    </small>
-                  )}
-                </td>
-                <td style={sticky(3)}>
-                  <span style={chip(line.gate.passes ? "ok" : "warn")} title={gateHint(line)}>{gateText(line)}</span>
-                  {line.decision && <small className="tone-ok" style={{ display: "block" }}>✓ решено</small>}
-                </td>
-                {suppliers.map((supplier) => (
-                  <MatrixCell
-                    key={supplier.supplier_id} line={line} supplier={supplier}
-                    onOpen={() => setDecisionFor({ lineId: line.id, supplierId: supplier.supplier_id })}
-                  />
-                ))}
-              </tr>
-            ))}
-          </tbody>
-          {suppliers.length > 0 && (
-            <tfoot>
-              <tr>
-                <td colSpan={4} style={{ ...sticky(0), maxWidth: undefined }}><strong>Выбрано у поставщика</strong></td>
-                {suppliers.map((supplier) => (
-                  <td key={supplier.supplier_id} colSpan={2} style={groupEdge}>{supplier.chosen_total ? money(supplier.chosen_total) : ""}</td>
-                ))}
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
+      <MatrixTable
+        matrix={matrix} lines={lines} editable={editable} selectable={false} picked={new Set()} onPick={() => undefined}
+        basket={null} actions={{
+          onOpen: (lineId, supplierId) => setDecisionFor({ lineId, supplierId }),
+          onBasket: () => undefined,
+          onLines: (supplier) => setLinesFor(supplier),
+          onSent: (supplier) => void act(() => rfqApi.markSent(id, supplier.supplier_id), `«${supplier.name}»: запрос отправлен`, "Не отмечено"),
+          onQuote: (supplier) => setQuoteFor({ supplier }),
+          onDeclined: (supplier) => {
+            const note = window.prompt(`«${supplier.name}» отказался отвечать. Комментарий (необязательно):`, "");
+            if (note !== null) void act(() => rfqApi.markDeclined(id, supplier.supplier_id, note), `«${supplier.name}»: отказ отмечен`, "Не отмечено");
+          },
+          onRemove: (supplier) => void act(() => rfqApi.removeSupplier(id, supplier.supplier_id), `«${supplier.name}» убран из запроса`, "Поставщик не убран"),
+        }}
+      />
       {matrix.quotes.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", fontSize: 12 }} aria-label="КП в запросе">
           <span className="muted">КП в запросе:</span>
@@ -358,100 +271,6 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       )}
     </section>
   );
-}
-
-function SupplierHead({ supplier, editable, total, onLines, onSent, onQuote, onDeclined, onRemove }: {
-  supplier: RfqSupplier; editable: boolean; total: number; onLines: () => void; onSent: () => void; onQuote: () => void;
-  onDeclined: () => void; onRemove: () => void;
-}) {
-  const state = supplier.declined_at
-    ? `отказался${supplier.decline_note ? `: ${supplier.decline_note}` : ""}`
-    : supplier.answered ? "КП получено" : supplier.sent_at ? `отправлено ${formatDay(supplier.sent_at)}` : "не отправлено";
-  return (
-    <div style={{ display: "grid", gap: 2, textTransform: "none", letterSpacing: 0, fontSize: 12 }}>
-      <strong style={{ fontSize: 13, color: "var(--foreground)" }} title={supplier.is_key ? "Ключевой поставщик" : undefined}>
-        {supplier.name}{supplier.is_key ? " ★" : ""}
-      </strong>
-      <span className={supplier.declined_at ? "tone-danger" : supplier.answered ? "tone-ok" : "muted"}>{state} · {REASONS[supplier.reason] ?? ""}</span>
-      <span className="muted">
-        позиций: {supplier.line_ids?.length ?? total} из {total}
-        {editable && <>
-          {" · "}
-          <button type="button" className="link-button" style={{ padding: 0, fontSize: 12 }} aria-label={`Изменить позиции ${supplier.name}`} onClick={onLines}>изменить</button>
-        </>}
-      </span>
-      {(supplier.delivery_cost || supplier.min_order_sum) && (
-        <span className="muted">
-          {supplier.delivery_cost ? `доставка ${money(supplier.delivery_cost)}` : ""}
-          {supplier.delivery_cost && supplier.min_order_sum ? " · " : ""}
-          {supplier.min_order_sum ? `мин. заказ ${money(supplier.min_order_sum)}` : ""}
-        </span>
-      )}
-      {supplier.basket_total && (
-        <span title="Все позиции с ценой у этого поставщика, с доставкой">всё у него: <strong style={{ display: "inline" }}>{money(supplier.basket_total)}</strong> ({supplier.basket_lines} поз.)</span>
-      )}
-      {supplier.min_order_warning && <span className="tone-warn">{supplier.min_order_warning}</span>}
-      {editable && (
-        <span style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
-          {!supplier.sent_at && <button type="button" className="secondary small" style={{ padding: "2px 8px" }} onClick={onSent}>Отправлено</button>}
-          <button type="button" className="secondary small" style={{ padding: "2px 8px" }} onClick={onQuote} aria-label={`+ КП ${supplier.name}`}>+ КП</button>
-          {!supplier.answered && !supplier.declined_at && <button type="button" className="link-button" style={{ padding: 0 }} onClick={onDeclined}>отказ</button>}
-          {!supplier.answered && <button type="button" className="link-button" style={{ padding: 0 }} onClick={onRemove}>убрать</button>}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function cellHints(cell: RfqCell): string[] {
-  const hints: string[] = [];
-  if (cell.moq) hints.push(`мин. ${quantity(cell.moq)}`);
-  if (cell.pack) hints.push(`уп. ${quantity(cell.pack)}`);
-  if (cell.in_stock) hints.push("в наличии");
-  else if (cell.lead_days !== null) hints.push(`${cell.lead_days} дн`);
-  if (cell.analog) hints.push("аналог");
-  if (cell.expired) hints.push("срок КП истёк");
-  return hints;
-}
-
-function MatrixCell({ line, supplier, onOpen }: { line: RfqLine; supplier: RfqSupplier; onOpen: () => void }) {
-  if (unasked(line, supplier.supplier_id)) {
-    return (
-      <td colSpan={2} style={{ ...groupEdge, color: "var(--muted-foreground)", fontSize: 12 }} title="Эту позицию у поставщика не запрашивали">
-        не запрашивали
-      </td>
-    );
-  }
-  const cell = quoteCell(line, supplier.supplier_id);
-  if (!cell) {
-    return <>
-      <td style={{ ...groupEdge, color: "var(--muted-foreground)" }}>—</td>
-      <td style={{ color: "var(--muted-foreground)" }}>—</td>
-    </>;
-  }
-  const background = cell.decided
-    ? "var(--sheet-selected)"
-    : cell.cheapest ? "color-mix(in srgb, var(--tone-ok) 10%, transparent)" : undefined;
-  const dim = cell.expired || cell.declined;
-  const style: CSSProperties = { background, cursor: "pointer", color: dim ? "var(--muted-foreground)" : undefined, whiteSpace: "nowrap" };
-  const label = `${line.name} — ${supplier.name}`;
-  const open = () => onOpen();
-  const raisedQty = cell.cover_qty !== null && Number(cell.cover_qty) !== Number(line.quantity);
-  return <>
-    <td
-      style={{ ...style, ...groupEdge }} role="button" tabIndex={0} aria-label={label}
-      onClick={open} onKeyDown={(event) => { if (event.key === "Enter") open(); }}
-    >
-      {cell.declined ? <span className="tone-danger">отказ</span> : <strong style={{ display: "inline" }}>{number(cell.gross_unit)}</strong>}
-      {cell.cheapest && <span style={{ ...chip("ok"), marginLeft: 4 }}>мин</span>}
-      {cellHints(cell).length > 0 && <small className="muted" style={{ display: "block" }}>{cellHints(cell).join(" · ")}</small>}
-    </td>
-    <td style={style} onClick={open}>
-      {cell.decided && <span className="tone-ok" aria-label="выбрано">✓ </span>}
-      {cell.declined ? "" : number(cell.total)}
-      {raisedQty && <small className="muted" style={{ display: "block" }}>за {quantity(cell.cover_qty)} {line.unit}</small>}
-    </td>
-  </>;
 }
 
 function DecisionPanel({ matrix, line, supplierId, editable, onClose, onDone }: {
