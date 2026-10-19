@@ -318,10 +318,44 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     return record, updated
 
 
+# БД.КОАКС (владелец 19.10.2026: «у одного артикула не могут быть разные значения»): строка — разъём × кабель, свойства
+# разъёма у всех строк артикула одни. Своё у строки — только кабель и предложение продавца (ссылка, цена, дата цены),
+# наименование, примечание и источник.
+COAX_ROW_OWN = frozenset({"Артикул", "coaxArticle", "Провод", "coaxWire", "Наименование", "Ссылка", "Цена, ₽", "Дата цены",
+                          "Примечание", "Источник данных"})
+
+
+def _coax_article(fields: Mapping[str, str]) -> str:
+    return " ".join(str(fields.get("coaxArticle") or fields.get("Артикул") or "").casefold().split())
+
+
+def _same_article(updated: TechOperationRecord, edits: tuple[FieldEdit, ...], now: datetime, uow: UnitOfWork) -> int:
+    """Пишет правленые свойства разъёма в остальные строки того же артикула (тем же путём, что ячейку); возвращает,
+    сколько строк поправлено. Не БД.КОАКС или правка только своих полей строки — ничего."""
+    if updated.tab != TechOperationTab.COAX:
+        return 0
+    names = [edit.field for edit in edits if edit.field not in COAX_ROW_OWN]
+    article = _coax_article(updated.fields)
+    if not names or not article:
+        return 0
+    known = set(_coax_card_columns()) | set(custom_columns(updated.tab, uow))
+    written = 0
+    for sibling in uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=100_000):
+        if sibling.id == updated.id or _coax_article(sibling.fields) != article:
+            continue
+        follow = tuple(FieldEdit(name, sibling.fields.get(name, ""), updated.fields.get(name, "")) for name in names
+                       if (name in sibling.fields or name in known) and sibling.fields.get(name, "") != updated.fields.get(name, ""))
+        if follow:
+            _edit_in(sibling.id, follow, now, uow)
+            written += 1
+    return written
+
+
 def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
     _check_edit_count(command.edits)
     with uow:
         record, updated = _edit_in(command.record_id, command.edits, command.now, uow)
+        _same_article(updated, command.edits, command.now, uow)
         _audit("references.tech_record_edited", command.actor, command.now, {
             "record_id": str(record.id), "tab": record.tab.value,
             "fields": [edit.field for edit in command.edits],
@@ -626,6 +660,7 @@ def link_stock_article(command: LinkStockCommand, uow: UnitOfWork) -> StockLinkR
         changes: tuple[StockLinkChange, ...] = ()
         if command.edits:
             before, record = _edit_in(command.record_id, command.edits, command.now, uow)
+            _same_article(record, command.edits, command.now, uow)
             changes = _changes(before.fields, record.fields, {edit.field for edit in command.edits})
         if changes:
             entry = _journal(StockLinkEvent.UPDATED, command, record, changes, uow)

@@ -93,6 +93,31 @@ def test_a_card_column_is_written_into_a_row_that_does_not_carry_it_yet(base):
         edit_record(EditRecordCommand(record.id, (FieldEdit("Цвет", "", "красный"),), ACTOR, NOW), base())
 
 
+def test_a_connector_property_edited_in_one_row_goes_to_every_row_of_the_article(base):
+    # Owner 19.10: «у одного артикула не могут быть разные значения» — строка = разъём × кабель, свойства разъёма одни.
+    first = _old_row(base, **{"Тип пина": "пайка", "Цена, ₽": "100"})
+    second = TechOperationRecord.create(
+        tab=TechOperationTab.COAX, display_text="SMA-OLD", search_text="", source_sheet="БД.КОАКС", sort_key="SMA-OLD",
+        fields={"Артикул": "sma-old ", "Провод": "RG-316", "L1": "3", "Тип пина": "", "Цена, ₽": "200",
+                "coaxArticle": "sma-old ", "coaxWire": "RG-316"}, edited_in_erp=False)
+    other = TechOperationRecord.create(
+        tab=TechOperationTab.COAX, display_text="SMA-NEW", search_text="", source_sheet="БД.КОАКС", sort_key="SMA-NEW",
+        fields={"Артикул": "SMA-NEW", "Провод": "RG-178", "L1": "4", "coaxArticle": "SMA-NEW", "coaxWire": "RG-178"},
+        edited_in_erp=False)
+    with base() as uow:
+        uow.tech_operations.save(second)
+        uow.tech_operations.save(other)
+        uow.commit()
+    edit_record(EditRecordCommand(first.id, (FieldEdit("L1", "4", "5"), FieldEdit("КСВ", "", "≤1,2"),
+                                             FieldEdit("Цена, ₽", "100", "120")), ACTOR, NOW), base())
+    with base() as uow:
+        twin, stranger = uow.tech_operations.get(second.id), uow.tech_operations.get(other.id)
+    # Свойства разъёма — у второй строки артикула тоже (регистр и пробелы артикула не мешают); цена — предложение продавца
+    # этой строки — и кабель остаются свои; чужой артикул не трогается.
+    assert (twin.fields["L1"], twin.fields["КСВ"], twin.fields["Цена, ₽"], twin.fields["Провод"]) == ("5", "≤1,2", "200", "RG-316")
+    assert stranger.fields["L1"] == "4" and "КСВ" not in stranger.fields
+
+
 def test_a_new_row_takes_no_d(base):
     with pytest.raises(ReferenceValidationError, match="Коаксиальные кабели"):
         create_record(CreateRecordCommand(TechOperationTab.COAX, {"Артикул": "SMA-NEW", "Провод": "RG-178", "D1": "1"},
