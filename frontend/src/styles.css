@@ -2446,6 +2446,17 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* Экран мастера: неделя монтажников — часы по дням, клик по дню ставит выбранную операцию. */
 .mb-week-nav { margin-left: auto; display: flex; gap: 4px; }
 .mb-week-nav .small { padding: 3px 9px; }
+/* Доска мастера: вид проекта «По оборудованию», метка нового задания, ответ сервера на назначение. */
+.mb-project-head .mb-view { margin: 0 0 0 auto; padding: 2px; }
+.mb-project-head .mb-view button { padding: 3px 10px; font-size: 12px; }
+.mb-new { height: 20px; font-size: 12px; }
+.mb-note { margin-bottom: 8px; display: grid; gap: 2px; font-size: 13px; }
+.mb-group-assign { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: var(--muted-foreground); }
+.mb-group-assign label { display: flex; align-items: center; gap: 6px; }
+.mb-group-assign select { width: auto; padding: 4px 8px; font-size: 13px; }
+.mb-group-assign input[type="date"] { width: auto; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.mb-group td:nth-child(3), .mb-group td:nth-child(4), .mb-group th:nth-child(3), .mb-group th:nth-child(4) { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mb-group td .mb-new { margin-left: 6px; }
 .mb-week { width: 100%; border-collapse: separate; border-spacing: 2px; table-layout: fixed; font-size: 12px; }
 .mb-week thead th { font-weight: 500; color: var(--muted-foreground); text-align: center; padding: 2px 0; line-height: 1.2; }
 .mb-week thead th span { display: block; font-size: 11px; }
