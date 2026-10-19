@@ -5,6 +5,9 @@
 // (снимок формы генератора: какие провода в каком сростке, хвосты, трубки). Без снимка — эскиз по тому, что есть.
 import { connectorTopView } from "./connectorTopView";
 import { etkWireColor, type EtkHousing } from "./etkDraw";
+import { coreColor } from "./pinoutCheck";
+import { parseCorePins_ } from "./tcGenLogic";
+import { setCustomColors } from "./wireColors";
 
 type Row = Record<string, unknown>;
 export type Drawing = { width: number; height: number; body: string };
@@ -94,12 +97,15 @@ export function topConnector(housing: EtkHousing | null | undefined, byPin: Reco
 
 type Target = { kind: "conn"; label: string } | { kind: "splice"; id: string } | { kind: "tail" };
 export type HarnessModel = {
-  wires: Array<{ name: string; color: string; length: number }>;
+  /** `cores` — цвета жил многожильного кабеля (hex, по порядку контактов); пусто — провод одного цвета. */
+  wires: Array<{ name: string; color: string; length: number; cores: string[] }>;
   /** Что на конце провода: `endA[idx]` — на стороне А, `endB[idx]` — на стороне Б. */
   endA: Record<number, Target>; endB: Record<number, Target>;
   conns: Array<{ label: string; side: "A" | "B"; wires: number[]; braidLen: string; tube: string; tubeLen: string;
     /** Контакт каждого провода (по номеру провода) и цвет по контакту — для вида сверху; корпус — из операции монтажа. */
-    pins: Record<number, number>; byPin: Record<number, string>; housing: EtkHousing | null }>;
+    pins: Record<number, number>; byPin: Record<number, string>; housing: EtkHousing | null;
+    /** Все контакты провода (у многожильного кабеля — по жиле на контакт). */
+    pinList?: Record<number, number[]> }>;
   splices: Array<{ id: string; name: string; ends: Array<{ idx: number; side: "A" | "B" }> }>;
   braid: string; spliceTube: string; spliceTubeLen: string; harnessTube: string; harnessTubeLen: string;
 };
@@ -120,9 +126,11 @@ export function harnessModel(config: Row, housingOf: (label: string) => EtkHousi
   const kit = new Map(rows(gen.kit).map((item) => [str(item.id), str(item.key).split("|").slice(1).join("|")]));
   const nameOf = (id: unknown) => kit.get(str(id)) ?? "";
   const wires: HarnessModel["wires"] = [];
+  setCustomColors(config.colorHex as Record<string, string> | undefined);
   wireRows.forEach((wire) => {
-    const name = nameOf(wire.compId);
-    wires[Math.round(num(wire.idx))] = { name, color: etkWireColor(name), length: num(wire.length) };
+    const name = nameOf(wire.compId), color = etkWireColor(name);
+    const own = (Array.isArray(wire.coreColors) ? wire.coreColors : []).map((item) => coreColor(str(item) || undefined)?.hex ?? "");
+    wires[Math.round(num(wire.idx))] = { name, color, length: num(wire.length), cores: own.some(Boolean) ? own.map((hex) => hex || color) : [] };
   });
   const endA: HarnessModel["endA"] = {}, endB: HarnessModel["endB"] = {};
   const put = (side: unknown, idx: unknown, target: Target) => { (str(side) === "A" ? endA : endB)[Math.round(num(idx))] = target; };
@@ -136,13 +144,18 @@ export function harnessModel(config: Row, housingOf: (label: string) => EtkHousi
     const list = given.length ? given : Object.keys(obj(ep.pins)).map((idx) => Math.round(num(idx)));
     list.forEach((idx) => put(ep.side, idx, { kind: "conn", label }));
     const shrink = ep.shrinkOn ? nameOf(ep.shrinkMat) : "";
-    const pins: Record<number, number> = {}, byPin: Record<number, string> = {};
+    const pins: Record<number, number> = {}, byPin: Record<number, string> = {}, pinList: Record<number, number[]> = {};
     Object.entries(obj(ep.pins)).forEach(([idx, pin]) => {
-      const number = Math.round(num(pin));
-      if (number > 0) { pins[Math.round(num(idx))] = number; byPin[number] = wires[Math.round(num(idx))]?.name ?? ""; }
+      const at = Math.round(num(idx)), wire = wires[at];
+      parseCorePins_(pin).forEach((number, k) => {
+        if (!number || number <= 0) return;
+        pins[at] ??= number;
+        (pinList[at] ||= []).push(number);
+        byPin[number] = wire?.cores[k] || wire?.name || "";
+      });
     });
     return { label, side: (str(ep.side) === "A" ? "A" : "B") as "A" | "B", wires: list, braidLen: str(ep.braidLen).trim(),
-      tube: shrink ? tubeShort(shrink) : "", tubeLen: shrink ? str(ep.shrinkLen).trim() : "", pins, byPin, housing: housingOf(label) };
+      tube: shrink ? tubeShort(shrink) : "", tubeLen: shrink ? str(ep.shrinkLen).trim() : "", pins, byPin, pinList, housing: housingOf(label) };
   });
   const splices = rows(S.splices).map((splice, index) => {
     const ends = rows(splice.ends).map((end) => ({ idx: Math.round(num(end.idx)), side: (str(end.side) === "A" ? "A" : "B") as "A" | "B" }));
@@ -291,7 +304,7 @@ export function harnessOverview(model: HarnessModel): Drawing {
   const left = model.conns.filter((conn) => conn.side === "A"), right = model.conns.filter((conn) => conn.side === "B");
   const lines = Math.max(left.length, model.splices.length, right.length, 1);
   const spread = (count: number, index: number) => top + (lines * rowH * (index + 0.5)) / count;
-  type Place = { x: number; y: number; conn?: TopConnector | null; pins?: Record<number, number> };
+  type Place = { x: number; y: number; conn?: TopConnector | null; pins?: Record<number, number[]> };
   const at: Record<string, Place> = {}, hasLeaf: Record<string, boolean> = {};
   const key = (target: Target) => (target.kind === "conn" ? `c:${target.label}` : target.kind === "splice" ? `s:${target.id}` : "t");
   let body = "", back = "", wiresBody = "";
@@ -303,13 +316,13 @@ export function harnessOverview(model: HarnessModel): Drawing {
     body += (tc ? tc.svg : connectorBox(24, y - 11, 32, 22, "")) + designator("A", 1, y, conn.label);
     if (conn.braidLen) body += `<rect data-part="braid" x="${f(exit + 1)}" y="${f(y - 6)}" width="16" height="12" rx="4" fill="url(#pfBraid)" stroke="${INK}" stroke-width=".9"/>`;
     if (conn.tube) body += `<rect data-part="branch-tube" x="${f(exit + 1)}" y="${f(y - 7)}" width="8" height="14" rx="3" fill="${TUBE}" stroke="${INK}" stroke-width=".9"/>`;
-    at[`c:${conn.label}`] = { x: exit + (conn.braidLen ? 18 : 3), y, conn: tc, pins: conn.pins };
+    at[`c:${conn.label}`] = { x: exit + (conn.braidLen ? 18 : 3), y, conn: tc, pins: conn.pinList ?? {} };
   });
   right.forEach((conn, index) => {
     const y = spread(right.length, index), tc = topConnector(conn.housing, conn.byPin, "B", W - 24, y, 34, 26);
     const exit = tc ? tc.wireX : W - 24 - 32;
     body += (tc ? tc.svg : connectorBox(W - 24 - 32, y - 11, 32, 22, "")) + designator("B", W - 1, y, conn.label);
-    at[`c:${conn.label}`] = { x: exit - 2, y, conn: tc, pins: conn.pins };
+    at[`c:${conn.label}`] = { x: exit - 2, y, conn: tc, pins: conn.pinList ?? {} };
   });
   model.splices.forEach((splice, index) => { at[`s:${splice.id}`] = { x: 118, y: spread(model.splices.length, index) }; });
   // Провода: по паре (откуда, куда) — пучок своих цветов, у разъёма — на высоте его контактов; хвост — отросток от сростка.
@@ -320,11 +333,11 @@ export function harnessOverview(model: HarnessModel): Drawing {
     if (a.kind === "tail" || b.kind === "tail") { hasLeaf[key(a.kind === "tail" ? b : a)] = true; return; }
     const id = `${key(a)}>${key(b)}`;
     const edge = edges.get(id) ?? edges.set(id, { from: key(a), to: key(b), colors: [], idxs: [] }).get(id)!;
-    edge.colors.push(wire.color);
+    edge.colors.push(...(wire.cores.length ? wire.cores : [wire.color]));
     edge.idxs.push(idx);
   });
   const anchorY = (place: Place, idxs: number[]) => {
-    const ys = idxs.map((idx) => place.pins?.[idx]).filter((pin): pin is number => !!pin && !!place.conn).map((pin) => place.conn!.pinY(pin));
+    const ys = idxs.flatMap((idx) => place.pins?.[idx] ?? []).filter((pin) => !!pin && !!place.conn).map((pin) => place.conn!.pinY(pin));
     return ys.length ? ys.reduce((sum, y) => sum + y, 0) / ys.length : place.y;
   };
   edges.forEach((edge) => {
