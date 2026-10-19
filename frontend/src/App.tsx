@@ -35,6 +35,7 @@ import { QualityPage } from "./QualityPage";
 import { RequestsPage } from "./RequestsPage";
 import { ReceivingPage } from "./ReceivingPage";
 import { WarehousePage } from "./WarehousePage";
+import { EquipmentPage } from "./EquipmentPage";
 import { ShippingPage } from "./ShippingPage";
 import { ReferencesPage } from "./ReferencesPage";
 import { NotificationsPage } from "./NotificationsPage";
@@ -50,7 +51,7 @@ import { StaffPage } from "./StaffPage";
 import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
-import { StageOptionsPanel } from "./StageOptions";
+import { StageOptionsPanel, useEnabledStageOptions } from "./StageOptions";
 import { ThemeSwitch } from "./ThemeSwitch";
 import { GlobalSearch } from "./CommandPalette";
 import { ViewAsBanner } from "./ViewAs";
@@ -117,8 +118,10 @@ export function App() {
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, requireLogin);
   }, []);
 
-  const visibleNav = useMemo(() => (principal ? visibleNavFor(principal) : []), [principal]);
-  const blocks = useMemo(() => (principal ? visibleBlocks(principal) : []), [principal]);
+  // Sections behind stage options («Оборудование») appear while one of their options is «Новое».
+  const enabledOptions = useEnabledStageOptions();
+  const visibleNav = useMemo(() => (principal ? visibleNavFor(principal, enabledOptions) : []), [principal, enabledOptions]);
+  const blocks = useMemo(() => (principal ? visibleBlocks(principal, enabledOptions) : []), [principal, enabledOptions]);
 
   function go(next: Place) {
     const url = new URL(window.location.href);
@@ -313,6 +316,7 @@ export function App() {
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
         {activeSection === "stock" && <WarehousePage key={visit} admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
           canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
+        {activeSection === "equipment" && <EquipmentPage readOnly={!canAct(principal, "warehouse")} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}

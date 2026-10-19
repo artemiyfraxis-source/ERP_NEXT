@@ -24,6 +24,7 @@ from .shared.warehouse_location import configured_rack_layout
 from .modules.procurement import api as procurement_api
 from .modules.receiving import api as receiving_api
 from .modules.warehouse import api as warehouse_api
+from .modules.warehouse import labels_api as warehouse_labels_api
 from .modules.fulfillment import api as fulfillment_api
 from .modules.production import api as production_api
 from .modules.production import plan_api as production_plan_api
@@ -92,6 +93,7 @@ app.include_router(requests_api.router)
 app.include_router(procurement_api.router)
 app.include_router(receiving_api.router)
 app.include_router(warehouse_api.router)
+app.include_router(warehouse_labels_api.router)
 app.include_router(fulfillment_api.router)
 app.include_router(production_api.router)
 app.include_router(production_plan_api.router)

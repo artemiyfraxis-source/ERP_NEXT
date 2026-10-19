@@ -128,6 +128,8 @@ def event_text(event_type: str, details: Mapping[str, object]) -> str:
         return f"Справочник типов сохранён: {_text(details, 'count')}"
     if event_type == "warehouse.rack_layout_saved":
         return f"Склад 0.5: {_text(details, 'message')}"
+    if event_type == "warehouse.label_settings_saved":
+        return f"Печать этикеток: {_text(details, 'message')}"
     if event_type in _RESERVE_EVENTS:
         unit = _text(details, "unit")
         quantity = _number(details.get("quantity")) + (f" {unit}" if unit else "")
