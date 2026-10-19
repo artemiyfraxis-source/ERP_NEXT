@@ -562,6 +562,80 @@ it("lets the master hand out operations of issued projects to installers and lau
   vi.useRealTimers();
 });
 
+// Доска мастера (владелец 19.10): операции КБ с выданной техкартой и вид «По оборудованию» с назначением группы.
+const WHO = "10000000-0000-0000-0000-000000000002";
+const TECHCARD = "80000000-0000-0000-0000-0000000000f1";
+const boardOp = (id: string, position: number, stage: string, norm: number, equipment: { key: string; label: string; limited: boolean }): ProductionOperation & { equipment: typeof equipment } => ({
+  ...task.operations[0], id, position, stage, code: "", norm_seconds: norm, operator_ids: [], planned_start: null, planned_finish: null, assigned_by: null, equipment,
+});
+const cutter = { key: "cut", label: "Станок резки", limited: true };
+const press = { key: "press", label: "Пресс", limited: false };
+const realTask: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000a1", version: 2, project: "708К.4", item: "708К.4КБ1", assigned: 0, quantity: 10,
+  operations: [boardOp("71000000-0000-0000-0000-0000000000a1", 1, "Резка", 600, cutter)] };
+const futureTask: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000f1", number: "Новое · 708К.4 КБ2", version: 1, project: "708К.4", item: "708К.4КБ2",
+  assigned: 0, quantity: 5, pending: true, techcard_id: TECHCARD, techcard_version: 3,
+  operations: [boardOp("71000000-0000-0000-0000-0000000000f1", 1, "Резка", 1200, cutter), boardOp("71000000-0000-0000-0000-0000000000f2", 2, "Опрессовка", 3600, press)] };
+
+function boardFetch(posts: unknown[], answer: unknown = { tasks: [], created: [], placed: [], refused: [], warnings: [] }) {
+  vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T08:00:00"));
+  masterFetch((path, init) => {
+    if (path === "/api/production/board/assign" && init?.method === "POST") { posts.push(JSON.parse(String(init.body))); return json(answer); }
+    if (path.startsWith("/api/production/board?")) return json({ project: "708К.4", tasks: [realTask], future: [futureTask], skipped: [
+      { techcard_id: "x", techcard_version: 1, project: "708К.4", index: "КБ3", name: "", reason: "не задан тираж" }] });
+    return null;
+  }, [realTask]);
+}
+
+it("shows a future operation as a new task and assigns it by the techcard reference", async () => {
+  const posts: unknown[] = [];
+  boardFetch(posts);
+  render(<ProductionPage principal={principal} />);
+  await openBoardProject("708К.4");
+  const block = (await screen.findByText("новое задание")).closest(".mb-task") as HTMLElement;
+  expect(within(block).getByText("Опрессовка")).toBeInTheDocument();
+  expect(screen.getByText(/не задан тираж/)).toBeInTheDocument();
+  fireEvent.click(within(block).getByRole("button", { name: "Резка" }));
+  const only = screen.getByRole("group", { name: "Весь этап одному монтажнику" });
+  fireEvent.click(within(only).getByRole("button", { name: "Назначить только Оператор на 22.09 с 09:00" }));
+  await waitFor(() => expect(posts).toEqual([{
+    operator_id: WHO, requested_start: "2026-09-22T09:00",
+    items: [{ techcard_id: TECHCARD, techcard_version: 3, position: 1 }],
+  }]));
+  vi.useRealTimers();
+});
+
+it("groups unassigned operations by equipment and assigns the whole group in one request", async () => {
+  const posts: unknown[] = [];
+  boardFetch(posts, { tasks: [], created: [], placed: [], warnings: ["Станок резки занят 22.09 с 09:00"],
+    refused: [{ task_id: null, techcard_id: TECHCARD, operation_id: null, position: 1, reason: "нет допуска" }] });
+  try {
+    render(<ProductionPage principal={principal} />);
+    await openBoardProject("708К.4");
+    fireEvent.click(await screen.findByRole("radio", { name: "По оборудованию" }));
+    expect(localStorage.getItem("erp.masterBoard.view")).toBe("equipment");
+    const cut = (await screen.findByText("Станок резки")).closest(".mb-group") as HTMLElement;
+    expect(within(cut).getByText("2 операции · 0,5 ч по норме")).toBeInTheDocument();
+    expect(within(cut).getAllByRole("row")).toHaveLength(3);
+    const pressGroup = screen.getByText("Пресс").closest(".mb-group") as HTMLElement;
+    expect(within(pressGroup).getByText("1 операция · 1,0 ч по норме")).toBeInTheDocument();
+    expect(within(cut).getByLabelText("День начала группы Станок резки")).toHaveValue("2026-09-22");
+    fireEvent.click(within(cut).getByRole("button", { name: "Назначить группу на 22.09 с 09:00" }));
+    await waitFor(() => expect(posts).toEqual([{
+      operator_id: WHO, requested_start: "2026-09-22T09:00",
+      items: [
+        { task_id: realTask.id, task_version: 2, operation_id: realTask.operations[0].id },
+        { techcard_id: TECHCARD, techcard_version: 3, position: 1 },
+      ],
+    }]));
+    expect(await screen.findByText(/Не назначено: .*этап 1: нет допуска/)).toBeInTheDocument();
+    expect(screen.getByText("Станок резки занят 22.09 с 09:00")).toBeInTheDocument();
+  } finally {
+    localStorage.removeItem("erp.masterBoard.view");
+    vi.useRealTimers();
+  }
+});
+
 it("hands a task to ZHUK whole and shows the ZHUK master no hourly grid", async () => {
   // Владелец, 30.09: ЖУК работает не нормированно — задание отдаётся площадке целиком, без людей и часов.
   let sent: unknown;

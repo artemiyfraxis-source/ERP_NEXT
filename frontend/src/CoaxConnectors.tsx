@@ -30,8 +30,9 @@ export const coaxWire = (fields: Fields) => pick(fields, "coaxWire", "Прово
 
 // Серии в порядке, в каком цех их чаще берёт; остальные — по алфавиту после них, «Без серии» — последней.
 const SERIES_ORDER = ["SMA", "N", "TNC", "BNC", "UHF", "mini-UHF", "F", "QMA", "FME", "MCX", "MMCX", "SMB", "SMP",
-  "U.FL", "MHF1", "Fakra", "TS9", "CRC9", "7/16 DIN", "4.3-10"];
-const SERIES_ALIASES: Record<string, string> = { fakra: "Fakra", din: "7/16 DIN", "7/16 din": "7/16 DIN", ipx: "U.FL" };
+  "2.92mm", "3.5mm", "U.FL", "MHF1", "Fakra", "TS9", "CRC9", "7/16 DIN", "4.3-10"];
+const SERIES_ALIASES: Record<string, string> = { fakra: "Fakra", din: "7/16 DIN", "7/16 din": "7/16 DIN", ipx: "U.FL",
+  "2.92": "2.92mm", "2.92 mm": "2.92mm", "3.5": "3.5mm", "3.5 mm": "3.5mm" };
 export const NO_SERIES = "Без серии";
 
 /** Серия разъёма: колонка «Серия», иначе из «Тип/Серия» («RP-SMA-male R/A» → SMA, «N-female flange» → N). */

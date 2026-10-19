@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { CoaxConnectors, coaxAngle, hasHex, coaxGender, coaxSeries, coaxSupplier, coaxTypeGroup } from "./CoaxConnectors";
+import { CoaxConnectors, coaxAngle, hasHex, coaxGender, coaxSeries, seriesRank, coaxSupplier, coaxTypeGroup } from "./CoaxConnectors";
 import type { TechOperationRecord } from "./api";
 
 const record = (id: string, fields: Record<string, string>): TechOperationRecord => ({
@@ -28,6 +28,11 @@ it("reads the series, gender and angle from the card columns or from the type", 
   expect(coaxSeries({ coaxType: "U.FL-female (IPX-female)" })).toBe("U.FL");
   expect(coaxSeries({ coaxType: "DIN-male", Серия: "7/16 DIN" })).toBe("7/16 DIN");
   expect(coaxSeries({ coaxType: "СР-50-male" })).toBe("СР-50");
+  expect(coaxSeries({ coaxType: "2.92mm-male", Серия: "2.92mm" })).toBe("2.92mm");
+  expect(coaxSeries({ coaxType: "2.92mm-male" })).toBe("2.92mm");
+  expect(coaxSeries({ coaxType: "3.5 mm-male" })).toBe("3.5mm");
+  expect(coaxSeries({ coaxType: "SMP-female R/A" })).toBe("SMP");
+  expect(seriesRank("2.92mm")).toBeLessThan(seriesRank("U.FL"));
   expect(coaxSeries({})).toBe("Без серии");
   expect(coaxGender({ coaxType: "SMA-female" })).toBe("гнездо");
   expect(coaxGender({ coaxType: "MHF1-plug" })).toBe("штекер");

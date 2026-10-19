@@ -844,6 +844,9 @@ export interface ProductionTask {
   team?: string[];
   /** «Сдано N шт» площадки без отменённых; null — не считалось в этом ответе. */
   delivered?: number | null;
+  /** Доска мастера: будущее задание КБ с выданной техкартой (в базе его ещё нет) и версия техкарты для назначения. */
+  pending?: boolean;
+  techcard_version?: number | null;
 }
 
 export type ProductionFlowMode = "sequential" | "parallel" | "mixed";
@@ -3087,7 +3090,30 @@ export interface AutoplanPreview {
 
 export type EtkRevisionNotice = { pinned: number | null; current: number; newer: boolean; fallback: string | null };
 
+export interface BoardEquipment { key: string; label: string; limited: boolean }
+export interface BoardTask extends ProductionTask {
+  operations: Array<ProductionOperation & { equipment: BoardEquipment }>;
+  run?: string;
+  warnings?: string[];
+}
+export interface BoardSkipped { techcard_id: string; techcard_version: number; project: string; index: string; name: string; reason: string }
+export interface BoardData { project: string; tasks: BoardTask[]; future: BoardTask[]; skipped: BoardSkipped[] }
+export type BoardAssignItem =
+  | { task_id: string; task_version: number; operation_id: string }
+  | { techcard_id: string; techcard_version: number; position: number; quantity?: number };
+export interface BoardAssignResult {
+  tasks: ProductionTask[];
+  created: Array<{ id: string; number: string }>;
+  placed: Array<{ task_id: string; task_number: string; operation_id: string; position: number; quantity: number | null; start: string; finish: string }>;
+  refused: Array<{ task_id: string | null; techcard_id: string | null; operation_id: string | null; position: number | null; reason: string }>;
+  warnings: string[];
+}
+
 export const productionApi = {
+  /** Доска мастера: задания с группой оборудования операций, будущие задания КБ и КБ, которые не собрались. */
+  board: (project = "") => api<BoardData>(`/api/production/board${project ? `?project=${encodeURIComponent(project)}` : ""}`),
+  boardAssign: (payload: { operator_id: string; requested_start: string | null; items: BoardAssignItem[] }) =>
+    api<BoardAssignResult>("/api/production/board/assign", { method: "POST", body: JSON.stringify(payload) }),
   autoplanContext: (payload: AutoplanRequest) => api<AutoplanContext>("/api/production/autoplan/context", {
     method: "POST",
     body: JSON.stringify(payload),

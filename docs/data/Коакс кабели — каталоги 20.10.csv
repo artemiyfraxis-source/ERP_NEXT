@@ -1,0 +1,845 @@
+﻿Марка,Поле,Было,Стало,Источник,Как
+MFC-195 UF,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-mfc-analogi-lmr/mfc-195-uf/,amel.ru,страница своего поставщика
+MFC-200 UF,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-mfc-analogi-lmr/mfc-200-uf/,amel.ru,страница своего поставщика
+MFC-240 UF,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-mfc-analogi-lmr/mfc-240-uf/,amel.ru,страница своего поставщика
+MFC-300 UF,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-mfc-analogi-lmr/mfc-300-uf-lmr-300-uf-type/,amel.ru,страница своего поставщика
+MFC-400 UF,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-mfc-analogi-lmr/mfc-400-uf/,amel.ru,страница своего поставщика
+MFC-600 UF,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-mfc-analogi-lmr/mfc-600-uf/,amel.ru,страница своего поставщика
+RG-179B/U,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-rg/rg-179b-u/,amel.ru,страница своего поставщика
+RG-180,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-rg-95/rg-180/,amel.ru,страница своего поставщика
+RG-303,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-rg-gibkiy/rg-303/,amel.ru,страница своего поставщика
+RG-303,"Темп. от, °C",,-55,amel.ru,страница своего поставщика
+RG-303,"Темп. до, °C",,200,amel.ru,страница своего поставщика
+RG-316D,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-rg-gibkiy/rg-316d/,amel.ru,страница своего поставщика
+RG-316D,"Жила: проволок × диаметр, мм","7×0,18 (посеребр. медненная сталь)","7×0,17 (сталь омеднённая посеребрённая), ⌀0,51",amel.ru,страница своего поставщика
+RG-316S,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-rg-gibkiy/rg-316s/,amel.ru,страница своего поставщика
+RG-316S,"Темп. от, °C",,-55,amel.ru,страница своего поставщика
+RG-316S,"Темп. до, °C",,200,amel.ru,страница своего поставщика
+RG-393/U,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-rg-gibkiy/rg-393u/,amel.ru,страница своего поставщика
+RG-402 SPCW PTFE SPC FEP,Число жил,,1,amel.ru,страница своего поставщика
+RG-402 SPCW PTFE SPC FEP,Изоляция,,ПТФЭ (оболочка ФЭП),amel.ru,страница своего поставщика
+RG-402 SPCW PTFE SPC FEP,"Темп. от, °C",,-55,amel.ru,страница своего поставщика
+RG-402 SPCW PTFE SPC FEP,"Темп. до, °C",,200,amel.ru,страница своего поставщика
+RG-58 C/U TC PE TC PVC,Число жил,,1,amel.ru,страница своего поставщика
+RG-58 C/U TC PE TC PVC,Изоляция,,ПЭ (оболочка ПВХ),amel.ru,страница своего поставщика
+RG-402SS LLC SE20,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-rg-poluzhestkie/rg402ss-llc-se20/,amel.ru,страница своего поставщика
+РК50-2-22,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-rk-50/rk-50-2-22/,amel.ru,страница своего поставщика
+SF-047 SPC FEP,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sf-ekran-poluzhestkaya-propayannaya-opletka/sf-047-spc-fep/,amel.ru,страница своего поставщика
+SF-047 SPC NJ,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sf-ekran-poluzhestkaya-propayannaya-opletka/sf-047-spc-nj/,amel.ru,страница своего поставщика
+SF-047,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sf-ekran-poluzhestkaya-propayannaya-opletka/sf-047/,amel.ru,страница своего поставщика
+SF-085 FEP,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sf-ekran-poluzhestkaya-propayannaya-opletka/sf-085-fep/,amel.ru,страница своего поставщика
+SF-085,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sf-ekran-poluzhestkaya-propayannaya-opletka/sf-085/,amel.ru,страница своего поставщика
+SF-100 FEP,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sf-ekran-poluzhestkaya-propayannaya-opletka/sf-100-fep/,amel.ru,страница своего поставщика
+SF-141,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sf/sf-141-100om/,amel.ru,страница своего поставщика
+SF-141 FEP,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sf-ekran-poluzhestkaya-propayannaya-opletka/sf-141-fep/,amel.ru,страница своего поставщика
+SF-250 FEP,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sf-ekran-poluzhestkaya-propayannaya-opletka/sf-250-fep/,amel.ru,страница своего поставщика
+SF-250,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sf-ekran-poluzhestkaya-propayannaya-opletka/sf-250/,amel.ru,страница своего поставщика
+SR-034,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sr-ekran-mednaya-trubka/sr-034/,amel.ru,страница своего поставщика
+SR-047,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sr-ekran-mednaya-trubka/sr-047/,amel.ru,страница своего поставщика
+SR-085,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sr-ekran-mednaya-trubka/sr-085/,amel.ru,страница своего поставщика
+SR-141-50 SPCW PTFE TC,"Жила: проволок × диаметр, мм",,"1×0,92 (сталь омеднённая посеребрённая, сплошная)",amel.ru,страница своего поставщика
+SR-141-50 SPCW PTFE TC,Число жил,,1,amel.ru,страница своего поставщика
+SR-141-50 SPCW PTFE TC,Изоляция,,ПТФЭ,amel.ru,страница своего поставщика
+SR-141-50 SPCW PTFE TC,Экран,,трубка медная лужёная,amel.ru,страница своего поставщика
+SR-250,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-serii-sr-ekran-mednaya-trubka/sr-250/,amel.ru,страница своего поставщика
+SUCOFORM 86 FEP,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-sucoform-ekran-poluzhestkaya-propayannaya-opletka/sucoform-86-fep/,amel.ru,страница своего поставщика
+SUCOFORM 141,Ссылка,,https://www.amel.ru/products/cables_coaxial/kabeli-sucoform-ekran-poluzhestkaya-propayannaya-opletka/sucoform-sm-141/,amel.ru,страница своего поставщика
+10D-FB,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+10D-FB,"Темп. до, °C",,80,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PVC внутр.,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PVC внутр.,"Жила: проволок × диаметр, мм",,"1×1,8 (алюминий омеднённый, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PVC внутр.,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PVC внутр.,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+5D-FB CCA PE AL PE,Экран,,фольга алюминиевая + оплётка алюминий,kroks.ru,страница своего поставщика
+5D-FB CCA PE AL PE,"Жила: проволок × диаметр, мм",,"1×1,8 (алюминий омеднённый, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CCA PE AL PE,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CCA PE AL PE,Изоляция,,ПЭ вспененный (оболочка ПЭ),kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC внутр.,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC внутр.,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC внутр.,Экран,,фольга алюминиевая + оплётка алюминий омеднённый,kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC внутр.,"Жила: проволок × диаметр, мм",,"1×1,81 (алюминий омеднённый, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC внутр.,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC внутр.,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+5D-FB CCA PE TC LSZH,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC LSZH,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC LSZH,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC LSZH,"Жила: проволок × диаметр, мм",,"1×1,8 (алюминий омеднённый, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CCA PE TC LSZH,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC LSZH,Изоляция,,ПЭ вспененный (оболочка LSZH),kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PE,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PE,"Жила: проволок × диаметр, мм",,"1×1,8 (алюминий омеднённый, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PE,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PE,Изоляция,,ПЭ вспененный (оболочка ПЭ),kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PVC наружн.,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PVC наружн.,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PVC наружн.,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PVC наружн.,"Жила: проволок × диаметр, мм",,"1×1,8 (алюминий омеднённый, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PVC наружн.,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CCA PE TC PVC наружн.,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC наружн.,Экран,,фольга алюминиевая + оплётка алюминий омеднённый,kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC наружн.,"Жила: проволок × диаметр, мм",,"1×1,81 (медь, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC наружн.,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC наружн.,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+5D-FB CCA PE CCA PVC наружн.,Материал жилы,алюминий омеднённый,медь,kroks.ru,страница своего поставщика
+5D-FB CU PE TC PVC,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+5D-FB CU PE TC PVC,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+5D-FB CU PE TC PVC,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+5D-FB CU PE TC PVC,"Жила: проволок × диаметр, мм",,"1×1,8 (медь, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CU PE TC PVC,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CU PE TC PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+5D-FB CU PE AL PE,Экран,,фольга алюминиевая + оплётка алюминий,kroks.ru,страница своего поставщика
+5D-FB CU PE AL PE,"Жила: проволок × диаметр, мм",,"1×1,81 (медь, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CU PE AL PE,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CU PE AL PE,Изоляция,,ПЭ вспененный (оболочка ПЭ),kroks.ru,страница своего поставщика
+5D-FB Cu,Материал экрана,"алюминий, фольга + алюминий-магний, оплётка","алюминий, фольга + алюминий, оплётка",kroks.ru,страница своего поставщика
+5D-FB CU PE CCA PVC,Экран,,фольга алюминиевая + оплётка алюминий омеднённый,kroks.ru,страница своего поставщика
+5D-FB CU PE CCA PVC,"Жила: проволок × диаметр, мм",,"1×1,8 (медь, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CU PE CCA PVC,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CU PE CCA PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+5D-FB CU PE TC LSZH,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+5D-FB CU PE TC LSZH,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+5D-FB CU PE TC LSZH,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+5D-FB CU PE TC LSZH,"Жила: проволок × диаметр, мм",,"1×1,81 (медь, сплошная)",kroks.ru,страница своего поставщика
+5D-FB CU PE TC LSZH,Число жил,,1,kroks.ru,страница своего поставщика
+5D-FB CU PE TC LSZH,Изоляция,,ПЭ вспененный (оболочка LSZH),kroks.ru,страница своего поставщика
+8D-FB CCA PE TC PVC,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+8D-FB CCA PE TC PVC,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+8D-FB CCA PE TC PVC,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+8D-FB CCA PE TC PVC,"Жила: проволок × диаметр, мм",,"1×2,6 (алюминий омеднённый, сплошная)",kroks.ru,страница своего поставщика
+8D-FB CCA PE TC PVC,Число жил,,1,kroks.ru,страница своего поставщика
+8D-FB CCA PE TC PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+GNS-360B,"Темп. от, °C",,-55,kroks.ru,страница своего поставщика
+GNS-360B,"Темп. до, °C",,125,kroks.ru,страница своего поставщика
+LMR-100,"Жила: проволок × диаметр, мм","1×0,48 (медь, сплошная — по типовой конструкции LMR-100, не подтверждено для этой позиции)","1×0,46 (медь, сплошная)",kroks.ru,страница своего поставщика
+LMR-195 CU PE CU PVC,Экран,,фольга алюминиевая + оплётка медь,kroks.ru,страница своего поставщика
+LMR-195 CU PE CU PVC,"Жила: проволок × диаметр, мм",,"1×0,95 (медь, сплошная)",kroks.ru,страница своего поставщика
+LMR-195 CU PE CU PVC,Число жил,,1,kroks.ru,страница своего поставщика
+LMR-195 CU PE CU PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+LMR-195 CU PE TC PVC,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+LMR-195 CU PE TC PVC,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+LMR-195 CU PE TC PVC,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+LMR-195 CU PE TC PVC,"Жила: проволок × диаметр, мм",,"1×0,9 (медь, сплошная)",kroks.ru,страница своего поставщика
+LMR-195 CU PE TC PVC,Число жил,,1,kroks.ru,страница своего поставщика
+LMR-195 CU PE TC PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+LSR-195,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-lsr-195-cu-pe-tc-pvc/,kroks.ru,страница своего поставщика
+LSR-195,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+LSR-195,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+LSR-240,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-lsr-240-cu-pe-tc-pvc/,kroks.ru,страница своего поставщика
+LSR-240,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+LSR-240,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+RF 0.81 SPC PTFE CU FEP,"Темп. от, °C",,-55,kroks.ru,страница своего поставщика
+RF 0.81 SPC PTFE CU FEP,"Темп. до, °C",,200,kroks.ru,страница своего поставщика
+RF 0.81 SPC PTFE CU FEP,Экран,,оплётка медь,kroks.ru,страница своего поставщика
+RF 0.81 SPC PTFE CU FEP,Изоляция,,ПТФЭ (оболочка ФЭП),kroks.ru,страница своего поставщика
+RF 1.13 SPC PTFE CU FEP,"Темп. от, °C",,-55,kroks.ru,страница своего поставщика
+RF 1.13 SPC PTFE CU FEP,"Темп. до, °C",,200,kroks.ru,страница своего поставщика
+RF 1.13 SPC PTFE CU FEP,Экран,,оплётка медь,kroks.ru,страница своего поставщика
+RF 1.13 SPC PTFE CU FEP,Изоляция,,ПТФЭ (оболочка ФЭП),kroks.ru,страница своего поставщика
+RF 1.32,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-rf132-mnogozhilnyj-spc-ptfe-cu-fep/,kroks.ru,страница своего поставщика
+RF 1.32,"Темп. от, °C",,-55,kroks.ru,страница своего поставщика
+RF 1.32,"Темп. до, °C",,125,kroks.ru,страница своего поставщика
+RF 1.37 SPC PTFE CU FEP,"Темп. от, °C",,-55,kroks.ru,страница своего поставщика
+RF 1.37 SPC PTFE CU FEP,"Темп. до, °C",,200,kroks.ru,страница своего поставщика
+RF 1.37 SPC PTFE CU FEP,Экран,,оплётка медь,kroks.ru,страница своего поставщика
+RF 1.37 SPC PTFE CU FEP,Изоляция,,ПТФЭ (оболочка ФЭП),kroks.ru,страница своего поставщика
+RF 1.48 CCS PTFE CU FEP,"Темп. от, °C",,-55,kroks.ru,страница своего поставщика
+RF 1.48 CCS PTFE CU FEP,"Темп. до, °C",,200,kroks.ru,страница своего поставщика
+RF 1.48 CCS PTFE CU FEP,Экран,,оплётка медь,kroks.ru,страница своего поставщика
+RF 1.48 CCS PTFE CU FEP,Изоляция,,ПТФЭ (оболочка ФЭП),kroks.ru,страница своего поставщика
+RG-174 CCS PE TC PVC,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+RG-174 CCS PE TC PVC,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+RG-174 CCS PE TC PVC,Экран,,оплётка медь лужёная,kroks.ru,страница своего поставщика
+RG-174 CCS PE TC PVC,Изоляция,,ПЭ сплошной (оболочка ПВХ),kroks.ru,страница своего поставщика
+RG-174 CU PE CU PVC,Экран,,оплётка медь,kroks.ru,страница своего поставщика
+RG-174 CU PE CU PVC,Изоляция,,ПЭ сплошной (оболочка ПВХ),kroks.ru,страница своего поставщика
+RG-174 CU PE TC PVC,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+RG-174 CU PE TC PVC,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+RG-174 CU PE TC PVC,Экран,,оплётка медь лужёная,kroks.ru,страница своего поставщика
+RG-174 CU PE TC PVC,Изоляция,,ПЭ сплошной (оболочка ПВХ),kroks.ru,страница своего поставщика
+RG-178 CCS PTFE CU FEP,"Темп. от, °C",,-55,kroks.ru,страница своего поставщика
+RG-178 CCS PTFE CU FEP,"Темп. до, °C",,200,kroks.ru,страница своего поставщика
+RG-178 CCS PTFE CU FEP,Экран,,оплётка медь,kroks.ru,страница своего поставщика
+RG-178 CCS PTFE CU FEP,Изоляция,,ПТФЭ (оболочка ФЭП),kroks.ru,страница своего поставщика
+RG-178 CU PTFE CU FEP,"Темп. от, °C",,-60,kroks.ru,страница своего поставщика
+RG-178 CU PTFE CU FEP,"Темп. до, °C",,200,kroks.ru,страница своего поставщика
+RG-178 CU PTFE CU FEP,Экран,,оплётка медь,kroks.ru,страница своего поставщика
+RG-178 CU PTFE CU FEP,Изоляция,,ПТФЭ (оболочка ФЭП),kroks.ru,страница своего поставщика
+RG-213 CU PE CU PVC,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+RG-213 CU PE CU PVC,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+RG-213 CU PE CU PVC,Экран,,оплётка медь,kroks.ru,страница своего поставщика
+RG-213 CU PE CU PVC,Изоляция,,ПЭ сплошной (оболочка ПВХ),kroks.ru,страница своего поставщика
+RG-213 CU PE TC PVC,Экран,,оплётка медь лужёная,kroks.ru,страница своего поставщика
+RG-213 CU PE TC PVC,Изоляция,,ПЭ сплошной (оболочка ПВХ),kroks.ru,страница своего поставщика
+RG-223,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-rg-223-spc-solid-pe-spc-pvc-do-1000-2000-mgcz/,kroks.ru,страница своего поставщика
+RG-223,"Погонная ёмкость, пФ/м",,100,kroks.ru,страница своего поставщика
+RG-223,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+RG-223,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+RG-316 CCS PTFE CU FEP,"Темп. от, °C",,-55,kroks.ru,страница своего поставщика
+RG-316 CCS PTFE CU FEP,"Темп. до, °C",,200,kroks.ru,страница своего поставщика
+RG-316 CCS PTFE CU FEP,Экран,,оплётка медь,kroks.ru,страница своего поставщика
+RG-316 CCS PTFE CU FEP,Изоляция,,ПТФЭ (оболочка ФЭП),kroks.ru,страница своего поставщика
+RG-316 CU PTFE CU FEP,"Темп. от, °C",,-55,kroks.ru,страница своего поставщика
+RG-316 CU PTFE CU FEP,"Темп. до, °C",,200,kroks.ru,страница своего поставщика
+RG-316 CU PTFE CU FEP,Экран,,оплётка медь,kroks.ru,страница своего поставщика
+RG-316 CU PTFE CU FEP,Изоляция,,ПТФЭ (оболочка ФЭП),kroks.ru,страница своего поставщика
+RG-400 SPC PE SPC FEP,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+RG-400 SPC PE SPC FEP,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+RG-400 SPC PE SPC FEP,Экран,,оплётка медь посеребрённая,kroks.ru,страница своего поставщика
+RG-400 SPC PE SPC FEP,Изоляция,,ПЭ вспененный (оболочка ФЭП),kroks.ru,страница своего поставщика
+RG-58 CU PE AL PVC,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+RG-58 CU PE AL PVC,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+RG-58 CU PE AL PVC,Экран,,фольга алюминиевая + оплётка алюминий,kroks.ru,страница своего поставщика
+RG-58 CU PE AL PVC,"Жила: проволок × диаметр, мм",,"1×0,94 (медь, сплошная)",kroks.ru,страница своего поставщика
+RG-58 CU PE AL PVC,Число жил,,1,kroks.ru,страница своего поставщика
+RG-58 CU PE AL PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+RG-58 CU PE CCA PVC,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+RG-58 CU PE CCA PVC,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+RG-58 CU PE CCA PVC,Экран,,фольга алюминиевая + оплётка алюминий омеднённый,kroks.ru,страница своего поставщика
+RG-58 CU PE CCA PVC,"Жила: проволок × диаметр, мм",,"1×0,94 (медь, сплошная)",kroks.ru,страница своего поставщика
+RG-58 CU PE CCA PVC,Число жил,,1,kroks.ru,страница своего поставщика
+RG-58 CU PE CCA PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+RG-58 CU PE CU PVC,Экран,,фольга алюминиевая + оплётка медь,kroks.ru,страница своего поставщика
+RG-58 CU PE CU PVC,"Жила: проволок × диаметр, мм",,"1×0,8 (медь, сплошная)",kroks.ru,страница своего поставщика
+RG-58 CU PE CU PVC,Число жил,,1,kroks.ru,страница своего поставщика
+RG-58 CU PE CU PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+RG-58 CU PE TC PVC,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+RG-58 CU PE TC PVC,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+RG-58 CU PE TC PVC,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+RG-58 CU PE TC PVC,"Жила: проволок × диаметр, мм",,"1×0,94 (медь, сплошная)",kroks.ru,страница своего поставщика
+RG-58 CU PE TC PVC,Число жил,,1,kroks.ru,страница своего поставщика
+RG-58 CU PE TC PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+RG-6 CCS PE TC PE,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+RG-6 CCS PE TC PE,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+RG-6 CCS PE TC PE,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+RG-6 CCS PE TC PE,"Жила: проволок × диаметр, мм",,"1×1,02 (сталь омеднённая, сплошная)",kroks.ru,страница своего поставщика
+RG-6 CCS PE TC PE,Число жил,,1,kroks.ru,страница своего поставщика
+RG-6 CCS PE TC PE,Изоляция,,ПЭ вспененный (оболочка ПЭ),kroks.ru,страница своего поставщика
+SAT-703 CU PE TC PVC,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+SAT-703 CU PE TC PVC,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+SAT-703 CU PE TC PVC,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,страница своего поставщика
+SAT-703 CU PE TC PVC,"Жила: проволок × диаметр, мм",,"1×1,02 (медь, сплошная)",kroks.ru,страница своего поставщика
+SAT-703 CU PE TC PVC,Число жил,,1,kroks.ru,страница своего поставщика
+SAT-703 CU PE TC PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,страница своего поставщика
+SAT-703B,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-sat-703b-cca-pe-tc-pe-buxta-100-metrov/,kroks.ru,страница своего поставщика
+SAT-703B,"Темп. от, °C",,-40,kroks.ru,страница своего поставщика
+SAT-703B,"Темп. до, °C",,85,kroks.ru,страница своего поставщика
+TW-FWP142,"Темп. от, °C",,-55,kroks.ru,страница своего поставщика
+TW-FWP142,"Темп. до, °C",,125,kroks.ru,страница своего поставщика
+10D-FB CCA LSZH FR,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+10D-FB CCA LSZH FR,"Темп. до, °C",,70,gsm-pdf,паспорт
+10D-FB CCA LSZH FR,Экран,,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+10D-FB CCA LSZH FR,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+10D-FB CCA LSZH FR,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2024/10/cable-10d-fb-cca-lszh-fr-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+10D-FB CU LSZH FR,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+10D-FB CU LSZH FR,"Темп. до, °C",,95,gsm-repiteri.ru,страница своего поставщика
+10D-FB CU LSZH FR,Экран,,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+10D-FB CU LSZH FR,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+10D-FB CU LSZH FR,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2024/10/cable-10d-fb-cu-lszh-fr-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+5D-FB CCA LSZH FR,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+5D-FB CCA LSZH FR,"Темп. до, °C",,95,gsm-repiteri.ru,страница своего поставщика
+5D-FB CCA LSZH FR,Экран,,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+5D-FB CCA LSZH FR,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+5D-FB CCA LSZH FR,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2026/07/cable-5d-fb-cca-lszh-fr-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+5D-FB CU LSZH FR,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+5D-FB CU LSZH FR,"Темп. до, °C",,95,gsm-repiteri.ru,страница своего поставщика
+5D-FB CU LSZH FR,Экран,,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+5D-FB CU LSZH FR,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+5D-FB CU LSZH FR,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2024/10/cable-5d-fb-cu-lszh-fr-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+8D-FB CCA LSZH FR,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+8D-FB CCA LSZH FR,"Темп. до, °C",,75,gsm-repiteri.ru,страница своего поставщика
+8D-FB CCA LSZH FR,Экран,,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+8D-FB CCA LSZH FR,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+8D-FB CCA LSZH FR,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2023/08/cable-8d-fb-cca-lszh-fr-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+8D-FB CCA PE,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+8D-FB CCA PE,"Темп. до, °C",,85,gsm-repiteri.ru,страница своего поставщика
+8D-FB CCA PE,Экран,,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+8D-FB CCA PE,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+8D-FB CCA PE,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2025/06/cable-8d-fb-cca-pe-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+8D-FB CU LSZH FR,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+8D-FB CU LSZH FR,"Темп. до, °C",,95,gsm-repiteri.ru,страница своего поставщика
+8D-FB CU LSZH FR,Экран,,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+8D-FB CU LSZH FR,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+8D-FB CU LSZH FR,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2024/10/cable-8d-fb-cu-lszh-fr-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+8D-FB CU LSZH,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+8D-FB CU LSZH,"Темп. до, °C",,75,gsm-repiteri.ru,страница своего поставщика
+8D-FB Cu,Экран,фольга алюминиевая + оплётка алюминий-магний,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+8D-FB Cu,Ссылка на datasheet,https://gsm-repiteri.ru/prodazha/cable/cable-8d-fb-cu-pvc-chernyy,https://gsm-repiteri.ru/files/2024/10/cable-8d-fb-cu-pvc-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+CNT-300,Ссылка,,https://gsm-repiteri.ru/prodazha/cable/cable-cnt-300-fr-chernyy-cu,gsm-repiteri.ru,страница своего поставщика
+CNT-300,Производители,,CommScope (Andrew),gsm-repiteri.ru,паспорт
+CNT-300,Экран,"двойной (алюминиевая фольга и луженая медная оплетка), оплётка 87%",двойной (алюминиевая фольга и луженая медная оплетка),gsm-repiteri.ru,страница своего поставщика
+CNT-300A,Ссылка,,https://gsm-repiteri.ru/prodazha/cable/cable-cnt-300a-fr-chernyy-cca,gsm-repiteri.ru,страница своего поставщика
+CNT-300A,Производители,,CommScope (Andrew),gsm-repiteri.ru,паспорт
+CNT-300A,Экран,"двойной (алюминиевая фольга и луженая медная оплетка), оплётка 87%",двойной (алюминиевая фольга и луженая медная оплетка),gsm-repiteri.ru,страница своего поставщика
+CNT-400 LSZH FR,"Темп. от, °C",,-40,gsm-repiteri.ru,страница своего поставщика
+CNT-400 LSZH FR,"Темп. до, °C",,60,gsm-repiteri.ru,страница своего поставщика
+CNT-400 LSZH FR,Экран,,двойной (алюминиевая фольга и луженая медная оплетка),gsm-repiteri.ru,страница своего поставщика
+CNT-400 LSZH FR,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+CNT-400 LSZH FR,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2023/05/cable-cnt-400-fr-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+CNT-400 LSZH FR,Производители,,CommScope (Andrew),gsm-repiteri.ru,паспорт
+RFA 1/2″-50,Производители,,Draka,gsm-repiteri.ru,страница своего поставщика
+RFA 1/2″-50,"Темп. от, °C",,-55,gsm-repiteri.ru,паспорт
+RFA 1/2″-50,"Темп. до, °C",,80,gsm-repiteri.ru,паспорт
+TZC500-97,Ссылка,,https://gsm-repiteri.ru/prodazha/cable/cable-ericsson-tzc500-97-5d-fb-cca,gsm-repiteri.ru,страница своего поставщика
+LMR-100,"Радиус изгиба неподвижно, мм",,"6,4",gsm-repiteri.ru,страница другого поставщика
+LMR-100,"Радиус изгиба многократно, мм",,"25,4",gsm-repiteri.ru,страница другого поставщика
+LMR-100,Цвета,,чёрный,gsm-repiteri.ru,страница другого поставщика
+LMR-100,"Наружный диаметр, мм","2,9","2,80",gsm-repiteri.ru,паспорт
+LMR-100,"Темп. от, °C",-40,-60,gsm-repiteri.ru,паспорт
+LMR-195,"Погонная ёмкость, пФ/м",,83,gsm-repiteri.ru,страница своего поставщика
+LMR-195,"Радиус изгиба неподвижно, мм",,12,gsm-repiteri.ru,страница своего поставщика
+LMR-195,"Радиус изгиба многократно, мм",,50,gsm-repiteri.ru,страница своего поставщика
+LMR-195,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+LMR-195,Экран,фольга алюминиевая + оплётка медь лужёная,двойной (алюминиевая фольга и оплетка из луженой меди),gsm-repiteri.ru,страница своего поставщика
+LMR-195,Ссылка на datasheet,https://gsm-repiteri.ru/prodazha/cable/cable-koaksialnyy-lmr-195,https://gsm-repiteri.ru/files/2025/06/cable-lmr-195-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+LMR-300,Ссылка,,https://gsm-repiteri.ru/prodazha/cable/cable-koaksialnyy-lmr-300,gsm-repiteri.ru,страница своего поставщика
+LMR-400,"Погонная ёмкость, пФ/м",,"78,4",gsm-repiteri.ru,страница своего поставщика
+LMR-400,"Радиус изгиба неподвижно, мм",,"25,4",gsm-repiteri.ru,страница своего поставщика
+LMR-400,"Радиус изгиба многократно, мм",,"101,6",gsm-repiteri.ru,страница своего поставщика
+LMR-400,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+LMR-400,Ссылка,,https://gsm-repiteri.ru/prodazha/cable/cable-koaksialnyy-lmr-400,gsm-repiteri.ru,страница своего поставщика
+RF 0.81,"Погонная ёмкость, пФ/м",,98,gsm-repiteri.ru,страница своего поставщика
+RF 0.81,"Радиус изгиба неподвижно, мм",,4,gsm-repiteri.ru,страница своего поставщика
+RF 0.81,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+RF 0.81,"Напряжение, В",,1000,gsm-repiteri.ru,паспорт
+RF 1.13,"Погонная ёмкость, пФ/м",,98,gsm-repiteri.ru,страница своего поставщика
+RF 1.13,"Радиус изгиба неподвижно, мм",,5,gsm-repiteri.ru,страница своего поставщика
+RF 1.13,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+RF 1.13,"Жила: проволок × диаметр, мм","7×0,08 (медь посеребрённая), ⌀0,24","7×0,08",gsm-repiteri.ru,страница своего поставщика
+RF 1.37,"Погонная ёмкость, пФ/м",,96,gsm-repiteri.ru,страница своего поставщика
+RF 1.37,"Радиус изгиба неподвижно, мм",,5,gsm-repiteri.ru,страница своего поставщика
+RF 1.37,Экран,оплётка медь лужёная,проволочная оплетка из луженой меди,gsm-repiteri.ru,страница своего поставщика
+RF 1.37,Ссылка на datasheet,https://gsm-repiteri.ru/prodazha/cable/cable-koaksialnyy-rf1-37,https://gsm-repiteri.ru/files/2026/03/kabel-rf1-37-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RF 1.48,"Жила: проволок × диаметр, мм","7×0,102 (медь посеребрённая), ⌀0,306","7×0,102",gsm-repiteri.ru,страница своего поставщика
+LCF78-50J,"Погонная ёмкость, пФ/м",,71,gsm-repiteri.ru,паспорт
+LCF78-50J,"Радиус изгиба неподвижно, мм",,100,gsm-repiteri.ru,паспорт
+LCF78-50J,"Радиус изгиба многократно, мм",,250,gsm-repiteri.ru,паспорт
+LCF14-50J,Ссылка,,https://gsm-repiteri.ru/prodazha/cable/cable-rfs-koaksialnyy-fider-1-4-lcf14-50j,gsm-repiteri.ru,страница своего поставщика
+RG-11 с тросом,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+RG-142,"Погонная ёмкость, пФ/м",,"96,5",gsm-repiteri.ru,страница своего поставщика
+RG-142,"Радиус изгиба неподвижно, мм",,25,gsm-repiteri.ru,страница своего поставщика
+RG-142,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+RG-142,Цвета,,розовый,gsm-repiteri.ru,страница своего поставщика
+RG-142,"Наружный диаметр, мм","4,95","5,35",gsm-repiteri.ru,паспорт
+RG-142,Материал жилы,сталь омеднённая посеребрённая,медь посеребрённая,gsm-repiteri.ru,паспорт
+RG-142,Экран,оплётка медь посеребрённая двойная,"двойной (двойная медная оплетка, плакированная серебром)",gsm-repiteri.ru,страница своего поставщика
+RG-142,Ссылка на datasheet,https://amel.ru/products/cables_coaxial/kabeli-serii-rg-gibkiy/rg-142b-u/,https://gsm-repiteri.ru/files/2023/03/cable-rg-142-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-178,"Погонная ёмкость, пФ/м",,"96,5",gsm-repiteri.ru,страница своего поставщика
+RG-178,"Радиус изгиба неподвижно, мм",,10,gsm-repiteri.ru,страница своего поставщика
+RG-178,"Радиус изгиба многократно, мм",,30,gsm-repiteri.ru,страница своего поставщика
+RG-178,Материал жилы,сталь омеднённая посеребрённая,медь посеребрённая,gsm-repiteri.ru,паспорт
+RG-178,Экран,оплётка медь посеребрённая,"проволочная медная оплетка, плакированная серебром",gsm-repiteri.ru,страница своего поставщика
+RG-178,Ссылка на datasheet,https://gsm-repiteri.ru/prodazha/cable/cable-rg-178-50-om,https://gsm-repiteri.ru/files/2023/03/cable-rg-178-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-213 C/U,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+RG-213 C/U,Экран,фольга + оплётка алюминий омеднённый лужёный,двойной (алюминиевая фольга и оплетка из луженого омедненного алюминия),gsm-repiteri.ru,страница своего поставщика
+RG-213 C/U,"Жила: проволок × диаметр, мм","7×0,75 (медь, многопров., ⌀2,25)","7×0,75",gsm-repiteri.ru,страница своего поставщика
+RG-213 C/U,Ссылка на datasheet,https://baltic-signal.ru/catalog/accessories/kabel/kabel-rg-213-cu-pvc/,https://gsm-repiteri.ru/files/2024/02/cable-rg-213-c-u-pvc-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-214,Ссылка,,https://gsm-repiteri.ru/prodazha/cable/cable-rg-214-50-om,gsm-repiteri.ru,страница своего поставщика
+RG-214,"Жила: проволок × диаметр, мм","7×0,75 (медь посеребрённая), ⌀2,25","7×0,75",gsm-repiteri.ru,страница своего поставщика
+RG-400,"Погонная ёмкость, пФ/м",,105,gsm-repiteri.ru,страница своего поставщика
+RG-400,"Радиус изгиба неподвижно, мм",,25,gsm-repiteri.ru,страница своего поставщика
+RG-400,"Напряжение, В",,1400,gsm-pdf,паспорт
+RG-400,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+RG-400,"Темп. до, °C",,200,gsm-repiteri.ru,страница своего поставщика
+RG-400,Цвета,,розовый,gsm-repiteri.ru,страница своего поставщика
+RG-400,Экран,оплётка медь посеребрённая двойная 94 %,"двойной (двойная медная оплетка, плакированная серебром)",gsm-repiteri.ru,страница своего поставщика
+RG-400,"Жила: проволок × диаметр, мм","19×0,203 (медь посеребрённая), ⌀1","19×0,20",gsm-repiteri.ru,страница своего поставщика
+RG-400,Ссылка на datasheet,https://www.amel.ru/products/cables_coaxial/kabeli-serii-rg-gibkiy/rg-400-u/,https://gsm-repiteri.ru/files/2023/07/kabel-rg-400-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-402,"Напряжение, В",,1900,gsm-repiteri.ru,страница своего поставщика
+RG-402,Цвета,,синий,gsm-repiteri.ru,страница своего поставщика
+RG-402,Экран,трубка медная,"проволочная медная оплетка, покрытая оловом",gsm-repiteri.ru,страница своего поставщика
+RG-402,Ссылка на datasheet,https://baltic-signal.ru/catalog/accessories/kabel/kabel-rg-402/,https://gsm-repiteri.ru/files/2024/04/cable-rg-402-cf-141-50-fep-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+SR-141-50,Экран,трубка медная,"проволочная медная оплетка, покрытая оловом",gsm-repiteri.ru,страница своего поставщика
+SR-141-50,Ссылка на datasheet,https://baltic-signal.ru/catalog/accessories/kabel/kabel-rg-402-sr-141-50/,https://gsm-repiteri.ru/files/2024/04/cable-rg-402-sr-141-50-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-402SS,Ссылка,,https://gsm-repiteri.ru/prodazha/cable/cable-rg-402-ss,gsm-repiteri.ru,страница своего поставщика
+RG-402SS,Материал оболочки,ПТФЭ,ФЭП,gsm-repiteri.ru,паспорт
+RG-405,"Напряжение, В",,1500,gsm-repiteri.ru,страница своего поставщика
+RG-405,Цвета,,синий,gsm-repiteri.ru,страница своего поставщика
+RG-405,Экран,трубка медная,"проволочная медная оплетка, покрытая оловом",gsm-repiteri.ru,страница своего поставщика
+RG-405,Ссылка на datasheet,https://baltic-signal.ru/catalog/accessories/kabel/kabel-rg-405-cf-086-50-fep/,https://gsm-repiteri.ru/files/2024/04/cable-rg-405-cf-086-50-fep-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+SR-086-50,Ссылка,,https://gsm-repiteri.ru/prodazha/cable/cable-rg-405-sr-086-50,gsm-repiteri.ru,страница своего поставщика
+SR-086-50,Экран,трубка медная,"проволочная медная оплетка, покрытая оловом",gsm-repiteri.ru,страница своего поставщика
+SR-086-50,Ссылка на datasheet,https://gsm-repiteri.ru/prodazha/cable/cable-rg-405-sr-086-50,https://gsm-repiteri.ru/files/2024/04/cable-rg-405-sr-086-50-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-405SS,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+RG-405SS,"Темп. до, °C",,200,gsm-repiteri.ru,страница своего поставщика
+RG-405SS,Цвета,,синий,gsm-repiteri.ru,страница своего поставщика
+RG-405SS,"Наружный диаметр, мм","2,64","2,60",gsm-repiteri.ru,паспорт
+RG-405SS,Материал жилы,сталь омеднённая посеребрённая,медь посеребрённая,gsm-repiteri.ru,паспорт
+RG-405SS,Экран,лента медная посеребрённая + оплётка медь посеребрённая,двойной (посеребренная медная лента и посеребренная медная оплетка),gsm-repiteri.ru,страница своего поставщика
+RG-405SS,Ссылка на datasheet,https://www.amel.ru/products/cables_coaxial/kabeli-serii-rg-gibkiy/rg-405ss/,https://gsm-repiteri.ru/files/2026/06/cable-rg-405-ss-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-59 B/U,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+RG-59 B/U,Ссылка,,https://gsm-repiteri.ru/prodazha/cable-75-om/cable-rg-59-b-u-75-om,gsm-repiteri.ru,страница своего поставщика
+RG-59 B/U,Экран,оплётка медь,"плетеный, медь",gsm-repiteri.ru,страница своего поставщика
+РК50-23-391-Снг(С),"Темп. от, °C",,-55,gsm-repiteri.ru,паспорт
+РК50-23-391-Снг(С),"Темп. до, °C",,85,gsm-repiteri.ru,паспорт
+10D-FB Cu ГОСТ,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+10D-FB Cu ГОСТ,"Темп. до, °C",,80,gsm-repiteri.ru,страница своего поставщика
+10D-FB Cu ГОСТ,Цвета,,синий,gsm-repiteri.ru,страница своего поставщика
+10D-FB Cu ГОСТ,Стандарт,,ГОСТ 31565-2012,gsm-repiteri.ru,страница своего поставщика
+10D-FB Cu ГОСТ,Производители,,VEGATEL,gsm-repiteri.ru,страница своего поставщика
+5D-FB Cu ГОСТ,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+5D-FB Cu ГОСТ,"Темп. до, °C",,80,gsm-repiteri.ru,страница своего поставщика
+5D-FB Cu ГОСТ,Цвета,,синий,gsm-repiteri.ru,страница своего поставщика
+5D-FB Cu ГОСТ,Стандарт,,ГОСТ 31565-2012,gsm-repiteri.ru,страница своего поставщика
+5D-FB Cu ГОСТ,Производители,,VEGATEL,gsm-repiteri.ru,страница своего поставщика
+8D-FB Cu ГОСТ,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+8D-FB Cu ГОСТ,"Темп. до, °C",,80,gsm-repiteri.ru,страница своего поставщика
+8D-FB Cu ГОСТ,Цвета,,синий,gsm-repiteri.ru,страница своего поставщика
+8D-FB Cu ГОСТ,Стандарт,,ГОСТ 31565-2012,gsm-repiteri.ru,страница своего поставщика
+8D-FB Cu ГОСТ,Производители,,VEGATEL,gsm-repiteri.ru,страница своего поставщика
+VEGATEL CF-1/2,Стандарт,,ГОСТ 31565-2012,gsm-repiteri.ru,страница своего поставщика
+10D-FB CCA PVC,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+10D-FB CCA PVC,"Темп. до, °C",,70,gsm-repiteri.ru,страница своего поставщика
+10D-FB CCA PVC,Экран,,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+10D-FB CCA PVC,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+10D-FB CCA PVC,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2024/08/kabel-10d-fb-cca-pvc-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+10D-FB CU PVC,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2018/06/10D-FB-CU-PVC.pdf,gsm-repiteri.ru,страница своего поставщика
+5D-FB,"Погонная ёмкость, пФ/м",,82,gsm-repiteri.ru,страница своего поставщика
+5D-FB,Экран,фольга алюминиевая + оплётка алюминий-магний,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+5D-FB,Ссылка на datasheet,https://gsm-repiteri.ru/prodazha/cable/kabel-5d-fb-pvc-chernyy,https://gsm-repiteri.ru/files/2023/03/cable-5d-fb-cca-pvc-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+8D-FB,"Погонная ёмкость, пФ/м",,82,gsm-repiteri.ru,страница своего поставщика
+8D-FB,Экран,фольга алюминиевая + оплётка алюминий-магний,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+8D-FB,Ссылка на datasheet,https://gsm-repiteri.ru/prodazha/cable/kabel-8d-fb-cca,https://gsm-repiteri.ru/files/2023/03/cable-8d-fb-cca-pvc-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+HPL 50-1/2F,Производители,,Acome,gsm-repiteri.ru,страница своего поставщика
+HPL 50-1/2F,"Темп. от, °C",,-40,gsm-repiteri.ru,паспорт
+HPL 50-1/2F,"Темп. до, °C",,85,gsm-repiteri.ru,паспорт
+HPL 50-7/8 LA,Производители,,Acome,gsm-repiteri.ru,страница своего поставщика
+LCF12-50J,"Темп. от, °C",,-50,gsm-repiteri.ru,паспорт
+LCF12-50J,"Темп. до, °C",,85,gsm-repiteri.ru,паспорт
+RG-11,Экран,"двойной (алюминиевая фольга и алюминиевая оплетка), оплётка 60%",двойной (алюминиевая фольга и алюминиевая оплетка),gsm-repiteri.ru,страница своего поставщика
+RG-174,"Погонная ёмкость, пФ/м",,101,gsm-repiteri.ru,страница своего поставщика
+RG-174,"Радиус изгиба неподвижно, мм",,14,gsm-pdf,паспорт
+RG-174,Экран,оплётка алюминий омеднённый лужёный,проволочная оплетка из луженого омедненного алюминия,gsm-repiteri.ru,страница своего поставщика
+RG-174,Ссылка на datasheet,https://gsm-repiteri.ru/prodazha/cable/kabel-rg-174-50-om,https://gsm-repiteri.ru/files/2024/07/cable-rg-174-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-213 C/U PE,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+RG-213 C/U PE,"Темп. до, °C",,70,gsm-repiteri.ru,страница своего поставщика
+RG-213 C/U PE,Экран,,двойной (алюминиевая фольга и оплетка из луженого омедненного алюминия),gsm-repiteri.ru,страница своего поставщика
+RG-213 C/U PE,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+RG-213 C/U PE,"Жила: проволок × диаметр, мм",,"7×0,75",gsm-repiteri.ru,страница своего поставщика
+RG-213 C/U PE,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2024/02/kabel-rg-213-c-u-pvc-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-213,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+RG-213,"Жила: проволок × диаметр, мм","7×0,74 (медь), ⌀2,39","7×0,74",gsm-repiteri.ru,страница своего поставщика
+RG-316,"Погонная ёмкость, пФ/м",,95,gsm-repiteri.ru,страница своего поставщика
+RG-316,"Радиус изгиба неподвижно, мм",,10,gsm-repiteri.ru,страница своего поставщика
+RG-316,"Радиус изгиба многократно, мм",,25,gsm-repiteri.ru,страница своего поставщика
+RG-316,Цвета,,розовый,gsm-repiteri.ru,страница своего поставщика
+RG-316,Экран,оплётка медь посеребрённая,"проволочная медная оплетка, плакированная серебром",gsm-repiteri.ru,страница своего поставщика
+RG-316,Ссылка на datasheet,https://baltic-signal.ru/catalog/accessories/kabel/kabel-rg-316-50-om/,https://gsm-repiteri.ru/files/2023/03/cable-rg-316-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-58 A/U CU PE CCA PVC,"Темп. от, °C",,-60,gsm-repiteri.ru,страница своего поставщика
+RG-58 A/U CU PE CCA PVC,"Темп. до, °C",,70,gsm-repiteri.ru,страница своего поставщика
+RG-58 A/U CU PE CCA PVC,Экран,,двойной (алюминиевая фольга и оплетка из луженого омедненного алюминия),gsm-repiteri.ru,страница своего поставщика
+RG-58 A/U CU PE CCA PVC,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+RG-58 A/U CU PE CCA PVC,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2024/09/cable-rg-58-a-u-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-58 C/U,Цвета,,чёрный,gsm-repiteri.ru,страница своего поставщика
+RG-58 C/U,Экран,оплётка алюминий омеднённый лужёный,оплетка из луженого омедненного алюминия,gsm-repiteri.ru,страница своего поставщика
+RG-58 C/U,"Жила: проволок × диаметр, мм","19×0,18 (луженая медь, многопров., ⌀0,92)","19×0,18",gsm-repiteri.ru,страница своего поставщика
+RG-58 C/U,Ссылка на datasheet,https://gsm-repiteri.ru/prodazha/cable/kabel-rg-58-c-u-chernyy,https://gsm-repiteri.ru/files/2026/07/cable-rg-58-c-u-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+RG-6,Экран,фольга алюминиевая + оплётка алюминий-магний,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,страница своего поставщика
+1/2 Baltic Signal BSF-50-12 LSZH,Экран,трубка медная гофрированная,медная трубка с кольцевой формой гофра,gsm-repiteri.ru,страница своего поставщика
+1/2 Baltic Signal BSF-50-12 LSZH,Ссылка на datasheet,https://gsm-repiteri.ru/prodazha/cable/koaksialnyy-fider-1-2-baltic-signal-bsf-50-12-lszh-fr,https://gsm-repiteri.ru/files/2025/02/cable-bsf-50-12-lszh-fr-specifikacii.pdf,gsm-repiteri.ru,страница своего поставщика
+5D-FB Cu ГОСТ,Экран,,фольга алюминиевая + оплётка 120*0.14,vegatel.ru,страница другого поставщика
+5D-FB Cu ГОСТ,Число жил,,1,vegatel.ru,страница другого поставщика
+5D-FB Cu ГОСТ,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/5d-fb/guarantee_vegatel_5d-fb-cu-gost-sinij.pdf,vegatel.ru,страница другого поставщика
+8D-FB ГОСТ,"Темп. от, °C",,-60,vegatel.ru,страница своего поставщика
+8D-FB ГОСТ,"Темп. до, °C",,80,vegatel.ru,страница своего поставщика
+8D-FB ГОСТ,Экран,,фольга алюминиевая + оплётка 168*0.16,vegatel.ru,страница своего поставщика
+8D-FB ГОСТ,Число жил,,1,vegatel.ru,страница своего поставщика
+8D-FB ГОСТ,Цвета,,чёрный,vegatel.ru,страница своего поставщика
+8D-FB ГОСТ,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/5d-fb/guarantee_vegatel_8d-fb-gost-100.pdf,vegatel.ru,страница своего поставщика
+8D-FB Cu ГОСТ,Экран,,фольга алюминиевая + оплётка 168*0.16,vegatel.ru,страница другого поставщика
+8D-FB Cu ГОСТ,Число жил,,1,vegatel.ru,страница другого поставщика
+8D-FB Cu ГОСТ,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/5d-fb/guarantee_vegatel_8d-fb-cu-gost-sinij.pdf,vegatel.ru,страница другого поставщика
+10D-FB Cu ГОСТ,Экран,,фольга алюминиевая + оплётка 216*0.16,vegatel.ru,страница другого поставщика
+10D-FB Cu ГОСТ,Число жил,,1,vegatel.ru,страница другого поставщика
+10D-FB Cu ГОСТ,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/5d-fb/guarantee_vegatel_10d-fb-cu-gost-sinij.pdf,vegatel.ru,страница другого поставщика
+10D-FB ГОСТ,"Темп. от, °C",,-60,vegatel.ru,страница своего поставщика
+10D-FB ГОСТ,"Темп. до, °C",,80,vegatel.ru,страница своего поставщика
+10D-FB ГОСТ,Экран,,фольга алюминиевая + оплётка 216*0.16,vegatel.ru,страница своего поставщика
+10D-FB ГОСТ,Число жил,,1,vegatel.ru,страница своего поставщика
+10D-FB ГОСТ,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/5d-fb/guarantee_vegatel_10d-fb-gost.pdf,vegatel.ru,страница своего поставщика
+RG-58 A/U,Материал диэлектрика,ПЭ,ПЭ сплошной,vegatel.ru,страница своего поставщика
+RG-316 TC PTFE CU FEP,"Темп. от, °C",,-55,vegatel.ru,страница своего поставщика
+RG-316 TC PTFE CU FEP,"Темп. до, °C",,200,vegatel.ru,страница своего поставщика
+RG-316 TC PTFE CU FEP,Число жил,,1,vegatel.ru,страница своего поставщика
+RG-316 TC PTFE CU FEP,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/other-kabel/guarantee_vegatel-rg-316-bu.pdf,vegatel.ru,страница своего поставщика
+VEGATEL CF-1/2,"Темп. от, °C",-60,-40,gsm-pdf,паспорт
+VEGATEL CF-1/2,"Темп. до, °C",80,75,gsm-pdf,паспорт
+5D-FB Titan,"Темп. от, °C",,-40,vegatel.ru,страница своего поставщика
+5D-FB Titan,"Темп. до, °C",,75,vegatel.ru,страница своего поставщика
+5D-FB Titan,Экран,,фольга алюминиевая + оплётка 120*0.14,vegatel.ru,страница своего поставщика
+5D-FB Titan,Число жил,,1,vegatel.ru,страница своего поставщика
+5D-FB Titan,Цвета,,чёрный,vegatel.ru,страница своего поставщика
+5D-FB Titan,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/5d-fb/titan_5d-fb-chernyj.pdf,vegatel.ru,страница своего поставщика
+8D-FB Titan,"Темп. от, °C",,-40,vegatel.ru,страница своего поставщика
+8D-FB Titan,"Темп. до, °C",,75,vegatel.ru,страница своего поставщика
+8D-FB Titan,Экран,,фольга алюминиевая + оплётка 168*0.16,vegatel.ru,страница своего поставщика
+8D-FB Titan,Число жил,,1,vegatel.ru,страница своего поставщика
+8D-FB Titan,Цвета,,чёрный,vegatel.ru,страница своего поставщика
+8D-FB Titan,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/8d-fb/titan_8d-fb-chernyj.pdf,vegatel.ru,страница своего поставщика
+10D-FB Titan,"Темп. от, °C",,-40,vegatel.ru,страница своего поставщика
+10D-FB Titan,"Темп. до, °C",,75,vegatel.ru,страница своего поставщика
+10D-FB Titan,Экран,,фольга алюминиевая + оплётка 216*0.16,vegatel.ru,страница своего поставщика
+10D-FB Titan,Число жил,,1,vegatel.ru,страница своего поставщика
+10D-FB Titan,Цвета,,чёрный,vegatel.ru,страница своего поставщика
+10D-FB Titan,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/10d-fb/guarantee_titan_10d-fb.pdf,vegatel.ru,страница своего поставщика
+HCAAY-50-12,Материал жилы,алюминий омеднённый,медь,gsm-pdf,паспорт
+SR-086-50,"Темп. до, °C",155,125,gsm-pdf,паспорт
+10D-FB CU PVC,"Погонная ёмкость, пФ/м","81,5",86,gsm-pdf,паспорт
+HPL 50-1/2F,Материал жилы,алюминий омеднённый,медь,gsm-pdf,паспорт
+HPL 50-1/2F,Материал экрана,медь,"медь, трубка гофрированная",gsm-pdf,паспорт
+HCAAYZ-50-12,"Темп. от, °C",-55,-30,gsm-pdf,паспорт
+8D-FB ГОСТ,Производители,,VEGATEL,gsm-repiteri.ru,"пустая ячейка, тот же кабель у другого продавца"
+RG-58 A/U,Артикул поставщика,R01581,R01543,vegatel.ru,дешевле предложение того же кабеля
+RG-58 A/U,"Цена поставщика, ₽/м","48,36","27,87",vegatel.ru,дешевле предложение того же кабеля
+RG-58 A/U,Ссылка,https://www.vegatel.ru/kabel/vegatel-rg-58/kabel-vegatel-rg-58-a-u-cu-gost-re-chernii-buhta-100m,https://www.vegatel.ru/kabel/vegatel-rg-58/kabel-vegatel-rg-58-a-u-gost-pvc-chernii-buhta-100m,vegatel.ru,дешевле предложение того же кабеля
+10D-FB ГОСТ,Стандарт,,ГОСТ 31565-2012,gsm-repiteri.ru,"пустая ячейка, тот же кабель у другого продавца"
+10D-FB Titan,Производители,,VEGATEL,gsm-repiteri.ru,"пустая ячейка, тот же кабель у другого продавца"
+5D-FB Titan,Производители,,VEGATEL,gsm-repiteri.ru,"пустая ячейка, тот же кабель у другого продавца"
+8D-FB Titan,Производители,,VEGATEL,gsm-repiteri.ru,"пустая ячейка, тот же кабель у другого продавца"
+RG-405 CF-086-50,Тип провода,,коаксиальный,kroks.ru,новая строка
+RG-405 CF-086-50,Артикул поставщика,,1449,kroks.ru,новая строка
+RG-405 CF-086-50,Ссылка,,https://kroks.ru/shop/cable-rf/1449-kabel-koaksialnyj-cf-086-50/,kroks.ru,новая строка
+RG-405 CF-086-50,Поставщик,,kroks.ru,kroks.ru,новая строка
+RG-405 CF-086-50,"Цена поставщика, ₽/м",,"393,44",kroks.ru,новая строка
+RG-405 CF-086-50,Дата цены,,19.10.2026,kroks.ru,новая строка
+RG-405 CF-086-50,"Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+RG-405 CF-086-50,"Погонная ёмкость, пФ/м",,95,kroks.ru,новая строка
+RG-405 CF-086-50,"Темп. от, °C",,-45,kroks.ru,новая строка
+RG-405 CF-086-50,"Темп. до, °C",,100,kroks.ru,новая строка
+RG-405 CF-086-50,"Радиус изгиба неподвижно, мм",,"6,5",kroks.ru,новая строка
+RG-405 CF-086-50,"Радиус изгиба многократно, мм",,25,kroks.ru,новая строка
+RG-405 CF-086-50,"Масса, г/м",,17,kroks.ru,новая строка
+RG-405 CF-086-50,Материал жилы,,медь посеребрённая,kroks.ru,новая строка
+RG-405 CF-086-50,Материал диэлектрика,,ПТФЭ,kroks.ru,новая строка
+RG-405 CF-086-50,Материал экрана,,"медь лужёная, оплётка",kroks.ru,новая строка
+RG-405 CF-086-50,Экран,,оплётка медь лужёная,kroks.ru,новая строка
+RG-405 CF-086-50,"Жила: проволок × диаметр, мм",,"1×0,51 (медь посеребрённая, сплошная)",kroks.ru,новая строка
+RG-405 CF-086-50,Число жил,,1,kroks.ru,новая строка
+RG-405 CF-086-50,Изоляция,,ПТФЭ,kroks.ru,новая строка
+RG-405 CF-086-50,"Напряжение, В",,1500,kroks.ru,новая строка
+RG-405 CF-086-50,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2024/04/cable-rg-405-cf-086-50-specifikacii.pdf,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Тип провода,,коаксиальный,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Артикул поставщика,,3524,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-5d-fb-cca-pe-al-pvc-dlya-vnutrennej-prokladki/,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Поставщик,,kroks.ru,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,"Цена поставщика, ₽/м",,"69,67",kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Дата цены,,19.10.2026,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,"Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,"Наружный диаметр, мм",,"7,62",kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,"Погонная ёмкость, пФ/м",,82,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,"Темп. от, °C",,-40,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,"Темп. до, °C",,85,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Материал жилы,,алюминий омеднённый,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Материал диэлектрика,,ПЭ вспененный,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Материал оболочки,,ПВХ,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Материал экрана,,"алюминий, фольга + алюминий, оплётка",kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Экран,,фольга алюминиевая + оплётка алюминий,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,"Жила: проволок × диаметр, мм",,"1×1,81 (алюминий омеднённый, сплошная)",kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Число жил,,1,kroks.ru,новая строка
+5D-FB CCA PE AL PVC внутр.,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Тип провода,,коаксиальный,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Артикул поставщика,,1372,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-5d-fb-cu-pe-tc-pvc-dlya-vnutrennej-prokladki/,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Поставщик,,kroks.ru,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,"Цена поставщика, ₽/м",,"131,15",kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Дата цены,,19.10.2026,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,"Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,"Наружный диаметр, мм",,"7,5",kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,"Погонная ёмкость, пФ/м",,86,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Материал жилы,,медь,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Материал диэлектрика,,ПЭ вспененный,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Материал оболочки,,ПВХ,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Материал экрана,,"алюминий, фольга + медь лужёная, оплётка",kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,"Жила: проволок × диаметр, мм",,"1×1,8 (медь, сплошная)",kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Число жил,,1,kroks.ru,новая строка
+5D-FB CU PE TC PVC внутр.,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Тип провода,,коаксиальный,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Артикул поставщика,,3533,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-8d-fb-cca-pe-tc-pvc-dlya-vnutrennej-prokladki-x/,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Поставщик,,kroks.ru,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,"Цена поставщика, ₽/м",,"172,13",kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Дата цены,,19.10.2026,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,"Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,"Наружный диаметр, мм",,"10,4",kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,"Погонная ёмкость, пФ/м",,84,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Материал жилы,,алюминий омеднённый,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Материал диэлектрика,,ПЭ вспененный,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Материал оболочки,,ПВХ,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Материал экрана,,"алюминий, фольга + медь лужёная, оплётка",kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Экран,,фольга алюминиевая + оплётка медь лужёная,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,"Жила: проволок × диаметр, мм",,"1×2,8 (алюминий омеднённый, сплошная)",kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Число жил,,1,kroks.ru,новая строка
+8D-FB CCA PE TC PVC внутр.,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,новая строка
+GNS-360B 40 ГГц,Тип провода,,коаксиальный,kroks.ru,новая строка
+GNS-360B 40 ГГц,Артикул поставщика,,3872,kroks.ru,новая строка
+GNS-360B 40 ГГц,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-gns-360b-do-40-ggcz-spc-ldptfe-spc-pfa/,kroks.ru,новая строка
+GNS-360B 40 ГГц,Поставщик,,kroks.ru,kroks.ru,новая строка
+GNS-360B 40 ГГц,"Цена поставщика, ₽/м",,"5426,23",kroks.ru,новая строка
+GNS-360B 40 ГГц,Дата цены,,19.10.2026,kroks.ru,новая строка
+GNS-360B 40 ГГц,"Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+GNS-360B 40 ГГц,"Наружный диаметр, мм",,"3,60+-0,05",kroks.ru,новая строка
+GNS-360B 40 ГГц,"Погонная ёмкость, пФ/м",,85,kroks.ru,новая строка
+GNS-360B 40 ГГц,"Темп. от, °C",,-55,kroks.ru,новая строка
+GNS-360B 40 ГГц,"Темп. до, °C",,125,kroks.ru,новая строка
+GNS-360B 40 ГГц,Материал жилы,,медь посеребрённая,kroks.ru,новая строка
+GNS-360B 40 ГГц,Материал диэлектрика,,ПТФЭ низкой плотности,kroks.ru,новая строка
+GNS-360B 40 ГГц,Материал экрана,,"фольга + медь посеребрённая, оплётка",kroks.ru,новая строка
+GNS-360B 40 ГГц,Экран,,фольга + оплётка медь посеребрённая,kroks.ru,новая строка
+GNS-360B 40 ГГц,"Жила: проволок × диаметр, мм",,"1×0,91+-0,01 (медь посеребрённая, сплошная)",kroks.ru,новая строка
+GNS-360B 40 ГГц,Число жил,,1,kroks.ru,новая строка
+GNS-360B 40 ГГц,Изоляция,,ПТФЭ низкой плотности (оболочка ПФА),kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Тип провода,,коаксиальный,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Артикул поставщика,,1706,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-lmr-100-cu-solid-pe-tc-pvc/,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Поставщик,,kroks.ru,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,"Цена поставщика, ₽/м",,"106,56",kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Дата цены,,19.10.2026,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,"Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,"Наружный диаметр, мм",,"2,79",kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,"Погонная ёмкость, пФ/м",,"101,1",kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,"Темп. от, °C",,-40,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,"Темп. до, °C",,85,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Материал жилы,,медь,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Материал диэлектрика,,ПЭ сплошной,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Материал оболочки,,ПВХ,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Материал экрана,,"медь лужёная, оплётка",kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Экран,,оплётка медь лужёная,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,"Жила: проволок × диаметр, мм",,"1×0,46 (медь, сплошная)",kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Число жил,,1,kroks.ru,новая строка
+LMR-100 CU Solid PE TC PVC,Изоляция,,ПЭ сплошной (оболочка ПВХ),kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Тип провода,,коаксиальный,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Артикул поставщика,,1447,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-poluzhestkij-rg402-cf-141-50-fep/,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Поставщик,,kroks.ru,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,"Цена поставщика, ₽/м",,"344,26",kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Дата цены,,19.10.2026,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,"Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,"Наружный диаметр, мм",,"4,14",kroks.ru,новая строка
+RG-402 CF-141-50 FEP,"Погонная ёмкость, пФ/м",,95,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,"Темп. от, °C",,-45,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,"Темп. до, °C",,100,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,"Радиус изгиба неподвижно, мм",,12,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,"Радиус изгиба многократно, мм",,50,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,"Масса, г/м",,44,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Материал жилы,,медь посеребрённая,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Материал диэлектрика,,ПТФЭ,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Материал оболочки,,ФЭП,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Материал экрана,,"медь лужёная, оплётка",kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Экран,,оплётка медь лужёная,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,"Жила: проволок × диаметр, мм",,"1×0,92 (медь посеребрённая, сплошная)",kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Число жил,,1,kroks.ru,новая строка
+RG-402 CF-141-50 FEP,Изоляция,,ПТФЭ (оболочка ФЭП),kroks.ru,новая строка
+RG-402 CF-141-50,Тип провода,,коаксиальный,kroks.ru,новая строка
+RG-402 CF-141-50,Артикул поставщика,,1448,kroks.ru,новая строка
+RG-402 CF-141-50,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-poluzhestkij-rg402-cf-141-50/,kroks.ru,новая строка
+RG-402 CF-141-50,Поставщик,,kroks.ru,kroks.ru,новая строка
+RG-402 CF-141-50,"Цена поставщика, ₽/м",,"311,48",kroks.ru,новая строка
+RG-402 CF-141-50,Дата цены,,19.10.2026,kroks.ru,новая строка
+RG-402 CF-141-50,"Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+RG-402 CF-141-50,"Погонная ёмкость, пФ/м",,95,kroks.ru,новая строка
+RG-402 CF-141-50,"Темп. от, °C",,-45,kroks.ru,новая строка
+RG-402 CF-141-50,"Темп. до, °C",,100,kroks.ru,новая строка
+RG-402 CF-141-50,"Радиус изгиба неподвижно, мм",,12,kroks.ru,новая строка
+RG-402 CF-141-50,"Радиус изгиба многократно, мм",,50,kroks.ru,новая строка
+RG-402 CF-141-50,"Масса, г/м",,41,kroks.ru,новая строка
+RG-402 CF-141-50,Материал жилы,,медь посеребрённая,kroks.ru,новая строка
+RG-402 CF-141-50,Материал диэлектрика,,ПТФЭ,kroks.ru,новая строка
+RG-402 CF-141-50,Материал экрана,,"медь лужёная, оплётка",kroks.ru,новая строка
+RG-402 CF-141-50,Экран,,оплётка медь лужёная,kroks.ru,новая строка
+RG-402 CF-141-50,"Жила: проволок × диаметр, мм",,"1×0,92 (медь посеребрённая, сплошная)",kroks.ru,новая строка
+RG-402 CF-141-50,Число жил,,1,kroks.ru,новая строка
+RG-402 CF-141-50,Изоляция,,ПТФЭ,kroks.ru,новая строка
+RG-402 CF-141-50,"Напряжение, В",,1900,kroks.ru,новая строка
+RG-402 CF-141-50,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2024/04/cable-rg-402-cf-141-50-specifikacii.pdf,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Тип провода,,коаксиальный,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Артикул поставщика,,1450,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-poluzhestkij-rg405-cf-086-50-fep/,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Поставщик,,kroks.ru,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,"Цена поставщика, ₽/м",,"393,44",kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Дата цены,,19.10.2026,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,"Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,"Наружный диаметр, мм",,"2,18",kroks.ru,новая строка
+RG-405 CF-086-50 FEP,"Погонная ёмкость, пФ/м",,95,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,"Темп. от, °C",,-45,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,"Темп. до, °C",,100,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,"Радиус изгиба неподвижно, мм",,"6,5",kroks.ru,новая строка
+RG-405 CF-086-50 FEP,"Радиус изгиба многократно, мм",,25,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,"Масса, г/м",,22,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Материал жилы,,медь посеребрённая,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Материал диэлектрика,,ПТФЭ,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Материал оболочки,,ФЭП,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Материал экрана,,"медь лужёная, оплётка",kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Экран,,оплётка медь лужёная,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,"Жила: проволок × диаметр, мм",,"1×0,51 (медь посеребрённая, сплошная)",kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Число жил,,1,kroks.ru,новая строка
+RG-405 CF-086-50 FEP,Изоляция,,ПТФЭ (оболочка ФЭП),kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Тип провода,,коаксиальный,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Артикул поставщика,,3539,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-rg-6u-ccs-pe-al-pvc/,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Поставщик,,kroks.ru,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,"Цена поставщика, ₽/м",,"39,34",kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Дата цены,,19.10.2026,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,"Волновое сопротивление, Ом",,75,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,"Наружный диаметр, мм",,"6,8",kroks.ru,новая строка
+RG-6U CCS PE AL PVC,"Погонная ёмкость, пФ/м",,52,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Материал жилы,,сталь омеднённая,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Материал диэлектрика,,ПЭ вспененный,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Материал оболочки,,ПВХ,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Материал экрана,,"алюминий, фольга + алюминий, оплётка",kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Экран,,фольга алюминиевая + оплётка алюминий,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,"Жила: проволок × диаметр, мм",,"1×1,02 (сталь омеднённая, сплошная)",kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Число жил,,1,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,Изоляция,,ПЭ вспененный (оболочка ПВХ),kroks.ru,новая строка
+RG-6U CCS PE AL PVC,"Темп. от, °C",,-40,kroks.ru,новая строка
+RG-6U CCS PE AL PVC,"Темп. до, °C",,85,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Тип провода,,коаксиальный,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Артикул поставщика,,4074,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-tw-fwp142-do-265-ggcz-spc-ldptfe-spc-fep/,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Поставщик,,kroks.ru,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц","Цена поставщика, ₽/м",,"4721,31",kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Дата цены,,19.10.2026,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц","Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц","Наружный диаметр, мм",,"3,60+-0,05",kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц","Погонная ёмкость, пФ/м",,85,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц","Темп. от, °C",,-55,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц","Темп. до, °C",,125,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Материал жилы,,медь посеребрённая,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Материал диэлектрика,,ПТФЭ низкой плотности,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Материал оболочки,,ФЭП,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Материал экрана,,"фольга + медь посеребрённая, оплётка",kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Экран,,фольга + оплётка медь посеребрённая,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц","Жила: проволок × диаметр, мм",,"1×0,91+-0,01 (медь посеребрённая, сплошная)",kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Число жил,,1,kroks.ru,новая строка
+"TW-FWP142 26,5 ГГц",Изоляция,,ПТФЭ низкой плотности (оболочка ФЭП),kroks.ru,новая строка
+TW-FWP142 40 ГГц,Тип провода,,коаксиальный,kroks.ru,новая строка
+TW-FWP142 40 ГГц,Артикул поставщика,,4075,kroks.ru,новая строка
+TW-FWP142 40 ГГц,Ссылка,,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-tw-fwp142-do-40-ggcz-spc-ldptfe-spc-fep/,kroks.ru,новая строка
+TW-FWP142 40 ГГц,Поставщик,,kroks.ru,kroks.ru,новая строка
+TW-FWP142 40 ГГц,"Цена поставщика, ₽/м",,"4721,31",kroks.ru,новая строка
+TW-FWP142 40 ГГц,Дата цены,,19.10.2026,kroks.ru,новая строка
+TW-FWP142 40 ГГц,"Волновое сопротивление, Ом",,50,kroks.ru,новая строка
+TW-FWP142 40 ГГц,"Наружный диаметр, мм",,"3,60+-0,05",kroks.ru,новая строка
+TW-FWP142 40 ГГц,"Погонная ёмкость, пФ/м",,85,kroks.ru,новая строка
+TW-FWP142 40 ГГц,"Темп. от, °C",,-55,kroks.ru,новая строка
+TW-FWP142 40 ГГц,"Темп. до, °C",,125,kroks.ru,новая строка
+TW-FWP142 40 ГГц,Материал жилы,,медь посеребрённая,kroks.ru,новая строка
+TW-FWP142 40 ГГц,Материал диэлектрика,,ПТФЭ низкой плотности,kroks.ru,новая строка
+TW-FWP142 40 ГГц,Материал оболочки,,ФЭП,kroks.ru,новая строка
+TW-FWP142 40 ГГц,Материал экрана,,"фольга + медь посеребрённая, оплётка",kroks.ru,новая строка
+TW-FWP142 40 ГГц,Экран,,фольга + оплётка медь посеребрённая,kroks.ru,новая строка
+TW-FWP142 40 ГГц,"Жила: проволок × диаметр, мм",,"1×0,91+-0,01 (медь посеребрённая, сплошная)",kroks.ru,новая строка
+TW-FWP142 40 ГГц,Число жил,,1,kroks.ru,новая строка
+TW-FWP142 40 ГГц,Изоляция,,ПТФЭ низкой плотности (оболочка ФЭП),kroks.ru,новая строка
+RG-402 SF-141 FEP,"Волновое сопротивление, Ом",,50,vegatel.ru,новая строка
+RG-402 SF-141 FEP,"Погонная ёмкость, пФ/м",,95,vegatel.ru,новая строка
+RG-402 SF-141 FEP,"Наружный диаметр, мм",,"4,1",vegatel.ru,новая строка
+RG-402 SF-141 FEP,"Темп. от, °C",,-55,vegatel.ru,новая строка
+RG-402 SF-141 FEP,"Темп. до, °C",,125,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Материал жилы,,медь посеребрённая,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Материал диэлектрика,,ПТФЭ,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Материал оболочки,,ФЭП,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Материал экрана,,"медь лужёная, оплётка",vegatel.ru,новая строка
+RG-402 SF-141 FEP,Поставщик,,vegatel.ru,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Артикул поставщика,,R01413,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Ссылка,,https://www.vegatel.ru/kabel/kabel-rg-402/vegatel-rg-402-fep-sf-141,vegatel.ru,новая строка
+RG-402 SF-141 FEP,"Цена поставщика, ₽/м",,"358,20",vegatel.ru,новая строка
+RG-402 SF-141 FEP,Тип провода,,коаксиальный,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Число жил,,1,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/Кабель/guarantee_cabel_vegatel-rg-402-fep-sf-141.pdf,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Дата цены,,19.10.2026,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Экран,,пропаянная оплетка,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Цвета,,синий,vegatel.ru,новая строка
+RG-402 SF-141 FEP,Производители,,VEGATEL,vegatel.ru,новая строка
+RG-405 SF-086 FEP,"Волновое сопротивление, Ом",,50,vegatel.ru,новая строка
+RG-405 SF-086 FEP,"Погонная ёмкость, пФ/м",,95,vegatel.ru,новая строка
+RG-405 SF-086 FEP,"Наружный диаметр, мм",,"2,6",vegatel.ru,новая строка
+RG-405 SF-086 FEP,"Темп. от, °C",,-55,vegatel.ru,новая строка
+RG-405 SF-086 FEP,"Темп. до, °C",,165,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Материал жилы,,медь посеребрённая,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Материал диэлектрика,,ПТФЭ,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Материал оболочки,,ФЭП,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Материал экрана,,"медь лужёная, оплётка",vegatel.ru,новая строка
+RG-405 SF-086 FEP,Поставщик,,vegatel.ru,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Артикул поставщика,,R01420,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Ссылка,,https://www.vegatel.ru/kabel/kabel-rg-405/vegatel-rg-405-fep-sf-086,vegatel.ru,новая строка
+RG-405 SF-086 FEP,"Цена поставщика, ₽/м",,"236,07",vegatel.ru,новая строка
+RG-405 SF-086 FEP,Тип провода,,коаксиальный,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Число жил,,1,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/Кабель/guarantee_cabel_vegatel-rg-405-fep-sf-086.pdf,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Дата цены,,19.10.2026,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Экран,,пропаянная оплетка,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Цвета,,синий,vegatel.ru,новая строка
+RG-405 SF-086 FEP,Производители,,VEGATEL,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,"Волновое сопротивление, Ом",,50,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,"Наружный диаметр, мм",,"4,95",gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,"Погонная ёмкость, пФ/м",,"81,69",gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,"Темп. от, °C",,-60,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,"Темп. до, °C",,80,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Материал жилы,,медь,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Материал диэлектрика,,ПЭ,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Материал оболочки,,ПЭ,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Экран,,фольга и проволочная оплетка,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Цвета,,чёрный,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Стандарт,,ГОСТ 31565-2012,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Производители,,VEGATEL,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Ссылка,,https://gsm-repiteri.ru/prodazha/cable-vegatel/cable-koaksialnyy-vegatel-rg-58-a-u-cu-buhta-100m,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Артикул поставщика,,4702,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Дата цены,,19.10.2026,gsm-repiteri.ru,новая строка
+RG-58 A/U Cu ГОСТ PE,Поставщик,,gsm-repiteri.ru,gsm-repiteri.ru,новая строка
+RG-213 Cu ГОСТ,"Волновое сопротивление, Ом",,50,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,"Погонная ёмкость, пФ/м",,100,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,"Наружный диаметр, мм",,"10,4",vegatel.ru,новая строка
+RG-213 Cu ГОСТ,"Темп. от, °C",,-40,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,"Темп. до, °C",,70,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Материал жилы,,медь,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Материал диэлектрика,,ПЭ сплошной,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Материал оболочки,,ПВХ,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Материал экрана,,"алюминий омеднённый, оплётка",vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Поставщик,,vegatel.ru,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Артикул поставщика,,R04155,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Ссылка,,https://www.vegatel.ru/kabel/kabel-koaksialnyj-rg-213/kabel-vegatel-rg-213-cu-gost-pvc-chernyj,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,"Цена поставщика, ₽/м",,"209,84",vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Тип провода,,коаксиальный,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Число жил,,1,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Цвета,,чёрный,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/Кабель/kabel-vegatel-rg-213-cu-gost-pvc-chernyj.pdf,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Дата цены,,19.10.2026,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Экран,,проволочная оплетка,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Стандарт,,ГОСТ 31565-2012,vegatel.ru,новая строка
+RG-213 Cu ГОСТ,Производители,,VEGATEL,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,"Волновое сопротивление, Ом",,50,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,"Погонная ёмкость, пФ/м",,"81,69",vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,"Наружный диаметр, мм",,"4,95",vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,"Темп. от, °C",,-60,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,"Темп. до, °C",,80,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Материал жилы,,медь лужёная,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Материал диэлектрика,,ПЭ сплошной,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Материал оболочки,,ПВХ,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Поставщик,,vegatel.ru,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Артикул поставщика,,R01567,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Ссылка,,https://www.vegatel.ru/kabel/vegatel-rg-58/kabel-vegatel-rg-58-a-u-cu-gost-pvc-mnogozhilnii-chernii-buhta-100m,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,"Цена поставщика, ₽/м",,"45,08",vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Тип провода,,коаксиальный,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Число жил,,1,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Цвета,,чёрный,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Ссылка на datasheet,,https://www.vegatel.ru/assets/files/teh.pasporta/rg-58/guarantee_vegatel-rg-58-au-cu-gost-pvc-mnogozhilnyj-chernyj-buhta-100m.pdf,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Дата цены,,19.10.2026,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Экран,,фольга и проволочная оплетка,vegatel.ru,новая строка
+RG-58 A/U Cu ГОСТ многожильный,Производители,,VEGATEL,vegatel.ru,новая строка
+5D-FB CU PVC,"Волновое сопротивление, Ом",,50,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,"Наружный диаметр, мм",,"7,54",gsm-repiteri.ru,новая строка
+5D-FB CU PVC,"Погонная ёмкость, пФ/м",,82,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,"Радиус изгиба неподвижно, мм",,50,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,"Радиус изгиба многократно, мм",,150,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,"Темп. от, °C",,-60,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,"Темп. до, °C",,75,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,Материал жилы,,медь,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,Материал диэлектрика,,ПЭ вспененный,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,Материал оболочки,,ПВХ,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,Экран,,двойной (алюминиевая фольга и алюминиево-магниевая оплетка),gsm-repiteri.ru,новая строка
+5D-FB CU PVC,Цвета,,чёрный,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,Ссылка на datasheet,,https://gsm-repiteri.ru/files/2024/12/cable-5d-fb-cu-pvc-specifikacii.pdf,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,Ссылка,,https://gsm-repiteri.ru/prodazha/cable/kabel-5d-fb-cu-pvc-chernyy,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,Артикул поставщика,,0912,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,Дата цены,,19.10.2026,gsm-repiteri.ru,новая строка
+5D-FB CU PVC,Поставщик,,gsm-repiteri.ru,gsm-repiteri.ru,новая строка

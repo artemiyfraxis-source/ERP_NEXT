@@ -1,7 +1,7 @@
 import { PageWindow } from "./PageWindow";
 import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataCellEdit, type DataColumn } from "./DataTable";
-import { CABLE_KIND_LABELS, CoaxCardView, kindColumn, num, spanText } from "./CableStructure";
+import { CABLE_KIND_LABELS, CoaxCardView, freq, kindColumn, num, range, spanText } from "./CableStructure";
 import {
   failureText,
   referencesApi,
@@ -83,6 +83,9 @@ const SHOWN: Record<CableKind, string[]> = {
 // in «Колонки» and in the card.
 const LISTED_ANYWHERE = new Set([...Object.values(SHOWN).flat(), TYPE, "Изоляция", "Экран"]);
 // A new row starts in the list it was added from.
+// «Нормальная карточка» (owner 19.10.2026): the coax table keeps the key columns, the rest is in «Колонки» and in the card.
+const COAX_VISIBLE = new Set(["cable", "D1", "Наружный диаметр, мм", "Волновое сопротивление, Ом", "Поставщик", "Артикул поставщика", LINK,
+  "Цена поставщика, ₽/м", "__kind", "__reason"]);
 const NEW_TYPE: Record<CableKind, Record<string, string>> = {
   coax: { [TYPE]: "коаксиальный", "Число жил": "1" },
   wire: { [TYPE]: "монтажный", "Число жил": "1" },
@@ -222,7 +225,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       render: (row) => <span className={!row.card ? "muted" : row.card.verified && row.card.confidence !== "низкая" ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
     },
   } : { [LINK]: linkColumn() };
-  const columns: DataColumn<CableRow>[] = [
+  const allColumns: DataColumn<CableRow>[] = [
     { key: "cable", title: kind === "wire" ? "Марка провода" : "Марка кабеля", value: (row) => row.cable, render: (row) => <strong>{row.cable}</strong> },
     ...(kind === "coax" ? DIAMETERS.map((name): DataColumn<CableRow> => ({
       key: name, title: DIA_TITLES[name], numeric: true, value: (row) => row.dia?.[name] ?? "", edit: diaEdit(name),
@@ -241,12 +244,11 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
     kindColumn(canEdit, onSaved),
     { key: "__reason", title: "Почему здесь", computed: true, value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
+  const columns = kind === "coax" ? allColumns.map((column) => COAX_VISIBLE.has(column.key) ? column : { ...column, hidden: true }) : allColumns;
+  const [openId, setOpenId] = useState("");
+  const opened = kind === "coax" ? rows.find((row) => row.id === openId) ?? null : null;
 
   const detail = (row: CableRow) => <>
-    {kind === "coax" && <CoaxNames row={row} />}
-    {row.card
-      ? <CoaxCardView card={row.card} exact={Boolean(row.card_exact)} aside={kind === "coax" ? <CompatibleConnectors row={row} /> : undefined} />
-      : kind === "coax" && <div className="coax-card"><CompatibleConnectors row={row} /></div>}
     {canEdit
       ? <CableEditor key={`${row.id}:${JSON.stringify(row.record?.fields ?? {})}:${row.dia ? diaText(row.dia) : ""}:${row.kind}`}
         row={row} kind={kind} data={data} onSaved={onSaved} onError={onError} />
@@ -254,6 +256,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
   </>;
 
   return <>
+    {opened && <CoaxCableWindow key={opened.id} row={opened} kind={kind} data={data} canEdit={canEdit} onSaved={onSaved} onError={onError} close={() => setOpenId("")} />}
     {adding && <PageWindow label="Новая запись кабеля" width={900} close={() => setAdding(false)}><div className="panel db-edit">
       <div className="manual-stock-head"><h2>Новая запись: {CABLE_KIND_LABELS[kind].toLowerCase()}</h2></div>
       <CableEditor row={null} kind={kind} data={data} onSaved={async (message) => { setAdding(false); await onSaved(message); }} onError={onError} onCancel={() => setAdding(false)} />
@@ -269,9 +272,10 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       // A saved layout keeps its order and hidden set: the coax order of 15.10 (materials, one range, the supplier
       // columns; 19.10 — the card's parameters as columns after the impedance) starts from a new key, so a layout saved
       // before it does not hide the new order.
-      storageKey={kind === "coax" ? "db:cables:coax:5" : `db:cables:${kind}:3`}
+      storageKey={kind === "coax" ? "db:cables:coax:5-2" : `db:cables:${kind}:3`}
       exportName={CABLE_KIND_LABELS[kind]}
-      renderDetail={detail}
+      renderDetail={kind === "coax" ? undefined : detail}
+      onRowClick={kind === "coax" ? (row) => setOpenId(row.id) : undefined}
       collapsibleGroups={kind === "coax"}
       groupBy={kind === "multi" ? (row) => cableFamily(cells(row)).family : grouped ? (row) => cableGroup(cells(row)).label : kind === "coax" ? coaxGroup : undefined}
       // Each group sorts its own rows (owner 16.10: «у каждой группы своя»); every row of the list at once, no page.
@@ -283,6 +287,99 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       toolbar={<>{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
     />
   </>;
+}
+
+const dash = <span className="cell-empty">—</span>;
+const isoDate = (text: string) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(text.trim()); return m ? `${m[3]}.${m[2]}.${m[1]}` : text.trim(); };
+const withUnit = (value: string, unit: string) => value ? `${value} ${unit}` : "";
+const asNumber = (text: string) => text ? Number(text.replace(",", ".")) : null;
+
+/** Attenuation at the VNA markers' frequencies from the card's points: «0,55 на 433 МГц · 1,65 на 2,45 ГГц (дБ/м)». */
+function lossAtMarkers(card: CoaxCard | null | undefined): string {
+  if (!card) return "";
+  const parts: string[] = [];
+  for (const marker of card.markers) {
+    if (marker.peak || marker.freq_mhz === null) continue;
+    const point = card.attenuation.filter((item) => item.freq_mhz === marker.freq_mhz).sort((a, b) => Number(a.interpolated) - Number(b.interpolated))[0];
+    if (point) parts.push(`${point.interpolated ? "≈ " : ""}${num(Math.round(point.loss_db_m * 100) / 100)} на ${freq(marker.freq_mhz)}`);
+  }
+  return parts.length ? `${parts.join(" · ")} (дБ/м)` : "";
+}
+
+/** The cable's own data in sections (owner 19.10.2026: «нормальная карточка, открывающаяся, с нужными данными»), then the
+    VNA markers and the compatible connectors; «Править» swaps in the record's editor. */
+function CoaxCableWindow({ row, kind, data, canEdit, onSaved, onError, close }: {
+  row: CableRow; kind: CableKind; data: CablesResult; canEdit: boolean;
+  onSaved: (message: string) => Promise<void> | void; onError: (message: string) => void; close: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const f = (name: string) => (row.record?.fields[name] ?? "").trim();
+  const card = row.card;
+  const param = (field: string) => { const item = COAX_PARAMS.find((entry) => entry.field === field)!; return coaxParam(row, item)?.text ?? ""; };
+  const layer = (...parts: string[]) => parts.filter(Boolean).join(" · ");
+  const temp = f("Темп. от, °C") || f("Темп. до, °C")
+    ? range(asNumber(f("Темп. от, °C")), asNumber(f("Темп. до, °C")))
+    : range(card?.params.temp_min_c ?? null, card?.params.temp_max_c ?? null);
+  const price = f("Цена поставщика, ₽/м");
+  const link = f(LINK);
+  const sections: Array<{ title: string; items: Array<[string, ReactNode]> }> = [
+    { title: "Конструкция", items: [
+      ["Жила (D1)", layer(f("Материал жилы"), f("Жила: проволок × диаметр, мм"), withUnit(row.dia?.D1 ?? "", "мм"))],
+      ["Диэлектрик (D2)", layer(f("Материал диэлектрика"), withUnit(row.dia?.D2 ?? "", "мм"))],
+      ["Экран (D3)", layer(f("Материал экрана"), withUnit(row.dia?.D3 ?? "", "мм"))],
+      ["Оболочка (наружный)", layer(f("Материал оболочки"), withUnit(f("Наружный диаметр, мм"), "мм"))],
+    ] },
+    { title: "Электрические", items: [
+      ["Волновое сопротивление", withUnit(param("Волновое сопротивление, Ом"), "Ом")],
+      ["Погонная ёмкость", withUnit(param("Погонная ёмкость, пФ/м"), "пФ/м")],
+      ["Диапазон частот", rangeText(card)],
+      ["Рабочая частота", card?.max_operating_ghz != null ? `до ${num(card.max_operating_ghz)} ГГц` : ""],
+      ["Частота среза", card?.fc_ghz != null ? `≈ ${num(card.fc_ghz)} ГГц` : ""],
+      ["Напряжение", withUnit(param("Напряжение, В"), "В")],
+      ["Затухание", lossAtMarkers(card)],
+    ] },
+    { title: "Механика и условия", items: [
+      ["Радиус изгиба неподвижно", withUnit(param("Радиус изгиба неподвижно, мм"), "мм")],
+      ["Радиус изгиба многократно", withUnit(param("Радиус изгиба многократно, мм"), "мм")],
+      ["Масса", withUnit(param("Масса, г/м"), "г/м")],
+      ["Температура", temp ? `${temp} °C` : ""],
+    ] },
+  ];
+  const head: Array<[string, ReactNode]> = [
+    ["Тип / семейство", card?.family || f(TYPE)],
+    ["Поставщик", f("Поставщик")],
+    ["Артикул поставщика", f("Артикул поставщика")],
+    ["Ссылка", /^https?:\/\//i.test(link)
+      ? <a href={link} target="_blank" rel="noreferrer" title={link} aria-label={`Открыть страницу ${row.cable} у поставщика`}>открыть</a> : link],
+    ["Цена", price ? `${price} ₽/м${f("Дата цены") ? ` от ${isoDate(f("Дата цены"))}` : ""}` : ""],
+    ["Стандарт", f(STANDARD)],
+  ];
+  const grid = (items: Array<[string, ReactNode]>, label?: string) => <dl className="cable-sheet-grid" aria-label={label}>
+    {items.map(([label, value]) => <div key={label} className={label === "Затухание" ? "wide" : undefined}><dt>{label}</dt><dd>{value || dash}</dd></div>)}
+  </dl>;
+  return <PageWindow label={`Карточка кабеля ${row.cable}`} width={900} dismissable={!editing} close={close}><div className="panel cable-sheet">
+    <div className="cable-sheet-head">
+      <h2>{row.cable}</h2>
+      <div className="cable-sheet-actions">
+        {canEdit && !editing && <button type="button" className="primary small" onClick={() => setEditing(true)}>Править</button>}
+        <button type="button" className="secondary small" onClick={close} aria-label="Закрыть карточку">Закрыть</button>
+      </div>
+    </div>
+    {editing
+      ? <CableEditor key={`${row.id}:${JSON.stringify(row.record?.fields ?? {})}:${row.dia ? diaText(row.dia) : ""}:${row.kind}`}
+        row={row} kind={kind} data={data} onCancel={() => setEditing(false)} onError={onError}
+        onSaved={async (message) => { if (message) setEditing(false); await onSaved(message); }} />
+      : <>
+        {grid(head, "Основное")}
+        <CoaxNames row={row} />
+        {sections.map((section) => <section key={section.title} className="cable-sheet-sec" aria-label={section.title}>
+          <h3>{section.title}</h3>{grid(section.items)}
+        </section>)}
+        {card
+          ? <CoaxCardView compact card={card} exact={Boolean(row.card_exact)} aside={<CompatibleConnectors row={row} />} />
+          : <div className="coax-card"><CompatibleConnectors row={row} /></div>}
+      </>}
+  </div></PageWindow>;
 }
 
 /** Other names of the very cable, above its card; nothing when they would only repeat the row. */
