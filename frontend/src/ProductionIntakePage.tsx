@@ -3,11 +3,11 @@ import { ApiError, failureText, productionApi, shippingApi, type FinishedGood, t
 import { DataTable, type DataColumn } from "./DataTable";
 import { DispatchCard } from "./DispatchCard";
 import { FinishedGoodsHandoff } from "./FinishedGoodsHandoff";
-import { formatDayMonth } from "./format";
+import { formatDay, formatDayMonth } from "./format";
 import { isoDay } from "./Gantt";
 import { daysUntil } from "./productionGraph";
 import { canAct } from "./navigation";
-import { intakeApi, type IntakeRow } from "./productionIntakeApi";
+import { intakeApi, type IntakeAct, type IntakeRow } from "./productionIntakeApi";
 import "./productionIntake.css";
 
 /* «Приёмка с производства» (владелец 14.10): всё, что у нас в работе, по проектам. Склад принимает кусками —
@@ -23,6 +23,10 @@ const num = (value: string | number | null | undefined) => {
 const round2 = (value: number) => Math.round(value * 100) / 100;
 const today = () => isoDay(new Date());
 const keyOf = (row: IntakeRow) => `${row.project}\u0000${row.item_index}`;
+/** Строка таблицы: КБ (или её остаток, когда часть уже принята) либо акт приёмки — зелёная строка без ввода. */
+type IntakeLine = IntakeRow & { act?: IntakeAct };
+const lineKey = (row: IntakeLine) => row.act ? `${keyOf(row)}\u0000${row.act.grn}` : keyOf(row);
+const RECENT_DAYS = 7;
 const dash = <span className="muted">—</span>;
 const count = (value: string) => num(value) > 0 ? value : dash;
 
@@ -32,8 +36,25 @@ function tasksText(row: IntakeRow) {
 
 /** «В производстве» (владелец 14.10): по этапу КБ — «В работе» или «ОТК», — или запущено больше, чем сдано цехом. */
 const IN_WORK_STAGES = new Set(["В работе", "ОТК"]);
+const recentAct = (row: IntakeRow) => {
+  const from = new Date(); from.setDate(from.getDate() - RECENT_DAYS);
+  return (row.acts ?? []).some((act) => act.received_at >= isoDay(from));
+};
 const inSegment = (row: IntakeRow, segment: Segment) => segment === "all"
-  || (segment === "ready" ? num(row.remaining) > 0 : IN_WORK_STAGES.has(row.stage) || num(row.launched) > num(row.delivered));
+  || (segment === "ready" ? num(row.remaining) > 0 || recentAct(row) : IN_WORK_STAGES.has(row.stage) || num(row.launched) > num(row.delivered));
+
+/** КБ с принятым → зелёные строки актов, затем остаток (заказано − принято; нет остатка — КБ принята целиком). */
+function expand(row: IntakeRow): IntakeLine[] {
+  const acts = row.acts ?? [];
+  if (!acts.length) return [row];
+  const lines: IntakeLine[] = acts.map((act) => ({
+    ...row, act, stage: "", needed: "0", launched: "0", delivered: "0", accepted: act.quantity, remaining: "0", packed: "0", sent: "0",
+    grn: act.grn, location: act.location, tasks: [],
+  }));
+  const rest = round2(Math.max(num(row.needed) - num(row.accepted), 0));
+  if (rest > 0 || num(row.remaining) > 0) lines.push({ ...row, needed: String(rest), accepted: "0", grn: null, location: "" });
+  return lines;
+}
 
 export function ProductionIntakePage({ principal }: { principal: Principal }) {
   // Принимает кладовщик («Отгрузка — склад»); данные отправки вносят и менеджер («Отгрузка»), и кладовщик.
@@ -83,7 +104,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const acceptable = rows.filter((row) => num(row.remaining) > 0);
   const chosen = acceptable.filter((row) => picked[keyOf(row)] && num(amount(row)) > 0);
   const total = round2(chosen.reduce((sum, row) => sum + num(amount(row)), 0));
-  const shown = useMemo(() => rows.filter((row) => inSegment(row, segment)), [rows, segment]);
+  const shown = useMemo(() => rows.filter((row) => inSegment(row, segment)).flatMap(expand), [rows, segment]);
   const head = useMemo(() => {
     const byProject: Record<string, IntakeRow> = {};
     for (const row of rows) if (!byProject[row.project]) byProject[row.project] = row;
@@ -140,11 +161,11 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     finally { setBusy(""); }
   };
 
-  const columns: DataColumn<IntakeRow>[] = [
-    ...(canWarehouse ? [{ key: "take", title: "Принять, шт", value: (row: IntakeRow) => picked[keyOf(row)] ? num(amount(row)) : "",
-      render: (row: IntakeRow) => {
+  const columns: DataColumn<IntakeLine>[] = [
+    ...(canWarehouse ? [{ key: "take", title: "Принять, шт", value: (row: IntakeLine) => picked[keyOf(row)] ? num(amount(row)) : "",
+      render: (row: IntakeLine) => {
         const key = keyOf(row);
-        if (!(num(row.remaining) > 0)) return dash;
+        if (row.act || !(num(row.remaining) > 0)) return dash;
         const problem = rowErrors[key];
         return <span className="intake-take"><span className="ship-take">
           <input type="checkbox" aria-label={`Принять ${row.project} ${row.item_index}`} checked={Boolean(picked[key])} onChange={(event) => tick([row], event.target.checked)} />
@@ -160,18 +181,19 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     // Строка — одна линия (владелец 15.10): длинное наименование обрезается «…», целиком — в подсказке.
     { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <span className="intake-clip intake-name" title={row.name}>{row.name}</span> },
     { key: "stage", title: "Этап", value: (row) => row.stage, render: (row) => row.stage ? <span className="intake-clip intake-stage" title={row.stage}>{row.stage}</span> : dash },
-    { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true },
+    { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true, render: (row) => row.act ? dash : row.needed },
     { key: "launched", title: "Запущено", value: (row) => num(row.launched), numeric: true, render: (row) => count(row.launched) },
-    { key: "delivered", title: "Сдано цехом", value: (row) => num(row.delivered), numeric: true, render: (row) => <span title={tasksText(row)}>{count(row.delivered)}</span> },
+    { key: "delivered", title: "Сдано цехом", value: (row) => num(row.delivered), numeric: true, render: (row) => row.act ? dash : <span title={tasksText(row)}>{count(row.delivered)}</span> },
     { key: "accepted", title: "Принято", value: (row) => num(row.accepted), numeric: true, render: (row) => count(row.accepted) },
     { key: "remaining", title: "Можно принять", value: (row) => num(row.remaining), numeric: true,
-      render: (row) => num(row.remaining) > 0 ? <strong className="tone-ok">{row.remaining}</strong> : dash },
+      render: (row) => !row.act && num(row.remaining) > 0 ? <strong className="tone-ok">{row.remaining}</strong> : dash },
     { key: "packed", title: "Упаковано", value: (row) => num(row.packed), numeric: true, render: (row) => count(row.packed) },
     { key: "sent", title: "Отгружено", value: (row) => num(row.sent), numeric: true, render: (row) => count(row.sent) },
+    { key: "received", title: "Дата приёмки", value: (row) => row.act?.received_at ?? "", render: (row) => row.act ? formatDay(row.act.received_at) : dash },
     // Место — своё у отмеченной строки (пусто — общее из шапки); у остальных — где КБ лежит сейчас.
     { key: "location", title: "Место хранения", value: (row) => row.location, render: (row) => {
       const key = keyOf(row);
-      if (canWarehouse && picked[key] && num(row.remaining) > 0) {
+      if (canWarehouse && !row.act && picked[key] && num(row.remaining) > 0) {
         return <input className="intake-place" type="text" autoComplete="off" maxLength={255} aria-label={`Место хранения ${row.project} ${row.item_index}`}
           placeholder={location.trim() || row.location || "ячейка"} value={places[key] ?? ""} onChange={(event) => setPlaces({ ...places, [key]: event.target.value })} />;
       }
@@ -186,7 +208,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   // Место хранения у склада остаётся: туда пишут место отмеченной строки.
   const OPTIONAL: Record<string, (row: IntakeRow) => boolean> = {
     launched: (row) => num(row.launched) > 0, accepted: (row) => num(row.accepted) > 0, packed: (row) => num(row.packed) > 0,
-    sent: (row) => num(row.sent) > 0, grn: (row) => Boolean(row.grn), tasks: (row) => row.tasks.length > 0, stage: (row) => Boolean(row.stage),
+    sent: (row) => num(row.sent) > 0, grn: (row) => Boolean(row.grn), received: (row) => Boolean(row.act), tasks: (row) => row.tasks.length > 0, stage: (row) => Boolean(row.stage),
     ...(canWarehouse ? {} : { location: (row: IntakeRow) => Boolean(row.location) }),
   };
   const visibleColumns = columns.filter((column) => !OPTIONAL[column.key] || shown.some(OPTIONAL[column.key]));
@@ -199,7 +221,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       {busy === "accept" ? "Принимаем…" : `Принять на склад · ${total} шт`}</button>
   </span> : undefined;
 
-  const groupLabel = (project: string, groupRows: IntakeRow[]) => {
+  const groupLabel = (project: string, groupRows: IntakeLine[]) => {
     const first = head[project];
     const title = [project, first?.customer].filter(Boolean).join(" · ");
     const left = first?.deadline ? daysUntil(first.deadline) : null;
@@ -225,10 +247,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       <div className="seg-tabs" role="tablist" aria-label="Что показать">{SEGMENTS.map(([key, label]) =>
         <button key={key} type="button" role="tab" aria-selected={segment === key} className={segment === key ? "on" : undefined} onClick={() => { segmentChosen.current = true; setSegment(key); }}>
           {label}<span className="page-count"> {rows.filter((row) => inSegment(row, key)).length}</span></button>)}</div>
-      <DataTable label="Приёмка с производства" storageKey="production-intake" rows={shown} columns={visibleColumns} rowKey={keyOf}
+      <DataTable label="Приёмка с производства" storageKey="production-intake" rows={shown} columns={visibleColumns} rowKey={lineKey}
         groupBy={(row) => row.project} groupLabel={groupLabel} toolbar={toolbar} exportName="Приёмка с производства"
         searchPlaceholder="Проект, КБ, наименование или задание"
-        rowClassName={(row) => num(row.remaining) > 0 ? (picked[keyOf(row)] ? "ship-row-picked" : "") : "ship-line-off"}
+        rowClassName={(row) => row.act ? "intake-act-row" : num(row.remaining) > 0 ? (picked[keyOf(row)] ? "ship-row-picked" : "") : "ship-line-off"}
         emptyText={rows.length ? "В этом списке пусто — другие КБ во вкладках «В производстве» и «Все»." : "Нет КБ в работе"} />
       {canWarehouse && boxes.length > 0 && <FinishedGoodsHandoff boxes={boxes} goods={goods} busy={busy} mutate={mutateBoxes} />}
     </>}
