@@ -27,6 +27,7 @@ import { hasFullAccess } from "./navigation";
 import { EtkFold, EtkFoldScope, useEtkFold } from "./etkFold";
 import { EtkHarnessE4, wireMapModel } from "./EtkHarnessE4";
 import { etkLinkScheme } from "./etkLinkScheme";
+import { pinCoreColor, withCoreColors } from "./etkCoreColors";
 import { LinkSchemeView, type LinkScheme } from "./PinoutLinks";
 import { EtkPfList } from "./EtkPfList";
 import { ETK_TO_TEMPLATE_CONFIRM, etkCardSourceNote } from "./etkCardSource";
@@ -75,9 +76,17 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+const WITH_COLORS = new WeakMap<object, EtkOperation[]>();
+
+/** Операции документа; провода монтажа несут цвета жил из `build_config` (как в «Схеме связей»), без пересборки карты. */
 function operations(document: ProjectTechcard["document"]): EtkOperation[] {
   const value = document?.operations;
-  return Array.isArray(value) ? value as EtkOperation[] : [];
+  if (!Array.isArray(value)) return [];
+  const known = WITH_COLORS.get(document as object);
+  if (known) return known;
+  const list = withCoreColors(value as EtkOperation[], document);
+  WITH_COLORS.set(document as object, list);
+  return list;
 }
 
 function warnings(document: ProjectTechcard["document"]): string[] {
@@ -135,7 +144,7 @@ export function harnessPins(list: EtkOperation[]): Record<string, Record<number,
     const article = String(operation.connector_article || "").trim();
     if (!article) return;
     (operation.fields?.wires ?? []).forEach((wire) => (wire.pins ?? []).forEach((pin) => {
-      (out[`${article}::${operation.side || ""}`] ||= {})[pin] = wire.art || wire.name || "";
+      (out[`${article}::${operation.side || ""}`] ||= {})[pin] = pinCoreColor(wire as Record<string, unknown>, pin) || wire.art || wire.name || "";
     }));
   });
   return out;
