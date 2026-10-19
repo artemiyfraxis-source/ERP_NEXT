@@ -69,7 +69,8 @@ def database(tmp_path):
     records = [
         # пара 1: у G есть то, чего нет у R; у R есть соседняя строка артикула (другой кабель)
         coax("SMA-male RG-402", "RG-402", **{"Наименование": name("S-115-141", "SMA-male, напаиваемый"), "Тип пина": "пайка",
-                                              "L1": "4", "Артикул поставщика": "gsm-repiteri.ru: 3449"}),
+                                              "L1": "4", "Артикул поставщика": "gsm-repiteri.ru: 3449",
+                                              "Источник данных": "L1–L3: по Huber+Suhner 11_SMA-50-3-15/111_NE"}),
         coax("S-115-141", "RG-402"),
         coax("S-115-141", "RG-405"),
         # пара 2: разные L1 — не сливается
@@ -219,3 +220,81 @@ def test_seller_codes_are_merged_by_seller_and_a_different_code_of_one_seller_is
     assert cells[("S-115-141", "RG-402")]["Артикул поставщика"] == "gsm-repiteri.ru: 3449; kroks.ru: 12"
     assert cells[("S-111L", "RG-174")]["Артикул поставщика"] == "gsm-repiteri.ru: 2"
     assert "Артикул поставщика (gsm-repiteri.ru): у G «1», у R «2»" in out
+
+
+def test_a_g_row_with_its_own_article_in_the_name_is_not_a_duplicate_and_an_undocumented_length_is_not_copied(tmp_path):
+    records = [
+        # «S-231L NGT» — настоящий артикул G стоит в имени целиком: свой товар (никелированный), в пары не берётся
+        coax("S-231L NGT", "RG-174", **{"Наименование": name("S-231L NGT", "SMA-female, никелированный"), "Тип пина": "пайка"}),
+        coax("S-231L", "RG-174"),
+        # у G длина цеховая, без документа: в пустую ячейку R не переносится, остальное сливается
+        coax("SMA-male RG-402", "RG-402", **{"Наименование": name("S-115-141", "x"), "L1": "2", "Тип пина": "пайка"}),
+        coax("S-115-141", "RG-402"),
+    ]
+    url, engine = make_db(tmp_path, records, [])
+    code, out = run(url, "apply")
+    assert code == 0, out
+    cells = coax_fields(engine)
+    assert "«S-231L NGT» →" not in out and "Примечание" not in cells[("S-231L NGT", "RG-174")]
+    assert cells[("S-231L", "RG-174")]["Тип пина"] == ""
+    assert cells[("S-115-141", "RG-402")]["Тип пина"] == "пайка" and cells[("S-115-141", "RG-402")]["L1"] == ""
+
+
+FIX_SCRIPT = BACKEND.parent / "docs" / "data" / "КОАКС — слияние дублей разногласия 19.10 запись в прод.py"
+
+
+def run_fix(url, *args):
+    env = {**os.environ, "ERP_DATABASE_URL": url, "PYTHONPATH": str(BACKEND), "PYTHONIOENCODING": "utf-8"}
+    done = subprocess.run([sys.executable, str(FIX_SCRIPT), *args], env=env, cwd=BACKEND, capture_output=True, text=True,
+                          encoding="utf-8", timeout=300)
+    return done.returncode, done.stdout + done.stderr
+
+
+def fix_payload():
+    import json
+    import re
+    source = FIX_SCRIPT.read_text(encoding="utf-8")
+    return json.loads(re.search(r"PAYLOAD = json.loads\(r'''(.*?)'''\)", source, re.S).group(1))
+
+
+def test_disagreement_script_writes_the_planned_cells_once_guarded_and_rolls_back(tmp_path):
+    payload = fix_payload()
+    assert payload and all(e["edits"] for e in payload)
+    records = []
+    for item in payload:
+        base = {name: old for name, old, _ in item["edits"]}
+        records.append(coax(item["article"], item["cable"], **base))
+    url, engine = make_db(tmp_path, records, [])
+    before = coax_fields(engine)
+    code, out = run_fix(url, "dry")
+    assert code == 0, out
+    assert coax_fields(engine) == before  # проверка ничего не пишет
+    code, out = run_fix(url, "apply")
+    assert code == 0, out
+    cells = coax_fields(engine)
+    for item in payload:
+        row = cells[(item["article"], item["cable"])]
+        for name, _, new in item["edits"]:
+            assert row[name] == new, (item["article"], name)
+    journal = out.split("== CSV-журнал отката")[1].split("\n", 1)[1].split("ИТОГО")[0]
+    code, again = run_fix(url, "apply")  # повтор: всё «уже так», ничего не меняется
+    assert code == 0, again
+    assert coax_fields(engine) == cells and "уже так" in again
+    path = tmp_path / "journal.csv"
+    path.write_text(journal, encoding="utf-8", newline="")
+    code, out = run_fix(url, "rollback", str(path))
+    assert code == 0, out
+    restored = coax_fields(engine)
+    for key, fields in before.items():
+        for name, value in fields.items():
+            assert restored[key].get(name, "") == value, (key, name)
+
+
+def test_disagreement_script_refuses_a_cell_that_changed_meanwhile(tmp_path):
+    item = next(e for e in fix_payload() if e["article"] == "SMA-female RG-174")
+    base = {name: old for name, old, _ in item["edits"]}
+    base["L2"] = "9"  # кто-то поправил ячейку — ни старое, ни новое
+    url, engine = make_db(tmp_path, [coax(item["article"], item["cable"], **base)], [])
+    code, out = run_fix(url, "apply")
+    assert code == 1 and "ОТКАЗ" in out
+    assert coax_fields(engine)[(item["article"], item["cable"])]["L3"] == base["L3"]
