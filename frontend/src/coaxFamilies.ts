@@ -1,12 +1,17 @@
 import type { CableRow } from "./api";
 
-/* «Коаксиальные кабели» grouped by the head of the mark (owner 16.10.2026: «нормальную сортировку по марке, взять за
-   головную например RG, SF, SAT итд»): the letters a mark starts with — RG, SF, SR, SAT, LMR, MFC, LCF, РК … — and
-   «D-FB» for 5D-FB / 8D-FB / 10D-FB. Marks that start with an inch size (1/2″, 7/8 Baltic Signal …) are «Фидеры»; a head
-   only one mark has goes to «Прочие», so the list is not cut into single rows. Groups in alphabet order (Latin, then
-   Cyrillic), «Фидеры» and «Прочие» last; inside a group by the numbers of the mark (RG-6, RG-11, RG-58, RG-142 …), the
-   base mark before its variants (A/U, C/U, FEP, UF…). Spellings are normalised only for this order (RG58 = RG-58);
-   the marks themselves stay as written. A column header sort still overrides it. */
+/* «Коаксиальные кабели» grouped by the mark family. 16.10.2026 the owner asked for a sort by the head of the mark («взять
+   за головную например RG, SF, SAT итд»); 19.10.2026, seeing every supplier article with its own materials as its own
+   row, he said: «почему все RG в одном, почему все D-FB в одном». So a group is now the family — the head letters plus
+   the numbers of the mark as `coaxPlace` reads them: RG-58 (RG-58, RG-58 A/U, RG-58 CU PE AL PVC …), RG-6, RG-174, 5D-FB,
+   8D-FB, 10D-FB (each its own), LMR-195, RF 1.37, РК50-2-22 … Spellings fold together (RG58 = RG-58, 5D FB = 5D-FB). The
+   label is the family's base mark as written in the list (the row without a variant, else the shortest mark). A family
+   of one row is no group: such rows of one head gather in «<head> — разные», before that head's families; a head with
+   only one such row overall goes to «Прочие». Marks that start with an inch size (1/2″, 7/8 Baltic Signal …) stay one
+   group «Фидеры». Order: by head (Latin, then Cyrillic), then by the family's numbers (RG-6, RG-11, RG-58, RG-142 …;
+   5D-FB, 8D-FB, 10D-FB); «Фидеры» and «Прочие» last; inside a group the base mark before its variants (A/U, C/U, FEP,
+   UF…). Spellings are normalised only for grouping and order; the marks stay as written. A column header sort inside a
+   group still overrides it. */
 
 export const NO_FAMILY = "Без марки";
 export const FEEDERS = "Фидеры";
@@ -53,27 +58,67 @@ function compareInGroup(a: string, b: string): number {
 
 const LAST = [FEEDERS, OTHERS, NO_FAMILY];
 const latin = (name: string) => /^[A-Z]/.test(name);
-function compareGroups(a: string, b: string): number {
-  return LAST.indexOf(a) - LAST.indexOf(b) || Number(!latin(a)) - Number(!latin(b)) || text(a, b);
-}
 
-/** Group label per row: the head of the mark, «Прочие» for a head only one mark of the list has. */
-export function coaxGroupOf(rows: CableRow[]): (row: CableRow) => string {
-  const counts = new Map<string, number>();
+type Slot = { label: string; head: string; rank: number; numbers: number[]; own?: string };
+const familyKey = (place: Place) => `${place.head}|${place.numbers.join("-")}`;
+const SINGLES = " — разные";
+
+/** Where each row of the list goes: its family's group, or «<head> — разные», or «Прочие». Keyed by the mark as written. */
+function layout(rows: CableRow[]): (cable: string) => Slot {
+  const families = new Map<string, string[]>();
   for (const item of rows) {
-    const head = coaxPlace(item.cable).head;
-    counts.set(head, (counts.get(head) ?? 0) + 1);
+    const place = coaxPlace(item.cable);
+    if (LAST.includes(place.head)) continue;
+    const key = familyKey(place);
+    const marks = families.get(key) ?? [];
+    marks.push(item.cable);
+    families.set(key, marks);
   }
-  return (row) => {
-    const head = coaxPlace(row.cable).head;
-    return LAST.includes(head) || (counts.get(head) ?? 0) > 1 ? head : OTHERS;
+  const singlesPerHead = new Map<string, number>();
+  for (const [key, marks] of families) {
+    if (marks.length === 1) singlesPerHead.set(key.split("|")[0], (singlesPerHead.get(key.split("|")[0]) ?? 0) + 1);
+  }
+  const labels = new Map<string, string>();
+  for (const [key, marks] of families) {
+    const pool = marks.filter((mark) => coaxPlace(mark).variant === "");
+    labels.set(key, [...(pool.length ? pool : marks)].sort((a, b) => Number(b.includes("-")) - Number(a.includes("-")) || a.length - b.length || text(a, b))[0]);
+  }
+  return (cable) => {
+    const place = coaxPlace(cable);
+    if (LAST.includes(place.head)) return { label: place.head, head: place.head, rank: 1, numbers: place.numbers };
+    const key = familyKey(place);
+    if ((families.get(key)?.length ?? 0) > 1) return { label: labels.get(key) ?? cable, head: place.head, rank: 1, numbers: place.numbers };
+    if ((singlesPerHead.get(place.head) ?? 0) > 1) return { label: place.head + SINGLES, head: place.head, rank: 0, numbers: [] };
+    return { label: OTHERS, head: OTHERS, rank: 1, numbers: [], own: place.head };
   };
 }
 
-/** Catalogue order of two marks within a list: group, then the mark's numbers and variant. */
+function compareSlots(a: Slot, b: Slot): number {
+  const last = LAST.indexOf(a.head) - LAST.indexOf(b.head);
+  if (last) return last;
+  if (LAST.includes(a.head)) { // inside «Прочие» the marks go by their own head letters
+    const [left, right] = [a.own ?? "", b.own ?? ""];
+    return Number(!latin(left)) - Number(!latin(right)) || text(left, right);
+  }
+  const byHead = Number(!latin(a.head)) - Number(!latin(b.head)) || text(a.head, b.head);
+  if (byHead || a.rank !== b.rank) return byHead || a.rank - b.rank;
+  for (let index = 0; index < Math.max(a.numbers.length, b.numbers.length); index += 1) {
+    const difference = (a.numbers[index] ?? -1) - (b.numbers[index] ?? -1);
+    if (difference) return difference;
+  }
+  return text(a.label, b.label);
+}
+
+/** Group label per row: its mark family, «<head> — разные» for single-row families, «Прочие» for a lone one. */
+export function coaxGroupOf(rows: CableRow[]): (row: CableRow) => string {
+  const slot = layout(rows);
+  return (row) => slot(row.cable).label;
+}
+
+/** Catalogue order of two rows within a list: group, then the mark's numbers and variant. */
 export function compareCoaxRows(rows: CableRow[]): (a: CableRow, b: CableRow) => number {
-  const group = coaxGroupOf(rows);
-  return (a, b) => compareGroups(group(a), group(b)) || compareInGroup(a.cable, b.cable);
+  const slot = layout(rows);
+  return (a, b) => compareSlots(slot(a.cable), slot(b.cable)) || compareInGroup(a.cable, b.cable);
 }
 
 /** Rows in catalogue order, without touching the input. */
