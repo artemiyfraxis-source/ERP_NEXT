@@ -4566,7 +4566,7 @@
     "impedance_ohm": 50.0,
     "velocity_pct": 66,
     "capacitance_pf_m": 100,
-    "voltage_max_v": 1.4,
+    "voltage_max_v": 1400,
     "max_power_w": 50,
     "max_power_at_mhz": 1000,
     "bend_static_mm": 27,
