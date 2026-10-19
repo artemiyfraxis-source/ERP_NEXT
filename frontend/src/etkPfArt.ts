@@ -14,7 +14,7 @@ import type { WireBlankEnd } from "./harness/WireBlankCatalog";
 import { coreColor } from "./pinoutCheck";
 import { coresWord, type WireThumb } from "./routeCards";
 import { coaxPfArt } from "./etkPfCoaxArt";
-import { harnessModel, harnessOverview, harnessTubeDrawing, spliceDrawing, spliceSketches, spliceSketchesPlain, tubeShort, type Drawing, type TubeBranch } from "./etkPfScheme";
+import { harnessModel, harnessOverview, harnessTubeDrawing, overviewWired, spliceDrawing, spliceSketches, spliceSketchesPlain, tubeShort, type Drawing, type TubeBranch } from "./etkPfScheme";
 import { setCustomColors } from "./wireColors";
 
 type Row = Record<string, unknown>;
@@ -228,7 +228,7 @@ function mmText(value: unknown): string {
 
 /** Ветвь из операций ПФ: есть монтаж в разъём (корпус или распиновка) и хоть что-то на проводах — оплётка, лента,
  *  трубка, метка или свивка; иначе null. `source` — строка генератора той же операции. */
-export function pfBranch(operations: Row[], source: (operation: Row) => Row, config: Row = {}, batch = 1): PfBranch | null {
+export function pfBranch(operations: Row[], source: (operation: Row) => Row, config: Row = {}, batch = 1, whole = false): PfBranch | null {
   const conn = [...operations].reverse().find((operation) => operation.housing && typeof operation.housing === "object")
     ?? operations.find((operation) => rows(obj(operation.fields).wires).some((wire) => Array.isArray(wire.pins) && wire.pins.length));
   if (!conn) return null;
@@ -274,10 +274,10 @@ export function pfBranch(operations: Row[], source: (operation: Row) => Row, con
   if (!branch.name && connector && !/^\d+$/.test(connector)) branch.name = connector;
   const art = str(conn.connector_article) || str(branch.housing?.art);
   if (art && !branch.name.includes(art)) branch.name = [branch.name, art].filter(Boolean).join(" · ");
-  // Ветвь ПФ из нескольких операций (обжим и монтаж в разъём) — рисунком ветви и без надетого; одна операция монтажа —
-  // её эскиз с легендой контактов, как был.
+  // Ветвь ПФ из нескольких операций (обжим и монтаж в разъём) или изделие целиком (`whole`) — рисунком ветви и без
+  // надетого; одна операция монтажа в промежуточном ПФ — её эскиз с легендой контактов, как был.
   const dressed = branch.twist || branch.braid || branch.wrap || branch.sleeve || branch.marks.length;
-  return dressed || (branch.housing && operations.length > 1) ? branch : null;
+  return dressed || (branch.housing && (operations.length > 1 || whole)) ? branch : null;
 }
 
 /** Длина в мм из подписи: «110 мм» → 110, «1,2 м» → 1200; нет числа — 0. */
@@ -513,8 +513,12 @@ export function etkPfArt({ group, operations, inputs = [], document, pins = {}, 
   // Изделие — схема жгута целиком.
   let main: PfMain | null = null;
   if (group.final) {
-    // Плоский обзор жгута по снимку генератора; нет снимка — схема жгута по топологии.
+    // Плоский обзор жгута по снимку генератора; нет снимка — схема жгута по топологии. Обзору нечего соединять (разъём с
+    // открытыми концами, владелец 19.10: вместо разъёма был пустой контур «Раз…») — изделие рисуется ветвью: разъём видом
+    // сверху и провода от его контактов.
     const model = harnessModel(config, housingOf);
+    const single = model && !overviewWired(model) ? pfBranch(operations, source, config, batch, true) : null;
+    if (single) return { main: { svg: pfBranchSvg(single) }, layers: "" };
     const harness = model ? drawn(harnessOverview(model)) : etkDrawHarness(topology, pins);
     if (harness) main = { svg: harness };
   }
