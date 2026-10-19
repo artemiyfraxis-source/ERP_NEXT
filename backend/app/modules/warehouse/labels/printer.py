@@ -111,6 +111,9 @@ NO_PRINTER = "Принтер не выбран в настройках — за�
 class SendResult:
     sent: bool
     reason: str | None  # why not sent, in words
+    # The queue was called (and refused or failed); False — nothing was handed to a queue: no printer chosen, or
+    # the server is not Windows. The job file is saved either way.
+    attempted: bool = True
 
 
 def on_windows() -> bool:
@@ -157,9 +160,9 @@ def send_raw(printer_name: str, path: Path) -> SendResult:
     """Send a saved job file to the queue. The file is saved before the call and stays in any case: if the queue
     refuses, the job is not lost — it can be poured into the printer by hand (`copy /b файл \\\\.\\принтер`)."""
     if not printer_name:
-        return SendResult(False, NO_PRINTER)
+        return SendResult(False, NO_PRINTER, attempted=False)
     if not on_windows():
-        return SendResult(False, NOT_WINDOWS)
+        return SendResult(False, NOT_WINDOWS, attempted=False)
     try:
         answer = _powershell(RAW_PRINT_SCRIPT, {"PrinterName": printer_name, "Path": str(path)}).strip()
     except (OSError, subprocess.SubprocessError) as error:
