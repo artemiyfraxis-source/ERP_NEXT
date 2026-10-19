@@ -126,9 +126,15 @@ const PRESETS: DataPreset<TechOperationRecord>[] = [
   { label: "Без L1–L3", test: (record) => !stripping(record.fields) },
 ];
 
+// Заглубление контакта от торца корпуса (19.10): в таблице — только число; источник — подсказкой и в «Колонках»,
+// длинный текст источника ломал строки (владелец 19.10: «зачем мне источник … только ломает таблицу»).
+const DEPTH = "Заглубление контакта, мм";
+const DEPTH_SOURCE = "Заглубление контакта, источник";
+
 // Поля, у которых в таблице своя колонка: такой же «свой столбец» («+ Столбец») второй раз не показывается.
 const BUILT_IN = new Set(["Артикул поставщика", "HEX обжима, мм", "Ссылка", "Цена, ₽", "Дата цены", "Монтаж", "Производитель",
-  "Волновое сопротивление, Ом", "Частота до, ГГц", "КСВ", "Наименование", "Источник данных", "Тип пина", "Тип экрана"].map((name) => name.toLowerCase()));
+  "Волновое сопротивление, Ом", "Частота до, ГГц", "КСВ", "Наименование", "Источник данных", "Тип пина", "Тип экрана",
+  DEPTH, DEPTH_SOURCE].map((name) => name.toLowerCase()));
 
 /** Ссылка на карточку товара: видно сайт, полный адрес — в подсказке; клик открывает карточку, строку не выбирает. */
 function SiteLink({ href }: { href: string }) {
@@ -179,6 +185,12 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
     { key: "ghz", title: "Частота, ГГц", hint: "Рабочая частота до, ГГц — из карточки разъёма", numeric: true, value: text("Частота до, ГГц"),
       render: (record) => pick(record.fields, "Частота до, ГГц") ? `до ${pick(record.fields, "Частота до, ГГц")}` : "—", edit: cardCell("Частота до, ГГц") },
     { key: "vswr", title: "КСВ", hint: "КСВН по карточке поставщика", value: text("КСВ"), wrap: true, maxWidth: 140, edit: cardCell("КСВ") },
+    { key: "depth", title: "Заглубление, мм", hint: "Заглубление контакта от торца корпуса, мм", numeric: true, value: text(DEPTH),
+      render: (record) => pick(record.fields, DEPTH)
+        ? <span title={pick(record.fields, DEPTH_SOURCE) || undefined}>{pick(record.fields, DEPTH)}</span> : "—",
+      edit: canEdit ? ownCellEdit<TechOperationRecord>(DEPTH, (record) => record) : undefined },
+    { key: "depthSource", title: "Заглубление, источник", value: text(DEPTH_SOURCE), hidden: true, wrap: true, maxWidth: 220,
+      edit: canEdit ? ownCellEdit<TechOperationRecord>(DEPTH_SOURCE, (record) => record) : undefined },
     { key: "mfr", title: "Производитель", value: (record) => coaxMaker(record.fields), render: (record) => coaxMaker(record.fields) || "—", wrap: true, maxWidth: 120, edit: cell("Производитель") },
     { key: "supplier", title: "Поставщик", value: (record) => coaxSupplier(record.fields), render: (record) => coaxSupplier(record.fields) || "—", wrap: true, maxWidth: 130 },
     { key: "vendorArticle", title: "Артикул поставщика", value: text("Артикул поставщика"), wrap: true, maxWidth: 160, edit: cell("Артикул поставщика") },
