@@ -6,6 +6,7 @@ import { coaxMountEtk, coaxPartsEtk } from "./etkCoaxOpArt";
 import { coaxEndNames, coaxEndTitle, coaxKindTitle } from "./coaxNames";
 import { connectorFace, connectorFaceUnits, connectorSummary, wireColor, type HousingBody, type Mate, type Roof } from "./connectorArt";
 import { connectorTopView } from "./connectorTopView";
+import { pinCoreColor, pinCoreName } from "./etkCoreColors";
 import { wireEndArt } from "./etkDefectArt";
 import { solderMode } from "./etkOperation";
 export { coaxEndNames, coaxEndTitle, coaxKindTitle };
@@ -653,8 +654,13 @@ function housingWarn(hs: EtkHousing): string {
  *  объёмной картинки здесь нет — она только на лице карточки серии в каталоге. Ниже легенда «конт. — провод»
  *  (etkDrawHousingOp_). Без распиновки в генераторе — список проводов «контакт по КД». */
 export function etkDrawHousingOp(operation: Row): string {
-  const hs = operation.housing as EtkHousing, byPin: Record<number, string> = {}, ws = list(obj(operation.fields).wires);
-  ws.forEach((w) => (Array.isArray(w.pins) ? w.pins as number[] : []).forEach((p) => { byPin[p] = str(w.art || w.name); }));
+  const hs = operation.housing as EtkHousing, names: Record<number, string> = {}, byPin: Record<number, string> = {}, ws = list(obj(operation.fields).wires);
+  // Многожильный кабель: цвет жилы в контакте (build_config) — на торце и в легенде; без цвета — по наименованию провода.
+  ws.forEach((w) => (Array.isArray(w.pins) ? w.pins as number[] : []).forEach((p) => {
+    const name = str(w.art || w.name), core = pinCoreName(w, p);
+    names[p] = core ? `${name}, ${core}` : name;
+    byPin[p] = pinCoreColor(w, p) || name;
+  }));
   const warn = housingWarn(hs), W = 640, top = warn ? 46 : 30;
   const pictureW = 150, faceArea = W - pictureW - 70;
   const round = hs.kind === "round" || hs.kind === "barrel";
@@ -678,7 +684,7 @@ export function etkDrawHousingOp(operation: Row): string {
   let ly = top + Math.max(g.h + 6, right) + 22;
   const pins = Object.keys(byPin).map(Number).sort((a, b) => a - b);
   if (pins.length) {
-    const legend = pinLegend(pins, (pin) => byPin[pin], pinPeers(obj(operation.fields)), ly);
+    const legend = pinLegend(pins, (pin) => names[pin], pinPeers(obj(operation.fields)), ly, (pin) => byPin[pin]);
     body += legend.body;
     ly += legend.h;
   } else {
@@ -708,12 +714,13 @@ export function etkDrawPinout(operation: Row): string {
   for (let p = 1; p <= max; p++) {
     const x = x0 + (p - 1) * cw, w = byPin[p];
     body += `<rect x="${x}" y="${y0}" width="${cw}" height="${cw}" fill="#fff" stroke="#17272b" stroke-width="1.2"/>` +
-      (w ? `<rect x="${x + cw * 0.22}" y="${y0 + cw * 0.22}" width="${cw * 0.56}" height="${cw * 0.56}" fill="${etkWireColor(w.art || w.name)}" stroke="#17272b" stroke-width=".8"/>` : "") +
+      (w ? `<rect x="${x + cw * 0.22}" y="${y0 + cw * 0.22}" width="${cw * 0.56}" height="${cw * 0.56}" fill="${pinCoreColor(w, p) || etkWireColor(w.art || w.name)}" stroke="#17272b" stroke-width=".8"/>` : "") +
       `<text x="${x + cw / 2}" y="${y0 - 5}" text-anchor="middle" font-size="${cw < 22 ? 9 : 11}" fill="#17272b">${p}</text>`;
   }
   const used = Object.keys(byPin).map(Number).sort((a, b) => a - b);
   const ly = y0 + cw + 20;
-  const legend = pinLegend(used, (pin) => str(byPin[pin].art || byPin[pin].name), pinPeers(f), ly);
+  const legend = pinLegend(used, (pin) => [str(byPin[pin].art || byPin[pin].name), pinCoreName(byPin[pin], pin)].filter(Boolean).join(", "), pinPeers(f), ly,
+    (pin) => pinCoreColor(byPin[pin], pin) || str(byPin[pin].art || byPin[pin].name));
   return svg(W, ly + legend.h + 6, body + legend.body);
 }
 
@@ -729,11 +736,12 @@ function pinPeers(fields: Row): Record<number, string[]> {
 }
 
 /** Легенда «конт. — провод» под торцом разъёма; с соединениями — в одну колонку, другой конец провода жирным. */
-function pinLegend(pins: number[], wireOf: (pin: number) => string, peers: Record<number, string[]>, y: number): { body: string; h: number } {
+function pinLegend(pins: number[], wireOf: (pin: number) => string, peers: Record<number, string[]>, y: number,
+  paintOf: (pin: number) => string = wireOf): { body: string; h: number } {
   const cols = pins.some((pin) => peers[pin]) ? 1 : 2;
   const body = pins.map((pin, i) => {
     const cx = 40 + (i % cols) * 300, cy = y + Math.floor(i / cols) * 17, wire = wireOf(pin);
-    return `<rect x="${cx}" y="${cy - 9}" width="12" height="12" fill="${etkWireColor(wire)}" stroke="#17272b" stroke-width=".6"/>` +
+    return `<rect x="${cx}" y="${cy - 9}" width="12" height="12" fill="${etkWireColor(paintOf(pin))}" stroke="#17272b" stroke-width=".6"/>` +
       `<text x="${cx + 18}" y="${cy + 1}" font-size="11" fill="#17272b">конт. ${pin} — ${esc(wire)}` +
       (peers[pin] ? ` <tspan font-weight="700" fill="#00554f">${esc(peers[pin].join(", "))}</tspan>` : "") + "</text>";
   }).join("");

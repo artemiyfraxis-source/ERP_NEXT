@@ -5,6 +5,7 @@
 // таблица соединений — на титуле схема связей Э4, та же, что на экране ЭТК и в генераторе (etkLinkScheme.tsx).
 import type { EtkRoute, ProjectTechcard, TechcardRevision } from "./api";
 import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
+import { pinCoreColor, withCoreColors } from "./etkCoreColors";
 import {
   ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
   type EtkTopologyData,
@@ -97,7 +98,7 @@ function harnessPinsOf(operations: Row[]): Record<string, Record<number, string>
     const wires = rows(object(operation.fields).wires);
     if (!article) return;
     wires.forEach((wire) => (Array.isArray(wire.pins) ? wire.pins as number[] : []).forEach((pin) => {
-      (out[`${article}::${text(operation.side)}`] ||= {})[pin] = text(wire.art || wire.name);
+      (out[`${article}::${text(operation.side)}`] ||= {})[pin] = pinCoreColor(wire, pin) || text(wire.art || wire.name);
     }));
   });
   return out;
@@ -152,7 +153,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
   const document = object(card.document);
   const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(document.kit) };
   const revision = card.revision || 1;
-  const operations = rows(document.operations);
+  const operations = withCoreColors(rows(document.operations), document);
   const linkScheme = etkLinkScheme(card.document);
   const linkSvg = linkScheme ? etkLinkSchemeMarkup(linkScheme) : "";
   // Схема связей перечисляет каждый провод в таблицах разъёмов — прежние схема жгута и таблица соединений её не повторяют.
