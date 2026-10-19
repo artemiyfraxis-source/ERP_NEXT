@@ -197,7 +197,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       render: (row) => {
         const shown = coaxParam(row, item);
         if (!shown) return <span className="cell-empty">—</span>;
-        return shown.from ? <span className={shown.family ? "muted" : undefined} title={shown.from}>{shown.text}</span> : shown.text;
+        return shown.from ? <span title={shown.from}>{shown.text}</span> : shown.text; // one colour whoever gives it (owner 19.10)
       },
       edit: base.edit ? { ...base.edit, value: (row) => field(row, item.field) } : undefined,
     };
@@ -227,8 +227,8 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
     ...(kind === "coax" ? DIAMETERS.map((name): DataColumn<CableRow> => ({
       key: name, title: DIA_TITLES[name], numeric: true, value: (row) => row.dia?.[name] ?? "", edit: diaEdit(name),
       render: (row) => row.dia
-        ? row.dia[name] || <span className="muted">—</span>
-        : <span className="tone-warn" title={`Нет D1–D3 — генератор возьмёт диаметры из записи разъёма${row.dia_hint ? `; похожий кабель: ${row.dia_hint.cable}` : ""}`}>—</span>,
+        ? row.dia[name] || <span className="cell-empty">—</span>
+        : <span className="cell-empty" title={`Нет D1–D3 — генератор возьмёт диаметры из записи разъёма${row.dia_hint ? `; похожий кабель: ${row.dia_hint.cable}` : ""}`}>—</span>,
     })) : []),
     ...shown.map((name) => computed[name] ?? textColumn(name, false)),
     // The card's own frequencies stay in «Колонки»; the table shows the one range above.
