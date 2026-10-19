@@ -546,7 +546,7 @@ const sourceName = (source: string): string => {
 /** The card of a coax cable holds only what the VNA check needs (owner 19.10.2026: «внутри карточки оставляем только
     параметры для векторника, ну и совместимые разъёмы»): header, markers, the source's attenuation, notes, sources.
     Construction and parameters are table columns; `aside` — the row's compatible connectors, next to the markers. */
-export function CoaxCardView({ card, exact, aside }: { card: CoaxCard; exact: boolean; aside?: ReactNode }) {
+export function CoaxCardView({ card, exact, aside, compact = false }: { card: CoaxCard; exact: boolean; aside?: ReactNode; compact?: boolean }) {
   // dB/m at a marker: a published point first (typical / nominal, then max), else the interpolated one.
   const lossAt = (mhz: number | null) => {
     const points = card.attenuation.filter((point) => point.freq_mhz === mhz);
@@ -576,13 +576,15 @@ export function CoaxCardView({ card, exact, aside }: { card: CoaxCard; exact: bo
   return <section className="coax-card" aria-label={`Карточка кабеля ${card.name}`}>
     <header className="coax-card-head">
       <div className="coax-title">
-        <h3>{card.name}{!exact && <small> — карточка семейства</small>}</h3>
-        {card.family && <span className="coax-desc">{ruDecimals(card.family)}</span>}
+        {compact
+          ? !exact && <h3><small>Карточка семейства {card.name}</small></h3> // the window above already names the cable and its family
+          : <h3>{card.name}{!exact && <small> — карточка семейства</small>}</h3>}
+        {!compact && card.family && <span className="coax-desc">{ruDecimals(card.family)}</span>}
         <span className={`coax-flag ${card.verified ? CONFIDENCE_TONE[card.confidence] ?? "tone-ok" : "tone-warn"}`}>{flag}</span>
       </div>
-      <dl className="coax-facts">{facts.filter(([, value]) => value).map(([label, value, note]) => <div key={label} title={note}>
+      {!compact && <dl className="coax-facts">{facts.filter(([, value]) => value).map(([label, value, note]) => <div key={label} title={note}>
         <dt>{label}</dt><dd>{value}</dd>
-      </div>)}</dl>
+      </div>)}</dl>}
     </header>
     {card.span_note && <p className="coax-note">Диапазон: {ruDecimals(card.span_note)}</p>}
     <div className="coax-grid">

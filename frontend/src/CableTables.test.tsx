@@ -160,8 +160,9 @@ it("shows each cable in its own list with the parameters of that list", async ()
 
   // coax: D1–D3 of the generator's row next to the cable's own parameters; a D-table-only cable is a row too
   expect(await screen.findByText("RG316")).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "D3 оплётка, мм" })).toBeInTheDocument();
-  expect(screen.getByText("1,95")).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "D1 жила, мм" })).toBeInTheDocument();
+  expect(screen.getByText("0,5")).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "D3 оплётка, мм" })).toBeNull(); // D2 and D3 are in «Колонки» and in the card
   expect(screen.getAllByText("RG58").length).toBeGreaterThan(0);
   expect(screen.getByRole("columnheader", { name: "Волновое сопротивление, Ом" })).toBeInTheDocument();
   expect(screen.queryByText("UL1061 22AWG")).toBeNull();
@@ -200,7 +201,7 @@ it("shows each cable in its own list with the parameters of that list", async ()
 describe("coax column order (owner 15.10: «сначала конструктивные характеристики — диаметры, потом материал…»)", () => {
   const OWN = ["Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены", "Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки"];
   const BASE = [...COLUMNS, "Изоляция", "Экран", "Стандарт", "Производители", "Поставщик", "Цвета", "Источник данных"];
-  const VISIBLE = ["Марка кабеля", "D1 жила, мм", "D3 оплётка, мм", "Наружный диаметр, мм", "Волновое сопротивление, Ом", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м"];
+  const VISIBLE = ["Марка кабеля", "D1 жила, мм", "Наружный диаметр, мм", "Волновое сопротивление, Ом", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м"];
   const ORDER = [
     "Марка кабеля", "D1 жила, мм", "D2 диэлектрик, мм", "D3 оплётка, мм", "Наружный диаметр, мм",
     "Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки", "Волновое сопротивление, Ом",
@@ -345,8 +346,9 @@ it("opens a coax card a tester reads at the VNA: markers, the source's loss, com
   const card = screen.getByRole("region", { name: "Карточка кабеля RG-316" });
   expect(within(card).getByText("проверено по datasheet · достоверность средняя")).toBeInTheDocument();
   // the rated operating limit and the TE11 cut-off are two numbers, never one
-  expect(within(card).getByText("Рабочая частота").parentElement).toHaveTextContent(/Рабочая частота\s*до 3 ГГц/);
-  expect(within(card).getByText("Частота среза TE11").parentElement).toHaveTextContent(/≈ 65,3 ГГц/);
+  const electrical = screen.getByRole("region", { name: "Электрические" });
+  expect(within(electrical).getByText("Рабочая частота").parentElement).toHaveTextContent(/Рабочая частота\s*до 3 ГГц/);
+  expect(within(electrical).getByText("Частота среза").parentElement).toHaveTextContent(/≈ 65,3 ГГц/);
   const markers = within(card).getByRole("table", { name: "Маркеры VNA" });
   expect(within(markers).getByText("КСВН — норма приёмки (предложено)")).toBeInTheDocument();
   expect(within(markers).getByRole("columnheader", { name: "Паспорт ≤" })).toBeInTheDocument();

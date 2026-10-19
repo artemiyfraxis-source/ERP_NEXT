@@ -596,7 +596,8 @@ table.ship-lines td:first-child { width: 1%; }
 .cable-sheet-sec { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--sheet-line); }
 .cable-sheet-sec h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .cable-sheet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 20px; margin: 0; }
-.cable-sheet-grid > div { display: grid; gap: 1px; min-width: 0; }
+.cable-sheet-grid > div { display: grid; align-content: start; gap: 1px; min-width: 0; }
+.cable-sheet-grid > div.wide { grid-column: 1 / -1; }
 .cable-sheet-grid dt { color: var(--muted-foreground); font-size: 12px; }
 .cable-sheet-grid dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
 /* Structured cable reference (10.10.2026): the coax card a tester reads at the VNA, «разобрать позже». */

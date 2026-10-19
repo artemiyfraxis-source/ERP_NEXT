@@ -84,7 +84,7 @@ const SHOWN: Record<CableKind, string[]> = {
 const LISTED_ANYWHERE = new Set([...Object.values(SHOWN).flat(), TYPE, "Изоляция", "Экран"]);
 // A new row starts in the list it was added from.
 // «Нормальная карточка» (owner 19.10.2026): the coax table keeps the key columns, the rest is in «Колонки» and in the card.
-const COAX_VISIBLE = new Set(["cable", "D1", "D3", "Наружный диаметр, мм", "Волновое сопротивление, Ом", "Поставщик", "Артикул поставщика", LINK,
+const COAX_VISIBLE = new Set(["cable", "D1", "Наружный диаметр, мм", "Волновое сопротивление, Ом", "Поставщик", "Артикул поставщика", LINK,
   "Цена поставщика, ₽/м", "__kind", "__reason"]);
 const NEW_TYPE: Record<CableKind, Record<string, string>> = {
   coax: { [TYPE]: "коаксиальный", "Число жил": "1" },
@@ -333,9 +333,10 @@ function CoaxCableWindow({ row, kind, data, canEdit, onSaved, onError, close }: 
       ["Волновое сопротивление", withUnit(param("Волновое сопротивление, Ом"), "Ом")],
       ["Погонная ёмкость", withUnit(param("Погонная ёмкость, пФ/м"), "пФ/м")],
       ["Диапазон частот", rangeText(card)],
+      ["Рабочая частота", card?.max_operating_ghz != null ? `до ${num(card.max_operating_ghz)} ГГц` : ""],
       ["Частота среза", card?.fc_ghz != null ? `≈ ${num(card.fc_ghz)} ГГц` : ""],
-      ["Затухание", lossAtMarkers(card)],
       ["Напряжение", withUnit(param("Напряжение, В"), "В")],
+      ["Затухание", lossAtMarkers(card)],
     ] },
     { title: "Механика и условия", items: [
       ["Радиус изгиба неподвижно", withUnit(param("Радиус изгиба неподвижно, мм"), "мм")],
@@ -354,7 +355,7 @@ function CoaxCableWindow({ row, kind, data, canEdit, onSaved, onError, close }: 
     ["Стандарт", f(STANDARD)],
   ];
   const grid = (items: Array<[string, ReactNode]>, label?: string) => <dl className="cable-sheet-grid" aria-label={label}>
-    {items.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || dash}</dd></div>)}
+    {items.map(([label, value]) => <div key={label} className={label === "Затухание" ? "wide" : undefined}><dt>{label}</dt><dd>{value || dash}</dd></div>)}
   </dl>;
   return <PageWindow label={`Карточка кабеля ${row.cable}`} width={900} dismissable={!editing} close={close}><div className="panel cable-sheet">
     <div className="cable-sheet-head">
@@ -375,7 +376,7 @@ function CoaxCableWindow({ row, kind, data, canEdit, onSaved, onError, close }: 
           <h3>{section.title}</h3>{grid(section.items)}
         </section>)}
         {card
-          ? <CoaxCardView card={card} exact={Boolean(row.card_exact)} aside={<CompatibleConnectors row={row} />} />
+          ? <CoaxCardView compact card={card} exact={Boolean(row.card_exact)} aside={<CompatibleConnectors row={row} />} />
           : <div className="coax-card"><CompatibleConnectors row={row} /></div>}
       </>}
   </div></PageWindow>;
