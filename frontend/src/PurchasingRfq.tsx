@@ -20,6 +20,7 @@ import {
 } from "./purchasingRfqApi";
 import { useStageOption } from "./StageOptions";
 import { picksOf, RfqPool, suggestionKey, SuggestionList } from "./RfqPool";
+import { rfqLinkState, syncRfqUrl } from "./rfqLinks";
 
 /** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
@@ -71,9 +72,14 @@ function gateHint(line: RfqLine) {
   return parts.join("; ");
 }
 
-export function PurchasingRfq({ readOnly = false, focusId }: { readOnly?: boolean; focusId?: string } = {}) {
+export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {}) {
+  // `?rfq=<id>[&letters=1|&invoices=1]` (CONTRACTS.md): the request to open and the panel to open with it.
+  const [link] = useState(rfqLinkState);
   const [rfqs, setRfqs] = useState<RfqSummary[] | null>(null);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(link.rfq);
+  // The panel to open once with a request: from the link, or the letters right after «Создать запрос».
+  const [panelFor, setPanelFor] = useState<{ id: string; letters: boolean; invoices: boolean } | null>(
+    link.rfq ? { id: link.rfq, letters: link.letters, invoices: link.invoices } : null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
@@ -88,13 +94,16 @@ export function PurchasingRfq({ readOnly = false, focusId }: { readOnly?: boolea
     }
   }, [readOnly]);
 
-  useEffect(() => { void reload(focusId); }, [reload, focusId]);
+  useEffect(() => { void reload(link.rfq || undefined); }, [reload, link.rfq]);
+  useEffect(() => { if (selected && panelFor?.id !== selected) syncRfqUrl(selected); }, [selected, panelFor]);
 
   if (creating) {
     // The pool takes the whole width (a sheet of lines, not a modal list); the new request's matrix opens after it.
     return (
       <section className="page">
-        <RfqPool onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); void reload(id); }} />
+        <RfqPool onClose={() => setCreating(false)} onCreated={(id) => {
+          setCreating(false); setPanelFor({ id, letters: true, invoices: false }); void reload(id);
+        }} />
       </section>
     );
   }
@@ -126,7 +135,11 @@ export function PurchasingRfq({ readOnly = false, focusId }: { readOnly?: boolea
       </aside>
       <div style={{ minWidth: 0 }}>
         {selected
-          ? <RfqMatrixView key={selected} id={selected} readOnly={readOnly} onChanged={() => void reload(selected)} />
+          ? <RfqMatrixView
+              key={selected} id={selected} readOnly={readOnly} onChanged={() => void reload(selected)}
+              openLetters={panelFor?.id === selected && panelFor.letters}
+              openInvoices={panelFor?.id === selected && panelFor.invoices}
+            />
           : <div className="panel empty">Выберите запрос слева или создайте новый.</div>}
       </div>
     </section>
@@ -144,7 +157,12 @@ function Dialog({ title, wide = false, onClose, children }: { title: string; wid
   );
 }
 
-function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: boolean; onChanged: () => void }) {
+function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoices = false }: {
+  id: string; readOnly: boolean; onChanged: () => void; openLetters?: boolean; openInvoices?: boolean;
+}) {
+  const [letters, setLetters] = useState(openLetters);
+  const [invoiceLetters, setInvoiceLetters] = useState(openInvoices);
+  useEffect(() => { syncRfqUrl(id, { letters, invoices: invoiceLetters }); }, [id, letters, invoiceLetters]);
   const [matrix, setMatrix] = useState<RfqMatrix | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");

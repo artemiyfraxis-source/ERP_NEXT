@@ -220,3 +220,29 @@ it("the pasted text fills the form with the pack recalculated, lists the rest an
   expect(posts[1].body.aliases).toEqual([{ rfq_line_id: "l1", text: "Разъём SHR-02 (100 шт)" }]);
   expect(posts[1].body.lines[0]).toMatchObject({ unit_price: "5", pack: "100", moq: "100", lead_days: 7 });
 });
+
+it("opens the request named in the address and keeps the address on the request chosen", async () => {
+  window.history.replaceState({}, "", "/?section=procurement&tab=rfq&rfq=r2");
+  const asked: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    asked.push(path);
+    if (path === "/api/purchasing/rfqs?scope=mine") {
+      return json({ rfqs: [
+        { id: "r1", number: "КП-2610-001", title: "Разъёмы", created_at: "2026-10-01T10:00:00", closed_at: null, mine: true, lines: 1, suppliers: 2, sent: 2, quotes: 2, decided: 0 },
+        { id: "r2", number: "КП-2610-002", title: "Кабель", created_at: "2026-10-02T10:00:00", closed_at: null, mine: true, lines: 1, suppliers: 2, sent: 2, quotes: 2, decided: 0 },
+      ] });
+    }
+    if (path === "/api/purchasing/rfqs/directory") return json({ suppliers: [] });
+    if (path === "/api/purchasing/rfqs/r1") return json(matrix);
+    if (path === "/api/purchasing/rfqs/r2") return json({ ...matrix, rfq: { ...matrix.rfq, id: "r2", number: "КП-2610-002", title: "Кабель" } });
+    return json({}, 404);
+  });
+  render(<PurchasingRfq />);
+  expect(await screen.findByRole("heading", { name: "КП-2610-002 · Кабель" })).toBeInTheDocument();
+  expect(asked).not.toContain("/api/purchasing/rfqs/r1");
+  fireEvent.click(screen.getByRole("button", { name: /КП-2610-001/ }));
+  expect(await screen.findByRole("heading", { name: "КП-2610-001 · Разъёмы" })).toBeInTheDocument();
+  await waitFor(() => expect(window.location.search).toBe("?section=procurement&tab=rfq&rfq=r1"));
+  window.history.replaceState({}, "", "/");
+});
