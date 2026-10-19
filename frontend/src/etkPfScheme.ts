@@ -104,6 +104,14 @@ export type HarnessModel = {
   braid: string; spliceTube: string; spliceTubeLen: string; harnessTube: string; harnessTubeLen: string;
 };
 
+/** Есть ли на обзоре жгута что соединить: провод, у которого известны оба конца (разъём или сросток с каждой стороны). */
+export function overviewWired(model: HarnessModel): boolean {
+  return model.wires.some((wire, idx) => {
+    const a = model.endA[idx], b = model.endB[idx];
+    return Boolean(wire && a && b && a.kind !== "tail" && b.kind !== "tail");
+  });
+}
+
 /** Модель жгута по `build_config.gen_state`; нет снимка формы (или в нём нет проводов и разъёмов) — null. */
 export function harnessModel(config: Row, housingOf: (label: string) => EtkHousing | null = () => null): HarnessModel | null {
   const gen = obj(config.gen_state), S = obj(gen.S);
@@ -118,9 +126,14 @@ export function harnessModel(config: Row, housingOf: (label: string) => EtkHousi
   });
   const endA: HarnessModel["endA"] = {}, endB: HarnessModel["endB"] = {};
   const put = (side: unknown, idx: unknown, target: Target) => { (str(side) === "A" ? endA : endB)[Math.round(num(idx))] = target; };
+  const sideCount = { A: 0, B: 0 };
   const conns = endpoints.map((ep) => {
-    const label = str(ep.label).trim() || "Разъём";
-    const list = (Array.isArray(ep.wireIdxs) ? ep.wireIdxs : []).map((idx) => Math.round(num(idx)));
+    // Простая сборка (генератор без обозначений): «X1» по порядку стороны; провода — по распиновке, если списка нет.
+    const sideKey = str(ep.side) === "A" ? "A" : "B";
+    sideCount[sideKey] += 1;
+    const label = str(ep.label).trim() || `X${sideKey === "A" ? sideCount.A : endpoints.filter((item) => str(item.side) === "A").length + sideCount.B}`;
+    const given = (Array.isArray(ep.wireIdxs) ? ep.wireIdxs : []).map((idx) => Math.round(num(idx)));
+    const list = given.length ? given : Object.keys(obj(ep.pins)).map((idx) => Math.round(num(idx)));
     list.forEach((idx) => put(ep.side, idx, { kind: "conn", label }));
     const shrink = ep.shrinkOn ? nameOf(ep.shrinkMat) : "";
     const pins: Record<number, number> = {}, byPin: Record<number, string> = {};
