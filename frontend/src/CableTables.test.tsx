@@ -269,7 +269,7 @@ describe("coax column order (owner 15.10: «сначала конструкти�
     expect(cell("RG316", "Радиус изгиба неподвижно, мм")).toHaveTextContent(/^10$/);
     expect(cell("RG316", "Масса, г/м")).toHaveTextContent(/^—$/);
     const borrowed = within(cell("RG-58 A/U", "Погонная ёмкость, пФ/м")).getByText("101");
-    expect(borrowed).toHaveClass("muted");
+    expect(borrowed).not.toHaveClass("muted"); // one colour in the table (owner 19.10); whose value — in the tooltip
     expect(borrowed).toHaveAttribute("title", "как у RG-58");
     expect(cell("RG58", "Погонная ёмкость, пФ/м")).toHaveTextContent(/^—$/); // no card, no cell
   });

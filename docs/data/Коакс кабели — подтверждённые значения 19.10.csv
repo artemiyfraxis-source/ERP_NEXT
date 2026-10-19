@@ -1,0 +1,21 @@
+﻿Решение,Строка,Поле,Было (прод 19.10),Стало,Источник,Как найдено
+A,5D-FB Cu,"D2 диэлектрик, мм (таблица диаметров)","4,9","5,1",https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-5d-fb-cu-pe-al-pvc-dlya-vnutrennej-prokladki/,"kroks 3527: «Диаметр диэлектрика, мм 5,1»"
+A,5D-FB Cu,"D3 оплётка, мм (таблица диаметров)","5,64","5,9",https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-5d-fb-cu-pe-al-pvc-dlya-vnutrennej-prokladki/,"kroks 3527: «Диаметр оплетки, мм 5,9»"
+A,LMR-100,"D3 оплётка, мм (таблица диаметров)","2,11","1,8",https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-lmr-100-cu-solid-pe-tc-pvc-revo/,"kroks 3547: «Диаметр оплетки, мм 1,8»"
+A,LMR-100,"Наружный диаметр, мм","2,79","2,9",https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-lmr-100-cu-solid-pe-tc-pvc-revo/,"kroks 3547: «Диаметр внешнего изолятора, мм 2,9»"
+A,RG-174,"D3 оплётка, мм (таблица диаметров)","2,23","1,9",https://gsm-repiteri.ru/prodazha/cable/kabel-rg-174-50-om,"gsm 1640: «Диаметр экрана 1,9 мм»"
+A,RG-400,"D3 оплётка, мм (таблица диаметров)","4,2","3,95",https://gsm-repiteri.ru/prodazha/cable/cable-rg-400-50-om,"gsm 3277: «Диаметр экрана 3,95 мм» (карточка RG-400: 3,96)"
+A,RG-6,"D3 оплётка, мм (таблица диаметров)","5,38","5,2",https://gsm-repiteri.ru/prodazha/cable-75-om/kabel-rg-6-75-om,"gsm 1527: «Диаметр экрана 5,20 мм»"
+A,SAT-703,"D1 жила, мм (таблица диаметров)","1,13","1,02",https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-sat-703-cu-pe-al-pvc/,"kroks 3541: «Диаметр центр. проводника, мм 1,02»"
+A,SAT-703,"D2 диэлектрик, мм (таблица диаметров)","4,80","4,6",https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-sat-703-cu-pe-al-pvc/,"kroks 3541: «Диаметр диэлектрика, мм 4,6»"
+A,SAT-703,"D3 оплётка, мм (таблица диаметров)","5,30","5,1",https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-sat-703-cu-pe-al-pvc/,"kroks 3541: «Диаметр оплетки, мм 5,1»"
+A,TZC500-97,Материал диэлектрика,ПЭ,ПЭ вспененный,https://gsm-repiteri.ru/files/2022/04/PLU030222-E-Data_sheet.pdf,даташит Ericsson TZC 500 97: «3.2 DIELECTRIC Extruded foamed polyethylene (PE)»
+A,MFC-240 UF,Материал экрана,"алюминий, фольга","алюминий, фольга + медь лужёная, оплётка",https://www.amel.ru/products/cables_coaxial/kabeli-mfc-analogi-lmr/mfc-240-uf/,"карточка АМЭЛ (изготовитель): внутр. экран «алюминий» Ø 3,94, внешний экран «TC» Ø 4,52 мм"
+B,5D-FB,"Радиус изгиба неподвижно, мм",,50,https://gsm-repiteri.ru/prodazha/cable/kabel-5d-fb-pvc-chernyy,"gsm 0090 (CCA): «Минимальный радиус изгиба (однократный) 50 мм»; карточка 5D-FB — медный кабель, 46"
+B,5D-FB,"Радиус изгиба многократно, мм",,150,https://gsm-repiteri.ru/prodazha/cable/kabel-5d-fb-pvc-chernyy,gsm 0090 (CCA): «Минимальный радиус изгиба (многократный) 150 мм»; карточка 5D-FB — 114
+B,10D-FB,"Погонная ёмкость, пФ/м",,82,https://kroks.ru/shop/cable-rf/kabel-koaksialnyj-10d-fb-cca-pe-tc-pvc-o/,"kroks 3530 (CCA): «Ёмкость, пФ/метр 82»; карточка 10D-FB — медный кабель, 84"
+B,RG-174,"Радиус изгиба многократно, мм",,50,https://gsm-repiteri.ru/prodazha/cable/kabel-rg-174-50-om,"gsm 1640 (медь, сшитый ПЭ): «Минимальный радиус изгиба (многократный) 50 мм»; карточка RG-174 (CCS) — 26"
+B,RG-402,"Погонная ёмкость, пФ/м",,"95,1",https://gsm-repiteri.ru/prodazha/cable/cable-rg-402-50-om,"gsm 2605 (гибкий CF-141-50-FEP): «Погонная емкость 95,1 пФ/м»; карточка RG-402 (полужёсткий) — 98,1"
+B,RG-402,"Радиус изгиба неподвижно, мм",,8,https://gsm-repiteri.ru/prodazha/cable/cable-rg-402-50-om,"gsm 2605: «Минимальный радиус изгиба (однократный) 8 мм»; карточка RG-402 (полужёсткий) — 6,35"
+B,RG-405,"Погонная ёмкость, пФ/м",,"95,1",https://gsm-repiteri.ru/prodazha/cable/cable-rg-405-50-om,"gsm 2602 (гибкий CF-086-50-FEP): «Погонная емкость 95,1 пФ/м»; карточка RG-405 (полужёсткий) — 105"
+B,RG-405,"Радиус изгиба неподвижно, мм",,4,https://gsm-repiteri.ru/prodazha/cable/cable-rg-405-50-om,"gsm 2602: «Минимальный радиус изгиба (однократный) 4 мм»; карточка RG-405 (полужёсткий) — 3,18"
