@@ -16,6 +16,8 @@ import { coresWord, type WireThumb } from "./routeCards";
 import { coaxPfArt } from "./etkPfCoaxArt";
 import { harnessModel, harnessOverview, harnessTubeDrawing, overviewWired, spliceDrawing, spliceSketches, spliceSketchesPlain, tubeShort, type Drawing, type TubeBranch } from "./etkPfScheme";
 import { setCustomColors } from "./wireColors";
+import { withCoreColors } from "./etkCoreColors";
+import { parseCorePins_ } from "./tcGenLogic";
 
 type Row = Record<string, unknown>;
 
@@ -209,6 +211,8 @@ function spliceCount(topology: EtkTopologyData | null | undefined): string {
  *  генератора (`build_config.ops`: tutArt, wrapArt/wrapLen, label «Надеть маркировку X4 «A6» — «A6»»). */
 export type PfBranch = {
   name: string; housing: EtkHousing | null; byPin: Record<number, string>; wires: string[];
+  /** Цвет каждой строки `wires` (hex; у многожильного кабеля — по жиле); пусто — по наименованию. */
+  colors?: string[];
   twist: { pairs: string[][]; pitch: string } | null;
   braid: { label: string; len: string } | null; wrap: { label: string; len: string } | null;
   sleeve: { label: string; heat: boolean } | null; marks: Array<{ text: string; place: string }>;
@@ -232,13 +236,15 @@ export function pfBranch(operations: Row[], source: (operation: Row) => Row, con
   const conn = [...operations].reverse().find((operation) => operation.housing && typeof operation.housing === "object")
     ?? operations.find((operation) => rows(obj(operation.fields).wires).some((wire) => Array.isArray(wire.pins) && wire.pins.length));
   if (!conn) return null;
-  const byPin: Record<number, string> = {};
-  const wires = rows(obj(conn.fields).wires).map((wire) => {
-    const name = str(wire.art || wire.name);
-    (Array.isArray(wire.pins) ? wire.pins as number[] : []).forEach((pin) => { byPin[pin] = name; });
-    return name;
+  const byPin: Record<number, string> = {}, wires: string[] = [], colors: string[] = [];
+  rows(obj(conn.fields).wires).forEach((wire) => {
+    const name = str(wire.art || wire.name), pins = Array.isArray(wire.pins) ? wire.pins as number[] : [];
+    const hex = Array.isArray(wire.coreHex) ? wire.coreHex as unknown[] : [];
+    // Многожильный кабель: по строке на жилу — цвет жилы стоит в её контакте (`withCoreColors`).
+    if (hex.some(Boolean)) pins.forEach((pin, k) => { byPin[pin] = str(hex[k]) || name; wires.push(name); colors.push(str(hex[k]) || etkWireColor(name)); });
+    else { pins.forEach((pin) => { byPin[pin] = name; }); wires.push(name); colors.push(etkWireColor(name)); }
   });
-  const branch: PfBranch = { name: "", housing: conn.housing ? conn.housing as EtkHousing : null, byPin, wires,
+  const branch: PfBranch = { name: "", housing: conn.housing ? conn.housing as EtkHousing : null, byPin, wires, colors,
     twist: null, braid: null, wrap: null, sleeve: null, marks: [] };
   const markRows = rows(config.markRows);
   operations.forEach((operation) => {
@@ -322,7 +328,7 @@ export function pfBranchSvg(branch: PfBranch): string {
   body = "";
   // Жилы: свитые пары (до двух) и прямые провода — те, что не в паре.
   const names = (branch.wires.length ? branch.wires : ["", ""]).slice(0, 10);
-  const colors = names.map((name) => etkWireColor(name));
+  const colors = names.map((name, index) => branch.colors?.[index] || etkWireColor(name));
   const twisted = new Set((branch.twist?.pairs ?? []).flat().filter(Boolean));
   const pairs: Array<[string, string]> = branch.twist ? branch.twist.pairs.slice(0, 2).map((pair, index) => pair[0]
     ? [etkWireColor(pair[0]), etkWireColor(pair[1])] : [colors[index * 2] ?? "#2b2b2b", colors[index * 2 + 1] ?? "#d7322d"]) : [];
@@ -478,10 +484,16 @@ function harnessTubeArt(operations: Row[], source: (operation: Row) => Row, conf
       if (str(op.type) !== "insTerm" || str(op.side) !== side || !label || seen.has(label)) return [];
       seen.add(label);
       const pins = Array.isArray(op.pins) ? op.pins : [], byPin: Record<number, string> = {};
-      const wires = rows(op.wires).map((wire, index) => {
-        const name = str(wire.art || wire.name), pin = Math.round(num(pins[index]));
-        if (pin > 0) byPin[pin] = name;
-        return { color: etkWireColor(name), pin };
+      // Провод — строка контактов («1, 2, 3, 4»): кабель в оболочке даёт по жиле на контакт, цвет жилы — `coreColors`.
+      const wires = rows(op.wires).flatMap((wire, index) => {
+        const name = str(wire.art || wire.name), list = parseCorePins_(pins[index]);
+        const names = Array.isArray(wire.coreColors) ? wire.coreColors as unknown[] : [];
+        const cores = list.length > 1 ? list : [list[0] ?? null];
+        return cores.map((pin, k) => {
+          const color = coreColor(str(names[k]) || undefined)?.hex ?? etkWireColor(name);
+          if (pin && pin > 0) byPin[pin] = color;
+          return { color, pin: pin && pin > 0 ? pin : 0 };
+        });
       });
       return [{ label, wires, housing: housingOf(label), byPin }];
     });
@@ -503,6 +515,8 @@ export function etkPfArt({ group, operations, inputs = [], document, pins = {}, 
   pins?: Record<string, Record<number, string>>; batch?: number; image?: (operation: Row) => string;
 }): PfArt | null {
   const config = obj(document?.build_config);
+  setCustomColors(config.colorHex as Record<string, string> | undefined);
+  operations = withCoreColors(operations, document);
   const topology = obj(document?.topology) as EtkTopologyData;
   const source = etkConfigOp(document), housingOf = housingsOf(document);
   // Коаксиальная сборка: конец кабеля, собранный конец и вся сборка — свои рисунки на размер карточки (владелец 19.10).
