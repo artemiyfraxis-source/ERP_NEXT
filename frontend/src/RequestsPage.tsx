@@ -16,6 +16,7 @@ import { useFormDraft } from "./formDrafts";
 import { RequestGrid } from "./RequestGrid";
 import { RequestFormV2 } from "./RequestFormV2";
 import { projectLabel, useInternalProjects } from "./internalProjects";
+import { projectFromDesignation } from "./projectNumber";
 import { usePurposeLabel } from "./purposeLabels";
 import { useStageOption } from "./StageOptions";
 import { StatusChip } from "./StatusChip";
@@ -186,7 +187,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   // Stage option «Новая форма заявки»: off = the form below as it was.
   const formV2 = useStageOption("requests.form");
   const purposeText = usePurposeLabel();
-  useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the «Цель» column
+  useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the «Цель» / «Проект» column
   const [formSeed, setFormSeed] = useState<{ id: number; text: string } | null>(null);
 
   const [mineRows, setMineRows] = useState<RequestRow[]>([]);
@@ -666,7 +667,11 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     { key: "item_type", title: "Тип", value: (row) => row.item_type, filter: true, hidden: true },
     { key: "design_article", title: "Артикул КД", value: (row) => row.design_article ?? "", hidden: view === "mine" },
     { key: "purpose", title: "Назначение (база)", value: (row) => row.purpose, hidden: true },
-    { key: "project_reference", title: "Цель", value: (row) => (row.project_reference ? projectLabel(row.project_reference) : purposeText(row.purpose)), filter: true },
+    // Option «Новая форма заявки»: no «Цель» (owner, 16.10: «Убери „Цель закупки“») — the project, or the one the
+    // designation starts with; the purpose stays in the hidden «Назначение (база)».
+    formV2
+      ? { key: "project_reference", title: "Проект", value: (row) => projectLabel(row.project_reference || projectFromDesignation(row.designation)), filter: true }
+      : { key: "project_reference", title: "Цель", value: (row) => (row.project_reference ? projectLabel(row.project_reference) : purposeText(row.purpose)), filter: true },
     { key: "quantity", title: "Кол-во", value: (row) => `${row.quantity} ${row.unit}`, numeric: true },
     { key: "delivery_point", title: formV2 ? "Склад" : "Точка отгрузки", value: (row) => row.delivery_point, filter: true, hidden: true },
     { key: "category", title: "Категория", value: (row) => row.category, filter: true, hidden: view === "mine" },
