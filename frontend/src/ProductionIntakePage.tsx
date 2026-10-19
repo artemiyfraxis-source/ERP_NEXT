@@ -206,10 +206,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   ];
   // Колонка, где у всех строк вкладки пусто, не показывается (владелец 15.10: «почти все числа — прочерки»).
   // Место хранения у склада остаётся: туда пишут место отмеченной строки.
-  const OPTIONAL: Record<string, (row: IntakeRow) => boolean> = {
+  const OPTIONAL: Record<string, (row: IntakeLine) => boolean> = {
     launched: (row) => num(row.launched) > 0, accepted: (row) => num(row.accepted) > 0, packed: (row) => num(row.packed) > 0,
     sent: (row) => num(row.sent) > 0, grn: (row) => Boolean(row.grn), received: (row) => Boolean(row.act), tasks: (row) => row.tasks.length > 0, stage: (row) => Boolean(row.stage),
-    ...(canWarehouse ? {} : { location: (row: IntakeRow) => Boolean(row.location) }),
+    ...(canWarehouse ? {} : { location: (row: IntakeLine) => Boolean(row.location) }),
   };
   const visibleColumns = columns.filter((column) => !OPTIONAL[column.key] || shown.some(OPTIONAL[column.key]));
 
