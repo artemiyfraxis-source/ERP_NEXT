@@ -1,5 +1,6 @@
 """Прижимной экран коакса (владелец 19.10): «Надеть» (гайка, шайба, уплотнитель, зажимное кольцо) → контакт → одна операция
 «Монтаж корпуса с прижимом» вместо втулки экрана и её опрессовки; HEX у прижимного разъёма не читается, даже если он есть в базе."""
+import csv
 import json
 from pathlib import Path
 
@@ -133,3 +134,28 @@ def test_a_compression_only_shield_op_names_the_tool_and_gives_no_hex():
     mixed = _config("компрессия", "обжим", hex_a="8,23", hex_b="5,41")
     mixed["ops"] = config["ops"]
     assert _built(mixed)[0]["fields"]["crimpHex"] == [{"side": "В", "connector": "S-111", "hex": "5,41 мм"}]
+
+
+def _norm_row(code: str) -> dict[str, str]:
+    with (ROOT / "data" / "reference-mirror" / "БД.ОП.tsv").open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.reader(handle, delimiter="	"))
+    header = rows[1]
+    return next(dict(zip(header, row)) for row in rows[2:] if row and row[0] == code)
+
+
+def test_the_clamp_housing_has_its_own_time_norm_by_analogy_and_the_etk_carries_it():
+    """БД.ОП (19.10): tOp = «Монтаж корпуса» 10 + «Опрессовка втулки» 8 = 18 с, подготовка как у монтажа корпуса; номер строки = код карточки."""
+    clamp, base, press = (_norm_row(code) for code in ("INS_housing_COAX_clamp", "INS_housing_COAX", "PRS_SLEEVE_coax"))
+    seconds = lambda row: float(row["Время Операции"].replace(",", "."))
+    assert seconds(clamp) == seconds(base) + seconds(press) == 18
+    assert clamp["Время подготовки, сек"] == base["Время подготовки, сек"] == "120" and clamp["Время машины, сек/оп; сек/м"] == "0,00"
+    assert clamp["Время ручных работ для взятия полуфабриката"] == "2" and clamp["Время ручных работ"] == "14"
+    assert "уточнить хронометражем" in clamp["Инструкция"]
+    assert {card.code for card in CLAMP_HOUSING.values()} == {clamp["Номер"]}
+    config = _config()
+    config["ops"][-1] = {**config["ops"][-1], "tOp": clamp["Время Операции"].replace(",", "."),
+                         "tPrep": clamp["Время подготовки, сек"], "tMachine": "0"}
+    housing = _built(config)[-1]
+    assert housing["code"] == "INS_housing_COAX_clamp"
+    assert housing["times"] == {"operation_seconds": "18.00", "setup_seconds": "120", "machine_seconds": "0"}
+    assert housing["time"][0]["norm"] == "3"  # 18 с × партия 10 = 3 мин
