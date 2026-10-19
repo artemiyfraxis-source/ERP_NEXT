@@ -16,9 +16,10 @@ from app.modules.references.application import (
     apply_coax_vocabulary, cable_catalog, coax_dia_rows, import_coax_cards, import_coax_names,
 )
 from app.modules.references.cable_structure import (
-    CoaxAlias, CoaxNames, alias_dia_rows, card_for, cards_from_seed, names_from_articles, validate_aliases,
-    vocabulary_cells, vocabulary_changes,
+    CoaxAlias, CoaxNames, alias_dia_rows, card_for, cards_from_seed, names_from_articles, states_materials,
+    validate_aliases, vocabulary_cells, vocabulary_changes,
 )
+from app.modules.references.cables import CONNECTOR_FIELDS, CableKind, compatible_connectors, connector_cable
 from app.modules.references.domain import ReferenceValidationError, TechOperationTab, cable_key
 from app.modules.references.infrastructure import CoaxCableAliasRow, SqlAlchemyReferencesUnitOfWork
 from app.modules.references.load_cables import ARTICLES_FILE, DEFAULT_FILE, VOCABULARY_FILE, read_seed
@@ -32,9 +33,9 @@ from tests.references.test_cable_structure import _cable
 from tests.references.test_load_mirror import NOW, sessions, uow  # noqa: F401  (fixtures)
 
 
-def _offer(article, full_name, supplier="Крокс", family_only=False):
+def _offer(article, full_name, supplier="Крокс", family_only=False, variant=False):
     return {"supplier": supplier, "article": article, "full_name": full_name, "url": f"https://x/{article}",
-            "family_only": family_only, "note": ""}
+            "family_only": family_only, **({"variant": True} if variant else {}), "note": ""}
 
 
 ARTICLES = {"cables": [
@@ -45,8 +46,8 @@ ARTICLES = {"cables": [
     {"mark": "RF 1.37", "aliases": ["RF1.37", "RG1.37"], "offers": [_offer("9001", "Кабель RF 1.37 серый")]},
     {"mark": "RG-58 A/U", "aliases": ["RG58 A/U"], "offers": [_offer("0448", "Кабель RG-58 A/U (черный)", "ГСМ Репитеры")]},
     # an article of the family listed under both cables; only one has a card — it is that card's
-    {"mark": "RG-58", "aliases": ["RG58"], "offers": [_offer("384", "Кабель коаксиальный RG-58 CU PE AL PVC")]},
-    {"mark": "RG-58 C/U", "aliases": [], "offers": [_offer("384", "Кабель коаксиальный RG-58 CU PE AL PVC")]},
+    {"mark": "RG-58", "aliases": ["RG58"], "offers": [_offer("384", "Кабель коаксиальный RG-58 50 Ом")]},
+    {"mark": "RG-58 C/U", "aliases": [], "offers": [_offer("384", "Кабель коаксиальный RG-58 50 Ом")]},
 ]}
 
 
@@ -68,10 +69,52 @@ def test_supplier_file_gives_each_card_its_full_name_and_aliases():
     assert _keys(rg316) == [("Кабель RG-316 50 Ом", "full_name"), ("1951", "supplier_article")]
     assert rg316.aliases[1].supplier == "ГСМ Репитеры" and rg316.aliases[1].url == "https://x/1951"
     assert ("RG1.37", "mark") in _keys(plan.names["rf1.37"])
-    assert [alias.alias for alias in plan.names["rg58"].aliases] == ["Кабель коаксиальный RG-58 CU PE AL PVC", "384"]
+    assert [alias.alias for alias in plan.names["rg58"].aliases] == ["Кабель коаксиальный RG-58 50 Ом", "384"]
     assert plan.names["lmr400"] == CoaxNames()  # a card the file does not name has none
     # variants are never merged into the family card
     assert plan.no_card == ("RG-58 A/U", "RG-58 C/U") and plan.family_only == 1 and plan.refused == ()
+
+
+def test_an_offer_naming_its_materials_is_another_cable_never_an_alias_or_the_full_name():
+    # owner 19.10.2026: «ты разные артикулы кабелей записал в одно, там же разные материалы»
+    document = {"cables": [{"mark": "5D-FB", "aliases": ["5D FB"], "offers": [
+        _offer("3521", "Кабель коаксиальный 5D-FB CCA PE AL PE (для внешней прокладки)", variant=True),
+        _offer("0912", "Кабель 5D-FB CU PVC (черный)", "ГСМ Репитеры", variant=True),
+        _offer("4653", "Кабель VEGATEL 5D-FB Cu (ГОСТ, синий)", "ГСМ Репитеры", variant=True),
+        _offer("7000", "Кабель 5D-FB (черный)", "ГСМ Репитеры"),
+    ]}]}
+    plan = names_from_articles(document, _cards("5D-FB"))
+    names = plan.names["5dfb"]
+    assert names.full_name == "Кабель 5D-FB (черный)"
+    assert _keys(names) == [("Кабель 5D-FB (черный)", "full_name"), ("7000", "supplier_article")]  # «5D FB» is its own key
+    assert plan.variants == 3 and plan.refused == ()
+    only_variants = {"cables": [{**document["cables"][0], "offers": document["cables"][0]["offers"][:3]}]}
+    assert names_from_articles(only_variants, _cards("5D-FB")).names["5dfb"] == CoaxNames()
+
+
+@pytest.mark.parametrize("name, marks, stated", [
+    ("Кабель коаксиальный 5D-FB CCA PE AL PE (для внешней прокладки)", ["5D-FB", "5D FB"], True),
+    ("Кабель 5D-FB CU LSZH FR (черный)", ["5D-FB"], True),
+    ("Кабель VEGATEL 5D-FB Cu (ГОСТ, синий)", ["5D-FB"], True),
+    ("Кабель VEGATEL 5D-FB Cu (ГОСТ, синий)", ["5D-FB Cu", "5D-FB CU"], False),  # the mark itself says Cu
+    ("Кабель коаксиальный 10D-FB CCA PE AL PE (для внешней прокладки)", ["10D-FB PE", "10D-FB CCA PE AL PE"], False),
+    ("Кабель коаксиальный RG-174 Многожильный CU Solid PE CU PVC, до 1000 МГц", ["RG-174"], True),
+    ("Кабель коаксиальный RF1.37 Многожильный SPC PTFE CU FEP", ["RF 1.37", "RF1.37"], True),
+    ("Кабель RG-213 C/U PVC", ["RG213 C/U", "RG-213 C/U"], True),
+    ("Кабель RG-316 50 Ом", ["RG-316", "RG316"], False),
+    ("Кабель RG-402 (CF-141-50-FEP)", ["RG-402"], False),  # FEP inside a model code, not a jacket
+    ("Кабель коаксиальный полужесткий RG-405 CF086-50", ["RG-405"], False),
+    ("Кабель RG-6U 75 Ом", ["RG-6/U", "RG6/U", "RG-6U"], False),
+])
+def test_states_materials_reads_whole_words_beyond_the_mark(name, marks, stated):
+    assert states_materials(name, marks) is stated
+
+
+def test_the_supplier_file_marks_every_offer_that_names_its_materials():
+    for entry in read_seed(ARTICLES_FILE)["cables"]:
+        marks = [entry["mark"], *entry.get("aliases", [])]
+        for offer in entry["offers"]:
+            assert bool(offer.get("variant")) is states_materials(offer["full_name"], marks), (entry["mark"], offer["full_name"])
 
 
 def test_an_alias_of_two_cards_or_named_as_another_card_is_refused():
@@ -161,7 +204,7 @@ def test_every_old_key_finds_the_same_d_and_every_alias_finds_its_cable(uow):  #
         cards = {card.name: card for card in uow.cable_structure.cards()}
     after = _generator_lookup(rows)
     assert {key: after[key] for key in before} == before
-    assert report["refused"] == [] and report["aliases"] > 50
+    assert report["refused"] == [] and report["aliases"] > 20
     rg316 = before["rg316"]
     assert cards["RG-316"].full_name == "Кабель RG-316 50 Ом"
     assert after[cable_key("Кабель RG-316 50 Ом")] == after[cable_key("1951")] == rg316  # full name, article
@@ -169,6 +212,10 @@ def test_every_old_key_finds_the_same_d_and_every_alias_finds_its_cable(uow):  #
     assert after[cable_key("RG1.37")] == before["rf1.37"]  # a БД.ПРОВ mark of another spelling
     # «RG-58 A/U» has no card: it is not given the D1–D3 of the RG-58 family
     assert cable_key("RG-58 A/U") not in after and "RG-58 A/U" in report["no_card"]
+    # owner 19.10: the supplier's «5D-FB CCA PE AL PE», «5D-FB CU PVC» … are other cables, not names of the card «5D-FB»
+    assert cards["5D-FB"].full_name == "" and cards["5D-FB"].aliases == ()
+    assert cable_key("Кабель 5D-FB CU PVC (черный)") not in after and cable_key("3521") not in after
+    assert report["variants"] > 50
 
 
 def test_second_load_changes_nothing(uow):  # noqa: F811
@@ -208,7 +255,7 @@ def test_aliases_move_between_cards_and_go_with_their_card(uow):  # noqa: F811
     import_coax_names(ARTICLES, ACTOR, NOW, uow)  # back to RG-316
     import_coax_cards({"cables": [_cable("RG-58")]}, ACTOR, NOW, uow)  # RG-316 leaves the file with its names
     with uow:
-        assert {row.alias for row in uow.session.query(CoaxCableAliasRow)} == {"Кабель коаксиальный RG-58 CU PE AL PVC", "384"}
+        assert {row.alias for row in uow.session.query(CoaxCableAliasRow)} == {"Кабель коаксиальный RG-58 50 Ом", "384"}
     assert import_coax_names(moved, ACTOR, NOW, uow)["aliases_added"] == 2  # its key is free again
 
 
@@ -245,6 +292,27 @@ def test_cables_screen_shows_the_card_of_an_alias_mark(uow):  # noqa: F811
     _load_all(uow)
     row = next(row for row in cable_catalog(uow).rows if row.cable == "RG1.37")
     assert row.card.name == "RF 1.37" and row.card_exact
+
+
+# --- «Совместимые разъёмы»: БД.КОАКС rows made for the cable (owner 19.10.2026) ---
+
+def test_compatible_connectors_come_from_the_coax_base_by_mark_card_and_alias(uow):  # noqa: F811
+    _load_all(uow)
+    catalog = cable_catalog(uow)
+    with uow:
+        coax = uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000)
+    wires = lambda key: {record.id for record in coax if cable_key(connector_cable(record)) == key}  # noqa: E731
+    row = {item.cable: item for item in catalog.rows}
+    assert wires("5dfb") and {item.id for item in compatible_connectors(row["5D-FB"], catalog.connectors)} == wires("5dfb")
+    # «RG316» of БД.ПРОВ finds the rows written «RG-316» (one key), and those of the card's other spellings
+    rg316 = compatible_connectors(row["RG316"], catalog.connectors)
+    assert {item.id for item in rg316} == wires("rg316") and len(rg316) == len({item.id for item in rg316})
+    # a family card lends nothing; a row of another list has none
+    assert compatible_connectors(replace(row["RG316"], cable="RG-316 Z", card_exact=False), catalog.connectors) == []
+    wire = next(item for item in catalog.rows if item.kind == CableKind.WIRE)
+    assert compatible_connectors(wire, {wire.key: coax}) == []
+    by_alias = replace(row["RG316"], cable="Кабель RG-316 50 Ом")  # a mark the card knows as its alias
+    assert {item.id for item in compatible_connectors(by_alias, catalog.connectors)} == wires("rg316")
 
 
 # --- `--coax-vocabulary` ---
@@ -300,11 +368,17 @@ def api(sessions):  # noqa: F811
 def test_api_import_loads_names_and_coax_dia_serves_alias_rows(sessions, api):  # noqa: F811
     load_mirror(BUNDLED_MIRROR, SqlAlchemyReferencesUnitOfWork(sessions), dry_run=False, now=NOW)
     imported = api.post("/api/references/coax-cards/import").json()
-    assert imported["names"]["aliases"] > 50 and imported["names"]["refused"] == []
+    assert imported["names"]["aliases"] > 20 and imported["names"]["refused"] == []
     rows = api.get("/api/references/coax-dia").json()["records"]
     by_name = {row["fields"]["Кабель"]: row["fields"] for row in rows}
     assert by_name["1951"]["D1"] == by_name["RG-316"]["D1"]
-    card = next(row for row in api.get("/api/references/cables").json()["rows"] if row["cable"] == "RG316")["card"]
+    listed = api.get("/api/references/cables").json()["rows"]
+    # one request: every coax row carries its БД.КОАКС connectors, only the cells the card shows
+    fdfb = next(row for row in listed if row["cable"] == "5D-FB")["connectors"]
+    assert fdfb and {item["fields"]["coaxWire"] for item in fdfb} == {"5D-FB"}
+    assert all(set(item["fields"]) <= set(CONNECTOR_FIELDS) and item["fields"].get("coaxType") for item in fdfb)
+    assert all("connectors" not in row for row in listed if row["kind"] != "coax")
+    card = next(row for row in listed if row["cable"] == "RG316")["card"]
     assert card["full_name"] == "Кабель RG-316 50 Ом"
     assert {"alias": "1951", "kind": "supplier_article", "supplier": "ГСМ Репитеры"}.items() <= next(
         alias for alias in card["aliases"] if alias["alias"] == "1951").items()

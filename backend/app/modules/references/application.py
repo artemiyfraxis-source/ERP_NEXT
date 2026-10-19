@@ -17,7 +17,9 @@ from .cable_structure import (
     gauge_gost_awg, hookup_from_parse, names_from_articles, parse_hookup, refreshed_hookup, section_key,
     validate_aliases, validate_gauges, vocabulary_cells, vocabulary_changes, written_back_fields,
 )
-from .cables import DIAMETERS, CableKind, CableRow, auto_kind, cable_mark, cable_rows, clean_diameter, diameter_index
+from .cables import (
+    DIAMETERS, CableKind, CableRow, auto_kind, cable_mark, cable_rows, clean_diameter, connectors_by_cable, diameter_index,
+)
 from .domain import BASE_COLUMNS, CUSTOM_COLUMN_TABS, EDITABLE_TABS, MAX_COLUMN_NAME, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
 from .domain import StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent
 from .equipment import (
@@ -727,6 +729,7 @@ class CableCatalog:
     hookups: dict[str, HookupWire]  # by mark key
     usage: dict[UUID, int]  # gauge id → hook-up wires on it
     columns: list[str] = dc_field(default_factory=list)  # the owner's own БД.ПРОВ columns, after the base ones
+    connectors: dict[str, list[TechOperationRecord]] = dc_field(default_factory=dict)  # cable key → БД.КОАКС rows
 
 
 def cable_catalog(uow: UnitOfWork) -> CableCatalog:
@@ -739,8 +742,9 @@ def cable_catalog(uow: UnitOfWork) -> CableCatalog:
         hookups = {wire.mark_key: wire for wire in uow.cable_structure.hookups()}
         usage = uow.cable_structure.gauge_usage()
         own_columns = custom_columns(TechOperationTab.WIRE, uow)
+        connectors = connectors_by_cable(uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000))
     rows = sorted(cable_rows(wires, diameters, overrides, cards), key=lambda row: (row.key, row.cable))
-    return CableCatalog(rows, gauges, hookups, usage, own_columns)
+    return CableCatalog(rows, gauges, hookups, usage, own_columns, connectors)
 
 
 # --- «Сечения AWG ↔ мм²» ---
@@ -958,7 +962,7 @@ def import_coax_names(document, actor: Actor, now: datetime, uow: UnitOfWork, *,
         if not dry_run:
             uow.commit()
     return {**result, "cables": len(document.get("cables") or []), "aliases": aliases, "family_only": plan.family_only,
-            "no_card": list(plan.no_card), "refused": list(plan.refused)}
+            "variants": plan.variants, "no_card": list(plan.no_card), "refused": list(plan.refused)}
 
 
 def coax_dia_rows(uow: UnitOfWork, limit: int = 100_000) -> list[dict[str, str]]:

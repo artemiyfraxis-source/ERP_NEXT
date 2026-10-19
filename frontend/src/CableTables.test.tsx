@@ -202,6 +202,8 @@ describe("coax column order (owner 15.10: «сначала конструкти�
   const ORDER = [
     "Марка кабеля", "D1 жила, мм", "D2 диэлектрик, мм", "D3 оплётка, мм", "Наружный диаметр, мм",
     "Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки", "Волновое сопротивление, Ом",
+    // owner 19.10: «Параметры» of the card — table columns after the impedance
+    "Погонная ёмкость, пФ/м", "Радиус изгиба неподвижно, мм", "Радиус изгиба многократно, мм", "Напряжение макс., В", "Масса, г/м",
     "Диапазон частот", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены",
     "Карточка",
   ];
@@ -229,7 +231,7 @@ describe("coax column order (owner 15.10: «сначала конструкти�
   });
 
   it("ignores a coax layout saved before the new order", async () => {
-    window.localStorage.setItem("erp-table:db:cables:coax:2", JSON.stringify({ order: ["__card", "cable"], hidden: ["D1", "Стандарт"] }));
+    window.localStorage.setItem("erp-table:db:cables:coax:4", JSON.stringify({ order: ["__card", "cable"], hidden: ["D1", "Погонная ёмкость, пФ/м"] }));
     withColumns([...BASE, ...OWN], OWN);
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
@@ -248,6 +250,45 @@ describe("coax column order (owner 15.10: «сначала конструкти�
     expect(shown).not.toContain("Изоляция");
     expect(shown).not.toContain("Экран");
     expect(shown).toEqual(expect.arrayContaining(["Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м"]));
+  });
+
+  it("fills a parameter column from БД.ПРОВ, else from the card; a family card's value is muted «как у»", async () => {
+    const family: CableRow = { ...ROWS[1], card: { ...ROWS[0].card!, name: "RG-58", params: { capacitance_pf_m: 101, weight_g_m: 38 } }, card_exact: false };
+    const exact: CableRow = { ...ROWS[0], card: { ...ROWS[0].card!, params: { impedance_ohm: 51, capacitance_pf_m: 95, bend_static_mm: 10 } } };
+    mockApi([], [exact, family, ROWS[2]]);
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    const cell = (cable: string, header: string) => {
+      const line = screen.getByText(cable, { selector: "td.key strong" }).closest("tr") as HTMLElement;
+      const index = screen.getAllByRole("columnheader").findIndex((head) => head.textContent === header);
+      return line.querySelectorAll("td")[index] as HTMLElement;
+    };
+    expect(cell("RG316", "Волновое сопротивление, Ом")).toHaveTextContent(/^50$/); // the БД.ПРОВ cell beats the card's 51
+    expect(cell("RG316", "Погонная ёмкость, пФ/м")).toHaveTextContent(/^95$/);
+    expect(within(cell("RG316", "Погонная ёмкость, пФ/м")).getByText("95")).toHaveAttribute("title", "по карточке RG-316");
+    expect(cell("RG316", "Радиус изгиба неподвижно, мм")).toHaveTextContent(/^10$/);
+    expect(cell("RG316", "Масса, г/м")).toHaveTextContent(/^—$/);
+    const borrowed = within(cell("RG-58 A/U", "Погонная ёмкость, пФ/м")).getByText("101");
+    expect(borrowed).toHaveClass("muted");
+    expect(borrowed).toHaveAttribute("title", "как у RG-58");
+    expect(cell("RG58", "Погонная ёмкость, пФ/м")).toHaveTextContent(/^—$/); // no card, no cell
+  });
+
+  it("shows the supplier's page of a cable as «открыть» next to the supplier columns", async () => {
+    const linked: CableRow = { ...ROWS[0], record: { ...ROWS[0].record!, fields: { ...ROWS[0].record!.fields, "Ссылка": "https://gsm-repiteri.ru/prodazha/cable/kabel-rg-316-50-om" } } };
+    const columns = [...BASE, "Артикул поставщика", "Ссылка", "Цена поставщика, ₽/м", "Дата цены"];
+    mockApi([], [linked, ROWS[1], ROWS[2]]);
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => String(input) === "/api/references/cables"
+      ? json({ columns, custom_columns: ["Артикул поставщика", "Ссылка", "Цена поставщика, ₽/м", "Дата цены"], counts: { coax: 3, wire: 0, multi: 0, other: 0 }, rows: [linked, ROWS[1], ROWS[2]], gauges: GAUGES })
+      : answer(input, init));
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    const shown = heads();
+    expect(shown.slice(shown.indexOf("Поставщик"), shown.indexOf("Поставщик") + 5)).toEqual(["Поставщик", "Артикул поставщика", "Ссылка", "Цена поставщика, ₽/м", "Дата цены"]);
+    const link = screen.getByRole("link", { name: "Открыть страницу RG316 у поставщика" });
+    expect(link).toHaveTextContent(/^открыть$/);
+    expect(link).toHaveAttribute("href", "https://gsm-repiteri.ru/prodazha/cable/kabel-rg-316-50-om");
   });
 
   it("gives the range of the VNA span, else DC up to the rated maximum, never the cut-off", () => {
@@ -277,8 +318,15 @@ it("lists coax cables like a catalogue: series groups in order, base mark before
   expect(screen.getByText("LMR-195")).toBeInTheDocument();
 });
 
-it("opens a coax card a tester reads at the VNA: markers, connectors, construction", async () => {
-  mockApi();
+it("opens a coax card a tester reads at the VNA: markers, the source's loss, compatible connectors — nothing else", async () => {
+  const connector = (id: string, fields: Record<string, string>) => ({ id, fields: { coaxWire: "RG-316", ...fields } });
+  const withConnectors: CableRow = { ...ROWS[0], connectors: [
+    connector("k1", { coaxArticle: "S-111L", coaxType: "SMA-male", "Серия": "SMA", "Монтаж": "обжимной", "Ссылка": "https://gsm-repiteri.ru/a", "Цена, ₽": "250" }),
+    connector("k2", { coaxArticle: "S-111L NGT", coaxType: "SMA-male", "Серия": "SMA", "Монтаж": "обжимной", "Ссылка": "https://gsm-repiteri.ru/b", "Цена, ₽": "310,5" }),
+    connector("k3", { coaxArticle: "BNC-C316P", coaxType: "BNC-male" }),
+    connector("k4", { coaxArticle: "SMA-C316J", coaxType: "SMA-female" }),
+  ] };
+  mockApi([], [withConnectors, ...ROWS.slice(1)]);
   render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
   fireEvent.click(await screen.findByText("RG316"));
   const card = screen.getByRole("region", { name: "Карточка кабеля RG-316" });
@@ -291,8 +339,19 @@ it("opens a coax card a tester reads at the VNA: markers, connectors, constructi
   expect(within(markers).getByRole("columnheader", { name: "Паспорт ≤" })).toBeInTheDocument();
   const rows = within(markers).getAllByRole("row").slice(1).map((row) => row.textContent);
   expect(rows).toEqual(["433 МГц1,11,4≈ 0,55", "2,45 ГГц1,221,41,65", "Peak — максимум по диапазону1,25——"]);
-  const connectors = within(card).getByRole("table", { name: "Разъёмы" });
-  expect(within(connectors).getByText("до 2 ГГц", { selector: "strong" })).toBeInTheDocument(); // BNC narrows the span
+  // owner 19.10: construction, the card file's connector list and the parameters are not in the card any more
+  for (const name of ["Конструкция", "Разъёмы", "Параметры кабеля"]) expect(within(card).queryByRole("table", { name })).toBeNull();
+  expect(within(card).queryByText("Волновое сопротивление")).toBeNull();
+  // compatible connectors come from БД.КОАКС: series → type, mount, supplier, price, count; SMA before BNC (the shop's order)
+  const connectors = within(card).getByRole("table", { name: "Совместимые разъёмы" });
+  expect(within(connectors).getByText("из БД.КОАКС · 4")).toBeInTheDocument();
+  expect(within(connectors).getAllByRole("row").slice(1).map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent)))
+    .toEqual([
+      ["SMA", "SMA-female", "—", "—", "—", "1"],
+      ["", "SMA-male", "обжимной", "gsm-repiteri.ru", "250–310,5", "2"],
+      ["BNC", "BNC-male", "—", "—", "—", "1"],
+    ]);
+  expect(within(connectors).getByText("SMA-male")).toHaveAttribute("title", "S-111L, S-111L NGT");
   const datasheet = within(card).getByRole("table", { name: "Затухание по источнику" });
   expect(datasheet).toHaveTextContent("50,3 дБ/100 фут");
   expect(within(datasheet).queryByRole("columnheader", { name: "t, °C" })).toBeInTheDocument(); // one point has a temperature
@@ -300,8 +359,16 @@ it("opens a coax card a tester reads at the VNA: markers, connectors, constructi
   expect(within(datasheet).getByText("пересчёт")).toBeInTheDocument();
   expect(within(datasheet).queryByRole("columnheader", { name: "Единица" })).toBeNull(); // the unit sits next to the source value, not in a column of its own
   expect(within(datasheet).getByRole("link", { name: "example.test" })).toHaveAttribute("href", "https://example.test/rg316.pdf");
-  expect(within(card).getByText("Волновое сопротивление").parentElement).toHaveAttribute("title", "50 ±2");
-  expect(within(card).getByText("Мощность, макс.").parentElement).toHaveTextContent("173 Вт на 1 ГГц");
+});
+
+it("lists no compatible connectors when БД.КОАКС has none for the cable, with or without a card", async () => {
+  mockApi([], [{ ...ROWS[0], connectors: [] }, { ...ROWS[1], connectors: [] }, ROWS[2]]);
+  render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+  fireEvent.click(await screen.findByText("RG316"));
+  expect(within(screen.getByRole("table", { name: "Совместимые разъёмы" })).getByText("Разъёмов в БД.КОАКС нет")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("RG-58 A/U")); // no card: the block stands alone
+  expect(screen.queryByRole("region", { name: /Карточка кабеля/ })).toBeNull();
+  expect(within(screen.getByRole("table", { name: "Совместимые разъёмы" })).getByText("Разъёмов в БД.КОАКС нет")).toBeInTheDocument();
 });
 
 it("structures a hook-up wire from its БД.ПРОВ suggestion and edits a size row", async () => {

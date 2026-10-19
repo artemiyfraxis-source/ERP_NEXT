@@ -1485,6 +1485,9 @@ export interface CableRow {
   /** Coax: the card by the exact name (`card_exact`) or of the family («RG-58» for «RG-58 C/U»). */
   card?: CoaxCard | null;
   card_exact?: boolean;
+  /** Coax: the БД.КОАКС rows made for this cable (by its mark, the exact card's name and aliases), only the cells the
+      card shows — «Совместимые разъёмы» (owner 19.10.2026). */
+  connectors?: Array<{ id: string; fields: Record<string, string> }>;
   /** Монтажный wire: its structure, or — not structured yet — why, and what the БД.ПРОВ row suggests. */
   hookup?: HookupWire | null;
   hookup_problem?: string;
