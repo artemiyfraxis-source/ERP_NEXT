@@ -27,6 +27,8 @@ from app.modules.techcards.scheme_corrections import EVENT, scheme_correction
 from app.shared.clock import MOSCOW
 from app.shared.persistence import AuditEventRow, create_schema
 from tests.factories import Actor
+from tests.techcards.library import load_library
+from tests.techcards.test_operation_card_api import _template
 from tests.techcards.test_assembly_drafts_api import INDEX, PROJECT, _card, _csrf, _token, drafts_api  # noqa: F401
 
 
@@ -206,9 +208,7 @@ def _application(tmp_path):
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     factory = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)  # noqa: E731
-    with factory() as uow:
-        uow.operation_cards.replace((), source_commit="lib-1", imported_at=NOW)
-        uow.commit()
+    load_library(factory, [_template("placeholder", "PLACEHOLDER")])  # the build needs a library with templates
     return engine, sessions, factory
 
 
@@ -239,10 +239,8 @@ def test_application_build_writes_the_event_with_the_card_fields_once(tmp_path):
     build(_typical(CORRECTED), NOW + timedelta(minutes=2))  # re-saved as is — not a new correction
     [event] = _events(sessions)
     assert event.aggregate_id == card.id and event.actor_name == "Мастер"
-    assert {key: event.details[key] for key in ("project", "item_index", "card_id", "revision",
-                                                "operation_library_commit", "mode")} == {
-        "project": PROJECT, "item_index": INDEX, "card_id": str(card.id), "revision": card.revision,
-        "operation_library_commit": "lib-1", "mode": "типовая",
+    assert {key: event.details[key] for key in ("project", "item_index", "card_id", "revision", "mode")} == {
+        "project": PROJECT, "item_index": INDEX, "card_id": str(card.id), "revision": card.revision, "mode": "типовая",
     }
     engine.dispose()
 

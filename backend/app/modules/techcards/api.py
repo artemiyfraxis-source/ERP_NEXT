@@ -24,7 +24,7 @@ from app.shared.clock import moscow_now
 from app.shared.file_types import sniffed_type
 from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import (
-    TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, refuse_api_tokens, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
+    TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, refuse_api_tokens, tcgen_principal, techcards_edit_principal, techcards_view_principal,
     tctemplates_edit_principal, tctemplates_view_principal, section_allowed,
 )
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
@@ -41,9 +41,7 @@ from .application import (
     EditOperationRecordCommand,
     EditTechcardOperationCommand,
     RebuildProjectTechcardCommand,
-    OperationLibraryEditedError,
     SaveTechcardRouteCommand,
-    ReplaceOperationLibraryCommand,
     UnitOfWork,
     create_project_techcard,
     auto_build_project_techcard,
@@ -53,7 +51,6 @@ from .application import (
     edit_project_operation,
     issue_project_techcard,
     rebuild_project_techcard,
-    replace_operation_library,
     save_project_route,
 )
 
@@ -178,12 +175,6 @@ class NewOperationPayload(BaseModel):
     category: str = Field(default="", max_length=255)
 
 
-class OperationLibraryPayload(BaseModel):
-    sourceCommit: str = Field(min_length=40, max_length=40)
-    templates: list[dict[str, Any]] = Field(min_length=1, max_length=500)
-    force: bool = False
-
-
 class TemplateDraftOpenPayload(BaseModel):
     """portalTcTplDraft(templateId, title): templateId задан → черновик правки, иначе новый."""
 
@@ -296,8 +287,6 @@ def etk_part_identifier(
 def _run(operation):
     try:
         return operation()
-    except OperationLibraryEditedError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
     except TechcardValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except KeyError as error:
@@ -437,13 +426,8 @@ def operation_card_templates(
 ) -> dict:
     with uow_factory() as uow:
         cards = uow.operation_cards.list()
-        metadata = uow.operation_cards.metadata()
     norms = _operation_norms(references_factory)
     return {
-        "metadata": None if metadata is None else {
-            **metadata,
-            "imported_at": metadata["imported_at"].isoformat(),
-        },
         "items": [_operation_card_result(card, norms=norms) for card in cards],
     }
 
@@ -546,27 +530,6 @@ def delete_template_sheet_endpoint(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
 ) -> dict:
     return _sheet_run(lambda: delete_template_sheet(uow_factory(), template_id, actor=principal.actor, now=now))
-
-
-@router.put("/techcards/templates/supplymap-library")
-def import_operation_card_templates(
-    payload: OperationLibraryPayload,
-    principal: Annotated[Principal, Depends(tctemplates_admin_principal)],
-    now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
-) -> dict:
-    result = _run(lambda: replace_operation_library(ReplaceOperationLibraryCommand(
-        source_commit=payload.sourceCommit,
-        templates=tuple(payload.templates),
-        actor=principal.actor,
-        now=now,
-        force=payload.force,
-    ), uow_factory()))
-    return {
-        "templates": result.templates,
-        "source_commit": payload.sourceCommit.lower(),
-        "overwritten_edited": list(result.overwritten_edited),
-    }
 
 
 @router.put("/techcards/templates/{source_id}")

@@ -31,7 +31,7 @@ def _seed_template_and_etk() -> None:
         project=PROJECT, item_index="КБ1", product_name="Жгут", source_calculation="", deadline=None, now=BUILT,
     ).rebuild(document, BUILT).issue(BUILT)
     with app.state.techcards_uow_factory() as uow:
-        uow.operation_cards.replace((card,), source_commit="lib", imported_at=BUILT)
+        uow.operation_cards.load((card,), imported_at=BUILT)
         uow.techcards.save(techcard)
         uow.commit()
 

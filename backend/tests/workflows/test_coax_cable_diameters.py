@@ -54,7 +54,6 @@ def test_etk_strip_sketch_draws_the_cable_diameters():
     strip = next(card for card in CARDS if card.code == "STRIP_COAX_auto")
     config = _config("RG-174", side_b=False)
     config["ops"] = [{"type": "coaxStrip", "side": "A", "units": 1, "templateId": strip.source_id}]
-    operation = build_etk(enrich_coax_diameters(config, DIA_ROWS), CARDS,
-                          operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]
+    operation = build_etk(enrich_coax_diameters(config, DIA_ROWS), CARDS)["operations"][0]
     assert operation["fields"]["coax"] == {"cable": "RG-174", "connector": "SMA-J", "d1": "0,48", "d2": "1,52", "d3": "2,23",
                                            "l1": "4", "l2": "3", "l3": "2", "lPlus": "", "lMinus": ""}

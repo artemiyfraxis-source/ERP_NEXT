@@ -34,7 +34,7 @@ const known = (commit) => typeof commit === "string" && /^[0-9a-f]{7,40}$/i.test
 const onMain = (commit) => tryGit("merge-base", "--is-ancestor", commit, "main") !== null;
 const behindOf = (commit) => Number(tryGit("rev-list", "--count", `${commit}..main`, ...code) ?? 0);
 
-// Nested pins (projectCardsSourceCommit, grapherImport.sourceCommit, operationLibrary.sourceCommit, …).
+// Nested pins (projectCardsSourceCommit, grapherImport.sourceCommit, …).
 const subPins = (node, top = true) =>
   !node || typeof node !== "object" ? [] : Object.entries(node).flatMap(([key, value]) =>
     typeof value === "object" ? subPins(value, false)

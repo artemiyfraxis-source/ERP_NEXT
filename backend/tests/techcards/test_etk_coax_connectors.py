@@ -23,7 +23,7 @@ def _config() -> dict:
 
 
 def _built(config: dict) -> list[dict]:
-    return build_etk(config, list(CARDS.values()), operation_library_commit=LIBRARY["sourceCommit"])["operations"]
+    return build_etk(config, list(CARDS.values()))["operations"]
 
 
 def test_connector_kind_is_the_base_type_and_the_russian_half_by_contacts():

@@ -66,7 +66,7 @@ class World:
         self.techcards = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)
         self.references = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
         with self.techcards() as uow:
-            uow.operation_cards.replace(tuple(CARDS), source_commit=LIBRARY["sourceCommit"], imported_at=NOW)
+            uow.operation_cards.load(tuple(CARDS), imported_at=NOW)
             uow.commit()
         self.refs = full_refs(load_refs(self.references))
         self.minutes = 0
@@ -242,8 +242,7 @@ def test_a_rerun_is_a_no_op(world):
 
 def test_a_card_changed_during_the_run_is_not_overwritten(world):
     card = world.old_card("713K.4", CONFIG_713)
-    result = backfill.classify(card, lambda config: with_technology(config, refs=world.refs)[0], CARDS,
-                               LIBRARY["sourceCommit"], None)
+    result = backfill.classify(card, lambda config: with_technology(config, refs=world.refs)[0], CARDS, None)
     auto_build_project_techcard(AutoBuildProjectTechcardCommand(
         config=card.document["build_config"], inputs=None, **world.change(card)), world.techcards())
     assert backfill._store(world.techcards, result) is False

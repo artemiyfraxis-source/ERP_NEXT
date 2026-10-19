@@ -33,7 +33,6 @@ def build(name: str) -> dict:
     return build_etk(
         kit(name)["config"],
         CARDS,
-        operation_library_commit=LIBRARY["sourceCommit"],
     )
 
 
@@ -48,12 +47,6 @@ def terminal_records() -> tuple[TerminalRecord, ...]:
         )
         for item in FIXTURES["files"]["db.json"]["payload"]["terRecords"]
     )
-
-
-def test_current_supplymap_etk_fixtures_are_pinned_to_the_library_commit():
-    assert FIXTURES["sourceCommit"] == LIBRARY["sourceCommit"]
-    assert len(FIXTURES["files"]) == 8
-    assert len(FIXTURES["files"]["db.json"]["payload"]["terRecords"]) == 280
 
 
 def test_builds_all_current_supplymap_kits_with_cards_results_and_times():
@@ -87,7 +80,7 @@ def test_720_etk_keeps_supplymap_codes_material_norms_times_and_final_product():
 def test_720_etk_resolves_terminal_norms_from_current_supplymap_database():
     config = enrich_terminal_norms(kit("720К.-КБ1")["config"], terminal_records())
     document = build_etk(
-        config, CARDS, operation_library_commit=LIBRARY["sourceCommit"],
+        config, CARDS,
         technology_source={"schema_version": 14},
     )
 
@@ -103,7 +96,7 @@ def test_720_etk_resolves_terminal_norms_from_current_supplymap_database():
 
 def test_current_cut_and_crimp_fixture_includes_control_tolerances_and_materials():
     config = enrich_terminal_norms(kit("720К.1.2-КБ1")["config"], terminal_records())
-    document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    document = build_etk(config, CARDS)
     cut = document["operations"][0]
 
     assert [item["code"] for item in document["operations"]] == [
@@ -122,7 +115,7 @@ def test_current_cut_and_crimp_fixture_includes_control_tolerances_and_materials
 
 def test_etk_surfaces_terminal_sections_missing_from_current_database():
     config = enrich_terminal_norms(kit("708К.5-КБ1")["config"], terminal_records())
-    document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    document = build_etk(config, CARDS)
 
     warnings = [warning for warning in document["warnings"] if "нормы терминала" in warning]
     assert any("16-02-0086" in warning for warning in warnings)
@@ -138,7 +131,7 @@ def test_etk_surfaces_terminal_sections_missing_from_current_database():
 def test_build_uses_template_id_not_ambiguous_side_title_and_tracks_pinout():
     config = kit("720К.-КБ1")["config"]
     config["ops"][2]["pins"] = ["1", "2"]
-    document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    document = build_etk(config, CARDS)
     operation = document["operations"][2]
     assert operation["template_id"].endswith("-a")
     assert [item["pins"] for item in operation["fields"]["wires"]] == [[1], [2]]
@@ -147,7 +140,7 @@ def test_build_uses_template_id_not_ambiguous_side_title_and_tracks_pinout():
 
 def test_connections_pair_both_ends_and_show_the_other_end_in_mounting_operations():
     config = deepcopy(kit("720К.-КБ1")["config"])
-    plain = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    plain = build_etk(config, CARDS)
     assert "connections" not in plain
     assert not any("links" in item["fields"] for item in plain["operations"])
 
@@ -159,7 +152,7 @@ def test_connections_pair_both_ends_and_show_the_other_end_in_mounting_operation
         {"wire": "черный", "from": {"end": "А1", "pin": 2}, "to": {"end": "", "pin": 1}},
         "мусор",
     ]
-    document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    document = build_etk(config, CARDS)
     assert document["connections"] == [{
         "wire": "черный",
         "from": {"end": "А1", "conn": "XHP-2", "label": "", "pin": 1},
@@ -195,7 +188,7 @@ def test_project_document_accepts_repeated_code_when_connectors_are_distinct():
 def test_missing_template_is_visible_in_the_built_project_snapshot():
     config = kit("720К.-КБ1")["config"]
     config["ops"][0]["templateId"] = "missing"
-    document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    document = build_etk(config, CARDS)
     assert document["operations"][0]["card"] is None
     assert "нет карточки" in document["warnings"][0]
 
@@ -219,7 +212,7 @@ def test_cut_and_crimp_operation_tracks_terminal_material_strip_and_applicator()
             "terminalNorm": {"applicator": "A16"},
         }, {"type": "insTerm", "opNum": "INS_terminal", "side": "A", "ep": {"connArt": "XHP-2"}}],
     }
-    operation = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]
+    operation = build_etk(config, CARDS)["operations"][0]
 
     assert operation["components"][-1] == {"art": "SXH-001T-P0.6", "name": "Терминал", "norm": "200", "unit": "Шт."}
     assert operation["fields"]["strip"]["lenA"] == "3,5"
@@ -338,7 +331,7 @@ def test_drawing_cut_length_with_end_allowances_reaches_the_etk_unchanged():
     wire = {"name": "ПВАМ 0,35", "art": "ПВАМ 0,35", "qty": 1, "length": wire_view["cut_mm"]}
     config = {"assemblyName": "Жгут", "partQty": 1, "wires": [wire],
               "ops": [{"type": "cutWire", "opNum": "CUT_WIRE_auto", "wires": [wire]}]}
-    operation = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]
+    operation = build_etk(config, CARDS)["operations"][0]
     assert operation["result"][0]["name"].startswith("ПВАМ 0,35 312мм")
 
 
@@ -354,7 +347,7 @@ def test_splice_topology_and_strip_cable_do_not_advance_main_chain():
             {"type": "insTerm", "opNum": "INS_terminal_2.00", "side": "B", "ep": {"connArt": "PHR-2"}, "wires": [{"name": "Провод", "art": "ПВ3", "qty": 2, "length": 300}], "wireSources": [""]},
         ],
     }
-    document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    document = build_etk(config, CARDS)
 
     assert document["operations"][1]["result"][0]["name"].endswith("; концы разделаны")
     assert any(node.get("kind") == "splice" for node in document["topology"]["nodes"])
@@ -364,7 +357,7 @@ def test_splice_topology_and_strip_cable_do_not_advance_main_chain():
 def test_issue_rejects_cut_operations_without_wire_length():
     config = {"wires": [{"art": "ПВ3", "length": 0}], "ops": [{"type": "cutWire", "opNum": "CUT_WIRE"}]}
     now = datetime.now(timezone.utc)
-    document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    document = build_etk(config, CARDS)
     card = ProjectTechcard.create(
         project="P", item_index="КБ1", product_name="Жгут",
         source_calculation="", deadline=None, now=now,
@@ -421,7 +414,7 @@ def test_coax_strip_carries_side_dimensions_for_the_sketch():
         "cableArt": "RG-174", "sideA": {"article": "SMA-M", "l1": "3", "l2": "5", "l3": "9", "d1": "0,5"},
         "sideB": {"article": "BNC-F", "l1": "4"},
     }, "ops": [{"type": "coaxStrip", "side": "A"}, {"type": "coaxStrip", "side": "B"}]}
-    operations = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"]
+    operations = build_etk(config, CARDS)["operations"]
 
     assert operations[0]["fields"]["coax"] == {
         "cable": "RG-174", "connector": "SMA-M", "d1": "0,5", "d2": "", "d3": "",
@@ -439,7 +432,7 @@ def _coax_cut_strip(machine: dict | None, strip_sides: list[str], code: str = "C
         "cableArt": "RG-316", "sideA": {"article": "MMCX-male", "l1": "1,8", "l2": "4,5", "l3": "10"},
         "sideB": {"article": "N-male", "l1": "3", "l2": "6", "l3": "9"},
     }, "ops": [op]}
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]
+    return build_etk(config, CARDS)["operations"][0]
 
 
 def _equipment(operation: dict) -> list[tuple[str, str, str]]:
@@ -527,7 +520,7 @@ def test_cut_crimp_and_tin_uses_the_erp_template_with_tin_defects_and_the_machin
             "terminalNorm": {"applicator": "S9/M1/A19"},
         }, {"type": "insTerm", "opNum": "INS_terminal", "side": "A", "ep": {"connArt": "SHR-02V-S-B"}}],
     }
-    operation = build_etk(config, cards, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]
+    operation = build_etk(config, cards)["operations"][0]
 
     assert operation["card"]["name"] == "Автомат резка + опрессовка + лужение"
     assert operation["result"][0]["name"] == "ПВ28 100мм, обжатый терминал SSH-003T-P0.2-H, другой конец облужен"
@@ -656,7 +649,7 @@ def test_cut_cards_list_the_measuring_tools_their_steps_use():
             "terminalNorm": {"applicator": "A16"},
         }, {"type": "insTerm", "opNum": "INS_terminal", "side": "A", "ep": {"connArt": "XHP-2"}}],
     }
-    tooling = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]["card"]["tooling"]
+    tooling = build_etk(config, CARDS)["operations"][0]["card"]["tooling"]
     tools = [tool["name"] for tool in tooling if tool["section"] == "Инструмент"]
     assert "Штангенциркуль ШЦ-I (ГОСТ 166-89)" in tools
     assert any("микрометр" in name for name in tools)
@@ -692,7 +685,7 @@ def test_marks_by_kd_list_every_mark_group_materials_and_scale_the_norm_by_their
          "place": "50 мм от конца", "placeKind": "dist", "placeMm": "50"},
         {"art": "", "name": "", "qty": 1, "target": "Жгут целиком", "text": "КБ1 №1", "place": "на оплётке", "placeKind": "free", "placeMm": ""},
     ]
-    op = _mark_op(build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"]))
+    op = _mark_op(build_etk(config, CARDS))
     assert op["fields"]["marks"] == [
         {"target": "Разъём X1 (174047-2)", "text": "X1", "material": tag, "place": "у разъёма", "qty": "1", "batch": "38"},
         {"target": "Разъём X2", "text": "X2", "material": tag, "place": "у разъёма", "qty": "1", "batch": "38"},
@@ -717,7 +710,7 @@ def test_product_mark_with_a_tab_goes_to_the_etk_in_russian_and_feeds_the_materi
         {"art": "Термотрубка", "name": "Термотрубка", "qty": 1, "target": "Разъём X1", "text": "X1", "place": "у разъёма", "placeKind": "conn", "placeMm": ""},
         {"art": "Хлястик", "name": "Хлястик", "qty": 1, "target": "Изделие КБ1", "text": "КБ1", "place": "на изделии", "placeKind": "item", "placeMm": ""},
     ]
-    op = _mark_op(build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"]))
+    op = _mark_op(build_etk(config, CARDS))
     assert [(m["target"], m["material"], m["place"]) for m in op["fields"]["marks"]] == [
         ("Разъём X1", "Термотрубка", "у разъёма"), ("Изделие КБ1", "Хлястик", "на изделии"),
     ]
@@ -736,7 +729,7 @@ def test_input_of_every_operation_is_the_previous_result_word_for_word():
     наименование и то же количество; ЭТК и печать берут обе строки из одних полей документа."""
     from tests.techcards.test_etk_golden import CARDS, LIBRARY, _kit
 
-    document = build_etk(_kit("720К.-КБ1"), CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    document = build_etk(_kit("720К.-КБ1"), CARDS)
     operations = document["operations"]
     assert len(operations) == 5
     for before, after in zip(operations, operations[1:]):
@@ -759,9 +752,8 @@ def test_terminal_norm_counts_one_terminal_per_double_crimped_contact():
 def test_generator_form_snapshot_in_build_config_does_not_change_the_etk():
     # `gen_state` (снимок формы генератора, 14.10) читает только форма; ЭТК от него не меняется.
     config = next(item["payload"]["config"] for key, item in FIXTURES["files"].items() if key.startswith("kit-"))
-    plain = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
-    snapped = build_etk({**config, "gen_state": {"v": 1, "kit": [], "S": {"wires": [], "endpoints": []}}}, CARDS,
-                        operation_library_commit=LIBRARY["sourceCommit"])
+    plain = build_etk(config, CARDS)
+    snapped = build_etk({**config, "gen_state": {"v": 1, "kit": [], "S": {"wires": [], "endpoints": []}}}, CARDS)
     assert {k: v for k, v in snapped.items() if k != "build_config"} == {k: v for k, v in plain.items() if k != "build_config"}
     assert snapped["build_config"]["gen_state"]["v"] == 1
 
@@ -787,7 +779,7 @@ def test_wire_diameters_from_the_wire_record_reach_the_etk_and_a_wire_without_on
     def built(art: str) -> dict:
         config = enrich_wire_diameters(_diameter_config({"name": "Провод", "art": art, "qty": 1, "length": 100}),
                                        hookups, [gauge, bare], prov)
-        return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]["fields"]["wires"][0]
+        return build_etk(config, CARDS)["operations"][0]["fields"]["wires"][0]
 
     both = built("мгтф 0,2")
     assert (both["outerDiameter"], both["conductorDiameter"]) == (1.2, 0.61)
@@ -884,8 +876,7 @@ def test_shrinks_of_tubes_on_both_sides_get_their_own_words_and_distinct_etk_key
         {"type": "heatTut", "opKey": "heatShrB1", "templateId": "heat-tyt-short-усадка", "tutCount": 1, **tube},
         {"type": "heatTut", "opKey": "heatJsB", "side": "B", "templateId": "heat-tyt-short-усадка", "tutCount": 1, **tube},
     ]
-    built = build_etk({"assemblyName": "Кабель", "partQty": 10, "wires": [dict(wire)], "ops": ops}, CARDS,
-                      operation_library_commit=LIBRARY["sourceCommit"])["operations"]
+    built = build_etk({"assemblyName": "Кабель", "partQty": 10, "wires": [dict(wire)], "ops": ops}, CARDS)["operations"]
     keys = [(item["code"], item["connector"], item["side"]) for item in built]
     assert len(set(keys)) == len(keys)
     assert [item["connector"] for item in built[1:]] == [

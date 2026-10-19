@@ -50,7 +50,7 @@ CONFIG = {
 
 
 def build(config: dict) -> dict:
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(config, CARDS)
 
 
 def manual(**changes) -> dict:
@@ -258,6 +258,5 @@ def test_generator_operations_of_existing_schemes_keep_their_etk_keys():
     expected = json.loads((Path(__file__).parent / "fixtures" / "manual-etk-keys.json").read_text(encoding="utf-8"))
     assert set(expected) == set(golden.KITS)
     for kit, keys in expected.items():
-        document = build_etk(generator_to_assembly(golden._kit(kit)), golden.CARDS,
-                             operation_library_commit=golden.LIBRARY["sourceCommit"])
+        document = build_etk(generator_to_assembly(golden._kit(kit)), golden.CARDS)
         assert [operation_key(operation) for operation in document["operations"]] == keys, kit

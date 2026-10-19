@@ -23,7 +23,6 @@ BACKEND = Path(__file__).resolve().parents[2]
 LIBRARY = json.loads((BACKEND / "data" / "techcard-library.json").read_text(encoding="utf-8"))
 ERP_LIBRARY = json.loads((BACKEND / "data" / "techcard-library-erp.json").read_text(encoding="utf-8"))
 CARDS = parse_operation_library(LIBRARY["templates"] + ERP_LIBRARY["templates"])
-COMMIT = LIBRARY["sourceCommit"]
 CONFIG_713 = json.loads((Path(__file__).with_name("generator_713k4_config.json")).read_text(encoding="utf-8"))
 COAX_FIXTURE = BACKEND.parent / "frontend" / "src" / "fixtures" / "coaxSmaRg316Rev1.json"
 CONFIG_COAX = json.loads(COAX_FIXTURE.read_text(encoding="utf-8"))["document"]["build_config"]
@@ -34,11 +33,11 @@ def enrich(config: Any) -> Any:
 
 
 def current_path(config: dict[str, Any]) -> dict[str, Any]:
-    return stamp_templates(build_etk(enrich(config), CARDS, operation_library_commit=COMMIT), CARDS)
+    return stamp_templates(build_etk(enrich(config), CARDS), CARDS)
 
 
 def run(config: dict[str, Any], overrides: Any = None):
-    return derive(config, overrides, enrich, CARDS, operation_library_commit=COMMIT)
+    return derive(config, overrides, enrich, CARDS)
 
 
 CASES = [pytest.param(CONFIG_713, id="713К.4"), pytest.param(CONFIG_COAX, id="228К.20-коакс")]

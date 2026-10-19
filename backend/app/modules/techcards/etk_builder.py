@@ -1,4 +1,4 @@
-"""Build a project ETK from a SUPPLYMAP generator config and operation cards."""
+"""Build a project ETK from a generator config and operation cards."""
 
 from __future__ import annotations
 
@@ -2213,7 +2213,7 @@ def _distinct_generator_keys(items: Sequence[_ManualOp], built: list[dict[str, A
 
 def _build_manual(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
-    operation_library_commit: str, technology_source: Mapping[str, Any] | None,
+    operation_library_commit: str = "", technology_source: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     cards_by_id = {card.source_id: card for card in cards}
     cards_by_code: dict[str, OperationCardTemplate] = {}
@@ -2302,7 +2302,7 @@ def _build_manual(
         "warnings": warnings,
         "build_config": deepcopy(dict(config)),
         "source": {
-            "operation_library_commit": operation_library_commit,
+            **({"operation_library_commit": operation_library_commit} if operation_library_commit else {}),
             **({"technology_snapshot": deepcopy(dict(technology_source))} if technology_source else {}),
         },
     }
@@ -2548,7 +2548,7 @@ def fill_generator_chain(document: Mapping[str, Any] | None) -> Mapping[str, Any
         return document
     config = document.get("build_config")
     operations = _list(document.get("operations"))
-    if not isinstance(config, Mapping) or config.get("mode") == MANUAL_MODE or config.get("source") == "SUPPLYMAP":
+    if not isinstance(config, Mapping) or config.get("mode") == MANUAL_MODE:
         return document
     raw = [item for item in _list(config.get("ops")) if isinstance(item, Mapping)]
     if not raw or len(raw) != len(operations) or any(
@@ -2584,10 +2584,11 @@ def fill_generator_chain(document: Mapping[str, Any] | None) -> Mapping[str, Any
 
 def build_etk(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
-    operation_library_commit: str,
+    operation_library_commit: str = "",
     technology_source: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return an immutable document snapshot suitable for ProjectTechcard.rebuild."""
+    """Return an immutable document snapshot suitable for ProjectTechcard.rebuild. `operation_library_commit` — only a
+    provenance label in `source` (documents built from the SUPPLYMAP library carry its commit); empty — none."""
     if config.get("mode") == MANUAL_MODE:
         return _build_manual(config, cards, operation_library_commit=operation_library_commit,
                              technology_source=technology_source)
@@ -2627,7 +2628,7 @@ def build_etk(
         "warnings": warnings,
         "build_config": deepcopy(dict(config)),
         "source": {
-            "operation_library_commit": operation_library_commit,
+            **({"operation_library_commit": operation_library_commit} if operation_library_commit else {}),
             **({"technology_snapshot": deepcopy(dict(technology_source))} if technology_source else {}),
         },
     }
@@ -2637,7 +2638,7 @@ def build_etk(
 
 def document_route(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """The block scheme of any stored ETK, for the read path: its own `route`, else the generator's hand-edited
-    `build_config.route`, else derived from the operations (documents before version 3, SUPPLYMAP imports). A stored
+    `build_config.route`, else derived from the operations (documents before version 3). A stored
     scheme that no longer fits the operations gives way to the next one; totals always come from the operations as
     they are now. None — the document has no operations."""
     return _route(document, strict=False) if isinstance(document, Mapping) else None

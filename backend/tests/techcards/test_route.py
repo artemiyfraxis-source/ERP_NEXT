@@ -25,7 +25,7 @@ def kit(name: str) -> dict:
 
 
 def build(config: dict) -> dict:
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(config, CARDS)
 
 
 def edges(route: dict) -> list[tuple]:

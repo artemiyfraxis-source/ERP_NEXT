@@ -30,7 +30,7 @@ def _config(name: str, part_quantity: int = 100) -> dict:
 
 
 def _build(config: dict) -> dict:
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(config, CARDS)
 
 
 def _etk_minutes(document: dict) -> Decimal:

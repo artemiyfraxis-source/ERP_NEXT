@@ -158,7 +158,7 @@ async function readRefs(): Promise<Refs> {
   const safe = <T,>(promise: Promise<T>, fallback: T) => promise.catch(() => fallback);
   const noRecords = { metadata: null, columns: [], records: [] };
   const [templates, op, ter, coax, wireDia, kabCoax, mat, prov] = await Promise.all([
-    safe(techcardsApi.templates(), { metadata: null, items: [] }),
+    safe(techcardsApi.templates(), { items: [] }),
     safe(referencesApi.techOperations("op", "", 5000), noRecords),
     safe(referencesApi.techOperations("ter", "", 5000), noRecords),
     safe(referencesApi.techOperations("coax", "", 5000), noRecords),

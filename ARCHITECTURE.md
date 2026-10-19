@@ -1499,11 +1499,11 @@ SUPPLYMAP нет. Поэтому в ERP не вводится правило а�
 зеркала; (2) TSV не хранит хвостовые пустые ячейки, у фикстуры они есть — на разбор `rows` не
 влияет (`_cell` терпит короткие строки); (3) объединений ячеек и формул нет ни там, ни там —
 только значения. Порядок: сначала 115 шаблонов фикстуры, затем новые по имени файла.
-Пин в `SOURCE.json` (`operationLibrary`, вместе с `grapherImport.sourceCommit`, который тест
-держит равным ему) пишет сам скрипт; `sourceSha256` теперь — хеш вывода `git ls-tree -r -z` по
-зеркалу и фикстуре категорий (не хеш одного файла), `sourcePath` — каталог зеркала,
-`categorySourcePath` — фикстура. Ref по умолчанию `main` (раньше `origin/main`, что расходилось
-с пином `main` в SOURCE.json).
+Пин `operationLibrary` в `SOURCE.json` и ключи происхождения в `techcard-library.json`
+(`sourceCommit`, `sourceSha256`, `sourcePath`…) сняты 19.10.2026 вместе с перезагрузкой библиотеки из
+SUPPLYMAP (`PUT /api/techcards/templates/supplymap-library`) и переносом выданных ТК из листа «Техкарты»
+(владелец: «ТК из SUPPLYMAP на проде нет»): библиотека — данные ERP, `seed_library` кладёт базовые шаблоны
+только в пустую базу.
 Что приехало: второй станок — CUT_COAX+1strip/+2strip BZW-886+Q2 (ОБ.094) и BZW-50X (ОБ.095),
 STRIP_WIRE EW-1090 (ОБ.007) и BZW-D2.0S(R) (ОБ.100.X), PRS_ТМЛ YQK-70 (ОБ.056) и BZW-20TS
 (ОБ.093); CUT_NEYLON — BZW-200+H; три новых шаблона `sdr-banana-пайка` (SDR_BANANA),

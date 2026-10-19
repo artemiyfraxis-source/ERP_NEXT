@@ -19,6 +19,8 @@ from app.modules.techcards.project_cards import operation_key
 from app.shared.clock import MOSCOW
 from app.shared.persistence import create_schema
 from tests.factories import Actor
+from tests.techcards.library import load_library
+from tests.techcards.test_operation_card_api import _template
 from tests.techcards.test_scheme_corrections import GENERATOR
 
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=MOSCOW)
@@ -30,9 +32,7 @@ def _app(tmp_path):
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     factory = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)  # noqa: E731
-    with factory() as uow:
-        uow.operation_cards.replace((), source_commit="lib-1", imported_at=NOW)
-        uow.commit()
+    load_library(factory, [_template("placeholder", "PLACEHOLDER")])  # the build needs a library with templates
     card = create_project_techcard(CreateProjectTechcardCommand(
         project="P-1", item_index="1", product_name="Жгут", source_calculation="", deadline=None,
         actor=ACTOR, now=NOW,

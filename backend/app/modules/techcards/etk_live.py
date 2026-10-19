@@ -221,10 +221,8 @@ def _rebuilt_cards(
         if template_id and template_id not in known:
             cards.append(replace(template, source_id=template_id))
             known.add(template_id)
-    source = document.get("source") if isinstance(document.get("source"), Mapping) else {}
     try:
-        built = build_etk(document["build_config"], cards,
-                          operation_library_commit=str(source.get("operation_library_commit") or ""))
+        built = build_etk(document["build_config"], cards)
     except Exception:  # noqa: BLE001 — a config the builder no longer takes keeps the stored copies
         return {}
     by_key = {_key(op): op for op in _operations(built) if isinstance(op, Mapping)}

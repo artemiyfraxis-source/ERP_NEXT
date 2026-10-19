@@ -13,28 +13,16 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
-from app.modules.production.launchable import route_from_document
 from app.modules.production.plan_application import AddPlanEventCommand, add_plan_event
-from app.modules.techcards.application import (
-    CreateProjectTechcardCommand,
-    ReplaceOperationLibraryCommand,
-    create_project_techcard,
-    replace_operation_library,
-)
+from app.modules.techcards.application import LoadOperationLibraryCommand, load_operation_library
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
 from app.modules.techcards.etk_builder import ETK_VERSION, document_route
-from app.workflows.techcards_all import (
-    refresh,
-    generate,
-    import_supplymap,
-    split_item,
-    supplymap_routes,
-)
+from app.workflows.techcards_all import refresh, generate
 from tests.factories import Actor
-from tests.techcards.calc_sheets import FakeSheets, calc_sheets, grid
+from tests.techcards.calc_sheets import FakeSheets, calc_sheets
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,8 +53,8 @@ def state():
         })
         assert loaded.status_code == 200, loaded.text
     del app.state.kitset_sheets_reader
-    replace_operation_library(ReplaceOperationLibraryCommand(
-        source_commit=LIBRARY["sourceCommit"], templates=tuple(LIBRARY["templates"]), actor=ACTOR, now=NOW,
+    load_operation_library(LoadOperationLibraryCommand(
+        templates=tuple(LIBRARY["templates"]), actor=ACTOR, now=NOW,
     ), app.state.techcards_uow_factory())
     yield SimpleNamespace(
         techcards_uow_factory=app.state.techcards_uow_factory,
@@ -90,72 +78,7 @@ def _plan(state, project: str, **fields) -> None:
     ), state.production_uow_factory())
 
 
-def test_split_item_like_tcSplitItem():
-    assert split_item("708К.4КБ1") == ("708К.4", "КБ1")
-    assert split_item(" 35К.М.34кб12 ") == ("35К.М.34", "КБ12")
-    assert split_item("708К.4") == ("708К.4", "")
-
-
-SHEET = grid([
-    ["ИЗДЕЛИЕ", "НАИМЕНОВАНИЕ", "№ ЭТАПА", "ЭТАП", "КОД ОПЕРАЦИИ", "ОПИСАНИЕ ШАГА", "ВРЕМЯ НА ЕД, СЕК",
-     "ВРЕМЯ ПОДГОТОВКИ, СЕК", "КОММЕНТАРИЙ"],
-    ["708К.4КБ1", "Жгут питания", 1, "Резка", "CUT_WIRE_auto", "Резка провода", "12,5", 60,
-     "ТК: https://docs.google.com/spreadsheets/d/tk-file/edit"],
-    ["708К.4КБ1", "Жгут питания", 2, "Опрессовка", "PRS_TERMINAL_auto", "Опрессовка ст. А", 8, 0, ""],
-    ["708К.4КБ1", "Жгут питания", 3, "Опрессовка", "PRS_TERMINAL_auto", "Опрессовка ст. Б", 8, 0, ""],
-    ["708К.4КБ9", "Нет такой КБ", 1, "Резка", "CUT", "", 1, 0, ""],
-    ["999К.1КБ1", "Нет проекта", 1, "Резка", "CUT", "", 1, 0, ""],
-])
-
-
-def test_supplymap_sheet_rows_become_routes_with_the_tk_file_link():
-    routes = supplymap_routes(SHEET)
-    assert set(routes) == {"708К.4КБ1", "708К.4КБ9", "999К.1КБ1"}
-    route = routes["708К.4КБ1"]
-    assert route["file_url"] == "https://docs.google.com/spreadsheets/d/tk-file/edit"
-    assert [stage["tOp"] for stage in route["stages"]] == [12.5, 8, 8]
-
-
-def test_issued_supplymap_techcards_become_issued_etks_and_a_rerun_changes_nothing(state):
-    report = import_supplymap(SHEET, state.techcards_uow_factory, actor=ACTOR, now=NOW, apply=True)
-    assert report.done == ["708К.4 КБ1 — этапов 3"]
-    assert report.skipped == {"проекта или КБ нет в ERP (отгружен или не заведён)": ["708К.4КБ9", "999К.1КБ1"]}
-    card = _cards(state)[("708К.4", "КБ1")]
-    assert (card.status, card.revision) == (TechcardStatus.ISSUED, 1)
-    assert card.document["source"]["file_url"] == "https://docs.google.com/spreadsheets/d/tk-file/edit"
-    # Повтор одного кода в маршруте — разные операции ЭТК; цех видит этапы, как по листу SUPPLYMAP.
-    assert [(item["code"], item["connector"]) for item in card.document["operations"]] == [
-        ("CUT_WIRE_auto", ""), ("PRS_TERMINAL_auto", ""), ("PRS_TERMINAL_auto", "этап 3"),
-    ]
-    route = route_from_document(card.document)
-    assert [(step.code, step.description, float(step.seconds_per_unit)) for step in route] == [
-        ("CUT_WIRE_auto", "Резка провода", 12.5), ("PRS_TERMINAL_auto", "Опрессовка ст. А", 8.0),
-        ("PRS_TERMINAL_auto", "Опрессовка ст. Б", 8.0),
-    ]
-    with state.techcards_uow_factory() as uow:
-        assert [item.reason for item in uow.techcards.revisions(card.id)] == ["Перенос выданной ТК из SUPPLYMAP"]
-
-    again = import_supplymap(SHEET, state.techcards_uow_factory, actor=ACTOR, now=NOW, apply=True)
-    assert again.done == []
-    assert again.skipped["ЭТК уже выдана в ERP — не перезаписываю"] == ["708К.4 КБ1"]
-    assert _cards(state)[("708К.4", "КБ1")].version == card.version
-
-
-def test_a_draft_gives_way_to_the_supplymap_issue_and_dry_run_writes_nothing(state):
-    create_project_techcard(CreateProjectTechcardCommand(
-        project="708К.4", item_index="КБ1", product_name="Жгут питания", source_calculation="",
-        deadline=None, actor=ACTOR, now=NOW,
-    ), state.techcards_uow_factory())
-    dry = import_supplymap(SHEET, state.techcards_uow_factory, actor=ACTOR, now=NOW, apply=False)
-    assert dry.done == ["708К.4 КБ1 — этапов 3"]
-    assert _cards(state)[("708К.4", "КБ1")].status is TechcardStatus.DRAFT
-
-    import_supplymap(SHEET, state.techcards_uow_factory, actor=ACTOR, now=NOW, apply=True)
-    assert _cards(state)[("708К.4", "КБ1")].status is TechcardStatus.ISSUED
-
-
 def test_generate_builds_and_issues_only_where_a_techcard_is_missing_and_skips_shipped_and_hold(state):
-    import_supplymap(SHEET, state.techcards_uow_factory, actor=ACTOR, now=NOW, apply=True)
     _plan(state, "709К.1", kind="block", blocker="ХОЛД", text="ждём заказчика")
     _plan(state, "710К.1", kind="stage", item_index="КБ2", value="Отгружено")
     asked = []
@@ -166,25 +89,21 @@ def test_generate_builds_and_issues_only_where_a_techcard_is_missing_and_skips_s
         return {"items": [{"key": item["key"], "config": CONFIG, "error": "", "warnings": []} for item in payload["items"]]}
 
     report = generate(state, generator, None, actor=ACTOR, now=NOW, apply=True)
-    assert asked == ["КБ2", "КБ1"]  # 708К.4 КБ1 выдана из SUPPLYMAP, 709К.1 на ХОЛДе, 710К.1 КБ2 отгружена
-    assert [line.split(" — ")[0] for line in report.done] == ["708К.4 КБ2", "710К.1 КБ1"]
-    assert report.skipped == {
-        "ЭТК уже выдана": ["708К.4 КБ1"], "проект на ХОЛДе": ["709К.1"], "КБ отгружена": ["710К.1 КБ2"],
-    }
-    # Как кнопка «Создать» (SUPPLYMAP «Создать техкарты»): собранная ЭТК сразу выдана — её правят по операциям.
+    assert asked == ["КБ1", "КБ2", "КБ1"]  # 709К.1 на ХОЛДе, 710К.1 КБ2 отгружена
+    assert [line.split(" — ")[0] for line in report.done] == ["708К.4 КБ1", "708К.4 КБ2", "710К.1 КБ1"]
+    assert report.skipped == {"проект на ХОЛДе": ["709К.1"], "КБ отгружена": ["710К.1 КБ2"]}
+    # Как кнопка «Создать»: собранная ЭТК сразу выдана — её правят по операциям.
     built = _cards(state)[("710К.1", "КБ1")]
     assert (built.status, built.revision) == (TechcardStatus.ISSUED, 1)
     assert built.document["operations"] and built.product_name == "Жгут питания"
 
     again = generate(state, generator, None, actor=ACTOR, now=NOW, apply=True)
-    assert again.done == [] and asked == ["КБ2", "КБ1"]
+    assert again.done == [] and asked == ["КБ1", "КБ2", "КБ1"]
     assert again.skipped["ЭТК уже выдана"] == ["708К.4 КБ1", "708К.4 КБ2", "710К.1 КБ1"]
 
 
-def test_only_limits_both_steps_to_the_loaded_project(state):
+def test_only_limits_generation_to_the_loaded_project(state):
     """Загрузка по одному (projects_import.py load): ТК только загружаемого проекта, остальные не трогаются."""
-    moved = import_supplymap(SHEET, state.techcards_uow_factory, actor=ACTOR, now=NOW, apply=True, only={"710К.1"})
-    assert moved.done == [] and moved.skipped == {}
     asked = []
 
     def generator(payload):
@@ -232,8 +151,7 @@ def test_generator_errors_are_reported_and_leave_no_card(state):
     assert _cards(state) == {}
 
 
-def test_refresh_rebuilds_issued_etks_of_an_older_builder_and_keeps_supplymap_ones(state):
-    import_supplymap(SHEET, state.techcards_uow_factory, actor=ACTOR, now=NOW, apply=True)
+def test_refresh_rebuilds_issued_etks_of_an_older_builder(state):
     generate(state, lambda payload: {"items": [
         {"key": item["key"], "config": CONFIG, "error": "", "warnings": []} for item in payload["items"]
     ]}, None, actor=ACTOR, now=NOW, apply=True)
@@ -253,7 +171,7 @@ def test_refresh_rebuilds_issued_etks_of_an_older_builder_and_keeps_supplymap_on
     assert rebuilt.document["schema_version"] == ETK_VERSION
     assert all(row["norm"] for operation in rebuilt.document["operations"] for row in operation["result"]
                if operation["type"] != "splice")
-    assert _cards(state)[("708К.4", "КБ1")].revision == 1  # перенесённую из SUPPLYMAP не трогаем
+    assert _cards(state)[("708К.4", "КБ1")].revision == 1  # собранную этим сборщиком не трогаем
     assert refresh(state, actor=ACTOR, now=NOW, apply=True).done == []
 
 

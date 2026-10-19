@@ -24,7 +24,8 @@ from app.modules.techcards.kitsets import KitAssembly, Kitset
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.http_auth import authenticated_principal
 from app.shared.persistence import AuditEventRow, create_schema
-from tests.techcards.test_operation_card_api import SOURCE_COMMIT, _template
+from tests.techcards.library import load_library
+from tests.techcards.test_operation_card_api import _template
 
 
 NOW = datetime(2026, 10, 5, 12, 0, tzinfo=MOSCOW)
@@ -82,11 +83,7 @@ def drafts_api():
         uow.commit()
     admin = TestClient(app)
     assert admin.post("/api/auth/login", json={"login": "admin", "password": "admin-password"}).status_code == 200
-    library = admin.put(
-        "/api/techcards/templates/supplymap-library", headers=_csrf(admin),
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("cut-wire", "CUT_WIRE")]},
-    )
-    assert library.status_code == 200, library.text
+    load_library(app.state.techcards_uow_factory, [_template("cut-wire", "CUT_WIRE")])
     yield sessions, clock, admin
     app.dependency_overrides.pop(moscow_now, None)
     for name in STATE:

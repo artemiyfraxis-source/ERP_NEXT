@@ -36,7 +36,7 @@ ACTOR = Actor(id=uuid4(), name="перенос ЭТК на ПФ", department="")
 
 def document(name: str) -> dict:
     config = deepcopy(FIXTURES["files"][name]["payload"]["config"])
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(config, CARDS)
 
 
 @pytest.fixture()
@@ -184,10 +184,10 @@ OLD_SPLIT = ("ПФ-1 · Нарезанные провода (01) · ПФ-2 · О
 
 @pytest.fixture()
 def library(shop):
-    from app.modules.techcards.application import ReplaceOperationLibraryCommand, replace_operation_library
+    from app.modules.techcards.application import LoadOperationLibraryCommand, load_operation_library
 
-    replace_operation_library(ReplaceOperationLibraryCommand(
-        source_commit=LIBRARY["sourceCommit"], templates=tuple(LIBRARY["templates"]), actor=ACTOR, now=NOW,
+    load_operation_library(LoadOperationLibraryCommand(
+        templates=tuple(LIBRARY["templates"]), actor=ACTOR, now=NOW,
     ), shop.factory())
     return shop
 
@@ -197,7 +197,7 @@ def old_generated(name: str = "kit-720К.-КБ1.json", **config) -> dict:
     from app.modules.techcards.application import _hand_route
 
     payload = {**deepcopy(FIXTURES["files"][name]["payload"]["config"]), "tab": "inter", **config}
-    etk = build_etk(payload, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    etk = build_etk(payload, CARDS)
     etk["route"] = _hand_route(etk, OLD_ROUTE, generated=True)
     etk["operations"][2]["result"][0]["name"] = OLD_SIDE_A
     etk["operations"][3]["semis"][0]["name"] = OLD_SIDE_A

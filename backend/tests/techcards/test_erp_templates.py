@@ -1,4 +1,4 @@
-"""Шаблоны карт ERP, которых нет в БД.ТК SUPPLYMAP (backend/data/techcard-library-erp.json)."""
+"""Шаблоны карт поставки ERP (backend/data/techcard-library-erp.json) и первая загрузка базовой библиотеки."""
 
 from datetime import datetime, timezone
 import json
@@ -7,9 +7,10 @@ from pathlib import Path
 from app.main import app
 from app.modules.techcards.application import ERP_TEMPLATE_AUTHOR, SeedErpTemplatesCommand, seed_erp_templates
 from app.modules.techcards.operation_cards import parse_operation_library
-from app.modules.techcards.seed_library import ACTOR, seed_erp
+from app.modules.techcards.seed_library import ACTOR, seed_base, seed_erp
 
-from .test_operation_card_api import SOURCE_COMMIT, _template, operation_library_api  # noqa: F401
+from .library import load_library
+from .test_operation_card_api import _template, operation_library_api  # noqa: F401
 
 ERP_LIBRARY = json.loads((Path(__file__).resolve().parents[2] / "data" / "techcard-library-erp.json").read_text(encoding="utf-8"))
 TIN_ID = "cut-wire-1crimp-tin-автомат-резка-опрессовка-лужение"
@@ -75,15 +76,10 @@ def test_bundled_cut_2strip_tin_card_cuts_strips_both_ends_and_tins_without_crim
     assert "Контроль" in {step.kind for step in card.steps}
 
 
-def test_seed_creates_the_template_once_and_it_survives_a_supplymap_snapshot(operation_library_api):
+def test_seed_creates_the_template_once_beside_the_base_library(operation_library_api):
+    load_library(app.state.techcards_uow_factory, [_template("cut-wire", "CUT_WIRE")])
     assert "добавлены" in seed_erp(app.state.techcards_uow_factory, NOW)
     assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (6)"
-
-    reimport = operation_library_api.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("cut-wire", "CUT_WIRE")]},
-    )
-    assert reimport.status_code == 200, reimport.text
 
     ids = {item["id"] for item in operation_library_api.get("/api/techcards/templates").json()["items"]}
     assert ids == {"cut-wire", TIN_ID, COAX_CUT_ID, MARK_TUBE_ID, CUT_2STRIP_TIN_ID,
@@ -114,3 +110,33 @@ def test_seed_updates_its_own_template_but_keeps_one_a_person_saved(operation_li
     assert _seed([changed])["kept"] == ["ERP_CARD | Операция"]
     detail = operation_library_api.get("/api/techcards/templates/erp-card").json()
     assert detail["document"]["steps"][0]["text"] == "Правка технолога"
+
+
+def test_base_library_goes_only_into_an_empty_database(operation_library_api):
+    """seed_library on a fresh base loads techcard-library.json; once the library has templates (edited in ERP), a
+    rerun loads nothing and leaves them as they are."""
+    base = json.loads((Path(__file__).resolve().parents[2] / "data" / "techcard-library.json").read_text(encoding="utf-8"))
+    factory = app.state.techcards_uow_factory
+    with factory() as uow:
+        assert uow.operation_cards.metadata() is None
+
+    assert seed_base(factory, NOW) == f"Библиотека операций: загружено шаблонов {len(base['templates'])}"
+    assert set(base) == {"templates"}
+    with factory() as uow:
+        assert uow.operation_cards.metadata() == {"template_count": len(base["templates"])}
+        assert not any(row.saved_at for row in uow.operation_cards.sheets())
+    first = base["templates"][0]["id"]
+    assert operation_library_api.put(f"/api/techcards/templates/{first}", json={
+        "name": "Правка в ERP", "safety": "", "defects": "", "revision": "",
+        "steps": [{"kind": "Операция", "text": "Свой шаг", "tolerance": ""}], "tooling": [],
+    }).status_code == 200
+
+    assert seed_base(factory, NOW) == "Библиотека операций уже загружена"
+    assert operation_library_api.get(f"/api/techcards/templates/{first}").json()["document"]["steps"][0]["text"] == "Свой шаг"
+
+
+def test_base_library_is_not_loaded_over_templates_made_in_erp(operation_library_api):
+    seed_erp(app.state.techcards_uow_factory, NOW)
+    assert seed_base(app.state.techcards_uow_factory, NOW) == "Библиотека операций уже загружена"
+    with app.state.techcards_uow_factory() as uow:
+        assert uow.operation_cards.metadata() == {"template_count": len(ERP_LIBRARY["templates"])}

@@ -158,6 +158,7 @@ const EVENT_NAMES: Record<string, string> = {
   "techcards.harness_component_created": "Шаблон компонента создан",
   "techcards.harness_component_published": "Опубликована версия шаблона",
   "techcards.operation_library_replaced": "Библиотека операций обновлена",
+  "techcards.operation_library_loaded": "Библиотека операций загружена",
   "techcards.template_sheet_saved": "Шаблон-лист сохранён",
   "techcards.template_sheet_deleted": "Шаблон-лист удалён",
   "techcards.erp_templates_seeded": "Шаблоны ERP загружены",

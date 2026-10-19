@@ -29,7 +29,7 @@ CONFIG = json.loads((Path(__file__).with_name("generator_713k4_config.json")).re
 
 
 def build(config: dict[str, Any] | None = None) -> dict[str, Any]:
-    return build_etk(config or CONFIG, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(config or CONFIG, CARDS)
 
 
 def op_by_key(document: dict[str, Any], key: str) -> dict[str, Any]:
