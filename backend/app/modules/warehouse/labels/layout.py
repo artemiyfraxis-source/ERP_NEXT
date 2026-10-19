@@ -107,11 +107,19 @@ def fit_text(text: str, max_width: int, font: ImageFont.FreeTypeFont) -> str:
     return "" if low == 0 else f"{text[:low].rstrip()}…"
 
 
+def qr_symbol(text: str) -> segno.QRCode:
+    """The QR with error correction M as in Roller_Buyer: segno would otherwise raise the level when it fits — a fixed
+    level keeps the module size predictable."""
+    if text.isascii():
+        return segno.make(text, error="m", boost_error=False, micro=False)
+    # Cyrillic goes as UTF-8 bytes (as Roller_Buyer's encoder does): left to itself segno would pick the Kanji mode,
+    # since Shift_JIS has Cyrillic, and a scanner would read Japanese-encoded bytes.
+    return segno.make(text, error="m", boost_error=False, micro=False, mode="byte", encoding="utf-8")
+
+
 def qr_matrix(text: str) -> tuple[tuple[bool, ...], ...]:
-    """The QR's own modules (no border), error correction M as in Roller_Buyer: segno would otherwise raise the
-    level when it fits — a fixed level keeps the module size predictable."""
-    code = segno.make(text, error="m", boost_error=False, micro=False)
-    return tuple(tuple(bool(cell) for cell in row) for row in code.matrix)
+    """The QR's own modules, no border."""
+    return tuple(tuple(bool(cell) for cell in row) for row in qr_symbol(text).matrix)
 
 
 def build_grn_label(data: GrnLabelData, options: LabelOptions = LabelOptions()) -> LabelLayout:

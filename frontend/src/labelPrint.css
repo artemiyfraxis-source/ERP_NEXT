@@ -1,16 +1,17 @@
 /* «Печать этикеток ГРН» (stage option warehouse.labels) and the «Оборудование» section. */
 .equipment-cards { display: grid; gap: 16px; margin-top: 12px; }
 .equipment-card { display: grid; gap: 12px; max-width: 1100px; padding: 16px 20px; }
-.equipment-card > h2:first-child { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
+.panel.equipment-card > h2:first-child { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
 .equipment-card .page-sub { margin: 0; }
 .equipment-card .error-banner, .equipment-card .success-banner { margin: 0; }
 .printer-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 16px; margin: 0; border: 0; padding: 0; min-width: 0; }
 .printer-fields .printer-name { grid-column: span 2; }
 .printer-pair { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); }
 .printer-pair input { width: 100%; min-width: 0; }
-/* 685 × 354 dots shown at half size: the label as the printer gets it, on paper-white in either theme. */
+/* The label as the printer gets it (685 × 354 dots at 300 dpi) shown at 70 %, smoothed by the browser so the small text
+   reads on screen; paper-white in either theme. */
 .label-print { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 4px 0; }
-.label-preview { display: block; width: 343px; max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; background: #fff; image-rendering: pixelated; }
+.label-preview { display: block; width: 480px; max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
 .label-print-form { display: flex; align-items: end; gap: 10px; }
 .label-copies { width: 72px; }
 .label-print .error-banner, .label-print .success-banner { flex-basis: 100%; margin: 0; }
@@ -20,6 +21,7 @@
 .receipt-labels-table td { vertical-align: middle; }
 .receipt-labels-actions { display: flex; gap: 6px; white-space: nowrap; }
 .receipt-labels-more td { padding-top: 4px; padding-bottom: 10px; }
+.receipt-labels-more .label-preview { width: 343px; }
 .receipt-labels-more .error-banner, .receipt-labels-more .success-banner { margin: 6px 0 0; }
 @media (max-width: 900px) {
   .printer-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }

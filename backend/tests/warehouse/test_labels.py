@@ -16,6 +16,7 @@ from app.modules.warehouse.labels.layout import (
     LabelOptions,
     build_grn_label,
     label_png,
+    qr_symbol,
     render_label,
 )
 from app.modules.warehouse.labels.settings import DEFAULT_PRINT_SETTINGS, PrintSettings
@@ -99,6 +100,14 @@ def test_code128_refuses_cyrillic_and_the_label_falls_back_to_qr_alone():
     label = render_label(cyrillic, DEFAULT_PRINT_SETTINGS)
     assert (label.width, label.height) == (685, 354)
     assert label.bar_module_dots is None and label.qr_module_dots == 6
+
+
+def test_qr_keeps_level_m_latin_alphanumeric_and_cyrillic_as_utf8_bytes():
+    latin = qr_symbol("FRX.26.0000041")
+    assert (latin.mode, latin.error, latin.version) == ("alphanumeric", "M", 1)
+    # Not Kanji (Shift_JIS has Cyrillic): a scanner reads UTF-8 bytes back as «ФРХ».
+    assert qr_symbol("ФРХ.26.0000001").mode == "byte"
+    assert qr_symbol("FRX.26.0000001-П2").mode == "byte"
 
 
 @pytest.mark.parametrize("grn", ["FRX.26.0000041", "FRX.26.0000041-2", "ФРХ.26.0000041-П2", "R&D.26.0000001"])
