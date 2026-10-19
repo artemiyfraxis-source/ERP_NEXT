@@ -34,4 +34,5 @@
 - [Maker docs from Russia](maker-docs-from-russia.md) — te.com/molex/mouser 403 by geo; Web Archive in browser, JST guide, chipdip/eicom mirrors, KiCad/LCSC for pin 1
 - [Maker docs over shop values](maker-docs-over-shop-values.md) — owner 17.10: the maker's document beats shop values; overwrite, keep the old one in the journal
 - [713К.4 agreed deviations](713k4-accepted-deviations.md) — НВ4 0,5 on SYM-001T-P0.6 and unused НШВ ferrules are owner-agreed; don't flag
+- [One article, one row](one-article-one-row.md) — owner 19.10: each supplier article its own row, cheapest seller; coax card = VNA + connectors from БД.КОАКС
 - [Connector gender names](connector-gender-names.md) — вилка = штыри, розетка = гнёзда во всех сериях; слово берётся из contacts (owner 17.10)
