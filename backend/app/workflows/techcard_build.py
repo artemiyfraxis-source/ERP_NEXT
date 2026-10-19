@@ -58,6 +58,7 @@ def with_technology(
     enriched = enrich_linear_timing(enriched, operation_records)
     enriched = enrich_wire_diameters(enriched, hookups, gauges, prov_rows)
     enriched = enrich_coax_hex(enriched, coax_rows)
+    enriched = enrich_coax_depth(enriched, coax_rows)
     enriched = enrich_coax_diameters(enriched, dia_rows)
     return enriched, {
         "schema_version": metadata["schema_version"],
@@ -289,6 +290,33 @@ def enrich_coax_hex(config: Mapping[str, Any], coax_rows: Iterable[Mapping[str, 
         values = {coax_hex_cell(fields) for fields in (pair or mine)}
         if len(values) == 1 and (value := next(iter(values))):
             end["crimpHex"] = value
+    return enriched
+
+
+COAX_DEPTH_COLUMN = "Заглубление контакта, мм"
+
+
+def enrich_coax_depth(config: Mapping[str, Any], coax_rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Copy of the config whose coax ends carry `contactDepth` — «Заглубление контакта, мм» of the connector (owner
+    19.10.2026: the distance from the body's front face to the contact, «0,38…1,14»). It belongs to the connector, not to
+    the pair, so every row of the article must give the same value; none or a disagreement — no key, nothing is drawn."""
+    enriched = deepcopy(dict(config))
+    coax = enriched.get("coax")
+    if not isinstance(coax, dict):
+        return enriched
+    rows = list(coax_rows)
+    for key in ("sideA", "sideB"):
+        end = coax.get(key)
+        if not isinstance(end, dict):
+            continue
+        end.pop("contactDepth", None)
+        article = " ".join(str(end.get("article") or "").casefold().split())
+        if not article:
+            continue
+        values = {str(fields.get(COAX_DEPTH_COLUMN) or "").strip() for fields in rows
+                  if " ".join(str(fields.get("coaxArticle") or fields.get("Артикул") or "").casefold().split()) == article}
+        if len(values) == 1 and (value := next(iter(values))):
+            end["contactDepth"] = value
     return enriched
 
 

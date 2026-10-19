@@ -92,5 +92,40 @@ export function coaxMountEtk(end: Row, title: string, hint: string): { height: n
   body += label(gx(122) - 30, cy + 80, "оплётка расправлена по хвостовику,", 12, 600, INK, "start") + label(gx(122) - 30, cy + 96, "внутрь не завёрнута", 12, 600, INK, "start") +
     line(gx(122), cy + 66, gx(122), cy + 11 * s, MUTED, .9, "2 2");
   body += label(gx(163), cy + 4.5, str(end.cable) || "кабель", 12, 600, "#fff");
-  return { height: 228, body };
+  const depth = depthText(end.contactDepth);
+  if (!depth) return { height: 228, body };
+  return { height: 228 + DEPTH_ROW, body: body + depthCallout(depth, cy) };
+}
+
+/** «0,38…1,14» / «0,38-1,14» → «0,38…1,14»; без числа — пусто (ничего не рисуется). */
+function depthText(value: unknown): string {
+  const text = str(value).trim().replace(/\s*(?:\.{2,3}|…|–|—|-)\s*/g, "…");
+  return /^\d+(?:[.,]\d+)?(?:…\d+(?:[.,]\d+)?)?$/.test(text) ? text.replace(/\./g, ",") : "";
+}
+
+const DEPTH_ROW = 120;
+
+/** Заглубление контакта от торца корпуса (БД.КОАКС «Заглубление контакта, мм»): величина в десятые доли миллиметра не читается на
+ *  разрезе, поэтому на нём — кружок «А» у торца с выноской, а под ним увеличенный вид А (10:1, не в масштабе): торец корпуса,
+ *  контакт в глубине и размерная линия между ними с подписью. */
+function depthCallout(depth: string, cy: number): string {
+  const faceX = 40, ring = 15, cxD = 104, cyD = cy + 108 + DEPTH_ROW / 2 - 10, r = 50;
+  let art = `<circle cx="${f(faceX + 12)}" cy="${f(cy)}" r="${ring}" fill="none" stroke="${INK}" stroke-width="1.2" stroke-dasharray="4 2"/>` +
+    label(faceX + 12 - ring - 6, cy + 5, "А", 13, 700, INK, "end") +
+    line(faceX + 12 - 10, cy + ring - 4, cxD - 30, cyD - r + 4, INK, .9, "3 3");
+  const id = "etkDepthZoom";
+  // Увеличенный вид: слева торец корпуса (штриховая стенка по краям), справа — контакт; расстояние — между торцом и кончиком контакта.
+  const faceZ = cxD - 28, tipZ = cxD + 26;
+  art += `<defs><clipPath id="${id}"><circle cx="${f(cxD)}" cy="${f(cyD)}" r="${r}"/></clipPath></defs><circle cx="${f(cxD)}" cy="${f(cyD)}" r="${r}" fill="#fff" stroke="${INK}" stroke-width="1.4"/>` +
+    `<g clip-path="url(#${id})">` +
+    rect(faceZ, cxD + r, cyD - r, 26, METAL, EDGE) + rect(faceZ, cxD + r, cyD + r - 26, 26, METAL, EDGE) +
+    rect(faceZ, cxD + r, cyD - 24, 48, DIEL, EDGE) + rect(tipZ, cxD + r, cyD - 8, 16, BRASS, EDGE, 2) +
+    `</g>` + line(faceZ, cyD - r + 6, faceZ, cyD + r - 6, INK, 1.3, "5 3") + line(tipZ, cyD - 30, tipZ, cyD + 30, INK, 1.1, "5 3") +
+    line(faceZ, cyD + 36, tipZ, cyD + 36, INK, 1.2) + arrowHead(faceZ, cyD + 36, 1) + arrowHead(tipZ, cyD + 36, -1) +
+    label(cxD, cyD - r - 6, "А (10:1)", 13, 700, INK);
+  const tx = cxD + r + 22;
+  art += label(tx, cyD - 14, `заглубление контакта ${depth} мм`, 14, 700, INK, "start") +
+    label(tx, cyD + 6, "от торца корпуса до контакта", 12, 400, MUTED, "start") +
+    label(tx, cyD + 24, "вид А увеличен, не в масштабе", 12, 400, MUTED, "start");
+  return art;
 }
