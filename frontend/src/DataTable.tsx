@@ -134,8 +134,8 @@ export interface DataTableProps<T> {
   phoneCards?: boolean;
   /** После записи ячеек в таблице (и после отказа): перечитать строки с сервера. */
   onEdited?: () => Promise<unknown> | void;
-  /** Своя сортировка у каждой группы (owner 16.10.2026: «у каждой группы своя, и это во всех кабелях»): колонка и
-      направление выбираются в строке группы, другие группы и порядок групп не меняются; заголовок таблицы не сортирует. */
+  /** Сортировка внутри групп (owner 16.10.2026: «у каждой группы своя, и это во всех кабелях»; 19.10: «сделай просто
+      вверху столбцов сортировку»): щелчок по заголовку сортирует строки в каждой группе, порядок групп не меняется. */
   groupSort?: boolean;
 }
 
@@ -151,11 +151,7 @@ export interface Saved {
   widths?: Record<string, number>;
   /** Свои подписи колонок. */
   titles?: Record<string, string>;
-  /** Сортировка внутри каждой группы (`groupSort`): имя группы → колонка и направление. */
-  groupSorts?: Record<string, GroupSort>;
 }
-
-type GroupSort = { key: string; direction: 1 | -1 };
 
 const MIN_WIDTH = 40;
 const MAX_WIDTH = 900;
@@ -197,18 +193,13 @@ function cleanSaved(raw: unknown): Saved {
   const order = Array.isArray(saved.order) ? saved.order.filter((item): item is string => typeof item === "string") : [];
   const widths = map(saved.widths).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]));
   const titles = map(saved.titles).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim() !== "");
-  const groupSorts = map(saved.groupSorts).filter((entry): entry is [string, GroupSort] => {
-    const sort = entry[1] as { key?: unknown; direction?: unknown } | null;
-    return Boolean(sort && typeof sort === "object" && typeof sort.key === "string" && (sort.direction === 1 || sort.direction === -1));
-  });
   delete saved.order;
   delete saved.widths;
   delete saved.titles;
-  delete saved.groupSorts;
+  delete saved.groupSorts; // прежняя сортировка в строке группы (до 19.10) — не читается
   if (order.length) saved.order = order;
   if (widths.length) saved.widths = Object.fromEntries(widths.map(([key, width]) => [key, clampWidth(width)]));
   if (titles.length) saved.titles = Object.fromEntries(titles);
-  if (groupSorts.length) saved.groupSorts = Object.fromEntries(groupSorts.map(([name, sort]) => [name, { key: sort.key, direction: sort.direction }]));
   if (saved.hidden !== undefined && !Array.isArray(saved.hidden)) delete saved.hidden;
   return saved;
 }
@@ -384,7 +375,6 @@ export function DataTable<T>({
   const [order, setOrder] = useState<string[] | undefined>(saved.order);
   const [widths, setWidths] = useState<Record<string, number>>(saved.widths ?? {});
   const [titles, setTitles] = useState<Record<string, string>>(saved.titles ?? {});
-  const [groupSorts, setGroupSorts] = useState<Record<string, GroupSort>>(saved.groupSorts ?? {});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [limit, setLimit] = useState(pageSize);
@@ -424,15 +414,14 @@ export function DataTable<T>({
 
   // A screen may keep its own fields under the same key (the «В работе» sheet's groups): they are written back as found.
   useEffect(() => {
-    const { order: _order, widths: _widths, titles: _titles, groupSorts: _groupSorts, ...kept } = readSaved(storageKey);
+    const { order: _order, widths: _widths, titles: _titles, ...kept } = readSaved(storageKey);
     writeSaved(storageKey, {
     ...kept, hidden, sort, preset,
     ...(order ? { order } : {}),
     ...(Object.keys(widths).length ? { widths } : {}),
     ...(Object.keys(titles).length ? { titles } : {}),
-    ...(Object.keys(groupSorts).length ? { groupSorts } : {}),
     });
-  }, [storageKey, hidden, sort, preset, order, widths, titles, groupSorts]);
+  }, [storageKey, hidden, sort, preset, order, widths, titles]);
 
   // The user's order and captions: everything below (headers, search hint, filters, Excel) reads these columns.
   const ordered = useMemo(() => orderColumns(columns, order), [columns, order]);
@@ -455,7 +444,7 @@ export function DataTable<T>({
 
   const filtered = useMemo(() => {
     const result = searched.filter((row) => !activePreset || activePreset.test(row));
-    // With a sort per group the header does not sort: the rows come in the screen's order, each group sorts its own.
+    // With a sort inside groups the rows keep the screen's order here (it places the groups); the groups sort below.
     if (sort && !groupSort) {
       const column = columns.find((item) => item.key === sort.key);
       if (column) {
@@ -593,22 +582,12 @@ export function DataTable<T>({
       if (!byName.has(name)) { byName.set(name, []); groups.push([name, byName.get(name)!]); }
       byName.get(name)!.push(row);
     }
-    // A group's own sort orders only its rows; the groups stay where they are.
-    if (groupSort) {
-      for (const [name, groupRows] of groups) {
-        const own = groupSorts[name];
-        const column = own && columns.find((item) => item.key === own.key);
-        if (column) groupRows.sort((a, b) => directed(column.value(a), column.value(b), own.direction, column.numeric));
-      }
+    // The header's sort orders the rows inside every group; the groups stay where they are.
+    const column = groupSort && sort ? columns.find((item) => item.key === sort.key) : undefined;
+    if (column && sort) {
+      for (const [, groupRows] of groups) groupRows.sort((a, b) => directed(column.value(a), column.value(b), sort.direction, column.numeric));
     }
   } else groups.push(["", shown]);
-  /** `choice` — «ключ:+» / «ключ:-», пусто — порядок экрана. */
-  const sortGroup = (name: string, choice: string) => setGroupSorts((current) => {
-    const next = { ...current };
-    if (!choice) delete next[name];
-    else next[name] = { key: choice.slice(0, -2), direction: choice.endsWith(":-") ? -1 : 1 };
-    return next;
-  });
 
   // --- Cells edited in place ---
   const lines = groups.flatMap(([name, groupRows]) => collapsibleGroups && collapsed.has(name) ? [] : groupRows);
@@ -1089,8 +1068,8 @@ export function DataTable<T>({
                     className={[columnClass(width ? { ...column, width } : column, index, sized), width ? "dt-w" : "", drop].filter(Boolean).join(" ") || undefined}
                     style={width ? { "--dt-w": `${width}px` } as CSSProperties : column.width ? { width: column.width } : undefined}
                     title={column.hint ?? (column.computed && hasEditing ? "Считается — в таблице не правится"
-                      : groupSort ? "Сортировка — у каждой группы, в её строке" : undefined)}
-                    aria-sort={groupSort ? undefined : direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}
+                      : groupSort ? "Сортировка — внутри каждой группы" : undefined)}
+                    aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}
                     draggable
                     onDragStart={(event) => {
                       if ((event.target as HTMLElement).closest?.(".dt-resize")) { event.preventDefault(); return; }
@@ -1112,12 +1091,9 @@ export function DataTable<T>({
                     }}
                     onDragEnd={() => { dragKey.current = null; setDropTarget(null); }}
                   >
-                    {groupSort
-                      // Each group sorts its own rows (the control in the group's row): the header only names the column.
-                      ? <span className="sort-head">{column.title}</span>
-                      : <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
-                        {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
-                      </button>}
+                    <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
+                      {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
+                    </button>
                     <span
                       className="dt-resize"
                       aria-hidden="true"
@@ -1162,29 +1138,6 @@ export function DataTable<T>({
                             return next;
                           })} style={{ all: "unset", cursor: "pointer" }}>{collapsed.has(name) ? "▸" : "▾"} {title}</button>
                           : title;
-                      })()}
-                      {groupSort && groupRows.length > 1 && (() => {
-                        const own = groupSorts[name];
-                        const column = own && visible.find((item) => item.key === own.key);
-                        const choice = column ? `${column.key}:${own.direction === -1 ? "-" : "+"}` : "";
-                        // The chosen sort reads as text as wide as it is; the list itself lies over it, invisible.
-                        return (
-                          <span className={choice ? "dt-group-sort active" : "dt-group-sort"}>
-                            <span aria-hidden="true">{column ? `${column.title} ${own.direction === -1 ? "▼" : "▲"}` : "порядок каталога ▾"}</span>
-                            <select
-                              aria-label={`Сортировка группы «${name || "—"}»`}
-                              title="Сортировка этой группы"
-                              value={choice}
-                              onChange={(event) => sortGroup(name, event.target.value)}
-                            >
-                              <option value="">порядок каталога</option>
-                              {visible.flatMap((item) => [
-                                <option key={`${item.key}:+`} value={`${item.key}:+`}>{item.title} ▲</option>,
-                                <option key={`${item.key}:-`} value={`${item.key}:-`}>{item.title} ▼</option>,
-                              ])}
-                            </select>
-                          </span>
-                        );
                       })()}
                     </td>
                   </tr>

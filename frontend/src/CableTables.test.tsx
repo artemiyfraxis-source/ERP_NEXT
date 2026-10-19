@@ -641,8 +641,8 @@ describe("«Монтажные провода» and the other cable lists across
     });
   });
 
-  it("shows every multi-core cable at once with every group open, and sorts one group by its own choice", () => {
-    // owner 16.10: «раскрыть до конца … выключить ограничение на 300 шт» and «у каждой группы своя [сортировка]»
+  it("shows every multi-core cable at once with every group open, and a header click sorts inside every group", () => {
+    // owner 16.10: «раскрыть до конца … выключить ограничение на 300 шт»; 19.10: «сделай просто вверху столбцов сортировку»
     const many: CableRow[] = Array.from({ length: 380 }, (_, index) => {
       const family = index % 2 ? "КСПВГ" : "МКЭШ";
       const mark = `${family} ${index + 2}x0,5`;
@@ -656,7 +656,7 @@ describe("«Монтажные провода» and the other cable lists across
     expect(screen.queryByRole("button", { name: "Показать ещё" })).toBeNull();
     const sections = () => {
       const result: Array<{ name: string; diameters: string[] }> = [];
-      const head = screen.getAllByRole("columnheader").findIndex((cell) => cell.textContent === "Наружный диаметр, мм");
+      const head = screen.getAllByRole("columnheader").findIndex((cell) => cell.textContent?.startsWith("Наружный диаметр, мм"));
       for (const line of document.querySelectorAll("tbody tr")) {
         if (line.classList.contains("group-row")) result.push({ name: line.querySelector("strong")?.textContent ?? "", diameters: [] });
         else result[result.length - 1].diameters.push(line.querySelectorAll("td")[head].textContent ?? "");
@@ -666,11 +666,13 @@ describe("«Монтажные провода» and the other cable lists across
     const before = sections();
     expect(before).toHaveLength(2);
     expect(before.map((group) => group.diameters.length)).toEqual([190, 190]); // both groups open to the end
-    fireEvent.change(screen.getByRole("combobox", { name: `Сортировка группы «${before[0].name}»` }), { target: { value: "Наружный диаметр, мм:-" } });
+    const head = screen.getByRole("button", { name: "Наружный диаметр, мм" });
+    fireEvent.click(head);
+    fireEvent.click(screen.getByRole("button", { name: /Наружный диаметр, мм/ }));
     const after = sections();
     expect(after.map((group) => group.name)).toEqual(before.map((group) => group.name));
-    expect(after[0].diameters).toEqual([...before[0].diameters].sort((a, b) => Number(b) - Number(a)));
-    expect(after[1].diameters).toEqual(before[1].diameters);
+    const down = (values: string[]) => [...values].sort((a, b) => Number(b) - Number(a));
+    expect(after.map((group) => group.diameters)).toEqual(before.map((group) => down(group.diameters)));
     unmount();
     render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
     expect(sections()[0].diameters).toEqual(after[0].diameters); // remembered with the list's layout
