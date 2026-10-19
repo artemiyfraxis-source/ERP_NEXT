@@ -32,7 +32,7 @@ from .application import (
 from .cable_structure import (
     LAYER_LABELS, CoaxCard, HookupWire, WireGauge, parse_hookup,
 )
-from .cables import DIAMETERS, CableKind, CableRow, cable_counts
+from .cables import CONNECTOR_FIELDS, DIAMETERS, CableKind, CableRow, cable_counts, compatible_connectors
 from .domain import (
     BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, merge_country_pairs, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
     StockLinkEntry, TechOperationTab,
@@ -436,6 +436,11 @@ def _cable_json(row: CableRow, catalog: CableCatalog | None = None) -> dict:
         "dia": _dia_json(row.dia), "dia_hint": _dia_json(row.dia_hint),
         "card": _card_json(row.card), "card_exact": row.card_exact,
     }
+    if catalog is not None and row.kind == CableKind.COAX:
+        result["connectors"] = [
+            {"id": str(record.id), "fields": {name: record.fields[name] for name in CONNECTOR_FIELDS if record.fields.get(name)}}
+            for record in compatible_connectors(row, catalog.connectors)
+        ]
     if catalog is not None and row.kind == CableKind.WIRE:
         wire = catalog.hookups.get(row.key)
         result["hookup"] = _hookup_json(wire)
@@ -458,7 +463,8 @@ def cables(
 ) -> dict:
     """«Кабели и провода»: БД.ПРОВ rows split into коаксиальные / монтажные / многожильные / прочие (`cables.auto_kind`,
     or where the user moved them). A coax cable is joined with the D1·D2·D3 row the generator uses for its name and
-    its card; D-table cables and cards without a БД.ПРОВ row are coax rows of their own. A монтажный wire carries its
+    its card and the БД.КОАКС connectors made for it (`cables.compatible_connectors`); D-table cables and cards without
+    a БД.ПРОВ row are coax rows of their own. A монтажный wire carries its
     structure (series, size row, …) or, not structured yet, what its БД.ПРОВ row suggests. `gauges` — «Сечения AWG ↔
     мм²» with the number of wires on each size."""
     catalog = cable_catalog(uow_factory())
