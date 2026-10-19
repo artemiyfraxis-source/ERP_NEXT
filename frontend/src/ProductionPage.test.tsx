@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ProductionPage, clock, goodPrefill, workedSeconds } from "./ProductionPage";
+import { ProductionPage, clock, etkRevisionNotice, goodPrefill, workedSeconds } from "./ProductionPage";
 import { forgetOpenProject } from "./MasterBoard";
 import type { Principal, ProductionOperation, ProductionTask } from "./api";
 
@@ -1244,4 +1244,13 @@ it("keeps an old one-ETK-operation card as it was: stage name, ЭТК button, no
   expect(screen.getByRole("button", { name: "ЭТК" })).toBeInTheDocument();
   expect(screen.queryByText("Требования")).not.toBeInTheDocument();
   expect(screen.queryByText(/ПФ-/)).not.toBeInTheDocument();
+});
+
+it("says when the card got a newer revision than the task was launched with", () => {
+  expect(etkRevisionNotice({ pinned: 1, current: 2, newer: true, fallback: null }))
+    .toBe("Есть новая ревизия ТК 2 — задание идёт по ревизии 1");
+  expect(etkRevisionNotice({ pinned: 2, current: 2, newer: false, fallback: null })).toBe("");
+  expect(etkRevisionNotice({ pinned: 1, current: 2, newer: false, fallback: "Ревизия 1 не найдена — показана текущая ЭТК" }))
+    .toBe("Ревизия 1 не найдена — показана текущая ЭТК");
+  expect(etkRevisionNotice(undefined)).toBe("");
 });

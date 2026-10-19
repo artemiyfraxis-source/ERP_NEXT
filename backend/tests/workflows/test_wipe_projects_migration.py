@@ -85,6 +85,11 @@ def database(tmp_path, monkeypatch):
         # 0125: бумажная УПД в данных отправки; файл УПД может принадлежать проекту.
         connection.execute(text("ALTER TABLE shipping_project_addressees ADD COLUMN upd_url VARCHAR(1024) NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE shipping_files ADD COLUMN project VARCHAR(255) NOT NULL DEFAULT ''"))
+        # 0127: входы и правки ЭТК, источник и разница ревизии.
+        for column in ("inputs JSON", "overrides JSON", "review_note TEXT", "derived_hash VARCHAR(64)"):
+            connection.execute(text(f"ALTER TABLE techcard_projects ADD COLUMN {column}"))
+        connection.execute(text("ALTER TABLE techcard_revisions ADD COLUMN source VARCHAR(16) NOT NULL DEFAULT 'manual'"))
+        connection.execute(text("ALTER TABLE techcard_revisions ADD COLUMN diff JSON"))
         Base.metadata.tables["production_operation_inputs"].create(connection)
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))
         # 0106: «нет на складе» on a kit line.

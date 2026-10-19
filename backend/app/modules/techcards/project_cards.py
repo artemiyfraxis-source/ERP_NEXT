@@ -67,6 +67,11 @@ class ProjectTechcard:
     created_at: datetime
     updated_at: datetime
     issued_at: datetime | None = None
+    # Входы и правки для автоматической ревизии: конфиг генератора как пришёл (до норм справочников), правки технолога.
+    inputs: dict[str, Any] | None = None
+    overrides: dict[str, Any] | None = None
+    review_note: str | None = None
+    derived_hash: str | None = None
 
     @classmethod
     def create(
@@ -105,7 +110,8 @@ class ProjectTechcard:
         if self.document is None:
             raise TechcardValidationError("Черновик ЭТК ещё не собран")
         return replace(
-            self, document=None, manual_operation_keys=(),
+            self, document=None, manual_operation_keys=(), inputs=None, overrides=None, review_note=None,
+            derived_hash=None,
             version=self.version + 1, updated_at=now,
         )
 
@@ -171,6 +177,9 @@ class TechcardRevision:
     actor_name: str
     occurred_at: datetime
     document: dict[str, Any]
+    # manual — выпустил человек (выдача, правка, пересборка); auto — система после правки справочника/правила.
+    source: str = "manual"
+    diff: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, or_, select
+from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
@@ -45,6 +45,12 @@ class ProjectTechcardRow(Base):
     # № проекта для сравнения (`normalize_project_number` ≡ `kitsets.project_key`): карты проекта — по индексу.
     # Ставится при записи `project`; NULL — строка мимо ORM (читается и сверяется в Python).
     project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Из чего собрана карта и что поправлено руками (автоматическая ревизия): конфиг генератора как пришёл — до
+    # дополнения нормами справочников; правки технолога по ключу операции и ручное деление на ПФ (`route`).
+    inputs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    overrides: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    derived_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -59,6 +65,7 @@ class TechcardRevisionRow(Base):
     __table_args__ = (
         Index("ux_techcard_revisions_card_revision", "project_card_id", "revision", unique=True),
         Index("ix_techcard_revisions_card_time", "project_card_id", "occurred_at"),
+        CheckConstraint("source IN ('manual', 'auto')", name="ck_techcard_revisions_source"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -72,6 +79,21 @@ class TechcardRevisionRow(Base):
     actor_name: Mapped[str] = mapped_column(String(255), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     document: Mapped[dict] = mapped_column(JSON, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual", server_default="manual")
+    diff: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class RefreshRequestRow(Base):
+    """Запрос на пересборку ЭТК после правки справочника или правила; обработанный помечается `processed_at`."""
+
+    __tablename__ = "techcard_refresh_requests"
+    __table_args__ = (Index("ix_techcard_refresh_requests_processed", "processed_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    reason: Mapped[str] = mapped_column(Text(), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class OperationCardTemplateRow(Base):
@@ -178,6 +200,10 @@ class SqlAlchemyTechcardRepository:
             created_at=row.created_at,
             updated_at=row.updated_at,
             issued_at=row.issued_at,
+            inputs=row.inputs,
+            overrides=row.overrides,
+            review_note=row.review_note,
+            derived_hash=row.derived_hash,
         )
 
     def get(self, card_id: UUID) -> ProjectTechcard | None:
@@ -238,6 +264,10 @@ class SqlAlchemyTechcardRepository:
             "created_at",
             "updated_at",
             "issued_at",
+            "inputs",
+            "overrides",
+            "review_note",
+            "derived_hash",
         ):
             setattr(row, field, getattr(card, field))
         row.status = card.status.value
@@ -253,6 +283,8 @@ class SqlAlchemyTechcardRepository:
                 actor_name=revision.actor_name,
                 occurred_at=revision.occurred_at,
                 document=revision.document,
+                source=revision.source,
+                diff=revision.diff,
             )
         )
 
@@ -283,6 +315,8 @@ class SqlAlchemyTechcardRepository:
                 actor_name=row.actor_name,
                 occurred_at=row.occurred_at,
                 document=row.document,
+                source=row.source,
+                diff=row.diff,
             )
             for row in rows
         ]

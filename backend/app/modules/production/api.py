@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
-from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item, saved_harness
+from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item, pinned_card, saved_harness
 from app.workflows.etk_lots import IssuedKitLots
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import MOSCOW, moscow_now
@@ -898,7 +898,12 @@ def operation_etk(
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     with techcards_factory() as techcards:
         card = issued_card_for_item(techcards, task.project, task.item)
-        result = card_views(techcards, [card], issued=issued_lots)[0] if card is not None else None
+        if card is not None:
+            shown, revision = pinned_card(techcards, card, task.techcard_revision)
+            result = card_views(techcards, [shown], issued=issued_lots,
+                                frozen=shown is not card)[0]
+        else:
+            result = revision = None
     if result is None:
         raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
     # position — операция ЭТК, на которой открыть карту (у ПФ — его первая); positions — все операции ЭТК этой
@@ -907,7 +912,7 @@ def operation_etk(
     # serial — номера изделий задания для «№ изделия» в надписях меток (сквозь задания позиции, mark_serial_range).
     with uow_factory() as uow:
         first, last = mark_serial_range(task, uow.production.for_project(task.project))
-    return {"card": result, "focus": {
+    return {"card": result, "revision": revision, "focus": {
         "position": positions[0], "positions": positions, "code": operation_code(operation.code),
     }, "serial": {"first": first, "last": last, "task": task.number}}
 
