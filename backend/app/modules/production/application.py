@@ -587,86 +587,105 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
         task = tasks.get(loaded.id) or localize(loaded, now)
         tasks[task.id] = task
         operation = task.operation(command.operation_id)
-        current = operation.share_of(command.operator_id)
         if command.remove:
-            return _remove_share(uow, tasks, task, operation, current, command)
-        names = _checked_names(uow, operation, (command.operator_id,), command.actor)
-        if current is not None and (current.started_at is not None or current.finished_at is not None):
-            raise ProductionValidationError(f"{names[command.operator_id]} уже взял(а) эту операцию — её время идёт по факту")
-        # Штуки по умолчанию: своя доля (у бригады — поровну), иначе нераспределённое, иначе поровну с назначенными.
-        if command.quantity is not None:
-            quantity = command.quantity
-        elif current is not None:
-            quantity = current.quantity or ceil(task.quantity / len(operation.shares))
-        else:
-            quantity = remainder(operation, task.quantity) or ceil(task.quantity / (len(operation.shares) + 1))
-        split = split_shares(operation, task.quantity, command.operator_id, quantity)
-        skills = _skills(uow)
-        calendar = _dispatch_calendar(uow, now)
-        progress = _progress(uow, tasks.keys())
-        sources: dict[NodeKey, tuple[datetime, datetime] | None] = {}
-        crew_window = (
-            (operation.planned_start, operation.planned_finish)
-            if operation.shares and not operation.split and operation.planned_start is not None else None
+            return _remove_share(uow, tasks, task, operation, operation.share_of(command.operator_id), command)
+        updated, plan, lines = place_share(
+            uow, tasks, task, operation, command.operator_id, command.quantity, command.requested_start,
+            command.actor, now,
         )
-        # Сначала доли остальных (штуки могли уменьшиться — окно короче от прежнего начала), потом окно новой доли.
-        others: dict[UUID, OperationShare] = {}
-        for share in split.others:
-            if share.operator_id in split.resized and share.planned_start is not None:
-                seconds = share_seconds(task, operation, share.quantity, (share.operator_id,), skills)
-                sources[(operation.id, share.operator_id)] = crew_window or (share.planned_start, share.planned_finish)
-                share = replace(share, planned_finish=add_work_seconds(share.planned_start, seconds, calendar.holidays, calendar.shift))
-            others[share.operator_id] = share
-        interim = replace(task, operations=tuple(
-            item.with_shares(tuple(others.values()), item.assigned_by) if item.id == operation.id else item
-            for item in task.operations
-        ))
-        requested = local(command.requested_start, now) if command.requested_start is not None else now
-        start, finish = place(
-            tasks=[interim if item.id == task.id else item for item in tasks.values()],
-            task=interim, operation=interim.operation(operation.id), operator_id=command.operator_id,
-            quantity=quantity, requested_start=requested, calendar=calendar, skills=skills, progress=progress,
-        )
-        target = OperationShare(command.operator_id, quantity, start, finish)
-        ordered = [
-            target if share.operator_id == command.operator_id else others[share.operator_id]
-            for share in operation.shares
-            if share.operator_id == command.operator_id or share.operator_id in others
-        ]
-        if current is None:
-            ordered.append(target)
-        updated = task.with_operations((operation.with_shares(tuple(ordered), command.actor.name),))
-        tasks[task.id] = updated
-        moved_before = current is not None and current.quantity is not None and current.planned_start is not None
-        sources[(operation.id, command.operator_id)] = (current.planned_start, current.planned_finish) if moved_before else None
-        moves = reflow(
-            tasks=tasks.values(), sources=sources, pull=False, now=now,
-            calendar=calendar, skills=skills, progress=progress,
-        )
-        touched = {task.id}
-        lines = _save_moves(uow, tasks, touched, moves, command.actor, now, "share_assigned")
-        warnings: list[str] = []
-        check = skill_of(skills, operation.skill_codes, command.operator_id)
-        if not check.allowed:
-            warnings.append(f"{names[command.operator_id]}: нет допуска к операции {', '.join(operation.skill_codes)}")
-        if split.dropped:
-            everyone = {item.id: item.name for item in uow.operators.list()}
-            gone = ", ".join(everyone.get(value, "?") for value in split.dropped)
-            warnings.append(f"Снят(а) с операции: {gone} — все штуки у {names[command.operator_id]}")
-        previous = waited_input(updated, operation.id)
-        if previous is not None:
-            if start < local(previous.planned_finish, now):
-                warnings.append(
-                    f"Этап {previous.position} идёт до {_moment(local(previous.planned_finish, now))} — "
-                    f"этот этап начнётся внахлёст"
-                )
-        _audit(updated, "production.share_assigned", command.actor, now, {
-            "operation_id": str(operation.id), "operator_id": str(command.operator_id), "quantity": quantity,
-            "planned_start": start.isoformat(), "planned_finish": finish.isoformat(),
-            "resized": [str(value) for value in split.resized], "dropped": [str(value) for value in split.dropped],
-        }, uow)
         uow.commit()
-        return tasks[task.id], PlanResult(start, finish, tuple(warnings)), tuple(lines)
+        return updated, plan, lines
+
+
+def place_share(
+    uow: UnitOfWork,
+    tasks: dict[UUID, ProductionTask],
+    task: ProductionTask,
+    operation: ProductionOperation,
+    operator_id: UUID,
+    quantity: int | None,
+    requested_start: datetime | None,
+    actor: Actor,
+    now: datetime,
+) -> tuple[ProductionTask, PlanResult, tuple[str, ...]]:
+    """Ядро «доли монтажнику» внутри открытой единицы работы, без коммита: окно доли (dispatch.place), сдвиг работы
+    после неё (dispatch.reflow), запись заданий и аудит. tasks — живые задания в поясе «сейчас» (с этим заданием);
+    сохранённые задания в нём обновляются, так что несколько вызовов подряд видят друг друга (доска мастера)."""
+    current = operation.share_of(operator_id)
+    names = _checked_names(uow, operation, (operator_id,), actor)
+    if current is not None and (current.started_at is not None or current.finished_at is not None):
+        raise ProductionValidationError(f"{names[operator_id]} уже взял(а) эту операцию — её время идёт по факту")
+    # Штуки по умолчанию: своя доля (у бригады — поровну), иначе нераспределённое, иначе поровну с назначенными.
+    if quantity is None and current is not None:
+        quantity =current.quantity or ceil(task.quantity / len(operation.shares))
+    elif quantity is None:
+        quantity = remainder(operation, task.quantity) or ceil(task.quantity / (len(operation.shares) + 1))
+    split = split_shares(operation, task.quantity, operator_id, quantity)
+    skills = _skills(uow)
+    calendar = _dispatch_calendar(uow, now)
+    progress = _progress(uow, tasks.keys())
+    sources: dict[NodeKey, tuple[datetime, datetime] | None] = {}
+    crew_window = (
+        (operation.planned_start, operation.planned_finish)
+        if operation.shares and not operation.split and operation.planned_start is not None else None
+    )
+    # Сначала доли остальных (штуки могли уменьшиться — окно короче от прежнего начала), потом окно новой доли.
+    others: dict[UUID, OperationShare] = {}
+    for share in split.others:
+        if share.operator_id in split.resized and share.planned_start is not None:
+            seconds = share_seconds(task, operation, share.quantity, (share.operator_id,), skills)
+            sources[(operation.id, share.operator_id)] = crew_window or (share.planned_start, share.planned_finish)
+            share = replace(share, planned_finish=add_work_seconds(share.planned_start, seconds, calendar.holidays, calendar.shift))
+        others[share.operator_id] = share
+    interim = replace(task, operations=tuple(
+        item.with_shares(tuple(others.values()), item.assigned_by) if item.id == operation.id else item
+        for item in task.operations
+    ))
+    requested = local(requested_start, now) if requested_start is not None else now
+    start, finish = place(
+        tasks=[interim if item.id == task.id else item for item in tasks.values()],
+        task=interim, operation=interim.operation(operation.id), operator_id=operator_id,
+        quantity=quantity, requested_start=requested, calendar=calendar, skills=skills, progress=progress,
+    )
+    target = OperationShare(operator_id, quantity, start, finish)
+    ordered = [
+        target if share.operator_id == operator_id else others[share.operator_id]
+        for share in operation.shares
+        if share.operator_id == operator_id or share.operator_id in others
+    ]
+    if current is None:
+        ordered.append(target)
+    updated = task.with_operations((operation.with_shares(tuple(ordered), actor.name),))
+    tasks[task.id] = updated
+    moved_before = current is not None and current.quantity is not None and current.planned_start is not None
+    sources[(operation.id, operator_id)] = (current.planned_start, current.planned_finish) if moved_before else None
+    moves = reflow(
+        tasks=tasks.values(), sources=sources, pull=False, now=now,
+        calendar=calendar, skills=skills, progress=progress,
+    )
+    touched = {task.id}
+    lines = _save_moves(uow, tasks, touched, moves, actor, now, "share_assigned")
+    warnings: list[str] = []
+    check = skill_of(skills, operation.skill_codes, operator_id)
+    if not check.allowed:
+        warnings.append(f"{names[operator_id]}: нет допуска к операции {', '.join(operation.skill_codes)}")
+    if split.dropped:
+        everyone = {item.id: item.name for item in uow.operators.list()}
+        gone = ", ".join(everyone.get(value, "?") for value in split.dropped)
+        warnings.append(f"Снят(а) с операции: {gone} — все штуки у {names[operator_id]}")
+    previous = waited_input(updated, operation.id)
+    if previous is not None:
+        if start < local(previous.planned_finish, now):
+            warnings.append(
+                f"Этап {previous.position} идёт до {_moment(local(previous.planned_finish, now))} — "
+                f"этот этап начнётся внахлёст"
+            )
+    _audit(updated, "production.share_assigned", actor, now, {
+        "operation_id": str(operation.id), "operator_id": str(operator_id), "quantity": quantity,
+        "planned_start": start.isoformat(), "planned_finish": finish.isoformat(),
+        "resized": [str(value) for value in split.resized], "dropped": [str(value) for value in split.dropped],
+    }, uow)
+    return tasks[task.id], PlanResult(start, finish, tuple(warnings)), tuple(lines)
 
 
 def _remove_share(
