@@ -41,6 +41,8 @@ from .application import (
     SetTraceabilityCommand,
     SetNoteCommand,
     SetExpectedArrivalCommand,
+    SetOrderExpectedArrivalCommand,
+    set_order_expected_arrival,
     SetActualArrivalCommand,
     set_procurement_actual_arrival,
     ExpectedArrivalCopier,
@@ -1133,7 +1135,12 @@ def _command_errors(operation):
     except RateUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except KeyError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+        raise HTTPException(status_code=404, detail=_key_error_text(error)) from error
+
+
+def _key_error_text(error: KeyError) -> str:
+    """«Заказ PO-404: нет ваших строк» — not the quoted repr `str(KeyError)` gives."""
+    return str(error.args[0]) if error.args else "Не найдено"
 
 
 def _kp_errors(operation):
@@ -1389,6 +1396,39 @@ def pay_order(
             ),
             uow_factory(),
             rates,
+        )
+    )
+    return {"lines": [_line_result(line) for line in lines]}
+
+
+class OrderExpectedArrivalInput(BaseModel):
+    expected_arrival: date
+    lines: list[OrderLineInput] = Field(min_length=1, max_length=200)
+
+
+@router.post("/orders/{order_number}/expected-arrival")
+def order_expected_arrival(
+    order_number: str,
+    payload: OrderExpectedArrivalInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    receiving: Annotated[ExpectedArrivalCopier | None, Depends(procurement_receiving)],
+) -> dict:
+    """Stage option `procurement.orders` («Счета и поставки»): ОЖИД. ДАТА of every line of the order whose date can
+    still move, all or none (409 when the rows sent are not that set or a row is stale)."""
+    _require_option("procurement.orders")
+    lines = _command_errors(
+        lambda: set_order_expected_arrival(
+            SetOrderExpectedArrivalCommand(
+                order_number=order_number,
+                expected_arrival=payload.expected_arrival,
+                lines=[OrderLineRef(row.line_id, row.version) for row in payload.lines],
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+            receiving,
         )
     )
     return {"lines": [_line_result(line) for line in lines]}

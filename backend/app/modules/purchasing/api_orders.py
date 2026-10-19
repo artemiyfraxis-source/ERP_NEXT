@@ -60,10 +60,10 @@ def list_orders(
     A fixed number of queries whatever the number of orders (see app/workflows/purchasing_orders.py)."""
     require_option(OPTION)
     uow = make_uow()
-    with uow:
+    with uow:  # the facts rows are read inside: the unit of work expires them on exit
         lines = port.order_lines(uow.session, buyer_id=principal.actor.id if scope == "mine" else None)
         facts = service.load_facts(uow.session, {line.order_number for line in lines})
-    orders = service.build_orders(lines, facts, now.date(), principal.actor.id)
+        orders = service.build_orders(lines, facts, now.date(), principal.actor.id)
     return {
         "today": now.date().isoformat(),
         "scope": scope,
