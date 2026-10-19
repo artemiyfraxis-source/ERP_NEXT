@@ -103,3 +103,33 @@ def test_a_mixed_assembly_puts_the_hex_of_the_crimped_end_only_into_the_sleeve_c
 def test_a_clamp_housing_with_a_crimped_contact_is_built_the_same_way():
     operations = _built(_config(pin="обжим"))
     assert [operation["type"] for operation in operations][-1] == "coaxHousing" and operations[-1]["code"] == "INS_housing_COAX_clamp"
+
+
+# 19.10: компрессионный, накручивающийся и Push-On разъёмы (БД.КОАКС «Тип экрана» = компрессия / накрутка / самообжим).
+def test_new_shield_words_are_told_apart_from_a_crimp_by_the_generators_words():
+    from app.modules.techcards.etk_builder import coax_end_shield
+    words = ("компрессия", "компрессионный", "накрутка", "накручивающийся", "резьбовой", "самообжим", "Push-On (самообжим)", "обжим", "", "пайка", "прижим")
+    assert {name: coax_end_shield({"shield": name}) for name in words} == {
+        "компрессия": "компрессия", "компрессионный": "компрессия", "накрутка": "накрутка", "накручивающийся": "накрутка",
+        "резьбовой": "накрутка", "самообжим": "самообжим", "Push-On (самообжим)": "самообжим", "обжим": "обжим", "": "обжим",
+        "пайка": "пайка", "прижим": "прижим"}
+
+
+def test_hex_is_read_only_from_a_crimped_end_never_from_compression_twist_on_or_push_on():
+    for shield in ("компрессия", "накрутка", "самообжим"):
+        config = _config(shield, "обжим", hex_a="8,23", hex_b="5,41")["coax"]
+        assert coax_crimp_hex({"coax": config}) == [{"side": "В", "connector": "S-111", "hex": "5,41 мм"}], shield
+
+
+def test_a_compression_only_shield_op_names_the_tool_and_gives_no_hex():
+    config = _config("компрессия", "компрессия", hex_a="8,23", hex_b="8,23")
+    config["ops"] = [{"type": "coaxShield", "units": 2, "templateId": CARDS["PRS_SLEEVE_coax"].source_id}]
+    shield = _built(config)[0]
+    assert "crimpHex" not in shield["fields"] and shield["fields"]["compression"] is True
+    hex_step = next(step["text"] for step in shield["card"]["steps"] if "hex" in step["text"].casefold())
+    assert hex_step.endswith("Компрессионный разъём: компрессионный инструмент, матрица HEX не применяется.")
+    assert "8,23" not in hex_step and "не задан" not in hex_step
+    # Рядом с обжимным разъёмом HEX читается как обычно — только у него.
+    mixed = _config("компрессия", "обжим", hex_a="8,23", hex_b="5,41")
+    mixed["ops"] = config["ops"]
+    assert _built(mixed)[0]["fields"]["crimpHex"] == [{"side": "В", "connector": "S-111", "hex": "5,41 мм"}]

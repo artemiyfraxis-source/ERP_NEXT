@@ -220,7 +220,30 @@ describe("коакс: резка с разделкой на роторном с�
 
     it("normalizes the spellings of «Тип экрана»", () => {
       expect(["прижим", "Прижимной", "зажимной", "clamp", "обжимной", "Обжим втулки", "пайка", "паяный", "RG-178: пайка", "накручивание", "", undefined]
-        .map((value) => coaxShieldKind_(value))).toEqual(["прижим", "прижим", "прижим", "прижим", "обжим", "обжим", "пайка", "пайка", "пайка", "", "", ""]);
+        .map((value) => coaxShieldKind_(value))).toEqual(["прижим", "прижим", "прижим", "прижим", "обжим", "обжим", "пайка", "пайка", "пайка", "накрутка", "", ""]);
+    });
+
+    it("knows compression, twist-on and Push-On (19.10): own kinds, «самообжим» is not a crimp", () => {
+      expect(["компрессия", "компрессионный", "накрутка", "накручивающийся", "резьбовой", "самообжим", "Push-On (самообжим)", "обжим"]
+        .map((value) => coaxShieldKind_(value))).toEqual(["компрессия", "компрессия", "накрутка", "накрутка", "накрутка", "самообжим", "самообжим", "обжим"]);
+    });
+
+    it("twist-on and Push-On sides have no shield op and no sleeve; compression is a crimp op with the tool in the label and no HEX", () => {
+      const twist = clampData("накрутка", "обжим");
+      const ops = opsOf(twist, initState(twist));
+      expect(ops.find((op) => op.type === "coaxShield")).toMatchObject({ units: 1, label: "Опрессовка втулки экрана" });
+      expect(ops.find((op) => op.type === "coaxInsSleeve")).toMatchObject({ units: 1, label: "Монтаж втулки экрана" });
+      expect(ops.find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса (А) — накручивается на кабель, экран зажимает разъём");
+      const bare = clampData("самообжим", "накрутка");
+      const bareOps = opsOf(bare, initState(bare));
+      expect(bareOps.some((op) => op.type === "coaxShield" || op.type === "coaxInsSleeve")).toBe(false);
+      expect(bareOps.find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса (А) — Push-On, без инструмента");
+      const compress = clampData("компрессия", "компрессия");
+      const compressOps = opsOf(compress, initState(compress));
+      expect(compressOps.find((op) => op.type === "coaxShield")).toMatchObject({
+        units: 2, label: "Опрессовка втулки экрана ×2 — компрессия: А, B (компрессионный инструмент, без HEX)", tmplHint: "PRS_SLEEVE_coax" });
+      const cfg = makeGen(compress, initState(compress)).buildConfig() as Record<string, any>;
+      expect([cfg.coax.sideA.shield, cfg.coax.sideB.shield]).toEqual(["компрессия", "компрессия"]);
     });
 
     it("takes the shield of each side from its БД.КОАКС connector, a manual choice overrides", () => {

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { CoaxConnectors, coaxAngle, coaxGender, coaxSeries, coaxSupplier, coaxTypeGroup } from "./CoaxConnectors";
+import { CoaxConnectors, coaxAngle, hasHex, coaxGender, coaxSeries, coaxSupplier, coaxTypeGroup } from "./CoaxConnectors";
 import type { TechOperationRecord } from "./api";
 
 const record = (id: string, fields: Record<string, string>): TechOperationRecord => ({
@@ -219,4 +219,9 @@ it("a header click sorts inside every type group; the order of the groups stays 
   expect(groups(up)).toEqual(["[SMA-female]", "[F-male]"]);
   expect(groups(down)).toEqual(["[SMA-female]", "[F-male]"]);
   for (const name of ["SMA-female", "F-male"]) expect(inside(down, name)).toEqual([...inside(up, name)].reverse());
+});
+
+it("offers the HEX cell only to a crimped or not yet typed shield — not to compression, twist-on, Push-On, solder or clamp", () => {
+  const has = (shield: string) => hasHex({ "Тип экрана": shield });
+  expect(["", "обжим", "компрессия", "накрутка", "самообжим", "пайка", "прижим"].map(has)).toEqual([true, true, false, false, false, false, false]);
 });
