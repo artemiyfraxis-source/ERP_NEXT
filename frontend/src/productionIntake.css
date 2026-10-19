@@ -28,3 +28,5 @@
 }
 .intake-take { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; max-width: 150px; }
 .intake-take .ship-row-error { flex-basis: auto; max-width: 150px; white-space: normal; }
+/* Принятое (владелец 19.10): акт приёмки — своя зелёная строка с ГРН, без ввода; остаток — обычная строка ниже. */
+.intake-page .data-table .grid tbody tr.intake-act-row:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-ok) 12%, var(--card)); }

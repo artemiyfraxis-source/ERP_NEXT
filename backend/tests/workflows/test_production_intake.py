@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -25,7 +25,7 @@ from app.modules.production.infrastructure import (
 )
 from app.modules.production.plan import PlanEvent, PlanProjectSnapshot
 from app.modules.production.traceability import ProductionOutput
-from app.modules.shipping.domain import FinishedGood
+from app.modules.shipping.domain import FinishedGood, MoveContext
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from app.modules.techcards.kitset_infrastructure import SqlAlchemyKitsetRepository
 from app.modules.techcards.kitsets import KitAssembly, Kitset
@@ -208,7 +208,8 @@ def test_intake_reads_in_bulk_not_per_kb(intake_api):
     finally:
         event.remove(engine, "before_cursor_execute", listener)
     # Ни запроса ГП, набора или карточки ТК на КБ: по одному на всё.
-    assert sum("FROM finished_goods" in sql for sql in statements) == 1
+    assert sum("FROM finished_goods " in sql for sql in statements) == 1
+    assert sum("FROM finished_goods_acts" in sql for sql in statements) == 1
     assert sum("FROM techcard_kitsets" in sql for sql in statements) == 1
     assert len(statements) < 60
 
@@ -284,3 +285,27 @@ def test_kb_in_work_without_erp_tasks_can_be_accepted_up_to_the_order():
     rows = {row.item_index: row for row in intake_rows(facts)}
     assert (rows["КБ1"].stage, rows["КБ1"].remaining) == ("В работе", 30)
     assert rows["КБ2"].remaining == 0
+
+
+def test_intake_rows_carry_acceptance_acts_and_a_rollback_shrinks_the_latest(intake_api):
+    client, engine = intake_api
+    for key, quantity in (("k-a1", "12"), ("k-a2", "8")):
+        assert client.post("/api/shipping/finished-goods/accept", headers={"Idempotency-Key": key}, json={
+            "lines": [{"project": "708К.4", "item_index": "КБ1", "quantity": quantity, "location": "Ячейка 3"}],
+        }).status_code == 200
+    kb1 = next(row for row in _rows(client) if (row["project"], row["item_index"]) == ("708К.4", "КБ1"))
+    assert [(act["quantity"], act["location"]) for act in kb1["acts"]] == [("12", "Ячейка 3"), ("8", "Ячейка 3")]
+    assert len({act["grn"] for act in kb1["acts"]}) == 2 and kb1["acts"][0]["grn"] == kb1["grn"]
+    assert kb1["acts"][0]["received_at"] and kb1["accepted"] == "20" and kb1["remaining"] == "10"
+    # Откат руководителя «принято → в производство» на 5 шт сначала укорачивает последний акт.
+    sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+    with SqlAlchemyShippingUnitOfWork(sessions) as uow:
+        current = next(good for good in uow.goods.list(limit=100) if good.item_index == "КБ1")
+        uow.goods.add(replace(current, accepted=current.accepted - 5, version=current.version + 1), MoveContext(
+            actor="Руководитель", occurred_at=NOW + timedelta(minutes=5), reason="пересорт", correction=True,
+        ))
+        uow.commit()
+    rows = _rows(client)
+    kb1 = next(row for row in rows if (row["project"], row["item_index"]) == ("708К.4", "КБ1"))
+    assert [act["quantity"] for act in kb1["acts"]] == ["12", "3"] and kb1["accepted"] == "15"
+    assert next(row for row in rows if (row["project"], row["item_index"]) == ("708К.4", "КБ2"))["acts"] == []

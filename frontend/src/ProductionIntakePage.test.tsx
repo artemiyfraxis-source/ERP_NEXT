@@ -178,4 +178,27 @@ describe("Приёмка с производства", () => {
     fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
     expect(await screen.findByText(/откройте его заново/)).toBeInTheDocument();
   });
+
+  it("принятое остаётся зелёными строками актов, а остаток — отдельной строкой с флажком", async () => {
+    const day = isoDay(new Date());
+    intakeRows = [
+      row({ item_index: "КБ1", name: "Жгут акты", needed: "1000", launched: "1000", delivered: "1000", accepted: "800", remaining: "200", grn: "ГП.26.0000010",
+        acts: [{ grn: "ГП.26.0000010", quantity: "500", received_at: day, location: "А-1" }, { grn: "ГП.26.0000011", quantity: "300", received_at: day, location: "А-2" }] }),
+      row({ item_index: "КБ2", name: "Жгут целиком", needed: "10", launched: "10", delivered: "10", accepted: "10", remaining: "0", grn: "ГП.26.0000012",
+        acts: [{ grn: "ГП.26.0000012", quantity: "10", received_at: day, location: "" }] }),
+      row({ item_index: "КБ3", name: "Жгут старый", needed: "10", launched: "10", delivered: "10", accepted: "10", remaining: "0", grn: "ГП.26.0000013",
+        acts: [{ grn: "ГП.26.0000013", quantity: "10", received_at: "2026-01-10", location: "" }] }),
+    ];
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findAllByText("Жгут акты");
+    expect(document.querySelectorAll("tr.intake-act-row")).toHaveLength(3); // два акта КБ1 и акт КБ2; КБ3 принята давно — только во «Все»
+    expect(screen.getByText("ГП.26.0000010")).toBeInTheDocument();
+    expect(screen.getByText("ГП.26.0000011")).toBeInTheDocument();
+    expect(screen.queryByText("Жгут старый")).not.toBeInTheDocument();
+    // Остаток КБ1 — одна строка с флажком, «до 200»; у актов и у КБ2 (принята целиком) полей ввода нет.
+    expect(screen.getAllByLabelText(/Принять 591К.3/)).toHaveLength(1);
+    expect(screen.getByLabelText("Сколько принять 591К.3 КБ1")).toHaveAttribute("placeholder", "до 200");
+    fireEvent.click(screen.getByRole("tab", { name: /Все/ }));
+    expect((await screen.findAllByText("Жгут старый")).length).toBeGreaterThan(0);
+  });
 });
