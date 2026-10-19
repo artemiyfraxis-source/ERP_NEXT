@@ -2,6 +2,7 @@ import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useSta
 import { urlParam } from "./navigation";
 import { SuggestInput } from "./SuggestInput";
 import { useStageOption } from "./StageOptions";
+import { LABELS_OPTION, LotLabel } from "./LabelPrint";
 import { usePurposeLabel } from "./purposeLabels";
 import { VIA_LABELS, purchasingItemsApi, type ItemBrief, type ItemRow } from "./purchasingItemsApi";
 import { useLatestSearch } from "./useLatestSearch";
@@ -1457,13 +1458,14 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
 }) {
   const purposeText = usePurposeLabel();
   // Every action is a window over the stock, as the buttons on a SUPPLYMAP partition card (− / + / ✎ / История).
-  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history" | "item" | "link">("");
+  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history" | "item" | "link" | "label">("");
   const close = () => setDialog("");
   const writtenOff = Number(lot.written_off) > 0;
   const passport = passportLine(lot);
   const itemsCtx = useContext(LotItems);
   const brief = itemsCtx.items[lot.id];
   const undoOn = useStageOption("warehouse.undo");
+  const labelsOn = useStageOption(LABELS_OPTION);
 
   return (
     <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
@@ -1485,6 +1487,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
           {writtenOff && <button className="secondary small" disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => setDialog("return")}>Вернуть на склад</button>}
           <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
           <button className="secondary small" disabled={disabled} onClick={() => setDialog("edit")}>✎ Правка</button>
+          {labelsOn && <button className="secondary small" title="Предпросмотр и печать этикетки ГРН" onClick={() => setDialog("label")}>Этикетка…</button>}
         </>}
         {!readOnly && itemsCtx.on && <button className="secondary small" disabled={disabled} onClick={() => setDialog("item")}>Позиция номенклатуры…</button>}
         {canLink && <button className="secondary small" title="Привязать к записи базы или создать запись" onClick={() => setDialog("link")}>В базу данных…</button>}
@@ -1496,6 +1499,10 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
       {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {canLink && dialog === "link" && <StockLinkDialog lot={lot} onClose={close} />}
       {history && dialog === "history" && <LotHistoryDialog lot={lot} onClose={close} />}
+      {!readOnly && labelsOn && dialog === "label" && <LotDialog title="Этикетка" lot={lot} onClose={close}>
+        <LotLabel key={lot.version} lotId={lot.id} />
+        <div className="move-actions"><button type="button" className="secondary" onClick={close}>Закрыть</button></div>
+      </LotDialog>}
       {!readOnly && itemsCtx.on && dialog === "item" && <LotItemDialog lot={lot} brief={brief} onClose={close} onChanged={itemsCtx.reload} />}
     </article>
   );

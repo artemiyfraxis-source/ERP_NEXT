@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { warehouseApi, type WarehouseLot, type WarehouseScan as ScanAnswer, type WarehouseUndoPreview } from "./api";
 import { useStageOption } from "./StageOptions";
+import { LABELS_OPTION, LotLabel } from "./LabelPrint";
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<void>;
 
@@ -136,7 +137,9 @@ function ScanLotCard({ lot, readOnly, disabled, mutate, who, setWho, onChanged, 
   const [done, setDone] = useState("");
   const quantityRef = useRef<HTMLInputElement>(null);
   const undoOn = useStageOption("warehouse.undo");
-  useEffect(() => { setError(""); setDone(""); }, [lot.id]);
+  const labelsOn = useStageOption(LABELS_OPTION);
+  const [label, setLabel] = useState(false);
+  useEffect(() => { setError(""); setDone(""); setLabel(false); }, [lot.id]);
 
   async function run(action: string, operation: () => Promise<{ lot: WarehouseLot }>, message: (updated: WarehouseLot) => string) {
     setError("");
@@ -210,6 +213,10 @@ function ScanLotCard({ lot, readOnly, disabled, mutate, who, setWho, onChanged, 
         setDone(`Отменено: ${label}`);
         onChanged(updated);
       }} />}
+      {labelsOn && <div className="scan-label">
+        <button type="button" className="secondary small" aria-expanded={label} onClick={() => setLabel((open) => !open)}>{label ? "Скрыть этикетку" : "Этикетка…"}</button>
+        {label && <LotLabel key={lot.version} lotId={lot.id} />}
+      </div>}
       <p className="page-sub">Enter в количестве — списать · Enter в месте — переместить · Esc — закрыть</p>
     </>}
     {error && <div className="error-banner" role="alert">{error}</div>}
