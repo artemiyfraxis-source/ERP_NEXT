@@ -67,6 +67,10 @@ def line_view(line: ProcurementLine) -> LineView:
         actual_unit=line.actual_unit,
         project=line.project_reference,
         item_type=line.item_type,
+        designation=line.designation,
+        delivery_point=line.delivery_point,
+        link=line.link,
+        manufacturer=line.trace.manufacturer,
     )
 
 

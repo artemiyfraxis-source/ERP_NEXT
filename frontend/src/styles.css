@@ -4049,6 +4049,25 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .rfq-lines-editor label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 400; color: var(--foreground); }
 .rfq-lines-editor input[type="checkbox"] { width: auto; margin: 0; }
 .rfq-lines-editor small { color: var(--muted-foreground); font-size: 11px; white-space: nowrap; }
+/* «Письма поставщикам», «Запросы счетов» (Roller_Buyer RfqLetters / InvoiceRequests): text to copy into the mail. */
+.rfq-head-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rfq-letters { display: grid; gap: 8px; padding: 10px 14px; }
+.rfq-letters-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.rfq-letters-head h3 { margin: 0; font-size: 15px; }
+.rfq-letters-head .muted { font-size: 12px; }
+.rfq-letters-close { margin-left: auto; }
+.rfq-letter { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.rfq-letter-subject, .rfq-letter-to-line { font-size: 13px; }
+.rfq-letter-body { margin: 0; max-height: 320px; overflow: auto; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-soft); font: inherit; font-size: 13px; white-space: pre-wrap; }
+.rfq-letter-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.rfq-letters a.secondary { display: inline-block; text-decoration: none; }
+.rfq-letter-to { width: auto; font-size: 13px; }
+.rfq-letter-to-actions { display: flex; flex-wrap: wrap; gap: 4px; white-space: nowrap; }
+.rfq-letter-qty summary { cursor: pointer; font-size: 13px; color: var(--muted-foreground); }
+.rfq-letter-qty table { width: auto; margin: 6px 0; font-size: 13px; }
+.rfq-letter-extra { display: grid; gap: 2px; max-width: 360px; margin-top: 6px; font-size: 12.5px; }
+.rfq-letter-ask { width: 90px; text-align: right; }
+.rfq-letters .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
 /* «Назначения заявок» row: stacked, full width (the generic 3-column setting row squeezed the hint into a word column). */
 .purchasing-setting.purchasing-setting-list { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 8px; padding: 14px 20px; }
 .purchasing-setting.purchasing-setting-list > span:first-child { font-weight: 600; }

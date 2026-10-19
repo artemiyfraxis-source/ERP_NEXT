@@ -52,6 +52,7 @@ from .offers import (
     current_offers,
     delta_pct,
     gate_status,
+    gross_unit,
     normalize_decision,
     read_tiers,
 )
@@ -114,6 +115,10 @@ class LineView:
     actual_unit: str | None = None
     project: str | None = None  # ПРОЕКТ as written (the client shows an internal project by its label)
     item_type: str | None = None  # ТИП — the nomenclature category guess falls back to it
+    designation: str | None = None  # НАЗНАЧЕНИЕ of the request line
+    delivery_point: str | None = None  # ТОЧКА ОТГРУЗКИ: the invoice-request letter's delivery address
+    link: str | None = None  # ССЫЛКА: where the calculation found its price («План» links to it)
+    manufacturer: str | None = None  # ИЗГОТОВИТЕЛЬ the buyer wrote on the line
 
 
 class ProcurementLines(Protocol):
@@ -691,10 +696,42 @@ def line_offers(session: Session, rfq_id: UUID, lines: dict[UUID, RfqLineRow], v
     return {line_id: [entry.offer for entry in found] for line_id, found in _entries(session, rfq_id, lines, valid_days).items()}
 
 
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def first_email(text: str | None) -> str | None:
+    """The address to write to: the first e-mail in the card's field (it may hold several, or a name with it)."""
+    found = EMAIL.search(text or "")
+    return found.group(0) if found else None
+
+
+def _terms(line: QuoteLineRow, cover_quantity: Decimal | None, budget: Decimal | None, gross: Decimal | None) -> dict:
+    """How the seller sells it, for the matrix (RB renderOfferCell): the base price and every break with VAT, the break
+    the bought quantity falls into, the packs it takes, the gap to the plan."""
+    tiers = read_tiers(line.tiers)
+    vat = Decimal(line.vat_rate)
+    applied = None
+    if cover_quantity is not None:
+        applied = next((tier for tier in reversed(tiers) if tier.from_quantity <= cover_quantity), None)
+    packs = None
+    if line.pack and cover_quantity is not None and applied is None and line.pack > 0:
+        count = cover_quantity / line.pack
+        packs = count if count == count.to_integral_value() else None
+    return {
+        "base_gross": num(gross_unit(line.unit_price, line.vat_included, vat)) if line.unit_price is not None else None,
+        "tiers_gross": [{"from": num(tier.from_quantity), "gross": num(gross_unit(tier.price, line.vat_included, vat))}
+                        for tier in tiers],
+        "applied_from": num(applied.from_quantity) if applied else None,
+        "packs": num(packs),
+        "plan_pct": num(delta_pct(gross, budget)),
+    }
+
+
 def _cell(entry: _Entry, *, current: bool, best: Offer | None, base: Offer | None, decision: DecisionRow | None,
-          requires: list[str]) -> dict:
+          requires: list[str], budget: Decimal | None = None) -> dict:
     line, quote, offer = entry.line, entry.quote, entry.offer
     return {
+        **_terms(line, entry.cover_quantity, budget, offer.gross_unit),
         "asked": True,
         "quote_line_id": str(line.id), "quote_id": str(quote.id),
         "received_on": quote.received_on.isoformat(),
@@ -753,6 +790,10 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
             for row in session.scalars(select(DecisionRow).where(DecisionRow.rfq_line_id.in_(list(by_id))))
         } if by_id else {}
         views = lines.get_many([line.procurement_line_id for line in rfq_lines])
+        item_ids = [line.item_id for line in rfq_lines if line.item_id]
+        manufacturers = dict(session.execute(
+            select(ItemRow.id, ItemRow.manufacturer).where(ItemRow.id.in_(item_ids))).all()) if item_ids else {}
+        delivery_default = Decimal(values["delivery_default"])
         supplier_of_quote_line = {entry.line.id: entry.quote.supplier_id for found in entries.values() for entry in found}
         used_quotes = {
             entry.quote.id for line_id, found in entries.items() for entry in found
@@ -790,7 +831,7 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
                     )
                 ] if live is not None and live.offer.priced else []
                 cells[str(supplier.id)] = _cell(shown, current=live is not None, best=best, base=base, decision=decision,
-                                                requires=requires)
+                                                requires=requires, budget=line.budget_unit_gross)
             view = views.get(line.procurement_line_id)
             price = decision.unit_gross if decision is not None else (best.gross_unit if best else None)
             line_results.append({
@@ -799,6 +840,10 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
                 "version": view.version if view else None, "editable": bool(view and view.editable),
                 "name": line.name, "article": line.article, "quantity": num(Decimal(line.quantity)), "unit": line.unit,
                 "need_by": line.need_by.isoformat() if line.need_by else None,
+                "project": view.project if view else None, "designation": view.designation if view else None,
+                "item_type": view.item_type if view else None,
+                "manufacturer": (manufacturers.get(line.item_id) if line.item_id else None) or (view.manufacturer if view else None),
+                "plan_supplier": view.supplier if view else None, "plan_link": view.link if view else None,
                 "budget_unit_gross": num(line.budget_unit_gross),
                 "delta_pct": num(delta_pct(price, line.budget_unit_gross)),
                 "gate": {"priced": gate.priced, "required": gate.required, "has_non_key": gate.has_non_key,
@@ -821,7 +866,8 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
             terms = latest_terms.get(supplier.id)
             delivery = terms.delivery_cost if terms else None
             minimum = terms.min_order_sum if terms else None
-            basket = sum(totals, Decimal(0)) + (delivery or 0) if totals else None
+            # A delivery the quote does not name costs the settings' constant: nothing comes for free (RB rfq-matrix).
+            basket = sum(totals, Decimal(0)) + (delivery if delivery is not None else delivery_default) if totals else None
             chosen = sum(
                 (decision.total_gross for decision in decisions.values()
                  if supplier_of_quote_line.get(decision.quote_line_id) == supplier.id),
@@ -835,14 +881,15 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
                     warning = f"Даже всё у него — меньше минимального заказа {num(minimum)} ₽"
             supplier_results.append({
                 "supplier_id": str(supplier.id), "name": supplier.name, "is_key": supplier.is_key,
-                "reason": rfq_supplier.reason,
+                "reason": rfq_supplier.reason, "email": first_email(supplier.email),
+                "contact_person": supplier.contact_person, "phone": supplier.phone, "site": supplier.site,
                 "line_ids": None if asked_of[supplier.id] is None
                 else [str(line.id) for line in rfq_lines if line.id in asked_of[supplier.id]],
                 "sent_at": rfq_supplier.sent_at.isoformat() if rfq_supplier.sent_at else None,
                 "declined_at": rfq_supplier.declined_at.isoformat() if rfq_supplier.declined_at else None,
                 "decline_note": rfq_supplier.decline_note,
                 "answered": terms is not None,
-                "delivery_cost": num(delivery), "min_order_sum": num(minimum),
+                "delivery_cost": num(delivery), "min_order_sum": num(minimum), "delivery_known": delivery is not None,
                 "basket_total": num(basket), "basket_lines": len(totals), "chosen_total": num(chosen) if chosen else None,
                 "min_order_warning": warning,
             })
@@ -850,9 +897,11 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
             "rfq": {
                 "id": str(rfq.id), "number": rfq.number, "title": rfq.title, "created_at": rfq.created_at.isoformat(),
                 "closed_at": rfq.closed_at.isoformat() if rfq.closed_at else None, "mine": rfq.buyer_id == actor.id,
+                "note": rfq.note,
             },
             "settings": {"gate_min_quotes": min_quotes, "gate_require_non_key": require_non_key,
-                         "default_vat_rate": num(Decimal(values["default_vat_rate"]))},
+                         "default_vat_rate": num(Decimal(values["default_vat_rate"])),
+                         "quote_wait_days": int(values["quote_wait_days"]), "delivery_default": num(delivery_default)},
             "suppliers": supplier_results,
             "lines": line_results,
             "quotes": [

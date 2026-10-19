@@ -246,3 +246,18 @@ it("opens the request named in the address and keeps the address on the request 
   await waitFor(() => expect(window.location.search).toBe("?section=procurement&tab=rfq&rfq=r1"));
   window.history.replaceState({}, "", "/");
 });
+
+it("«&letters=1» opens the supplier letters with the request; «Свернуть» drops it from the address", async () => {
+  window.history.replaceState({}, "", "/?section=procurement&tab=rfq&rfq=r1&letters=1");
+  mockServer();
+  render(<PurchasingRfq />);
+  const letters = await screen.findByRole("region", { name: "Письма поставщикам" });
+  expect(within(letters).getAllByText(/Запрос КП № КП-2610-001 от 01\.10\.2026 — 1 позиция/).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("button", { name: "Письма поставщикам" })).not.toBeInTheDocument();
+  fireEvent.click(within(letters).getByRole("button", { name: "Свернуть" }));
+  expect(screen.queryByRole("region", { name: "Письма поставщикам" })).not.toBeInTheDocument();
+  await waitFor(() => expect(window.location.search).toBe("?section=procurement&tab=rfq&rfq=r1"));
+  fireEvent.click(screen.getByRole("button", { name: "Письма поставщикам" }));
+  await waitFor(() => expect(window.location.search).toBe("?section=procurement&tab=rfq&rfq=r1&letters=1"));
+  window.history.replaceState({}, "", "/");
+});

@@ -21,6 +21,7 @@ import {
 import { useStageOption } from "./StageOptions";
 import { picksOf, RfqPool, suggestionKey, SuggestionList } from "./RfqPool";
 import { rfqLinkState, syncRfqUrl } from "./rfqLinks";
+import { RfqLetters } from "./RfqLetters";
 
 /** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
@@ -231,8 +232,13 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
           от {formatDay(rfq.created_at)} · {rfq.closed_at ? `закрыт ${formatDay(rfq.closed_at)}` : "открыт"} · нужно КП: {matrix.settings.gate_min_quotes}
           {matrix.settings.gate_require_non_key ? ", хотя бы одно не от ключевого" : ""}
         </span>
+        <div className="rfq-head-actions">
+          {!letters && suppliers.length > 0 && (
+            <button type="button" className="secondary small" onClick={() => setLetters(true)}>Письма поставщикам</button>
+          )}
+        </div>
         {editable && (
-          <div style={{ marginLeft: "auto", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
             <button type="button" className="secondary small" onClick={() => setSuggesting(true)}>Подобрать поставщиков</button>
             <form onSubmit={(event) => void addSupplier(event)} style={{ display: "flex", gap: 6 }}>
               <input
@@ -253,6 +259,10 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
+      {rfq.note && <p className="page-sub">{rfq.note}</p>}
+      {letters && suppliers.length > 0 && (
+        <RfqLetters matrix={matrix} editable={editable} onClose={() => setLetters(false)} onSent={(message) => void refresh(message)} />
+      )}
       {suppliers.length === 0 && (
         <div className="empty">Поставщиков в запросе нет{editable ? " — «Подобрать поставщиков» или добавьте по названию" : ""}.</div>
       )}

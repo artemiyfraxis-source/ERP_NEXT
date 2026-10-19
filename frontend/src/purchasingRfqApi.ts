@@ -22,6 +22,15 @@ export type RfqCell = {
   tiers: { from: string; price: string }[]; lead_days: number | null; in_stock: boolean; analog: boolean;
   analog_note: string | null; declined: boolean; expired: boolean; cheapest: boolean; baseline: boolean;
   decided: boolean; requires: DecisionField[];
+  /** the base price with VAT and every price break with VAT (the quote keeps them in its own VAT mode) */
+  base_gross?: string | null; tiers_gross?: { from: string; gross: string }[];
+  /** the break the bought quantity falls into; null — the base price */
+  applied_from?: string | null;
+  /** whole packs the bought quantity takes (only at the base price) */
+  packs?: string | null;
+  /** the offer against the plan price, % */
+  plan_pct?: string | null;
+  quote_number?: string | null;
 };
 /** A line not asked of that supplier: no quote expected there. */
 export type RfqUnaskedCell = { asked: false };
@@ -41,6 +50,11 @@ export type RfqLine = {
   budget_unit_gross: string | null; delta_pct: string | null; gate: RfqGate;
   cheapest_quote_line_id: string | null; baseline_quote_line_id: string | null; decision: RfqDecision | null;
   cells: Record<string, RfqCell | RfqUnaskedCell>;
+  project?: string | null; designation?: string | null; item_type?: string | null; manufacturer?: string | null;
+  /** the supplier the calculation priced the line at and its link */
+  plan_supplier?: string | null; plan_link?: string | null;
+  /** the procurement line was cancelled: not asked any more */
+  cancelled?: boolean;
 };
 
 /** The supplier's quote cell of a line; undefined — no quote (or the line is not asked of him). */
@@ -61,11 +75,21 @@ export type RfqSupplier = {
   declined_at: string | null; decline_note: string | null; answered: boolean; delivery_cost: string | null;
   min_order_sum: string | null; basket_total: string | null; basket_lines: number; chosen_total: string | null;
   min_order_warning: string | null;
+  /** the first e-mail of the supplier card */
+  email?: string | null; contact_person?: string | null; phone?: string | null; site?: string | null;
+  /** the delivery comes from his quote; false — the settings' constant is counted */
+  delivery_known?: boolean;
 };
 
 export type RfqMatrix = {
-  rfq: { id: string; number: string; title: string | null; created_at: string; closed_at: string | null; mine: boolean };
-  settings: { gate_min_quotes: number; gate_require_non_key: boolean; default_vat_rate: string };
+  rfq: {
+    id: string; number: string; title: string | null; created_at: string; closed_at: string | null; mine: boolean;
+    note?: string | null;
+  };
+  settings: {
+    gate_min_quotes: number; gate_require_non_key: boolean; default_vat_rate: string;
+    quote_wait_days?: number; delivery_default?: string;
+  };
   suppliers: RfqSupplier[];
   lines: RfqLine[];
   quotes: {
