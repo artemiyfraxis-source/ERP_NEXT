@@ -303,16 +303,18 @@ def test_compatible_connectors_come_from_the_coax_base_by_mark_card_and_alias(uo
         coax = uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000)
     wires = lambda key: {record.id for record in coax if cable_key(connector_cable(record)) == key}  # noqa: E731
     row = {item.cable: item for item in catalog.rows}
-    assert wires("5dfb") and {item.id for item in compatible_connectors(row["5D-FB"], catalog.connectors)} == wires("5dfb")
+    own, family = compatible_connectors(row["5D-FB"], catalog.connectors)
+    assert wires("5dfb") and {item.id for item in own} == wires("5dfb") and family == ""
     # «RG316» of БД.ПРОВ finds the rows written «RG-316» (one key), and those of the card's other spellings
-    rg316 = compatible_connectors(row["RG316"], catalog.connectors)
+    rg316, _ = compatible_connectors(row["RG316"], catalog.connectors)
     assert {item.id for item in rg316} == wires("rg316") and len(rg316) == len({item.id for item in rg316})
-    # a family card lends nothing; a row of another list has none
-    assert compatible_connectors(replace(row["RG316"], cable="RG-316 Z", card_exact=False), catalog.connectors) == []
+    # a variant with none of its own takes the family card's, named; a row of another list has none
+    variant, family = compatible_connectors(replace(row["RG316"], cable="RG-316 Z", card_exact=False), catalog.connectors)
+    assert {item.id for item in variant} == wires("rg316") and family == row["RG316"].card.name
     wire = next(item for item in catalog.rows if item.kind == CableKind.WIRE)
-    assert compatible_connectors(wire, {wire.key: coax}) == []
+    assert compatible_connectors(wire, {wire.key: coax}) == ([], "")
     by_alias = replace(row["RG316"], cable="Кабель RG-316 50 Ом")  # a mark the card knows as its alias
-    assert {item.id for item in compatible_connectors(by_alias, catalog.connectors)} == wires("rg316")
+    assert {item.id for item in compatible_connectors(by_alias, catalog.connectors)[0]} == wires("rg316")
 
 
 # --- `--coax-vocabulary` ---

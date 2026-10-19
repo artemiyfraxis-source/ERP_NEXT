@@ -253,20 +253,27 @@ def connectors_by_cable(records: Iterable[TechOperationRecord]) -> dict[str, lis
     return index
 
 
-def compatible_connectors(row: CableRow, index: Mapping[str, Sequence[TechOperationRecord]]) -> list[TechOperationRecord]:
+def compatible_connectors(row: CableRow, index: Mapping[str, Sequence[TechOperationRecord]]) -> tuple[list[TechOperationRecord], str]:
     """БД.КОАКС rows for a coax row: by its mark, and — when the card is this very cable — by the card's name and its
-    aliases (another spelling of the same cable: «RG58» finds the rows written «RG-58»). A family card («RG-58» for
-    «RG-58 C/U») lends nothing: it is another cable. Each row once."""
+    aliases (another spelling of the same cable: «RG58» finds the rows written «RG-58»). A row with none of its own and
+    a family card («5D-FB» for «5D-FB CCA PE AL PE» — the same dimensions, other materials) takes the family's
+    (owner 19.10.2026: «они сами должны подтягиваться»); the second item is then the family card's name. Each row once."""
     if row.kind != CableKind.COAX:
-        return []
-    keys = [row.key]
-    if row.card is not None and row.card_exact:
-        keys += [row.card.name_key, *(alias.alias_key for alias in row.card.aliases)]
-    found: dict[object, TechOperationRecord] = {}
-    for key in dict.fromkeys(keys):
-        for record in index.get(key, ()):
-            found.setdefault(record.id, record)
-    return list(found.values())
+        return [], ""
+
+    def found_by(keys: Iterable[str]) -> list[TechOperationRecord]:
+        found: dict[object, TechOperationRecord] = {}
+        for key in dict.fromkeys(keys):
+            for record in index.get(key, ()):
+                found.setdefault(record.id, record)
+        return list(found.values())
+
+    card_keys = [row.card.name_key, *(alias.alias_key for alias in row.card.aliases)] if row.card is not None else []
+    own = found_by([row.key, *(card_keys if row.card_exact else [])])
+    if own or row.card is None or row.card_exact:
+        return own, ""
+    family = found_by(card_keys)
+    return family, row.card.name if family else ""
 
 
 def cable_counts(rows: Iterable[CableRow]) -> dict[str, int]:
