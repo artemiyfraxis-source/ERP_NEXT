@@ -63,7 +63,7 @@ def test_the_body_has_one_row_per_connector_and_cable_with_known_fields():
         assert set(row["fields"]) <= allowed, row
         assert all(isinstance(value, str) and value.strip() for value in row["fields"].values()), row
         assert row["fields"].get("Тип пина", "пайка") == "пайка"  # the base's words only
-        assert row["fields"].get("Тип экрана", "обжим") in ("обжим", "пайка")
+        assert row["fields"].get("Тип экрана", "обжим") in ("обжим", "пайка", "прижим")
     sites = {row["fields"]["Ссылка"] for row in rows}
     assert len(sites) == 311 - 2  # S-231L and N-112C/5D are on the site twice: one row, the second page in the note
 
@@ -121,9 +121,9 @@ def test_pin_and_shield_go_to_the_base_words_or_stay_empty():
     assert [pin_type(value) for value in ("пайка", "цанга", "не требуется", None)] == ["пайка", "", "", ""]
     assert [shield_type(value) for value in ("обжимной", "обжим (под клещи 0,475″)", "пайка", "RG-178: пайка",
                                             "прижимной", "накручивание на кабель", None)] == \
-        ["обжим", "обжим", "пайка", "пайка", "", "", ""]
+        ["обжим", "обжим", "пайка", "пайка", "прижим", "", ""]
     [row] = gsm_import_rows(_site(_entry(pin="цанга", shield="прижимной", max_freq_ghz=2.5))).rows
-    assert "Тип пина" not in row["fields"] and "Тип экрана" not in row["fields"]
+    assert "Тип пина" not in row["fields"] and row["fields"]["Тип экрана"] == "прижим"
     assert (row["fields"]["Центральный контакт"], row["fields"]["Крепление экрана"]) == ("цанга", "прижимной")
     assert row["fields"]["Частота до, ГГц"] == "2,5"
     assert row["fields"]["Источник данных"] == "gsm-repiteri.ru, 12.10.2026"

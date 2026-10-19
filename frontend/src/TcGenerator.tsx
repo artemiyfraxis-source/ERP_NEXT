@@ -66,6 +66,8 @@ import {
   setHsRow,
   COAX_MACHINES,
   COAX_PIN_COLLET,
+  COAX_PIN_CRIMP,
+  COAX_SHIELD_OPTIONS,
   type CableRec,
   type Comp,
   type Endpoint,
@@ -725,7 +727,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       connArticle: s.art, type: v("type"), wire: v("wire") || gen.coaxBomCable_(), mfr: "", program: "",
       // D1–D3 у разъёма нет: диаметры у кабеля (СПР.КАБ), генератор берёт их оттуда.
       l1: v("l1"), l2: v("l2"), l3: v("l3"), lPlus: v("lPlus"), lMinus: v("lMinus"),
-      pinType: side === "A" ? S.coax.pinA : S.coax.pinB, shieldType: S.coax.shield,
+      pinType: side === "A" ? S.coax.pinA : S.coax.pinB, shieldType: gen.coaxShieldOf_(side),
     };
     try {
       await referencesApi.createRecord("coax", coaxRecordFields(payload));
@@ -997,12 +999,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const add = coaxAdd[side] || {};
     const addValue = (key: string, fallback = "") => add[key] ?? fallback;
     const setAdd = (key: string, value: string) => setCoaxAdd((current) => ({ ...current, [side]: { ...(current[side] || {}), [key]: value } }));
-    const pin = S.coax[pinKey] === "внутри корпуса" || S.coax[pinKey] === COAX_PIN_COLLET ? S.coax[pinKey] : "пайка";
+    const pin = S.coax[pinKey] === "внутри корпуса" || S.coax[pinKey] === COAX_PIN_COLLET || S.coax[pinKey] === COAX_PIN_CRIMP ? S.coax[pinKey] : "пайка";
     return <div className="ep-card">
       <div className="ep-head"><span className="ep-title">{s ? s.art : side === "A" ? "в составе нет разъёма" : "—"}</span><span className="ep-kind">из состава</span></div>
       <div className="ep-grid coax">
         <div className="gfield"><span className="gfield-label">Тип пина</span>
-          <Seg label={`Тип пина ${sideRu_(side)}`} value={pin} options={[["пайка", "Пайка"], ["внутри корпуса", "Пайка внутри корпуса"], [COAX_PIN_COLLET, "Цанга, без пайки"]]}
+          <Seg label={`Тип пина ${sideRu_(side)}`} value={pin} options={[["пайка", "Пайка"], ["внутри корпуса", "Пайка внутри корпуса"], [COAX_PIN_CRIMP, "Обжим"], [COAX_PIN_COLLET, "Цанга, без пайки"]]}
             onChange={(value) => update((current) => syncCoverRow_({ ...current, coax: { ...current.coax, [pinKey]: value } }, side))} /></div>
         {S.coax[pinKey] === "внутри корпуса" && <div className="gfield"><span className="gfield-label">Крышка (угловой разъём)</span>
           <Seg label={`Крышка ${sideRu_(side)}`} value={S.coax[coverKey]} options={[["", "Без крышки"], ["обжим", "Обжим"], ["винт", "Винт"]]}
@@ -1416,8 +1418,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       <div className="opt-grid">
         <Field label="Длина по чертежу"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value } }))} /></Field>
         <div className="gfield span2"><span className="gfield-label">Экран (на сборку)</span>
-          <Seg label="Тип экрана" value={S.coax.shield} options={[["обжим", "Обжим втулки"], ["пайка", "Пайка экрана"]]}
-            onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield } }))} /></div>
+          <Seg label={S.coax.sideB ? "Тип экрана, сторона А" : "Тип экрана"} value={S.coax.shield} options={COAX_SHIELD_OPTIONS}
+            onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield } }))} />
+          {S.coax.sideB && <Seg label="Тип экрана, сторона В" value={gen.coaxShieldOf_("B")} options={COAX_SHIELD_OPTIONS}
+            onChange={(shieldB) => update((current) => ({ ...current, coax: { ...current.coax, shieldB } }))} />}</div>
         <div className="gfield span-all"><span className="gfield-label">Разделка</span>
           <Seg label="Разделка" value={S.coax.stripMode} options={[["machine", "Резка с разделкой на станке"], ["separate", "Резка, затем разделка А и В"]]}
             onChange={(stripMode) => update((current) => ({ ...current, coax: { ...current.coax, stripMode } }))} /></div>

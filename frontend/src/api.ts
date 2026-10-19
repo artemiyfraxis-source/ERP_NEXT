@@ -1632,6 +1632,8 @@ export interface ProjectTechcard {
   created_at: string;
   updated_at: string;
   issued_at: string | null;
+  /** Нужна проверка технолога после автоматической ревизии (текст причины); нет — null. */
+  review_note?: string | null;
 }
 
 export interface TechcardRevision {
@@ -1640,6 +1642,10 @@ export interface TechcardRevision {
   reason: string;
   actor_name: string;
   occurred_at: string;
+  /** «manual» — выпустил человек; «auto» — система после правки справочника или правила. */
+  source?: "manual" | "auto";
+  /** У автоматической ревизии — список {operation_key, label, field, old, new}. */
+  diff?: unknown;
   document: Record<string, unknown>;
 }
 

@@ -3,6 +3,7 @@ import { PageWindow } from "./PageWindow";
 import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
 import type { TechOperationRecord } from "./api";
 import { fieldCellEdit, ownCellEdit } from "./CustomColumn";
+import { coaxShieldKind_ } from "./tcGenLogic";
 import "./coaxConnectors.css";
 
 /* «База данных → Коаксиальные разъёмы» (owner 13.10.2026): БД.КОАКС — разъёмы базы и 311 разъёмов gsm-repiteri.ru —
@@ -144,6 +145,12 @@ function SiteLink({ href }: { href: string }) {
   return <a href={href} target="_blank" rel="noreferrer" title={href} onClick={(event) => event.stopPropagation()}>{host}</a>;
 }
 
+/** HEX обжима есть только у обжимного экрана; тип не задан — поле открыто (его ещё надо заполнить), у прижимного и паяного — нет. */
+export const hasHex = (fields: Record<string, string>) => {
+  const kind = coaxShieldKind_(pick(fields, "Тип экрана", "shieldType"));
+  return kind === "" || kind === "обжим";
+};
+
 export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns = [], onEdited, removeColumn }: {
   records: TechOperationRecord[];
   canEdit: boolean;
@@ -164,6 +171,8 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
   const cell = (name: string) => canEdit ? fieldCellEdit<TechOperationRecord>(name, (record) => record) : undefined;
   // Поле карточки (частота, КСВ) правится и у строки, где его ещё нет (сервер принимает поля карточки БД.КОАКС).
   const cardCell = (name: string) => canEdit ? fieldCellEdit<TechOperationRecord>(name, (record) => record, true) : undefined;
+  const hexCell = cell("HEX обжима, мм");
+  const hexEdit = hexCell ? { ...hexCell, enabled: (row: TechOperationRecord) => hasHex(row.fields) && (hexCell.enabled?.(row) ?? true) } : undefined;
   const length = (name: "L1" | "L2" | "L3"): DataColumn<TechOperationRecord> => ({
     key: name, title: name, hint: `Разделка ${name}, мм`, numeric: true, value: text(name, name.toLowerCase()), edit: cell(name),
   });
@@ -180,7 +189,11 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
     { key: "shield", title: "Тип экрана", value: text("Тип экрана", "shieldType"), edit: cell("Тип экрана") },
     // Разделка — тремя колонками: каждую длину можно вписать прямо в таблицу; HEX обжима втулки — сразу за ними.
     length("L1"), length("L2"), length("L3"),
-    { key: "hex", title: "HEX, мм", hint: "HEX обжима втулки экрана, мм", numeric: true, value: text("HEX обжима, мм"), edit: cell("HEX обжима, мм") },
+    // HEX — только у обжимного экрана: у прижимного и паяного гильзы под матрицу нет — «—», правки нет (владелец 19.10).
+    { key: "hex", title: "HEX, мм", hint: "HEX обжима втулки экрана, мм (у прижимного и паяного экрана его нет)", numeric: true,
+      value: (record) => (hasHex(record.fields) ? pick(record.fields, "HEX обжима, мм") : ""),
+      render: (record) => (hasHex(record.fields) ? pick(record.fields, "HEX обжима, мм") || "—" : "—"),
+      edit: hexEdit },
     // Частотный диапазон и КСВ из карточки — сразу за HEX (владелец 19.10).
     { key: "ghz", title: "Частота, ГГц", hint: "Рабочая частота до, ГГц — из карточки разъёма", numeric: true, value: text("Частота до, ГГц"),
       render: (record) => pick(record.fields, "Частота до, ГГц") ? `до ${pick(record.fields, "Частота до, ГГц")}` : "—", edit: cardCell("Частота до, ГГц") },
@@ -218,7 +231,8 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
         rows={rows}
         columns={columns}
         rowKey={(record) => record.id}
-        storageKey="db:coax-connectors"
+        // «-2»: раскладка до 19.10 прятала «Частоту» (была скрыта по умолчанию) и показывала новый «источник заглубления».
+        storageKey="db:coax-connectors-2"
         exportName="Коаксиальные разъёмы"
         presets={PRESETS}
         groupBy={(record) => coaxTypeGroup(record.fields)}
@@ -252,7 +266,7 @@ const CARD_ROWS: Array<[string, (fields: Fields) => string, boolean?]> = [
   ["Полярность", (fields) => pick(fields, "Полярность")],
   ["Разделка L1 · L2 · L3", stripping, true],
   ["L+ · L−", (fields) => joinDots([pick(fields, "L+", "lPlus"), pick(fields, "L-", "L−", "lMinus")])],
-  ["HEX обжима", (fields) => (pick(fields, "HEX обжима, мм") ? `${pick(fields, "HEX обжима, мм")} мм` : "")],
+  ["HEX обжима", (fields) => (hasHex(fields) && pick(fields, "HEX обжима, мм") ? `${pick(fields, "HEX обжима, мм")} мм` : "")],
   ["Тип пина", (fields) => pick(fields, "Тип пина", "pinType"), true],
   ["Тип экрана", (fields) => pick(fields, "Тип экрана", "shieldType"), true],
   ["Монтаж", (fields) => pick(fields, "Монтаж")],

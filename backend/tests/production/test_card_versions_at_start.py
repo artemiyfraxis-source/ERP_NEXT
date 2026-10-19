@@ -1,6 +1,7 @@
 """Версия шаблона операции в задании монтажника (владелец, 17.10.2026): «Мои задания» показывают, откуда сейчас карточки
 операций ЭТК (по шаблону / правлена в ТК), а первое «▶ Начать» записывает их один раз — повторное начало и продолжение
-запись не меняют; шаблон, изменённый после начала, виден как расхождение живой версии с записанной."""
+запись не меняют. Выданная ЭТК хранится как выдана (владелец 19.10): правка шаблона после начала карточку не меняет и
+расхождения не даёт — до новой ревизии у карты нет другой версии."""
 
 from __future__ import annotations
 
@@ -73,13 +74,13 @@ def test_the_first_start_records_the_card_versions_once_and_a_later_template_edi
     recorded = [{"position": 1, "source": TEMPLATE, "changed_at": ""}]
     assert _stored(operation_id) == recorded
 
-    # Технолог правит шаблон после начала: ЭТК живая — новая дата, записанная на начале остаётся прежней.
+    # Технолог правит шаблон после начала: выданная ЭТК не меняется, записанное на начале остаётся прежним.
     _edit_template(EDITED_AT)
     session_id = started.json()["session"]["id"]
     assert client.post(f"/api/production/work/{session_id}/pause").status_code == 200
     assert client.post(f"/api/production/work/{session_id}/resume").status_code == 200
     after = _my_operation(client)
-    assert after["etk_cards"]["live"] == [{"position": 1, "source": TEMPLATE, "changed_at": EDITED_AT.isoformat()}]
+    assert after["etk_cards"]["live"] == recorded
     assert after["etk_cards"]["started"] == recorded
 
     # Повторное начало (отменили и начали снова) запись не меняет.
@@ -121,7 +122,7 @@ def test_without_an_issued_etk_the_first_start_records_an_empty_list_and_the_fit
     assert _my_operation(client)["etk_cards"] == {"live": [], "started": []}
 
 
-def test_a_late_start_after_the_template_edit_records_the_edited_date(production_api):  # noqa: F811
+def test_a_late_start_after_the_template_edit_records_the_stored_card_without_the_template_date(production_api):  # noqa: F811
     client, operator_id = production_api
     _seed_template_and_etk()
     _edit_template(EDITED_AT - timedelta(days=1))
@@ -131,6 +132,6 @@ def test_a_late_start_after_the_template_edit_records_the_edited_date(production
 
     assert client.post(f"/api/production/tasks/{task.id}/operations/{operation_id}/work/start", json={"inputs": []}).status_code == 200
 
-    expected = [{"position": 1, "source": TEMPLATE, "changed_at": (EDITED_AT - timedelta(days=1)).isoformat()}]
+    expected = [{"position": 1, "source": TEMPLATE, "changed_at": ""}]
     assert _stored(operation_id) == expected
     assert _my_operation(client)["etk_cards"] == {"live": expected, "started": expected}

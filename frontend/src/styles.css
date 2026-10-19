@@ -2229,6 +2229,17 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-warnings > div { margin-top: 4px; white-space: pre-line; }
 .etk-revs { font-size: 12.5px; }
 .etk-revs > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+.etk-rev-row { align-items: center; }
+.etk-rev-row > span:first-child { flex: 1 1 auto; min-width: 0; }
+.etk-review { padding: 8px 12px; border-radius: 10px; font-size: 13px; }
+.etk-changes-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.etk-changes-op h3 { margin: 12px 0 4px; font-size: 14px; }
+.etk-changes table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.etk-changes th:first-child { width: 44%; }
+.etk-changes th, .etk-changes td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.etk-changes th { font-size: 12px; color: var(--muted-foreground); font-weight: 600; }
+.etk-change-old { color: var(--muted-foreground); text-decoration: line-through; }
+.etk-change-new { font-weight: 600; }
 .etk-sheet .etk-wrap { grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); }
 .etk-sheet .etk-nav-route button { padding: 8px 10px; font-size: 13px; }
 .etk-op { display: grid; gap: 14px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }

@@ -162,6 +162,16 @@ describe("defect picture library", () => {
     expect(defectContext("INS_housing_COAX")).toBe("coaxAsm");
     expect(scenes("INS_housing_COAX", ["«Недосад» корпуса", "Деформация или изгиб пина при вводе в разъем",
       "Заворачивание проволочек экрана внутрь корпуса"])).toEqual(["cxSeat", "cxBent", "shieldSpread"]);
+    // Монтаж корпуса с прижимом (INS_housing_COAX_clamp): свой рисунок на каждый дефект карты.
+    expect(defectContext("INS_housing_COAX_clamp")).toBe("coaxAsm");
+    expect(scenes("INS_housing_COAX_clamp", ["Пряди оплётки на изоляторе или контакте", "Оплётка не зажата", "Гайка перетянута",
+      "Пропущен уплотнитель или шайба", "Контакт не дошёл до упора"]))
+      .toEqual(["cxBraidStrands", "cxClampLoose", "cxNutOver", "cxGasketMissing", "cxSeat"]);
+    for (const id of ["cxBraidStrands", "cxClampLoose", "cxNutOver", "cxGasketMissing"]) {
+      const panels = [...defectSceneArt(id).matchAll(/<svg x="[^"]+" y="1" [^>]*>(.*?)<\/svg>/g)].map((match) => match[1]);
+      expect(panels).toHaveLength(2);
+      expect(panels[0]).not.toEqual(panels[1]);
+    }
     expect(defectContext("PRS_SLEEVE_coax")).toBe("coaxCrimp");
     expect(scenes("PRS_SLEEVE_coax", ["Торчащие волоски экрана из-под краев гильзы", "«недожим» гильзы",
       "«пережим» или выдавливание облоя («ушей») металла между матрицами",

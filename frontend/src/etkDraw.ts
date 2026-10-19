@@ -2,7 +2,7 @@
 // Одни и те же строки идут и на экран (блок «Эскиз»), и в печать (etkPrint.ts): печатное окно — отдельный
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
-import { coaxMountEtk, coaxPartsEtk } from "./etkCoaxOpArt";
+import { coaxClampEtk, coaxMountEtk, coaxPartsEtk } from "./etkCoaxOpArt";
 import { coaxEndNames, coaxEndTitle, coaxKindTitle } from "./coaxNames";
 import { connectorFace, connectorFaceUnits, connectorSummary, wireColor, type HousingBody, type Mate, type Roof } from "./connectorArt";
 import { connectorTopView } from "./connectorTopView";
@@ -393,9 +393,9 @@ function coaxPin(x0: number, xEnd: number, cy: number, solder: boolean): string 
 function coaxEndSketch(operation: Row): string {
   const end = obj(obj(operation.fields).coaxEnd), type = str(operation.type), cy = 70, x0 = 150, span = 300;
   const g = coaxEndGeometry(end, x0, span), xPin = x0 + (g.x1 - x0) * 0.8;
-  const crimp = /обжим/i.test(str(end.pinType));
+  const crimp = type === "coaxPinCrimp" || /обжим/i.test(str(end.pinType));
   let body = caption(20, 18, sideCaption(end), "start", 600, CX.ink);
-  if (type === "coaxPin") {
+  if (type === "coaxPin" || type === "coaxPinCrimp") {
     body += coaxEndBase(end, x0, span, cy) + coaxPin(x0, xPin, cy, !crimp) +
       `<line x1="${xPin}" y1="${cy + 10}" x2="${xPin}" y2="${cy + 34}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
       `<line x1="${g.x1}" y1="${cy + 12}" x2="${g.x1}" y2="${cy + 34}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
@@ -403,6 +403,11 @@ function coaxEndSketch(operation: Row): string {
       caption(g.x1 + 6, cy + 32, "зазор до диэлектрика — по КД");
     if (g.ok) body += caption(x0, cy + 56, `L1 = ${mm(end.l1)} · L2 = ${mm(end.l2)} · L3 = ${mm(end.l3)}`);
     return svg(640, cy + (g.ok ? 66 : 46), body);
+  }
+  // Монтаж корпуса с прижимом: оплётка по конусу, контакт в изоляторе, гайка затянута — без втулки и обжима.
+  if (type === "coaxHousing" && str(end.shield) === "прижим") {
+    const art = coaxClampEtk(end, sideCaption(end), "Оплётку расправить по конусу и обрезать, корпус собрать, гайку затянуть");
+    return svg(640, art.height, art.body);
   }
   // Корпус: настоящий боковой вид SMA в разрезе, контакт в изоляторе, оплётка расправлена по хвостовику; пайка экрана / крышка — тот же вид с подписью.
   const mount: Record<string, string> = {
@@ -431,7 +436,9 @@ function coaxEndSketch(operation: Row): string {
 function coaxPartsSketch(operation: Row): string {
   const p = obj(obj(operation.fields).coaxParts), type = str(operation.type), cy = 62;
   const kind = str(p.kind) === "sleeve" ? "sleeve" : "tube", count = Math.max(1, num(p.count) || 1);
-  const name = str(p.name) || (kind === "tube" ? "ТУТ" : "втулка экрана");
+  const clampSides = Array.isArray(p.clampSides) ? p.clampSides.length : 0;
+  const name = clampSides >= count && kind === "sleeve" ? "гайка, шайба, уплотнитель, кольцо"
+    : clampSides > 0 && kind === "sleeve" ? `${str(p.name) || "втулка экрана"} и гайка, шайба, уплотнитель, кольцо` : str(p.name) || (kind === "tube" ? "ТУТ" : "втулка экрана");
   const what = `${name}${count > 1 ? ` × ${count}` : ""}`;
   if ((type === "coaxInsTut" || type === "coaxInsSleeve") && list(p.ends).length) {
     // Оба конца со своими разъёмами, ТУТ / втулка на оболочке, знак разрыва (владелец 19.10).

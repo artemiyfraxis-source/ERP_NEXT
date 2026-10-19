@@ -356,6 +356,24 @@ describe("coax operation sketches (796К.2 КБ1, owner 15.10: «эскизов 
     for (const svg of [cut, tut, pin]) expect(svg).not.toMatch(/undefined|NaN/);
   });
 
+  it("clamp shield (прижимной, owner 19.10): the housing sketch shows the braid on the cone and the tightened nut, the put-on shows the clamp set — no sleeve, no crimp", () => {
+    const clamp = { ...end, connector: "N-112B", shield: "прижим" };
+    const housing = etkFigure({ type: "coaxHousing", fields: { coaxEnd: clamp } });
+    expect(housing).toContain("оплётка зажата кольцом");
+    expect(housing).toContain("гайка затянута");
+    expect(housing).toContain("шайба и уплотнитель");
+    expect(housing).not.toMatch(/undefined|NaN|втулк|шестигранник/);
+    // Тот же корпус без «прижим» — прежний вид SMA в разрезе, без зажимного кольца.
+    expect(etkFigure({ type: "coaxHousing", fields: { coaxEnd: end } })).not.toContain("оплётка зажата кольцом");
+    const parts = { kind: "sleeve", name: "Втулка", count: 2, cable: "RG316", length: "", clampSides: ["А"],
+      ends: [{ ...end, shield: "прижим" }, { ...end, side: "В", shield: "обжим" }] };
+    const putOn = etkFigure({ type: "coaxInsSleeve", fields: { coaxParts: parts } });
+    expect(putOn).toContain("data-part=\"clamp-set\"");
+    expect(putOn).toContain("гайка, шайба, уплотнитель, кольцо");
+    expect(putOn).toContain("data-part=\"sleeve\"");  // обжимной конец В — по-прежнему втулка
+    expect(putOn).not.toMatch(/undefined|NaN/);
+  });
+
   it("keeps the strip sketch for stripping and draws nothing without data", () => {
     expect(etkFigure({ type: "coaxStrip", fields: { coax: end } })).toContain("L1 = 1,8 мм");
     expect(etkFigure({ type: "coaxPin", fields: {} })).toBe("");

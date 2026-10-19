@@ -1,0 +1,6 @@
+﻿Артикул,Кабель,Поле,Было,Стало,Документ,Фрагмент документа
+Commscope L4HM-D,1/2″,КСВ,,"≤1,11 до 6 ГГц",https://gsm-repiteri.ru/files/2023/01/l4hm-d-product-specifications.pdf,VSWR/Return Loss Frequency Band VSWR Return Loss (dB) 45-1000 MHz 1.02 40.09 1000-2700 MHz 1.025 38.17 2700-3800 MHz 1.065 30.04 3800-6000 MHz 1.106 25.96
+RFS NM-LCF12-C02,1/2″,КСВ,,"≤1,08 до 3,7 ГГц",https://gsm-repiteri.ru/files/2017/07/NM-LCF12-C02.pdf,"VSWR (Return Loss, dB) 0 < f = 1.0 GHz: 1.030 (36.6) 1.0 < f = 2.7 GHz: 1.040 (34.1) 2.7 < f = 3.7 GHz: 1.080 (28.3)"
+11_SMA-50-2-112/133_NE,RG-316D,КСВ,,"≤1,11 до 5 ГГц",https://static.chipdip.ru/lib2/b/064/DOC083064713.pdf,Frequency range Return loss VSWR: 0-1 GHz 32 dB 1.05; 1-2.5 GHz 29 dB 1.07; 2.5-5 GHz 26 dB 1.11 (ordering: 11_SMA-50-2-112/133_NE)
+11_SMA-50-2-65/119_NE,RG-405,КСВ,,"≤1,14 до 18 ГГц",https://static.chipdip.ru/lib2/a/720/DOC066720087.pdf,Frequency range Return loss VSWR: 0-4 GHz 30.71 dB 1.06; 4-8 GHz 26.44 dB 1.10; 8-18 GHz 23.69 dB 1.14 (ordering: 11_SMA-50-2-65/119_NE)
+SMA-50-3-3/111 NH,RG-402,КСВ,,"≤1,92 до 18 ГГц (возвратные потери ≥10 дБ)",https://static.chipdip.ru/lib/240/DOC047240652.pdf,Frequency range DC to 2 GHz 2 to 12 GHz 12 to 18 GHz Return loss 32 dB 23 dB 10 dB

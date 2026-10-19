@@ -143,6 +143,9 @@ type Sort = { key: string; direction: 1 | -1 } | null;
 
 export interface Saved {
   hidden?: string[];
+  /** Колонки, которые таблица уже видела при сохранении (владелец 19.10: «почему пропал частотный диапазон»): колонка не
+      из этого списка — новая, она показывается или прячется по своему умолчанию, а не по старому `hidden`. */
+  known?: string[];
   sort?: Sort;
   preset?: string;
   /** Порядок колонок пользователя (ключи); колонка, которой нет в списке, встаёт после своей соседки слева. */
@@ -201,6 +204,7 @@ function cleanSaved(raw: unknown): Saved {
   if (widths.length) saved.widths = Object.fromEntries(widths.map(([key, width]) => [key, clampWidth(width)]));
   if (titles.length) saved.titles = Object.fromEntries(titles);
   if (saved.hidden !== undefined && !Array.isArray(saved.hidden)) delete saved.hidden;
+  if (saved.known !== undefined && !(Array.isArray(saved.known) && saved.known.every((item) => typeof item === "string"))) delete saved.known;
   return saved;
 }
 
@@ -371,7 +375,15 @@ export function DataTable<T>({
   const [sort, setSort] = useState<Sort>(saved.sort ?? null);
   const [preset, setPreset] = useState(saved.preset || defaultPreset);
   const defaultHidden = () => columns.filter((column) => column.hidden).map((column) => column.key);
-  const [hidden, setHidden] = useState<string[]>(saved.hidden ?? defaultHidden());
+  const [hidden, setHidden] = useState<string[]>(() => {
+    if (!saved.hidden) return defaultHidden();
+    if (!saved.known) return saved.hidden;
+    // Новая колонка (её не было при сохранении) — по своему умолчанию; остальные — как оставил пользователь.
+    const known = new Set(saved.known);
+    const fresh = columns.filter((column) => !known.has(column.key));
+    return [...saved.hidden.filter((key) => !fresh.some((column) => column.key === key)),
+      ...fresh.filter((column) => column.hidden).map((column) => column.key)];
+  });
   const [order, setOrder] = useState<string[] | undefined>(saved.order);
   const [widths, setWidths] = useState<Record<string, number>>(saved.widths ?? {});
   const [titles, setTitles] = useState<Record<string, string>>(saved.titles ?? {});
@@ -416,12 +428,12 @@ export function DataTable<T>({
   useEffect(() => {
     const { order: _order, widths: _widths, titles: _titles, ...kept } = readSaved(storageKey);
     writeSaved(storageKey, {
-    ...kept, hidden, sort, preset,
+    ...kept, hidden, known: [...new Set([...(kept.known ?? []), ...columns.map((column) => column.key)])], sort, preset,
     ...(order ? { order } : {}),
     ...(Object.keys(widths).length ? { widths } : {}),
     ...(Object.keys(titles).length ? { titles } : {}),
     });
-  }, [storageKey, hidden, sort, preset, order, widths, titles]);
+  }, [storageKey, hidden, sort, preset, order, widths, titles, columns]);
 
   // The user's order and captions: everything below (headers, search hint, filters, Excel) reads these columns.
   const ordered = useMemo(() => orderColumns(columns, order), [columns, order]);

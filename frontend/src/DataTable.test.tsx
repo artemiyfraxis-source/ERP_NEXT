@@ -336,7 +336,8 @@ describe("columns the user arranges: order, width, caption", () => {
     fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
     fireEvent.click(screen.getByRole("button", { name: "Сбросить вид" }));
     expect(heads()).toEqual(["Наименование", "Поставщик", "Кол-во"]);
-    expect(JSON.parse(window.localStorage.getItem("erp-table:arrange")!)).toEqual({ hidden: ["status"], sort: null, preset: "" });
+    expect(JSON.parse(window.localStorage.getItem("erp-table:arrange")!)).toMatchObject({ hidden: ["status"], sort: null, preset: "" });
+    expect(JSON.parse(window.localStorage.getItem("erp-table:arrange")!)).not.toHaveProperty("order");
   });
 
   it("reads the state saved before columns could move: hidden, sort and the screen's own fields stay", () => {
@@ -618,4 +619,23 @@ it("shows «Удалить» in «Колонки» only for a column that can be
   expect(screen.queryByRole("button", { name: "Удалить столбец: Название" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
   expect(remove).toHaveBeenCalledTimes(1);
+});
+
+it("a column new since the saved layout follows its own default; columns the user saw keep their saved visibility (owner 19.10)", () => {
+  type R = { id: string; a: string; b: string; c: string; d: string };
+  const cols: DataColumn<R>[] = [
+    { key: "a", title: "А", value: (row) => row.a },
+    { key: "b", title: "Б", value: (row) => row.b },
+    { key: "c", title: "В скрытая", value: (row) => row.c, hidden: true },
+    { key: "d", title: "Г новая", value: (row) => row.d },
+  ];
+  // Сохранено, когда были только «А» и «Б», «Б» пользователь скрыл.
+  window.localStorage.setItem("erp-table:known-test", JSON.stringify({ hidden: ["b"], known: ["a", "b"] }));
+  render(<DataTable rows={[{ id: "1", a: "1", b: "2", c: "3", d: "4" }]} columns={cols} rowKey={(row) => row.id} storageKey="known-test" />);
+  const heads = screen.getAllByRole("columnheader").map((head) => head.textContent ?? "");
+  expect(heads.some((text) => text.startsWith("А"))).toBe(true);
+  expect(heads.some((text) => text.startsWith("Б"))).toBe(false);
+  expect(heads.some((text) => text.startsWith("В скрытая"))).toBe(false);
+  expect(heads.some((text) => text.startsWith("Г новая"))).toBe(true);
+  expect(JSON.parse(window.localStorage.getItem("erp-table:known-test") ?? "{}").known).toEqual(["a", "b", "c", "d"]);
 });

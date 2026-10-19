@@ -149,9 +149,11 @@ def _key(op: Mapping[str, Any]) -> str | None:
 
 def live_document(
     document: Mapping[str, Any] | None, *, manual_keys: Iterable[str], templates: Sequence[OperationCardTemplate],
-    built_at: datetime | None, refill_all: bool = False,
+    built_at: datetime | None, refill_all: bool = False, stored: bool = False,
 ) -> Mapping[str, Any] | None:
     """A copy of the document whose operations carry the live card and `card_source` / `card_changed_at`.
+    `stored` — an issued card: the cards stay as stored (a template change is a revision, not a silent refill), the
+    labels come from the stored stamps (`edited`, `template_id`, `build_config`), the template's date is not read.
     `refill_all` — fill every template card anew even when the template did not change (tests: the builder's
     filling reproduces the stored copy)."""
     operations = _operations(document)
@@ -161,6 +163,7 @@ def live_document(
     by_id = {card.source_id: card for card in templates}
     seen = seen_versions(document, templates, built_at)
     config = document.get("build_config")
+    stamped = (document.get("source") or {}).get("templates") if isinstance(document.get("source"), Mapping) else None
     result: list[Any] = []
     refill: dict[int, OperationCardTemplate] = {}
     for index, op in enumerate(operations):
@@ -175,6 +178,13 @@ def live_document(
         template_id = str(op.get("template_id") or "").strip()
         if not template_id:
             result.append(view)  # an own operation of «Ручная сборка»: its card is its own, no template to follow
+            continue
+        if stored:
+            # the stamp of the build (`source.templates`): the card was filled from its template; else snapshot
+            from_template = isinstance(config, Mapping) and (
+                template_id in stamped if isinstance(stamped, Mapping) else template_for(op, by_id, templates) is not None)
+            view.update(card_source=TEMPLATE if from_template else SNAPSHOT, card_changed_at="")
+            result.append(view)
             continue
         template = template_for(op, by_id, templates)
         if template is None or not isinstance(config, Mapping):

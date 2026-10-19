@@ -123,7 +123,8 @@ export function coaxMountedDrawing(side: Side, end: Row, tube: string): string {
   let body = label(4, 14, `сторона ${side === "A" ? "А" : "В"}${wordKind ? ` · под ${wordKind}` : ""}`, 12, 700, INK, "start") + art;
   const near = mirror ? "end" : "start", edge = mirror ? W - 4 : 4;
   body += label(edge, 36, female ? "корпус с резьбой" : "накидная гайка", 11, 600, INK, near) + line(mx(8 + (female ? 22 : 28)), 40, mx(8 + (female ? 22 : 28)), cy - 17, MUTED, .9, "2 2");
-  body += label(mx(8 + 124), 96, "втулка экрана", 11, 600, INK) + line(mx(8 + 124), cy + 12, mx(8 + 124), 85, MUTED, .9, "2 2");
+  // Прижимной экран: втулки нет — на этом месте зажимное кольцо с оплёткой под затянутой гайкой.
+  body += label(mx(8 + 124), 96, /прижим|зажим/i.test(str(end.shield)) ? "зажим: кольцо и гайка" : "втулка экрана", 11, 600, INK) + line(mx(8 + 124), cy + 12, mx(8 + 124), 85, MUTED, .9, "2 2");
   body += label(mx(8 + 171), cy + 4, tube || "ТУТ", 11, 700, "#fff");
   body += label(mx(8 + 262), cy + 4, str(end.cable) || "кабель", 11, 600, "#fff");
   return svg(104, body);
@@ -150,7 +151,9 @@ export function coaxAssemblyDrawing(a: Row, b: Row, lengthMm: string, tube: stri
     line(6, yd, W - 6, yd, INK, 1) + `<path d="M6,${yd} l9,-3.5 v7 z M${W - 6},${yd} l-9,-3.5 v7 z" fill="${INK}"/>` +
     `<rect x="${W / 2 - 46}" y="${yd - 10}" width="92" height="20" fill="#f6f8f8"/>` +
     label(W / 2, yd + 5, lengthMm ? `L = ${lengthMm} мм` : "L по КД", 13, 700, INK);
-  if (tube) body += label(W / 2, 108, `${tube} на обоих концах · втулки экрана обжаты`, 10, 400, MUTED);
+  const clamp = (end: Row) => /прижим|зажим/i.test(str(end.shield));
+  const shieldText = clamp(a) && clamp(b) ? "оплётка зажата кольцом" : clamp(a) || clamp(b) ? "экран: зажим и обжим" : "втулки экрана обжаты";
+  if (tube) body += label(W / 2, 108, `${tube} на обоих концах · ${shieldText}`, 10, 400, MUTED);
   return svg(114, body);
 }
 
@@ -175,6 +178,6 @@ export function coaxPfArt(group: EtkPfGroup, operations: Row[], config: Row): st
   if (group.final) return coaxAssemblyDrawing(end("A"), end("B"), assemblyLength(config, group.name), tube, str(coax.cableArt || coax.cableName) || "кабель");
   const last = operations[operations.length - 1], side: Side = str(last.side) === "B" ? "B" : "A";
   if (types.includes("coaxHousing")) return coaxMountedDrawing(side, end(side), tube);
-  if (types.every((type) => type === "coaxPin")) return coaxContactDrawing(side, end(side));
+  if (types.every((type) => type === "coaxPin" || type === "coaxPinCrimp")) return coaxContactDrawing(side, end(side));
   return null;
 }
