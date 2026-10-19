@@ -569,6 +569,43 @@ class PriceRefRow(Base):
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+# ---- supplier orders (migration 0127): «Счета и поставки» -----------------------------------------------------------
+# An ERP supplier order is the procurement lines sharing one № ЗАКАЗА (PO-NNN). Procurement keeps the lines, their
+# stage, invoice and payment; the facts below are the ones it has no place for (Roller_Buyer orders kept them): when
+# the invoice went to the accountant, when the supplier shipped and how to find the parcel, the delivery billed on
+# top, a note. Rubles with kopecks like procurement's own sums. The promised date is not stored: it is derived on
+# read from the audit of the lines' ОЖИД. ДАТА (app/workflows/purchasing_orders.py).
+
+ORDER_NOTE_MAX = 2000
+SHIPMENT_NOTE_MAX = 500
+
+
+class OrderFactRow(Base):
+    __tablename__ = "purchasing_order_facts"
+    __table_args__ = (
+        CheckConstraint("length(trim(order_number)) > 0", name="ck_purchasing_order_facts_number"),
+        CheckConstraint("delivery_cost IS NULL OR delivery_cost >= 0", name="ck_purchasing_order_facts_delivery"),
+        CheckConstraint(f"length(shipment_note) <= {SHIPMENT_NOTE_MAX}", name="ck_purchasing_order_facts_shipment_note"),
+        CheckConstraint(f"length(note) <= {ORDER_NOTE_MAX}", name="ck_purchasing_order_facts_note"),
+        CheckConstraint("version >= 1", name="ck_purchasing_order_facts_version"),
+    )
+
+    order_number: Mapped[str] = mapped_column(String(32), primary_key=True)
+    sent_to_pay_on: Mapped[date | None] = mapped_column(Date)
+    shipped_on: Mapped[date | None] = mapped_column(Date)
+    shipment_note: Mapped[str] = mapped_column(String(SHIPMENT_NOTE_MAX), nullable=False, default="")
+    delivery_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    updated_by_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
 class SqlAlchemyPurchasingUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
