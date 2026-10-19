@@ -6,7 +6,9 @@
     RG-179B/U, RG-180, RG-303, RG-316S, RG-393/U); значения слэш-листов — из справочника Times Microwave и каталога
     Harbour Industries (QPL-изготовители);
   • по даташитам изготовителя своего артикула — Huber+Suhner SUCOFORM 141, SUCOFORM 86 FEP, ENVIROFLEX_316_D (RG-316D);
-  • по карточке продавца своего артикула — RG-174 A/U (olmitec, Radiolab).
+  • по карточке продавца своего артикула — RG-174 A/U (olmitec, Radiolab);
+  • D1 / D3 по стандарту (решение главной сессии 19.10): RG-213 CU PE CU PVC D1 = 2,26 (M17/163-00001),
+    RG-214 D3 = 8,71 (M17/75-RG214).
 
 Значения и источник каждой ячейки — «Коакс кабели — дозаполнение 2 19.10.csv» (журнал для отката: до записи все эти
 ячейки пустые), сводка — «Коакс кабели — дозаполнение 2 19.10.md».
@@ -14,7 +16,9 @@
   • строка ищется по «Марке» (cable_key), не по ID;
   • столбцы листа БД.ПРОВ («Напряжение, В», «Масса, г/м») — загрузкой import_rows("prov") по «Марке» со старым
     значением ""; свои столбцы (ёмкость, радиусы) — правкой записи со старым значением "". Заполненную за это время
-    ячейку скрипт не перезапишет: отказ.
+    ячейку скрипт не перезапишет: отказ;
+  • D1–D3 — тем же путём, что форма «Коаксиальные кабели» (set_coax_diameters_in): в существующей строке таблицы
+    диаметров дописывается только пустой D, остальные D передаются как прочитаны; нет строки — отказ (новых не заводит).
 Повторный запуск идемпотентен: записанное печатается как «уже так».
 
   cd /opt/erp/app/deploy
@@ -30,7 +34,9 @@ from collections import defaultdict
 from uuid import UUID
 
 from app.database import build_engine, build_references_uow_factory
-from app.modules.references.application import EditRecordCommand, FieldEdit, custom_columns, edit_record
+from app.modules.references.application import (EditRecordCommand, FieldEdit, SetCoaxDiametersCommand, custom_columns,
+                                                 edit_record, set_coax_diameters_in)
+from app.modules.references.cables import diameter_index
 from app.modules.references.domain import (BASE_COLUMNS, ReferenceValidationError, StaleRecordError, TechOperationTab,
                                            cable_key)
 from app.modules.references.importers import import_rows
@@ -40,7 +46,9 @@ from app.shared.identity import Actor
 
 sys.stdout.reconfigure(encoding="utf-8")
 ACTOR = Actor(id=UUID(int=0), name="Исправление данных 19.10.2026", department="System")
-# [марка, поле, было, стало]
+REASON = "дозаполнение коаксиальных кабелей, второй проход 19.10.2026 (по стандарту MIL-DTL-17)"
+DIAMETERS = ("D1", "D2", "D3")
+# [марка, поле (D1/D2/D3 — таблица диаметров), было, стало]
 CELLS = json.loads(r'''[
  [
   "RG-58 C/U TC PE TC PVC",
@@ -175,6 +183,18 @@ CELLS = json.loads(r'''[
   "50,8"
  ],
  [
+  "RG-213 CU PE CU PVC",
+  "D1",
+  "",
+  "2,26"
+ ],
+ [
+  "RG-214",
+  "D3",
+  "",
+  "8,71"
+ ],
+ [
   "SUCOFORM 141",
   "Погонная ёмкость, пФ/м",
   "",
@@ -283,7 +303,8 @@ if missing:
     print("СТОП — нет строк в БД.ПРОВ (ничего не записано):", ", ".join(missing))
     raise SystemExit(1)
 base_columns = set(BASE_COLUMNS[TechOperationTab.WIRE])
-no_column = sorted({field for _, field, *_ in CELLS if field not in base_columns and field not in own_columns})
+no_column = sorted({field for _, field, *_ in CELLS
+                    if field not in DIAMETERS and field not in base_columns and field not in own_columns})
 if no_column:
     print("СТОП — нет своих столбцов БД.ПРОВ (ничего не записано):", ", ".join(no_column))
     raise SystemExit(1)
@@ -291,7 +312,8 @@ if no_column:
 print("== БД.ПРОВ")
 by_mark = defaultdict(list)
 for mark, field, old, new in CELLS:
-    by_mark[mark].append((field, old, new))
+    if field not in DIAMETERS:
+        by_mark[mark].append((field, old, new))
 base_rows = []
 for mark, cells in by_mark.items():
     record = records[cable_key(mark)]
@@ -339,4 +361,41 @@ if base_rows:
     total["отказ"] += refused
     if written + refused != cells:
         print(f"   ВНИМАНИЕ: ячеек {cells}, записано {written}, отказ {refused} — не сходится")
+
+print("== СПР.КАБ D1–D3")
+by_dia = defaultdict(list)
+for mark, field, old, new in CELLS:
+    if field in DIAMETERS:
+        by_dia[mark].append((field, old, new))
+for mark, cells in by_dia.items():
+    with factory() as uow:
+        current = diameter_index(uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=100_000)).get(cable_key(mark))
+        if current is None:
+            total["отказ"] += len(cells)
+            print(f"   отказ «{mark}»: нет строки в таблице диаметров")
+            continue
+        have = {n: str(current.fields.get(n, "") or "").strip() for n in DIAMETERS}
+        merged, todo = dict(have), []
+        for n, old, new in cells:
+            if have[n] == new:
+                total["уже так"] += 1
+            elif have[n] == old:
+                merged[n] = new
+                todo.append(f"{n} «{old}» → «{new}»")
+            else:
+                total["отказ"] += 1
+                print(f"   отказ «{mark}» {n}: в таблице «{have[n]}», ждали «{old}»")
+        if not todo:
+            continue
+        try:
+            set_coax_diameters_in(SetCoaxDiametersCommand(cable=mark, dia_id=current.id, old=have, value=merged,
+                                                          actor=ACTOR, now=now), uow, {"reason": REASON})
+        except (StaleRecordError, ReferenceValidationError) as error:
+            total["отказ"] += len(todo)
+            print(f"   отказ «{mark}»: {error}")
+            continue
+        if not dry:
+            uow.commit()
+        total["к записи"] += len(todo)
+        print(f"   {'к записи' if dry else 'записано'}: «{mark}» " + "; ".join(todo))
 print("ИТОГО", total, "(проверка, ничего не записано)" if dry else "(записано)")
