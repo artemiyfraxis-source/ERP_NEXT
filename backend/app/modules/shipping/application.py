@@ -22,7 +22,7 @@ from app.shared.notifications import (
 )
 
 from .domain import (
-    DeliveryTerms, FinishedGood, GoodMove, MoveContext, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
     plan_project_queue,
 )
@@ -46,6 +46,8 @@ class FinishedGoodsRepository(Protocol):
     def list(self, limit: int = 500) -> Sequence[FinishedGood]: ...
     def add(self, good: FinishedGood, move: MoveContext | None = None) -> tuple[GoodMove, ...]: ...
     def reserve_grn(self, year: int) -> str: ...
+    def record_act(self, good: FinishedGood, moves: tuple[GoodMove, ...]) -> AcceptanceAct | None: ...
+    def acts(self, good_ids: Sequence[UUID]) -> dict[UUID, tuple[AcceptanceAct, ...]]: ...
     def by_project(self, project: str) -> Sequence[FinishedGood]: ...
     def for_project(self, project: str) -> Sequence[FinishedGood]: ...
     def in_shipments(self, good_ids: Sequence[UUID]) -> set[UUID]: ...
@@ -407,11 +409,11 @@ def accept_into_stock(
             f"{good.project} {good.item_index}: {limit_basis} {_plain(limit)} {good.unit}, уже принято "
             f"{_plain(good.accepted)} — принять можно ещё {_plain(left)}"
         )
-    grn = good.grn or uow.goods.reserve_grn(now.year)
-    updated = good.accept(amount, received_at, grn, location)
-    uow.goods.add(updated, _context(actor, now, reason=reason, id_seed=id_seed))
+    updated = good.accept(amount, received_at, good.grn or uow.goods.reserve_grn(now.year), location)
+    # Акт приёмки со своим ГРН (владелец 19.10.2026): первый — ГРН КБ, каждая следующая часть — новый номер.
+    act = uow.goods.record_act(updated, uow.goods.add(updated, _context(actor, now, reason=reason, id_seed=id_seed)))
     _audit(good.id, "shipping.good_accepted", actor, now, {
-        "quantity": str(amount), "grn": grn, **({"reason": reason} if reason else {}),
+        "quantity": str(amount), "grn": act.grn, **({"reason": reason} if reason else {}),
         **({"location": updated.location} if updated.location != good.location else {}),
     }, uow)
     return updated
