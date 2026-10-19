@@ -1039,8 +1039,9 @@ def _coax_strip_sizes(config: Mapping[str, Any], side_name: str) -> dict[str, An
     side = coax.get("sideB" if side_name == "B" else "sideA")
     side = side if isinstance(side, Mapping) else {}
     kind, gender = coax_connector_kind(side)
+    depth = str(side.get("contactDepth") or "").strip()
     return {"cable": coax.get("cableArt") or "", "connector": side.get("article") or "",
-            **({"connectorType": kind, "gender": gender} if kind else {}), **{
+            **({"connectorType": kind, "gender": gender} if kind else {}), **({"contactDepth": depth} if depth else {}), **{
         key: side.get(key) or "" for key in ("d1", "d2", "d3", "l1", "l2", "l3", "lPlus", "lMinus")}}
 
 
@@ -1069,11 +1070,18 @@ def with_coax_connectors(op: Mapping[str, Any], config: Mapping[str, Any]) -> Ma
     patched = dict(fields)
     for key, side in (("coax", "A"), ("coaxB", "B"), ("coaxEnd", "B" if op.get("side") == "B" else "A")):
         end = fields.get(key)
-        if not isinstance(end, Mapping) or end.get("connectorType"):
+        if not isinstance(end, Mapping):
             continue
-        kind, gender = coax_connector_kind(_coax(config).get("sideB" if side == "B" else "sideA") or {})
-        if kind:
-            patched[key] = {**end, "connectorType": kind, "gender": gender}
+        source = _coax(config).get("sideB" if side == "B" else "sideA") or {}
+        kind, gender = coax_connector_kind(source)
+        add: dict[str, Any] = {}
+        if kind and not end.get("connectorType"):
+            add.update(connectorType=kind, gender=gender)
+        depth = str(source.get("contactDepth") or "").strip()
+        if depth and not end.get("contactDepth"):
+            add["contactDepth"] = depth  # заглубление контакта — на эскиз «Монтаж корпуса» и у выданного ЭТК
+        if add:
+            patched[key] = {**end, **add}
     parts = fields.get("coaxParts")
     if isinstance(parts, Mapping) and "ends" not in parts and _coax(config).get("sideA"):
         # ТУТ / втулки экрана надеваются на оба конца — эскиз рисует каждый разделанный конец со своим разъёмом.
@@ -1243,6 +1251,8 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
     fields.update(coax_sketch_fields(op, config))
     if operation_type == "coaxShield":
         fields["crimpHex"] = coax_crimp_hex(config)
+    if operation_type == "coaxHousing" and (depth := str(_coax_end(op, config).get("contactDepth") or "").strip()):
+        fields["contactDepth"] = depth  # заглубление контакта от торца корпуса (БД.КОАКС) — в шаг «Контроль» карты
     if operation_type == "coaxHousing" and "цанг" in str(_coax_end(op, config).get("pinType") or "").casefold():
         # Цанговый центральный контакт (владелец 16.10): пайки пина не было — карта корпуса не говорит «припаянный».
         fields["collet"] = True
@@ -1467,6 +1477,7 @@ def _resolve_card(
         return text
 
     steps = []
+    depth_checked = False
     for step in card.steps:
         text = substitute(step.text)
         tolerance = substitute(step.tolerance)
@@ -1486,6 +1497,10 @@ def _resolve_card(
         if isinstance(fields.get("crimpHex"), list) and step.kind == "Контроль" and "hex" in text.casefold():
             # Обжим втулки экрана: размер HEX по разъёму и кабелю из БД.КОАКС, нет — явно «не задан».
             text = f"{text.rstrip()} Размер: {_hex_phrase(fields['crimpHex'])}."
+        if fields.get("contactDepth") and step.kind == "Контроль" and not depth_checked:
+            # Монтаж корпуса: заглубление контакта от торца корпуса из БД.КОАКС (владелец 19.10) — в первый шаг контроля.
+            text = f"{text.rstrip()} Проверить заглубление контакта от торца корпуса: {fields['contactDepth']} мм."
+            depth_checked = True
         steps.append({"number": step.number, "kind": step.kind, "text": text, "tolerance": "" if tolerance in {"-", "—"} else tolerance})
     tooling = []
     applicator_set = False

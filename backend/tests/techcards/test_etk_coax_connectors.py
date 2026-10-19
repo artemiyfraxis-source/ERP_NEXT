@@ -104,3 +104,39 @@ def test_every_result_is_one_short_sentence_of_what_the_fitter_holds():
         "Кабельная сборка SMA-Male - SMA-Female RG316 285 мм",
     ]
     assert not any(name.count(";") > 1 for name in names)
+
+
+def _housings(depth_a: str = "", depth_b: str = "") -> list[dict]:
+    config = _config()
+    config["ops"] = [{"type": "coaxHousing", "side": side, "units": 1, "templateId": CARDS["INS_housing_COAX"].source_id} for side in ("A", "B")]
+    for side, depth in (("sideA", depth_a), ("sideB", depth_b)):
+        if depth:
+            config["coax"][side]["contactDepth"] = depth
+    return _built(config)
+
+
+def test_housing_gets_the_contact_depth_of_its_connector_on_the_sketch_and_in_the_control_step():
+    """Заглубление контакта от торца корпуса (БД.КОАКС, владелец 19.10): SMA-C174P вилка, SMA-C316F розетка."""
+    male, female = _housings("0,38…1,14", "1,88…2,41")
+    assert male["fields"]["coaxEnd"]["contactDepth"] == "0,38…1,14" and male["fields"]["contactDepth"] == "0,38…1,14"
+    assert female["fields"]["coaxEnd"]["contactDepth"] == "1,88…2,41"
+    for operation, depth in ((male, "0,38…1,14"), (female, "1,88…2,41")):
+        control = [step["text"] for step in operation["card"]["steps"] if step["kind"] == "Контроль"]
+        assert len(control) == 1 and control[0].endswith(f"Проверить заглубление контакта от торца корпуса: {depth} мм.")
+        assert "дюйм" not in control[0] and "″" not in control[0]
+
+
+def test_housing_without_a_depth_draws_and_says_nothing():
+    """Угловой / не найденный в документах разъём — значения нет: ни ключа на эскизе, ни строки в контроле."""
+    for operation in _housings():
+        assert "contactDepth" not in operation["fields"]["coaxEnd"] and "contactDepth" not in operation["fields"]
+        assert all("заглублен" not in step["text"] for step in operation["card"]["steps"])
+
+
+def test_a_read_gives_an_issued_housing_the_depth_from_its_config():
+    config = _config()
+    config["coax"]["sideB"]["contactDepth"] = "1,88…2,41"
+    operation = _housings()[1]
+    seen = with_coax_connectors(operation, config)
+    assert seen["fields"]["coaxEnd"]["contactDepth"] == "1,88…2,41"
+    assert "contactDepth" not in operation["fields"]["coaxEnd"]
