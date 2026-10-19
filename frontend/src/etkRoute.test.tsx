@@ -157,6 +157,11 @@ afterEach(() => vi.restoreAllMocks());
 
 const diagramOf = () => screen.getByRole("region", { name: "Схема полуфабрикатов" });
 const boxOf = (name: RegExp) => within(diagramOf()).getByRole("region", { name });
+/** Операция по номеру в схеме: первый щелчок выбирает её ПФ, второй открывает (владелец 19.10). */
+const openOp = (name: RegExp) => {
+  fireEvent.click(within(diagramOf()).getByRole("button", { name }));
+  fireEvent.click(within(diagramOf()).getByRole("button", { name }));
+};
 
 describe("ETK scheme of ПФ — the navigation", () => {
   it("shows a linear route as the same boxes in a chain; an ETK without a scheme keeps the flat list", async () => {
@@ -231,7 +236,7 @@ describe("ETK scheme of ПФ — the navigation", () => {
     ] };
     render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
     await screen.findByRole("region", { name: "Схема полуфабрикатов" });
-    fireEvent.click(within(diagramOf()).getByRole("button", { name: /^05/ }));
+    openOp(/^05/);
     const table = await screen.findByRole("table", { name: "Что взять" });
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(2);
@@ -246,7 +251,7 @@ describe("ETK scheme of ПФ — the navigation", () => {
     ] };
     render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
     await screen.findByRole("region", { name: "Схема полуфабрикатов" });
-    fireEvent.click(within(diagramOf()).getByRole("button", { name: /^05/ }));
+    openOp(/^05/);
     const given = within(await screen.findByRole("table", { name: "Что взять" })).getAllByRole("row").slice(1);
     expect(given.map((row) => row.querySelector(".etk-pick-from")?.textContent)).toEqual(["ПФ 1.2", "операция 09"]);
   });
@@ -260,22 +265,37 @@ describe("ETK scheme of ПФ — the navigation", () => {
       result: [{ name: "Трубки нарезаны: ТТК 8/2мм, черная — 3 шт по 15 мм; ТТК 12/4мм — 2 шт по 25 мм", norm: "3", unit: "шт." }] };
     render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
     await screen.findByRole("region", { name: "Схема полуфабрикатов" });
-    fireEvent.click(within(diagramOf()).getByRole("button", { name: /^02/ }));
+    openOp(/^02/);
     const result = await screen.findByRole("region", { name: "Результат" });
     expect(result.querySelector(".etk-result-art svg")?.innerHTML).toContain("ТТК 8/2мм ×3 · 15 мм");
     expect(within(diagramOf()).getByRole("img", { name: "Эскиз ПФ 1.2" }).innerHTML).toContain("ТТК 12/4мм ×2 · 25 мм");
   });
 
-  it("opens the block's first operation from its title, any operation from its number, and marks the block of the open operation", async () => {
-    await renderSheet(branched);
+  it("selects a block on the first click (its links stay lit), opens an operation on the next; the open block's operations open at once; a click on the empty field drops the choice", async () => {
+    const { container } = await renderSheet(branched);
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 1");
     expect(within(diagramOf()).getAllByRole("region")[0]).toHaveAttribute("aria-current", "step");
+    // Первый щелчок — где угодно по карточке: выбор, связи горят и без наведения; операция не меняется.
+    fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-name")!);
+    expect(boxOf(/Опрессовка/)).toHaveClass("picked");
+    expect(container.querySelectorAll(".etk-dag-line.on")).toHaveLength(2);
+    expect(boxOf(/Резка ТУТ/)).toHaveClass("dim");
+    fireEvent.mouseEnter(boxOf(/Резка ТУТ/));
+    expect(boxOf(/Опрессовка/)).toHaveClass("picked");
+    expect(container.querySelectorAll(".etk-dag-line.on")).toHaveLength(2);
+    expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 1");
+    // Щелчок по пустому месту схемы снимает выбор; снова выбор — и щелчок по заголовку открывает первую операцию.
+    fireEvent.click(container.querySelector(".etk-dag")!);
+    expect(container.querySelector(".etk-dag-box.picked")).toBeNull();
+    fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-title")!);
+    expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 1");
     fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-title")!);
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 3");
     expect(boxOf(/Опрессовка/)).toHaveAttribute("aria-current", "step");
     expect(boxOf(/Резка провода/)).not.toHaveAttribute("aria-current");
     fireEvent.click(within(boxOf(/Опрессовка/)).getByRole("button", { name: /^04/ }));
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 4");
+    fireEvent.click(boxOf(/Изделие/).querySelector(".etk-dag-title")!);
     fireEvent.click(boxOf(/Изделие/).querySelector(".etk-dag-title")!);
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 5");
   });
@@ -312,6 +332,7 @@ describe("ETK scheme of ПФ — the navigation", () => {
     expect(ops(/Опрессовка/)).toEqual(["03Надеть ТТК X4 «A6» — ТТК 12/4", "04Усадка маркировки X4 «A6» — «A6»"]);
     // Пустая строка генератора — название карты.
     expect(ops(/Изделие/)).toEqual(["05Операция 5"]);
+    fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-title")!);
     fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-title")!);
     expect(within(boxOf(/Опрессовка/)).getByRole("button", { name: /^03/ }).querySelector("small")).toHaveTextContent("CUT_WIRE_auto");
     expect(within(boxOf(/Резка провода/)).getByRole("button", { name: /^01/ }).querySelector("small")).toBeNull();
