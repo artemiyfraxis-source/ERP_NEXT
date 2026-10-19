@@ -2455,7 +2455,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mb-group-assign label { display: flex; align-items: center; gap: 6px; }
 .mb-group-assign select { width: auto; padding: 4px 8px; font-size: 13px; }
 .mb-group-assign input[type="date"] { width: auto; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
-.mb-group td:nth-child(3), .mb-group td:nth-child(4), .mb-group th:nth-child(3), .mb-group th:nth-child(4) { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mb-group .mb-ops th:first-child, .mb-group .mb-ops td:first-child { width: 250px; text-align: left; color: inherit; }
+.mb-group .mb-ops th:nth-child(2) { width: auto; }
+.mb-group .mb-ops th:nth-child(3), .mb-group .mb-ops td:nth-child(3), .mb-group .mb-ops th:nth-child(4), .mb-group .mb-ops td:nth-child(4) { width: 80px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mb-group td .mb-new { margin-left: 6px; }
 .mb-week { width: 100%; border-collapse: separate; border-spacing: 2px; table-layout: fixed; font-size: 12px; }
 .mb-week thead th { font-weight: 500; color: var(--muted-foreground); text-align: center; padding: 2px 0; line-height: 1.2; }
