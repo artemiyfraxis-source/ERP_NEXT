@@ -114,7 +114,7 @@ N-female RG-405	N-female	RG-405	Kroks		0,51	1,68	2,2						пайка	пайка
 N-111/10D	N-male	10D-FB			3,5	10	10,8						пайка	обжим
 N-111C/8D	N-male	8D-FB			2,56	7,35	8,25						пайка	обжим
 N-112/8D	N-male	8D-FB	Kroks		2,56	7,35	8,25						пайка	обжим
-N-122/8D	N-male R/A	8D-FB	PIGTAILS		2,56	7,35	8,25
+N-122/8D	N-male R/A	8D-FB	PIGTAILS		2,56	7,35	8,25							прижим
 N-male RG-405	N-male	RG-405	Kroks		0,51	1,68	2,2						пайка	пайка
 N-male RG-6	N-male	RG-6	Kroks		1,02	4,57	5,38
 QMA-J240W	QMA-female	LMR-240	АМЭЛ		1,42	3,81	4,52
@@ -143,7 +143,7 @@ SMA-FEMALE S-235-085	SMA-female	RG-405			0,51	1,68	2,2						пайка	пайк�
 SMA-Female фланцевый RG316	SMA-female flange	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим	1,88…2,41	radiolab.ru, SMA, розетка: H+I+J = (1,88+0,00+0,00)…(1,98+0,25+0,18) = 1,88…2,41 мм, торец → REF (H) → изолятор (I) → контакт (J); стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
 SMA-JW3	SMA-male R/A	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим
 SMA-Male 141	SMA-male	RG-402			0,92	2,98	3,58						пайка	пайка	0,38…1,14	radiolab.ru, SMA, вилка: E = 0,38…1,14 мм от торца корпуса до контакта; стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
-SMA-Male flanged	SMA-female flange	RG-405	Kroks		0,51	1,68	2,2						пайка	пайка
+SMA-Male flanged	SMA-male flange	RG-405	Kroks		0,51	1,68	2,2						пайка	пайка
 SMA-Male R/A RG178	SMA-male R/A	RG-178	Kroks		0,25	0,87	1,3						обжим	обжим
 SMA-Male RG402 18GHz	SMA-female	RG-402	АМЭЛ		0,92	2,98	3,58
 SMA-Male RG405 18GHz	SMA-male	RG-405	АМЭЛ		0,51	1,68	2,2						пайка	пайка	0,38…1,14	radiolab.ru, SMA, вилка: E = 0,38…1,14 мм от торца корпуса до контакта; стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
@@ -172,7 +172,7 @@ UHF-Male U-112B	UHF-male	RG-213			2,39	7,25	7,9						пайка	обжим
 RP-SMA-Female R/A RG1.37	RP-SMA-female R/A	RF 1.37			0,3	0,9	1,13
 SMA-C174J	RP-SMA-male flange	RG-174	RUICHI		0,48	1,52	1,9						пайка	обжим
 U.FL	U.FL-female R/A	RG-178			0,25	0,87	1,3						обжим	обжим
-N-112B	N-male	RG-213			2,39	7,25	7,9						пайка
+N-112B	N-male	RG-213			2,39	7,25	7,9						пайка	прижим
 SMA-Female R/A RG316	SMA-female R/A	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим
 SMA-Female R/A RG58	SMA-female R/A	RG58	Kroks		1	2,95	3,5						обжим	обжим
 SMA-ВКП-1,5.21-2-019-2.М	SMA-male	РК50-1,5-21			0,54	1,5									0,38…1,14	radiolab.ru, SMA, вилка: E = 0,38…1,14 мм от торца корпуса до контакта; стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
