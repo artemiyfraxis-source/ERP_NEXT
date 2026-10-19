@@ -711,6 +711,7 @@ def auto_build_project_etk(
         card_id=card_id,
         expected_version=payload.version,
         config=config,
+        inputs=payload.config,
         actor=principal.actor,
         now=now,
         technology_source=technology_source,

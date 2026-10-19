@@ -86,12 +86,17 @@ class ChangeProjectTechcardCommand:
 @dataclass(frozen=True)
 class RebuildProjectTechcardCommand(ChangeProjectTechcardCommand):
     document: dict[str, Any]
+    # Конфиг генератора как пришёл (до норм справочников); None — входы карты остаются прежними.
+    inputs: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
 class AutoBuildProjectTechcardCommand(ChangeProjectTechcardCommand):
     config: dict[str, Any]
     technology_source: dict[str, Any] | None = None
+    # The raw generator config as received, before `with_technology` fills in the reference norms — stored on the card
+    # so it can be derived again; None — the card keeps the inputs it has.
+    inputs: dict[str, Any] | None = None
     # «Поправить вручную»: the generator config the manual one was converted from — only to rebuild the automatic
     # scheme the correction is logged against (scheme_corrections.py), never used as a scheme.
     generator_origin: dict[str, Any] | None = None
@@ -171,14 +176,52 @@ def _current(command: ChangeProjectTechcardCommand, uow: UnitOfWork) -> ProjectT
     return card
 
 
-def _revision(card: ProjectTechcard, reason: str, actor: Actor, now: datetime) -> TechcardRevision:
+def _revision(card: ProjectTechcard, reason: str, actor: Actor, now: datetime, source: str = "manual") -> TechcardRevision:
     if card.document is None or card.revision <= 0:
         raise TechcardValidationError("Нельзя записать пустую ревизию ЭТК")
     return TechcardRevision(
         id=uuid4(), project_card_id=card.id, revision=card.revision,
         reason=reason, actor_name=actor.name, occurred_at=now,
-        document=card.document,
+        document=card.document, source=source,
     )
+
+
+def _with_inputs(card: ProjectTechcard, inputs: dict[str, Any] | None) -> ProjectTechcard:
+    return replace(card, inputs=deepcopy(inputs)) if isinstance(inputs, dict) else card
+
+
+def _with_operation_override(card: ProjectTechcard, key: str, value: dict[str, Any] | None) -> ProjectTechcard:
+    """The technologist's hand edit of one operation kept beside the document (`overrides.operations[key]`); None
+    takes it out."""
+    overrides = dict(card.overrides or {})
+    operations = {name: item for name, item in (overrides.get("operations") or {}).items() if name != key}
+    if value is not None:
+        operations[key] = deepcopy(value)
+    if operations:
+        overrides["operations"] = operations
+    else:
+        overrides.pop("operations", None)
+    return replace(card, overrides=overrides or None)
+
+
+def _with_route_override(card: ProjectTechcard, route: dict[str, Any]) -> ProjectTechcard:
+    return replace(card, overrides={**(card.overrides or {}), "route": deepcopy(route)})
+
+
+def _route_override(document: dict[str, Any]) -> dict[str, Any]:
+    """The stored manual ПФ route in the override form: blocks name their operations by key (positions do not survive
+    a rebuild), the edges stay as they are."""
+    route = document.get("route") or {}
+    keys = {str(item.get("position")): operation_key(item) for item in document.get("operations") or []}
+    return {
+        "source": "manual",
+        "blocks": [{
+            "key": block.get("key"), "name": block.get("name") or "", "final": bool(block.get("final")),
+            **({"kit": True} if block.get("kit") else {}),
+            "ops": [keys.get(str(position), str(position)) for position in block.get("ops") or []],
+        } for block in route.get("blocks") or []],
+        "edges": deepcopy(route.get("edges") or []),
+    }
 
 
 def create_project_techcard(command: CreateProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
@@ -243,7 +286,7 @@ def _keep_hand_route(previous: dict[str, Any] | None, document: dict[str, Any]) 
 def rebuild_project_techcard(command: RebuildProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
     with uow:
         current = _current(command, uow)
-        updated = current.rebuild(_keep_hand_route(current.document, command.document), command.now)
+        updated = _with_inputs(current.rebuild(_keep_hand_route(current.document, command.document), command.now), command.inputs)
         uow.techcards.save(updated)
         if updated.revision > current.revision:
             uow.techcards.add_revision(_revision(updated, "Пересборка", command.actor, command.now))
@@ -272,7 +315,7 @@ def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: U
             ), library)
         except ValueError as error:
             raise TechcardValidationError(str(error)) from error
-        updated = current.rebuild(_keep_hand_route(current.document, document), command.now)
+        updated = _with_inputs(current.rebuild(_keep_hand_route(current.document, document), command.now), command.inputs)
         uow.techcards.save(updated)
         if updated.revision > current.revision:
             uow.techcards.add_revision(_revision(updated, command.reason, command.actor, command.now))
@@ -426,6 +469,14 @@ def edit_project_operation(command: EditTechcardOperationCommand, uow: UnitOfWor
         current = _current(command, uow)
         operation = _edited_operation(command.operation, command.actor, command.now, stamp=not command.to_template)
         updated = current.edit_operation(command.operation_key, operation, command.now, live=command.to_template)
+        stored = next((item for item in (current.document or {}).get("operations") or []
+                       if operation_key(item) == command.operation_key), {})
+        # The edit rides along with the inputs; an edit that went into the template too follows the template again.
+        updated = _with_operation_override(updated, command.operation_key, None if command.to_template else {
+            "operation": operation,
+            "base_template_version": (((current.document or {}).get("source") or {}).get("templates") or {}).get(
+                str(stored.get("template_id") or "").strip(), ""),
+        })
         reason = _edit_reason(operation)
         if command.to_template:
             stamped = _card_to_template(current, command, operation["card"], uow)
@@ -462,6 +513,7 @@ def save_project_route(command: SaveTechcardRouteCommand, uow: UnitOfWork) -> Pr
             current, document=document, revision=current.revision + 1 if issued else current.revision,
             version=current.version + 1, updated_at=command.now,
         )
+        updated = _with_route_override(updated, _route_override(document))
         uow.techcards.save(updated)
         if issued:
             uow.techcards.add_revision(_revision(updated, command.reason, command.actor, command.now))
