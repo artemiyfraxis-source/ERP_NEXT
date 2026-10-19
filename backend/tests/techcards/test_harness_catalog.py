@@ -122,7 +122,7 @@ def test_coax_cables_from_spr_kab_with_d_layers(catalog, mirror_tables):
 def test_coax_terminations_keep_strip_layers_and_split_shared_articles(catalog, mirror_tables):
     records = _snapshot(catalog, COAX_TERMINATIONS)["records"]
     assert len(records) == len([row for row in mirror_tables["coax"] if row.get("coaxArticle")])
-    mcx = _record(catalog, COAX_TERMINATIONS, "MCX-male RG-174")["payload"]
+    mcx = _record(catalog, COAX_TERMINATIONS, "11-111L")["payload"]
     assert mcx["layers"] == [
         {"index": 1, "diameterMm": 0.48, "stripLengthMm": 2.0},
         {"index": 2, "diameterMm": 1.52, "stripLengthMm": 4.0},
@@ -183,7 +183,7 @@ def test_reference_book_holds_what_the_pickers_offer(catalog, mirror_tables):
     """A drawing may reference what the editor's pickers offer: the save checks new references against this."""
     book = reference_book(mirror_tables)
     assert {"UL1061 28AWG", "ПВВС 4×0,35", "RF 1.13"} <= book.wires
-    assert "MCX-male RG-174" in book.strips
+    assert "11-111L" in book.strips
     terminal = _snapshot(catalog, TERMINALS)["records"][0]
     assert terminal["sourceKey"] in book.terminals
     assert {terminal["payload"].get("reelArticle"), terminal["payload"].get("bagArticle")} - {None} <= book.terminals

@@ -6,7 +6,11 @@
 One row per connector and cable (the table's key is the article + «Провод»; a connector the site gives for RG-174 and
 RG-316 is two rows, as БД.КОАКС keeps SMA-C174P). How a site entry becomes rows:
 
-* article — the site's; an entry without one is named by what tells it apart: «<тип> [угловой] [монтаж, кроме
+* article — the site's, else the part number the product name starts with («Разъём S-115-141 (SMA-male, …)» →
+  «S-115-141»; owner 19.10.2026: a made-up «SMA-Male 141» is not an article); the site's own number («Артикул: 3449»)
+  is never the article — a new row gets it in «Артикул поставщика» as «gsm-repiteri.ru: 3449» (a pair the base
+  has keeps its own cell: it may list other sellers; re-sending this file over a filled base would overwrite them).
+  An entry with neither is named by what tells it apart: «<тип> [угловой] [монтаж, кроме
   обжимного] [с иглой] [на корпус] для <кабели>» — «FAKRA-female (тип C) для RG-174/RG-316» (owner 14.10.2026: «а
   зачем мне номера?»); the site number stays in «Примечание» and names it only when two entries would share a name;
   two entries with one article and cable: the angled one becomes «<артикул> R/A» (БД.КОАКС names angled connectors
@@ -49,6 +53,11 @@ GSM_VERSION = 1
 GENDER = {"male": "штекер", "female": "гнездо"}
 POLARITY = {"normal": "обычная", "RP": "обратная (RP)"}
 _SITE_NUMBER = re.compile(r"номер на сайте:\s*(\d+)")
+# «Разъём S-115-141 (SMA-male, …)»: the maker's part number leads the product name — letters/digits with a hyphen and a digit
+# («S-211L», «N-235-141», «11-121L», «S1-111L»); «CRC9», «TS9», «Fakra тип Z» are model names, not part numbers.
+_TITLE_PART = re.compile(r"^\s*Разъ[её]м\s+((?=[A-Z0-9-]*\d)[A-Z0-9]+(?:-[A-Z0-9]+)+(?: NGT)?)\s*\(")
+SUPPLIER = "gsm-repiteri.ru"
+SUPPLIER_CODE_COLUMN = "Артикул поставщика"
 _SHIELD_CRIMP = re.compile(r"^обжим")
 _SHIELD_SOLDER = re.compile(r"(^|:\s*)пайка$")
 _SHIELD_CLAMP = re.compile(r"^(прижим|зажим)")
@@ -100,8 +109,20 @@ def site_number(entry: Mapping[str, Any]) -> str:
     return match.group(1) if match else ""
 
 
+def title_part(entry: Mapping[str, Any]) -> str:
+    """The part number the product name starts with («Разъём S-115-141 (SMA-male, …)» → «S-115-141»), or empty."""
+    match = _TITLE_PART.match(_text(entry.get("full_name")))
+    return match.group(1) if match else ""
+
+
+def supplier_code(entry: Mapping[str, Any]) -> str:
+    """The site's own number («Артикул: 3449») as the base writes it in «Артикул поставщика»: «gsm-repiteri.ru: 3449»."""
+    number = site_number(entry)
+    return f"{SUPPLIER}: {number}" if number else ""
+
+
 def _article(entry: Mapping[str, Any]) -> str:
-    article = _text(entry.get("article"))
+    article = _text(entry.get("article")) or title_part(entry)
     if article:
         return article
     kind = _text(entry.get("type_name")) or _text(entry.get("series"))
@@ -176,7 +197,7 @@ def gsm_import_rows(document: Mapping[str, Any], existing: Iterable[tuple[str, s
     merged: list[str] = []
     for entry in entries:
         name = _article(entry)
-        if not _text(entry.get("article")):
+        if not _text(entry.get("article")) and not title_part(entry):
             if page_of.setdefault(name, _text(entry.get("url"))) != _text(entry.get("url")):
                 name = _numbered(entry)
         cables = [_text(cable) for cable in entry.get("cable") or [] if _text(cable)]
@@ -199,6 +220,7 @@ def gsm_import_rows(document: Mapping[str, Any], existing: Iterable[tuple[str, s
                     "coaxMfr": _text(entry.get("manufacturer")),
                     "Тип пина": pin_type(entry.get("pin")),
                     "Тип экрана": shield_type(entry.get("shield")),
+                    SUPPLIER_CODE_COLUMN: supplier_code(entry),  # a pair the base has keeps its own cell (it may list other sellers)
                 })
             fields.update(_card(entry, checked_on, source))
             rows[key] = {"fields": {column: value for column, value in fields.items() if value}}

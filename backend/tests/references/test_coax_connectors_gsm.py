@@ -14,7 +14,7 @@ from app.main import app
 from app.modules.references.application import mirror_keys, TechRecordInput
 from app.modules.references.coax_connectors import (
     EXPORT_FILE, GSM_FILE, GsmFileError, build_export, export_body, gsm_import_rows, mirror_pairs, pair_key,
-    pin_type, shield_type,
+    pin_type, shield_type, title_part,
 )
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.references.importers import COAX_CARD_COLUMNS
@@ -94,6 +94,37 @@ def test_an_entry_without_article_is_named_by_what_tells_it_apart_not_by_the_sit
     assert [row["fields"]["coaxArticle"] for row in named.rows] == [
         "F-male резьбовой для RG-11", "U.FL-female угловой для RG-178", "FAKRA-female (тип Z) с иглой для RG-174",
         "SMA-female на корпус для RG-178"]
+
+
+def test_an_entry_without_article_takes_the_part_number_from_the_product_name_not_a_made_up_name():
+    """Владелец 19.10: «SMA-Male 141» вместо S-115-141 — артикул берётся из названия товара, не сочиняется."""
+    export = gsm_import_rows(_site(
+        _entry(full_name="Разъём S-115-141 (SMA-male, напаиваемый, на кабель RG-402)", cable=["RG-402"],
+               note="номер на сайте: 3449", url="https://gsm-repiteri.ru/a"),
+        _entry(full_name="Разъём 11-121L (MCX-male, обжимной, угловой, на кабель RG-174)", cable=["RG-174"],
+               note="номер на сайте: 3832", url="https://gsm-repiteri.ru/b"),
+        _entry(full_name="Разъём S-115-141 NGT (SMA-male, напаиваемый, никелированный)", cable=["RG-402"],
+               note="номер на сайте: 4676", url="https://gsm-repiteri.ru/c"),
+        _entry(full_name="Разъём CRC9 (CRC9-male, обжимной)", type_name="CRC9-male", cable=["RG-174"],
+               url="https://gsm-repiteri.ru/d"),
+        _entry(full_name="Разъём Fakra тип Z (Water Blue / 5021) female", type_name="FAKRA-female (тип Z)",
+               cable=["RG-174"], url="https://gsm-repiteri.ru/e"),
+    ))
+    assert [row["fields"]["coaxArticle"] for row in export.rows] == [
+        "S-115-141", "11-121L", "S-115-141 NGT", "CRC9-male для RG-174", "FAKRA-female (тип Z) для RG-174"]
+    assert [title_part(_entry(full_name=name)) for name in (
+        "Разъём S1-111L (SMB-male)", "Разъём N-235-141 (N-female)", "Разъём TS9 (TS9-male)", "Разъём SMA female на кабели RG-178")
+    ] == ["S1-111L", "N-235-141", "", ""]
+
+
+def test_a_new_row_gets_the_site_number_as_the_supplier_code_and_a_known_pair_keeps_its_own_cell():
+    entry = _entry(article="S-115-141", cable=["RG-402"], note="номер на сайте: 3449")
+    [new] = gsm_import_rows(_site(entry)).rows
+    assert new["fields"]["Артикул поставщика"] == "gsm-repiteri.ru: 3449"
+    [known] = gsm_import_rows(_site(entry), existing={pair_key("S-115-141", "RG-402")}).rows
+    assert "Артикул поставщика" not in known["fields"]
+    [none] = gsm_import_rows(_site(_entry(article="X-1", note=None))).rows
+    assert "Артикул поставщика" not in none["fields"]  # no site number: nothing is made up
 
 
 def test_two_different_site_entries_with_one_name_keep_the_site_number_on_the_second():
