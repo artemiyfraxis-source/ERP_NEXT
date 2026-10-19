@@ -63,7 +63,7 @@ N-111/5D	N-male	5D-FB	Kroks		1,8	4,9	5,64						пайка	обжим
 S-M111C	SMA-male	5D-FB	Kroks		1,8	4,9	5,64						пайка	обжим	0,38…1,14	radiolab.ru, SMA, вилка: E = 0,38…1,14 мм от торца корпуса до контакта; стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
 13-121L	MMCX-male R/A	RG-174	gsm-repiteri		0,48	1,52	1,9						обжим	обжим
 13-121L	MMCX-male R/A	RG-316	gsm-repiteri		0,5	1,48	1,95						обжим	обжим
-T-111/5D	TNC-male	5D-FB	gsm-repiteri		1,8	4,9	5,64						пайка	обжим
+T-111/5D	TNC-male	5D-FB	gsm-repiteri		1,8	4,9	5,64						пайка	обжим	2,06…3,00	MIL-STD-348A рис. 313-1: край гайки в крайнем переднем положении (M 1,98) + REF → кончик штыря (H 0,08…1,02) = 2,06…3,00 мм; гайка плавающая; сверено с radiolab.ru TNC, вилка; стандарт TNC, общий для серии; https://everyspec.com/MIL-STD/MIL-STD-0300-0499/MIL-STD-348A_420/
 Kroks-412	MMCX-male R/A	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим
 SMA-C58J GOLD	SMA-female bulkhead	RG58	RUICHI		1	2,95	3,5						пайка	обжим	1,88…2,41	radiolab.ru, SMA, розетка: H+I+J = (1,88+0,00+0,00)…(1,98+0,25+0,18) = 1,88…2,41 мм, торец → REF (H) → изолятор (I) → контакт (J); стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
 N-212/8D	N-female	8D-FB	gsm-repiteri		2,56	7,35	8,25						пайка	обжим	3,78…4,44	radiolab.ru, N, розетка: F − E = (9,04 − 5,26)…(9,19 − 4,75) = 3,78…4,44 (торец → REF минус контакт → REF; стандарт N, общий для серии); https://www.radiolab.ru/ru/attach_file/nradiolab.pdf
@@ -84,15 +84,15 @@ SMA-male RF 1.37	SMA-male	RF 1.37			0,3	0,9	1,13								0,38…1,14	radiolab.ru,
 SMA-ВКУ-1,5.214-2-355-1.М	SMA-male R/A	RG-316D	АМЭЛ		0,5	1,52	2,4
 SMB-male RG-316	SMB-male	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим
 SMP-KW2.5D	SMP-female R/A	RG-316D	АМЭЛ		0,5	1,52	2,4
-TNC-C174P	TNC-male	RG-174			0,48	1,52	1,9						обжим	обжим
-T-111L	TNC-male	RG-316			0,5	1,48	1,95						пайка	обжим
+TNC-C174P	TNC-male	RG-174			0,48	1,52	1,9						обжим	обжим	2,06…3,00	MIL-STD-348A рис. 313-1: край гайки в крайнем переднем положении (M 1,98) + REF → кончик штыря (H 0,08…1,02) = 2,06…3,00 мм; гайка плавающая; сверено с radiolab.ru TNC, вилка; стандарт TNC, общий для серии; https://everyspec.com/MIL-STD/MIL-STD-0300-0499/MIL-STD-348A_420/
+T-111L	TNC-male	RG-316			0,5	1,48	1,95						пайка	обжим	2,06…3,00	MIL-STD-348A рис. 313-1: край гайки в крайнем переднем положении (M 1,98) + REF → кончик штыря (H 0,08…1,02) = 2,06…3,00 мм; гайка плавающая; сверено с radiolab.ru TNC, вилка; стандарт TNC, общий для серии; https://everyspec.com/MIL-STD/MIL-STD-0300-0499/MIL-STD-348A_420/
 N-111L	N-male	RG-316			0,5	1,48	1,95						пайка	обжим
 S-A111F	RP-SMA-male	RG58	Kroks		1	2,95	3,5						обжим	обжим
 СР-50-155ФВ	СР-50-female	РК50-2-11			0,67	2,2							пайка	пайка
 11_SMA-50-2-65/119_NE	SMA-male		Huber+Suhner		Не найдено								пайка	обжим	0,38…1,14	radiolab.ru, SMA, вилка: E = 0,38…1,14 мм от торца корпуса до контакта; стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
 11_SMA-50-3-15/111_NE	SMA-male	RG-402	Huber+Suhner		0,92	2,98	3,58						пайка	пайка	0,38…1,14	radiolab.ru, SMA, вилка: E = 0,38…1,14 мм от торца корпуса до контакта; стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
 2.92mm-male RG-405	2.92mm-male	RG-405	Kroks		0,51	1,68	2,2						пайка
-BNC-C174J	BNC-female	RG-174	HOYUTEC		0,48	1,52	1,9						обжим	обжим
+BNC-C174J	BNC-female	RG-174	HOYUTEC		0,48	1,52	1,9						обжим	обжим	3,08…3,79	MIL-STD-348A, рис. 301-2 (BNC, socket contact): G − J = (8,31 − 5,23)…(8,51 − 4,72) = 3,08…3,79 (торец → REF минус контакт → REF; сверено с radiolab.ru BNC, розетка; стандарт BNC, общий для серии); https://everyspec.com/MIL-STD/MIL-STD-0300-0499/MIL-STD-348A_420/
 BNC-C174P	BNC-male	RG-174	HOYUTEC		0,48	1,52	1,9						обжим	обжим
 BNC-C6P	BNC-male	RG-6	HOYUTEC		1,02	4,57	5,38						обжим	обжим
 F-113A	F-male	RG-6			1,02	4,57	5,38
