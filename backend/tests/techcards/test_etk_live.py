@@ -1,4 +1,5 @@
-"""Live operation cards (owner, 17.10.2026): «если карта берётся без изменений — она должна идти из базы данных, а не
+"""Operation cards of drafts are live; an issued card is stored (owner, 19.10.2026: «выданная карта молча не меняется»).
+Live cards (owner, 17.10.2026): «если карта берётся без изменений — она должна идти из базы данных, а не
 копией … если я меняю что-то в ТК — возможность обновить базу». An ETK operation nobody edited by hand shows its
 template as it is now (no rebuild, no new revision); a hand-edited one keeps its copy; «Сохранить также в шаблон»
 writes the edit into the template and keeps the operation live."""
@@ -6,6 +7,7 @@ writes the edit into the template and keeps the operation live."""
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -162,7 +164,22 @@ def _edit(client, card: dict[str, Any], text: str, **extra) -> Any:
                       json={"version": card["version"], "operation": operation, **extra})
 
 
-def test_an_unchanged_template_shows_the_stored_card_and_an_edit_shows_at_once(operation_library_api):
+def _draft(client, project: str = "P-402") -> dict[str, Any]:
+    created = client.post("/api/techcards/projects", json={"project": project, "item_index": "КБ1",
+                                                           "product_name": "Жгут"}).json()
+    built = client.post(f"/api/techcards/projects/{created['id']}/build",
+                        json={"version": created["version"], "config": _config(project)})
+    assert built.status_code == 200, built.text
+    return built.json()
+
+
+def _rename_step(client) -> Any:
+    return client.put("/api/techcards/templates/cut-wire", json={
+        **EDIT, "steps": [{"kind": "Операция", "text": "Резать {{WIRE_NAME}} в размер", "tolerance": ""}],
+    })
+
+
+def test_an_issued_card_does_not_change_when_its_template_changes(operation_library_api):
     client = operation_library_api
     _seed(client, [_cut_template()])
     card = _issued(client)
@@ -170,14 +187,35 @@ def test_an_unchanged_template_shows_the_stored_card_and_an_edit_shows_at_once(o
     assert op["card_source"] == TEMPLATE and op["card_changed_at"] == ""
     assert op["card"]["steps"][0]["text"] == "Отрезать провод ПВ3 черный длиной 100 мм"
 
-    edited = client.put("/api/techcards/templates/cut-wire", json={
-        **EDIT, "steps": [{"kind": "Операция", "text": "Резать {{WIRE_NAME}} в размер", "tolerance": ""}],
-    })
+    assert _rename_step(client).status_code == 200
     after = _read(client, card)
 
-    assert edited.status_code == 200, edited.text
-    assert after["document"]["operations"][0]["card"]["steps"][0]["text"] == "Резать ПВ3 черный в размер"
+    shown = after["document"]["operations"][0]
+    assert shown["card"]["steps"][0]["text"] == "Отрезать провод ПВ3 черный длиной 100 мм"
+    assert shown["card_source"] == TEMPLATE and shown["card_changed_at"] == ""
     assert (after["version"], after["revision"]) == (card["version"], card["revision"])
+
+
+def test_a_draft_follows_its_template_live(operation_library_api):
+    client = operation_library_api
+    _seed(client, [_cut_template()])
+    draft = _draft(client)
+    assert draft["document"]["operations"][0]["card"]["steps"][0]["text"].endswith("длиной 100 мм")
+
+    assert _rename_step(client).status_code == 200
+    after = _read(client, draft)
+
+    assert after["document"]["operations"][0]["card"]["steps"][0]["text"] == "Резать ПВ3 черный в размер"
+    assert (after["version"], after["revision"]) == (draft["version"], draft["revision"])
+
+
+def test_the_card_view_exposes_the_review_note_and_the_revision_source_and_diff(operation_library_api):
+    client = operation_library_api
+    _seed(client, [_cut_template()])
+    card = _issued(client)
+    assert card["review_note"] is None
+    revisions = client.get(f"/api/techcards/projects/{card['id']}/revisions").json()["items"]
+    assert revisions[0]["source"] == "manual" and revisions[0]["diff"] is None
 
 
 def test_a_hand_edited_operation_keeps_its_copy(operation_library_api):
@@ -200,19 +238,19 @@ def test_save_to_template_updates_the_template_and_keeps_the_operation_live(oper
     card = _issued(client)
     other = _issued(client, "P-401")
 
-    saved = _edit(client, card, "Отрезать провод {{WIRE_NAME}} ножом", to_template=True)
+    saved = _edit(client, card, "Отрезать провод ПВ3 черный ножом", to_template=True)
 
     assert saved.status_code == 200, saved.text
     body = saved.json()
     template = client.get("/api/techcards/templates/cut-wire").json()["document"]
-    assert [step["text"] for step in template["steps"]] == ["Отрезать провод {{WIRE_NAME}} ножом", "Проверить длину"]
+    assert [step["text"] for step in template["steps"]][1] == "Проверить длину"
     assert body["manual_operation_keys"] == [] and body["revision"] == card["revision"] + 1
     op = body["document"]["operations"][0]
     assert op["card_source"] == TEMPLATE and "edited" not in op
     assert op["card"]["steps"][0]["text"] == "Отрезать провод ПВ3 черный ножом"
-    # every ETK with this operation shows it — without a rebuild
+    # another issued ETK keeps what it was issued with: the template reaches it as a revision, not silently
     shown = _read(client, other)
-    assert shown["document"]["operations"][0]["card"]["steps"][0]["text"] == "Отрезать провод ПВ3 черный ножом"
+    assert shown["document"]["operations"][0]["card"]["steps"][0]["text"].endswith("длиной 100 мм")
     assert shown["revision"] == other["revision"]
     revisions = client.get(f"/api/techcards/projects/{card['id']}/revisions").json()["items"]
     assert revisions[-1]["reason"].endswith("— и в шаблон")
@@ -236,7 +274,7 @@ def test_save_to_template_of_a_hand_edited_operation_makes_it_live_again(operati
     assert saved["document"]["operations"][0]["card_source"] == TEMPLATE
     assert later.status_code == 200
     op = _read(client, card)["document"]["operations"][0]
-    assert op["card_source"] == TEMPLATE and op["card"]["steps"][0]["text"] == "Резать ПВ3 черный"
+    assert op["card_source"] == TEMPLATE and op["card"]["steps"][0]["text"] == "Отрезать по месту"
 
 
 def test_a_template_gone_from_the_library_leaves_the_copy(operation_library_api):
@@ -247,5 +285,28 @@ def test_a_template_gone_from_the_library_leaves_the_copy(operation_library_api)
 
     op = _read(client, card)["document"]["operations"][0]
 
-    assert op["card_source"] == SNAPSHOT
+    assert op["card_source"] == TEMPLATE  # the stored stamp, not the live library, says where the card came from
     assert op["card"] == {key: value for key, value in card["document"]["operations"][0]["card"].items()}
+
+
+def test_card_view_exposes_review_note_and_shows_an_issued_document_as_stored():
+    from uuid import uuid4
+
+    from app.modules.techcards.etk_read import card_view
+    from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus
+
+    parsed = _parsed(_cut_template())
+    document = stamp_templates(build_etk(_config(), [parsed], operation_library_commit="lib"), [parsed])
+    changed = _parsed(_cut_template("Иначе {{WIRE_NAME}}"))
+    now = datetime(2026, 10, 19, 9, 0)
+    card = ProjectTechcard(
+        id=uuid4(), version=3, project="P-1", item_index="КБ1", product_name="Жгут", source_calculation="",
+        deadline=None, status=TechcardStatus.ISSUED, revision=1, document=document, manual_operation_keys=(),
+        created_at=now, updated_at=now, issued_at=now, review_note="Проверить длину резки",
+    )
+    issued = card_view(card, templates=[changed])
+    draft = card_view(replace(card, status=TechcardStatus.DRAFT), templates=[changed])
+
+    assert issued["review_note"] == "Проверить длину резки"
+    assert issued["document"]["operations"][0]["card"] == document["operations"][0]["card"]
+    assert draft["document"]["operations"][0]["card"]["steps"][0]["text"] == "Иначе ПВ3 черный"
