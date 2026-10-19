@@ -12,6 +12,7 @@ import {
   type ProductionMaterialSource,
   type ProductionLaunchable,
   type ProductionAssignPlan,
+  type EtkRevisionNotice,
   type ProductionOperation,
   type ProductionOperator,
   type ProductionOutput,
@@ -933,8 +934,15 @@ function cardState(operation: ProductionOperation, running: ProductionWorkSessio
 
 // ЭТК операции для монтажника: выданная карта проекта и изделия, только чтение, открыта на этой операции — в окне поверх
 // списка (владелец 16.10: раскрытая в списке ЭТК сдвигала карточки; правило «правка и карточки — окнами»).
+/** Сообщение монтажнику: карта получила новую ревизию, а задание идёт по своей; нет закреплённой ревизии — почему показана текущая. */
+export function etkRevisionNotice(revision: EtkRevisionNotice | undefined): string {
+  if (!revision) return "";
+  if (revision.newer && revision.pinned != null) return `Есть новая ревизия ТК ${revision.current} — задание идёт по ревизии ${revision.pinned}`;
+  return revision.fallback ?? "";
+}
+
 function OperationEtk({ principal, task, operation, title, close }: { principal: Principal; task: ProductionTask; operation: ProductionOperation; title: string; close: () => void }) {
-  const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string }; serial?: MarkSerialRange } | undefined>(undefined);
+  const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string }; revision?: EtkRevisionNotice; serial?: MarkSerialRange } | undefined>(undefined);
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
@@ -949,6 +957,7 @@ function OperationEtk({ principal, task, operation, title, close }: { principal:
     <div className="manual-stock-head"><h2>{title}</h2><button className="link-button" onClick={close}>Закрыть</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!error && !view && <div className="empty">Загрузка…</div>}
+    {view && etkRevisionNotice(view.revision) && <div className="warning-inline" role="status">{etkRevisionNotice(view.revision)}</div>}
     {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} task taskId={task.id} serial={view.serial} sketchSource={{
       list: () => productionApi.operationEtkSketches(task.id, operation.id),
       url: (key, at) => productionApi.operationEtkSketchUrl(task.id, operation.id, key, at),

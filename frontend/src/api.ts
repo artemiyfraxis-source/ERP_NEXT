@@ -3074,6 +3074,8 @@ export interface AutoplanPreview {
   fingerprint: string;
 }
 
+export type EtkRevisionNotice = { pinned: number | null; current: number; newer: boolean; fallback: string | null };
+
 export const productionApi = {
   autoplanContext: (payload: AutoplanRequest) => api<AutoplanContext>("/api/production/autoplan/context", {
     method: "POST",
@@ -3177,6 +3179,8 @@ export const productionApi = {
   taskHarness: (taskId: string) => api<HarnessDrawing>(`/api/production/my/tasks/${taskId}/harness`),
   operationEtk: (taskId: string, operationId: string) =>
     api<{ card: ProjectTechcard; focus: { position: number; positions?: number[]; code: string };
+      /** Ревизия, по которой идёт задание: показанная, последняя, есть ли новее и почему показана текущая ЭТК. */
+      revision?: EtkRevisionNotice;
       /** Номера изделий задания для «№ изделия» в надписях меток (сквозь задания позиции проекта). */
       serial?: { first: number; last: number; task: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
   inputs: (taskId: string, operationId: string, operatorId = "") =>
