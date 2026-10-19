@@ -105,10 +105,16 @@ export function coaxMountEtk(end: Row, title: string, hint: string): { height: n
   return { height: 228 + DEPTH_ROW, body: body + depthCallout(depth, cy) };
 }
 
-/** «0,38…1,14» / «0,38-1,14» → «0,38…1,14»; без числа — пусто (ничего не рисуется). */
+/** «0,38…1,14» / «0,38-1,14» → «0,38…1,14 мм»; «не менее 2,50» → «не менее 2,50 мм»; «9,14 (номинал)» → «9,14 мм (номинал)»;
+ *  без числа — пусто (ничего не рисуется). */
 function depthText(value: unknown): string {
-  const text = str(value).trim().replace(/\s*(?:\.{2,3}|…|–|—|-)\s*/g, "…");
-  return /^\d+(?:[.,]\d+)?(?:…\d+(?:[.,]\d+)?)?$/.test(text) ? text.replace(/\./g, ",") : "";
+  const raw = str(value).trim();
+  const bound = /^(не\s+менее|не\s+более)\s+(\d+(?:[.,]\d+)?)$/i.exec(raw);
+  if (bound) return `${bound[1].toLowerCase().replace(/\s+/g, " ")} ${bound[2].replace(/\./g, ",")} мм`;
+  const nominal = /^(\d+(?:[.,]\d+)?)\s*\(номинал\)$/i.exec(raw);
+  if (nominal) return `${nominal[1].replace(/\./g, ",")} мм (номинал)`;
+  const text = raw.replace(/\s*(?:\.{2,3}|…|–|—|-)\s*/g, "…");
+  return /^\d+(?:[.,]\d+)?(?:…\d+(?:[.,]\d+)?)?$/.test(text) ? `${text.replace(/\./g, ",")} мм` : "";
 }
 
 const DEPTH_ROW = 120;
@@ -132,7 +138,7 @@ function depthCallout(depth: string, cy: number): string {
     line(faceZ, cyD + 36, tipZ, cyD + 36, INK, 1.2) + arrowHead(faceZ, cyD + 36, 1) + arrowHead(tipZ, cyD + 36, -1) +
     label(cxD, cyD - r - 6, "А (10:1)", 13, 700, INK);
   const tx = cxD + r + 22;
-  art += label(tx, cyD - 14, `заглубление контакта ${depth} мм`, 14, 700, INK, "start") +
+  art += label(tx, cyD - 14, `заглубление контакта ${depth}`, 14, 700, INK, "start") +
     label(tx, cyD + 6, "от торца корпуса до контакта", 12, 400, MUTED, "start") +
     label(tx, cyD + 24, "вид А увеличен, не в масштабе", 12, 400, MUTED, "start");
   return art;

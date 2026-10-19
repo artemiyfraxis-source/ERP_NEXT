@@ -126,6 +126,15 @@ def test_housing_gets_the_contact_depth_of_its_connector_on_the_sketch_and_in_th
         assert "дюйм" not in control[0] and "″" not in control[0]
 
 
+def test_one_sided_and_nominal_depth_are_worded_as_they_are():
+    """Владелец 20.10: «не менее X», «не более X», «X (номинал)» — как есть, единица после числа."""
+    for stored, phrase in (("не менее 2,50", "не менее 2,50 мм"), ("не более 2,65", "не более 2,65 мм"),
+                           ("9,14 (номинал)", "9,14 мм (номинал)")):
+        male, _ = _housings(stored, stored)
+        control = [step["text"] for step in male["card"]["steps"] if step["kind"] == "Контроль"]
+        assert len(control) == 1 and control[0].endswith(f"Проверить заглубление контакта от торца корпуса: {phrase}.")
+
+
 def test_housing_without_a_depth_draws_and_says_nothing():
     """Угловой / не найденный в документах разъём — значения нет: ни ключа на эскизе, ни строки в контроле."""
     for operation in _housings():
