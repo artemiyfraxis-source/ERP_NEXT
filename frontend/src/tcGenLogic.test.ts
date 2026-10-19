@@ -349,6 +349,19 @@ describe("коакс: резка с разделкой на роторном с�
     expect((makeGen(D, S).buildConfig() as Record<string, any>).coax.sideA.pinType).toBe("обжим");
   });
 
+  it("the 2.92 mm and SMP stock articles are matched by article, dots and hyphens ignored (19.10)", () => {
+    const rec = coaxFromFields({ coaxArticle: "2.92-JB2G-F", coaxWire: "RG-405", coaxType: "2.92mm-male", "Тип пина": "обжим", "Тип экрана": "обжим" });
+    const smp = coaxFromFields({ coaxArticle: "SMP-KW2", coaxWire: "RG-178", coaxType: "SMP-female R/A", "Тип пина": "обжим", "Тип экрана": "обжим" });
+    const kit = [
+      { id: "k", type: "Кабель", name: "RG-405", art: "RG-405", qty: 0.3 },
+      { id: "a", type: "Соед", name: "2.92 JB2G F", art: "2.92 JB2G F", qty: 1 },
+      { id: "b", type: "Соед", name: "SMP-KW2", art: "SMP-KW2", qty: 1 },
+    ];
+    const D: GenData = { ...data(kit, "Кабельная сборка 2.92-JB2G-F RG-405 0,3m"), templates: coaxTemplates, coaxRecords: [rec, smp] };
+    const S = initState(D);
+    expect([S.coax.pinA, S.coax.pinB]).toEqual(["обжим", "обжим"]);
+  });
+
   it("a collet centre contact (N-111C/8D × 8D-FB) is not soldered: no pin solder, the housing says why", () => {
     // gsm-repiteri.ru 3300: «центральный контакт - цанговый и не требует пайки»; «Тип пина» в БД.КОАКС пуст.
     const rec = coaxFromFields({ coaxArticle: "N-111C/8D", coaxWire: "8D-FB", coaxType: "N-male", "Тип экрана": "обжим",

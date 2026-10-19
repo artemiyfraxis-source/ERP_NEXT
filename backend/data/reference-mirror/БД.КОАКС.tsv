@@ -182,3 +182,9 @@ BNC-Male RG59	BNC-male	RG59			0,81	3,66	4,28						пайка	обжим
 Fakra Z-Female	Fakra-female	RG-316			0,5	1,48	1,95						пайка	обжим
 MCX-JW3	MCX-male R/A	RG-316	Kroks		0,5	1,48	1,95						обжим	обжим
 MHF1 for 1.13	MHF1-plug	RF 1.13	I-PEX (аналог)		0,24	0,7	0,92						обжим	корпус
+2.92-JB2G-F	2.92mm-male	RG-405														
+3.5-JB2AG	3.5mm-male	RG-405														
+SMA-JB2C	SMA-male	RG-405													0,38…1,14	radiolab.ru, SMA, вилка: E = 0,38…1,14 мм от торца корпуса до контакта; стандарт SMA (MIL-C-39012, IEC 169-15), общий для серии; https://www.radiolab.ru/ru/attach_file/smaradiolab.pdf; 19.10.2026
+SMA-JWB3-F-1	SMA-male R/A	RG-402														
+SMB-KB2	SMB-female	RG-405													0,36…1,19	MIL-STD-348B рис. 311-1 (SMB, штырь): C 3,33…3,58 (REF → торец корпуса) − D 2,39…2,97 (REF → кончик штыря) = 0,36…1,19 мм; radiolab.ru SMB, розетка: D 3,33…3,58, H ≤ 2,97 — совпадает; https://www.radiolab.ru/ru/attach_file/smbradiolab.pdf; 19.10.2026
+SMP-KW2	SMP-female R/A	RG-178														
