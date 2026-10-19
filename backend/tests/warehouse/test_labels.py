@@ -1,0 +1,198 @@
+"""GRN label layout, Code128 and the TSPL job (stage option warehouse.labels), ported from Roller_Buyer
+`apps/api/src/test/labels.test.ts` with its vectors; the byte vectors of the TSPL job and Code128 were produced by
+Roller_Buyer's own builder for the same input."""
+
+from datetime import date
+from pathlib import Path
+
+import pytest
+from PIL import Image
+
+from app.modules.warehouse.labels import printer
+from app.modules.warehouse.labels.code128 import code128_modules, encode_code128
+from app.modules.warehouse.labels.layout import (
+    QR_DOTS_PER_MODULE,
+    GrnLabelData,
+    LabelOptions,
+    build_grn_label,
+    label_png,
+    render_label,
+)
+from app.modules.warehouse.labels.settings import DEFAULT_PRINT_SETTINGS, PrintSettings
+from app.modules.warehouse.labels.tspl import TsplOptions, build_tspl_job, pack_for_tspl
+
+SAMPLE = GrnLabelData(
+    grn="26.0000001",
+    sku="TSRSLT-001",
+    item_name="Провод МГТФ 0,5 экранированный многожильный с длинным наименованием",
+    quantity="25",
+    unit="м",
+    manufacturer_batch="L-2026-07",
+    received_on=date(2026, 8, 31),
+)
+
+# Roller_Buyer encodeCode128('FRX.26.0000041').
+RB_FRX_BARS = [
+    2, 1, 1, 2, 1, 4, 1, 3, 2, 3, 1, 1, 2, 3, 1, 1, 3, 1, 3, 3, 1, 1, 2, 1, 1, 2, 2, 2, 3, 1, 2, 2, 3, 2, 1, 1, 2, 2,
+    3, 1, 1, 2, 1, 2, 2, 2, 3, 1, 1, 2, 3, 1, 2, 2, 1, 2, 3, 1, 2, 2, 1, 2, 3, 1, 2, 2, 1, 2, 3, 1, 2, 2, 1, 2, 3, 1,
+    2, 2, 2, 2, 1, 2, 3, 1, 1, 2, 3, 2, 2, 1, 3, 1, 1, 2, 2, 2, 2, 3, 3, 1, 1, 1, 2,
+]
+
+
+def test_canvas_is_one_to_one_with_the_printer_resolution():
+    label = build_grn_label(SAMPLE)
+    # 58 × 30 mm at 300 dpi — 11.81 dots per mm.
+    assert (label.width, label.height) == (685, 354)
+    assert label.image.size == (685, 354) and label.image.mode == "1"
+
+
+def test_qr_is_a_whole_number_of_dots_per_module():
+    label = build_grn_label(SAMPLE, LabelOptions(code_type="qr"))
+    # A fractional module would give uneven cells and scanner misses.
+    assert label.qr_module_dots == QR_DOTS_PER_MODULE == 6
+    # Ten characters of the alphanumeric set — version 1, 21 modules.
+    assert label.qr_modules == 21
+    assert label.bar_module_dots is None
+
+
+def test_the_label_says_what_the_storekeeper_reads_by_eye():
+    texts = build_grn_label(SAMPLE).texts
+    assert texts[0] == "GRN"
+    assert texts[1] == "26.0000001"
+    assert texts[2].startswith("TSRSLT-001 · Провод МГТФ")
+    assert texts[3] == "25 м"
+    assert texts[4] == "серия L-2026-07 · 31.08.2026"
+    # A long name is cut with an ellipsis, it does not run into the next field.
+    assert texts[2].endswith("…") and "многожильный" not in texts[2]
+
+
+def test_a_name_that_already_carries_the_article_is_not_doubled():
+    texts = build_grn_label(GrnLabelData("FRX.26.0000001", "510210200", "Molex 510210200 PicoBlade", "5", "шт", "", None)).texts
+    assert texts[2] == "Molex 510210200 PicoBlade"
+    assert texts[4] == ""  # no series, no date — an empty footer
+
+
+def test_code128_start_b_checksum_stop_and_whole_dot_modules():
+    bars = encode_code128(SAMPLE.grn)
+    # Start + 10 characters + check symbol, 11 modules each; stop — 13.
+    assert code128_modules(SAMPLE.grn) == 11 * 12 + 13
+    assert bars[:6] == [2, 1, 1, 2, 1, 4], "start B"
+    assert bars[-7:] == [2, 3, 3, 1, 1, 1, 2], "stop"
+    assert encode_code128("FRX.26.0000041") == RB_FRX_BARS
+
+    label = build_grn_label(SAMPLE)
+    assert label.bar_module_dots == 3, "a quarter millimetre at 300 dpi"
+    assert label.qr_module_dots == 6
+    # At 203 dpi the same size has fewer dots, the modules stay whole.
+    small = build_grn_label(SAMPLE, LabelOptions(dpi=203))
+    assert small.width == 464
+    assert small.bar_module_dots == 2
+    assert isinstance(small.qr_module_dots, int)
+
+
+def test_code128_refuses_cyrillic_and_the_label_falls_back_to_qr_alone():
+    with pytest.raises(ValueError, match="Code128 B не кодирует"):
+        encode_code128("ФРХ.26.0000001")
+    cyrillic = GrnLabelData("ФРХ.26.0000001", "", "Разъём", "1", "шт", "", None)
+    with pytest.raises(ValueError):
+        build_grn_label(cyrillic)
+    label = render_label(cyrillic, DEFAULT_PRINT_SETTINGS)
+    assert (label.width, label.height) == (685, 354)
+    assert label.bar_module_dots is None and label.qr_module_dots == 6
+
+
+@pytest.mark.parametrize("grn", ["FRX.26.0000041", "FRX.26.0000041-2", "ФРХ.26.0000041-П2", "R&D.26.0000001"])
+@pytest.mark.parametrize("code_type", ["both", "qr", "code128"])
+def test_every_code_type_renders_long_names_without_exceptions(grn, code_type):
+    data = GrnLabelData(grn, "X" * 300, "Очень длинное наименование " * 20, "123456.789", "шт", "серия " * 40, date(2026, 10, 1))
+    label = render_label(data, PrintSettings(code_type=code_type))
+    assert label.image.size == (685, 354)
+    assert label_png(label).startswith(b"\x89PNG")
+
+
+def test_no_storage_place_on_the_label():
+    texts = build_grn_label(GrnLabelData("FRX.26.0000001", "X", "Y", "1", "шт", "", None)).texts
+    assert not any("1F4" in text for text in texts)
+
+
+def test_a_black_dot_is_a_zero_bit_as_tspl_prints():
+    raster = Image.new("1", (8, 1), 1)
+    raster.putpixel((0, 0), 0)
+    assert pack_for_tspl(raster) == (1, bytes([0b01111111]))
+
+
+def test_a_row_is_padded_with_clean_tape_bits():
+    raster = Image.new("1", (10, 1), 0)  # all black
+    width_bytes, data = pack_for_tspl(raster)
+    assert width_bytes == 2
+    assert data == bytes([0x00, 0b00111111])
+
+
+def test_a_tiny_job_is_byte_for_byte_roller_buyers():
+    raster = Image.new("1", (10, 2), 1)
+    for index, dark in enumerate([1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0]):
+        if dark:
+            raster.putpixel((index % 10, index // 10), 0)
+    job = build_tspl_job(raster, TsplOptions(copies=3, offset_x_dots=11.81, offset_y_dots=-5.9))
+    assert job == (
+        b"SIZE 58 mm,30 mm\r\nGAP 2 mm,0 mm\r\nREFERENCE 12,-6\r\nDIRECTION 1\r\nDENSITY 12\r\nSPEED 2\r\nCLS\r\n"
+        b"BITMAP 0,0,2,2,0,\x7f?\xaa\xff\r\nPRINT 3,1\r\n"
+    )
+
+
+def test_the_job_carries_size_gap_and_the_whole_raster():
+    raster = build_grn_label(SAMPLE).image
+    job = build_tspl_job(raster, TsplOptions(gap_mm=3, copies=2, width_mm=58, height_mm=30.5))
+    text = job.decode("latin-1")
+    assert "SIZE 58 mm,30.5 mm" in text
+    assert "GAP 3 mm,0 mm" in text
+    assert "BITMAP 0,0,86,354,0," in text
+    assert text.endswith("\r\nPRINT 2,1\r\n")
+    # The raster goes as raw bytes: 86 bytes a row, 354 rows.
+    header = text.index("BITMAP 0,0,86,354,0,") + len("BITMAP 0,0,86,354,0,")
+    assert len(job) - header - len("\r\nPRINT 2,1\r\n") == 86 * 354
+
+
+def test_settings_defaults_are_the_ones_proven_on_the_real_printer():
+    # Roller_Buyer, 2026-09-25: density 8 / speed 4 printed pale and speckled, the QR broke up.
+    assert (DEFAULT_PRINT_SETTINGS.density, DEFAULT_PRINT_SETTINGS.speed, DEFAULT_PRINT_SETTINGS.gap_mm) == (12, 2, 2)
+    assert (DEFAULT_PRINT_SETTINGS.width_mm, DEFAULT_PRINT_SETTINGS.height_mm, DEFAULT_PRINT_SETTINGS.dpi) == (58, 30, 300)
+    assert DEFAULT_PRINT_SETTINGS.code_type == "both" and DEFAULT_PRINT_SETTINGS.printer_name == ""
+
+
+@pytest.mark.parametrize("bad", [
+    {"dpi": 600}, {"density": 16}, {"density": -1}, {"speed": 0}, {"speed": 13}, {"width_mm": 44}, {"height_mm": 81},
+    {"gap_mm": 21}, {"offset_x_mm": 5.5}, {"code_type": "datamatrix"}, {"printer_name": "x" * 201},
+])
+def test_settings_out_of_bounds_are_refused(bad):
+    with pytest.raises(ValueError):
+        PrintSettings(**bad)
+
+
+def test_without_a_printer_nothing_is_sent_and_the_reason_is_said(tmp_path: Path):
+    job = tmp_path / "a.prn"
+    job.write_bytes(b"x")
+    result = printer.send_raw("", job)
+    assert result.sent is False and "Принтер не выбран" in result.reason
+
+
+def test_off_windows_nothing_is_sent(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(printer, "on_windows", lambda: False)
+    result = printer.send_raw("TSC MB341", tmp_path / "a.prn")
+    assert result.sent is False and "не на Windows" in result.reason
+    assert printer.list_printers() == []
+
+
+def test_print_dir_sits_next_to_the_stage_options_file(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv(printer.PRINT_DIR_ENV, raising=False)
+    monkeypatch.setenv("ERP_STAGE_OPTIONS", str(tmp_path / "data" / "options.json"))
+    assert printer.print_dir() == tmp_path / "data" / "print"
+    monkeypatch.setenv(printer.PRINT_DIR_ENV, str(tmp_path / "jobs"))
+    assert printer.print_dir() == tmp_path / "jobs"
+
+
+def test_powershell_arguments_are_literal(monkeypatch):
+    import base64
+
+    script = base64.b64decode(printer._encode("Write-Output $PrinterName", {"PrinterName": "O'Brien $env:X"})).decode("utf-16-le")
+    assert "$PrinterName = 'O''Brien $env:X'" in script
