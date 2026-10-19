@@ -136,7 +136,10 @@ describe("эскизы операций «Надеть» и «Монтаж ко�
     expect(texts(withDepth(a, "0,38…1,14"))).toEqual(expect.arrayContaining(["заглубление контакта 0,38…1,14 мм", "А (10:1)", "вид А увеличен, не в масштабе"]));
     expect(texts(withDepth(b, "1,88…2,41"))).toContain("заглубление контакта 1,88…2,41 мм");
     expect(withDepth(a, "0,38-1,14")).toContain("заглубление контакта 0,38…1,14 мм");
-    for (const svg of [etkFigure(a), etkFigure(b), withDepth(a, ""), withDepth(a, "по КД")]) expect(svg).not.toContain("заглубление");
+    expect(withDepth(a, "не менее 2,50")).toContain("заглубление контакта не менее 2,50 мм");
+    expect(withDepth(a, "не более 2.65")).toContain("заглубление контакта не более 2,65 мм");
+    expect(withDepth(a, "9,14 (номинал)")).toContain("заглубление контакта 9,14 мм (номинал)");
+    for (const svg of [etkFigure(a), etkFigure(b), withDepth(a, ""), withDepth(a, "по КД"), withDepth(a, "не менее")]) expect(svg).not.toContain("заглубление");
     expect(Math.min(...sizes(withDepth(a, "0,38…1,14")))).toBeGreaterThanOrEqual(12);
     expect(withDepth(a, "0,38…1,14")).not.toMatch(/undefined|NaN/);
   });

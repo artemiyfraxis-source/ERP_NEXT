@@ -1205,6 +1205,17 @@ def coax_crimp_hex(config: Mapping[str, Any]) -> list[dict[str, str]]:
     return result
 
 
+_DEPTH_NOMINAL = re.compile(r"^(.*?)\s*\(номинал\)$")
+
+
+def _depth_phrase(value: Any) -> str:
+    """«0,38…1,14» → «0,38…1,14 мм»; «не менее 2,50» → «не менее 2,50 мм»; «9,14 (номинал)» → «9,14 мм (номинал)»
+    (владелец 20.10: односторонний предел и номинал пишутся как есть, единица — после числа)."""
+    text = str(value or "").strip()
+    nominal = _DEPTH_NOMINAL.match(text)
+    return f"{nominal.group(1)} мм (номинал)" if nominal else f"{text} мм"
+
+
 def _hex_phrase(items: list[Mapping[str, str]]) -> str:
     """«HEX 5,41 мм» — один размер на все концы; иначе по концам: «А (S-111F) — HEX 5,41 мм; В (N-111F) — HEX не
     задан — по чертежу разъёма»."""
@@ -1569,7 +1580,7 @@ def _resolve_card(
             text = f"{text.rstrip()} Размер: {_hex_phrase(fields['crimpHex'])}."
         if fields.get("contactDepth") and step.kind == "Контроль" and not depth_checked:
             # Монтаж корпуса: заглубление контакта от торца корпуса из БД.КОАКС (владелец 19.10) — в первый шаг контроля.
-            text = f"{text.rstrip()} Проверить заглубление контакта от торца корпуса: {fields['contactDepth']} мм."
+            text = f"{text.rstrip()} Проверить заглубление контакта от торца корпуса: {_depth_phrase(fields['contactDepth'])}."
             depth_checked = True
         steps.append({"number": step.number, "kind": step.kind, "text": text, "tolerance": "" if tolerance in {"-", "—"} else tolerance})
     tooling = []
