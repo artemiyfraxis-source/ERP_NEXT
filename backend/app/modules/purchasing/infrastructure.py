@@ -185,6 +185,8 @@ class RfqLineRow(Base):
     __tablename__ = "purchasing_rfq_lines"
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_purchasing_rfq_lines_quantity"),
+        CheckConstraint("removed_reason IS NULL OR removed_reason IN ('new', 'requote')", name="ck_purchasing_rfq_lines_removed_reason"),
+        CheckConstraint("removed_reason IS NULL OR removed_at IS NOT NULL", name="ck_purchasing_rfq_lines_removed"),
         Index(
             "uq_purchasing_rfq_lines_live", "procurement_line_id", unique=True,
             sqlite_where=text("removed_at IS NULL"), postgresql_where=text("removed_at IS NULL"),
@@ -203,6 +205,11 @@ class RfqLineRow(Base):
     budget_unit_gross: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Why the line left (migration 0126): «new» — back to the free lines, «requote» — «Перезапрос»; NULL with removed_at
+    # — closed with the request (read as «Перезапрос», as before). The note says who answered what.
+    removed_reason: Mapped[str | None] = mapped_column(String(16))
+    removed_note: Mapped[str | None] = mapped_column(Text)
+    removed_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
 
 
 RFQ_SUPPLIER_REASONS = ("key", "category", "rotation", "plan", "manual")
@@ -241,13 +248,32 @@ class RfqSupplierLineRow(Base):
         Uuid(as_uuid=True), ForeignKey("purchasing_rfq_lines.id", ondelete="CASCADE"), primary_key=True,
     )
 
-QUOTE_SOURCES = ("manual", "paste", "file")
+QUOTE_SOURCES = ("manual", "paste", "file", "invoice")
+
+
+class RfqDeclinedSuggestionRow(Base):
+    """A rotation suggestion the buyer unticked when creating the request (migration 0126, Roller declinedSuggestion):
+    the supplier was offered a turn and passed — not asked, but on record."""
+
+    __tablename__ = "purchasing_rfq_declined_suggestions"
+    __table_args__ = (UniqueConstraint("rfq_id", "supplier_id", name="uq_purchasing_rfq_declined_suggestions"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    rfq_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_rfqs.id", ondelete="CASCADE"), nullable=False)
+    supplier_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("purchasing_suppliers.id", ondelete="RESTRICT"), nullable=False,
+    )
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
 
 
 class QuoteRow(Base):
     __tablename__ = "purchasing_quotes"
     __table_args__ = (
-        CheckConstraint("source IN ('manual', 'paste', 'file')", name="ck_purchasing_quotes_source"),
+        CheckConstraint("source IN ('manual', 'paste', 'file', 'invoice')", name="ck_purchasing_quotes_source"),
+        CheckConstraint("source <> 'invoice' OR invoice_id IS NOT NULL", name="ck_purchasing_quotes_invoice"),
+        Index("ix_purchasing_quotes_invoice", "invoice_id"),
         CheckConstraint("delivery_cost IS NULL OR delivery_cost >= 0", name="ck_purchasing_quotes_delivery"),
         CheckConstraint("min_order_sum IS NULL OR min_order_sum >= 0", name="ck_purchasing_quotes_min_order"),
         Index("ix_purchasing_quotes_rfq", "rfq_id", "supplier_id"),
@@ -270,6 +296,10 @@ class QuoteRow(Base):
     note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    # Migration 0126: «Номер КП», the PDF it came in (purchasing_document_files), the Kaiten invoice it was made from.
+    number: Mapped[str | None] = mapped_column(String(64))
+    file_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_document_files.id", ondelete="SET NULL"))
+    invoice_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_invoices.id", ondelete="SET NULL"))
 
 
 class QuoteLineRow(Base):
@@ -309,6 +339,16 @@ class DecisionRow(Base):
     __table_args__ = (
         UniqueConstraint("rfq_line_id", name="uq_purchasing_decisions_rfq_line"),
         CheckConstraint("cover_quantity > 0 AND unit_gross > 0 AND total_gross > 0", name="ck_purchasing_decisions_amounts"),
+        CheckConstraint(
+            "gate_override_code IS NULL OR gate_override_code IN ('urgent', 'single_source', 'repeat_fresh_quote', 'other')",
+            name="ck_purchasing_decisions_gate_code",
+        ),
+        CheckConstraint(
+            "not_cheapest_code IS NULL OR not_cheapest_code IN ('lead_time', 'availability', 'moq', 'quality', 'other')",
+            name="ck_purchasing_decisions_pricier_code",
+        ),
+        CheckConstraint("gate_override_code IS NULL OR gate_override_reason IS NOT NULL", name="ck_purchasing_decisions_gate_text"),
+        CheckConstraint("not_cheapest_code IS NULL OR not_cheapest_reason IS NOT NULL", name="ck_purchasing_decisions_pricier_text"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -327,6 +367,10 @@ class DecisionRow(Base):
     gate_override_reason: Mapped[str | None] = mapped_column(Text)
     not_cheapest_reason: Mapped[str | None] = mapped_column(Text)
     analog_approved_by: Mapped[str | None] = mapped_column(String(255))
+    # Migration 0126: Roller's fixed reason lists (shared/decisions.ts); the *_reason text is the label or, for
+    # «other», the buyer's own words.
+    gate_override_code: Mapped[str | None] = mapped_column(String(32))
+    not_cheapest_code: Mapped[str | None] = mapped_column(String(32))
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     decided_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     # When the choice was written into the procurement line (supplier, quantity, unit).

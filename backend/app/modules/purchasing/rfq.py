@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -732,6 +732,7 @@ def _cell(entry: _Entry, *, current: bool, best: Offer | None, base: Offer | Non
     line, quote, offer = entry.line, entry.quote, entry.offer
     return {
         **_terms(line, entry.cover_quantity, budget, offer.gross_unit),
+        "quote_number": quote.number,
         "asked": True,
         "quote_line_id": str(line.id), "quote_id": str(quote.id),
         "received_on": quote.received_on.isoformat(),
@@ -910,7 +911,8 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
                     "received_on": quote.received_on.isoformat(),
                     "valid_until": quote.valid_until.isoformat() if quote.valid_until else None,
                     "delivery_cost": num(quote.delivery_cost), "min_order_sum": num(quote.min_order_sum),
-                    "source": quote.source, "used": quote.id in used_quotes,
+                    "source": quote.source, "used": quote.id in used_quotes, "number": quote.number, "note": quote.note,
+                    "has_file": quote.file_id is not None,
                 }
                 for quote in quotes
             ],
@@ -946,6 +948,7 @@ class QuoteInput:
     min_order_sum: Decimal | None = None
     source: str = "manual"
     note: str | None = None
+    number: str | None = None  # «Номер КП» as the supplier wrote it
 
 
 def _positive(value: Decimal | None, label: str) -> Decimal | None:
@@ -1010,13 +1013,19 @@ def add_quote(uow: UnitOfWork, actor: Actor, now: datetime, rfq_id: UUID, data: 
                 in_stock=item.in_stock, declined=item.declined, analog=item.analog,
                 analog_note=((item.analog_note or "").strip()[:512] or None) if item.analog else None,
             ))
+        # A supplier who answers without being asked still counts as asked (Roller routes/rfqs.ts): in the request, sent
+        # no later than his answer.
+        answered_at = now if received_on >= _today(now) else datetime.combine(received_on, time(12), now.tzinfo)
         if rfq_supplier is None:
-            session.add(RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier.id, reason="manual", created_at=now))
+            session.add(RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier.id, reason="manual",
+                                       sent_at=answered_at, created_at=now))
+        elif rfq_supplier.sent_at is None:
+            rfq_supplier.sent_at = answered_at
         session.add(QuoteRow(
             id=quote_id, rfq_id=rfq.id, supplier_id=supplier.id, supplier_is_key=supplier.is_key,
             received_on=received_on, valid_until=data.valid_until, currency="RUB", delivery_cost=data.delivery_cost,
             min_order_sum=data.min_order_sum, source=data.source, note=(data.note or "").strip() or None,
-            created_at=now, created_by=actor.id,
+            number=" ".join((data.number or "").split())[:64] or None, created_at=now, created_by=actor.id,
         ))
         session.flush()
         session.add_all(rows)

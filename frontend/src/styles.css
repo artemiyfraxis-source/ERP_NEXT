@@ -4050,6 +4050,9 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .rfq-lines-editor input[type="checkbox"] { width: auto; margin: 0; }
 .rfq-lines-editor small { color: var(--muted-foreground); font-size: 11px; white-space: nowrap; }
 /* «Письма поставщикам», «Запросы счетов» (Roller_Buyer RfqLetters / InvoiceRequests): text to copy into the mail. */
+.rfq-quote-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.rfq-quote-head .rfq-quote-note input { width: 260px; }
+.rfq-input-bad { border-color: var(--tone-danger) !important; }
 .rfq-head-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .rfq-letters { display: grid; gap: 8px; padding: 10px 14px; }
 .rfq-letters-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }

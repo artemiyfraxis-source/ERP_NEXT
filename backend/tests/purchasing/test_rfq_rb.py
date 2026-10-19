@@ -1,10 +1,10 @@
 """«Запросы КП» brought to Roller_Buyer's parity (stand of Витя, 16.10.2026): letters, matrix details, withdraw,
 «Подбор», invoice-request letters, quote import header, decision reason codes."""
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.modules.purchasing.infrastructure import SupplierRow
-from tests.purchasing.test_rfq_api import BASE, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — the fixture
+from tests.purchasing.test_rfq_api import BASE, NOW, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — the fixture
 
 
 def _line_of(matrix: dict, procurement_line_id) -> dict:
@@ -43,3 +43,27 @@ def test_a_cell_shows_the_price_ladder_the_applied_break_the_packs_and_the_plan(
     assert ladder["plan_pct"] == "-11.3" and ladder["packs"] is None
     reel = cells[packs]
     assert reel["cover_qty"] == "4" and reel["packs"] == "1" and reel["applied_from"] is None and reel["plan_pct"] == "-54.5"
+
+
+def test_a_quote_keeps_its_number_and_note_and_a_supplier_who_answers_unasked_counts_as_asked(rfq_api):
+    client, lines, sessions = rfq_api
+    rfq = _rfq(client, lines)
+    line = _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[0].id)
+    asked = _supplier(client, rfq["id"], "ООО Спросили")  # in the request, not marked sent
+    with sessions() as session:
+        stranger = SupplierRow(id=uuid4(), name="ООО Сам пришёл", name_key="сам пришёл", categories=[], is_key=False,
+                               domains=[], created_at=NOW, version=1)
+        session.add(stranger)
+        session.commit()
+        stranger_id = str(stranger.id)
+    for supplier_id, number in ((asked, " КП-17 "), (stranger_id, None)):
+        body = {"supplier_id": supplier_id, "number": number, "note": "цены до конца месяца", "received_on": "2026-09-14",
+                "lines": [{"rfq_line_id": line["id"], "unit_price": "100", "tiers": [{"from": "500", "price": "90"}]}]}
+        assert client.post(f"{BASE}/{rfq['id']}/quotes", json=body).status_code == 201
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    heads = {head["supplier_id"]: head for head in matrix["suppliers"]}
+    assert heads[stranger_id]["sent_at"].startswith("2026-09-14") and heads[asked]["sent_at"].startswith("2026-09-14")
+    quote = next(quote for quote in matrix["quotes"] if quote["supplier_id"] == asked)
+    assert quote["number"] == "КП-17" and quote["note"] == "цены до конца месяца" and quote["has_file"] is False
+    cell = _line_of(matrix, lines[0].id)["cells"][asked]
+    assert cell["quote_number"] == "КП-17" and cell["tiers"] == [{"from": "500", "price": "90"}]

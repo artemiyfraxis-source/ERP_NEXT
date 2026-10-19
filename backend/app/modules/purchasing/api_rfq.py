@@ -144,6 +144,7 @@ class QuoteModel(BaseModel):
     min_order_sum: Money | None = None
     source: Literal["manual", "paste", "file"] = "manual"
     note: Text | None = None
+    number: str | None = Field(default=None, max_length=64)
     lines: list[QuoteLineModel] = Field(min_length=1, max_length=500)
     # Supplier wordings the buyer confirmed in «КП из PDF и текста»; stored only while that option is on.
     aliases: list[AliasModel] = Field(default_factory=list, max_length=500)
@@ -152,6 +153,7 @@ class QuoteModel(BaseModel):
         return service.QuoteInput(
             supplier_id=self.supplier_id, received_on=self.received_on, valid_until=self.valid_until,
             delivery_cost=self.delivery_cost, min_order_sum=self.min_order_sum, source=self.source, note=self.note,
+            number=self.number,
             lines=tuple(
                 service.QuoteLineInput(
                     rfq_line_id=line.rfq_line_id, unit_price=line.unit_price, vat_included=line.vat_included,

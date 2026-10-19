@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import { failureText } from "./api";
 import { formatDay } from "./format";
 import {
@@ -7,9 +7,6 @@ import {
   rfqApi,
   unasked,
   type DecisionField,
-  type ImportedQuoteLine,
-  type PastedRow,
-  type QuoteLineInput,
   type RfqCell,
   type RfqLine,
   type RfqMatrix,
@@ -18,28 +15,15 @@ import {
   type SuggestResult,
   type SupplierBrief,
 } from "./purchasingRfqApi";
-import { useStageOption } from "./StageOptions";
 import { picksOf, RfqPool, suggestionKey, SuggestionList } from "./RfqPool";
 import { rfqLinkState, syncRfqUrl } from "./rfqLinks";
+import { QuoteDialog } from "./RfqQuoteDialog";
+import { Dialog, money, number, quantity } from "./rfqUi";
 import { RfqLetters } from "./RfqLetters";
 
 /** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
  *  reasons the gate asks for → supplier and quantity go into the procurement line. */
-
-const number = (value: string | null | undefined, digits = 2) =>
-  value === null || value === undefined || value === ""
-    ? "—"
-    : Number(value).toLocaleString("ru-RU", { minimumFractionDigits: digits, maximumFractionDigits: digits });
-const money = (value: string | null | undefined) => (value === null || value === undefined ? "—" : `${number(value)} ₽`);
-const quantity = (value: string | null | undefined) =>
-  value === null || value === undefined ? "—" : Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 6 });
-const decimalInput = (value: string) => value.replace(/\s/g, "").replace(",", ".");
-const today = () => {
-  const now = new Date();
-  const pad = (part: number) => String(part).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-};
 
 const REASONS: Record<string, string> = {
   key: "ключевой", category: "по категории", rotation: "давно не спрашивали", plan: "указан в строке", manual: "вручную",
@@ -147,17 +131,6 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
   );
 }
 
-function Dialog({ title, wide = false, onClose, children }: { title: string; wide?: boolean; onClose: () => void; children: ReactNode }) {
-  return (
-    <div className="dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className={`panel move-dialog${wide ? " wide" : ""}`} role="dialog" aria-label={title}>
-        <h2>{title}</h2>
-        {children}
-      </div>
-    </div>
-  );
-}
-
 function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoices = false }: {
   id: string; readOnly: boolean; onChanged: () => void; openLetters?: boolean; openInvoices?: boolean;
 }) {
@@ -167,7 +140,8 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
   const [matrix, setMatrix] = useState<RfqMatrix | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [quoteFor, setQuoteFor] = useState<RfqSupplier | null>(null);
+  // «+ КП» of a supplier column, or «Внести КП» from anyone (null supplier — chosen in the dialog).
+  const [quoteFor, setQuoteFor] = useState<{ supplier: RfqSupplier | null } | null>(null);
   const [linesFor, setLinesFor] = useState<RfqSupplier | null>(null);
   const [decisionFor, setDecisionFor] = useState<{ lineId: string; supplierId: string } | null>(null);
   const [suggesting, setSuggesting] = useState(false);
@@ -239,6 +213,7 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
         </div>
         {editable && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <button type="button" className="secondary small" onClick={() => setQuoteFor({ supplier: null })}>Внести КП</button>
             <button type="button" className="secondary small" onClick={() => setSuggesting(true)}>Подобрать поставщиков</button>
             <form onSubmit={(event) => void addSupplier(event)} style={{ display: "flex", gap: 6 }}>
               <input
@@ -278,7 +253,7 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
                   <SupplierHead
                     supplier={supplier} editable={editable} total={lines.length} onLines={() => setLinesFor(supplier)}
                     onSent={() => void act(() => rfqApi.markSent(id, supplier.supplier_id), `«${supplier.name}»: запрос отправлен`, "Не отмечено")}
-                    onQuote={() => setQuoteFor(supplier)}
+                    onQuote={() => setQuoteFor({ supplier })}
                     onDeclined={() => {
                       const note = window.prompt(`«${supplier.name}» отказался отвечать. Комментарий (необязательно):`, "");
                       if (note !== null) void act(() => rfqApi.markDeclined(id, supplier.supplier_id, note), `«${supplier.name}»: отказ отмечен`, "Не отмечено");
@@ -343,8 +318,9 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
           <span className="muted">КП в запросе:</span>
           {matrix.quotes.map((quote) => (
             <span key={quote.id}>
-              {supplierName(quote.supplier_id)}{quote.supplier_is_key ? " ★" : ""} от {formatDay(quote.received_on)}
-              {quote.valid_until ? `, до ${formatDay(quote.valid_until)}` : ""}{quote.source === "paste" ? ", из Excel" : quote.source === "file" ? ", из PDF" : ""}
+              {supplierName(quote.supplier_id)}{quote.supplier_is_key ? " ★" : ""}{quote.number ? ` № ${quote.number}` : ""} от {formatDay(quote.received_on)}
+              {quote.valid_until ? `, до ${formatDay(quote.valid_until)}` : ""}{quote.source === "paste" ? ", из Excel" : quote.source === "file" ? ", из PDF" : quote.source === "invoice" ? ", из счёта" : ""}
+              {quote.note ? <span className="muted"> — {quote.note}</span> : null}
               {editable && !quote.used && (
                 <button
                   type="button" className="link-button" style={{ padding: "0 0 0 6px" }}
@@ -357,8 +333,8 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       )}
       {quoteFor && (
         <QuoteDialog
-          matrix={matrix} supplier={quoteFor} onClose={() => setQuoteFor(null)}
-          onSaved={() => { setQuoteFor(null); void refresh(`КП «${quoteFor.name}» внесено`); }}
+          matrix={matrix} supplier={quoteFor.supplier} directory={directory} onClose={() => setQuoteFor(null)}
+          onSaved={(name) => { setQuoteFor(null); void refresh(`КП «${name}» внесено`); }}
         />
       )}
       {linesFor && (
@@ -651,273 +627,6 @@ function ReasonField({ label, hint, presets, value, onChange }: {
       </span>
       <input aria-label={label} value={value} maxLength={2000} onChange={(event) => onChange(event.target.value)} placeholder="Своими словами" />
     </div>
-  );
-}
-
-type QuoteRowState = {
-  price: string; vat_included: boolean; vat_rate: string; moq: string; pack: string; lead: string;
-  in_stock: boolean; declined: boolean; analog: boolean; analog_note: string;
-};
-
-function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
-  matrix: RfqMatrix; supplier: RfqSupplier; onClose: () => void; onSaved: () => void;
-}) {
-  const blank = (): QuoteRowState => ({
-    price: "", vat_included: true, vat_rate: matrix.settings.default_vat_rate, moq: "", pack: "", lead: "",
-    in_stock: false, declined: false, analog: false, analog_note: "",
-  });
-  const asked = supplier.line_ids ? matrix.lines.filter((line) => supplier.line_ids?.includes(line.id)) : matrix.lines;
-  const [rows, setRows] = useState<Record<string, QuoteRowState>>(() => Object.fromEntries(asked.map((line) => [line.id, blank()])));
-  const [receivedOn, setReceivedOn] = useState(today());
-  const [validUntil, setValidUntil] = useState("");
-  const [delivery, setDelivery] = useState("");
-  const [minOrder, setMinOrder] = useState("");
-  const [pasteOpen, setPasteOpen] = useState(false);
-  const [pasteText, setPasteText] = useState("");
-  const [unmatched, setUnmatched] = useState<PastedRow[]>([]);
-  const importEnabled = useStageOption("procurement.quote_import");
-  const [importOpen, setImportOpen] = useState(false);
-  const [importText, setImportText] = useState("");
-  const [importBusy, setImportBusy] = useState(false);
-  const [importNotes, setImportNotes] = useState<string[]>([]);
-  const [importUnmatched, setImportUnmatched] = useState<ImportedQuoteLine[]>([]);
-  const [importUnread, setImportUnread] = useState<string[]>([]);
-  // The supplier's wording per request line, remembered as an alias when the quote is saved.
-  const [wording, setWording] = useState<Record<string, string>>({});
-  const [source, setSource] = useState<"manual" | "paste" | "file">("manual");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const patch = (lineId: string, change: Partial<QuoteRowState>) =>
-    setRows((current) => ({ ...current, [lineId]: { ...current[lineId], ...change } }));
-
-  async function parsePaste() {
-    setError("");
-    try {
-      const preview = await rfqApi.paste(matrix.rfq.id, pasteText, supplier.supplier_id);
-      const next = { ...rows };
-      for (const row of preview.rows) {
-        if (!row.rfq_line_id || !next[row.rfq_line_id]) continue;
-        next[row.rfq_line_id] = {
-          ...next[row.rfq_line_id], price: row.price ?? "", vat_included: preview.vat_included,
-          vat_rate: row.vat_rate ?? next[row.rfq_line_id].vat_rate, lead: row.lead_days === null ? "" : String(row.lead_days),
-          in_stock: row.in_stock, declined: row.declined, analog: row.analog,
-        };
-      }
-      setRows(next);
-      setUnmatched(preview.rows.filter((row) => !row.rfq_line_id));
-      setSource("paste");
-      setPasteOpen(false);
-    } catch (reason) {
-      setError(failureText(reason, "Вставка не разобрана"));
-    }
-  }
-
-  /** One proposed line into the form row of its request line; the buyer still reviews and saves. */
-  function fillFrom(next: Record<string, QuoteRowState>, row: ImportedQuoteLine, lineId: string) {
-    const current = next[lineId];
-    if (!current) return;
-    next[lineId] = {
-      ...current, price: row.declined ? "" : row.price ?? "", vat_rate: row.vat_rate ?? current.vat_rate,
-      lead: row.in_stock || row.lead_days === null ? "" : String(row.lead_days), in_stock: row.in_stock,
-      declined: row.declined, analog: row.analog, analog_note: row.analog_note, moq: row.moq ?? current.moq,
-      pack: row.pack ?? current.pack,
-    };
-  }
-
-  const wordingOf = (row: ImportedQuoteLine) => `${row.source_article} ${row.source_name}`.trim();
-
-  async function runImport(input: { text: string } | { file_name: string; content_base64: string }) {
-    setError("");
-    setImportBusy(true);
-    try {
-      const result = await rfqApi.importQuote(matrix.rfq.id, supplier.supplier_id, input);
-      const next = { ...rows };
-      const words: Record<string, string> = {};
-      for (const row of result.lines) {
-        if (!row.rfq_line_id || !next[row.rfq_line_id]) continue;
-        fillFrom(next, row, row.rfq_line_id);
-        next[row.rfq_line_id].vat_included = result.vat_included;
-        if (row.matched_by !== "alias") words[row.rfq_line_id] = wordingOf(row);
-      }
-      setRows(next);
-      setWording((current) => ({ ...current, ...words }));
-      setImportNotes(result.lines.filter((row) => row.pack_note).map((row) => `«${row.source_name}»: ${row.pack_note}`));
-      setImportUnmatched(result.unmatched);
-      setImportUnread(result.unread);
-      setSource(result.source);
-      setImportOpen(false);
-    } catch (reason) {
-      setError(failureText(reason, "КП не разобрано"));
-    } finally {
-      setImportBusy(false);
-    }
-  }
-
-  function importFile(file: File | undefined) {
-    if (!file) return;
-    if (file.size > 20 * 1024 * 1024) {
-      setError("PDF больше 20 МБ — сожмите файл или вставьте текст");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onerror = () => setError("Файл не прочитан");
-    reader.onload = () => {
-      const data = String(reader.result ?? "");
-      void runImport({ file_name: file.name, content_base64: data.slice(data.indexOf(",") + 1) });
-    };
-    reader.readAsDataURL(file);
-  }
-
-  /** The buyer puts an unmatched quote line onto a request line by hand. */
-  function assignUnmatched(index: number, lineId: string) {
-    const row = importUnmatched[index];
-    if (!row || !lineId) return;
-    const next = { ...rows };
-    fillFrom(next, row, lineId);
-    setRows(next);
-    setWording((current) => ({ ...current, [lineId]: wordingOf(row) }));
-    if (row.pack_note) setImportNotes((current) => [...current, `«${row.source_name}»: ${row.pack_note}`]);
-    setImportUnmatched((current) => current.filter((_, at) => at !== index));
-  }
-
-  async function save() {
-    const lines: QuoteLineInput[] = asked.flatMap((line) => {
-      const row = rows[line.id];
-      if (!row.declined && !decimalInput(row.price)) return [];
-      return [{
-        rfq_line_id: line.id, unit_price: row.declined ? null : decimalInput(row.price), vat_included: row.vat_included,
-        vat_rate: decimalInput(row.vat_rate) || null, moq: decimalInput(row.moq) || null, pack: decimalInput(row.pack) || null,
-        lead_days: row.in_stock ? 0 : row.lead.trim() ? Number(row.lead) : null, in_stock: row.in_stock, declined: row.declined,
-        analog: row.analog, analog_note: row.analog ? row.analog_note.trim() || null : null,
-      }];
-    });
-    if (lines.length === 0) {
-      setError("Заполните цену или отказ хотя бы по одной позиции");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      await rfqApi.addQuote(matrix.rfq.id, {
-        supplier_id: supplier.supplier_id, received_on: receivedOn || null, valid_until: validUntil || null,
-        delivery_cost: decimalInput(delivery) || null, min_order_sum: decimalInput(minOrder) || null, source, lines,
-        ...(importEnabled ? { aliases: lines.filter((line) => wording[line.rfq_line_id]).map((line) => ({ rfq_line_id: line.rfq_line_id, text: wording[line.rfq_line_id] })) } : {}),
-      });
-      onSaved();
-    } catch (reason) {
-      setError(failureText(reason, "КП не сохранено"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const small: CSSProperties = { width: 80 };
-  return (
-    <Dialog title={`КП от «${supplier.name}»`} wide onClose={onClose}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "end" }}>
-        <label>Получено<input type="date" value={receivedOn} onChange={(event) => setReceivedOn(event.target.value)} /></label>
-        <label>Действует до<input type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} /></label>
-        <label>Доставка, ₽<input inputMode="decimal" value={delivery} onChange={(event) => setDelivery(event.target.value)} style={{ width: 110 }} /></label>
-        <label>Мин. заказ, ₽<input inputMode="decimal" value={minOrder} onChange={(event) => setMinOrder(event.target.value)} style={{ width: 110 }} /></label>
-        <button type="button" className="secondary small" onClick={() => setPasteOpen(!pasteOpen)} aria-expanded={pasteOpen}>Вставить из Excel</button>
-        {importEnabled && (
-          <button type="button" className="secondary small" onClick={() => setImportOpen(!importOpen)} aria-expanded={importOpen}>Вставить из PDF / текста</button>
-        )}
-      </div>
-      {importEnabled && importOpen && (
-        <div className="quote-import-panel">
-          <textarea
-            aria-label="Текст КП" rows={6} value={importText} onChange={(event) => setImportText(event.target.value)}
-            placeholder="Вставьте текст письма или КП: в каждой строке наименование, количество, цена и сумма (единица и срок — если есть)"
-          />
-          <div className="quote-import-actions">
-            <button type="button" className="secondary small" disabled={!importText.trim() || importBusy} onClick={() => void runImport({ text: importText })}>Разобрать текст</button>
-            <label className="quote-import-file">или PDF с текстовым слоем (до 20 МБ)
-              <input type="file" accept="application/pdf,.pdf" aria-label="PDF с КП" disabled={importBusy} onChange={(event) => { importFile(event.target.files?.[0]); event.target.value = ""; }} />
-            </label>
-          </div>
-        </div>
-      )}
-      {importNotes.length > 0 && (
-        <ul className="quote-import-notes" aria-label="Что сделано при разборе">
-          {importNotes.map((note) => <li key={note}>{note}</li>)}
-        </ul>
-      )}
-      {importUnmatched.length > 0 && (
-        <div className="warning-inline quote-import-unmatched">
-          Не сопоставлено со строками запроса — отнесите к позиции или пропустите:
-          {importUnmatched.map((row, index) => (
-            <div key={`${row.source_name}-${index}`} className="quote-import-unmatched-row">
-              <span>{row.source_name || row.source_article}{row.price ? `, ${row.price} ₽` : ""}</span>
-              <select aria-label={`Отнести «${row.source_name}»`} value="" onChange={(event) => assignUnmatched(index, event.target.value)}>
-                <option value="">— к позиции —</option>
-                {asked.map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}
-              </select>
-            </div>
-          ))}
-        </div>
-      )}
-      {importUnread.length > 0 && (
-        <div className="warning-inline">Строки с ценой, которые не удалось прочитать: {importUnread.join("; ")}</div>
-      )}
-      {pasteOpen && (
-        <div style={{ display: "grid", gap: 6 }}>
-          <textarea
-            aria-label="Таблица из Excel" rows={6} value={pasteText} onChange={(event) => setPasteText(event.target.value)}
-            placeholder="Скопируйте строки КП из Excel вместе с заголовком: наименование, артикул, кол-во, цена, НДС, срок"
-          />
-          <div><button type="button" className="secondary small" disabled={!pasteText.trim()} onClick={() => void parsePaste()}>Разобрать</button></div>
-        </div>
-      )}
-      {asked.length < matrix.lines.length && (
-        <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-          У поставщика запрошено позиций: {asked.length} из {matrix.lines.length} — остальные в КП не вносятся.
-        </p>
-      )}
-      {unmatched.length > 0 && (
-        <div className="warning-inline">Не сопоставлено со строками запроса: {unmatched.map((row) => row.source_name || row.source_article).join("; ")}</div>
-      )}
-      {error && <div className="error-banner" role="alert">{error}</div>}
-      <div className="inwork-scroll" style={{ maxHeight: "50vh" }}>
-        <table className="inwork-table">
-          <thead>
-            <tr>
-              <th>Позиция</th><th>Кол-во</th><th>Цена</th><th>НДС в цене</th><th>Ставка, %</th><th>Мин. партия</th><th>Упаковка</th>
-              <th>Срок, дн</th><th>В наличии</th><th>Отказ</th><th>Аналог</th>
-            </tr>
-          </thead>
-          <tbody>
-            {asked.map((line) => {
-              const row = rows[line.id];
-              return (
-                <tr key={line.id}>
-                  <td style={{ whiteSpace: "normal", minWidth: 200 }}><strong>{line.name}</strong> <small className="muted">{line.article ?? ""}</small></td>
-                  <td>{quantity(line.quantity)} {line.unit}</td>
-                  <td><input aria-label={`Цена ${line.name}`} inputMode="decimal" disabled={row.declined} value={row.price} onChange={(event) => patch(line.id, { price: event.target.value })} style={{ width: 100 }} /></td>
-                  <td><input type="checkbox" aria-label={`НДС в цене ${line.name}`} checked={row.vat_included} onChange={(event) => patch(line.id, { vat_included: event.target.checked })} /></td>
-                  <td><input aria-label={`Ставка НДС ${line.name}`} inputMode="decimal" value={row.vat_rate} onChange={(event) => patch(line.id, { vat_rate: event.target.value })} style={{ width: 56 }} /></td>
-                  <td><input aria-label={`Мин. партия ${line.name}`} inputMode="decimal" value={row.moq} onChange={(event) => patch(line.id, { moq: event.target.value })} style={small} /></td>
-                  <td><input aria-label={`Упаковка ${line.name}`} inputMode="decimal" value={row.pack} onChange={(event) => patch(line.id, { pack: event.target.value })} style={small} /></td>
-                  <td><input aria-label={`Срок ${line.name}`} inputMode="numeric" disabled={row.in_stock} value={row.lead} onChange={(event) => patch(line.id, { lead: event.target.value.replace(/\D/g, "") })} style={{ width: 56 }} /></td>
-                  <td><input type="checkbox" aria-label={`В наличии ${line.name}`} checked={row.in_stock} onChange={(event) => patch(line.id, { in_stock: event.target.checked })} /></td>
-                  <td><input type="checkbox" aria-label={`Отказ ${line.name}`} checked={row.declined} onChange={(event) => patch(line.id, { declined: event.target.checked })} /></td>
-                  <td>
-                    <input type="checkbox" aria-label={`Аналог ${line.name}`} checked={row.analog} onChange={(event) => patch(line.id, { analog: event.target.checked })} />
-                    {row.analog && <input aria-label={`Какой аналог ${line.name}`} value={row.analog_note} placeholder="какой" onChange={(event) => patch(line.id, { analog_note: event.target.value })} style={{ width: 120, marginLeft: 4 }} />}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <div className="form-actions">
-        <span className="muted" style={{ marginRight: "auto", fontSize: 12 }}>Пустая строка без отказа — позиция не предложена. Повторное КП заменит прежнее по этим позициям.</span>
-        <button type="button" className="secondary" onClick={onClose}>Отмена</button>
-        <button type="button" className="primary" disabled={busy} onClick={() => void save()}>Сохранить КП</button>
-      </div>
-    </Dialog>
   );
 }
 
