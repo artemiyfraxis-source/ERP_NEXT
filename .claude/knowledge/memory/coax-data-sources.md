@@ -32,6 +32,12 @@ gsm-repiteri.ru, «Амел», kroks.ru, vegatel.ru («оттуда кстати
 - MIL-STD-348A confirms (19.10): N socket F−E = 9,04…9,19 − 4,75…5,26; TNC and BNC socket G−J = 8,31…8,51 − 4,72…5,23. Plugs: nut front is not an
   interface dimension (TNC pin fig 313-1: nut M ≤ 1,98 mm ahead of REF, pin tip recessed F ≥ 0,15), SMB pin interface gives only depth ≥ 0,36.
 
+- MIL-STD-348B (2014; SMB figs 311-1 pin / 311-2 socket with full min…max; no MCX/MMCX/UHF/FME in it): `curl -L -A "Mozilla/5.0" "https://web.archive.org/web/2026id_/https://everyspec.com/MIL-STD/MIL-STD-0300-0499/download.php?spec=MIL-STD-348B.051541.pdf"` (3,4 MB, 222 pages, fig 311 on pp. 79–81).
+- Amphenol Connex catalogs, interface dimensions in mm: MCX `https://web.archive.org/web/2024id_/https://www.peigenesis.com/images/content/pei_tabs/amphenol/rf-series/connex/mcx.pdf` (p. 2 «Interface mating dimensions», plug and jack, full ranges); MMCX same path `…/connex/mmcx.pdf` (p. 2; jack face→REF only «2,60 min»); FME `…/connex/fme.pdf` (no interface page). peigenesis direct = 403 for curl, use the Web Archive `2024id_` form.
+- TE catalog 1307191 MMCX (Web Archive `2024id_` of `te.com/commerce/DocumentDelivery/DDEController?Action=srchrtrv&DocNm=1307191_MMCX_Connectors&DocType=CS&DocLang=English&DocFilename=ENG_CS_1307191_MMCX_Connectors_0307.pdf`, p. 2): MMCX plug/jack drawing with mm — same one-sided numbers as Amphenol (jack face→REF 2,6 min, contact 1,05 max).
+- Amphenol RF FME interface drawing (image only, letters A–G, no table; the table is radiolab's): `https://web.archive.org/web/2018id_/https://www.amphenolrf.com/media/wysiwyg/FME_Interface_Drawing.jpg`.
+- Dead ends 19.10: mouser/farnell/te/octopart/times direct links 403 or HTML; Amphenol UHF catalog (farnell 1663862, Web Archive ok) has no interface drawing; IEC 61169-10/-36/-52 and CECC 22220 are paid.
+
 **How to apply:** coax cables come only from АМЭЛ / Kroks / gsm-repiteri; a new cable from elsewhere is an exception
 to flag, not to add silently. Enrich from these first; fill only empty cells, write to prod per [[prod-reference-write]].
 [[module-reference-db]]
