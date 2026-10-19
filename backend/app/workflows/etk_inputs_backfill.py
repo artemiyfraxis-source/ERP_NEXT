@@ -29,6 +29,7 @@ import os
 import sys
 from typing import Any
 
+from app.modules.techcards.etk_builder import norms_include_setup
 from app.modules.techcards.etk_derive import BUILD_FAILED, MISSING_OPERATION, ROUTE_NOT_APPLIED, derive, document_diff, route_override
 from app.modules.techcards.etk_live import VIEW_KEYS
 from app.modules.techcards.project_cards import ProjectTechcard, operation_key
@@ -158,7 +159,7 @@ def classify(
     elif isinstance(config, Mapping) and config:
         inputs = strip_enriched(config)
     else:
-        return CardResult(card, NO_INPUTS, "нет build_config")
+        return CardResult(card, NO_INPUTS, "нет build_config" if document else "черновик: ЭТК ещё не собрана")
     if document is None:
         return CardResult(card, NO_INPUTS, "ЭТК не собрана")
     try:
@@ -189,6 +190,8 @@ def classify(
                           overrides=overrides or None, write=not tracked)
     shown = remaining[:3] + [item["message"] for item in blocking[:1]]
     summary = f"{len(remaining) + len(blocking)} расхождений: " + "; ".join(shown)
+    if norms_include_setup(document):  # built before ETK_VERSION 4: its norms carry the card's setup, a fresh build has none
+        summary += " [ЭТК версии <4: старые нормы включают настройку (tPrep)]"
     return CardResult(card, DRIFT, summary, inputs=inputs, overrides=overrides or None, write=not tracked)
 
 
