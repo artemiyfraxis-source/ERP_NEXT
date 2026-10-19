@@ -408,7 +408,7 @@ def generate(
                 ), techcards())
             config, technology_source = with_technology(result["config"], getattr(state, "references_uow_factory", None))
             built = auto_build_project_techcard(AutoBuildProjectTechcardCommand(
-                card_id=card.id, expected_version=card.version, config=config, actor=actor, now=now,
+                card_id=card.id, expected_version=card.version, config=config, inputs=result["config"], actor=actor, now=now,
                 technology_source=technology_source,
             ), techcards())
         except TechcardValidationError as error:
@@ -452,7 +452,7 @@ def refresh(state: Any, *, actor: Actor, now: datetime, apply: bool) -> Report:
         try:
             built_config, technology_source = with_technology(config, getattr(state, "references_uow_factory", None))
             built = auto_build_project_techcard(AutoBuildProjectTechcardCommand(
-                card_id=card.id, expected_version=card.version, config=built_config, actor=actor, now=now,
+                card_id=card.id, expected_version=card.version, config=built_config, inputs=config, actor=actor, now=now,
                 technology_source=technology_source,
             ), techcards())
         except TechcardValidationError as error:
