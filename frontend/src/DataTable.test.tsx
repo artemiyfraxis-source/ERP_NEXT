@@ -561,7 +561,7 @@ describe("cells edited right in the table, like a sheet", () => {
   });
 });
 
-describe("a sort of its own in every group (owner 16.10: «у каждой группы своя, и это во всех кабелях»)", () => {
+describe("the header sorts inside every group (owner 19.10: «сделай просто вверху столбцов сортировку»)", () => {
   const stock: Row[] = [
     { id: "a1", name: "Б-разъём", supplier: "Чип и Дип", qty: 5, status: "" },
     { id: "a2", name: "А-разъём", supplier: "Чип и Дип", qty: 50, status: "" },
@@ -573,29 +573,21 @@ describe("a sort of its own in every group (owner 16.10: «у каждой гр�
   const order = () => screen.getAllByRole("row").slice(1).map((row) => row.classList.contains("group-row")
     ? `[${row.querySelector("strong")?.textContent}]` : row.querySelector("td")?.textContent);
 
-  it("sorts one group up and down by a column it picks; the other group and the order of groups stay", () => {
+  it("a header click sorts the rows of every group up, then down, then back; the order of groups stays", () => {
     const { unmount } = render(table());
     const catalogue = ["[Чип и Дип]", "Б-разъём", "А-разъём", "В-разъём", "[Кабель-Торг]", "Провод 2", "Провод 1"];
     expect(order()).toEqual(catalogue);
-    expect(screen.queryByRole("button", { name: "Кол-во" })).toBeNull(); // the header does not sort
-    const sorter = screen.getByRole("combobox", { name: "Сортировка группы «Чип и Дип»" });
-    expect(sorter).toHaveValue("");
-    expect(within(sorter).getAllByRole("option")[0]).toHaveTextContent("порядок каталога");
-
-    fireEvent.change(sorter, { target: { value: "qty:+" } });
-    expect(order()).toEqual(["[Чип и Дип]", "В-разъём", "Б-разъём", "А-разъём", "[Кабель-Торг]", "Провод 2", "Провод 1"]);
-    fireEvent.change(sorter, { target: { value: "qty:-" } });
+    expect(screen.queryByRole("combobox", { name: /Сортировка группы/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Кол-во" }));
+    expect(order()).toEqual(["[Чип и Дип]", "В-разъём", "Б-разъём", "А-разъём", "[Кабель-Торг]", "Провод 1", "Провод 2"]);
+    fireEvent.click(screen.getByRole("button", { name: /Кол-во/ }));
     expect(order()).toEqual(["[Чип и Дип]", "А-разъём", "Б-разъём", "В-разъём", "[Кабель-Торг]", "Провод 2", "Провод 1"]);
-    fireEvent.change(screen.getByRole("combobox", { name: "Сортировка группы «Кабель-Торг»" }), { target: { value: "name:+" } });
-    expect(order()).toEqual(["[Чип и Дип]", "А-разъём", "Б-разъём", "В-разъём", "[Кабель-Торг]", "Провод 1", "Провод 2"]);
-
     // remembered with the table's key
     unmount();
     render(table());
-    expect(screen.getByRole("combobox", { name: "Сортировка группы «Чип и Дип»" })).toHaveValue("qty:-");
-    expect(order()).toEqual(["[Чип и Дип]", "А-разъём", "Б-разъём", "В-разъём", "[Кабель-Торг]", "Провод 1", "Провод 2"]);
-    fireEvent.change(screen.getByRole("combobox", { name: "Сортировка группы «Чип и Дип»" }), { target: { value: "" } });
-    expect(order().slice(0, 4)).toEqual(catalogue.slice(0, 4));
+    expect(order()).toEqual(["[Чип и Дип]", "А-разъём", "Б-разъём", "В-разъём", "[Кабель-Торг]", "Провод 2", "Провод 1"]);
+    fireEvent.click(screen.getByRole("button", { name: /Кол-во/ }));
+    expect(order()).toEqual(catalogue);
   });
 
   it("keeps the header sort of other grouped tables as it was", () => {
