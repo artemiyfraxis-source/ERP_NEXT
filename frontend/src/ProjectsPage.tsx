@@ -61,16 +61,17 @@ function remember(key: string, value: string) {
 
 /* Переключатели «Скрыть …» над списком проектов: чтобы отгруженные и закрытые по техкартам проекты не засоряли
    список. Помнятся у каждого пользователя отдельно; «Скрыть отгруженные» включён, пока его не выключили. */
-type HideKey = "shipped" | "tcReady" | "tcChecked" | "blocked";
+type HideKey = "shipped" | "working" | "tcReady" | "tcChecked" | "blocked";
 const HIDES: Array<[HideKey, string, boolean]> = [
-  ["shipped", "Скрыть отгруженные", true], ["tcReady", "Скрыть с готовыми ТК", false], ["tcChecked", "Скрыть с проверенными ТК", false],
-  ["blocked", "Скрыть с блокерами", false],
+  ["shipped", "Скрыть отгруженные", true], ["working", "Скрыть в работе", false], ["tcReady", "Скрыть с готовыми ТК", false],
+  ["tcChecked", "Скрыть с проверенными ТК", false], ["blocked", "Скрыть с блокерами", false],
 ];
 
 function hidden(item: KitsetTile, hide: Record<HideKey, boolean>, status: string) {
   const { total, tc, unreviewed } = tcProgress(item);
   // Статус «Отгружено», выбранный в фильтре явно, важнее переключателя.
   if (hide.shipped && item.status === "Отгружено" && status !== "Отгружено") return true;
+  if (hide.working && item.status === "В работе" && status !== "В работе") return true; // владелец 19.10
   if (hide.tcReady && total > 0 && tc === total) return true;             // чип «ТК на все КБ»
   if (hide.tcChecked && total > 0 && tc === total && !unreviewed) return true; // и ни одной «не проверена»
   if (hide.blocked && item.blocker) return true;                           // ХОЛД, СТОП, ОЖИД ИНФ, ОЖИД КОМПЛ, ПАУЗА

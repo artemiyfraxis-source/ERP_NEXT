@@ -214,6 +214,21 @@ describe("ProjectsPage", () => {
     expect(screen.getByText(`показано ${before - blocked} из ${more.length}`)).toBeTruthy();
   });
 
+  it("hides projects in work on request — владелец 19.10", async () => {
+    const more = [...tiles, { ...tiles[1], project: "630К.1", status: "В работе", blocker: "" }];
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => String(input).startsWith("/api/techcards/kitsets?sort=")
+      ? json({ items: more, statuses }) : base(input, init));
+    render(<ProjectsPage principal={editor} />);
+    expect(await screen.findByText("630К.1")).toBeTruthy();
+    const before = more.filter((item) => item.status !== "Отгружено").length;
+    const working = more.filter((item) => item.status === "В работе").length;
+    fireEvent.click(screen.getByLabelText("Скрыть в работе"));
+    expect(screen.queryByText("630К.1")).toBeNull();
+    expect(screen.getByText(`показано ${before - working} из ${more.length}`)).toBeTruthy();
+  });
+
   it("shows the status as a plain badge to a viewer", async () => {
     render(<ProjectsPage principal={viewer} />);
     expect(await screen.findByText("708К.4")).toBeTruthy();
