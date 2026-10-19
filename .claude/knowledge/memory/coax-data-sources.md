@@ -23,6 +23,8 @@ gsm-repiteri.ru, «Амел», kroks.ru, vegatel.ru («оттуда кстати
   three were deleted unless a БД.КОАКС connector, a stock lot or a kit references them (15 kept). Deleted rows are
   in docs/data «Коакс кабели — удалено 15.10.csv».
 
+- radiolab.ru is a datasheet source for connector interface dimensions (owner 19.10): per-series PDFs `radiolab.ru/ru/attach_file/<series>radiolab.pdf` (sma, n, bnc, tnc, uhf, mcx, mmcx, smb…), curl works, page 1 = «Габаритно-присоединительные размеры» (мм/inch tables; keep mm only). «Заглубление контакта» = body face → contact, read by tracing extension lines (SMA male E; female H+I+J).
+
 **How to apply:** coax cables come only from АМЭЛ / Kroks / gsm-repiteri; a new cable from elsewhere is an exception
 to flag, not to add silently. Enrich from these first; fill only empty cells, write to prod per [[prod-reference-write]].
 [[module-reference-db]]

@@ -126,4 +126,18 @@ describe("эскизы операций «Надеть» и «Монтаж ко�
     expect(texts(b)).toEqual(expect.arrayContaining(["Сторона В — SMA-Female bulkhead (розетка), SMA-C316F", "резьбовой корпус", "изолятор"]));
     expect(Math.min(...sizes(a), ...sizes(b))).toBeGreaterThanOrEqual(12);
   });
+
+  it("заглубление контакта: размер со стороны корпуса и увеличенный вид А; нет значения — ничего не рисуется (угловые без значения)", () => {
+    const withDepth = (operation: Record<string, unknown>, depth: string) => {
+      const fields = operation.fields as { coaxEnd: object };
+      return etkFigure({ ...operation, fields: { ...fields, coaxEnd: { ...fields.coaxEnd, contactDepth: depth } } });
+    };
+    const [a, b] = housings;
+    expect(texts(withDepth(a, "0,38…1,14"))).toEqual(expect.arrayContaining(["заглубление контакта 0,38…1,14 мм", "А (10:1)", "вид А увеличен, не в масштабе"]));
+    expect(texts(withDepth(b, "1,88…2,41"))).toContain("заглубление контакта 1,88…2,41 мм");
+    expect(withDepth(a, "0,38-1,14")).toContain("заглубление контакта 0,38…1,14 мм");
+    for (const svg of [etkFigure(a), etkFigure(b), withDepth(a, ""), withDepth(a, "по КД")]) expect(svg).not.toContain("заглубление");
+    expect(Math.min(...sizes(withDepth(a, "0,38…1,14")))).toBeGreaterThanOrEqual(12);
+    expect(withDepth(a, "0,38…1,14")).not.toMatch(/undefined|NaN/);
+  });
 });

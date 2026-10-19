@@ -37,3 +37,24 @@ def test_the_hex_column_is_any_column_named_hex_and_configs_without_coax_pass():
     assert coax_hex_cell({"Артикул": "x", "HEX, мм": " 4,52 "}) == "4,52"
     assert coax_hex_cell({"Артикул": "x"}) == ""
     assert enrich_coax_hex({"mode": "inter", "ops": []}, ROWS) == {"mode": "inter", "ops": []}
+
+
+DEPTH_ROWS = [
+    {"Артикул": "SMA-C174P", "Провод": "RG-174", "Заглубление контакта, мм": "0,38…1,14"},
+    {"Артикул": "SMA-C174P", "Провод": "RG-316", "Заглубление контакта, мм": "0,38…1,14"},
+    {"Артикул": "SMA-C316F", "Провод": "RG-316", "Заглубление контакта, мм": "1,88…2,41"},
+    {"Артикул": "SMA-C316F", "Провод": "RG-174", "Заглубление контакта, мм": "1,88…2,40"},
+    {"Артикул": "SMA-JW3", "Провод": "RG-316", "Заглубление контакта, мм": ""},
+]
+
+
+def test_contact_depth_comes_from_the_rows_of_the_connector_when_they_agree():
+    from app.workflows.techcard_build import enrich_coax_depth
+    config = {"mode": "coax", "coax": {"sideA": {"article": "sma-c174p", "contactDepth": "старое"},
+                                       "sideB": {"article": "SMA-C316F"}}}
+    coax = enrich_coax_depth(config, DEPTH_ROWS)["coax"]
+    assert coax["sideA"]["contactDepth"] == "0,38…1,14"
+    assert "contactDepth" not in coax["sideB"]  # строки разъёма расходятся — не гадаем
+    for article in ("SMA-JW3", "НЕТ-ТАКОГО"):  # угловой / нет значения
+        assert "contactDepth" not in enrich_coax_depth({"coax": {"sideA": {"article": article}}}, DEPTH_ROWS)["coax"]["sideA"]
+    assert enrich_coax_depth({"mode": "inter"}, DEPTH_ROWS) == {"mode": "inter"}
