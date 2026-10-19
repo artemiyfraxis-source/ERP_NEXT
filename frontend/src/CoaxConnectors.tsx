@@ -145,7 +145,7 @@ function SiteLink({ href }: { href: string }) {
   return <a href={href} target="_blank" rel="noreferrer" title={href} onClick={(event) => event.stopPropagation()}>{host}</a>;
 }
 
-/** HEX обжима есть только у обжимного экрана; тип не задан — поле открыто (его ещё надо заполнить), у прижимного и паяного — нет. */
+/** HEX обжима есть только у обжимного экрана; тип не задан — поле открыто (его ещё надо заполнить), у прижимного, паяного, корпусного (MHF, U.FL) — нет. */
 export const hasHex = (fields: Record<string, string>) => {
   const kind = coaxShieldKind_(pick(fields, "Тип экрана", "shieldType"));
   return kind === "" || kind === "обжим";

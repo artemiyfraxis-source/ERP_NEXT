@@ -341,14 +341,17 @@ export const COAX_SHIELD_COMPRESS = "компрессия";
 export const COAX_SHIELD_TWIST = "накрутка";
 /** Push-On (самообжим): надевается без инструмента — операции по экрану нет (19.10). */
 export const COAX_SHIELD_PUSH = "самообжим";
+/** Микро-коакс (MHF, U.FL): экран зажимает корпус разъёма, гильзы нет — операции по экрану и HEX нет (владелец 19.10). */
+export const COAX_SHIELD_BODY = "корпус";
 export const COAX_SHIELD_OPTIONS: ReadonlyArray<readonly [string, string]> = [
   ["обжим", "Обжим втулки"], ["пайка", "Пайка экрана"], ["прижим", "Прижимной (зажим)"],
   ["компрессия", "Компрессионный"], ["накрутка", "Накручивающийся"], ["самообжим", "Push-On (самообжим)"],
+  ["корпус", "Корпусом (без гильзы)"],
 ];
 /** Типы экрана, у которых нет операции по экрану: разъём садится сам. */
-const COAX_SHIELD_NO_OP_ = [COAX_SHIELD_TWIST, COAX_SHIELD_PUSH];
-export type CoaxShieldKind = "обжим" | "пайка" | "прижим" | "компрессия" | "накрутка" | "самообжим" | "";
-/** «Тип экрана» БД.КОАКС любыми словами → обжим / пайка / прижим / компрессия / накрутка / самообжим; не распознано (или пусто) — "" (тип не выбирается по базе). */
+const COAX_SHIELD_NO_OP_ = [COAX_SHIELD_TWIST, COAX_SHIELD_PUSH, COAX_SHIELD_BODY];
+export type CoaxShieldKind = "обжим" | "пайка" | "прижим" | "компрессия" | "накрутка" | "самообжим" | "корпус" | "";
+/** «Тип экрана» БД.КОАКС любыми словами → обжим / пайка / прижим / компрессия / накрутка / самообжим / корпус; не распознано (или пусто) — "" (тип не выбирается по базе). */
 export function coaxShieldKind_(text: string | undefined | null): CoaxShieldKind {
   const t = String(text || "").toLowerCase();
   if (/прижим|зажим|clamp/.test(t)) return COAX_SHIELD_CLAMP;
@@ -356,6 +359,7 @@ export function coaxShieldKind_(text: string | undefined | null): CoaxShieldKind
   if (/компресс|compress/.test(t)) return COAX_SHIELD_COMPRESS;
   if (/накру[тч]|резьб|twist/.test(t)) return COAX_SHIELD_TWIST;
   if (/самообжим|push-?on/.test(t)) return COAX_SHIELD_PUSH;
+  if (/корпус/.test(t)) return COAX_SHIELD_BODY;
   if (/обжим|crimp/.test(t)) return "обжим";
   return "";
 }
@@ -1775,7 +1779,8 @@ export function makeGen(D: GenData, S: GenState) {
     };
     const housingLabel = (sd: Side, pin: string) => `Монтаж корпуса (${sd === "B" ? "B" : "А"})${pin === COAX_PIN_COLLET ? " — цанговый контакт, без пайки" : ""}${
       (sd === "A" ? shieldA : shieldB) === COAX_SHIELD_TWIST ? " — накручивается на кабель, экран зажимает разъём"
-        : (sd === "A" ? shieldA : shieldB) === COAX_SHIELD_PUSH ? " — Push-On, без инструмента" : ""}`;
+        : (sd === "A" ? shieldA : shieldB) === COAX_SHIELD_PUSH ? " — Push-On, без инструмента"
+        : (sd === "A" ? shieldA : shieldB) === COAX_SHIELD_BODY ? " — экран зажимается корпусом разъёма, без гильзы" : ""}`;
     const insTutOp = (): OpSpec | null => (tutOn ? { type: "coaxInsTut", opKey: "coaxInsTut", label: `Монтаж ТУТ${x(nSides)}`, units: nSides, tmplHint: "INS_TUT" } : null);
     const shieldA = coaxShieldOf_("A"), shieldB = sideB ? coaxShieldOf_("B") : "";
     const sidesOf = (kind: string) => (["A", "B"] as Side[]).filter((sd) => (sd === "A" ? shieldA : shieldB) === kind);
