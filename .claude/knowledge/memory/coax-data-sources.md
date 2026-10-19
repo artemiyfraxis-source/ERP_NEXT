@@ -25,6 +25,13 @@ gsm-repiteri.ru, «Амел», kroks.ru, vegatel.ru («оттуда кстати
 
 - radiolab.ru is a datasheet source for connector interface dimensions (owner 19.10): per-series PDFs `radiolab.ru/ru/attach_file/<series>radiolab.pdf` (sma, n, bnc, tnc, uhf, mcx, mmcx, smb…), curl works, page 1 = «Габаритно-присоединительные размеры» (мм/inch tables; keep mm only). «Заглубление контакта» = body face → contact, read by tracing extension lines (SMA male E; female H+I+J).
 
+- MIL-STD-348A (interface figures 301-2 BNC, 304-2 N, 311 SMB, 313 TNC; free, scanned): `curl -L` from Web Archive works from here —
+  `https://web.archive.org/web/20260521052714id_/https://everyspec.com/MIL-STD/MIL-STD-0300-0499/download.php?spec=MIL-STD-348A.029180.pdf`
+  (everyspec itself 403; `web.archive.org/cdx/search/cdx?url=everyspec.com/...&matchType=prefix` finds snapshots). Figures are
+  images — render pages (PyMuPDF) and read the lines. No MCX/MMCX there (CECC). ГОСТ 13317-89 covers only precision air-line 7/3,5/2,4 mm — no N/TNC.
+- MIL-STD-348A confirms (19.10): N socket F−E = 9,04…9,19 − 4,75…5,26; TNC and BNC socket G−J = 8,31…8,51 − 4,72…5,23. Plugs: nut front is not an
+  interface dimension (TNC pin fig 313-1: nut M ≤ 1,98 mm ahead of REF, pin tip recessed F ≥ 0,15), SMB pin interface gives only depth ≥ 0,36.
+
 **How to apply:** coax cables come only from АМЭЛ / Kroks / gsm-repiteri; a new cable from elsewhere is an exception
 to flag, not to add silently. Enrich from these first; fill only empty cells, write to prod per [[prod-reference-write]].
 [[module-reference-db]]
