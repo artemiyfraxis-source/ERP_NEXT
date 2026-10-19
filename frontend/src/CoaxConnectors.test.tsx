@@ -39,7 +39,7 @@ it("reads the series, gender and angle from the card columns or from the type", 
 it("groups the connectors by type in the shop's series order with the stripping lengths, HEX right after L3 and no D1–D3", () => {
   render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} />);
   const groups = screen.getAllByRole("row").filter((row) => row.classList.contains("group-row")).map((row) => row.textContent);
-  expect(groups).toEqual(["RP-SMA-male · 1", "N-male · 2", "Без серии · 1"]);
+  expect(groups).toEqual(["RP-SMA-male R/A · 1", "N-male · 2", "Без серии · 1"]);
   const n316 = screen.getAllByRole("row").find((row) => row.textContent?.includes("RG-316"))!;
   // Разделка — тремя колонками L1 · L2 · L3 (правятся по одной), HEX — следующей; D1–D3 — у кабеля, здесь их нет.
   const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
@@ -171,19 +171,21 @@ it("offers «Удалить» for an own column in «Колонки»", () => {
   expect(remove).toHaveBeenCalled();
 });
 
-it("orders the type groups as the owner asked (19.10): series, then the plain polarity before RP, female before male; variants stay inside", () => {
-  expect(coaxTypeGroup({ coaxType: "SMA-female flange" })).toBe("SMA-female");
-  expect(coaxTypeGroup({ coaxType: "RP-SMA-male R/A" })).toBe("RP-SMA-male");
+it("orders the type groups as the owner asked (19.10): series, then the plain polarity before RP, female before male, bulkhead, flange and R/A as their own groups after the straight ones", () => {
+  expect(coaxTypeGroup({ coaxType: "SMA-female flange" })).toBe("SMA-female flange");
+  expect(coaxTypeGroup({ coaxType: "SMA-female bulkhead" })).toBe("SMA-female bulkhead");
+  expect(coaxTypeGroup({ coaxType: "RP-SMA-male R/A" })).toBe("RP-SMA-male R/A");
+  expect(coaxTypeGroup({ coaxType: "SMA-male", Исполнение: "угловой" })).toBe("SMA-male R/A");
   expect(coaxTypeGroup({ coaxType: "FAKRA-female (тип Z)" })).toBe("Fakra-female");
   expect(coaxTypeGroup({ coaxType: "MHF1-plug (Lock)" })).toBe("MHF1-plug");
   expect(coaxTypeGroup({ coaxType: "QMA" })).toBe("QMA");
   expect(coaxTypeGroup({})).toBe("Без серии");
-  const rows = ["N-female", "RP-SMA-female", "SMA-male R/A", "SMA-male", "SMA-female R/A", "RP-SMA-male", "SMA-female"]
+  const rows = ["N-female", "RP-SMA-female", "SMA-male R/A", "SMA-male", "SMA-female R/A", "RP-SMA-male", "SMA-female flange", "SMA-female", "SMA-female bulkhead"]
     .map((type, index) => record(`r${index}`, { Артикул: `A${index}`, "Тип/Серия": type, Провод: "RG-58" }));
   render(<CoaxConnectors records={rows} canEdit={false} onEdit={() => undefined} />);
   const groups = screen.getAllByRole("row").filter((row) => row.classList.contains("group-row")).map((row) => row.textContent);
-  expect(groups).toEqual(["SMA-female · 2", "SMA-male · 2", "RP-SMA-female · 1", "RP-SMA-male · 1", "N-female · 1"]);
+  expect(groups).toEqual(["SMA-female · 1", "SMA-female bulkhead · 1", "SMA-female flange · 1", "SMA-female R/A · 1", "SMA-male · 1", "SMA-male R/A · 1", "RP-SMA-female · 1", "RP-SMA-male · 1", "N-female · 1"]);
   const types = screen.getAllByRole("row").filter((row) => !row.classList.contains("group-row") && row.querySelector("td"))
     .map((row) => within(row).getAllByRole("cell")[1].textContent);
-  expect(types.slice(0, 4)).toEqual(["SMA-female", "SMA-female R/A", "SMA-male", "SMA-male R/A"]);
+  expect(types.slice(0, 6)).toEqual(["SMA-female", "SMA-female bulkhead", "SMA-female flange", "SMA-female R/A", "SMA-male", "SMA-male R/A"]);
 });
