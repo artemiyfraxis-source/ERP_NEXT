@@ -541,15 +541,16 @@ it("shows the cable lists read-only without the reference edit right", async () 
   expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
 });
 
-it("groups the hook-up wires by series with the shared values in the header, sizes by number, colours as dots", () => {
+it("groups the hook-up wires by series with the shared values in the header, sizes by number, a colour per line", () => {
   const gauge = (id: string, section: number) => ({ id, awg: "", section_mm2: section, conductor_d_mm: null, strands: "", label: `${section} мм²`, wires: 1 });
   const wire = (series: string, mark: string, gauge_id: string, colors: string, voltage: number) => ({
     id: mark, kind: "wire" as const, auto_kind: "wire" as const, reason: "", manual: false, cable: mark, dia: null, dia_hint: null,
-    record: { id: mark, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Цвета": colors, "Материал оболочки": "ПВХ-пластикат" } },
+    record: { id: mark, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Цвета": colors, "Материал оболочки": "ПВХ-пластикат",
+      "Поставщик": "Снабкабель (snabcable.ru)", "Ссылка": "https://snabcable.ru/mounting/mgtf-mgtfe/pv-3-pugv/", "Погонная ёмкость, пФ/м": "" } },
     hookup: { series, gauge_id, insulation: "ПВХ", outer_d_mm: 2, voltage_v: voltage, temp_min_c: -50, temp_max_c: 65 },
   });
   const data = {
-    columns: ["Марка", "Цвета", "Материал оболочки"], counts: { coax: 0, wire: 4, multi: 0, other: 0 }, gauges: [gauge("s10", 10), gauge("s16", 16), gauge("s25", 2.5), gauge("s4", 4)],
+    columns: ["Марка", "Цвета", "Материал оболочки", "Поставщик", "Ссылка", "Погонная ёмкость, пФ/м"], custom_columns: ["Ссылка", "Погонная ёмкость, пФ/м"], counts: { coax: 0, wire: 4, multi: 0, other: 0 }, gauges: [gauge("s10", 10), gauge("s16", 16), gauge("s25", 2.5), gauge("s4", 4)],
     rows: [wire("ПуГВ", "ПуГВ 10", "s10", "синий", 450), wire("ПуГВ", "ПуГВ 16", "s16", "", 450), wire("ПуГВ", "ПуГВ 2,5", "s25", "белый, жёлто-зелёный", 450), wire("ПуГВ", "ПуГВ 4", "s4", "красный", 450)],
   } as unknown as Parameters<typeof HookupWireTable>[0]["data"];
   render(<HookupWireTable data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} kindSelect={() => null} />);
@@ -558,6 +559,10 @@ it("groups the hook-up wires by series with the shared values in the header, siz
   const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
   expect(heads).not.toContain("Серия");
   expect(heads[heads.indexOf("Ø наружный, мм") + 1]).toBe("Материал оболочки");
+  // the coax parameters are not a column of this list; the supplier's page — «открыть», right after the supplier
+  expect(heads).not.toContain("Погонная ёмкость, пФ/м");
+  expect(heads[heads.indexOf("Поставщик") + 1]).toBe("Ссылка");
+  expect(screen.getAllByRole("link", { name: /^Открыть страницу ПуГВ/ })[0]).toHaveAttribute("href", "https://snabcable.ru/mounting/mgtf-mgtfe/pv-3-pugv/");
   // one header: series, the jacket material (not the rudimentary «Изоляция»), what all sizes share, the number of sizes
   expect(screen.getByText("ПуГВ · ПВХ-пластикат · 450 В · −50 … +65 °C")).toBeInTheDocument();
   // not repeated in the rows
@@ -566,9 +571,10 @@ it("groups the hook-up wires by series with the shared values in the header, siz
   // 2,5 · 4 · 10 · 16, not the text order 10 · 16 · 2,5 · 4
   const marks = [...document.querySelectorAll("tbody tr:not(.group-row) strong")].map((node) => node.textContent);
   expect(marks).toEqual(["ПуГВ 2,5", "ПуГВ 4", "ПуГВ 10", "ПуГВ 16"]);
-  // colours: a dot per colour with its name; no colours — a dash
-  expect(screen.getByRole("img", { name: "жёлто-зелёный" })).toBeInTheDocument();
-  expect(screen.getAllByRole("img", { name: "красный" })).toHaveLength(1);
+  // colours: one per line, a dot and the name in text (owner 19.10); no colours — a dash
+  const row25 = screen.getByText("ПуГВ 2,5").closest("tr") as HTMLElement;
+  expect(within(within(row25).getByRole("list", { name: "Цвета" })).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["белый", "жёлто-зелёный"]);
+  expect(row25.querySelectorAll(".wire-dot")).toHaveLength(2);
   const row16 = screen.getByText("ПуГВ 16").closest("tr") as HTMLElement;
   expect(row16.querySelector(".wire-dot")).toBeNull();
   expect(within(row16).getAllByText("—").length).toBeGreaterThan(0);
