@@ -142,6 +142,8 @@ describe("ETK navigation by ПФ (схема ПФ)", () => {
     expect(within(mount).getByLabelText("Выход ПФ 3")).toHaveTextContent("→ Жгут");
     expect(mount).toHaveTextContent("11,5 мин");
     expect(mount).toHaveTextContent("изделие");
+    // Первый щелчок выбирает ПФ, второй открывает операцию (владелец 19.10).
+    fireEvent.click(within(mount).getByRole("button", { name: /^05/ }));
     fireEvent.click(within(mount).getByRole("button", { name: /^05/ }));
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Монтаж");
     expect(within(mount).getByRole("button", { name: /^05/ })).toHaveAttribute("aria-current", "step");

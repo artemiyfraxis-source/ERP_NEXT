@@ -20,7 +20,7 @@
 .etk-dag-scroll:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .etk-dag { position: relative; display: flex; align-items: center; width: max-content; min-width: 100%; box-sizing: border-box; }
 .etk-dag-svg { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 0; overflow: visible; }
-.etk-dag-col { position: relative; z-index: 1; display: flex; flex: none; flex-direction: column; gap: 12px; }
+.etk-dag-col { position: relative; z-index: 1; display: flex; flex: none; flex-direction: column; gap: 24px; }
 .etk-dag-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.8; opacity: .75; transition: opacity .12s; }
 .etk-dag-line.kit { stroke-width: 1.2; opacity: .4; stroke-dasharray: 4 3; }
 .etk-dag-line.on { stroke: var(--primary); stroke-width: 2.4; opacity: 1; }
@@ -36,6 +36,9 @@
 .etk-dag-box.kit { border-style: dashed; background: color-mix(in srgb, var(--muted-foreground) 5%, var(--card)); }
 .etk-dag-box.dim { opacity: .35; }
 .etk-dag-box.near { border-color: var(--primary); }
+/* Выбранный щелчком ПФ: рамка толще, пока выбор не снят; невыбранный — весь кликабелен для выбора. */
+.etk-dag-box:not(.picked):not(.on) { cursor: pointer; }
+.etk-dag-box.picked { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary); }
 .etk-dag-title { display: grid; gap: 2px; margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .etk-dag-title:disabled { cursor: default; }
 .etk-dag-title:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
