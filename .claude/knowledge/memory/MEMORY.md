@@ -25,6 +25,8 @@
 - [Repo public for CI](repo-public-ci.md) — owner made ERP_NEXT public 10.10 after Actions billing block; keep secrets/vuln write-ups out
 - [Crimp contacts protocol](crimp-contacts-protocol.md) — owner's old v5.2 terminal DB rules: keep REEL+BAG in one row, null-spec, N units; ERP keeps Molex hyphens; field gaps vs TerminalRecord
 - [Prod reference write](prod-reference-write.md) — owner wants DB fills written straight to prod: ssh + import_rows by natural key, old="" guard, backup-now
+- [ETK auto revisions](etk-auto-revisions.md) — since 19.10 reference/builder changes issue new ETK revisions automatically (ETK_AUTO_REVISION=1 on prod); no «Пересобрать»
+- [Coax contact depth](coax-contact-depth.md) — заглубление = body face → contact by tracing lines; SMA male E 0,38…1,14, female H+I+J 1,88…2,41; mm only
 - [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
 - [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
 - [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range
