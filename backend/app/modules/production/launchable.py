@@ -13,6 +13,7 @@ from app.modules.techcards.etk_builder import norms_include_setup, operation_nor
 
 from .domain import (
     EtkOperation, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, link_inputs,
+    operation_code_key,
 )
 from .plan import kit_stage_key
 
@@ -469,6 +470,35 @@ def launch_operations(route: Sequence[RouteStep], quantity: int) -> tuple[Produc
         stage_key=_step_block(step) or None,
     ) for step in route)
     return link_inputs(operations, route_inputs(route))
+
+
+def norms_outdated(task: Any, document: Mapping[str, Any] | None) -> bool:
+    """«Нормы устарели»: нормы, которые дала бы выданная сейчас ЭТК тому же запуску, отличаются от норм задания.
+    Сравниваются действующие нормы операций (секунды на штуку и подготовка), а не номера ревизий: новая ревизия с
+    теми же нормами (правка текста, ЭТК до версии 4, у которой подготовку производство и так вычитает) флаг не ставит.
+    Допуск — округление ЭТК до 0,01 мин на партию. Другой состав этапов (число, коды) — устарели: нормы не те."""
+    steps = launch_route(document).steps
+    if not steps:
+        return True
+    if any(operation.etk_ops for operation in task.operations):
+        try:
+            steps = semifinished_steps(steps)
+        except ProductionValidationError:
+            return True
+    fresh = {step.position: step for step in steps}
+    own = {operation.position: operation for operation in task.operations}
+    if set(fresh) != set(own):
+        return True
+    batch, _ = operation_norms(document)
+    unit_tolerance = Decimal("0.6") / max(batch, Decimal(1))  # 0,01 мин на партию — на штуку
+    for position, operation in own.items():
+        step = fresh[position]
+        if operation_code_key(step.code) != operation_code_key(operation.code):
+            return True
+        if (abs(step.seconds_per_unit - operation.seconds_per_unit) > unit_tolerance
+                or abs(step.setup_seconds - operation.setup_seconds) > Decimal("0.6")):
+            return True
+    return False
 
 
 @dataclass(frozen=True)

@@ -7,8 +7,8 @@ from uuid import UUID, uuid4
 from app.main import app
 from app.modules.production.infrastructure import ProductionTaskRow
 from app.modules.techcards.project_cards import TechcardRevision
-from tests.production.test_api import production_api  # noqa: F401
-from tests.production.test_job_flow_api import _launch
+from tests.production.test_api import issue_card, production_api  # noqa: F401
+from tests.production.test_job_flow_api import OPS, _launch
 
 NOW = datetime(2026, 9, 22, 9, 0)
 
@@ -57,7 +57,8 @@ def test_task_keeps_the_document_of_its_launch_revision_and_shows_the_notice(pro
     assert "marker" not in body["card"]["document"]
     assert body["revision"] == {"pinned": 1, "current": 2, "newer": True, "fallback": None}
     flow = client.get(f"/api/production/tasks/{task['id']}/flow").json()
-    assert flow["norms"]["outdated"] is True and flow["norms"]["revision"] == 1
+    # Правка текста: ревизия новее, а нормы те же — «нормы устарели» не ставится, уведомление о ревизии остаётся.
+    assert flow["norms"]["outdated"] is False and flow["norms"]["revision"] == 1 and flow["norms"]["current_revision"] == 2
 
 
 def test_a_new_launch_takes_the_latest_revision(production_api):  # noqa: F811
@@ -99,3 +100,49 @@ def test_task_without_a_pinned_revision_falls_back_to_the_current_card(productio
     body = _etk(client, task)
 
     assert body["revision"]["pinned"] is None and "до закрепления" in body["revision"]["fallback"]
+
+
+def _with_time_rows(card_id: str, *, version: int, with_setup: bool, factor: int = 1) -> None:
+    """Новая ревизия карты: операции с ЭТК-нормами (строки времени); версия 3 держит подготовку внутри нормы."""
+    with app.state.techcards_uow_factory() as uow:
+        card = uow.techcards.get(UUID(card_id))
+        operations = [
+            {**operation, "time": [{"name": "Результат", "norm": str((t_op * factor * 10 + (t_prep if with_setup else 0)) / 60)}]}
+            for operation, (_code, _stage, t_op, t_prep) in zip(card.document["operations"], OPS)
+        ]
+        updated = card.rebuild({**card.document, "operations": operations, "schema_version": version},
+                               datetime(2026, 9, 23, 9, 0))
+        uow.techcards.save(updated)
+        uow.commit()
+    _record_revision(updated)
+
+
+def _outdated(client, task) -> dict:
+    return client.get(f"/api/production/tasks/{task['id']}/flow").json()["norms"]
+
+
+def test_v3_card_that_only_lost_the_setup_does_not_set_the_norms_flag(production_api):  # noqa: F811
+    client, _ = production_api
+    card = issue_card("591K.3", "КБ1", OPS)
+    _with_time_rows(str(card.id), version=3, with_setup=True)
+    task = client.post("/api/production/tasks", headers={"Idempotency-Key": "v3"},
+                       json={"techcard_id": str(card.id), "quantity": 10}).json()["task"]
+    assert [item["seconds_per_unit"] for item in task["operations"]] == ["60", "30", "90"]  # подготовка вычтена
+
+    _with_time_rows(str(card.id), version=4, with_setup=False)
+
+    norms = _outdated(client, task)
+    assert norms["current_revision"] > norms["revision"] and norms["outdated"] is False
+
+
+def test_a_changed_operation_time_sets_the_norms_flag(production_api):  # noqa: F811
+    client, _ = production_api
+    card = issue_card("591K.3", "КБ1", OPS)
+    _with_time_rows(str(card.id), version=4, with_setup=False)
+    task = client.post("/api/production/tasks", headers={"Idempotency-Key": "chg"},
+                       json={"techcard_id": str(card.id), "quantity": 10}).json()["task"]
+    assert _outdated(client, task)["outdated"] is False
+
+    _with_time_rows(str(card.id), version=4, with_setup=False, factor=2)
+
+    assert _outdated(client, task)["outdated"] is True
