@@ -279,7 +279,7 @@ def test_cut_crimping_both_sides_carries_both_terminals_once_and_no_manual_crimp
     assert cut["fields"]["applicator"] == "A2/A7"
     assert cut["fields"]["crimpHeight"] == "0,60 - 0,75 (А) / 0,48 - 0,52 (В)"
     assert _result_name(_both_sides_config("SPH-002T-P0.5S")["ops"][0], {}, "") == (
-        "Провода нарезаны: НВ4 0,2 — 4 шт по 160 мм; сторона А: обжаты терминалы SXH-001T-P0.6N; сторона В: обжаты терминалы SPH-002T-P0.5S")
+        "Провода нарезаны: НВ4 0,2 — 4 шт по 160 мм; обжаты терминалы SXH-001T-P0.6N (сторона А) и SPH-002T-P0.5S (сторона В)")
 
 
 def test_cut_crimping_two_contacts_names_each_ends_crimp_spec_and_missing_norms():
@@ -706,7 +706,7 @@ def test_marks_by_kd_list_every_mark_group_materials_and_scale_the_norm_by_their
     ]
     # Норма БД.ОП на штуку × 5 меток на изделие × 38 шт: 20 × 5 × 38 / 60 = 63,33 мин (без подготовки).
     assert [row["norm"] for row in op["time"]] == ["63,33"]
-    assert op["result"][0]["name"].endswith("; маркировка нанесена")
+    assert op["result"][0]["name"].endswith(", маркировка нанесена")
     assert op["card"]["steps"]
 
 

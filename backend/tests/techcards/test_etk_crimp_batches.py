@@ -79,9 +79,9 @@ def test_each_terminal_is_crimped_at_cut_in_its_own_batch_with_its_own_norm():
 
 def test_batches_name_the_connectors_they_crimp():
     names = _chain_results(CONFIG)
-    assert names[0].endswith("; 5, I3: обжаты терминалы SYM-001T-P0.6")
-    assert names[1].endswith("; В1, В2: обжаты терминалы T-DS1071-SC600")
-    assert names[4].endswith("; A6: обжаты терминалы SYM-001T-P0.6; I-DS1071-SCB02X3: обжаты терминалы T-DS1071-SC600")
+    assert names[0].endswith("; обжаты терминалы SYM-001T-P0.6 (5, I3)")
+    assert names[1].endswith("; обжаты терминалы T-DS1071-SC600 (В1, В2)")
+    assert names[4].endswith("; обжаты терминалы SYM-001T-P0.6 (A6) и T-DS1071-SC600 (I-DS1071-SCB02X3)")
 
 
 def test_a_single_crimp_cut_keeps_its_old_etk_key():

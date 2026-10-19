@@ -315,45 +315,108 @@ def _side_word(op: Mapping[str, Any], config: Mapping[str, Any]) -> str:
 
 def _result_name(
     op: Mapping[str, Any], config: Mapping[str, Any], previous: str,
+    done: Sequence[Mapping[str, Any]] | None = None, seed: str = "",
 ) -> str:
-    """The semi-finished product an operation hands on, as one short Russian sentence: the subject first («Провода»,
-    «Сторона А»), then what was done, then the parts. Every technical fact (article, side, count) stays."""
+    """The semi-finished product an operation hands on, as one short Russian sentence (owner 19.10, «результат
+    по-человечески»): the part's name and its state now — never a log of the steps behind it. `done` — the operations
+    of the chain up to and including `op` (state is folded from them); `seed` — a product name the chain starts from
+    (a hand-written one). Without `done` the chain is `previous` plus this operation."""
     operation_type = str(op.get("type") or "")
     if operation_type.startswith("coax"):
-        return _coax_result_name(op, config, previous)
+        return _coax_result_name(op, config, done or [op])
+    base: str | None = (previous if done is None else seed) or None
+    facts: list[tuple[str, Any]] = []
+    for step in done if done is not None else [op]:
+        base, facts = _harness_step(step, config, base, facts)
+    return _compose_result(base, facts)
+
+
+def _with_fact(facts: list[tuple[str, Any]], key: str, payload: Any) -> list[tuple[str, Any]]:
+    """The facts with `key` said anew: a crimped side is one more fact, any other kind replaces its earlier word
+    («термоусадка надета» → «термоусадка усажена»)."""
+    if key == "crimp":
+        return [*facts, (key, payload)]
+    if any(item[0] == key for item in facts):
+        return [(key, payload) if item[0] == key else item for item in facts]
+    return [*facts, (key, payload)]
+
+
+def _fact_texts(facts: Sequence[tuple[str, Any]]) -> list[str]:
+    """What is still to see on the part: stripped ends are not told once they are crimped, tinned or spliced; the
+    same terminal crimped on both sides is one phrase."""
+    keys = {key for key, _ in facts}
+    crimps = [payload for key, payload in facts if key == "crimp"]
+    texts: list[str] = []
+    for key, payload in facts:
+        if key == "strip" and keys & {"crimp", "splice", "tin"}:
+            continue
+        if key == "strip_tail" and "tail_tin" in keys:
+            continue
+        if key == "crimp":
+            if payload is not crimps[0]:
+                continue
+            if len(crimps) == 2 and crimps[0][1] == crimps[1][1] and crimps[0][0] != crimps[1][0]:
+                texts.append(f"терминалы {payload[1]} обжаты с двух сторон")
+            else:
+                listed = [f"{terminal} ({place})" for place, terminal in crimps]
+                texts.append("обжаты терминалы " + (" и ".join(listed) if len(listed) == 2 else ", ".join(listed)))
+            continue
+        texts.append(str(payload))
+    return texts
+
+
+def _compose_result(base: str | None, facts: Sequence[tuple[str, Any]]) -> str:
+    texts = _fact_texts(facts)
+    if not texts:
+        return base or ""
+    joined = ", ".join(texts)
+    return f"{base}; {joined}" if base else joined[:1].upper() + joined[1:]
+
+
+def _harness_step(
+    op: Mapping[str, Any], config: Mapping[str, Any], base: str | None, facts: list[tuple[str, Any]],
+) -> tuple[str | None, list[tuple[str, Any]]]:
+    """One operation of a wire chain applied to the part's state: `base` (what the part is — the cut wires, a side
+    put together) and the `facts` that hold of it now. An operation that makes a new part starts the state anew."""
+    operation_type = str(op.get("type") or "")
     kind = _kind(op)
     wires = _wires(op, config)
     endpoint = _endpoint(op)
+    has_previous = bool(base) or bool(facts)
     if kind == "prs":
         terminal = str(endpoint.get("termArt") or endpoint.get("termName") or "")
         sources = list(dict.fromkeys(str(item) for item in op.get("wireSources") or [] if item))
-        if op.get("side") == "B" and previous and len(sources) <= 1:
-            return f"{previous}; {_location(op, config)}: обжаты терминалы {terminal}".strip()
-        return f"{_side_word(op, config)}: на {_wires_text(len(wires))} обжаты терминалы {terminal}"
+        if op.get("side") == "B" and has_previous and len(sources) <= 1:
+            return base, _with_fact(facts, "crimp", (_location(op, config), terminal))
+        return f"{_side_word(op, config)}: на {_wires_text(len(wires))} обжаты терминалы {terminal}", []
     if kind == "ins":
         connector = str(endpoint.get("connArt") or endpoint.get("connName") or "")
-        return f"{_side_word(op, config)} собрана: провода вставлены в разъём {connector}"
+        return f"{_side_word(op, config)} собрана: провода вставлены в разъём {connector}", []
     if kind == "sdr":
         connector = str(endpoint.get("connArt") or endpoint.get("connName") or "")
-        return f"{_side_word(op, config)} собрана: провода припаяны к разъёму {connector}"
+        return f"{_side_word(op, config)} собрана: провода припаяны к разъёму {connector}", []
     if operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
         cut = f"Провода нарезаны: {_cut_groups(wires)}" if wires else ""
         terminal = str(endpoint.get("termArt") or endpoint.get("termName") or "")
-        tinned = f"; {TINNED_END}" if op.get("tin") else ""
-        side_b = _side_b_op(op)
-        crimped_b = f"; {_location(side_b, config)}: обжаты терминалы {_terminal(side_b)}" if _terminal(side_b) else ""
-        if not terminal and operation_type == "cutWireStrip" and op.get("tin") and cut:
+        new: list[tuple[str, Any]] = []
+        if terminal:
+            new.append(("crimp", (_location(op, config), terminal)))
+            side_b = _side_b_op(op)
+            if _terminal(side_b):
+                new.append(("crimp", (_location(side_b, config), _terminal(side_b))))
+            if op.get("tin"):
+                new.append(("tin_end", TINNED_END))
+        elif operation_type == "cutWireStrip" and op.get("tin") and cut:
             # Хвосты «сросток → облуженный конец» (CUT_WIRE+2strip+tin): оба конца зачищены, хвост облужен тем же станком.
-            return f"{cut}; концы зачищены, {TAIL_SUFFIX} облужены"
-        return f"{cut}; {_location(op, config)}: обжаты терминалы {terminal}{crimped_b}{tinned}" if terminal else cut
+            new += [("strip", "концы зачищены"), ("tail_tin", f"{TAIL_SUFFIX} облужены")]
+        return cut or None, new
     if _mark_tube(op):
         if operation_type == "cutTut":
             parts = _tut_parts(op)
             listed = "; ".join(
                 f"{part['art']} — {_format(part['count'])} шт" + (f" по {part['len']} мм" if part["len"] else "") for part in parts)
-            return f"Маркировка нарезана: {listed}" if listed else "Маркировка нарезана"
-        done = "маркировка надета" if operation_type == "insTut" else "маркировка усажена"
-        return f"{previous}; {done}" if previous else done[:1].upper() + done[1:]
+            return (f"Маркировка нарезана: {listed}" if listed else "Маркировка нарезана"), []
+        return base, _with_fact(facts, "mark", "маркировка надета" if operation_type == "insTut" else "маркировка усажена")
     if _braid_cut(op):
         material = str(op.get("tutArt") or "")
         head = f"Оплётка {material or op.get('tutName') or ''}".strip()
@@ -361,42 +424,44 @@ def _result_name(
         # Одна оплётка — отрезки без артикула: «Оплётка XP-3 нарезана: 2 шт по 120 мм; 2 шт по 110 мм».
         listed = ("; ".join(f"{_format(part['count'])} шт" + (f" по {part['len']} мм" if part["len"] else "") for part in parts)
                   if material else _parts_text(parts))
-        return f"{head} нарезана: {listed}" if listed else f"{head} нарезана"
+        return (f"{head} нарезана: {listed}" if listed else f"{head} нарезана"), []
     if operation_type == "cutTut" and _tut_parts(op) and not op.get("tutArt"):
-        return f"Трубки нарезаны: {_parts_text(_tut_parts(op))}"
+        return f"Трубки нарезаны: {_parts_text(_tut_parts(op))}", []
     if operation_type == "cutTut":
         material = str(op.get("tutArt") or op.get("tutName") or "ТУТ")
         segments = op.get("tutSegs") if isinstance(op.get("tutSegs"), list) else []
         if any(item.get("len") for item in segments if isinstance(item, Mapping)):
             parts = [f"{item.get('count', 0)} шт по {item.get('len')} мм" for item in segments if item.get("len")]
-            return f"Трубка {material} нарезана: {'; '.join(parts)}"
+            return f"Трубка {material} нарезана: {'; '.join(parts)}", []
         count = int(_decimal(op.get("tutCount")))
-        return f"Трубка {material} нарезана" + (f": {_count_text(count, 'отрезок', 'отрезка', 'отрезков')}" if count else "")
+        return f"Трубка {material} нарезана" + (f": {_count_text(count, 'отрезок', 'отрезка', 'отрезков')}" if count else ""), []
     if operation_type == "insTut":
-        done = "термоусадка надета" if op.get("harness") else "трубка надета на провода"
-        return f"{previous}; {done}" if previous else "Трубка надета на провода"
+        return base, _with_fact(facts, "tube", "термоусадка надета" if op.get("harness") else "трубка надета на провода")
     if operation_type == "heatTut":
-        if op.get("harness") and previous.endswith("; термоусадка надета"):
-            return previous.removesuffix("; термоусадка надета") + "; термоусадка усажена"
-        done = "термоусадка усажена" if op.get("harness") else "трубка усажена"
-        return f"{previous}; {done}" if previous else "Термоусадка усажена"
+        return base, _with_fact(facts, "tube", "термоусадка усажена" if op.get("harness") else "трубка усажена")
     if operation_type == "stripCable":
         count = int(_decimal(op.get("tutCount")))
-        ends = f"{TAIL_SUFFIX} разделаны" if op.get("opKey") == "stripTail" else "концы разделаны"
-        return f"{previous}; {ends}" if previous else f"{ends[:1].upper()}{ends[1:]}: {count}"
+        tail = op.get("opKey") == "stripTail"
+        if has_previous:
+            return base, _with_fact(facts, "strip_tail" if tail else "strip", f"{TAIL_SUFFIX} разделаны" if tail else "концы разделаны")
+        ends = f"{TAIL_SUFFIX} разделаны" if tail else "концы разделаны"
+        return f"{ends[:1].upper()}{ends[1:]}: {count}", []
     if operation_type == "tin" and op.get("opKey") == "tinTail":
-        return f"{previous}; {TAIL_SUFFIX} облужены" if previous else previous
+        return (base, _with_fact(facts, "tail_tin", f"{TAIL_SUFFIX} облужены")) if has_previous else (base, facts)
     method = _splice_method(op)
     if method:
-        parts = ", ".join(row["art"] for row in _splice_parts(op))
-        done = SPLICE_DONE[method] + (f" {parts}" if parts and method == "sleeve" else "")
-        return f"{previous}; {done}" if previous else done[:1].upper() + done[1:]
+        arts = [row["art"] for row in _splice_parts(op)]
+        parts = (", ".join(arts[:-1]) + " и " if len(arts) > 1 else "") + arts[-1] if arts else ""  # no comma: the facts are joined by commas
+        return base, _with_fact(facts, "splice", SPLICE_DONE[method] + (f" {parts}" if parts and method == "sleeve" else ""))
     labels = {
-        "twist": "провода скручены", "tin": "концы облужены", "insMark": "маркировка нанесена",
-        "seal": "место загерметизировано",
-        "insWrap": "надета оплётка" if op.get("wrapKind") == "braid" else "намотана защитная лента",
+        "twist": ("twist", "провода скручены"), "tin": ("tin", "концы облужены"), "insMark": ("mark_print", "маркировка нанесена"),
+        "seal": ("seal", "место загерметизировано"),
+        "insWrap": ("wrap", "надета оплётка" if op.get("wrapKind") == "braid" else "намотана защитная лента"),
     }
-    return f"{previous}; {labels[operation_type]}" if previous and operation_type in labels else previous
+    if has_previous and operation_type in labels:
+        key, text = labels[operation_type]
+        return base, _with_fact(facts, key, text)
+    return base, facts
 
 
 def _coax(config: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -415,72 +480,17 @@ def _coax_units(op: Mapping[str, Any]) -> Decimal:
     return max(Decimal(1), _number(op.get("units"), Decimal(1)))
 
 
-def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], previous: str) -> str:
-    """The semi-finished cable a coax operation (generator tab «Коакс») hands on (владелец 15.10: «нет результата»):
-    the cut cable with its length, then every operation adds what was done to which end and with which part, the way
-    the wire chain does («…; сторона А разделана под MMCX-Male»); the same on both ends one after another is one part
-    («центральные контакты припаяны с двух сторон»). TUT pieces are a side product of their own."""
-    operation_type = str(op.get("type") or "")
-    coax = _coax(config)
-    cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
-    tut =str(coax.get("tutArt") or coax.get("tutName") or "").strip()
-    sleeve = str(coax.get("sleeveArt") or coax.get("sleeveName") or "").strip()
-    many = _coax_units(op) > 1
-    if operation_type == "coaxCut":
-        length = _format(coax.get("cableLength"))
-        name = f"Кабель {cable or 'коаксиальный'} нарезан" + (f": {length} мм" if length != "0" else "")
-        sides = [side for side in ("A", "B") if side in _list(op.get("stripSides"))]
-        if sides:
-            kinds = [coax_connector_kind(_coax(config).get(f"side{side}") or {})[0] for side in ("A", "B")]
-            if len(sides) == 2 and all(kinds):
-                name += f"; конец А — под {kinds[0]}, конец В — под {kinds[1]}"
-            else:
-                name += "; концы А и В разделаны" if len(sides) == 2 else f"; конец {_side_label({'side': sides[0]})} разделан"
-        return name
-    if operation_type == "coaxCutTut":
-        count = int(_coax_units(op))
-        length = _format(coax.get("tutLength"))
-        return (f"Трубка {tut or 'ТУТ'} нарезана: {_count_text(count, 'отрезок', 'отрезка', 'отрезков')}"
-                + (f" по {length} мм" if length != "0" else ""))
-    if operation_type in COAX_END_PHRASES:
-        # Сторона В сразу после того же на стороне А — одной частью «… с двух сторон», а не двумя длинными.
-        done = _coax_end_phrase(operation_type, config, "B" if op.get("side") == "B" else "A")
-        if op.get("side") == "B" and previous.endswith(_coax_end_phrase(operation_type, config, "A")):
-            head = previous[: -len(_coax_end_phrase(operation_type, config, "A"))]
-            return head + _coax_both_phrase(operation_type, config) if head else f"Кабель {cable or 'коаксиальный'}: {_coax_both_phrase(operation_type, config)}"
-    else:
-        done = {
-            "coaxInsTut": ("надеты трубки" if many else "надета трубка") + (f" {tut}" if tut else ""),
-            "coaxInsSleeve": ("надеты втулки экрана" if many else "надета втулка экрана") + (f" {sleeve}" if sleeve else ""),
-            "coaxShield": "втулки экрана обжаты" if many else "втулка экрана обжата",
-            "coaxHeat": "трубки усажены" if many else "трубка усажена",
-        }.get(operation_type, "")
-    if not done:
-        return previous
-    return f"{previous}; {done}" if previous else f"Кабель {cable or 'коаксиальный'}: {done}"
-
-
-# What an end operation of a coax cable does, said of one end; both ends one after another merge into one part.
-COAX_END_PHRASES = {
-    "coaxStrip": ("{where} разделана под {connector}", "{where} разделана", "концы разделаны: А — под {a}, В — под {b}",
-                  "концы А и В разделаны"),
-    "coaxPin": ("{where}: {contact} центральный контакт", "{where}: {contact} центральный контакт",
-                "центральные контакты {contacts} с двух сторон", "центральные контакты {contacts} с двух сторон"),
-    "coaxHousing": ("{where}: установлен корпус разъёма", "{where}: установлен корпус разъёма",
-                    "корпуса разъёмов установлены с двух сторон", "корпуса разъёмов установлены с двух сторон"),
-    "coaxSolderShield": ("{where}: экран припаян к корпусу", "{where}: экран припаян к корпусу",
-                         "экран припаян к корпусам с двух сторон", "экран припаян к корпусам с двух сторон"),
-    "coaxCapCrimp": ("{where}: крышка разъёма обжата", "{where}: крышка разъёма обжата",
-                     "крышки разъёмов обжаты с двух сторон", "крышки разъёмов обжаты с двух сторон"),
-    "coaxCapScrew": ("{where}: крышка разъёма завёрнута", "{where}: крышка разъёма завёрнута",
-                     "крышки разъёмов завёрнуты с двух сторон", "крышки разъёмов завёрнуты с двух сторон"),
-}
-
-
 def _coax_connector(config: Mapping[str, Any], side: str) -> str:
     end = _coax(config).get("sideB" if side == "B" else "sideA")
     end = end if isinstance(end, Mapping) else {}
     return str(end.get("article") or end.get("connName") or "").strip()
+
+
+def _coax_end_name(config: Mapping[str, Any], side: str) -> str:
+    """The connector of an end as the fitter reads it: «SMA-Male» by its type, else the article."""
+    end = _coax(config).get("sideB" if side == "B" else "sideA")
+    kind = coax_connector_kind(end)[0] if isinstance(end, Mapping) else ""
+    return kind or _coax_connector(config, side)
 
 
 def _coax_contact(config: Mapping[str, Any], side: str) -> str:
@@ -489,19 +499,92 @@ def _coax_contact(config: Mapping[str, Any], side: str) -> str:
     return "обжат" if "обжим" in pin_type else "припаян"
 
 
-def _coax_end_phrase(operation_type: str, config: Mapping[str, Any], side: str) -> str:
-    named, bare, _, _ = COAX_END_PHRASES[operation_type]
-    connector = _coax_connector(config, side)
-    return (named if connector else bare).format(
-        where=f"сторона {_side_label({'side': side})}", connector=connector, contact=_coax_contact(config, side))
-
-
-def _coax_both_phrase(operation_type: str, config: Mapping[str, Any]) -> str:
-    _, _, named, bare = COAX_END_PHRASES[operation_type]
-    a, b = _coax_connector(config, "A"), _coax_connector(config, "B")
-    contacts = {_coax_contact(config, "A"), _coax_contact(config, "B")}
-    contact = "припаяны" if contacts == {"припаян"} else "обжаты" if contacts == {"обжат"} else "припаяны / обжаты"
-    return (named if a and b else bare).format(a=a, b=b, contacts=contact)
+def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Sequence[Mapping[str, Any]]) -> str:
+    """What the fitter holds after a coax operation (generator tab «Коакс»; owner 19.10: «результат по-человечески»):
+    the cable with its length and how its ends look now, then — after «;» — what is still to finish on it («ТУТ и
+    втулки экрана надеты, не обжаты»). The state is folded from the operations done (`done`, `op` last), never a log
+    of steps: stripped ends are not told once the contacts are on, the contacts once the housings are on.
+    TUT pieces are a side product of their own."""
+    operation_type = str(op.get("type") or "")
+    coax = _coax(config)
+    cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
+    tut = str(coax.get("tutArt") or coax.get("tutName") or "").strip()
+    if operation_type == "coaxCutTut":
+        count = int(_coax_units(op))
+        length = _format(coax.get("tutLength"))
+        return (f"Трубка {tut or 'ТУТ'} нарезана: {_count_text(count, 'отрезок', 'отрезка', 'отрезков')}"
+                + (f" по {length} мм" if length != "0" else ""))
+    sides: dict[str, set[str]] = {key: set() for key in ("strip", "pin", "housing", "shield_solder", "cap_crimp", "cap_screw")}
+    flags: set[str] = set()
+    many = True
+    for step in done:
+        kind = str(step.get("type") or "")
+        end = "B" if step.get("side") == "B" else "A"
+        if kind == "coaxCut":
+            sides["strip"] |= {side for side in ("A", "B") if side in _list(step.get("stripSides"))}
+        elif kind == "coaxStrip":
+            sides["strip"].add(end)
+        elif kind == "coaxPin":
+            sides["pin"].add(end)
+        elif kind == "coaxHousing":
+            sides["housing"].add(end)
+        elif kind == "coaxSolderShield":
+            sides["shield_solder"].add(end)
+        elif kind == "coaxCapCrimp":
+            sides["cap_crimp"].add(end)
+        elif kind == "coaxCapScrew":
+            sides["cap_screw"].add(end)
+        elif kind in {"coaxInsTut", "coaxInsSleeve", "coaxShield", "coaxHeat"}:
+            flags.add(kind)
+            many = _coax_units(step) > 1
+    length = _format(coax.get("cableLength"))
+    head = f"Кабель {cable or 'коаксиальный'}" + (f" {length} мм" if length != "0" else "")
+    both = {"A", "B"}
+    named = {side: _coax_end_name(config, side) for side in ("A", "B")}
+    if sides["housing"]:
+        if sides["housing"] == both and all(named.values()):
+            head += f" с корпусами {named['A']} (А) и {named['B']} (В)"
+        elif sides["housing"] == both:
+            head += " с корпусами разъёмов на обоих концах"
+        else:
+            side = next(iter(sides["housing"]))
+            head += " с корпусом" + (f" {named[side]}" if named[side] else "") + f" на стороне {_side_label({'side': side})}"
+    elif sides["pin"]:
+        contacts = {_coax_contact(config, side) for side in sides["pin"]}
+        many_pins, one_pin = {"припаян": ("припаянными", "припаянным"), "обжат": ("обжатыми", "обжатым")}.get(
+            next(iter(contacts)) if len(contacts) == 1 else "", ("", ""))
+        if sides["pin"] == both:
+            head += " с " + (f"{many_pins} " if many_pins else "") + "центральными контактами"
+        else:
+            head += " с " + (f"{one_pin} " if one_pin else "") + (
+                f"центральным контактом на стороне {_side_label({'side': next(iter(sides['pin']))})}")
+    elif sides["strip"]:
+        if sides["strip"] == both:
+            if all(named.values()):
+                head += f", концы разделаны: А — под {named['A']}, В — под {named['B']}"
+            else:
+                head += ", концы А и В разделаны"
+        else:
+            side = next(iter(sides["strip"]))
+            head += f", конец {_side_label({'side': side})} разделан" + (f" под {named[side]}" if named[side] else "")
+    facts: list[str] = []
+    if sides["shield_solder"]:
+        facts.append("экран припаян к корпусам" if sides["shield_solder"] == both else "экран припаян к корпусу")
+    for key, word in (("cap_crimp", "обжаты"), ("cap_screw", "завёрнуты")):
+        if sides[key]:
+            facts.append(f"крышки разъёмов {word}" if sides[key] == both else f"крышка разъёма {word[:-1]}а")
+    tube_on, sleeve_on = "coaxInsTut" in flags, "coaxInsSleeve" in flags
+    shrunk, crimped = "coaxHeat" in flags, "coaxShield" in flags
+    if tube_on and sleeve_on and not shrunk and not crimped:
+        facts.append("ТУТ и втулки экрана надеты, не обжаты" if many else "ТУТ и втулка экрана надеты, не обжата")
+    else:
+        if sleeve_on or crimped:
+            facts.append(("втулки экрана обжаты" if many else "втулка экрана обжата") if crimped else
+                         ("втулки экрана надеты, не обжаты" if many else "втулка экрана надета, не обжата"))
+        if tube_on or shrunk:
+            facts.append(("ТУТ усажены" if many else "ТУТ усажена") if shrunk else
+                         ("ТУТ надеты, не усажены" if many else "ТУТ надета, не усажена"))
+    return f"{head}; {', '.join(facts)}" if facts else head
 
 
 def _group_cut_components(wires: Sequence[Mapping[str, Any]], quantity: Decimal) -> list[dict[str, str]]:
@@ -1619,15 +1702,14 @@ def _chain_results(config: Mapping[str, Any]) -> list[str]:
     scheme = _scheme_chain([op for op in _list(config.get("ops")) if isinstance(op, Mapping)], config)
     if scheme is not None:
         return [link.result for link in scheme]
-    previous = ""
+    chain: list[Mapping[str, Any]] = []
     names: list[str] = []
     for op in _list(config.get("ops")):
         if not isinstance(op, Mapping):
             continue
-        result = _result_name(op, config, previous)
-        names.append(result)
+        names.append(_result_name(op, config, "", [*chain, op]))
         if _advances_chain(op):
-            previous = result
+            chain.append(op)
     return names
 
 
@@ -1881,6 +1963,8 @@ def _manual_ops(
         raise _manual_error("добавьте хотя бы одну операцию — из библиотеки или свою")
     result: list[_ManualOp] = []
     previous = ""  # the generator chain over the list: a generator operation names its product after the one before
+    chain: list[Mapping[str, Any]] = []  # the generator operations behind `previous` (the state it is folded from)
+    seed = ""  # the hand-written product the chain started from
     for position, op in enumerate(raw, start=1):
         if not isinstance(op, Mapping):
             raise _manual_error(f"операция {position} — непонятная запись")
@@ -1924,12 +2008,15 @@ def _manual_ops(
             raise _manual_error(f"{named}: время на штуку должно быть числом не меньше нуля")
         if generator:
             chain_previous = previous
-            product = _manual_text(op.get("result")) or _result_name(op, config, previous)
+            written = _manual_text(op.get("result"))
+            product = written or _result_name(op, config, previous, [*chain, op], seed)
             if _advances_chain(op):
                 previous = product
+                chain, seed = ([], written) if written else ([*chain, op], seed)
         else:
             chain_previous = ""
             product = previous = _manual_text(op.get("result")) or f"Полуфабрикат после «{label}»"
+            chain, seed = [], product
         result.append(_ManualOp(position, op, kind, label, code, card, quantity, seconds, setup, product,
                                 generator, chain_previous))
     return result
@@ -2326,7 +2413,7 @@ def _scheme_chain(
             last = index == len(block.ops) - 1
             is_last = block.final and last
             if block.kit:
-                result = _result_name(op, config, previous)
+                result = _result_name(op, config, previous, [operations[item - 1] for item in block.ops[:index + 1]])
             else:
                 result = names[block.key] if last else _scheme_step(op)
             if index:
@@ -2370,10 +2457,11 @@ def _generator_chain(
     links: list[_ChainLink] = []
     previous_result = ""
     previous_norm = ""
+    chain: list[Mapping[str, Any]] = []
     tut_cuts: list[dict[str, Any]] = []
     tut_on_wires = False
     for index, (op, code) in enumerate(zip(operations, codes), start=1):
-        result = _result_name(op, config, previous_result)
+        result = _result_name(op, config, previous_result, [*chain, op])
         if op.get("type") in TUT_CUT_TYPES:
             tut_cuts.append({"name": result, "norm": _tut_pieces(op, config), "key": str(op.get("opKey") or "")})
         auxiliary = None
@@ -2393,6 +2481,7 @@ def _generator_chain(
         if _advances_chain(op):
             previous_result = result
             previous_norm = _output_norm(op, config)
+            chain.append(op)
     return links
 
 

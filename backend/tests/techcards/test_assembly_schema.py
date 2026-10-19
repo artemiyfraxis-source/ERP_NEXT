@@ -253,7 +253,7 @@ def test_generator_library_and_own_operations_mix_in_one_manual_assembly():
     assert cut["fields"]["params"] == "L = 250 мм" and cut["fields"]["applicator"] == "A16"
     # Inside the block the cut hands its typed product on; the block's product is named by the block.
     assert cut["result"] == [{"name": "ПВ3 250мм, обжатый терминал SXH-001T-P0.6", "norm": "20", "unit": "Шт."}]
-    assert twist["semis"] == [{"name": "Провода нарезаны: ПВ3 — 2 шт по 250 мм; сторона А: обжаты терминалы SXH-001T-P0.6", "norm": "10", "unit": "Шт."}]
+    assert twist["semis"] == [{"name": "Провода нарезаны: ПВ3 — 2 шт по 250 мм; обжаты терминалы SXH-001T-P0.6 (сторона А)", "norm": "10", "unit": "Шт."}]
     assert twist["result"][0]["name"] == "Провода с терминалом"
     assert mount["semis"] == [{"name": "Провода с терминалом", "norm": "10", "unit": "Шт."}]
     assert mount["result"][0]["name"] == "Сторона А собрана: провода вставлены в разъём XHP-2"

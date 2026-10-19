@@ -36,18 +36,18 @@ def test_connector_kind_is_the_base_type_and_the_russian_half_by_contacts():
 
 def test_strip_result_names_the_connector_of_each_end():
     operations = _built(_config())
-    assert operations[0]["result"][0]["name"] == "Кабель RG316 нарезан: 285 мм; конец А — под SMA-Male, конец В — под SMA-Female bulkhead"
+    assert operations[0]["result"][0]["name"] == "Кабель RG316 285 мм, концы разделаны: А — под SMA-Male, В — под SMA-Female bulkhead"
     fields = operations[0]["fields"]
     assert (fields["coax"]["connectorType"], fields["coax"]["gender"]) == ("SMA-Male", "вилка")
     assert (fields["coaxB"]["connectorType"], fields["coaxB"]["gender"]) == ("SMA-Female bulkhead", "розетка")
     assert operations[1]["fields"]["coaxEnd"]["gender"] == "вилка"
 
 
-def test_strip_without_connector_types_keeps_the_old_words():
+def test_strip_without_connector_types_names_the_articles():
     config = _config()
     for side in ("sideA", "sideB"):
         del config["coax"][side]["type"]
-    assert _built(config)[0]["result"][0]["name"].endswith("; концы А и В разделаны")
+    assert _built(config)[0]["result"][0]["name"].endswith("концы разделаны: А — под SMA-C174P, В — под SMA-C316F")
 
 
 def test_an_issued_etk_names_the_connector_halves_on_read():
@@ -73,6 +73,37 @@ def test_a_read_gives_the_tube_and_sleeve_operations_both_ends_with_their_connec
     assert [(end["side"], end["connectorType"], end["gender"], end["l3"]) for end in ends] == [
         ("А", "SMA-Male", "вилка", "7,5"), ("В", "SMA-Female bulkhead", "розетка", "10")]
     assert "ends" not in operation["fields"]["coaxParts"]
+
+
+def _full_config() -> dict:
+    """КБ1 228К.20 до конца: резка с разделкой, контакты, ТУТ и втулки, корпуса, обжим, усадка."""
+    config = _config()
+    sequence = [("coaxCut", "", "CUT_COAX+2strip"), ("coaxPin", "A", "SDR_COAX_pin"), ("coaxPin", "B", "SDR_COAX_pin"),
+                ("coaxInsTut", "", "INS_TUT"), ("coaxInsSleeve", "", "INS_SLEEVE_coax"), ("coaxHousing", "A", "INS_housing_COAX"),
+                ("coaxHousing", "B", "INS_housing_COAX"), ("coaxShield", "", "PRS_SLEEVE_coax"), ("coaxHeat", "", "HEAT_TYT_short")]
+    config["ops"] = [{"type": kind, "side": side, "units": 2 if kind in {"coaxInsTut", "coaxInsSleeve", "coaxShield", "coaxHeat"} else 1,
+                      "templateId": CARDS[code].source_id, **({"stripSides": ["A", "B"]} if kind == "coaxCut" else {})}
+                     for kind, side, code in sequence]
+    config["assemblyName"] = "Кабельная сборка SMA-Male - SMA-Female RG316 285 мм"
+    config["coax"].update(tutArt="ТУТ 4/2мм, черная", sleeveArt="SL-316")
+    return config
+
+
+def test_every_result_is_one_short_sentence_of_what_the_fitter_holds():
+    # Владелец 19.10: «РЕЗУЛЬТАТ ПО-ЧЕЛОВЕЧЕСКИ» — имя детали и её состояние, не журнал шагов.
+    names = [operation["result"][0]["name"] for operation in _built(_full_config())]
+    assert names == [
+        "Кабель RG316 285 мм, концы разделаны: А — под SMA-Male, В — под SMA-Female bulkhead",
+        "Кабель RG316 285 мм с припаянным центральным контактом на стороне А",
+        "Кабель RG316 285 мм с припаянными центральными контактами",
+        "Кабель RG316 285 мм с припаянными центральными контактами; ТУТ надеты, не усажены",
+        "Кабель RG316 285 мм с припаянными центральными контактами; ТУТ и втулки экрана надеты, не обжаты",
+        "Кабель RG316 285 мм с корпусом SMA-Male на стороне А; ТУТ и втулки экрана надеты, не обжаты",
+        "Кабель RG316 285 мм с корпусами SMA-Male (А) и SMA-Female bulkhead (В); ТУТ и втулки экрана надеты, не обжаты",
+        "Кабель RG316 285 мм с корпусами SMA-Male (А) и SMA-Female bulkhead (В); втулки экрана обжаты, ТУТ надеты, не усажены",
+        "Кабельная сборка SMA-Male - SMA-Female RG316 285 мм",
+    ]
+    assert not any(name.count(";") > 1 for name in names)
 
 
 def _housings(depth_a: str = "", depth_b: str = "") -> list[dict]:
