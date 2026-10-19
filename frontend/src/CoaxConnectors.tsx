@@ -84,16 +84,26 @@ const reversed = (fields: Fields) => /^RP[-\s]?/i.test(coaxType(fields));
 const GENDER_WORDS = ["female", "male", "plug", "jack"];
 const genderWord = (fields: Fields) => coaxType(fields).match(/(female|male|plug|jack)/i)?.[1].toLowerCase() ?? "";
 
+// Исполнения, которые идут своей группой за прямыми, в этом порядке.
+const VARIANTS = ["bulkhead", "flange", "R/A"];
+function coaxVariants(fields: Fields): string[] {
+  const type = coaxType(fields).toLowerCase();
+  return VARIANTS.filter((item) => (item === "R/A" ? coaxAngle(fields) === "угловой" : type.includes(item)));
+}
+const variantRank = (fields: Fields) => coaxVariants(fields).reduce((rank, item) => rank + (1 << VARIANTS.indexOf(item)), 0);
+
 /** Группа таблицы — тип разъёма (владелец 19.10: «сортировка по типу SMA-female и т. д.»): серия, полярность и пол —
-    «SMA-female», «RP-SMA-male», «Fakra-female»; угловые, фланцевые и проходные — внутри своей группы. */
+    «SMA-female», «RP-SMA-male», «Fakra-female»; проходные, фланцевые и угловые — своими группами следом за прямыми
+    («SMA-female bulkhead», «SMA-female flange», «SMA-male R/A», владелец 19.10). */
 export function coaxTypeGroup(fields: Fields): string {
   const series = coaxSeries(fields);
   if (series === NO_SERIES) return NO_SERIES;
   const word = genderWord(fields);
-  return `${reversed(fields) ? "RP-" : ""}${series}${word ? `-${word}` : ""}`;
+  return `${reversed(fields) ? "RP-" : ""}${series}${word ? `-${word}` : ""}${coaxVariants(fields).map((item) => ` ${item}`).join("")}`;
 }
 
-// Серия (порядок цеха) → обычная полярность раньше RP → female, male → полный тип (прямой раньше R/A) → артикул → кабель.
+// Серия (порядок цеха) → обычная полярность раньше RP → female, male → прямые, проходные, фланцевые, угловые → полный тип →
+// артикул → кабель.
 function sortRows(records: TechOperationRecord[]) {
   const genderRank = (fields: Fields) => { const at = GENDER_WORDS.indexOf(genderWord(fields)); return at < 0 ? GENDER_WORDS.length : at; };
   return [...records].sort((a, b) => {
@@ -102,6 +112,7 @@ function sortRows(records: TechOperationRecord[]) {
     return seriesRank(sa) - seriesRank(sb) || sa.localeCompare(sb, "ru")
       || Number(reversed(a.fields)) - Number(reversed(b.fields))
       || genderRank(a.fields) - genderRank(b.fields)
+      || variantRank(a.fields) - variantRank(b.fields)
       || coaxType(a.fields).localeCompare(coaxType(b.fields), "ru")
       || coaxArticle(a.fields).localeCompare(coaxArticle(b.fields), "ru", { numeric: true })
       || coaxWire(a.fields).localeCompare(coaxWire(b.fields), "ru", { numeric: true });
