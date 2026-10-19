@@ -189,6 +189,19 @@ def test_coax_articles_fill_the_rf_series_by_type():
     assert series["rf-bnc"]["catalog"] == [] and series["rf-bnc"]["housing_count"] == 0
 
 
+def test_millimetre_series_and_smp_take_their_stock_articles():
+    # Склад 19.10: 2.92-JB2G-F, 3.5-JB2AG, SMP-KW2 — серии 2,92 мм, 3,5 мм и SMP открываются по «Тип/Серия».
+    coax = [
+        {"coaxArticle": "2.92-JB2G-F", "coaxType": "2.92mm-male", "coaxMfr": "", "coaxWire": "RG-405"},
+        {"coaxArticle": "3.5-JB2AG", "coaxType": "3.5mm-male", "coaxMfr": "", "coaxWire": "RG-405"},
+        {"coaxArticle": "SMP-KW2", "coaxType": "SMP-female R/A", "coaxMfr": "", "coaxWire": "RG-178"},
+    ]
+    series = {item["id"]: item for item in connector_series((), coax)}
+    assert [c["article"] for c in series["rf-292"]["catalog"]] == ["2.92-JB2G-F"]
+    assert [c["article"] for c in series["rf-35"]["catalog"]] == ["3.5-JB2AG"]
+    assert [c["article"] for c in series["rf-smp"]["catalog"]] == ["SMP-KW2"]
+
+
 def test_terminal_payload_carries_crimp_height_and_pull_force():
     plain = {"terSeries": "GHR", "terArticle": "P-1", "terCrimpHeight": "0,85 - 0,90", "terPullForceMin": "50", "terPullForceMax": "70"}
     profiled = {"terSeries": "GHR", "terArticle": "P-2", "terCrimpHeight": "26 AWG: 0,62 (15 Н)\n28 AWG: 0,70 (12 Н)"}
