@@ -16,10 +16,10 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.identity import Actor
 from app.shared.persistence import create_schema
+from tests.techcards.library import load_library
 
 
 NOW = datetime(2026, 9, 23, 12, 0)
-SOURCE_COMMIT = "df683f87768f98735a87e68bde2be023b48dc03a"
 
 
 def _template(source_id: str, code: str) -> dict:
@@ -60,29 +60,21 @@ def operation_library_api():
     engine.dispose()
 
 
-def test_imports_lists_and_reads_lossless_operation_cards(operation_library_api):
-    imported = operation_library_api.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("cut-wire", "CUT_WIRE")]},
-    )
+def test_lists_and_reads_lossless_operation_cards(operation_library_api):
+    load_library(app.state.techcards_uow_factory, [_template("cut-wire", "CUT_WIRE")])
     listed = operation_library_api.get("/api/techcards/templates")
     detail = operation_library_api.get("/api/techcards/templates/cut-wire")
 
-    assert imported.status_code == 200
-    assert imported.json() == {"templates": 1, "source_commit": SOURCE_COMMIT, "overwritten_edited": []}
-    assert listed.json()["metadata"]["template_count"] == 1
+    assert list(listed.json()) == ["items"]
     assert listed.json()["items"][0]["code"] == "CUT_WIRE"
     assert detail.json()["document"]["steps"][0]["text"] == "Выполнить операцию"
     assert detail.json()["raw_rows"][8][2] == "Инструмент"
 
 
-def test_template_images_round_trip_through_import_and_detail(operation_library_api):
+def test_template_images_round_trip_to_the_detail(operation_library_api):
     template = _template("cut-wire", "CUT_WIRE")
     template["images"] = [{"row": 0, "col": 1, "driveFileId": "1AbCdEf", "width": 100, "height": 50}]
-    operation_library_api.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [template]},
-    )
+    load_library(app.state.techcards_uow_factory, [template])
     detail = operation_library_api.get("/api/techcards/templates/cut-wire")
 
     assert detail.json()["document"]["images"] == [
@@ -127,43 +119,8 @@ def test_grapher_import_checks_the_drawing_against_sheet_rows(operation_library_
     assert harness["wires"][0]["cut_mm"] == 312
 
 
-def test_library_import_replaces_previous_snapshot(operation_library_api):
-    operation_library_api.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE")]},
-    )
-    operation_library_api.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("two", "OP_TWO")]},
-    )
-    listed = operation_library_api.get("/api/techcards/templates")
-
-    assert [item["id"] for item in listed.json()["items"]] == ["two"]
-
-
-def test_non_admin_cannot_replace_operation_library(operation_library_api):
-    app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=Actor(
-            id=UUID("30000000-0000-0000-0000-000000000010"),
-            name="Инженер",
-            department="Производство",
-        ),
-        email="engineer@example.test",
-        roles=frozenset({"engineer"}),
-        permissions={"techcards": "edit", "erptctpl": "edit", "tcgen": "edit"},
-    )
-    response = operation_library_api.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE")]},
-    )
-    assert response.status_code == 403
-
-
-def test_auto_builds_a_persistent_project_etk_from_the_imported_library(operation_library_api):
-    operation_library_api.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE")]},
-    )
+def test_auto_builds_a_persistent_project_etk_from_the_library(operation_library_api):
+    load_library(app.state.techcards_uow_factory, [_template("one", "OP_ONE")])
     created = operation_library_api.post(
         "/api/techcards/projects",
         json={"project": "P-200", "item_index": "КБ1", "product_name": "Жгут"},
@@ -191,14 +148,11 @@ def test_auto_builds_a_persistent_project_etk_from_the_imported_library(operatio
     assert document["operations"][0]["code"] == "OP_ONE"
     assert document["operations"][0]["card"]["steps"][0]["text"] == "Выполнить операцию"
     assert document["operations"][0]["time"][0]["norm"] == "2,5"
-    assert document["source"]["operation_library_commit"] == SOURCE_COMMIT
+    assert "operation_library_commit" not in document["source"]
 
 
 def test_auto_build_enriches_crimp_from_current_reference_snapshot(operation_library_api):
-    operation_library_api.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("prs", "PRS_TERMINAL_auto")]},
-    )
+    load_library(app.state.techcards_uow_factory, [_template("prs", "PRS_TERMINAL_auto")])
     snapshot = operation_library_api.put("/api/references/tech-operations/snapshot", json={
         "schema_version": 14,
         "source_updated_at": "2026-09-23T08:00:00+03:00",
@@ -238,10 +192,7 @@ def test_auto_build_enriches_crimp_from_current_reference_snapshot(operation_lib
 
 
 def test_auto_build_uses_workshop_gost_awg_map_from_references(operation_library_api):
-    operation_library_api.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("prs", "PRS_TERMINAL_auto")]},
-    )
+    load_library(app.state.techcards_uow_factory, [_template("prs", "PRS_TERMINAL_auto")])
     operation_library_api.put("/api/references/tech-operations/snapshot", json={
         "schema_version": 14,
         "records": [{
@@ -277,10 +228,7 @@ def test_auto_build_uses_workshop_gost_awg_map_from_references(operation_library
 
 
 def test_manual_assembly_builds_through_the_same_endpoint_and_refuses_an_empty_list(operation_library_api):
-    operation_library_api.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE")]},
-    )
+    load_library(app.state.techcards_uow_factory, [_template("one", "OP_ONE")])
     created = operation_library_api.post(
         "/api/techcards/projects",
         json={"project": "P-203", "item_index": "КБ2", "product_name": "Провод нетиповой"},
@@ -345,10 +293,9 @@ def test_engineer_edits_operation_record_as_supplymap_normalizes_it(operation_li
     """SUPPLYMAP tcRecordNormalize_ + tcRecordSave_: empty rows dropped, steps numbered through, tooling inside its
     section, empty tolerance «-», safety with the form heading, revision placeholder dropped, who/when stamped;
     one record per code — both (A)/(B) blocks carry the edit."""
-    operation_library_api.put("/api/techcards/templates/supplymap-library", json={
-        "sourceCommit": SOURCE_COMMIT,
-        "templates": [_sided("sdr-a", "SDR_X", "A"), _sided("sdr-b", "SDR_X", "B"), _template("other", "OP_OTHER")],
-    })
+    load_library(app.state.techcards_uow_factory, [
+        _sided("sdr-a", "SDR_X", "A"), _sided("sdr-b", "SDR_X", "B"), _template("other", "OP_OTHER"),
+    ])
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=UUID("30000000-0000-0000-0000-000000000010"), name="Инженер", department="Производство"),
         email="engineer@example.test", roles=frozenset({"engineer"}), permissions={"techcards": "edit", "erptctpl": "edit"},
@@ -378,9 +325,7 @@ def test_engineer_edits_operation_record_as_supplymap_normalizes_it(operation_li
 
 
 def test_operation_record_edit_rejects_empty_record_and_unknown_card(operation_library_api):
-    operation_library_api.put("/api/techcards/templates/supplymap-library", json={
-        "sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE")],
-    })
+    load_library(app.state.techcards_uow_factory, [_template("one", "OP_ONE")])
 
     no_steps = operation_library_api.put("/api/techcards/templates/one", json={**EDIT, "steps": []})
     bad_kind = operation_library_api.put("/api/techcards/templates/one", json={
@@ -395,9 +340,7 @@ def test_operation_record_edit_rejects_empty_record_and_unknown_card(operation_l
 
 
 def test_operation_record_edit_needs_templates_edit(operation_library_api):
-    operation_library_api.put("/api/techcards/templates/supplymap-library", json={
-        "sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE")],
-    })
+    load_library(app.state.techcards_uow_factory, [_template("one", "OP_ONE")])
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=UUID("30000000-0000-0000-0000-000000000011"), name="Мастер", department="Производство"),
         email="master@example.test", roles=frozenset({"engineer"}), permissions={"techcards": "edit", "erptctpl": "view"},
@@ -406,42 +349,10 @@ def test_operation_record_edit_needs_templates_edit(operation_library_api):
     assert operation_library_api.put("/api/techcards/templates/one", json=EDIT).status_code == 403
 
 
-def test_library_replace_refuses_edited_records_unless_forced(operation_library_api):
-    """SUPPLYMAP tcRecordsSync: records edited in the portal make the whole reload refuse with their codes, nothing is
-    written; with force the reload overwrites them (ИЗМЕНЕНО is cleared)."""
-    library = {"sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE"), _template("two", "OP_TWO")]}
-    operation_library_api.put("/api/techcards/templates/supplymap-library", json=library)
-    operation_library_api.put("/api/techcards/templates/one", json=EDIT)
-    other_commit = "b" * 40
-
-    refused = operation_library_api.put(
-        "/api/techcards/templates/supplymap-library", json={**library, "sourceCommit": other_commit},
-    )
-    still_edited = operation_library_api.get("/api/techcards/templates/one").json()
-    forced = operation_library_api.put(
-        "/api/techcards/templates/supplymap-library", json={**library, "sourceCommit": other_commit, "force": True},
-    )
-    reloaded = operation_library_api.get("/api/techcards/templates/one").json()
-
-    assert refused.status_code == 409
-    assert refused.json()["detail"].startswith("Записи правлены в портале, пересборка из БД.ТК их затрёт: OP_ONE (")
-    assert "Администратор)" in refused.json()["detail"]
-    assert refused.json()["detail"].endswith('. Затереть сознательно — повторить с force.')
-    assert still_edited["document"]["steps"][0]["text"] == "Новый шаг"
-    assert forced.status_code == 200
-    assert len(forced.json()["overwritten_edited"]) == 1 and forced.json()["overwritten_edited"][0].startswith("OP_ONE (")
-    assert reloaded["document"]["steps"][0]["text"] != "Новый шаг"
-    assert reloaded["changed_by"] in (None, "")
-    # no edits left: a plain reload passes again
-    assert operation_library_api.put("/api/techcards/templates/supplymap-library", json=library).status_code == 200
-
-
 def test_template_list_carries_supplymap_catalog_meta_and_norms(operation_library_api):
     """SUPPLYMAP openTcRecords/renderCard: first step, control count, step text for search, БД.ОП time norms
     (or «нет норм»), and the edit stamp."""
-    operation_library_api.put("/api/techcards/templates/supplymap-library", json={
-        "sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE"), _template("two", "OP_TWO")],
-    })
+    load_library(app.state.techcards_uow_factory, [_template("one", "OP_ONE"), _template("two", "OP_TWO")])
     before = operation_library_api.get("/api/techcards/templates").json()["items"]
     operation_library_api.put("/api/references/tech-operations/snapshot", json={
         "schema_version": 14,

@@ -44,7 +44,7 @@ def _build(marks: list[dict], *, references: bool = True) -> tuple[dict, list[st
     next(item for item in config["ops"] if item["type"] == "insMark")["marks"] = marks
     if references:
         config = enrich_marking(config, _mirror_equipment(), _mirror_operations())
-    document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    document = build_etk(config, CARDS)
     return next(item for item in document["operations"] if item["type"] == "insMark"), document["warnings"]
 
 

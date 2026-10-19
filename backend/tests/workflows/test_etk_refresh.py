@@ -78,7 +78,7 @@ def _store(sessions, document, *, issued=True, overrides=None, manual_keys=()) -
 def base(sessions):  # noqa: F811
     load_mirror(MIRROR, SqlAlchemyReferencesUnitOfWork(sessions), dry_run=False, now=T0)
     with SqlAlchemyTechcardsUnitOfWork(sessions) as uow:
-        uow.operation_cards.replace(CARDS, source_commit="lib", imported_at=T0)
+        uow.operation_cards.load(tuple(CARDS), imported_at=T0)
         uow.commit()
     _set_depth(sessions, "0,5")
     return sessions

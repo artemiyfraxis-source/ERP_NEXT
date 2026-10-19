@@ -43,7 +43,7 @@ GROUPS = {
 
 def document() -> dict:
     config = deepcopy(FIXTURES["files"]["kit-720К.-КБ1.json"]["payload"]["config"])
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(config, CARDS)
 
 
 @pytest.fixture()

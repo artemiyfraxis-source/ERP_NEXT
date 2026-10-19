@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, or_, select
+from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
@@ -111,7 +111,7 @@ class OperationCardTemplateRow(Base):
     images: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     source_commit: Mapped[str] = mapped_column(String(40), nullable=False)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    # Правка записи в ERP поверх снимка (SUPPLYMAP БД.ОП-ТК: ИЗМЕНЕНО / КЕМ); переживает замену библиотеки.
+    # Правка записи в ERP поверх исходного шаблона (SUPPLYMAP БД.ОП-ТК: ИЗМЕНЕНО / КЕМ).
     edited: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     edited_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -140,6 +140,9 @@ class OperationCardDraftRow(Base):
 
 
 class OperationCardSnapshotRow(Base):
+    """The row «current»: written by the first load of the library (`load`), locked by a new operation
+    (workflows/new_operation.py) so creations go one at a time. Its commit is the old SUPPLYMAP provenance."""
+
     __tablename__ = "techcard_operation_template_snapshots"
 
     name: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -419,29 +422,9 @@ class SqlAlchemyOperationCardRepository:
             row.document = self._domain(row).document()
         return len(rows)
 
-    def edited_records(self) -> list[str]:
-        """SUPPLYMAP tcRecordsSync report.editedInPortal: «КОД (ИЗМЕНЕНО, КЕМ)» for every record edited in the portal,
-        one per operation code."""
-        rows = self.session.scalars(
-            select(OperationCardTemplateRow).where(OperationCardTemplateRow.edited_at.is_not(None))
-            .order_by(OperationCardTemplateRow.code, OperationCardTemplateRow.side, OperationCardTemplateRow.id)
-        )
-        found: dict[str, str] = {}
-        for row in rows:
-            found.setdefault(row.code, f"{row.code} ({row.edited_at.strftime('%d.%m.%Y %H:%M')}, {row.edited_by or ''})")
-        return list(found.values())
-
-    def replace(
-        self, cards: tuple[OperationCardTemplate, ...], *, source_commit: str, imported_at: datetime,
-    ) -> None:
-        """Replace the snapshot whole (SUPPLYMAP tcRecordsSync rewrites БД.ОП-ТК with an empty ИЗМЕНЕНО): edits made
-        in ERP are dropped. Refusing when there are edits is the application's job."""
-        # Шаблон-лист, сохранённый в ERP из черновика, снимок не затирает: ERP-версия остаётся.
-        saved = set(self.session.scalars(
-            select(OperationCardTemplateRow.id).where(OperationCardTemplateRow.saved_at.is_not(None))
-        ))
-        self.session.execute(delete(OperationCardTemplateRow).where(OperationCardTemplateRow.saved_at.is_(None)))
-        self.session.flush()
+    def load(self, cards: tuple[OperationCardTemplate, ...], *, imported_at: datetime) -> None:
+        """The base templates of a fresh database (`seed_library`), added as they are; the caller loads them only
+        into an empty library."""
         self.session.add_all(OperationCardTemplateRow(
             id=card.source_id,
             code=card.code,
@@ -458,16 +441,13 @@ class SqlAlchemyOperationCardRepository:
                 }
                 for image in card.images
             ],
-            source_commit=source_commit,
+            source_commit="",
             imported_at=imported_at,
-        ) for card in cards if card.source_id not in saved)
-        snapshot = self.session.get(OperationCardSnapshotRow, "current")
-        if snapshot is None:
-            snapshot = OperationCardSnapshotRow(name="current")
-            self.session.add(snapshot)
-        snapshot.source_commit = source_commit
-        snapshot.imported_at = imported_at
-        snapshot.template_count = len(cards)
+        ) for card in cards)
+        if self.session.get(OperationCardSnapshotRow, "current") is None:
+            self.session.add(OperationCardSnapshotRow(
+                name="current", source_commit="", imported_at=imported_at, template_count=len(cards),
+            ))
 
     # ── Шаблоны-листы: каталог и черновики (SUPPLYMAP TcTemplates.gs) ──
 
@@ -489,13 +469,12 @@ class SqlAlchemyOperationCardRepository:
         row = self.session.get(OperationCardTemplateRow, card.source_id)
         created = row is None
         if row is None:
-            snapshot = self.session.get(OperationCardSnapshotRow, "current")
             sibling = self.session.scalars(select(OperationCardTemplateRow).where(
                 OperationCardTemplateRow.code == card.code, OperationCardTemplateRow.edited_at.is_not(None),
             )).first()
             row = OperationCardTemplateRow(
                 id=card.source_id,
-                source_commit=snapshot.source_commit if snapshot is not None else "",
+                source_commit="",
                 imported_at=saved_at,
                 # Одна запись на код (tcRecordsByCode_): новый блок кода с правленой записью получает ту же правку.
                 edited=sibling.edited if sibling is not None else None,
@@ -577,14 +556,9 @@ class SqlAlchemyOperationCardRepository:
         return True
 
     def metadata(self) -> dict | None:
-        row = self.session.get(OperationCardSnapshotRow, "current")
-        if row is None:
-            return None
-        return {
-            "source_commit": row.source_commit,
-            "imported_at": row.imported_at,
-            "template_count": row.template_count,
-        }
+        """None — the library has no templates (nothing to build an ETK from)."""
+        count = self.session.scalar(select(func.count()).select_from(OperationCardTemplateRow)) or 0
+        return {"template_count": count} if count else None
 
 
 class SqlAlchemyTechcardsUnitOfWork:

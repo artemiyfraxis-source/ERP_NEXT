@@ -42,7 +42,7 @@ from app.modules.identity.infrastructure import provision_user
 from app.modules.production.launchable import OPERATION_TYPE_NAMES
 from app.modules.requests import google_sheets
 from app.modules.requests.application import CalcSpreadsheet
-from app.modules.techcards.application import ReplaceOperationLibraryCommand, replace_operation_library
+from app.modules.techcards.application import LoadOperationLibraryCommand, load_operation_library
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.modules.warehouse.import_stock import format_report, reconcile, run_import
 from app.modules.warehouse.infrastructure import StockLotRow, WriteOffEntryRow
@@ -204,9 +204,8 @@ def shop(tmp_path, monkeypatch):
     with engine.begin() as connection:
         assert migration.transfer(connection, clock.now) > 0
     # «load-real-data.sh base» кладёт библиотеку операций (seed_library); без неё генератор ЭТК не собирает.
-    replace_operation_library(ReplaceOperationLibraryCommand(
-        source_commit=LIBRARY["sourceCommit"], templates=tuple(LIBRARY["templates"]),
-        actor=Actor(name="ERP migration", department="System"), now=clock.now,
+    load_operation_library(LoadOperationLibraryCommand(
+        templates=tuple(LIBRARY["templates"]), actor=Actor(name="ERP migration", department="System"), now=clock.now,
     ), SqlAlchemyTechcardsUnitOfWork(sessions))
 
     state = Shop(engine=engine, sessions=sessions, clock=clock)

@@ -11,17 +11,6 @@
     "sourcePath": "TcGrapher.gs",
     "upstream": "TECHMAP-GRAPHER@codex/restore-20260918-0235"
   },
-  "operationLibrary": {
-    "sourceRepository": "../SUPPLYMAP",
-    "sourceRef": "main",
-    "sourceCommit": "d0a030b37e6364d241fdb827c20e6af54c532085",
-    "sourcePath": "_local/db/БД.ТК",
-    "sourceSha256": "ddab961d2adbd4b39bf9fa9118e68a5f64f7f16dcd38f6505dcad500661456f9",
-    "templateCount": 118,
-    "buildFixtureRoot": "_local/tooling/test/fixtures/etk",
-    "buildFixtureCount": 8,
-    "categorySourcePath": "_local/tooling/test/fixtures/tc-library.json"
-  },
   "files": [
     {
       "from": "techmap/backend/app/services/coax.py",

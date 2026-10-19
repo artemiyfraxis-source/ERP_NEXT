@@ -73,13 +73,11 @@ def test_library_rejects_duplicate_source_ids():
         raise AssertionError("duplicate source id was accepted")
 
 
-def test_bundled_current_supplymap_library_is_fully_parseable():
+def test_bundled_library_is_fully_parseable():
     backend = Path(__file__).resolve().parents[2]
     payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
-    metadata = json.loads((backend / "app" / "modules" / "techcards" / "SOURCE.json").read_text(encoding="utf-8"))
     cards = parse_operation_library(payload["templates"])
 
-    assert payload["sourceCommit"] == metadata["operationLibrary"]["sourceCommit"]
     assert len(cards) == 118
     assert len({card.code for card in cards}) == 107
     assert sum(len(card.steps) for card in cards) == 795

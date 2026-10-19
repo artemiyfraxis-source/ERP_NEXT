@@ -37,7 +37,7 @@ def _cards(document: dict[str, Any]) -> list[Any]:
 @pytest.mark.parametrize("case", [*_cases().keys(), "ручная сборка"])
 def test_refilling_from_unchanged_templates_reproduces_every_stored_card(case: str):
     if case == "ручная сборка":
-        document = build_etk(deepcopy(MANUAL_CONFIG), CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+        document = build_etk(deepcopy(MANUAL_CONFIG), CARDS)
     else:
         document = _cases()[case]()
     stored = deepcopy(document)

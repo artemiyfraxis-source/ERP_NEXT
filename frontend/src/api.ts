@@ -3416,10 +3416,7 @@ export const techcardsApi = {
   list: () => api<{ items: ProjectTechcard[] }>("/api/techcards/projects"),
   /** Одна карточка ТК по id — генератор и вкладка «ТК КБn» не тянут весь список со всеми ЭТК. */
   get: (cardId: string) => api<ProjectTechcard>(`/api/techcards/projects/${encodeURIComponent(cardId)}`),
-  templates: () => api<{
-    metadata: null | { source_commit: string; imported_at: string; template_count: number };
-    items: OperationCardSummary[];
-  }>("/api/techcards/templates"),
+  templates: () => api<{ items: OperationCardSummary[] }>("/api/techcards/templates"),
   template: (templateId: string) =>
     api<OperationCardDetail>(`/api/techcards/templates/${encodeURIComponent(templateId)}`),
   saveTemplate: (templateId: string, record: OperationRecordEdit) =>

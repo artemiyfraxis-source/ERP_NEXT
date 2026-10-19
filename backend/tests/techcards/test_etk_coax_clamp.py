@@ -37,7 +37,7 @@ def _config(shield_a: str = "прижим", shield_b: str = "прижим", hex_
 
 
 def _built(config: dict) -> list[dict]:
-    return build_etk(config, ALL_CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"]
+    return build_etk(config, ALL_CARDS)["operations"]
 
 
 def test_the_clamp_housing_cards_are_in_the_erp_library_as_the_owner_wrote_them():

@@ -113,7 +113,7 @@ def _kind(semis_typed: list[dict], semis_manual: list[dict], operation: dict) ->
 
 
 def _build(config: dict[str, Any], cards) -> dict[str, Any]:
-    return build_etk(config, cards, operation_library_commit=golden.LIBRARY["sourceCommit"])
+    return build_etk(config, cards)
 
 
 def _pair(case: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:

@@ -176,7 +176,8 @@ tctemplates_view_principal = require_section("erptctpl", "view", detail="Раз�
 tctemplates_edit_principal = require_section(
     "erptctpl", "edit", detail="Раздел «Шаблоны техкарт» открыт вам только на просмотр.",
 )
-# Loading the SUPPLYMAP operation library is the administrator's tool (sync script).
+# The gate of the removed SUPPLYMAP library reload (19.10.2026): no route takes it; kept because the frozen access
+# contract (`level_migration.GATES`, migration 0086) still lists «Загрузка библиотеки шаблонов».
 tctemplates_admin_principal = require_full_access("Загрузка библиотеки шаблонов — только администратору.")
 # ErpTechmap.gs: every generator handle is portalErpGuard_(token, 'tcgen') — the section being open is enough.
 tcgen_principal = require_section(

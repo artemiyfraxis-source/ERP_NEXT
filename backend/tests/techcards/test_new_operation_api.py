@@ -8,7 +8,8 @@ from app.modules.techcards.application import BLANK_STEP
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.identity import Actor
 
-from .test_operation_card_api import EDIT, SOURCE_COMMIT, _sided, _template, operation_library_api  # noqa: F401
+from .library import load_library
+from .test_operation_card_api import EDIT, _sided, _template, operation_library_api  # noqa: F401
 
 CUT_ROW = {
     "Номер": "CUT_WIRE", "Название": "Резка", "Машина": "EW-05F", "Время операции": "3,50",
@@ -18,9 +19,7 @@ CUT_ROW = {
 
 
 def _seed(client, templates, rows=()) -> None:
-    assert client.put("/api/techcards/templates/supplymap-library", json={
-        "sourceCommit": SOURCE_COMMIT, "templates": templates,
-    }).status_code == 200
+    load_library(app.state.techcards_uow_factory, templates)
     if rows:
         assert client.put("/api/references/tech-operations/snapshot", json={
             "schema_version": 14,
@@ -147,40 +146,6 @@ def test_new_operation_needs_both_template_and_reference_edit(operation_library_
         response = operation_library_api.post("/api/techcards/operations", json={"code": "NEW_OP", "name": "x"})
         assert response.status_code == 403, permissions
     assert _codes(operation_library_api) == ["CUT_WIRE"]
-
-
-def test_erp_created_operation_survives_a_supplymap_library_reload(operation_library_api):
-    _seed(operation_library_api, [_template("cut-wire", "CUT_WIRE")], [CUT_ROW])
-    blank = operation_library_api.post("/api/techcards/operations", json={"code": "NEW_OP", "name": "Новая"}).json()
-
-    reload = operation_library_api.put("/api/techcards/templates/supplymap-library", json={
-        "sourceCommit": "c" * 40, "templates": [_template("strip", "STRIP")],
-    })
-
-    assert reload.status_code == 200, reload.text
-    assert _codes(operation_library_api) == ["NEW_OP", "STRIP"]
-    kept = operation_library_api.get(f"/api/techcards/templates/{blank['templates'][0]['id']}").json()
-    assert kept["document"]["steps"][0]["text"] == BLANK_STEP
-
-
-def test_copy_of_an_edited_record_survives_a_forced_reload(operation_library_api):
-    """The copy carries the source's ERP edit as its own record edit, so a plain reload lists it like any edited
-    record; a forced reload drops only SUPPLYMAP templates — the ERP-saved copy keeps its content."""
-    _seed(operation_library_api, [_template("cut-wire", "CUT_WIRE")], [CUT_ROW])
-    operation_library_api.put("/api/techcards/templates/cut-wire", json=EDIT)
-    copy = operation_library_api.post("/api/techcards/operations", json={
-        "code": "CUT_COPY", "name": "Копия", "copy_of": "CUT_WIRE",
-    }).json()["templates"][0]
-    library = {"sourceCommit": "d" * 40, "templates": [_template("cut-wire", "CUT_WIRE")]}
-
-    refused = operation_library_api.put("/api/techcards/templates/supplymap-library", json=library)
-    forced = operation_library_api.put("/api/techcards/templates/supplymap-library", json={**library, "force": True})
-
-    assert refused.status_code == 409 and "CUT_COPY (" in refused.json()["detail"]
-    assert forced.status_code == 200
-    kept = operation_library_api.get(f"/api/techcards/templates/{copy['id']}").json()
-    assert kept["document"]["steps"] == copy["document"]["steps"]
-    assert kept["document"]["steps"][0]["text"] == "Новый шаг"
 
 
 def test_issued_etk_keeps_its_stored_card_when_the_template_is_edited(operation_library_api):

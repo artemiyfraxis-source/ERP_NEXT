@@ -39,7 +39,7 @@ def config(name: str = "kit-720К.-КБ1.json", **changes) -> dict:
 
 
 def build(cfg: dict) -> dict:
-    return build_etk(cfg, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(cfg, CARDS)
 
 
 def shape(route: dict) -> list:

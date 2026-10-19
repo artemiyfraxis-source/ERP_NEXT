@@ -149,7 +149,7 @@ class CardResult:
 
 def classify(
     card: ProjectTechcard, enrich: Callable[[Mapping[str, Any]], Mapping[str, Any]], templates: Sequence[Any],
-    library_commit: str, technology_source: Mapping[str, Any] | None,
+    technology_source: Mapping[str, Any] | None,
 ) -> CardResult:
     document = card.document if isinstance(card.document, Mapping) else None
     tracked = card.inputs is not None
@@ -163,8 +163,7 @@ def classify(
     if document is None:
         return CardResult(card, NO_INPUTS, "ЭТК не собрана")
     try:
-        fresh, conflicts = derive(inputs, {}, enrich, templates, operation_library_commit=library_commit,
-                                  technology_source=technology_source)
+        fresh, conflicts = derive(inputs, {}, enrich, templates, technology_source=technology_source)
     except Exception as error:  # noqa: BLE001 — one card's derive error must not stop the batch
         return CardResult(card, FAILED, f"{type(error).__name__}: {error}")
     if fresh is None:
@@ -179,8 +178,7 @@ def classify(
     if not differences(document, fresh) and not overrides:
         return CardResult(card, IDENTICAL, inputs=inputs, write=not tracked)
     try:
-        derived, conflicts = derive(inputs, overrides, enrich, templates, operation_library_commit=library_commit,
-                                    technology_source=technology_source)
+        derived, conflicts = derive(inputs, overrides, enrich, templates, technology_source=technology_source)
     except Exception as error:  # noqa: BLE001
         return CardResult(card, FAILED, f"{type(error).__name__}: {error}")
     blocking = [item for item in conflicts if item["kind"] in (MISSING_OPERATION, ROUTE_NOT_APPLIED)]
@@ -244,8 +242,7 @@ def run(
     with techcards_uow_factory() as uow:
         cards = list(uow.techcards.list())
         templates = list(uow.operation_cards.list())
-        metadata = uow.operation_cards.metadata()
-    if metadata is None:
+    if not templates:
         report.lines.append("Библиотека операционных карт не загружена — собирать нечем")
         report.code = 2
         report.after = report.before
@@ -257,7 +254,7 @@ def run(
 
     source = dict(refs.snapshot) if refs.snapshot is not None else None
     for card in sorted(cards, key=lambda item: (item.project, item.item_index)):
-        result = classify(card, enrich, templates, metadata["source_commit"], source)
+        result = classify(card, enrich, templates, source)
         report.counts[result.verdict] += 1
         extra = ""
         if apply and result.write:

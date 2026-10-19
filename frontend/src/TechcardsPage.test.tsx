@@ -112,12 +112,11 @@ it("keeps the generator's JSON configuration to superadmin and admin, whatever t
   expect(await screen.findByLabelText("Конфигурация автоматической сборки")).toBeInTheDocument();
 });
 
-it("shows the imported operation library and opens a structured template", async () => {
+it("shows the operation library and opens a structured template", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/techcards/projects") return json({ items: [] });
     if (path === "/api/techcards/templates") return json({
-      metadata: { source_commit: "df683f87768f98735a87e68bde2be023b48dc03a", imported_at: "2026-09-23T10:00:00Z", template_count: 1 },
       items: [{ id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 }],
     });
     if (path === "/api/techcards/templates/cut") return json({

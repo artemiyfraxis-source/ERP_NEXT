@@ -61,7 +61,7 @@ CRIMPED = f"{CUT}; провода опрессованы гильзой НШВ 1
 
 
 def build(source: dict[str, Any]) -> dict[str, Any]:
-    return build_etk(source, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(source, CARDS)
 
 
 def op_by_key(document: dict[str, Any], key: str) -> dict[str, Any]:

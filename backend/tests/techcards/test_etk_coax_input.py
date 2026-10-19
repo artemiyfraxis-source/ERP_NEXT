@@ -30,7 +30,7 @@ def _owner_coax_etk(**coax_extra: object) -> list[dict]:
         "sideA": {"article": "MMCX-Male", "connName": "Разъём MMCX-Male"},
         "sideB": {"article": "N-Male", "connName": "Разъём N-Male"}, **coax_extra,
     }, "ops": ops}
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"]
+    return build_etk(config, CARDS)["operations"]
 
 
 def _inputs(operation: dict) -> dict[str, tuple[str, str]]:
@@ -86,7 +86,7 @@ def _prod_config(**op_extra: dict) -> dict:
 
 
 def _build(config: dict) -> dict:
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(config, CARDS)
 
 
 def test_every_coax_operation_hands_on_its_semi_finished_cable_and_the_next_one_takes_it():
@@ -242,7 +242,7 @@ def test_a_crimped_centre_contact_is_its_own_pressing_operation_with_the_connect
         {"type": "coaxPinCrimp", "side": "A", "units": 1, "templateId": cards["PRS_SLEEVE_coax"].source_id},
         {"type": "coaxHousing", "side": "A", "units": 1, "templateId": cards["INS_housing_COAX"].source_id},
     ]}
-    operations = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"]
+    operations = build_etk(config, CARDS)["operations"]
     crimp = next(operation for operation in operations if operation["type"] == "coaxPinCrimp")
     assert _inputs(crimp) == {"SMA-JW3": ("20", "Шт.")}
     assert crimp["fields"]["coaxEnd"]["pinType"] == "обжим"

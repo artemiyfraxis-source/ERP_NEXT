@@ -280,7 +280,7 @@ class LaunchRoute:
 def launch_route(document: Mapping[str, Any] | None) -> LaunchRoute:
     """One route step per ETK operation, as tcRoutingFromConfig_ builds the «Техкарты» rows.
 
-    The generator config (build_config.ops) is the SUPPLYMAP source of stage/code; the built ETK operation fills what
+    The generator config (build_config.ops) is the source of stage/code; the built ETK operation fills what
     the config lacks (a card code resolved from the operation library, a title). Times are the ETK's own: its norm of
     the operation (time rows: wires × cores × batch, «на изделие» of «Ручная сборка»…) per unit, no setup — one
     source of truth with what the ETK and its block scheme show.

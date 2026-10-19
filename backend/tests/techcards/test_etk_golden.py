@@ -130,7 +130,7 @@ def _cut_crimp_tin() -> dict[str, Any]:
 def _cases() -> dict[str, Callable[[], dict[str, Any]]]:
     """Case → builder of the document; configs are the ones test_etk_builder.py and test_techcards_all.py build."""
     def plain(config_factory, cards=None, **kwargs):
-        return lambda: build_etk(config_factory(), cards or CARDS, operation_library_commit=LIBRARY["sourceCommit"], **kwargs)
+        return lambda: build_etk(config_factory(), cards or CARDS, **kwargs)
 
     cases: dict[str, Callable[[], dict[str, Any]]] = {name: plain(lambda name=name: _kit(name)) for name in KITS}
     for name in ("720К.-КБ1", "720К.1.2-КБ1", "708К.5-КБ1"):
@@ -171,12 +171,8 @@ def _golden() -> dict[str, Any]:
     return json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
-def test_golden_cases_are_pinned_to_the_library_commit():
-    golden = _golden()
-    assert golden["library_commit"] == LIBRARY["sourceCommit"], (
-        "Библиотека операций обновлена — перегенерируйте эталон: .venv/Scripts/python.exe -m tests.techcards.test_etk_golden"
-    )
-    assert set(golden["cases"]) == set(_cases())
+def test_golden_covers_every_case():
+    assert set(_golden()["cases"]) == set(_cases())
 
 
 @pytest.mark.parametrize("case", sorted(_cases()))
@@ -188,7 +184,6 @@ def test_etk_is_byte_identical_to_the_pinned_builder_except_the_route(case: str)
 
 def main() -> None:
     payload = {
-        "library_commit": LIBRARY["sourceCommit"],
         "cases": {name: _fingerprint(factory()) for name, factory in sorted(_cases().items())},
     }
     with GOLDEN.open("w", encoding="utf-8", newline="\n") as handle:

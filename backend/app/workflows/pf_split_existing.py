@@ -20,8 +20,8 @@
 `derived`), пересобираются из своего `build_config` тем же путём, что «Пересобрать» (`auto_build_project_techcard`:
 нормы терминалов из справочников, правленные вручную операции остаются), но без сохранённой схемы — её режет текущий
 `generator_split`. Новая ревизия «перестроено по новому правилу ПФ (владелец 14.10)», событие в журнале. Без
-`--apply` — только проверка (по умолчанию). Пропускает с причиной: «Ручную» и «Сложную сборку», ЭТК не из генератора
-и перенесённые из SUPPLYMAP, схему ПФ, правленную вручную, свой порядок операций, ЭТК с идущим заданием по ПФ. ЭТК,
+`--apply` — только проверка (по умолчанию). Пропускает с причиной: «Ручную» и «Сложную сборку», ЭТК не из генератора,
+схему ПФ, правленную вручную, свой порядок операций, ЭТК с идущим заданием по ПФ. ЭТК,
 которая уже собрана так же, — «без изменений», повторный `--apply` ничего не пишет.
 """
 
@@ -230,8 +230,6 @@ def regen_config(document: Mapping[str, Any]) -> tuple[dict[str, Any] | None, st
     config = document.get("build_config") if isinstance(document.get("build_config"), Mapping) else {}
     if not config:
         return None, "ЭТК не из генератора"
-    if config.get("source") == "SUPPLYMAP":
-        return None, "ЭТК перенесена из SUPPLYMAP"
     tab = generator_tab(config)
     if tab == MANUAL_MODE:
         return None, "Ручная сборка — ПФ по её блокам"
@@ -248,7 +246,7 @@ def regen_config(document: Mapping[str, Any]) -> tuple[dict[str, Any] | None, st
 
 
 def plan_regen(
-    card: ProjectTechcard, library: Sequence[OperationCardTemplate], library_commit: str, now: datetime,
+    card: ProjectTechcard, library: Sequence[OperationCardTemplate], now: datetime,
     running: Sequence[Any] = (), prepare: Prepare | None = None,
 ) -> Regen:
     """What the rebuild would make of one ETK — built in memory exactly as `auto_build_project_techcard` builds it
@@ -264,7 +262,7 @@ def plan_regen(
     stamp = (document.get("source") or {}).get("technology_snapshot") if isinstance(document.get("source"), Mapping) else None
     config, technology_source = prepare(config) if prepare else (config, stamp)
     try:
-        built = build_etk(config, library, operation_library_commit=library_commit, technology_source=technology_source)
+        built = build_etk(config, library, technology_source=technology_source)
         planned = card.rebuild(built, now).document
     except (TechcardValidationError, ValueError, KeyError, TypeError) as error:
         return Regen(card, SKIP, f"не собирается заново: {error}")
@@ -309,10 +307,9 @@ def run_regenerate(
     with techcards_uow_factory() as uow:
         cards = [uow.techcards.get(card_id)] if card_id else list(uow.techcards.list())
         library = list(uow.operation_cards.list())
-        metadata = uow.operation_cards.metadata()
     if card_id and cards[0] is None:
         return f"Карточки {card_id} нет", 2
-    if metadata is None:
+    if not library:
         return "Библиотека операционных карт не загружена — пересобрать нечем", 2
     wanted = project_key(project) if project else None
     cards = sorted((card for card in cards if card is not None and (wanted is None or project_key(card.project) == wanted)),
@@ -324,7 +321,7 @@ def run_regenerate(
     for card in cards:
         if card.document is None and not card_id:
             continue
-        item = plan_regen(card, library, metadata["source_commit"], now, running, prepare)
+        item = plan_regen(card, library, now, running, prepare)
         if item.verdict == REGEN and apply:
             try:
                 built = auto_build_project_techcard(AutoBuildProjectTechcardCommand(

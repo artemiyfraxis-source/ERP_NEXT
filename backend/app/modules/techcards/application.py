@@ -43,10 +43,7 @@ class TechcardRepository(Protocol):
 class OperationCardRepository(Protocol):
     def list(self) -> Sequence[OperationCardTemplate]: ...
     def get(self, source_id: str) -> OperationCardTemplate | None: ...
-    def edited_records(self) -> list[str]: ...
-    def replace(
-        self, cards: tuple[OperationCardTemplate, ...], *, source_commit: str, imported_at: datetime,
-    ) -> None: ...
+    def load(self, cards: tuple[OperationCardTemplate, ...], *, imported_at: datetime) -> None: ...
     def edit(self, code: str, edit: OperationRecordEdit, *, changed_at: datetime, changed_by: str) -> int: ...
     def metadata(self) -> dict | None: ...
 
@@ -127,44 +124,11 @@ class SaveTechcardRouteCommand(ChangeProjectTechcardCommand):
 
 
 @dataclass(frozen=True)
-class ImportIssuedTechcardCommand:
-    """A techcard issued outside ERP (SUPPLYMAP «Техкарты»): its route becomes the issued ETK of the product."""
-
-    project: str
-    item_index: str
-    product_name: str
-    source_calculation: str
-    document: dict[str, Any]
-    reason: str
-    actor: Actor
-    now: datetime
-
-
-@dataclass(frozen=True)
 class EditOperationRecordCommand:
     source_id: str
     record: dict[str, Any]
     actor: Actor
     now: datetime
-
-
-@dataclass(frozen=True)
-class ReplacedOperationLibrary:
-    templates: int
-    overwritten_edited: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class ReplaceOperationLibraryCommand:
-    source_commit: str
-    templates: tuple[dict[str, Any], ...]
-    actor: Actor
-    now: datetime
-    force: bool = False
-
-
-class OperationLibraryEditedError(TechcardValidationError):
-    """SUPPLYMAP tcRecordsSync: records edited in the portal are not silently overwritten by a library reload."""
 
 
 def _current(command: ChangeProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
@@ -302,16 +266,12 @@ def rebuild_project_techcard(command: RebuildProjectTechcardCommand, uow: UnitOf
 def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
     with uow:
         current = _current(command, uow)
-        metadata = uow.operation_cards.metadata()
-        if metadata is None:
-            raise TechcardValidationError("Библиотека операционных карт не загружена")
         library = uow.operation_cards.list()
+        if not library:
+            raise TechcardValidationError("Библиотека операционных карт не загружена")
         try:
             document = stamp_templates(build_etk(
-                command.config,
-                library,
-                operation_library_commit=metadata["source_commit"],
-                technology_source=command.technology_source,
+                command.config, library, technology_source=command.technology_source,
             ), library)
         except ValueError as error:
             raise TechcardValidationError(str(error)) from error
@@ -326,7 +286,6 @@ def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: U
                 "revision": updated.revision,
                 "operations": len(document["operations"]),
                 "warnings": len(document["warnings"]),
-                "operation_library_commit": metadata["source_commit"],
                 **({"reason": command.reason} if command.reason != "Автопересборка" else {}),
             },
         ))
@@ -337,7 +296,7 @@ def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: U
                 actor=command.actor, occurred_at=command.now,
                 details={
                     "project": updated.project, "item_index": updated.item_index, "card_id": str(updated.id),
-                    "revision": updated.revision, "operation_library_commit": metadata["source_commit"],
+                    "revision": updated.revision,
                     **correction,
                 },
             ))
@@ -357,29 +316,6 @@ def issue_project_techcard(command: ChangeProjectTechcardCommand, uow: UnitOfWor
         ))
         uow.commit()
         return updated
-
-
-def import_issued_techcard(command: ImportIssuedTechcardCommand, uow: UnitOfWork) -> ProjectTechcard | None:
-    """Create or take the product's card and issue it with the imported document. A card already issued in ERP
-    is left as is (None): ERP issues and edits are never overwritten by an import. A draft gives way."""
-    with uow:
-        current = uow.techcards.by_key(command.project.strip(), command.item_index.strip())
-        if current is not None and current.status is TechcardStatus.ISSUED:
-            return None
-        card = current or ProjectTechcard.create(
-            project=command.project, item_index=command.item_index, product_name=command.product_name,
-            source_calculation=command.source_calculation, deadline=None, now=command.now,
-        )
-        issued = card.rebuild(command.document, command.now).issue(command.now)
-        uow.techcards.save(issued)
-        uow.techcards.add_revision(_revision(issued, command.reason, command.actor, command.now))
-        uow.audit.add(AuditEvent(
-            id=uuid4(), aggregate_id=issued.id, event_type="techcards.project_imported",
-            actor=command.actor, occurred_at=command.now,
-            details={"project": issued.project, "item_index": issued.item_index, "reason": command.reason},
-        ))
-        uow.commit()
-        return issued
 
 
 def _edited_operation(operation: dict[str, Any], actor: Actor, now: datetime, *, stamp: bool = True) -> dict[str, Any]:
@@ -602,7 +538,7 @@ def create_operation_templates_in(
 ) -> list[OperationCardTemplate]:
     """The card template(s) of a new operation inside an open unit of work (nothing committed). Blank — the sheet head
     and one hint step; a copy — every block (A)/(B) of `copy_of` with its steps, tooling, defects, safety and pictures,
-    an ERP edit of the record included. Saved as an ERP sheet (`saved_at`): a SUPPLYMAP library reload keeps it."""
+    an ERP edit of the record included. Saved as an ERP sheet (`saved_at`)."""
     repo = uow.operation_cards
     catalog = repo.sheets()
     taken = operation.code.casefold()
@@ -664,9 +600,9 @@ class SeedErpTemplatesCommand:
 
 
 def seed_erp_templates(command: SeedErpTemplatesCommand, uow: UnitOfWork) -> dict[str, list[str]]:
-    """Шаблоны карт, которых нет в БД.ТК SUPPLYMAP (`backend/data/techcard-library-erp.json`), — в библиотеку как
-    сохранённые в ERP: снимок SUPPLYMAP их не затирает. Нет шаблона — создаётся; свой прежний — обновляется, если
-    поставка изменилась; пересохранённый человеком или пришедший из SUPPLYMAP с тем же id — не трогается."""
+    """Шаблоны карт поставки ERP (`backend/data/techcard-library-erp.json`) — в библиотеку как сохранённые в ERP.
+    Нет шаблона — создаётся; свой прежний — обновляется, если поставка изменилась; пересохранённый человеком или
+    пришедший из базовой библиотеки с тем же id — не трогается."""
     result: dict[str, list[str]] = {"created": [], "updated": [], "kept": []}
     cards = []
     for item in command.templates:
@@ -698,32 +634,29 @@ def seed_erp_templates(command: SeedErpTemplatesCommand, uow: UnitOfWork) -> dic
     return result
 
 
-def replace_operation_library(command: ReplaceOperationLibraryCommand, uow: UnitOfWork) -> ReplacedOperationLibrary:
-    source_commit = str(command.source_commit or "").strip().lower()
-    if len(source_commit) != 40 or any(character not in "0123456789abcdef" for character in source_commit):
-        raise TechcardValidationError("Нужен полный commit SUPPLYMAP из 40 hex-символов")
+@dataclass(frozen=True)
+class LoadOperationLibraryCommand:
+    templates: tuple[dict[str, Any], ...]
+    actor: Actor
+    now: datetime
+
+
+def load_operation_library(command: LoadOperationLibraryCommand, uow: UnitOfWork) -> int:
+    """The base templates (`backend/data/techcard-library.json`) into a fresh database — only while the library is
+    empty: after that the templates live in ERP and are edited there. Returns how many were loaded (0 — the library
+    already has templates)."""
     try:
         cards = parse_operation_library(command.templates)
     except ValueError as error:
         raise TechcardValidationError(str(error)) from error
     with uow:
-        edited = uow.operation_cards.edited_records()
-        if edited and not command.force:
-            raise OperationLibraryEditedError(
-                "Записи правлены в портале, пересборка из БД.ТК их затрёт: " + "; ".join(edited)
-                + '. Затереть сознательно — повторить с force.'
-            )
-        uow.operation_cards.replace(cards, source_commit=source_commit, imported_at=command.now)
+        if uow.operation_cards.metadata() is not None:
+            return 0
+        uow.operation_cards.load(cards, imported_at=command.now)
         uow.audit.add(AuditEvent(
-            id=uuid4(),
-            aggregate_id=UUID("00000000-0000-0000-0000-000000000018"),
-            event_type="techcards.operation_library_replaced",
-            actor=command.actor,
-            occurred_at=command.now,
-            details={
-                "source_commit": source_commit, "templates": str(len(cards)),
-                "overwritten_edited": "; ".join(edited),
-            },
+            id=uuid4(), aggregate_id=UUID("00000000-0000-0000-0000-000000000018"),
+            event_type="techcards.operation_library_loaded", actor=command.actor, occurred_at=command.now,
+            details={"templates": str(len(cards))},
         ))
         uow.commit()
-    return ReplacedOperationLibrary(templates=len(cards), overwritten_edited=tuple(edited))
+    return len(cards)
