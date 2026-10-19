@@ -313,7 +313,7 @@ export function ReceiptLabels({ lots, onClose }: { lots: ReceiptLot[]; onClose?:
     </div>
     <div className="table-wrap">
       <table className="grid compact receipt-labels-table">
-        <thead><tr><th>ГРН</th><th className="grow">Позиция</th><th>Кол-во</th><th>Копий</th><th /></tr></thead>
+        <thead><tr><th>ГРН</th><th className="grow">Позиция</th><th>Принято</th><th>Копий</th><th /></tr></thead>
         <tbody>
           {lots.map((lot) => {
             const done = outcome[lot.key];
