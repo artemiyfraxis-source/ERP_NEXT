@@ -14,8 +14,8 @@ RG-316 is two rows, as БД.КОАКС keeps SMA-C174P). How a site entry become
 * a pair БД.КОАКС already has (the mirror `backend/data/reference-mirror/БД.КОАКС.tsv`, matched as the import
   matches: article without case, cable by `cable_key`) gets the card columns only — its type, maker, «Тип пина» /
   «Тип экрана» and lengths are the technologist's and are not re-sent;
-* a new pair gets its type, maker, «Тип пина» / «Тип экрана» in the base's words (пайка / обжим / пайка; anything
-  else — цанга, прижим, накрутка — is left empty, as the generator then asks) and the card;
+* a new pair gets its type, maker, «Тип пина» / «Тип экрана» in the base's words (пайка / обжим / прижим; anything
+  else — цанга, накрутка — is left empty, as the generator then asks) and the card;
 * card columns (`importers.COAX_CARD_COLUMNS`): series, gender, polarity, angle, mount, the site's words for the pin
   and the shield, impedance, max frequency, body material, plating, size, the site's name, link, note, source.
   Empty values are left out (null-spec: the load neither clears nor guesses).
@@ -51,6 +51,7 @@ POLARITY = {"normal": "обычная", "RP": "обратная (RP)"}
 _SITE_NUMBER = re.compile(r"номер на сайте:\s*(\d+)")
 _SHIELD_CRIMP = re.compile(r"^обжим")
 _SHIELD_SOLDER = re.compile(r"(^|:\s*)пайка$")
+_SHIELD_CLAMP = re.compile(r"^(прижим|зажим)")
 
 
 class GsmFileError(ValueError):
@@ -83,12 +84,14 @@ def pin_type(pin: object) -> str:
 
 
 def shield_type(shield: object) -> str:
-    """«Тип экрана» in the base's words (обжим / пайка); прижим, накрутка, компрессия stay empty."""
+    """«Тип экрана» in the base's words (обжим / пайка / прижим); накрутка, компрессия stay empty."""
     text = _text(shield).casefold()
     if _SHIELD_CRIMP.search(text):
         return "обжим"
     if _SHIELD_SOLDER.search(text):
         return "пайка"
+    if _SHIELD_CLAMP.search(text):
+        return "прижим"
     return ""
 
 

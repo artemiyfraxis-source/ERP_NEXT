@@ -63,6 +63,7 @@ OPERATION_TYPE_NAMES: dict[str, str] = {
     "coaxPin": "Пайка центрального контакта", "coaxPinCrimp": "Опрессовка центрального контакта", "coaxCapCrimp": "Монтаж крышки (обжим)",
     "coaxCapScrew": "Монтаж крышки (винт)", "coaxHousing": "Монтаж корпуса", "coaxInsSleeve": "Монтаж втулки экрана",
     "coaxInsTut": "Монтаж ТУТ", "coaxHeat": "Усадка ТУТ",
+    "coaxClampNut": "Надеть гайку и шайбу (уплотнитель)", "coaxClampBraid": "Оплётка по зажимному кольцу",
 }
 _NO_CODE = re.compile(r"^\s*без\s+кода\s*$", re.IGNORECASE)
 

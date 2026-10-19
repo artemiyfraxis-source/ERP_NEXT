@@ -77,7 +77,7 @@ def test_bundled_cut_2strip_tin_card_cuts_strips_both_ends_and_tins_without_crim
 
 def test_seed_creates_the_template_once_and_it_survives_a_supplymap_snapshot(operation_library_api):
     assert "добавлены" in seed_erp(app.state.techcards_uow_factory, NOW)
-    assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (4)"
+    assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (6)"
 
     reimport = operation_library_api.put(
         "/api/techcards/templates/supplymap-library",
@@ -86,7 +86,9 @@ def test_seed_creates_the_template_once_and_it_survives_a_supplymap_snapshot(ope
     assert reimport.status_code == 200, reimport.text
 
     ids = {item["id"] for item in operation_library_api.get("/api/techcards/templates").json()["items"]}
-    assert ids == {"cut-wire", TIN_ID, COAX_CUT_ID, MARK_TUBE_ID, CUT_2STRIP_TIN_ID}
+    assert ids == {"cut-wire", TIN_ID, COAX_CUT_ID, MARK_TUBE_ID, CUT_2STRIP_TIN_ID,
+                   "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом-a",
+                   "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом-b"}
     detail = operation_library_api.get(f"/api/techcards/templates/{TIN_ID}").json()
     assert detail["code"] == "CUT_WIRE+1crimp+tin"
 
