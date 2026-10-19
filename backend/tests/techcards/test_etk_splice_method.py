@@ -57,7 +57,7 @@ def config(method: str | None, *, sleeves: list[dict[str, Any]] | None = None, p
 
 
 CUT = "Провода нарезаны: НВ4 1,0 — 4 шт по 300 мм; НВ4 0,5 — 4 шт по 250 мм; НВ4 0,5 — 2 шт по 200 мм"
-CRIMPED = f"{CUT}; провода опрессованы гильзой НШВ 1,0-8, НШВ 0,5-8"
+CRIMPED = f"{CUT}; провода опрессованы гильзой НШВ 1,0-8 и НШВ 0,5-8"
 
 
 def build(source: dict[str, Any]) -> dict[str, Any]:
@@ -147,8 +147,8 @@ def test_tail_ops_get_their_own_etk_keys_and_words_next_to_the_splice_strip_and_
         "2", "свободные концы", "свободные концы", "6"]
     # Stripping the tails does not move the product on; tinning them does.
     assert op_by_key(document, "stripTail")["result"] == [
-        {"name": f"{CRIMPED}; свободные концы разделаны", "norm": "10", "unit": "Шт."}]
-    assert op_by_key(document, "tinTail")["result"][0]["name"] == f"{CRIMPED}; свободные концы облужены"
+        {"name": f"{CRIMPED}, свободные концы разделаны", "norm": "10", "unit": "Шт."}]
+    assert op_by_key(document, "tinTail")["result"][0]["name"] == f"{CRIMPED}, свободные концы облужены"
     assert op_by_key(document, "tin")["result"][0]["name"] == "Жгут НВ4"
     now = datetime.now(timezone.utc)
     card = ProjectTechcard.create(project="713", item_index="К.4 КБ1", product_name="Жгут НВ4", source_calculation="",

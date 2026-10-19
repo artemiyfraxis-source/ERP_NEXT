@@ -92,14 +92,16 @@ def _build(config: dict) -> dict:
 def test_every_coax_operation_hands_on_its_semi_finished_cable_and_the_next_one_takes_it():
     operations = _build(_prod_config())["operations"]
     cut, strip_a, strip_b, tut_cut, pin_a, pin_b, put_tut, sleeve, housing_a, housing_b, shield, heat = operations
-    assert [(row["name"], row["norm"], row["unit"]) for row in cut["result"]] == [("Кабель RG316 нарезан: 1010 мм", "20", "Шт.")]
-    assert strip_a["result"][0]["name"] == "Кабель RG316 нарезан: 1010 мм; сторона А разделана под MMCX-Male RG316"
-    # Та же работа на стороне В сразу после стороны А — одной частью названия.
-    assert strip_b["result"][0]["name"] == "Кабель RG316 нарезан: 1010 мм; концы разделаны: А — под MMCX-Male RG316, В — под N-111L"
-    assert pin_a["result"][0]["name"].endswith("; сторона А: припаян центральный контакт")
-    assert pin_b["result"][0]["name"].endswith("; центральные контакты припаяны с двух сторон")
-    assert housing_b["result"][0]["name"].endswith("; корпуса разъёмов установлены с двух сторон")
-    assert shield["result"][0]["name"].endswith("; втулки экрана обжаты")
+    assert [(row["name"], row["norm"], row["unit"]) for row in cut["result"]] == [("Кабель RG316 1010 мм", "20", "Шт.")]
+    # Владелец 19.10, «результат по-человечески»: одна фраза — что в руках сейчас, без журнала шагов.
+    assert strip_a["result"][0]["name"] == "Кабель RG316 1010 мм, конец А разделан под MMCX-Male RG316"
+    assert strip_b["result"][0]["name"] == "Кабель RG316 1010 мм, концы разделаны: А — под MMCX-Male RG316, В — под N-111L"
+    assert pin_a["result"][0]["name"] == "Кабель RG316 1010 мм с припаянным центральным контактом на стороне А"
+    assert pin_b["result"][0]["name"] == "Кабель RG316 1010 мм с припаянными центральными контактами"
+    assert housing_b["result"][0]["name"] == (
+        "Кабель RG316 1010 мм с корпусами MMCX-Male RG316 (А) и N-111L (В); ТУТ и втулки экрана надеты, не обжаты")
+    assert shield["result"][0]["name"] == (
+        "Кабель RG316 1010 мм с корпусами MMCX-Male RG316 (А) и N-111L (В); втулки экрана обжаты, ТУТ надеты, не усажены")
     assert (heat["result_label"], heat["result"][0]["name"]) == ("Изделие", "Кабельная сборка MMCX-Male to N-Male RG316 1m")
     # Вход каждой операции — результат прошлой продвигающей, слово в слово, на партию; резки входа не имеют.
     chain = [cut, strip_a, strip_b, pin_a, pin_b, put_tut, sleeve, housing_a, housing_b, shield, heat]
