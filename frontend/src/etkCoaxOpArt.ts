@@ -29,9 +29,17 @@ export function coaxPartsEtk(ends: Row[], kind: "tube" | "sleeve", name: string,
     body += endGraphics(end, x0, cy, steps, brk[0], "url(#etkBraid)") + rect(brk[1], 600, cy - 16, 32, JACKET, "#000", 4);
     // Знак разрыва: кабель в середине не рисуется во всю длину.
     body += `<g data-part="break">${line(brk[0] + 8, cy - 22, brk[0] - 8, cy + 22, INK, 1.6)}${line(brk[1] + 8, cy - 22, brk[1] - 8, cy + 22, INK, 1.6)}</g>`;
-    const from = x3 + 36, width = kind === "tube" ? 96 : 46, to = from + width;
+    // Прижимной экран (владелец 19.10): вместо втулки — гайка, шайба, уплотнитель и зажимное кольцо (конус) на оболочке.
+    const clamp = kind === "sleeve" && /прижим|зажим/i.test(str(end.shield));
+    const from = x3 + 36, width = kind === "tube" ? 96 : clamp ? 104 : 46, to = from + width;
     if (kind === "tube") {
       body += rect(from, to, cy - 21, 42, TUBE, "#000", 7, 'fill-opacity=".92" data-part="tube"') + label((from + to) / 2, cy + 4.5, tubeShort(name) || "ТУТ", 13, 700, "#fff");
+    } else if (clamp) {
+      body += `<g data-part="clamp-set">` + rect(from, from + 36, cy - 22, 44, METAL, EDGE, 2);
+      for (let x = from + 7; x < from + 33; x += 7) body += line(x, cy - 22, x, cy + 22, EDGE, .8);
+      body += rect(from + 40, from + 46, cy - 20, 40, "#aab2b7", EDGE, 1) + rect(from + 50, from + 66, cy - 16, 32, "#4b5257", EDGE, 3) +
+        `<polygon points="${f(from + 72)},${f(cy - 8)} ${f(to)},${f(cy - 18)} ${f(to)},${f(cy + 18)} ${f(from + 72)},${f(cy + 8)}" fill="${METAL}" stroke="${EDGE}" stroke-width=".9"/></g>`;
+      body += label(from - 6, cy + 34, "гайка, шайба, уплотнитель, кольцо", 12, 700, INK, "start");
     } else {
       body += rect(from, to, cy - 19, 38, METAL, EDGE, 3, 'data-part="sleeve"');
       for (let x = from + 7; x < to - 3; x += 6) body += line(x, cy - 19, x, cy + 19, EDGE, .8);
@@ -128,4 +136,42 @@ function depthCallout(depth: string, cy: number): string {
     label(tx, cyD + 6, "от торца корпуса до контакта", 12, 400, MUTED, "start") +
     label(tx, cyD + 24, "вид А увеличен, не в масштабе", 12, 400, MUTED, "start");
   return art;
+}
+
+// ── Прижимной экран (зажим): гайка и шайба, оплётка по зажимному кольцу, сборка корпуса (владелец 19.10) ──
+
+const BRAID = "url(#etkBraid)";
+const polygon = (points: Array<[number, number]>, fill: string, stroke = EDGE) =>
+  `<polygon points="${points.map(([x, y]) => `${f(x)},${f(y)}`).join(" ")}" fill="${fill}" stroke="${stroke}" stroke-width=".9"/>`;
+
+/** Гайка: шестигранник с рифлением (вид сбоку), центр по оси кабеля `cy`. */
+function clampNut(x1: number, x2: number, cy: number, half: number): string {
+  let art = rect(x1, x2, cy - half, half * 2, METAL, EDGE, 2);
+  for (let x = x1 + 8; x < x2 - 4; x += 8) art += line(x, cy - half, x, cy + half, EDGE, .8);
+  return art;
+}
+
+/** Эскиз операции «прижимного» экрана крупно, в стиле остальных эскизов коакса (холст 640, подписи не мельче 12):
+ *  `nut` — гайка, шайба и уплотнитель надеты и сдвинуты назад по кабелю; `braid` — зажимное кольцо (конус) на диэлектрике,
+ *  оплётка отогнута на него и обрезается по краю; `assembly` — корпус в разрезе: контакт в изоляторе, оплётка зажата кольцом
+ *  между конусом и корпусом, гайка затянута. Ни втулки экрана, ни обжима здесь нет. */
+export function coaxClampEtk(end: Row, title: string, hint: string): { height: number; body: string } {
+  const cy = 130, cable = str(end.cable) || "кабель";
+  let body = label(8, 20, title, 14, 700, INK, "start") + label(8, 40, hint, 12, 400, MUTED, "start");
+  {
+    body += rect(60, 250, cy - 5, 10, BRASS, EDGE, 2) + rect(92, 290, cy - 30, 60, DIEL, EDGE) + rect(92, 290, cy - 36, 8, METAL, EDGE) + rect(92, 290, cy + 28, 8, METAL, EDGE) +
+      rect(132, 250, cy - 5, 10, BRASS, EDGE, 2) + rect(260, 330, cy - 14, 28, METAL, EDGE, 2);
+    // Оплётка зажата между конусом корпуса и зажимным кольцом.
+    body += polygon([[250, cy - 12], [300, cy - 22], [330, cy - 14], [330, cy - 8], [250, cy - 8]], BRAID) + polygon([[250, cy + 12], [300, cy + 22], [330, cy + 14], [330, cy + 8], [250, cy + 8]], BRAID);
+    body += clampNut(290, 360, cy, 38) + rect(360, 368, cy - 34, 68, "#aab2b7", EDGE, 1) + rect(368, 392, cy - 28, 56, "#4b5257", EDGE, 3) + rect(392, 610, cy - 16, 32, JACKET, "#000", 3);
+    body += label(70, cy - 52, "корпус", 12, 600, INK, "start") + line(110, cy - 46, 110, cy - 38, MUTED, .9, "2 2");
+    body += label(190, cy + 62, "контакт в изоляторе", 12, 600, INK) + line(190, cy + 52, 190, cy + 6, MUTED, .9, "2 2");
+    body += label(356, cy - 52, "оплётка зажата кольцом", 12, 600, INK, "end") + line(290, cy - 46, 290, cy - 24, MUTED, .9, "2 2");
+    body += label(325, cy + 62, "гайка затянута", 12, 600, INK) + line(325, cy + 52, 325, cy + 40, MUTED, .9, "2 2");
+    body += label(372, cy - 52, "шайба и уплотнитель", 12, 600, INK, "start") + line(380, cy - 46, 380, cy - 36, MUTED, .9, "2 2");
+    body += label(500, cy + 4.5, cable, 12, 600, "#fff");
+    body += `<path d="M300,${cy + 84} q40,18 80,0" fill="none" stroke="${INK}" stroke-width="1.4"/>${label(340, cy + 112, "момент затяжки — по документации производителя", 12, 600, INK)}`;
+    return { height: cy + 124, body };
+  }
+
 }

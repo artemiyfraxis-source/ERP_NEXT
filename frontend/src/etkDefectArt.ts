@@ -575,6 +575,26 @@ const COAX_SCENES: Record<string, () => Scene> = {
       ng: body + rect(30, 32.5, 12, 3, TIN, ` stroke="${TIN_LO}" stroke-width=".5"`) + line(20, 18, 20, 50, MUTED, 0.6, ' stroke-dasharray="3 2"') + dim(20, 30, 20, "", RED) + mark(26, 34, 9, 8) + text(58, 62, "контакт утоплен", RED),
     };
   },
+  // Корпус с прижимом (INS_housing_COAX_clamp): оплётка по конусу, гайка, уплотнитель.
+  cxBraidStrands: () => {
+    const body = coaxBody(30, 84, 100) + rect(30, 27, 16, 14, "#f4f4f2", ` stroke="${E}" stroke-width=".5"`) + jacket(100, 114, 34, 12);
+    return {
+      ok: body + rect(20, 32.5, 22, 3, TIN, ` stroke="${TIN_LO}" stroke-width=".5"`) + text(58, 62, "изолятор и контакт чисты", GREEN),
+      ng: body + rect(20, 32.5, 22, 3, TIN, ` stroke="${TIN_LO}" stroke-width=".5"`) + path("M46,30 l-14,-5 M48,36 l-18,4 M44,34 l-12,-1", "none", "#8d9297", 1) + mark(38, 33, 13, 10) + text(58, 62, "пряди — замыкание", RED),
+    };
+  },
+  cxClampLoose: () => ({
+    ok: coaxBody(30, 84, 100) + braid(84, 100, 34, 18) + jacket(100, 114, 34, 12) + text(58, 62, "оплётка зажата", GREEN),
+    ng: coaxBody(30, 84, 100) + braid(92, 104, 34, 12) + jacket(108, 114, 34, 12) + path("M96,56 L112,56 M108,52 L112,56 L108,60", "none", RED, 1.2) + mark(100, 34, 12, 14) + text(58, 66, "выдёргивается", RED),
+  }),
+  cxNutOver: () => ({
+    ok: coaxBody(30, 84, 100) + hexSleeve(66, 98) + jacket(98, 114, 34, 12) + rect(30, 27, 16, 14, "#f4f4f2", ` stroke="${E}" stroke-width=".5"`) + text(58, 62, "гайка по моменту", GREEN),
+    ng: coaxBody(30, 84, 100) + hexSleeve(66, 98) + jacket(98, 114, 34, 12) + path("M30,27 Q36,34 30,41 L46,41 L46,27 z", "#f4f4f2", E, 0.6) + rect(34, 34, 12, 3, TIN, ` stroke="${TIN_LO}" stroke-width=".5"`) + mark(38, 34, 12, 10) + text(58, 62, "изолятор смят", RED),
+  }),
+  cxGasketMissing: () => ({
+    ok: coaxBody(30, 84, 100) + rect(84, 20, 3, 28, TIN, ` stroke="${TIN_LO}" stroke-width=".5"`) + rect(87, 24, 9, 20, "#4b5257", ` rx="2" stroke="${E}" stroke-width=".5"`) + jacket(96, 114, 34, 12) + text(58, 62, "шайба и уплотнитель", GREEN),
+    ng: coaxBody(30, 84, 100) + jacket(88, 114, 34, 12) + mark(90, 34, 10, 16) + text(58, 62, "нет шайбы, уплотнителя", RED),
+  }),
   cxSleeveHairs: () => ({
     ok: coaxBody(4, 34, 48) + hexSleeve(36, 76) + jacket(76, 112, 34, 14),
     ng: coaxBody(4, 34, 48) + hexSleeve(36, 76) + jacket(76, 112, 34, 14) + path("M76,24 l6,-7 M78,25 l9,-4 M76,44 l7,6 M77,43 l9,3", "none", "#8d9297", 1) + mark(80, 34, 9, 15),
@@ -1107,7 +1127,11 @@ const RULES: Rule[] = [
   ["tubeOrder", /порядок трубок|неверный порядок/i, ["shrink"]],
   ["shrinkJacketMelt", /оболочк[а-яё]*.*(расплав|оплав)|(расплав|оплав|термическ)[а-яё]*.*оболочк/i, ["shrink"]],
   // Корпус коаксиального разъёма и втулка экрана.
-  ["cxSeat", /недосад|не встал|неполн[а-яё]* посадк/i, ["coaxAsm"]],
+  ["cxBraidStrands", /пряди оплётки|оплётк[а-яё]* на (изолятор|контакт)/i, ["coaxAsm"]],
+  ["cxClampLoose", /оплётка не зажата|выдёргив/i, ["coaxAsm"]],
+  ["cxNutOver", /гайка перетянут|перетянут[а-яё]* гайк/i, ["coaxAsm"]],
+  ["cxGasketMissing", /пропущен[а-яё]* (уплотнител|шайб)|нет уплотнител/i, ["coaxAsm"]],
+  ["cxSeat", /недосад|не встал|неполн[а-яё]* посадк|не дошёл до упора|не дошел до упора/i, ["coaxAsm"]],
   ["cxBent", /изгиб пина|деформ[а-яё]* .*пин/i, ["coaxAsm"]],
   ["cxSleeveHairs", /волоск|торчащ/i, ["coaxCrimp"]],
   ["cxHexLoose", /недожим|проворач/i, ["coaxCrimp"]],

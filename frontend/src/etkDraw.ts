@@ -2,7 +2,7 @@
 // Одни и те же строки идут и на экран (блок «Эскиз»), и в печать (etkPrint.ts): печатное окно — отдельный
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
-import { coaxMountEtk, coaxPartsEtk } from "./etkCoaxOpArt";
+import { coaxClampEtk, coaxMountEtk, coaxPartsEtk } from "./etkCoaxOpArt";
 import { coaxEndNames, coaxEndTitle, coaxKindTitle } from "./coaxNames";
 import { connectorFace, connectorFaceUnits, connectorSummary, wireColor, type HousingBody, type Mate, type Roof } from "./connectorArt";
 import { connectorTopView } from "./connectorTopView";
@@ -404,6 +404,11 @@ function coaxEndSketch(operation: Row): string {
     if (g.ok) body += caption(x0, cy + 56, `L1 = ${mm(end.l1)} · L2 = ${mm(end.l2)} · L3 = ${mm(end.l3)}`);
     return svg(640, cy + (g.ok ? 66 : 46), body);
   }
+  // Монтаж корпуса с прижимом: оплётка по конусу, контакт в изоляторе, гайка затянута — без втулки и обжима.
+  if (type === "coaxHousing" && str(end.shield) === "прижим") {
+    const art = coaxClampEtk(end, sideCaption(end), "Оплётку расправить по конусу и обрезать, корпус собрать, гайку затянуть");
+    return svg(640, art.height, art.body);
+  }
   // Корпус: настоящий боковой вид SMA в разрезе, контакт в изоляторе, оплётка расправлена по хвостовику; пайка экрана / крышка — тот же вид с подписью.
   const mount: Record<string, string> = {
     coaxHousing: "Корпус надвинуть до упора: контакт зафиксирован в изоляторе",
@@ -431,7 +436,9 @@ function coaxEndSketch(operation: Row): string {
 function coaxPartsSketch(operation: Row): string {
   const p = obj(obj(operation.fields).coaxParts), type = str(operation.type), cy = 62;
   const kind = str(p.kind) === "sleeve" ? "sleeve" : "tube", count = Math.max(1, num(p.count) || 1);
-  const name = str(p.name) || (kind === "tube" ? "ТУТ" : "втулка экрана");
+  const clampSides = Array.isArray(p.clampSides) ? p.clampSides.length : 0;
+  const name = clampSides >= count && kind === "sleeve" ? "гайка, шайба, уплотнитель, кольцо"
+    : clampSides > 0 && kind === "sleeve" ? `${str(p.name) || "втулка экрана"} и гайка, шайба, уплотнитель, кольцо` : str(p.name) || (kind === "tube" ? "ТУТ" : "втулка экрана");
   const what = `${name}${count > 1 ? ` × ${count}` : ""}`;
   if ((type === "coaxInsTut" || type === "coaxInsSleeve") && list(p.ends).length) {
     // Оба конца со своими разъёмами, ТУТ / втулка на оболочке, знак разрыва (владелец 19.10).

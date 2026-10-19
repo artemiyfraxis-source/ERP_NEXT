@@ -214,7 +214,10 @@ export type GenState = {
   tin: { enabled: boolean; wires: number[] | null; stripLen: string };
   coax: {
     len: string; tutEnabled: boolean; tutLen: string; pinA: string; pinB: string; coverA: string; coverB: string;
-    stripB: boolean; shield: string; sideA: CoaxSide; sideB: CoaxSide;
+    stripB: boolean; shield: string;
+    /** Тип экрана стороны В (владелец 19.10: у разъёмов А и В он может быть разный); нет / пусто — как у А (`shield`). */
+    shieldB?: string;
+    sideA: CoaxSide; sideB: CoaxSide;
     /** Разделка (владелец 14.10): «machine» — резка с разделкой на роторном станке одной операцией, «separate» — резка,
      *  затем разделка А и В. Станок: "" — по Ø кабеля (coaxMachineAuto_), иначе выбор технолога. */
     stripMode: CoaxStripMode; machine: "" | CoaxMachineKey;
@@ -233,6 +236,8 @@ export type OpSpec = {
   tmplHint?: string; cat?: string; termArt?: string; firstTerm?: boolean; wireIdxs?: number[];
   /** Карта, которую операция хочет по правилу, когда tmplHint — замена за её отсутствием (CUT_WIRE+2crimp → +1crimp). */
   tmplWant?: string;
+  /** «Надеть» коакса: стороны с прижимным экраном — на них гайка, шайба и уплотнитель вместо втулки экрана. */
+  clampSides?: Side[];
   /** Разделка концов: lenA/lenB — зачистка конца (у кабеля в оболочке — оболочка), coreA/coreB — зачистка жил кабеля в
    *  оболочке под обжим или пайку (ротор снимает оболочку и зачищает жилы одним проходом, владелец 15.10). */
   strip?: { a: boolean; lenA: string; b: boolean; lenB: string; coreA?: string; coreB?: string }; stripCount?: number;
@@ -319,6 +324,8 @@ const CRIMP_BOTH_CODE_ = "CUT_WIRE+2crimp";
 const SHIELD_CODE_ = "TWST_SHILED";
 /** Резка коаксиального кабеля без разделки (вкладка «Коакс», разделка отдельно): своя карта, не карта провода. */
 export const COAX_CUT_CODE_ = "CUT_COAX_auto";
+/** Карта «Монтаж корпуса» прижимного экрана (ERP-шаблон в techcard-library-erp.json). */
+const CLAMP_HOUSING_CODE_ = "INS_housing_COAX_clamp";
 /** Тип пина коакс-разъёма с цанговым центральным контактом: жила зажимается цангой, пайки центрального контакта нет. */
 export const COAX_PIN_COLLET = "цанга";
 /** Тип пина «обжим» (владелец 19.10): центральный контакт опрессовывается на жилу — своя операция, не пайка. */
@@ -326,6 +333,17 @@ export const COAX_PIN_CRIMP = "обжим";
 /** Карта опрессовки центрального контакта; пока её нет в БД.ОП — карта опрессовки коакса (втулки), с пометкой. */
 const COAX_PIN_CRIMP_CODE_ = "PRS_PIN_coax";
 const COLLET_RE_ = /цанг/i;
+/** Тип экрана разъёма на сборку: обжим втулки, пайка экрана, прижимной (зажим: оплётка отогнута на зажимное кольцо, гайка). */
+export const COAX_SHIELD_CLAMP = "прижим";
+export const COAX_SHIELD_OPTIONS: ReadonlyArray<readonly [string, string]> = [["обжим", "Обжим втулки"], ["пайка", "Пайка экрана"], ["прижим", "Прижимной (зажим)"]];
+/** «Тип экрана» БД.КОАКС любыми словами → обжим / пайка / прижим; не распознано (или пусто) — "" (тип не выбирается по базе). */
+export function coaxShieldKind_(text: string | undefined | null): "обжим" | "пайка" | "прижим" | "" {
+  const t = String(text || "").toLowerCase();
+  if (/прижим|зажим|clamp/.test(t)) return COAX_SHIELD_CLAMP;
+  if (/пайк|паян|solder/.test(t)) return "пайка";
+  if (/обжим|crimp/.test(t)) return "обжим";
+  return "";
+}
 
 /** Русское название операции генератора по её `type` (как `OPERATION_TYPE_NAMES` на сервере): когда в конфиге нет `label`. */
 const OP_TYPE_NAMES: Record<string, string> = {
@@ -1639,7 +1657,11 @@ export function makeGen(D: GenData, S: GenState) {
   function coaxRecForSide_(side: Side) {
     const s = side === "A" ? S.coax.sideA : S.coax.sideB;
     if (!s) return null;
-    return matchCoaxRec_(s.art, side === "A" ? S.coax.pinA : S.coax.pinB, S.coax.shield);
+    return matchCoaxRec_(s.art, side === "A" ? S.coax.pinA : S.coax.pinB, coaxShieldOf_(side));
+  }
+  /** Тип экрана стороны: В — свой (`shieldB`), пусто — как у А. */
+  function coaxShieldOf_(side: Side): string {
+    return side === "B" ? S.coax.shieldB || S.coax.shield : S.coax.shield;
   }
   function isCoaxAssembly_() {
     if (S.coax.sideA && matchCoaxRec_(S.coax.sideA.art, "", "")) return true;
@@ -1704,7 +1726,6 @@ export function makeGen(D: GenData, S: GenState) {
     const sideB = !!S.coax.sideB;
     const pinA = S.coax.pinA;
     const pinB = sideB ? S.coax.pinB : "";
-    const shield = S.coax.shield;
     const pinHint = (p: string) => (p === "внутри корпуса" ? "SDR_COAX_pin_R/A" : "SDR_COAX_pin");
     const ops: OpSpec[] = [];
     const nSides = sideB ? 2 : 1;
@@ -1739,8 +1760,21 @@ export function makeGen(D: GenData, S: GenState) {
     };
     const housingLabel = (sd: Side, pin: string) => `Монтаж корпуса (${sd === "B" ? "B" : "А"})${pin === COAX_PIN_COLLET ? " — цанговый контакт, без пайки" : ""}`;
     const insTutOp = (): OpSpec | null => (tutOn ? { type: "coaxInsTut", opKey: "coaxInsTut", label: `Монтаж ТУТ${x(nSides)}`, units: nSides, tmplHint: "INS_TUT" } : null);
-    const sleeveOp = (): OpSpec => ({ type: "coaxInsSleeve", opKey: "coaxInsSleeve", label: `Монтаж втулки экрана${x(nSides)}`, units: nSides, tmplHint: "INS_SLEEVE_coax" });
-    const hasSleeve = shield === "обжим";
+    const shieldA = coaxShieldOf_("A"), shieldB = sideB ? coaxShieldOf_("B") : "";
+    const sidesOf = (kind: string) => (["A", "B"] as Side[]).filter((sd) => (sd === "A" ? shieldA : shieldB) === kind);
+    const clampSides = sidesOf(COAX_SHIELD_CLAMP), solderSides = sidesOf("пайка");
+    // Обжим — всё, что не пайка и не прижим (прежнее поведение: тип по умолчанию «обжим»).
+    const nCrimp = (["A", ...(sideB ? ["B"] : [])] as Side[]).filter((sd) => !clampSides.includes(sd) && !solderSides.includes(sd)).length;
+    const nClamp = clampSides.length;
+    // «Надеть» (владелец 19.10): на обжимной стороне — втулка экрана, на прижимной — гайка, шайба и уплотнитель; одной операцией на обе стороны.
+    const sdName = (sd: Side) => (sd === "B" ? "B" : "А");
+    const crimpSides = (["A", ...(sideB ? ["B"] : [])] as Side[]).filter((sd) => !clampSides.includes(sd) && !solderSides.includes(sd));
+    const putOnLabel = !nClamp ? `Монтаж втулки экрана${x(nCrimp)}`
+      : !nCrimp ? `Надеть гайку, шайбу, уплотнитель и зажимное кольцо${x(nClamp)}`
+        : `Надеть втулку экрана (${crimpSides.map(sdName).join(", ")}) и гайку, шайбу, уплотнитель, зажимное кольцо (${clampSides.map(sdName).join(", ")})`;
+    const sleeveOp = (): OpSpec => ({ type: "coaxInsSleeve", opKey: "coaxInsSleeve", label: putOnLabel, units: nCrimp + nClamp, tmplHint: "INS_SLEEVE_coax",
+      ...(nClamp ? { clampSides } : {}) });
+    const hasSleeve = nCrimp + nClamp > 0;
     const angledB = sideB && pinB === "внутри корпуса";
     const pushTut = () => { const o = insTutOp(); if (o) ops.push(o); };
     if (angledB) {
@@ -1748,14 +1782,14 @@ export function makeGen(D: GenData, S: GenState) {
     } else {
       pushPin("A", pinA); if (sideB) pushPin("B", pinB); pushTut(); if (hasSleeve) ops.push(sleeveOp());
     }
-    if (pinA !== "внутри корпуса") ops.push({ type: "coaxHousing", side: "A", opKey: "coaxHousingA", label: housingLabel("A", pinA), tmplHint: "INS_housing_COAX" });
-    if (sideB && pinB !== "внутри корпуса") ops.push({ type: "coaxHousing", side: "B", opKey: "coaxHousingB", label: housingLabel("B", pinB), tmplHint: "INS_housing_COAX" });
-    if (shield === "пайка") {
-      ops.push({ type: "coaxSolderShield", side: "A", opKey: "coaxSolderShieldA", label: "Пайка экрана (А)", tmplHint: "SDR_COAX_housing" });
-      if (sideB) ops.push({ type: "coaxSolderShield", side: "B", opKey: "coaxSolderShieldB", label: "Пайка экрана (B)", tmplHint: "SDR_COAX_housing" });
-    } else {
-      ops.push({ type: "coaxShield", opKey: "coaxShield", label: `Опрессовка втулки экрана${x(nSides)}`, units: nSides, tmplHint: "PRS_SLEEVE_coax" });
-    }
+    // Прижимной экран — одна операция «Монтаж корпуса с прижимом»: оплётка по конусу, корпус, гайка. Карта — ERP-шаблон, пока его нет — карта корпуса.
+    const clampHousing = (sd: Side, pin: string): Partial<OpSpec> => (clampSides.includes(sd)
+      ? { label: `Монтаж корпуса с прижимом (${sdName(sd)})${pin === COAX_PIN_COLLET ? " — цанговый контакт, без пайки" : ""}`,
+          tmplHint: hasTemplateCode_(CLAMP_HOUSING_CODE_) ? CLAMP_HOUSING_CODE_ : "INS_housing_COAX", tmplWant: CLAMP_HOUSING_CODE_ } : {});
+    if (pinA !== "внутри корпуса") ops.push({ type: "coaxHousing", side: "A", opKey: "coaxHousingA", label: housingLabel("A", pinA), tmplHint: "INS_housing_COAX", ...clampHousing("A", pinA) });
+    if (sideB && pinB !== "внутри корпуса") ops.push({ type: "coaxHousing", side: "B", opKey: "coaxHousingB", label: housingLabel("B", pinB), tmplHint: "INS_housing_COAX", ...clampHousing("B", pinB) });
+    solderSides.forEach((sd) => ops.push({ type: "coaxSolderShield", side: sd, opKey: "coaxSolderShield" + sd, label: `Пайка экрана (${sdName(sd)})`, tmplHint: "SDR_COAX_housing" }));
+    if (nCrimp > 0) ops.push({ type: "coaxShield", opKey: "coaxShield", label: `Опрессовка втулки экрана${x(nCrimp)}`, units: nCrimp, tmplHint: "PRS_SLEEVE_coax" });
     if (tutOn) ops.push({ type: "coaxHeat", opKey: "coaxHeat", label: `Усадка ТУТ${x(nSides)}`, units: nSides, tmplHint: "HEAT_TYT_short" });
     const caps: Record<string, number> = {};
     ([["A", pinA, S.coax.coverA], ["B", sideB ? pinB : "", S.coax.coverB]] as const).forEach(([, pin, cover]) => {
@@ -2876,11 +2910,11 @@ export function makeGen(D: GenData, S: GenState) {
     const sideB = !!S.coax.sideB;
     const recA = coaxRecForSide_("A");
     const recB = sideB ? coaxRecForSide_("B") : null;
-    const mkSide = (rec: CoaxRec | null, art: string, pinType: string, connName: string) => (art ? {
+    const mkSide = (rec: CoaxRec | null, art: string, pinType: string, connName: string, shield: string) => (art ? {
       article: art, connName: connName || "",
       type: rec ? rec.type : "", wire: rec ? rec.wire : "", mfr: rec ? rec.mfr : "", program: rec ? rec.program : "",
       ...coaxDia_(), l1: rec ? rec.l1 : "", l2: rec ? rec.l2 : "", l3: rec ? rec.l3 : "",
-      lPlus: rec ? rec.lPlus : "", lMinus: rec ? rec.lMinus : "", pinType,
+      lPlus: rec ? rec.lPlus : "", lMinus: rec ? rec.lMinus : "", pinType, shield,
     } : null);
     const ops = getActiveOps().map((spec) => {
       const row = opRow(spec);
@@ -2888,7 +2922,8 @@ export function makeGen(D: GenData, S: GenState) {
       return { type: spec.type, opKey: spec.opKey, side: spec.side || "", units: spec.units || 1, templateId: row.templateId,
         opNum: row.matched ? (row.matched.opNumber || "") : "", tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine,
         ...(machine ? { machine: { model: machine.model, inventory: machine.inventory, name: machine.name } } : {}),
-        ...(spec.stripSides ? { stripSides: spec.stripSides } : {}) };
+        ...(spec.stripSides ? { stripSides: spec.stripSides } : {}),
+        ...(spec.clampSides ? { clampSides: spec.clampSides } : {}) };
     });
     const tut = coaxBomTut_(), cable = coaxBomCableComp_(), sleeve = coaxBomSleeve_();
     return {
@@ -2903,8 +2938,8 @@ export function makeGen(D: GenData, S: GenState) {
         cableArt: cable?.art || "", cableName: cable?.name || "",
         sleeveArt: sleeve?.art || "", sleeveName: sleeve?.name || "",
         shieldType: S.coax.shield,
-        sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : ""),
-        sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : ""),
+        sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : "", coaxShieldOf_("A")),
+        sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : "", coaxShieldOf_("B")),
       },
       ops, ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
     };
@@ -3188,7 +3223,7 @@ export function makeGen(D: GenData, S: GenState) {
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_, crimpCutBatchNote_, crimpCutBatchLines_, checkTerminalFit_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
-    coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, coaxMachineAuto_, coaxMachine_, coaxCableOuterMm_, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
+    coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, coaxMachineAuto_, coaxMachine_, coaxShieldOf_, coaxCableOuterMm_, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
     harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, hsComp_, hsRowSkip_, hsTubeOptions_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
     defaultJacketShrinkComp_, cableJacketShrink_, jacketShrinkItems_, freeJacketShrinkComp_, housingOn_, housingDefault_, sleeveWarning_,
     /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
@@ -3424,7 +3459,10 @@ export function onCoaxConnChange(D: GenData, S: GenState, side: Side): GenState 
       if (rec.pinType) coax = { ...coax, [pinKey]: /внутри/i.test(rec.pinType) ? "внутри корпуса" : /обжим/i.test(rec.pinType) ? COAX_PIN_CRIMP : "пайка" };
       // Пустой «Тип пина» не значит «пайка»: цанговый центральный контакт (N-111C/8D…) не паяется.
       if (!/внутри/i.test(rec.pinType) && COLLET_RE_.test(rec.centerContact || "")) coax = { ...coax, [pinKey]: COAX_PIN_COLLET };
-      if (side === "A" && rec.shieldType) coax = { ...coax, shield: /пайк/i.test(rec.shieldType) ? "пайка" : "обжим" };
+      // Тип экрана — по записи БД.КОАКС разъёма своей стороны (обжим / пайка / прижим); ручной выбор потом перекрывает.
+      const kind = coaxShieldKind_(rec.shieldType);
+      if (kind) coax = side === "A" ? { ...coax, shield: kind } : { ...coax, shieldB: kind };
+      else if (side === "B") coax = { ...coax, shieldB: "" };
     }
   }
   return syncCoverRow_({ ...S, coax }, side);

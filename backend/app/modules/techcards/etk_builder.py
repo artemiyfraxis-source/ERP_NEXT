@@ -515,6 +515,7 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
         return (f"Трубка {tut or 'ТУТ'} нарезана: {_count_text(count, 'отрезок', 'отрезка', 'отрезков')}"
                 + (f" по {length} мм" if length != "0" else ""))
     sides: dict[str, set[str]] = {key: set() for key in ("strip", "pin", "housing", "shield_solder", "cap_crimp", "cap_screw")}
+    clamp_put_on = 0
     flags: set[str] = set()
     many = True
     for step in done:
@@ -535,12 +536,18 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
         elif kind == "coaxCapScrew":
             sides["cap_screw"].add(end)
         elif kind in {"coaxInsTut", "coaxInsSleeve", "coaxShield", "coaxHeat"}:
-            flags.add(kind)
+            clamp = len(_list(step.get("clampSides"))) if kind == "coaxInsSleeve" else 0
+            clamp_put_on += clamp
+            if kind != "coaxInsSleeve" or _coax_units(step) > clamp:  # на прижимной стороне втулки нет — гайка, шайба, уплотнитель
+                flags.add(kind)
             many = _coax_units(step) > 1
     length = _format(coax.get("cableLength"))
     head = f"Кабель {cable or 'коаксиальный'}" + (f" {length} мм" if length != "0" else "")
     both = {"A", "B"}
     named = {side: _coax_end_name(config, side) for side in ("A", "B")}
+    for side in sides["housing"]:
+        if named[side] and coax_end_shield(_coax_end({"side": side}, config)) == SHIELD_CLAMP:
+            named[side] += " (прижим)"  # «с корпусом N-Male (прижим) на стороне А»
     if sides["housing"]:
         if sides["housing"] == both and all(named.values()):
             head += f" с корпусами {named['A']} (А) и {named['B']} (В)"
@@ -570,6 +577,8 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
     facts: list[str] = []
     if sides["shield_solder"]:
         facts.append("экран припаян к корпусам" if sides["shield_solder"] == both else "экран припаян к корпусу")
+    if clamp_put_on and not sides["housing"]:
+        facts.append("гайки, шайбы, уплотнители и зажимные кольца надеты" if clamp_put_on > 1 else "гайка, шайба, уплотнитель и зажимное кольцо надеты")
     for key, word in (("cap_crimp", "обжаты"), ("cap_screw", "завёрнуты")):
         if sides[key]:
             facts.append(f"крышки разъёмов {word}" if sides[key] == both else f"крышка разъёма {word[:-1]}а")
@@ -709,7 +718,9 @@ def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[d
     if operation_type == "coaxCutTut":
         return row("tutArt", "tutName", units * quantity, "Шт.")
     if operation_type == "coaxInsSleeve":
-        return row("sleeveArt", "sleeveName", units * quantity, "Шт.")
+        # Втулка — только на обжимных сторонах; гайка, шайба и уплотнитель прижимной стороны входят в комплект разъёма.
+        crimped = units - len(op.get("clampSides") or [])
+        return row("sleeveArt", "sleeveName", crimped * quantity, "Шт.") if crimped > 0 else []
     if operation_type in ("coaxPin", "coaxPinCrimp"):
         side = coax.get("sideB" if op.get("side") == "B" else "sideA")
         article = str(side.get("article") or "").strip() if isinstance(side, Mapping) else ""
@@ -1088,7 +1099,8 @@ def with_coax_connectors(op: Mapping[str, Any], config: Mapping[str, Any]) -> Ma
     if isinstance(parts, Mapping) and "ends" not in parts and _coax(config).get("sideA"):
         # ТУТ / втулки экрана надеваются на оба конца — эскиз рисует каждый разделанный конец со своим разъёмом.
         patched["coaxParts"] = {**parts, "ends": [
-            {**_coax_strip_sizes(config, side), "side": "А" if side == "A" else "В", "pinType": str(_coax(config).get(f"side{side}", {}).get("pinType") or "")}
+            {**_coax_strip_sizes(config, side), "side": "А" if side == "A" else "В", "pinType": str(_coax(config).get(f"side{side}", {}).get("pinType") or ""),
+             "shield": coax_end_shield(_coax(config).get(f"side{side}") or {})}
             for side in ("A", "B") if _coax(config).get(f"side{side}")]}
     return {**op, "fields": patched} if patched != dict(fields) else op
 
@@ -1105,7 +1117,8 @@ def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict
     if operation_type in COAX_END_TYPES:
         end = _coax_end(op, config)
         return {"coaxEnd": {**_coax_strip_sizes(config, "B" if op.get("side") == "B" else "A"),
-                            "side": _side_label(op), "pinType": str(end.get("pinType") or "")}}
+                            "side": _side_label(op), "pinType": str(end.get("pinType") or ""),
+                            "shield": coax_end_shield(end)}}
     if operation_type == "coaxCutTut":
         length = _format(coax.get("tutLength"))
         return {"lengthKd": f"{length}мм"} if length != "0" else {}
@@ -1119,15 +1132,46 @@ def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict
         return {}
     kind, name, length = parts
     length_text = _format(length) if length else "0"
+    clamp = [_side_label({"side": side}) for side in _list(op.get("clampSides"))] if operation_type == "coaxInsSleeve" else []
     return {"coaxParts": {
         "kind": kind, "name": str(name or "").strip(), "count": int(_coax_units(op)),
         "cable": str(coax.get("cableArt") or coax.get("cableName") or ""), "length": "" if length_text == "0" else length_text,
+        **({"clampSides": clamp} if clamp else {}),
     }}
+
+
+_PUT_ON = re.compile(r"Надеть обжимную гильзу на внешнюю оболочку кабеля\.?")
+_SLIDE = re.compile(r"Сдвинуть гильзу по кабелю вслед за ТУТ\.?")
+_ORIENT = re.compile(r"Визуально проверить правильность ориентации гильзы[^.]*\.?")
+
+
+def _clamp_put_on_text(text: str, clamp: int, total: int) -> str:
+    """«Надеть» с прижимным экраном (владелец 19.10): карта INS_SLEEVE_coax говорит о гильзе; на прижимной стороне надеваются гайка
+    (резьбой к разъёму), шайба и уплотнитель — на всех сторонах (карта переписана), на части (к шагу добавлена оговорка)."""
+    if clamp >= total:
+        text = _PUT_ON.sub("Надеть на внешнюю оболочку кабеля гайку (резьбой в сторону разъёма), затем шайбу, уплотнитель и зажимное кольцо (конус) — "
+                           "в порядке по КД.", text)
+        text = _SLIDE.sub("Сдвинуть гайку, шайбу, уплотнитель и зажимное кольцо по кабелю вслед за ТУТ, за зону разделки.", text)
+        return _ORIENT.sub("Визуально проверить порядок и ориентацию деталей (гайка резьбой к разъёму, конус узкой частью к торцу), отсутствие вмятин, "
+                           "повреждений резьбы и загрязнений.", text)
+    return _PUT_ON.sub("Надеть обжимную гильзу на внешнюю оболочку кабеля — только на обжимную сторону; на прижимной стороне вместо неё надеть гайку "
+                       "(резьбой в сторону разъёма), шайбу, уплотнитель и зажимное кольцо (конус) в порядке по КД.", text)
 
 
 HEX_MISSING = "HEX не задан — по чертежу разъёма"
 _COLLET_PIN = re.compile(r"припаянн\w*\s+центральн\w*\s+контакт\w*", re.IGNORECASE)
 _PLAIN_NUMBER = re.compile(r"^\d+(?:[.,]\d+)?$")
+
+
+SHIELD_CLAMP = "прижим"
+
+
+def coax_end_shield(end: Mapping[str, Any]) -> str:
+    """Тип экрана конца коакс-сборки словами генератора: «прижим» (зажим, clamp), «пайка», иначе «обжим» (прежний тип по умолчанию)."""
+    text = str(end.get("shield") or "").casefold()
+    if re.search(r"прижим|зажим|clamp", text):
+        return SHIELD_CLAMP
+    return "пайка" if re.search(r"пайк|паян|solder", text) else "обжим"
 
 
 def coax_crimp_hex(config: Mapping[str, Any]) -> list[dict[str, str]]:
@@ -1138,6 +1182,9 @@ def coax_crimp_hex(config: Mapping[str, Any]) -> list[dict[str, str]]:
     for key, label in (("sideA", "А"), ("sideB", "В")):
         end = coax.get(key)
         if not isinstance(end, Mapping) or not str(end.get("article") or "").strip():
+            continue
+        if coax_end_shield(end) != "обжим":
+            # HEX есть только у обжимного экрана: у прижимного и паяного нет гильзы под матрицу — значение в базе не читается (владелец 19.10).
             continue
         value = str(end.get("crimpHex") or "").strip()
         if value and _PLAIN_NUMBER.match(value):
@@ -1480,8 +1527,11 @@ def _resolve_card(
 
     steps = []
     depth_checked = False
+    parts_fields = fields.get("coaxParts") if isinstance(fields.get("coaxParts"), Mapping) else {}
     for step in card.steps:
         text = substitute(step.text)
+        if parts_fields.get("clampSides"):
+            text = _clamp_put_on_text(text, len(parts_fields["clampSides"]), int(parts_fields.get("count") or 0))
         tolerance = substitute(step.tolerance)
         if step.kind == "Контроль" and tolerance in {"", "-", "—"}:
             lowered = text.casefold()
