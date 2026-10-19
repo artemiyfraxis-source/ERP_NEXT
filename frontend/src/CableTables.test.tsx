@@ -158,7 +158,7 @@ it("shows each cable in its own list with the parameters of that list", async ()
   expect(await screen.findByText("RG316")).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "D3 оплётка, мм" })).toBeInTheDocument();
   expect(screen.getByText("1,95")).toBeInTheDocument();
-  expect(screen.getByText("RG58")).toBeInTheDocument();
+  expect(screen.getAllByText("RG58").length).toBeGreaterThan(0);
   expect(screen.getByRole("columnheader", { name: "Волновое сопротивление, Ом" })).toBeInTheDocument();
   expect(screen.queryByText("UL1061 22AWG")).toBeNull();
   expect(screen.queryByText("КСПВГ 4x0,20")).toBeNull();
@@ -305,12 +305,12 @@ it("lists coax cables like a catalogue: series groups in order, base mark before
     record: wire("w-lmr", { "Марка": "LMR-195" }), dia: null, dia_hint: null };
   mockApi([], [lmr, ...ROWS]);
   render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
-  const rg = await screen.findByRole("button", { name: /RG · 3/ });
-  // owner 16.10: groups by the head of the mark; a head only one mark has is «Прочие», last
-  const lmrGroup = screen.getByRole("button", { name: /Прочие · 1/ });
+  const rg = await screen.findByRole("button", { name: /RG58 · 2/ });
+  // owner 19.10: a group per mark family (RG58 = RG-58 and its A/U); single-row families of a head with no mate go to «Прочие», last
+  const lmrGroup = screen.getByRole("button", { name: /Прочие · 2/ });
   expect(rg.compareDocumentPosition(lmrGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const marks = screen.getAllByRole("row").map((line) => line.querySelector("td.key")?.textContent).filter(Boolean);
-  expect(marks).toEqual(["RG58", "RG-58 A/U", "RG316", "LMR-195"]); // RG58 = RG-58: the base mark, then its A/U
+  expect(marks).toEqual(["RG58", "RG-58 A/U", "LMR-195", "RG316"]); // RG58 = RG-58: the base mark, then its A/U
   expect(rg).toHaveAttribute("aria-expanded", "true");
   fireEvent.click(rg);
   expect(rg).toHaveAttribute("aria-expanded", "false");
