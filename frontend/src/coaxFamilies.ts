@@ -81,9 +81,16 @@ export function sortCoax(rows: CableRow[]): CableRow[] {
   return [...rows].sort(compareCoaxRows(rows));
 }
 
-type Naming = { full_name?: string; aliases?: Array<{ alias: string }> };
-/** Full name and aliases the card carries (the API sends them; the shared `CoaxCard` type does not list them). */
-export const coaxNaming = (row: CableRow): { fullName: string; aliases: string[] } => {
-  const card = (row.card ?? {}) as Naming;
-  return { fullName: card.full_name?.trim() ?? "", aliases: (card.aliases ?? []).map((item) => item.alias).filter(Boolean) };
+type Naming = { name?: string; aliases?: Array<{ alias: string; kind?: string; supplier?: string }> };
+const nameKey = (value: string) => String(value || "").toLowerCase().replace(/[\s-]/g, "");
+/** Other names of the very cable of the row (the API sends the card's aliases; the shared `CoaxCard` type does not list
+    them): a spelling of the mark, a supplier's name without materials in it, an article with its supplier. A family
+    card's names belong to another cable; a name that only repeats the mark or the card is not shown (owner 19.10.2026:
+    «разные артикулы кабелей записал в одно» — offers of other materials are no aliases since). */
+export const coaxOtherNames = (row: CableRow): string[] => {
+  if (!row.card || !row.card_exact) return [];
+  const card = row.card as Naming;
+  const own = new Set([nameKey(row.cable), nameKey(card.name ?? "")]);
+  return (card.aliases ?? []).filter((item) => item.alias && !own.has(nameKey(item.alias)))
+    .map((item) => item.kind === "supplier_article" ? `арт. ${item.alias}${item.supplier ? ` (${item.supplier})` : ""}` : item.alias);
 };

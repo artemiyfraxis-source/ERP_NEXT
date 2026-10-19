@@ -10,10 +10,12 @@ import {
   type CableRow,
   type CablesResult,
   type CoaxCard,
+  type CoaxParam,
   type TechOperationRecord,
 } from "./api";
 import { CATEGORIES, CATEGORY_CELL, cableCategory, cableFamily, cableGroup, compareByFamily, compareCables } from "./cableCategory";
-import { coaxGroupOf, coaxNaming, sortCoax } from "./coaxFamilies";
+import { coaxGroupOf, coaxOtherNames, sortCoax } from "./coaxFamilies";
+import { coaxArticle, coaxSeries, coaxSupplier, coaxType, seriesRank } from "./CoaxConnectors";
 import { cellFailure, fieldCellEdit, ownCellEdit } from "./CustomColumn";
 import { MakersInput } from "./WireFieldWidgets";
 import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
@@ -51,11 +53,24 @@ export const COAX_MATERIALS = ["Материал жилы", "Материал д
 // Multicore (owner 15.10.2026: «изоляция слишком обобщённо, тут нет диэлектрика»): core, core insulation, screen if any,
 // jacket — instead of the old «Изоляция» / «Экран» text cells, which stay in «Колонки», hidden.
 export const MULTI_MATERIALS = ["Материал жилы", "Материал изоляции жилы", "Материал экрана", "Материал оболочки"];
-const OWN_LISTED = new Set([...COAX_MATERIALS, ...MULTI_MATERIALS, "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
-const SUPPLY = ["Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"];
+// «Ссылка» — the supplier's page of the cable (owner 19.10.2026, as on «Коаксиальные разъёмы»): «открыть» in the cell.
+const LINK = "Ссылка";
+const OWN_LISTED = new Set([...COAX_MATERIALS, ...MULTI_MATERIALS, "Артикул поставщика", LINK, "Цена поставщика, ₽/м", "Дата цены"]);
+const SUPPLY = ["Поставщик", "Артикул поставщика", LINK, "Цена поставщика, ₽/м", "Дата цены"];
+/** A coax parameter column (owner 19.10.2026: «Параметры» out of the card, into the table): the БД.ПРОВ cell when it is
+    filled, else the card's value. `field` — the БД.ПРОВ column (base or the owner's own), also the column key. */
+type CoaxParamColumn = { field: string; title: string; param: CoaxParam };
+export const COAX_PARAMS: CoaxParamColumn[] = [
+  { field: "Волновое сопротивление, Ом", title: "Волновое сопротивление, Ом", param: "impedance_ohm" },
+  { field: "Погонная ёмкость, пФ/м", title: "Погонная ёмкость, пФ/м", param: "capacitance_pf_m" },
+  { field: "Радиус изгиба неподвижно, мм", title: "Радиус изгиба неподвижно, мм", param: "bend_static_mm" },
+  { field: "Радиус изгиба многократно, мм", title: "Радиус изгиба многократно, мм", param: "bend_dynamic_mm" },
+  { field: "Напряжение, В", title: "Напряжение макс., В", param: "voltage_max_v" },
+  { field: "Масса, г/м", title: "Масса, г/м", param: "weight_g_m" },
+];
 const SHOWN: Record<CableKind, string[]> = {
-  coax: ["Наружный диаметр, мм", ...COAX_MATERIALS, "Волновое сопротивление, Ом", RANGE, "Стандарт", "Производители",
-    "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены", CARD],
+  coax: ["Наружный диаметр, мм", ...COAX_MATERIALS, ...COAX_PARAMS.map((item) => item.field), RANGE, "Стандарт", "Производители",
+    ...SUPPLY, CARD],
   wire: ["Сечение, мм2", "AWG", "Наружный диаметр, мм", "Жила: проволок × диаметр, мм", "Материал жилы", "Изоляция", "Цвета",
     "Темп. от, °C", "Темп. до, °C", "Напряжение, В", ...SUPPLY],
   multi: ["Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", ...MULTI_MATERIALS, "Стандарт", "Производители", ...SUPPLY],
@@ -80,6 +95,16 @@ export const rangeText = (card: CoaxCard | null | undefined): string => !card ? 
   : card.span_to_ghz !== null ? spanText(card) : card.max_operating_ghz !== null ? `DC – ${num(card.max_operating_ghz)} ГГц` : "";
 const cardState = (row: CableRow) => !row.card ? "нет карточки"
   : `${row.card.verified ? `проверено${row.card.confidence ? `, ${row.card.confidence}` : ""}` : "не проверено"}${row.card_exact ? "" : ` · как у ${row.card.name}`}`;
+/** A coax parameter of a row: its БД.ПРОВ cell, else the card's value — `from` says whose (a family card's is «как у»). */
+export function coaxParam(row: CableRow, item: CoaxParamColumn): { text: string; from?: string; family?: boolean } | null {
+  const own = (row.record?.fields[item.field] ?? "").trim();
+  if (own) return { text: own };
+  const value = row.card?.params[item.param];
+  if (!row.card || value === undefined || value === null) return null;
+  const note = row.card.param_notes[item.param];
+  return { text: num(value), family: !row.card_exact,
+    from: [row.card_exact ? `по карточке ${row.card.name}` : `как у ${row.card.name}`, note].filter(Boolean).join(" · ") };
+}
 const NUMBER = /^-?\d[\d\s]*([.,]\d+)?$/;
 const cableKey = (value: string) => String(value || "").toLowerCase().replace(/[\s-]/g, "");
 const diaText = (dia: CableDiameters) => DIAMETERS.map((name) => dia[name] || "—").join(" · ");
@@ -163,13 +188,40 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
   };
   // An own column not added yet (the materials before the fill) is not drawn empty; base БД.ПРОВ columns always are.
   const shown = SHOWN[kind].filter((name) => !OWN_LISTED.has(name) || data.columns.includes(name));
+  // The card's value stands in for an empty БД.ПРОВ cell; the cell edit still writes (and starts from) the БД.ПРОВ value.
+  const paramColumn = (item: CoaxParamColumn): DataColumn<CableRow> => {
+    const base = textColumn(item.field, false);
+    return {
+      ...base, title: item.title, numeric: true,
+      value: (row) => coaxParam(row, item)?.text ?? "",
+      render: (row) => {
+        const shown = coaxParam(row, item);
+        if (!shown) return <span className="cell-empty">—</span>;
+        return shown.from ? <span className={shown.family ? "muted" : undefined} title={shown.from}>{shown.text}</span> : shown.text;
+      },
+      edit: base.edit ? { ...base.edit, value: (row) => field(row, item.field) } : undefined,
+    };
+  };
+  const linkColumn = (): DataColumn<CableRow> => ({
+    ...textColumn(LINK, false),
+    render: (row) => {
+      const href = field(row, LINK).trim();
+      if (!href) return <span className="cell-empty">—</span>;
+      return /^https?:\/\//i.test(href)
+        ? <a href={href} target="_blank" rel="noreferrer" title={href} aria-label={`Открыть страницу ${row.cable} у поставщика`}
+          onClick={(event) => event.stopPropagation()}>открыть</a>
+        : <span className="cable-clip" title={href}>{href}</span>;
+    },
+  });
   const computed: Record<string, DataColumn<CableRow>> = kind === "coax" ? {
+    ...Object.fromEntries(COAX_PARAMS.map((item) => [item.field, paramColumn(item)])),
+    [LINK]: linkColumn(),
     [RANGE]: { key: RANGE, title: "Диапазон частот", computed: true, value: (row) => rangeText(row.card), render: (row) => rangeText(row.card) || <span className="cell-empty">—</span> },
     [CARD]: {
       key: CARD, title: "Карточка", computed: true, value: cardState,
       render: (row) => <span className={!row.card ? "muted" : row.card.verified && row.card.confidence !== "низкая" ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
     },
-  } : {};
+  } : { [LINK]: linkColumn() };
   const columns: DataColumn<CableRow>[] = [
     { key: "cable", title: kind === "wire" ? "Марка провода" : "Марка кабеля", value: (row) => row.cable, render: (row) => <strong>{row.cable}</strong> },
     ...(kind === "coax" ? DIAMETERS.map((name): DataColumn<CableRow> => ({
@@ -192,7 +244,9 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
 
   const detail = (row: CableRow) => <>
     {kind === "coax" && <CoaxNames row={row} />}
-    {row.card && <CoaxCardView card={row.card} exact={Boolean(row.card_exact)} />}
+    {row.card
+      ? <CoaxCardView card={row.card} exact={Boolean(row.card_exact)} aside={kind === "coax" ? <CompatibleConnectors row={row} /> : undefined} />
+      : kind === "coax" && <div className="coax-card"><CompatibleConnectors row={row} /></div>}
     {canEdit
       ? <CableEditor key={`${row.id}:${JSON.stringify(row.record?.fields ?? {})}:${row.dia ? diaText(row.dia) : ""}:${row.kind}`}
         row={row} kind={kind} data={data} onSaved={onSaved} onError={onError} />
@@ -213,8 +267,9 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       rowLabel={(row) => row.cable}
       onEdited={() => onSaved("")}
       // A saved layout keeps its order and hidden set: the coax order of 15.10 (materials, one range, the supplier
-      // columns) starts from a new key, so a layout saved before it does not hide the new order.
-      storageKey={kind === "coax" ? "db:cables:coax:4" : `db:cables:${kind}:3`}
+      // columns; 19.10 — the card's parameters as columns after the impedance) starts from a new key, so a layout saved
+      // before it does not hide the new order.
+      storageKey={kind === "coax" ? "db:cables:coax:5" : `db:cables:${kind}:3`}
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
       collapsibleGroups={kind === "coax"}
@@ -230,14 +285,70 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
   </>;
 }
 
-/** Full name and aliases of a coax cable, above its card. */
+/** Other names of the very cable, above its card; nothing when they would only repeat the row. */
 function CoaxNames({ row }: { row: CableRow }) {
-  const { fullName, aliases } = coaxNaming(row);
-  if (!fullName && !aliases.length) return null;
+  const names = coaxOtherNames(row);
+  if (!names.length) return null;
   return <div className="reference-fields cable-card">
-    {fullName && <span><small>Полное название</small>{fullName}</span>}
-    {aliases.length > 0 && <span><small>Другие названия</small>{aliases.join(" · ")}</span>}
+    <span><small>Другие названия</small>{names.join(" · ")}</span>
   </div>;
+}
+
+type ConnectorGroup = { series: string; type: string; mount: string; supplier: string; count: number; articles: string[]; prices: number[]; texts: string[] };
+const priceOf = (text: string) => {
+  const value = Number(text.replace(/\s/g, "").replace(",", "."));
+  return text.trim() && Number.isFinite(value) ? value : null;
+};
+const priceText = (group: ConnectorGroup) => {
+  if (group.prices.length) {
+    const low = Math.min(...group.prices);
+    const high = Math.max(...group.prices);
+    return low === high ? num(low) : `${num(low)}–${num(high)}`;
+  }
+  return group.texts[0] ?? "";
+};
+
+/** «Совместимые разъёмы» (owner 19.10.2026: «они сами должны подтягиваться — из базы коаксиальных разъёмов»): the
+    БД.КОАКС rows made for this cable, sent with the row, folded by series → type → mount → supplier with a count. */
+export function CompatibleConnectors({ row }: { row: CableRow }) {
+  const groups = useMemo(() => {
+    const found = new Map<string, ConnectorGroup>();
+    for (const item of row.connectors ?? []) {
+      const fields = item.fields;
+      const group: Omit<ConnectorGroup, "count" | "articles" | "prices" | "texts"> = {
+        series: coaxSeries(fields), type: coaxType(fields) || "—", mount: (fields["Монтаж"] ?? "").trim(), supplier: coaxSupplier(fields),
+      };
+      const key = [group.series, group.type, group.mount, group.supplier].join("\u0001");
+      const entry = found.get(key) ?? { ...group, count: 0, articles: [], prices: [], texts: [] };
+      entry.count += 1;
+      const article = coaxArticle(fields);
+      if (article) entry.articles.push(article);
+      const price = (fields["Цена, ₽"] ?? "").trim();
+      const value = priceOf(price);
+      if (value !== null) entry.prices.push(value);
+      else if (price) entry.texts.push(price);
+      found.set(key, entry);
+    }
+    return [...found.values()].sort((a, b) => seriesRank(a.series) - seriesRank(b.series) || a.series.localeCompare(b.series, "ru")
+      // as on «Коаксиальные разъёмы»: the usual polarity before RP-, then the type
+      || Number(/^RP[-\s]?/i.test(a.type)) - Number(/^RP[-\s]?/i.test(b.type))
+      || a.type.localeCompare(b.type, "ru") || a.mount.localeCompare(b.mount, "ru") || a.supplier.localeCompare(b.supplier, "ru"));
+  }, [row.connectors]);
+  const total = row.connectors?.length ?? 0;
+  return <table className="coax-mini coax-connectors" aria-label="Совместимые разъёмы">
+    <caption>Совместимые разъёмы{total > 0 && <small>из БД.КОАКС · {total}</small>}</caption>
+    {groups.length > 0 && <thead><tr><th>Серия</th><th>Тип</th><th>Монтаж</th><th>Поставщик</th><th className="num">Цена, ₽</th><th className="num" title="Разъёмов этого типа в БД.КОАКС">Шт.</th></tr></thead>}
+    <tbody>{groups.length === 0
+      ? <tr><td colSpan={6} className="muted">Разъёмов в БД.КОАКС нет</td></tr>
+      : groups.map((group, index) => <tr key={`${group.series}|${group.type}|${group.mount}|${group.supplier}`}>
+        <td>{index === 0 || groups[index - 1].series !== group.series ? <strong>{group.series}</strong> : ""}</td>
+        <td className="wrap" title={group.articles.length ? group.articles.join(", ") : undefined}>{group.type}</td>
+        <td>{group.mount || <span className="muted">—</span>}</td>
+        <td>{group.supplier || <span className="muted">—</span>}</td>
+        <td className="num">{priceText(group) || <span className="muted">—</span>}</td>
+        <td className="num">{group.count}</td>
+      </tr>)}</tbody>
+  </table>;
 }
 
 /** Read-only card: every БД.ПРОВ cell of the row and its D1·D2·D3. */

@@ -43,7 +43,8 @@ export function coaxSeries(fields: Fields): string {
   return SERIES_ALIASES[base.toLowerCase()] ?? known ?? (base || NO_SERIES);
 }
 
-function seriesRank(series: string) {
+/** Место серии в порядке цеха (SMA, N, TNC…), «Без серии» — последней. */
+export function seriesRank(series: string) {
   const index = SERIES_ORDER.indexOf(series);
   return series === NO_SERIES ? 10_000 : index >= 0 ? index : 1_000;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CableRow } from "./api";
-import { coaxGroupOf, coaxNaming, coaxPlace, sortCoax } from "./coaxFamilies";
+import { coaxGroupOf, coaxOtherNames, coaxPlace, sortCoax } from "./coaxFamilies";
 
 const row = (cable: string, extra: Partial<CableRow> = {}): CableRow => ({
   id: cable, kind: "coax", auto_kind: "coax", reason: "", manual: false, cable, record: null, dia: null, dia_hint: null, ...extra,
@@ -43,9 +43,13 @@ describe("coax catalogue order (owner 16.10: groups by the head of the mark — 
     expect(input[0].cable).toBe("LMR-195");
   });
 
-  it("reads full name and aliases off the card", () => {
-    const card = { full_name: "Кабель RG-316", aliases: [{ alias: "M17/113" }, { alias: "" }] } as unknown as CableRow["card"];
-    expect(coaxNaming(row("RG316", { card }))).toEqual({ fullName: "Кабель RG-316", aliases: ["M17/113"] });
-    expect(coaxNaming(row("RG316"))).toEqual({ fullName: "", aliases: [] });
+  it("reads the other names of the very cable off its card, never repeating the mark or a family's names", () => {
+    const card = { name: "RG-316", full_name: "Кабель RG-316 50 Ом", aliases: [
+      { alias: "RG 316", kind: "mark" }, { alias: "M17/113", kind: "mark" }, { alias: "" },
+      { alias: "Кабель RG-316 50 Ом", kind: "full_name" }, { alias: "1951", kind: "supplier_article", supplier: "ГСМ Репитеры" },
+    ] } as unknown as CableRow["card"];
+    expect(coaxOtherNames(row("RG316", { card, card_exact: true }))).toEqual(["M17/113", "Кабель RG-316 50 Ом", "арт. 1951 (ГСМ Репитеры)"]);
+    expect(coaxOtherNames(row("RG-316 B/U", { card, card_exact: false }))).toEqual([]); // the family's names are another cable's
+    expect(coaxOtherNames(row("RG316"))).toEqual([]);
   });
 });

@@ -8,7 +8,6 @@ import {
   type CableRow,
   type CablesResult,
   type CoaxCard,
-  type CoaxParam,
   type HookupPayload,
   type HookupWire,
   type TechOperationRecord,
@@ -524,12 +523,6 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
 
 // --- «Коаксиальные кабели»: the card ---
 
-const PARAM_LABELS: Array<[CoaxParam, string, string]> = [
-  ["impedance_ohm", "Волновое сопротивление", "Ом"], ["velocity_pct", "Коэф. укорочения", "%"],
-  ["capacitance_pf_m", "Погонная ёмкость", "пФ/м"], ["shielding_db", "Экранировка", "дБ"],
-  ["bend_static_mm", "Радиус изгиба, неподвижно", "мм"], ["bend_dynamic_mm", "Радиус изгиба, многократно", "мм"],
-  ["voltage_max_v", "Напряжение, макс.", "В"], ["max_power_w", "Мощность, макс.", "Вт"], ["weight_g_m", "Масса", "г/м"],
-];
 const KIND_LABELS: Record<string, string> = { nominal: "ном.", typical: "тип.", max: "макс." };
 const CONFIDENCE_TONE: Record<string, string> = { высокая: "tone-ok", средняя: "tone-ok", низкая: "tone-warn" };
 
@@ -550,7 +543,10 @@ const sourceName = (source: string): string => {
   try { return new URL(source).hostname.replace(/^www\./, ""); } catch { return source; }
 };
 
-export function CoaxCardView({ card, exact }: { card: CoaxCard; exact: boolean }) {
+/** The card of a coax cable holds only what the VNA check needs (owner 19.10.2026: «внутри карточки оставляем только
+    параметры для векторника, ну и совместимые разъёмы»): header, markers, the source's attenuation, notes, sources.
+    Construction and parameters are table columns; `aside` — the row's compatible connectors, next to the markers. */
+export function CoaxCardView({ card, exact, aside }: { card: CoaxCard; exact: boolean; aside?: ReactNode }) {
   // dB/m at a marker: a published point first (typical / nominal, then max), else the interpolated one.
   const lossAt = (mhz: number | null) => {
     const points = card.attenuation.filter((point) => point.freq_mhz === mhz);
@@ -560,7 +556,6 @@ export function CoaxCardView({ card, exact }: { card: CoaxCard; exact: boolean }
   const onMarkers = new Set(card.markers.map((marker) => marker.freq_mhz));
   const datasheet = card.attenuation.some((point) => point.unit !== "dB/m" || point.kind === "max" || point.interpolated || !onMarkers.has(point.freq_mhz));
   const temp = range(card.params.temp_min_c ?? null, card.params.temp_max_c ?? null);
-  const params = PARAM_LABELS.filter(([key]) => card.params[key] !== undefined);
   const lossTemp = card.attenuation.find((point) => point.temp_c !== null)?.temp_c ?? null;
   const hasReference = card.markers.some((marker) => marker.vswr_ref !== null);
   const hasEstimate = card.markers.some((marker) => lossAt(marker.freq_mhz)?.interpolated);
@@ -592,24 +587,6 @@ export function CoaxCardView({ card, exact }: { card: CoaxCard; exact: boolean }
     {card.span_note && <p className="coax-note">Диапазон: {ruDecimals(card.span_note)}</p>}
     <div className="coax-grid">
       <div className="coax-col">
-        {card.layers.length > 0 && <table className="coax-mini" aria-label="Конструкция">
-          <caption>Конструкция</caption>
-          <thead><tr><th>Слой</th><th>Материал</th><th className="num">Ø, мм</th></tr></thead>
-          <tbody>{card.layers.map((layer) => <tr key={layer.layer}>
-            <td>{layer.label}</td><td className="wrap">{layer.material ? ruDecimals(layer.material) : "—"}</td><td className="num">{num(layer.diameter_mm) || "—"}</td>
-          </tr>)}</tbody>
-        </table>}
-        {card.connectors.length > 0 && <table className="coax-mini" aria-label="Разъёмы">
-          <caption>Разъёмы</caption>
-          <thead><tr><th>Разъём</th><th>Предел разъёма</th><th>Диапазон сборки</th></tr></thead>
-          <tbody>{card.connectors.map((connector) => <tr key={connector.family}>
-            <td className="wrap">{connector.family}</td>
-            <td className="wrap" title={connector.max_note ? ruDecimals(connector.max_note) : undefined}>{connector.max_ghz !== null ? `до ${num(connector.max_ghz)} ГГц` : connector.max_note ? ruDecimals(connector.max_note) : "—"}</td>
-            <td>{connector.span_to_ghz !== null ? <strong>до {num(connector.span_to_ghz)} ГГц</strong> : <span className="muted">как у кабеля</span>}</td>
-          </tr>)}</tbody>
-        </table>}
-      </div>
-      <div className="coax-col">
         <table className="coax-mini" aria-label="Маркеры VNA">
           <caption>Маркеры VNA <small>КСВН — норма приёмки (предложено)</small></caption>
           <thead><tr><th>Частота</th><th className="num">КСВН ≤</th>{hasReference && <th className="num" title="КСВН, который гарантирует паспорт эталонной сборки — по нему решается спорный брак">Паспорт ≤</th>}<th className="num">дБ/м{lossTemp !== null ? ` при ${num(lossTemp)} °C` : ""}</th></tr></thead>
@@ -629,16 +606,7 @@ export function CoaxCardView({ card, exact }: { card: CoaxCard; exact: boolean }
         </table>
         {hasEstimate && <p className="coax-legend">≈ — в источнике нет точки на этой частоте: значение посчитано между соседними точками таблицы или по аппроксимации.</p>}
       </div>
-      {params.length > 0 && <div className="coax-col">
-        <table className="coax-mini" aria-label="Параметры кабеля">
-          <caption>Параметры</caption>
-          <tbody>{params.map(([key, label, unit]) => <tr key={key} title={card.param_notes[key] ? ruDecimals(card.param_notes[key]) : undefined}>
-            <th scope="row">{label}</th>
-            <td className="num">{num(card.params[key])} <span className="muted">{unit}</span>{key === "max_power_w" && card.params.max_power_at_mhz !== undefined ? ` на ${freq(card.params.max_power_at_mhz)}` : ""}</td>
-          </tr>)}</tbody>
-        </table>
-        {card.param_notes.mechanical && <p className="coax-legend">{ruDecimals(card.param_notes.mechanical)}</p>}
-      </div>}
+      {aside && <div className="coax-col">{aside}</div>}
     </div>
     {datasheet && <div className="coax-wide"><table className="coax-mini coax-datasheet" aria-label="Затухание по источнику">
       <caption>Затухание по источнику</caption>

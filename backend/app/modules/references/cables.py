@@ -232,6 +232,43 @@ def cable_rows(
     return rows
 
 
+# «Совместимые разъёмы» of a coax cable (owner 19.10.2026: «совместимые разъёмы … должны подтягиваться — из базы
+# коаксиальных разъёмов»): the БД.КОАКС rows whose «Провод» (`coaxWire`) is this cable. Only the cells the card shows.
+CONNECTOR_FIELDS = ("coaxArticle", "Артикул", "coaxType", "Тип/Серия", "coaxWire", "Провод", "Серия", "Пол", "Исполнение",
+                    "Монтаж", "Поставщик", "Ссылка", "Источник данных", "Цена, ₽", "Дата цены")
+
+
+def connector_cable(record: TechOperationRecord) -> str:
+    """The cable a БД.КОАКС row is for: «coaxWire», else the sheet's «Провод»."""
+    return str(record.fields.get("coaxWire") or record.fields.get("Провод") or "").strip()
+
+
+def connectors_by_cable(records: Iterable[TechOperationRecord]) -> dict[str, list[TechOperationRecord]]:
+    """Cable key → the БД.КОАКС rows made for it, in list order."""
+    index: dict[str, list[TechOperationRecord]] = {}
+    for record in records:
+        key = cable_key(connector_cable(record))
+        if key:
+            index.setdefault(key, []).append(record)
+    return index
+
+
+def compatible_connectors(row: CableRow, index: Mapping[str, Sequence[TechOperationRecord]]) -> list[TechOperationRecord]:
+    """БД.КОАКС rows for a coax row: by its mark, and — when the card is this very cable — by the card's name and its
+    aliases (another spelling of the same cable: «RG58» finds the rows written «RG-58»). A family card («RG-58» for
+    «RG-58 C/U») lends nothing: it is another cable. Each row once."""
+    if row.kind != CableKind.COAX:
+        return []
+    keys = [row.key]
+    if row.card is not None and row.card_exact:
+        keys += [row.card.name_key, *(alias.alias_key for alias in row.card.aliases)]
+    found: dict[object, TechOperationRecord] = {}
+    for key in dict.fromkeys(keys):
+        for record in index.get(key, ()):
+            found.setdefault(record.id, record)
+    return list(found.values())
+
+
 def cable_counts(rows: Iterable[CableRow]) -> dict[str, int]:
     counts = {kind.value: 0 for kind in CableKind}
     for row in rows:
