@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it } from "vitest";
-import { coaxFromFields, coaxShieldKind_, coaxRecordFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { COAX_SHIELD_OPTIONS, coaxFromFields, coaxShieldKind_, coaxRecordFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 import { genCards } from "./routeCards";
 import { deriveRoute, type RouteOp } from "./routeLogic";
 
@@ -226,6 +226,18 @@ describe("коакс: резка с разделкой на роторном с�
     it("knows compression, twist-on and Push-On (19.10): own kinds, «самообжим» is not a crimp", () => {
       expect(["компрессия", "компрессионный", "накрутка", "накручивающийся", "резьбовой", "самообжим", "Push-On (самообжим)", "обжим"]
         .map((value) => coaxShieldKind_(value))).toEqual(["компрессия", "компрессия", "накрутка", "накрутка", "накрутка", "самообжим", "самообжим", "обжим"]);
+    });
+
+    it("knows the body shield (MHF, U.FL, 19.10): «корпус» / «корпусом» / «обжим корпуса», no sleeve, no ferrule press, own housing note", () => {
+      expect(["корпус", "корпусом", "обжим корпуса", "Корпусом (без гильзы)", "обжим"].map((value) => coaxShieldKind_(value)))
+        .toEqual(["корпус", "корпус", "корпус", "корпус", "обжим"]);
+      const body = clampData("корпус", "корпусом");
+      const ops = opsOf(body, initState(body));
+      expect(ops.some((op) => op.type === "coaxShield" || op.type === "coaxInsSleeve")).toBe(false);
+      expect(ops.find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса (А) — экран зажимается корпусом разъёма, без гильзы");
+      const mixed = clampData("корпус", "обжим");
+      expect(opsOf(mixed, initState(mixed)).find((op) => op.type === "coaxShield")).toMatchObject({ units: 1 });
+      expect(COAX_SHIELD_OPTIONS).toContainEqual(["корпус", "Корпусом (без гильзы)"]);
     });
 
     it("twist-on and Push-On sides have no shield op and no sleeve; compression is a crimp op with the tool in the label and no HEX", () => {

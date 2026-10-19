@@ -116,8 +116,14 @@ def test_new_shield_words_are_told_apart_from_a_crimp_by_the_generators_words():
         "пайка": "пайка", "прижим": "прижим"}
 
 
-def test_hex_is_read_only_from_a_crimped_end_never_from_compression_twist_on_or_push_on():
-    for shield in ("компрессия", "накрутка", "самообжим"):
+def test_body_shield_words_of_micro_coax_are_a_shield_kind_of_their_own():
+    from app.modules.techcards.etk_builder import coax_end_shield
+    assert {w: coax_end_shield({"shield": w}) for w in ("корпус", "корпусом", "обжим корпуса", "Корпусом (без гильзы)")} == {
+        "корпус": "корпус", "корпусом": "корпус", "обжим корпуса": "корпус", "Корпусом (без гильзы)": "корпус"}
+
+
+def test_hex_is_read_only_from_a_crimped_end_never_from_compression_twist_on_push_on_or_body():
+    for shield in ("компрессия", "накрутка", "самообжим", "корпус", "обжим корпуса"):
         config = _config(shield, "обжим", hex_a="8,23", hex_b="5,41")["coax"]
         assert coax_crimp_hex({"coax": config}) == [{"side": "В", "connector": "S-111", "hex": "5,41 мм"}], shield
 

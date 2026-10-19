@@ -223,5 +223,5 @@ it("a header click sorts inside every type group; the order of the groups stays 
 
 it("offers the HEX cell only to a crimped or not yet typed shield — not to compression, twist-on, Push-On, solder or clamp", () => {
   const has = (shield: string) => hasHex({ "Тип экрана": shield });
-  expect(["", "обжим", "компрессия", "накрутка", "самообжим", "пайка", "прижим"].map(has)).toEqual([true, true, false, false, false, false, false]);
+  expect(["", "обжим", "компрессия", "накрутка", "самообжим", "пайка", "прижим", "корпус", "корпусом", "обжим корпуса"].map(has)).toEqual([true, true, false, false, false, false, false, false, false, false]);
 });
