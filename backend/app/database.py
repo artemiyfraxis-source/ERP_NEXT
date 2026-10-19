@@ -31,6 +31,7 @@ from .modules.operations.application import UnitOfWork as OperationsUnitOfWork
 from .modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from .modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from .modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
+from .workflows import etk_refresh  # noqa: F401 — registers the refresh-request trigger on every session
 from .workflows.kitset_names import KitsetNameQueue
 from .workflows.new_operation import SqlAlchemyReferencesOperationsUnitOfWork
 from .workflows.project_registry import PlanSnapshotProjectRegistry

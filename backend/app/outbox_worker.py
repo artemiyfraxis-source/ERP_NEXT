@@ -55,6 +55,7 @@ from app.workflows.arrival_kits import (
     ReceivingArrivalLookup,
     dispatch_next_lot_arrived,
 )
+from app.workflows.etk_refresh import refresh_tick
 from app.workflows.kitset_names import kitset_names_tick
 from app.workflows.leave_calendar import leave_calendar_tick
 from app.workflows.procurement_autofill import AUTOFILL_TICK_CAP, procurement_autofill_tick
@@ -326,14 +327,21 @@ def run_owner_jobs(sessions: sessionmaker[Session]) -> int:
 
 
 def run_tail_jobs(sessions: sessionmaker[Session]) -> int:
-    """OwnerTick.gs tail group: the kitset name fill from supplier sites. A failure is logged, never raised."""
+    """OwnerTick.gs tail group: the kitset name fill from supplier sites, then the ETK refresh of pending reference
+    changes. A failure is logged, never raised."""
     with _GroupRun(sessions, "kitset_names") as run:
         try:
-            return int(kitset_names_tick(moscow_now(), sessions))
+            done = int(kitset_names_tick(moscow_now(), sessions))
         except Exception as error:  # noqa: BLE001 — one broken job must not stop the worker
             logging.exception("Tail job kitset names failed; retrying next tick")
             run.failed("kitset names", error)
-            return 0
+            done = 0
+        try:  # pending reference/template changes become ETK revisions (only with ETK_AUTO_REVISION=1)
+            done += int(refresh_tick(sessions))
+        except Exception as error:  # noqa: BLE001 — one broken job must not stop the worker
+            logging.exception("Tail job ETK refresh failed; retrying next tick")
+            run.failed("etk refresh", error)
+    return done
 
 
 def start_tail_jobs(sessions: sessionmaker[Session]) -> bool:

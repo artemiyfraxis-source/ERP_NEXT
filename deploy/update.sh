@@ -266,6 +266,13 @@ step=post
 "$erp" cli python -m app.modules.techcards.seed_library --erp-only || echo "Шаблоны карт ERP не записаны" >&2
 "$erp" cli python -m app.modules.references.erp_corrections || echo "Правки справочников не записаны" >&2
 "$erp" cli python -m app.modules.references.load_cables || echo "Структурная база кабелей не записана" >&2
+# ЭТК после выкладки: правки справочников и правил сборки → новые ревизии карт. Пока ETK_AUTO_REVISION не 1 в
+# config/.env — только пробный запуск (в журнале видно, что изменилось бы), ничего не выпускается.
+if [ "${ETK_AUTO_REVISION:-}" = 1 ] || grep -qs '^ETK_AUTO_REVISION=1' "$ERP_HOME/config/.env"; then
+  "$erp" cli python -m app.workflows.etk_refresh --all || echo "Ревизии ЭТК не выпущены" >&2
+else
+  "$erp" cli python -m app.workflows.etk_refresh --all --dry-run || echo "Пробный запуск ревизий ЭТК не прошёл" >&2
+fi
 "$erp" cli python -m app.modules.identity.issue_logins --out /app/data/import/logins.csv || echo "Логины не выданы" >&2
 # The auto-update timer and command come from this repo too: refresh them when they are installed.
 if [ -f /etc/systemd/system/erp-auto-update.timer ]; then
