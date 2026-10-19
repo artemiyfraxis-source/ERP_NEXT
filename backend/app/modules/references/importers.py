@@ -766,10 +766,11 @@ def _ter_forms(values: tuple[str, ...]) -> tuple[tuple[str, object], ...]:
 
 # The coax connector card (owner 13.10.2026, the 311 connectors of gsm-repiteri.ru): БД.КОАКС sheet columns a load may
 # bring before any row has them. «Тип пина» / «Тип экрана» are the sheet's own (the generator reads them); the site's
-# words for the pin and the shield go to «Центральный контакт» / «Крепление экрана».
+# words for the pin and the shield go to «Центральный контакт» / «Крепление экрана». «КСВ» — по карточке поставщика
+# (владелец 19.10.2026). A card column is edited in a cell of any row, even one that does not carry it yet.
 COAX_CARD_COLUMNS = (
     "Тип пина", "Тип экрана", "Серия", "Пол", "Полярность", "Исполнение", "Монтаж", "Центральный контакт",
-    "Крепление экрана", "Волновое сопротивление, Ом", "Частота до, ГГц", "Материал корпуса", "Покрытие", "Габариты",
+    "Крепление экрана", "Волновое сопротивление, Ом", "Частота до, ГГц", "КСВ", "Материал корпуса", "Покрытие", "Габариты",
     "Наименование", "Ссылка", "Примечание", "Источник данных",
 )
 

@@ -45,7 +45,7 @@ it("groups the connectors by type in the shop's series order with the stripping 
   const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
   const cells = within(n316).getAllByRole("cell").map((cell) => cell.textContent);
   expect(["L1", "L2", "L3"].map((name) => cells[heads.indexOf(name)])).toEqual(["4", "2", "6"]);
-  expect(heads[heads.indexOf("L3") + 1]).toBe("HEX, мм");
+  expect(heads.slice(heads.indexOf("L3") + 1, heads.indexOf("L3") + 4)).toEqual(["HEX, мм", "Частота, ГГц", "КСВ"]);
   expect(cells[heads.indexOf("HEX, мм")]).toBe("3,25");
   expect(heads.some((head) => /D1/.test(head ?? ""))).toBe(false);
   expect(within(n316).getByRole("link", { name: "gsm-repiteri.ru" })).toHaveAttribute("href", "https://gsm-repiteri.ru/n-111l");
