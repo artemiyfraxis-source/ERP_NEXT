@@ -431,7 +431,11 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], previous
         name = f"Кабель {cable or 'коаксиальный'} нарезан" + (f": {length} мм" if length != "0" else "")
         sides = [side for side in ("A", "B") if side in _list(op.get("stripSides"))]
         if sides:
-            name += "; концы А и В разделаны" if len(sides) == 2 else f"; конец {_side_label({'side': sides[0]})} разделан"
+            kinds = [coax_connector_kind(_coax(config).get(f"side{side}") or {})[0] for side in ("A", "B")]
+            if len(sides) == 2 and all(kinds):
+                name += f"; конец А — под {kinds[0]}, конец В — под {kinds[1]}"
+            else:
+                name += "; концы А и В разделаны" if len(sides) == 2 else f"; конец {_side_label({'side': sides[0]})} разделан"
         return name
     if operation_type == "coaxCutTut":
         count = int(_coax_units(op))
@@ -951,8 +955,43 @@ def _coax_strip_sizes(config: Mapping[str, Any], side_name: str) -> dict[str, An
     coax = config.get("coax") if isinstance(config.get("coax"), Mapping) else {}
     side = coax.get("sideB" if side_name == "B" else "sideA")
     side = side if isinstance(side, Mapping) else {}
-    return {"cable": coax.get("cableArt") or "", "connector": side.get("article") or "", **{
+    kind, gender = coax_connector_kind(side)
+    return {"cable": coax.get("cableArt") or "", "connector": side.get("article") or "",
+            **({"connectorType": kind, "gender": gender} if kind else {}), **{
         key: side.get(key) or "" for key in ("d1", "d2", "d3", "l1", "l2", "l3", "lPlus", "lMinus")}}
+
+
+_FEMALE = re.compile(r"(?<![a-z])female(?![a-z])", re.IGNORECASE)
+_MALE = re.compile(r"(?<![a-z])male(?![a-z])", re.IGNORECASE)
+
+
+def coax_connector_kind(end: Mapping[str, Any]) -> tuple[str, str]:
+    """The connector of a coax end the way the fitter names it: «SMA-Male» (the БД.КОАКС type, Male/Female capitalised) and
+    the Russian half name by its contacts, «вилка» (male, pins) / «розетка» (female, sockets) — owner 17.10, the same
+    words as `connector_housings.GENDER_WORD`. No type — ('', ''); a type without male/female (plug…) — no half name."""
+    kind = " ".join(str(end.get("type") or "").split())
+    if not kind:
+        return "", ""
+    gender = "розетка" if _FEMALE.search(kind) else "вилка" if _MALE.search(kind) else ""
+    kind = _MALE.sub("Male", _FEMALE.sub("Female", kind))
+    return kind, gender
+
+
+def with_coax_connectors(op: Mapping[str, Any], config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A view of a coax operation whose end fields (`coax`, `coaxB`, `coaxEnd`) name the connector type and half
+    (`connectorType`, `gender`) — also an ETK issued before they were stored. Nothing to add — the same operation."""
+    fields = op.get("fields")
+    if not isinstance(fields, Mapping) or not isinstance(config.get("coax"), Mapping):
+        return op
+    patched = dict(fields)
+    for key, side in (("coax", "A"), ("coaxB", "B"), ("coaxEnd", "B" if op.get("side") == "B" else "A")):
+        end = fields.get(key)
+        if not isinstance(end, Mapping) or end.get("connectorType"):
+            continue
+        kind, gender = coax_connector_kind(_coax(config).get("sideB" if side == "B" else "sideA") or {})
+        if kind:
+            patched[key] = {**end, "connectorType": kind, "gender": gender}
+    return {**op, "fields": patched} if patched != dict(fields) else op
 
 
 COAX_END_TYPES = frozenset({"coaxPin", "coaxHousing", "coaxSolderShield", "coaxCapCrimp", "coaxCapScrew"})

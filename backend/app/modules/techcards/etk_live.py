@@ -22,7 +22,7 @@ import hashlib
 import json
 from typing import Any
 
-from .etk_builder import COMBINED_DEFECTS, build_etk
+from .etk_builder import COMBINED_DEFECTS, build_etk, with_coax_connectors
 from .operation_cards import OperationCardTemplate
 from .project_cards import TechcardValidationError, operation_key
 
@@ -193,6 +193,8 @@ def live_document(
                 result[index].update(card_source=SNAPSHOT, card_changed_at="")
             else:
                 result[index]["card"] = card
+    if isinstance(config, Mapping):
+        result = [with_coax_connectors(op, config) if isinstance(op, Mapping) else op for op in result]
     return {**document, "operations": result}
 
 

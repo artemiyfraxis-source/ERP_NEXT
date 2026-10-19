@@ -13,6 +13,7 @@ import { formatMinutes, type EtkPfGroup } from "./etkRoute";
 import type { WireBlankEnd } from "./harness/WireBlankCatalog";
 import { coreColor } from "./pinoutCheck";
 import { coresWord, type WireThumb } from "./routeCards";
+import { coaxPfArt } from "./etkPfCoaxArt";
 import { harnessModel, harnessOverview, harnessTubeDrawing, spliceDrawing, spliceSketches, spliceSketchesPlain, tubeShort, type Drawing, type TubeBranch } from "./etkPfScheme";
 import { setCustomColors } from "./wireColors";
 
@@ -504,6 +505,9 @@ export function etkPfArt({ group, operations, inputs = [], document, pins = {}, 
   const config = obj(document?.build_config);
   const topology = obj(document?.topology) as EtkTopologyData;
   const source = etkConfigOp(document), housingOf = housingsOf(document);
+  // Коаксиальная сборка: конец кабеля, собранный конец и вся сборка — свои рисунки на размер карточки (владелец 19.10).
+  const coaxArt = coaxPfArt(group, operations, config);
+  if (coaxArt) return { main: { svg: coaxArt }, layers: "" };
   const kinds = operations.map(kindOf);
   const figures = operations.map((operation) => etkFigure(operation));
   // Изделие — схема жгута целиком.

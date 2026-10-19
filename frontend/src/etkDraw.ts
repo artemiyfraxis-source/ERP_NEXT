@@ -243,6 +243,30 @@ export function etkDrawCoax(operation: Row): string {
   return coaxSketch(a, "Сторона А") + coaxSketch(b, "Сторона В");
 }
 
+/** Разъём конца коакса словами монтажника (владелец 19.10: «какая зачистка к какому разъёму»): тип из БД.КОАКС с большой
+ *  Male/Female и русская половина по контактам — вилка (штыри) / розетка (гнёзда), как `etk_builder.coax_connector_kind`.
+ *  Берёт готовые `connectorType` / `gender` конца, иначе считает по `type`; типа нет — пустые строки. */
+export function coaxEndNames(end: Row): { kind: string; word: string } {
+  const given = str(end.connectorType).trim();
+  if (given) return { kind: given, word: str(end.gender).trim() };
+  const type = str(end.type).replace(/\s+/g, " ").trim();
+  if (!type) return { kind: "", word: "" };
+  const female = /(?<![a-z])female(?![a-z])/i, male = /(?<![a-z])male(?![a-z])/i;
+  return { kind: type.replace(female, "Female").replace(male, "Male"), word: female.test(type) ? "розетка" : male.test(type) ? "вилка" : "" };
+}
+
+/** «SMA-Male (вилка)» — разъём без артикула; пусто, когда типа нет. */
+export function coaxKindTitle(end: Row): string {
+  const { kind, word } = coaxEndNames(end);
+  return kind ? `${kind}${word ? ` (${word})` : ""}` : "";
+}
+
+/** «Сторона А — SMA-Male (вилка), SMA-C174P»: заголовок рисунка конца (без стороны — только разъём). */
+export function coaxEndTitle(side: string, end: Row): string {
+  const connector = [coaxKindTitle(end), str(end.connector || end.article).trim()].filter(Boolean).join(", ");
+  return [side, connector].filter(Boolean).join(" — ");
+}
+
 /** Ступени по тому, какие из L1–L3 заданы (пустая L — «такой ступени нет», не 0 мм): L1+L2+L3 — жила, диэлектрик, оплётка;
     L1+L2 (зажимной/F) — жила и оплётка, отогнутая на оболочку, до L2; L1+L3 (твист-он BNC, top-hat, semi-rigid) — жила и
     диэлектрик до L3, оплётка заподлицо; только L1 — одна жила; только L3 (7/8″ по RFS) — кабель режется заподлицо, снята
@@ -283,8 +307,11 @@ function coaxSketch(c: Row, caption: string): string {
   body += `<line x1="${x0}" y1="${cy - 30 - (present.length - 1) * 24 - 4}" x2="${x0}" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`;
   const ds = ["d1", "d2", "d3"].filter((key) => c[key]).map((key) => `${key.toUpperCase()} = ${mm(c[key])}`);
   if (ds.length) body += `<text x="${x0}" y="${cy + 42}" font-size="12" fill="#5f7470">Ø: ${esc(ds.join(" · "))}</text>`;
-  if (caption) body += `<text x="${W - 30}" y="${cy - 30}" text-anchor="end" font-size="12" font-weight="600" fill="#17272b">${esc(caption)}</text>`;
-  return svg(W, cy + 52, body);
+  // Заголовок рисунка — над ним: какая сторона и под какой разъём разделка (а не мелкая подпись сбоку).
+  const title = coaxEndTitle(caption, c);
+  // Размер 20: на карточке схемы ПФ (640 → 320 px) заголовок остаётся не мельче 10 px.
+  return svg(W, cy + 52 + 36, `<text data-coax-title x="${x0}" y="22" font-size="20" font-weight="700" fill="#17272b">${esc(title)}</text>` +
+    `<g transform="translate(0,36)">${body}</g>`);
 }
 
 // ── Коакс по операциям (владелец 15.10, ТК КБ1 796К.2: «эскизов нет»): резка кабеля и ТУТ, пайка контакта, корпус,
@@ -325,7 +352,9 @@ function coaxBody(x1: number, x2: number, x3: number, cy: number): string {
 }
 
 function sideCaption(end: Row): string {
-  return [str(end.side) ? `Сторона ${str(end.side)}` : "", str(end.connector)].filter(Boolean).join(" · ");
+  const side = str(end.side) ? `Сторона ${str(end.side)}` : "";
+  // Тип разъёма известен — «Сторона А — SMA-Male (вилка), артикул»; нет (старые данные) — как было: «Сторона А · артикул».
+  return coaxKindTitle(end) ? coaxEndTitle(side, end) : [side, str(end.connector)].filter(Boolean).join(" · ");
 }
 
 /** Резка коаксиального кабеля: мерный отрезок с длиной и допуском, торец — вид с торца (рез 90°, слои не смяты). */
@@ -933,6 +962,13 @@ function sideItems(operation: Row, end: "A" | "B"): EtkParam[] {
     if (cut.kind !== "none") out.push(["Зачистка", `${withUnit(entryStrip || cut.len, "мм")}${cut.kind === "tin" ? " (лужение)" : ""}`]);
   } else if (entryStrip || strip[key]) {
     out.push(["Зачистка", withUnit(entryStrip || str(key === "a" ? strip.lenA : strip.lenB), "мм")]);
+  }
+  // Резка коаксиала с разделкой: у каждой стороны — под какой разъём и какие ступени L1–L3 (владелец 19.10).
+  const coax = obj(f[key === "a" ? "coax" : "coaxB"]);
+  if (str(operation.type) === "coaxCut" && Object.keys(coax).length) {
+    const steps = [1, 2, 3].filter((n) => str(coax[`l${n}`]).trim()).map((n) => `L${n} ${str(coax[`l${n}`]).trim()}`);
+    out.push(["Разъём", [coaxKindTitle(coax), str(coax.connector).trim()].filter(Boolean).join(", ") || DASH],
+      ["Разделка", steps.length ? `${steps.join(" · ")} мм` : DASH]);
   }
   // Пайка: жало и температура — на стороне операции (по умолчанию ERP — помечено, технологу уточнить).
   const solder = solderMode(operation);
