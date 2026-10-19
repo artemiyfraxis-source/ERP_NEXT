@@ -55,6 +55,18 @@ it("groups the connectors by type in the shop's series order with the stripping 
   expect(screen.queryByText("N-111L")).toBeNull();
 });
 
+it("shows the contact depth as a short number with its source as a hint; the long source column is hidden — владелец 19.10", () => {
+  const source = "radiolab.ru, SMA series connectors, габаритно-присоединительные размеры, розетка (мама): H + I + J";
+  const rows = [record("f1", { Артикул: "S-211/5D", "Тип/Серия": "SMA-female", Провод: "5D-FB",
+    "Заглубление контакта, мм": "1,88…2,41", "Заглубление контакта, источник": source })];
+  render(<CoaxConnectors records={rows} canEdit onEdit={() => undefined}
+    ownColumns={["Заглубление контакта, мм", "Заглубление контакта, источник"]} />);
+  const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+  expect(heads.filter((head) => head?.startsWith("Заглубление"))).toEqual(["Заглубление, мм"]);
+  expect(screen.getByText("1,88…2,41")).toHaveAttribute("title", source);
+  expect(screen.queryByText(source)).toBeNull();
+});
+
 it("opens the connector's card on a row click: what the technologist still has to fill, the link, the other cables", () => {
   const onEdit = vi.fn();
   render(<CoaxConnectors records={RECORDS} canEdit onEdit={onEdit} />);
