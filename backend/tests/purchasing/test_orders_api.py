@@ -289,3 +289,36 @@ def test_column_rules():
     assert column_of([_facts_line("Карантин"), _facts_line("Готово")], None) == "receiving"
     assert column_of([_facts_line("Готово"), _facts_line("Согласование", is_backorder=True)], None) == "stocked"
     assert column_of([_facts_line("Согласование", is_backorder=True)], None) is None
+
+
+def test_open_decisions_list_the_decided_lines_until_the_supplier_request(orders_api, monkeypatch, tmp_path):
+    client, sessions = orders_api
+    _options(monkeypatch, tmp_path, **{"procurement.rfq": True})
+    start = _NEXT["n"]
+    _NEXT["n"] += 1
+    line = consume_procurement_requested(message(start), SqlAlchemyProcurementUnitOfWork(sessions))
+    assert client.post("/api/procurement/take", json={"line_ids": [str(line.id)]}).status_code == 200
+    rfq = client.post("/api/purchasing/rfqs", json={"line_ids": [str(line.id)]}).json()
+    supplier = client.post(f"/api/purchasing/rfqs/{rfq['id']}/suppliers", json={"name": "ООО Опт"}).json()["supplier_id"]
+    rfq_line = client.get(f"/api/purchasing/rfqs/{rfq['id']}").json()["lines"][0]
+    quote = client.post(f"/api/purchasing/rfqs/{rfq['id']}/quotes", json={
+        "supplier_id": supplier, "min_order_sum": "5000", "delivery_cost": "300",
+        "lines": [{"rfq_line_id": rfq_line["id"], "unit_price": "100", "vat_included": False, "vat_rate": "20", "pack": "5"}],
+    })
+    assert quote.status_code == 201, quote.text
+    cell = client.get(f"/api/purchasing/rfqs/{rfq['id']}").json()["lines"][0]["cells"][supplier]
+    decided = client.post(f"/api/purchasing/rfqs/{rfq['id']}/decisions", json={
+        "rfq_line_id": rfq_line["id"], "quote_line_id": cell["quote_line_id"], "gate_override_reason": "один поставщик",
+    })
+    assert decided.status_code == 201, decided.text
+
+    (group,) = client.get(f"{BASE}/decisions").json()["suppliers"]
+    assert (group["supplier"], group["min_order_sum"], group["delivery_cost"], group["currency"]) == ("ООО Опт", "5000", "300", "RUB")
+    (item,) = group["lines"]
+    assert (item["line_id"], item["need"], item["decided_quantity"], item["quantity"], item["unit_gross"]) == (
+        str(line.id), "2", "5", "5", "120")
+    assert (item["vat_rate"], item["vat_included"], item["pack"], item["blockers"]) == ("20", False, "5", [])
+
+    formed = client.post("/api/procurement/supplier-requests", json={"line_ids": [str(line.id)]})
+    assert formed.status_code == 200 and formed.json()["orders"], formed.text
+    assert client.get(f"{BASE}/decisions").json() == {"suppliers": []}
