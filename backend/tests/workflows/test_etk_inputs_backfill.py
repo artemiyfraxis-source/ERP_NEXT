@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from decimal import Decimal
 from dataclasses import replace
 from datetime import datetime
 import json
@@ -158,6 +159,36 @@ def test_a_card_that_differs_even_after_overrides_is_drift(world):
     report = world.run()
     assert verdicts(report) == {DRIFT: 1}
     assert "расхождений" in report.lines[0] and "Результат" in report.lines[0]
+
+
+def test_a_card_built_before_etk_version_4_differs_only_by_the_setup_in_its_norms(world):
+    """Prod 19.10: 26 «drift» cards were mostly this — norms issued with tPrep inside (ETK < 4), a fresh build has none."""
+    card = world.old_card("713К.4", CONFIG_713)
+    document = deepcopy(card.document)
+    document["schema_version"] = 3
+    for operation in document["operations"]:
+        for row in operation.get("time") or []:
+            row["norm"] = str(Decimal(str(row["norm"]).replace(",", ".")) + 5).replace(".", ",")
+    world.patch(card, document=document)
+    report = world.run()
+    assert verdicts(report) == {DRIFT: 1}
+    assert "Норма времени" in report.lines[0] and "версии <4" in report.lines[0]
+    assert "Результат" not in report.lines[0] and "Параметры" not in report.lines[0]
+
+
+def test_a_card_built_by_the_current_code_is_identical_not_drift(world):
+    card = world.old_card("713К.4", CONFIG_713)
+    assert card.document["schema_version"] >= 4
+    assert verdicts(world.run()) == {IDENTICAL: 1}
+
+
+def test_an_empty_draft_is_no_inputs_and_says_it_is_a_draft(world):
+    create_project_techcard(CreateProjectTechcardCommand(
+        project="П-0", item_index="1", product_name="Без сборки", source_calculation="", deadline=None,
+        actor=ACTOR, now=NOW), world.techcards())
+    report = world.run()
+    assert verdicts(report) == {NO_INPUTS: 1}
+    assert "черновик" in report.lines[0]
 
 
 def test_no_build_config_and_a_failed_derive(world):

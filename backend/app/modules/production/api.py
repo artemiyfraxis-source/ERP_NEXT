@@ -61,7 +61,7 @@ from .domain import (
 from .flow import EARLY_LIMIT, EARLY_NOTICE
 from .launchable import (
     item_id, launch_operations, launch_route, launched_quantity, operation_code, operation_codes, ready_cards,
-    route_from_document, semifinished_steps, stage_name,
+    norms_outdated, route_from_document, semifinished_steps, stage_name,
 )
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
@@ -1738,8 +1738,9 @@ def _flow_result(view: FlowView, card) -> dict:
             "techcard_id": str(card.id) if card is not None else None,
             "revision": task.techcard_revision,
             "current_revision": current,
-            # Нормы задания старее выданной ЭТК — мастер обновляет кнопкой, сами нормы не меняются.
-            "outdated": current is not None and (task.techcard_revision is None or current > task.techcard_revision),
+            # Нормы задания отличаются от тех, что даёт выданная ЭТК (а не просто ревизия новее) — мастер обновляет
+            # кнопкой, сами нормы не меняются. Уведомление «есть новая ревизия» — по номерам, на экране техкарты.
+            "outdated": current is not None and task.techcard_revision != current and norms_outdated(task, card.document),
         },
     }
 
