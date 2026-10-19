@@ -1386,3 +1386,64 @@ it("quick entry suggests already entered articles by article or name and copies 
   fireEvent.change(article, { target: { value: `${lot.article}-NEW` } });
   expect(screen.getByLabelText("Наименование")).toHaveValue(lot.name);
 });
+
+it("«Печать этикетки» on a lot prints its label with the arrival date from the journal", async () => {
+  const frames = capturePrintFrames();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).startsWith("/api/stock/journal")) {
+      return json({ rows: [
+        { occurred_at: "2026-10-05T10:00:00+00:00", kind: "Списание", lot: "FRX.26.0000001", name: "Разъём", event: "2 шт", warehouse: "ЦАР", who: "Иванов" },
+        { occurred_at: "2026-09-01T10:00:00+00:00", kind: "Приход", lot: "FRX.26.0000001", name: "Разъём", event: "10 шт", warehouse: "ЦАР", who: "Петров" },
+      ], total: 2, truncated: 0 });
+    }
+    return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Печать этикетки" }));
+
+  await waitFor(() => expect(frames.print).toHaveBeenCalledTimes(1));
+  const html = frames.html[0];
+  for (const text of ["FRX.26.0000001", "GHR-04V-S", "Разъём", "10 шт", "1F4", "ЦАР", "Поступило 01.09.2026"]) expect(html).toContain(text);
+  expect(html).toContain("size: 58mm 40mm");
+});
+
+it("«Внести и печать этикетки» enters the row and prints the label of the created lot", async () => {
+  const frames = capturePrintFrames();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock/batches" && init?.method === "POST") {
+      return json({ added: 1, lots: [lot], errors: [], assigned: [{ i: 0, id: lot.id, grn: "OLD.26.0000007", article: "CON-001", quantity: "10", unit: "шт", storage_location: "1F4", warehouse: "ЦАР" }] });
+    }
+    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
+    return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
+  fireEvent.change(screen.getByLabelText("Наименование"), { target: { value: "Разъём 4 pin" } });
+  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
+  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F4" } });
+  fireEvent.click(screen.getByRole("button", { name: "Внести и печать этикетки" }));
+
+  await waitFor(() => expect(frames.print).toHaveBeenCalledTimes(1));
+  for (const text of ["OLD.26.0000007", "CON-001", "Разъём 4 pin", "10 шт", "1F4", "ЦАР", "Поступило "]) expect(frames.html[0]).toContain(text);
+});
+
+it("«Внести» alone does not print", async () => {
+  const frames = capturePrintFrames();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock/batches" && init?.method === "POST") return added([lot]);
+    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
+    return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+  });
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
+  fireEvent.click(screen.getByRole("button", { name: "Внести" }));
+  await screen.findByRole("button", { name: "+ Внести позиции" });
+  expect(frames.print).not.toHaveBeenCalled();
+});

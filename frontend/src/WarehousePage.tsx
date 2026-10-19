@@ -19,6 +19,7 @@ import {
 } from "./api";
 import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
+import { lotReceivedAt, printLotLabels } from "./lotLabel";
 import { countLabel } from "./format";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
@@ -699,6 +700,7 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
   const [quantity, setQuantity] = useState("");
   const [storageLocation, setStorageLocation] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const printAfter = useRef(false);
   const [articleSource, setArticleSource] = useState("");
   // Already entered positions by article: pick one to copy its name/series/type, then change the article.
   const knownArticles = useMemo(() => {
@@ -787,6 +789,8 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
     <form className="panel manual-stock-form" noValidate onSubmit={async (event) => {
       event.preventDefault();
       if (submitting) return;
+      const withLabels = printAfter.current;
+      printAfter.current = false;
       const current = currentItem();
       const items = [...rows.map((row) => row.item), ...(current ? [current] : [])];
       if (!items.length) {
@@ -798,6 +802,14 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
         const result = await onAdded(items);
         if (!result) return;
         if (current) clearRow();
+        // «Внести и печатать этикетки»: по одной на каждую созданную партию, дата поступления — сегодня.
+        if (withLabels && result.assigned.length) {
+          const today = new Date().toISOString().slice(0, 10);
+          printLotLabels(result.assigned.map((row) => ({
+            grn: row.grn, article: row.article, name: items[row.i]?.name ?? "", quantity: `${row.quantity} ${row.unit}`,
+            place: row.storage_location, warehouse: row.warehouse, receivedAt: today,
+          })));
+        }
         const refused = result.errors.map(({ i, error }) => ({ item: items[i], error: `${i + 1} — ${error}` }));
         setRows(refused);
         // SUPPLYMAP wording (PortalApp.html: «Записано: N. Не приняты строки (M): i+1 — ошибка; …»).
@@ -870,6 +882,7 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
           setReport("");
         }}>+ В список</button>
         <button className="primary" disabled={busy || submitting}>{submitting ? "Вносим…" : pending > 1 ? `Внести (${pending})` : "Внести"}</button>
+        <button className="secondary" disabled={busy || submitting} onClick={() => { printAfter.current = true; }}>{pending > 1 ? `Внести и печать этикеток (${pending})` : "Внести и печать этикетки"}</button>
       </div>
     </form>
   );
@@ -1372,6 +1385,19 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
   const close = () => setDialog("");
   const writtenOff = Number(lot.written_off) > 0;
   const passport = passportLine(lot);
+  const [printing, setPrinting] = useState(false);
+  const printLabel = async () => {
+    setPrinting(true);
+    try {
+      const receivedAt = await lotReceivedAt(lot.grn, lot.package);
+      printLotLabels([{
+        grn: lot.grn, package: lot.package, article: lot.article, name: lot.name, quantity: `${lot.balance} ${lot.unit}`,
+        place: lot.storage_location, warehouse: lot.warehouse, receivedAt,
+      }]);
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   return (
     <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
@@ -1386,7 +1412,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
         {Number(lot.reserved) > 0 && <span title={lot.reserve_note || undefined}>резерв {lot.reserved} {lot.unit}{lot.reserve_note ? ` · ${lot.reserve_note.replace(/^резерв: /, "")}` : ""}</span>}
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
-      {(!readOnly || history || canLink) && <div className="lot-card-actions">
+      <div className="lot-card-actions">
         {!readOnly && <>
           <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
           {writtenOff && <button className="secondary small" disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => setDialog("return")}>Вернуть на склад</button>}
@@ -1395,7 +1421,8 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
         </>}
         {canLink && <button className="secondary small" title="Привязать к записи базы или создать запись" onClick={() => setDialog("link")}>В базу данных…</button>}
         {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
-      </div>}
+        <button className="secondary small" disabled={printing} onClick={() => void printLabel()}>{printing ? "Готовим этикетку…" : "Печать этикетки"}</button>
+      </div>
       {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
