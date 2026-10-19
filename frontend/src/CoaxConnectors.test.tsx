@@ -201,3 +201,22 @@ it("orders the type groups as the owner asked (19.10): series, then the plain po
     .map((row) => within(row).getAllByRole("cell")[1].textContent);
   expect(types.slice(0, 6)).toEqual(["SMA-female", "SMA-female bulkhead", "SMA-female flange", "SMA-female R/A", "SMA-male", "SMA-male R/A"]);
 });
+
+it("a header click sorts inside every type group; the order of the groups stays (owner 19.10)", () => {
+  const rows = [["SMA-female", "B1", "RG-58"], ["SMA-female", "A1", "RG-316"], ["F-male", "F1", "RG-6"], ["F-male", "F2", "RG-11"]]
+    .map(([type, art, wire], index) => record(`g${index}`, { Артикул: art, "Тип/Серия": type, Провод: wire }));
+  render(<CoaxConnectors records={rows} canEdit={false} onEdit={() => undefined} />);
+  const order = () => screen.getAllByRole("row").slice(1).map((row) => row.classList.contains("group-row")
+    ? `[${row.textContent?.split(" · ")[0]}]` : within(row).getAllByRole("cell")[2].textContent);
+  const groups = (list: string[]) => list.filter((item) => item.startsWith("["));
+  const inside = (list: string[], name: string) => { const at = list.indexOf(`[${name}]`); return list.slice(at + 1, at + 3); };
+  expect(groups(order())).toEqual(["[SMA-female]", "[F-male]"]);
+  fireEvent.click(screen.getByRole("button", { name: "Кабель" }));
+  const up = order();
+  fireEvent.click(screen.getByRole("button", { name: /Кабель/ }));
+  const down = order();
+  // Группы на своих местах; внутри каждой порядок по кабелю разворачивается.
+  expect(groups(up)).toEqual(["[SMA-female]", "[F-male]"]);
+  expect(groups(down)).toEqual(["[SMA-female]", "[F-male]"]);
+  for (const name of ["SMA-female", "F-male"]) expect(inside(down, name)).toEqual([...inside(up, name)].reverse());
+});

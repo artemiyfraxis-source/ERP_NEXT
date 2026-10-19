@@ -380,8 +380,6 @@ function useWidth() {
   return { ref, width };
 }
 
-// «Создать задание» у КБ без задания (владелец, 12.10: «непонятный функционал «Запустить сегодня»»).
-const CREATE_TASK_HINT = "Создаёт производственное задание на весь тираж; операции появятся в списке для назначения. Автоплан создаёт задания сам";
 
 export function MasterBoard({ tasks, operators, site = "", skills, absences, shift, holidays = [], projectDeadlines = {}, canEdit, busy, mutate, openTask }: {
   tasks: ProductionTask[];
@@ -413,7 +411,6 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const [onlyDay, setOnlyDay] = useState("");
   // Снятие исполнителя — через окно подтверждения с тем, что изменится (владелец 16.10: «×» сразу пересобирал план).
   const [removing, setRemoving] = useState<{ taskId: string; operationId: string; personId: string } | null>(null);
-  const keys = useRef(new Map<string, string>());
   const board = useWidth();
 
   function setOpenProject(project: string) {
@@ -540,14 +537,6 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     void mutate(`handover:${item.id}`, () => productionApi.handOver(item.id, item.version, site));
   }
 
-  function launch(item: ProductionLaunchable) {
-    const key = keys.current.get(item.techcard_id) ?? crypto.randomUUID();
-    keys.current.set(item.techcard_id, key);
-    void mutate(`launch:${item.techcard_id}`, () => productionApi.launch(key, {
-      techcard_id: item.techcard_id, quantity: Number(item.run), deadline: item.deadline, fulfillment_request_id: null,
-    }));
-  }
-
   return <div className="master-board">
     <section className="panel mb-projects" aria-label="Проекты и операции">
       <div className="mb-head">
@@ -630,11 +619,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
               </table>
             </div>;
           })}
+          {/* КБ с выданной техкартой без задания — справкой, без кнопки: задания создаёт автоплан (владелец 19.10: «у кнопки
+              «Создать задание» нет никакого смысла»). */}
           {!onlyFree && projectReady.map((item) => {
-            const runOk = /^\d+$/.test(item.run) && Number(item.run) > 0;
             return <div className="mb-ready" key={item.techcard_id}>
               <span><b>{kbLabel(item.project, item.index)}</b>{item.name ? ` · ${item.name}` : ""}<small> · техкарта выдана, задания ещё нет · этапов {item.operations}, тираж {item.run || "—"}{item.deadline ? `, срок ${formatDay(item.deadline)}` : ""}</small></span>
-              <button className="secondary small" disabled={Boolean(busy) || !runOk} title={runOk ? CREATE_TASK_HINT : "Тиража нет — запустите через «+ Запустить задание»"} onClick={() => launch(item)}>Создать задание</button>
             </div>;
           })}
         </div>;
