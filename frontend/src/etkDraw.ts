@@ -2,10 +2,13 @@
 // Одни и те же строки идут и на экран (блок «Эскиз»), и в печать (etkPrint.ts): печатное окно — отдельный
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
+import { coaxMountEtk, coaxPartsEtk } from "./etkCoaxOpArt";
+import { coaxEndNames, coaxEndTitle, coaxKindTitle } from "./coaxNames";
 import { connectorFace, connectorFaceUnits, connectorSummary, wireColor, type HousingBody, type Mate, type Roof } from "./connectorArt";
 import { connectorTopView } from "./connectorTopView";
 import { wireEndArt } from "./etkDefectArt";
 import { solderMode } from "./etkOperation";
+export { coaxEndNames, coaxEndTitle, coaxKindTitle };
 
 type Row = Record<string, unknown>;
 
@@ -243,30 +246,6 @@ export function etkDrawCoax(operation: Row): string {
   return coaxSketch(a, "Сторона А") + coaxSketch(b, "Сторона В");
 }
 
-/** Разъём конца коакса словами монтажника (владелец 19.10: «какая зачистка к какому разъёму»): тип из БД.КОАКС с большой
- *  Male/Female и русская половина по контактам — вилка (штыри) / розетка (гнёзда), как `etk_builder.coax_connector_kind`.
- *  Берёт готовые `connectorType` / `gender` конца, иначе считает по `type`; типа нет — пустые строки. */
-export function coaxEndNames(end: Row): { kind: string; word: string } {
-  const given = str(end.connectorType).trim();
-  if (given) return { kind: given, word: str(end.gender).trim() };
-  const type = str(end.type).replace(/\s+/g, " ").trim();
-  if (!type) return { kind: "", word: "" };
-  const female = /(?<![a-z])female(?![a-z])/i, male = /(?<![a-z])male(?![a-z])/i;
-  return { kind: type.replace(female, "Female").replace(male, "Male"), word: female.test(type) ? "розетка" : male.test(type) ? "вилка" : "" };
-}
-
-/** «SMA-Male (вилка)» — разъём без артикула; пусто, когда типа нет. */
-export function coaxKindTitle(end: Row): string {
-  const { kind, word } = coaxEndNames(end);
-  return kind ? `${kind}${word ? ` (${word})` : ""}` : "";
-}
-
-/** «Сторона А — SMA-Male (вилка), SMA-C174P»: заголовок рисунка конца (без стороны — только разъём). */
-export function coaxEndTitle(side: string, end: Row): string {
-  const connector = [coaxKindTitle(end), str(end.connector || end.article).trim()].filter(Boolean).join(", ");
-  return [side, connector].filter(Boolean).join(" — ");
-}
-
 /** Ступени по тому, какие из L1–L3 заданы (пустая L — «такой ступени нет», не 0 мм): L1+L2+L3 — жила, диэлектрик, оплётка;
     L1+L2 (зажимной/F) — жила и оплётка, отогнутая на оболочку, до L2; L1+L3 (твист-он BNC, top-hat, semi-rigid) — жила и
     диэлектрик до L3, оплётка заподлицо; только L1 — одна жила; только L3 (7/8″ по RFS) — кабель режется заподлицо, снята
@@ -424,7 +403,16 @@ function coaxEndSketch(operation: Row): string {
     if (g.ok) body += caption(x0, cy + 56, `L1 = ${mm(end.l1)} · L2 = ${mm(end.l2)} · L3 = ${mm(end.l3)}`);
     return svg(640, cy + (g.ok ? 66 : 46), body);
   }
-  // Корпус: пин в изоляторе, оплётка расправлена по хвостовику; пайка экрана / крышка — тот же вид с подписью.
+  // Корпус: настоящий боковой вид SMA в разрезе, контакт в изоляторе, оплётка расправлена по хвостовику; пайка экрана / крышка — тот же вид с подписью.
+  const mount: Record<string, string> = {
+    coaxHousing: "Корпус надвинуть до упора: контакт зафиксирован в изоляторе",
+    coaxSolderShield: "Экран припаять к корпусу по окружности",
+    coaxCapCrimp: "Крышку надеть и обжать", coaxCapScrew: "Крышку завернуть до упора",
+  };
+  if (mount[type]) {
+    const art = coaxMountEtk(end, sideCaption(end), mount[type]);
+    return svg(640, art.height, art.body);
+  }
   const tail = g.x3 + 16;
   body += coaxEndBase(end, x0, span, cy, true) + coaxBody(x0 - 90, g.x2, tail, cy) +
     `<path d="M${g.x2},${cy - 14} L${g.x3 + 24},${cy - 17} L${g.x3 + 24},${cy + 17} L${g.x2},${cy + 14} z" fill="url(#etkBraid)" stroke="${CX.metalEdge}"/>`;
@@ -444,6 +432,12 @@ function coaxPartsSketch(operation: Row): string {
   const kind = str(p.kind) === "sleeve" ? "sleeve" : "tube", count = Math.max(1, num(p.count) || 1);
   const name = str(p.name) || (kind === "tube" ? "ТУТ" : "втулка экрана");
   const what = `${name}${count > 1 ? ` × ${count}` : ""}`;
+  if ((type === "coaxInsTut" || type === "coaxInsSleeve") && list(p.ends).length) {
+    // Оба конца со своими разъёмами, ТУТ / втулка на оболочке, знак разрыва (владелец 19.10).
+    const art = coaxPartsEtk(list(p.ends), kind, name, str(p.offset).trim());
+    return svg(640, art.height + 28, caption(8, 18, `Надеть: ${what}`, "start", 700, CX.ink) + art.body +
+      caption(8, art.height + 20, "до монтажа корпусов", "start"));
+  }
   if (type === "coaxInsTut" || type === "coaxInsSleeve") {
     const h = kind === "tube" ? 38 : 36, w = kind === "tube" ? 70 : 34;
     let body = coaxJacket(40, 600, cy, str(p.cable));

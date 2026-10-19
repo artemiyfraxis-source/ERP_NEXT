@@ -673,7 +673,41 @@
       "name": "ТУТ 4/2мм, черная",
       "count": 2,
       "cable": "RG316",
-      "length": "20"
+      "length": "20",
+      "ends": [
+       {
+        "cable": "RG316",
+        "connector": "SMA-C174P",
+        "connectorType": "SMA-Male",
+        "gender": "вилка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "3,5",
+        "l3": "7,5",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "А",
+        "pinType": "пайка"
+       },
+       {
+        "cable": "RG316",
+        "connector": "SMA-C316F",
+        "connectorType": "SMA-Female bulkhead",
+        "gender": "розетка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "4,8",
+        "l3": "10",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "В",
+        "pinType": "пайка"
+       }
+      ]
      }
     }
    },
@@ -719,7 +753,41 @@
       "name": "",
       "count": 2,
       "cable": "RG316",
-      "length": ""
+      "length": "",
+      "ends": [
+       {
+        "cable": "RG316",
+        "connector": "SMA-C174P",
+        "connectorType": "SMA-Male",
+        "gender": "вилка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "3,5",
+        "l3": "7,5",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "А",
+        "pinType": "пайка"
+       },
+       {
+        "cable": "RG316",
+        "connector": "SMA-C316F",
+        "connectorType": "SMA-Female bulkhead",
+        "gender": "розетка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "4,8",
+        "l3": "10",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "В",
+        "pinType": "пайка"
+       }
+      ]
      }
     }
    },
@@ -875,7 +943,41 @@
       "name": "",
       "count": 2,
       "cable": "RG316",
-      "length": ""
+      "length": "",
+      "ends": [
+       {
+        "cable": "RG316",
+        "connector": "SMA-C174P",
+        "connectorType": "SMA-Male",
+        "gender": "вилка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "3,5",
+        "l3": "7,5",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "А",
+        "pinType": "пайка"
+       },
+       {
+        "cable": "RG316",
+        "connector": "SMA-C316F",
+        "connectorType": "SMA-Female bulkhead",
+        "gender": "розетка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "4,8",
+        "l3": "10",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "В",
+        "pinType": "пайка"
+       }
+      ]
      },
      "crimpHex": [
       {
@@ -933,7 +1035,41 @@
       "name": "ТУТ 4/2мм, черная",
       "count": 2,
       "cable": "RG316",
-      "length": "20"
+      "length": "20",
+      "ends": [
+       {
+        "cable": "RG316",
+        "connector": "SMA-C174P",
+        "connectorType": "SMA-Male",
+        "gender": "вилка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "3,5",
+        "l3": "7,5",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "А",
+        "pinType": "пайка"
+       },
+       {
+        "cable": "RG316",
+        "connector": "SMA-C316F",
+        "connectorType": "SMA-Female bulkhead",
+        "gender": "розетка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "4,8",
+        "l3": "10",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "В",
+        "pinType": "пайка"
+       }
+      ]
      }
     }
    }

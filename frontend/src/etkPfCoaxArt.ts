@@ -7,15 +7,15 @@
 //  - изделие — вся сборка: разъём А, кабель с размером длины, разъём Б, ТУТ на обоих концах, названия обоих разъёмов.
 // Данные — из конфигурации сборки `build_config.coax` (разъёмы концов, размеры разделки, ТУТ, кабель) и `gen_state`
 // (длина по чертежу): выданные ЭТК перевыпускать не нужно.
-import { coaxEndNames, coaxKindTitle } from "./etkDraw";
+import { coaxEndNames, coaxKindTitle } from "./coaxNames";
 import { tubeShort } from "./etkPfScheme";
 import type { EtkPfGroup } from "./etkRoute";
 
 type Row = Record<string, unknown>;
 type Side = "A" | "B";
 
-const INK = "#17272b", MUTED = "#5f7470", METAL = "#d4d9dd", EDGE = "#8d969c", BRASS = "#d9b25f", COPPER = "#e08a2c";
-const JACKET = "#222", TUBE = "#3b4147", SOLDER = "#c9ced3", DIEL = "#fbfbf8";
+export const INK = "#17272b", MUTED = "#5f7470", METAL = "#d4d9dd", EDGE = "#8d969c", BRASS = "#d9b25f", COPPER = "#e08a2c";
+export const JACKET = "#222", TUBE = "#3b4147", SOLDER = "#c9ced3", DIEL = "#fbfbf8";
 const W = 320;
 
 const obj = (value: unknown): Row => (value && typeof value === "object" && !Array.isArray(value) ? value as Row : {});
@@ -28,12 +28,12 @@ const esc = (value: unknown): string => str(value).replaceAll("&", "&amp;").repl
 const f = (value: number) => value.toFixed(1);
 
 /** Прямоугольник по краям x1..x2 (в любом порядке). */
-function rect(x1: number, x2: number, y: number, h: number, fill: string, stroke = EDGE, rx = 0, extra = ""): string {
+export function rect(x1: number, x2: number, y: number, h: number, fill: string, stroke = EDGE, rx = 0, extra = ""): string {
   return `<rect x="${f(Math.min(x1, x2))}" y="${f(y)}" width="${f(Math.abs(x2 - x1))}" height="${f(h)}" rx="${rx}" fill="${fill}" stroke="${stroke}" stroke-width=".9"${extra ? ` ${extra}` : ""}/>`;
 }
-const line = (x1: number, y1: number, x2: number, y2: number, stroke = EDGE, width = .9, dash = "") =>
+export const line = (x1: number, y1: number, x2: number, y2: number, stroke = EDGE, width = .9, dash = "") =>
   `<line x1="${f(x1)}" y1="${f(y1)}" x2="${f(x2)}" y2="${f(y2)}" stroke="${stroke}" stroke-width="${width}"${dash ? ` stroke-dasharray="${dash}"` : ""}/>`;
-const label = (x: number, y: number, value: string, size = 11, weight = 600, fill = INK, anchor = "middle") =>
+export const label = (x: number, y: number, value: string, size = 11, weight = 600, fill = INK, anchor = "middle") =>
   `<text x="${f(x)}" y="${f(y)}" text-anchor="${anchor}" font-size="${size}" font-weight="${weight}" fill="${fill}">${esc(value)}</text>`;
 
 function svg(height: number, body: string): string {
@@ -43,7 +43,33 @@ function svg(height: number, body: string): string {
 }
 
 /** Разъём конца: вилка (штыри) или розетка (гнёзда); типа нет — вилкой по умолчанию. */
-const isFemale = (end: Row) => coaxEndNames(end).word === "розетка";
+export const isFemale = (end: Row) => coaxEndNames(end).word === "розетка";
+
+// ── Разделанный конец с припаянным центральным контактом ──
+
+/** Геометрия ступеней разделки конца: L1–L3 в масштабе на `span` px от кончика жилы `x0`; нет размеров — типовые 2,5 / 3,5 / 7,5. */
+export function stepsOf(end: Row, x0: number, span: number): { x1: number; x2: number; x3: number } {
+  const [l1, l2, l3] = [num(end.l1), num(end.l2), num(end.l3)];
+  const [a, b, c] = l1 > 0 && l2 > l1 && l3 > l2 ? [l1, l2, l3] : [2.5, 3.5, 7.5];
+  const k = span / c;
+  return { x1: x0 + a * k, x2: x0 + b * k, x3: x0 + c * k };
+}
+
+/** Рисунок (без подписей) конца кабеля, сторона А — конец слева: оболочка до `jacketTo`, оплётка, диэлектрик, жила и припаянный
+ *  центральный контакт — штырь у вилки, гнездо у розетки. `braid` — заливка оплётки (у каждого холста свой узор). */
+export function endGraphics(end: Row, x0: number, cy: number, steps: { x1: number; x2: number; x3: number }, jacketTo: number, braid: string): string {
+  const { x1, x2, x3 } = steps, female = isFemale(end);
+  let art = rect(x3, jacketTo, cy - 16, 32, JACKET, "#000", 4) +
+    rect(x2, x3, cy - 12, 24, braid) + rect(x1, x2, cy - 9, 18, DIEL, INK) + rect(x0, x1, cy - 2.5, 5, COPPER, INK);
+  // Центральный контакт: хвостовик-чашка на жиле с припоем и рабочая часть — штырь (вилка) или гнездо (розетка).
+  art += rect(x0 - 4, x1 - 2, cy - 5.5, 11, BRASS) +
+    `<ellipse cx="${f((x0 + x1) / 2)}" cy="${f(cy)}" rx="${f((x1 - x0) * 0.36)}" ry="4.6" fill="${SOLDER}" stroke="${EDGE}" stroke-width=".8"/>` +
+    rect(x0 - 8, x0 - 4, cy - 8, 16, BRASS);
+  art += female
+    ? rect(x0 - 32, x0 - 8, cy - 5.5, 11, BRASS) + rect(x0 - 32, x0 - 24, cy - 2.6, 5.2, TUBE, TUBE)
+    : rect(x0 - 32, x0 - 8, cy - 2.6, 5.2, BRASS) + `<polygon points="${f(x0 - 38)},${f(cy)} ${f(x0 - 32)},${f(cy - 2.6)} ${f(x0 - 32)},${f(cy + 2.6)}" fill="${BRASS}" stroke="${EDGE}" stroke-width=".8"/>`;
+  return art;
+}
 
 // ── ПФ «Кабель с центральным контактом»: конец кабеля крупно ──
 
@@ -52,20 +78,8 @@ const isFemale = (end: Row) => coaxEndNames(end).word === "розетка";
 export function coaxContactDrawing(side: Side, end: Row): string {
   const mirror = side === "B", cy = 64, x0 = 46;
   const mx = (x: number) => (mirror ? W - x : x);
-  const [l1, l2, l3] = [num(end.l1), num(end.l2), num(end.l3)];
-  const ok = l1 > 0 && l2 > l1 && l3 > l2;
-  const [a, b, c] = ok ? [l1, l2, l3] : [2.5, 3.5, 7.5];
-  const k = 150 / c, x1 = x0 + a * k, x2 = x0 + b * k, x3 = x0 + c * k;
-  const female = isFemale(end), solderFrom = x0 - 4, solderTo = x1 - 2;
-  let art = rect(x3, 312, cy - 16, 32, JACKET, "#000", 4) +
-    rect(x2, x3, cy - 12, 24, "url(#pfBraid)") + rect(x1, x2, cy - 9, 18, DIEL, INK) + rect(x0, x1, cy - 2.5, 5, COPPER, INK);
-  // Центральный контакт: хвостовик-чашка на жиле с припоем и рабочая часть — штырь (вилка) или гнездо (розетка).
-  art += rect(solderFrom, solderTo, cy - 5.5, 11, BRASS) +
-    `<ellipse cx="${f((x0 + x1) / 2)}" cy="${f(cy)}" rx="${f((x1 - x0) * 0.36)}" ry="4.6" fill="${SOLDER}" stroke="${EDGE}" stroke-width=".8"/>` +
-    rect(x0 - 8, x0 - 4, cy - 8, 16, BRASS);
-  art += female
-    ? rect(x0 - 32, x0 - 8, cy - 5.5, 11, BRASS) + rect(x0 - 32, x0 - 24, cy - 2.6, 5.2, TUBE, TUBE)
-    : rect(x0 - 32, x0 - 8, cy - 2.6, 5.2, BRASS) + `<polygon points="${f(x0 - 38)},${f(cy)} ${f(x0 - 32)},${f(cy - 2.6)} ${f(x0 - 32)},${f(cy + 2.6)}" fill="${BRASS}" stroke="${EDGE}" stroke-width=".8"/>`;
+  const { x1, x2, x3 } = stepsOf(end, x0, 150);
+  const art = endGraphics(end, x0, cy, { x1, x2, x3 }, 312, "url(#pfBraid)");
   const flip = mirror ? `<g transform="translate(${W},0) scale(-1,1)">${art}</g>` : art;
   const near = mirror ? "end" : "start", edge = mirror ? W - 4 : 4;
   const wordKind = coaxEndNames(end).kind;

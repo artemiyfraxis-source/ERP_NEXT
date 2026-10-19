@@ -59,3 +59,17 @@ def test_an_issued_etk_names_the_connector_halves_on_read():
     assert (seen["fields"]["coaxB"]["connectorType"], seen["fields"]["coaxB"]["gender"]) == ("SMA-Female bulkhead", "розетка")
     assert seen["fields"]["coax"]["gender"] == "вилка"
     assert "connectorType" not in old["fields"]["coax"]  # the stored copy is not touched
+
+
+def test_a_read_gives_the_tube_and_sleeve_operations_both_ends_with_their_connectors():
+    """«Надеть ТУТ / втулку»: эскиз рисует оба разделанных конца со своими разъёмами (владелец 19.10) — и у выданного ЭТК."""
+    config = _config()
+    config["ops"] = [{"type": "coaxInsTut", "units": 2, "templateId": CARDS["INS_TUT"].source_id}]
+    config["coax"].update({"tutArt": "ТУТ 4/2мм, черная", "tutLength": 20})
+    operation = _built(config)[0]
+    assert "ends" not in operation["fields"]["coaxParts"]  # сборка не меняется: эталоны ЭТК те же
+    seen = with_coax_connectors(operation, config)
+    ends = seen["fields"]["coaxParts"]["ends"]
+    assert [(end["side"], end["connectorType"], end["gender"], end["l3"]) for end in ends] == [
+        ("А", "SMA-Male", "вилка", "7,5"), ("В", "SMA-Female bulkhead", "розетка", "10")]
+    assert "ends" not in operation["fields"]["coaxParts"]
