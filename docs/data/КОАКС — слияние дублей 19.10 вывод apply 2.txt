@@ -1,0 +1,233 @@
+строк БД.КОАКС: 598; пар G → R: 34; партий: 597
+
+== пары и ячейки ==
+   уже слито: «MCX-male R/A RG-174» → «11-121L» × RG-174
+        ссылка (история): audit_events.details × 2 «{"table": "coax", "created": "0", "updated": "82", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: уже стоит
+   уже слито: «MMCX-female RG-174» → «13-211L» × RG-174
+        ссылка (история): audit_events.details × 2 «{"table": "coax", "created": "0", "updated": "82", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: уже стоит
+   к записи: «MMCX-male R/A RG-174» → «13-121L» × RG-174
+        ячейка R: Производитель: «» → «LenoRF»
+        ссылка (история): audit_events.details × 2 «{"table": "coax", "created": "0", "updated": "37", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: да
+   уже слито: «RP-SMA-female RG-316» → «S-A211L» × RG-174
+        ссылка (история): audit_events.details × 2 «{"table": "coax", "created": "16", "updated": "0", "unchanged": "0", "refused": »
+        ссылка (история): warehouse_writeoffs.name × 1 «RP-SMA-female RG-316/RG-174»
+        пометка G «дубль → …»: уже стоит
+   к записи: «SMA-female RG-174» → «S-211L» × RG-174
+        ячейка R: Производитель: «» → «LenoRF»
+        ссылка (история): audit_events.details × 3 «{"table": "coax", "created": "0", "updated": "146", "unchanged": "0", "refused":»
+        пометка G «дубль → …»: да
+   к записи: «SMA-male RG-174» → «S-111L» × RG-174
+        ячейка R: Производитель: «» → «LenoRF»
+        ячейка R: Тип пина: «» → «пайка»
+        ссылка (история): audit_events.details × 4 «{"line_id": "3cd8330d-356c-4c09-9d54-e3068beb2dfd", "lot_id": "2ff2983b-cc3e-495»
+        ссылка (история): warehouse_writeoffs.name × 24 «SMA-male RG-174/RG-316»
+        пометка G «дубль → …»: да
+   к записи: «SMA-male R/A RG-174» → «S-121L» × RG-174
+        ячейка R: Производитель: «» → «LenoRF»
+        ссылка (история): audit_events.details × 3 «{"table": "coax", "created": "0", "updated": "146", "unchanged": "0", "refused":»
+        ссылка (история): warehouse_writeoffs.name × 2 «SMA-male R/A RG-174/RG-316»
+        пометка G «дубль → …»: да
+   к записи: «SMA-female RG-178» → «S-235M» × RG-178
+        ячейка R: Производитель: «» → «LenoRF»
+        ссылка (история): audit_events.details × 3 «{"table": "coax", "created": "0", "updated": "95", "unchanged": "0", "refused": »
+        ссылка (история): warehouse_writeoffs.name × 2 «SMA-female RG-178»
+        пометка G «дубль → …»: да
+   к записи: «SMA-male RG-178» → «S-115M» × RG-178
+        ячейка R: Производитель: «» → «LenoRF»
+        ссылка (история): audit_events.details × 3 «{"table": "coax", "created": "0", "updated": "95", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: да
+   к записи: «U.FL-female (IPX-female) угловой для RG-178» → «U.FL» × RG-178
+        ячейка R: Волновое сопротивление, Ом: «» → «50»
+        ячейка R: Исполнение: «» → «угловой»
+        ячейка R: Крепление экрана: «» → «обжимной»
+        ячейка R: Монтаж: «» → «обжимной»
+        ячейка R: Покрытие: «» → «центральный контакт: золото»
+        ячейка R: Пол: «» → «гнездо»
+        ячейка R: Полярность: «» → «обычная»
+        ячейка R: Серия: «» → «U.FL»
+        пометка G «дубль → …»: да
+   к записи: «UHF-Male U-112B» → «U-112B» × RG-213
+        ячейка R: HEX обжима, мм: «» → «10,9»
+        ссылка (история): audit_events.details × 1 «{"table": "coax", "created": "0", "updated": "128", "unchanged": "0", "refused":»
+        пометка G «дубль → …»: да
+   уже слито: «MCX-male R/A RG-316» → «11-121L» × RG-316
+        ссылка (история): audit_events.details × 1 «{"table": "coax", "created": "0", "updated": "82", "unchanged": "0", "refused": »
+        ссылка (история): warehouse_writeoffs.name × 6 «MCX-male R/A RG-316/RG-174»
+        пометка G «дубль → …»: уже стоит
+   уже слито: «MMCX-female RG-316» → «13-211L» × RG-316
+        ссылка (история): audit_events.details × 1 «{"table": "coax", "created": "0", "updated": "82", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: уже стоит
+   к записи: «MMCX-male R/A RG-316» → «13-121L» × RG-316
+        ссылка (история): audit_events.details × 2 «{"table": "coax", "created": "16", "updated": "0", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: да
+   уже слито: «RP-SMA-female RG-316» → «S-A211L» × RG-316
+        ссылка (история): audit_events.details × 2 «{"table": "coax", "created": "16", "updated": "0", "unchanged": "0", "refused": »
+        ссылка (история): warehouse_writeoffs.name × 1 «RP-SMA-female RG-316/RG-174»
+        пометка G «дубль → …»: уже стоит
+   к записи: «SMA-female RG-316» → «S-211L» × RG-316
+        ссылка (история): audit_events.details × 5 «{"line_id": "2c573a8d-43a0-4457-b34a-8f5d6beeacbb", "lot_id": "76b7a125-e1cd-427»
+        ссылка (история): warehouse_writeoffs.name × 17 «SMA-female RG-316»
+        пометка G «дубль → …»: да
+   к записи: «SMA-male RG-316» → «S-111L» × RG-316
+        ссылка (история): audit_events.details × 1 «{"table": "coax", "created": "0", "updated": "95", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: да
+   к записи: «SMA-male R/A RG-316» → «S-121L» × RG-316
+        ссылка (история): audit_events.details × 1 «{"table": "coax", "created": "0", "updated": "37", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: да
+   уже слито: «N-female RG-402» → «N-235-141» × RG-402
+        ссылка (история): audit_events.details × 1 «{"table": "coax", "created": "0", "updated": "58", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: уже стоит
+   к записи: «SMA-male RG-402» → «S-115-141» × RG-402
+        ячейка R: Производитель: «» → «LenoRF»
+        ссылка (история): warehouse_writeoffs.name × 11 «SMA-male RG-402»
+        пометка G «дубль → …»: да
+   уже слито: «SMA-male R/A RG-402» → «S-125-141» × RG-402
+        ссылка (история): audit_events.details × 3 «{"table": "coax", "created": "0", "updated": "37", "unchanged": "0", "refused": »
+        ссылка (история): warehouse_writeoffs.name × 1 «SMA-male R/A RG-402»
+        пометка G «дубль → …»: уже стоит
+   уже слито: «SMA-Male 141» → «S-115-141» × RG-402
+        пометка G «дубль → …»: уже стоит
+   к записи: «SMA-female RG-405» → «S-235-085» × RG-405
+        ячейка R: Производитель: «» → «LenoRF»
+        ссылка (история): warehouse_writeoffs.name × 1 «SMA-female RG-405»
+        пометка G «дубль → …»: да
+   уже слито: «SMA-FEMALE S-235-085» → «S-235-085» × RG-405
+        пометка G «дубль → …»: уже стоит
+   к записи: «SMA-male RG-405» → «S-115-085» × RG-405
+        ячейка R: Производитель: «» → «LenoRF»
+        ссылка (история): warehouse_writeoffs.name × 2 «SMA-male RG-405»
+        пометка G «дубль → …»: да
+   к записи: «N-female RG58» → «N-211F» × RG-58
+        ячейка R: Производитель: «» → «LenoRF»
+        ссылка (история): audit_events.details × 1 «{"table": "coax", "created": "0", "updated": "58", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: да
+   к записи: «N-male RG58» → «N-111F» × RG-58
+        ячейка R: Производитель: «» → «LenoRF»
+        пометка G «дубль → …»: да
+   к записи: «SMA-female RG58» → «S-211F» × RG-58
+        ячейка R: Производитель: «» → «LenoRF»
+        пометка G «дубль → …»: да
+   к записи: «SMA-male RG58» → «S-111F» × RG-58
+        ячейка R: Производитель: «» → «LenoRF»
+        ячейка R: Артикул поставщика: «gsm-repiteri.ru: 1314; kroks.ru: 546; kroks.ru: 345» → «gsm-repiteri.ru: 1314; kroks.ru: 345»
+        пометка G «дубль → …»: да
+   к записи: «SMA-male R/A RG58» → «S-121F» × RG-58
+        ячейка R: Производитель: «» → «LenoRF»
+        ссылка (история): audit_events.details × 1 «{"table": "coax", "created": "0", "updated": "37", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: да
+   к записи: «TNC-Female RG58» → «T-211F» × RG-58
+        пометка G «дубль → …»: да
+   уже слито: «TNC-Male RG58» → «T-111F» × RG-58
+        ссылка (история): audit_events.details × 2 «{"table": "coax", "created": "0", "updated": "49", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: уже стоит
+   уже слито: «BNC-Male RG59» → «B-111G» × RG-59
+        ссылка (история): audit_events.details × 1 «{"table": "coax", "created": "0", "updated": "49", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: уже стоит
+   уже слито: «SMB-Male» → «S1-111L» × RG-316
+        ссылка (история): audit_events.details × 2 «{"table": "coax", "created": "16", "updated": "0", "unchanged": "0", "refused": »
+        пометка G «дубль → …»: уже стоит
+
+== без пары (в названии номер детали, строки R на этом кабеле нет) ==
+   «4.3-10-female для 1/2″» × 1/2″ → номер детали «коаксиальный»
+   «4.3-10-male для 1/2″» × 1/2″ → номер детали «коаксиальный»
+   «Commscope L4TNM-PSA» × 1/2″ → номер детали «Commscope»
+   «7/16 DIN-male угловой для 1/2 SF» × 1/2″ SF → номер детали «коаксиальный»
+   «4.3-10-male для 1/2″ SuperFlex (⌀13,5 мм)» × 1/2″ SF → номер детали «коаксиальный»
+   «4.3-10-female для 1/2″ SuperFlex» × 1/2″ SF → номер детали «коаксиальный»
+   «4.3-10-female для 7/8″» × 7/8″ → номер детали «коаксиальный»
+   «4.3-10-male для 7/8″» × 7/8″ → номер детали «коаксиальный»
+   «F-male для RG-11» × RG-11 → номер детали «F-male,»
+   «F-male резьбовой для RG-11» × RG-11 → номер детали «F-male,»
+   «SMA-female RG-141» × RG-141 → номер детали «S-211F»
+   «N-female RG-142» × RG-142 → номер детали «N-211F»
+   «N-male RG-142» × RG-142 → номер детали «N-111F»
+   «Fakra Z-Female» × RG-174 → номер детали «Fakra»
+   «FAKRA-female (тип C) для RG-174/RG-316» × RG-174 → номер детали «Fakra»
+   «FAKRA-female (тип D) для RG-174/RG-316» × RG-174 → номер детали «Fakra»
+   «FAKRA-female (тип Z) для RG-174/RG-316» × RG-174 → номер детали «Fakra»
+   «FAKRA-female (тип Z) с иглой для RG-174/RG-316» × RG-174 → номер детали «Fakra»
+   «SMA-female на корпус для RG-178/RG-316/RG-174» × RG-174 → номер детали «SMA»
+   «SMA-female на корпус для RG-178/RG-316/RG-174» × RG-178 → номер детали «SMA»
+   «N-female RG-223» × RG-223 → номер детали «N-211F»
+   «N-male RG-223» × RG-223 → номер детали «N-111F»
+   «SMA-female RG-223» × RG-223 → номер детали «S-211F»
+   «SMA-male R/A RG-223» × RG-223 → номер детали «S-121F»
+   «Fakra Z-Female» × RG-316 → номер детали «Fakra»
+   «FAKRA-female (тип C) для RG-174/RG-316» × RG-316 → номер детали «Fakra»
+   «FAKRA-female (тип D) для RG-174/RG-316» × RG-316 → номер детали «Fakra»
+   «FAKRA-female (тип Z) для RG-174/RG-316» × RG-316 → номер детали «Fakra»
+   «FAKRA-female (тип Z) с иглой для RG-174/RG-316» × RG-316 → номер детали «Fakra»
+   «SMA-female на корпус для RG-178/RG-316/RG-174» × RG-316 → номер детали «SMA»
+   «N-female RG-400» × RG-400 → номер детали «N-211F»
+   «N-male RG-400» × RG-400 → номер детали «N-111F»
+   «FAKRA-female (тип C) для RG-58» × RG-58 → номер детали «Fakra»
+   «FAKRA-female (тип D) для RG-58» × RG-58 → номер детали «Fakra»
+   «FAKRA-female (тип Z) для RG-58» × RG-58 → номер детали «Fakra»
+   «F-male компрессионный для RG-6» × RG-6 → номер детали «F-male»
+
+== остатки: сумма (приход − списано) | резерв | партий ==
+   S-111F: G+R до 44.000000 | 0.000000 | 1;  R после 44.000000 | 0.000000 | 1; на G осталось 0 | 0 | 0  ИТОГО РАВНО
+   все партии: 597 → 597, количества, места и движения без изменений: ДА
+
+== CSV-журнал отката (сохранить в docs/data/«КОАКС — слияние дублей 19.10.csv») ==
+вид,id,артикул G,артикул R,кабель,поле,было,стало
+ячейка,6aec1603-dfef-4924-bfda-21b9e00e48fb,UHF-Male U-112B,U-112B,DX-1000,"HEX обжима, мм",,"10,9"
+ячейка,0e80cd0f-b416-4fbd-b56e-9735d02d8d97,UHF-Male U-112B,U-112B,DX-10A,"HEX обжима, мм",,"10,9"
+ячейка,e53534e4-51b7-4133-8b6e-5a124d520075,UHF-Male U-112B,U-112B,H-1000,"HEX обжима, мм",,"10,9"
+ячейка,949de827-e49e-4e95-a3b2-08e14b7cbe06,MMCX-male R/A RG-174,13-121L,RG-174,Производитель,,LenoRF
+ячейка,9ff425ae-125b-4ee7-95f1-5f80e3700385,SMA-female RG-174,S-211L,RG-174,Производитель,,LenoRF
+ячейка,ef167653-8cd8-4c68-849e-eea66138e55b,SMA-male RG-174,S-111L,RG-174,Производитель,,LenoRF
+ячейка,ef167653-8cd8-4c68-849e-eea66138e55b,SMA-male RG-174,S-111L,RG-174,Тип пина,,пайка
+ячейка,7cf2d427-ce31-4584-90e7-6208f74e098f,SMA-male R/A RG-174,S-121L,RG-174,Производитель,,LenoRF
+ячейка,af3f53f8-fcaf-4bab-89ea-ad5b92d2aea7,SMA-female RG-178,S-235M,RG-178,Производитель,,LenoRF
+ячейка,4ec39ccd-e0c6-45bd-bf85-ebc6c291b83a,SMA-male RG-178,S-115M,RG-178,Производитель,,LenoRF
+ячейка,4cd7e92d-6832-4c9d-8d2a-aaeb4d27a745,U.FL-female (IPX-female) угловой для RG-178,U.FL,RG-178,"Волновое сопротивление, Ом",,50
+ячейка,4cd7e92d-6832-4c9d-8d2a-aaeb4d27a745,U.FL-female (IPX-female) угловой для RG-178,U.FL,RG-178,Исполнение,,угловой
+ячейка,4cd7e92d-6832-4c9d-8d2a-aaeb4d27a745,U.FL-female (IPX-female) угловой для RG-178,U.FL,RG-178,Крепление экрана,,обжимной
+ячейка,4cd7e92d-6832-4c9d-8d2a-aaeb4d27a745,U.FL-female (IPX-female) угловой для RG-178,U.FL,RG-178,Монтаж,,обжимной
+ячейка,4cd7e92d-6832-4c9d-8d2a-aaeb4d27a745,U.FL-female (IPX-female) угловой для RG-178,U.FL,RG-178,Покрытие,,центральный контакт: золото
+ячейка,4cd7e92d-6832-4c9d-8d2a-aaeb4d27a745,U.FL-female (IPX-female) угловой для RG-178,U.FL,RG-178,Пол,,гнездо
+ячейка,4cd7e92d-6832-4c9d-8d2a-aaeb4d27a745,U.FL-female (IPX-female) угловой для RG-178,U.FL,RG-178,Полярность,,обычная
+ячейка,4cd7e92d-6832-4c9d-8d2a-aaeb4d27a745,U.FL-female (IPX-female) угловой для RG-178,U.FL,RG-178,Серия,,U.FL
+ячейка,a2c86d1b-9074-4814-889f-778dec2f1ea3,UHF-Male U-112B,U-112B,RG-213,"HEX обжима, мм",,"10,9"
+ячейка,83fbe83a-032a-4d96-948c-cbadec8a15ba,MMCX-male R/A RG-174,13-121L,RG-316,Производитель,,LenoRF
+ячейка,ed6fc3ff-93b6-4b5f-ab4f-4352505dae03,SMA-female RG-174,S-211L,RG-316,Производитель,,LenoRF
+ячейка,10dbdb61-24ec-4b97-b2a0-9b448402e263,SMA-male RG-174,S-111L,RG-316,Производитель,,LenoRF
+ячейка,10dbdb61-24ec-4b97-b2a0-9b448402e263,SMA-male RG-174,S-111L,RG-316,Тип пина,,пайка
+ячейка,e6290ece-2d95-4108-bdef-ff74ebfc7581,SMA-male R/A RG-174,S-121L,RG-316,Производитель,,LenoRF
+ячейка,1be8f926-8cc5-4b20-a3fa-ed5727d4dbb9,SMA-male RG-402,S-115-141,RG-402,Производитель,,LenoRF
+ячейка,99005b13-7175-4e1b-b10f-31b343bd64fe,SMA-female RG-405,S-235-085,RG-405,Производитель,,LenoRF
+ячейка,a023016b-4261-45fa-8dfc-8654dbf2f53b,SMA-male RG-405,S-115-085,RG-405,Производитель,,LenoRF
+ячейка,66769fbd-e02b-433a-9811-bae1dae5c838,N-female RG58,N-211F,RG-58,Производитель,,LenoRF
+ячейка,0d083bc3-905e-4930-ab05-1385f98200dd,N-male RG58,N-111F,RG-58,Производитель,,LenoRF
+ячейка,49c015d5-204d-413f-a5f9-3eee31d512ed,SMA-female RG58,S-211F,RG-58,Производитель,,LenoRF
+ячейка,70aacbb8-6662-46c3-8c62-59606b2aec74,SMA-male RG58,S-111F,RG-58,Артикул поставщика,gsm-repiteri.ru: 1314; kroks.ru: 546; kroks.ru: 345,gsm-repiteri.ru: 1314; kroks.ru: 345
+ячейка,70aacbb8-6662-46c3-8c62-59606b2aec74,SMA-male RG58,S-111F,RG-58,Производитель,,LenoRF
+ячейка,289b0857-0a09-4c61-829d-27cb76dfa3a9,SMA-male R/A RG58,S-121F,RG-58,Производитель,,LenoRF
+ячейка,e9dcdee7-c570-43ca-a3e3-149275fbb3f6,UHF-Male U-112B,U-112B,RG-8,"HEX обжима, мм",,"10,9"
+ячейка,e55f4331-7488-4763-ad3b-4a269c38fdb9,MMCX-male R/A RG-174,13-121L,RG-174,Примечание,,дубль → 13-121L (19.10.2026)
+ячейка,a12fd1d5-3329-4693-b679-5edd4a6350ee,SMA-female RG-174,S-211L,RG-174,Примечание,,дубль → S-211L (19.10.2026)
+ячейка,39c6b25c-387f-41c0-864d-0e1878fe7b92,SMA-male RG-174,S-111L,RG-174,Примечание,,дубль → S-111L (19.10.2026)
+ячейка,972284bf-5b96-45de-a78f-a80b5ae732f4,SMA-male R/A RG-174,S-121L,RG-174,Примечание,,дубль → S-121L (19.10.2026)
+ячейка,06364099-2ea5-4f7b-9425-1dcc3a73c742,SMA-female RG-178,S-235M,RG-178,Примечание,,дубль → S-235M (19.10.2026)
+ячейка,2efa16cf-07c5-43b1-b122-5d0ef836925e,SMA-male RG-178,S-115M,RG-178,Примечание,,дубль → S-115M (19.10.2026)
+ячейка,5c74ccc0-4602-47f5-bd62-99127d06acfc,U.FL-female (IPX-female) угловой для RG-178,U.FL,RG-178,Примечание,номер на сайте: 3148,дубль → U.FL (19.10.2026); номер на сайте: 3148
+ячейка,aee81c24-9c2e-40c8-834e-b5b90e6bef5f,UHF-Male U-112B,U-112B,RG-213,Примечание,,дубль → U-112B (19.10.2026)
+ячейка,257ed546-0990-48fb-a2af-d5cb2c332aa4,MMCX-male R/A RG-316,13-121L,RG-316,Примечание,,дубль → 13-121L (19.10.2026)
+ячейка,685b95bb-6343-4e3f-9d01-83f18618bb42,SMA-female RG-316,S-211L,RG-316,Примечание,,дубль → S-211L (19.10.2026)
+ячейка,930d3803-7674-4039-9225-9e5f5a0a0c5b,SMA-male RG-316,S-111L,RG-316,Примечание,,дубль → S-111L (19.10.2026)
+ячейка,5a7588e3-36ca-4315-90bd-8f04231f34ed,SMA-male R/A RG-316,S-121L,RG-316,Примечание,,дубль → S-121L (19.10.2026)
+ячейка,351ad3d6-392f-4eef-a87f-dffaa6acdc17,SMA-male RG-402,S-115-141,RG-402,Примечание,,дубль → S-115-141 (19.10.2026)
+ячейка,fd5d3cc9-b929-4264-af10-c7326155e4a3,SMA-female RG-405,S-235-085,RG-405,Примечание,,дубль → S-235-085 (19.10.2026)
+ячейка,2fef5327-5b1b-42b4-82ec-5c24c1236739,SMA-male RG-405,S-115-085,RG-405,Примечание,,дубль → S-115-085 (19.10.2026)
+ячейка,f0b7d415-6609-44b3-ac2c-7a234d986e28,N-female RG58,N-211F,RG-58,Примечание,,дубль → N-211F (19.10.2026)
+ячейка,8a4b1c62-c3fc-4f31-91de-2eab7e389bdc,N-male RG58,N-111F,RG-58,Примечание,,дубль → N-111F (19.10.2026)
+ячейка,466e075c-a318-4aa6-8353-900fa4bc60c7,SMA-female RG58,S-211F,RG-58,Примечание,,дубль → S-211F (19.10.2026)
+ячейка,db015e7a-9afa-4e60-8eb6-74729c9555ac,SMA-male RG58,S-111F,RG-58,Примечание,,дубль → S-111F (19.10.2026)
+ячейка,87f64575-6232-455e-9d4c-152f45bfc2e2,SMA-male R/A RG58,S-121F,RG-58,Примечание,,дубль → S-121F (19.10.2026)
+ячейка,e151177c-d134-47eb-b2c2-0763cacfd49e,TNC-Female RG58,T-211F,RG-58,Примечание,,дубль → T-211F (19.10.2026)
+
+ИТОГО {"пар": 34, "разногласий": 0, "ячеек к записи": 25, "партий": 0, "пометок": 21, "живых ссылок": 0, "проблем": 0} (записано)

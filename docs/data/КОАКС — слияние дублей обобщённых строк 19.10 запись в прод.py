@@ -4,6 +4,9 @@
 Пара G → R (G — обобщённая строка, R — строка настоящего артикула, КАБЕЛЬ ТОТ ЖЕ) находится сама, по данным базы: в
 «Наименовании» G стоит «Разъём <номер детали> (…)» (его проставила запись «реальные артикулы и коды поставщика 19.10»), и у
 того же кабеля есть строка R с «Артикулом» = номер детали. Строки без пары (нет R) не трогаются, они в списке «без пары».
+G, у которой в «Наименовании» стоит её собственный артикул («Разъём S-231L NGT (…)» при «Артикуле» «S-231L NGT»), — свой товар,
+не обобщённая строка: в пары не берётся. Длины L1–L3 из G в пустую ячейку R копируются только если у G они подтверждены документом
+(«L1–L3:» в её «Источнике данных»), цеховое значение без документа в R не переносится (владелец 19.10: документация превыше).
 
 Что делает (журнал — CSV в конце вывода, откат — режим rollback):
   1. Значения, ячейка за ячейкой. У G есть значение, у R пусто — копируется в R (тем же путём, что «Изменить» в «Базе
@@ -64,6 +67,7 @@ NOTE_PREFIX = "дубль → "
 SUPPLIER_CODE = "Артикул поставщика"
 OFFER = ("Поставщик", "Ссылка", "Цена, ₽", "Дата цены")
 # Не сравниваются и не копируются: ключ строки, свои поля строки.
+LENGTHS = frozenset({"L1", "L2", "L3", "L+", "L-"})
 OWN = frozenset({"Артикул", "Провод", "Наименование", NOTE, "Источник данных", SUPPLIER_CODE, *OFFER})
 PART_NUMBER = re.compile(r"^Разъ[её]м\s+([^\s(]+)")
 # Журналы и истории: имя в них остаётся как было, не блокирует.
@@ -146,6 +150,9 @@ def find_pairs(records):
         part = match.group(1)
         if fold(part) == fold(article_of(g)):
             continue
+        # «Разъём S-231L NGT (…)»: настоящий артикул G — всё до скобки, а не первое слово; такая G — свой товар, не обобщённая
+        if fold(match.string.strip()).startswith(fold(f"Разъём {article_of(g)} (")):
+            continue
         real = by_key.get((fold(part), cable_key(cable_of(g))))
         if real is None or real.id == g.id:
             unpaired.append((g, part))
@@ -161,11 +168,14 @@ def plan_values(pair: Pair, state: dict, groups: dict, known: set[str]) -> None:
     siblings = [sheet(state[i]) for i in groups[fold(article_of(pair.r))] if i != pair.r.id]
     sibling_ids = [i for i in groups[fold(article_of(pair.r))] if i != pair.r.id]
     edits: list[tuple[str, str, str, bool]] = []  # поле, было, стало, идёт ли в остальные строки артикула R
+    g_documented = "L1–L3:" in gs.get("Источник данных", "") or "L1–L3:" in str(g.get("Источник данных", ""))
     for name in sorted(set(gs) - OWN):
         want = gs[name]
         if not want:
             continue
         have = rs.get(name, "")
+        if not have and name in LENGTHS and not g_documented:
+            continue  # длины без документа у G (цеховое значение) в пустую ячейку R не копируются
         if have:
             if not same(have, want):
                 pair.conflicts.append((name, want, have))
