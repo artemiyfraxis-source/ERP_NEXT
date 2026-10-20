@@ -11,7 +11,7 @@
 .td-status-signing { color: var(--tone-warn); font-weight: 600; }
 .td-status-annulled { color: var(--tone-neutral); text-decoration: line-through; }
 .td-findings-box { margin: 8px 0 0; font-size: 13px; }
-.td-findings-box > summary { cursor: pointer; color: var(--muted, #5f6368); }
+.td-findings-box > summary { cursor: pointer; color: var(--muted-foreground); }
 .td-findings { margin: 4px 0 0; padding: 0; list-style: none; font-size: 13px; }
 .td-findings li { padding: 3px 0; }
 .td-finding-blocking { color: var(--tone-danger); }
