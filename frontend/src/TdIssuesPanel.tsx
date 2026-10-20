@@ -11,14 +11,19 @@ import "./TdIssues.css";
 
 const BLOCKED_TIP = "Есть замечания, которые блокируют: исправьте их и повторите";
 
+/** Сводка нормоконтроля одной строкой; список раскрыт сам, только если есть блокирующие — иначе не теснит ЭТК. */
 function FindingsList({ findings }: { findings: TdFinding[] }) {
   if (!findings.length) return null;
-  return <ul className="td-findings" aria-label="Замечания нормоконтроля">
-    {findings.map((finding, index) => <li key={`${finding.code}-${finding.operation_key ?? ""}-${index}`}
-      className={finding.severity === "blocking" ? "td-finding-blocking" : "td-finding-warning"}>
-      {finding.severity === "blocking" && <strong>блокирует</strong>} {finding.text}
-    </li>)}
-  </ul>;
+  const blocking = findings.filter((finding) => finding.severity === "blocking").length;
+  return <details className="td-findings-box" open={blocking > 0 || undefined}>
+    <summary>Нормоконтроль: блокирующих {blocking}, предупреждений {findings.length - blocking}</summary>
+    <ul className="td-findings" aria-label="Замечания нормоконтроля">
+      {findings.map((finding, index) => <li key={`${finding.code}-${finding.operation_key ?? ""}-${index}`}
+        className={finding.severity === "blocking" ? "td-finding-blocking" : "td-finding-warning"}>
+        {finding.severity === "blocking" && <strong>блокирует</strong>} {finding.text}
+      </li>)}
+    </ul>
+  </details>;
 }
 
 /** Сопроводительный лист: серийный номер, партия и количество вводятся перед печатью. */
