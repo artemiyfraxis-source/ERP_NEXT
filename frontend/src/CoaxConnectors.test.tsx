@@ -26,6 +26,10 @@ it("reads the series, gender and angle from the card columns or from the type", 
   expect(coaxSeries({ coaxType: "N-female flange" })).toBe("N");
   expect(coaxSeries({ coaxType: "Fakra-female" })).toBe("Fakra");
   expect(coaxSeries({ coaxType: "U.FL-female (IPX-female)" })).toBe("U.FL");
+  expect(coaxSeries({ coaxType: "IPEX-female" })).toBe("MHF1");
+  expect(coaxSeries({ coaxType: "MHF1-plug" })).toBe("MHF1");
+  expect(coaxSeries({ coaxType: "W.FL-female" })).toBe("MHF1");
+  expect(coaxSeries({ coaxType: "u.fl-female" })).toBe("U.FL");
   expect(coaxSeries({ coaxType: "DIN-male", Серия: "7/16 DIN" })).toBe("7/16 DIN");
   expect(coaxSeries({ coaxType: "СР-50-male" })).toBe("СР-50");
   expect(coaxSeries({ coaxType: "2.92mm-male", Серия: "2.92mm" })).toBe("2.92mm");
