@@ -105,6 +105,15 @@ def test_operation_code_field_itself_is_not_a_printed_text():
     assert not [item for item in normcontrol(_issue([_operation(code="CUT_WIRE+1strip")])) if item["code"] == "internal_code"]
 
 
+def test_template_code_prefix_in_operation_name_is_not_a_finding():
+    # Шаблоны ЭТК называются «CUT_WIRE_auto | Резка»; печать убирает префикс — нормоконтроль не блокирует выпуск.
+    operation = _operation(title="CUT_WIRE_auto | Резка", card={"name": "CUT_WIRE+1strip | Резка + зачистка", "steps": [
+        {"number": "1", "kind": "Контроль", "text": "Контролировать длину", "tolerance": "±5 мм"},
+    ]})
+    findings = normcontrol(_issue([operation]))
+    assert not [item for item in findings if item["code"] == "internal_code"]
+
+
 def test_warnings_for_missing_control_time_kd_and_sto_section():
     operation = _operation(
         code="Handjob", card={"name": "Сборка", "steps": [{"number": "1", "kind": "Работа", "text": "Собрать", "tolerance": ""}]},

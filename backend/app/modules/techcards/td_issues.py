@@ -47,6 +47,7 @@ MAX_NAME = 255
 
 # Внутренний код латиницей с подчёркиванием (cutWireStrip не ловится — у него нет «_»; INS_гофра — кириллица).
 _LATIN_CODE = re.compile(r"\b[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+\b")
+_CODE_PREFIX = re.compile(r"^\s*[A-Za-z][A-Za-z0-9_+./-]*\s*\|\s*")
 
 
 class TdIssueError(Exception):
@@ -255,9 +256,15 @@ def _finding(code: str, severity: str, key: str | None, text: str) -> dict[str, 
     return {"code": code, "severity": severity, "operation_key": key, "text": text}
 
 
+def _without_code_prefix(value: object) -> str:
+    """Название шаблона «CUT_WIRE_auto | Резка» печатается без кода (etkOperationName на фронте) — префикс не замечание."""
+    return _CODE_PREFIX.sub("", _text(value))
+
+
 def _printed_texts(operation: dict[str, Any]) -> list[str]:
     card = operation.get("card") if isinstance(operation.get("card"), dict) else {}
-    texts = [operation.get("title"), operation.get("name"), card.get("name")]
+    texts = [_without_code_prefix(operation.get("title")), _without_code_prefix(operation.get("name")),
+             _without_code_prefix(card.get("name"))]
     for step in card.get("steps") or []:
         if isinstance(step, dict):
             texts += [step.get("text"), step.get("tolerance")]
@@ -291,7 +298,7 @@ def normcontrol(issue: TdIssue) -> list[dict[str, Any]]:
     for position, operation in enumerate(snapshot_operations(issue.snapshot), start=1):
         key = operation_key_of(operation)
         label = f"Операция {operation.get('position') or position}"
-        title = _text(operation.get("title") or operation.get("name") or (operation.get("card") or {}).get("name"))
+        title = _without_code_prefix(operation.get("title") or operation.get("name") or (operation.get("card") or {}).get("name"))
         if title:
             label += f" «{title}»"
         card = operation.get("card") if isinstance(operation.get("card"), dict) else {}
