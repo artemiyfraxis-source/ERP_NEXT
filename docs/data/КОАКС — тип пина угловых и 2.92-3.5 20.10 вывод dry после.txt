@@ -1,0 +1,7 @@
+ Container erp-db-1 Running 
+ Container erp-db-1 Waiting 
+ Container erp-db-1 Healthy 
+ Container erp-api-run-be24337b5f70 Creating 
+ Container erp-api-run-be24337b5f70 Created 
+строк БД.КОАКС: 608; строк в плане: 54
+ИТОГО {"строк": 54, "ячеек к записи/записано": 0, "уже так": 54, "проблем": 0} (проверка, ничего не записано)
