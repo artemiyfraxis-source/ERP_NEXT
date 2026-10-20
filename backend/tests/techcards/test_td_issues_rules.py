@@ -166,7 +166,7 @@ def test_change_needs_notice_and_reason():
 def test_every_known_operation_family_has_an_sto_section():
     codes = {row[0] for row in csv.reader(OPS_TSV.open(encoding="utf-8"), delimiter="\t") if row and row[0]}
     expected = {
-        "CUT_WIRE+1strip": "4.1", "CUT_COAX+2strip": "4.1", "CUT_гофра": "4.1", "STRIP_F/FTP_ethernet": "4.2",
+        "CUT_WIRE+1strip": "4.1, 4.2", "CUT_COAX+2strip": "4.1, 4.2", "CUT_гофра": "4.1", "STRIP_F/FTP_ethernet": "4.2",
         "PRS_TERMINAL_auto": "4.3", "PRS_SLEEVE_coax": "4.3", "PRS_НШВИ": "4.3", "SDR_tin": "4.4.1", "SDR_W_W": "4.4.4",
         "SDR_COAX_pin_R/A": "4.4.5", "SDR_GX12": "4.4", "HEAT_TYT_short": "4.5", "INS_TUT": "4.5", "INS_SLEEVE_coax": "4.5",
         "INS_WRAP": "4.5", "INS_BRAID": "4.5", "INS_NEYLON": "4.5", "INS_CAP": "4.5", "INS_END_CAP": "4.5",
@@ -184,6 +184,10 @@ def test_every_known_operation_family_has_an_sto_section():
     assert unresolved == []
     assert sto_section("PRS_TERMINAL_auto") == {"section": "4.3", "title": "Опрессовка (обжим) контактов и наконечников"}
     assert sto_section("SDR_tin")["title"] == "Лужение"
+    # Совмещённая операция — все её разделы СТО по порядку.
+    assert sto_section("CUT_WIRE+1crimp+tin") == {
+        "section": "4.1, 4.3, 4.4.1", "title": "Резка; Опрессовка (обжим) контактов и наконечников; Лужение",
+    }
     assert sto_section("") is None and outside_sto("OTK_auto") and outside_sto("BOX") and not outside_sto("Handjob")
 
 

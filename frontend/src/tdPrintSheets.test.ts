@@ -39,7 +39,13 @@ const second = {
     steps: [{ number: "1", kind: "Операция", text: "Облудить жилу" }, { number: "2", kind: "Контроль", text: "Осмотреть пайку", tolerance: "Без наплывов" }],
     tooling: [{ section: "Оборудование", name: "Паяльная станция", parameters: "320 °C" }],
   },
-  components: [{ art: "SELLER-ART-999", name: "Провод ПВАМ 1,5", kd: "ПВАМ-1,5 ТУ", norm: "700", unit: "М." }],
+  components: [
+    { art: "SELLER-ART-999", name: "Провод ПВАМ 1,5", kd: "ПВАМ-1,5 ТУ", norm: "700", unit: "М." },
+    { art: "SELLER-ART-555", name: "Контакт Mini-Fit Jr.", norm: "140", unit: "Шт." },
+    // Провод из БД.ПРОВ: наименования нет, марка — в «art»; два цвета не сливаются в одну строку ВМ.
+    { art: "ПВАМ 0,5 черный", name: "", kd: "", norm: "50", unit: "М." },
+    { art: "ПВАМ 0,5 белый", name: "", kd: "", norm: "50", unit: "М." },
+  ],
 };
 const third = { position: 3, code: "INS_HSG", type: "insHousing", title: "Монтаж в корпус", card: { name: "Монтаж в корпус", steps: [{ kind: "Операция", text: "Вставить контакты" }] } };
 
@@ -104,6 +110,7 @@ it("МК: строки А/Б/К/М, номера 005, 010…, время в ми
   expect(mk).toContain("<td>Б</td>");
   expect(mk).toContain("<td>К</td>");
   expect(mk).toContain("<td>М</td>");
+  expect(mk).toContain("ПВАМ 0,5 черный"); // провод без наименования — марка из БД.ПРОВ, строка «М»
   for (const number of ["005", "010", "015"]) expect(mk).toContain(`<td>${number}</td>`);
   expect(mk).toContain("<td>1,50</td>"); // 90 с подготовки
   expect(mk).toContain("<td>0,20</td>"); // 12 с на штуку

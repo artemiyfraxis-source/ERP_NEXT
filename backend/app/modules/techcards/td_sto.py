@@ -75,8 +75,24 @@ def sto_section(code: str) -> dict[str, str] | None:
         return None
     for pattern, section in _RULES:
         if pattern.search(code):
-            return {"section": section, "title": _titles()[section]}
-    return None
+            found = {"section": section, "title": _titles()[section]}
+            break
+    else:
+        return None
+    # Совмещённая операция «CUT_WIRE+1crimp+tin» — резка, опрессовка и лужение в одном: даём все разделы СТО.
+    extra = [part for part, pattern in _COMBINED if pattern.search(code) and part != found["section"]]
+    if extra:
+        sections = [found["section"], *extra]
+        found = {"section": ", ".join(sections), "title": "; ".join(_titles()[part] for part in sections)}
+    return found
+
+
+_COMBINED = (
+    ("4.2", re.compile(r"\+\d*strip", re.IGNORECASE)),
+    ("4.3", re.compile(r"\+\d*crimp", re.IGNORECASE)),
+    ("4.4.1", re.compile(r"\+tin\b", re.IGNORECASE)),
+    ("4.6", re.compile(r"\+\d*mark", re.IGNORECASE)),
+)
 
 
 def outside_sto(code: str) -> bool:

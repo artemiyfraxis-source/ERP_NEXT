@@ -119,10 +119,17 @@ function perItem(norm: unknown, batch: number): string {
   return String(Math.round((value / batch) * 10000) / 10000).replace(".", ",");
 }
 
-const isMaterial = (item: Row): boolean => /материал/i.test(`${text(item.kind)} ${text(item.category)} ${text(item.section)}`);
+// Провод и прочее, что нормируется в метрах, — материал (строка «М» по ГОСТ 3.1118), а не комплектующее.
+const isMaterial = (item: Row): boolean =>
+  /материал/i.test(`${text(item.kind)} ${text(item.category)} ${text(item.section)}`) || /^м\.?$/i.test(text(item.unit).trim());
+
+/** У провода из БД.ПРОВ наименования нет — марка («ПВАМ 1,5 белый») лежит в «art»; печатаем её, раз нет КД. */
+function itemName(item: Row): string {
+  return text(item.name).trim() || text(item.kd).trim() || text(item.art).trim() || "—";
+}
 
 function componentName(item: Row): string {
-  const name = text(item.name).trim() || text(item.kd).trim() || "—";
+  const name = itemName(item);
   return item.kd && text(item.kd).trim() && name !== text(item.kd).trim() ? `${name} (по КД: ${text(item.kd).trim()})` : name;
 }
 
@@ -176,6 +183,11 @@ const KIT_CSS = `
   .stamp table { width: 100%; height: 100%; border-collapse: collapse; table-layout: fixed; }
   .stamp td { border: 0.25mm solid #000; padding: 0 0.8mm; text-align: center; vertical-align: middle; overflow: hidden; }
   .stamp td.l { text-align: left; }
+  .stamp-left col:nth-child(1) { width: 7mm; } .stamp-left col:nth-child(2) { width: 8mm; }
+  .stamp-left col:nth-child(3) { width: 30mm; } .stamp-left col:nth-child(4) { width: 16mm; }
+  .stamp-left col:nth-child(5) { width: 12mm; }
+  .stamp-right col:nth-child(2) { width: 15mm; } .stamp-right col:nth-child(3) { width: 15mm; }
+  .stamp-right col:nth-child(4) { width: 18mm; }
   .stamp td.h { background: #f4f4f4; }
   .stamp .des { font-size: 14pt; font-weight: bold; height: 11mm; }
   .stamp .name { font-size: 9pt; text-align: left; }
@@ -318,8 +330,8 @@ function materialSheets(model: TdPrintModel, ops: Op[]): string[] {
   const batch = batchOf(model);
   const sums = new Map<string, { name: string; kd: string; unit: string; total: number; ops: string[]; material: boolean; count: number }>();
   ops.forEach((op) => op.components.forEach((item) => {
-    const kd = text(item.kd).trim(), name = text(item.name).trim() || kd || "—", unit = unitLabel(text(item.unit)) || "—";
-    const entry = aggregate(sums, `${name}\u0000${kd}\u0000${unit}`, () => ({ name, kd, unit, total: 0, ops: [], material: isMaterial(item), count: 0 }));
+    const kd = text(item.kd).trim(), name = itemName(item), unit = unitLabel(text(item.unit)) || "—";
+    const entry = aggregate(sums, `${name}\u0000${kd}\u0000${text(item.art).trim()}\u0000${unit}`, () => ({ name, kd, unit, total: 0, ops: [], material: isMaterial(item), count: 0 }));
     entry.total += num(item.norm);
     entry.count += 1;
     if (!entry.ops.includes(op.number)) entry.ops.push(op.number);
