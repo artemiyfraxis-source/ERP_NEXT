@@ -336,7 +336,11 @@ def lots(
     q: Annotated[str, Query(max_length=255)] = "",
     zero: bool = False,
     warehouse: Annotated[str | None, Query(pattern="^(ЦАР|ЖУК)$")] = None,
+    sort: Annotated[str | None, Query(pattern="^(type|grn|balance|reserved|available|lots|place|series|article|name|warehouse)$")] = None,
+    desc: bool = False,
+    group: Annotated[str, Query(pattern="^(type|place|name|series|grn)?$")] = "",
 ) -> dict:
+    """`sort` (+ `desc`, `group` as in the grouped table) orders the WHOLE filter before the page is cut."""
     try:
         lots, total = warehouse_lots(
             uow_factory(),
@@ -345,6 +349,9 @@ def lots(
             query=q,
             warehouse=warehouse,
             include_zero=zero,
+            sort=sort,
+            desc=desc,
+            group=group,
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error

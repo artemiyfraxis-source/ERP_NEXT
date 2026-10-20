@@ -2817,14 +2817,23 @@ export type WarehouseTotals = {
 };
 
 export const warehouseApi = {
-  list: ({ after, query = "", includeZero = false, warehouse = "" }: {
+  list: ({ after, query = "", includeZero = false, warehouse = "", sort = "", desc = false, group = "" }: {
     after?: string;
     query?: string;
     includeZero?: boolean;
     warehouse?: string;
+    /** The column of the grouped table: the server orders the whole filter by it before the page is cut. */
+    sort?: string;
+    desc?: boolean;
+    group?: string;
   } = {}) => {
     const params = new URLSearchParams();
     if (after) params.set("after", after);
+    if (sort) {
+      params.set("sort", sort);
+      if (desc) params.set("desc", "true");
+      if (group) params.set("group", group);
+    }
     if (query.trim()) params.set("q", query.trim());
     if (includeZero) params.set("zero", "true");
     if (warehouse) params.set("warehouse", warehouse);

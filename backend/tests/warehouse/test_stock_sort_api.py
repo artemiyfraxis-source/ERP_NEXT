@@ -1,0 +1,74 @@
+from decimal import Decimal
+
+import pytest
+
+from app.main import app
+from app.modules.warehouse.domain import StockLot
+from app.modules.warehouse.application import sort_stock_lots
+from tests.warehouse.test_api import warehouse_api  # noqa: F401  (the fixture)
+
+
+def _lot(number: int, *, article: str = "", quantity: str = "5", series: str = "") -> StockLot:
+    return StockLot.create(
+        warehouse="ЦАР", grn=f"OLD.26.{number:07d}", package="", article=article or f"ART-{number}", series=series,
+        name=f"Позиция {number}", item_type="Комплектующие", purpose="FRX.001", unit="шт", quantity=Decimal(quantity),
+        storage_location="1F4", source_receiving_ids=("20000000-0000-0000-0000-000000000009",),
+    )
+
+
+@pytest.fixture()
+def lots_client(warehouse_api):  # noqa: F811
+    client, _first = warehouse_api
+    # ГРН is a text with a number: 0000598 must come before 0000100 when descending, whatever the insert (id) order.
+    numbers = [595, 561, 559, 100, 598, 591, 592, 593, 594, 596, 597, 560, 9, 1000]
+    with app.state.warehouse_uow_factory() as uow:
+        for index, number in enumerate(numbers):
+            uow.warehouse.add(_lot(number, quantity=str(1 + (index * 7) % 11), series=f"S{index % 3}"))
+        uow.commit()
+    return client
+
+
+def _pages(client, **params):
+    lots, after = [], None
+    while True:
+        page = client.get("/api/stock", params={**params, "limit": 3, **({"after": after} if after else {})}).json()
+        lots += page["lots"]
+        after = page["next_cursor"]
+        if not after:
+            return lots, page["total"]
+
+
+def test_grn_descending_is_global_across_pages(lots_client):
+    lots, total = _pages(lots_client, sort="grn", desc="true")
+    grns = [lot["grn"] for lot in lots]
+    assert grns[:8] == [f"OLD.26.{n:07d}" for n in (1000, 598, 597, 596, 595, 594, 593, 592)]
+    assert grns == sorted(grns, reverse=True)
+    assert total == len(lots) == len(set(grns)) > 3
+
+
+def test_first_page_alone_already_has_the_global_top(lots_client):
+    first = lots_client.get("/api/stock", params={"sort": "grn", "desc": "true", "limit": 3}).json()
+    assert [lot["grn"] for lot in first["lots"]] == [f"OLD.26.{n:07d}" for n in (1000, 598, 597)]
+    assert first["next_cursor"] is not None
+
+
+@pytest.mark.parametrize("key,field", [("balance", "balance"), ("grn", "grn"), ("series", "series")])
+@pytest.mark.parametrize("desc", [False, True])
+def test_every_column_sorts_the_whole_stock(lots_client, key, field, desc):
+    lots, _ = _pages(lots_client, sort=key, desc=str(desc).lower())
+    if key == "balance":
+        values = [Decimal(lot[field]) for lot in lots]
+    else:
+        values = [lot[field] for lot in lots]
+    assert values == sorted(values, reverse=desc)
+    assert len({lot["id"] for lot in lots}) == len(lots)  # no lot twice, none lost between pages
+
+
+def test_unknown_sort_is_rejected(lots_client):
+    assert lots_client.get("/api/stock", params={"sort": "id; drop"}).status_code == 422
+
+
+def test_natural_order_of_numbers_in_text():
+    first, second = _lot(9, article="A-9"), _lot(10, article="A-10")
+    assert [lot.article for lot in sort_stock_lots([second, first], "article", False)] == ["A-9", "A-10"]
+    assert [lot.article for lot in sort_stock_lots([first, second], "article", True)] == ["A-10", "A-9"]
