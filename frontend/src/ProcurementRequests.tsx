@@ -197,7 +197,7 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
           <span className="muted">Ход закупки:</span> <StatusChips counts={current ? current.counts : totals} />
         </span>
         <span className="spacer" />
-        {canAct && (
+        {!readOnly && (
           <button
             type="button" className="secondary small"
             title="Оформить заявку — проект подставится"
