@@ -6,6 +6,11 @@
 .etk-route-actions { display: flex; gap: 6px; margin-left: auto; }
 .etk-dag-pager { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .etk-dag-pager + .etk-route-actions { margin-left: 4px; }
+/* «− N % +» — масштаб схемы; щелчок по проценту — вписать (задание) или 100 % (техкарта). */
+.etk-dag-zoomer { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.etk-dag-zoomer + .etk-dag-pager, .etk-dag-zoomer + .etk-route-actions { margin-left: 4px; }
+.etk-dag-zoomer button { min-width: 34px; font-size: 16px; line-height: 1; }
+.etk-dag-zoomer .etk-dag-zoom-now { min-width: 58px; font-size: 13px; font-variant-numeric: tabular-nums; }
 .etk-dag-pager button { min-width: 34px; font-size: 18px; line-height: 1; }
 .etk-route-final { flex: none; align-self: center; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); font-size: 12px; font-style: normal; font-weight: 700; }
 /* Рамка листания: ряд колонок шире рамки — полоса прокрутки снизу и тень у края, за которым ещё блоки; страница не едет. */
@@ -51,6 +56,7 @@
 .etk-dag-top .etk-route-final + .etk-dag-here { margin-left: 0; }
 /* «ваше задание» — ПФ монтажника в схеме задания. */
 .etk-dag-here { background: var(--primary); color: #fff; }
+.etk-dag-brief { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
 .etk-dag-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
 .etk-dag-ins { display: grid; padding-top: 5px; border-top: 1px solid var(--border); font-size: 13px; }
 .etk-dag-in { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 18px; }
@@ -81,5 +87,5 @@
 .etk-dag-out .num { flex: none; font-variant-numeric: tabular-nums; }
 @media (pointer: coarse) {
   .etk-dag-ops button, .etk-dag-opline { min-height: 40px; align-items: center; }
-  .etk-dag-pager button { min-width: 44px; min-height: 40px; }
+  .etk-dag-pager button, .etk-dag-zoomer button { min-width: 44px; min-height: 40px; }
 }

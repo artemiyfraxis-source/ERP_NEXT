@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EtkRoute, EtkRouteBlock, Principal, ProjectTechcard } from "./api";
 import { EtkSheet } from "./ProjectEtk";
-import { COLUMN_MAX, COLUMN_MIN, GAP, OPEN_MIN, etkDiagramWidths } from "./EtkRouteDiagram";
+import { COLUMN_MAX, COLUMN_MIN, GAP, OPEN_MIN, ZOOM_MIN, etkDiagramFit, etkDiagramWidths, etkOpRuns } from "./EtkRouteDiagram";
 import { buildPrintDocumentHtml } from "./print";
 import { etkPrintPages } from "./etkPrint";
 import { etkDiagramCrossings, etkPartSource, etkSourceLines, etkPfGroups, etkRouteBranches, etkRouteChips, etkRouteDiagram, etkRouteLevels, etkRouteOf, etkRouteSummary, etkSemiSource, pluralBlocks } from "./etkRoute";
@@ -184,6 +184,38 @@ describe("ETK scheme of ПФ in the fitter's task", () => {
     fireEvent.click(boxOf(/ПФ 1.1 · Резка провода/));
     expect(boxOf(/ПФ 1.1 · Резка провода/)).toHaveClass("picked");
     expect(screen.getByLabelText("Операции задания")).toBeInTheDocument();
+  });
+
+  it("folds the other ПФ to name, operation numbers and output so the scheme fits the tablet", async () => {
+    await renderTask({ position: 3, positions: [3, 4] });
+    const other = boxOf(/ПФ 1.1 · Резка провода/);
+    expect(within(other).queryByRole("list")).toBeNull();
+    expect(within(other).queryByRole("img")).toBeNull();
+    expect(within(other).getByText("оп. 01")).toBeInTheDocument();
+    expect(within(boxOf(/ПФ 2 · Опрессовка/)).getByRole("list", { name: "Операции ПФ 2" })).toBeInTheDocument();
+  });
+
+  it("scales the scheme with «− N % +», remembers it, and the percent goes back to fit", async () => {
+    window.localStorage.clear();
+    const { container } = await renderTask({ position: 3, positions: [3, 4] });
+    const frame = () => container.querySelector(".etk-dag") as HTMLElement;
+    expect(screen.getByRole("button", { name: /Масштаб 100 %/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Схема мельче" }));
+    fireEvent.click(screen.getByRole("button", { name: "Схема мельче" }));
+    expect(screen.getByRole("button", { name: /Масштаб 80 %/ })).toBeInTheDocument();
+    expect(frame().style.transform).toBe("scale(0.8)");
+    expect(window.localStorage.getItem("etk-dag-zoom:task")).toBe("0.8");
+    fireEvent.click(screen.getByRole("button", { name: /Масштаб 80 %/ }));
+    expect(frame().style.transform).toBe("");
+    expect(window.localStorage.getItem("etk-dag-zoom:task")).toBeNull();
+  });
+
+  it("fits the height in 5 % steps, never smaller than the readable minimum and never enlarges", () => {
+    expect(etkDiagramFit(1000, 660)).toBe(0.65);
+    expect(etkDiagramFit(5000, 600)).toBe(ZOOM_MIN);
+    expect(etkDiagramFit(300, 900)).toBe(1);
+    expect(etkDiagramFit(0, 900)).toBe(1);
+    expect(etkOpRuns([6, 7, 8, 9, 14, 15, 20], (n) => String(n).padStart(2, "0"))).toBe("06–09·14·15·20");
   });
 
   it("lights the one operation of a single-operation task", async () => {

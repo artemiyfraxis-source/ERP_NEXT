@@ -150,3 +150,32 @@ describe("экран мастера: операция по ПФ", () => {
     expect(screen.getByText("SOL-1")).toBeInTheDocument();
   });
 });
+
+describe("«Уже сделано» — ввод готовых мастером (владелец 20.10)", () => {
+  it("штуки монтажника мимо терминала: по умолчанию остаток этапа, чьи — назначенный, входы отбить готовыми", async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && String(url).includes("/manual-output")) calls.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify({ items: [], statuses: [], box: {}, filled: [], warnings: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+    const assembly = op({
+      id: "m2", position: 2, stage: "Сборка", operator_ids: ["p1"], fact: { good: "300", defect: "0", processed: "300" },
+      inputs: [{ operation_id: "m1", position: 1, stage: "Резка", per_unit: "1", transfer_batch: null }],
+    });
+    const mutate = vi.fn(async (_key: string, run: () => Promise<unknown>) => { await run(); });
+    render(<MasterBoard tasks={[task("9", "CCC", [op({ id: "m1", position: 1, stage: "Резка" }), assembly])]}
+      operators={[{ id: "p1", name: "Рыбкина Ольга", site: "ЦАР" }]} skills={[]} absences={[]} canEdit busy="" mutate={mutate} openTask={() => {}} />);
+    fireEvent.click(screen.getByText("CCC"));
+    fireEvent.click(screen.getByRole("button", { name: "Сборка" }));
+
+    const made = screen.getByRole("group", { name: "Уже сделано без терминала" });
+    expect(within(made).getByText("осталось 200")).toBeInTheDocument();
+    expect(within(made).getByRole("combobox", { name: "Чьи штуки" })).toHaveValue("p1");
+    fireEvent.change(within(made).getByRole("spinbutton", { name: "Готовых штук" }), { target: { value: "150" } });
+    fireEvent.click(within(made).getByRole("button", { name: "Записать готовыми 150 шт" }));
+
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0].url).toBe("/api/production/tasks/9/operations/m2/manual-output");
+    expect(calls[0].body).toEqual({ good_quantity: 150, operator_id: "p1", fill_inputs: true });
+  });
+});
