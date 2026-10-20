@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EtkRoute, EtkRouteBlock, Principal, ProjectTechcard } from "./api";
 import { EtkSheet } from "./ProjectEtk";
-import { COLUMN_MAX, COLUMN_MIN, OPEN_MIN, etkDiagramWidths } from "./EtkRouteDiagram";
+import { COLUMN_MAX, COLUMN_MIN, GAP, OPEN_MIN, etkDiagramWidths } from "./EtkRouteDiagram";
 import { buildPrintDocumentHtml } from "./print";
 import { etkPrintPages } from "./etkPrint";
 import { etkDiagramCrossings, etkPartSource, etkSourceLines, etkPfGroups, etkRouteBranches, etkRouteChips, etkRouteDiagram, etkRouteLevels, etkRouteOf, etkRouteSummary, etkSemiSource, pluralBlocks } from "./etkRoute";
@@ -163,6 +163,36 @@ const openOp = (name: RegExp) => {
   fireEvent.click(within(diagramOf()).getByRole("button", { name }));
 };
 
+describe("ETK scheme of ПФ in the fitter's task", () => {
+  async function renderTask(focus: { position: number; positions?: number[] }) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const view = render(<EtkSheet card={techcard(branched)} principal={principal} onChange={() => undefined} task focus={focus} />);
+    await screen.findByRole("region", { name: "Схема полуфабрикатов" });
+    return view;
+  }
+
+  it("shows the scheme open with the fitter's ПФ expanded and his operations lit; operations do not open from it", async () => {
+    const { container } = await renderTask({ position: 3, positions: [3, 4] });
+    const mine = boxOf(/ПФ 2 · Опрессовка/);
+    expect(mine).toHaveClass("on");
+    expect(within(mine).getByText("ваше задание")).toBeInTheDocument();
+    expect([...container.querySelectorAll(".etk-dag-opline.on")].map((line) => line.querySelector(".etk-no")?.textContent)).toEqual(["03", "04"]);
+    expect(within(diagramOf()).queryByRole("button", { name: /Операция/ })).toBeNull();
+    expect(container.querySelector(".etk-route")?.closest("details")).toBeNull();
+    // Щелчок по чужому ПФ только подсвечивает его связи.
+    fireEvent.click(boxOf(/ПФ 1.1 · Резка провода/));
+    expect(boxOf(/ПФ 1.1 · Резка провода/)).toHaveClass("picked");
+    expect(screen.getByLabelText("Операции задания")).toBeInTheDocument();
+  });
+
+  it("lights the one operation of a single-operation task", async () => {
+    const { container } = await renderTask({ position: 5 });
+    expect(boxOf(/ПФ 3 · Изделие/)).toHaveClass("on");
+    expect([...container.querySelectorAll(".etk-dag-opline.on")].map((line) => line.querySelector(".etk-no")?.textContent)).toEqual(["05"]);
+  });
+});
+
 describe("ETK scheme of ПФ — the navigation", () => {
   it("shows a linear route as the same boxes in a chain; an ETK without a scheme keeps the flat list", async () => {
     const withLinear = await renderSheet(linear);
@@ -302,9 +332,9 @@ describe("ETK scheme of ПФ — the navigation", () => {
 
   it("lays the levels out in one row over the whole frame and scrolls it sideways inside its own frame when it does not fit", async () => {
     // 27": колонки делят ширину, раскрытая шире; не измерено — минимальные; узкая рамка — не уже минимума, ряд листается.
-    const wide = etkDiagramWidths([false, false, true, false, false], 2300);
+    const wide = etkDiagramWidths([false, false, true, false, false], 3600);
     expect(wide[2]).toBeGreaterThan(wide[0]);
-    expect(wide.reduce((sum, width) => sum + width, 0) + 4 * 56 + 24).toBeLessThanOrEqual(2300);
+    expect(wide.reduce((sum, width) => sum + width, 0) + 4 * GAP + 24).toBeLessThanOrEqual(3600);
     expect(wide[0]).toBeGreaterThan(COLUMN_MIN);
     expect(etkDiagramWidths([false, true], 0)).toEqual([COLUMN_MIN, OPEN_MIN]);
     const narrow = etkDiagramWidths([false, false, true, false, false], 1100);

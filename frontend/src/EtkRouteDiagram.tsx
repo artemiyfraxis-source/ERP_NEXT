@@ -18,7 +18,10 @@ import "./EtkRouteDiagram.css";
    Владелец 19.10 («чуть раздвинуть; чтобы связи подсвечивались, когда нажимаешь по карточке; вся карточка сначала
    кликабельна для выбора, после выбора уже проваливаться внутрь»): первый щелчок по карточке выбирает ПФ — связи и
    соседи горят, пока выбор не снят (и на планшете); щелчок по операции выбранного или открытого ПФ открывает её;
-   щелчок по пустому месту схемы или Esc снимает выбор. Колонки и блоки — с запасом места между ними. */
+   щелчок по пустому месту схемы или Esc снимает выбор. Колонки и блоки — с запасом места между ними.
+   Владелец 20.10 («расстояние между блоками по горизонтали раза в три шире, чтобы нормально были стрелочки, а её я буду
+   листать по бокам»): промежуток между колонками втрое шире — на планшете 12" видно две-три колонки, остальное вбок.
+   В задании монтажника (без `onPick`) операции не открываются: его ПФ раскрыт, его операции (`marked`) подсвечены. */
 
 /** Ширина компактной колонки: не уже — текст и эскиз не читаются; не шире — блок растянут пустотой. */
 export const COLUMN_MIN = 280;
@@ -27,7 +30,8 @@ export const COLUMN_MAX = 520;
 export const OPEN_MIN = 560;
 export const OPEN_MAX = 820;
 const OPEN_RATIO = 1.6;
-const GAP = 96;
+/** Между колонками, px: место под стрелки (владелец 20.10 — втрое шире прежних 96). */
+export const GAP = 288;
 /** Между блоками колонки, px. */
 const ROW_GAP = 24;
 const PAD = 12;
@@ -57,13 +61,16 @@ export function etkDiagramWidths(open: boolean[], room: number, gap = GAP, pad =
   return open.map((on) => (on ? Math.floor(wide) : narrow));
 }
 
-export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }>({ route, list, batch, current, onPick, title, sub, art, actions }: {
+export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }>({ route, list, batch, current, marked, onPick, title, sub, art, actions }: {
   route: EtkRoute;
   list: T[];
   batch: number;
   /** 1-based позиция открытой операции в `list`. */
   current: number;
-  onPick: (position: number) => void;
+  /** Подсвеченные операции (1-based): задание монтажника; по умолчанию — открытая `current`. */
+  marked?: number[];
+  /** Открыть операцию; нет — схема только показывает (задание монтажника). */
+  onPick?: (position: number) => void;
   /** Название операции в блоке — своё, из генератора («Надеть ТТК X4 «A6» — ТТК 12/4»), и вторая строка раскрытого
    *  блока (код карты, разъём, «правлена»). */
   title: (operation: T) => string;
@@ -159,6 +166,7 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
   const note = (arrow: (typeof arrows)[number]) => `${names.get(arrow.edge.from)} → ${names.get(arrow.edge.to)}${arrow.edge.text ? `: ${arrow.edge.text}` : ""}`;
   const numberOf = (position: number) => opNumber(list[position - 1]?.position || position);
   const wide = edges.left || edges.right;
+  const mine = new Set(marked ?? [current]);
 
   return <section className="etk-route" aria-label="Схема полуфабрикатов">
     <div className="etk-route-head">
@@ -203,7 +211,7 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
               const enter = (go: () => void) => { if (inside) { setPicked(box.key); go(); } else setPicked(box.key); };
               return <section key={box.key} data-pf={box.key} aria-label={`${label} · ${box.name}`} aria-current={open ? "step" : undefined}
                 className={`etk-dag-box${open ? " on" : ""}${picked === box.key ? " picked" : ""}${box.final ? " final" : ""}${box.kit ? " kit" : ""}${state}`}
-                title={inside ? undefined : "Щелчок — выбрать ПФ и подсветить связи; затем щелчок по операции — открыть её"}
+                title={inside ? undefined : onPick ? "Щелчок — выбрать ПФ и подсветить связи; затем щелчок по операции — открыть её" : "Щелчок — подсветить связи ПФ"}
                 onClick={() => { if (picked !== box.key) setPicked(box.key); }}
                 onKeyDown={(event) => { if (event.key === "Escape") setPicked(null); }}
                 onPointerDown={(event) => { touch.current = event.pointerType !== "mouse"; }}
@@ -212,8 +220,9 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
                 onFocus={() => !touch.current && setHot(box.key)} onBlur={() => setHot(null)}>
                 <button type="button" className="etk-dag-title" disabled={!group?.ops.length}
                   title={[`${label} · ${box.name}`, ...box.inputs.map((input) => `← ПФ ${input.label}: ${input.text}${input.times ? ` ${input.times}` : ""}`)].join("\n")}
-                  onClick={(event) => { event.stopPropagation(); enter(() => group?.ops.length && onPick(group.ops[0])); }}>
+                  onClick={(event) => { event.stopPropagation(); enter(() => group?.ops.length && onPick?.(group.ops[0])); }}>
                   <span className="etk-dag-top"><b>{label}</b>{box.kit && <small>комплект</small>}{box.final && <em className="etk-route-final">изделие</em>}
+                    {!onPick && open && <em className="etk-route-final etk-dag-here">ваше задание</em>}
                     {group && group.minutes > 0 && <span className="etk-dag-time" title="Норма ПФ на партию">{formatMinutes(group.minutes)} мин</span>}</span>
                   <span className="etk-dag-name">{box.name}</span>
                 </button>
@@ -232,12 +241,16 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
                   const operation = list[position - 1];
                   if (!operation) return null;
                   const second = open ? sub(operation) : "";
-                  return <li key={position}><button type="button" className={position === current ? "on" : undefined}
-                    aria-current={position === current ? "step" : undefined} title={title(operation)}
-                    onClick={(event) => { event.stopPropagation(); enter(() => onPick(position)); }}>
+                  const line = <>
                     <span className="etk-no">{numberOf(position)}</span>
                     <span className="etk-dag-op">{title(operation)}{second && <small>{second}</small>}</span>
-                  </button></li>;
+                  </>;
+                  const on = mine.has(position);
+                  if (!onPick) return <li key={position}><span className={`etk-dag-opline${on ? " on" : ""}`}
+                    aria-current={on ? "step" : undefined} title={title(operation)}>{line}</span></li>;
+                  return <li key={position}><button type="button" className={on ? "on" : undefined}
+                    aria-current={on ? "step" : undefined} title={title(operation)}
+                    onClick={(event) => { event.stopPropagation(); enter(() => onPick(position)); }}>{line}</button></li>;
                 })}</ol>}
                 {output && <div className="etk-dag-out" aria-label={`Выход ${label}`}>
                   <span title={group.output.map((row) => row.name).filter(Boolean).join("; ") || undefined}>→ {etkPfOutName(group) || "—"}{group.output.length > 1 ? ` и ещё ${group.output.length - 1}` : ""}</span>
