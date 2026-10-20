@@ -762,6 +762,31 @@ def _decision_result(decision: DecisionRow, supplier_id: UUID | None) -> dict:
     }
 
 
+CANCELLED = "Отменено"  # ProcurementStatus.CANCELLED as LineView carries it
+REMOVED_REASONS = {"new": "в новые", "requote": "перезапрос"}
+
+
+def _removed_lines(session: Session, lines: ProcurementLines, rfq_id: UUID) -> list[dict]:
+    """Lines taken out of the request (newest first), for «показать убранные»: why, when and who answered what."""
+    rows = list(session.scalars(
+        select(RfqLineRow).where(RfqLineRow.rfq_id == rfq_id, RfqLineRow.removed_at.is_not(None))
+        .order_by(RfqLineRow.removed_at.desc(), RfqLineRow.name)
+    ))
+    views = lines.get_many([row.procurement_line_id for row in rows]) if rows else {}
+    return [
+        {
+            "id": str(row.id), "procurement_line_id": str(row.procurement_line_id),
+            "legacy_id": views[row.procurement_line_id].legacy_id if row.procurement_line_id in views else None,
+            "name": row.name, "article": row.article, "quantity": num(Decimal(row.quantity)), "unit": row.unit,
+            "removed_at": row.removed_at.isoformat() if row.removed_at else None,
+            # NULL — closed with the request: «Перезапрос» as before (CONTRACTS.md).
+            "reason": row.removed_reason or "requote", "reason_label": REMOVED_REASONS.get(row.removed_reason or "requote"),
+            "note": row.removed_note,
+        }
+        for row in rows
+    ]
+
+
 def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID, today: date) -> dict:
     """Lines × suppliers: each supplier's latest valid offer (an expired one is shown greyed), cheapest by the cost of
     covering the need, the gate per line, the budget Δ, and per supplier the whole basket bought from him."""
@@ -839,6 +864,8 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
                 "id": str(line.id), "procurement_line_id": str(line.procurement_line_id),
                 "legacy_id": view.legacy_id if view else None, "status": view.status if view else None,
                 "version": view.version if view else None, "editable": bool(view and view.editable),
+                # The procurement line was cancelled (Заявки / «Отменить» here): not asked any more, shown struck.
+                "cancelled": bool(view and view.status == CANCELLED),
                 "name": line.name, "article": line.article, "quantity": num(Decimal(line.quantity)), "unit": line.unit,
                 "need_by": line.need_by.isoformat() if line.need_by else None,
                 "project": view.project if view else None, "designation": view.designation if view else None,
@@ -898,8 +925,9 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
             "rfq": {
                 "id": str(rfq.id), "number": rfq.number, "title": rfq.title, "created_at": rfq.created_at.isoformat(),
                 "closed_at": rfq.closed_at.isoformat() if rfq.closed_at else None, "mine": rfq.buyer_id == actor.id,
-                "note": rfq.note,
+                "note": rfq.note, "version": rfq.version,
             },
+            "removed": _removed_lines(session, lines, rfq.id),
             "settings": {"gate_min_quotes": min_quotes, "gate_require_non_key": require_non_key,
                          "default_vat_rate": num(Decimal(values["default_vat_rate"])),
                          "quote_wait_days": int(values["quote_wait_days"]), "delivery_default": num(delivery_default)},

@@ -19,6 +19,7 @@ import { QuoteDialog } from "./RfqQuoteDialog";
 import { Dialog, money, number, quantity } from "./rfqUi";
 import { RfqLetters } from "./RfqLetters";
 import { chip, gateHint, gateText, MatrixTable } from "./RfqMatrix";
+import { askSplit, RemovedLines, RfqLineToolbar, RfqSelectionBar } from "./RfqLineActions";
 
 /** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
@@ -117,6 +118,14 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
   const [suggesting, setSuggesting] = useState(false);
   const [directory, setDirectory] = useState<SupplierBrief[]>([]);
   const [newSupplier, setNewSupplier] = useState("");
+  // Lines ticked for the selection bar (request line ids) and «показать отменённые и убранные».
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [showRemoved, setShowRemoved] = useState(false);
+  const pick = (ids: string[], on: boolean) => setPicked((current) => {
+    const next = new Set(current);
+    for (const lineId of ids) { if (on) next.add(lineId); else next.delete(lineId); }
+    return next;
+  });
 
   const load = useCallback(async () => {
     try {
@@ -140,6 +149,13 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
     setNotice(message);
     onChanged();
   }, [load, onChanged]);
+
+  /** After the selection bar or a split: the lines changed, the ticks go. */
+  async function linesChanged(message: string) {
+    setPicked(new Set());
+    setError("");
+    await refresh(message);
+  }
 
   async function act(run: () => Promise<unknown>, message: string, fallback: string) {
     setError("");
@@ -211,9 +227,25 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       {suppliers.length === 0 && (
         <div className="empty">Поставщиков в запросе нет{editable ? " — «Подобрать поставщиков» или добавьте по названию" : ""}.</div>
       )}
+      {editable && lines.length > 0 && (
+        <RfqLineToolbar matrix={matrix} picked={picked} onPick={pick} showRemoved={showRemoved} onShowRemoved={setShowRemoved} />
+      )}
+      {!editable && (matrix.removed?.length ?? 0) + lines.filter((line) => line.cancelled).length > 0 && (
+        <RfqLineToolbar matrix={matrix} picked={picked} onPick={() => undefined} showRemoved={showRemoved} onShowRemoved={setShowRemoved} />
+      )}
+      {editable && picked.size > 0 && (
+        <RfqSelectionBar
+          matrix={matrix} picked={picked} onClear={() => setPicked(new Set())}
+          onDone={(message) => void linesChanged(message)} onError={setError}
+        />
+      )}
       <MatrixTable
-        matrix={matrix} lines={lines} editable={editable} selectable={false} picked={new Set()} onPick={() => undefined}
-        basket={null} actions={{
+        matrix={matrix} lines={showRemoved ? lines : lines.filter((line) => !line.cancelled)} editable={editable}
+        picked={picked} onPick={pick} basket={null} actions={{
+          onSplit: (line) => {
+            const task = askSplit(line);
+            if (task) void task().then((message) => linesChanged(message)).catch((reason) => setError(failureText(reason, "Строка не разделена")));
+          },
           onOpen: (lineId, supplierId) => setDecisionFor({ lineId, supplierId }),
           onBasket: () => undefined,
           onLines: (supplier) => setLinesFor(supplier),
@@ -226,6 +258,10 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
           onRemove: (supplier) => void act(() => rfqApi.removeSupplier(id, supplier.supplier_id), `«${supplier.name}» убран из запроса`, "Поставщик не убран"),
         }}
       />
+      {showRemoved && <RemovedLines matrix={matrix} />}
+      {lines.length === 0 && (
+        <div className="empty">В запросе нет строк: все убраны или отменены.</div>
+      )}
       {matrix.quotes.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", fontSize: 12 }} aria-label="КП в запросе">
           <span className="muted">КП в запросе:</span>

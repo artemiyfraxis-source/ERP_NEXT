@@ -4,7 +4,9 @@
 from uuid import UUID, uuid4
 
 from app.modules.purchasing.infrastructure import SupplierRow
-from tests.purchasing.test_rfq_api import BASE, NOW, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — the fixture
+from app.workflows.procurement_history import line_history
+from app.workflows.procurement_rfq_requote import requote_lines
+from tests.purchasing.test_rfq_api import BASE, NOW, _as, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — the fixture
 
 
 def _line_of(matrix: dict, procurement_line_id) -> dict:
@@ -67,3 +69,78 @@ def test_a_quote_keeps_its_number_and_note_and_a_supplier_who_answers_unasked_co
     assert quote["number"] == "КП-17" and quote["note"] == "цены до конца месяца" and quote["has_file"] is False
     cell = _line_of(matrix, lines[0].id)["cells"][asked]
     assert cell["quote_number"] == "КП-17" and cell["tiers"] == [{"from": "500", "price": "90"}]
+
+
+# ── withdraw (Roller rfq-withdraw.test.ts) ──────────────────────────────────────────────────────────────────────────
+
+
+def _withdraw(client, rfq_id, ids, to, **more):
+    return client.post(f"{BASE}/{rfq_id}/lines/withdraw", json={"rfq_line_ids": ids, "to": to, **more})
+
+
+def test_nobody_has_it_the_line_goes_to_requote_with_who_had_nothing_then_into_a_new_request(rfq_api):
+    client, lines, sessions = rfq_api
+    rfq = _rfq(client, lines)
+    alfa = _supplier(client, rfq["id"], "Альфа")
+    _supplier(client, rfq["id"], "Бета")
+    line = _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[0].id)
+    _quote(client, rfq["id"], alfa, line["id"], declined=True)
+    done = _withdraw(client, rfq["id"], [line["id"]], "requote")
+    assert done.status_code == 200, done.text
+    assert done.json() == {"withdrawn": 1}
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    assert all(item["id"] != line["id"] for item in matrix["lines"])
+    removed = matrix["removed"][0]
+    assert removed["reason"] == "requote" and removed["reason_label"] == "перезапрос"
+    assert removed["note"] == "Запрос КП КП-2609-001 от 15.09.2026: Альфа — отказ; Бета — не ответил"
+    with sessions() as session:
+        state = requote_lines(session, [lines[0].id, lines[1].id])
+    assert list(state) == [lines[0].id] and state[lines[0].id]["rfq_number"] == "КП-2609-001"
+    # «Перезапрос» goes into the next request like a new line; then it is not «перезапрос» any more.
+    assert str(lines[0].id) in {item["id"] for item in client.get(f"{BASE}/candidates").json()["lines"]}
+    _rfq(client, lines[:1])
+    with sessions() as session:
+        assert requote_lines(session, [lines[0].id]) == {}
+    with sessions() as session:
+        events = line_history(session, lines[0].id)["events"]
+    out = next(event for event in events if "Выведена из запроса" in event["title"])
+    assert out["title"] == "Выведена из запроса КП-2609-001 — перезапрос" and "Альфа — отказ" in out["details"]
+
+
+def test_back_to_new_a_line_with_prices_goes_only_on_confirmation_a_chosen_one_never(rfq_api):
+    client, lines, sessions = rfq_api
+    rfq = _rfq(client, lines)
+    alfa = _supplier(client, rfq["id"], "Альфа")
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    first, second = _line_of(matrix, lines[0].id), _line_of(matrix, lines[1].id)
+    _quote(client, rfq["id"], alfa, first["id"], unit_price="22.33")
+    refused = _withdraw(client, rfq["id"], [first["id"]], "new")
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["code"] == "has_prices" and refused.json()["detail"]["lines"] == [first["name"]]
+    assert "есть цены" in refused.json()["detail"]["message"]
+    stale = _withdraw(client, rfq["id"], [first["id"]], "new", drop_prices=True, rfq_version=matrix["rfq"]["version"] + 5)
+    assert stale.status_code == 409
+    ok = _withdraw(client, rfq["id"], [first["id"]], "new", drop_prices=True, rfq_version=matrix["rfq"]["version"])
+    assert ok.status_code == 200, ok.text
+    removed = client.get(f"{BASE}/{rfq['id']}").json()["removed"][0]
+    assert removed["reason"] == "new" and "Альфа — 22,33 ₽" in removed["note"]  # the price is not lost
+    with sessions() as session:
+        assert requote_lines(session, [lines[0].id]) == {}  # back to new is not «перезапрос»
+
+    _quote(client, rfq["id"], alfa, second["id"], unit_price="500")
+    cell = _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[1].id)["cells"][alfa]
+    decided = client.post(f"{BASE}/{rfq['id']}/decisions", json={
+        "rfq_line_id": second["id"], "quote_line_id": cell["quote_line_id"], "gate_override_reason": "Срочно"})
+    assert decided.status_code == 201, decided.text
+    blocked = _withdraw(client, rfq["id"], [second["id"]], "new", drop_prices=True)
+    assert blocked.status_code == 422 and "выбран поставщик" in blocked.json()["detail"]
+    assert _withdraw(client, rfq["id"], [first["id"]], "requote").status_code == 422  # already out
+
+
+def test_only_the_requests_buyer_takes_lines_out(rfq_api):
+    client, lines, _ = rfq_api
+    rfq = _rfq(client, lines)
+    line = _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[0].id)
+    _as("Иванов")
+    assert _withdraw(client, rfq["id"], [line["id"]], "new").status_code == 403
+    assert _withdraw(client, rfq["id"], [line["id"]], "elsewhere").status_code == 422

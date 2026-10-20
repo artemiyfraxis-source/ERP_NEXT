@@ -84,8 +84,10 @@ export type RfqSupplier = {
 export type RfqMatrix = {
   rfq: {
     id: string; number: string; title: string | null; created_at: string; closed_at: string | null; mine: boolean;
-    note?: string | null;
+    note?: string | null; version?: number;
   };
+  /** lines taken out of the request (newest first) */
+  removed?: RemovedLine[];
   settings: {
     gate_min_quotes: number; gate_require_non_key: boolean; default_vat_rate: string;
     quote_wait_days?: number; delivery_default?: string;
@@ -216,4 +218,27 @@ export const rfqApi = {
   decide: (id: string, decision: DecisionInput) => post<RfqDecision>(`${BASE}/${id}/decisions`, decision),
   undoDecision: (id: string, decisionId: string) => remove(`${BASE}/${id}/decisions/${decisionId}`),
   close: (id: string) => post(`${BASE}/${id}/close`),
+  /** Lines out of the request: back to the free lines or to «Перезапрос» (409 `has_prices` until drop_prices). */
+  withdraw: (id: string, body: { rfq_line_ids: string[]; to: "new" | "requote"; drop_prices: boolean; rfq_version?: number }) =>
+    post<{ withdrawn: number }>(`${BASE}/${id}/lines/withdraw`, body),
+  /** The requests slice's commands (CONTRACTS.md), called from the request's selection bar. */
+  cancelMany: (lines: { id: string; version: number }[], reason: string) =>
+    post<CancelManyResult>("/api/procurement/cancel-many", { lines, reason }),
+  splitQty: (lineId: string, version: number, quantity: string) =>
+    post<{ original: unknown; created: unknown }>(`/api/procurement/${lineId}/split-qty`, { version, quantity }),
+};
+
+export type CancelManyResult = { cancelled: string[]; skipped: { id: string; reason: string }[] };
+
+/** The 409 of withdraw: suppliers priced these lines — ask before the prices go. */
+export function hasPrices(error: unknown): { message: string; lines: string[] } | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detail = error.detail as { code?: string; message?: string; lines?: string[] } | undefined;
+  return detail?.code === "has_prices" ? { message: detail.message ?? error.message, lines: detail.lines ?? [] } : null;
+}
+
+export type RemovedLine = {
+  id: string; procurement_line_id: string; legacy_id: string | null; name: string; article: string | null;
+  quantity: string; unit: string; removed_at: string | null; reason: "new" | "requote"; reason_label: string;
+  note: string | null;
 };

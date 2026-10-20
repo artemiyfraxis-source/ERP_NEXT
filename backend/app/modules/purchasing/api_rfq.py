@@ -23,6 +23,7 @@ from app.workflows.purchasing_rfq_stats import PurchaseStatsBridge
 from . import quote_import
 from . import rfq as service
 from . import rfq_pool
+from . import rfq_withdraw
 from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
 
 
@@ -68,7 +69,7 @@ def _run(operation):
         try:
             return operation()
         except service.RfqError as error:
-            detail: object = str(error)
+            detail: object = getattr(error, "payload", None) or str(error)
             if error.violations:
                 detail = {
                     "code": "decision_reasons", "message": str(error),
@@ -176,6 +177,15 @@ class ImportInput(BaseModel):
     text: str | None = Field(default=None, max_length=500_000)
     file_name: str | None = Field(default=None, max_length=300)
     content_base64: str | None = Field(default=None, max_length=28_000_000)  # a 20 MB PDF in base64
+
+
+class WithdrawInput(BaseModel):
+    """CONTRACTS.md: lines out of the request — `new` back to the free lines, `requote` to «Перезапрос»."""
+
+    rfq_line_ids: list[UUID] = Field(min_length=1, max_length=500)
+    to: Literal["new", "requote"]
+    drop_prices: bool = False
+    rfq_version: int | None = Field(default=None, ge=1)  # the request as the client read it; omitted — not checked
 
 
 class DecisionModel(BaseModel):
@@ -330,6 +340,13 @@ def rfq_decide(rfq_id: UUID, payload: DecisionModel, principal: Edit, now: Now, 
 def rfq_undo_decision(rfq_id: UUID, decision_id: UUID, principal: Edit, now: Now, uow: Uow, lines: Lines) -> Response:
     _run(lambda: service.undo_decision(uow(), lines, principal.actor, now, rfq_id, decision_id))
     return Response(status_code=204)
+
+
+@router.post("/{rfq_id}/lines/withdraw")
+def rfq_withdraw_lines(rfq_id: UUID, payload: WithdrawInput, principal: Edit, now: Now, uow: Uow) -> dict:
+    """→ {withdrawn}; 409 {code: has_prices, lines} while quoted prices would go and drop_prices is false."""
+    return _run(lambda: rfq_withdraw.withdraw_lines(
+        uow(), principal.actor, now, rfq_id, payload.rfq_line_ids, payload.to, payload.drop_prices, payload.rfq_version))
 
 
 @router.post("/{rfq_id}/close")
