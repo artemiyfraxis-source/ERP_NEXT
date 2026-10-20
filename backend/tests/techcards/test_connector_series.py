@@ -177,13 +177,16 @@ def test_coax_articles_fill_the_rf_series_by_type():
         {"coaxArticle": "SMA-male RG-316", "coaxType": "SMA-male", "coaxMfr": "LenoRF", "coaxWire": "RG-316"},
         {"coaxArticle": "RP-SMA-female RG-316", "coaxType": "RP-SMA-female", "coaxMfr": "", "coaxWire": "RG-316"},
         {"coaxArticle": "U.FL", "coaxType": "U.FL-female R/A", "coaxMfr": "", "coaxWire": ""},
+        {"coaxArticle": "MHF1-plug RG-178", "coaxType": "MHF1-plug", "coaxMfr": "", "coaxWire": "RG-178"},
+        {"coaxArticle": "IPEX-female", "coaxType": "IPEX-female", "coaxMfr": "", "coaxWire": ""},
         {"coaxArticle": "Fakra Z-Female", "coaxType": "Fakra-female", "coaxMfr": "", "coaxWire": ""},
         {"coaxArticle": "QMA-KPD7", "coaxType": "QMA", "coaxMfr": "", "coaxWire": ""},
     ]
     series = {item["id"]: item for item in connector_series((), coax)}
     assert [c["article"] for c in series["rf-sma"]["catalog"]] == ["SMA-male RG-316"]
     assert [c["article"] for c in series["rf-rpsma"]["catalog"]] == ["RP-SMA-female RG-316"]
-    assert [c["article"] for c in series["rf-mhf"]["catalog"]] == ["U.FL"]
+    assert [c["article"] for c in series["rf-ufl"]["catalog"]] == ["U.FL"]  # Hirose U.FL is not I-PEX MHF (owner 20.10)
+    assert [c["article"] for c in series["rf-mhf"]["catalog"]] == ["MHF1-plug RG-178", "IPEX-female"]
     assert [c["article"] for c in series["rf-qma"]["catalog"]] == ["QMA-KPD7"]
     assert series["rf-fakra"]["category"] == "Автомобильные" and len(series["rf-fakra"]["catalog"]) == 1
     assert series["rf-bnc"]["catalog"] == [] and series["rf-bnc"]["housing_count"] == 0
