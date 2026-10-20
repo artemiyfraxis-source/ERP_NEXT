@@ -22,8 +22,20 @@ import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
    outer Ø, voltage, temperature) and the coax card a tester reads at the VNA. Backend: references/cable_structure.py. */
 
 export const CABLE_KIND_LABELS: Record<CableKind, string> = {
-  coax: "Коаксиальные кабели", wire: "Монтажные провода", multi: "Многожильные кабели", other: "Прочие кабели",
+  coax: "Коаксиальные кабели", wire: "Монтажные провода", multi: "Многожильные кабели",
 };
+
+/** The columns of one list (owner 20.10.2026: «у каждого своя структура»): the list's own БД.ПРОВ columns and the ones the
+    owner added to it — never another list's. A server without the per-list sets (an old answer) gives the shared ones. */
+export function kindColumns(data: CablesResult, kind: CableKind): { columns: string[]; own: string[] } {
+  const own = data.custom_columns_by_kind?.[kind] ?? (data.columns_by_kind ? [] : data.custom_columns ?? []);
+  const columns = data.columns_by_kind?.[kind] ?? data.columns;
+  return { columns: [...new Set([...columns, ...own])], own };
+}
+
+/** What a move keeps, said in the confirmation of the move. */
+export const moveText = (name: string, kind: CableKind) =>
+  `Перенести «${name}» в «${CABLE_KIND_LABELS[kind]}»? Заполненные значения строки сохранятся, у списка будут свои столбцы.`;
 
 /** A number as the shop reads it: comma decimal, no trailing zeros. */
 export const num = (value: number | null | undefined): string =>
@@ -59,7 +71,7 @@ export function parseTempRange(text: string): { min: string; max: string } {
   return { min, max };
 }
 
-const KIND_ORDER: CableKind[] = ["coax", "wire", "multi", "other"];
+const KIND_ORDER: CableKind[] = ["coax", "wire", "multi"];
 /** «Вкладка» of a БД.ПРОВ row as a cell — the choice of the row window's «Вкладка» (`kindSelect`): the row moves to that
     list by the same server path, «по правилу» marks where the rule would put it. Hidden in «Колонки» by default. */
 export function kindColumn(canEdit: boolean, onSaved: (message: string) => Promise<void> | void): DataColumn<CableRow> {
@@ -73,8 +85,9 @@ export function kindColumn(canEdit: boolean, onSaved: (message: string) => Promi
       })),
       save: async (row, value) => {
         const kind = value as CableKind;
+        if (kind !== row.kind && !window.confirm(moveText(row.cable, kind))) throw new Error("Перенос отменён");
         try { await referencesApi.moveCable(row.record!.id, kind); } catch (reason) { throw cellFailure(reason); }
-        await onSaved(`«${row.cable}» перенесён во вкладку «${CABLE_KIND_LABELS[kind]}»`);
+        await onSaved(`«${row.cable}» перенесён во вкладку «${CABLE_KIND_LABELS[kind]}», заполненные значения сохранены`);
       },
     } : undefined,
   };
@@ -280,7 +293,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
         onClick={(event) => event.stopPropagation()}>открыть</a>
       : clip(href);
   };
-  const own = data.custom_columns ?? [];
+  const { columns: kindCols, own } = kindColumns(data, "wire");
   // Every value of a parsed wire is written from its cell the way the wire's window writes it: the whole structure with
   // the old values (the server refuses it when the wire changed meanwhile). The size is a pick from «Сечения AWG ↔ мм²»,
   // the temperature is typed as «−60 … +200». A wire not parsed yet is set up in its window.
@@ -339,7 +352,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     // Colours as dots; typed as text («красный, синий») they go by the palette, the picker stays in the wire's window.
     { key: "colors", title: "Цвета", value: (row) => field(row, COLORS), render: (row) => <WireColors text={field(row, COLORS)} />,
       edit: canEdit ? fieldCellEdit<CableRow>(COLORS, (row) => row.record, own.includes(COLORS), normalizeColors) : undefined },
-    ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name) && !COAX_ONLY.has(name)).map((name): DataColumn<CableRow> => ({
+    ...kindCols.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name) && !COAX_ONLY.has(name)).map((name): DataColumn<CableRow> => ({
       key: name, title: name, value: (row) => field(row, name), hidden: !WIRE_SHOWN.has(name) && (!own.includes(name) || OTHER_LISTS.has(name)),
       // The series' common jacket material is in the group header (owner 15.10: «Изоляция» — a rudiment).
       render: (row) => name === JACKET_MATERIAL && sharedOf(row)?.jacket ? null : name === LINK ? supplierLink(row) : clip(field(row, name)),
@@ -361,13 +374,13 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   const columns = [...rest.slice(0, outer + 1), ...materials, ...rest.slice(outer + 1, after), ...supply, ...rest.slice(after)];
   const detail = (row: CableRow) => canEdit
     ? <HookupEditor key={`${row.id}:${JSON.stringify(row.hookup ?? null)}:${JSON.stringify(row.record?.fields ?? {})}:${row.kind}`}
-      row={row} columns={data.columns} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
-    : <HookupCard row={row} gauge={gaugeOf(row)} columns={data.columns} />;
+      row={row} columns={kindCols} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
+    : <HookupCard row={row} gauge={gaugeOf(row)} columns={kindCols} />;
   const unparsed = rows.filter((row) => !row.hookup).length;
   return <>
     {adding && <div className="panel db-edit">
       <div className="manual-stock-head"><h2>Новый монтажный провод</h2></div>
-      <HookupEditor row={null} columns={data.columns} gauges={gauges} onSaved={async (message) => { setAdding(false); await onSaved(message); }} onError={onError} onCancel={() => setAdding(false)} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
+      <HookupEditor row={null} columns={kindCols} gauges={gauges} onSaved={async (message) => { setAdding(false); await onSaved(message); }} onError={onError} onCancel={() => setAdding(false)} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
     </div>}
     <DataTable
       label="Монтажные провода"
@@ -426,7 +439,7 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
 }) {
   const original = hookupPayload(row?.hookup ?? row?.hookup_suggestion);
   const ownFields = (record: TechOperationRecord | null) => record
-    ? Object.fromEntries(Object.entries(record.fields).filter(([name]) => !MIRRORED.includes(name)))
+    ? Object.fromEntries(Object.entries(record.fields).filter(([name]) => !MIRRORED.includes(name) && columns.includes(name)))
     : Object.fromEntries(columns.filter((name) => !MIRRORED.includes(name)).map((name) => [name, name === TYPE ? "монтажный" : name === "Число жил" ? "1" : ""]));
   const [wire, setWire] = useState<HookupPayload>(original);
   const [fields, setFields] = useState<Record<string, string>>(() => ownFields(row?.record ?? null));
@@ -437,11 +450,12 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
 
   async function save() {
     if (busy) return;
+    if (row?.record && kind !== row.kind && !window.confirm(moveText(row.cable, kind))) return;
     setBusy(true);
     let record = row?.record ?? null;
     try {
       if (!record) {
-        record = await referencesApi.createRecord("prov", fields);
+        record = await referencesApi.createRecord("prov", fields, "wire");
       } else {
         const edits = Object.entries(fields)
           .filter(([name, value]) => (record?.fields[name] ?? "") !== value)
@@ -453,7 +467,7 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
       }
       if (row?.record && kind !== row.kind) await referencesApi.moveCable(row.record.id, kind);
       const mark = (fields[MARK] || record?.display_text || "").trim();
-      await onSaved(row ? kind !== row.kind ? `«${mark}» перенесён во вкладку «${CABLE_KIND_LABELS[kind]}»` : `«${mark}» сохранён` : `«${mark}» добавлен`);
+      await onSaved(row ? kind !== row.kind ? `«${mark}» перенесён во вкладку «${CABLE_KIND_LABELS[kind]}», заполненные значения сохранены` : `«${mark}» сохранён` : `«${mark}» добавлен`);
     } catch (reason) {
       onError(failureText(reason, "Провод не сохранён"));
       if (row || record) await onSaved("");

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import { HookupWireTable, parseTempRange } from "./CableStructure";
 import { CableTable, rangeText } from "./CableTables";
@@ -7,7 +7,7 @@ import { normalizeColors } from "./wireColors";
 import { CATEGORIES } from "./cableCategory";
 import type { CableRow, Principal } from "./api";
 
-/* «База данных» → «Кабели и провода» (owner 04.10.2026): coax / hookup / other cables, D1–D3 edited in the coax tab,
+/* «База данных» → «Кабели и провода» (owner 04.10.2026): coax / hookup / multi-core cables, D1–D3 edited in the coax tab,
    a row moved between the lists, and the regrouped tab bar with a count on every chip. */
 
 const admin: Principal = {
@@ -43,8 +43,6 @@ const ROWS: CableRow[] = [
   { id: "w-ksp", kind: "multi", auto_kind: "multi", reason: "жил: 4", manual: false, cable: "КСПВГ 4x0,20",
     record: wire("w-ksp", { "Марка": "КСПВГ 4x0,20", "Тип провода": "многожильный", "Число жил": "4", "Наружный диаметр, мм": "3,6" }),
     dia: null, dia_hint: null },
-  { id: "w-hv", kind: "other", auto_kind: "other", reason: "тип не указан", manual: false, cable: "Проволока",
-    record: wire("w-hv", { "Марка": "Проволока" }), dia: null, dia_hint: null },
 ];
 const GAUGES = [
   { id: "g22", awg: "22", section_mm2: 0.35, conductor_d_mm: 0.64, strands: "", label: "22 AWG · 0,35 мм²", wires: 1 },
@@ -85,9 +83,9 @@ function mockApi(calls: Call[] = [], rows: CableRow[] = ROWS) {
     if (path === "/api/references/maps") return json({ suppliers: [{ key: "склад", value: "Склад" }], countries: [], gost_awg: [], can_edit: { suppliers: true, gost_awg: true } });
     if (path === "/api/references/bases") return json({
       bases: [], tabs: { ob: 192, ter: 528, coax: 181, kab_awg: 22, mat: 115, kab_coax: 30, prov: 139 },
-      cables: { coax: 47, wire: 52, multi: 9, other: 56 }, gauges: 24,
+      cables: { coax: 47, wire: 52, multi: 9 }, gauges: 24,
     });
-    if (path === "/api/references/cables") return json({ columns: [...COLUMNS, "Цвета"], counts: { coax: 3, wire: 3, multi: 1, other: 1 }, rows, gauges: GAUGES });
+    if (path === "/api/references/cables") return json({ columns: [...COLUMNS, "Цвета", "Поставщик"], counts: { coax: 3, wire: 3, multi: 1 }, rows, gauges: GAUGES });
     if (path === "/api/references/coverings") return json({ counts: {}, titles: {}, rows: [] });
     if (path.endsWith("/hookup")) return json({ hookup: rows[4].hookup_suggestion, record: rows[4].record });
     if (path.startsWith("/api/references/wire-gauges")) return json(GAUGES[0]);
@@ -127,7 +125,7 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
   expect(groups).toEqual([
     { title: "Техкарты", tabs: ["Операции", "Оборудование"] },
     { title: "Разъёмы и контакты", tabs: ["Разъёмы", "Коаксиальные разъёмы", "Терминалы"] },
-    { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "Многожильные кабели", "Прочие кабели"] },
+    { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "Многожильные кабели"] },
     // owner 15.10.2026: «Материалы» расформированы; the old key opens «Оболочки»
     { title: "Материалы", tabs: ["Оболочки", "Расходники"] },
     { title: "Соответствия", tabs: ["Домен → поставщик", "Изготовитель → страна", "Сечения AWG ↔ мм²"] },
@@ -137,7 +135,6 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
     ["Операции", "3"], // CUT_WIRE_auto (A/B — one card), STRIP_WIRE, SDR_PCB from БД.ОП
     ["Оборудование", "192"], ["Разъёмы", "2"], ["Коаксиальные разъёмы", "181"], ["Терминалы", "528"],
     ["Коаксиальные кабели", "47"], ["Монтажные провода", "52"], ["Сечения AWG ↔ мм²", "24"], ["Многожильные кабели", "9"],
-    ["Прочие кабели", "56"],
     ["Домен → поставщик", "1"], ["Изготовитель → страна", "0"],
   ];
   for (const [name, n] of expected) await waitFor(() => expect(chip(name).querySelector(".db-tab-count")).toHaveTextContent(new RegExp(`^${n}$`)));
@@ -193,9 +190,8 @@ it("shows each cable in its own list with the parameters of that list", async ()
   expect(screen.getByText("КСПВГ")).toBeInTheDocument(); // owner 15.10.2026: one group per mark, not «КСПВ / КСПВГ»
   expect(screen.getByRole("columnheader", { name: "Число жил" })).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: /^Прочие кабели/ }));
-  expect(await screen.findByText("Проволока")).toBeInTheDocument();
-  expect(screen.queryByText("КСПВГ 4x0,20")).toBeNull();
+  // «Прочие кабели» are closed (20.10.2026): no chip, three lists only
+  expect(screen.queryByRole("button", { name: /^Прочие кабели/ })).toBeNull();
 });
 
 describe("coax column order (owner 15.10: «сначала конструктивные характеристики — диаметры, потом материал…»)", () => {
@@ -214,7 +210,7 @@ describe("coax column order (owner 15.10: «сначала конструкти�
     mockApi();
     const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
     vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => String(input) === "/api/references/cables"
-      ? json({ columns, custom_columns: own, counts: { coax: 3, wire: 3, multi: 1, other: 1 }, rows: ROWS, gauges: GAUGES })
+      ? json({ columns, custom_columns: own, counts: { coax: 3, wire: 3, multi: 1 }, rows: ROWS, gauges: GAUGES })
       : answer(input, init));
   };
   const heads = () => screen.getAllByRole("columnheader").map((head) => head.textContent ?? "").filter(Boolean);
@@ -294,7 +290,7 @@ describe("coax column order (owner 15.10: «сначала конструкти�
     mockApi([], [linked, ROWS[1], ROWS[2]]);
     const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
     vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => String(input) === "/api/references/cables"
-      ? json({ columns, custom_columns: ["Артикул поставщика", "Ссылка", "Цена поставщика, ₽/м", "Дата цены"], counts: { coax: 3, wire: 0, multi: 0, other: 0 }, rows: [linked, ROWS[1], ROWS[2]], gauges: GAUGES })
+      ? json({ columns, custom_columns: ["Артикул поставщика", "Ссылка", "Цена поставщика, ₽/м", "Дата цены"], counts: { coax: 3, wire: 0, multi: 0 }, rows: [linked, ROWS[1], ROWS[2]], gauges: GAUGES })
       : answer(input, init));
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
@@ -518,17 +514,20 @@ it("edits D1–D3 right in the coax tab and copies them from the cable's family"
   }));
 });
 
-it("moves a cable to another list from its editor", async () => {
+it("moves a cable to another list from its editor, after a confirm that says its filled values are kept", async () => {
   const calls = mockApi();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   render(<ReferencesPage principal={admin} initialTab="cab_wire" />);
 
   fireEvent.click(await screen.findByText("ПВАМ 0,50"));
   expect(screen.getByText("по правилу: одна жила")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Вкладка"), { target: { value: "other" } });
+  fireEvent.change(screen.getByLabelText("Вкладка"), { target: { value: "multi" } });
+  expect(screen.getByText("Заполненные значения строки сохранятся при переносе.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 
-  await waitFor(() => expect(calls.find((call) => call.path === "/api/references/cables/w-pvam/kind")).toMatchObject({ method: "PUT", body: { kind: "other" } }));
-  expect(await screen.findByText("«ПВАМ 0,50» перенесён во вкладку «Прочие кабели»")).toBeInTheDocument();
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Заполненные значения строки сохранятся"));
+  await waitFor(() => expect(calls.find((call) => call.path === "/api/references/cables/w-pvam/kind")).toMatchObject({ method: "PUT", body: { kind: "multi" } }));
+  expect(await screen.findByText("«ПВАМ 0,50» перенесён во вкладку «Многожильные кабели», заполненные значения сохранены")).toBeInTheDocument();
 });
 
 it("shows the cable lists read-only without the reference edit right", async () => {
@@ -550,7 +549,7 @@ it("groups the hook-up wires by series with the shared values in the header, siz
     hookup: { series, gauge_id, insulation: "ПВХ", outer_d_mm: 2, voltage_v: voltage, temp_min_c: -50, temp_max_c: 65 },
   });
   const data = {
-    columns: ["Марка", "Цвета", "Материал оболочки", "Поставщик", "Ссылка", "Погонная ёмкость, пФ/м"], custom_columns: ["Ссылка", "Погонная ёмкость, пФ/м"], counts: { coax: 0, wire: 4, multi: 0, other: 0 }, gauges: [gauge("s10", 10), gauge("s16", 16), gauge("s25", 2.5), gauge("s4", 4)],
+    columns: ["Марка", "Цвета", "Материал оболочки", "Поставщик", "Ссылка", "Погонная ёмкость, пФ/м"], custom_columns: ["Ссылка", "Погонная ёмкость, пФ/м"], counts: { coax: 0, wire: 4, multi: 0 }, gauges: [gauge("s10", 10), gauge("s16", 16), gauge("s25", 2.5), gauge("s4", 4)],
     rows: [wire("ПуГВ", "ПуГВ 10", "s10", "синий", 450), wire("ПуГВ", "ПуГВ 16", "s16", "", 450), wire("ПуГВ", "ПуГВ 2,5", "s25", "белый, жёлто-зелёный", 450), wire("ПуГВ", "ПуГВ 4", "s4", "красный", 450)],
   } as unknown as Parameters<typeof HookupWireTable>[0]["data"];
   render(<HookupWireTable data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} kindSelect={() => null} />);
@@ -672,7 +671,7 @@ describe("«+ Столбец» (owner 14.10: «добавить свои сто�
       if (path === "/api/references/cables" && added) {
         calls.push({ path, method: "GET", body: null });
         const rows = ROWS.map((row) => row.record ? { ...row, record: { ...row.record, fields: { ...row.record.fields, "Полка": "" } } } : row);
-        return json({ columns: [...COLUMNS, "Цвета", "Полка"], custom_columns: ["Полка"], counts: { coax: 3, wire: 3, multi: 1, other: 1 }, rows, gauges: GAUGES });
+        return json({ columns: [...COLUMNS, "Цвета", "Полка"], custom_columns: ["Полка"], counts: { coax: 3, wire: 3, multi: 1 }, rows, gauges: GAUGES });
       }
       return answer(input, init);
     });
@@ -687,7 +686,7 @@ describe("«+ Столбец» (owner 14.10: «добавить свои сто�
     fireEvent.click(within(dialog).getByRole("button", { name: "Добавить столбец" }));
 
     expect(await screen.findByRole("columnheader", { name: "Полка" })).toBeInTheDocument();
-    expect(calls.find((call) => call.method === "POST")?.body).toEqual({ tab: "prov", name: "Полка" });
+    expect(calls.find((call) => call.method === "POST")?.body).toEqual({ tab: "prov", name: "Полка", cable_kind: "coax" });
     expect(screen.queryByRole("dialog", { name: "Новый столбец" })).toBeNull();
 
     const line = screen.getByText("RG316", { selector: "td.key strong" }).closest("tr") as HTMLElement;
@@ -724,7 +723,7 @@ describe("«+ Столбец» (owner 14.10: «добавить свои сто�
     mockApi();
     const { unmount } = render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
-    for (const list of ["Монтажные провода", "Многожильные кабели", "Прочие кабели", "Коаксиальные кабели"]) {
+    for (const list of ["Монтажные провода", "Многожильные кабели", "Коаксиальные кабели"]) {
       fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${list}`) }));
       await waitFor(() => expect(screen.getByRole("button", { name: "+ Столбец" })).toBeInTheDocument());
     }
@@ -809,6 +808,7 @@ describe("«Монтажные провода» and the other cable lists across
       expect(cellIn("UL1061 22AWG", "Тип провода")).toHaveClass("dt-editable");
       const tab = cellIn("UL1061 22AWG", "Вкладка");
       expect(tab).toHaveTextContent("Монтажные провода");
+      vi.spyOn(window, "confirm").mockReturnValue(true);
       fireEvent.doubleClick(tab);
       const select = within(tab).getByRole("combobox");
       fireEvent.pointerDown(select);
@@ -816,7 +816,7 @@ describe("«Монтажные провода» and the other cable lists across
       await waitFor(() => expect(calls.find((call) => call.path.endsWith("/kind"))).toEqual({
         path: "/api/references/cables/w-ul/kind", method: "PUT", body: { kind: "multi" },
       }));
-      expect(await screen.findByText("«UL1061 22AWG» перенесён во вкладку «Многожильные кабели»")).toBeInTheDocument();
+      expect(await screen.findByText("«UL1061 22AWG» перенесён во вкладку «Многожильные кабели», заполненные значения сохранены")).toBeInTheDocument();
     });
   });
 
@@ -828,7 +828,7 @@ describe("«Монтажные провода» and the other cable lists across
       return { id: `m${index}`, kind: "multi", auto_kind: "multi", reason: "жил", manual: false, cable: mark, dia: null, dia_hint: null,
         record: wire(`m${index}`, { "Марка": mark, "Тип провода": "многожильный", "Число жил": String(index + 2), "Наружный диаметр, мм": String((index % 7) + 3) }) };
     });
-    const data = { columns: COLUMNS, counts: { coax: 0, wire: 0, multi: many.length, other: 0 }, rows: many, gauges: [] } as unknown as Parameters<typeof CableTable>[0]["data"];
+    const data = { columns: COLUMNS, counts: { coax: 0, wire: 0, multi: many.length }, rows: many, gauges: [] } as unknown as Parameters<typeof CableTable>[0]["data"];
     const { unmount } = render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
     expect(document.querySelectorAll("tbody tr:not(.group-row)")).toHaveLength(380);
     expect(screen.getByText("Показано 380 из 380")).toBeInTheDocument();
@@ -859,11 +859,11 @@ describe("«Монтажные провода» and the other cable lists across
 
   it("picks «Категория» of a cable in its cell from the editor's list, the rule's choice first", async () => {
     const calls = mockApi();
-    const row: CableRow = { id: "w-x", kind: "other", auto_kind: "other", reason: "тип не указан", manual: false, cable: "ПВ-3 1,5", dia: null, dia_hint: null,
+    const row: CableRow = { id: "w-x", kind: "multi", auto_kind: "multi", reason: "жил: 4", manual: false, cable: "ПВ-3 1,5", dia: null, dia_hint: null,
       record: wire("w-x", { "Марка": "ПВ-3 1,5", "Категория": "" }) };
-    const data = { columns: ["Марка", "Категория"], counts: { coax: 0, wire: 0, multi: 0, other: 1 }, rows: [row], gauges: [] } as unknown as Parameters<typeof CableTable>[0]["data"];
+    const data = { columns: ["Марка", "Категория"], counts: { coax: 0, wire: 0, multi: 1 }, rows: [row], gauges: [] } as unknown as Parameters<typeof CableTable>[0]["data"];
     const onSaved = vi.fn();
-    render(<CableTable kind="other" data={data} canEdit onSaved={onSaved} onError={() => undefined} />);
+    render(<CableTable kind="multi" data={data} canEdit onSaved={onSaved} onError={() => undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
     const shown = screen.getByRole("checkbox", { name: "Категория" }) as HTMLInputElement;
     if (!shown.checked) fireEvent.click(shown);
@@ -922,8 +922,6 @@ describe("«Монтажные провода» and the other cable lists across
     fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
     await screen.findByText("КСПВГ 4x0,20", { selector: "td.key strong" });
     expect(screen.queryByRole("button", { name: /^Без Ø/ })).toBeNull(); // у всех многожильных Ø есть — чипа нет
-    fireEvent.click(screen.getByRole("button", { name: /^Прочие кабели/ }));
-    expect(await screen.findByRole("button", { name: /^Без Ø · 1/ })).toBeInTheDocument();
   });
 
   it("removes an empty own БД.ПРОВ column from «Колонки» after a confirm window", async () => {
@@ -938,7 +936,7 @@ describe("«Монтажные провода» and the other cable lists across
       if (path === "/api/references/cables") {
         calls.push({ path, method: "GET", body: null });
         const rows = ROWS.map((row) => row.record ? { ...row, record: { ...row.record, fields: { ...row.record.fields, "Полка": "" } } } : row);
-        return json({ columns: [...COLUMNS, "Цвета", "Полка"], custom_columns: ["Полка"], counts: { coax: 3, wire: 3, multi: 1, other: 1 }, rows, gauges: GAUGES });
+        return json({ columns: [...COLUMNS, "Цвета", "Полка"], custom_columns: ["Полка"], counts: { coax: 3, wire: 3, multi: 1 }, rows, gauges: GAUGES });
       }
       return answer(input, init);
     });
@@ -948,7 +946,115 @@ describe("«Монтажные провода» and the other cable lists across
     fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
     const dialog = screen.getByRole("dialog", { name: "Удалить столбец" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Удалить столбец" }));
-    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns/remove"))?.body).toEqual({ tab: "prov", name: "Полка" }));
+    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns/remove"))?.body).toEqual({ tab: "prov", name: "Полка", cable_kind: "multi" }));
     expect(await screen.findByText("Столбец «Полка» удалён")).toBeInTheDocument();
+  });
+});
+
+// owner 20.10.2026: «у каждого своя структура» — each list has its own columns, the server sends them per list.
+describe("columns of each cable list (БД.ПРОВ cable_kind)", () => {
+  const BY_KIND = {
+    coax: ["Марка", "Тип провода", "Наружный диаметр, мм", "Волновое сопротивление, Ом", "Материал диэлектрика", "Поставщик", "Полка коакса"],
+    wire: ["Марка", "Тип провода", "Сечение, мм2", "AWG", "Число жил", "Наружный диаметр, мм", "Цвета", "Материал оболочки", "Полка проводов"],
+    multi: ["Марка", "Тип провода", "Число жил", "Наружный диаметр, мм", "Материал изоляции жилы", "Полка многожильных"],
+  };
+  const OWN = { coax: ["Материал диэлектрика", "Полка коакса"], wire: ["Материал оболочки", "Полка проводов"], multi: ["Материал изоляции жилы", "Полка многожильных"] };
+  const ALL = [...new Set(Object.values(BY_KIND).flat())];
+  const withKinds = (calls: Call[] = []) => {
+    mockApi(calls);
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => String(input) === "/api/references/cables"
+      ? json({ columns: ALL, custom_columns: [...new Set(Object.values(OWN).flat())], columns_by_kind: BY_KIND, custom_columns_by_kind: OWN,
+        counts: { coax: 3, wire: 3, multi: 1 }, rows: ROWS, gauges: GAUGES })
+      : answer(input, init));
+    return calls;
+  };
+  const chooser = () => within(screen.getByRole("group", { name: "Показывать колонки" })).getAllByRole("checkbox").map((box) => box.parentElement?.textContent ?? "");
+
+  it("offers in «Колонки» only the columns of the open list", async () => {
+    withKinds();
+    render(<ReferencesPage principal={admin} initialTab="cab_wire" />);
+    await screen.findByText("UL1061 22AWG");
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    let names = chooser();
+    expect(names).toContain("Полка проводов");
+    for (const alien of ["Полка коакса", "Полка многожильных", "Материал диэлектрика", "Материал изоляции жилы"]) expect(names).not.toContain(alien);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
+    await screen.findByText("КСПВГ 4x0,20");
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    names = chooser();
+    expect(names).toContain("Полка многожильных");
+    for (const alien of ["Полка проводов", "Полка коакса", "Цвета", "Материал оболочки"]) expect(names).not.toContain(alien);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Коаксиальные кабели/ }));
+    await screen.findByText("RG316");
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    names = chooser();
+    expect(names).toContain("Полка коакса");
+    expect(names).toContain("Материал диэлектрика"); // hidden by default, reachable here
+    for (const alien of ["Полка проводов", "Полка многожильных", "Цвета", "Материал изоляции жилы"]) expect(names).not.toContain(alien);
+  });
+
+  it("opens a row's editor with the fields of its own list only", async () => {
+    withKinds();
+    const multi = ROWS.find((row) => row.kind === "multi")!;
+    // a filled value of another list's column that the migration left in the row is not offered
+    const was = multi.record!.fields;
+    multi.record!.fields = { ...was, "Материал изоляции жилы": "ПВХ", "Цвета": "серый" };
+    onTestFinished(() => { multi.record!.fields = was; });
+    render(<ReferencesPage principal={admin} initialTab="cab_multi" />);
+    fireEvent.click(await screen.findByText("КСПВГ 4x0,20"));
+    expect(screen.getByLabelText("Поле Материал изоляции жилы")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Поле Цвета")).toBeNull();
+    expect(screen.queryByLabelText("Поле Полка проводов")).toBeNull();
+  });
+
+  it("«+ Столбец» and the removal send the list's cable_kind, «+ Запись» creates a row of that list", async () => {
+    const calls = withKinds();
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (init?.method === "POST" && path.startsWith("/api/references/tech-operations")) {
+        calls.push({ path, method: "POST", body: JSON.parse(String(init.body)) });
+        return json({ tab: "prov", name: "Х", records: 1, id: "new", display_text: "Новый", fields: {}, source_sheet: "БД.ПРОВ" });
+      }
+      return answer(input, init);
+    });
+    render(<ReferencesPage principal={admin} initialTab="cab_multi" />);
+    await screen.findByText("КСПВГ 4x0,20");
+    fireEvent.click(screen.getByRole("button", { name: "+ Столбец" }));
+    const dialog = screen.getByRole("dialog", { name: "Новый столбец" });
+    fireEvent.change(within(dialog).getByLabelText("Название столбца"), { target: { value: "Полка Х" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Добавить столбец" }));
+    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns"))?.body).toEqual({ tab: "prov", name: "Полка Х", cable_kind: "multi" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка многожильных" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Удалить столбец" })).getByRole("button", { name: "Удалить столбец" }));
+    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns/remove"))?.body).toEqual({ tab: "prov", name: "Полка многожильных", cable_kind: "multi" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Запись" }));
+    fireEvent.change(screen.getByLabelText("Поле Марка"), { target: { value: "ПВС 3x1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Добавить запись" }));
+    await waitFor(() => expect(calls.find((call) => call.path === "/api/references/tech-operations")?.body)
+      .toMatchObject({ tab: "prov", cable_kind: "multi", fields: { "Марка": "ПВС 3x1" } }));
+  });
+
+  it("keeps the user's «Колонки» choice of the coax list across a reload, over the key-columns default", async () => {
+    withKinds();
+    const first = render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    expect(screen.queryByRole("columnheader", { name: "Материал диэлектрика" })).toBeNull(); // hidden by default
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Материал диэлектрика" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Поставщик" })); // a default-visible one switched off
+    expect(screen.getByRole("columnheader", { name: "Материал диэлектрика" })).toBeInTheDocument();
+    first.unmount();
+
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    expect(screen.getByRole("columnheader", { name: "Материал диэлектрика" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Поставщик" })).toBeNull();
   });
 });

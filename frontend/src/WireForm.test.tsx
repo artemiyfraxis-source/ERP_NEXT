@@ -44,7 +44,7 @@ const wireRow = (mark: string, fields: Record<string, string>) => ({
   hookup: { series: "ПВАМ", gauge_id: "g1", insulation: "", outer_d_mm: 2, voltage_v: 48, temp_min_c: -50, temp_max_c: 65 },
 });
 const data = {
-  columns: [...Object.keys(FIELDS), "Материал жилы", "Материал оболочки"], counts: { coax: 0, wire: 2, multi: 0, other: 0 }, gauges: [gauge],
+  columns: [...Object.keys(FIELDS), "Материал жилы", "Материал оболочки"], counts: { coax: 0, wire: 2, multi: 0 }, gauges: [gauge],
   rows: [wireRow("ПВАМ 0,50", FIELDS), wireRow("ПВАМ 0,75", sibling)],
 } as unknown as Parameters<typeof HookupWireTable>[0]["data"];
 

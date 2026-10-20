@@ -47,21 +47,6 @@ it("sorts naturally: category, screen, series, cores as a number, section as a n
   expect(cableSeries("UL2464 24AWG 4C")).toBe("UL2464");
 });
 
-it("renders «Прочие кабели» in groups of category and screen", () => {
-  const row = (mark: string, fields: Record<string, string>) => ({
-    id: mark, kind: "other" as const, auto_kind: "other" as const, reason: "", manual: false, cable: mark, dia: null, dia_hint: null,
-    record: { id: mark, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Тип провода": "многожильный", ...fields } },
-  });
-  const data = {
-    columns: ["Марка", "Тип провода", "Число жил", "Экран", "Категория"], counts: { coax: 0, wire: 0, multi: 0, other: 3 }, gauges: [],
-    rows: [row("LiYCY 4x0,5", { "Экран": "оплётка" }), row("Cat5e U/UTP", { "Экран": "нет" }), row("Нестандартный", { "Экран": "", "Категория": "Силовые" })],
-  } as unknown as CablesResult;
-  render(<CableTable kind="other" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
-  expect(screen.getByText("Витая пара / Ethernet · без экрана")).toBeInTheDocument();
-  expect(screen.getByText("Контрольные / управления · экранированный")).toBeInTheDocument();
-  expect(screen.getByText("Силовые · без экрана")).toBeInTheDocument();
-});
-
 // Owner 15.10.2026: «нормальная сортировка по маркам — ПВВС, КДЭВГ, CAT5e, CAT6 и т.д.» — the marks of production.
 it.each([
   ["ПВВС 4×0,35", {}, "ПВВС"], ["ПВС 3x1,5", {}, "ПВС"], ["ШВВП 2x0,75", {}, "ШВВП"], ["H05RN-F 3x0,75", {}, "H05RN-F"],
@@ -103,7 +88,7 @@ it("renders «Многожильные кабели» in groups of the mark fami
   });
   const data = {
     columns: ["Марка", "Тип провода", "Число жил", "Экран", "Материал экрана"], custom_columns: ["Материал экрана"],
-    counts: { coax: 0, wire: 0, multi: 3, other: 0 }, gauges: [],
+    counts: { coax: 0, wire: 0, multi: 3 }, gauges: [],
     rows: [row("LiYCY 4x0,5", { "Материал экрана": "медь лужёная" }), row("U/UTP Cat5e 4x2x0,52", { "Экран": "нет" }), row("КДЭВГ 9х0,14", { "Материал экрана": "алюминий" })],
   } as unknown as CablesResult;
   render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
