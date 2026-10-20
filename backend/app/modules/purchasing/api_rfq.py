@@ -15,7 +15,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared import stage_options
 from app.shared.clock import moscow_now
-from app.shared.stored_files import decode_upload
+from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal, section_allowed
 from app.workflows.purchasing_procurement_bridge import ProcurementLinesBridge
 from app.workflows.purchasing_rfq_stats import PurchaseStatsBridge
@@ -148,6 +148,9 @@ class QuoteModel(BaseModel):
     source: Literal["manual", "paste", "file"] = "manual"
     note: Text | None = None
     number: str | None = Field(default=None, max_length=64)
+    # The PDF the quote came in («КП из PDF»), kept with the quote; a 20 MB PDF in base64.
+    file_name: str | None = Field(default=None, max_length=300)
+    file_base64: str | None = Field(default=None, max_length=28_000_000)
     lines: list[QuoteLineModel] = Field(min_length=1, max_length=500)
     # Supplier wordings the buyer confirmed in «КП из PDF и текста»; stored only while that option is on.
     aliases: list[AliasModel] = Field(default_factory=list, max_length=500)
@@ -156,7 +159,8 @@ class QuoteModel(BaseModel):
         return service.QuoteInput(
             supplier_id=self.supplier_id, received_on=self.received_on, valid_until=self.valid_until,
             delivery_cost=self.delivery_cost, min_order_sum=self.min_order_sum, source=self.source, note=self.note,
-            number=self.number,
+            number=self.number, file_name=self.file_name,
+            file_content=decode_upload(self.file_base64, "Файл КП повреждён") if self.file_base64 else None,
             lines=tuple(
                 service.QuoteLineInput(
                     rfq_line_id=line.rfq_line_id, unit_price=line.unit_price, vat_included=line.vat_included,
@@ -172,6 +176,9 @@ class QuoteModel(BaseModel):
 class PasteInput(BaseModel):
     supplier_id: UUID | None = None
     text: str = Field(min_length=1, max_length=500_000)
+    # The buyer's own column choice (key → column index, -1 — none) and «цены с НДС»; omitted — guessed.
+    columns: dict[Literal["name", "article", "qty", "unit", "price", "vat", "lead"], Annotated[int, Field(ge=-1, le=200)]] | None = None
+    vat_included: bool | None = None
 
 
 class ImportInput(BaseModel):
@@ -268,6 +275,13 @@ def rfq_suggest(rfq_id: UUID, principal: Edit, uow: Uow, lines: Lines) -> dict:
     return _run(lambda: service.suggest_suppliers(uow(), lines, principal.actor, rfq_id))
 
 
+@router.get("/quotes/{quote_id}/file")
+def rfq_quote_file(quote_id: UUID, _principal: View, uow: Uow) -> Response:
+    """The PDF the quote came in (stored-files serving policy: a PDF opens in the tab)."""
+    content, name = _run(lambda: service.quote_file(uow(), quote_id))
+    return file_response(content, name)
+
+
 @router.delete("/quotes/{quote_id}", status_code=204)
 def rfq_delete_quote(quote_id: UUID, principal: Edit, now: Now, uow: Uow) -> Response:
     _run(lambda: service.delete_quote(uow(), principal.actor, now, quote_id))
@@ -345,11 +359,13 @@ def rfq_add_quote(rfq_id: UUID, payload: QuoteModel, principal: Edit, now: Now, 
 
 @router.post("/{rfq_id}/quotes/paste")
 def rfq_paste_quote(rfq_id: UUID, payload: PasteInput, principal: Edit, uow: Uow) -> dict:
-    return _run(lambda: service.paste_preview(uow(), principal.actor, rfq_id, payload.text, payload.supplier_id))
+    """Excel rows → proposed quote lines (remembered wordings, packs per unit); nothing is saved."""
+    return _run(lambda: quote_import.paste_table(
+        uow(), principal.actor, rfq_id, payload.text, payload.supplier_id, payload.columns, payload.vat_included))
 
 
 @router.post("/{rfq_id}/quotes/import")
-def rfq_import_quote(rfq_id: UUID, payload: ImportInput, principal: Edit, uow: Uow) -> dict:
+def rfq_import_quote(rfq_id: UUID, payload: ImportInput, principal: Edit, now: Now, uow: Uow) -> dict:
     """«КП из PDF и текста»: proposed quote lines for the form; nothing is saved."""
     require_option("procurement.quote_import")
     require_option("procurement.rfq")
@@ -360,7 +376,7 @@ def rfq_import_quote(rfq_id: UUID, payload: ImportInput, principal: Edit, uow: U
     else:
         text = payload.text or ""
     return _run(lambda: quote_import.parse_quote(
-        uow(), principal.actor, rfq_id, text, payload.supplier_id, "file" if payload.content_base64 else "paste"))
+        uow(), principal.actor, rfq_id, text, payload.supplier_id, "file" if payload.content_base64 else "paste", now.date()))
 
 
 @router.post("/{rfq_id}/decisions", status_code=201)

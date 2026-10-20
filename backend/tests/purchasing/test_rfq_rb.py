@@ -1,6 +1,8 @@
 """«Запросы КП» brought to Roller_Buyer's parity (stand of Витя, 16.10.2026): letters, matrix details, withdraw,
 «Подбор», invoice-request letters, quote import header, decision reason codes."""
 
+import base64
+from datetime import date
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -9,7 +11,10 @@ from sqlalchemy import func, select
 from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.modules.purchasing import rfq as rfq_service
 from app.modules.purchasing import rfq_batch
-from app.modules.purchasing.infrastructure import DecisionRow, SupplierRow
+from app.modules.purchasing.infrastructure import DecisionRow, DocumentFileRow, ItemAliasRow, ItemRow, RfqLineRow, SupplierRow
+from app.modules.purchasing.items import alias_key
+from app.modules.purchasing.quote_import import read_header
+from tests.pdf_samples import identity_pdf
 from app.workflows.procurement_history import line_history
 from app.workflows.procurement_rfq_requote import requote_lines
 from tests.purchasing.test_rfq_api import BASE, NOW, _as, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — the fixture
@@ -307,3 +312,69 @@ def test_whole_reels_at_the_base_price_and_the_requisites_from_the_settings(rfq_
     assert "— 200 м (2 × 100 м) × 10,00 ₽ = 2 000,00 ₽" in letter["body"]
     assert "Покупатель:\nООО Тест, ИНН 7700000000\nМосква" in letter["body"]
     assert letter["cart"].endswith("\t2 × 100 м")
+
+
+# ── quote import: the header, Excel columns, the PDF kept with the quote ────────────────────────────────────────────
+
+
+def test_the_header_is_read_by_regex_our_own_inn_skipped():
+    head = read_header("ООО Альфа ИНН 7701234567 КПП 770101001\nПокупатель: ЗЭП ФРАКСИС ИНН 5040191181\n"
+                       "Коммерческое предложение № КП-123/45 от 14.10.2026\nПредложение действительно до 30.10.2026",
+                       date(2026, 10, 14))
+    assert head == {"number": "КП-123/45", "valid_until": "2026-10-30", "inn": "7701234567"}
+    bill = read_header("Счет на оплату № 1990 от 14.10.26\nИНН/КПП: 5040191181/504001001\nПоставщик ИНН 772800000000\n"
+                       "Цены действительны в течение 10 рабочих дней", date(2026, 10, 14))
+    assert bill == {"number": "1990", "valid_until": "2026-10-28", "inn": "772800000000"}
+    assert read_header("просто текст", date(2026, 10, 14)) == {"number": "", "valid_until": None, "inn": ""}
+
+
+def test_excel_paste_takes_the_buyers_columns_and_vat_and_remembered_wordings(rfq_api):
+    client, lines, sessions = rfq_api
+    rfq = _rfq(client, lines)
+    supplier = _supplier(client, rfq["id"], "ООО Таблица")
+    url = f"{BASE}/{rfq['id']}/quotes/paste"
+    text = "Поз\tТовар\tКод\tШт\tЦена\n1\tКлеммник хитрый\tXX-1\t2\t100\n"
+    guessed = client.post(url, json={"text": text, "supplier_id": supplier}).json()
+    assert guessed["width"] == 5 and guessed["column_labels"]["price"] == "Цена" and guessed["vat_included"] is True
+    remapped = client.post(url, json={"text": text, "supplier_id": supplier, "vat_included": False,
+                                      "columns": {"name": 1, "article": 2, "qty": 3, "price": 4}}).json()
+    assert remapped["columns"]["name"] == 1 and remapped["vat_included"] is False
+    row = remapped["rows"][0]
+    assert (row["source_name"], row["source_article"], row["qty"], row["price"]) == ("Клеммник хитрый", "XX-1", "2", "100")
+    assert row["rfq_line_id"] is None  # nothing in common with the request's lines yet
+    # Remembered: this supplier calls our line «Клеммник хитрый XX-1».
+    line_id = _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[0].id)["id"]
+    with sessions() as session:
+        item = ItemRow(id=uuid4(), name="Разъём", category="connector", unit="шт", created_at=NOW, version=1)
+        session.add(item)
+        session.flush()
+        session.get(RfqLineRow, UUID(line_id)).item_id = item.id
+        session.add(ItemAliasRow(id=uuid4(), item_id=item.id, supplier_id=UUID(supplier), alias_text="XX-1 Клеммник хитрый",
+                                 alias_key=alias_key("XX-1 Клеммник хитрый"), created_at=NOW))
+        session.commit()
+    again = client.post(url, json={"text": text, "supplier_id": supplier, "columns": {"name": 1, "article": 2, "qty": 3, "price": 4}}).json()
+    assert (again["rows"][0]["rfq_line_id"], again["rows"][0]["matched_by"]) == (line_id, "alias")
+
+
+def test_the_pdf_a_quote_came_in_is_kept_with_it(rfq_api):
+    client, lines, sessions = rfq_api
+    rfq = _rfq(client, lines)
+    supplier = _supplier(client, rfq["id"], "ООО Файл")
+    line_id = _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[0].id)["id"]
+    pdf = identity_pdf(["Разъём SHR-02V-S-B 2 шт 100,00"])
+    body = {"supplier_id": supplier, "source": "file", "number": "17", "file_name": "КП Файл.pdf",
+            "file_base64": base64.b64encode(pdf).decode(), "lines": [{"rfq_line_id": line_id, "unit_price": "100"}]}
+    saved = client.post(f"{BASE}/{rfq['id']}/quotes", json=body)
+    assert saved.status_code == 201, saved.text
+    quote = next(item for item in client.get(f"{BASE}/{rfq['id']}").json()["quotes"] if item["id"] == saved.json()["id"])
+    assert quote["has_file"] is True
+    served = client.get(f"{BASE}/quotes/{quote['id']}/file")
+    assert served.status_code == 200 and served.content == pdf and served.headers["content-type"] == "application/pdf"
+    second = client.post(f"{BASE}/{rfq['id']}/quotes", json={**body, "number": "18"})
+    assert second.status_code == 201
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(DocumentFileRow)) == 1  # the same file is kept once
+    not_pdf = client.post(f"{BASE}/{rfq['id']}/quotes", json={**body, "file_base64": base64.b64encode(b"<html>").decode()})
+    assert not_pdf.status_code == 422 and "только PDF" in not_pdf.json()["detail"]
+    plain = client.post(f"{BASE}/{rfq['id']}/quotes", json={**body, "file_base64": None, "file_name": None})
+    assert client.get(f"{BASE}/quotes/{plain.json()['id']}/file").status_code == 404

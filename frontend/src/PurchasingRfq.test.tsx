@@ -204,13 +204,20 @@ it("the pasted text fills the form with the pack recalculated, lists the rest an
   fireEvent.click(await within(quote).findByRole("button", { name: "Вставить из PDF / текста" }));
   fireEvent.change(within(quote).getByLabelText("Текст КП"), { target: { value: "Разъём SHR-02 (100 шт) 1 уп 500,00 7 дн" } });
   fireEvent.click(within(quote).getByRole("button", { name: "Разобрать текст" }));
-  await waitFor(() => expect(within(quote).getByLabelText("Цена Разъём")).toHaveValue("5"));
+  // Every row is matched or skipped before anything reaches the form.
+  const review = await within(quote).findByRole("region", { name: "Проверка импорта" });
+  expect(within(review).getByText(/мусор 12,50/)).toBeInTheDocument();
+  expect(within(review).getByText("Не решено строк: 1 — выберите позицию или «пропустить».")).toBeInTheDocument();
+  const apply = within(review).getByRole("button", { name: "Перенести в КП" });
+  expect(apply).toBeDisabled();
+  fireEvent.change(within(review).getByLabelText("Позиция для «Что-то ещё»"), { target: { value: "skip" } });
+  expect(apply).toBeEnabled();
+  fireEvent.click(apply);
+  expect(within(quote).getByLabelText("Цена Разъём")).toHaveValue("5");
   expect(within(quote).getByLabelText("Упаковка Разъём")).toHaveValue("100");
   expect(within(quote).getByLabelText("Мин. партия Разъём")).toHaveValue("100");
   expect(within(quote).getByLabelText("Срок Разъём")).toHaveValue("7");
   expect(within(quote).getByText(/цена пересчитана за шт/)).toBeInTheDocument();
-  expect(within(quote).getByText(/Что-то ещё/)).toBeInTheDocument();
-  expect(within(quote).getByText(/мусор 12,50/)).toBeInTheDocument();
   expect(posts[0].path).toBe("/api/purchasing/rfqs/r1/quotes/import");
   expect(posts[0].body).toEqual({ supplier_id: "s2", text: "Разъём SHR-02 (100 шт) 1 уп 500,00 7 дн" });
 

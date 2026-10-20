@@ -150,6 +150,8 @@ export type QuoteInput = {
   supplier_id: string; received_on: string | null; valid_until: string | null; delivery_cost: string | null;
   min_order_sum: string | null; source: "manual" | "paste" | "file"; lines: QuoteLineInput[];
   number?: string | null; note?: string | null;
+  /** the PDF the quote came in, kept with it */
+  file_name?: string | null; file_base64?: string | null;
   aliases?: { rfq_line_id: string; text: string }[];
 };
 
@@ -158,8 +160,17 @@ export type PastedRow = {
   vat_rate: string | null; lead_days: number | null; in_stock: boolean; declined: boolean; analog: boolean;
   rfq_line_id: string | null; matched_by: "article" | "name" | null;
 };
+export type PasteColumn = "name" | "article" | "qty" | "unit" | "price" | "vat" | "lead";
 export type PastePreview = {
-  header: string[] | null; columns: Record<string, number>; vat_included: boolean; default_vat_rate: string; rows: PastedRow[];
+  header: string[] | null; columns: Record<string, number>; vat_included: boolean; default_vat_rate: string;
+  /** the Excel rows read as quote lines (remembered wordings, packs per unit) */
+  rows: ImportedQuoteLine[];
+  width?: number; column_labels?: Record<PasteColumn, string>;
+};
+/** The quote's header read from its text: «№», «действует до», the seller's INN and the directory supplier behind it. */
+export type ImportHeader = {
+  number: string; valid_until: string | null; inn: string; supplier_id: string | null; supplier_name: string | null;
+  in_request: boolean;
 };
 
 /** «КП из PDF и текста»: a proposed line; `price` is per unit asked (a pack quote is already converted, see `pack_note`). */
@@ -171,7 +182,7 @@ export type ImportedQuoteLine = {
 };
 export type QuoteImport = {
   source: "paste" | "file"; vat_included: boolean; default_vat_rate: string; lines: ImportedQuoteLine[];
-  unmatched: ImportedQuoteLine[]; unread: string[];
+  unmatched: ImportedQuoteLine[]; unread: string[]; header?: ImportHeader;
 };
 
 export type DecisionInput = {
@@ -212,8 +223,9 @@ export const rfqApi = {
   markDeclined: (id: string, supplierId: string, note: string, declined = true) =>
     post(`${BASE}/${id}/suppliers/${supplierId}/declined`, { note: note || null, declined }),
   addQuote: (id: string, quote: QuoteInput) => post<{ id: string }>(`${BASE}/${id}/quotes`, quote),
-  paste: (id: string, text: string, supplierId?: string) =>
-    post<PastePreview>(`${BASE}/${id}/quotes/paste`, supplierId ? { text, supplier_id: supplierId } : { text }),
+  paste: (id: string, text: string, supplierId?: string, options: { columns?: Record<string, number>; vat_included?: boolean } = {}) =>
+    post<PastePreview>(`${BASE}/${id}/quotes/paste`, { text, ...(supplierId ? { supplier_id: supplierId } : {}), ...options }),
+  quoteFileUrl: (quoteId: string) => `${BASE}/quotes/${quoteId}/file`,
   importQuote: (id: string, supplierId: string | null, input: { text: string } | { file_name: string; content_base64: string }) =>
     post<QuoteImport>(`${BASE}/${id}/quotes/import`, supplierId ? { supplier_id: supplierId, ...input } : input),
   deleteQuote: (quoteId: string) => remove(`${BASE}/quotes/${quoteId}`),

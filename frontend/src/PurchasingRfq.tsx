@@ -301,6 +301,7 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
               {supplierName(quote.supplier_id)}{quote.supplier_is_key ? " ★" : ""}{quote.number ? ` № ${quote.number}` : ""} от {formatDay(quote.received_on)}
               {quote.valid_until ? `, до ${formatDay(quote.valid_until)}` : ""}{quote.source === "paste" ? ", из Excel" : quote.source === "file" ? ", из PDF" : quote.source === "invoice" ? ", из счёта" : ""}
               {quote.note ? <span className="muted"> — {quote.note}</span> : null}
+              {quote.has_file && <a href={rfqApi.quoteFileUrl(quote.id)} target="_blank" rel="noreferrer" style={{ paddingLeft: 6 }}>PDF ↗</a>}
               {editable && !quote.used && (
                 <button
                   type="button" className="link-button" style={{ padding: "0 0 0 6px" }}

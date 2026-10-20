@@ -8,6 +8,7 @@ JSON-ready dicts (Decimals as strings)."""
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
@@ -30,6 +31,7 @@ from .infrastructure import (
     ITEM_CATEGORIES,
     RFQ_SUPPLIER_REASONS,
     DecisionRow,
+    DocumentFileRow,
     ItemRow,
     LineItemRow,
     QuoteLineRow,
@@ -979,6 +981,8 @@ class QuoteInput:
     source: str = "manual"
     note: str | None = None
     number: str | None = None  # «Номер КП» as the supplier wrote it
+    file_name: str | None = None  # the PDF the quote came in, kept with it (purchasing_document_files)
+    file_content: bytes | None = None
 
 
 def _positive(value: Decimal | None, label: str) -> Decimal | None:
@@ -1051,11 +1055,13 @@ def add_quote(uow: UnitOfWork, actor: Actor, now: datetime, rfq_id: UUID, data: 
                                        sent_at=answered_at, created_at=now))
         elif rfq_supplier.sent_at is None:
             rfq_supplier.sent_at = answered_at
+        stored = _stored_pdf(session, data.file_name, data.file_content, now) if data.file_content else None
         session.add(QuoteRow(
             id=quote_id, rfq_id=rfq.id, supplier_id=supplier.id, supplier_is_key=supplier.is_key,
             received_on=received_on, valid_until=data.valid_until, currency="RUB", delivery_cost=data.delivery_cost,
             min_order_sum=data.min_order_sum, source=data.source, note=(data.note or "").strip() or None,
             number=" ".join((data.number or "").split())[:64] or None, created_at=now, created_by=actor.id,
+            file_id=stored.id if stored else None, file_name=stored.file_name[:255] if stored else None,
         ))
         session.flush()
         session.add_all(rows)
@@ -1063,6 +1069,39 @@ def add_quote(uow: UnitOfWork, actor: Actor, now: datetime, rfq_id: UUID, data: 
                {"number": rfq.number, "supplier": supplier.name, "lines": str(len(rows))})
         uow.commit()
         return {"id": str(quote_id)}
+
+
+QUOTE_PDF_LIMIT = 20 * 1024 * 1024
+
+
+def _stored_pdf(session: Session, name: str | None, content: bytes, now: datetime) -> DocumentFileRow:
+    """The quote's PDF in the ERP's document files: one row per distinct content (the same file twice is kept once)."""
+    if len(content) > QUOTE_PDF_LIMIT:
+        raise Refused("PDF больше 20 МБ")
+    if b"%PDF" not in content[:1024]:
+        raise Refused("К КП прикладывается только PDF")
+    digest = hashlib.sha256(content).hexdigest()
+    found = session.scalar(select(DocumentFileRow).where(DocumentFileRow.sha256 == digest))
+    if found is not None:
+        return found
+    clean = " ".join((name or "").split()) or "КП.pdf"
+    row = DocumentFileRow(id=uuid4(), sha256=digest, file_name=clean[:1024], size=len(content), content=content, created_at=now)
+    session.add(row)
+    session.flush()
+    return row
+
+
+def quote_file(uow: UnitOfWork, quote_id: UUID) -> tuple[bytes, str]:
+    """The PDF a quote came in."""
+    with uow:
+        session = _session(uow)
+        quote = session.get(QuoteRow, quote_id)
+        if quote is None or quote.file_id is None:
+            raise NotFound("У этого КП нет файла")
+        row = session.get(DocumentFileRow, quote.file_id)
+        if row is None:
+            raise NotFound("У этого КП нет файла")
+        return bytes(row.content), quote.file_name or row.file_name
 
 
 def delete_quote(uow: UnitOfWork, actor: Actor, now: datetime, quote_id: UUID) -> None:
