@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { EtkRoute } from "./api";
 import type { PfArt } from "./etkPfArt";
-import { etkPfGroups, etkPfOutName, etkRouteChips, etkRouteDiagram, etkRouteSummary, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
+import { etkOpRuns, etkPfGroups, etkPfOutName, etkRouteChips, etkRouteDiagram, etkRouteSummary, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
 import { formatQty } from "./format";
 import { CableArt } from "./RouteCanvas";
 import "./EtkRouteDiagram.css";
@@ -50,17 +50,6 @@ const FIT_MARGIN = 40;
 export function etkDiagramFit(height: number, room: number): number {
   if (height <= 0 || room <= 0) return 1;
   return clamp(Math.floor((room / height) * 20) / 20, ZOOM_MIN, 1);
-}
-
-/** Номера операций подряд — диапазоном: [6,7,8,14] → «06–08·14». */
-export function etkOpRuns(numbers: number[], show: (value: number) => string): string {
-  const runs: Array<[number, number]> = [];
-  numbers.forEach((value) => {
-    const last = runs[runs.length - 1];
-    if (last && value === last[1] + 1) last[1] = value;
-    else runs.push([value, value]);
-  });
-  return runs.map(([from, to]) => (from === to ? show(from) : `${show(from)}${to === from + 1 ? "·" : "–"}${show(to)}`)).join("·");
 }
 
 function readZoom(key: string): number | null {

@@ -791,8 +791,10 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
             <button className="secondary" aria-haspopup="dialog" onClick={() => setEtkOpen(key)}>{pf ? "Инструкция" : "ЭТК"}</button>
           </div>
         </div>
-        <div className="mo-s">{task.number} · {pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{own != null ? <> · <b className="mo-own">ваша доля {own} из {task.quantity}</b></> : null}</div>
-        {operation.description && !operation.description.startsWith(operation.stage || stage) && <div className="mo-d">{operation.description}</div>}
+        <div className="mo-s">{task.number} · {pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{own != null ? <> · <b className="mo-own">ваша доля {own} из {task.quantity}</b></> : null}</div>
+        {/* Монтажнику — без «из этапов … ×0,142857» (коробки и их этапы — в «Получить…» и в форме старта) и без строки кодов
+            карт у ПФ (операции — в «Инструкции»); владелец 20.10: «как-то сложно для восприятия». */}
+        {!pf && operation.description && !operation.description.startsWith(operation.stage || stage) && <div className="mo-d">{operation.description}</div>}
         <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span>{early >= EARLY_NOTE_MS ? <span className="mo-early tone-info"> — начато раньше на {spanText(early)}</span> : null} · <span className="mo-norm" title="Как «Расчётное время» в «Результате» ЭТК: подготовка + время на изделие × штуки. «Время» в шапке ЭТК — на одно действие (один обжим, один рез)">{norm}</span>{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
         {(handed || factParts.length > 0 || fact) && <div className="mo-fact">{handed}{handed && factParts.length ? " · " : ""}{factParts.join(" · ")}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>}
         {pf && <PfCardBlocks taskId={task.id} operation={operation} onBehalfOf={onBehalfOf} showInputs={!done && !operation.first} />}
@@ -1112,6 +1114,8 @@ function BoxCorrection({ box, busy, mutate, onDone, onBehalfOf = "" }: {
 
 // prodWorkStart_: первая операция начинается сразу (складские партии — по желанию), дальше оператор вводит номера
 // входных коробок с предыдущего этапа — сданных (подтверждения мастером нет с 13.10); штуки из них берутся при сдаче.
+// Владелец 20.10 («как-то сложно»): заголовок говорит, что это шаг перед началом; без «×0,142857» и «сданные» — этап
+// написан на самой коробке; с каждого этапа одна готовая коробка — она отмечена сразу, остаётся «Начать работу».
 function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
   task: ProductionTask;
   operation: ProductionOperation;
@@ -1126,16 +1130,23 @@ function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
   const [error, setError] = useState("");
   const first = isFirst(operation);
   const source = feedsText(task, operation);
+  const [loaded, setLoaded] = useState(false);
   // Ключ повтора на эту форму: двойной клик «Начать работу» не начинает дважды.
   const key = useRef(crypto.randomUUID());
   useEffect(() => {
     productionApi.inputs(task.id, operation.id, onBehalfOf)
       .then((result) => { setBoxes(result.boxes); setMaterials(result.materials); })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Коробки не загружены"));
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Коробки не загружены"))
+      .finally(() => setLoaded(true));
   }, [task.id, operation.id, operation.position]);
-  const [picked, setPicked] = useState<string[]>([]);
   const chips = operation.readiness?.boxes.map((box) => ({ id: box.id, number: box.number ?? "", code: box.code ?? null, quantity: box.quantity, stage: box.stage, position: box.operation_position }))
     ?? boxes.map((box) => ({ id: box.id, number: box.number ?? "", code: box.code, quantity: box.available, stage: "", position: box.operation_position }));
+  // Одна готовая коробка на каждый этап-вход — отмечена сразу (`chosen` = null, пока монтажник не щёлкнул сам).
+  const [chosen, setChosen] = useState<string[] | null>(null);
+  const single = new Set(chips.map((chip) => chip.position)).size === chips.length;
+  const picked = chosen ?? (single ? chips.map((chip) => chip.number) : []);
+  // Готовых коробок нет — с каких этапов их ждать: номер и название этапа, без штук на изделие.
+  const awaited = (operation.inputs ?? []).map((input) => `${input.position ?? "?"}${input.stage ? ` «${input.stage}»` : ""}`);
   const typed = numbers.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
   const inputs = [...picked, ...typed.filter((item) => !picked.includes(item))];
   const materialInputs = materials.flatMap((material) => {
@@ -1150,9 +1161,10 @@ function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
     {error && <small className="danger-text">{error}</small>}
     {first && materials.map((material) => <label key={material.fulfillment_line_id}>{material.grn}{material.package ? ` · ${material.package}` : ""} · {material.article || material.name} · доступно {material.available} {material.unit}<input aria-label={`Количество из партии ${material.grn} ${material.package}`} type="number" min="0" max={material.available} step="any" value={quantities[material.fulfillment_line_id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [material.fulfillment_line_id]: event.target.value }))} /></label>)}
     {!first && <>
-      <div className="sw-title">Из каких коробок берёте детали <small>({source ? `${source}; сданные` : `с этапа ${previousStage(operation)}, сданные`})</small></div>
+      <div className="sw-title">Перед началом отметьте коробки, из которых берёте детали</div>
+      {loaded && !chips.length && <small className="sw-why">Готовых коробок {awaited.length > 1 ? `с этапов ${awaited.join(", ")}` : `с этапа ${awaited[0] ?? previousStage(operation)}`} пока нет — введите код с коробки</small>}
       {chips.length > 0 && <div className="box-chips" role="group" aria-label="Готовые коробки">{chips.map((chip) => <button key={chip.id} type="button" className={`box-chip${picked.includes(chip.number) ? " on" : ""}`} aria-pressed={picked.includes(chip.number)}
-        onClick={() => setPicked((current) => current.includes(chip.number) ? current.filter((item) => item !== chip.number) : [...current, chip.number])}>
+        onClick={() => setChosen(picked.includes(chip.number) ? picked.filter((item) => item !== chip.number) : [...picked, chip.number])}>
         <b>{boxTitle(chip)}</b><span>{chip.quantity} шт{source ? ` · ${chip.stage || `этап ${chip.position}`}` : ""}</span></button>)}</div>}
       {chips.length > 0 && !manual && !typed.length
         ? <button type="button" className="link-button sw-manual-toggle" onClick={() => setManual(true)}>Ввести код вручную</button>
