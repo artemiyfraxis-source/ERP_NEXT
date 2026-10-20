@@ -3173,6 +3173,13 @@ export const productionApi = {
         ? { version, operator_id: operatorId, remove: true }
         : { version, operator_id: operatorId, quantity, requested_start: requestedStart }),
     }),
+  // Ввод готовых мастером (владелец 20.10): штуки этапа мимо терминала; operatorId — чьи (пусто — без исполнителя);
+  // fillInputs — пропущенные этапы-входы отбить готовыми.
+  manualOutput: (taskId: string, operationId: string, goodQuantity: number, operatorId: string, fillInputs: boolean) =>
+    api<{ box: ProductionBox; filled: ProductionBox[]; warnings: string[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/manual-output`, {
+      method: "POST",
+      body: JSON.stringify({ good_quantity: goodQuantity, operator_id: operatorId || null, fill_inputs: fillInputs }),
+    }),
   cancel: (taskId: string, version: number, cancelled: boolean) =>
     api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/cancel`, {
       method: "POST",
