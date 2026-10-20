@@ -69,8 +69,10 @@ export function sortColumn(column: OrderColumn, list: Order[]): Order[] {
   return by(expectedDay);
 }
 
-/** «На складе» растёт без конца — на доске последние, остальные по кнопке. */
+/** «На складе» растёт без конца — на доске последние, остальные по кнопке; в остальных колонках (все закупщики — сотни
+ *  заказов) — первые 40, остальные тоже по кнопке. */
 export const STOCKED_SHOWN = 8;
+export const COLUMN_SHOWN = 40;
 
 const daysBetween = (from: string | null, to: string) => {
   if (!from) return null;
@@ -132,7 +134,7 @@ export function OrderBoard({ orders, today, onOpen, onDrop }: {
 }) {
   const [dragged, setDragged] = useState<Order | null>(null);
   const [over, setOver] = useState<OrderColumn | null>(null);
-  const [allStocked, setAllStocked] = useState(false);
+  const [expanded, setExpanded] = useState<Set<OrderColumn>>(new Set());
   const columns = boardColumns(orders);
 
   function drop(to: OrderColumn) {
@@ -146,7 +148,8 @@ export function OrderBoard({ orders, today, onOpen, onDrop }: {
     <div className="order-board" role="list" aria-label="Доска заказов">
       {ORDER_COLUMNS.map((column) => {
         const list = sortColumn(column.key, columns.get(column.key) ?? []);
-        const shown = column.key === "stocked" && !allStocked ? list.slice(0, STOCKED_SHOWN) : list;
+        const limit = column.key === "stocked" ? STOCKED_SHOWN : COLUMN_SHOWN;
+        const shown = expanded.has(column.key) ? list : list.slice(0, limit);
         const total = list.reduce((sum, order) => sum + Number(order.sum ?? 0) + Number(order.delivery_cost ?? 0), 0);
         return (
           <section
@@ -185,7 +188,7 @@ export function OrderBoard({ orders, today, onOpen, onDrop }: {
               />
             ))}
             {list.length > shown.length && (
-              <button type="button" className="secondary small order-column-more" onClick={() => setAllStocked(true)}>Показать все {list.length}</button>
+              <button type="button" className="secondary small order-column-more" onClick={() => setExpanded((current) => new Set(current).add(column.key))}>Показать все {list.length}</button>
             )}
           </section>
         );
