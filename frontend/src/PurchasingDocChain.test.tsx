@@ -123,14 +123,14 @@ function procurementServer(chainOn: boolean) {
   });
 }
 
-it("the procurement page shows «Счета», «Цепочка документов», «Поиск по документам» only with the option on", async () => {
+it("the procurement page shows «Счета Kaiten», «Цепочка документов», «Поиск по документам» only with the option on", async () => {
   procurementServer(true);
   render(<ProcurementPage />);
   const tabs = await screen.findByRole("tablist", { name: "Разделы закупки" });
-  await waitFor(() => expect(within(tabs).getByRole("tab", { name: "Счета" })).toBeInTheDocument());
+  await waitFor(() => expect(within(tabs).getByRole("tab", { name: "Счета Kaiten" })).toBeInTheDocument());
   expect(within(tabs).getByRole("tab", { name: "Цепочка документов" })).toBeInTheDocument();
   expect(within(tabs).getByRole("tab", { name: "Поиск по документам" })).toBeInTheDocument();
-  fireEvent.click(within(tabs).getByRole("tab", { name: "Счета" }));
+  fireEvent.click(within(tabs).getByRole("tab", { name: "Счета Kaiten" }));
   expect(await screen.findByText("Счетов ещё нет: их загружает перенос из Kaiten.")).toBeInTheDocument();
   cleanup();
   resetStageOptions();
@@ -139,5 +139,5 @@ it("the procurement page shows «Счета», «Цепочка документ
   render(<ProcurementPage />);
   const off = await screen.findByRole("tablist", { name: "Разделы закупки" });
   await screen.findAllByRole("tab");
-  expect(within(off).queryByRole("tab", { name: "Счета" })).toBeNull();
+  expect(within(off).queryByRole("tab", { name: "Счета Kaiten" })).toBeNull();
 });

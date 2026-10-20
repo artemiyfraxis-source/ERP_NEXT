@@ -4393,3 +4393,73 @@ tr.upd-row-bad td { background: var(--chip-danger-bg); }
 /* Документ без продавца показывает имя XML-файла (≈170 знаков без пробелов) — оно переносится, а не растягивает колонку. */
 .upd-table td.text, .upd-table .table-link { overflow-wrap: anywhere; white-space: normal; text-align: left; }
 .upd-table .upd-chips { max-width: 220px; }
+
+/* «Счета и поставки» (option procurement.orders): доска заказов, карточка, «Дожать», «Новый счёт». Только токены темы. */
+.purchasing-orders { display: grid; gap: 12px; }
+.orders-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.orders-toolbar .seg-tabs { margin: 0; }
+.orders-toolbar select { width: auto; max-width: 260px; }
+.orders-hint { font-size: 12px; }
+.order-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); gap: 10px; overflow-x: auto; padding-bottom: 6px; align-items: start; }
+.order-column { display: grid; gap: 6px; align-content: start; min-height: 160px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); }
+.order-column.is-drop { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary) inset; }
+.order-column-head { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; }
+.order-column-head b { font-weight: 700; }
+.order-column-count { color: var(--muted-foreground); font-size: 11px; font-weight: 700; }
+.order-column-sum { margin-left: auto; color: var(--muted-foreground); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.order-column-empty { padding: 8px 2px; color: var(--muted-foreground); font-size: 12px; }
+.order-column-more { justify-self: start; }
+.order-card { border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.order-card[draggable="true"] { cursor: grab; }
+.order-card:hover { border-color: var(--primary); }
+.order-card.is-late { border-left: 3px solid var(--tone-danger); }
+.order-card.is-dragging { opacity: .45; }
+.order-card.is-foreign { background: color-mix(in srgb, var(--card) 80%, var(--panel-soft)); }
+.order-card-summary { display: grid; gap: 3px; width: 100%; padding: 7px 9px; border: 0; background: transparent; color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
+.order-card-top { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; }
+.order-card-number { font-weight: 700; }
+.order-card-sum { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.order-card-supplier { font-size: 12.5px; overflow-wrap: anywhere; }
+.order-card-meta { color: var(--muted-foreground); font-size: 11.5px; }
+.order-card-late { color: var(--tone-danger); font-size: 11.5px; font-weight: 600; }
+.order-card-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.order-card-chips .status-chip { font-size: 11px; }
+.order-modal { width: min(1180px, 100%); }
+.order-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.order-modal-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.order-card-body { display: grid; gap: 10px; font-size: 13px; }
+.order-card-body h3 { margin: 6px 0 0; font-size: 13px; font-weight: 600; }
+.order-card-body small { display: block; }
+.order-card-facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 14px; align-items: start; }
+.order-facts { display: grid; gap: 6px; margin: 0; }
+.order-facts > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; }
+.order-facts dt { color: var(--muted-foreground); }
+.order-facts dd { margin: 0; overflow-wrap: anywhere; }
+.order-fact-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; }
+.order-fact-form label { display: grid; gap: 3px; font-size: 12px; color: var(--muted-foreground); }
+.order-fact-form label.wide { grid-column: span 3; }
+.order-fact-form textarea { resize: vertical; }
+.order-fact-readonly { display: grid; gap: 3px; font-size: 12px; color: var(--muted-foreground); }
+.order-fact-readonly strong { color: var(--foreground); font-size: 13px; font-weight: 500; padding-top: 6px; }
+.order-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.order-lines td small { white-space: normal; }
+.order-followups { padding: 0; }
+.order-followups > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 16px; cursor: pointer; }
+.order-followups-body { display: grid; gap: 4px; padding: 0 16px 12px; font-size: 13px; }
+.order-followups-body ul { margin: 0 0 6px; padding-left: 18px; }
+.order-toast { position: fixed; left: 50%; bottom: 20px; z-index: 60; display: flex; align-items: center; gap: 12px; max-width: min(720px, calc(100vw - 32px)); padding: 10px 14px; transform: translateX(-50%); border-radius: 10px; color: var(--primary-foreground); background: var(--foreground); box-shadow: 0 8px 28px rgba(0, 0, 0, .25); font-size: 13px; }
+.order-toast.is-error { background: var(--tone-danger); }
+.order-toast .link-button { padding: 0; color: inherit; font-weight: 600; text-decoration: underline; }
+.new-order-body { display: grid; gap: 10px; padding: 0 20px 16px; }
+.new-order-input { width: 96px; text-align: right; }
+.new-order-lines td small { display: block; white-space: normal; }
+.new-order-form { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 18px; }
+.new-order-form label { display: grid; gap: 3px; font-size: 12px; color: var(--muted-foreground); }
+.new-order-form input[inputmode] { width: 140px; }
+.new-order-total { margin-left: auto; font-size: 13px; }
+tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger); }
+@media (max-width: 900px) {
+  .order-card-facts { grid-template-columns: minmax(0, 1fr); }
+  .order-fact-form { grid-template-columns: minmax(0, 1fr); }
+  .order-fact-form label.wide { grid-column: auto; }
+}
