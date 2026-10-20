@@ -187,8 +187,8 @@ export type QuoteImport = {
 
 export type DecisionInput = {
   rfq_line_id: string; quote_line_id: string; expected_version: number | null;
-  gate_override_reason?: string; not_cheapest_reason?: string; analog_approved_by?: string;
-};
+  gate_override_reason?: string; not_cheapest_reason?: string;
+} & ReasonFields;
 
 export type Violation = { field: DecisionField; message: string };
 

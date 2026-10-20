@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { failureText } from "./api";
 import { formatDay } from "./format";
 import {
-  decisionViolations,
   quoteCell,
   rfqApi,
-  type DecisionField,
-  type RfqLine,
   type RfqMatrix,
   type RfqSummary,
   type RfqSupplier,
@@ -18,7 +15,8 @@ import { rfqLinkState, syncRfqUrl } from "./rfqLinks";
 import { QuoteDialog } from "./RfqQuoteDialog";
 import { Dialog, money, number, quantity } from "./rfqUi";
 import { RfqLetters } from "./RfqLetters";
-import { chip, gateHint, gateText, MatrixTable } from "./RfqMatrix";
+import { MatrixTable } from "./RfqMatrix";
+import { DecisionPanel } from "./RfqDecision";
 import { askSplit, RemovedLines, RfqLineToolbar, RfqSelectionBar } from "./RfqLineActions";
 import { decidedPicks, RfqBasket } from "./RfqBasket";
 import { invoiceAskable, RfqInvoiceRequests } from "./RfqInvoiceRequests";
@@ -27,8 +25,6 @@ import { invoiceAskable, RfqInvoiceRequests } from "./RfqInvoiceRequests";
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
  *  reasons the gate asks for → supplier and quantity go into the procurement line. */
 
-const GATE_PRESETS = ["Срочно", "Единственный производитель или поставщик", "Повторная закупка по свежему КП"];
-const PRICIER_PRESETS = ["Срок", "Наличие", "Минимальная партия", "Качество или происхождение"];
 
 export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {}) {
   // `?rfq=<id>[&letters=1|&invoices=1]` (CONTRACTS.md): the request to open and the panel to open with it.
@@ -338,182 +334,6 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
         />
       )}
     </section>
-  );
-}
-
-function DecisionPanel({ matrix, line, supplierId, editable, onClose, onDone }: {
-  matrix: RfqMatrix; line: RfqLine; supplierId: string; editable: boolean; onClose: () => void; onDone: (message: string) => void;
-}) {
-  const [chosenId, setChosenId] = useState(supplierId);
-  const [gateReason, setGateReason] = useState("");
-  const [pricierReason, setPricierReason] = useState("");
-  const [analogBy, setAnalogBy] = useState("");
-  const [serverFields, setServerFields] = useState<DecisionField[]>([]);
-  const [messages, setMessages] = useState<string[]>([]);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const chosen = quoteCell(line, chosenId);
-  const chosenSupplier = matrix.suppliers.find((supplier) => supplier.supplier_id === chosenId);
-  const decidedSupplier = line.decision ? matrix.suppliers.find((supplier) => supplier.supplier_id === line.decision?.supplier_id) : undefined;
-  const choosable = Boolean(chosen && !chosen.declined && !chosen.expired && chosen.gross_unit !== null);
-  const required = useMemo(
-    () => new Set<DecisionField>([...(chosen?.requires ?? []), ...serverFields]),
-    [chosen, serverFields],
-  );
-  const missing = (required.has("gate_override_reason") && !gateReason.trim())
-    || (required.has("not_cheapest_reason") && !pricierReason.trim())
-    || (required.has("analog_approved_by") && !analogBy.trim());
-  const offers = matrix.suppliers.flatMap((supplier) => {
-    const cell = quoteCell(line, supplier.supplier_id);
-    return cell ? [{ supplier, cell }] : [];
-  });
-
-  async function decide() {
-    if (!chosen) return;
-    setBusy(true);
-    setError("");
-    setMessages([]);
-    try {
-      await rfqApi.decide(matrix.rfq.id, {
-        rfq_line_id: line.id, quote_line_id: chosen.quote_line_id, expected_version: line.version,
-        ...(required.has("gate_override_reason") ? { gate_override_reason: gateReason.trim() } : {}),
-        ...(required.has("not_cheapest_reason") ? { not_cheapest_reason: pricierReason.trim() } : {}),
-        ...(required.has("analog_approved_by") ? { analog_approved_by: analogBy.trim() } : {}),
-      });
-      onDone(`${line.legacy_id ?? line.name}: выбран «${chosenSupplier?.name ?? ""}» — поставщик и количество записаны в строку закупки`);
-    } catch (reason) {
-      const violations = decisionViolations(reason);
-      if (violations.length > 0) {
-        setServerFields(violations.map((violation) => violation.field));
-        setMessages(violations.map((violation) => violation.message));
-      } else {
-        setError(failureText(reason, "Решение не сохранено"));
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function undo() {
-    if (!line.decision) return;
-    setBusy(true);
-    setError("");
-    try {
-      await rfqApi.undoDecision(matrix.rfq.id, line.decision.id);
-      onDone(`${line.legacy_id ?? line.name}: решение отменено, данные строки закупки остались как были`);
-    } catch (reason) {
-      setError(failureText(reason, "Решение не отменено"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Dialog title={`${line.name}: выбор поставщика`} wide onClose={onClose}>
-      <p className="page-sub">
-        Нужно {quantity(line.quantity)} {line.unit} · бюджет {money(line.budget_unit_gross)} за {line.unit} ·{" "}
-        <span style={chip(line.gate.passes ? "ok" : "warn")}>{gateText(line)}</span> {line.gate.passes ? "" : gateHint(line)}
-      </p>
-      <div className="inwork-scroll">
-        <table className="inwork-table">
-          <thead>
-            <tr><th>Поставщик</th><th>Цена с НДС</th><th>Берём</th><th>Сумма</th><th>Срок</th><th>Отметки</th></tr>
-          </thead>
-          <tbody>
-            {offers.map(({ supplier, cell }) => {
-              const marks = [
-                cell.cheapest && "самое дешёвое", cell.baseline && "база экономии", cell.decided && "выбрано",
-                cell.analog && `аналог${cell.analog_note ? `: ${cell.analog_note}` : ""}`, cell.expired && "срок КП истёк",
-                cell.declined && "отказ",
-              ].filter(Boolean).join(", ");
-              const active = supplier.supplier_id === chosenId;
-              return (
-                <tr
-                  key={supplier.supplier_id} aria-selected={active}
-                  style={{ cursor: "pointer", background: active ? "var(--sheet-selected)" : undefined }}
-                  onClick={() => { setChosenId(supplier.supplier_id); setServerFields([]); setMessages([]); }}
-                >
-                  <td><strong>{supplier.name}{supplier.is_key ? " ★" : ""}</strong></td>
-                  <td>{cell.declined ? "—" : money(cell.gross_unit)}</td>
-                  <td>{cell.cover_qty ? `${quantity(cell.cover_qty)} ${line.unit}` : "—"}</td>
-                  <td>{cell.declined ? "—" : money(cell.total)}</td>
-                  <td>{cell.in_stock ? "в наличии" : cell.lead_days !== null ? `${cell.lead_days} дн` : ""}</td>
-                  <td>{marks}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {error && <div className="error-banner" role="alert">{error}</div>}
-      {line.decision ? (
-        <div style={{ display: "grid", gap: 6 }}>
-          <p className="page-sub">
-            Выбран «{decidedSupplier?.name ?? ""}»: {quantity(line.decision.cover_quantity)} {line.unit} на {money(line.decision.total_gross)}
-            {line.decision.applied_at ? `, записано в строку закупки ${formatDay(line.decision.applied_at)}` : ""}.
-            {line.decision.gate_override_reason ? ` Обход: ${line.decision.gate_override_reason}.` : ""}
-            {line.decision.not_cheapest_reason ? ` Не самое дешёвое: ${line.decision.not_cheapest_reason}.` : ""}
-            {line.decision.analog_approved_by ? ` Аналог согласован: ${line.decision.analog_approved_by}.` : ""}
-          </p>
-          {editable && line.editable && (
-            <div className="form-actions">
-              <span className="muted" style={{ marginRight: "auto", fontSize: 12 }}>При отмене поставщик и количество в строке закупки останутся как есть.</span>
-              <button type="button" className="secondary" disabled={busy} onClick={() => void undo()}>Отменить решение</button>
-            </div>
-          )}
-          {editable && !line.editable && <p className="muted">Строка уже «{line.status}» — решение не отменить.</p>}
-        </div>
-      ) : !editable ? (
-        <p className="muted">Решение принимает закупщик строки в открытом запросе.</p>
-      ) : !line.editable ? (
-        <p className="muted">Строка уже «{line.status}» — поставщик в неё не пишется.</p>
-      ) : !choosable ? (
-        <p className="muted">Это предложение выбрать нельзя: {chosen?.declined ? "поставщик отказался" : chosen?.expired ? "срок КП истёк" : "нет цены"}.</p>
-      ) : (
-        <form className="dialog-form" onSubmit={(event) => { event.preventDefault(); void decide(); }}>
-          {required.size === 0 && <p className="page-sub">Причины не нужны: КП достаточно и выбрано самое дешёвое.</p>}
-          {required.has("gate_override_reason") && (
-            <ReasonField label="Причина обхода" hint={gateHint(line)} presets={GATE_PRESETS} value={gateReason} onChange={setGateReason} />
-          )}
-          {required.has("not_cheapest_reason") && (
-            <ReasonField label="Почему не самое дешёвое" presets={PRICIER_PRESETS} value={pricierReason} onChange={setPricierReason} />
-          )}
-          {required.has("analog_approved_by") && (
-            <label>С кем согласован аналог
-              <input value={analogBy} maxLength={255} onChange={(event) => setAnalogBy(event.target.value)} placeholder="ФИО конструктора" />
-            </label>
-          )}
-          {messages.map((message) => <div key={message} className="warning-inline">{message}</div>)}
-          <div className="form-actions">
-            <button type="button" className="secondary" onClick={onClose}>Отмена</button>
-            <button type="submit" className="primary" disabled={busy || missing}>
-              Выбрать «{chosenSupplier?.name ?? ""}» — {quantity(chosen?.cover_qty)} {line.unit} на {money(chosen?.total)}
-            </button>
-          </div>
-        </form>
-      )}
-    </Dialog>
-  );
-}
-
-function ReasonField({ label, hint, presets, value, onChange }: {
-  label: string; hint?: string; presets: string[]; value: string; onChange: (value: string) => void;
-}) {
-  return (
-    <div style={{ display: "grid", gap: 2 }}>
-      <span style={{ fontWeight: 600, fontSize: 13 }}>{label}</span>
-      {hint ? <small className="muted">{hint}</small> : null}
-      <span style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "4px 0" }}>
-        {presets.map((preset) => (
-          <button
-            key={preset} type="button" className={`secondary small${value === preset ? " active" : ""}`} aria-pressed={value === preset}
-            style={{ padding: "2px 8px" }} onClick={() => onChange(preset)}
-          >{preset}</button>
-        ))}
-      </span>
-      <input aria-label={label} value={value} maxLength={2000} onChange={(event) => onChange(event.target.value)} placeholder="Своими словами" />
-    </div>
   );
 }
 

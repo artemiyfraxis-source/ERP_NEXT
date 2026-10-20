@@ -378,3 +378,25 @@ def test_the_pdf_a_quote_came_in_is_kept_with_it(rfq_api):
     assert not_pdf.status_code == 422 and "только PDF" in not_pdf.json()["detail"]
     plain = client.post(f"{BASE}/{rfq['id']}/quotes", json={**body, "file_base64": None, "file_name": None})
     assert client.get(f"{BASE}/quotes/{plain.json()['id']}/file").status_code == 404
+
+
+def test_a_decision_takes_rollers_reason_codes_and_keeps_the_label_or_the_words(rfq_api):
+    client, lines, sessions = rfq_api
+    rfq = _rfq(client, lines)
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    x, y = _line_of(matrix, lines[0].id), _line_of(matrix, lines[1].id)
+    alfa = _supplier(client, rfq["id"], "Альфа")
+    _quote(client, rfq["id"], alfa, x["id"], unit_price="10")
+    _quote(client, rfq["id"], alfa, y["id"], unit_price="10")
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    url = f"{BASE}/{rfq['id']}/decisions"
+    pick = lambda line: {"rfq_line_id": line["id"], "quote_line_id": _line_of(matrix, line["procurement_line_id"])["cells"][alfa]["quote_line_id"]}  # noqa: E731
+    words = client.post(url, json={**pick(x), "gate_override_code": "other"})
+    assert words.status_code == 422 and "опишите причину" in words.json()["detail"]
+    bad = client.post(url, json={**pick(x), "gate_override_code": "cheaper"})
+    assert bad.status_code == 422
+    assert client.post(url, json={**pick(x), "gate_override_code": "single_source"}).status_code == 201
+    assert client.post(url, json={**pick(y), "gate_override_code": "other", "gate_override_note": "  только у них  "}).status_code == 201
+    after = client.get(f"{BASE}/{rfq['id']}").json()
+    assert [(_line_of(after, line.id)["decision"]["gate_override_code"], _line_of(after, line.id)["decision"]["gate_override_reason"])
+            for line in lines] == [("single_source", "Единственный производитель или поставщик"), ("other", "только у них")]

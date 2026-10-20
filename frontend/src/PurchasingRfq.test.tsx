@@ -77,19 +77,23 @@ it("asks only the reasons the choice needs and sends them with the decision", as
   render(<PurchasingRfq />);
   fireEvent.click(await screen.findByRole("button", { name: "Разъём — ООО Бета" }));
   const dialog = await screen.findByRole("dialog", { name: "Разъём: выбор поставщика" });
-  expect(within(dialog).getByLabelText("Причина обхода")).toBeInTheDocument();
-  expect(within(dialog).getByLabelText("Почему не самое дешёвое")).toBeInTheDocument();
-  expect(within(dialog).queryByLabelText("С кем согласован аналог")).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Гейт конкуренции не пройден — причина обхода")).toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Не самое дешёвое КП — причина")).toBeInTheDocument();
+  expect(within(dialog).queryByLabelText("Аналог — с кем согласовано")).not.toBeInTheDocument();
+  expect(within(dialog).getByText("Укажите причину обхода правила КП")).toBeInTheDocument();
   const choose = within(dialog).getByRole("button", { name: /Выбрать «ООО Бета»/ });
   expect(choose).toBeDisabled();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Срочно" }));
-  fireEvent.change(within(dialog).getByLabelText("Почему не самое дешёвое"), { target: { value: "Срок" } });
+  fireEvent.change(within(dialog).getByLabelText("Гейт конкуренции не пройден — причина обхода"), { target: { value: "other" } });
+  expect(choose).toBeDisabled(); // «Другое» needs the buyer's words
+  fireEvent.change(within(dialog).getByLabelText("Гейт конкуренции не пройден — причина обхода: своими словами"), { target: { value: "Срочно для сборки" } });
+  fireEvent.change(within(dialog).getByLabelText("Не самое дешёвое КП — причина"), { target: { value: "lead_time" } });
   expect(choose).toBeEnabled();
   fireEvent.click(choose);
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0].path).toBe("/api/purchasing/rfqs/r1/decisions");
   expect(posts[0].body).toEqual({
-    rfq_line_id: "l1", quote_line_id: "ql2", expected_version: 3, gate_override_reason: "Срочно", not_cheapest_reason: "Срок",
+    rfq_line_id: "l1", quote_line_id: "ql2", expected_version: 3, gate_override_code: "other", gate_override_note: "Срочно для сборки",
+    not_cheapest_code: "lead_time", not_cheapest_note: null,
   });
 });
 
@@ -98,8 +102,8 @@ it("the cheapest offer asks only for the gate reason when too few quotes came", 
   render(<PurchasingRfq />);
   fireEvent.click(await screen.findByRole("button", { name: "Разъём — ООО Альфа" }));
   const dialog = await screen.findByRole("dialog", { name: "Разъём: выбор поставщика" });
-  expect(within(dialog).getByLabelText("Причина обхода")).toBeInTheDocument();
-  expect(within(dialog).queryByLabelText("Почему не самое дешёвое")).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Гейт конкуренции не пройден — причина обхода")).toBeInTheDocument();
+  expect(within(dialog).queryByLabelText("Не самое дешёвое КП — причина")).not.toBeInTheDocument();
 });
 
 it("a line not asked of a supplier is «не запрашивали», the header edits his positions, the quote form lists his only", async () => {

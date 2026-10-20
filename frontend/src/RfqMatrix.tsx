@@ -314,7 +314,11 @@ export function MatrixTable({ matrix, lines, editable, selectable = editable, pi
                 </td>
                 <td style={sticky(at(3))}>
                   <span style={chip(line.gate.passes ? "ok" : "warn")} title={gateHint(line)}>{gateText(line)}</span>
-                  {line.decision && <small className={locked(line) ? "muted" : "tone-ok"} style={{ display: "block" }}>{locked(line) ? "🔒 заказано" : "✓ решено"}</small>}
+                  {line.decision && (
+                    <small className={locked(line) ? "muted" : "tone-ok"} style={{ display: "block" }} title="Цена выбранного КП с НДС; в строку закупки она не пишется — деньги вносятся по счёту">
+                      {locked(line) ? "🔒 заказано" : "✓ решено"} · {money(line.decision.unit_gross)}
+                    </small>
+                  )}
                 </td>
                 {suppliers.map((supplier) => (
                   <MatrixCell
