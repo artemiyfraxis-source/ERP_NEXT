@@ -715,7 +715,8 @@ it("keeps a chain task as it was: no «из этапов», the second stage rea
   });
   render(<ProductionPage principal={operatorPrincipal} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
-  expect(await screen.findByText(/с этапа 1, сданные/)).toBeInTheDocument();
+  expect(await screen.findByText("Перед началом отметьте коробки, из которых берёте детали")).toBeInTheDocument();
+  expect(await screen.findByText(/Готовых коробок с этапа 1 пока нет — введите код с коробки/)).toBeInTheDocument();
   expect(screen.queryByText(/из этапов/)).not.toBeInTheDocument();
   expect(screen.queryByText(/сдать/)).not.toBeInTheDocument();
 });
@@ -745,11 +746,17 @@ it("tells the fitter of the assembly which stages the boxes come from, and lets 
 
   // Сборка: коробки с нескольких этапов, штуки на изделие — в карточке и в форме старта.
   const { unmount } = render(<ProductionPage principal={operatorPrincipal} mine />);
-  expect(await screen.findByText(new RegExp(FEEDS))).toBeInTheDocument();
+  // Карточка монтажника — без «из этапов … ×N»: этапы видны на коробках.
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
-  expect(await screen.findByText(new RegExp(`${FEEDS}; сданные`))).toBeInTheDocument();
-  expect(await screen.findByRole("button", { name: /000001-8.*5 шт · этап 1/ })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /000002-6.*5 шт · этап 2/ })).toBeInTheDocument();
+  expect(screen.queryByText(new RegExp(FEEDS))).not.toBeInTheDocument();
+  // Форма старта — без «×N» и «сданные»: этап написан на коробке; по одной коробке с этапа — отмечены сразу.
+  expect(await screen.findByText("Перед началом отметьте коробки, из которых берёте детали")).toBeInTheDocument();
+  expect(screen.queryByText(/сданные/)).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /000001-8.*5 шт · этап 1/ })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: /000002-6.*5 шт · этап 2/ })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(screen.getByRole("button", { name: /000002-6/ }));
+  expect(screen.getByRole("button", { name: /000002-6/ })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByRole("button", { name: /000001-8/ })).toHaveAttribute("aria-pressed", "true");
   fireEvent.click(screen.getByRole("button", { name: "Ввести код вручную" }));
   expect(screen.getByLabelText("Номера коробок")).toBeInTheDocument();
   unmount();
@@ -1298,7 +1305,7 @@ it("shows a semi-finished task card: ПФ name, operation numbers, inputs and co
     etk_ops: [{ position: 5, code: "OP-5", stage: "Зачистка" }, { position: 6, code: "OP-6", stage: "Опрессовка" }, { position: 7, code: "OP-7", stage: "Контроль" }] });
   render(<ProductionPage principal={pfPrincipal} mine />);
   expect(await screen.findByText("ПФ-3 · Опрессовка")).toBeInTheDocument();
-  expect(screen.getByText("оп. 05·06·07")).toBeInTheDocument();
+  expect(screen.getByText("оп. 05–07")).toBeInTheDocument();
   expect(await screen.findByText(/Получить от предыдущей задачи/)).toBeInTheDocument();
   expect(await screen.findByText(/180К\.11·КБ1·13\.10·Б07·3/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Инструкция" })).toBeInTheDocument();

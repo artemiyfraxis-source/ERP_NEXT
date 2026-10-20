@@ -466,3 +466,14 @@ export function etkSemiSource(route: EtkRoute | null, position: number): string 
     .map(({ label, lastOp }) => `ПФ ${label}${lastOp ? `, коробка с операции ${opNumber(lastOp)}` : ""}`);
   return feeds.length ? `из ${feeds.join("; ")}` : position > 1 ? `с операции ${opNumber(position - 1)}` : "";
 }
+
+/** Номера операций подряд — диапазоном: [6,7,8,14] → «06–08·14». */
+export function etkOpRuns(numbers: number[], show: (value: number) => string): string {
+  const runs: Array<[number, number]> = [];
+  numbers.forEach((value) => {
+    const last = runs[runs.length - 1];
+    if (last && value === last[1] + 1) last[1] = value;
+    else runs.push([value, value]);
+  });
+  return runs.map(([from, to]) => (from === to ? show(from) : `${show(from)}${to === from + 1 ? "·" : "–"}${show(to)}`)).join("·");
+}
