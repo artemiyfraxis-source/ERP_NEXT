@@ -176,7 +176,7 @@ it("the procurement page has «Счета и поставки» only with the op
     if (path === "/api/stage-options") return json({ available: true, options: [option("procurement.orders", true)] });
     if (path.startsWith("/api/purchasing/orders?")) return json({ today: "2026-09-20", scope: "mine", orders: [order()] });
     if (path === "/api/purchasing/orders/followups") return json({ awaiting_quotes: [], late: [], arriving: [], unpaid: [], awaiting_invoice: [] });
-    return json({ lines: [], buyers: [], stages: [], next_cursor: null });
+    return json({ lines: [], buyers: [], stages: [], statuses: [], units: [], next_cursor: null });
   });
   render(<ProcurementPage />);
   const tabs = await screen.findByRole("tablist", { name: "Разделы закупки" });
@@ -188,7 +188,7 @@ it("the procurement page has «Счета и поставки» only with the op
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = decodeURIComponent(String(input));
     if (path === "/api/stage-options") return json({ available: true, options: [option("procurement.orders", false)] });
-    return json({ lines: [], buyers: [], stages: [], next_cursor: null });
+    return json({ lines: [], buyers: [], stages: [], statuses: [], units: [], next_cursor: null });
   });
   render(<ProcurementPage />);
   const off = await screen.findByRole("tablist", { name: "Разделы закупки" });
