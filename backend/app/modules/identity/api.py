@@ -384,7 +384,7 @@ def deactivate_user_route(
 
 class EmployeeCreateInput(BaseModel):
     login: str = Field(default="", max_length=255)
-    email: str = Field(min_length=1, max_length=255)
+    email: str = Field(default="", max_length=255)  # empty → a placeholder address from the name
     name: str = Field(min_length=1, max_length=255)
     department: str = Field(default="", max_length=255)
     # Уровень доступа; the legacy `role` (one release) sets it when the level is not sent.

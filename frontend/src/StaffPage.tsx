@@ -339,8 +339,8 @@ function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange
       <h3 id="staff-form-access">Доступ в ERP</h3>
       <div className="form-grid staff-form">
         {creating && <>
-          <label className="pair">E-mail<input aria-label="E-mail" type="email" value={draft.email} onChange={(event) => set("email", event.target.value)} /></label>
-          <label>Логин<input aria-label="Логин" placeholder="пусто — e-mail" value={draft.login} onChange={(event) => set("login", event.target.value)} /></label>
+          <label className="pair">E-mail<input aria-label="E-mail" type="email" placeholder="пусто — сгенерируем из ФИО" value={draft.email} onChange={(event) => set("email", event.target.value)} /></label>
+          <label>Логин<input aria-label="Логин" placeholder="пусто — e-mail или фамилия" value={draft.login} onChange={(event) => set("login", event.target.value)} /></label>
         </>}
         <label title={levelLocked ? LEVEL_LOCKED_HINT : LEVEL_HINT}>Уровень доступа<select aria-label="Уровень доступа" value={draft.access_level} disabled={levelLocked} onChange={(event) => set("access_level", event.target.value)}>
           {data.levels.map((level) => {

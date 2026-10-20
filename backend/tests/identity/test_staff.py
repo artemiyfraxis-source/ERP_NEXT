@@ -197,6 +197,22 @@ def test_create_issues_and_returns_a_pin_when_the_field_is_blank(staff_api):
     assert TestClient(app).post("/api/auth/pin-login", json={"who": who, "pin": pin}).status_code == 200
 
 
+def test_create_without_email_and_login_makes_them_from_the_name(staff_api):
+    # Owner 20.10: «Новый сотрудник» with blank e-mail and login gave a bare HTTP 422; shop staff have no mailbox.
+    admin = _client("admin", "admin-password")
+    body = {"name": "Зингер Артем", "department": "Цех", "access_level": "operator", "job_title": "ЗГД"}
+    first = admin.post("/api/auth/staff", json=body)
+    assert first.status_code == 201, first.text
+    assert (first.json()["user"]["login"], first.json()["user"]["email"]) == ("zinger", "zinger.artem@fraxis.local")
+
+    second = admin.post("/api/auth/staff", json={**body, "name": "Зингер Артем Иванович"})
+    assert second.status_code == 201, second.text
+    assert (second.json()["user"]["login"], second.json()["user"]["email"]) == ("zingera", "zinger.artem2@fraxis.local")
+
+    typed = admin.post("/api/auth/staff", json={**body, "name": "Пётр", "login": "petr"})
+    assert (typed.json()["user"]["login"], typed.json()["user"]["email"]) == ("petr", "petr@fraxis.local")
+
+
 def test_create_returns_the_pin_the_admin_typed(staff_api):
     admin = _client("admin", "admin-password")
     body = {"email": "svoi@example.test", "name": "Свой", "department": "Цех", "role": "staff", "pin": "246802"}
