@@ -1,4 +1,5 @@
 import { api, ApiError } from "./api";
+import type { GateCode, PricierCode, ReasonFields } from "./rfqReasons";
 
 /** «Запросы КП» (stage option procurement.rfq): backend `purchasing/api_rfq.py`. Numbers come as strings. */
 const BASE = "/api/purchasing/rfqs";
@@ -42,6 +43,7 @@ export type RfqDecision = {
   total_gross: string; baseline_unit_gross: string | null; cheapest_unit_gross: string | null; priced_quotes: number;
   gate_override_reason: string | null; not_cheapest_reason: string | null; analog_approved_by: string | null;
   decided_at: string; applied_at: string | null;
+  gate_override_code?: GateCode | null; not_cheapest_code?: PricierCode | null;
 };
 
 export type RfqLine = {
@@ -218,6 +220,9 @@ export const rfqApi = {
   decide: (id: string, decision: DecisionInput) => post<RfqDecision>(`${BASE}/${id}/decisions`, decision),
   undoDecision: (id: string, decisionId: string) => remove(`${BASE}/${id}/decisions/${decisionId}`),
   close: (id: string) => post(`${BASE}/${id}/close`),
+  /** «Подбор»: every pick at once; 422 batch_refused — nothing written, 409 batch_partial — what was. */
+  decideBatch: (id: string, body: { picks: { rfq_line_id: string; quote_line_id: string; expected_version: number | null }[] } & ReasonFields) =>
+    post<{ decided: number; kept: number }>(`${BASE}/${id}/decisions/batch`, body),
   /** Lines out of the request: back to the free lines or to «Перезапрос» (409 `has_prices` until drop_prices). */
   withdraw: (id: string, body: { rfq_line_ids: string[]; to: "new" | "requote"; drop_prices: boolean; rfq_version?: number }) =>
     post<{ withdrawn: number }>(`${BASE}/${id}/lines/withdraw`, body),

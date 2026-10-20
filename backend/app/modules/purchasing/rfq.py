@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
@@ -24,6 +24,7 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from . import settings as purchasing_settings
+from .decision_reasons import GATE_OVERRIDE_REASONS, NOT_CHEAPEST_REASONS, ReasonError, reason_text
 from .suppliers import supplier_key
 from .infrastructure import (
     ITEM_CATEGORIES,
@@ -758,6 +759,7 @@ def _decision_result(decision: DecisionRow, supplier_id: UUID | None) -> dict:
         "cheapest_unit_gross": num(decision.cheapest_unit_gross), "priced_quotes": decision.priced_quotes,
         "gate_override_reason": decision.gate_override_reason, "not_cheapest_reason": decision.not_cheapest_reason,
         "analog_approved_by": decision.analog_approved_by,
+        "gate_override_code": decision.gate_override_code, "not_cheapest_code": decision.not_cheapest_code,
         "decided_at": decision.decided_at.isoformat(), "applied_at": decision.applied_at.isoformat() if decision.applied_at else None,
     }
 
@@ -1340,12 +1342,83 @@ class DecisionInput:
     gate_override_reason: str | None = None
     not_cheapest_reason: str | None = None
     analog_approved_by: str | None = None
+    # Roller's fixed lists (decision_reasons.py): a code wins over the free text; «other» carries the buyer's words.
+    gate_override_code: str | None = None
+    gate_override_note: str | None = None
+    not_cheapest_code: str | None = None
+    not_cheapest_note: str | None = None
+
+    def reasons(self) -> tuple[Reasons, str | None, str | None]:
+        """The texts the rules check and the codes behind them."""
+        try:
+            gate = reason_text(self.gate_override_code, self.gate_override_note, GATE_OVERRIDE_REASONS, "Причина обхода")
+            pricier = reason_text(self.not_cheapest_code, self.not_cheapest_note, NOT_CHEAPEST_REASONS,
+                                  "Почему не самое дешёвое")
+        except ReasonError as error:
+            raise Refused(str(error)) from error
+        return (
+            Reasons(gate if self.gate_override_code else self.gate_override_reason,
+                    pricier if self.not_cheapest_code else self.not_cheapest_reason, self.analog_approved_by),
+            self.gate_override_code or None, self.not_cheapest_code or None,
+        )
+
+
+@dataclass(frozen=True)
+class CheckedPick:
+    """A choice that passed every check: what decide() writes."""
+
+    line: RfqLineRow
+    quote_line: QuoteLineRow
+    view: LineView
+    entries: list[_Entry]
+    reasons: Reasons
+    gate_code: str | None
+    pricier_code: str | None
+
+
+def _rules(values: dict, today: date) -> dict:
+    return {"today": today, "min_quotes": int(values["gate_min_quotes"]),
+            "require_non_key": bool(values["gate_require_non_key"])}
+
+
+def check_pick(session: Session, lines: ProcurementLines, actor: Actor, rfq: RfqRow, data: DecisionInput,
+               values: dict, today: date, views: dict[UUID, LineView] | None = None) -> CheckedPick:
+    """Every rule of a choice, nothing written: the line, the offer, the buyer, the stage, the gate and the reasons."""
+    line = session.get(RfqLineRow, data.rfq_line_id)
+    if line is None or line.rfq_id != rfq.id or line.removed_at is not None:
+        raise NotFound("Строки нет в этом запросе")
+    quote_line = session.get(QuoteLineRow, data.quote_line_id)
+    if quote_line is None or quote_line.rfq_line_id != line.id:
+        raise Refused("Это КП не относится к строке запроса")
+    if session.scalar(select(DecisionRow.id).where(DecisionRow.rfq_line_id == line.id)) is not None:
+        raise Conflict("По строке уже есть решение — сначала отмените его")
+    view = (views if views is not None else lines.get_many([line.procurement_line_id])).get(line.procurement_line_id)
+    if view is None:
+        raise Refused("Строка закупки не найдена")
+    if view.buyer_id != actor.id:
+        raise Forbidden("Поставщика выбирает только закупщик строки")
+    if not view.editable:
+        raise Refused(f"{view.legacy_id} уже «{view.status}» — поставщик в строку не пишется")
+    if data.expected_version is not None and data.expected_version != view.version:
+        raise LineChanged("Строку закупки изменили — обновите")
+    rules = _rules(values, today)
+    entries = _entries(session, rfq.id, {line.id: line}, int(values["quote_valid_days"]))[line.id]
+    offers = [entry.offer for entry in entries]
+    asked, gate_code, pricier_code = data.reasons()
+    violations = check_decision(offers, quote_line.id, reasons=asked, **rules)
+    if violations:
+        raise Refused(" ".join(violation.message for violation in violations), violations)
+    reasons = normalize_decision(offers, quote_line.id, reasons=asked, **rules)
+    return CheckedPick(
+        line, quote_line, view, entries, reasons,
+        gate_code if reasons.gate_override_reason else None, pricier_code if reasons.not_cheapest_reason else None,
+    )
 
 
 def decide(
     uow: UnitOfWork, lines: ProcurementLines, actor: Actor, now: datetime, rfq_id: UUID, data: DecisionInput,
 ) -> dict:
-    """check_decision → the decision with its snapshots (baseline, cheapest, priced quotes) → the procurement line's
+    """check_pick → the decision with its snapshots (baseline, cheapest, priced quotes) → the procurement line's
     ПОСТАВЩИК / КОЛ-ВО / ЕД.ИЗМ (факт) through the bridge, with the line's version → applied_at.
 
     Nothing is written to the purchasing tables before procurement accepts the facts; if the decision then fails to
@@ -1354,32 +1427,11 @@ def decide(
     with uow:
         session = _session(uow)
         rfq = _open(_own(_rfq(session, rfq_id), actor))
-        line = session.get(RfqLineRow, data.rfq_line_id)
-        if line is None or line.rfq_id != rfq.id or line.removed_at is not None:
-            raise NotFound("Строки нет в этом запросе")
-        quote_line = session.get(QuoteLineRow, data.quote_line_id)
-        if quote_line is None or quote_line.rfq_line_id != line.id:
-            raise Refused("Это КП не относится к строке запроса")
-        if session.scalar(select(DecisionRow.id).where(DecisionRow.rfq_line_id == line.id)) is not None:
-            raise Conflict("По строке уже есть решение — сначала отмените его")
-        view = lines.get_many([line.procurement_line_id]).get(line.procurement_line_id)
-        if view is None:
-            raise Refused("Строка закупки не найдена")
-        if view.buyer_id != actor.id:
-            raise Forbidden("Поставщика выбирает только закупщик строки")
-        if not view.editable:
-            raise Refused(f"{view.legacy_id} уже «{view.status}» — поставщик в строку не пишется")
         values = purchasing_settings.load(session)
-        rules = {"today": today, "min_quotes": int(values["gate_min_quotes"]),
-                 "require_non_key": bool(values["gate_require_non_key"])}
-        entries = _entries(session, rfq.id, {line.id: line}, int(values["quote_valid_days"]))[line.id]
-        offers = [entry.offer for entry in entries]
-        asked = Reasons(data.gate_override_reason, data.not_cheapest_reason, data.analog_approved_by)
-        violations = check_decision(offers, quote_line.id, reasons=asked, **rules)
-        if violations:
-            raise Refused(" ".join(violation.message for violation in violations), violations)
-        reasons = normalize_decision(offers, quote_line.id, reasons=asked, **rules)
-        current = current_offers(offers, today)
+        checked = check_pick(session, lines, actor, rfq, replace(data, expected_version=None), values, today)
+        line, quote_line, view, entries, reasons = checked.line, checked.quote_line, checked.view, checked.entries, checked.reasons
+        rules = _rules(values, today)
+        current = current_offers([entry.offer for entry in entries], today)
         best, base = cheapest(current), baseline(current)
         gate = gate_status(current, rules["min_quotes"], rules["require_non_key"])
         chosen = next(entry for entry in entries if entry.line.id == quote_line.id)
@@ -1395,6 +1447,7 @@ def decide(
             baseline_unit_gross=base.gross_unit if base else None, cheapest_unit_gross=best.gross_unit if best else None,
             priced_quotes=gate.priced, gate_override_reason=reasons.gate_override_reason,
             not_cheapest_reason=reasons.not_cheapest_reason, analog_approved_by=reasons.analog_approved_by,
+            gate_override_code=checked.gate_code, not_cheapest_code=checked.pricier_code,
             decided_at=now, decided_by=actor.id, applied_at=now,
         )
         session.add(decision)

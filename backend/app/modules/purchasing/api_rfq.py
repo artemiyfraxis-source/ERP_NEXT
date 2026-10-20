@@ -23,6 +23,7 @@ from app.workflows.purchasing_rfq_stats import PurchaseStatsBridge
 from . import quote_import
 from . import rfq as service
 from . import rfq_pool
+from . import rfq_batch
 from . import rfq_withdraw
 from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
 
@@ -188,13 +189,38 @@ class WithdrawInput(BaseModel):
     rfq_version: int | None = Field(default=None, ge=1)  # the request as the client read it; omitted — not checked
 
 
-class DecisionModel(BaseModel):
-    rfq_line_id: UUID
-    quote_line_id: UUID
-    expected_version: int | None = Field(default=None, ge=1)
+GateCode = Literal["urgent", "single_source", "repeat_fresh_quote", "other"]
+PricierCode = Literal["lead_time", "availability", "moq", "quality", "other"]
+
+
+class ReasonsModel(BaseModel):
+    """Roller's fixed lists (decision_reasons.py); the free-text fields stay for older clients."""
+
     gate_override_reason: Text | None = None
     not_cheapest_reason: Text | None = None
     analog_approved_by: str | None = Field(default=None, max_length=255)
+    gate_override_code: GateCode | None = None
+    gate_override_note: Text | None = None
+    not_cheapest_code: PricierCode | None = None
+    not_cheapest_note: Text | None = None
+
+
+class DecisionModel(ReasonsModel):
+    rfq_line_id: UUID
+    quote_line_id: UUID
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class PickModel(BaseModel):
+    rfq_line_id: UUID
+    quote_line_id: UUID
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class BatchModel(ReasonsModel):
+    """«Подбор»: every pick of the set; one reason of each kind covers the picks that need it."""
+
+    picks: list[PickModel] = Field(min_length=1, max_length=500)
 
 
 # Static paths before /{rfq_id}.
@@ -334,6 +360,20 @@ def rfq_import_quote(rfq_id: UUID, payload: ImportInput, principal: Edit, uow: U
 def rfq_decide(rfq_id: UUID, payload: DecisionModel, principal: Edit, now: Now, uow: Uow, lines: Lines) -> dict:
     data = service.DecisionInput(**payload.model_dump())
     return _run(lambda: service.decide(uow(), lines, principal.actor, now, rfq_id, data))
+
+
+@router.post("/{rfq_id}/decisions/batch")
+def rfq_decide_batch(rfq_id: UUID, payload: BatchModel, principal: Edit, now: Now, uow: Uow, lines: Lines) -> dict:
+    """→ {decided, kept}; 422 batch_refused — nothing written; 409 batch_partial — which lines got their decision."""
+    reasons = service.DecisionInput(
+        rfq_line_id=payload.picks[0].rfq_line_id, quote_line_id=payload.picks[0].quote_line_id,
+        **payload.model_dump(exclude={"picks"}),
+    )
+    picks = [rfq_batch.Pick(item.rfq_line_id, item.quote_line_id, item.expected_version) for item in payload.picks]
+    try:
+        return rfq_batch.decide_batch(uow, lines, principal.actor, now, rfq_id, picks, reasons)
+    except service.RfqError as error:
+        raise HTTPException(status_code=error.status, detail=getattr(error, "payload", None) or str(error)) from error
 
 
 @router.delete("/{rfq_id}/decisions/{decision_id}", status_code=204)

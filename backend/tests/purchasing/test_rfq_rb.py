@@ -3,7 +3,12 @@
 
 from uuid import UUID, uuid4
 
-from app.modules.purchasing.infrastructure import SupplierRow
+from sqlalchemy import func, select
+
+from app.modules.procurement.infrastructure import ProcurementLineRow
+from app.modules.purchasing import rfq as rfq_service
+from app.modules.purchasing import rfq_batch
+from app.modules.purchasing.infrastructure import DecisionRow, SupplierRow
 from app.workflows.procurement_history import line_history
 from app.workflows.procurement_rfq_requote import requote_lines
 from tests.purchasing.test_rfq_api import BASE, NOW, _as, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — the fixture
@@ -144,3 +149,86 @@ def test_only_the_requests_buyer_takes_lines_out(rfq_api):
     _as("Иванов")
     assert _withdraw(client, rfq["id"], [line["id"]], "new").status_code == 403
     assert _withdraw(client, rfq["id"], [line["id"]], "elsewhere").status_code == 422
+
+
+# ── «Подбор» (Roller rfq-basket.test.ts) ────────────────────────────────────────────────────────────────────────────
+
+
+def _three_quotes(client, rfq_id, line_x, line_y):
+    alfa, beta, gamma = (_supplier(client, rfq_id, name) for name in ("Альфа", "Бета", "Гамма"))
+    for supplier, (x, y) in ((alfa, ("10", "5.2")), (beta, ("11", "5")), (gamma, ("12", "6"))):
+        body = {"supplier_id": supplier, "lines": [{"rfq_line_id": line_x, "unit_price": x}, {"rfq_line_id": line_y, "unit_price": y}]}
+        assert client.post(f"{BASE}/{rfq_id}/quotes", json=body).status_code == 201
+    return alfa, beta, gamma
+
+
+def test_basket_chooses_the_whole_set_at_once_one_reason_covers_every_pick_that_needs_it(rfq_api):
+    client, lines, sessions = rfq_api
+    rfq = _rfq(client, lines)
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    x, y = _line_of(matrix, lines[0].id), _line_of(matrix, lines[1].id)
+    alfa, _, _ = _three_quotes(client, rfq["id"], x["id"], y["id"])
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    x, y = _line_of(matrix, lines[0].id), _line_of(matrix, lines[1].id)
+    # All from Альфа: the second line is not its cheapest — one reason for it.
+    picks = [{"rfq_line_id": x["id"], "quote_line_id": x["cells"][alfa]["quote_line_id"], "expected_version": x["version"]},
+             {"rfq_line_id": y["id"], "quote_line_id": y["cells"][alfa]["quote_line_id"], "expected_version": y["version"]}]
+    url = f"{BASE}/{rfq['id']}/decisions/batch"
+    refused = client.post(url, json={"picks": picks})
+    assert refused.status_code == 422
+    detail = refused.json()["detail"]
+    assert detail["code"] == "batch_refused" and [line["name"] for line in detail["lines"]] == [y["name"]]
+    assert "не самое дешёвое" in detail["message"]
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(DecisionRow)) == 0  # nothing written
+    other = client.post(url, json={"picks": picks, "not_cheapest_code": "other"})
+    assert other.status_code == 422 and "опишите причину" in other.text
+
+    ok = client.post(url, json={"picks": picks, "not_cheapest_code": "other", "not_cheapest_note": "Подбор: дешевле с доставкой"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json() == {"decided": 2, "kept": 0}
+    after = client.get(f"{BASE}/{rfq['id']}").json()
+    decisions = [(_line_of(after, line.id)["decision"]["not_cheapest_code"], _line_of(after, line.id)["decision"]["not_cheapest_reason"])
+                 for line in lines]
+    assert decisions == [(None, None), ("other", "Подбор: дешевле с доставкой")]  # the reason stays only where needed
+    with sessions() as session:
+        assert {session.get(ProcurementLineRow, line.id).supplier for line in lines} == {"Альфа"}
+    # Saved again, the same set is kept as is.
+    again = client.post(url, json={"picks": [{**pick, "expected_version": None} for pick in picks]})
+    assert again.status_code == 200 and again.json() == {"decided": 0, "kept": 2}
+
+
+def test_basket_stops_on_a_stale_line_before_writing_and_reports_a_failure_midway(rfq_api, monkeypatch):
+    client, lines, sessions = rfq_api
+    rfq = _rfq(client, lines)
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    x, y = _line_of(matrix, lines[0].id), _line_of(matrix, lines[1].id)
+    _, beta, _ = _three_quotes(client, rfq["id"], x["id"], y["id"])
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    x, y = _line_of(matrix, lines[0].id), _line_of(matrix, lines[1].id)
+    picks = [{"rfq_line_id": x["id"], "quote_line_id": x["cells"][beta]["quote_line_id"], "expected_version": x["version"]},
+             {"rfq_line_id": y["id"], "quote_line_id": y["cells"][beta]["quote_line_id"], "expected_version": y["version"] + 1}]
+    body = {"picks": picks, "not_cheapest_code": "lead_time"}
+    stale = client.post(f"{BASE}/{rfq['id']}/decisions/batch", json=body)
+    assert stale.status_code == 422 and "обновите" in stale.json()["detail"]["lines"][0]["message"]
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(DecisionRow)) == 0
+
+    picks[1]["expected_version"] = y["version"]
+    real_decide = rfq_batch.decide
+    calls = []
+
+    def failing_second(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise rfq_service.LineChanged("Строку закупки изменили — обновите")
+        return real_decide(*args, **kwargs)
+
+    monkeypatch.setattr(rfq_batch, "decide", failing_second)
+    partial = client.post(f"{BASE}/{rfq['id']}/decisions/batch", json=body)
+    assert partial.status_code == 409
+    detail = partial.json()["detail"]
+    assert detail["code"] == "batch_partial" and detail["decided"] == [x["name"]] and detail["failed"]["name"] == y["name"]
+    assert detail["not_done"] == [] and "Выбор записан" in detail["message"]
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(DecisionRow)) == 1

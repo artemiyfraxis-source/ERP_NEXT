@@ -20,6 +20,7 @@ import { Dialog, money, number, quantity } from "./rfqUi";
 import { RfqLetters } from "./RfqLetters";
 import { chip, gateHint, gateText, MatrixTable } from "./RfqMatrix";
 import { askSplit, RemovedLines, RfqLineToolbar, RfqSelectionBar } from "./RfqLineActions";
+import { decidedPicks, RfqBasket } from "./RfqBasket";
 
 /** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
@@ -121,6 +122,8 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
   // Lines ticked for the selection bar (request line ids) and «показать отменённые и убранные».
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [showRemoved, setShowRemoved] = useState(false);
+  // «Подбор»: request line → the offer taken for it while the buyer assembles a set; null — the mode is off.
+  const [basket, setBasket] = useState<Map<string, string> | null>(null);
   const pick = (ids: string[], on: boolean) => setPicked((current) => {
     const next = new Set(current);
     for (const lineId of ids) { if (on) next.add(lineId); else next.delete(lineId); }
@@ -196,6 +199,13 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
           {!letters && suppliers.length > 0 && (
             <button type="button" className="secondary small" onClick={() => setLetters(true)}>Письма поставщикам</button>
           )}
+          {editable && !basket && lines.some((line) => !line.cancelled) && (
+            <button
+              type="button" className="secondary small"
+              title="Выбрать по строкам предложения разных поставщиков и посчитать итог с доставкой"
+              onClick={() => { setBasket(decidedPicks(matrix)); setDecisionFor(null); setQuoteFor(null); setPicked(new Set()); }}
+            >Подбор</button>
+          )}
         </div>
         {editable && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -233,7 +243,13 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       {!editable && (matrix.removed?.length ?? 0) + lines.filter((line) => line.cancelled).length > 0 && (
         <RfqLineToolbar matrix={matrix} picked={picked} onPick={() => undefined} showRemoved={showRemoved} onShowRemoved={setShowRemoved} />
       )}
-      {editable && picked.size > 0 && (
+      {basket && (
+        <RfqBasket
+          m={matrix} picks={basket} setPicks={setBasket} onClose={() => setBasket(null)}
+          onSaved={(message) => { setBasket(null); setInvoiceLetters(true); void refresh(message); }}
+        />
+      )}
+      {editable && picked.size > 0 && !basket && (
         <RfqSelectionBar
           matrix={matrix} picked={picked} onClear={() => setPicked(new Set())}
           onDone={(message) => void linesChanged(message)} onError={setError}
@@ -241,13 +257,19 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       )}
       <MatrixTable
         matrix={matrix} lines={showRemoved ? lines : lines.filter((line) => !line.cancelled)} editable={editable}
-        picked={picked} onPick={pick} basket={null} actions={{
+        picked={picked} onPick={pick} basket={basket} actions={{
           onSplit: (line) => {
             const task = askSplit(line);
             if (task) void task().then((message) => linesChanged(message)).catch((reason) => setError(failureText(reason, "Строка не разделена")));
           },
           onOpen: (lineId, supplierId) => setDecisionFor({ lineId, supplierId }),
-          onBasket: () => undefined,
+          onBasket: (lineId, quoteLineId) => setBasket((current) => {
+            if (!current) return current;
+            const next = new Map(current);
+            // A click takes this offer for the line; again — drops it.
+            if (next.get(lineId) === quoteLineId) next.delete(lineId); else next.set(lineId, quoteLineId);
+            return next;
+          }),
           onLines: (supplier) => setLinesFor(supplier),
           onSent: (supplier) => void act(() => rfqApi.markSent(id, supplier.supplier_id), `«${supplier.name}»: запрос отправлен`, "Не отмечено"),
           onQuote: (supplier) => setQuoteFor({ supplier }),
