@@ -807,6 +807,23 @@ def save_gauge(command: SaveGaugeCommand, uow: UnitOfWork) -> WireGauge:
     return gauge
 
 
+def delete_record(record_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork, reason: str = "") -> TechOperationRecord:
+    """Удаляет строку таблицы «Базы данных» (владелец 20.10.2026: слитые дубли БД.КОАКС не должны висеть на экране).
+    Всё в одной транзакции: строка уходит, а в журнал пишется `references.record_deleted` с её полной старой записью —
+    по нему строку можно восстановить. Ссылки по имени (партии, комплекты, техкарты) здесь не проверяются — это дело
+    вызывающего: он решает, можно ли удалять."""
+    with uow:
+        record = _editable(record_id, uow)
+        uow.tech_operations.delete(record_id)
+        _audit("references.record_deleted", actor, now, {
+            "record_id": str(record.id), "tab": record.tab.value, "display_text": record.display_text,
+            "sort_key": record.sort_key, "source_sheet": record.source_sheet, "mirror_key": record.mirror_key,
+            "edited_in_erp": record.edited_in_erp, "fields": dict(record.fields), "reason": reason,
+        }, uow)
+        uow.commit()
+    return record
+
+
 def delete_gauge(gauge_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork) -> None:
     """A size row no hook-up wire uses (the FK refuses the rest, this says it in words first)."""
     with uow:
