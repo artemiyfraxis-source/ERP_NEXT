@@ -178,7 +178,7 @@ export function NewOrderForm({ onDone, onCancel }: {
                             onChange={(event) => setRows((current) => ({ ...current, [line.line_id]: { ...current[line.line_id], checked: event.target.checked } }))} />
                         </td>
                         <td className="text"><strong>{line.legacy_id}</strong> {line.name}
-                          {line.article && <small className="muted">{line.article}</small>}
+                          {line.article && line.article.trim() !== line.name.trim() && <small className="muted">{line.article}</small>}
                           {blocked && <small className="tone-warn">не оформится: {line.blockers.join("; ")}</small>}
                         </td>
                         <td>{projectLabel(line.project) || "—"}</td>
@@ -226,7 +226,7 @@ export function NewOrderForm({ onDone, onCancel }: {
                 <ul>{refusals.map((text) => <li key={text}>{text}</li>)}</ul>
               </div>
             )}
-            <p className="muted">Отмеченные строки уйдут поставщику обычным запросом ERP: номер заказа, документ запроса, строки «Жду счёт». Номер и дату счёта внесёт «Вставить счёт».</p>
+            <p className="page-sub">Отмеченные строки уйдут поставщику обычным запросом ERP: номер заказа, документ запроса, строки «Жду счёт». Номер и дату счёта внесёт «Вставить счёт».</p>
           </>
         )}
         <div className="move-actions">

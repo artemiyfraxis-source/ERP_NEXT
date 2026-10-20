@@ -235,8 +235,8 @@ export function OrderCardBody({ number, today, readOnly, refreshKey = 0, onChang
           </dd></div>
         </dl>
         <div className="order-fact-form">
-          <div className="order-fact-readonly" title="Дата из счёта; переносы срока её не меняют — по ней считается «в срок»">
-            <span>Обещано (фиксировано для честности KPI)</span>
+          <div className="order-fact-readonly" title="Обещанная дата фиксирована для честности KPI: дата из счёта, переносы срока её не меняют — по ней считается «в срок»">
+            <span>Обещано · не меняется</span>
             <strong>{order.promised ? formatDay(order.promised) : "—"}</strong>
           </div>
           <label>Ожидается{differs ? <small className="muted"> у строк {formatDayMonth(order.expected)}–{formatDayMonth(order.expected_last)}</small> : null}
@@ -301,8 +301,9 @@ export function OrderCardBody({ number, today, readOnly, refreshKey = 0, onChang
             {order.lines.map((line) => (
               <tr key={line.id}>
                 <td className="text"><strong>{line.legacy_id}</strong> {line.name}
-                  {line.article && <small className="muted">{line.article}</small>}
-                  {line.invoice_item_name && line.invoice_item_name.trim() !== line.calculated_name.trim() && <small className="muted">по заявке: {line.calculated_name}</small>}
+                  {line.invoice_item_name && line.invoice_item_name.trim() !== line.calculated_name.trim()
+                    ? <small className="muted">по заявке: {line.calculated_name}{line.article && line.article !== line.calculated_name ? ` · ${line.article}` : ""}</small>
+                    : line.article && line.article !== line.calculated_name && <small className="muted">{line.article}</small>}
                 </td>
                 <td>{projectLabel(line.project) || "—"}</td>
                 <td className="num">{formatQty(line.quantity, line.unit)}</td>

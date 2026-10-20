@@ -83,8 +83,9 @@ type Toast = { text: string; tone: "ok" | "error"; undo?: () => Promise<string>;
 
 function ToastBar({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [undone, setUndone] = useState(false);
   const [text, setText] = useState(toast.text);
-  useEffect(() => { setText(toast.text); }, [toast]);
+  useEffect(() => { setText(toast.text); setUndone(false); }, [toast]);
   useEffect(() => {
     const timer = window.setTimeout(onClose, toast.undo ? 12_000 : 8_000);
     return () => window.clearTimeout(timer);
@@ -92,12 +93,13 @@ function ToastBar({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   return createPortal(
     <div className={`order-toast ${toast.tone === "error" ? "is-error" : ""}`} role={toast.tone === "error" ? "alert" : "status"}>
       <span>{text}</span>
-      {toast.action && <button type="button" className="link-button" onClick={() => { toast.action!.run(); onClose(); }}>{toast.action.label}</button>}
-      {toast.undo && (
+      {toast.action && !undone && <button type="button" className="link-button" onClick={() => { toast.action!.run(); onClose(); }}>{toast.action.label}</button>}
+      {toast.undo && !undone && (
         <button type="button" className="link-button" disabled={busy} onClick={async () => {
           setBusy(true);
           try {
             setText(`${await toast.undo!()} — отменено`);
+            setUndone(true);
             window.setTimeout(onClose, 3_000);
           } catch (reason) {
             setText(failureText(reason, "Не отменилось"));
@@ -331,7 +333,9 @@ export function PurchasingOrders({ readOnly = false, onOpenUpd, onOpenRfq }: {
         </label>
         <span className="upd-spacer" />
         {view === "board" && orders.length > 0 && (
-          <span className="muted orders-hint">{readOnly ? "Только просмотр." : "Перетащите свою карточку в следующую колонку — шаг запишется сегодняшним днём. Щелчок открывает заказ."}</span>
+          <span className="muted orders-hint" title="Перетаскиваются только свои заказы и только вперёд; оплату не отменить, остальное — «Отменить» в подсказке внизу">
+            {readOnly ? "Только просмотр — щелчок открывает заказ." : "Перетащите карточку вперёд — шаг запишется сегодня. Щелчок открывает заказ."}
+          </span>
         )}
         {!readOnly && <button type="button" className={creating ? "secondary" : "primary"} onClick={() => setCreating((current) => !current)}>{creating ? "Свернуть" : "+ Новый счёт"}</button>}
       </div>
