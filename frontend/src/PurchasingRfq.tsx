@@ -21,6 +21,7 @@ import { RfqLetters } from "./RfqLetters";
 import { chip, gateHint, gateText, MatrixTable } from "./RfqMatrix";
 import { askSplit, RemovedLines, RfqLineToolbar, RfqSelectionBar } from "./RfqLineActions";
 import { decidedPicks, RfqBasket } from "./RfqBasket";
+import { invoiceAskable, RfqInvoiceRequests } from "./RfqInvoiceRequests";
 
 /** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
@@ -199,6 +200,13 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
           {!letters && suppliers.length > 0 && (
             <button type="button" className="secondary small" onClick={() => setLetters(true)}>Письма поставщикам</button>
           )}
+          {!invoiceLetters && lines.some(invoiceAskable) && (
+            <button
+              type="button" className="secondary small"
+              title="Письма поставщикам с просьбой выставить счёт по выбранным у них строкам"
+              onClick={() => setInvoiceLetters(true)}
+            >Запросить счета</button>
+          )}
           {editable && !basket && lines.some((line) => !line.cancelled) && (
             <button
               type="button" className="secondary small"
@@ -243,6 +251,7 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       {!editable && (matrix.removed?.length ?? 0) + lines.filter((line) => line.cancelled).length > 0 && (
         <RfqLineToolbar matrix={matrix} picked={picked} onPick={() => undefined} showRemoved={showRemoved} onShowRemoved={setShowRemoved} />
       )}
+      {invoiceLetters && !basket && <RfqInvoiceRequests key={matrix.lines.map((line) => line.decision?.id ?? "").join()} rfqId={id} onClose={() => setInvoiceLetters(false)} />}
       {basket && (
         <RfqBasket
           m={matrix} picks={basket} setPicks={setBasket} onClose={() => setBasket(null)}

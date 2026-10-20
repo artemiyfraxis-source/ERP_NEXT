@@ -24,6 +24,7 @@ from . import quote_import
 from . import rfq as service
 from . import rfq_pool
 from . import rfq_batch
+from . import rfq_invoice_requests
 from . import rfq_withdraw
 from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
 
@@ -291,6 +292,12 @@ def rfq_create(payload: CreateRfqInput, principal: Edit, now: Now, uow: Uow, lin
 @router.get("/{rfq_id}")
 def rfq_matrix(rfq_id: UUID, principal: View, now: Now, uow: Uow, lines: Lines) -> dict:
     return _run(lambda: service.matrix(uow(), lines, principal.actor, rfq_id, now.date()))
+
+
+@router.get("/{rfq_id}/invoice-requests")
+def rfq_invoice_requests_route(rfq_id: UUID, principal: View, uow: Uow, lines: Lines) -> dict:
+    """«Запросить счета»: a letter per supplier for the chosen lines that have no invoice yet."""
+    return _run(lambda: rfq_invoice_requests.invoice_requests(uow(), lines, principal.actor, rfq_id))
 
 
 @router.post("/{rfq_id}/suppliers", status_code=201)

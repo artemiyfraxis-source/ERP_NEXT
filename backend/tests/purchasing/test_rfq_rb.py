@@ -1,6 +1,7 @@
 """«Запросы КП» brought to Roller_Buyer's parity (stand of Витя, 16.10.2026): letters, matrix details, withdraw,
 «Подбор», invoice-request letters, quote import header, decision reason codes."""
 
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
@@ -232,3 +233,77 @@ def test_basket_stops_on_a_stale_line_before_writing_and_reports_a_failure_midwa
     assert detail["not_done"] == [] and "Выбор записан" in detail["message"]
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(DecisionRow)) == 1
+
+
+# ── «Запросить счета» (Roller invoice-request.test.ts) ─────────────────────────────────────────────────────────────
+
+
+def test_one_invoice_request_per_chosen_supplier_whole_packs_the_break_the_vat_mode_delivery(rfq_api):
+    client, lines, sessions = rfq_api
+    with sessions() as session:
+        for line, quantity in zip(lines, (Decimal("1000"), Decimal("1500"))):
+            row = session.get(ProcurementLineRow, line.id)
+            row.calculated_quantity, row.calculated_unit, row.design_article = quantity, "м", None
+        session.get(ProcurementLineRow, lines[0].id).calculated_name = "Силикон 28AWG белый"
+        session.get(ProcurementLineRow, lines[1].id).calculated_name = "ПВАМ 0,35 красный"
+        session.commit()
+    rfq = _rfq(client, lines)
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    silicone, pvam = _line_of(matrix, lines[0].id), _line_of(matrix, lines[1].id)
+    prodiel = _supplier(client, rfq["id"], 'ООО "Продиэл"')
+    delta = _supplier(client, rfq["id"], 'ООО "Дельта-юниверсум"')
+    # Продиэл: reels of 100 m at 19,25 ₽, from 500 m — 14,01 ₽ (a 500 m reel), with VAT, from its site.
+    assert client.post(f"{BASE}/{rfq['id']}/quotes", json={
+        "supplier_id": prodiel, "number": "сайт Продиэлком", "received_on": "2026-09-14",
+        "lines": [{"rfq_line_id": silicone["id"], "unit_price": "19.25", "pack": "100", "tiers": [{"from": "500", "price": "14.01"}]}],
+    }).status_code == 201
+    # Дельта: an invoice-quote without VAT, delivery 1 500 ₽.
+    assert client.post(f"{BASE}/{rfq['id']}/quotes", json={
+        "supplier_id": delta, "number": "ДЛТ/1990", "received_on": "2026-09-14", "delivery_cost": "1500",
+        "lines": [{"rfq_line_id": pvam["id"], "unit_price": "7.54", "vat_included": False, "vat_rate": "22"}],
+    }).status_code == 201
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    for line, supplier in ((lines[0], prodiel), (lines[1], delta)):
+        row = _line_of(matrix, line.id)
+        decided = client.post(f"{BASE}/{rfq['id']}/decisions", json={
+            "rfq_line_id": row["id"], "quote_line_id": row["cells"][supplier]["quote_line_id"], "gate_override_code": "single_source"})
+        assert decided.status_code == 201, decided.text
+    letters = client.get(f"{BASE}/{rfq['id']}/invoice-requests").json()["requests"]
+    by_name = {letter["supplier_name"]: letter for letter in letters}
+    first, second = by_name['ООО "Продиэл"'], by_name['ООО "Дельта-юниверсум"']
+    assert first["subject"] == "Запрос счёта — предложение от 14.09.2026 (сайт Продиэлком), 1 поз."
+    assert "по вашему предложению от 14.09.2026 (сайт Продиэлком)" in first["body"]
+    # At a price break the reel is not guessed: 14,01 ₽ is the 500 m reel's price, not ten 100 m ones.
+    assert "1. Силикон 28AWG белый — 1 000 м × 14,01 ₽ = 14 010,00 ₽" in first["body"]
+    assert "Итого по ценам предложения: 14 010,00 ₽ с НДС." in first["body"]
+    assert "просим включить её стоимость в счёт" in first["body"]
+    assert "ИНН 5040191181, КПП 504001001" in first["body"]
+    assert first["cart"] == "Силикон 28AWG белый\t1 000 м"
+    assert second["subject"] == "Запрос счёта — КП № ДЛТ/1990 от 14.09.2026, 1 поз."
+    assert "ПВАМ 0,35 красный — 1 500 м × 7,54 ₽ = 11 310,00 ₽" in second["body"]
+    assert "Итого по ценам предложения: 11 310,00 ₽ без НДС." in second["body"]
+    assert "Доставка — 1 500,00 ₽, как в предложении" in second["body"]
+    assert letters[0]["supplier_name"] == 'ООО "Продиэл"'  # dearest first
+
+
+def test_whole_reels_at_the_base_price_and_the_requisites_from_the_settings(rfq_api):
+    client, lines, sessions = rfq_api
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, lines[0].id)
+        row.calculated_quantity, row.calculated_unit = Decimal("150"), "м"
+        session.commit()
+    rfq = _rfq(client, lines[:1])
+    line = _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[0].id)
+    alfa = _supplier(client, rfq["id"], "Альфа")
+    _quote(client, rfq["id"], alfa, line["id"], unit_price="10", pack="100")
+    cell = _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[0].id)["cells"][alfa]
+    assert client.post(f"{BASE}/{rfq['id']}/decisions", json={
+        "rfq_line_id": line["id"], "quote_line_id": cell["quote_line_id"], "gate_override_code": "urgent"}).status_code == 201
+    with sessions() as session:
+        from app.modules.purchasing import settings as purchasing_settings
+        purchasing_settings.save(session, {"letter_requisites": "ООО Тест, ИНН 7700000000\r\n  Москва  "}, None, NOW)
+        session.commit()
+    letter = client.get(f"{BASE}/{rfq['id']}/invoice-requests").json()["requests"][0]
+    assert "— 200 м (2 × 100 м) × 10,00 ₽ = 2 000,00 ₽" in letter["body"]
+    assert "Покупатель:\nООО Тест, ИНН 7700000000\nМосква" in letter["body"]
+    assert letter["cart"].endswith("\t2 × 100 м")

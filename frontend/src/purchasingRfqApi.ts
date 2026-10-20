@@ -220,6 +220,7 @@ export const rfqApi = {
   decide: (id: string, decision: DecisionInput) => post<RfqDecision>(`${BASE}/${id}/decisions`, decision),
   undoDecision: (id: string, decisionId: string) => remove(`${BASE}/${id}/decisions/${decisionId}`),
   close: (id: string) => post(`${BASE}/${id}/close`),
+  invoiceRequests: (id: string) => api<{ requests: InvoiceRequest[]; ready_for_request: number }>(`${BASE}/${id}/invoice-requests`),
   /** «Подбор»: every pick at once; 422 batch_refused — nothing written, 409 batch_partial — what was. */
   decideBatch: (id: string, body: { picks: { rfq_line_id: string; quote_line_id: string; expected_version: number | null }[] } & ReasonFields) =>
     post<{ decided: number; kept: number }>(`${BASE}/${id}/decisions/batch`, body),
@@ -231,6 +232,14 @@ export const rfqApi = {
     post<CancelManyResult>("/api/procurement/cancel-many", { lines, reason }),
   splitQty: (lineId: string, version: number, quantity: string) =>
     post<{ original: unknown; created: unknown }>(`/api/procurement/${lineId}/split-qty`, { version, quantity }),
+};
+
+export type InvoiceRequest = {
+  supplier_id: string; supplier_name: string; email: string | null; quote_number: string; quote_date: string;
+  delivery_cost: string | null; total: string;
+  lines: { rfq_line_id: string; legacy_id: string; name: string; article: string; qty: string; unit: string; packs: string;
+    price: string; sum: string; vat_included: boolean }[];
+  subject: string; body: string; cart: string;
 };
 
 export type CancelManyResult = { cancelled: string[]; skipped: { id: string; reason: string }[] };

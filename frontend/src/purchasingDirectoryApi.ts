@@ -14,7 +14,7 @@ export interface PurchasingSetting {
   key: string;
   label: string;
   hint: string;
-  kind: "int" | "decimal" | "bool" | "list";
+  kind: "int" | "decimal" | "bool" | "list" | "text";
   value: number | string | boolean | string[];
   default: number | string | boolean | string[];
   minimum: string | number | null;
