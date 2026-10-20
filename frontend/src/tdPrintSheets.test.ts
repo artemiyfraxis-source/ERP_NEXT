@@ -1,5 +1,5 @@
+// @ts-ignore — типы node в проекте не подключены, файл СТО читается напрямую из backend/data
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { expect, it } from "vitest";
 import type { ProjectTechcard } from "./api";
 import { buildRouteSheetHtml } from "./routeSheetPrint";
@@ -7,7 +7,8 @@ import { buildStoHtml } from "./stoPrint";
 import { buildTdKitHtml } from "./tdPrintSheets";
 import type { Sto, TdPrintModel } from "./tdTypes";
 
-const sto = JSON.parse(readFileSync(resolve(process.cwd(), "../backend/data/sto-frak-001-2026.json"), "utf8")) as Sto;
+declare const process: { cwd(): string };
+const sto = JSON.parse(readFileSync(`${process.cwd()}/../backend/data/sto-frak-001-2026.json`, "utf8") as string) as Sto;
 
 const cut = {
   position: 1, code: "CUT_WIRE_auto", type: "cutWireCrimp", title: "CUT_WIRE_auto | Автомат резка", connector: "", side: "",
