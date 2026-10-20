@@ -156,6 +156,10 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     return () => observer.disconnect();
   }, [flat]);
 
+  /** The grouped table is ordered by the server over the whole filter (a page holds the top of the whole warehouse,
+   *  not of what happened to be loaded); the flat table keeps the id order. */
+  const serverOrder = () => flat ? {} : { sort: sort.key, desc: sort.desc, group: groupBy };
+
   /** The first server page only: the table is on screen after one request; the rest comes on demand. */
   async function reload() {
     const version = ++requestVersion.current;
@@ -163,7 +167,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     setLoading(true);
     setError("");
     try {
-      const page = await warehouseApi.list({ query, includeZero, warehouse });
+      const page = await warehouseApi.list({ query, includeZero, warehouse, ...serverOrder() });
       if (version !== requestVersion.current) return;
       setLots(mergeLots([], page.lots));
       setTotal(page.total);
@@ -186,7 +190,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       let next: string | null = cursor;
       let loaded = lots;
       do {
-        const page = await warehouseApi.list({ after: next, query, includeZero, warehouse });
+        const page = await warehouseApi.list({ after: next, query, includeZero, warehouse, ...serverOrder() });
         if (version !== requestVersion.current) return;
         loaded = mergeLots(loaded, page.lots);
         setLots(loaded);
@@ -210,7 +214,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   useEffect(() => {
     const timer = window.setTimeout(() => void reload(), 250);
     return () => window.clearTimeout(timer);
-  }, [query, warehouse, includeZero]);
+  }, [query, warehouse, includeZero, flat, sort.key, sort.desc, groupBy]);
 
   async function openPutawaySheet() {
     setPutawayError("");

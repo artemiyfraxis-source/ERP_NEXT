@@ -91,7 +91,7 @@ it("ID-6: a view grant opens procurement, receiving and stock read-only", async 
     if (path === "/api/auth/me") return json({
       ...as("commercial", { procurement: "view", receiving: "view", warehouse: "view" }),
     });
-    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -108,7 +108,7 @@ it("ID-6: a storekeeper keeps the edit controls", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/auth/me") return json(as("foreman", { warehouse: "edit" }));
-    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path === "/api/stock/item-types") return json({ types: [], choices: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -124,7 +124,7 @@ it("opens the native warehouse at the live ERP stock route", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/auth/me") return json(as("foreman", { warehouse: "edit" }));
-    if (path === "/api/stock") {
+    if (path.split("?")[0] === "/api/stock") {
       return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     }
     throw new Error(`Unexpected request: ${path}`);
