@@ -725,7 +725,7 @@ const isNumber = (value: string) => decimal(value) !== "" && Number.isFinite(Num
  *  нашёл каждую; цены правятся здесь же, если распознано не то. Подтверждение пишет все строки заказа или ни одной:
  *  КП — только цены, строки ждут счёт; счёт — цены и счёт, строки уходят «В оплату» (ожидаемая дата обязательна,
  *  цена — нет: без неё окно предупреждает, «Оплачено» ждёт цену). */
-function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply, onClose }: {
+export function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply, onClose }: {
   group: OrderGroup;
   /** Строки стадии, к которым относится документ: «Жду счет», а для «Заменить счёт» — «В оплату». */
   lines: ProcurementLine[];
