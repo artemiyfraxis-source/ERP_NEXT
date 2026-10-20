@@ -420,11 +420,11 @@ def test_the_coax_cable_list_carries_d1_d3_and_only_that_list(references_api):
     wires = _rows(_download(references_api, kind="wire"))
     everything = _rows(_download(references_api))
 
-    assert coax[0][-3:] == ["D1, мм", "D2, мм", "D3, мм"]
+    assert coax[0][-3:] == ["D1 жила, мм", "D2 диэлектрик, мм", "D3 оплётка, мм"]
     by_mark = {row[coax[0].index("Марка")]: row for row in coax[1:]}
     assert by_mark["RG316"][-3:] == ["0,5", "1,48", "1,95"] and by_mark["RG174"][-3:] == ["", "", ""]
-    assert "D1, мм" not in wires[0] and "D1, мм" not in everything[0]
-    assert wires[0][-3:] == ["Серия провода", "Материал жилы", "Толщина изоляции, мм"]
+    assert "D1 жила, мм" not in wires[0] and "D1 жила, мм" not in everything[0]
+    assert wires[0][-3:] == ["Серия", "Материал жилы (серия)", "Толщина изоляции, мм"]
     [wire] = wires[1:]
     assert wire[-3:] == ["UL1061", "медь луженая", "0,2"]
 
@@ -446,8 +446,8 @@ def test_an_edited_d_value_is_applied_through_the_cable_save_and_audited(referen
     content = _download(references_api, kind="coax")
 
     def edit(rows):
-        next(row for row in rows if row[0] == records["RG316"]["id"])[_column(rows, "D2, мм")] = "1,5"
-        next(row for row in rows if row[0] == records["RG174"]["id"])[_column(rows, "D1, мм")] = "0,48"
+        next(row for row in rows if row[0] == records["RG316"]["id"])[_column(rows, "D2 диэлектрик, мм")] = "1,5"
+        next(row for row in rows if row[0] == records["RG174"]["id"])[_column(rows, "D1 жила, мм")] = "0,48"
 
     edited = _edited(content, edit)
     preview = _upload(references_api, edited, dry_run=1).json()
@@ -471,8 +471,8 @@ def test_a_bad_d_value_is_refused_for_its_row_only(references_api):
     content = _download(references_api, kind="coax")
 
     def edit(rows):
-        next(row for row in rows if row[0] == records["RG316"]["id"])[_column(rows, "D1, мм")] = "много"
-        next(row for row in rows if row[0] == records["RG174"]["id"])[_column(rows, "D3, мм")] = "2,9"
+        next(row for row in rows if row[0] == records["RG316"]["id"])[_column(rows, "D1 жила, мм")] = "много"
+        next(row for row in rows if row[0] == records["RG174"]["id"])[_column(rows, "D3 оплётка, мм")] = "2,9"
 
     body = _upload(references_api, _edited(content, edit), dry_run=0).json()
 
@@ -487,8 +487,8 @@ def test_edited_wire_structure_is_applied_through_the_wire_save(references_api):
 
     def edit(rows):
         row = rows[1]
-        row[_column(rows, "Серия провода")] = "UL1007"
-        row[_column(rows, "Материал жилы")] = "медь"
+        row[_column(rows, "Серия")] = "UL1007"
+        row[_column(rows, "Материал жилы (серия)")] = "медь"
         row[_column(rows, "Толщина изоляции, мм")] = "0,25"
 
     body = _upload(references_api, _edited(content, edit), dry_run=0).json()
@@ -508,7 +508,7 @@ def test_a_bad_structure_value_is_refused_and_nothing_is_left(references_api):
     content = _download(references_api, kind="wire")
 
     def edit(rows):
-        rows[1][_column(rows, "Серия провода")] = "UL1007"
+        rows[1][_column(rows, "Серия")] = "UL1007"
         rows[1][_column(rows, "Толщина изоляции, мм")] = "минус"
 
     body = _upload(references_api, _edited(content, edit), dry_run=0).json()
