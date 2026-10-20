@@ -29,6 +29,7 @@ import { EtkHarnessE4, wireMapModel } from "./EtkHarnessE4";
 import { etkLinkScheme } from "./etkLinkScheme";
 import { changesByOperation, changeValue, revisionActor, revisionChanges } from "./etkRevisions";
 import { PageWindow } from "./PageWindow";
+import { TdIssuesPanel } from "./TdIssuesPanel";
 import { pinCoreColor, withCoreColors } from "./etkCoreColors";
 import { LinkSchemeView, type LinkScheme } from "./PinoutLinks";
 import { EtkPfList } from "./EtkPfList";
@@ -793,6 +794,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+    {list.length > 0 && !task && <TdIssuesPanel cardId={card.id} canEdit={canEdit} />}
     {card.review_note && <div className="warning-inline etk-review" role="status"><strong>Нужна проверка технолога:</strong> {card.review_note}</div>}
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}

@@ -147,7 +147,7 @@ async function renderSheet(route?: EtkRoute) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
   const view = render(<EtkSheet card={techcard(route)} principal={principal} onChange={() => undefined} />);
-  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2)); // журнал ревизий и эскизы
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3)); // журнал ревизий, эскизы и выпуски комплекта ТД
   if (route) await screen.findByRole("region", { name: "Схема полуфабрикатов" });
   else await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
   return view;
