@@ -111,6 +111,12 @@ export function sharesOf(operation: ProductionOperation, personId: string): Prod
     : [];
 }
 
+// Сколько ещё можно записать готовыми на этап: нужно этапу минус сданное (годные + брак).
+export function madeLeft(task: ProductionTask, operation: ProductionOperation) {
+  const required = Number(operation.required_quantity ?? task.quantity) || 0;
+  return Math.max(0, Math.round(required - (Number(operation.fact?.processed ?? 0) || 0)));
+}
+
 const shareDone = (operation: ProductionOperation, share: ProductionShare) => done(operation) || Boolean(share.finished_at);
 
 // Норма доли: подготовка + штучное время на свои штуки; бригада делит норму всей операции поровну.
@@ -426,6 +432,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   // со свободным временем, его видно на кнопке и можно сменить.
   const [onlyWho, setOnlyWho] = useState("");
   const [onlyDay, setOnlyDay] = useState("");
+  // «Уже сделано» (владелец 20.10: «люди уже начали работать и сделали какое-то кол-во — нужен ручной ввод и отбития
+  // готовых»): штуки мимо терминала, чьи они и отбить ли готовыми пропущенные этапы-входы.
+  const [madeWho, setMadeWho] = useState<string | null>(null);
+  const [madePieces, setMadePieces] = useState("");
+  const [madeFill, setMadeFill] = useState(true);
   // Снятие исполнителя — через окно подтверждения с тем, что изменится (владелец 16.10: «×» сразу пересобирал план).
   const [removing, setRemoving] = useState<{ taskId: string; operationId: string; personId: string } | null>(null);
   const board = useWidth();
@@ -533,6 +544,9 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     setPieces(op ? String(defaultPieces(item, op)) : "");
     setOnlyWho("");
     setOnlyDay("");
+    setMadeWho(null);
+    setMadePieces(op ? String(madeLeft(item, op)) : "");
+    setMadeFill(true);
   }
 
   // Мастер выбирает день (и час); доля встаёт с первого свободного времени монтажника, хвост — на следующие дни,
@@ -600,6 +614,22 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       return;
     }
     void mutate(operation.id, () => productionApi.share(task.id, operation.id, task.version, onlyPerson.id, task.quantity, `${isoDay(date)}T${clock(date.getHours() * 60 + date.getMinutes())}`));
+  }
+
+  // «Уже сделано»: по умолчанию — первый назначенный, кто не закончил свою долю, иначе без исполнителя (отбить готовыми).
+  const madePerson = task && operation
+    ? madeWho ?? operation.operator_ids.find((id) => !sharesOf(operation, id)[0]?.finished_at) ?? ""
+    : "";
+  const madeCount = Math.floor(Number(madePieces));
+  const madeMax = task && operation ? madeLeft(task, operation) : 0;
+  function recordMade() {
+    if (!task || !operation || !(madeCount > 0)) return;
+    // Записано — поле пустеет, чтобы второй клик не записал те же штуки ещё раз; отказ — число остаётся для правки.
+    void mutate(`made:${operation.id}`, async () => {
+      const result = await productionApi.manualOutput(task.id, operation.id, madeCount, madePerson, madeFill && Boolean(operation.inputs?.length));
+      setMadePieces("");
+      return result;
+    });
   }
 
   function openPersonDay(personId: string, day: string, open: boolean) {
@@ -804,6 +834,19 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
             {(onlyBlock || !onlySlot) && <small className="danger-text">{onlyBlock || "Свободного времени в ближайшие 60 дней нет — выберите другой день или монтажника."}</small>}
             {!onlyBlock && onlySlot && operation.operator_ids.some((id) => id !== onlyPerson.id) && <small>Остальные исполнители будут сняты — все {task.quantity} шт получит {onlyPerson.name}.</small>}
             {!onlyBlock && onlySlot && !task.pending && <MachineWarning taskId={task.id} operationId={operation.id} operatorId={onlyPerson.id} quantity={task.quantity} start={onlySlot.start} finish={onlyFinish} />}
+          </div>}
+          {canEdit && !task.pending && madeMax > 0 && <div className="mb-only mb-made" role="group" aria-label="Уже сделано без терминала">
+            <b>Уже сделано</b>
+            <label>чьи<select aria-label="Чьи штуки" value={madePerson} onChange={(event) => setMadeWho(event.target.value)}>
+              {operation.operator_ids.map((id) => <option key={id} value={id}>{operators.find((item) => item.id === id)?.name ?? "?"}</option>)}
+              <option value="">без исполнителя</option>
+            </select></label>
+            <label>штук<input type="number" min={1} max={madeMax} step={1} aria-label="Готовых штук" value={madePieces} onChange={(event) => setMadePieces(event.target.value)} /></label>
+            <span>осталось {madeMax}</span>
+            {Boolean(operation.inputs?.length) && <label><input type="checkbox" checked={madeFill} onChange={(event) => setMadeFill(event.target.checked)} />пропущенные этапы-входы отбить готовыми</label>}
+            <button className="primary small" disabled={Boolean(busy) || !(madeCount > 0) || madeCount > madeMax} onClick={recordMade}>
+              {madeCount > 0 ? `Записать готовыми ${madeCount} шт` : "Записать готовыми"}
+            </button>
           </div>}
           <button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
         : <div className="mb-target muted">{canEdit ? "Выберите операцию в списке выше, затем день и час у монтажника." : "Нажмите на день — раскладка по часам."}</div>}
