@@ -1,0 +1,26 @@
+/* Комплект ТД (ЕСТД): блок экрана ЭТК и окно выпуска. Цвета — только токены styles.css. */
+.td-panel { margin: 12px 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.td-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.td-head h2, .td-title { margin: 0; font-size: 16px; font-weight: 600; flex: 1; }
+.td-head .td-sto { margin-left: auto; }
+.td-changes { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.td-table th, .td-table td { padding: 5px 12px; }
+.td-table tbody tr { cursor: pointer; }
+.td-table tbody tr:hover, .td-table tbody tr.td-selected { background: var(--accent); }
+.td-status-active { color: var(--tone-ok); font-weight: 600; }
+.td-status-signing { color: var(--tone-warn); font-weight: 600; }
+.td-status-annulled { color: var(--tone-neutral); text-decoration: line-through; }
+.td-findings { margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; }
+.td-findings li { padding: 3px 0; }
+.td-finding-blocking { color: var(--tone-danger); }
+.td-finding-blocking strong { margin-right: 4px; text-transform: uppercase; font-size: 11px; }
+.td-finding-warning { color: var(--tone-neutral); }
+.td-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.td-spacer { flex: 1; }
+.td-form { display: grid; gap: 12px; }
+.td-form-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px 16px; }
+.td-form label { display: grid; gap: 4px; font-size: 13px; }
+.td-sign th[scope="row"] { font-weight: 600; }
+.td-sign td input { width: 100%; }
+.td-actions { display: flex; gap: 8px; }
+@media (pointer: coarse) { .td-toolbar button { min-height: 40px; } }
