@@ -41,6 +41,7 @@ from .requests_infrastructure import cancel_reasons, last_paid_purchases, view_l
 from .requests_view import batch_lines, build_summary, line_results
 
 OPTION = "procurement.requests_rb"
+BATCH_LIMIT = 300  # requests listed without a project filter
 router = APIRouter(prefix="/api/procurement", tags=["procurement"])
 Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 
@@ -61,9 +62,10 @@ def requests_view(
     batch: Annotated[str | None, Query(max_length=800)] = None,
     line: UUID | None = None,
 ) -> dict:
-    """Projects → request batches of the scope with RB's «Ход закупки»; with `batch` also that batch's lines (plan with
-    VAT and link, last purchase, free stock, request for quotes, what the viewer may do). «Мои» — the buyer's lines and
-    the unclaimed «Новый» ones; «Все» — every line, read only. `line` (a `&line=` link) names its batch and project."""
+    """Projects → request batches of the scope with RB's «Ход закупки» (without a project — the newest `BATCH_LIMIT`,
+    `batches_total` says how many); with `batch` only that batch's lines instead (plan with VAT and link, last purchase,
+    free stock, request for quotes, what the viewer may do). «Мои» — the buyer's lines and the unclaimed «Новый» ones;
+    «Все» — every line, read only. `line` (a `&line=` link) names its batch and project."""
     _require_option()
     actor_id = principal.actor.id if scope == "mine" else None
     uow = uow_factory()
@@ -71,21 +73,29 @@ def requests_view(
         session = uow.session
         lines = view_lines(session, actor_id)
         purposes = purposes_of(lines)
-        states = rfq_states(session, [item.id for item in lines])
-        result = {
-            "scope": scope,
-            **build_summary(lines, purposes, states, actor_id, project=(project or "").strip() or None, focus=line),
-        }
         if batch:
+            # One batch opened: only its lines, nothing of the summary is recomputed.
             chosen = batch_lines(lines, batch, purposes)
-            result["lines"] = line_results(
+            states = rfq_states(session, [item.id for item in chosen])
+            return {"scope": scope, "batch": batch, "lines": line_results(
                 chosen, states, actor_id,
                 suppliers=suppliers.supplier_map() if suppliers is not None else {},
                 free_stock=free_stock(session, chosen),
                 last=last_purchases(session, chosen, last_paid_purchases(session, chosen)),
                 reasons=cancel_reasons(session, [item.id for item in chosen if item.status == "Отменено"]),
-            )
-    return result
+            )}
+        states = rfq_states(session, [item.id for item in lines])
+        chosen_project = (project or "").strip() or None
+        summary = build_summary(lines, purposes, states, actor_id, project=chosen_project, focus=line)
+    total = len(summary["batches"])
+    if chosen_project is None and total > BATCH_LIMIT:
+        # Without a project only the newest requests (the focused one kept): a project shows all of its own.
+        kept = summary["batches"][:BATCH_LIMIT]
+        focus = summary["focus"]
+        if focus and all(item["key"] != focus["batch"] for item in kept):
+            kept.append(next(item for item in summary["batches"] if item["key"] == focus["batch"]))
+        summary["batches"] = kept
+    return {"scope": scope, **summary, "batches_total": total}
 
 
 class SplitQuantityInput(BaseModel):

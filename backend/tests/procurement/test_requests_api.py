@@ -228,3 +228,18 @@ def test_cancel_many_skips_another_buyers_line(api, monkeypatch, tmp_path):
     result = client.post("/api/procurement/cancel-many", json=body).json()
     assert result == {"cancelled": [], "skipped": [{"id": str(lines[0].id), "reason": "строка другого закупщика"}]}
     _as("Петров")
+
+
+def test_without_a_project_only_the_newest_requests_are_listed(api, monkeypatch, tmp_path):
+    from app.modules.procurement import requests_api
+
+    client, lines, _ = api
+    _options(monkeypatch, tmp_path)
+    monkeypatch.setattr(requests_api, "BATCH_LIMIT", 1)
+    listed = _view(client)
+    assert (len(listed["batches"]), listed["batches_total"]) == (1, 2)
+    focused = _view(client, line=str(lines[0].id))
+    assert {item["key"] for item in focused["batches"]} >= {focused["focus"]["batch"]}
+    assert len(_view(client, project="RND")["batches"]) == 2
+    only_lines = _view(client, batch="RND|rnd.001")
+    assert set(only_lines) == {"scope", "batch", "lines"} and len(only_lines["lines"]) == 1

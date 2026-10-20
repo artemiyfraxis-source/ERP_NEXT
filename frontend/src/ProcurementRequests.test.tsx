@@ -89,6 +89,7 @@ const summary = {
     request_date: "2026-10-05", planned_date: "2026-10-15", initiators: ["Орлова Анна"], lines: 3,
     counts: { new: 2, in_rfq: 1 }, mine: 3, selectable: 2, to_take: 0,
   }],
+  batches_total: 1,
   focus: null,
 };
 const lines = [
@@ -109,7 +110,7 @@ describe("the «Заявки» screen", () => {
         return json({ available: true, options: ["procurement.requests_rb", "procurement.rfq"].map((key) => ({ key, enabled: true, block: "", title: "", before: "", after: "" })) });
       }
       if (path.startsWith("/api/procurement/requests-view")) {
-        return json(path.includes("batch=") ? { ...summary, lines } : summary);
+        return json(path.includes("batch=") ? { scope: "mine", batch: BATCH, lines } : summary);
       }
       if (path === "/api/procurement/cancel-many") return json({ cancelled: ["a"], skipped: [{ id: "b", reason: "строка изменилась — обновите список" }] });
       if (path.startsWith("/api/purchasing/rfqs/suggest")) return json({ categories: [], lines: 2, suggestions: [] });

@@ -76,8 +76,8 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
 
   const loadBatch = useCallback(async (key: string) => {
     try {
-      const result = await requestsViewApi.view({ scope, batch: key });
-      setLinesOf((current) => ({ ...current, [key]: result.lines ?? [] }));
+      const result = await requestsViewApi.batch(scope, key);
+      setLinesOf((current) => ({ ...current, [key]: result.lines }));
     } catch (reason) {
       setError(failureText(reason, "Позиции заявки не загрузились"));
     }
@@ -224,6 +224,9 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
         </section>
       )}
 
+      {view !== null && view.batches_total > batches.length && (
+        <p className="page-sub">Показаны последние {batches.length} заявок из {view.batches_total} — выберите проект, чтобы увидеть все его заявки.</p>
+      )}
       {batches.length > 0 && (
         <div className="data-table">
           <div className="table-wrap">

@@ -62,8 +62,9 @@ export type RqView = {
   scope: RqScope;
   projects: RqProjectSummary[];
   batches: RqBatch[];
+  /** Requests in the scope; without a project only the newest are listed. */
+  batches_total: number;
   focus: { project: string; batch: string } | null;
-  lines?: RqLine[];
 };
 
 export type CancelManyResult = { cancelled: string[]; skipped: { id: string; reason: string }[] };
@@ -76,8 +77,11 @@ function query(params: Record<string, string | undefined>): string {
 }
 
 export const requestsViewApi = {
-  view: (params: { scope: RqScope; project?: string; batch?: string; line?: string }) =>
+  view: (params: { scope: RqScope; project?: string; line?: string }) =>
     api<RqView>(`/api/procurement/requests-view${query(params)}`),
+  /** One request opened: only its lines. */
+  batch: (scope: RqScope, batch: string) =>
+    api<{ scope: RqScope; batch: string; lines: RqLine[] }>(`/api/procurement/requests-view${query({ scope, batch })}`),
   splitQty: (lineId: string, version: number, quantity: string) =>
     api<{ original: { legacy_id: string }; created: { legacy_id: string }; rfq: { rfq_number: string; quotes: number } | null }>(
       `/api/procurement/${encodeURIComponent(lineId)}/split-qty`,
