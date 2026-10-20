@@ -64,7 +64,9 @@ MERGE_DELETE = [
     ("TNC-Female RG316", "RG-316", "T-231L", "RG-316"),
     ("MCX-female RG-174", "RG-174", "11-211L", "RG-174"),     # kroks.ru: «Разъем 11-211L MCX(female) на кабели RG-174, RG-316»
     ("MCX-female RG-316", "RG-316", "11-211L", "RG-316"),
-    ("MHF1-plug RG-178", "RG-178", "U.FL", "RG-178"),         # gsm-repiteri.ru 3148 — одна страница, один код, один кабель
+    # ОШИБКА 20.10: пара «MHF1-plug RG-178» → «U.FL» слила разные серии (MHF1 — I-PEX, U.FL — Hirose); строку вернули.
+    # Теперь do_merge отказывает любой паре с разными series_key (same_series), так что пара ниже не выполнится повторно.
+    ("MHF1-plug RG-178", "RG-178", "U.FL", "RG-178"),
     ("Fakra Z-Female", "RG-174", "FAKRA-female (тип Z) для RG-174/RG-316", "RG-174"),  # gsm-repiteri.ru 3166 — одна страница
     ("Fakra Z-Female", "RG-316", "FAKRA-female (тип Z) для RG-174/RG-316", "RG-316"),
     ("MMCX-male RG-174", "RG-174", "Kroks-1440", "RG-174"),   # одна страница kroks.ru и тот же кабель; у поставщика номера детали нет
@@ -106,6 +108,23 @@ def article_of(record) -> str:
 
 def cable_of(record) -> str:
     return str(record.fields.get("coaxWire") or record.fields.get("Провод") or "").strip()
+
+def type_of(record) -> str:
+    return str(record.fields.get("coaxType") or record.fields.get("Тип/Серия") or "").strip()
+
+
+def series_key(kind: object) -> str:
+    """Серия из «Тип/Серия» без пола и исполнения: «U.FL-female R/A» → «u.fl», «MHF1-plug (Lock)» → «mhf1», «SMA-male R/A» → «sma».
+    Серии разных производителей не равны (владелец 20.10: U.FL — Hirose, MHF1 / IPEX — I-PEX; свои артикулы и данные)."""
+    text_ = " ".join(str(kind or "").casefold().split())
+    text_ = re.split(r"[-\s](?:male|female|plug|jack)\b", text_)[0]
+    return re.sub(r"\s*(?:r/a|flange|bulkhead|\(.*\))\s*$", "", text_).strip()
+
+
+def same_series(a, b) -> bool:
+    """Строки разных серий не парятся и не сливаются никогда (защита от слияния «MHF1-plug» → «U.FL» 20.10)."""
+    return series_key(type_of(a)) == series_key(type_of(b))
+
 
 
 def sellers(value: str) -> dict[str, str]:
@@ -306,6 +325,9 @@ def do_merge(run: Run, factory, url, lots, report):
                 continue
             if r is None:
                 report.append(("ОТКАЗ слияния", f"{g_art} × {g_cab}", f"нет строки R «{r_art}» × {r_cab}"))
+                continue
+            if not same_series(g, r):
+                report.append(("НЕ слита (другая серия)", f"{g_art} × {g_cab}", f"{type_of(g)} ≠ {type_of(r)}"))
                 continue
             if blocked[g_art]:
                 report.append(("НЕ слита (ссылки)", f"{g_art} × {g_cab}", "; ".join(blocked[g_art])))

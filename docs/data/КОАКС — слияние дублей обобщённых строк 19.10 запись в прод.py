@@ -136,6 +136,23 @@ def article_of(record) -> str:
 def cable_of(record) -> str:
     return str(record.fields.get("coaxWire") or record.fields.get("Провод") or "").strip()
 
+def type_of(record) -> str:
+    return str(record.fields.get("coaxType") or record.fields.get("Тип/Серия") or "").strip()
+
+
+def series_key(kind: object) -> str:
+    """Серия из «Тип/Серия» без пола и исполнения: «U.FL-female R/A» → «u.fl», «MHF1-plug (Lock)» → «mhf1», «SMA-male R/A» → «sma».
+    Серии разных производителей не равны (владелец 20.10: U.FL — Hirose, MHF1 / IPEX — I-PEX; свои артикулы и данные)."""
+    text_ = " ".join(str(kind or "").casefold().split())
+    text_ = re.split(r"[-\s](?:male|female|plug|jack)\b", text_)[0]
+    return re.sub(r"\s*(?:r/a|flange|bulkhead|\(.*\))\s*$", "", text_).strip()
+
+
+def same_series(a, b) -> bool:
+    """Строки разных серий не парятся и не сливаются никогда (защита от слияния «MHF1-plug» → «U.FL» 20.10)."""
+    return series_key(type_of(a)) == series_key(type_of(b))
+
+
 
 def find_pairs(records):
     by_key = {(fold(article_of(r)), cable_key(cable_of(r))): r for r in records}
@@ -154,7 +171,7 @@ def find_pairs(records):
         if fold(match.string.strip()).startswith(fold(f"Разъём {article_of(g)} (")):
             continue
         real = by_key.get((fold(part), cable_key(cable_of(g))))
-        if real is None or real.id == g.id:
+        if real is None or real.id == g.id or not same_series(g, real):  # другая серия — не пара (U.FL ≠ MHF1)
             unpaired.append((g, part))
             continue
         pairs.append(Pair(g=g, r=real, part=part))
