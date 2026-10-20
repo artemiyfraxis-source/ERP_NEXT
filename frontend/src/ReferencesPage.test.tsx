@@ -1,7 +1,7 @@
 import { CRIMP_COLUMN_TITLE } from "./CrimpCell";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ReferencesPage, visibleTabs, type DbTab } from "./ReferencesPage";
+import { ReferencesPage } from "./ReferencesPage";
 import type { Principal } from "./api";
 
 const admin: Principal = {
@@ -100,8 +100,8 @@ it("shows the versioned technology snapshot as a table of its own columns", asyn
   expect(screen.getByRole("columnheader", { name: "Артикул контакта" })).toBeInTheDocument();
   // «Операции» is the erptctpl tab; БД.ОБ / БД.ПРОВ / БД.МАТ are working bases (owner: «с оборудованием то же самое»).
   expect(screen.queryByRole("button", { name: /^Операции/ })).toBeNull();
-  // «Прочие кабели» shows while its count is unknown or not 0 (owner 15.10.2026); «Материалы» is dissolved into purpose tabs
-  for (const kept of [/^Оборудование/, /^Монтажные провода/, /^Прочие кабели/, /^Оболочки/, /^Расходники/]) expect(screen.getByRole("button", { name: kept })).toBeInTheDocument();
+  // «Прочие кабели» are closed (20.10.2026); «Материалы» is dissolved into purpose tabs
+  for (const kept of [/^Оборудование/, /^Монтажные провода/, /^Оболочки/, /^Расходники/]) expect(screen.getByRole("button", { name: kept })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /^Материалы/ })).toBeNull();
   expect(screen.queryByRole("button", { name: /^Провода и кабели/ })).toBeNull();
 });
@@ -172,7 +172,7 @@ it("opens the retired «Ø изоляции по маркам» key (kab_awg) on
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [] });
     if (path === "/api/references/bases") return json({ bases: [] });
-    if (path === "/api/references/cables") return json({ columns: [], counts: { coax: 0, wire: 0, multi: 0, other: 0 }, rows: [], gauges: [] });
+    if (path === "/api/references/cables") return json({ columns: [], counts: { coax: 0, wire: 0, multi: 0 }, rows: [], gauges: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -522,12 +522,3 @@ it("БД.ОБ: a click on a value edits it in the card — a model value goes to
   window.history.replaceState({}, "", "/");
 });
 
-
-it("hides «Прочие кабели» once it is empty (owner 15.10.2026: «закрыть»), keeps it while it has rows, is unknown or open", () => {
-  const tabs = [{ id: "cab_wire" as const }, { id: "cab_other" as const }];
-  const ids = (n: number | null, active: DbTab = "cab_wire") => visibleTabs(tabs, (tab) => (tab.id === "cab_other" ? n : 5), active).map((tab) => tab.id);
-  expect(ids(0)).toEqual(["cab_wire"]);
-  expect(ids(2)).toEqual(["cab_wire", "cab_other"]);
-  expect(ids(null)).toEqual(["cab_wire", "cab_other"]);
-  expect(ids(0, "cab_other")).toEqual(["cab_wire", "cab_other"]);
-});
