@@ -4393,3 +4393,45 @@ tr.upd-row-bad td { background: var(--chip-danger-bg); }
 /* Документ без продавца показывает имя XML-файла (≈170 знаков без пробелов) — оно переносится, а не растягивает колонку. */
 .upd-table td.text, .upd-table .table-link { overflow-wrap: anywhere; white-space: normal; text-align: left; }
 .upd-table .upd-chips { max-width: 220px; }
+
+/* «Заявки» закупщика (опция procurement.requests_rb, Roller_Buyer RequestsPage): заявки → позиции, чипы хода закупки. */
+.procurement-requests .rq-toolbar .spacer { flex: 1; }
+.procurement-requests .rq-project { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.procurement-requests .rq-project select { max-width: 360px; }
+.procurement-requests .rq-progress { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; }
+.rq-chips { display: inline-flex; flex-wrap: wrap; gap: 3px 4px; }
+.rq-batches td { vertical-align: top; }
+.rq-batches td.rq-toggle { width: 18px; color: var(--muted-foreground); }
+.rq-batches td.text strong { font-weight: 600; }
+.rq-batches td.text, .rq-lines-table td.text { white-space: normal; overflow-wrap: break-word; }
+.rq-sub { display: block; color: var(--muted-foreground); font-size: 11.5px; white-space: nowrap; }
+.rq-batches tr.detail > td { padding: 6px 4px 12px 10px; }
+.rq-lines { display: grid; gap: 6px; }
+.rq-lines-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12.5px; }
+.rq-lines-tools label { display: inline-flex; align-items: center; gap: 6px; }
+.rq-lines-tools select { width: auto; }
+.rq-lines-table { border: 1px solid var(--border); border-radius: 8px; }
+.rq-lines-table td { padding-top: 3px; padding-bottom: 3px; vertical-align: top; }
+.data-table .rq-lines-table td.text { min-width: 200px; }
+.data-table .rq-batches td.text { min-width: 220px; }
+.rq-lines-table td.text strong { display: block; font-weight: 600; }
+.rq-lines-table td.text small { display: block; color: var(--muted-foreground); font-size: 11.5px; }
+.rq-lines-table .rq-check { width: 26px; text-align: center; user-select: none; }
+.rq-lines-table .rq-check input { width: auto; margin: 0; cursor: pointer; }
+.rq-lines-table tr.group-row td { background: var(--accent); font-size: 12px; }
+.rq-lines-table tr.rq-picked > td { background: color-mix(in srgb, var(--primary) 9%, var(--card)); }
+.rq-lines-table tr.rq-highlight > td { box-shadow: inset 0 0 0 9999px color-mix(in srgb, var(--tone-warn) 14%, transparent); }
+.rq-lines-table tr.muted > td { color: var(--muted-foreground); }
+.rq-lines-table tr.rq-sub-row > td { padding-top: 2px; padding-bottom: 6px; font-size: 12.5px; white-space: normal; }
+.rq-plan { display: inline-flex; flex-direction: column; gap: 1px; font-size: 12.5px; }
+.rq-plan b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.rq-plan .link-button { padding: 0; font-size: 12px; text-align: left; }
+.rq-rfq { display: block; padding: 2px 0 0; font-size: 12px; }
+.data-table .rq-lines-table td.rq-actions { width: 1px; }
+.rq-actions-in { display: flex; flex-wrap: nowrap; gap: 4px; }
+@media (max-width: 1400px) { .rq-actions-in { flex-wrap: wrap; min-width: 96px; } }
+.rq-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 10px; }
+.rq-form label { display: grid; gap: 3px; font-size: 12px; }
+.rq-form input { width: 220px; }
+.rq-bulk .rq-reason { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.rq-bulk .rq-reason input { width: 240px; }

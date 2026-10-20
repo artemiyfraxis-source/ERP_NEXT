@@ -394,7 +394,7 @@ export function manualSuggestion(name: string, directory: SupplierBrief[]): Supp
   };
 }
 
-function SuggestPanel({ lineIds, lines, onBack, onCreated }: {
+export function SuggestPanel({ lineIds, lines, onBack, onCreated }: {
   lineIds: string[]; lines: ChosenLine[]; onBack: () => void; onCreated: (id: string) => void;
 }) {
   const [result, setResult] = useState<SuggestResult | null>(null);
