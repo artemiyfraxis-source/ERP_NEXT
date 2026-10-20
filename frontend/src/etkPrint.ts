@@ -82,7 +82,7 @@ function solderRows(operation: Row): string[][] {
   ];
 }
 
-function operationKeyOf(operation: Row): string {
+export function operationKeyOf(operation: Row): string {
   return `${text(operation.code).trim()}::${text(operation.connector).trim()}::${text(operation.side).trim()}`;
 }
 
@@ -193,7 +193,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
         } },
       ] as PrintBlock[] : []),
     ],
-    sign: `${SIGN}\nДокумент составлен в соответствии с ГОСТ 3.1407-86 · ревизия ${revision}`,
+    sign: `${SIGN}\nРевизия ${revision}`,
   };
   const pages = operations.map((operation, index): PrintPage => {
     const opCard = object(operation.card);
@@ -253,7 +253,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
           ...table(["№", "Расчётное время", "Норма, мин", "Факт"], time),
         ] : []),
       ],
-      sign: `${SIGN}\nДокумент составлен в соответствии с ГОСТ 3.1407-86 · ревизия ${revision}`,
+      sign: `${SIGN}\nРевизия ${revision}`,
     };
   });
   const labels = serial ? etkMarkLabelsPage(card, serial) : null;

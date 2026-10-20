@@ -160,9 +160,12 @@ def _database_assigns(table: Table, column: Column, dialect: str) -> bool:
 # Pairs a CHECK ties together that the column-by-column fill can't see: identity_documents.scope takes 'all' from its
 # `IN (…)` list, and `scope = 'all'` demands an empty scope_value (0100_identity_documents); fulfillment_lines.absent_at
 # is left empty (`absent_at IS NULL OR …`), and «who» goes with «when» (0106_fulfillment_line_absent).
+# finished_goods.before_erp is 0: the acts of a КБ (0128) sum to its «принято» moves less what was shipped before ERP,
+# and row i of the moves and of the acts both take the i-th КБ and i + 1 pieces, so the sums meet only without it.
 _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("identity_documents", "scope_value"): "",
     ("fulfillment_lines", "absent_by"): None,
+    ("finished_goods", "before_erp"): Decimal(0),
 }
 
 
