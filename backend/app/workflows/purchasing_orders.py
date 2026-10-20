@@ -183,8 +183,17 @@ def _pay_missing(session: Session, line_ids: set[UUID]) -> dict[UUID, tuple[str,
     """What the pay gate still misses on the lines «В оплату» (the domain rule itself, so it never drifts)."""
     if not line_ids:
         return {}
-    lines = SqlAlchemyProcurementRepository(session).with_statuses([ProcurementStatus.TO_PAY.value])
-    return {line.id: tuple(line.pay_missing()) for line in lines if line.id in line_ids}
+    wanted = list(line_ids)
+    # One query per 500 rows; the repository's get() then reads the session's identity map (the rows are held here).
+    held = [row for chunk in _chunks(wanted) for row in session.scalars(select(ProcurementLineRow).where(ProcurementLineRow.id.in_(chunk)))]
+    repository = SqlAlchemyProcurementRepository(session)
+    out = {}
+    for line_id in wanted:
+        line = repository.get(line_id)
+        if line is not None and line.status is ProcurementStatus.TO_PAY:
+            out[line_id] = tuple(line.pay_missing())
+    del held
+    return out
 
 
 def order_lines(

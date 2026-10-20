@@ -24,7 +24,10 @@ export type Order = {
   quarantine_count: number; invoices: OrderInvoice[]; invoice_date: string | null; expected: string | null;
   expected_last: string | null; promised: string | null; paid_on: string | null; stocked_on: string | null; late_days: number;
   sum: string | null; sum_estimated: boolean; foreign: { currency: string; sum: string | null }[]; projects: string[];
-  lines: OrderLine[]; backorders: OrderLine[];
+  /** Только в карточке (`card`): доска и таблица строки не читают. */
+  lines?: OrderLine[];
+  /** В списке — только № и этап дозавоза, в карточке — строка целиком. */
+  backorders: (Pick<OrderLine, "legacy_id" | "status"> & Partial<OrderLine>)[];
   sent_to_pay_on: string | null; shipped_on: string | null; shipment_note: string; delivery_cost: string | null; note: string;
   facts_version: number; facts_updated_by: string | null; facts_updated_at: string | null;
 };

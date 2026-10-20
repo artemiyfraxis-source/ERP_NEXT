@@ -149,8 +149,9 @@ def facts_json(facts: OrderFactRow | None) -> dict:
 
 
 def order_json(number: str, lines: Sequence[OrderLineFacts], facts: OrderFactRow | None, today: date,
-               viewer: UUID | None) -> dict | None:
-    """The card of one order; None when it has no stage line (only `-Д` backorders left)."""
+               viewer: UUID | None, detail: bool = True) -> dict | None:
+    """The card of one order; None when it has no stage line (only `-Д` backorders left). Without `detail` (the board,
+    the table) the lines are left out — the card reads them — and a backorder is only its № and stage."""
     column = column_of(lines, facts)
     if column is None:
         return None
@@ -203,8 +204,8 @@ def order_json(number: str, lines: Sequence[OrderLineFacts], facts: OrderFactRow
         "sum_estimated": estimated,
         "foreign": [{"currency": currency, "sum": _num(value)} for currency, value in sorted(foreign.items())],
         "projects": sorted({line.project for line in staged if line.project}),
-        "lines": [line_json(line) for line in staged],
-        "backorders": [line_json(line) for line in backorders],
+        **({"lines": [line_json(line) for line in staged]} if detail else {}),
+        "backorders": [line_json(line) if detail else {"legacy_id": line.legacy_id, "status": line.status} for line in backorders],
         **facts_json(facts),
     }
 
@@ -225,7 +226,7 @@ def build_orders(lines: Iterable[OrderLineFacts], facts: Mapping[str, OrderFactR
     grouped: dict[str, list[OrderLineFacts]] = {}
     for line in lines:
         grouped.setdefault(line.order_number, []).append(line)
-    orders = [order_json(number, group, facts.get(number), today, viewer) for number, group in grouped.items()]
+    orders = [order_json(number, group, facts.get(number), today, viewer, detail=False) for number, group in grouped.items()]
     return sorted(
         (order for order in orders if order is not None),
         key=lambda order: (order["order_date"] or "", order["order_number"]), reverse=True,

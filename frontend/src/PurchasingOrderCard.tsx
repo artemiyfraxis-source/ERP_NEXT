@@ -22,7 +22,7 @@ export const columnLabel = (order: Pick<Order, "column">) => ORDER_COLUMNS.find(
 
 /** Строки, чья ожидаемая дата меняется сейчас (дозавоз — со своей датой). */
 export const expectedLines = (order: Order) =>
-  order.lines.filter((line) => EXPECTED_EDITABLE.has(line.status)).map((line) => ({ line_id: line.id, version: line.version }));
+  (order.lines ?? []).filter((line) => EXPECTED_EDITABLE.has(line.status)).map((line) => ({ line_id: line.id, version: line.version }));
 
 const lineSum = (line: OrderLine) => line.actual_sum ?? line.calculated_sum;
 
@@ -39,7 +39,7 @@ export function PayOrderDialog({ order, onClose, onPaid, onConflict, onOpenCard 
   onConflict: (message: string) => void;
   onOpenCard?: () => void;
 }) {
-  const lines = order.lines.filter((line) => line.status === TO_PAY);
+  const lines = (order.lines ?? []).filter((line) => line.status === TO_PAY);
   const missing = lines.filter((line) => line.pay_missing.length > 0);
   const [prompt, setPrompt] = useState<ManualRatePrompt | null>(null);
   const [rate, setRate] = useState("");
@@ -298,7 +298,7 @@ export function OrderCardBody({ number, today, readOnly, refreshKey = 0, onChang
             </tr>
           </thead>
           <tbody>
-            {order.lines.map((line) => (
+            {(order.lines ?? []).map((line) => (
               <tr key={line.id}>
                 <td className="text"><strong>{line.legacy_id}</strong> {line.name}
                   {line.invoice_item_name && line.invoice_item_name.trim() !== line.calculated_name.trim()
@@ -329,7 +329,7 @@ export function OrderCardBody({ number, today, readOnly, refreshKey = 0, onChang
           <h3>Дозавоз</h3>
           <ul className="doc-list" aria-label="Дозавоз">
             {order.backorders.map((line) => (
-              <li key={line.id}>{line.legacy_id} · {line.name} · {formatQty(line.quantity, line.unit)} · <StatusChip status={line.status} /></li>
+              <li key={line.legacy_id}>{line.legacy_id} · {line.name} · {formatQty(line.quantity, line.unit)} · <StatusChip status={line.status} /></li>
             ))}
           </ul>
           <p className="muted">Недопоставку приёмка выносит в дозавоз: подтвердить досыл или отменить — в «Очередях», блок «Дозавоз».{" "}

@@ -139,7 +139,9 @@ def test_the_order_walks_the_columns_with_its_facts_and_payment(orders_api):
     assert order["column"] == "unpaid"
     assert order["invoices"] == [{"number": "СЧ-7", "date": "2026-09-16", "url": "https://files.test/invoice.pdf"}]
     assert (order["sum"], order["sum_estimated"], order["promised"], order["expected"]) == ("4880", False, "2026-09-25", "2026-09-25")
-    assert all(line["pay_missing"] == [] for line in order["lines"])
+    assert "lines" not in order  # the board and the table read the lines with the card
+    card = client.get(f"{BASE}/{number}").json()["order"]
+    assert all(line["pay_missing"] == [] for line in card["lines"]) and len(card["lines"]) == 2
 
     sent = _facts(client, number, 0, sent_to_pay_on="2026-09-20")
     assert sent.status_code == 200, sent.text
@@ -237,7 +239,7 @@ def test_the_order_wide_expected_date_moves_every_line_and_the_promise_stays(ord
     assert {line["expected_arrival"] for line in moved.json()["lines"]} == {"2026-09-30"}
     order = _order(client, number)
     assert (order["promised"], order["expected"]) == ("2026-09-25", "2026-09-30")
-    assert {line["promised"] for line in order["lines"]} == {"2026-09-25"}
+    assert {line["promised"] for line in client.get(f"{BASE}/{number}").json()["order"]["lines"]} == {"2026-09-25"}
 
     _as("Сидоров")
     foreign = client.post(url, json={"expected_arrival": "2026-10-01", "lines": refs({line["id"]: line for line in moved.json()["lines"]})})
@@ -322,3 +324,15 @@ def test_open_decisions_list_the_decided_lines_until_the_supplier_request(orders
     formed = client.post("/api/procurement/supplier-requests", json={"line_ids": [str(line.id)]})
     assert formed.status_code == 200 and formed.json()["orders"], formed.text
     assert client.get(f"{BASE}/decisions").json() == {"suppliers": []}
+
+
+def test_the_card_names_what_the_pay_gate_still_misses(orders_api):
+    client, sessions = orders_api
+    number, lines = formed_order(client, sessions)
+    invoiced = client.post(f"/api/procurement/orders/{number}/invoice", json={
+        "invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25", "lines": refs(lines),
+    })
+    assert invoiced.status_code == 200, invoiced.text
+    card = client.get(f"{BASE}/{number}").json()["order"]
+    assert card["column"] == "unpaid" and card["sum_estimated"] is True
+    assert {tuple(line["pay_missing"]) for line in card["lines"]} == {("ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)")}

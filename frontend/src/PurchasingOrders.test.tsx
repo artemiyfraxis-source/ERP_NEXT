@@ -78,6 +78,8 @@ function server(orders: Order[], calls: Call[]) {
       return json({ order: { ...orders[0], facts_version: body.version + 1, sent_to_pay_on: body.sent_to_pay_on ?? null } });
     }
     if (path.endsWith("/paid")) return json({ lines: [] });
+    const card = orders.find((item) => path === `/api/purchasing/orders/${item.order_number}`);
+    if (card) return json({ order: card, receiving: [], upds: null });
     if (path === "/api/stage-options") return json({ available: true, options: [] });
     return json({});
   });

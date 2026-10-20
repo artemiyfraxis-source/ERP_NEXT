@@ -273,6 +273,15 @@ export function PurchasingOrders({ readOnly = false, onOpenUpd, onOpenRfq }: {
     }
   }
 
+  /** The pay dialog reads the order's card: the lines with their versions and what the pay gate still misses. */
+  async function openPay(order: Order) {
+    try {
+      setPay((await ordersApi.card(order.order_number)).order);
+    } catch (reason) {
+      say(failureText(reason, "Заказ не загрузился"), "error");
+    }
+  }
+
   async function writeFact(order: Order, field: "sent_to_pay_on" | "shipped_on") {
     const before = order[field];
     const done = field === "sent_to_pay_on" ? "передан в оплату" : "отгружен";
@@ -301,7 +310,7 @@ export function PurchasingOrders({ readOnly = false, onOpenUpd, onOpenRfq }: {
       return;
     }
     if (action.kind === "invoice") void openInvoice(order);
-    else if (action.kind === "pay") setPay(order);
+    else if (action.kind === "pay") void openPay(order);
     else void writeFact(order, action.kind === "sent_to_pay" ? "sent_to_pay_on" : "shipped_on");
   }
 
