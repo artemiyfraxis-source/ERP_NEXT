@@ -28,7 +28,7 @@ from app.shared.identity import Actor
 
 from .application import (
     FieldEdit, SaveGaugeCommand, SaveHookupCommand, SetCoaxDiametersCommand, UnitOfWork, _audit, _clean_new_fields,
-    _create_in, _edit_in, cable_catalog, cable_overrides, save_gauge_in, save_hookup_in, set_coax_diameters_in,
+    _create_in, _edit_in, cable_catalog, save_gauge_in, save_hookup_in, set_coax_diameters_in,
 )
 from .cable_structure import parse_hookup, shown
 from .cables import DIAMETERS, CableKind, cable_mark, cable_rows, diameter_index
@@ -109,8 +109,7 @@ class _TechTable:
 
     def _extra_values(self, uow: UnitOfWork, records: Sequence[TechOperationRecord]) -> dict[str, dict[str, str]]:
         """The extra columns of every БД.ПРОВ row, read in the open `uow` (the cable catalogue's own join)."""
-        rows = cable_rows(records, uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=100_000),
-                          cable_overrides(uow.references.list()))
+        rows = cable_rows(records, uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=100_000))
         hookups = {wire.mark_key: wire for wire in uow.cable_structure.hookups()}
         result: dict[str, dict[str, str]] = {}
         for row in rows:
@@ -352,8 +351,7 @@ def _folded(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
 
 
-CABLE_KINDS = {"coax": "Коаксиальные кабели", "wire": "Монтажные провода", "multi": "Многожильные кабели",
-               "other": "Прочие кабели"}
+CABLE_KINDS = {"coax": "Коаксиальные кабели", "wire": "Монтажные провода", "multi": "Многожильные кабели"}
 
 
 def _tables() -> dict[str, Callable[[], _Table]]:

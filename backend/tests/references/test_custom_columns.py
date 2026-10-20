@@ -1,4 +1,4 @@
-"""«+ Столбец» (owner 14.10.2026): the owner's own column of a reference table."""
+"""«+ Столбец» (owner 14.10.2026): the owner's own column of a reference table; БД.ПРОВ — of one cable list (20.10.2026)."""
 
 from uuid import UUID
 
@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.main import app
 from app.modules.references.application import ColumnCommand, FieldEdit, _edit_in, add_column, custom_columns
+from app.modules.references.cables import CableKind
 from app.modules.references.domain import TechOperationTab
 from app.modules.references.load_mirror import ACTOR, load_mirror
 from app.shared.http_auth import Principal, authenticated_principal
@@ -42,14 +43,15 @@ def _events(event_type: str):
 def test_a_column_is_added_to_every_record_listed_edited_inline_and_audited_once(references_api):
     records = _seed(references_api)
 
-    response = references_api.post(COLUMNS, json={"tab": "prov", "name": "  Склад   полка "})
+    response = references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "  Склад   полка "})
     after = references_api.get("/api/references/tech-operations", params={"tab": "prov"}).json()
 
-    assert response.status_code == 201 and response.json() == {"tab": "prov", "name": "Склад полка", "records": 2}
+    assert response.status_code == 201
+    assert response.json() == {"tab": "prov", "name": "Склад полка", "records": 2, "cable_kind": "wire"}
     assert after["columns"][-1] == "Склад полка"
     assert all(record["fields"]["Склад полка"] == "" for record in after["records"])
     [event] = _events("references.column_added")
-    assert event.details == {"tab": "prov", "column": "Склад полка", "records": 2}
+    assert event.details == {"tab": "prov", "column": "Склад полка", "records": 2, "cable_kind": "wire"}
     edit = references_api.patch(f"/api/references/tech-operations/{records[0]['id']}",
                                 json={"edits": [{"field": "Склад полка", "old": "", "value": "А-12"}]})
     assert edit.status_code == 200 and edit.json()["fields"]["Склад полка"] == "А-12"
@@ -59,20 +61,26 @@ def test_the_cables_screen_columns_and_the_coax_tab_get_the_new_column(reference
     _seed(references_api)
     _seed(references_api, tab="coax", fields=[{"Артикул": "SMA-1", "Тип": "SMA"}])
 
-    assert references_api.post(COLUMNS, json={"tab": "prov", "name": "Полка"}).status_code == 201
+    assert references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "Полка"}).status_code == 201
     assert references_api.post(COLUMNS, json={"tab": "coax", "name": "Полка"}).status_code == 201
 
-    assert references_api.get("/api/references/cables").json()["columns"][-1] == "Полка"
+    cables = references_api.get("/api/references/cables").json()
+    assert cables["columns"][-1] == "Полка" and cables["columns_by_kind"]["wire"][-1] == "Полка"
+    assert "Полка" not in cables["columns_by_kind"]["coax"] and cables["custom_columns_by_kind"]["wire"] == ["Полка"]
     assert _columns(references_api, "coax")[-1] == "Полка"
-    assert references_api.post(COLUMNS, json={"tab": "prov", "name": "полка"}).status_code == 422
+    assert references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "полка"}).status_code == 422
+    no_list = references_api.post(COLUMNS, json={"tab": "prov", "name": "Ячейка"})
+    assert no_list.status_code == 422 and "список кабелей" in no_list.json()["detail"]
+    # another list has no such column yet: a coax cable gets its own «Полка» (here the list is empty — no place for it)
+    assert "нет записей" in references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "coax", "name": "Полка"}).json()["detail"]
 
 
 def test_a_bad_name_is_refused_and_nothing_is_written(references_api):
     _seed(references_api)
     cases = {"": 422, "   ": 422, "Я" * 61: 422, "марка": 422, "Цвета": 422, "=A1": 422}
 
-    codes = {name: references_api.post(COLUMNS, json={"tab": "prov", "name": name}).status_code for name in cases}
-    ok_long = references_api.post(COLUMNS, json={"tab": "prov", "name": "Я" * 60})
+    codes = {name: references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": name}).status_code for name in cases}
+    ok_long = references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "Я" * 60})
 
     assert codes == cases
     assert ok_long.status_code == 201
@@ -100,7 +108,7 @@ def test_an_empty_table_has_no_place_for_a_column(references_api):
 
 def test_the_column_survives_a_mirror_reload_and_a_row_that_lacks_it_still_edits(tmp_path, uow):
     load_mirror(_mirror(tmp_path / "a"), uow, dry_run=False, now=NOW)
-    command = ColumnCommand(TechOperationTab.WIRE, "Полка", ACTOR, NOW)
+    command = ColumnCommand(TechOperationTab.WIRE, "Полка", ACTOR, NOW, CableKind.WIRE)
     written = add_column(command, uow)
 
     prov = PROV + "Новый 1\tмонтажный\t0,5\t\t1\t1\t\n"  # a row the mirror brings after the column was added
@@ -108,17 +116,20 @@ def test_the_column_survives_a_mirror_reload_and_a_row_that_lacks_it_still_edits
 
     with uow:
         records = {item.fields["Марка"]: item for item in uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=100)}
-        assert written == len(PROV_ROWS) and len(records) == len(PROV_ROWS) + 1
-        assert all(record.fields.get("Полка") == "" for mark, record in records.items() if mark != "Новый 1")
-        assert "Полка" not in records["Новый 1"].fields
-        assert custom_columns(TechOperationTab.WIRE, uow) == ["Полка"]
+        wires = {mark for mark, record in records.items() if record.cable_kind == "wire"}
+        assert written == len(wires) - 1 == 3 and len(records) == len(PROV_ROWS) + 1
+        assert all(record.fields.get("Полка") == "" for mark, record in records.items() if mark in wires - {"Новый 1"})
+        assert not any("Полка" in record.fields for mark, record in records.items() if mark not in wires)  # own list only
+        assert "Полка" not in records["Новый 1"].fields and records["Новый 1"].cable_kind == "wire"
+        assert custom_columns(TechOperationTab.WIRE, uow) == ["Полка"] == custom_columns(TechOperationTab.WIRE, uow, "wire")
+        assert custom_columns(TechOperationTab.WIRE, uow, "coax") == []
         _record_in, updated = _edit_in(records["Новый 1"].id, (FieldEdit("Полка", "", "Б-3"),), NOW, uow)
     assert updated.fields["Полка"] == "Б-3"
 
 
 def test_the_download_for_editing_carries_the_column_and_reads_it_back(references_api):
     records = _seed(references_api)
-    references_api.post(COLUMNS, json={"tab": "prov", "name": "Полка"})
+    references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "Полка"})
     references_api.patch(f"/api/references/tech-operations/{records[0]['id']}",
                          json={"edits": [{"field": "Полка", "old": "", "value": "А-1"}]})
 
@@ -131,16 +142,16 @@ def test_the_download_for_editing_carries_the_column_and_reads_it_back(reference
 
 def test_a_column_is_removed_only_when_every_value_is_empty(references_api):
     records = _seed(references_api)
-    references_api.post(COLUMNS, json={"tab": "prov", "name": "Полка"})
+    references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "Полка"})
     references_api.patch(f"/api/references/tech-operations/{records[0]['id']}",
                          json={"edits": [{"field": "Полка", "old": "", "value": "А-1"}]})
 
-    refused = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "name": "Полка"})
+    refused = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "cable_kind": "wire", "name": "Полка"})
     still = "Полка" in _columns(references_api)
     references_api.patch(f"/api/references/tech-operations/{records[0]['id']}",
                          json={"edits": [{"field": "Полка", "old": "А-1", "value": ""}]})
-    removed = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "name": "полка"})
-    base = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "name": "Цвета"})
+    removed = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "cable_kind": "wire", "name": "полка"})
+    base = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "cable_kind": "wire", "name": "Цвета"})
 
     assert refused.status_code == 422 and "есть данные" in refused.json()["detail"] and still
     assert removed.status_code == 200 and removed.json()["records"] == 2
@@ -149,7 +160,7 @@ def test_a_column_is_removed_only_when_every_value_is_empty(references_api):
                references_api.get("/api/references/tech-operations", params={"tab": "prov"}).json()["records"])
     assert base.status_code == 422 and "только свой" in base.json()["detail"]
     assert len(_events("references.column_removed")) == 1
-    assert references_api.post(COLUMNS, json={"tab": "prov", "name": "Полка"}).status_code == 201
+    assert references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "Полка"}).status_code == 201
 
 
 def test_adding_a_column_needs_erpref_edit(references_api):
@@ -159,8 +170,8 @@ def test_adding_a_column_needs_erpref_edit(references_api):
         actor=actor, email="viewer@example.test", roles=frozenset({"receiver"}), permissions={"erpref": "view"},
     )
 
-    add = references_api.post(COLUMNS, json={"tab": "prov", "name": "Полка"})
-    remove = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "name": "Полка"})
+    add = references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "Полка"})
+    remove = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "cable_kind": "wire", "name": "Полка"})
 
     assert add.status_code == 403 and remove.status_code == 403
     assert "Полка" not in _columns(references_api)

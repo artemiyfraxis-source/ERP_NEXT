@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from enum import Enum
-from typing import Iterable
+from typing import Iterable, Mapping
 from uuid import UUID, uuid4
 
 
@@ -23,17 +23,21 @@ class ReferenceKind(str, Enum):
     SUPPLIER = "supplier"
     COUNTRY = "country"
     GOST_AWG = "gost_awg"
-    # «Кабели и провода»: БД.ПРОВ mark → the list the user moved it to (coax / wire / multi / other). Kept beside the
-    # maps, not on the record, so a mirror reload neither drops the move nor freezes the row's other cells.
+    # «Кабели и провода»: БД.ПРОВ mark → the list the user moved it to (coax / wire / multi). The row itself stores its
+    # list (`TechOperationRecord.cable_kind`, migration 0129); this map remembers the move by the mark, so a row of that
+    # mark created anew (a mirror reload, an import) lands in the same list.
     CABLE_KIND = "cable_kind"
-    # A column the owner added to a tech-operation table («+ Столбец», 14.10.2026): key «<tab>:<name>», value — the name.
-    # Fields are JSON, so the column is real in every record; this entry says it is the owner's (removable when empty).
+    # A column the owner added to a tech-operation table («+ Столбец», 14.10.2026): key «<tab>:<name>», value — the name;
+    # БД.ПРОВ: «prov:<cable list>:<name>» — each cable list has its own columns (owner 20.10.2026). Fields are JSON, so
+    # the column is real in every record of the tab (of the list); this entry says it is the owner's.
     CUSTOM_COLUMN = "custom_column"
 
 
 # The three maps of «Соответствия» / ГОСТ→AWG; a maps save never touches the other kinds.
 MAP_KINDS = (ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY, ReferenceKind.GOST_AWG)
-CABLE_KIND_VALUES = ("coax", "wire", "multi", "other")
+# «Прочие кабели» is gone (owner 20.10.2026): every БД.ПРОВ row is коаксиальный, монтажный or многожильный.
+CABLE_KIND_VALUES = ("coax", "wire", "multi")
+CABLE_KIND_REASON = "Список кабеля: коаксиальные, монтажные или многожильные"
 
 
 class TechOperationTab(str, Enum):
@@ -376,7 +380,7 @@ class ReferenceEntry:
         if kind == ReferenceKind.GOST_AWG:
             clean_value = _awg_value(clean_value)
         if kind == ReferenceKind.CABLE_KIND and clean_value not in CABLE_KIND_VALUES:
-            raise ReferenceValidationError("Вкладка кабеля: коаксиальные, монтажные, многожильные или прочие")
+            raise ReferenceValidationError(CABLE_KIND_REASON)
         normalized = _KEY_NORMALIZERS[kind](clean_key)
         return cls(uuid4(), kind, clean_key, normalized, clean_value, position)
 
@@ -397,21 +401,34 @@ class TechOperationRecord:
     fields: dict[str, str]
     mirror_key: str = ""  # identity of the mirror row this record came from ('' — created in ERP); survives ERP edits
     edited_in_erp: bool = False  # edited/created in ERP: a mirror reload never overwrites or deletes it
+    # БД.ПРОВ: the cable list of the row (CABLE_KIND_VALUES); None on every other tab — `check_cable_kind`, and the
+    # CHECK ck_tech_operation_records_cable_kind in the database.
+    cable_kind: str | None = None
 
     @classmethod
     def create(
         cls, *, tab: TechOperationTab, display_text: str, search_text: str,
         source_sheet: str, sort_key: str, fields: dict[str, str], mirror_key: str = "", edited_in_erp: bool = False,
+        cable_kind: str | None = None,
     ) -> TechOperationRecord:
         display = str(display_text or "").strip()
         if not display:
             raise ReferenceValidationError("Отображаемое значение техоперации обязательно")
+        check_cable_kind(tab, cable_kind)
         clean_fields = {str(key): str(value or "").strip() for key, value in fields.items() if str(key).strip()}
         search = " ".join(f"{display} {search_text or ''} {' '.join(clean_fields.values())}".casefold().split())
         return cls(
             uuid4(), tab, display, search, str(source_sheet or "").strip(),
-            str(sort_key or display).strip(), clean_fields, mirror_key, edited_in_erp,
+            str(sort_key or display).strip(), clean_fields, mirror_key, edited_in_erp, cable_kind,
         )
+
+
+def check_cable_kind(tab: TechOperationTab, cable_kind: str | None) -> None:
+    """A БД.ПРОВ row is in exactly one cable list; a row of any other tab is in none."""
+    if tab == TechOperationTab.WIRE and cable_kind not in CABLE_KIND_VALUES:
+        raise ReferenceValidationError(CABLE_KIND_REASON)
+    if tab != TechOperationTab.WIRE and cable_kind is not None:
+        raise ReferenceValidationError("Список кабеля бывает только у строки БД.ПРОВ")
 
 
 def validate_entries(entries: tuple[ReferenceEntry, ...]) -> None:
@@ -426,15 +443,42 @@ EDITABLE_TABS = frozenset(TechOperationTab) - VIEW_ONLY_TABS
 VIEW_ONLY_BASES = ("spr_kab", "tk_templates")
 MAX_ROW_EDITS = 200
 
+# БД.ПРОВ sheet columns (SUPPLYMAP DbMirror.gs DB_MIRROR_NEW_) of all three cable lists together.
+_PROV_COLUMNS = (
+    "Марка", "Тип провода", "Стандарт", "Производители", "Сечение, мм2", "AWG", "Жила: проволок × диаметр, мм",
+    "Число жил", "Цвета", "Наружный диаметр, мм", "Изоляция", "Экран", "Волновое сопротивление, Ом", "Темп. от, °C",
+    "Темп. до, °C", "Напряжение, В", "Ток, А", "Масса, г/м", "Закупок", "Цена посл., ₽/м без НДС", "Поставщик",
+    "Ссылка на datasheet", "Источник данных", "Категория",
+)
+# Each cable list has its own columns (owner 20.10.2026: «у каждого своя структура»): the sheet columns less those the
+# list never fills on prod (20.10.2026) — a coax cable has no AWG, current or category, a монтажный wire no wave
+# impedance or category, a многожильный cable no current. The owner's own columns come on top, per list
+# (`ReferenceKind.CUSTOM_COLUMN`). The coax D1–D3 and the hook-up structure (series, conductor material, insulation
+# thickness) are no БД.ПРОВ cells: they live in СПР.КАБ and `hookup_wires`.
+_PROV_NEVER = {
+    "coax": ("AWG", "Ток, А", "Категория"),
+    "wire": ("Волновое сопротивление, Ом", "Категория"),
+    "multi": ("Ток, А",),
+}
+CABLE_COLUMNS: dict[str, tuple[str, ...]] = {
+    kind: tuple(name for name in _PROV_COLUMNS if name not in _PROV_NEVER[kind]) for kind in CABLE_KIND_VALUES
+}
+
+
+def cable_fields(columns: Iterable[str], fields: Mapping[str, str], pad: Iterable[str] = ()) -> dict[str, str]:
+    """The fields of a БД.ПРОВ row shaped to its list `columns`: a filled value always stays (in any column), an empty
+    cell stays only in a column of the list. `pad` — columns of the list given to the row empty when it lacks them
+    (they come first)."""
+    allowed = set(columns)
+    kept = {key: value for key, value in fields.items() if key in allowed or str(value or "").strip()}
+    return {**{name: "" for name in pad if name in allowed}, **kept}
+
+
 # Column schema of the sheet-header bases (SUPPLYMAP DbMirror.gs DB_MIRROR_NEW_). Fields of these bases are keyed by
 # the sheet header, so an empty tab can still offer a «+ Запись» form. op/ob/ter/coax fields are internal keys.
+# БД.ПРОВ: the columns of all three cable lists (each list's own — `CABLE_COLUMNS`).
 BASE_COLUMNS = {
-    TechOperationTab.WIRE: (
-        "Марка", "Тип провода", "Стандарт", "Производители", "Сечение, мм2", "AWG", "Жила: проволок × диаметр, мм",
-        "Число жил", "Цвета", "Наружный диаметр, мм", "Изоляция", "Экран", "Волновое сопротивление, Ом", "Темп. от, °C",
-        "Темп. до, °C", "Напряжение, В", "Ток, А", "Масса, г/м", "Закупок", "Цена посл., ₽/м без НДС", "Поставщик",
-        "Ссылка на datasheet", "Источник данных", "Категория",
-    ),
+    TechOperationTab.WIRE: _PROV_COLUMNS,
     TechOperationTab.MATERIAL: (
         "Наименование", "Группа", "Производитель", "Серия", "Размер до, мм", "Размер после, мм", "Коэф. усадки",
         "Цвет", "Клеевой слой", "Материал", "Темп. от, °C", "Темп. до, °C", "Ед. изм.", "Закупок", "Цена посл., ₽ без НДС",
@@ -443,12 +487,24 @@ BASE_COLUMNS = {
 }
 # The v14 GAS snapshot never carries these; a snapshot without them must not wipe portal-edited rows.
 # Same for СПР.КАБ (REF-SPRKAB): only the mirror carries it.
-# Tabs whose table accepts the owner's own columns («+ Столбец»): БД.ПРОВ (all four cable lists), БД.МАТ, БД.КОАКС,
-# БД.ТЕР and БД.ОП (14.10.2026, «Операции» shows them beside the code). БД.ОБ has none: its list is one row per model.
+# Tabs whose table accepts the owner's own columns («+ Столбец»): БД.ПРОВ (each cable list its own, 20.10.2026),
+# БД.МАТ, БД.КОАКС, БД.ТЕР and БД.ОП (14.10.2026, «Операции» shows them beside the code). БД.ОБ has none: its list is one
+# row per model.
 CUSTOM_COLUMN_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.COAX, TechOperationTab.TERMINAL,
                       TechOperationTab.OPERATION)
 MAX_COLUMN_NAME = 60
-SHEET_TABLE_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG)
+
+
+def custom_column_prefix(tab: TechOperationTab, cable_kind: str | None = None) -> str:
+    """Key prefix of the owner's columns of a tab (`ReferenceKind.CUSTOM_COLUMN`): «mat:»; БД.ПРОВ per list — «prov:coax:»."""
+    if tab == TechOperationTab.WIRE:
+        if cable_kind not in CABLE_KIND_VALUES:
+            raise ReferenceValidationError("Укажите список кабелей: " + CABLE_KIND_REASON.split(": ", 1)[1])
+        return f"{tab.value}:{cable_kind}:"
+    return f"{tab.value}:"
+
+
+SHEET_TABLE_TABS =(TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG)
 
 
 def _clean_cell(value: str) -> str:

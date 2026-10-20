@@ -94,6 +94,7 @@ class RecordEditPayload(BaseModel):
 class RecordCreatePayload(BaseModel):
     tab: str = Field(min_length=1, max_length=32)
     fields: dict[str, str] = Field(max_length=100)
+    cable_kind: CableKind | None = None  # БД.ПРОВ: the cable list the row is created in (none — by the rule)
 
 
 class TerminalResolutionPayload(BaseModel):
@@ -223,7 +224,7 @@ def tech_operations(
         "custom_columns": own,
         "records": [{
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
-            "source_sheet": item.source_sheet,
+            "source_sheet": item.source_sheet, **({"cable_kind": item.cable_kind} if item.cable_kind else {}),
             "fields": normalize_terminal_fields(item.fields) if item.tab == TechOperationTab.TERMINAL else item.fields,
             # «Терминалы»: the contact card by protocol v5.2, read from the record as the generator reads it.
             **({"card": terminal_card(item.fields)} if item.tab == TechOperationTab.TERMINAL else {}),
@@ -337,7 +338,8 @@ _BASE_TABS = {
 
 def _record_json(item) -> dict:
     return {"id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
-            "source_sheet": item.source_sheet, "fields": item.fields}
+            "source_sheet": item.source_sheet, "fields": item.fields,
+            **({"cable_kind": item.cable_kind} if item.cable_kind else {})}
 
 
 def _run_edit(operation):
@@ -463,14 +465,17 @@ def cables(
     _principal: Annotated[Principal, Depends(references_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    """«Кабели и провода»: БД.ПРОВ rows split into коаксиальные / монтажные / многожильные / прочие (`cables.auto_kind`,
-    or where the user moved them). A coax cable is joined with the D1·D2·D3 row the generator uses for its name and
+    """«Кабели и провода»: БД.ПРОВ rows in the list each stores — коаксиальные / монтажные / многожильные; each list has
+    its own columns (`columns_by_kind`: the list's, then the owner's of it; `custom_columns_by_kind` — the owner's).
+    `columns` / `custom_columns` — of all lists together. A coax cable is joined with the D1·D2·D3 row the generator uses for its name and
     its card and the БД.КОАКС connectors made for it (`cables.compatible_connectors`); D-table cables and cards without
     a БД.ПРОВ row are coax rows of their own. A монтажный wire carries its
     structure (series, size row, …) or, not structured yet, what its БД.ПРОВ row suggests. `gauges` — «Сечения AWG ↔
     мм²» with the number of wires on each size."""
     catalog = cable_catalog(uow_factory())
-    return {"columns": list(BASE_COLUMNS[TechOperationTab.WIRE]) + catalog.columns, "custom_columns": catalog.columns, "counts": cable_counts(catalog.rows),
+    return {"columns": list(BASE_COLUMNS[TechOperationTab.WIRE]) + catalog.columns, "custom_columns": catalog.columns,
+            "columns_by_kind": catalog.columns_by_kind, "custom_columns_by_kind": catalog.custom_by_kind,
+            "counts": cable_counts(catalog.rows),
             "rows": [_cable_json(row, catalog) for row in catalog.rows],
             "gauges": [_gauge_json(gauge, catalog.usage.get(gauge.id, 0)) for gauge in catalog.gauges]}
 
@@ -686,6 +691,7 @@ def edit_tech_record(
 class ColumnPayload(BaseModel):
     tab: TechOperationTab
     name: str = Field(min_length=1, max_length=200)  # the limit proper (60) is the use case's, with its own words
+    cable_kind: CableKind | None = None  # БД.ПРОВ: the cable list whose column it is (required there)
 
 
 @router.post("/tech-operations/columns", status_code=201, dependencies=[Depends(refuse_api_tokens("Токен API не меняет состав столбцов."))])
@@ -697,8 +703,9 @@ def add_tech_column(
 ) -> dict:
     """«+ Столбец»: an empty column of the owner's own in every record of the table (БД.ПРОВ, БД.МАТ, БД.КОАКС, БД.ТЕР, БД.ОП)."""
     records = _run_edit(lambda: add_column(ColumnCommand(
-        tab=payload.tab, name=payload.name, actor=principal.actor, now=now), uow_factory()))
-    return {"tab": payload.tab.value, "name": " ".join(payload.name.split()), "records": records}
+        tab=payload.tab, name=payload.name, actor=principal.actor, now=now, cable_kind=payload.cable_kind), uow_factory()))
+    return {"tab": payload.tab.value, "name": " ".join(payload.name.split()), "records": records,
+            "cable_kind": payload.cable_kind.value if payload.cable_kind else None}
 
 
 @router.post("/tech-operations/columns/remove", dependencies=[Depends(refuse_api_tokens("Токен API не меняет состав столбцов."))])
@@ -710,8 +717,9 @@ def remove_tech_column(
 ) -> dict:
     """Removes the owner's own column, only when it is empty everywhere."""
     records = _run_edit(lambda: remove_column(ColumnCommand(
-        tab=payload.tab, name=payload.name, actor=principal.actor, now=now), uow_factory()))
-    return {"tab": payload.tab.value, "name": payload.name, "records": records}
+        tab=payload.tab, name=payload.name, actor=principal.actor, now=now, cable_kind=payload.cable_kind), uow_factory()))
+    return {"tab": payload.tab.value, "name": payload.name, "records": records,
+            "cable_kind": payload.cable_kind.value if payload.cable_kind else None}
 
 
 @router.post("/tech-operations", status_code=201)
@@ -725,8 +733,10 @@ def create_tech_record(
         raise HTTPException(status_code=422, detail="База только для просмотра")
     try: tab = TechOperationTab(payload.tab)
     except ValueError as error: raise HTTPException(status_code=422, detail="Неизвестная база") from error
+    if payload.cable_kind is not None and tab != TechOperationTab.WIRE:
+        raise HTTPException(status_code=422, detail="Список кабеля бывает только у строки БД.ПРОВ")
     record = _run_edit(lambda: create_record(CreateRecordCommand(
-        tab=tab, fields=payload.fields, actor=principal.actor, now=now,
+        tab=tab, fields=payload.fields, actor=principal.actor, now=now, cable_kind=payload.cable_kind,
     ), uow_factory()))
     return _record_json(record)
 

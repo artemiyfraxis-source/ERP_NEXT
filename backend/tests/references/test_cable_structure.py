@@ -275,7 +275,8 @@ def test_api_cables_carry_structure_sizes_and_cards(tmp_path, sessions, structur
     pvam = next(row for row in listed["rows"] if row["cable"] == "ПВАМ 0,50")
     assert pvam["hookup"] is None and pvam["hookup_suggestion"]["gauge_id"] == created.json()["id"]
     agr = next(row for row in listed["rows"] if row["cable"] == "FLRY-B 0,35")
-    assert (agr["kind"], agr["reason"]) == ("other", "марка не из базы монтажных") and "hookup_problem" not in agr
+    # «прочие» closed 20.10.2026: монтажный, but no series of the база — it gets no structure
+    assert (agr["kind"], agr["reason"], agr["hookup"]) == ("wire", "марка не из базы монтажных", None)
     rg316 = next(row for row in listed["rows"] if row["cable"] == "RG316")
     assert rg316["card"]["name"] == "RG-316" and rg316["card"]["markers"][-1]["peak"]
     assert rg316["card"]["attenuation"][0] == {
@@ -317,6 +318,6 @@ def test_structure_hookups_is_idempotent_and_lists_what_it_left(tmp_path, uow):
     again = structure_hookups(ACTOR, NOW, factory)
 
     assert dry["created"] == first["created"] == 2
-    assert first["left"] == []  # FLRY-B is in no series of the база монтажных: «прочие»
+    assert first["left"] == ["FLRY-B 0,35: марка не из базы монтажных"]  # монтажный of no series: no structure
     assert (again["created"], again["structured_before"]) == (0, 2)
     assert sorted(cable_catalog(factory()).hookups) == ["ul106128awg", "пвам0,50"]

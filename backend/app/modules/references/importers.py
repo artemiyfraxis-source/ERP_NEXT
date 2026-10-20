@@ -23,8 +23,9 @@ A file that is not this format at all is refused whole; a bad gauge, series or s
    not by the mark text («МГТФ 0,2» = «МГТФ 0,20»). A matched row keeps its id and mark; the cells the file gives are
    written (only a changed meaning), the row is marked edited in ERP so a mirror reload keeps it; its structure is
    created or updated. A size no row has becomes a new БД.ПРОВ row with its structure. Nothing is renamed or deleted.
-3. report: the БД.ПРОВ marks the shape rule calls монтажный that the база монтажных sends to «прочие» — a picture of
-   the table as it is, not something the load does (the load never writes «Тип провода» / «Число жил» / the mark).
+3. report: the БД.ПРОВ marks the shape rule calls монтажный whose mark is of no series of the база монтажных (they
+   stay монтажные without a structure; «прочие» closed 20.10.2026) — a picture of the table as it is, not something
+   the load does (the load never writes «Тип провода» / «Число жил» / the mark).
 Run twice — the second run changes nothing.
 
 `fill_empty=True` (owner 13.10.2026, after a prod dry run would have rewritten 63 filled cells: «UL 758; AWM Style
@@ -55,7 +56,7 @@ from app.shared.bulk_import import (
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
-from .application import UnitOfWork, _audit, _search_text, _sync_gost_awg, cable_overrides
+from .application import UnitOfWork, _audit, _kind_rule, _search_text, _sync_gost_awg, _wire_fields, cable_overrides
 from .cable_structure import (
     AWG_FIELD, INSULATION_FIELD, MIRRORED_FIELDS, OUTER_FIELD, SECTION_FIELD, TEMP_MAX_FIELD, TEMP_MIN_FIELD,
     VOLTAGE_FIELD, HookupWire, WireGauge, decimal_or_none, leading_int, parse_hookup, refreshed_hookup, section_key,
@@ -635,13 +636,15 @@ def _update(record: TechOperationRecord, series: SeedSeries, size: SeedSize, gau
 
 def _create(series: SeedSeries, size: SeedSize, gauge: WireGauge, by_id: Mapping, uow: UnitOfWork, now: datetime,
             report: ImportReport) -> None:
-    """A size no БД.ПРОВ row has: a new row (edited in ERP — a mirror reload keeps it) and its structure."""
-    fields = {name: "" for name in BASE_COLUMNS[TechOperationTab.WIRE]}
-    fields.update({"Марка": size.mark, TYPE_FIELD: "монтажный", SECTION_FIELD: shown(size.section_mm2),
-                   AWG_FIELD: size.awg or gauge.awg or "", CORES_FIELD: "1"})
+    """A size no БД.ПРОВ row has: a new row (edited in ERP — a mirror reload keeps it) in its list (the rule — a single
+    core of a series of the база is монтажный) with that list's columns, and its structure."""
+    fields = {"Марка": size.mark, TYPE_FIELD: "монтажный", SECTION_FIELD: shown(size.section_mm2),
+              AWG_FIELD: size.awg or gauge.awg or "", CORES_FIELD: "1"}
     fields.update(_cells(fields, series, size))
+    kind = _kind_rule(uow)(fields, size.mark)
     record = TechOperationRecord.create(tab=TechOperationTab.WIRE, display_text=size.mark, search_text="",
-                                        source_sheet="", sort_key=size.mark, fields=fields, edited_in_erp=True)
+                                        source_sheet="", sort_key=size.mark, fields=_wire_fields(kind, fields, uow, pad_all=True),
+                                        edited_in_erp=True, cable_kind=kind.value)
     uow.tech_operations.save(record)
     wire = _hookup(size.mark, None, parse_hookup(size.mark, fields, list(by_id.values())), gauge, series, size)
     uow.cable_structure.save_hookup(wire, now)
@@ -835,6 +838,7 @@ class _TechTarget(_Target):
         self.ambiguous: set[str] = set()
         self.duplicates: set[str] = set()
         self.created: set[tuple[str, object]] = set()
+        self._kind_of = None  # БД.ПРОВ: (fields, mark) → the list of a new row, read once on the first create
 
     def _current(self, record: TechOperationRecord) -> dict[str, str]:
         fields = dict(record.fields)
@@ -913,8 +917,15 @@ class _TechTarget(_Target):
         forms = set(self.table.forms(self.key_values[key]))
         if key in self.duplicates or forms & self.created:
             raise RowRefused(DUPLICATE_REASON)
-        stored = {name: "" for name in self.columns}  # every column of the base, so the row is editable on screen
-        stored.update(fields)
+        kind = None
+        if self.table.tab == TechOperationTab.WIRE:  # БД.ПРОВ: the row's list (the rule) and that list's columns
+            if self._kind_of is None:
+                self._kind_of = _kind_rule(self.uow)
+            kind = self._kind_of(fields, str(fields.get(self.table.key_fields[0]) or ""))
+            stored = _wire_fields(kind, fields, self.uow, pad_all=True)
+        else:
+            stored = {name: "" for name in self.columns}  # every column of the base, so the row is editable on screen
+            stored.update(fields)
         stored = self._schema(stored, set(fields))
         tab = self.table.tab.value
         display = (schema_display_text(tab, stored) if self.table.sheet_columns else "") \
@@ -926,7 +937,8 @@ class _TechTarget(_Target):
             stored.pop(self.table.virtual, None)
         try:
             record = TechOperationRecord.create(tab=self.table.tab, display_text=display, search_text="",
-                                                source_sheet="", sort_key=sort_key, fields=stored, edited_in_erp=True)
+                                                source_sheet="", sort_key=sort_key, fields=stored, edited_in_erp=True,
+                                                cable_kind=kind.value if kind else None)
         except ReferenceValidationError as error:
             raise RowRefused(str(error)) from error
         self.uow.tech_operations.save(record)
