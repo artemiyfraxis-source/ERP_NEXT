@@ -365,7 +365,7 @@ it("prints the ETK through the shared print contract (etkPrint_)", async () => {
   expect(html).toContain("Операция 2. Опрессовка терминалов — XS1");
   expect(html).toContain("Автомат резки");
   expect(html).toContain("Первая выдача");
-  expect(html).toContain("ГОСТ 3.1407-86");
+  expect(html).not.toContain("ГОСТ 3.1407-86");
 });
 
 const libraryItems = [

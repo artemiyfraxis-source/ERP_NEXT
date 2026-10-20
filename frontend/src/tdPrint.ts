@@ -1,19 +1,19 @@
-// Печать комплекта ТД (ЕСТД), СТО типовых дефектов и сопроводительного листа. Заглушка контракта: тела функций
-// пишет задача печати, сигнатуры не меняются — их зовёт блок «Комплект ТД» в ЭТК.
+// Печать комплекта ТД (ЕСТД), СТО типовых дефектов и сопроводительного листа. Сигнатуры — контракт: их зовёт блок
+// «Комплект ТД» в ЭТК. Вёрстка — tdPrintSheets.ts, stoPrint.ts, routeSheetPrint.ts.
+import { openPrintHtml } from "./print";
+import { buildRouteSheetHtml } from "./routeSheetPrint";
+import { buildStoHtml } from "./stoPrint";
+import { buildTdKitHtml } from "./tdPrintSheets";
 import type { RouteSheetOptions, Sto, TdPrintModel } from "./tdTypes";
 
 export function openTdKitPrint(model: TdPrintModel): void {
-  void model;
-  throw new Error("Печать комплекта ТД ещё не подключена");
+  openPrintHtml(buildTdKitHtml(model));
 }
 
 export function openStoPrint(sto: Sto): void {
-  void sto;
-  throw new Error("Печать СТО ещё не подключена");
+  openPrintHtml(buildStoHtml(sto));
 }
 
 export function openRouteSheetPrint(model: TdPrintModel, options: RouteSheetOptions): void {
-  void model;
-  void options;
-  throw new Error("Сопроводительный лист ещё не подключён");
+  openPrintHtml(buildRouteSheetHtml(model, options));
 }
