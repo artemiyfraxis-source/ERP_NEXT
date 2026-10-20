@@ -195,3 +195,11 @@ it("the procurement page has «Счета и поставки» only with the op
   await screen.findAllByRole("tab");
   expect(within(off).queryByRole("tab", { name: "Счета и поставки" })).toBeNull();
 });
+
+it("«Новый счёт» says why the decided quantity is above the need", async () => {
+  const { surplusHint } = await import("./PurchasingNewOrder");
+  expect(surplusHint({ need: "309", decided_quantity: "310", moq: null, pack: "10" })).toBe("нужно 309 — кратность");
+  expect(surplusHint({ need: "20", decided_quantity: "50", moq: "50", pack: null })).toBe("нужно 20 — мин. партия");
+  expect(surplusHint({ need: "20", decided_quantity: "60", moq: "50", pack: "10" })).toBe("нужно 20 — мин. партия и кратность");
+  expect(surplusHint({ need: "20", decided_quantity: "20", moq: null, pack: null })).toBe("");
+});
