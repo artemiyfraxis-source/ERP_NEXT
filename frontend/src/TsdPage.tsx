@@ -51,12 +51,16 @@ export function TsdScreen({ principal, onSignOut, onLeave }: { principal: Princi
   if (!on || !allowed) return <div className="screen-center muted">Загружаем…</div>;
   return <div className="tsd-shell">
     <header className="tsd-bar">
-      <strong>FRAXIS · склад</strong>
-      <span className="tsd-user">{principal.user.name}</span>
-      <button type="button" className="tsd-bar-btn" onClick={onLeave}>Полная версия</button>
+      <div className="tsd-bar-who">
+        <strong>FRAXIS · склад</strong>
+        <span className="tsd-user">{principal.user.name}</span>
+      </div>
       <button type="button" className="tsd-bar-btn" onClick={onSignOut}>Выйти</button>
     </header>
-    <main className="tsd-main"><TsdPage readOnly={!canAct(principal, "warehouse")} /></main>
+    <main className="tsd-main">
+      <TsdPage readOnly={!canAct(principal, "warehouse")} />
+      <button type="button" className="tsd-help-link tsd-full" onClick={onLeave}>Полная версия ERP</button>
+    </main>
   </div>;
 }
 
@@ -183,7 +187,11 @@ export function TsdPage({ readOnly }: { readOnly: boolean }) {
     </form>
 
     {searching && <p className="muted">Ищу…</p>}
-    {error && <div className="tsd-card tsd-none" role="alert">{error}</div>}
+    {error && <div className="tsd-card">
+      <div className="tsd-none" role="alert">{error}</div>
+      {/* A code that is «not found» may be a scanner that garbles what it types. */}
+      <button type="button" className="tsd-help-link" onClick={() => setChecking(true)}>Сканер вводит не то? Проверить сканер</button>
+    </div>}
     {!answer && !lot && !searching && !error && <div className="tsd-card tsd-howto">
       <b>Отсканируйте код</b>
       <ul>
@@ -335,7 +343,7 @@ function TsdLot({ lot, readOnly, who, setWho, onChanged, onBack, onDone }: {
     </div>
     <div className="tsd-qty">{lot.balance} {unit}</div>
     {lot.available !== lot.balance && <div className="muted">
-      доступно {lot.available} · в резерве {lot.reserved}{lot.reserve_note ? ` (${lot.reserve_note})` : ""}
+      доступно {lot.available} · {lot.reserve_note || `в резерве ${lot.reserved}`}
     </div>}
 
     {notice && <div className="tsd-ok" role="status">

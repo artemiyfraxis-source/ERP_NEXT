@@ -3,8 +3,9 @@
 .tsd-shell { min-height: 100vh; background: var(--background); color: var(--foreground); }
 .tsd-bar { display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--card); }
 .tsd-bar > * + * { margin-left: 10px; }
-.tsd-bar strong { white-space: nowrap; }
-.tsd-user { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-foreground); }
+.tsd-bar-who { flex: 1; min-width: 0; }
+.tsd-bar-who strong, .tsd-user { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tsd-user { font-size: 13px; color: var(--muted-foreground); }
 .tsd-bar-btn { flex: none; min-height: 40px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); font: inherit; cursor: pointer; }
 .tsd-main { padding: 12px 12px 24px; }
 .tsd { max-width: 560px; margin: 0 auto; }
@@ -93,6 +94,7 @@
 .tsd-howto .muted { font-size: 13px; margin-top: 4px; }
 .tsd-help-link { display: block; margin: 10px auto 0; padding: 6px; border: 0; background: none; color: var(--primary); font: inherit; text-decoration: underline; cursor: pointer; }
 .tsd-back { margin: 0 0 6px; padding: 0; }
+.tsd-full { margin-top: 18px; color: var(--muted-foreground); }
 .tsd-label { margin-top: 12px; }
 .tsd .label-print { display: block; }
 .tsd .label-preview { width: 100%; }
