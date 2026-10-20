@@ -45,6 +45,7 @@ from .modules.techcards import kitset_api as kitsets_api
 from .modules.techcards import assembly_api
 from .modules.techcards import harness_catalog_api
 from .modules.techcards import harness_api
+from .modules.techcards import td_issues_api
 from .shared.bulk_import import MAX_IMPORT_BODY_BYTES
 from .shared.http_auth import techcards_router_principal
 from .workflows import employee_card_api, leave_api
@@ -78,6 +79,10 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(
     techcards_api.router,
+    dependencies=[Depends(techcards_router_principal)],
+)
+app.include_router(
+    td_issues_api.router,
     dependencies=[Depends(techcards_router_principal)],
 )
 app.include_router(harness_catalog_api.router)

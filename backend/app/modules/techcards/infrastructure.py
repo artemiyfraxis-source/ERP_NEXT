@@ -16,6 +16,7 @@ from .harness_infrastructure import (
     SqlAlchemyHarnessComponentRepository, SqlAlchemyHarnessRevisionRepository, SqlAlchemyHarnessRouteRepository,
 )
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
+from .td_issues_infrastructure import SqlAlchemyTdIssueRepository
 from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
 from .template_sheets import TemplateDraft
@@ -576,6 +577,7 @@ class SqlAlchemyTechcardsUnitOfWork:
         self.harness_revisions = SqlAlchemyHarnessRevisionRepository(self.session)
         self.harness_components = SqlAlchemyHarnessComponentRepository(self.session)
         self.harness_routes = SqlAlchemyHarnessRouteRepository(self.session)
+        self.td_issues = SqlAlchemyTdIssueRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         return self
 
