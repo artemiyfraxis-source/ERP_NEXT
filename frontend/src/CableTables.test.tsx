@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import { HookupWireTable, parseTempRange } from "./CableStructure";
 import { CableTable, rangeText } from "./CableTables";
-import { normalizeColors } from "./wireColors";
 import { CATEGORIES } from "./cableCategory";
 import type { CableRow, Principal } from "./api";
 
@@ -29,7 +28,7 @@ const ROWS: CableRow[] = [
   { id: "dia:d-58", kind: "coax", auto_kind: "coax", reason: "есть в таблице D1 · D2 · D3", manual: false, cable: "RG58",
     record: null, dia: dia("d-58", "RG58", "1", "2,95", "3,5"), dia_hint: null },
   { id: "w-ul", kind: "wire", auto_kind: "wire", reason: "одна жила", manual: false, cable: "UL1061 22AWG",
-    record: wire("w-ul", { "Марка": "UL1061 22AWG", "Тип провода": "монтажный", "Сечение, мм2": "0,33", "AWG": "22", "Число жил": "1", "Наружный диаметр, мм": "1,3", "Цвета": "чёрный" }),
+    record: wire("w-ul", { "Марка": "UL1061 22AWG", "Тип провода": "монтажный", "Сечение, мм2": "0,33", "AWG": "22", "Число жил": "1", "Наружный диаметр, мм": "1,3", "Цвет": "чёрный" }),
     dia: null, dia_hint: null,
     hookup: { series: "UL1061", gauge_id: "g22", insulation: "ПВХ", outer_d_mm: 1.3, voltage_v: 300, temp_min_c: -10, temp_max_c: 80 } },
   { id: "w-pvam", kind: "wire", auto_kind: "wire", reason: "одна жила", manual: false, cable: "ПВАМ 0,50",
@@ -541,17 +540,18 @@ it("shows the cable lists read-only without the reference edit right", async () 
   expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
 });
 
-it("groups the hook-up wires by series with the shared values in the header, sizes by number, a colour per line", () => {
+it("groups the hook-up wires by series with the shared values in the header, sizes by number, a row per colour", () => {
   const gauge = (id: string, section: number) => ({ id, awg: "", section_mm2: section, conductor_d_mm: null, strands: "", label: `${section} мм²`, wires: 1 });
-  const wire = (series: string, mark: string, gauge_id: string, colors: string, voltage: number) => ({
-    id: mark, kind: "wire" as const, auto_kind: "wire" as const, reason: "", manual: false, cable: mark, dia: null, dia_hint: null,
-    record: { id: mark, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Цвета": colors, "Материал оболочки": "ПВХ-пластикат",
+  const wire = (series: string, mark: string, gauge_id: string, color: string, voltage: number) => ({
+    id: `${mark}:${color}`, kind: "wire" as const, auto_kind: "wire" as const, reason: "", manual: false, cable: mark, dia: null, dia_hint: null,
+    record: { id: `${mark}:${color}`, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Цвет": color, "Материал оболочки": "ПВХ-пластикат",
       "Поставщик": "Снабкабель (snabcable.ru)", "Ссылка": "https://snabcable.ru/mounting/mgtf-mgtfe/pv-3-pugv/", "Погонная ёмкость, пФ/м": "" } },
     hookup: { series, gauge_id, insulation: "ПВХ", outer_d_mm: 2, voltage_v: voltage, temp_min_c: -50, temp_max_c: 65 },
   });
   const data = {
-    columns: ["Марка", "Цвета", "Материал оболочки", "Поставщик", "Ссылка", "Погонная ёмкость, пФ/м"], custom_columns: ["Ссылка", "Погонная ёмкость, пФ/м"], counts: { coax: 0, wire: 4, multi: 0, other: 0 }, gauges: [gauge("s10", 10), gauge("s16", 16), gauge("s25", 2.5), gauge("s4", 4)],
-    rows: [wire("ПуГВ", "ПуГВ 10", "s10", "синий", 450), wire("ПуГВ", "ПуГВ 16", "s16", "", 450), wire("ПуГВ", "ПуГВ 2,5", "s25", "белый, жёлто-зелёный", 450), wire("ПуГВ", "ПуГВ 4", "s4", "красный", 450)],
+    columns: ["Марка", "Цвета", "Цвет", "Материал оболочки", "Поставщик", "Ссылка", "Погонная ёмкость, пФ/м"], custom_columns: ["Ссылка", "Погонная ёмкость, пФ/м"], counts: { coax: 0, wire: 5, multi: 0, other: 0 }, gauges: [gauge("s10", 10), gauge("s16", 16), gauge("s25", 2.5), gauge("s4", 4)],
+    rows: [wire("ПуГВ", "ПуГВ 10", "s10", "синий", 450), wire("ПуГВ", "ПуГВ 16", "s16", "", 450), wire("ПуГВ", "ПуГВ 2,5", "s25", "жёлто-зелёный", 450),
+      wire("ПуГВ", "ПуГВ 4", "s4", "красный", 450), wire("ПуГВ", "ПуГВ 2,5", "s25", "белый", 450)],
   } as unknown as Parameters<typeof HookupWireTable>[0]["data"];
   render(<HookupWireTable data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} kindSelect={() => null} />);
 
@@ -570,11 +570,14 @@ it("groups the hook-up wires by series with the shared values in the header, siz
   expect(screen.queryAllByText("ПВХ-пластикат", { selector: "td *" })).toHaveLength(0);
   // 2,5 · 4 · 10 · 16, not the text order 10 · 16 · 2,5 · 4
   const marks = [...document.querySelectorAll("tbody tr:not(.group-row) strong")].map((node) => node.textContent);
-  expect(marks).toEqual(["ПуГВ 2,5", "ПуГВ 4", "ПуГВ 10", "ПуГВ 16"]);
-  // colours: one per line, a dot and the name in text (owner 19.10); no colours — a dash
-  const row25 = screen.getByText("ПуГВ 2,5").closest("tr") as HTMLElement;
-  expect(within(within(row25).getByRole("list", { name: "Цвета" })).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["белый", "жёлто-зелёный"]);
-  expect(row25.querySelectorAll(".wire-dot")).toHaveLength(2);
+  expect(marks).toEqual(["ПуГВ 2,5", "ПуГВ 2,5", "ПуГВ 4", "ПуГВ 10", "ПуГВ 16"]);
+  // each colour its own row (owner 20.10: «каждый цвет своя строка»): «Цвет» — a dot and the name; no colour — a dash;
+  // the multicore list «Цвета» is no column here
+  expect(heads).toContain("Цвет");
+  expect(heads).not.toContain("Цвета");
+  const rows25 = screen.getAllByText("ПуГВ 2,5").map((node) => node.closest("tr") as HTMLElement);
+  expect(rows25.map((row) => row.querySelector(".wire-color")?.textContent)).toEqual(["белый", "жёлто-зелёный"]);
+  expect(rows25.map((row) => row.querySelectorAll(".wire-dot").length)).toEqual([1, 1]);
   const row16 = screen.getByText("ПуГВ 16").closest("tr") as HTMLElement;
   expect(row16.querySelector(".wire-dot")).toBeNull();
   expect(within(row16).getAllByText("—").length).toBeGreaterThan(0);
@@ -791,17 +794,17 @@ describe("«Монтажные провода» and the other cable lists across
       await waitFor(() => expect(hookupPut(calls)?.body).toEqual({ ...old, temp_min_c: "-60", temp_max_c: "200", old }));
     });
 
-    it("writes the colours typed as text by the palette, «Тип провода» as text and moves the wire from its «Вкладка» cell", async () => {
+    it("writes the row's colour typed as text by the palette, «Тип провода» as text and moves the wire from its «Вкладка» cell", async () => {
       const calls = await open();
-      const colors = cellIn("UL1061 22AWG", "Цвета");
-      fireEvent.click(colors);
-      fireEvent.keyDown(colors, { key: "Enter" });
-      const input = within(colors).getByRole("textbox");
+      const color = cellIn("UL1061 22AWG", "Цвет");
+      fireEvent.click(color);
+      fireEvent.keyDown(color, { key: "Enter" });
+      const input = within(color).getByRole("textbox");
       expect(input).toHaveValue("чёрный");
-      fireEvent.change(input, { target: { value: "чёрный; красный" } });
+      fireEvent.change(input, { target: { value: " кр " } });
       fireEvent.keyDown(input, { key: "Enter" });
       await waitFor(() => expect(calls.find((call) => call.method === "PATCH")?.body)
-        .toEqual({ edits: [{ field: "Цвета", old: "чёрный", value: normalizeColors("чёрный; красный") }] }));
+        .toEqual({ edits: [{ field: "Цвет", old: "чёрный", value: "красный" }] }));
 
       fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
       fireEvent.click(screen.getByRole("checkbox", { name: "Тип провода" }));
@@ -911,13 +914,13 @@ describe("«Монтажные провода» and the other cable lists across
     }));
   });
 
-  it("has «Без Ø» and «Без цветов» chips on the hook-up wires and «Без Ø» on the multi-core cables", async () => {
+  it("has «Без Ø» and «Без цвета» chips on the hook-up wires and «Без Ø» on the multi-core cables", async () => {
     mockApi();
     render(<ReferencesPage principal={admin} initialTab="cab_wire" />);
     await screen.findByText("UL1061 22AWG", { selector: "td.key strong" });
     fireEvent.click(screen.getByRole("button", { name: /^Без Ø · 2/ }));
     expect(screen.queryByText("UL1061 22AWG", { selector: "td.key strong" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /^Без цветов · 2/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Без цвета · 2/ }));
     expect(screen.getByText("ПВАМ 0,50", { selector: "td.key strong" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
     await screen.findByText("КСПВГ 4x0,20", { selector: "td.key strong" });

@@ -13,21 +13,24 @@ function Chip({ label, onRemove, dot }: { label: string; onRemove: () => void; d
   </span>;
 }
 
-export function ColorPicker({ label = "Цвета", value, onChange, seriesColors = "" }: {
+export function ColorPicker({ label = "Цвета", value, onChange, seriesColors = "", single = false }: {
   label?: string;
   value: string;
   onChange: (value: string) => void;
   /** The colours the other sizes of the series have; «Все цвета серии» copies them. */
   seriesColors?: string;
+  /** One colour (a монтажный wire row, owner 20.10.2026): a swatch replaces the colour, no «Все цвета серии». */
+  single?: boolean;
 }) {
   const chosen = parseColors(value);
   const [other, setOther] = useState<string | null>(null);
-  const toggle = (name: string) => onChange(joinColors(chosen.includes(name) ? chosen.filter((item) => item !== name) : [...chosen, name]));
+  const toggle = (name: string) => onChange(single ? (chosen.includes(name) ? "" : name)
+    : joinColors(chosen.includes(name) ? chosen.filter((item) => item !== name) : [...chosen, name]));
   const commit = () => {
-    if (other && other.trim()) onChange(joinColors(parseColors(joinColors(chosen) + "," + other)));
+    if (other && other.trim()) onChange(single ? parseColors(other)[0] ?? "" : joinColors(parseColors(joinColors(chosen) + "," + other)));
     setOther(null);
   };
-  const series = parseColors(seriesColors);
+  const series = single ? [] : parseColors(seriesColors);
   return <div className="field-group color-picker" role="group" aria-label={label}>
     <small>{label}</small>
     <div className="swatch-row">

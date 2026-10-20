@@ -446,23 +446,89 @@ MAX_ROW_EDITS = 200
 # БД.ПРОВ sheet columns (SUPPLYMAP DbMirror.gs DB_MIRROR_NEW_) of all three cable lists together.
 _PROV_COLUMNS = (
     "Марка", "Тип провода", "Стандарт", "Производители", "Сечение, мм2", "AWG", "Жила: проволок × диаметр, мм",
-    "Число жил", "Цвета", "Наружный диаметр, мм", "Изоляция", "Экран", "Волновое сопротивление, Ом", "Темп. от, °C",
-    "Темп. до, °C", "Напряжение, В", "Ток, А", "Масса, г/м", "Закупок", "Цена посл., ₽/м без НДС", "Поставщик",
-    "Ссылка на datasheet", "Источник данных", "Категория",
+    "Число жил", "Цвета", "Цвет", "Наружный диаметр, мм", "Изоляция", "Экран", "Волновое сопротивление, Ом",
+    "Темп. от, °C", "Темп. до, °C", "Напряжение, В", "Ток, А", "Масса, г/м", "Закупок", "Цена посл., ₽/м без НДС",
+    "Поставщик", "Ссылка на datasheet", "Источник данных", "Категория",
 )
 # Each cable list has its own columns (owner 20.10.2026: «у каждого своя структура»): the sheet columns less those the
 # list never fills on prod (20.10.2026) — a coax cable has no AWG, current or category, a монтажный wire no wave
 # impedance or category, a многожильный cable no current. The owner's own columns come on top, per list
 # (`ReferenceKind.CUSTOM_COLUMN`). The coax D1–D3 and the hook-up structure (series, conductor material, insulation
 # thickness) are no БД.ПРОВ cells: they live in СПР.КАБ and `hookup_wires`.
+# A монтажный wire has one colour per row (owner 20.10.2026: «каждый цвет своя строка»): its «Цвет» is one colour, the
+# list «Цвета» (the colours of a multicore cable's cores, a coax jacket's colour) is no column of it.
 _PROV_NEVER = {
-    "coax": ("AWG", "Ток, А", "Категория"),
-    "wire": ("Волновое сопротивление, Ом", "Категория"),
-    "multi": ("Ток, А",),
+    "coax": ("AWG", "Ток, А", "Категория", "Цвет"),
+    "wire": ("Волновое сопротивление, Ом", "Категория", "Цвета"),
+    "multi": ("Ток, А", "Цвет"),
 }
 CABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     kind: tuple(name for name in _PROV_COLUMNS if name not in _PROV_NEVER[kind]) for kind in CABLE_KIND_VALUES
 }
+
+
+# --- «Монтажные провода»: one row per colour (owner 20.10.2026: «имелось ввиду каждый цвет своя строка») ---
+# A wire row is identified by its mark AND its colour (`wire_identity`): «НВ-4 0,20 красный» and «НВ-4 0,20 синий» are two
+# rows with the same values but the colour and the seller's offer (`WIRE_ROW_OWN`); every other cell is the mark's and
+# is kept equal across its colours (`application._same_wire_mark`). A reader that finds a wire by its mark alone takes
+# any row of it; with a colour known — the row of that colour (`pick_wire_row`).
+WIRE_COLOR_FIELD = "Цвет"
+CORE_COLORS_FIELD = "Цвета"
+WIRE_ROW_OWN = frozenset({
+    "Марка", WIRE_COLOR_FIELD, "Поставщик", "Артикул поставщика", "Ссылка", "Цена поставщика, ₽/м", "Дата цены",
+    "Цена посл., ₽/м без НДС", "Закупок", "Источник данных",
+})
+WIRE_ONE_COLOR_REASON = "«Цвет»: один цвет на строку — другой цвет монтажного провода добавьте своей строкой"
+
+
+def color_key(value: object) -> str:
+    """A colour compared without case, «ё» and extra spaces: «Жёлто-зелёный» = «желто-зеленый»."""
+    return " ".join(str(value or "").casefold().replace("ё", "е").split())
+
+
+def split_colors(text: object) -> list[str]:
+    """«чёрный, красный; белый» → the colours in their order, as typed (trimmed), a repeat (`color_key`) dropped."""
+    seen: set[str] = set()
+    colors: list[str] = []
+    for piece in re.split(r"[,;]", str(text or "")):
+        color = " ".join(piece.split())
+        if color and color_key(color) not in seen:
+            seen.add(color_key(color))
+            colors.append(color)
+    return colors
+
+
+def check_wire_color(value: object) -> None:
+    if len(split_colors(value)) > 1:
+        raise ReferenceValidationError(WIRE_ONE_COLOR_REASON)
+
+
+def wire_identity(fields: Mapping[str, str], mark: str | None = None) -> tuple[str, str]:
+    """(mark key, colour key) — the natural key of a монтажный wire row."""
+    return cable_key(fields.get("Марка") if mark is None else mark), color_key(fields.get(WIRE_COLOR_FIELD))
+
+
+def wire_color_rows(fields: Mapping[str, str]) -> list[dict[str, str]]:
+    """A монтажный wire row that still holds its colours as a list («Цвета», the mirror sheet) → one row per colour,
+    every other cell the same; «Цвета» becomes «Цвет» in place (the column order kept), an empty list — one row with an
+    empty «Цвет». A row without «Цвета», or with its own «Цвет» filled, is left as it is."""
+    if CORE_COLORS_FIELD not in fields or str(fields.get(WIRE_COLOR_FIELD) or "").strip():
+        return [dict(fields)]
+    return [{(WIRE_COLOR_FIELD if key == CORE_COLORS_FIELD else key): (color if key == CORE_COLORS_FIELD else value)
+             for key, value in fields.items() if key != WIRE_COLOR_FIELD}
+            for color in split_colors(fields.get(CORE_COLORS_FIELD)) or [""]]
+
+
+def pick_wire_row(rows: Iterable[Mapping[str, str]], color: object = "") -> Mapping[str, str] | None:
+    """The row of one mark a reader takes: the one of `color` when given and there, else the first (the rows of a mark
+    share every cell but the colour and the offer, so any of them gives the same values)."""
+    rows = list(rows)
+    wanted = color_key(color)
+    if wanted:
+        for row in rows:
+            if color_key(row.get(WIRE_COLOR_FIELD)) == wanted:
+                return row
+    return rows[0] if rows else None
 
 
 def cable_fields(columns: Iterable[str], fields: Mapping[str, str], pad: Iterable[str] = ()) -> dict[str, str]:

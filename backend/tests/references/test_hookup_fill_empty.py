@@ -15,7 +15,7 @@ from app.main import app
 from app.modules.references import load_cables
 from app.modules.references.application import SaveGaugeCommand, cable_catalog, save_gauge, structure_hookups
 from app.modules.references.domain import TechOperationTab
-from app.modules.references.importers import FILL_EMPTY_NO_ROW, hookup_seed, import_hookups
+from app.modules.references.importers import FILL_EMPTY_COLOR_ROWS, FILL_EMPTY_NO_ROW, hookup_seed, import_hookups
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.references.load_mirror import ACTOR, load_mirror
 from app.shared.clock import moscow_now
@@ -115,7 +115,8 @@ def test_the_full_load_rewrites_filled_cells_and_lists_marks_outside_the_base(tm
     report = import_hookups(_factory(uow)(), _load(FULL), ACTOR, NOW, dry_run=True)
     changes = {item["key"]: item["changes"] for item in report.updated}
     assert changes["UL1061 28AWG"]["Стандарт"][0] == "UL 758; AWM Style 1061"
-    assert changes["ПВАМ 0,35"]["Цвета"][0] == "красный"
+    # each colour its own row (owner 20.10.2026): the real colour stays, the series palette would add rows
+    assert "Цвет" not in changes["ПВАМ 0,35"] and any(what.startswith("строка цвета") for what in changes["ПВАМ 0,35"])
     assert changes["НВ-4 0,20"][STRANDS][0] == "7×0,2"
     assert changes["ПВАМ 0,35"]["Источник данных"][0] == "Склад ЦАР"
     assert set(report.moved_out_of_montage) == OUTSIDE
@@ -136,8 +137,9 @@ def test_fill_empty_dry_run_shows_only_empty_to_value_and_moves_nothing(tmp_path
     assert not touched & OUTSIDE
     assert all(item["reason"] for item in report.refused)
     if payload == CUT:
-        assert {item["reason"] for item in report.refused} == {FILL_EMPTY_NO_ROW, "размера нет в таблице сечений"}
-        allowed = {STRANDS, "Цвета", "Источник данных"}
+        assert {item["reason"] for item in report.refused} == {
+            FILL_EMPTY_NO_ROW, "размера нет в таблице сечений", FILL_EMPTY_COLOR_ROWS}
+        allowed = {STRANDS, "Источник данных"}  # the colours are rows: not made in this mode
         assert {what for item in report.updated for what in item["changes"]} <= allowed
 
 
@@ -151,7 +153,7 @@ def test_fill_empty_writes_only_the_empty_cells_and_a_second_run_changes_nothing
     assert kinds_after == kinds and gauges_after == gauges and hookups_after == hookups  # no structure value in the cut
     assert {item["key"] for item in report.updated} == {"ПВАМ 0,35", "ПВАМ 0,50", "МС 15-11 0,12", "ПуГВ 1,0"}
     # filled cells stay exactly as they were
-    assert after["ПВАМ 0,35"]["Цвета"] == "красный" and after["ПВАМ 0,35"]["Источник данных"] == "Склад ЦАР"
+    assert after["ПВАМ 0,35"]["Цвет"] == "красный" and after["ПВАМ 0,35"]["Источник данных"] == "Склад ЦАР"
     assert after["НВ-4 0,20"] == fields["НВ-4 0,20"] and after["UL1061 28AWG"] == fields["UL1061 28AWG"]
     assert after["МС 15-11 0,12"]["Источник данных"] == "ТУ 16-505.083-78"
     for mark in OUTSIDE:
@@ -160,12 +162,12 @@ def test_fill_empty_writes_only_the_empty_cells_and_a_second_run_changes_nothing
     cut = {item["key"]: item for item in _load(CUT)["series"]}
     pvam = after["ПВАМ 0,50"]
     assert pvam[STRANDS] == cut["ПВАМ"]["sizes"][1]["strands"]["value"]
-    assert pvam["Цвета"] == ", ".join(cut["ПВАМ"]["colors"]["value"])
-    assert pvam["Источник данных"] == cut["ПВАМ"]["colors"]["source"]  # strands and colours: one source
+    assert pvam["Цвет"] == ""  # a colour is a row of its own: this mode makes none (reported in `refused`)
+    assert pvam["Источник данных"] == cut["ПВАМ"]["sizes"][1]["strands"]["source"]
     assert pvam["Напряжение, В"] == "48 (ном.) / 1000 (испыт.)" and pvam["Наружный диаметр, мм"] == "1,6"
     assert after["ПВАМ 0,35"][STRANDS] and after["МС 15-11 0,12"][STRANDS].startswith("многопроволочная")
     pugv = after["ПуГВ 1,0"]
-    assert pugv[STRANDS] and pugv["Цвета"] == ", ".join(cut["ПуГВ"]["colors"]["value"]) and pugv["Источник данных"]
+    assert pugv[STRANDS] and pugv["Цвет"] == "" and pugv["Источник данных"]
     assert all(pugv[name] == "" for name in ("Стандарт", "Наружный диаметр, мм", "Изоляция", "Напряжение, В"))
 
     again = import_hookups(_factory(uow)(), _load(CUT), ACTOR, NOW, fill_empty=True)
@@ -185,7 +187,7 @@ def test_fill_empty_fills_only_unknown_structure_values_and_keeps_its_series_and
     changes = next(item["changes"] for item in report.updated if item["key"] == "UL1061 28AWG")
     assert {what for what in changes if what.startswith("структура")} == {
         "структура: материал жилы", "структура: толщина изоляции, мм"}
-    assert {what for what in changes if not what.startswith("структура")} == {"Цвета"}  # the only empty cell
+    assert {what for what in changes if not what.startswith("структура")} == set()  # its colours are rows, not made here
     wire = after["ul106128awg"]
     assert (wire.series, wire.gauge_id, wire.temp_min_c, wire.outer_d_mm) == (ul.series, ul.gauge_id, -10, ul.outer_d_mm)
     assert wire.conductor_material and wire.insulation_thickness_mm
