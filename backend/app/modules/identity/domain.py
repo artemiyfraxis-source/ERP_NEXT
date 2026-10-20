@@ -322,6 +322,44 @@ def normalize_email(value: str) -> str:
     return email
 
 
+TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z", "и": "i", "й": "y",
+    "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f",
+    "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+# Staff without a mailbox get a placeholder address, as the imported shop staff did (import_staff.py).
+PLACEHOLDER_EMAIL_DOMAIN = "fraxis.local"
+
+
+def translit(text: str) -> str:
+    out = "".join(TRANSLIT.get(ch, ch) for ch in text.casefold())
+    return "".join(ch for ch in out if ch.isascii() and ch.isalnum())
+
+
+def short_login(name: str, taken: set[str]) -> str:
+    """The transliterated surname («Безменов Никита» → bezmenov); a clash adds the first letter of the name, then a digit."""
+    parts = name.split()
+    surname = translit(parts[0]) if parts else ""
+    first = translit(parts[1])[:1] if len(parts) > 1 else ""
+    base = surname or "user"
+    for candidate in (base, base + first):
+        if candidate and candidate not in taken:
+            return candidate
+    n = 2
+    while f"{base}{first}{n}" in taken:
+        n += 1
+    return f"{base}{first}{n}"
+
+
+def placeholder_email(name: str, taken: set[str]) -> str:
+    """«Зингер Артем» → zinger.artem@fraxis.local; a clash adds a digit."""
+    local = ".".join(part for part in (translit(word) for word in name.split()[:2]) if part) or "user"
+    candidate, n = f"{local}@{PLACEHOLDER_EMAIL_DOMAIN}", 2
+    while candidate in taken:
+        candidate, n = f"{local}{n}@{PLACEHOLDER_EMAIL_DOMAIN}", n + 1
+    return candidate
+
+
 def normalize_name(value: str) -> str:
     name = str(value or "").strip()
     if not name:
