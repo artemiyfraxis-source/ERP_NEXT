@@ -158,7 +158,8 @@ _RF: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ("rf-bnc", "BNC", RF, ("BNC",)), ("rf-tnc", "TNC", RF, ("TNC",)), ("rf-uhf", "UHF", RF, ("UHF",)),
     ("rf-mcx", "MCX", RF, ("MCX",)), ("rf-mmcx", "MMCX", RF, ("MMCX",)), ("rf-smb", "SMB", RF, ("SMB",)),
     ("rf-smp", "SMP", RF, ("SMP",)), ("rf-ssmc", "SSMC", RF, ("SSMC",)), ("rf-qma", "QMA", RF, ("QMA",)),
-    ("rf-mhf", "MHF1 / U.FL", RF, ("MHF1", "U.FL")), ("rf-f", "F-тип", RF, ("F",)), ("rf-292", "2,92 мм", RF, ("2.92MM",)),
+    ("rf-ufl", "U.FL (Hirose)", RF, ("U.FL",)),
+    ("rf-mhf", "MHF / IPEX (I-PEX)", RF, ("MHF1", "MHF", "MHF2", "MHF3", "MHF4", "IPEX", "IPX", "W.FL")), ("rf-f", "F-тип", RF, ("F",)), ("rf-292", "2,92 мм", RF, ("2.92MM",)),
     ("rf-35", "3,5 мм", RF, ("3.5MM",)),
     ("rf-sr50", "СР-50", RF, ("СР-50",)), ("rf-fakra", "Fakra", AUTO, ("FAKRA",)),
 )
