@@ -16,16 +16,31 @@ function publish(next: Payload) {
 }
 
 let generation = 0;
+// The last answer was a refusal (no sign-in yet, no network) rather than the server's word.
+let refused = false;
+// The current generation has its answer (a reload after sign-in clears it until the new one comes).
+let settled = false;
 
 function load() {
   if (!loading) {
     const mine = generation;
     // An answer that lands after a reset belongs to the previous generation and is dropped.
     loading = api<Payload>("/api/stage-options")
-      .then((payload) => { if (mine === generation) publish(payload); })
-      .catch(() => { if (mine === generation) publish({ available: false, options: [] }); });
+      .then((payload) => { if (mine === generation) { refused = false; settled = true; publish(payload); } })
+      .catch(() => { if (mine === generation) { refused = true; settled = true; publish({ available: false, options: [] }); } });
   }
   return loading;
+}
+
+/** After a sign-in: a list asked before it (the shell asks at once, the answer was 401) is asked again — otherwise
+ *  every option looked off until the page was reloaded. */
+export function reloadRefusedStageOptions() {
+  if (!refused) return;
+  generation += 1;
+  refused = false;
+  settled = false;
+  loading = null;
+  void load();
 }
 
 /** Test hook: forget the cached answer. */
@@ -33,6 +48,8 @@ export function resetStageOptions() {
   generation += 1;
   current = null;
   loading = null;
+  refused = false;
+  settled = false;
 }
 
 function useStageOptions(): Payload | null {
@@ -50,6 +67,13 @@ function useStageOptions(): Payload | null {
 export function useStageOption(key: string): boolean {
   const payload = useStageOptions();
   return Boolean(payload?.options?.find((option) => option.key === key)?.enabled);
+}
+
+/** `undefined` while the list is still loading: a screen that exists only behind the option (the ТСД) waits for it
+ *  instead of showing «off» for a moment. */
+export function useStageOptionState(key: string): boolean | undefined {
+  const payload = useStageOptions();
+  return payload && settled ? Boolean(payload.options?.find((option) => option.key === key)?.enabled) : undefined;
 }
 
 /** The keys switched to «Новое» (empty off the stage) — for things that open on any of several options, like a

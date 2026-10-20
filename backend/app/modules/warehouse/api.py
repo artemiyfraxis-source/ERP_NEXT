@@ -399,9 +399,10 @@ def totals(
     }
 
 
-def _require_option(key: str) -> None:
-    """A stage option that is off hides its route: 404, checked after the gate (an unknown caller still gets 401/403)."""
-    if not stage_options.enabled(key):
+def _require_option(*keys: str) -> None:
+    """A stage option that is off hides its route: 404, checked after the gate (an unknown caller still gets 401/403).
+    Several keys — any one of them opens the route."""
+    if not any(stage_options.enabled(key) for key in keys):
         raise HTTPException(status_code=404, detail="Not Found")
 
 
@@ -413,8 +414,9 @@ def scan(
     code: Annotated[str, Query(max_length=255)] = "",
 ) -> dict:
     """Stage option warehouse.scan: ГРН (with or without «-П2», any case, look-alikes, Russian layout) → its lot(s);
-    a place code → the lots with a balance lying there (both warehouses); else 404 «Не найдено: …»."""
-    _require_option("warehouse.scan")
+    a place code → the lots with a balance lying there (both warehouses); else 404 «Не найдено: …».
+    The ТСД screen (option warehouse.tsd) scans through the same route."""
+    _require_option("warehouse.scan", "warehouse.tsd")
     try:
         result = scan_stock(uow_factory(), code)
     except KeyError as error:
