@@ -349,9 +349,10 @@ describe("коакс: резка с разделкой на роторном с�
     expect((makeGen(D, S).buildConfig() as Record<string, any>).coax.sideA.pinType).toBe("обжим");
   });
 
-  it("the 2.92 mm and SMP stock articles are matched by article, dots and hyphens ignored (19.10)", () => {
-    const rec = coaxFromFields({ coaxArticle: "2.92-JB2G-F", coaxWire: "RG-405", coaxType: "2.92mm-male", "Тип пина": "обжим", "Тип экрана": "обжим" });
-    const smp = coaxFromFields({ coaxArticle: "SMP-KW2", coaxWire: "RG-178", coaxType: "SMP-female R/A", "Тип пина": "обжим", "Тип экрана": "обжим" });
+  it("the 2.92 mm and SMP stock articles are matched by article, dots and hyphens ignored (19.10); «Тип пина» цанга → no pin solder (20.10)", () => {
+    // Владелец 20.10: у 2,92 / 3,5 мм пин не паяется — «цанга»; у углового пин только паяется внутри корпуса.
+    const rec = coaxFromFields({ coaxArticle: "2.92-JB2G-F", coaxWire: "RG-405", coaxType: "2.92mm-male", "Тип пина": "цанга", "Тип экрана": "обжим" });
+    const smp = coaxFromFields({ coaxArticle: "SMP-KW2", coaxWire: "RG-178", coaxType: "SMP-female R/A", "Тип пина": "пайка внутри корпуса", "Тип экрана": "обжим" });
     const kit = [
       { id: "k", type: "Кабель", name: "RG-405", art: "RG-405", qty: 0.3 },
       { id: "a", type: "Соед", name: "2.92 JB2G F", art: "2.92 JB2G F", qty: 1 },
@@ -359,7 +360,8 @@ describe("коакс: резка с разделкой на роторном с�
     ];
     const D: GenData = { ...data(kit, "Кабельная сборка 2.92-JB2G-F RG-405 0,3m"), templates: coaxTemplates, coaxRecords: [rec, smp] };
     const S = initState(D);
-    expect([S.coax.pinA, S.coax.pinB]).toEqual(["обжим", "обжим"]);
+    expect([S.coax.pinA, S.coax.pinB]).toEqual(["цанга", "внутри корпуса"]);
+    expect(opsOf(D, S).filter((op) => op.type === "coaxPin" || op.type === "coaxPinCrimp").map((op) => op.side)).toEqual(["B"]);
   });
 
   it("a collet centre contact (N-111C/8D × 8D-FB) is not soldered: no pin solder, the housing says why", () => {
