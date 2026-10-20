@@ -3,7 +3,7 @@ import { failureText, requestsApi, procurementApi, type ProcurementLine } from "
 import { formatDay, formatNumber, formatQty, NBSP, unitLabel } from "./format";
 import { useInternalProjects } from "./internalProjects";
 import { useLineHistory } from "./LineHistory";
-import { openPlace, openSection, urlParam } from "./navigation";
+import { openPlace, urlParam } from "./navigation";
 import {
   requestsViewApi, type RbStatus, type RqBatch, type RqCounts, type RqLine, type RqScope, type RqView,
 } from "./procurementRequestsApi";
@@ -201,7 +201,7 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
           <button
             type="button" className="secondary small"
             title="Оформить заявку — проект подставится"
-            onClick={() => openSection("newrequest", current && current.kind !== "none" ? { project: current.value } : {})}
+            onClick={() => openPlace("newrequest", current && current.kind !== "none" ? { project: current.value } : {})}
           >Новая заявка</button>
         )}
       </div>
@@ -246,7 +246,7 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
                     key={batch.key} batch={batch} open={open.has(batch.key)} onToggle={() => toggleBatch(batch.key)}
                     lines={linesOf[batch.key]} groupBy={groupBy} onGroupBy={setGroupBy}
                     selected={selected} onSet={(ids, on) => setSelected((current) => setMany(current, ids, on))}
-                    canAct={canAct} busy={busy} highlight={highlight} onHighlight={setHighlight}
+                    canAct={canAct} showBuyer={scope === "all"} busy={busy} highlight={highlight} onHighlight={setHighlight}
                     historyOpen={history.enabled ? history.open : undefined}
                     act={act}
                   />
@@ -287,11 +287,11 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
   );
 }
 
-function BatchRow({ batch, open, onToggle, lines, groupBy, onGroupBy, selected, onSet, canAct, busy, highlight, onHighlight, historyOpen, act }: {
+function BatchRow({ batch, open, onToggle, lines, groupBy, onGroupBy, selected, onSet, canAct, showBuyer, busy, highlight, onHighlight, historyOpen, act }: {
   batch: RqBatch; open: boolean; onToggle: () => void; lines: RqLine[] | undefined;
   groupBy: GroupBy; onGroupBy: (value: GroupBy) => void;
   selected: ReadonlySet<string>; onSet: (ids: string[], on: boolean) => void;
-  canAct: boolean; busy: boolean; highlight: string | null; onHighlight: (id: string | null) => void;
+  canAct: boolean; showBuyer: boolean; busy: boolean; highlight: string | null; onHighlight: (id: string | null) => void;
   historyOpen?: (lineId: string, title: string) => void;
   act: (run: () => Promise<string>) => Promise<void>;
 }) {
@@ -318,7 +318,7 @@ function BatchRow({ batch, open, onToggle, lines, groupBy, onGroupBy, selected, 
               {lines === undefined ? <div className="empty">Загружаю…</div> : (
                 <RequestLinesTable
                   lines={lines} groupBy={groupBy} onGroupBy={onGroupBy} selected={selected} onSet={onSet}
-                  canAct={canAct} busy={busy} highlight={highlight} onHighlight={onHighlight}
+                  canAct={canAct} showBuyer={showBuyer} busy={busy} highlight={highlight} onHighlight={onHighlight}
                   historyOpen={historyOpen} act={act}
                 />
               )}
@@ -334,10 +334,10 @@ type Panel = { id: string; kind: "split" | "cancel" | "stock" };
 
 /** RB `RequestLinesTable`: grouped lines, a checkbox per group and for all, Shift+click for a range, a drag down the
  *  checkbox column; each line with the calculation's plan and the last real purchase — the price to beat. */
-export function RequestLinesTable({ lines, groupBy, onGroupBy, selected, onSet, canAct, busy, highlight, onHighlight, historyOpen, act }: {
+export function RequestLinesTable({ lines, groupBy, onGroupBy, selected, onSet, canAct, showBuyer = false, busy, highlight, onHighlight, historyOpen, act }: {
   lines: RqLine[]; groupBy: GroupBy; onGroupBy: (value: GroupBy) => void;
   selected: ReadonlySet<string>; onSet: (ids: string[], on: boolean) => void;
-  canAct: boolean; busy: boolean; highlight: string | null; onHighlight: (id: string | null) => void;
+  canAct: boolean; showBuyer?: boolean; busy: boolean; highlight: string | null; onHighlight: (id: string | null) => void;
   historyOpen?: (lineId: string, title: string) => void;
   act: (run: () => Promise<string>) => Promise<void>;
 }) {
@@ -387,7 +387,7 @@ export function RequestLinesTable({ lines, groupBy, onGroupBy, selected, onSet, 
     setSplitQty("");
     setReason("");
   };
-  const columns = canAct ? 9 : 8;
+  const columns = 7 + (canAct ? 1 : 0) + (showBuyer ? 1 : 0);
 
   return (
     <div className="rq-lines">
@@ -415,7 +415,7 @@ export function RequestLinesTable({ lines, groupBy, onGroupBy, selected, onSet, 
             <th title="Цена за единицу с НДС и где её взяли в расчёте проекта (колонка «Ссылка»). От неё отталкиваемся: КП дороже плана — повод торговаться.">План из расчёта</th>
             <th title="Последняя закупка этой позиции: оплаченная строка закупки или УПД">Покупали</th>
             <th title="Свободный остаток позиции на складе: баланс минус резерв. «Со склада» закроет строку им вместо закупки; если не хватает, остаток останется к закупке.">На складе</th>
-            <th>Закупщик</th>
+            {showBuyer && <th>Закупщик</th>}
             <th>Статус</th>
             <th aria-label="Действия" />
           </tr>
@@ -438,7 +438,7 @@ export function RequestLinesTable({ lines, groupBy, onGroupBy, selected, onSet, 
                         />
                       </td>
                     )}
-                    <td colSpan={8}>
+                    <td colSpan={columns - (canAct ? 1 : 0)}>
                       <strong>{name || EMPTY_GROUPS[groupBy]}</strong>
                       <span className="muted">
                         {" "}· {rows.length} поз.{canAct && groupPick.length !== rows.length ? `, к запросу ${groupPick.length}` : ""}
@@ -449,7 +449,7 @@ export function RequestLinesTable({ lines, groupBy, onGroupBy, selected, onSet, 
                 )}
                 {rows.map((line) => (
                   <LineRows
-                    key={line.id} line={line} canAct={canAct} busy={busy} picked={selected.has(line.id)}
+                    key={line.id} line={line} canAct={canAct} showBuyer={showBuyer} busy={busy} picked={selected.has(line.id)}
                     highlighted={highlight === line.id} columns={columns} panel={panel?.id === line.id ? panel.kind : null}
                     onBox={(event) => clickBox(line, event)} onBoxDown={() => line.selectable && boxDown(line)}
                     onBoxEnter={(event) => boxEnter(line, event)} onPanel={(kind) => togglePanel(line.id, kind)}
@@ -475,10 +475,10 @@ function asStockLine(line: RqLine): ProcurementLine {
 }
 
 function LineRows({
-  line, canAct, busy, picked, highlighted, columns, panel, onBox, onBoxDown, onBoxEnter, onPanel, splitQty, onSplitQty,
+  line, canAct, showBuyer, busy, picked, highlighted, columns, panel, onBox, onBoxDown, onBoxEnter, onPanel, splitQty, onSplitQty,
   reason, onReason, onClosePanel, onHighlight, historyOpen, act,
 }: {
-  line: RqLine; canAct: boolean; busy: boolean; picked: boolean; highlighted: boolean; columns: number;
+  line: RqLine; canAct: boolean; showBuyer: boolean; busy: boolean; picked: boolean; highlighted: boolean; columns: number;
   panel: Panel["kind"] | null;
   onBox: (event: MouseEvent) => void; onBoxDown: () => void; onBoxEnter: (event: PointerEvent) => void;
   onPanel: (kind: Panel["kind"]) => void;
@@ -511,7 +511,6 @@ function LineRows({
           <small>
             {line.legacy_id}
             {line.article && line.article.trim().toLowerCase() !== line.name.trim().toLowerCase() ? ` · ${line.article}` : ""}
-            {line.item_type ? ` · ${line.item_type}` : ""}
           </small>
         </td>
         <td className="num">
@@ -548,7 +547,7 @@ function LineRows({
             </span>
           ) : <span className="muted">—</span>}
         </td>
-        <td>{line.buyer ?? <span className="muted">не взята</span>}</td>
+        {showBuyer && <td>{line.buyer ?? <span className="muted">не взята</span>}</td>}
         <td>
           <LineChip status={line.rb_status} />
           {line.rfq && (
@@ -558,7 +557,7 @@ function LineRows({
             >{line.rfq.number}</button>
           )}
         </td>
-        <td className="rq-actions">
+        <td className="rq-actions"><div className="rq-actions-in">
           {historyOpen && <button type="button" className="secondary small" onClick={() => historyOpen(line.id, line.legacy_id)}>История</button>}
           {canAct && line.can_take && (
             <button
@@ -584,7 +583,7 @@ function LineRows({
               }}
             >Повторно в закупку</button>
           )}
-        </td>
+        </div></td>
       </tr>
       {line.rb_status === "cancelled" && line.cancel_reason && sub(<>Причина отмены: {line.cancel_reason}</>, "muted")}
       {line.rb_status === "requote" && line.requote_from && sub(<>Перезапрос. Прошлый запрос: {line.requote_from}</>, "muted rq-requote")}
