@@ -118,6 +118,7 @@ function procurementServer(chainOn: boolean) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = decodeURIComponent(String(input));
     if (path === "/api/stage-options") return json({ available: true, options: [option("documents.chain", chainOn)] });
+    if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     if (path.startsWith("/api/purchasing/invoices")) return json({ items: [], total: 0, page: 1, page_size: 100, counts: { to_pay: 0, paid: 0, return: 0, other: 0 }, sum: 0 });
     return json({ lines: [], buyers: [], stages: [], next_cursor: null });
   });

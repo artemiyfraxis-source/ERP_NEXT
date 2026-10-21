@@ -171,8 +171,8 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("fulfillment_lines", "absent_by"): None,
     ("finished_goods", "before_erp"): Decimal(0),
 }
-# Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0133_internal_projects), unique; the
-# label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0136_warehouse_labels).
+# Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
+# label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).
 _LABEL_SETTINGS = {"width_mm": 58, "height_mm": 30, "dpi": 300, "gap_mm": 2, "density": 12, "speed": 2,
                    "offset_x_mm": 0, "offset_y_mm": 0}
 _SHAPED_VALUES: dict[tuple[str, str], Any] = {

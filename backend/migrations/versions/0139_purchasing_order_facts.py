@@ -14,8 +14,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0137_purchasing_order_facts"
-down_revision: str | None = "0136_warehouse_labels"
+revision: str = "0139_purchasing_order_facts"
+down_revision: str | None = "0138_warehouse_labels"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

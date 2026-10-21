@@ -61,7 +61,7 @@ function stub(internalOn: boolean, extra: (path: string, init?: RequestInit) => 
     if (path === "/api/requests/schema") return json(schema);
     if (path.startsWith("/api/techcards/kitsets?sort=")) return json({ items: [], statuses: [] });
     if (path === "/api/requests") return json({ requests: [] });
-    return json({ lines: [], buyers: [], stages: [], next_cursor: null });
+    return json({ lines: [], buyers: [], stages: [], statuses: [], next_cursor: null });
   });
   return calls;
 }
@@ -222,7 +222,7 @@ describe("«Заявки» без «Цели» (owner, 16.10: «Убери „Ц
       if (path === "/api/purchasing/internal-projects") return json({ projects: [project()] });
       if (path === "/api/requests/schema") return json(schema);
       if (path === "/api/requests") return json({ requests: rows });
-      return json({ lines: [], buyers: [], stages: [], next_cursor: null, requests: [] });
+      return json({ lines: [], buyers: [], stages: [], statuses: [], next_cursor: null, requests: [] });
     });
   }
 
