@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { EtkRoute } from "./api";
 import type { PfArt } from "./etkPfArt";
-import { etkOpRuns, etkPfGroups, etkPfOutName, etkRouteChips, etkRouteDiagram, etkRouteSummary, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
+import { etkOpRuns, etkPfGroups, etkRoutePathDiagram, etkPfOutName, etkRouteChips, etkRouteDiagram, etkRouteSummary, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
 import { formatQty } from "./format";
 import { CableArt } from "./RouteCanvas";
 import "./EtkRouteDiagram.css";
@@ -24,7 +24,9 @@ import "./EtkRouteDiagram.css";
    В задании монтажника (без `onPick`) операции не открываются: его ПФ раскрыт, его операции (`marked`) подсвечены.
    Владелец 20.10 («на планшете так крупно эта схема, что вообще не влезает»): в задании чужие ПФ свёрнуты до названия,
    номеров операций и выхода, схема вписана по высоте окна (не мельче ZOOM_MIN); «− N % +» в шапке меняет масштаб
-   везде, щелчок по проценту возвращает «вписать» (в техкарте — 100 %); выбор помнится в этом браузере. */
+   везде, щелчок по проценту возвращает «вписать» (в техкарте — 100 %); выбор помнится в этом браузере.
+   На 713К.4 (16 ПФ) и так упиралось в 50 % (прод 21.10): в задании по умолчанию — путь монтажника (его входы, его ПФ и
+   дальше до изделия, etkRoutePathDiagram), «Вся схема» в шапке показывает все блоки. */
 
 /** Ширина компактной колонки: не уже — текст и эскиз не читаются; не шире — блок растянут пустотой. */
 export const COLUMN_MIN = 280;
@@ -109,7 +111,12 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
   /** Кнопки в шапке схемы («Править ПФ»). */
   actions?: ReactNode;
 }) {
-  const diagram = etkRouteDiagram(route);
+  const active = route.blocks.find((block) => block.ops.includes(current))?.key;
+  // Задание: только путь монтажника, пока не попросили «Вся схема».
+  const [whole, setWhole] = useState(false);
+  const pathOnly = !onPick && !whole && active != null;
+  const diagram = pathOnly && active ? etkRoutePathDiagram(route, active) : etkRouteDiagram(route);
+  const hidden = route.blocks.length - diagram.columns.reduce((sum, column) => sum + column.boxes.length, 0);
   const groups = new Map(etkPfGroups(route, list, batch).map((group) => [group.key, group]));
   const scroller = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
@@ -169,7 +176,6 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
   // Стрелки — по измеренным блокам: высота блока зависит от эскиза и числа операций.
   useLayoutEffect(() => { measure(); sides(); });
 
-  const active = route.blocks.find((block) => block.ops.includes(current))?.key;
   // Открытый ПФ вне рамки (выбрали операцию ниже, «Далее →») — рамка листается к нему, страница не двигается.
   useEffect(() => {
     const node = scroller.current;
@@ -217,6 +223,8 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
   return <section className="etk-route" aria-label="Схема полуфабрикатов">
     <div className="etk-route-head">
       <strong>Схема ПФ</strong><small>{etkRouteSummary(etkRouteChips(route))}</small>
+      {!onPick && (hidden > 0 || whole) && <button type="button" className="secondary small" aria-pressed={whole} onClick={() => setWhole(!whole)}>
+        {whole ? "Только мой путь" : `Вся схема · ещё ${hidden}`}</button>}
       <span className="etk-dag-zoomer" role="group" aria-label="Масштаб схемы">
         <button type="button" className="secondary small" aria-label="Схема мельче" title="Мельче" disabled={scale <= ZOOM_MIN + 0.001} onClick={() => zoomBy(-1)}>−</button>
         <button type="button" className="secondary small etk-dag-zoom-now" title={onPick ? "Обычный размер" : "Вписать по высоте окна"}
