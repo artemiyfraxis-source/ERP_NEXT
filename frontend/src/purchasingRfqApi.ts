@@ -232,6 +232,11 @@ export const rfqApi = {
   decide: (id: string, decision: DecisionInput) => post<RfqDecision>(`${BASE}/${id}/decisions`, decision),
   undoDecision: (id: string, decisionId: string) => remove(`${BASE}/${id}/decisions/${decisionId}`),
   close: (id: string) => post(`${BASE}/${id}/close`),
+  kaiten: (id: string) => api<{ rfq_date: string; synced_at: string | null; unread: number; invoices: KaitenInvoice[] }>(`${BASE}/${id}/kaiten`),
+  kaitenFileUrl: (id: string, invoiceId: string) => `${BASE}/${id}/kaiten/${invoiceId}/file`,
+  kaitenOrder: (id: string, invoiceId: string, body: {
+    picks: { seq: number; rfq_line_id: string; quantity: string }[]; dry_run?: boolean; expected_arrival?: string;
+  } & ReasonFields) => post<KaitenOrderReport>(`${BASE}/${id}/kaiten/${invoiceId}`, body),
   invoiceRequests: (id: string) => api<{ requests: InvoiceRequest[]; ready_for_request: number }>(`${BASE}/${id}/invoice-requests`),
   /** «Подбор»: every pick at once; 422 batch_refused — nothing written, 409 batch_partial — what was. */
   decideBatch: (id: string, body: { picks: { rfq_line_id: string; quote_line_id: string; expected_version: number | null }[] } & ReasonFields) =>
@@ -252,6 +257,24 @@ export type InvoiceRequest = {
   lines: { rfq_line_id: string; legacy_id: string; name: string; article: string; qty: string; unit: string; packs: string;
     price: string; sum: string; vat_included: boolean }[];
   subject: string; body: string; cart: string;
+};
+
+export type KaitenLine = {
+  seq: number; name: string; article: string; qty: string | null; unit: string; price: string | null; sum: string | null;
+  delivery: boolean; matched_by: "price" | "alias" | "article" | "name" | null;
+  targets: { rfq_line_id: string; quantity: string | null }[];
+};
+export type KaitenInvoice = {
+  invoice_id: string; title: string; number: string | null; date: string | null; status: string; seller_name: string;
+  seller_inn: string; supplier_id: string | null; supplier_name: string | null; quote_number: string | null;
+  same_document: boolean; total: string | null; vat_included: boolean; vat_rate: string; delivery_gross: string;
+  lines: KaitenLine[]; matched: number; ordered_lines: string[]; has_file: boolean;
+};
+export type KaitenOrderReport = {
+  dry_run: boolean; needs: { gate: number; not_cheapest: number; analog: number }; problems: string[];
+  lines: { rfq_line_id: string; name: string; seq: number; quantity: string; unit_price: string; offer: "quote" | "invoice";
+    decision: "new" | "kept" | "changed"; quote_gross: string | null; invoice_gross: string }[];
+  expected_suggestion: string | null; has_file: boolean; done?: string[]; orders?: string[];
 };
 
 export type CancelManyResult = { cancelled: string[]; skipped: { id: string; reason: string }[] };

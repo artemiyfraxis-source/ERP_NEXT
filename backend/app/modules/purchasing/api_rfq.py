@@ -17,6 +17,7 @@ from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal, section_allowed
+from app.workflows.purchasing_kaiten_order import KaitenOrderBridge
 from app.workflows.purchasing_procurement_bridge import ProcurementLinesBridge
 from app.workflows.purchasing_rfq_stats import PurchaseStatsBridge
 
@@ -25,6 +26,7 @@ from . import rfq as service
 from . import rfq_pool
 from . import rfq_batch
 from . import rfq_invoice_requests
+from . import rfq_kaiten
 from . import rfq_withdraw
 from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
 
@@ -52,6 +54,13 @@ def procurement_lines(
 
 
 Lines = Annotated[service.ProcurementLines, Depends(procurement_lines)]
+
+
+def procurement_orders(factory: Annotated[Callable, Depends(procurement_uow_factory)]) -> rfq_kaiten.ProcurementOrders:
+    return KaitenOrderBridge(factory)
+
+
+Orders = Annotated[rfq_kaiten.ProcurementOrders, Depends(procurement_orders)]
 
 
 def purchase_stats(factory: Annotated[Callable, Depends(procurement_uow_factory)]) -> rfq_pool.PurchaseStats:
@@ -225,6 +234,20 @@ class PickModel(BaseModel):
     expected_version: int | None = Field(default=None, ge=1)
 
 
+class KaitenPickModel(BaseModel):
+    seq: Annotated[int, Field(ge=0, le=10_000)]
+    rfq_line_id: UUID
+    quantity: Amount
+
+
+class KaitenOrderModel(ReasonsModel):
+    """«Оформить» a Kaiten invoice: the positions taken for the request lines; `dry_run` — say what would happen."""
+
+    picks: list[KaitenPickModel] = Field(min_length=1, max_length=500)
+    dry_run: bool = False
+    expected_arrival: date | None = None
+
+
 class BatchModel(ReasonsModel):
     """«Подбор»: every pick of the set; one reason of each kind covers the picks that need it."""
 
@@ -306,6 +329,34 @@ def rfq_create(payload: CreateRfqInput, principal: Edit, now: Now, uow: Uow, lin
 @router.get("/{rfq_id}")
 def rfq_matrix(rfq_id: UUID, principal: View, now: Now, uow: Uow, lines: Lines) -> dict:
     return _run(lambda: service.matrix(uow(), lines, principal.actor, rfq_id, now.date()))
+
+
+@router.get("/{rfq_id}/kaiten")
+def rfq_kaiten_invoices(rfq_id: UUID, principal: View, now: Now, uow: Uow, lines: Lines) -> dict:
+    """Kaiten invoices dated on or after the request, their positions matched to its lines."""
+    return _run(lambda: rfq_kaiten.kaiten_invoices(uow(), lines, principal.actor, rfq_id, now.date()))
+
+
+@router.get("/{rfq_id}/kaiten/{invoice_id}/file")
+def rfq_kaiten_file(rfq_id: UUID, invoice_id: UUID, _principal: View, uow: Uow) -> Response:
+    content, name = _run(lambda: rfq_kaiten.invoice_file(uow(), rfq_id, invoice_id))
+    return file_response(content, name)
+
+
+@router.post("/{rfq_id}/kaiten/{invoice_id}")
+def rfq_kaiten_order(
+    rfq_id: UUID, invoice_id: UUID, payload: KaitenOrderModel, principal: Edit, now: Now, uow: Uow, lines: Lines,
+    orders: Orders,
+) -> dict:
+    """→ the dry run's report, or what was done; 422 — nothing written; 409 kaiten_partial — stopped at a step."""
+    reasons = service.DecisionInput(rfq_line_id=payload.picks[0].rfq_line_id, quote_line_id=payload.picks[0].rfq_line_id,
+                                    **payload.model_dump(exclude={"picks", "dry_run", "expected_arrival"}))
+    picks = [rfq_kaiten.KaitenPick(item.seq, item.rfq_line_id, item.quantity) for item in payload.picks]
+    try:
+        return rfq_kaiten.kaiten_order(uow, lines, orders, principal.actor, now, rfq_id, invoice_id, picks,
+                                       dry_run=payload.dry_run, expected_arrival=payload.expected_arrival, reasons=reasons)
+    except service.RfqError as error:
+        raise HTTPException(status_code=error.status, detail=getattr(error, "payload", None) or str(error)) from error
 
 
 @router.get("/{rfq_id}/invoice-requests")

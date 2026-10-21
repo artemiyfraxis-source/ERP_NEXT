@@ -122,6 +122,8 @@ class LineView:
     delivery_point: str | None = None  # ТОЧКА ОТГРУЗКИ: the invoice-request letter's delivery address
     link: str | None = None  # ССЫЛКА: where the calculation found its price («План» links to it)
     manufacturer: str | None = None  # ИЗГОТОВИТЕЛЬ the buyer wrote on the line
+    order_number: str | None = None  # № ЗАКАЗА once the supplier request is formed
+    invoice_number: str | None = None  # № СЧЕТА once the invoice is in
 
 
 class ProcurementLines(Protocol):
@@ -1456,13 +1458,16 @@ def check_pick(session: Session, lines: ProcurementLines, actor: Actor, rfq: Rfq
 
 def decide(
     uow: UnitOfWork, lines: ProcurementLines, actor: Actor, now: datetime, rfq_id: UUID, data: DecisionInput,
+    today: date | None = None,
 ) -> dict:
     """check_pick → the decision with its snapshots (baseline, cheapest, priced quotes) → the procurement line's
     ПОСТАВЩИК / КОЛ-ВО / ЕД.ИЗМ (факт) through the bridge, with the line's version → applied_at.
 
     Nothing is written to the purchasing tables before procurement accepts the facts; if the decision then fails to
-    save, the facts stay — a retry of the same choice writes nothing new there (the save is idempotent)."""
-    today = _today(now)
+    save, the facts stay — a retry of the same choice writes nothing new there (the save is idempotent).
+
+    `today` — the day the rules see the offers on (a choice made from an invoice is made on the invoice's day)."""
+    today = today or _today(now)
     with uow:
         session = _session(uow)
         rfq = _open(_own(_rfq(session, rfq_id), actor))

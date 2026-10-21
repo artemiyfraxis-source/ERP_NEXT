@@ -2,7 +2,8 @@
 «Подбор», invoice-request letters, quote import header, decision reason codes."""
 
 import base64
-from datetime import date
+import hashlib
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -11,9 +12,12 @@ from sqlalchemy import func, select
 from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.modules.purchasing import rfq as rfq_service
 from app.modules.purchasing import rfq_batch
-from app.modules.purchasing.infrastructure import DecisionRow, DocumentFileRow, ItemAliasRow, ItemRow, RfqLineRow, SupplierRow
+from app.modules.purchasing.infrastructure import (
+    DecisionRow, DocumentFileRow, InvoiceFileRow, InvoiceRow, ItemAliasRow, ItemRow, QuoteRow, RfqLineRow, SupplierRow,
+)
 from app.modules.purchasing.items import alias_key
 from app.modules.purchasing.quote_import import read_header
+from app.modules.purchasing.rfq_kaiten import invoice_vat, pack_in_name, quantity_in
 from tests.pdf_samples import identity_pdf
 from app.workflows.procurement_history import line_history
 from app.workflows.procurement_rfq_requote import requote_lines
@@ -400,3 +404,148 @@ def test_a_decision_takes_rollers_reason_codes_and_keeps_the_label_or_the_words(
     after = client.get(f"{BASE}/{rfq['id']}").json()
     assert [(_line_of(after, line.id)["decision"]["gate_override_code"], _line_of(after, line.id)["decision"]["gate_override_reason"])
             for line in lines] == [("single_source", "Единственный производитель или поставщик"), ("other", "только у них")]
+
+
+# ── Kaiten invoices in a request (Roller rfq-kaiten.test.ts) ────────────────────────────────────────────────────────
+
+
+def test_invoice_vat_mode_units_and_packs():
+    lines = [{"seq": 1, "name": "Провод", "qty": 10, "unit": "м", "price": 1000, "sum": 10_000}]
+    assert invoice_vat(12_200, 2200, False, lines, Decimal(22)) == (False, Decimal(22))  # positions without VAT
+    assert invoice_vat(10_000, 1667, False, lines, Decimal(22)) == (True, Decimal(20))
+    assert invoice_vat(10_000, None, True, lines, Decimal(22)) == (True, Decimal(0))
+    # Two rates (goods 22 %, delivery 5 %) and the 5 % figure read: not trusted.
+    assert invoice_vat(10_000, 46, False, lines, Decimal(22)) == (True, Decimal(22))
+    assert quantity_in(Decimal("0.5"), "км", "м", None) == Decimal("500.000")
+    assert quantity_in(2, "бухта", "м", Decimal(305)) == Decimal("610.000")
+    assert quantity_in(2, "бухта", "м", None) is None
+    assert pack_in_name("SHF-001T##5000@JST упаковка 5000 шт.", "") == Decimal(5000)
+    assert pack_in_name("Терминал (упаковка 5000 шт)", "шт") is None  # counted in pieces already
+
+
+def _kaiten_setup(client, lines, sessions):
+    with sessions() as session:
+        specs = (("Кабель коаксиальный RG-316", "RG-316", "100", "м"), ("Разъём SMA-J угловой", "SMA-J-01", "20", "шт"))
+        for line, (name, article, quantity, unit) in zip(lines, specs):
+            row = session.get(ProcurementLineRow, line.id)
+            row.calculated_name, row.design_article = name, article
+            row.calculated_quantity, row.calculated_unit = Decimal(quantity), unit
+            row.actual_quantity, row.actual_unit = Decimal(quantity), unit
+        session.commit()
+    rfq = _rfq(client, lines)
+    alfa = _supplier(client, rfq["id"], "Альфа")
+    beta = _supplier(client, rfq["id"], "Бета")
+    _supplier(client, rfq["id"], "Гамма")
+    with sessions() as session:
+        session.get(SupplierRow, UUID(alfa)).inn = "7701000019"
+        session.commit()
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    cable, sma = _line_of(matrix, lines[0].id), _line_of(matrix, lines[1].id)
+    _quote(client, rfq["id"], beta, cable["id"], unit_price="45")  # B quoted the cable cheaper than the invoice will
+    return rfq, alfa, beta, cable, sma
+
+
+def _invoice(sessions, supplier_id, number, day, lines, file=False):
+    with sessions() as session:
+        total = sum(line["sum"] for line in lines)
+        row = InvoiceRow(id=uuid4(), source="kaiten", external_id=number, title=f"Счет № {number}", status="paid",
+                         card_created=datetime(2026, 9, 16, 9), card_updated=datetime(2026, 9, 17, 9), number=number,
+                         doc_date=day, supplier_id=UUID(supplier_id) if supplier_id else None, total=total,
+                         vat=round(total * 22 / 122), lines=lines, synced_at=datetime(2026, 9, 17))
+        session.add(row)
+        if file:
+            content = identity_pdf([f"Счет № {number}"])
+            stored = DocumentFileRow(id=uuid4(), sha256=hashlib.sha256(content).hexdigest(), file_name=f"Счет {number}.pdf",
+                                     size=len(content), content=content, created_at=NOW)
+            session.add(stored)
+            session.flush()
+            session.add(InvoiceFileRow(id=uuid4(), invoice_id=row.id, external_id=f"f{number}", name=f"Счет {number}.pdf",
+                                       kind="invoice", size=len(content), seq=0, file_id=stored.id))
+        session.commit()
+        return str(row.id)
+
+
+def _goods():
+    return [
+        {"seq": 1, "name": "Кабель коаксиальный", "article": "RG-316", "qty": 0.1, "unit": "км", "price": 4_800_000, "sum": 480_000},
+        {"seq": 2, "name": "Разъём SMA-J-01 угловой", "article": "", "qty": 20, "unit": "шт", "price": 15_000, "sum": 300_000},
+        {"seq": 3, "name": "Доставка до терминала", "article": "", "qty": 1, "unit": "усл", "price": 50_000, "sum": 50_000},
+        {"seq": 4, "name": "Паяльник", "article": "", "qty": 1, "unit": "шт", "price": 100_000, "sum": 100_000},
+    ]
+
+
+def test_an_invoice_dated_after_the_request_is_offered_with_its_positions_matched(rfq_api):
+    client, lines, sessions = rfq_api
+    rfq, alfa, _, cable, sma = _kaiten_setup(client, lines, sessions)
+    invoice = _invoice(sessions, alfa, "СЧ-77", date(2026, 9, 16), _goods())
+    _invoice(sessions, alfa, "СЧ-1", date(2026, 9, 1), _goods())  # predates the request
+    _invoice(sessions, None, "Х-5", date(2026, 9, 16), [])  # a scan: no positions, nobody's
+    answer = client.get(f"{BASE}/{rfq['id']}/kaiten").json()
+    assert answer["rfq_date"] == "2026-09-15" and answer["unread"] == 1
+    assert [item["invoice_id"] for item in answer["invoices"]] == [invoice]
+    got = answer["invoices"][0]
+    assert (got["supplier_id"], got["matched"], got["vat_included"], got["vat_rate"], got["delivery_gross"]) == (alfa, 2, True, "22", "500")
+    assert [(line["targets"], line["delivery"]) for line in got["lines"]] == [
+        ([{"rfq_line_id": cable["id"], "quantity": "100"}], False),  # 0,1 км is 100 м
+        ([{"rfq_line_id": sma["id"], "quantity": "20"}], False),
+        ([], True),
+        ([], False),
+    ]
+
+
+def test_oformit_makes_the_quote_from_the_invoice_the_choice_and_the_order_through_procurement(rfq_api):
+    client, lines, sessions = rfq_api
+    rfq, alfa, _, cable, sma = _kaiten_setup(client, lines, sessions)
+    invoice = _invoice(sessions, alfa, "СЧ-77", date(2026, 9, 16), _goods())
+    url = f"{BASE}/{rfq['id']}/kaiten/{invoice}"
+    picks = [{"seq": 1, "rfq_line_id": cable["id"], "quantity": "100"}, {"seq": 2, "rfq_line_id": sma["id"], "quantity": "20"}]
+
+    dry = client.post(url, json={"picks": picks, "dry_run": True})
+    assert dry.status_code == 200, dry.text
+    body = dry.json()
+    assert body["needs"] == {"gate": 2, "not_cheapest": 1, "analog": 0}, body  # two answers of three; B is cheaper on the cable
+    assert [(line["offer"], line["decision"], line["unit_price"]) for line in body["lines"]] == [
+        ("invoice", "new", "48"), ("invoice", "new", "150")]
+    assert body["problems"] == [] and body["has_file"] is False
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(QuoteRow).where(QuoteRow.source == "invoice")) == 0
+
+    no_reason = client.post(url, json={"picks": picks, "expected_arrival": "2026-09-25"})
+    assert no_reason.status_code == 422 and "причин" in no_reason.text
+    reasons = {"gate_override_code": "urgent", "not_cheapest_code": "lead_time"}
+    no_file = client.post(url, json={"picks": picks, "expected_arrival": "2026-09-25", **reasons})
+    assert no_file.status_code == 422 and "Файл счёта" in no_file.json()["detail"]
+
+    invoice = _invoice(sessions, alfa, "СЧ-78", date(2026, 9, 16), _goods(), file=True)
+    url = f"{BASE}/{rfq['id']}/kaiten/{invoice}"
+    no_date = client.post(url, json={"picks": picks, **reasons})
+    assert no_date.status_code == 422 and "ожидаемую дату" in no_date.json()["detail"]
+    done = client.post(url, json={"picks": picks, "expected_arrival": "2026-09-25", **reasons})
+    assert done.status_code == 200, done.text
+    result = done.json()
+    assert result["done"][0] == "КП из счёта" and len(result["orders"]) == 1
+    with sessions() as session:
+        rows = [session.get(ProcurementLineRow, line.id) for line in lines]
+        assert [(row.status, row.supplier, row.invoice_number, row.invoice_date, row.expected_arrival) for row in rows] == [
+            ("В оплату", "Альфа", "СЧ-78", date(2026, 9, 16), date(2026, 9, 25))] * 2
+        assert rows[0].order_number == rows[1].order_number == result["orders"][0]
+        assert rows[0].invoice_url.startswith("/api/procurement/files/")
+        quote = session.scalar(select(QuoteRow).where(QuoteRow.source == "invoice"))
+        assert (quote.number, quote.received_on, str(quote.invoice_id), quote.file_id is not None) == ("СЧ-78", date(2026, 9, 16), invoice, True)
+    after = client.get(f"{BASE}/{rfq['id']}").json()
+    assert [(_line_of(after, line.id)["decision"]["gate_override_code"], _line_of(after, line.id)["editable"]) for line in lines] == [
+        ("urgent", False), ("urgent", False)]
+    again = client.get(f"{BASE}/{rfq['id']}/kaiten").json()["invoices"]
+    mine = next(item for item in again if item["invoice_id"] == invoice)
+    assert mine["matched"] == 0 and len(mine["ordered_lines"]) == 2
+    twice = client.post(url, json={"picks": picks, "expected_arrival": "2026-09-25", **reasons})
+    assert twice.status_code == 422  # the lines are ordered already
+
+
+def test_an_invoice_older_than_the_request_cannot_be_its_order(rfq_api):
+    client, lines, sessions = rfq_api
+    rfq, alfa, _, cable, _ = _kaiten_setup(client, lines, sessions)
+    invoice = _invoice(sessions, alfa, "СЧ-1", date(2026, 9, 1), _goods())
+    answer = client.post(f"{BASE}/{rfq['id']}/kaiten/{invoice}", json={
+        "picks": [{"seq": 1, "rfq_line_id": cable["id"], "quantity": "100"}], "dry_run": True})
+    assert answer.status_code == 422 and "раньше запроса КП" in answer.json()["detail"]

@@ -4082,6 +4082,8 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .rfq-reason { display: grid; gap: 3px; }
 .rfq-reason-label { font-weight: 600; font-size: 13px; }
 .rfq-price-note { margin: 0; font-size: 12px; }
+.kaiten-order { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 13px; }
+.kaiten-order p { margin: 0; }
 .rfq-quote-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
 .rfq-quote-head .rfq-quote-note input { width: 260px; }
 .rfq-input-bad { border-color: var(--tone-danger) !important; }

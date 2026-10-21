@@ -71,6 +71,8 @@ def line_view(line: ProcurementLine) -> LineView:
         delivery_point=line.delivery_point,
         link=line.link,
         manufacturer=line.trace.manufacturer,
+        order_number=line.order_number,
+        invoice_number=line.invoice_number,
     )
 
 

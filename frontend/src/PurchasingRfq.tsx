@@ -20,6 +20,7 @@ import { DecisionPanel } from "./RfqDecision";
 import { askSplit, RemovedLines, RfqLineToolbar, RfqSelectionBar } from "./RfqLineActions";
 import { decidedPicks, RfqBasket } from "./RfqBasket";
 import { invoiceAskable, RfqInvoiceRequests } from "./RfqInvoiceRequests";
+import { RfqKaitenInvoices } from "./RfqKaitenInvoices";
 
 /** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
@@ -286,6 +287,7 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
         }}
       />
       {showRemoved && <RemovedLines matrix={matrix} />}
+      {!basket && <RfqKaitenInvoices m={matrix} editable={editable} onDone={(message) => void refresh(message)} />}
       {lines.length === 0 && (
         <div className="empty">В запросе нет строк: все убраны или отменены.</div>
       )}
