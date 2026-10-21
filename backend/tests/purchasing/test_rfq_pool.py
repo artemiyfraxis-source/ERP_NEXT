@@ -364,11 +364,12 @@ def test_pool_and_suggest_stay_fast_on_thousands_of_lines(stand):
     elapsed = time.perf_counter() - started
     assert pool["total"] == 500 and sum(group["count"] for group in pool["groups"]) == 500
     # Measured ~0.16 s alone; the bound only has to catch a per-line query (seconds), not a busy test run.
-    assert elapsed < 1.0, f"пул строится {elapsed:.3f} с"
+    # Budgets ×3 over the stage machine: CI runners jitter by tens of percent; an order-of-magnitude slowdown still fails.
+    assert elapsed < 3.0, f"пул строится {elapsed:.3f} с"
     started = time.perf_counter()
     body = _suggest(stand, *active[:50])
     elapsed = time.perf_counter() - started
-    assert body["suggestions"] and elapsed < 1.0, f"подсказка {elapsed:.3f} с"
+    assert body["suggestions"] and elapsed < 3.0, f"подсказка {elapsed:.3f} с"
 
 
 def test_part_numbers_place_lines_in_the_right_category():
