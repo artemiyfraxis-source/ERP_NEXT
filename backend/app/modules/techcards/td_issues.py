@@ -12,6 +12,12 @@
 signing → active (approved_at; прежний действующий выпуск карты аннулируется в той же транзакции), active → annulled,
 draft → annulled; остальное — 409. Правка и пересъёмка снимка — только в draft. `version` сверяется при каждой записи.
 
+Выпуск хранит цех и участок (0130: МК «Цех», «Уч.», ТЛ, сопроводительный лист); без них подпись блокируется
+(`place_missing`). Снимок несёт `td_ops` — профессию и разряд операций (td_grades.py): разряд по умолчанию —
+предупреждение `grade_default` на выпуск, без разряда — `grade_missing` на операцию. Комплектующее с аналогом вместо
+артикула по КД (`kd` задан — etk_parts.use_article) — предупреждение `analog_used`: для РВ нужно разрешение на замену.
+Автоматический выпуск при выдаче ЭТК и её новой ревизии — app/workflows/td_auto.py.
+
 Ключ операции в замечаниях и в `sto_sections` печати — «код::connector::side», как `project_cards.operation_key` и
 `operationKeyOf` печати ЭТК (frontend/src/etkPrint.ts); у своей операции без кода ключ «::<connector>::<side>».
 """
@@ -24,6 +30,7 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from .td_grades import BY_DEFAULT, operation_grade
 from .td_sto import outside_sto, sto_section
 
 STATUS_LABELS = {"draft": "проект", "signing": "на подписи", "active": "действует", "annulled": "аннулирован"}
@@ -44,6 +51,9 @@ CONTROL_METHOD = "02"
 MAX_NOTICE = 64
 MAX_TEXT = 2000
 MAX_NAME = 255
+SITES = ("ЦАР", "ЖУК")
+DEFAULT_WORKSHOP = "Цех электромонтажа"
+SYSTEM_ACTOR = "система"
 
 # Внутренний код латиницей с подчёркиванием (cutWireStrip не ловится — у него нет «_»; INS_гофра — кириллица).
 _LATIN_CODE = re.compile(r"\b[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+\b")
@@ -94,6 +104,8 @@ class TdIssueInput:
     signatories: dict[str, dict[str, str]]
     notice_no: str
     reason: str
+    workshop: str = ""
+    site: str = ""
 
 
 def parse_input(raw: dict[str, Any]) -> TdIssueInput:
@@ -121,7 +133,15 @@ def parse_input(raw: dict[str, Any]) -> TdIssueInput:
         raise TdIssueInvalid(f"Номер извещения — не длиннее {MAX_NOTICE} знаков")
     if len(reason) > MAX_TEXT:
         raise TdIssueInvalid(f"Причина изменения — не длиннее {MAX_TEXT} знаков")
-    return TdIssueInput(litera=litera, method_code=method, signatories=signatories, notice_no=notice, reason=reason)
+    workshop, site = _text(raw.get("workshop")), _text(raw.get("site"))
+    if len(workshop) > MAX_NAME:
+        raise TdIssueInvalid(f"Цех — не длиннее {MAX_NAME} знаков")
+    if site and site not in SITES:
+        raise TdIssueInvalid(f"Участок «{site}»: допустимы {', '.join(SITES)}")
+    return TdIssueInput(
+        litera=litera, method_code=method, signatories=signatories, notice_no=notice, reason=reason,
+        workshop=workshop, site=site,
+    )
 
 
 def _require_notice(change_no: int, value: TdIssueInput) -> None:
@@ -156,6 +176,8 @@ class TdIssue:
     created_by: str
     approved_at: datetime | None = None
     annulled_at: datetime | None = None
+    workshop: str = ""
+    site: str = ""
 
     @classmethod
     def open(
@@ -179,6 +201,7 @@ class TdIssue:
             org_code=ORG_CODE, method_code=value.method_code, litera=value.litera, status="draft",
             etk_revision=int(snapshot.get("revision") or 0), snapshot=snapshot, signatories=value.signatories,
             notice_no=value.notice_no, reason=value.reason, created_at=now, created_by=actor,
+            workshop=value.workshop, site=value.site,
         )
 
     @property
@@ -199,6 +222,7 @@ class TdIssue:
         return replace(
             self, version=self.version + 1, method_code=value.method_code, litera=value.litera,
             signatories=value.signatories, notice_no=value.notice_no, reason=value.reason,
+            workshop=value.workshop, site=value.site,
         )
 
     def resnapshot(self, snapshot: dict[str, Any]) -> "TdIssue":
@@ -233,7 +257,7 @@ class TdIssue:
             "has_changes": current_etk_revision > self.etk_revision, "sequence_no": self.sequence_no,
             "org_code": self.org_code, "method_code": self.method_code, "litera": self.litera,
             "designations": self.designations, "signatories": self.signatories,
-            "notice_no": self.notice_no, "reason": self.reason,
+            "notice_no": self.notice_no, "reason": self.reason, "workshop": self.workshop, "site": self.site,
             "created_at": self.created_at.isoformat(), "created_by": self.created_by,
             "approved_at": self.approved_at.isoformat() if self.approved_at else None,
             "annulled_at": self.annulled_at.isoformat() if self.annulled_at else None,
@@ -295,6 +319,13 @@ def normcontrol(issue: TdIssue) -> list[dict[str, Any]]:
             ))
     if not names["agreed_vp"]:
         found.append(_finding("agreed_vp_missing", "warning", None, "Не указан представитель ВП в «Согласовано»"))
+    missing_place = [title for title, value in (("цех", issue.workshop), ("участок", issue.site)) if not _text(value)]
+    if missing_place:
+        found.append(_finding(
+            "place_missing", "blocking", None, f"Не указан {' и '.join(missing_place)} выпуска",
+        ))
+    grades = td_ops_of(issue.snapshot)
+    defaulted = 0
     for position, operation in enumerate(snapshot_operations(issue.snapshot), start=1):
         key = operation_key_of(operation)
         label = f"Операция {operation.get('position') or position}"
@@ -320,24 +351,55 @@ def normcontrol(issue: TdIssue) -> list[dict[str, Any]]:
         times = operation.get("times") if isinstance(operation.get("times"), dict) else {}
         if _seconds(times.get("operation_seconds")) <= 0:
             found.append(_finding("no_time_norm", "warning", key, f"{label}: не задана норма времени"))
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         for row in operation.get("components") or []:
             if not isinstance(row, dict):
                 continue
-            article = _text(row.get("art"))
-            if article and not _text(row.get("kd")) and article not in seen:
-                seen.add(article)
+            kd, article = _text(row.get("kd")), _text(row.get("art"))
+            if kd and article and kd != article and (kd, article) not in seen:
+                seen.add((kd, article))
                 found.append(_finding(
-                    "component_without_kd", "warning", key,
-                    f"{label}: у комплектующего {article} нет обозначения по КД",
+                    "analog_used", "warning", key,
+                    f"{label}: вместо {kd} по КД применён аналог {article} — для РВ нужно разрешение на замену, "
+                    "согласованное с разработчиком КД и ВП",
                 ))
+        grade = grades.get(key) or {}
+        if not _text(grade.get("grade")):
+            found.append(_finding("grade_missing", "warning", key, f"{label}: не задан разряд исполнителя"))
+        elif grade.get("source") == BY_DEFAULT:
+            defaulted += 1
         code = _text(operation.get("code"))
         if sto_section(code) is None and not outside_sto(code):
             found.append(_finding(
                 "no_sto_section", "warning", key,
                 f"{label}: для операции {code or 'без кода'} нет раздела СТО типовых дефектов",
             ))
+    if defaulted:
+        found.append(_finding(
+            "grade_default", "warning", None,
+            f"Разряд и профессия по умолчанию (ЕТКС) у {defaulted} операций — задайте в БД.ОП, если иначе",
+        ))
     return found
+
+
+def with_td_ops(snapshot: dict[str, Any], reference: dict[str, dict[str, str]]) -> dict[str, Any]:
+    """Снимок с профессией и разрядом каждой операции (`td_ops`): БД.ОП по коду, иначе по умолчанию (td_grades)."""
+    td_ops = {operation_key_of(item): operation_grade(_text(item.get("code")), reference)
+              for item in snapshot_operations(snapshot)}
+    return {**snapshot, "td_ops": td_ops}
+
+
+def td_ops_of(snapshot: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """`td_ops` снимка; снимок до 0130 (без них) — по умолчанию."""
+    stored = snapshot.get("td_ops")
+    if isinstance(stored, dict):
+        return stored
+    return with_td_ops(snapshot, {})["td_ops"]
+
+
+def print_card(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Снимок для печати: как заморожен; у снимка до 0130 `td_ops` достраиваются по умолчанию."""
+    return snapshot if isinstance(snapshot.get("td_ops"), dict) else with_td_ops(snapshot, {})
 
 
 def sto_sections(snapshot: dict[str, Any]) -> dict[str, dict[str, str] | None]:

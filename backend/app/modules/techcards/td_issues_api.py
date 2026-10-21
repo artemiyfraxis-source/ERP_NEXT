@@ -17,11 +17,11 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, techcards_edit_principal, techcards_view_principal
 
-from .api import EtkCards, etk_cards, techcards_uow_factory
+from .api import EtkCards, etk_cards, operation_grade_reference, techcards_uow_factory
 from .application import UnitOfWork
 from .td_issues import (
     TdIssue, TdIssueError, TdIssueNotFound, change_rows, create_issue, edit_issue, move_issue, normcontrol,
-    parse_input, resnapshot_issue, sto_sections,
+    parse_input, print_card, resnapshot_issue, sto_sections, with_td_ops,
 )
 from .td_sto import sto, sto_reference
 
@@ -47,6 +47,8 @@ class TdIssuePayload(BaseModel):
     signatories: SignatoriesPayload = SignatoriesPayload()
     notice_no: str = Field(default="", max_length=64)
     reason: str = Field(default="", max_length=2000)
+    workshop: str = Field(default="", max_length=255)
+    site: str = Field(default="", max_length=8)
 
 
 class TdIssueEditPayload(TdIssuePayload):
@@ -76,15 +78,18 @@ def _current_revision(uow_factory: Callable[[], UnitOfWork], card_id: UUID) -> i
     return card.revision if card is not None else 0
 
 
-def _snapshot_of(uow_factory: Callable[[], UnitOfWork], etk: EtkCards) -> Callable[[UUID], dict[str, Any]]:
-    """Карта ЭТК ровно как её отдаёт GET /api/techcards/projects/{id}, приведённая к JSON."""
+def _snapshot_of(
+    uow_factory: Callable[[], UnitOfWork], etk: EtkCards, grades: dict[str, dict[str, str]],
+) -> Callable[[UUID], dict[str, Any]]:
+    """Карта ЭТК ровно как её отдаёт GET /api/techcards/projects/{id}, приведённая к JSON, и `td_ops` — профессия и
+    разряд операций из БД.ОП (иначе по умолчанию)."""
 
     def snapshot(card_id: UUID) -> dict[str, Any]:
         with uow_factory() as uow:
             card = uow.techcards.get(card_id)
         if card is None:
             raise TdIssueNotFound("Карточка проекта не найдена")
-        return jsonable_encoder(etk.one(card))
+        return with_td_ops(jsonable_encoder(etk.one(card)), grades)
 
     return snapshot
 
@@ -122,9 +127,10 @@ def open_td_issue(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
     etk: Annotated[EtkCards, Depends(etk_cards)],
+    grades: Annotated[dict[str, dict[str, str]], Depends(operation_grade_reference)],
 ) -> dict[str, Any]:
     value = _run(lambda: parse_input(payload.model_dump()))
-    snapshot = _run(lambda: _snapshot_of(uow_factory, etk)(card_id))
+    snapshot = _run(lambda: _snapshot_of(uow_factory, etk, grades)(card_id))
     issue = _run(lambda: create_issue(uow_factory(), card_id, value, snapshot, principal.actor.name, now))
     return _view(issue, uow_factory)
 
@@ -154,8 +160,11 @@ def resnapshot_td_issue(
     payload: TdVersionPayload,
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
     etk: Annotated[EtkCards, Depends(etk_cards)],
+    grades: Annotated[dict[str, dict[str, str]], Depends(operation_grade_reference)],
 ) -> dict[str, Any]:
-    issue = _run(lambda: resnapshot_issue(uow_factory(), issue_id, payload.version, _snapshot_of(uow_factory, etk)))
+    issue = _run(lambda: resnapshot_issue(
+        uow_factory(), issue_id, payload.version, _snapshot_of(uow_factory, etk, grades),
+    ))
     return _view(issue, uow_factory)
 
 
@@ -190,7 +199,7 @@ def td_issue_print(
         issues = uow.td_issues.for_card(issue.project_card_id)
     return {
         "issue": issue.view(card.revision if card is not None else 0),
-        "card": issue.snapshot,
+        "card": print_card(issue.snapshot),
         "sto_sections": sto_sections(issue.snapshot),
         "changes": change_rows(issues),
         "sto": sto_reference(),

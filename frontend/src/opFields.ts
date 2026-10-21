@@ -20,7 +20,7 @@ export const OP_GROUP_TITLES: Record<OpGroupId, string> = {
 };
 const ORDER: OpGroupId[] = ["ident", "equip", "norms", "nodes", "other", "raw"];
 const LABEL_ORDER = [
-  "Код", "Название", "Машина", "Инструмент", "Апликаторы / модули", "Тип операции", "Время операции", "Время подготовки",
+  "Код", "Название", "Профессия", "Разряд", "Машина", "Инструмент", "Апликаторы / модули", "Тип операции", "Время операции", "Время подготовки",
   "Время машины", "Скорость проката", "Скорость работы инструмента", "Кол-во операций инструмента",
   "Ручные работы: взять ПФ", "Ручные работы", "Ручные работы: снять ПФ", "Расход на настройку",
 ];
@@ -52,6 +52,9 @@ function spec(key: string): Spec | null | undefined {
   const name = norm(key);
   if (name === "номер") return { group: "ident", label: "Код", readOnly: true };
   if (name === "название") return { group: "ident", label: "Название" };
+  // Комплект ТД (МК «Проф.» и «Р»): ключи схемы без колонки листа.
+  if (key === "opProfession") return { group: "ident", label: "Профессия", hint: "Пусто — по ЕТКС" };
+  if (key === "opGrade") return { group: "ident", label: "Разряд", hint: "1–6; пусто — по ЕТКС" };
   if (name === "машина") return { group: "equip", label: "Машина" };
   if (name === "инструмент") return { group: "equip", label: "Инструмент" };
   if (name === "апликаторы / модули") return { group: "equip", label: "Апликаторы / модули" };

@@ -625,6 +625,34 @@ it("edits БД.ОП right in the operations table: the time cell and the machine
   expect(patches[1]).toEqual({ id: "o2", edits: [{ field: "Машина", old: "Лазер", value: "EW-09" }] });
 });
 
+it("«Операции»: профессия и разряд комплекта ТД правятся в ячейке, пусто — «по ЕТКС»", async () => {
+  const patches: Array<{ id: string; edits: Array<Record<string, string>> }> = [];
+  const rows = [opRows[0], { ...opRows[1], fields: { ...opRows[1].fields, opProfession: "Оператор лазерной установки" } }];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?tab=ob")) return json({ metadata: null, records: [] });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: rows });
+    const id = path.match(/tech-operations\/(o\d)$/)?.[1];
+    if (id && init?.method === "PATCH") {
+      patches.push({ id, ...JSON.parse(String(init.body)) });
+      return json(rows.find((row) => row.id === id));
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  const row = (await screen.findByText("LASER_MARK")).closest("tr") as HTMLElement;
+  expect(within(row).getByText("Оператор лазерной установки")).toBeInTheDocument();
+  const cell = row.querySelector('td[data-col="grade"]') as HTMLElement;
+  expect(cell.textContent).toBe("по ЕТКС");
+  fireEvent.doubleClick(cell);
+  const pick = within(row).getByRole("combobox");
+  expect([...(pick as HTMLSelectElement).options].map((option) => option.value)).toEqual(["", "1", "2", "3", "4", "5", "6"]);
+  fireEvent.change(pick, { target: { value: "4" } });
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0]).toEqual({ id: "o2", edits: [{ field: "opGrade", old: "", value: "4" }] });
+});
+
 it("«Операции»: the cyclogram is open in the table — «Подготовка» first, a cell edit writes the recomputed time with it, the time cell then is a formula (owner 18.10)", async () => {
   const patches: Array<{ id: string; edits: Array<Record<string, string>> }> = [];
   const crimp = { id: "o3", tab: "op", display_text: "Опрессовка", source_sheet: "БД.ОП", fields: {
@@ -647,7 +675,7 @@ it("«Операции»: the cyclogram is open in the table — «Подгот�
   const row = (await screen.findByText("PRS_TERMINAL_auto")).closest("tr") as HTMLElement;
   const keys = [...row.querySelectorAll("td[data-col]")].map((td) => td.getAttribute("data-col"));
   // Правятся ячейки циклограммы; «Время, с» при заполненной циклограмме — формула, не правится.
-  expect(keys).toEqual(["prep", "cycle:take", "cycle:manual", "cycle:put", "cycle:roll", "cycle:tool", "cycle:toolOps"]);
+  expect(keys).toEqual(["profession", "grade", "prep", "cycle:take", "cycle:manual", "cycle:put", "cycle:roll", "cycle:tool", "cycle:toolOps"]);
   const heads = screen.getAllByRole("columnheader").map((th) => th.textContent ?? "");
   const at = (title: string) => heads.findIndex((text) => text.startsWith(title));
   expect(heads.some((text) => /Инструмент|Аппликаторы/.test(text))).toBe(false);

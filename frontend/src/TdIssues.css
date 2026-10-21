@@ -7,6 +7,7 @@
 .td-table th, .td-table td { padding: 5px 12px; }
 .td-table tbody tr { cursor: pointer; }
 .td-table tbody tr:hover, .td-table tbody tr.td-selected { background: var(--accent); }
+.td-auto { margin-left: 8px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; color: var(--muted-foreground); white-space: nowrap; }
 .td-status-active { color: var(--tone-ok); font-weight: 600; }
 .td-status-signing { color: var(--tone-warn); font-weight: 600; }
 .td-status-annulled { color: var(--tone-neutral); text-decoration: line-through; }

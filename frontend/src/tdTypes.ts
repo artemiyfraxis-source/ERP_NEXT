@@ -42,6 +42,9 @@ export interface TdIssue {
   signatories: TdSignatories;
   notice_no: string;
   reason: string;
+  /** Цех и участок выпуска (МК «Цех», «Уч.»; ТЛ; сопроводительный лист). Пусто — нормоконтроль блокирует подпись. */
+  workshop: string;
+  site: string;
   created_at: string;
   created_by: string;
   approved_at: string | null;
@@ -54,6 +57,27 @@ export interface TdIssueInput {
   signatories: TdSignatories;
   notice_no: string;
   reason: string;
+  workshop: string;
+  /** «ЦАР» / «ЖУК». */
+  site: string;
+}
+
+/** Автор выпуска, открытого самим ERP при выдаче ЭТК или её новой ревизии. */
+export const TD_SYSTEM_ACTOR = "система";
+
+/** Профессия и разряд исполнителя операции, замороженные в снимке выпуска (`card.td_ops[operation_key]`). */
+export interface TdOpGrade {
+  profession: string;
+  /** "1"…"6"; "" — не задан (нормоконтроль предупреждает). */
+  grade: string;
+  /** «БД.ОП» — разряд из БД.ОП; «по умолчанию» — по ЕТКС для семейства операции. */
+  source: string;
+}
+
+/** td_ops снимка по ключу операции; нет (снимок старый) — пусто. */
+export function tdOpGrade(card: ProjectTechcard, key: string): TdOpGrade {
+  const all = (card as unknown as { td_ops?: Record<string, TdOpGrade> }).td_ops;
+  return all?.[key] ?? { profession: "", grade: "", source: "" };
 }
 
 export interface TdFinding {
@@ -77,7 +101,8 @@ export interface TdChange {
 /** GET /techcards/td-issues/{id}/print — всё для печати из замороженного снимка. */
 export interface TdPrintModel {
   issue: TdIssue;
-  /** Карта ЭТК в том виде, как её отдавал GET /techcards/projects/{id} в момент выпуска. */
+  /** Карта ЭТК в том виде, как её отдавал GET /techcards/projects/{id} в момент выпуска, и `td_ops` — профессия и
+   *  разряд операций (tdOpGrade). */
   card: ProjectTechcard;
   /** operation_key → раздел СТО типовых дефектов (null — раздел не найден). */
   sto_sections: Record<string, TdStoRef | null>;

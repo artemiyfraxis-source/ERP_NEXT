@@ -25,9 +25,10 @@ const cut = {
       { section: "Инструмент", name: "Штангенциркуль ШЦ-1", inventory_number: "ИН-5" },
     ],
   },
+  // «kd» заполнен только при аналоге: «art» — применённый аналог; без «kd» «art» и есть артикул по КД.
   components: [
-    { art: "SELLER-ART-777", name: "Провод ПВАМ 1,5", kd: "ПВАМ-1,5 ТУ", norm: "700", unit: "М." },
-    { art: "SELLER-ART-888", name: "Припой ПОС-61", kind: "Материал", norm: "70", unit: "г" },
+    { art: "ANALOG-777", name: "Провод ПВАМ 1,5", kd: "ПВАМ-1,5 ТУ", norm: "700", unit: "М." },
+    { art: "ПОС-61 ГОСТ 21931-76", name: "Припой ПОС-61", kind: "Материал", norm: "70", unit: "г" },
   ],
   fields: { crimpHeight: "1,3" },
 };
@@ -40,8 +41,8 @@ const second = {
     tooling: [{ section: "Оборудование", name: "Паяльная станция", parameters: "320 °C" }],
   },
   components: [
-    { art: "SELLER-ART-999", name: "Провод ПВАМ 1,5", kd: "ПВАМ-1,5 ТУ", norm: "700", unit: "М." },
-    { art: "SELLER-ART-555", name: "Контакт Mini-Fit Jr.", norm: "140", unit: "Шт." },
+    { art: "ANALOG-777", name: "Провод ПВАМ 1,5", kd: "ПВАМ-1,5 ТУ", norm: "700", unit: "М." },
+    { art: "39000038", name: "Контакт Mini-Fit Jr.", norm: "140", unit: "Шт." },
     // Провод из БД.ПРОВ: наименования нет, марка — в «art»; два цвета не сливаются в одну строку ВМ.
     { art: "ПВАМ 0,5 черный", name: "", kd: "", norm: "50", unit: "М." },
     { art: "ПВАМ 0,5 белый", name: "", kd: "", norm: "50", unit: "М." },
@@ -58,10 +59,15 @@ function model(over: Partial<TdPrintModel["issue"]> = {}): TdPrintModel {
       has_changes: false, sequence_no: 1, org_code: "ФРАК", method_code: "85", litera: "О1",
       designations: { vtd: "ФРАК.10185.00007", mk: "ФРАК.10185.00007 МК", ke: "ФРАК.10185.00007 КЭ", ok: "ФРАК.10185.00007 ОК", ok_tk: "ФРАК.60102.00007", vm: "ФРАК.10185.00007 ВМ", vo: "ФРАК.10185.00007 ВО" },
       signatories: { developer: person("Иванов И.И."), checker: person("Петров П.П."), normcontrol: person("Сидоров С.С."), approver: person("Козлов К.К.", "Главный инженер"), agreed_vp: person("", "") },
-      notice_no: "", reason: "", created_at: "2026-10-20T10:00:00", created_by: "x", approved_at: null, annulled_at: null, ...over,
+      notice_no: "", reason: "", workshop: "Цех электромонтажа", site: "ЦАР",
+      created_at: "2026-10-20T10:00:00", created_by: "x", approved_at: null, annulled_at: null, ...over,
     },
     card: { id: "t", project: "713К.4", item_index: "КБ1", product_name: "Жгут 713К.4", revision: 4,
-      document: { kit: { part_quantity: "700" }, operations: [cut, second, third] } } as unknown as ProjectTechcard,
+      document: { kit: { part_quantity: "700" }, operations: [cut, second, third] },
+      td_ops: {
+        "CUT_WIRE_auto::::": { profession: "Монтажник радиоэлектронной аппаратуры и приборов", grade: "2", source: "по умолчанию" },
+        "SDR_TIN::XS1::A": { profession: "Паяльщик", grade: "4", source: "БД.ОП" },
+      } } as unknown as ProjectTechcard,
     sto_sections: { "CUT_WIRE_auto::::": { section: "4.1", title: "Резка" }, "SDR_TIN::XS1::A": { section: "4.4", title: "Лужение и пайка" }, "INS_HSG::::": null },
     changes: [{ change_no: 1, notice_no: "ИЗВ-1", reason: "Смена провода", designation: "ФРАК.10185.00007", approved_at: "2026-10-21T00:00:00", developer: "Иванов И.И." }],
     sto: { designation: "СТО ФРАК-001-2026", revision: "1" },
@@ -94,6 +100,7 @@ it("титульный лист: утверждаю, согласовано с �
   expect(tl).toContain("СОГЛАСОВАНО");
   expect(tl).toContain("Представитель ВП МО");
   expect(tl).toContain("на технологический процесс электромонтажа");
+  expect(tl).toContain("ООО «ЗЭП «ФРАКСИС» Цех электромонтажа, участок ЦАР");
   expect(buildTdKitHtml(model({ method_code: "88" }))).toContain("технологический процесс сборки");
   expect(buildTdKitHtml(model({ method_code: "80" }))).toContain("технологический процесс пайки");
 });
@@ -114,10 +121,21 @@ it("МК: строки А/Б/К/М, номера 005, 010…, время в ми
   for (const number of ["005", "010", "015"]) expect(mk).toContain(`<td>${number}</td>`);
   expect(mk).toContain("<td>1,50</td>"); // 90 с подготовки
   expect(mk).toContain("<td>0,20</td>"); // 12 с на штуку
-  expect(mk).toContain("монтажник РЭА и приборов");
   expect(mk).toContain("Тпз, мин");
   expect(mk).toContain("СТО ФРАК-001-2026, разд. 4.1");
-  expect(mk).toContain("Провод ПВАМ 1,5 (по КД: ПВАМ-1,5 ТУ)");
+  // Обозначение по КД — «kd» при аналоге, иначе «art»; аналог — ниже.
+  expect(mk).toContain("<td>Провод ПВАМ 1,5, ПВАМ-1,5 ТУ\nаналог: ANALOG-777</td>");
+  expect(mk).toContain("<td>Контакт Mini-Fit Jr., 39000038</td>");
+  expect(mk).toContain("<td>ПВАМ 0,5 черный</td>");
+});
+
+it("МК: цех, участок и РМ в строке «А», профессия и разряд из снимка в строке «Б»", () => {
+  const mk = byHeading("Маршрутная карта");
+  expect(mk).toContain("<td>А</td><td>Цех электромонтажа</td><td>ЦАР</td><td>ИН-17</td><td>005</td>");
+  expect(mk).toContain("<td>А</td><td>Цех электромонтажа</td><td>ЦАР</td><td></td><td>010</td>"); // у паяльной станции нет инв. №
+  expect(mk).toMatch(/<td>Б<\/td>(<td><\/td>){4}<td>BZW-2\.0 \| Станок резки<\/td><td><\/td><td>Монтажник РЭА и приборов<\/td><td>2<\/td>/);
+  expect(mk).toMatch(/<td>Паяльщик<\/td><td>4<\/td>/);
+  expect(mk).toMatch(/<td>015<\/td>[\s\S]*?<td>Б<\/td>(<td><\/td>){6}<td><\/td><td><\/td><td>1<\/td>/); // разряда в снимке нет — пусто
 });
 
 it("ОК: переходы нумеруются 1, 2, 3; ссылка на ОК ТК и на СТО; нет текста типовых дефектов", () => {
@@ -133,6 +151,9 @@ it("ОК: переходы нумеруются 1, 2, 3; ссылка на ОК 
   expect(first).toContain("<td>Р</td>");
   expect(first).toContain("Высота обжима");
   expect(first).toContain("по СТО ФРАК-001-2026, разд. 4.1 «Резка»");
+  expect(first).toContain("Исполнитель: Монтажник радиоэлектронной аппаратуры и приборов, разряд 2");
+  expect(ok[1]).toContain("Исполнитель: Паяльщик, разряд 4");
+  expect(ok[2]).toContain("Исполнитель: —, разряд —");
   expect(ok[1]).toContain("разд. 4.4");
   expect(ok[2]).toContain("по СТО ФРАК-001-2026, разд. 4");
   expect(html).not.toContain("ТИПОВЫЕ ДЕФЕКТЫ");
@@ -152,12 +173,13 @@ it("ОК технического контроля — только шаги «�
   expect(tk).toContain("по ОК, графа Т");
 });
 
-it("ВМ без артикула продавца, с обозначением по КД и нормой на изделие", () => {
+it("ВМ: обозначение по КД, аналог с разрешением и норма на изделие", () => {
   const vm = byHeading("Ведомость материалов");
-  expect(vm).toContain("Провод ПВАМ 1,5");
-  expect(vm).toContain("ПВАМ-1,5 ТУ");
+  expect(vm).toContain("<td>Провод ПВАМ 1,5\nаналог: ANALOG-777</td><td>ПВАМ-1,5 ТУ</td>");
+  expect(vm).toContain("<td>аналог вместо ПВАМ-1,5 ТУ — по разрешению; Материал; оп. 005, 010</td>");
+  expect(vm).toContain("<td>Контакт Mini-Fit Jr.</td><td>39000038</td>"); // без аналога «art» — артикул по КД
+  expect(vm).toContain("<td>ПВАМ 0,5 черный</td><td>ПВАМ 0,5 черный</td>");
   expect(vm).toContain("<td>2</td>"); // 700 + 700 м на партию 700 — 2 м на изделие
-  expect(html).not.toMatch(/SELLER-ART/);
 });
 
 it("ВО агрегирует оснастку, ЛР содержит изменения и пустые строки", () => {
@@ -202,6 +224,6 @@ it("СТО печатается целиком: все 236 кодов дефек
 
 it("сопроводительный лист: шапка, операции, места для отметок и принятие изделия", () => {
   const out = buildRouteSheetHtml(model({ change_no: 1 }), { serial: "SN-001", batch: "П-5", qty: "20" });
-  for (const part of ["ФРАК.10185.00007", "SN-001", "П-5", "20", "Исполнитель (ФИО, подпись)", "Партии материалов", "Отметка ОТК", "Отметка ВП", "Изделие принял: ОТК", "Автомат резка + опрессовка", "005", "010"]) expect(out).toContain(part);
+  for (const part of ["ФРАК.10185.00007", "SN-001", "П-5", "20", "<th>Участок</th><td>ЦАР</td>", "Исполнитель (ФИО, подпись)", "Партии материалов", "Отметка ОТК", "Отметка ВП", "Изделие принял: ОТК", "Автомат резка + опрессовка", "005", "010"]) expect(out).toContain(part);
   expect(out).not.toContain("CUT_WIRE");
 });

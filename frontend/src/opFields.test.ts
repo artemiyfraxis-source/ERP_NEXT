@@ -96,3 +96,10 @@ it("the roll speed counts only for a «Погонная» operation: there the t
   expect(linearPiece(cut, 100)).toMatchObject({ hands: 5, total: 5 });
   expect(linearPiece(cut, 10000)!.total).toBeCloseTo(7, 6);
 });
+
+it("профессия и разряд комплекта ТД — в «Идентификации» сразу за названием", () => {
+  const groups = groupOpFields({ "Номер": "PRS_TERMINAL_auto", "Название": "Опрессовка", opGrade: "3", opProfession: "Монтажник", "Машина": "АП-1" });
+  const ident = groups.find((group) => group.id === "ident");
+  expect(ident?.fields.map((field) => field.label)).toEqual(["Код", "Название", "Профессия", "Разряд"]);
+  expect(ident?.fields.find((field) => field.label === "Разряд")?.value).toBe("3");
+});

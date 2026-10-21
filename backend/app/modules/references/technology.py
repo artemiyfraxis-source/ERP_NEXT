@@ -653,6 +653,9 @@ _TECH_SCHEMA = {
         _SchemaField("tOp", ("время операции", "время операции, сек", "время операции сек"), store=True),
         _SchemaField("tPrep", ("время подготовки, сек", "время подготовки сек", "время подготовки"), store=True),
         _SchemaField("tMachine", ("время машины, сек/оп; сек/м", "время машины сек/оп; сек/м", "время машины"), store=True),
+        # Комплект ТД (МК «Проф.» и «Р»): пусто — по умолчанию по ЕТКС (techcards/td_grades.py).
+        _SchemaField("opProfession", ("профессия",), store=True),
+        _SchemaField("opGrade", ("разряд",), store=True),
     ), lambda v: _join_parts(v["opName"], v["opNumber"]), lambda v: v["opNumber"] + " " + v["opName"],
         lambda v: v["opName"] or v["opNumber"]),
     "ter": ((
@@ -844,6 +847,19 @@ def pull_force_newtons(value: object) -> str:
     return "".join(parts).strip()
 
 
+# БД.ОП fields the sheet never had: kept under their schema keys, edited in the operations table and the .xlsx roundtrip.
+OPERATION_TD_KEYS = ("opProfession", "opGrade")
+OPERATION_GRADES = ("1", "2", "3", "4", "5", "6")
+
+
+def operation_grade_problem(value: object) -> str:
+    """«Разряд» of a БД.ОП row: empty or a whole number 1–6; otherwise the reason."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text or text in OPERATION_GRADES:
+        return ""
+    return f"Разряд — целое число от 1 до 6, а не «{text}»"
+
+
 def schema_keys(tab: str) -> frozenset[str]:
     """Record fields that are schema values, not sheet columns (for ОБ/ОП/ТЕР/КОАКС); empty for other tabs."""
     if tab not in _TECH_SCHEMA:
@@ -972,7 +988,9 @@ def sheet_snapshot_records(tab: str, rows: Sequence[Sequence[object]]) -> tuple[
         }
         if sort_key is not None:
             record["sortKey"] = sort_key(values)
-        record.update({field.key: values[field.key] for field in fields if field.store})
+        # «Профессия» / «Разряд» (комплект ТД) are ERP's own: a sheet without such a column gives no empty key.
+        record.update({field.key: values[field.key] for field in fields
+                       if field.store and not (field.key in OPERATION_TD_KEYS and resolved[field.key] < 0)})
         records.append(record)
     return [name for name, _index in named], records
 

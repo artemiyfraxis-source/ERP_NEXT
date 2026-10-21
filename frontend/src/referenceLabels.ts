@@ -61,6 +61,7 @@ export function valueLabel(header: string, value: string): string {
 export const FIELD_TITLES: Record<string, string> = {
   baseValue: "Для базы", obType: "Тип",
   opNumber: "Номер", opName: "Название", tOp: "Время операции, с", tPrep: "Время подготовки, с", tMachine: "Время машины, с/оп; с/м",
+  opProfession: "Профессия", opGrade: "Разряд",
   terManufacturer: "Производитель", terSeries: "Серия", terComponent: "Наименование", connType: "Тип разъёма",
   terType: "Тип контакта", artISL: "Артикул ISL", artSAG: "Артикул SAG", terArticle: "Артикул контакта", terLPlus: "L+",
   terLMinus: "L−", terStep: "Шаг", terApplicator: "Аппликатор", terStrip: "Длина зачистки, мм",

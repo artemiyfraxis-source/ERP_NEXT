@@ -27,6 +27,7 @@ export function buildRouteSheetHtml(model: TdPrintModel, options: RouteSheetOpti
     ["Изменение", String(issue.change_no)],
     ["Ревизия ЭТК", String(issue.etk_revision)],
     ["Заводской номер", options.serial], ["Партия", options.batch], ["Количество", options.qty],
+    ["Участок", String(issue.site ?? "")],
   ];
   const head = `<table><tbody>${[0, 4].map((from) => `<tr>${info.slice(from, from + 4).map(([label, value]) => `<th>${esc(label)}</th><td>${esc(value || "")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   const body = operations.map((operation, index) =>
