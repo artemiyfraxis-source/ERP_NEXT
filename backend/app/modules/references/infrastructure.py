@@ -72,15 +72,25 @@ def terminal_card_checks(dialect: str) -> dict[str, str]:
     }
 
 
+# A БД.ПРОВ row is in exactly one cable list, a row of another tab in none (migration 0129 holds a literal copy).
+CABLE_KIND_CHECK = (
+    "(tab = 'prov' AND cable_kind IS NOT NULL AND cable_kind IN ('coax', 'wire', 'multi'))"
+    " OR (tab <> 'prov' AND cable_kind IS NULL)"
+)
+
+
 class TechOperationRecordRow(Base):
     __tablename__ = "tech_operation_records"
     __table_args__ = (
         Index("ix_tech_operation_records_tab_sort", "tab", "sort_key"),
         *(CheckConstraint(sql, name=name).ddl_if(dialect=dialect)
           for dialect in ("sqlite", "postgresql") for name, sql in terminal_card_checks(dialect).items()),
+        CheckConstraint(CABLE_KIND_CHECK, name="ck_tech_operation_records_cable_kind"),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     tab: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    # БД.ПРОВ: the cable list of the row (migration 0129); NULL on every other tab.
+    cable_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
     display_text: Mapped[str] = mapped_column(String(2000), nullable=False)
     normalized_search: Mapped[str] = mapped_column(Text(), nullable=False)
     source_sheet: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -116,7 +126,7 @@ class SqlAlchemyTechOperationRepository:
     def __init__(self, session: Session): self.session = session
     @staticmethod
     def _domain(row: TechOperationRecordRow) -> TechOperationRecord:
-        return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search, row.source_sheet, row.sort_key, row.fields, row.mirror_key, row.edited_in_erp)
+        return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search, row.source_sheet, row.sort_key, row.fields, row.mirror_key, row.edited_in_erp, row.cable_kind)
     def list(self, *, tab: TechOperationTab | None, query: str, limit: int) -> list[TechOperationRecord]:
         statement = select(TechOperationRecordRow)
         if tab is not None: statement = statement.where(TechOperationRecordRow.tab == tab.value)
@@ -146,6 +156,7 @@ class SqlAlchemyTechOperationRepository:
         row.normalized_search = record.normalized_search; row.source_sheet = record.source_sheet
         row.sort_key = record.sort_key; row.fields = dict(record.fields)
         row.mirror_key = record.mirror_key; row.edited_in_erp = record.edited_in_erp
+        row.cable_kind = record.cable_kind
     def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = (), preserve_erp_edits: bool = False) -> dict[str, int]:
         """Replaces the records of every tab not in `keep_tabs`. With `preserve_erp_edits` the rows edited/created in
         ERP stay untouched and a mirror record whose `mirror_key` belongs to an edited row is not inserted again;
@@ -170,6 +181,7 @@ class SqlAlchemyTechOperationRepository:
             id=record.id, tab=record.tab.value, display_text=record.display_text,
             normalized_search=record.normalized_search, source_sheet=record.source_sheet,
             sort_key=record.sort_key, fields=record.fields, mirror_key=record.mirror_key, edited_in_erp=False,
+            cable_kind=record.cable_kind,
         ) for record in records)
         meta = self.session.get(TechOperationSnapshotRow, "current")
         if meta is None: meta = TechOperationSnapshotRow(name="current"); self.session.add(meta)
