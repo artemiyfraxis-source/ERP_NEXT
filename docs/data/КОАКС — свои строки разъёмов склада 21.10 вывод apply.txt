@@ -1,0 +1,30 @@
+== БД.КОАКС: 608 строк
+   создать SMA-JWB2-F × RG-405: строки нет — будет создана
+     проба: «SMA-male R/A | RG-405», полей 28, Артикул «SMA-JWB2-F», Провод «RG-405», Производитель «HenryTech (Hengliti)», coaxArticle «SMA-JWB2-F», coaxWire «RG-405», coaxType «SMA-male R/A», coaxMfr «HenryTech (Hengliti)»
+   создать SMA-JW2CG × —: строки нет — будет создана
+     проба: «SMA-male R/A», полей 22, Артикул «SMA-JW2CG», Провод «», Производитель «», coaxArticle «SMA-JW2CG», coaxWire «», coaxType «SMA-male R/A», coaxMfr «»
+   SMA-JWB3-F-1 · coaxMfr: ок
+   SMA-JWB3-F-1 · L1: ок
+   SMA-JWB3-F-1 · Тип экрана: ок
+   SMA-JWB3-F-1 · Частота до, ГГц: ок
+   SMA-JWB3-F-1 · КСВ: ок
+   SMA-JWB3-F-1 · Ссылка: ок
+   SMA-JWB3-F-1 · Примечание: ок
+   SMA-JWB3-F-1 · Источник данных: ок
+   партия OLD.26.0000071: артикул «ISMA-JB3 SMA-male RG402» → «ISMA-JB3»
+   журнал «Склад → база» по этим партиям: 0 строк
+== создана 5a116fef-4941-4260-a3b6-a1737c545e55 SMA-JWB2-F × RG-405; журнал created OLD.26.0000062
+== создана 56a67cb2-0661-4f8c-a544-dad3ac97ac2f SMA-JW2CG × —; журнал created OLD.26.0000070
+== SMA-JWB3-F-1: правок 8; журнал updated OLD.26.0000068
+== партия OLD.26.0000071: артикул «ISMA-JB3 SMA-male RG402» → «ISMA-JB3», наименование «SMA-male RG-402»
+== OLD.26.0000063 → SMA-JWB2-F × RG-405: linked
+== OLD.26.0000071 → ISMA-JB3 × RG-402: linked
+== OLD.26.0000073 → ISMA-KB2-F × RG-405: linked
+== OLD.26.0000074 → ISMA-KB2-F × RG-405: linked
+== OLD.26.0000075 → ISMA-KB2-F × RG-405: linked
+== OLD.26.0000076 → ISMA-KB2-F × RG-405: linked
+== OLD.26.0000077 → ISMA-KB2-F × RG-405: linked
+== OLD.26.0000078 → ISMA-KB2-F × RG-405: linked
+== OLD.26.0000064 → ISMA-KB3A × RG-402: linked
+== OLD.26.0000065 → ISMA-KB3A × RG-402: linked
+== apply: готово
