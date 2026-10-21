@@ -6,7 +6,6 @@ this view needs a few columns of every line of the scope, so it selects only tho
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import replace
 from datetime import date, datetime
 from uuid import UUID
 
@@ -42,7 +41,7 @@ _PAID_COLUMNS = (
 )
 
 
-def _view(row) -> ViewLine:
+def _view(row, **more) -> ViewLine:
     return ViewLine(
         id=row.id, legacy_id=row.legacy_id, version=row.version, status=row.status, buyer_id=row.buyer_id,
         buyer_name=row.buyer_name, source_request_id=row.source_request_id, created_at=row.created_at,
@@ -52,7 +51,7 @@ def _view(row) -> ViewLine:
         quantity=row.calculated_quantity, unit=row.calculated_unit, stock_covered=row.stock_covered,
         price=row.calculated_price, price_with_vat=row.calculated_price_with_vat, link=row.link,
         supplier=row.supplier, paid=row.paid_at is not None, invoiced=bool(row.invoice_url),
-        requested=bool(row.supplier_request_reference), order_number=row.order_number,
+        requested=bool(row.supplier_request_reference), order_number=row.order_number, **more,
     )
 
 
@@ -66,8 +65,8 @@ def _local_day(value) -> date | None:
 
 
 def _today_view(row) -> ViewLine:
-    return replace(
-        _view(row), expected_arrival=row.expected_arrival, actual_arrival=row.actual_arrival,
+    return _view(
+        row, expected_arrival=row.expected_arrival, actual_arrival=row.actual_arrival,
         invoice_date=row.invoice_date, paid_on=_local_day(row.paid_at), order_date=row.order_date,
         invoice_number=row.invoice_number, invoice_name=row.invoice_item_name,
     )

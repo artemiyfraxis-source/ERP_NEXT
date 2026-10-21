@@ -196,11 +196,9 @@ def _pay_missing(session: Session, line_ids: set[UUID]) -> dict[UUID, tuple[str,
 
 def order_lines(
     session: Session, *, buyer_id: UUID | None = None, order_numbers: Sequence[str] | None = None,
-    with_receipts: bool = True, with_pay_missing: bool = True,
 ) -> list[OrderLineFacts]:
     """The lines of supplier orders, «Жду счет» … «Готово» plus the orders' backorders; cancelled lines never.
-    `buyer_id` — one buyer's orders only; `order_numbers` — only these orders. `with_receipts` / `with_pay_missing` off
-    — the order facts port (promised dates only) skips what receiving accepted and the pay gate."""
+    `buyer_id` — one buyer's orders only; `order_numbers` — only these orders."""
     R = ProcurementLineRow
     columns = (
         R.id, R.legacy_id, R.version, R.status, R.order_number, R.order_date, R.buyer_id, R.buyer_name, R.supplier,
@@ -225,9 +223,8 @@ def order_lines(
     invoiced = {row.id: row.expected_arrival for row in rows if row.status in _INVOICED and not is_backorder_id(row.legacy_id)}
     promised = _promised(session, invoiced)
     in_receiving = [row.id for row in rows if row.status in _INVOICED and row.status != ProcurementStatus.TO_PAY.value]
-    receipts = _receipts(session, in_receiving) if with_receipts else {}
-    to_pay = {row.id for row in rows if row.status == ProcurementStatus.TO_PAY.value}
-    missing = _pay_missing(session, to_pay) if with_pay_missing else {}
+    receipts = _receipts(session, in_receiving)
+    missing = _pay_missing(session, {row.id for row in rows if row.status == ProcurementStatus.TO_PAY.value})
     out = []
     for row in rows:
         quantity = row.actual_quantity if row.actual_quantity is not None else row.calculated_quantity
@@ -245,6 +242,28 @@ def order_lines(
             created_on=_day(row.created_at), note=row.note, is_backorder=is_backorder_id(row.legacy_id),
             receipt=receipts.get(row.id, Receipt()), pay_missing=missing.get(row.id, ()),
         ))
+    return out
+
+
+def promised_dates(session: Session, order_numbers: Sequence[str]) -> dict[str, date]:
+    """№ ЗАКАЗА → the latest promise among its invoiced lines (`backorders` repeat a paid line: not counted) — what
+    `order_lines` derives, read with four columns instead of the whole order (the order facts port)."""
+    R = ProcurementLineRow
+    wanted = sorted({number for number in order_numbers if number})
+    rows = []
+    for chunk in _chunks(wanted):
+        rows.extend(session.execute(
+            select(R.id, R.order_number, R.legacy_id, R.expected_arrival)
+            .where(R.order_number.in_(chunk), R.status.in_(sorted(_INVOICED)))
+        ).all())
+    rows = [row for row in rows if not is_backorder_id(row.legacy_id)]
+    promised = _promised(session, {row.id: row.expected_arrival for row in rows})
+    out: dict[str, date] = {}
+    for row in rows:
+        day = promised.get(row.id)
+        number = (row.order_number or "").strip()
+        if day is not None and number and (number not in out or day > out[number]):
+            out[number] = day
     return out
 
 

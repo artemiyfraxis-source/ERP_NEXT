@@ -281,13 +281,16 @@ class _Line:
 
 def _lines(facts: TodayFacts) -> list[_Line]:
     out = []
+    projects: dict[tuple, LineProject] = {}  # a request batch shares its project: worked out once
     for view in facts.lines:
         order = facts.orders.get(view.order_number or "") if view.order_number else None
+        key = (view.project_reference, view.designation, facts.purposes.get(view.source_request_id))
+        project = projects.get(key)
+        if project is None:
+            project = projects[key] = line_project(*key)
         out.append(_Line(
-            view=view,
-            status=rb_status(view, facts.rfq.get(view.id), order.state() if order else None),
-            project=line_project(view.project_reference, view.designation, facts.purposes.get(view.source_request_id)),
-            order=order,
+            view=view, status=rb_status(view, facts.rfq.get(view.id), order.state() if order else None),
+            project=project, order=order,
         ))
     return out
 
