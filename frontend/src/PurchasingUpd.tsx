@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { failureText } from "./api";
 import { formatDate } from "./format";
+import { urlParam } from "./navigation";
 import { PurchasingUpdCard } from "./PurchasingUpdCard";
 import {
   EDO_STATUS_LABELS, EMPTY_FILTERS, UPD_ORIGIN_HINTS, UPD_ORIGIN_LABELS, UPD_STATUS_LABELS, UPD_STATUS_ORDER, UPD_STATUS_TONES,
@@ -9,6 +10,14 @@ import {
 } from "./purchasingUpdApi";
 import { StatusChip } from "./StatusChip";
 
+/** `&tab=upd&status=needs_review` (a link from «Сегодня»): the registry opens on that status. */
+function filtersFromUrl(): UpdFilters {
+  if (urlParam("tab") !== "upd") return EMPTY_FILTERS;
+  const wanted = urlParam("status");
+  const status = UPD_STATUS_ORDER.find((key) => key === wanted);
+  return status ? { ...EMPTY_FILTERS, status } : EMPTY_FILTERS;
+}
+
 /** «Реестр УПД» (option documents.upd): every closing document — PDFs read by the Google parser and EDO XML from Diadoc —
  *  with filters, the card (PurchasingUpdCard), «Загрузить из ЭДО» (dry run first, then apply) and «Продавцы без
  *  поставщика». `extraBlocks` is mounted at the bottom of the card: the slot for «Счета по этому УПД» from the
@@ -16,7 +25,7 @@ import { StatusChip } from "./StatusChip";
 export function PurchasingUpd({ readOnly = false, focusId, extraBlocks }: {
   readOnly?: boolean; focusId?: string; extraBlocks?: (documentId: string) => ReactNode;
 } = {}) {
-  const [filters, setFilters] = useState<UpdFilters>(EMPTY_FILTERS);
+  const [filters, setFilters] = useState<UpdFilters>(filtersFromUrl);
   const [list, setList] = useState<UpdList | null>(null);
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState<string | null>(focusId ?? null);

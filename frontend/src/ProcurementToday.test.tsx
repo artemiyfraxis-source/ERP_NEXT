@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ProcurementPage } from "./ProcurementPage";
 import { resetStageOptions } from "./StageOptions";
+import type { TodayItem, TodaySection } from "./ProcurementToday";
 
 function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -9,20 +10,32 @@ function json(body: unknown) {
 
 const OPTION = { key: "procurement.today", block: "Закупки", title: "«Сегодня»", before: "", after: "", enabled: true };
 
-function mockServer(enabled: boolean, sections: unknown[], projects: Record<string, unknown[]> = {}) {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+function mockServer(options: Record<string, boolean>, sections: TodaySection[], extra: (path: string) => Response | null = () => null) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/stage-options") return json({ available: true, options: [{ ...OPTION, enabled }] });
-    if (path === "/api/procurement/today") return json({ sections });
-    if (path.startsWith("/api/procurement/today/project?project=")) {
-      return json({ lines: projects[decodeURIComponent(path.split("=")[1])] ?? [] });
+    if (path === "/api/stage-options") {
+      return json({ available: true, options: Object.entries(options).map(([key, enabled]) => ({ ...OPTION, key, enabled })) });
     }
+    if (path === "/api/procurement/today") return json({ today: "2026-10-21", sections, calm: sections.length === 0 });
+    const answer = extra(path);
+    if (answer) return answer;
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     return json({ lines: [], buyers: [], stages: [], next_cursor: null });
   });
 }
 
+const row = (title: string, link: Record<string, string>, days: number | null = null): TodayItem => ({ title, detail: `${title}: подробности`, link, days });
+
+const section = (key: string, title: string, items: TodayItem[], extra: Partial<TodaySection> = {}): TodaySection => ({
+  key, title, action: `шаг: ${title}`, tone: "warning", count: items.length, items, ...extra,
+});
+
+beforeEach(() => {
+  window.history.replaceState({}, "", "/?section=procurement");
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   window.localStorage.clear();
   cleanup(); // unmount before the reset: a live tree would refetch the options without the mock
@@ -30,92 +43,106 @@ afterEach(() => {
 });
 
 it("has no «Сегодня» tab while the option is off", async () => {
-  mockServer(false, []);
+  mockServer({ "procurement.today": false }, []);
   render(<ProcurementPage />);
   await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/stage-options", expect.anything()));
   expect(screen.getByRole("tab", { name: "Очереди" })).toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: "Сегодня" })).not.toBeInTheDocument();
 });
 
-it("shows «Сегодня» first as a board of project cards; one project sits in several fields and opens its positions", async () => {
-  const line = (id: string, status: string, field: string | null) => ({
-    id, name: `Позиция ${id}`, article: null, supplier: "Рос", order_number: "ЗК-1", status, expected: "2026-10-01", quantity: "10", unit: "шт", field,
-  });
-  mockServer(true, [
-    {
-      key: "overdue", title: "Просрочена поставка", count: 2,
-      items: [],
-      projects: [{ project: "591К.3", count: 2, days: 4, date: "2026-10-01", suppliers: ["Рос"] }],
-    },
-    {
-      key: "to_pay", title: "Ждёт оплаты", count: 1,
-      items: [],
-      projects: [{ project: "591К.3", count: 1, days: 2, date: "2026-10-03", suppliers: ["Рос"] }],
-    },
-  ], { "591К.3": [line("1", "В пути", "Просрочена поставка"), line("2", "В пути", "Просрочена поставка"), line("3", "В оплату", "Ждёт оплаты"), line("4", "В работе", null)] });
+it("says everything is calm when nothing is to do", async () => {
+  mockServer({ "procurement.today": true }, []);
+  render(<ProcurementPage />);
+  expect(await screen.findByRole("heading", { name: "Всё спокойно" })).toBeInTheDocument();
+  expect(screen.getByText("21.10.2026 · дел нет")).toBeInTheDocument();
+});
+
+it("shows «Сегодня» first: sections in the order of doing with their tone, action and count; the header counts the work", async () => {
+  mockServer({ "procurement.today": true, "procurement.orders": true }, [
+    section("late", "Просрочены поставки", [row("Кабель", { tab: "orders", order: "PO-1" }, 2)], { tone: "danger" }),
+    section("rfq", "Запросить КП", [row("П-100", { tab: "requests", project: "П-100" }, 10)], { tone: "accent", count: 3 }),
+  ]);
   render(<ProcurementPage />);
   const tab = await screen.findByRole("tab", { name: "Сегодня" });
   expect(tab.parentElement?.firstElementChild).toBe(tab);
-  const cards = await screen.findAllByRole("button", { name: /591К\.3/ });
-  expect(cards).toHaveLength(2);
-  expect(screen.getByText("просрочка 4 дн.")).toBeInTheDocument();
-  fireEvent.click(cards[0]);
-  expect(await screen.findByText("Позиция 1")).toBeInTheDocument();
-  expect(screen.queryByText("Позиция 3")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: /Все позиции проекта/ }));
-  expect(screen.getByText("Позиция 3")).toBeInTheDocument();
-  expect(screen.getByText("Позиция 4")).toBeInTheDocument();
+  const cards = await screen.findAllByRole("region");
+  expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["Просрочены поставки", "Запросить КП"]);
+  expect(cards[0]).toHaveClass("today-card", "tone-danger");
+  expect(within(cards[0]).getByText("шаг: Просрочены поставки")).toBeInTheDocument();
+  expect(within(cards[0]).getByText("2 дн")).toBeInTheDocument();
+  expect(screen.getByText("21.10.2026 · дел: 4")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Счета и поставки" })).toHaveAttribute("href", "?section=procurement&tab=orders");
 });
 
-it("says everything is done when no section has rows", async () => {
-  mockServer(true, []);
+it("shows eight items of a section, then «и ещё N»", async () => {
+  const items = Array.from({ length: 8 }, (_, index) => row(`Позиция ${index + 1}`, { tab: "orders" }, 20 - index));
+  mockServer({ "procurement.today": true }, [section("invoice", "Ждём счёт", items, { count: 13 })]);
   render(<ProcurementPage />);
-  expect(await screen.findByText("На сегодня всё сделано")).toBeInTheDocument();
+  expect(await screen.findByText("Позиция 8")).toBeInTheDocument();
+  expect(screen.getByText("и ещё 5")).toBeInTheDocument();
 });
 
-it("shows the request follow-up fields before «В работе»; a drill-down row carries the hint, opens the request and its history", async () => {
-  const options = [
-    { ...OPTION, enabled: true },
-    { ...OPTION, key: "procurement.rfq", enabled: true },
-    { ...OPTION, key: "procurement.history", enabled: true },
-  ];
-  const row = {
-    id: "9", name: "Разъём", article: null, supplier: null, order_number: null, status: "В работе", expected: null, quantity: "2", unit: "шт",
-    field: "Нет ответа на запрос КП", fields: ["Нет ответа на запрос КП", "В работе: запросить, выбрать поставщика"],
-    rfq: { id: "rfq-1", number: "КП-2610-001", hint: "КП-2610-001: нет ответа на запрос — ООО Молчит" },
+it("opens a project card in place with its positions; a position and «открыть все» lead to the place", async () => {
+  const card: TodayItem = {
+    title: "ВП-001", detail: "3 позиции · перезапрос: 1", link: { tab: "requests", project: "ВП-001" }, days: 10,
+    project: { key: "ВП-001", kind: "project", value: "ВП-001" }, lines_count: 3,
+    lines: [
+      row("Разъём 1", { tab: "requests", project: "ВП-001", line: "l-1" }, 10),
+      row("Разъём 2", { tab: "requests", project: "ВП-001", line: "l-2" }, 4),
+    ],
   };
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const path = String(input);
-    if (path === "/api/stage-options") return json({ available: true, options });
-    if (path === "/api/procurement/today") {
-      return json({ sections: [
-        { key: "rfq_no_answer", title: "Нет ответа на запрос КП", count: 1, items: [], projects: [{ project: "Без проекта", count: 1, days: 4, date: "2026-10-01", suppliers: [] }] },
-        { key: "rfq_to_decide", title: "Выбрать поставщика", count: 2, items: [], projects: [{ project: "591К.3", count: 2, days: 1, date: "2026-10-04", suppliers: [] }] },
-        { key: "in_work", title: "В работе: запросить, выбрать поставщика", count: 1, items: [], projects: [{ project: "Без проекта", count: 1, days: 6, date: "2026-09-29", suppliers: [] }] },
-      ] });
-    }
-    if (path.startsWith("/api/procurement/today/project?project=")) return json({ lines: [row] });
-    if (path === "/api/procurement/9/history") {
-      return json({ line: { id: "9", legacy_id: "SM-1", name: "Разъём", status: "В работе" }, events: [
-        { at: "2026-09-14T09:00:00", time: true, title: "Заявка SM-1 создана", details: "Разъём", who: "Иванов", source: "заявка" },
-        { at: null, time: false, title: "Ожидаемая дата поставки", details: "03.10.2026; дата не хранится", who: null, source: "закупка" },
-      ] });
-    }
-    return json({ lines: [], buyers: [], stages: [], next_cursor: null });
-  });
+  mockServer({ "procurement.today": true }, [section("rfq", "Запросить КП", [card], { positions: 3 })]);
   render(<ProcurementPage />);
-  const board = await screen.findByRole("list", { name: "Доска «Сегодня»" });
-  const titles = Array.from(board.querySelectorAll(":scope > [role=listitem] h2")).map((node) => node.textContent);
-  expect(titles).toEqual(["Нет ответа на запрос КП", "Выбрать поставщика", "В работе: запросить, выбрать поставщика"]);
+  const group = await screen.findByRole("button", { name: /ВП-001/ });
+  expect(group).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByText("3 поз.")).toBeInTheDocument();
+  expect(screen.queryByText("Разъём 1")).not.toBeInTheDocument();
+  fireEvent.click(group);
+  const positions = screen.getByRole("list", { name: "Позиции: ВП-001" });
+  expect(within(positions).getByRole("link", { name: /Разъём 1/ })).toHaveAttribute(
+    "href", "?section=procurement&tab=requests&project=%D0%92%D0%9F-001&line=l-1");
+  expect(within(positions).getByRole("link", { name: "и ещё 1 — открыть все →" })).toBeInTheDocument();
 
-  fireEvent.click(screen.getAllByRole("button", { name: /Без проекта/ })[0]);
-  expect(await screen.findByText(/нет ответа на запрос — ООО Молчит/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Открыть запрос КП-2610-001" })).toBeInTheDocument();
+  const moved = vi.fn();
+  window.addEventListener("popstate", moved);
+  fireEvent.click(within(positions).getByRole("link", { name: /Разъём 2/ }));
+  window.removeEventListener("popstate", moved);
+  expect(moved).toHaveBeenCalled(); // in-app: the address changes and the shell follows, no reload
+  const url = new URL(window.location.href);
+  expect(Object.fromEntries(url.searchParams)).toEqual({ section: "procurement", tab: "requests", project: "ВП-001", line: "l-2" });
+});
 
-  fireEvent.click(screen.getByRole("button", { name: "История Разъём" }));
-  const panel = await screen.findByRole("dialog", { name: "История Разъём" });
-  expect(await within(panel).findByText("Заявка SM-1 создана")).toBeInTheDocument();
-  expect(within(panel).getByText("14.09.2026 09:00")).toBeInTheDocument();
-  expect(within(panel).getByText("03.10.2026; дата не хранится")).toBeInTheDocument();
-  expect(within(panel).getByText("без даты")).toBeInTheDocument();
+it("«Новая заявка» opens the request form in the app", async () => {
+  mockServer({ "procurement.today": true }, []);
+  render(<ProcurementPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Новая заявка" }));
+  expect(new URL(window.location.href).searchParams.get("section")).toBe("newrequest");
+});
+
+it("refreshes itself every minute", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fetch = mockServer({ "procurement.today": true }, []);
+  render(<ProcurementPage />);
+  await screen.findByRole("heading", { name: "Всё спокойно" });
+  const calls = () => fetch.mock.calls.filter(([input]) => String(input) === "/api/procurement/today").length;
+  expect(calls()).toBe(1);
+  await act(async () => { vi.advanceTimersByTime(60_000); });
+  await waitFor(() => expect(calls()).toBe(2));
+});
+
+it("the documents tabs open on the status a «Сегодня» link names", async () => {
+  window.history.replaceState({}, "", "/?section=procurement&tab=invoices&status=to_pay");
+  const fetch = mockServer({ "procurement.today": true, "documents.chain": true }, [], (path) =>
+    path.startsWith("/api/purchasing/invoices") ? json({ items: [], total: 0, page: 1, page_size: 50, counts: {} }) : null);
+  render(<ProcurementPage />);
+  await waitFor(() => expect(fetch.mock.calls.some(([input]) => String(input).startsWith("/api/purchasing/invoices") && String(input).includes("status=to_pay"))).toBe(true));
+  cleanup();
+  resetStageOptions();
+  vi.restoreAllMocks();
+
+  window.history.replaceState({}, "", "/?section=procurement&tab=upd&status=needs_review");
+  const second = mockServer({ "procurement.today": true, "documents.upd": true }, [], (path) =>
+    path.startsWith("/api/purchasing/upd") ? json({ items: [], total: 0, page: 1, page_size: 50, counts: {}, review: 0, origins: {}, buyers: [] }) : null);
+  render(<ProcurementPage />);
+  await waitFor(() => expect(second.mock.calls.some(([input]) => String(input).startsWith("/api/purchasing/upd?") && String(input).includes("status=needs_review"))).toBe(true));
 });

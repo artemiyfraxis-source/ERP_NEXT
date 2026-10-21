@@ -157,7 +157,7 @@ function FollowupsBlock({ data, onOpenOrder, onOpenRfq }: {
             <div className="muted">Поставки к сроку:</div>
             <ul>
               {data.late.map((item) => order(item, `ждали ${formatDayMonth(item.date)}, просрочено на ${item.days} дн.`))}
-              {data.arriving.map((item) => order(item, `приезжает ${item.days === 0 ? "сегодня" : "завтра"}`))}
+              {data.arriving.map((item) => order(item, `приезжает ${item.days === 0 ? "сегодня" : item.days === 1 ? "завтра" : `через ${item.days} дн.`}`))}
             </ul>
           </>
         )}

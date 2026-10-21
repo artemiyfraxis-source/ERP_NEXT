@@ -3907,24 +3907,39 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .theme-switch-buttons button[aria-pressed="true"] { color: var(--on-accent); background: var(--primary); border-color: var(--primary); }
 .theme-switch-buttons button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
-/* «Сегодня» как доска (Витя): поля по срочности → карточки проектов → позиции проекта. Только токены — есть тёмная тема. */
-.today-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 10px; overflow-x: auto; padding-bottom: 6px; align-items: start; }
-.today-field { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); min-height: 120px; }
-.today-field.urgent { border-color: var(--tone-danger); }
-.today-field header { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
-.today-field h2 { margin: 0; font-size: 12.5px; font-weight: 700; }
-.today-count { font-size: 11px; font-weight: 700; color: var(--muted-foreground); }
-.today-card { display: grid; gap: 3px; width: 100%; text-align: left; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); cursor: pointer; font: inherit; }
-.today-card:hover { border-color: var(--primary); }
-.today-card.active { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary) inset; }
-.today-card-head { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; }
-.today-card-head span { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
-.today-card small { color: var(--muted-foreground); font-size: 11px; }
-.today-days { font-size: 11.5px; font-weight: 600; color: var(--tone-warn); }
-.today-days.late { color: var(--tone-danger); }
-.today-drill { margin-top: 12px; }
-.today-drill-actions { display: inline-flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
-.today-stage { font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+/* «Сегодня» (Roller_Buyer TodayPage): карточки разделов по порядку дел, цвет — тон раздела; карточки проектов и заказов
+   раскрываются на месте. Только токены — светлая и тёмная тема. */
+.today-head { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
+.today-head .spacer { flex: 1; }
+.today-head a.secondary { text-decoration: none; }
+.today-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; align-items: start; }
+.today-card { --tone: var(--muted-foreground); border: 1px solid var(--border); border-top: 3px solid var(--tone); border-radius: 12px; background: var(--card); overflow: hidden; }
+.today-card.tone-danger { --tone: var(--tone-danger); }
+.today-card.tone-warning { --tone: var(--tone-warn); }
+.today-card.tone-accent { --tone: var(--primary); }
+.today-card.tone-neutral { --tone: var(--muted-foreground); }
+.today-card.tone-success { --tone: var(--tone-ok); }
+.today-card header { padding: 12px 14px 8px; }
+.today-card h3 { margin: 0 0 2px; font-size: 14px; }
+.today-card header .muted { font-size: 12.5px; }
+.today-count { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 10px; background: color-mix(in srgb, var(--tone) 15%, transparent); color: var(--tone); font-size: 12px; text-align: center; }
+.today-positions { font-size: 12px; font-weight: 400; }
+.today-card ul { list-style: none; margin: 0; padding: 0 0 6px; }
+.today-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; width: 100%; padding: 6px 14px; border: 0; border-top: 1px solid var(--border); color: inherit; background: none; font: inherit; text-align: left; text-decoration: none; }
+a.today-row, button.today-row { cursor: pointer; }
+a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix(in srgb, var(--primary) 7%, transparent); }
+.today-caret { display: inline-block; width: 12px; color: var(--muted-foreground); }
+.today-card ul.today-lines { padding: 0 0 4px; background: color-mix(in srgb, var(--primary) 4%, transparent); }
+.today-card ul.today-lines .today-row { padding-left: 34px; }
+.today-lines-all a { display: block; padding: 4px 14px 2px 34px; font-size: 12px; color: var(--primary); text-decoration: none; }
+.today-lines-all a:hover { text-decoration: underline; }
+.today-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.today-detail { grid-column: 1; color: var(--muted-foreground); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.today-days { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-weight: 600; color: var(--tone); font-size: 12px; white-space: nowrap; }
+.today-more { padding: 0 14px 10px; font-size: 12px; }
+.today-calm { text-align: center; padding: 30px; margin-bottom: 14px; }
+.today-calm h3 { margin: 0 0 6px; }
+@media (max-width: 760px) { .today-grid { grid-template-columns: 1fr; } }
 
 /* Закупка-гибрид: «Справочник поставщиков» и «Настройки закупки». Только переменные темы. */
 .supplier-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
@@ -3962,7 +3977,6 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .kpi-note { margin: 8px 2px 0; font-size: 12px; color: var(--muted-foreground); line-height: 1.45; }
 .purchasing-setting-default { font-size: 12px; color: var(--muted-foreground); white-space: nowrap; }
 .table-panel > .purchasing-toolbar, .purchasing-toolbar + .calendar-chips { padding-left: 20px; padding-right: 20px; }
-.today-more { color: var(--muted-foreground); font-size: 11.5px; padding: 2px 4px; }
 
 /* Номенклатура под наименованием партии / строки приёмки (option references.items). */
 .lot-item-chip { display: block; font-size: 12px; white-space: normal; }
@@ -4010,7 +4024,6 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .history-timeline li > div { display: grid; gap: 1px; min-width: 0; overflow-wrap: anywhere; }
 .history-timeline li > div span { color: var(--foreground); }
 .history-timeline li > div small { color: var(--muted-foreground); font-size: 11px; }
-.today-link { display: block; margin-top: 2px; color: var(--muted-foreground); font-size: 11.5px; }
 
 /* «Новый запрос КП» (RfqPool.tsx): the buyer's lines by category as a dense sheet, a sticky selection bar, then the
    suppliers with their reasons. Rows stay one line high; the nomenclature cell wraps its chips. */
