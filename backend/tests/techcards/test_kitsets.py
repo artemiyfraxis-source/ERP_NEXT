@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -141,6 +142,32 @@ def test_refresh_keeps_person_edits_and_lot_binding():
                                       who="Технолог", now=NOW)
     assert cleared.assembly("КБ1").components[0].lot is None
 
+
+
+def test_technologist_row_stays_at_the_end_until_the_calculation_lists_it():
+    data = parse(calc_sheets(), "708К.4")
+    first = write_from_calc(data, None, who="Технолог", now=NOW)
+    tube = KitComponent(article="ТТК 4,8/1,6мм", type="ТТК", per_unit=Decimal("0.04"))
+    added = first.with_component("кб1", tube, who="Технолог", now=NOW)
+    assert added.version == first.version + 1
+    assert [(item.article, item.manual) for item in added.assembly("КБ1").components][-1] == ("ТТК 4,8/1,6мм", True)
+
+    refreshed = write_from_calc(data, added, who="Технолог", now=NOW)
+    assert refreshed.assembly("КБ1").components[-1].article == "ТТК 4,8/1,6мм"
+    assert refreshed.assembly("КБ1").components[-1].manual
+
+    kb1 = data.assemblies[0]
+    calc_tube = KitComponent(article="ТТК 4,8/1,6мм", type="ТТК")
+    listed = replace(data, assemblies=(replace(kb1, components=(*kb1.components, calc_tube)), *data.assemblies[1:]))
+    taken = write_from_calc(listed, refreshed, who="Технолог", now=NOW).assembly("КБ1").components
+    assert [(item.article, item.manual, item.per_unit) for item in taken if item.article == "ТТК 4,8/1,6мм"] == [
+        ("ТТК 4,8/1,6мм", False, Decimal("0.04")),
+    ]
+
+    with pytest.raises(KitsetValidationError, match="пришёл из расчёта"):
+        refreshed.without_component("КБ1", "UL1007 22AWG", who="Технолог", now=NOW)
+    gone = refreshed.without_component("КБ1", "ТТК 4,8/1,6мм", who="Технолог", now=NOW)
+    assert gone.assembly("КБ1").components == first.assembly("КБ1").components
 
 def test_refresh_keeps_hand_set_piece_scrap_and_defaults_only_new_lines():
     data = parse(calc_sheets(), "708К.4")

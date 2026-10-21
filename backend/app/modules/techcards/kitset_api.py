@@ -42,6 +42,7 @@ from app.workflows import project_track as track_flow
 
 from .application import CreateProjectTechcardCommand, create_project_techcard
 from .kitsets import (
+    KitComponent,
     Kitset,
     KitsetNotFound,
     clean_folder_url,
@@ -49,6 +50,7 @@ from .kitsets import (
     document_json,
     document_kind,
     item_id,
+    kit_number,
     sort_kitsets,
     supply_state,
 )
@@ -836,7 +838,22 @@ def bom(
     Аналог по КД → оригинал к применению (kitUseArt_): генератор ищет контакт по артикулу к применению.
     `calc_ops` — строки листа КБn расчёта (`tcCalcOps_`): длины резки и лужение сметчика. Хранятся в карточке с
     заведения / «Обновить из расчёта»; у старой карточки лист читается один раз и запоминается."""
-    kitset = _kitset(request, project)
+    return _bom(request, _kitset(request, project), index)
+
+
+
+class BomComponentPayload(BaseModel):
+    type: str = Field(default="", max_length=64)
+    art: str = Field(min_length=1, max_length=255)
+    name: str = Field(default="", max_length=1024)
+    per: str = Field(min_length=1, max_length=32)
+
+
+class BomComponentRef(BaseModel):
+    art: str = Field(min_length=1, max_length=255)
+
+
+def _bom(request: Request, kitset: Kitset, index: str) -> dict:
     assembly = kitset.assembly(index)
     if assembly is None:
         raise HTTPException(status_code=404, detail=f"В наборе «{kitset.project}» нет сборки {index}")
@@ -844,6 +861,42 @@ def bom(
         kitset, assembly, lambda: flow.calc_sheets_reader(request.app.state), techcards_factory(request),
     ))
 
+
+@router.post("/{project}/bom/{index}/components")
+def add_bom_component(
+    project: str,
+    index: str,
+    payload: BomComponentPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Технолог добавляет комплектующее в состав КБ из генератора (владелец 21.10.2026): строка встаёт в набор проекта —
+    её видят «Проекты», резерв ГРН и «Отправить на комплектацию». Ответ — обновлённый состав и `note`, если КБ уже
+    отправлена на комплектацию (в живую заявку строка не попадёт)."""
+    component = KitComponent(article=payload.art, type=payload.type, name=payload.name, per_unit=kit_number(payload.per))
+    kitset, kitted = _run(lambda: reserve_flow.add_row(
+        project, index, component, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+    ))
+    note = (f"{index} уже отправлена на комплектацию — в её заявку строка не попадёт: после выдачи комплекта "
+            "довыдайте её («Довыдать» в заявке).") if kitted else ""
+    return {"bom": _bom(request, kitset, index), "note": note}
+
+
+@router.post("/{project}/bom/{index}/components/remove")
+def remove_bom_component(
+    project: str,
+    index: str,
+    payload: BomComponentRef,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Убрать строку, добавленную технологом (строку расчёта убирают в расчёте); её резерв ГРН снимается."""
+    kitset = _run(lambda: reserve_flow.remove_row(
+        project, index, payload.art, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+    ))
+    return {"bom": _bom(request, kitset, index)}
 
 class TechcardPayload(BaseModel):
     deadline: date | None = None

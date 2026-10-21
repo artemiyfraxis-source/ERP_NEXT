@@ -8,6 +8,7 @@ import {
   techcardsApi,
   type AssemblyDraft,
   type GrapherImportResult,
+  type KitComponentInput,
   type KitsetBom,
   type ProjectTechcard,
   type TerminalResolution,
@@ -93,6 +94,7 @@ import {
   manualProblem, proposeFromKd, selectBlock, type KdCard, type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { ComplexCables } from "./ComplexCables";
+import { KitComponentAdd } from "./KitComponentAdd";
 import { CableCoreColors } from "./CableCoreColors";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { TER_L_MINUS_HINT, TER_L_PLUS_HINT } from "./referenceLabels";
@@ -184,13 +186,20 @@ async function readRefs(): Promise<Refs> {
   };
 }
 
+/** Правка состава КБ из генератора: добавить строку технолога, убрать её, отдать новый состав наверх. */
+export type KitEdit = {
+  add: (row: KitComponentInput) => Promise<{ bom: KitsetBom; note: string }>;
+  remove: (art: string) => Promise<KitsetBom>;
+  apply: (bom: KitsetBom) => void;
+};
+
 /**
  * Генератор техкарт — порт формы SUPPLYMAP TcGenInline.html. Собирает тот же config, что уходил в
  * portalTechmapGenerate, и отдаёт его в `onBuild` (→ POST /api/techcards/projects/{id}/build).
  * Данные — `portalTcGenData` → `tcLoadBomFromKit`: состав сборки из набора проекта и строки листа КБn расчёта
  * (`kit`, GET /api/techcards/kitsets/{project}/bom/{index}); нет набора — ошибка вместо формы (`kitError`).
  */
-export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange, userId, onOpenDrawing }: {
+export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange, userId, onOpenDrawing, kitEdit }: {
   card: ProjectTechcard;
   kit?: KitsetBom | null;
   kitError?: string;
@@ -209,6 +218,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   userId?: string;
   /** «Открыть чертёж» после «Построить чертёж» — вкладка «Чертёж КБn» карточки проекта. */
   onOpenDrawing?: () => void;
+  /** Право дописать комплектующее в состав КБ (правка «Проектов»): `apply` отдаёт новый состав владельцу `kit`. */
+  kitEdit?: KitEdit;
 }) {
   const [refs, setRefs] = useState<Refs | null>(null);
   const [S, setS] = useState<GenState>(emptyState);
@@ -247,6 +258,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     return { byId, groups: sorted };
   }, [refs]);
 
+  const manualIds = useMemo(() => new Set((kit?.components || []).filter((item) => item.manual).map((item) => item.id)), [kit]);
   const components = useMemo<Comp[]>(() => (kit?.components || []).map((item) => ({
     id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", kd: item.kd || "", qty: item.qty,
   })), [kit]);
@@ -305,6 +317,26 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Засев — один раз на карту и набор: обновлённый справочник («Записать в БД», «Добавить в БД.КОАКС») форму не
   // пересевает — иначе введённое после засева (длина по чертежу, концы) пропадало.
   const seededFor = useRef<{ card: string; kit: KitsetBom } | null>(null);
+  // Дописанное технологом комплектующее меняет состав, но форму не пересевает: введённое остаётся, новая строка
+  // появляется в выборе компонентов.
+  const [kitAdding, setKitAdding] = useState(false);
+  const [kitNote, setKitNote] = useState<{ text: string; error: boolean }>({ text: "", error: false });
+  useEffect(() => { setKitAdding(false); setKitNote({ text: "", error: false }); }, [card.id]);
+  function kitChanged(bom: KitsetBom) {
+    seededFor.current = { card: card.id, kit: bom };
+    kitEdit?.apply(bom);
+  }
+  async function addKitComponent(row: KitComponentInput) {
+    if (!kitEdit) return;
+    const result = await kitEdit.add(row);
+    kitChanged(result.bom);
+    setKitNote({ text: result.note, error: false });
+  }
+  async function removeKitComponent(art: string) {
+    if (!kitEdit) return;
+    try { kitChanged(await kitEdit.remove(art)); setKitNote({ text: "", error: false }); }
+    catch (reason) { setKitNote({ text: failureText(reason, "Строка не убрана"), error: true }); }
+  }
   useLayoutEffect(() => {
     if (!refs || !kit) return;
     if (seededFor.current && seededFor.current.card === card.id && seededFor.current.kit === kit) return;
@@ -1075,11 +1107,15 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   const sheet = <section className={manualTab ? "gsec full" : "gsec"} aria-label="Данные из листа">
     <div className="gsec-head"><h3>Данные из листа</h3>
-      <span className="gsec-meta">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="kv" key={key}>{key} <b>{value}</b></span>)}</span></div>
+      <span className="gsec-meta">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="kv" key={key}>{key} <b>{value}</b></span>)}</span>
+      {kitEdit && !kitAdding && <button type="button" className="btn-link" onClick={() => { setKitAdding(true); setKitNote({ text: "", error: false }); }}>+ Комплектующее</button>}</div>
     <div className="gtable-wrap is-full"><table className="gtable"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th className="num">Кол-во</th></tr></thead><tbody>
-      {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td>{c.name}</td><td className="muted">{c.art}{c.kd && <small>по КД: {c.kd}</small>}</td><td className="num">{String(c.qty)}</td></tr>)}
+      {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td>{c.name}{manualIds.has(c.id) && <small>добавил технолог</small>}</td><td className="muted">{c.art}{c.kd && <small>по КД: {c.kd}</small>}</td>
+        <td className="num nowrap">{String(c.qty)}{kitEdit && manualIds.has(c.id) && <button type="button" className="btn-remove" title="Убрать из комплектации" aria-label={`Убрать ${c.art} из комплектации`} onClick={() => void removeKitComponent(c.art)}>×</button>}</td></tr>)}
       {!components.length && <tr><td colSpan={4} className="gtable-empty">СПЯ не найдена</td></tr>}
     </tbody></table></div>
+    {kitAdding && <KitComponentAdd types={components.map((c) => c.type)} onAdd={addKitComponent} onClose={() => setKitAdding(false)} />}
+    {kitNote.text && <div className={kitNote.error ? "error-banner" : "warning-inline"} role={kitNote.error ? "alert" : "status"}>{kitNote.text}</div>}
   </section>;
 
   const sideSection = (side: Side) => {

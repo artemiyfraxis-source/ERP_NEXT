@@ -855,6 +855,8 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
   const [notice, setNotice] = useState("");
   const [kit, setKit] = useState<{ data: KitsetBom | null; error: string }>({ data: null, error: "" });
   const canIssue = principal.permissions.techcards === "edit";
+  // Дописать комплектующее в состав — правка набора проекта, как строки спецификации в «Проектах».
+  const canKit = hasFullAccess(principal) || principal.permissions.projects === "edit";
   useEffect(() => { setConfigText(JSON.stringify(defaultConfig(card), null, 2)); }, [card.id, card.version]);
   useEffect(() => {
     // SUPPLYMAP portalTcGenData → tcLoadBomFromKit: состав из набора проекта + строки листа КБn расчёта;
@@ -917,6 +919,11 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
 
   return <div className="gen-pane">
     <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} builtId={builtId} onBuiltChange={onBuiltChange} onOpenDrawing={onOpenDrawing}
+      kitEdit={canKit ? {
+        add: (row) => kitsetsApi.addComponent(card.project, card.item_index, row),
+        remove: async (art) => (await kitsetsApi.removeComponent(card.project, card.item_index, art)).bom,
+        apply: (bom) => setKit({ data: bom, error: "" }),
+      } : undefined}
       userId={principal.user.id} onConfig={(config) => { generatedConfig.current = config; }}
       /* JSON-конфигурация — служебная, только админу (владелец 29.09: «что это такое и зачем»). */
       more={!hasFullAccess(principal) ? undefined : <div className="build-config">
