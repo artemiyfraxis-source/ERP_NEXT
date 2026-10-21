@@ -112,6 +112,8 @@ class CreateRfqInput(BaseModel):
     line_ids: list[UUID] = Field(min_length=1, max_length=200)
     title: str | None = Field(default=None, max_length=255)
     suppliers: list[PickSupplierInput] = Field(default_factory=list, max_length=100)
+    sent_on: date | None = None  # the request went out that day: every supplier is marked sent
+    declined_suggestions: list[UUID] = Field(default_factory=list, max_length=20)  # rotation suggestions unticked
 
 
 class SupplierLinesInput(BaseModel):
@@ -323,7 +325,8 @@ def rfq_create(payload: CreateRfqInput, principal: Edit, now: Now, uow: Uow, lin
                              None if item.line_ids is None else tuple(item.line_ids))
         for item in payload.suppliers
     ]
-    return _run(lambda: service.create_rfq(uow(), lines, principal.actor, now, payload.line_ids, payload.title, picks))
+    return _run(lambda: service.create_rfq(uow(), lines, principal.actor, now, payload.line_ids, payload.title, picks,
+                                           payload.sent_on, payload.declined_suggestions))
 
 
 @router.get("/{rfq_id}")

@@ -33,6 +33,7 @@ from .infrastructure import (
     DecisionRow,
     DocumentFileRow,
     ItemRow,
+    RfqDeclinedSuggestionRow,
     LineItemRow,
     QuoteLineRow,
     QuoteRow,
@@ -305,12 +306,18 @@ def stored_reason(reason: str) -> str:
 
 def create_rfq(
     uow: UnitOfWork, lines: ProcurementLines, actor: Actor, now: datetime, line_ids: Sequence[UUID], title: str | None,
-    suppliers: Sequence[SupplierPick] = (),
+    suppliers: Sequence[SupplierPick] = (), sent_on: date | None = None, declined: Sequence[UUID] = (),
 ) -> dict:
-    """The request with its lines and, in the same transaction, the suppliers picked from the suggestion."""
+    """The request with its lines and, in the same transaction, the suppliers picked from the suggestion.
+
+    `sent_on` — the request already went out that day (Roller RfqCreatePanel «Дата отправки»): every supplier is marked
+    sent; omitted — each is marked when his letter is used. `declined` — rotation suggestions the buyer unticked: kept
+    on record (Roller declinedSuggestion), not asked."""
     ids = list(dict.fromkeys(line_ids))
     if not ids:
         raise Refused("Выберите строки для запроса")
+    if sent_on is not None and (sent_on > _today(now) or sent_on < _today(now) - timedelta(days=60)):
+        raise Refused("Дата отправки — не позже сегодняшней и не раньше чем за 60 дней")
     views = lines.get_many(ids)
     for line_id in ids:
         view = views.get(line_id)
@@ -363,15 +370,28 @@ def create_rfq(
             else:
                 added[supplier.id] = (reason, asked)
         session.flush()
+        sent_at = None
+        if sent_on is not None:
+            sent_at = now if sent_on == _today(now) else datetime.combine(sent_on, time(12), now.tzinfo)
+        refused = list(dict.fromkeys(declined))
+        if set(refused) & set(added):
+            raise Refused("Поставщик не может быть одновременно в запросе и в отказе от подсказки")
+        for supplier_id in refused:
+            row = session.get(SupplierRow, supplier_id)
+            if row is None:
+                raise NotFound("Поставщик не найден")
+            session.add(RfqDeclinedSuggestionRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier_id, reason="rotation",
+                                                 created_at=now, created_by=actor.id))
         everything = set(rfq_line_of.values())
         for supplier_id, (reason, asked) in added.items():
-            rfq_supplier = RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier_id, reason=reason, created_at=now)
+            rfq_supplier = RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier_id, reason=reason, sent_at=sent_at,
+                                          created_at=now)
             session.add(rfq_supplier)
             if asked is not None and not asked >= everything:
                 session.flush()
                 _ask_for(session, rfq_supplier.id, asked, everything)
         _audit(uow, rfq.id, "purchasing.rfq_created", actor, now,
-               {"number": rfq.number, "lines": str(len(ids)), "suppliers": str(len(added))})
+               {"number": rfq.number, "lines": str(len(ids)), "suppliers": str(len(added)), "declined": str(len(refused))})
         uow.commit()
         return {"id": str(rfq.id), "number": rfq.number, "suppliers": len(added)}
 
@@ -934,6 +954,14 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
                 "note": rfq.note, "version": rfq.version,
             },
             "removed": _removed_lines(session, lines, rfq.id),
+            # Rotation suggestions unticked when the request was created: offered a turn, not asked.
+            "declined_suggestions": [
+                {"supplier_id": str(supplier.id), "name": supplier.name}
+                for supplier in session.scalars(
+                    select(SupplierRow).join(RfqDeclinedSuggestionRow, RfqDeclinedSuggestionRow.supplier_id == SupplierRow.id)
+                    .where(RfqDeclinedSuggestionRow.rfq_id == rfq.id).order_by(SupplierRow.name))
+                if supplier.id not in {pair[1].id for pair in suppliers}
+            ],
             "settings": {"gate_min_quotes": min_quotes, "gate_require_non_key": require_non_key,
                          "default_vat_rate": num(Decimal(values["default_vat_rate"])),
                          "quote_wait_days": int(values["quote_wait_days"]), "delivery_default": num(delivery_default)},

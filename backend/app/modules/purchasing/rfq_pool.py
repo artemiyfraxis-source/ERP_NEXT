@@ -311,7 +311,8 @@ def suggest(
         analysis = stats.analyse(session, views)
         categories = {_insight(analysis, view).category for view in views}
         directory = Directory(session)
-        rotation_size = int(purchasing_settings.load(session)["rotation_non_key"])
+        values = purchasing_settings.load(session)
+        rotation_size = int(values["rotation_non_key"])
         last_asked = dict(session.execute(
             select(RfqSupplierRow.supplier_id, func.max(RfqSupplierRow.sent_at))
             .where(RfqSupplierRow.sent_at.is_not(None)).group_by(RfqSupplierRow.supplier_id)
@@ -394,6 +395,8 @@ def suggest(
         return {
             "categories": [code for code, _ in GROUPS if code in categories],
             "lines": len(views),
+            # Roller RfqCreatePanel: fewer suppliers than the gate wants — ask someone else too.
+            "gate_min_quotes": int(values["gate_min_quotes"]),
             "suggestions": [_suggestion(item, in_rfq, last_asked, line_insights) for item in ordered],
         }
 

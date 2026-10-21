@@ -377,6 +377,13 @@ function SupplierLinesList({ items, lines, chosen, onChange }: {
   );
 }
 
+/** Rotation suggestions the buyer unticked: recorded with the request (Roller declinedSuggestion), not asked. */
+export function declinedRotation(items: SupplierSuggestion[], picks: SupplierPick[]): string[] {
+  const asked = new Set(picks.map((pick) => pick.supplier_id).filter(Boolean));
+  return items.filter((item) => item.supplier_id && !item.in_rfq && item.preselect && item.reasons.some((reason) => reason.code === "rotation")
+    && !asked.has(item.supplier_id)).map((item) => item.supplier_id!);
+}
+
 /** The supplier picks to send: from the directory by id, the rest by name (the server quick-adds them). */
 export function picksOf(items: SupplierSuggestion[], checked: Set<string>): SupplierPick[] {
   return items
@@ -404,6 +411,8 @@ function SuggestPanel({ lineIds, lines, onBack, onCreated }: {
   const [directory, setDirectory] = useState<SupplierBrief[]>([]);
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
+  // The day the request went out (Roller «Дата отправки»); empty — each supplier is marked when his letter is used.
+  const [sentOn, setSentOn] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -436,7 +445,9 @@ function SuggestPanel({ lineIds, lines, onBack, onCreated }: {
     setBusy(true);
     setError("");
     try {
-      const created = await rfqApi.create(lineIds, title.trim(), picks);
+      const created = await rfqApi.create(lineIds, title.trim(), picks, {
+        sent_on: sentOn || null, declined_suggestions: declinedRotation(items, picks),
+      });
       onCreated(created.id);
     } catch (reason) {
       setError(failureText(reason, "Запрос не создан"));
@@ -446,6 +457,8 @@ function SuggestPanel({ lineIds, lines, onBack, onCreated }: {
 
   const picks = picksWithLines(items, chosen);
   const asks = picks.reduce((sum, pick) => sum + (pick.line_ids?.length ?? 0), 0);
+  const minQuotes = result?.gate_min_quotes ?? 3;
+  const declined = declinedRotation(items, picks);
   return (
     <div className="rfq-suggest" aria-label="Поставщики для запроса" role="region">
       <div className="rfq-pool-head">
@@ -471,6 +484,20 @@ function SuggestPanel({ lineIds, lines, onBack, onCreated }: {
         </datalist>
         <button type="submit" className="secondary small" disabled={!name.trim()}>+ поставщик по названию</button>
       </form>
+      <label className="rfq-suggest-title">Дата отправки (необязательно)
+        <input type="date" aria-label="Дата отправки" value={sentOn} onChange={(event) => setSentOn(event.target.value)} />
+        <small className="muted">Если запрос уже ушёл — все поставщики будут отмечены отправленными. Пусто — отметится, когда письмо уйдёт.</small>
+      </label>
+      {picks.length < minQuotes && (
+        <p className="rfq-few" title={`Поставщика потом можно выбрать без вопросов, только если по строке будет не меньше ${minQuotes} КП с ценой и хотя бы одно не от ключевого. Спрашивайте с запасом: кто-то не ответит.`}>
+          Поставщиков: {picks.length} — для гейта нужно не меньше {minQuotes} КП, спросите ещё кого-нибудь
+        </p>
+      )}
+      {declined.length > 0 && (
+        <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+          Подсказку ротации не берёте ({items.filter((item) => item.supplier_id && declined.includes(item.supplier_id)).map((item) => item.name).join(", ")}) — это запишется в запрос: ему предлагали очередь.
+        </p>
+      )}
       <div className="bulk-bar rfq-pool-bar" role="toolbar" aria-label="Создание запроса">
         <span>Поставщиков: {picks.length} · запросов позиций: {asks}</span>
         <span className="spacer" />

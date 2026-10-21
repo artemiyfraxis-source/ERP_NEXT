@@ -236,6 +236,11 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
       {rfq.note && <p className="page-sub">{rfq.note}</p>}
+      {(matrix.declined_suggestions?.length ?? 0) > 0 && (
+        <p className="muted" style={{ margin: 0, fontSize: 12 }} title="Подсказка ротации, от которой отказались при создании запроса: поставщику предлагали очередь">
+          Подсказка системы — не запрашивали: {matrix.declined_suggestions!.map((item) => item.name).join(", ")}
+        </p>
+      )}
       {letters && suppliers.length > 0 && (
         <RfqLetters matrix={matrix} editable={editable} onClose={() => setLetters(false)} onSent={(message) => void refresh(message)} />
       )}

@@ -90,6 +90,8 @@ export type RfqMatrix = {
   };
   /** lines taken out of the request (newest first) */
   removed?: RemovedLine[];
+  /** rotation suggestions unticked when the request was created: offered a turn, not asked */
+  declined_suggestions?: { supplier_id: string; name: string }[];
   settings: {
     gate_min_quotes: number; gate_require_non_key: boolean; default_vat_rate: string;
     quote_wait_days?: number; delivery_default?: string;
@@ -137,7 +139,7 @@ export type SupplierSuggestion = {
   reason: SuggestReasonCode; rfq_reason: string; preselect: boolean; in_rfq: boolean; last_asked_at: string | null;
   lines: SuggestLine[];
 };
-export type SuggestResult = { categories: string[]; lines: number; suggestions: SupplierSuggestion[] };
+export type SuggestResult = { categories: string[]; lines: number; suggestions: SupplierSuggestion[]; gate_min_quotes?: number };
 /** `line_ids` — the procurement lines asked of this supplier; omitted — every line of the request. */
 export type SupplierPick = { supplier_id?: string; name?: string; reason: string; line_ids?: string[] };
 
@@ -207,8 +209,9 @@ export const rfqApi = {
   list: (scope: "mine" | "all") => api<{ rfqs: RfqSummary[] }>(`${BASE}?scope=${scope}`),
   candidates: () => api<{ lines: RfqCandidate[] }>(`${BASE}/candidates`),
   pool: () => api<RfqPoolResult>(`${BASE}/pool`),
-  create: (lineIds: string[], title: string, suppliers: SupplierPick[] = []) =>
-    post<{ id: string; number: string; suppliers: number }>(BASE, { line_ids: lineIds, title: title || null, suppliers }),
+  create: (lineIds: string[], title: string, suppliers: SupplierPick[] = [],
+    options: { sent_on?: string | null; declined_suggestions?: string[] } = {}) =>
+    post<{ id: string; number: string; suppliers: number }>(BASE, { line_ids: lineIds, title: title || null, suppliers, ...options }),
   matrix: (id: string) => api<RfqMatrix>(`${BASE}/${id}`),
   directory: () => api<{ suppliers: SupplierBrief[] }>(`${BASE}/directory`),
   suggest: (id: string) => api<SuggestResult>(`${BASE}/suggest?rfq_id=${encodeURIComponent(id)}`),

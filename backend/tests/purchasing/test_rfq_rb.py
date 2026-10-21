@@ -13,7 +13,8 @@ from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.modules.purchasing import rfq as rfq_service
 from app.modules.purchasing import rfq_batch
 from app.modules.purchasing.infrastructure import (
-    DecisionRow, DocumentFileRow, InvoiceFileRow, InvoiceRow, ItemAliasRow, ItemRow, QuoteRow, RfqLineRow, SupplierRow,
+    DecisionRow, DocumentFileRow, InvoiceFileRow, InvoiceRow, ItemAliasRow, ItemRow, QuoteRow, RfqLineRow, RfqSupplierRow,
+    SupplierRow,
 )
 from app.modules.purchasing.items import alias_key
 from app.modules.purchasing.quote_import import read_header
@@ -549,3 +550,31 @@ def test_an_invoice_older_than_the_request_cannot_be_its_order(rfq_api):
     answer = client.post(f"{BASE}/{rfq['id']}/kaiten/{invoice}", json={
         "picks": [{"seq": 1, "rfq_line_id": cable["id"], "quantity": "100"}], "dry_run": True})
     assert answer.status_code == 422 and "раньше запроса КП" in answer.json()["detail"]
+
+
+# ── creating a request: the send date, a declined rotation suggestion ───────────────────────────────────────────────
+
+
+def test_a_request_created_as_sent_and_with_a_declined_rotation_suggestion(rfq_api):
+    client, lines, sessions = rfq_api
+    with sessions() as session:
+        rotation = SupplierRow(id=uuid4(), name="ООО Давно", name_key="давно", categories=[], is_key=False, domains=[],
+                               created_at=NOW, version=1)
+        session.add(rotation)
+        session.commit()
+        rotation_id = str(rotation.id)
+    body = {"line_ids": [str(lines[0].id)], "suppliers": [{"name": "ООО Ключ"}], "sent_on": "2026-09-14",
+            "declined_suggestions": [rotation_id]}
+    both = client.post(BASE, json={**body, "suppliers": [{"supplier_id": rotation_id}]})
+    assert both.status_code == 422 and "отказе от подсказки" in both.json()["detail"]
+    future = client.post(BASE, json={**body, "sent_on": "2026-12-01"})
+    assert future.status_code == 422
+    created = client.post(BASE, json=body)
+    assert created.status_code == 201, created.text
+    matrix = client.get(f"{BASE}/{created.json()['id']}").json()
+    assert matrix["suppliers"][0]["sent_at"].startswith("2026-09-14")
+    assert matrix["declined_suggestions"] == [{"supplier_id": rotation_id, "name": "ООО Давно"}]
+    # The declined one is not asked: rotation still sees him as never asked.
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(RfqSupplierRow).where(RfqSupplierRow.supplier_id == UUID(rotation_id))) == 0
+
