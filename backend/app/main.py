@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -58,6 +59,16 @@ app = FastAPI(
     description="Gradual replacement for the Google Apps Script ERP contour",
     version="0.1.0",
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_without_input(_request: Request, error: RequestValidationError) -> JSONResponse:
+    """FastAPI's 422 echoes the whole rejected body back (`input`) — a password among it on a bad login (21.10).
+    Keep only where and what failed."""
+    return JSONResponse(status_code=422, content={"detail": [
+        {key: item[key] for key in ("type", "loc", "msg") if key in item} for item in error.errors()]})
+
+
 app.state.cookie_secure = os.getenv("ERP_COOKIE_SECURE", "1").strip().lower() not in {
     "0",
     "false",
