@@ -177,7 +177,14 @@ describe("«ВП-001 · Название» wherever a reference is shown", () =>
         return json({ available: true, options: [option("projects.internal", true), option("procurement.today", true)] });
       }
       if (path === "/api/procurement/today") {
-        return json({ sections: [{ key: "to_pay", title: "Ждёт оплаты", count: 1, items: [], projects: [{ project: "ВП-001", count: 1, days: 2, date: null, suppliers: [] }, { project: "591К.3", count: 1, days: 1, date: null, suppliers: [] }] }] });
+        const card = (value: string, days: number) => ({
+          title: value, detail: "1 позиция", link: { tab: "requests", project: value }, days,
+          project: { key: value, kind: "project", value }, lines: [], lines_count: 1,
+        });
+        return json({
+          today: "2026-10-21", calm: false,
+          sections: [{ key: "rfq", title: "Запросить КП", action: "выбрать строки", tone: "accent", count: 2, items: [card("ВП-001", 2), card("591К.3", 1)] }],
+        });
       }
       return undefined;
     });
