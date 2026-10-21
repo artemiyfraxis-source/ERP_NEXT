@@ -297,6 +297,21 @@ export function etkRouteDiagram(route: EtkRoute): EtkDiagram {
   return { columns, edges };
 }
 
+/** Схема ПФ задания (владелец 20.10, на 713К.4 вся схема не входит в планшет): путь монтажника — ПФ, из которых он
+ *  берёт детали, его ПФ `key` и дальше до изделия. Номера, названия и входы блоков — как во всей схеме. */
+export function etkRoutePathDiagram(route: EtkRoute, key: string): EtkDiagram {
+  const keep = new Set([key]);
+  route.edges.forEach((edge) => { if (edge.to === key) keep.add(edge.from); });
+  for (let next = [key]; next.length;) {
+    next = route.edges.filter((edge) => next.includes(edge.from) && !keep.has(edge.to)).map((edge) => edge.to);
+    next.forEach((item) => keep.add(item));
+  }
+  const full = new Map(etkRouteDiagram(route).columns.flatMap((column) => column.boxes).map((box) => [box.key, box]));
+  const part = etkRouteDiagram({ ...route, blocks: route.blocks.filter((block) => keep.has(block.key)),
+    edges: route.edges.filter((edge) => keep.has(edge.from) && keep.has(edge.to)) });
+  return { ...part, columns: part.columns.map((column) => ({ ...column, boxes: column.boxes.map((box) => full.get(box.key) ?? box) })) };
+}
+
 export function etkRouteFeedText(feed: EtkRouteFeed): string {
   return `ПФ ${feed.label} ${feed.name}${feed.times ? ` (${feed.times})` : ""}`;
 }

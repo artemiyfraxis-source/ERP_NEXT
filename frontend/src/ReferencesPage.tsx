@@ -43,7 +43,7 @@ import {
    references read like one database. Project techcards (ЭТК) stay with the projects. */
 
 type MapTab = "suppliers" | "countries";
-type CableTab = "cab_coax" | "cab_wire" | "cab_multi" | "cab_other";
+type CableTab = "cab_coax" | "cab_wire" | "cab_multi";
 export type DbTab = "templates" | "connectors" | "gauges" | "cov" | TechOperationTab | MapTab | CableTab | MaterialTab;
 type TabDef = { id: DbTab; label: string; base?: string };
 
@@ -72,7 +72,6 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "cab_coax", label: "Коаксиальные кабели" },
     { id: "cab_wire", label: "Монтажные провода" },
     { id: "cab_multi", label: "Многожильные кабели" },
-    { id: "cab_other", label: "Прочие кабели" },
   ] },
   // БД.МАТ is a working base in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
   // Owner 12.10.2026: оболочки (ТУТ, ТТК, оплётки, гофра) — отдельной таблицей из строк БД.МАТ, с разбором и сортировкой;
@@ -87,10 +86,11 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "gauges", label: "Сечения AWG ↔ мм²" },
   ] },
 ];
-const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_multi: "multi", cab_other: "other" };
+const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_multi: "multi" };
 // Keys of the tabs these replaced (saved tab, `initialTab`): «Провода и кабели» → монтажные, «Коаксиальные кабели:
 // D1 · D2 · D3» → коаксиальные кабели; «Материалы» (15.10.2026) → «Оболочки», куда ушла бóльшая часть строк.
-const TAB_ALIASES: Partial<Record<string, DbTab>> = { prov: "cab_wire", kab_coax: "cab_coax", kab_awg: "cab_wire", mat: "cov", mat_fix: "mat_use", mat_seal: "mat_use", mat_sleeve: "mat_use" };
+// «Прочие кабели» закрыты 20.10.2026: сохранённая вкладка ведёт в многожильные.
+const TAB_ALIASES: Partial<Record<string, DbTab>> = { cab_other: "cab_multi", prov: "cab_wire", kab_coax: "cab_coax", kab_awg: "cab_wire", mat: "cov", mat_fix: "mat_use", mat_seal: "mat_use", mat_sleeve: "mat_use" };
 const MAP_TABS: Record<MapTab, { keyLabel: string; valueLabel: string }> = {
   suppliers: { keyLabel: "Домен или ссылка", valueLabel: "Поставщик" },
   countries: { keyLabel: "Изготовитель", valueLabel: "Страна" },
@@ -178,11 +178,6 @@ function isMapTab(tab: DbTab): tab is MapTab {
 
 function isCableTab(tab: DbTab): tab is CableTab {
   return tab in CABLE_TABS;
-}
-
-/** «Прочие кабели» is a to-sort list (owner 15.10.2026: «закрыть»): its tab shows only while it has rows or is open. */
-export function visibleTabs<T extends { id: DbTab }>(tabs: T[], counts: (tab: T) => number | null, active: DbTab): T[] {
-  return tabs.filter((tab) => tab.id !== "cab_other" || tab.id === active || counts(tab) !== 0);
 }
 
 function savedTab(): string {
@@ -301,7 +296,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     try {
       setCables(await referencesApi.cables());
     } catch (reason) {
-      setCables({ columns: [], counts: { coax: 0, wire: 0, multi: 0, other: 0 }, rows: [], gauges: [] });
+      setCables({ columns: [], counts: { coax: 0, wire: 0, multi: 0 }, rows: [], gauges: [] });
       setError(failureText(reason, "Не удалось загрузить кабели и провода"));
     }
   }
@@ -391,11 +386,12 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     if (techTab) await loadTech(techTab);
     setError(""); setNotice(`Столбец «${name}» удалён`);
   });
+  // Столбцы БД.ПРОВ у каждого списка свои: «+ Столбец» и «Удалить столбец» работают с тем списком, что открыт.
   const cableRemoval = useColumnRemoval("prov", principal.permissions.erpref === "edit",
-    (name) => filledIn((cables?.rows ?? []).map((row) => row.record), name), (name) => cablesSaved(`Столбец «${name}» удалён`));
-  // «+ Столбец» на таблицах кабелей: колонка БД.ПРОВ общая для всех четырёх списков.
-  const columnButton = principal.permissions.erpref === "edit"
-    ? <AddColumnButton tab="prov" onAdded={(name) => cablesSaved(`Столбец «${name}» добавлен`)} /> : undefined;
+    (name) => filledIn((cables?.rows ?? []).filter((row) => row.kind === cableKind).map((row) => row.record), name),
+    (name) => cablesSaved(`Столбец «${name}» удалён`), cableKind ?? undefined);
+  const columnButton = principal.permissions.erpref === "edit" && cableKind
+    ? <AddColumnButton tab="prov" cableKind={cableKind} onAdded={(name) => cablesSaved(`Столбец «${name}» добавлен`)} /> : undefined;
   const coaxTab = techTab === "coax";
   const cableOf = (record: TechOperationRecord) => cableDia[cableKey(record.fields["Провод"] ?? record.fields.coaxWire ?? "")];
   // Edit form: the sheet's columns only (the server moves the schema values derived from them); on БД.КОАКС without
@@ -521,7 +517,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     <nav className="db-tabs" aria-label="Вкладки базы данных">
       {groups.map((group) => <div className="db-tab-group" key={group.title}>
         <span className="db-tab-group-title">{group.title}</span>
-        <div className="db-tab-row">{visibleTabs(group.tabs, count, tab).map((def) => {
+        <div className="db-tab-row">{group.tabs.map((def) => {
           const n = count(def);
           const active = tab === def.id && !stockLog;
           return <button key={def.id} type="button" className={active ? "db-tab active" : "db-tab"} aria-pressed={active} onClick={() => { setTab(def.id); setStockLog(false); }}>

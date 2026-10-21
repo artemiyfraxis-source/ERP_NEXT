@@ -28,17 +28,17 @@ from app.shared.identity import Actor
 
 from .application import (
     FieldEdit, SaveGaugeCommand, SaveHookupCommand, SetCoaxDiametersCommand, UnitOfWork, _audit, _clean_new_fields,
-    _create_in, _edit_in, cable_catalog, cable_overrides, save_gauge_in, save_hookup_in, set_coax_diameters_in,
+    _create_in, _edit_in, save_gauge_in, save_hookup_in, set_coax_diameters_in,
 )
 from .cable_structure import parse_hookup, shown
 from .cables import DIAMETERS, CableKind, cable_mark, cable_rows, diameter_index
 from .domain import (
-    BASE_COLUMNS, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceKind, ReferenceValidationError, StaleRecordError,
-    TechOperationRecord, TechOperationTab, merge_country_pairs, normalized_cable_key, normalized_manufacturer_key,
-    normalized_supplier_key,
+    BASE_COLUMNS, CABLE_KIND_VALUES, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceKind, ReferenceValidationError,
+    StaleRecordError, TechOperationRecord, TechOperationTab, merge_country_pairs, normalized_cable_key,
+    normalized_manufacturer_key, normalized_supplier_key,
 )
 from .equipment import EXTRA_KEYS, TARGETS_KEY
-from .importers import _MapTarget
+from .importers import _MapTarget, cable_list_columns
 from .technology import OPERATION_TD_KEYS, schema_columns, schema_keys
 from .xlsx_file import Cell, ReadSheet, Sheet, XlsxError, read_xlsx, write_xlsx
 
@@ -49,11 +49,13 @@ VIA = "file"
 MAX_FILE_ROWS = 10_000
 COAX_DIAMETERS = DIAMETERS  # the cable's Ø: not on the connector row («Коаксиальные разъёмы»), a column of the cable list
 # Columns beyond the БД.ПРОВ cells, by list (owner 14.10): the coax cable's D1–D3 (СПР.КАБ, saved as the cable form saves
-# them) and the structure of a hook-up wire that has no БД.ПРОВ cell (saved as the wire form saves it).
+# them) and the structure of a hook-up wire that has no БД.ПРОВ cell (saved as the wire form saves it). Titled as
+# «Кабели и провода» shows them (CableTables.tsx DIA_TITLES, CableStructure.tsx «Серия»); the structure's conductor
+# material is no БД.ПРОВ «Материал жилы» cell, so its title says it is the series structure's.
 HOOKUP_SERIES, HOOKUP_MATERIAL, HOOKUP_THICKNESS = "hookup_series", "hookup_material", "hookup_insulation_mm"
-HOOKUP_TITLES = {HOOKUP_SERIES: "Серия провода", HOOKUP_MATERIAL: "Материал жилы",
+HOOKUP_TITLES = {HOOKUP_SERIES: "Серия", HOOKUP_MATERIAL: "Материал жилы (серия)",
                  HOOKUP_THICKNESS: "Толщина изоляции, мм"}
-COAX_TITLES = {name: f"{name}, мм" for name in DIAMETERS}
+COAX_TITLES = {"D1": "D1 жила, мм", "D2": "D2 диэлектрик, мм", "D3": "D3 оплётка, мм"}
 
 NOT_FOUND_REASON = "записи с этим ID нет — её удалили или файл скачан из другой вкладки"
 CONFLICT_REASON = "запись изменили после скачивания файла — скачайте таблицу заново"
@@ -93,24 +95,35 @@ class _Table(Protocol):
 
 
 class _TechTable:
-    """БД.ОБ / БД.ОП / БД.ТЕР / БД.КОАКС / БД.ПРОВ / БД.МАТ rows by record id."""
+    """БД.ОБ / БД.ОП / БД.ТЕР / БД.КОАКС / БД.ПРОВ / БД.МАТ rows by record id.
+
+    БД.ПРОВ of one cable list (owner 20.10.2026: «у каждого своя структура»): only the rows of that list
+    (`TechOperationRecord.cable_kind`) and only that list's columns — `CABLE_COLUMNS[list]`, the owner's columns of the
+    list, the cells its rows carry that are no other list's column, then the list's extras; a row created from the file
+    goes to that list. Without a list — every row and column of БД.ПРОВ (a new row's list by the rule)."""
 
     titles: Mapping[str, str] = {}
 
     def __init__(self, tab: TechOperationTab, label: str, kinds: Mapping[str, str] | None = None) -> None:
         self.tab, self.label, self.kinds = tab, label, dict(kinds or {})
         self.extras: Mapping[str, str] = {}  # extra columns of the chosen list: field → title
+        self.cable_kind = ""  # БД.ПРОВ: the cable list of the file ('' — all lists together)
+        self.own_columns: tuple[str, ...] = ()  # БД.ПРОВ of a list: its columns, read in `items`
+        self.foreign: frozenset[str] = frozenset()  # БД.ПРОВ of a list: the columns of the other lists only
 
     def for_kind(self, kind: str) -> "_TechTable":
-        if self.tab == TechOperationTab.WIRE:
+        if self.tab == TechOperationTab.WIRE and kind:
+            if kind not in CABLE_KIND_VALUES:
+                raise RoundtripError(f"Списка «{kind}» в «Кабелях и проводах» нет — скачайте таблицу заново из "
+                                     "коаксиальных, монтажных или многожильных")
+            self.cable_kind = kind
             self.extras = COAX_TITLES if kind == "coax" else HOOKUP_TITLES if kind == "wire" else {}
             self.titles = self.extras
         return self
 
     def _extra_values(self, uow: UnitOfWork, records: Sequence[TechOperationRecord]) -> dict[str, dict[str, str]]:
         """The extra columns of every БД.ПРОВ row, read in the open `uow` (the cable catalogue's own join)."""
-        rows = cable_rows(records, uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=100_000),
-                          cable_overrides(uow.references.list()))
+        rows = cable_rows(records, uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=100_000))
         hookups = {wire.mark_key: wire for wire in uow.cable_structure.hookups()}
         result: dict[str, dict[str, str]] = {}
         for row in rows:
@@ -128,17 +141,20 @@ class _TechTable:
         return result
 
     def _records(self, uow: UnitOfWork) -> list[TechOperationRecord]:
-        return list(uow.tech_operations.list(tab=self.tab, query="", limit=100_000))
+        records = list(uow.tech_operations.list(tab=self.tab, query="", limit=100_000))
+        if self.cable_kind:  # БД.ПРОВ of one list: its rows only (an ID of another list's row is «not found»)
+            records = [record for record in records if record.cable_kind == self.cable_kind]
+        return records
 
     def kind_ids(self, uow: UnitOfWork, kind: str) -> set[str] | None:
-        """The ids of one list of the tab (a cable list of БД.ПРОВ, «Оболочки» of БД.МАТ), read in `uow` (not open)."""
+        """The ids of one list of the tab («Оболочки» of БД.МАТ), read in `uow` (not open); a cable list of БД.ПРОВ is
+        chosen by `_records` itself."""
         if not kind:
             return None
         if kind not in self.kinds:
             raise RoundtripError("Неизвестный список: " + kind)
         if self.tab == TechOperationTab.WIRE:
-            wanted = CableKind(kind)
-            return {str(row.record.id) for row in cable_catalog(uow).rows if row.kind == wanted and row.record}
+            return None
         from .coverings import build  # «Оболочки»: the БД.МАТ rows that cover a harness
         with uow:
             records = self._records(uow)
@@ -146,6 +162,11 @@ class _TechTable:
 
     def items(self, uow: UnitOfWork) -> list[Item]:
         records = self._records(uow)
+        if self.cable_kind:
+            columns = {kind: cable_list_columns(uow, kind) for kind in CABLE_KIND_VALUES}
+            self.own_columns = columns[self.cable_kind]
+            self.foreign = frozenset(name for kind, names in columns.items() if kind != self.cable_kind
+                                     for name in names) - set(self.own_columns)
         extra = self._extra_values(uow, records) if self.extras else {}
         return [
             Item(str(record.id), record.display_text.strip(" /") or str(record.id),
@@ -157,9 +178,9 @@ class _TechTable:
     def fields(self, items: Sequence[Item]) -> list[str]:
         """Every field the tab's edit form edits: the sheet columns (the schema values the generator reads follow them
         on save), ПРОВ / МАТ — the base's columns first; a column only some rows have is still a column."""
-        keys = schema_keys(self.tab.value) | set(self.extras)
+        keys = schema_keys(self.tab.value) | set(self.extras) | self.foreign
         richest = sorted(items, key=lambda item: -sum(1 for name in item.values if name not in keys))
-        ordered: dict[str, None] = dict.fromkeys(BASE_COLUMNS.get(self.tab, ()))
+        ordered: dict[str, None] = dict.fromkeys(self.own_columns if self.cable_kind else BASE_COLUMNS.get(self.tab, ()))
         for item in richest:
             ordered.update(dict.fromkeys(name for name in item.values if name not in keys))
         if not ordered:  # a snapshot without the sheet's columns: the schema keys are the fields
@@ -184,6 +205,11 @@ class _TechTable:
         extra = {name: value for name, value in changes.items() if name in self.extras}
         if extra and COAX_TITLES.keys() == self.extras.keys():
             self._set_diameters(uow, item, extra, actor, now)
+        if own and self.tab == TechOperationTab.WIRE:
+            # a монтажный wire's cell of the mark another colour's row of this file has already written (the mark's
+            # cells follow to all its colours) is not this row's change
+            current = self._record(uow, item).fields
+            own = {name: value for name, value in own.items() if current.get(name, "") != value}
         if own:
             edits = tuple(FieldEdit(name, item.values.get(name, ""), value) for name, value in own.items())
             record, _updated = _edit_in(UUID(item.id), edits, now, uow)
@@ -235,10 +261,20 @@ class _TechTable:
         ), uow, {"via": VIA})
 
     def create(self, uow, values, actor, now):
-        record = _create_in(self.tab, _clean_new_fields(self.tab, values), uow)
+        """A row without an ID: the record (БД.ПРОВ of a list — in that list), then its extras through their own saves
+        (D1–D3 of a coax cable, the structure of a монтажный wire), as `update` writes them."""
+        own = {name: value for name, value in values.items() if name not in self.extras}
+        extra = {name: value for name, value in values.items() if name in self.extras}
+        kind = CableKind(self.cable_kind) if self.cable_kind else None
+        record = _create_in(self.tab, _clean_new_fields(self.tab, own), uow, kind)
         _audit("references.tech_record_created", actor, now, {
             "record_id": str(record.id), "tab": record.tab.value, "via": VIA,
+            **({"cable_kind": record.cable_kind} if record.cable_kind else {}),
         }, uow)
+        current = self._extra_values(uow, [record]).get(str(record.id), {}) if extra else {}
+        extra = {name: value for name, value in extra.items() if value != current.get(name, "")}
+        if extra:  # a D row of that cable may already be there: the old values are what it holds
+            self.update(uow, Item(str(record.id), record.display_text, "", {**record.fields, **current}), extra, actor, now)
         return record.display_text.strip(" /")
 
     def finish(self, uow, actor, now):
@@ -357,8 +393,7 @@ def _folded(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
 
 
-CABLE_KINDS = {"coax": "Коаксиальные кабели", "wire": "Монтажные провода", "multi": "Многожильные кабели",
-               "other": "Прочие кабели"}
+CABLE_KINDS = {"coax": "Коаксиальные кабели", "wire": "Монтажные провода", "multi": "Многожильные кабели"}
 
 
 def _tables() -> dict[str, Callable[[], _Table]]:

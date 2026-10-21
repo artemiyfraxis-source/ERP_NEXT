@@ -31,7 +31,7 @@ from typing import Any, Iterable, Mapping
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork, coax_dia_rows
 from app.modules.references.cable_structure import HookupWire, WireGauge, decimal_or_none, gauge_gost_awg, section_key
 from app.modules.references.cables import hookup_series_rest
-from app.modules.references.domain import TechOperationTab, cable_key, gost_awg_map
+from app.modules.references.domain import TechOperationTab, cable_key, gost_awg_map, pick_wire_row
 from app.modules.references.wire_dia import outer_by_series
 from app.modules.references.technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, matching_terminal_records, resolve_terminal,
@@ -172,13 +172,21 @@ def enrich_wire_diameters(
     by_section = {section_key(gauge.section_mm2): gauge for gauge in gauges}
     by_mark = {wire.mark_key: wire for wire in hookups}
     series_outer = outer_by_series(hookups)
-    prov = {cable_key(row.get("Марка")): row for row in prov_rows if cable_key(row.get("Марка"))}
+    # БД.ПРОВ rows by mark: a монтажный wire has a row per colour (owner 20.10.2026), all with the same values but the
+    # colour and the offer — the row of the label's colour when there is one, else the mark's first (`pick_wire_row`)
+    prov_by_mark: dict[str, list[Mapping[str, Any]]] = {}
+    for row in prov_rows:
+        if cable_key(row.get("Марка")):
+            prov_by_mark.setdefault(cable_key(row.get("Марка")), []).append(row)
+    prov: dict[str, Mapping[str, Any]] = {key: rows[0] for key, rows in prov_by_mark.items()}
 
     def known(label: object) -> str:
         words = str(label or "").split()
         for count in range(len(words), 1, -1):
             key = cable_key(" ".join(words[:count]))
             if key in by_mark or key in prov:
+                if key in prov:  # «UL1007 24AWG красный»: the words after the mark name the colour
+                    prov[key] = pick_wire_row(prov_by_mark[key], " ".join(words[count:])) or prov[key]
                 return key
         key = cable_key(label)
         return key if key in by_mark or key in prov else ""

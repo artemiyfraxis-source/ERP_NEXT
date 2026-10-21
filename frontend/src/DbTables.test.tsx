@@ -236,7 +236,7 @@ it("Сечения AWG ↔ мм²: Ø жилы is written in the cell with the s
     if (path === "/api/references/wire-gauges/g2" && init?.method === "PUT") { saved.push(JSON.parse(String(init.body))); return json(gauges[1]); }
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     if (path === "/api/references/bases") return json({ bases: [] });
-    if (path === "/api/references/cables") return json({ columns: [], counts: { coax: 0, wire: 0, multi: 0, other: 0 }, rows: [], gauges });
+    if (path === "/api/references/cables") return json({ columns: [], counts: { coax: 0, wire: 0, multi: 0 }, rows: [], gauges });
     throw new Error(`Unexpected request: ${path}`);
   });
   render(<ReferencesPage principal={admin} initialTab="gauges" />);

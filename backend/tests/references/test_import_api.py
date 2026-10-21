@@ -55,7 +55,8 @@ def _record(tab: TechOperationTab, display: str, fields: dict, sort: str = "") -
     """A row as the mirror load stores it (with its mirror key)."""
     [key] = mirror_keys([_mirror_row(tab, display, fields, sort)])
     return TechOperationRecord.create(tab=tab, display_text=display, search_text="", source_sheet="", sort_key=sort,
-                                      fields=fields, mirror_key=key)
+                                      fields=fields, mirror_key=key,
+                                      cable_kind="wire" if tab == TechOperationTab.WIRE else None)
 
 
 PROV_ROW = {**{name: "" for name in BASE_COLUMNS[TechOperationTab.WIRE]}, "Марка": "UL1061 28AWG",

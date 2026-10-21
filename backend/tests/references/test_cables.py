@@ -1,4 +1,5 @@
-"""«Кабели и провода» (owner 04.10.2026): БД.ПРОВ + coax D1·D2·D3 as коаксиальные / монтажные / прочие."""
+"""«Кабели и провода» (owner 04.10.2026): БД.ПРОВ + coax D1·D2·D3 as коаксиальные / монтажные / многожильные (each row
+stores its list since 20.10.2026; «прочие» closed)."""
 
 from datetime import datetime
 from uuid import UUID
@@ -36,14 +37,15 @@ SPR_KAB = (
 )
 
 
-def _record(tab: str, fields: dict[str, str], sort_key: str = "") -> TechOperationRecord:
+def _record(tab: str, fields: dict[str, str], sort_key: str = "", cable_kind: str | None = None) -> TechOperationRecord:
     display = next(value for value in fields.values() if value)
     return TechOperationRecord.create(tab=TechOperationTab(tab), display_text=display, search_text="", source_sheet="",
-                                      sort_key=sort_key or display, fields=fields)
+                                      sort_key=sort_key or display, fields=fields, cable_kind=cable_kind)
 
 
-def _wire(*cells: str) -> TechOperationRecord:
-    return _record("prov", dict(zip(PROV_HEADER, cells)))
+def _wire(*cells: str, kind: CableKind | None = None) -> TechOperationRecord:
+    fields = dict(zip(PROV_HEADER, cells))
+    return _record("prov", fields, cable_kind=(kind or auto_kind(fields, fields["Марка"], frozenset())[0]).value)
 
 
 def _dia(cable: str, d1: str, d2: str, d3: str, sort_key: str) -> TechOperationRecord:
@@ -56,7 +58,7 @@ def _dia(cable: str, d1: str, d2: str, d3: str, sort_key: str) -> TechOperationR
     (PROV_ROWS[0], CableKind.COAX, "тип «коаксиальный»"),
     (PROV_ROWS[2], CableKind.WIRE, "одна жила"),
     (PROV_ROWS[3], CableKind.WIRE, "одна жила"),  # «силовой» single core: ПВАМ is a column of the AWG table
-    (PROV_ROWS[4], CableKind.OTHER, "марка не из базы монтажных"),  # owner 12.10.2026: only the база монтажных
+    (PROV_ROWS[4], CableKind.WIRE, "марка не из базы монтажных"),  # «прочие» closed 20.10.2026: монтажный, no structure
     (PROV_ROWS[5], CableKind.MULTI, "жил: 4"),  # owner 10.10.2026: multi-core → own tab
     (PROV_ROWS[6], CableKind.MULTI, "жил: 5"),  # «5 коаксиалов» inside a multi-core cable is not a coax cable
     (PROV_ROWS[7], CableKind.COAX, "марка коаксиального кабеля"),  # no type: the generator's RG-… marker
@@ -69,7 +71,7 @@ def test_auto_kind_rules(cells, kind, reason):
 def test_a_mark_in_the_diameter_table_is_coax_whatever_its_type():
     fields = dict(zip(PROV_HEADER, ["RG 58", "кабель", "", "", "", "", ""]))
     assert auto_kind(fields, "RG 58", frozenset({"rg58"})) == (CableKind.COAX, "есть в таблице D1 · D2 · D3")
-    assert auto_kind({"Тип провода": "", "Число жил": ""}, "Проволока", frozenset())[0] == CableKind.OTHER
+    assert auto_kind({"Тип провода": "", "Число жил": ""}, "Проволока", frozenset())[0] == CableKind.WIRE
 
 
 def test_rows_join_the_generator_diameter_row_and_keep_diameter_only_cables():
@@ -77,10 +79,10 @@ def test_rows_join_the_generator_diameter_row_and_keep_diameter_only_cables():
     diameters = [_dia("RG-316", "0,5", "1,48", "1,95", "00001"), _dia("RG58", "1", "2,95", "3,5", "00002"),
                  _dia("RG-142", "0,9", "3", "3,9", "00003"), _dia("RG-142", "0,94", "3", "3,95", "00004")]
 
-    result = cable_rows(wires, diameters, {})
+    result = cable_rows(wires, diameters)
     by_cable = {row.cable: row for row in result}
 
-    assert cable_counts(result) == {"coax": 5, "wire": 2, "multi": 2, "other": 1}
+    assert cable_counts(result) == {"coax": 5, "wire": 3, "multi": 2}
     assert by_cable["RG316"].dia.fields["D3"] == "1,95"  # «RG316» ↔ «RG-316»: the generator's key
     assert by_cable["RG-58 A/U"].dia is None and by_cable["RG-58 A/U"].dia_hint.fields["Кабель"] == "RG58"
     assert by_cable["RG58"].record is None and by_cable["RG58"].dia.fields["D1"] == "1"  # only in the D-table
@@ -94,9 +96,18 @@ def test_family_hint_needs_a_non_digit_after_the_prefix():
     assert family_dia("rg58c/u", index).fields["Кабель"] == "RG58"
 
 
-def test_manual_kind_beats_the_rule():
-    [row] = cable_rows([_wire(*PROV_ROWS[3])], [], {"пвам0,50": CableKind.OTHER})
-    assert (row.kind, row.auto, row.manual, row.reason) == (CableKind.OTHER, CableKind.WIRE, True, "перенесён вручную")
+def test_the_stored_kind_beats_the_rule():
+    [row] = cable_rows([_wire(*PROV_ROWS[3], kind=CableKind.MULTI)], [])
+    assert (row.kind, row.auto, row.manual, row.reason) == (CableKind.MULTI, CableKind.WIRE, True, "перенесён вручную")
+
+
+def test_a_wire_record_needs_its_list_and_another_tab_has_none():
+    with pytest.raises(ReferenceValidationError):
+        _record("prov", {"Марка": "ПВАМ 0,50"})
+    with pytest.raises(ReferenceValidationError):
+        _record("prov", {"Марка": "ПВАМ 0,50"}, cable_kind="other")
+    with pytest.raises(ReferenceValidationError):
+        _record("mat", {"Наименование": "ТУТ 3/1"}, cable_kind="wire")
 
 
 # --- application + mirror ---
@@ -164,12 +175,15 @@ def test_move_between_lists_survives_a_mirror_reload_and_moving_back_clears_it(t
     load_mirror(_mirror(tmp_path / "a"), uow, dry_run=False, now=NOW)
     pvam = _row(uow, "ПВАМ 0,50")
 
-    moved = set_cable_kind(SetCableKindCommand(pvam.record.id, CableKind.OTHER, ACTOR, NOW), uow)
+    assert pvam.record.cable_kind == "wire" and "Волновое сопротивление, Ом" not in pvam.record.fields  # not a wire column
+
+    moved = set_cable_kind(SetCableKindCommand(pvam.record.id, CableKind.MULTI, ACTOR, NOW), uow)
+    assert moved.kind == CableKind.MULTI and moved.manual and moved.record.cable_kind == "multi"
+    assert moved.record.fields["Наружный диаметр, мм"] == "1,6"
     load_mirror(_mirror(tmp_path / "b", prov=PROV.replace("1,6", "1,7")), uow, dry_run=False, now=NOW)
 
-    assert moved.kind == CableKind.OTHER and moved.manual
     again = _row(uow, "ПВАМ 0,50")
-    assert (again.kind, again.manual) == (CableKind.OTHER, True)
+    assert (again.kind, again.manual, again.record.cable_kind) == (CableKind.MULTI, True, "multi")
     assert again.record.fields["Наружный диаметр, мм"] == "1,7"  # the row itself still follows the mirror
     assert not again.record.edited_in_erp
 
@@ -204,8 +218,12 @@ def test_api_lists_moves_and_edits_cables(tmp_path, sessions, cables_api):  # no
     load_mirror(_mirror(tmp_path), SqlAlchemyReferencesUnitOfWork(sessions), dry_run=False, now=NOW)
 
     listed = cables_api.get("/api/references/cables").json()
-    assert listed["counts"] == {"coax": 5, "wire": 2, "multi": 2, "other": 1}
+    assert listed["counts"] == {"coax": 5, "wire": 3, "multi": 2}
     assert listed["columns"][:2] == ["Марка", "Тип провода"]
+    by_kind = listed["columns_by_kind"]
+    assert "AWG" not in by_kind["coax"] and "Волновое сопротивление, Ом" in by_kind["coax"]
+    assert "Волновое сопротивление, Ом" not in by_kind["wire"] and "Ток, А" in by_kind["wire"] and "AWG" in by_kind["wire"]
+    assert "Ток, А" not in by_kind["multi"] and listed["custom_columns_by_kind"] == {"coax": [], "wire": [], "multi": []}
     rg316 = next(row for row in listed["rows"] if row["cable"] == "RG316")
     assert rg316["kind"] == "coax" and rg316["dia"]["cable"] == "RG-316" and rg316["record"]["fields"]["Волновое сопротивление, Ом"] == "50"
     rg58 = next(row for row in listed["rows"] if row["cable"] == "RG58")
@@ -232,7 +250,7 @@ def test_api_lists_moves_and_edits_cables(tmp_path, sessions, cables_api):  # no
     assert cables_api.put(f"/api/references/cables/{rg58['dia']['id']}/kind", json={"kind": "wire"}).status_code == 404
     assert cables_api.put(f"/api/references/cables/{pvam['id']}/kind", json={"kind": "кабель"}).status_code == 422
     after = cables_api.get("/api/references/cables").json()
-    assert after["counts"] == {"coax": 6, "wire": 1, "multi": 2, "other": 1}
+    assert after["counts"] == {"coax": 6, "wire": 2, "multi": 2}
 
     # the move is not a supplier/country map row, and saving the maps does not drop it
     maps = cables_api.get("/api/references/maps").json()
@@ -241,7 +259,7 @@ def test_api_lists_moves_and_edits_cables(tmp_path, sessions, cables_api):  # no
     assert cables_api.get("/api/references/cables").json()["counts"]["coax"] == 6
 
     bases = cables_api.get("/api/references/bases").json()
-    assert bases["cables"] == {"coax": 6, "wire": 1, "multi": 2, "other": 1}
+    assert bases["cables"] == {"coax": 6, "wire": 2, "multi": 2}
     assert bases["tabs"]["kab_awg"] == 1 and bases["tabs"]["kab_coax"] == 4 and bases["tabs"]["prov"] == len(PROV_ROWS)
 
 
@@ -252,7 +270,7 @@ def test_api_cable_edits_need_the_reference_edit_right(tmp_path, sessions, cable
         actor=ACTOR, email="viewer@example.test", roles=frozenset({"receiver"}), permissions={"erpref": "view"})
 
     assert cables_api.get("/api/references/cables").status_code == 200
-    assert cables_api.put(f"/api/references/cables/{pvam['id']}/kind", json={"kind": "other"}).status_code == 403
+    assert cables_api.put(f"/api/references/cables/{pvam['id']}/kind", json={"kind": "multi"}).status_code == 403
     assert cables_api.put("/api/references/cables/diameters", json={"cable": "RG-179", "value": {"D1": "1"}}).status_code == 403
 
 

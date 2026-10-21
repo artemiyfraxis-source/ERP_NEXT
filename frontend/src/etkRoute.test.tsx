@@ -186,6 +186,18 @@ describe("ETK scheme of ПФ in the fitter's task", () => {
     expect(screen.getByLabelText("Операции задания")).toBeInTheDocument();
   });
 
+  it("shows the fitter's path by default — his inputs, his ПФ and on to the product — with the whole scheme one click away", async () => {
+    await renderTask({ position: 3, positions: [3, 4] });
+    const shown = () => within(diagramOf()).getAllByRole("region").map((box) => box.getAttribute("aria-label"));
+    // «Резка ТУТ» идёт сразу в изделие, мимо опрессовки: её нет; номера ПФ — как во всей схеме.
+    expect(shown()).toEqual(["ПФ 1.1 · Резка провода", "ПФ 2 · Опрессовка", "ПФ 3 · Изделие"]);
+    fireEvent.click(screen.getByRole("button", { name: "Вся схема · ещё 1" }));
+    expect(shown()).toHaveLength(4);
+    expect(shown()).toContain("ПФ 1.2 · Резка ТУТ");
+    fireEvent.click(screen.getByRole("button", { name: "Только мой путь" }));
+    expect(shown()).toHaveLength(3);
+  });
+
   it("folds the other ПФ to name, operation numbers and output so the scheme fits the tablet", async () => {
     await renderTask({ position: 3, positions: [3, 4] });
     const other = boxOf(/ПФ 1.1 · Резка провода/);

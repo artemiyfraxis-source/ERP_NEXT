@@ -56,8 +56,12 @@ DEFAULT_WORKSHOP = "Цех электромонтажа"
 SYSTEM_ACTOR = "система"
 
 # Внутренний код латиницей с подчёркиванием (cutWireStrip не ловится — у него нет «_»; INS_гофра — кириллица).
-_LATIN_CODE = re.compile(r"\b[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+\b")
-_CODE_PREFIX = re.compile(r"^\s*[A-Za-z][A-Za-z0-9_+./-]*\s*\|\s*")
+# Коды операций БД.ОП. Только эти семейства: слово с «_» в наименовании по КД заказчика («…100mm LED_STRIP», 719К.2
+# КБ11) — часть наименования изделия, не наш код. Префикс шаблона — «КОД | название», в коде бывают запятые
+# («INS_terminal_2,54-6,3 | Монтаж терминалов»).
+_OP_FAMILY = r"(?:CUT|STRIP|PRS|SDR|HEAT|INS|MOLD|OTK|TWIST|TWST|US|PREP|LASER|PRINT|BOX|BUY)"
+_LATIN_CODE = re.compile(rf"\b{_OP_FAMILY}_[A-Za-z0-9_]+")
+_CODE_PREFIX = re.compile(rf"^\s*{_OP_FAMILY}(?:_[^|]*|\+[^|]*)?\s*\|\s*")
 
 
 class TdIssueError(Exception):

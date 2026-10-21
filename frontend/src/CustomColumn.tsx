@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { PageWindow } from "./PageWindow";
-import { ApiError, failureText, referencesApi, type TechOperationRecord, type TechOperationTab } from "./api";
+import { ApiError, failureText, referencesApi, type CableKind, type TechOperationRecord, type TechOperationTab } from "./api";
 import type { DataCellEdit } from "./DataTable";
 
 /* «+ Столбец» (владелец 14.10.2026: «добавить свои столбцы»): свой столбец таблицы базы. Имя спрашивает маленькое окно,
@@ -40,7 +40,8 @@ export function ownCellEdit<T>(name: string, recordOf: (row: T) => TechOperation
   return fieldCellEdit(name, recordOf, true);
 }
 
-export function AddColumnButton({ tab, onAdded }: { tab: TechOperationTab; onAdded: (name: string) => Promise<void> | void }) {
+/** `cableKind` — БД.ПРОВ: столбец добавляется одному списку кабелей. */
+export function AddColumnButton({ tab, onAdded, cableKind }: { tab: TechOperationTab; onAdded: (name: string) => Promise<void> | void; cableKind?: CableKind }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -49,7 +50,7 @@ export function AddColumnButton({ tab, onAdded }: { tab: TechOperationTab; onAdd
   async function save() {
     setBusy(true); setError("");
     try {
-      const added = await referencesApi.addColumn(tab, name);
+      const added = await referencesApi.addColumn(tab, name, cableKind);
       close();
       await onAdded(added.name);
     } catch (reason) {
@@ -78,7 +79,7 @@ export function AddColumnButton({ tab, onAdded }: { tab: TechOperationTab; onAdd
     `dialog` — окно подтверждения, его экран ставит рядом с таблицей. `filled(name)` — сколько записей с данными в столбце:
     непустой столбец окно не удаляет, а говорит, что сначала очистить. */
 export function useColumnRemoval(tab: TechOperationTab, canEdit: boolean, filled: (name: string) => number,
-  onRemoved: (name: string) => Promise<void> | void): { removeOf: (name: string) => (() => void) | undefined; dialog: ReactNode } {
+  onRemoved: (name: string) => Promise<void> | void, cableKind?: CableKind): { removeOf: (name: string) => (() => void) | undefined; dialog: ReactNode } {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -87,7 +88,7 @@ export function useColumnRemoval(tab: TechOperationTab, canEdit: boolean, filled
   async function remove() {
     setBusy(true); setError("");
     try {
-      await referencesApi.removeColumn(tab, name);
+      await referencesApi.removeColumn(tab, name, cableKind);
       const removed = name;
       setName("");
       await onRemoved(removed);
