@@ -16,7 +16,7 @@ import logging
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
@@ -30,7 +30,8 @@ from app.workflows.article_key import code_key
 
 from . import items as items_repo
 from . import rfq as rfq_service
-from .infrastructure import ItemAliasRow, RfqLineRow, RfqSupplierRow
+from .infrastructure import ItemAliasRow, RfqLineRow, RfqSupplierRow, SupplierRow
+from .upd_sellers import OWN_INNS
 
 log = logging.getLogger(__name__)
 
@@ -420,6 +421,57 @@ def _table_lines(text: str) -> tuple[list[ImportedLine], bool]:
     return lines, bool(re.search(r"без\s*ндс", title, re.I))
 
 
+# ── the quote's header: number, valid until, the seller's INN (Roller read them with Gemini; here — by regex) ──────
+
+_DATE = r"(\d{1,2})[./](\d{1,2})[./](\d{4}|\d{2})(?!\d)"
+_HEADER_NUMBER = re.compile(
+    r"(?:коммерческое\s+предложение|предложение|кп|сч[её]т(?:\s*-?\s*оферта)?(?:\s+на\s+оплату)?)\s*"
+    r"(?:№|n|no\.?|#)\s*([a-zа-яё0-9][a-zа-яё0-9\-/._]{0,40})", re.I)
+_VALID_DATE = re.compile(
+    r"(?:действительн\w*|действует|срок\s+действия(?:\s+\w+){0,2}|актуальн\w*)[^\n\d]{0,24}?(?:до|по)?\s*:?\s*" + _DATE, re.I)
+_VALID_DAYS = re.compile(
+    r"(?:действительн\w*|действует|срок\s+действия(?:\s+\w+){0,2})[^\n\d]{0,24}?(?:в\s+течени[еи]\s*)?(\d{1,3})\s*"
+    r"(?:(раб\w*)\s+)?(?:календарн\w*\s+)?(?:дн|день|дня|дней)", re.I)
+_INN = re.compile(r"ИНН(?:\s*/\s*КПП)?\s*:?\s*(\d{10}|\d{12})(?!\d)", re.I)
+
+
+def _date(day: str, month: str, year: str) -> date | None:
+    try:
+        return date(int(year) + (2000 if len(year) == 2 else 0), int(month), int(day))
+    except ValueError:
+        return None
+
+
+def read_header(text: str, today: date) -> dict:
+    """«КП № 123/45 от …», «Предложение действительно до 30.10.2026» / «… в течение 10 дней», the seller's ИНН (ours
+    is skipped: it stands in the buyer's block). What is not found stays empty."""
+    head = text[:20_000]
+    number = ""
+    found = _HEADER_NUMBER.search(head)
+    if found:
+        number = found.group(1).strip(" .,;")
+    valid_until: date | None = None
+    dated = _VALID_DATE.search(head)
+    if dated:
+        valid_until = _date(*dated.groups())
+    else:
+        days = _VALID_DAYS.search(head)
+        if days:
+            count = int(days.group(1))
+            valid_until = today + timedelta(days=round(count * 1.4) if days.group(2) else count)
+    inn = next((value for value in _INN.findall(head) if value not in OWN_INNS), "")
+    return {"number": number[:64], "valid_until": valid_until.isoformat() if valid_until else None, "inn": inn}
+
+
+def _header_supplier(session: Any, header: dict, rfq_id: UUID) -> dict:
+    """The directory supplier with the document's INN, and whether he is in the request."""
+    supplier = session.scalar(select(SupplierRow).where(SupplierRow.inn == header["inn"])) if header["inn"] else None
+    in_request = supplier is not None and session.scalar(select(RfqSupplierRow.id).where(
+        RfqSupplierRow.rfq_id == rfq_id, RfqSupplierRow.supplier_id == supplier.id)) is not None
+    return {**header, "supplier_id": str(supplier.id) if supplier else None, "supplier_name": supplier.name if supplier else None,
+            "in_request": in_request}
+
+
 # ── matching ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -519,7 +571,62 @@ def _json(line: ImportedLine) -> dict:
     }
 
 
-def parse_quote(uow: Any, actor: Actor, rfq_id: UUID, text: str, supplier_id: UUID | None, source: str) -> dict:
+def _context(session: Any, actor: Actor, rfq_id: UUID, supplier_id: UUID | None):
+    """The request (the buyer's own, open), the lines asked of the supplier as targets, his remembered wordings."""
+    rfq = rfq_service._open(rfq_service._own(rfq_service._rfq(session, rfq_id), actor))
+    asked = None
+    if supplier_id is not None:
+        rfq_supplier = session.scalar(select(RfqSupplierRow).where(
+            RfqSupplierRow.rfq_id == rfq.id, RfqSupplierRow.supplier_id == supplier_id))
+        asked = rfq_service.asked_lines(session, [rfq_supplier.id]).get(rfq_supplier.id) if rfq_supplier else None
+    targets = [
+        Target(line.id, line.name, line.article, line.quantity, items_repo.normalize_unit(line.unit), line.item_id)
+        for line in rfq_service._live_lines(session, rfq.id) if asked is None or line.id in asked
+    ]
+    return rfq, targets, _aliased(session, supplier_id, targets)
+
+
+COLUMN_LABELS = {"name": "Наименование", "article": "Артикул", "qty": "Кол-во", "unit": "Ед.", "price": "Цена",
+                 "vat": "НДС", "lead": "Срок"}
+
+
+def paste_table(
+    uow: Any, actor: Actor, rfq_id: UUID, text: str, supplier_id: UUID | None, columns: dict[str, int] | None = None,
+    vat_included: bool | None = None,
+) -> dict:
+    """Rows copied from Excel (Roller importPaste): the columns guessed from the header (or the buyer's own choice),
+    matched by the supplier's remembered wording, the part number, the name; packs priced per unit. Nothing saved."""
+    with uow:
+        session = uow.session
+        _, targets, aliases = _context(session, actor, rfq_id, supplier_id)
+        default_vat = Decimal(rfq_service.purchasing_settings.load(session)["default_vat_rate"])
+    header, rows = rfq_service.parse_pasted_table(text)
+    if not rows:
+        raise Refused("Во вставке нет строк")
+    guessed = rfq_service.guess_columns(header, rows)
+    chosen = {**guessed, **{key: index for key, index in (columns or {}).items() if key in guessed}}
+    if chosen["name"] < 0 and chosen["article"] < 0:
+        raise Refused("Укажите, в каком столбце наименование")
+    title = header[chosen["price"]] if header and 0 <= chosen["price"] < len(header) else ""
+    with_vat = vat_included if vat_included is not None else not re.search(r"без\s*ндс", title, re.I)
+    pasted = rfq_service.paste_rows(rows, chosen)
+    lines = [
+        ImportedLine(source_name=row.source_name, source_article=row.source_article, qty=row.qty, unit=row.unit,
+                     price=row.price, vat_rate=row.vat_rate, lead_days=row.lead_days, in_stock=row.in_stock,
+                     declined=row.declined, analog=row.analog)
+        for row in pasted
+    ]
+    lines = apply_packs(match_lines(lines[:500], targets, aliases), targets)
+    width = max([len(header or [])] + [len(row) for row in rows])
+    return {
+        "header": header, "width": width, "columns": chosen, "column_labels": COLUMN_LABELS, "vat_included": with_vat,
+        "default_vat_rate": rfq_service.num(default_vat),
+        "rows": [_json(line) for line in lines[:200]],
+    }
+
+
+def parse_quote(uow: Any, actor: Actor, rfq_id: UUID, text: str, supplier_id: UUID | None, source: str,
+                today: date | None = None) -> dict:
     """Proposed lines for the quote form. `source` — «paste» (typed or pasted) or «file» (a PDF's text layer)."""
     with uow:
         session = uow.session
@@ -553,7 +660,10 @@ def parse_quote(uow: Any, actor: Actor, rfq_id: UUID, text: str, supplier_id: UU
                       "или таблица из Excel с заголовком")
     lines = apply_packs(match_lines(lines[:500], targets, aliases), targets)
     matched = [line for line in lines if line.rfq_line_id]
+    with uow:
+        header = _header_supplier(uow.session, read_header(text, today or date.today()), rfq_id)
     return {
+        "header": header,
         "source": source, "vat_included": not without_vat, "default_vat_rate": rfq_service.num(default_vat),
         "lines": [_json(line) for line in matched],
         "unmatched": [_json(line) for line in lines if not line.rfq_line_id],

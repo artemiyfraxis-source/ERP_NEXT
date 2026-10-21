@@ -22,7 +22,7 @@ class Setting:
     key: str
     label: str
     hint: str
-    kind: str  # "int" | "decimal" | "bool" | "list" (a list of names)
+    kind: str  # "int" | "decimal" | "bool" | "list" (a list of names) | "text" (several lines)
     default: Any
     minimum: Decimal | None = None
     maximum: Decimal | None = None
@@ -37,6 +37,13 @@ DEFAULT_PURPOSES = (
     "Оснастка и инструмент", "Оборудование и основные средства", "Испытания и контроль качества",
     "Гарантия и рекламации", "ИТ и офис",
 )
+# Our company in the invoice-request letters (Roller_Buyer OUR_COMPANY): the ERP keeps the requisites nowhere else
+# the purchasing hybrid may read (shipping's document header is its own constant).
+DEFAULT_REQUISITES = (
+    "ООО «ЗЭП „ФРАКСИС“», ИНН 5040191181, КПП 504001001\n"
+    "140188, Московская обл., г.о. Жуковский, г. Жуковский, ул. Молодёжная, д. 29"
+)
+MAX_TEXT = 1000
 MAX_PURPOSES = 60
 MAX_PURPOSE_LENGTH = 64
 
@@ -47,6 +54,8 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("quote_wait_days", "Ждать ответа на запрос, дней", "Дольше — поставщик попадает в «нет ответа».", "int", 3, Decimal(0), Decimal(60)),
     Setting("quote_valid_days", "КП действует, дней", "Если срок не указан в КП.", "int", 14, Decimal(1), Decimal(365)),
     Setting("delivery_warn_days", "Предупреждать о поставке за, дней", "«Приезжает скоро» и риск к сроку.", "int", 3, Decimal(0), Decimal(60)),
+    Setting("delivery_default", "Доставка для подбора КП, ₽", "За каждого поставщика, если в его КП доставка не указана: «всё у него» и «Подбор».", "decimal", Decimal("1500"), Decimal(0), Decimal(1000000)),
+    Setting("letter_requisites", "Реквизиты для писем", "Покупатель в письмах «Запросить счета»: название, ИНН, КПП, адрес — по строке на каждое. Адрес доставки берётся из точки отгрузки строк.", "text", DEFAULT_REQUISITES),
     Setting("rotation_non_key", "Неключевых в подсказке", "Сколько неключевых поставщиков (давно не спрашивали) добавлять к ключевым.", "int", 1, Decimal(0), Decimal(5)),
     Setting("purposes", "Назначения заявок", "Назначение задаёт проект: у внутреннего проекта — из этого списка, у проекта заказчика — «Коммерческий проект». Назначение, которое уже встречается в заявках или проектах, убрать нельзя.", "list", DEFAULT_PURPOSES),
 )
@@ -88,6 +97,13 @@ def _coerce_names(setting: Setting, raw: Any) -> list[str]:
 def _coerce(setting: Setting, raw: Any) -> Any:
     if setting.kind == "list":
         return _coerce_names(setting, raw)
+    if setting.kind == "text":
+        if not isinstance(raw, str):
+            raise InvalidSetting(f"«{setting.label}»: нужен текст")
+        text = "\n".join(line.strip() for line in raw.replace("\r\n", "\n").replace("\r", "\n").split("\n")).strip()
+        if len(text) > MAX_TEXT:
+            raise InvalidSetting(f"«{setting.label}»: не длиннее {MAX_TEXT} знаков")
+        return text
     if setting.kind == "bool":
         if isinstance(raw, bool):
             return raw

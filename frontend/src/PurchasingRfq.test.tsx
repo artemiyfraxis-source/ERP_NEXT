@@ -77,19 +77,23 @@ it("asks only the reasons the choice needs and sends them with the decision", as
   render(<PurchasingRfq />);
   fireEvent.click(await screen.findByRole("button", { name: "Разъём — ООО Бета" }));
   const dialog = await screen.findByRole("dialog", { name: "Разъём: выбор поставщика" });
-  expect(within(dialog).getByLabelText("Причина обхода")).toBeInTheDocument();
-  expect(within(dialog).getByLabelText("Почему не самое дешёвое")).toBeInTheDocument();
-  expect(within(dialog).queryByLabelText("С кем согласован аналог")).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Гейт конкуренции не пройден — причина обхода")).toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Не самое дешёвое КП — причина")).toBeInTheDocument();
+  expect(within(dialog).queryByLabelText("Аналог — с кем согласовано")).not.toBeInTheDocument();
+  expect(within(dialog).getByText("Укажите причину обхода правила КП")).toBeInTheDocument();
   const choose = within(dialog).getByRole("button", { name: /Выбрать «ООО Бета»/ });
   expect(choose).toBeDisabled();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Срочно" }));
-  fireEvent.change(within(dialog).getByLabelText("Почему не самое дешёвое"), { target: { value: "Срок" } });
+  fireEvent.change(within(dialog).getByLabelText("Гейт конкуренции не пройден — причина обхода"), { target: { value: "other" } });
+  expect(choose).toBeDisabled(); // «Другое» needs the buyer's words
+  fireEvent.change(within(dialog).getByLabelText("Гейт конкуренции не пройден — причина обхода: своими словами"), { target: { value: "Срочно для сборки" } });
+  fireEvent.change(within(dialog).getByLabelText("Не самое дешёвое КП — причина"), { target: { value: "lead_time" } });
   expect(choose).toBeEnabled();
   fireEvent.click(choose);
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0].path).toBe("/api/purchasing/rfqs/r1/decisions");
   expect(posts[0].body).toEqual({
-    rfq_line_id: "l1", quote_line_id: "ql2", expected_version: 3, gate_override_reason: "Срочно", not_cheapest_reason: "Срок",
+    rfq_line_id: "l1", quote_line_id: "ql2", expected_version: 3, gate_override_code: "other", gate_override_note: "Срочно для сборки",
+    not_cheapest_code: "lead_time", not_cheapest_note: null,
   });
 });
 
@@ -98,8 +102,8 @@ it("the cheapest offer asks only for the gate reason when too few quotes came", 
   render(<PurchasingRfq />);
   fireEvent.click(await screen.findByRole("button", { name: "Разъём — ООО Альфа" }));
   const dialog = await screen.findByRole("dialog", { name: "Разъём: выбор поставщика" });
-  expect(within(dialog).getByLabelText("Причина обхода")).toBeInTheDocument();
-  expect(within(dialog).queryByLabelText("Почему не самое дешёвое")).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Гейт конкуренции не пройден — причина обхода")).toBeInTheDocument();
+  expect(within(dialog).queryByLabelText("Не самое дешёвое КП — причина")).not.toBeInTheDocument();
 });
 
 it("a line not asked of a supplier is «не запрашивали», the header edits his positions, the quote form lists his only", async () => {
@@ -204,13 +208,20 @@ it("the pasted text fills the form with the pack recalculated, lists the rest an
   fireEvent.click(await within(quote).findByRole("button", { name: "Вставить из PDF / текста" }));
   fireEvent.change(within(quote).getByLabelText("Текст КП"), { target: { value: "Разъём SHR-02 (100 шт) 1 уп 500,00 7 дн" } });
   fireEvent.click(within(quote).getByRole("button", { name: "Разобрать текст" }));
-  await waitFor(() => expect(within(quote).getByLabelText("Цена Разъём")).toHaveValue("5"));
+  // Every row is matched or skipped before anything reaches the form.
+  const review = await within(quote).findByRole("region", { name: "Проверка импорта" });
+  expect(within(review).getByText(/мусор 12,50/)).toBeInTheDocument();
+  expect(within(review).getByText("Не решено строк: 1 — выберите позицию или «пропустить».")).toBeInTheDocument();
+  const apply = within(review).getByRole("button", { name: "Перенести в КП" });
+  expect(apply).toBeDisabled();
+  fireEvent.change(within(review).getByLabelText("Позиция для «Что-то ещё»"), { target: { value: "skip" } });
+  expect(apply).toBeEnabled();
+  fireEvent.click(apply);
+  expect(within(quote).getByLabelText("Цена Разъём")).toHaveValue("5");
   expect(within(quote).getByLabelText("Упаковка Разъём")).toHaveValue("100");
   expect(within(quote).getByLabelText("Мин. партия Разъём")).toHaveValue("100");
   expect(within(quote).getByLabelText("Срок Разъём")).toHaveValue("7");
   expect(within(quote).getByText(/цена пересчитана за шт/)).toBeInTheDocument();
-  expect(within(quote).getByText(/Что-то ещё/)).toBeInTheDocument();
-  expect(within(quote).getByText(/мусор 12,50/)).toBeInTheDocument();
   expect(posts[0].path).toBe("/api/purchasing/rfqs/r1/quotes/import");
   expect(posts[0].body).toEqual({ supplier_id: "s2", text: "Разъём SHR-02 (100 шт) 1 уп 500,00 7 дн" });
 
@@ -219,4 +230,45 @@ it("the pasted text fills the form with the pack recalculated, lists the rest an
   expect(posts[1].body.source).toBe("paste");
   expect(posts[1].body.aliases).toEqual([{ rfq_line_id: "l1", text: "Разъём SHR-02 (100 шт)" }]);
   expect(posts[1].body.lines[0]).toMatchObject({ unit_price: "5", pack: "100", moq: "100", lead_days: 7 });
+});
+
+it("opens the request named in the address and keeps the address on the request chosen", async () => {
+  window.history.replaceState({}, "", "/?section=procurement&tab=rfq&rfq=r2");
+  const asked: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    asked.push(path);
+    if (path === "/api/purchasing/rfqs?scope=mine") {
+      return json({ rfqs: [
+        { id: "r1", number: "КП-2610-001", title: "Разъёмы", created_at: "2026-10-01T10:00:00", closed_at: null, mine: true, lines: 1, suppliers: 2, sent: 2, quotes: 2, decided: 0 },
+        { id: "r2", number: "КП-2610-002", title: "Кабель", created_at: "2026-10-02T10:00:00", closed_at: null, mine: true, lines: 1, suppliers: 2, sent: 2, quotes: 2, decided: 0 },
+      ] });
+    }
+    if (path === "/api/purchasing/rfqs/directory") return json({ suppliers: [] });
+    if (path === "/api/purchasing/rfqs/r1") return json(matrix);
+    if (path === "/api/purchasing/rfqs/r2") return json({ ...matrix, rfq: { ...matrix.rfq, id: "r2", number: "КП-2610-002", title: "Кабель" } });
+    return json({}, 404);
+  });
+  render(<PurchasingRfq />);
+  expect(await screen.findByRole("heading", { name: "КП-2610-002 · Кабель" })).toBeInTheDocument();
+  expect(asked).not.toContain("/api/purchasing/rfqs/r1");
+  fireEvent.click(screen.getByRole("button", { name: /КП-2610-001/ }));
+  expect(await screen.findByRole("heading", { name: "КП-2610-001 · Разъёмы" })).toBeInTheDocument();
+  await waitFor(() => expect(window.location.search).toBe("?section=procurement&tab=rfq&rfq=r1"));
+  window.history.replaceState({}, "", "/");
+});
+
+it("«&letters=1» opens the supplier letters with the request; «Свернуть» drops it from the address", async () => {
+  window.history.replaceState({}, "", "/?section=procurement&tab=rfq&rfq=r1&letters=1");
+  mockServer();
+  render(<PurchasingRfq />);
+  const letters = await screen.findByRole("region", { name: "Письма поставщикам" });
+  expect(within(letters).getAllByText(/Запрос КП № КП-2610-001 от 01\.10\.2026 — 1 позиция/).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("button", { name: "Письма поставщикам" })).not.toBeInTheDocument();
+  fireEvent.click(within(letters).getByRole("button", { name: "Свернуть" }));
+  expect(screen.queryByRole("region", { name: "Письма поставщикам" })).not.toBeInTheDocument();
+  await waitFor(() => expect(window.location.search).toBe("?section=procurement&tab=rfq&rfq=r1"));
+  fireEvent.click(screen.getByRole("button", { name: "Письма поставщикам" }));
+  await waitFor(() => expect(window.location.search).toBe("?section=procurement&tab=rfq&rfq=r1&letters=1"));
+  window.history.replaceState({}, "", "/");
 });

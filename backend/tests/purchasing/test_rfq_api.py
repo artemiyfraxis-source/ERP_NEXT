@@ -140,7 +140,9 @@ def test_full_flow_from_candidates_to_the_procurement_line(rfq_api):
     assert cells[bulk]["cover_qty"] == "100" and cells[bulk]["requires"] == ["not_cheapest_reason"]
     assert line_a["delta_pct"] == "9.1"  # 120 vs budget 110
     head = {supplier["supplier_id"]: supplier for supplier in matrix["suppliers"]}
-    assert head[key]["is_key"] and head[key]["sent_at"] and head[key]["answered"] and head[key]["basket_total"] == "240"
+    assert head[key]["is_key"] and head[key]["sent_at"] and head[key]["answered"]
+    # «всё у него»: the quote names no delivery — the settings' 1 500 ₽ is counted (RB rfq-matrix).
+    assert head[key]["basket_total"] == "1740" and head[key]["delivery_known"] is False
     # Suppliers are ordered key first.
     assert matrix["suppliers"][0]["supplier_id"] == key
 

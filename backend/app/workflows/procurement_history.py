@@ -338,7 +338,10 @@ def _rfq_events(session: Session, line_id: UUID, add, user) -> None:
                       f"аналог одобрил {decision.analog_approved_by}" if decision.analog_approved_by else ""),
                 user(decision.decided_by), "запрос КП")
         elif rfq_line.removed_at is not None:
-            add(rfq_line.removed_at, f"Выведена из запроса {rfq.number}", "решения не было", None, "запрос КП")
+            way = {"new": " — в новые", "requote": " — перезапрос"}.get(rfq_line.removed_reason or "", "")
+            add(rfq_line.removed_at, f"Выведена из запроса {rfq.number}{way}",
+                rfq_line.removed_note or "решения не было", user(rfq_line.removed_by) if rfq_line.removed_by else None,
+                "запрос КП")
 
 
 def _receiving_events(session: Session, line_id: UUID, add) -> None:

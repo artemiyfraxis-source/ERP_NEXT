@@ -154,6 +154,7 @@ it("preselects the suggested suppliers and creates the request with lines and su
         { name: "ИП Неизвестный", reason: "category_history", line_ids: ["a", "b"] },
         { supplier_id: "s-om", reason: "manual", line_ids: ["a", "b"] },
       ],
+      sent_on: null, declined_suggestions: [],
     },
   }]);
 });
@@ -244,3 +245,33 @@ it("«+ Запрос» opens the pool across the page instead of the request lis
   fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
   expect(await screen.findByText("Запросы КП")).toBeInTheDocument();
 });
+
+it("warns when fewer suppliers than the gate wants, records an unticked rotation suggestion and the send date", async () => {
+  const posts: { path: string; body: any }[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") {
+      posts.push({ path, body: JSON.parse(String(init.body)) });
+      return json({ id: "r-new", number: "КП-2610-002", suppliers: 1 }, 201);
+    }
+    if (path === "/api/purchasing/rfqs/pool") return json(pool);
+    if (path.startsWith("/api/purchasing/rfqs/suggest?")) {
+      return json({ ...suggestion, gate_min_quotes: 3, suggestions: suggestion.suggestions.map((item) => (item.reason === "rotation" ? { ...item, preselect: true } : item)) });
+    }
+    if (path === "/api/purchasing/rfqs/directory") return json({ suppliers: [] });
+    return json({}, 404);
+  });
+  render(<RfqPool onClose={() => undefined} onCreated={() => undefined} />);
+  fireEvent.click(await screen.findByLabelText("Выбрать группу «Кабель и провод»"));
+  fireEvent.click(screen.getByRole("button", { name: "Запросить КП (2)" }));
+  expect(await screen.findByLabelText("Спросить ООО Ротация")).toBeChecked();
+  expect(screen.queryByText(/для гейта нужно не меньше 3 КП/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Спросить ООО Ротация"));
+  expect(screen.getByText("Поставщиков: 2 — для гейта нужно не меньше 3 КП, спросите ещё кого-нибудь")).toBeInTheDocument();
+  expect(screen.getByText(/Подсказку ротации не берёте \(ООО Ротация\)/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Дата отправки"), { target: { value: "2026-10-15" } });
+  fireEvent.click(screen.getByRole("button", { name: "Создать запрос" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toMatchObject({ sent_on: "2026-10-15", declined_suggestions: ["s-rot"] });
+});
+
