@@ -3,7 +3,7 @@
 import base64
 import binascii
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 from urllib.parse import quote
@@ -14,10 +14,15 @@ from pydantic import BaseModel, BeforeValidator, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
 from app.shared.stored_files import decode_upload, file_response
 
+from sqlalchemy import select
+
+from .infrastructure import ProcurementLineRow, _line_domain
+from .price_history import history_for_row, history_for_rows
 from .application import (
     CancelBackorderCommand,
     KpRow,
@@ -36,6 +41,8 @@ from .application import (
     SetTraceabilityCommand,
     SetNoteCommand,
     SetExpectedArrivalCommand,
+    SetOrderExpectedArrivalCommand,
+    set_order_expected_arrival,
     SetActualArrivalCommand,
     set_procurement_actual_arrival,
     ExpectedArrivalCopier,
@@ -133,6 +140,9 @@ from .domain import (
 from .stock_port import StockLotView
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from .exchange_rates import CbrExchangeRates
+from .kpi import build_kpi
+from app.workflows.procurement_history import line_history
+from app.workflows.procurement_today import today_page
 from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
 from .money import MoneyInput, parse_number_loose
@@ -746,6 +756,115 @@ def my_lines(
     return _page_result(lines, limit, purposes_of, **_list_lookups(uow_factory))
 
 
+PRICE_HISTORY_OPTION = "procurement.price_history"
+PRICE_HISTORY_BATCH = 200
+
+
+class PriceHistoryRequest(BaseModel):
+    line_ids: list[UUID] = Field(max_length=PRICE_HISTORY_BATCH)
+
+
+def _require_price_history() -> None:
+    if not stage_options.enabled(PRICE_HISTORY_OPTION):
+        raise HTTPException(status_code=404, detail="Опция выключена")
+
+
+@router.post("/price-history")
+def price_history_batch(
+    payload: PriceHistoryRequest,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """«Покупали ранее» for the buyer's own lines, one request per list; foreign or unknown ids are skipped."""
+    _require_price_history()
+    uow = uow_factory()
+    with uow:
+        rows = uow.session.scalars(
+            select(ProcurementLineRow).where(
+                ProcurementLineRow.id.in_(payload.line_ids),
+                ProcurementLineRow.buyer_id == principal.actor.id,
+            )
+        ).all()
+        return history_for_rows(uow.session, rows)
+
+
+@router.get("/{line_id}/price-history")
+def price_history_one(
+    line_id: UUID,
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """A read: open on «Лист закупки» view like the sheet itself (view-mode contract, ID-6)."""
+    _require_price_history()
+    uow = uow_factory()
+    with uow:
+        row = uow.session.get(ProcurementLineRow, line_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Строка не найдена")
+        return history_for_row(uow.session, row)
+
+
+def _require_option(key: str) -> None:
+    if not stage_options.enabled(key):
+        raise HTTPException(status_code=404, detail="Опция выключена")
+
+
+@router.get("/today")
+def today_lines(
+    principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
+) -> dict:
+    """Stage option `procurement.today`: Roller_Buyer's «Сегодня» over the buyer's own lines and requests, computed on
+    read (`app/workflows/procurement_today.py`). A read, open on view (ID-6): a viewer has no own lines."""
+    _require_option("procurement.today")
+    uow = uow_factory()
+    with uow:
+        return today_page(uow.session, principal.actor.id, now.date(), purposes_of)
+
+
+@router.get("/{line_id}/history")
+def line_history_route(
+    line_id: UUID,
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """Stage option `procurement.history`: the line's life from the request to the warehouse, rebuilt on read."""
+    _require_option("procurement.history")
+    uow = uow_factory()
+    with uow:
+        result = line_history(uow.session, line_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Строка не найдена")
+    return result
+
+
+@router.get("/kpi")
+def buyer_kpi(
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    date_from: Annotated[date, Query(alias="from")],
+    date_to: Annotated[date, Query(alias="to")],
+    buyer: Annotated[str | None, Query(max_length=255)] = None,
+) -> dict:
+    """Stage option `procurement.kpi`: indicators of the lines paid in the period, per buyer and in total."""
+    _require_option("procurement.kpi")
+    if date_to < date_from:
+        raise HTTPException(status_code=422, detail="Конец периода раньше начала")
+    uow = uow_factory()
+    with uow:
+        # Only lines paid around the period (±1 day for the Moscow date of a UTC timestamp) leave the database.
+        low = datetime.combine(date_from - timedelta(days=1), time.min)
+        high = datetime.combine(date_to + timedelta(days=2), time.min)
+        rows = uow.session.scalars(
+            select(ProcurementLineRow).where(ProcurementLineRow.paid_at >= low, ProcurementLineRow.paid_at < high)
+        )
+        lines = [_line_domain(row) for row in rows]
+        buyers = sorted(set(uow.procurement.buyer_names()), key=str.casefold)
+    return {**build_kpi(lines, date_from, date_to, buyer or None), "buyers": buyers}
+
+
 @router.get("/in-work")
 def in_work_lines(
     _principal: Annotated[Principal, Depends(procurement_view_principal)],
@@ -994,7 +1113,12 @@ def _command_errors(operation):
     except RateUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except KeyError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+        raise HTTPException(status_code=404, detail=_key_error_text(error)) from error
+
+
+def _key_error_text(error: KeyError) -> str:
+    """«Заказ PO-404: нет ваших строк» — not the quoted repr `str(KeyError)` gives."""
+    return str(error.args[0]) if error.args else "Не найдено"
 
 
 def _kp_errors(operation):
@@ -1250,6 +1374,39 @@ def pay_order(
             ),
             uow_factory(),
             rates,
+        )
+    )
+    return {"lines": [_line_result(line) for line in lines]}
+
+
+class OrderExpectedArrivalInput(BaseModel):
+    expected_arrival: date
+    lines: list[OrderLineInput] = Field(min_length=1, max_length=200)
+
+
+@router.post("/orders/{order_number}/expected-arrival")
+def order_expected_arrival(
+    order_number: str,
+    payload: OrderExpectedArrivalInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    receiving: Annotated[ExpectedArrivalCopier | None, Depends(procurement_receiving)],
+) -> dict:
+    """Stage option `procurement.orders` («Счета и поставки»): ОЖИД. ДАТА of every line of the order whose date can
+    still move, all or none (409 when the rows sent are not that set or a row is stale)."""
+    _require_option("procurement.orders")
+    lines = _command_errors(
+        lambda: set_order_expected_arrival(
+            SetOrderExpectedArrivalCommand(
+                order_number=order_number,
+                expected_arrival=payload.expected_arrival,
+                lines=[OrderLineRef(row.line_id, row.version) for row in payload.lines],
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+            receiving,
         )
     )
     return {"lines": [_line_result(line) for line in lines]}

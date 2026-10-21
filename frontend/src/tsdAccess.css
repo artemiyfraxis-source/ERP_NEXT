@@ -1,0 +1,17 @@
+/* «Оборудование» → «ТСД и вход с устройств» (stage option warehouse.tsd), on the PC. */
+.tsd-access p { margin: 0; }
+.tsd-access h3 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.tsd-access-switch { align-self: start; }
+.tsd-access-state { font-weight: 600; }
+.tsd-access-state.warn { color: var(--tone-warn); }
+.tsd-access-qrs { display: flex; flex-wrap: wrap; gap: 16px; }
+.tsd-access-qrs figure { display: flex; align-items: center; gap: 12px; margin: 0; }
+.tsd-access-qrs img { background: #fff; border: 1px solid var(--border); border-radius: 6px; }
+.tsd-access-qrs figcaption { display: flex; flex-direction: column; gap: 4px; font-family: var(--font-mono); }
+.tsd-access-notes { margin: 0; padding-left: 18px; color: var(--muted-foreground); }
+.tsd-access-logs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.tsd-access-logs > button { justify-self: start; }
+.tsd-access-log { max-height: 260px; margin: 6px 0 0; padding: 8px; overflow: auto; font-size: 11px; line-height: 1.35; white-space: pre-wrap; word-break: break-all; background: var(--panel-soft); border-radius: 6px; }
+@media (max-width: 900px) {
+  .tsd-access-logs { grid-template-columns: minmax(0, 1fr); }
+}

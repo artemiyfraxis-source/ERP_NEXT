@@ -87,6 +87,9 @@ class ProjectRegistry(Protocol):
 
     def open_projects(self) -> Sequence[str] | None: ...
 
+    # Optional (read with getattr): ``purposes() -> list[str] | None`` — the purposes directory while the option
+    # requests.form is on, None otherwise.
+
 
 class CalcSheetError(RuntimeError):
     """The calculation spreadsheet could not be read; ``message`` is shown to the user as is.
@@ -249,6 +252,12 @@ def _procurement_requested_payload(
     }
 
 
+def directory_purposes(projects: object | None) -> list[str] | None:
+    getter = getattr(projects, "purposes", None)
+    found = getter() if callable(getter) else None
+    return None if found is None else list(found)
+
+
 def create_requests(
     command: CreateRequestsCommand,
     uow: UnitOfWork,
@@ -277,6 +286,7 @@ def create_requests(
             creation_key=creation_key,
             creation_fingerprint=fingerprint,
             designation_base=command.designation_base,
+            directory_purposes=directory_purposes(projects),
         )
         # Ручная заявка: № проекта вписывают руками, пусто — без проекта (владелец, 29.09). Реестр —
         # только подсказка в поле; формат 591К.3 проверяет create_request_batch.

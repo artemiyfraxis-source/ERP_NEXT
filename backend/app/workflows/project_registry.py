@@ -1,4 +1,4 @@
-"""Requests' ProjectRegistry port over the Projects snapshot imported for the production plan."""
+"""Requests' ProjectRegistry port over the Projects snapshot imported for the production plan (+ open internal projects)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from app.modules.production.plan import normalize_project_number, project_terminal, summarize_journal
 from app.modules.production.plan_application import PlanUnitOfWork
+from app.shared import stage_options
 
 
 CLOSED_PROJECT_STATUS = "Закрыт"
@@ -40,3 +41,34 @@ class PlanSnapshotProjectRegistry:
             if not _closed(item, journal.get(normalize_project_number(item.project)))
             and item.status.strip() != CLOSED_PROJECT_STATUS
         ]
+
+
+class InternalAwareProjectRegistry:
+    """The plan registry plus the open internal projects «ВП-…» while the option projects.internal is on.
+
+    Off, or the plan registry unavailable (None = «skip the check»), the answer is the plan registry's own."""
+
+    def __init__(self, base, purchasing_uow_factory: Callable[[], object]):
+        self.base = base
+        self.purchasing_uow_factory = purchasing_uow_factory
+
+    def open_projects(self) -> list[str] | None:
+        projects = self.base.open_projects()
+        if projects is None or not stage_options.enabled("projects.internal"):
+            return projects
+        return [*projects, *(item["number"] for item in self.internal_projects())]
+
+    def purposes(self) -> list[str] | None:
+        """The purposes directory («Настройки закупки») while the option requests.form is on; None = old behaviour."""
+        if not stage_options.enabled("requests.form"):
+            return None
+        from app.workflows.purchasing_internal_projects import directory_purposes
+
+        return directory_purposes(self.purchasing_uow_factory)
+
+    def internal_projects(self) -> list[dict[str, str]]:
+        if not stage_options.enabled("projects.internal"):
+            return []
+        from app.workflows.purchasing_internal_projects import open_summaries
+
+        return open_summaries(self.purchasing_uow_factory)

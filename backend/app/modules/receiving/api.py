@@ -237,6 +237,7 @@ def _result(line: ReceivingLine) -> dict:
         "name": line.name,
         "item_type": line.item_type,
         "purpose": line.purpose,
+        "goal": line.goal,
         "supplier": line.supplier,
         "ordered_quantity": _decimal(line.ordered_quantity),
         "unit": line.unit,

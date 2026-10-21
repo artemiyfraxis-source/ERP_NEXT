@@ -5,6 +5,7 @@ import { StatusChip } from "./StatusChip";
 import { DatasheetCell, ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { lineFilesColumn } from "./ProcurementLineDocuments";
 import { waitsForGrn } from "./ProcurementStockPicker";
+import { projectLabel } from "./internalProjects";
 
 /* Колонки «Весь лист» — все колонки листа закупки в порядке блоков SUPPLYMAP (Config.gs SHEET_ORDER.PURCHASE):
    регистрация → классификация → что закупаем → поставщик → кол-во (расчёт и факт) → заказ → замена →
@@ -58,7 +59,7 @@ const withUnit = (quantity: string | null | undefined, unit: string | null | und
 const yesNo = (value: boolean | null) => (value === null ? "" : value ? "Да" : "Нет");
 const dayOf = (value: string | null | undefined) => formatDay(value);
 
-type SheetEditing = { editing: LineEditing; buyerName: string; disabled?: boolean };
+type SheetEditing = { editing: LineEditing; buyerName: string; disabled?: boolean; dense?: boolean };
 
 /** Колонки листа. Без `edit` — только чтение (обзор «По поставщикам» берёт из них нужные). */
 export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLine>[] {
@@ -88,7 +89,7 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
     text("buyer", "Закупщик", (line) => line.buyer, { filter: true, hidden: true }),
     // классификация
     text("designation", "Назначение", (line) => line.designation, { hidden: true }),
-    text("project", "Проект", (line) => line.project_reference, { hidden: true }),
+    text("project", "Проект", (line) => projectLabel(line.project_reference), { hidden: !edit?.dense, filter: Boolean(edit?.dense) }),
     text("task_type", "Тип задачи", (line) => line.task_type, { filter: true, hidden: true }),
     text("purpose", "Цель", (line) => line.purpose, { filter: true, hidden: true }),
     text("priority", "Приоритет", (line) => line.priority, { filter: true, hidden: true }),

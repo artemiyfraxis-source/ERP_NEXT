@@ -33,6 +33,8 @@ ROWS = 6
 _CHECK_IN = re.compile(r"(\w+).*?'([^']*)'", re.DOTALL)
 _IN_LIST = re.compile(r"\bIN\s*\(|=\s*ANY\s*\(", re.IGNORECASE)
 _CHECK_NULL_OR = re.compile(r"\s*\(*\s*(\w+)\s+IS\s+NULL\s*\)?\s+OR\b", re.IGNORECASE)
+# A one-value `IN ('kaiten')`: PostgreSQL keeps it as `((source)::text = 'kaiten'::text)` — the whole CHECK is one equality.
+_CHECK_EQ = re.compile(r"^\(*\s*\(?(\w+)\)?(?:::[\w ]+)?\s*=\s*'([^']*)'(?:::[\w ]+)?\s*\)*\s*$", re.DOTALL)
 # `(tab = 'prov' AND cable_kind IN (…)) OR (tab <> 'prov' AND cable_kind IS NULL)` (0131): the column stays empty on a
 # row of any other value of the first column (the seeder never picks the one value that needs it).
 _CHECK_NULL_BRANCH = re.compile(r"\bOR\b.*?<>.*?\bAND\s*\(?\s*(\w+)\s+IS\s+NULL", re.IGNORECASE | re.DOTALL)
@@ -60,7 +62,8 @@ def seed(engine: Engine, rows: int = ROWS) -> dict[str, int]:
                 continue
             parents = _parent_values(connection, table)
             lots = _lot_ids(connection, metadata) if "lot_id" in table.c and not table.c.lot_id.foreign_keys else []
-            values = [_row(table, index, parents, lots, checks, engine.dialect.name) for index in range(rows)]
+            count = 1 if table.name in _SINGLE_ROW_TABLES else rows
+            values = [_row(table, index, parents, lots, checks, engine.dialect.name) for index in range(count)]
             connection.execute(table.insert(), values)
             inserted[table.name] = len(values)
     return inserted
@@ -95,6 +98,10 @@ def _check_values(connection: Connection, metadata: MetaData) -> dict[tuple[str,
             match = _CHECK_IN.search(text)
             if match and match.group(1) in table.c and _IN_LIST.search(text):
                 found[(table.name, match.group(1))] = match.group(2)
+                continue
+            equal = _CHECK_EQ.match(text)
+            if equal and equal.group(1) in table.c:
+                found[(table.name, equal.group(1))] = equal.group(2)
     return found
 
 
@@ -170,12 +177,24 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("fulfillment_lines", "absent_by"): None,
     ("finished_goods", "before_erp"): Decimal(0),
 }
+# Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
+# label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).
+_LABEL_SETTINGS = {"width_mm": 58, "height_mm": 30, "dpi": 300, "gap_mm": 2, "density": 12, "speed": 2,
+                   "offset_x_mm": 0, "offset_y_mm": 0}
+_SHAPED_VALUES: dict[tuple[str, str], Any] = {
+    ("purchasing_internal_projects", "number"): lambda i: f"ВП-{i + 1:03d}",
+    **{("warehouse_label_settings", name): (lambda value: lambda i: value)(value) for name, value in _LABEL_SETTINGS.items()},
+}
+# One row per installation (CHECK `id = 1`): seeded with a single row.
+_SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings"})
 
 
 def _value(table: str, column: Column, index: int) -> Any:
     name, kind = column.name, column.type
     if (table, name) in _COUPLED_VALUES:
         return _COUPLED_VALUES[(table, name)]
+    if (table, name) in _SHAPED_VALUES:
+        return _SHAPED_VALUES[(table, name)](index)
     if table == "warehouse_lots" and name in _LOT_QUANTITIES:
         return _LOT_QUANTITIES[name](index)
     if (table, name) in _HOLDER_QUANTITY:

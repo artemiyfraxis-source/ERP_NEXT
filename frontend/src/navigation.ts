@@ -8,7 +8,7 @@ export type Section =
   | "cabinet" | "card"
   | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement"
-  | "receiving" | "stock" | "issues" | "handout" | "intake" | "shipping"
+  | "receiving" | "stock" | "equipment" | "issues" | "handout" | "intake" | "shipping"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
 
 export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "refs";
@@ -28,6 +28,8 @@ export interface NavItem {
   /** A screen opened from another section, not a card or menu item of its own: SUPPLYMAP opens the ЭТК inside
    *  «Проекты» (hub 'tc'), so the menu highlights that section instead. */
   within?: Section;
+  /** Stage options (Витя's hybrid stage): the section exists only while at least one of them is «Новое». */
+  options?: string[];
 }
 
 export const BLOCKS: Array<{ id: BlockId; title: string; sub: string }> = [
@@ -78,6 +80,8 @@ export const NAV: NavItem[] = [
   // Склад
   { id: "receiving", label: "Приёмка", sub: "входной контроль и оприходование", permission: "receiving", block: "stock" },
   { id: "stock", label: "Склад", sub: "остатки · внести · переместить", permission: "warehouse", block: "stock" },
+  // «Оборудование» (stage options warehouse.labels, warehouse.tsd): the GRN label printer and access from a ТСД.
+  { id: "equipment", label: "Оборудование", sub: "принтер этикеток · ТСД", permission: "warehouse", block: "stock", options: ["warehouse.labels", "warehouse.tsd"] },
   // Picking only reserves, handout writes off: two sections over one request (SUPPLYMAP, owner 02.09.2026), each with
   // its own access key (NAV-SECTIONS) so picking and writing off can go to different people.
   { id: "issues", label: "Запросы на комплектацию", sub: "заявки под КБ · набрать комплект", permission: "fulfillment", block: "stock" },
@@ -158,16 +162,28 @@ export function isViewOnly(principal: Principal, item: NavItem): boolean {
   return modes.length > 0 && !modes.includes("edit");
 }
 
-export function visibleNav(principal: Principal) {
-  return NAV.filter((item) => hasNavAccess(principal, item));
+const NO_OPTIONS: ReadonlySet<string> = new Set();
+
+/** A section behind stage options is there only while one of them is on (`enabled` — the keys switched to «Новое»). */
+export function optionsAllow(item: NavItem, enabled: ReadonlySet<string> = NO_OPTIONS): boolean {
+  return !item.options || item.options.some((key) => enabled.has(key));
+}
+
+export function visibleNav(principal: Principal, enabled: ReadonlySet<string> = NO_OPTIONS) {
+  return NAV.filter((item) => hasNavAccess(principal, item) && optionsAllow(item, enabled));
 }
 
 /** Blocks with at least one section this principal may open, sections in block order. */
-export function visibleBlocks(principal: Principal) {
-  const items = visibleNav(principal);
+export function visibleBlocks(principal: Principal, enabled: ReadonlySet<string> = NO_OPTIONS) {
+  const items = visibleNav(principal, enabled);
   return BLOCKS
     .map((block) => ({ ...block, items: items.filter((item) => item.block === block.id && !item.within) }))
     .filter((block) => block.items.length > 0);
+}
+
+/** A query parameter of the address bar ("" when absent): the pages read their starting filter from it (`?q=`). */
+export function urlParam(name: string): string {
+  return new URLSearchParams(window.location.search).get(name) ?? "";
 }
 
 export function isSection(value: string | null): value is Section {
@@ -176,4 +192,24 @@ export function isSection(value: string | null): value is Section {
 
 export function isBlock(value: string | null): value is BlockId {
   return BLOCKS.some(({ id }) => id === value);
+}
+
+/** Open a section with exactly these parameters (the global search): `?section=…&tab=…&q=…`, no leftovers. */
+export function openPlace(section: string, params: Record<string, string> = {}) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.searchParams.set("section", section);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  window.history.pushState({}, "", url);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+/** Go to another section the way the menu does: `?section=…` in the address bar plus a popstate for the shell. */
+export function openSection(section: string, extra: Record<string, string> = {}) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("section", section);
+  url.searchParams.delete("block");
+  for (const [key, value] of Object.entries(extra)) url.searchParams.set(key, value);
+  window.history.pushState({}, "", url);
+  window.dispatchEvent(new PopStateEvent("popstate"));
 }

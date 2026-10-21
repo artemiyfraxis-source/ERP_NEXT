@@ -4,23 +4,32 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Callable
 from decimal import Decimal
+from functools import lru_cache
 from uuid import UUID
 
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, delete, func, or_, select
+from sqlalchemy import (
+    JSON, Boolean, CheckConstraint, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, delete,
+    func, or_, select,
+)
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import (
     AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository, check_read_version,
     note_written_version, track_read_versions,
 )
+from app.shared import stage_options
 from app.shared.events import AuditEvent
+from app.shared.identity import Actor
 from app.shared.warehouse_location import RackLayout, forget_rack_layout, rack_layout_from_config, storage_location_has_slot
 
 from .domain import WAREHOUSES, StockLot, WriteOffEntry
 from .journal import MIRRORED_BY_WRITEOFFS, JournalEvent
+from .labels.settings import PrintSettings
+from .word_search import words_matcher
 
 
 class StockLotRow(Base):
@@ -91,6 +100,14 @@ class WriteOffEntryRow(Base):
     source_key: Mapped[str | None] = mapped_column(String(255))
 
 
+_JOURNAL_WRITEOFF_COLUMNS = (
+    WriteOffEntryRow.occurred_at, WriteOffEntryRow.kind, WriteOffEntryRow.warehouse, WriteOffEntryRow.grn,
+    WriteOffEntryRow.package, WriteOffEntryRow.name, WriteOffEntryRow.quantity, WriteOffEntryRow.unit,
+    WriteOffEntryRow.reason, WriteOffEntryRow.purpose, WriteOffEntryRow.author, WriteOffEntryRow.posted,
+    WriteOffEntryRow.actor_name,
+)
+
+
 def _writeoff_domain(row: WriteOffEntryRow) -> WriteOffEntry:
     return WriteOffEntry(**{column.name: getattr(row, column.name) for column in WriteOffEntryRow.__table__.columns})
 
@@ -130,21 +147,35 @@ class SqlAlchemyWarehouseJournalReader:
     def __init__(self, session: Session):
         self.session = session
 
-    def audit_events(self) -> list[JournalEvent]:
-        rows = self.session.execute(
-            select(AuditEventRow, StockLotRow.grn, StockLotRow.package, StockLotRow.name, StockLotRow.warehouse)
+    @staticmethod
+    def _event_filters():
+        return (
+            AuditEventRow.event_type.like("warehouse.%"),
+            AuditEventRow.event_type.not_in(sorted(MIRRORED_BY_WRITEOFFS)),
+        )
+
+    def audit_events(self, limit: int | None = None) -> list[JournalEvent]:
+        """Only the columns a journal row shows (no entity, no UUID parsing); `limit` — the newest ones."""
+        statement = (
+            select(
+                AuditEventRow.occurred_at, AuditEventRow.event_type, AuditEventRow.actor_name, AuditEventRow.details,
+                StockLotRow.grn, StockLotRow.package, StockLotRow.name, StockLotRow.warehouse,
+            )
             .outerjoin(StockLotRow, StockLotRow.id == AuditEventRow.aggregate_id)
-            .where(AuditEventRow.event_type.like("warehouse.%"))
-            .where(AuditEventRow.event_type.not_in(sorted(MIRRORED_BY_WRITEOFFS)))
+            .where(*self._event_filters())
             .order_by(AuditEventRow.occurred_at.desc(), AuditEventRow.id.desc())
         )
+        if limit is not None:
+            statement = statement.limit(limit)
         return [
             JournalEvent(
-                occurred_at=event.occurred_at, event_type=event.event_type, actor_name=event.actor_name,
-                details=event.details or {}, grn=grn or "", package=package or "", name=name or "",
+                occurred_at=occurred_at, event_type=event_type, actor_name=actor_name,
+                details=details or {}, grn=grn or "", package=package or "", name=name or "",
                 warehouse=warehouse or "",
             )
-            for event, grn, package, name, warehouse in rows
+            for occurred_at, event_type, actor_name, details, grn, package, name, warehouse in self.session.execute(
+                statement
+            )
         ]
 
     def writeoff_entries(self) -> list[WriteOffEntry]:
@@ -152,6 +183,21 @@ class SqlAlchemyWarehouseJournalReader:
             select(WriteOffEntryRow).order_by(WriteOffEntryRow.occurred_at.desc(), WriteOffEntryRow.id.desc())
         )
         return [_writeoff_domain(row) for row in rows]
+
+    def writeoff_lines(self, limit: int | None = None) -> list:
+        """The write-off journal as light rows with the attributes a journal row reads, newest first."""
+        statement = select(*_JOURNAL_WRITEOFF_COLUMNS).order_by(
+            WriteOffEntryRow.occurred_at.desc(), WriteOffEntryRow.id.desc()
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list(self.session.execute(statement))
+
+    def totals(self) -> int:
+        """How many rows the whole journal has: listed audit events + write-off rows."""
+        events = self.session.scalar(select(func.count()).select_from(AuditEventRow).where(*self._event_filters()))
+        writeoffs = self.session.scalar(select(func.count()).select_from(WriteOffEntryRow))
+        return int(events or 0) + int(writeoffs or 0)
 
 
 class WarehouseSequenceRow(Base):
@@ -223,8 +269,45 @@ _DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d)")
 
 def search_text(value: str) -> str:
     """Text for the substring search: NFKC, case-folded, ё = е, Latin look-alikes as Cyrillic, comma = dot."""
-    text = unicodedata.normalize("NFKC", str(value or "")).casefold().translate(_LOOKALIKES)
-    return _DECIMAL_COMMA.sub(".", text)
+    return _folded(str(value or ""))
+
+
+@lru_cache(maxsize=1 << 16)
+def _folded(text: str) -> str:
+    # Pure, so memoized: the stock list re-folds the same lot texts on every page and keystroke.
+    return _DECIMAL_COMMA.sub(".", unicodedata.normalize("NFKC", text).casefold().translate(_LOOKALIKES))
+
+
+# The columns a search looks at (both modes); a search reads these and the id, never the whole row.
+_SEARCH_COLUMNS = (
+    StockLotRow.grn, StockLotRow.package, StockLotRow.article, StockLotRow.series, StockLotRow.name,
+    StockLotRow.item_type, StockLotRow.purpose, StockLotRow.storage_location,
+)
+
+
+def lot_matcher(query: str) -> Callable[[object], bool]:
+    """The stock search as a predicate over anything with the searched attributes (a lot or a row of
+    `_SEARCH_COLUMNS`). The query is folded and the stage option read once, not once per lot."""
+    if stage_options.enabled("warehouse.word_search"):
+        return words_matcher(query)
+    words = search_text(query).split()
+    if not words:
+        return lambda lot: True
+
+    def matches(lot) -> bool:
+        haystack = search_text(" ".join((
+            lot.grn,
+            lot.package,
+            lot.article,
+            lot.series,
+            lot.name,
+            lot.item_type,
+            lot.purpose,
+            lot.storage_location,
+        )))
+        return all(_word_found(word, haystack) for word in words)
+
+    return matches
 
 
 def _word_found(word: str, haystack: str) -> bool:
@@ -317,17 +400,7 @@ class SqlAlchemyWarehouseRepository:
         warehouse: str | None = None,
         include_zero: bool = False,
     ) -> list[StockLot]:
-        statement = select(StockLotRow).where(*self._filters(warehouse, include_zero))
-        if after_id is not None:
-            statement = statement.where(StockLotRow.id > after_id)
-        statement = statement.order_by(StockLotRow.id)
-        if not str(query or "").strip():
-            statement = statement.limit(limit)
-        rows = self.session.scalars(statement)
-        lots = [_domain(row) for row in rows]
-        if query:
-            lots = [lot for lot in lots if self._matches(lot, query)]
-        return lots[:limit]
+        return self.page(limit, after_id, query, warehouse, include_zero, with_total=False)[0]
 
     def count(
         self,
@@ -336,10 +409,7 @@ class SqlAlchemyWarehouseRepository:
         include_zero: bool = False,
     ) -> int:
         if str(query or "").strip():
-            rows = self.session.scalars(
-                select(StockLotRow).where(*self._filters(warehouse, include_zero))
-            )
-            return sum(self._matches(_domain(row), query) for row in rows)
+            return len(self._matching_ids(query, warehouse, include_zero))
         statement = select(func.count()).select_from(StockLotRow).where(
             *self._filters(warehouse, include_zero)
         )
@@ -352,18 +422,70 @@ class SqlAlchemyWarehouseRepository:
         include_zero: bool = False,
     ) -> list[StockLot]:
         """Every lot under the same filters as `list`, no paging, in the same id order (the source of the group
-        totals and of the whole-stock reads that must not lose lots past a page)."""
-        rows = self.session.scalars(
-            select(StockLotRow).where(*self._filters(warehouse, include_zero)).order_by(StockLotRow.id)
-        )
-        lots = [_domain(row) for row in rows]
-        if str(query or "").strip():
-            lots = [lot for lot in lots if self._matches(lot, query)]
+        totals and of the whole-stock reads that must not lose lots past a page). A search first picks the matching ids
+        from the searched columns only (`_matching_ids`, the option read once), then loads those rows."""
+        if not str(query or "").strip():
+            rows = self.session.scalars(
+                select(StockLotRow).where(*self._filters(warehouse, include_zero)).order_by(StockLotRow.id)
+            )
+            return [_domain(row) for row in rows]
+        ids = sorted(self._matching_ids(query, warehouse, include_zero))
+        lots: list[StockLot] = []
+        for start in range(0, len(ids), 500):
+            lots += [_domain(row) for row in self.session.scalars(
+                select(StockLotRow).where(StockLotRow.id.in_(ids[start:start + 500])).order_by(StockLotRow.id)
+            )]
         return lots
+
+    def page(
+        self,
+        limit: int = 200,
+        after_id: UUID | None = None,
+        query: str = "",
+        warehouse: str | None = None,
+        include_zero: bool = False,
+        *,
+        with_total: bool = True,
+    ) -> tuple[list[StockLot], int]:
+        """One page in id order after the cursor and the count of every match (the cursor ignored).
+
+        A search reads only the id and the searched columns of the filtered lots, matches them in Python (the folding
+        of `search_text` / `word_search` has no SQL twin, so no SQL text prefilter that could drop a match) and then
+        loads the full rows of the page alone. Without a search everything is SQL: filter, order, limit, count."""
+        if not str(query or "").strip():
+            statement = select(StockLotRow).where(*self._filters(warehouse, include_zero))
+            if after_id is not None:
+                statement = statement.where(StockLotRow.id > after_id)
+            rows = self.session.scalars(statement.order_by(StockLotRow.id).limit(limit))
+            lots = [_domain(row) for row in rows]
+            return lots, (self.count("", warehouse, include_zero) if with_total else len(lots))
+        matched = self._matching_ids(query, warehouse, include_zero)
+        page_ids = [lot_id for lot_id in matched if after_id is None or lot_id > after_id][:limit]
+        lots: list[StockLot] = []
+        for start in range(0, len(page_ids), 500):
+            chunk = page_ids[start:start + 500]
+            lots += [_domain(row) for row in self.session.scalars(
+                select(StockLotRow).where(StockLotRow.id.in_(chunk))
+            )]
+        lots.sort(key=lambda lot: lot.id)
+        return lots, len(matched)
+
+    def _matching_ids(self, query: str, warehouse: str | None, include_zero: bool) -> list[UUID]:
+        """Ids (ascending) of the filtered lots the search matches; the stage option is read once per call."""
+        matches = lot_matcher(query)
+        rows = self.session.execute(
+            select(StockLotRow.id, *_SEARCH_COLUMNS)
+            .where(*self._filters(warehouse, include_zero))
+            .order_by(StockLotRow.id)
+        )
+        return [row.id for row in rows if matches(row)]
 
     def every(self) -> list[StockLot]:
         """Every lot, zero balance included, ЦАР before ЖУК (the sheet order of SUPPLYMAP), then by ГРН and пакет."""
-        rows = self.session.scalars(select(StockLotRow).order_by(StockLotRow.grn, StockLotRow.package))
+        # Plain rows, not entities (autoflush still runs): no identity map for thousands of lots read once.
+        rows = self.session.execute(
+            select(*StockLotRow.__table__.columns).order_by(StockLotRow.grn, StockLotRow.package)
+        )
         order = {name: index for index, name in enumerate(WAREHOUSES)}
         return sorted((_domain(row) for row in rows), key=lambda lot: order.get(lot.warehouse, len(order)))
 
@@ -379,6 +501,24 @@ class SqlAlchemyWarehouseRepository:
             StockLotRow.inbound - StockLotRow.written_off > 0,
             location_filter,
         ).order_by(StockLotRow.grn, StockLotRow.package).with_for_update())
+        return [_domain(row) for row in rows]
+
+    def with_grn_ending(self, tail: str) -> list[StockLot]:
+        """Lots whose ГРН ends with «.26.0000001» (zero balance too): the scan narrows them by prefix and package."""
+        rows = self.session.scalars(
+            select(StockLotRow).where(StockLotRow.grn.like(f"%{tail}"))
+            .order_by(StockLotRow.grn, StockLotRow.package, StockLotRow.warehouse)
+        )
+        return [_domain(row) for row in rows]
+
+    def with_balance_near(self, place: str) -> list[StockLot]:
+        """Lots with a balance whose place starts with the rack code (both warehouses); the scan keeps the place."""
+        rows = self.session.scalars(
+            select(StockLotRow).where(
+                StockLotRow.storage_location.like(f"{place}%"),
+                StockLotRow.inbound - StockLotRow.written_off > 0,
+            ).order_by(StockLotRow.warehouse, StockLotRow.storage_location, StockLotRow.grn, StockLotRow.package)
+        )
         return [_domain(row) for row in rows]
 
     def occupied_locations(self, warehouse: str) -> list[str]:
@@ -400,18 +540,35 @@ class SqlAlchemyWarehouseRepository:
 
     @staticmethod
     def _matches(lot: StockLot, query: str) -> bool:
-        words = search_text(query).split()
-        haystack = search_text(" ".join((
-            lot.grn,
-            lot.package,
-            lot.article,
-            lot.series,
-            lot.name,
-            lot.item_type,
-            lot.purpose,
-            lot.storage_location,
-        )))
-        return all(_word_found(word, haystack) for word in words)
+        return lot_matcher(query)(lot)
+
+    def recent_events(self, lot_id: UUID, limit: int = 20) -> list[AuditEvent]:
+        """The lot's newest warehouse audit events, newest first (stage option warehouse.undo)."""
+        self.session.flush()
+        rows = self.session.scalars(
+            select(AuditEventRow).where(
+                AuditEventRow.aggregate_id == lot_id, AuditEventRow.event_type.like("warehouse.%"),
+            ).order_by(AuditEventRow.occurred_at.desc(), AuditEventRow.id.desc()).limit(limit)
+        )
+        return [
+            AuditEvent(
+                id=row.id, aggregate_id=row.aggregate_id, event_type=row.event_type,
+                actor=Actor(id=row.actor_id, name=row.actor_name, department=row.actor_department),
+                occurred_at=row.occurred_at, details=dict(row.details or {}),
+            )
+            for row in rows
+        ]
+
+    def received_at(self, lot_id: UUID) -> datetime | None:
+        """When the lot came on stock: its first arrival event — from receiving, entered by hand or carried over from
+        SUPPLYMAP (stage option warehouse.labels prints it as the date on the GRN label). None — no such event."""
+        self.session.flush()
+        return self.session.scalar(
+            select(func.min(AuditEventRow.occurred_at)).where(
+                AuditEventRow.aggregate_id == lot_id,
+                AuditEventRow.event_type.in_(LOT_ARRIVAL_EVENTS),
+            )
+        )
 
     def audit_trail(self, lot_id: UUID) -> list[tuple[str, dict]]:
         """(event_type, details) of every audit event on the lot, oldest first."""
@@ -436,6 +593,75 @@ class SqlAlchemyWarehouseRepository:
         note_written_version(self.session, stored)
 
 
+# The events that bring a lot onto the stock (warehouse.received, by hand, the SUPPLYMAP carry-over).
+LOT_ARRIVAL_EVENTS = ("warehouse.received", "warehouse.manually_received", "warehouse.legacy_imported")
+
+
+class WarehouseLabelSettingsRow(Base):
+    """«Печать этикеток ГРН» (stage option warehouse.labels): the label printer's settings, one row per installation.
+    The CHECK constraints repeat `PrintSettings`' bounds (migration 0125)."""
+
+    __tablename__ = "warehouse_label_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_warehouse_label_settings_single_row"),
+        CheckConstraint("code_type IN ('qr', 'code128', 'both')", name="ck_warehouse_label_settings_code_type"),
+        CheckConstraint("width_mm >= 45 AND width_mm <= 110", name="ck_warehouse_label_settings_width"),
+        CheckConstraint("height_mm >= 20 AND height_mm <= 80", name="ck_warehouse_label_settings_height"),
+        CheckConstraint("dpi IN (203, 300)", name="ck_warehouse_label_settings_dpi"),
+        CheckConstraint("gap_mm >= 0 AND gap_mm <= 20", name="ck_warehouse_label_settings_gap"),
+        CheckConstraint("density >= 0 AND density <= 15", name="ck_warehouse_label_settings_density"),
+        CheckConstraint("speed >= 1 AND speed <= 12", name="ck_warehouse_label_settings_speed"),
+        CheckConstraint("offset_x_mm >= -5 AND offset_x_mm <= 5", name="ck_warehouse_label_settings_offset_x"),
+        CheckConstraint("offset_y_mm >= -5 AND offset_y_mm <= 5", name="ck_warehouse_label_settings_offset_y"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    printer_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    code_type: Mapped[str] = mapped_column(String(8), nullable=False)
+    width_mm: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    height_mm: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    dpi: Mapped[int] = mapped_column(Integer, nullable=False)
+    gap_mm: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False)
+    density: Mapped[int] = mapped_column(Integer, nullable=False)
+    speed: Mapped[int] = mapped_column(Integer, nullable=False)
+    offset_x_mm: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False)
+    offset_y_mm: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+
+_LABEL_MM = ("width_mm", "height_mm", "gap_mm", "offset_x_mm", "offset_y_mm")
+_LABEL_WHOLE = ("printer_name", "code_type", "dpi", "density", "speed")
+
+
+class SqlAlchemyLabelSettings:
+    """The label printer settings row; no row — None (the caller takes the defaults)."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def load(self) -> PrintSettings | None:
+        row = self.session.get(WarehouseLabelSettingsRow, 1)
+        if row is None:
+            return None
+        return PrintSettings(
+            **{name: getattr(row, name) for name in _LABEL_WHOLE},
+            **{name: float(getattr(row, name)) for name in _LABEL_MM},
+        )
+
+    def save(self, settings: PrintSettings, updated_at: datetime, updated_by: str) -> None:
+        row = self.session.get(WarehouseLabelSettingsRow, 1)
+        if row is None:
+            row = WarehouseLabelSettingsRow(id=1)
+            self.session.add(row)
+        for name in _LABEL_WHOLE:
+            setattr(row, name, getattr(settings, name))
+        for name in _LABEL_MM:
+            setattr(row, name, Decimal(str(getattr(settings, name))).quantize(Decimal("0.01")))
+        row.updated_at = updated_at
+        row.updated_by = updated_by
+
+
 class SqlAlchemyWarehouseUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
@@ -449,6 +675,7 @@ class SqlAlchemyWarehouseUnitOfWork:
         self.writeoffs = SqlAlchemyWriteOffJournal(self.session)
         self.journal = SqlAlchemyWarehouseJournalReader(self.session)
         self.item_types = SqlAlchemyItemTypeDictionary(self.session)
+        self.label_settings = SqlAlchemyLabelSettings(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self

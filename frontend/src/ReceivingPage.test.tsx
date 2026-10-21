@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReceivingPage } from "./ReceivingPage";
 import type { ReceivingLine } from "./api";
+import { resetStageOptions } from "./StageOptions";
 
 const line: ReceivingLine = {
   id: "20000000-0000-0000-0000-000000000001",
@@ -47,7 +48,7 @@ const isQueue = (path: string) => path === "/api/receiving" || path.startsWith("
 
 /** Столбцы «ID» и «Назначение» скрыты по умолчанию; остальные тесты ищут строки по ID. */
 beforeEach(() => { localStorage.setItem("erp-table:receiving-v3", JSON.stringify({ hidden: [], sort: null, preset: "" })); });
-afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); resetStageOptions(); });
 
 /** Очередь — таблица; форма строки открывается кликом по строке. */
 async function openRow(legacyId = "SM-20260921-01") {
@@ -733,4 +734,33 @@ it("names the document in the success banner", async () => {
   expect(updDoneText({ url: "", number: "771", date: "" }, 1)).toBe("УПД № 771 внесён: 1 позиция");
   expect(updDoneText({ url: "", number: "", date: "2026-10-04" }, 3)).toBe("УПД от 04.10.2026 внесён: 3 позиции");
   expect(updDoneText({ url: "/f.pdf", number: " ", date: "" }, 5)).toBe("Файл УПД внесён: 5 позиций");
+});
+
+it("shows the nomenclature item under the line name only when references.items is on", async () => {
+  const calls: string[] = [];
+  const serve = (on: boolean) => vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    calls.push(path);
+    if (path === "/api/stage-options") {
+      return json({ available: true, options: [{ key: "references.items", block: "Номенклатура", title: "t", before: "", after: "", enabled: on }] });
+    }
+    if (isQueue(path)) return json({ lines: [line], next_cursor: null, total: 1 });
+    if (path.startsWith("/api/purchasing/items/for-receiving")) {
+      return json({ [line.id]: { item_id: "i1", name: "Разъём SMA (номенклатура)", category: "connector", via: "chain" } });
+    }
+    return json({});
+  });
+  serve(true);
+  const first = render(<ReceivingPage />);
+  expect(await screen.findByText("Разъём SMA (номенклатура)")).toBeInTheDocument();
+  expect(calls).toContain(`/api/purchasing/items/for-receiving?ids=${line.id}`);
+  first.unmount();
+  resetStageOptions();
+  vi.restoreAllMocks();
+  calls.length = 0;
+  serve(false);
+  render(<ReceivingPage />);
+  await screen.findByText("SM-20260921-01");
+  expect(screen.queryByText("Разъём SMA (номенклатура)")).toBeNull();
+  expect(calls.some((path) => path.startsWith("/api/purchasing"))).toBe(false);
 });

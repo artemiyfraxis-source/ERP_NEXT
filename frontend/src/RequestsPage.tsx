@@ -15,6 +15,11 @@ import {
 import { canAct } from "./navigation";
 import { useFormDraft } from "./formDrafts";
 import { RequestGrid } from "./RequestGrid";
+import { RequestFormV2 } from "./RequestFormV2";
+import { projectLabel, useInternalProjects } from "./internalProjects";
+import { projectFromDesignation } from "./projectNumber";
+import { usePurposeLabel } from "./purposeLabels";
+import { useStageOption } from "./StageOptions";
 import { StatusChip } from "./StatusChip";
 import {
   GRID_LIMIT,
@@ -180,6 +185,11 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const canHandoff = canAct(principal, "procurement");
 
   const [createMode, setCreateMode] = useState<"manual" | "excel" | "calc">(restored?.createMode ?? "manual");
+  // Stage option «Новая форма заявки»: off = the form below as it was.
+  const formV2 = useStageOption("requests.form");
+  const purposeText = usePurposeLabel();
+  useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the «Цель» / «Проект» column
+  const [formSeed, setFormSeed] = useState<{ id: number; text: string } | null>(null);
 
   const [mineRows, setMineRows] = useState<RequestRow[]>([]);
   const [mineTotal, setMineTotal] = useState(0);
@@ -444,6 +454,13 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       setExcelError("Не нашёл строк с данными.");
       return;
     }
+    if (formV2) {
+      setFormSeed({ id: Date.now(), text: excelText });
+      setExcelText("");
+      setCreateMode("manual");
+      setNotice(`Из Excel распознано позиций: ${parsed.rows.length}. Колонки: ${parsed.recognized.join(", ")}. Проверьте таблицу и оформите.`);
+      return;
+    }
     const result = applyPaste(positions, 0, "name", excelText, emptyDraft(common));
     if ("error" in result) {
       setExcelError(result.error);
@@ -651,9 +668,13 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     { key: "item_type", title: "Тип", value: (row) => row.item_type, filter: true, hidden: true },
     { key: "design_article", title: "Артикул КД", value: (row) => row.design_article ?? "", hidden: view === "mine" },
     { key: "purpose", title: "Назначение (база)", value: (row) => row.purpose, hidden: true },
-    { key: "project_reference", title: "Цель", value: (row) => row.project_reference || row.purpose, filter: true },
+    // Option «Новая форма заявки»: no «Цель» (owner, 16.10: «Убери „Цель закупки“») — the project, or the one the
+    // designation starts with; the purpose stays in the hidden «Назначение (база)».
+    formV2
+      ? { key: "project_reference", title: "Проект", value: (row) => projectLabel(row.project_reference || projectFromDesignation(row.designation)), filter: true }
+      : { key: "project_reference", title: "Цель", value: (row) => (row.project_reference ? projectLabel(row.project_reference) : purposeText(row.purpose)), filter: true },
     { key: "quantity", title: "Кол-во", value: (row) => `${row.quantity} ${row.unit}`, numeric: true },
-    { key: "delivery_point", title: "Точка отгрузки", value: (row) => row.delivery_point, filter: true, hidden: true },
+    { key: "delivery_point", title: formV2 ? "Склад" : "Точка отгрузки", value: (row) => row.delivery_point, filter: true, hidden: true },
     { key: "category", title: "Категория", value: (row) => row.category, filter: true, hidden: view === "mine" },
     { key: "quality_document", title: "Док. качества", value: (row) => row.quality_document ?? "", hidden: true },
     { key: "procurement_deadline", title: "Дедлайн", value: (row) => formatDate(row.procurement_deadline), hidden: view === "mine" },
@@ -716,14 +737,31 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       <div className={view === "create" ? "single-layout" : "list-layout"}>
         {view !== "create" ? null : canEdit ? (
           <div className="panel request-form">
-            <div className="panel-heading"><h2>Новая заявка</h2><span>* — обязательное поле</span></div>
+            <div className="panel-heading"><h2>Новая заявка</h2><span>{formV2 ? "* — обязательное поле; пустые поля сервер заполнит по умолчанию" : "* — обязательное поле"}</span></div>
             <div className="seg-tabs mode-tabs" aria-label="Способ ввода">
               <button type="button" className={createMode === "manual" ? "on" : undefined} aria-pressed={createMode === "manual"} onClick={() => switchMode("manual")}>Вручную</button>
               <button type="button" className={createMode === "excel" ? "on" : undefined} aria-pressed={createMode === "excel"} onClick={() => switchMode("excel")}>Вставить из Excel</button>
               <button type="button" className={createMode === "calc" ? "on" : undefined} aria-pressed={createMode === "calc"} onClick={() => switchMode("calc")}>Из расчёта</button>
             </div>
 
-            {createMode === "manual" && (
+            {createMode === "manual" && formV2 && (
+              <RequestFormV2
+                schema={schema}
+                seed={formSeed}
+                onError={setError}
+                onNotice={setNotice}
+                onCreated={async (ids) => {
+                  setNotice(ids.length === 1 ? `Создана заявка ${ids[0]}` : `Создано заявок: ${ids.length} (${ids.join(", ")})`);
+                  try {
+                    await reload();
+                  } catch (reason) {
+                    setError(reason instanceof Error ? `Заявки созданы, но список не обновился: ${reason.message}` : "Заявки созданы, но список не обновился");
+                  }
+                }}
+              />
+            )}
+
+            {createMode === "manual" && !formV2 && (
               <div className="rg-form">
                 <div className="rg-common">
                   <div className="rg-common-title">Общее для всех позиций <span>— применяется ко всем строкам таблицы</span></div>
@@ -793,7 +831,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                 <p className="page-sub">Вставьте ссылку на Google-таблицу расчёта — позиции листа ЗКП станут заявками.</p>
                 <div className="form-grid">
                   <label className="wide">Ссылка на расчёт<input type="text" placeholder="https://docs.google.com/spreadsheets/d/…" value={calcUrl} onChange={(e) => { calcPreset.current = null; setCalcUrl(e.target.value); }} /></label>
-                  <label>Назначение (на всю пачку) *<select value={calcPurpose} onChange={(e) => setCalcPurpose(e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
+                  <label>Назначение (на всю пачку) *<select value={calcPurpose} onChange={(e) => setCalcPurpose(e.target.value)}>{schema?.purposes.map((item) => <option key={item} value={item}>{purposeText(item)}</option>)}</select></label>
                   <label>Дедлайн (на всю пачку) *<input type="date" value={calcDeadline} onChange={(e) => setCalcDeadline(e.target.value)} /></label>
                   <label className="wide">Точка отгрузки (на всю пачку) *<select value={calcPoint} onChange={(e) => setCalcPoint(e.target.value)}><option value="">— выбери адрес —</option>{schema?.delivery_points.map((item) => <option key={item}>{item}</option>)}</select></label>
                 </div>
