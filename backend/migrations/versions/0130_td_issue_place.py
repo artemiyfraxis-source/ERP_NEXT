@@ -44,7 +44,7 @@ def upgrade() -> None:
         batch.add_column(sa.Column("site", sa.Text(), nullable=False, server_default=""))
         batch.create_check_constraint("ck_td_issues_site", "site IN ('', 'ЦАР', 'ЖУК')")
     _active_index()
-    print(f"0130_td_issue_place: td_issues {before} → {_count()}")
+    print(f"0130_td_issue_place: td_issues {before} -> {_count()}")
 
 
 def downgrade() -> None:
