@@ -1,4 +1,4 @@
-"""Tables of the purchasing hybrid (migration 0131_purchasing_hybrid) and its unit of work.
+"""Tables of the purchasing hybrid (migration 0133_purchasing_hybrid) and its unit of work.
 
 Repositories live next to the feature that needs them (settings.py, suppliers.py, items.py, rfq.py); they take the
 unit of work's session. Cross-module reads (procurement lines) go through app/workflows/purchasing_*.py."""
