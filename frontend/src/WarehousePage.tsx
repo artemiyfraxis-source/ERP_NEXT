@@ -1,6 +1,11 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { LoadMore } from "./LoadMore";
+import { urlParam } from "./navigation";
 import { SuggestInput } from "./SuggestInput";
+import { useStageOption } from "./StageOptions";
+import { LABELS_OPTION, LotLabel } from "./LabelPrint";
+import { usePurposeLabel } from "./purposeLabels";
+import { VIA_LABELS, purchasingItemsApi, type ItemBrief, type ItemRow } from "./purchasingItemsApi";
 import { useLatestSearch } from "./useLatestSearch";
 import {
   receivingApi,
@@ -22,6 +27,7 @@ import { openPrintSheet } from "./print";
 import { lotReceivedAt, printLotLabels } from "./lotLabel";
 import { countLabel } from "./format";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
+import { UndoLast, WarehouseScanBar } from "./WarehouseScan";
 import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
 import { StockLinkDialog } from "./StockLinkDialog";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
@@ -29,6 +35,9 @@ import {
   chooserColumns, ColumnChooser, columnTitle, defaultLayout, moveColumn, readLayouts, shownColumns as visibleColumns, writeLayouts,
   type ColumnKey, type ColumnLayout, type TableKind,
 } from "./WarehouseColumns";
+
+/** Номенклатура на партиях (option references.items): off = no request, no chip, no action. */
+const LotItems = createContext<{ on: boolean; items: Record<string, ItemBrief>; reload: () => void }>({ on: false, items: {}, reload: () => undefined });
 
 const EMPTY_PASSPORT: WarehouseLotPassport = {
   mass_1: "", mass_10: "", mass_100: "", expiry_date: null,
@@ -84,6 +93,7 @@ function StockViews({ view, onChange }: { view: "stock" | "goods"; onChange: (vi
 }
 
 function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boolean; readOnly: boolean; canEditReferences: boolean; views: ReactNode }) {
+  const purposeText = usePurposeLabel();
   const [lots, setLots] = useState<WarehouseLot[]>([]);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
@@ -91,7 +101,12 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   const [loadingMore, setLoadingMore] = useState(false);
   const [totalsStamp, setTotalsStamp] = useState(0);
   const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => urlParam("q"));
+  const wordSearch = useStageOption("warehouse.word_search");
+  const itemsOn = useStageOption("references.items");
+  const scanOn = useStageOption("warehouse.scan");
+  const [lotItems, setLotItems] = useState<Record<string, ItemBrief>>({});
+  const [itemsTick, setItemsTick] = useState(0);
   const [warehouse, setWarehouse] = useState("");
   const [includeZero, setIncludeZero] = useState(false);
   const [total, setTotal] = useState(0);
@@ -216,6 +231,19 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     return () => window.clearTimeout(timer);
   }, [query, warehouse, includeZero, flat, sort.key, sort.desc, groupBy]);
 
+  useEffect(() => {
+    if (!itemsOn || lots.length === 0) { setLotItems({}); return; }
+    let live = true;
+    const ids = lots.map((lot) => lot.id);
+    const parts: string[][] = [];
+    for (let start = 0; start < ids.length; start += 500) parts.push(ids.slice(start, start + 500));
+    // One batch per 500 visible lots; a failed read just leaves the lots without a chip.
+    Promise.all(parts.map((part) => purchasingItemsApi.forLots(part)))
+      .then((answers) => { if (live) setLotItems(Object.assign({}, ...answers)); })
+      .catch(() => { if (live) setLotItems({}); });
+    return () => { live = false; };
+  }, [itemsOn, lots, itemsTick]);
+
   async function openPutawaySheet() {
     setPutawayError("");
     setPutawayBusy(true);
@@ -249,6 +277,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   }
 
   return (
+    <LotItems.Provider value={{ on: itemsOn, items: lotItems, reload: () => setItemsTick((n) => n + 1) }}>
     <section className="page stock-page">
       <header className="page-head">
         <h1>Склад</h1>
@@ -277,10 +306,11 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       {views}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {putawayError && <div className="error-banner" role="alert">{putawayError}</div>}
+      {scanOn && <WarehouseScanBar readOnly={readOnly} disabled={Boolean(busy) || loading} mutate={mutate} />}
       {/* Wording from SUPPLYMAP «Склад 0.5» (PortalApp.html wh-hint). */}
       {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="filters table-toolbar stock-toolbar">
-        <input className="search stock-search" aria-label="Поиск по складу" placeholder="Поиск: резистор, 6-1, ГРН…" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <input className="search stock-search" aria-label="Поиск по складу" placeholder={wordSearch ? "Слова в любом порядке: артикул, название, ГРН, место…" : "Поиск: резистор, 6-1, ГРН…"} value={query} onChange={(event) => setQuery(event.target.value)} />
         <label className="check-inline"><input type="checkbox" checked={includeZero} onChange={(event) => setIncludeZero(event.target.checked)} />показывать нулевые</label>
         <label className="inline-select">группировать<select aria-label="Группировка склада" value={groupBy} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}>
           <option value="">нет</option><option value="type">по типу</option><option value="place">по месту (полка)</option><option value="name">по наименованию</option><option value="series">по серии</option><option value="grn">по ГРН</option>
@@ -357,7 +387,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
         <table className="grid wide compact stock-table" aria-label="Таблица склада">
           <colgroup>{shownColumns.map((key) => <col key={key} className={`stock-col-${key}`} />)}</colgroup>
           <thead><tr>{shownColumns.map((key) => <th key={key} className={classes(columnClass(key), key === pinned && "stock-pin")}>{columnTitle(key, true)}</th>)}</tr></thead>
-          <tbody>{lots.map((lot) => <tr key={lot.id}>{shownColumns.map((key) => flatCell(key, lot, key === pinned))}</tr>)}</tbody>
+          <tbody>{lots.map((lot) => <tr key={lot.id}>{shownColumns.map((key) => flatCell(key, lot, key === pinned, lotItems[lot.id], purposeText))}</tr>)}</tbody>
         </table>
       </div> : <div className="table-wrap" ref={wrapRef}>
         <table className="grid wide compact stock-table">
@@ -393,6 +423,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       </div>}
       {!lots.length && !loading && <div className="empty">{includeZero ? "Склад пуст." : "Позиций с остатком нет. Включите «показывать нулевые», чтобы увидеть израсходованные партии."}</div>}
     </section>
+    </LotItems.Provider>
   );
 }
 
@@ -598,9 +629,9 @@ function cutCell(key: ColumnKey, text: string, pinned: boolean, className = "") 
 }
 
 /** One lot of «Таблица склада», cell by cell in the order of the visible columns. */
-function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean) {
+function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: ItemBrief, purposeText: (value: string) => string = (value) => value) {
   switch (key) {
-    case "name": return <td key={key} className={classes("stock-name", pinned && "stock-pin")} title={lot.name || undefined}>{lot.name || "—"}</td>;
+    case "name": return <td key={key} className={classes("stock-name", pinned && "stock-pin")} title={lot.name || undefined}>{lot.name || "—"}{brief && itemMark(lot.name || "", brief.name, `Позиция номенклатуры (связь: ${VIA_LABELS[brief.via]})`)}</td>;
     case "article": return cutCell(key, lot.article || "—", pinned);
     case "grn": return cutCell(key, `${lot.grn}${lot.package ? ` · ${lot.package}` : ""}`, pinned, "stock-grn");
     case "balance": return <td key={key} className={classes("num", pinned && "stock-pin")}><strong>{lot.balance} {lot.unit}</strong></td>;
@@ -608,19 +639,32 @@ function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean) {
     case "reserved": return reserveCell(key, lot.reserved, lot.unit, [lot], pinned);
     case "place": return cutCell(key, lot.storage_location || "—", pinned);
     case "warehouse": return cutCell(key, lot.warehouse, pinned);
-    case "purpose": return cutCell(key, lot.purpose || "—", pinned);
+    case "purpose": return cutCell(key, purposeText(lot.purpose) || "—", pinned);
     case "series": return cutCell(key, lot.series || "—", pinned);
     case "type": return cutCell(key, lot.item_type || "—", pinned);
     default: return null;
   }
 }
 
+/** The nomenclature item next to a lot or article name: a full second line only when it is named differently,
+ *  otherwise a quiet ◆ — the same words twice is noise. */
+function itemMark(name: string, itemName: string | undefined, title: string) {
+  if (!itemName) return null;
+  const same = itemName.trim().toLocaleLowerCase("ru") === name.trim().toLocaleLowerCase("ru");
+  return same
+    ? <span className="lot-item-mark" title={`${title}: ${itemName}`} aria-label={`${title}: ${itemName}`}>◆</span>
+    : <small className="muted lot-item-chip" title={title}>{itemName}</small>;
+}
+
 /** One article (all its lots) of the grouped table, cell by cell in the order of the visible columns. */
-function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, toggle: () => void, pinned: boolean) {
+function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, toggle: () => void, pinned: boolean, briefs: Record<string, ItemBrief> = {}) {
   switch (key) {
     case "name": {
       const name = distinct(item.lots, "name") || item.article || "Без наименования";
-      return <td key={key} className={classes("stock-name", pinned && "stock-pin")}><button className="link-button table-link" title={name} aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(); }}>{name}</button></td>;
+      // Nomenclature item(s) of the article's lots (option «Номенклатура»): one name, or «N позиций» when they differ.
+      const items = [...new Set(item.lots.map((lot) => briefs[lot.id]?.name).filter(Boolean))];
+      const chip = items.length === 1 ? items[0] : items.length > 1 ? `${items.length} позиции номенклатуры` : "";
+      return <td key={key} className={classes("stock-name", pinned && "stock-pin")}><button className="link-button table-link" title={name} aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(); }}>{name}</button>{chip && itemMark(name, chip, "Позиция номенклатуры")}</td>;
     }
     case "article": return cutCell(key, item.article || "—", pinned);
     case "grn": return cutCell(key, distinct(item.lots, "grn"), pinned, "stock-grn");
@@ -660,13 +704,14 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
   readOnly: boolean;
   canLink: boolean;
 }) {
+  const lotItems = useContext(LotItems);
   return <>
     {group.label && <tr className="stock-group-row"><td colSpan={columns.length}><span className="stock-group-label">{group.label} · {countLabel(group.totals?.articles ?? group.articles.length, ["артикул", "артикула", "артикулов"])}</span>{group.totals && <span className="stock-group-sum"> · {countLabel(group.totals.lots, ["партия", "партии", "партий"])}{group.totals.units.length === 1 ? ` · остаток ${group.totals.balance} ${group.totals.units[0]}` : ""}{group.totals.units.length === 1 && Number(group.totals.reserved) > 0 ? ` · резерв ${group.totals.reserved} ${group.totals.units[0]}` : ""}</span>}</td></tr>}
     {group.articles.map((item) => {
       const open = expanded.has(item.key);
       return <Fragment key={item.key}>
         <tr className={open ? "stock-article-row open" : "stock-article-row"} title="Партии карточками" onClick={() => toggle(item.key)}>
-          {columns.map((key) => articleCell(key, item, open, () => toggle(item.key), key === pinned))}
+          {columns.map((key) => articleCell(key, item, open, () => toggle(item.key), key === pinned, lotItems.on ? lotItems.items : {}))}
         </tr>
         {open && <tr className="stock-cards-row"><td colSpan={columns.length}><div className="lot-cards">
           {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} canLink={canLink} />)}
@@ -683,6 +728,7 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
   onCancel: () => void;
   onAdded: (items: WarehouseManualItem[]) => Promise<WarehouseAddResult | null>;
 }) {
+  const purposeText = usePurposeLabel();
   // Rows put aside with «В список» and rows the server did not accept (with the reason).
   const [rows, setRows] = useState<Array<{ item: WarehouseManualItem; error: string }>>([]);
   const [report, setReport] = useState("");
@@ -867,7 +913,7 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
           <td className="num">{String(row.item.quantity).trim() ? `${row.item.quantity} ${row.item.unit}` : "—"}</td>
           <td>{row.item.storage_location || "—"}</td>
           <td>{row.item.warehouse}</td>
-          <td>{row.item.purpose || "—"}</td>
+          <td>{purposeText(row.item.purpose) || "—"}</td>
           <td className="manual-stock-passport-cell">{manualPassportLine(row.item) || "—"}</td>
           {anyRefused && <td className="danger-text">{row.error}</td>}
           <td className="manual-stock-row-actions">
@@ -1115,6 +1161,7 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
   onSaved: () => void;
 }) {
   const [values, setValues] = useState(() => rowValues(lot));
+  const strict = useStageOption("warehouse.strict_quantities");
   const [notice, setNotice] = useState("");
   const number = (field: RowEditField) => Number(values[field].trim() || lot[field] || 0);
   const balance = Math.round((number("inbound") - number("written_off")) * 1_000_000) / 1_000_000;
@@ -1144,10 +1191,12 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
     /></label>)}
     {ROW_EDIT_NUMBERS.map(([field, label]) => <label key={field}>{label}<input
       type="number" min="0" step="any" placeholder={String(lot[field] ?? "")}
+      readOnly={strict}
       value={values[field]}
       onChange={(event) => { setNotice(""); setValues((current) => ({ ...current, [field]: event.target.value })); }}
     /></label>)}
     </div>
+    {strict && <p className="page-sub">Приход, списано и резерв меняются только движениями: списание, возврат, перемещение.</p>}
     <p className="page-sub" role="status">{notice || `Баланс станет: ${balance} ${lot.unit}`}</p>
     <div className="move-actions">
       <button type="button" className="secondary" onClick={onClose}>Назад</button>
@@ -1195,6 +1244,47 @@ function LotDialog({ title, lot, wide, onClose, children }: {
       {children}
     </div>
   </div>, document.body);
+}
+
+/** «Позиция номенклатуры…»: search the item master and link the lot by hand (overrides the receiving chain), or unlink. */
+function LotItemDialog({ lot, brief, onClose, onChanged }: { lot: WarehouseLot; brief?: ItemBrief; onClose: () => void; onChanged: () => void }) {
+  const [query, setQuery] = useState("");
+  const [found, setFound] = useState<ItemRow[]>([]);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!query.trim()) { setFound([]); return; }
+    let live = true;
+    const timer = window.setTimeout(() => {
+      purchasingItemsApi.list({ q: query, category: "", hasPrice: false, page: 1 })
+        .then((next) => { if (live) setFound(next.items); })
+        .catch(() => { if (live) setFound([]); });
+    }, 200);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [query]);
+  async function run(action: () => Promise<unknown>) {
+    setError("");
+    try {
+      await action();
+      onChanged();
+      onClose();
+    } catch (reason) {
+      setError(dialogError(reason, "Не удалось сохранить связь"));
+    }
+  }
+  return <LotDialog title="Позиция номенклатуры" lot={lot} onClose={onClose}>
+    <p className="muted">{brief ? `Сейчас: ${brief.name} (${VIA_LABELS[brief.via]})` : "Позиция не назначена."}</p>
+    <input aria-label="Найти позицию номенклатуры" placeholder="Название, артикул" value={query} onChange={(event) => setQuery(event.target.value)} />
+    {found.map((row) => <div key={row.id} className="move-lot">
+      <strong>{row.name}</strong>
+      <span>{row.part_number ?? "без артикула"} · {row.unit}</span>
+      <button type="button" className="secondary small" onClick={() => void run(() => purchasingItemsApi.linkLot(lot.id, row.id))}>Связать</button>
+    </div>)}
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    <div className="move-actions">
+      {brief && brief.via !== "chain" && <button type="button" className="link-button danger-text" onClick={() => void run(() => purchasingItemsApi.unlinkLot(lot.id))}>Снять связь</button>}
+      <button type="button" className="secondary" onClick={onClose}>Закрыть</button>
+    </div>
+  </LotDialog>;
 }
 
 function dialogError(reason: unknown, fallback: string) {
@@ -1384,8 +1474,9 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
   /** «Справочник» на правку: кнопка «В базу данных…». */
   canLink: boolean;
 }) {
+  const purposeText = usePurposeLabel();
   // Every action is a window over the stock, as the buttons on a SUPPLYMAP partition card (− / + / ✎ / История).
-  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history" | "link">("");
+  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history" | "item" | "link" | "label">("");
   const close = () => setDialog("");
   const writtenOff = Number(lot.written_off) > 0;
   const passport = passportLine(lot);
@@ -1402,6 +1493,10 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
       setPrinting(false);
     }
   };
+  const itemsCtx = useContext(LotItems);
+  const brief = itemsCtx.items[lot.id];
+  const undoOn = useStageOption("warehouse.undo");
+  const labelsOn = useStageOption(LABELS_OPTION);
 
   return (
     <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
@@ -1411,27 +1506,36 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
       </div>
       <p className="lot-card-meta">
         <span>ГРН {lot.grn}{lot.package ? ` / ${lot.package}` : ""}</span>
-        {lot.purpose && <span>{lot.purpose}</span>}
+        {lot.purpose && <span>{purposeText(lot.purpose)}</span>}
         {writtenOff && <span>списано {lot.written_off}</span>}
         {Number(lot.reserved) > 0 && <span title={lot.reserve_note || undefined}>резерв {lot.reserved} {lot.unit}{lot.reserve_note ? ` · ${lot.reserve_note.replace(/^резерв: /, "")}` : ""}</span>}
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
+      {itemsCtx.on && brief && <p className="lot-card-meta"><small className="muted lot-item-chip" title={`Связь: ${VIA_LABELS[brief.via]}`}>Позиция: {brief.name}</small></p>}
       <div className="lot-card-actions">
         {!readOnly && <>
           <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
           {writtenOff && <button className="secondary small" disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => setDialog("return")}>Вернуть на склад</button>}
           <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
           <button className="secondary small" disabled={disabled} onClick={() => setDialog("edit")}>✎ Правка</button>
+          {labelsOn && <button className="secondary small" title="Предпросмотр и печать этикетки ГРН" onClick={() => setDialog("label")}>Этикетка…</button>}
         </>}
+        {!readOnly && itemsCtx.on && <button className="secondary small" disabled={disabled} onClick={() => setDialog("item")}>Позиция номенклатуры…</button>}
         {canLink && <button className="secondary small" title="Привязать к записи базы или создать запись" onClick={() => setDialog("link")}>В базу данных…</button>}
         {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
-        <button className="secondary small" disabled={printing} onClick={() => void printLabel()}>{printing ? "Готовим этикетку…" : "Печать этикетки"}</button>
+        {!labelsOn && <button className="secondary small" disabled={printing} onClick={() => void printLabel()}>{printing ? "Готовим этикетку…" : "Печать этикетки"}</button>}
       </div>
+      {!readOnly && undoOn && <UndoLast lot={lot} disabled={disabled} mutate={mutate} />}
       {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {canLink && dialog === "link" && <StockLinkDialog lot={lot} onClose={close} />}
-      {history && dialog === "history" &&<LotHistoryDialog lot={lot} onClose={close} />}
+      {history && dialog === "history" && <LotHistoryDialog lot={lot} onClose={close} />}
+      {!readOnly && labelsOn && dialog === "label" && <LotDialog title="Этикетка" lot={lot} onClose={close}>
+        <LotLabel key={lot.version} lotId={lot.id} />
+        <div className="move-actions"><button type="button" className="secondary" onClick={close}>Закрыть</button></div>
+      </LotDialog>}
+      {!readOnly && itemsCtx.on && dialog === "item" && <LotItemDialog lot={lot} brief={brief} onClose={close} onChanged={itemsCtx.reload} />}
     </article>
   );
 }

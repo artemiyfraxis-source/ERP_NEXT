@@ -1,7 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useStageOption } from "./StageOptions";
+import { urlParam } from "./navigation";
 import { DataTable, matchesWords } from "./DataTable";
 import { failureText, procurementApi, type ProcurementLine } from "./api";
 import type { LineEditing } from "./ProcurementCellEdit";
+import { useInternalProjects } from "./internalProjects";
 import { buildSheetColumns } from "./ProcurementSheetColumns";
 import { StatusChip } from "./StatusChip";
 import { statusLabel } from "./statusTone";
@@ -22,11 +25,12 @@ function message(reason: unknown, fallback: string) {
 
 /** `buyerName` — имя вошедшего: правка комментария и даты открыта только в строках, где он закупщик. */
 export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } = {}) {
+  useInternalProjects(); // option projects.internal: the «Проект» column shows «ВП-001 · Название»
   const [lines, setLines] = useState<ProcurementLine[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [buyers, setBuyers] = useState<string[]>([]);
   const [statuses, setStatuses] = useState<string[]>([]);
-  const [draft, setDraft] = useState({ q: "", status: "", buyer: "" });
+  const [draft, setDraft] = useState({ q: urlParam("q"), status: "", buyer: "" });
   const [applied, setApplied] = useState(draft);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -65,7 +69,8 @@ export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } 
   }
 
   const editing: LineEditing = { onSaved: replaceLine, onConflict: reloadLine };
-  const columns = buildSheetColumns({ editing, buyerName, disabled: loading });
+  const dense = useStageOption("procurement.dense");
+  const columns = buildSheetColumns({ editing, buyerName, disabled: loading, dense });
 
   // Server-side отбор: status and buyer apply at once, the search on «Найти»/Enter — all in the table's own toolbar.
   function apply(next: typeof draft) {

@@ -31,10 +31,11 @@ from .modules.operations.application import UnitOfWork as OperationsUnitOfWork
 from .modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from .modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from .modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
+from .modules.purchasing.infrastructure import SqlAlchemyPurchasingUnitOfWork
 from .workflows import etk_refresh  # noqa: F401 — registers the refresh-request trigger on every session
 from .workflows.kitset_names import KitsetNameQueue
 from .workflows.new_operation import SqlAlchemyReferencesOperationsUnitOfWork
-from .workflows.project_registry import PlanSnapshotProjectRegistry
+from .workflows.project_registry import InternalAwareProjectRegistry, PlanSnapshotProjectRegistry
 from .workflows.receiving_stock import WarehouseStockBalanceLookup
 from .workflows.procurement_stage import ProcurementLineStageLookup
 from .workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
@@ -115,6 +116,11 @@ def build_techcards_uow_factory(engine: Engine) -> Callable[[], TechcardsUnitOfW
     return lambda: SqlAlchemyTechcardsUnitOfWork(sessions)
 
 
+def build_purchasing_uow_factory(engine: Engine) -> Callable[[], SqlAlchemyPurchasingUnitOfWork]:
+    sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+    return lambda: SqlAlchemyPurchasingUnitOfWork(sessions)
+
+
 def configure_database(app: FastAPI, database_url: str) -> Engine:
     engine = build_engine(database_url)
     app.state.database_engine = engine
@@ -130,7 +136,9 @@ def configure_database(app: FastAPI, database_url: str) -> Engine:
     app.state.references_uow_factory = build_references_uow_factory(engine)
     app.state.operations_uow_factory = build_operations_uow_factory(engine)
     app.state.techcards_uow_factory = build_techcards_uow_factory(engine)
-    app.state.project_registry = PlanSnapshotProjectRegistry(app.state.production_uow_factory)
+    app.state.purchasing_uow_factory = build_purchasing_uow_factory(engine)
+    app.state.project_registry = InternalAwareProjectRegistry(
+        PlanSnapshotProjectRegistry(app.state.production_uow_factory), app.state.purchasing_uow_factory)
     app.state.procurement_stage_lookup = ProcurementLineStageLookup(app.state.procurement_uow_factory)
     app.state.request_purpose_lookup = RequestPurposeLookup(app.state.uow_factory)
     app.state.procurement_supplier_directory = ReferencesSupplierDirectory(app.state.references_uow_factory)

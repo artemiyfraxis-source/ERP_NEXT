@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Iterable, Sequence
 from uuid import UUID, uuid4
 
+from app.shared import stage_options
 from app.shared.identity import Actor
 
 
@@ -27,6 +28,9 @@ STATIC_PURPOSES = (
     "Склад",
     "Расходники",
 )
+# Stage option requests.form: the purpose belongs to the project. A commercial project (registry «591К.3») always
+# carries this purpose; it is implicit and never part of the editable purposes directory.
+COMMERCIAL_PURPOSE = "Коммерческий проект"
 DELIVERY_POINTS = (
     "г. Москва, ул. 6-я Радиальная, д. 17",
     "г. Раменское, ул. 100-й Свирской Дивизии, д. 52",
@@ -56,11 +60,16 @@ _PROJECT_HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
 _PROJECT_NUMBER = re.compile(
     r"(?:[1-9]\d*(?:К[А-Я]?|МФ)(?:\.(?:[А-Я]{1,3}|[1-9]\d*))*\.?|П\d{4}-[1-9]\d*(?:\.[1-9]\d*)?)"
 )
+# «Внутренний проект» (stage option projects.internal): ВП-001, number grows past 999 without padding.
+_INTERNAL_PROJECT = re.compile(r"ВП-\d{3,}")
 _PROJECT_WITHOUT_VERSION = re.compile(r"([1-9]\d*(?:К[А-Я]?|МФ)(?:\.[А-Я]{1,3})?)\.?")
 
 
 def project_reference_valid(value: str | None) -> bool:
-    return bool(_PROJECT_NUMBER.fullmatch(re.sub(r"\s+", "", _text(value).upper())))
+    text = re.sub(r"\s+", "", _text(value).upper())
+    if _PROJECT_NUMBER.fullmatch(text):
+        return True
+    return bool(_INTERNAL_PROJECT.fullmatch(text)) and stage_options.enabled("projects.internal")
 
 
 def normalize_project_reference(value: str | None) -> str:
@@ -264,13 +273,33 @@ def apply_draft_defaults(draft: RequestDraft, today: date | None = None) -> Requ
     )
 
 
-def validate_draft(draft: RequestDraft, today: date | None = None) -> RequestDraft:
+def _commercial_reference(value: str | None) -> bool:
+    text = re.sub(r"\s+", "", _text(value).upper())
+    return bool(_PROJECT_NUMBER.fullmatch(text))
+
+
+def validate_draft(
+    draft: RequestDraft, today: date | None = None, directory_purposes: Sequence[str] | None = None,
+) -> RequestDraft:
+    """``directory_purposes`` (not None only with the option requests.form on) replaces the fixed purpose list by the
+    editable directory plus «Коммерческий проект», and ties that purpose to commercial project numbers."""
     draft = apply_draft_defaults(draft, today)
-    purpose_by_key = {item.casefold(): item for item in STATIC_PURPOSES}
+    allowed = STATIC_PURPOSES if directory_purposes is None else (*directory_purposes, COMMERCIAL_PURPOSE)
+    purpose_by_key = {item.casefold(): item for item in allowed}
     purpose_key = _text(draft.purpose).casefold()
     purpose = purpose_by_key.get(purpose_key) or PURPOSE_ALIASES.get(purpose_key)
     if purpose is None:
         raise ValidationError("Недопустимое НАЗНАЧЕНИЕ: выберите значение из справочника")
+
+    if directory_purposes is not None:
+        commercial = _commercial_reference(draft.project_reference)
+        if commercial and purpose != COMMERCIAL_PURPOSE:
+            raise ValidationError(
+                f"проект «{normalize_project_reference(draft.project_reference)}» — коммерческий, "
+                f"назначение «{COMMERCIAL_PURPOSE}»"
+            )
+        if purpose == COMMERCIAL_PURPOSE and not commercial:
+            raise ValidationError(f"назначение «{COMMERCIAL_PURPOSE}» — только для проекта заказчика (591К.3)")
 
     delivery_point_by_key = {item.casefold(): item for item in DELIVERY_POINTS}
     delivery_point = delivery_point_by_key.get(_text(draft.delivery_point).casefold())
@@ -383,6 +412,7 @@ def create_request_batch(
     creation_key: str = "",
     creation_fingerprint: str = "",
     designation_base: str | None = None,
+    directory_purposes: Sequence[str] | None = None,
 ) -> list[Request]:
     """``designation_base`` set (import from a calculation) → the whole batch shares ``base.NNN``."""
     if not drafts:
@@ -393,7 +423,7 @@ def create_request_batch(
     normalized_drafts = []
     for index, item in enumerate(drafts, start=1):
         try:
-            normalized_drafts.append(validate_draft(item, now.date()))
+            normalized_drafts.append(validate_draft(item, now.date(), directory_purposes))
         except ValidationError as error:
             if str(error).startswith("Позиция "):
                 raise

@@ -26,3 +26,12 @@ file names its original). `backend/app/modules/techcards/harness/route_v3.py` re
 `generateRouteV3`, `createInitialRouteV3` and the part list of `buildRouteSourceItems` in Python. The author keeps the
 route in the browser; ERP stores it per position on the server (`techcard_harness_routes`, migration 0111), and a
 snapshot keeps hidden object IDs and isolated geometry instead of a full copy of the drawing.
+
+## IBM Plex fonts (GRN labels)
+
+IBM Plex Sans Regular, IBM Plex Sans SemiBold and IBM Plex Mono Bold © 2017 IBM Corp., SIL Open Font License 1.1 — the
+font files and the full licence text (`OFL.txt`) are in `backend/app/modules/warehouse/labels/fonts/`, copied unchanged
+from Roller_Buyer `apps/api/assets/fonts/`. They draw the text of the GRN label (stage option `warehouse.labels`): the
+label is printed as a bitmap, the printer's own fonts have no Cyrillic.
+
+The label's QR code is built with `segno` (BSD 3-Clause, pinned in `backend/requirements.txt`).

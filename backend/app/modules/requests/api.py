@@ -1,6 +1,7 @@
 """Request HTTP contract with server-owned identity and transactional writes."""
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterable
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
@@ -20,6 +21,7 @@ from app.shared.http_auth import (
     requests_form_principal,
     requests_view_principal,
 )
+from app.shared import stage_options
 from app.shared.clock import moscow_now, moscow_today
 
 from .application import (
@@ -30,6 +32,7 @@ from .application import (
     ProcurementDetails,
     ProcurementStageLookup,
     ProjectRegistry,
+    directory_purposes,
     UnitOfWork,
     create_requests as create_requests_use_case,
     extract_from_calc,
@@ -55,6 +58,7 @@ from .domain import (
     calculate_line_sum,
     derive_priority,
     import_project_warning,
+    normalize_project_reference,
     parse_calc_number,
     CalcItem,
     calc_project,
@@ -176,6 +180,28 @@ def procurement_stage_lookup(request: WebRequest) -> ProcurementStageLookup | No
     return getattr(request.app.state, "procurement_stage_lookup", None)
 
 
+_INTERNAL = re.compile(r"ВП-\d{3,}")
+
+
+def ensure_internal_projects_open(drafts: Iterable[RequestDraft], registry: object) -> None:
+    """With the option on, a «ВП-…» reference must be an OPEN internal project and the purpose the project's own."""
+    internal = {item["number"]: item["purpose"] for item in internal_projects(registry)}
+    for index, draft in enumerate(drafts, start=1):
+        number = normalize_project_reference(draft.project_reference)
+        if not stage_options.enabled("projects.internal") or not _INTERNAL.fullmatch(number):
+            continue
+        if number not in internal:
+            raise ValidationError(f"Позиция {index}: внутренний проект «{number}» закрыт или не заведён")
+        if " ".join(str(draft.purpose or "").split()).casefold() != internal[number].casefold():
+            raise ValidationError(f"Позиция {index}: назначение берётся из проекта «{number}» — {internal[number]}")
+
+
+def internal_projects(registry: object) -> list[dict[str, str]]:
+    """Open internal projects (number, name, purpose) for the form's own group; empty while the option is off."""
+    getter = getattr(registry, "internal_projects", None)
+    return list(getter()) if callable(getter) else []
+
+
 @router.get("/schema")
 def request_schema(
     _principal: Annotated[Principal, Depends(requests_form_principal)],
@@ -185,8 +211,9 @@ def request_schema(
     open_projects = projects.open_projects() if projects is not None else None
     return {
         "projects": list(open_projects or []),
+        "internal_projects": internal_projects(projects),
         "required": list(REQUIRED_FIELDS),
-        "purposes": list(STATIC_PURPOSES),
+        "purposes": directory_purposes(projects) or list(STATIC_PURPOSES),
         "delivery_points": list(DELIVERY_POINTS),
         "units": list(UNITS),
         "categories": list(CATEGORIES),
@@ -204,9 +231,10 @@ def validate_request(
     payload: ValidateRequestInput,
     _principal: Annotated[Principal, Depends(requests_form_principal)],
     today: Annotated[date, Depends(moscow_today)],
+    projects: Annotated[ProjectRegistry | None, Depends(project_registry)],
 ) -> dict:
     try:
-        normalized = validate_draft(payload.request.to_domain(), today)
+        normalized = validate_draft(payload.request.to_domain(), today, directory_purposes(projects))
         line_sum = calculate_line_sum(normalized.price_with_vat, normalized.quantity)
     except ValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -361,9 +389,11 @@ def create_requests(
     projects: Annotated[ProjectRegistry | None, Depends(project_registry)],
 ) -> dict:
     try:
+        drafts = tuple(item.to_domain() for item in payload.requests)
+        ensure_internal_projects_open(drafts, projects)
         command = CreateRequestsCommand(
             creation_key=idempotency_key,
-            drafts=tuple(item.to_domain() for item in payload.requests),
+            drafts=drafts,
             actor=principal.actor,
             now=now,
         )
