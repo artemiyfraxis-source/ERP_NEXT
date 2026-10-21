@@ -22,6 +22,7 @@ from .cables import (
     NOT_HOOKUP_REASON, hookup_series, resolve_kind,
 )
 from .domain import CABLE_COLUMNS, CABLE_KIND_VALUES, cable_fields, custom_column_prefix
+from .domain import WIRE_COLOR_FIELD, WIRE_ROW_OWN, check_wire_color, wire_color_rows, wire_identity
 from .domain import BASE_COLUMNS, CUSTOM_COLUMN_TABS, EDITABLE_TABS, MAX_COLUMN_NAME, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
 from .domain import StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent
 from .equipment import (
@@ -203,12 +204,15 @@ def replace_snapshot_detailed(command: ReplaceSnapshotCommand, uow: UnitOfWork) 
         for index, (item, key) in enumerate(keyed):
             if item.tab == TechOperationTab.WIRE:
                 kind = kind_of(item.fields, str(item.fields.get(MARK_FIELD) or item.display_text).strip())
-                built[index] = TechOperationRecord.create(
+                # a монтажный wire: one row per colour of the sheet's «Цвета» (owner 20.10.2026), one mirror key
+                variants = wire_color_rows(item.fields) if kind == CableKind.WIRE else [item.fields]
+                built[index] = tuple(TechOperationRecord.create(
                     tab=item.tab, display_text=item.display_text, search_text=item.search_text,
-                    source_sheet=item.source_sheet, sort_key=item.sort_key, fields=_wire_fields(kind, item.fields, uow),
+                    source_sheet=item.source_sheet, sort_key=item.sort_key, fields=_wire_fields(kind, fields, uow),
                     mirror_key=key, cable_kind=kind.value,
-                )
-        records = tuple(built[index] for index in range(len(keyed)))
+                ) for fields in variants)
+        records = tuple(record for index in range(len(keyed))
+                        for record in (built[index] if isinstance(built[index], tuple) else (built[index],)))
         skipped = uow.tech_operations.replace(
             records, keep_tabs=keep_tabs, schema_version=command.schema_version,
             source_updated_at=command.source_updated_at, imported_at=command.now,
@@ -277,8 +281,10 @@ def _without_empty_cable_columns(tab: TechOperationTab, fields: dict[str, str]) 
     return {key: value for key, value in fields.items() if not (is_coax_cable_column(key) and not str(value or "").strip())}
 
 
-def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: UnitOfWork) -> tuple[TechOperationRecord, TechOperationRecord]:
-    """The row edit inside an open unit of work (nothing committed): returns the record before and after."""
+def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: UnitOfWork,
+             siblings: bool = True) -> tuple[TechOperationRecord, TechOperationRecord]:
+    """The row edit inside an open unit of work (nothing committed): returns the record before and after. A монтажный
+    wire's cells of the mark follow to the rows of its other colours (`siblings`, `_same_wire_mark`)."""
     record = _editable(record_id, uow)
     fields = dict(record.fields)
     display = record.display_text
@@ -334,10 +340,57 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     display = schema_display_text(record.tab.value, fields) or display
     updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
     updated = replace(updated, normalized_search=_search_text(updated))
+    if record.cable_kind == CableKind.WIRE.value and edited & {MARK_FIELD, WIRE_COLOR_FIELD}:
+        _check_wire_row(updated.fields, uow, record.id)
     uow.tech_operations.save(updated)
     if record.tab == TechOperationTab.WIRE and edited & {MARK_FIELD, *MIRRORED_FIELDS}:
         _follow_wire_edit(uow, record, updated, edited, now)
+    if siblings:
+        _same_wire_mark(record, updated, now, uow)
     return record, updated
+
+
+# --- «Монтажные провода»: one row per colour (owner 20.10.2026) ---
+
+def _check_wire_row(fields: Mapping[str, str], uow: UnitOfWork, self_id: UUID | None = None) -> None:
+    """A монтажный wire row holds one colour, and no other монтажный row has its mark and colour. Read under the
+    transaction of the write."""
+    check_wire_color(fields.get(WIRE_COLOR_FIELD))
+    identity = wire_identity(fields)
+    if not identity[0]:
+        return
+    for other in uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=100_000):
+        if other.id != self_id and other.cable_kind == CableKind.WIRE.value and wire_identity(other.fields, cable_mark(other)) == identity:
+            color = str(fields.get(WIRE_COLOR_FIELD) or "").strip()
+            which = f"цвета «{color}»" if color else "без цвета"
+            raise ReferenceValidationError(
+                f"Провод «{cable_mark(other)}» {which} уже есть — у каждого цвета марки одна строка")
+
+
+def wire_siblings(record: TechOperationRecord, uow: UnitOfWork) -> list[TechOperationRecord]:
+    """The other rows of a монтажный wire's mark (its other colours)."""
+    key = cable_key(cable_mark(record))
+    if record.cable_kind != CableKind.WIRE.value or not key:
+        return []
+    return [other for other in uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=100_000)
+            if other.id != record.id and other.cable_kind == CableKind.WIRE.value and cable_key(cable_mark(other)) == key]
+
+
+def _same_wire_mark(before: TechOperationRecord, updated: TechOperationRecord, now: datetime, uow: UnitOfWork) -> int:
+    """Writes the changed cells of the mark (every cell but the colour and the offer, `WIRE_ROW_OWN`) into the rows of
+    its other colours the way the cell is written, so the rows of a mark stay equal. Returns the rows written."""
+    names = [name for name, value in updated.fields.items()
+             if name not in WIRE_ROW_OWN and before.fields.get(name, "") != value]
+    if not names or cable_key(cable_mark(before)) != cable_key(cable_mark(updated)):
+        return 0
+    written = 0
+    for sibling in wire_siblings(updated, uow):
+        follow = tuple(FieldEdit(name, sibling.fields.get(name, ""), updated.fields[name]) for name in names
+                       if sibling.fields.get(name, "") != updated.fields[name])
+        if follow:
+            _edit_in(sibling.id, follow, now, uow, siblings=False)
+            written += 1
+    return written
 
 
 # БД.КОАКС (владелец 19.10.2026: «у одного артикула не могут быть разные значения»): строка — разъём × кабель, свойства
@@ -617,6 +670,8 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
     if tab == TechOperationTab.WIRE:
         kind = cable_kind or _kind_rule(uow)(fields, str(fields.get(MARK_FIELD) or filled[0]))
         fields = _wire_fields(kind, fields, uow, pad_own=True)
+        if kind == CableKind.WIRE:
+            _check_wire_row(fields, uow)
     else:
         fields = _without_empty_cable_columns(
             tab, {**{name: "" for name in custom_columns(tab, uow)}, **sync_schema_fields(tab.value, fields)})
@@ -973,6 +1028,11 @@ def save_hookup_in(command: SaveHookupCommand, uow: UnitOfWork,
         record = replace(record, fields=fields, edited_in_erp=True)
         record = replace(record, normalized_search=_search_text(record))
         uow.tech_operations.save(record)
+    for sibling in wire_siblings(record, uow):  # the structure is the mark's: every colour of it says the same
+        follow = written_back_fields(sibling.fields, wire, gauge, gauges)
+        if follow:
+            moved = replace(sibling, fields={**sibling.fields, **follow}, edited_in_erp=True)
+            uow.tech_operations.save(replace(moved, normalized_search=_search_text(moved)))
     _audit("references.hookup_wire_saved", command.actor, command.now, {
         "record_id": str(record.id), "mark": mark, "gauge_id": str(gauge.id), "created": current is None,
         "fields_written": sorted(changes), **(details or {}),
@@ -996,7 +1056,14 @@ def _follow_wire_edit(uow: UnitOfWork, before: TechOperationRecord, after: TechO
     mark = cable_mark(after)
     if not normalized_cable_key(mark):
         raise ReferenceValidationError("Марка провода обязательна")
-    uow.cable_structure.save_hookup(refreshed_hookup(wire, mark, after.fields, edited, uow.cable_structure.gauges()), now)
+    refreshed = refreshed_hookup(wire, mark, after.fields, edited, uow.cable_structure.gauges())
+    if refreshed.mark_key != wire.mark_key and wire_siblings(before, uow):
+        # one colour moved to another mark: the structure stays with the mark's other colours; the new mark takes a
+        # copy unless it has its own
+        if uow.cable_structure.hookup(refreshed.mark_key) is None:
+            uow.cable_structure.save_hookup(replace(refreshed, id=uuid4()), now)
+        return
+    uow.cable_structure.save_hookup(refreshed, now)
 
 
 def structure_hookups(actor: Actor, now: datetime, uow_factory, *, dry_run: bool = False) -> dict[str, object]:
@@ -1012,9 +1079,11 @@ def structure_hookups(actor: Actor, now: datetime, uow_factory, *, dry_run: bool
         if hookup_series(row.cable) is None:  # a mark of no series of the база монтажных gets no structure
             left.append(f"{row.cable}: {NOT_HOOKUP_REASON}")
             continue
+        if row.key in {item.mark_key for item in created}:  # another colour of a mark structured just now
+            continue
         parsed = parse_hookup(row.cable, row.record.fields, catalog.gauges)
         wire = hookup_from_parse(row.cable, parsed)
-        if wire is None or wire.mark_key in {item.mark_key for item in created}:
+        if wire is None:
             left.append(f"{row.cable}: {parsed.problem or 'повтор марки'}")
             continue
         created.append(wire)
@@ -1131,13 +1200,15 @@ def set_cable_kind(command: SetCableKindCommand, uow: UnitOfWork) -> CableRow:
             entries.append(ReferenceEntry.create(ReferenceKind.CABLE_KIND, mark, command.kind.value, position))
         uow.references.replace(tuple(entries))
         before = record.cable_kind
+        colours = wire_siblings(record, uow)  # the list is the mark's: its other colours move with it
         if before != command.kind.value:
-            moved = replace(record, cable_kind=command.kind.value, fields=_wire_fields(command.kind, record.fields, uow))
-            record = replace(moved, normalized_search=_search_text(moved))
-            uow.tech_operations.save(record)
+            for item in (record, *colours):
+                moved = replace(item, cable_kind=command.kind.value, fields=_wire_fields(command.kind, item.fields, uow))
+                uow.tech_operations.save(replace(moved, normalized_search=_search_text(moved)))
+            record = uow.tech_operations.get(record.id)
         _audit("references.cable_kind_set", command.actor, command.now, {
             "record_id": str(record.id), "mark": mark, "kind": command.kind.value, "from": before,
-            "manual": command.kind != auto,
+            "manual": command.kind != auto, **({"colour_rows": len(colours)} if colours else {}),
         }, uow)
         uow.commit()
     [row] = [item for item in cable_rows([record], diameters) if item.record is not None]

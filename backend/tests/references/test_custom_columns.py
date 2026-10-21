@@ -77,7 +77,7 @@ def test_the_cables_screen_columns_and_the_coax_tab_get_the_new_column(reference
 
 def test_a_bad_name_is_refused_and_nothing_is_written(references_api):
     _seed(references_api)
-    cases = {"": 422, "   ": 422, "Я" * 61: 422, "марка": 422, "Цвета": 422, "=A1": 422}
+    cases = {"": 422, "   ": 422, "Я" * 61: 422, "марка": 422, "Цвет": 422, "=A1": 422}
 
     codes = {name: references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": name}).status_code for name in cases}
     ok_long = references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "Я" * 60})

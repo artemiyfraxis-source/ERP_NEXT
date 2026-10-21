@@ -200,6 +200,11 @@ class _TechTable:
         extra = {name: value for name, value in changes.items() if name in self.extras}
         if extra and COAX_TITLES.keys() == self.extras.keys():
             self._set_diameters(uow, item, extra, actor, now)
+        if own and self.tab == TechOperationTab.WIRE:
+            # a монтажный wire's cell of the mark another colour's row of this file has already written (the mark's
+            # cells follow to all its colours) is not this row's change
+            current = self._record(uow, item).fields
+            own = {name: value for name, value in own.items() if current.get(name, "") != value}
         if own:
             edits = tuple(FieldEdit(name, item.values.get(name, ""), value) for name, value in own.items())
             record, _updated = _edit_in(UUID(item.id), edits, now, uow)

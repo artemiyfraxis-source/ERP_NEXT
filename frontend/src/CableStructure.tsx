@@ -13,7 +13,7 @@ import {
   type TechOperationRecord,
   type WireGauge,
 } from "./api";
-import { colorBackground, normalizeColors, parseColors } from "./wireColors";
+import { canonicalColor, colorBackground, parseColors } from "./wireColors";
 import { ColorPicker, MakersInput } from "./WireFieldWidgets";
 import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 
@@ -206,17 +206,16 @@ const hookupPayload = (wire: Partial<HookupWire> | null | undefined): HookupPayl
   outer_d_mm: num(wire?.outer_d_mm), voltage_v: num(wire?.voltage_v), temp_min_c: num(wire?.temp_min_c), temp_max_c: num(wire?.temp_max_c),
 });
 
-// One colour per line, its dot and its name (owner 19.10.2026: «каждый цвет новой строчкой и текстом»).
-function WireColors({ text }: { text: string }) {
-  const names = parseColors(text);
-  if (!names.length) return <span className="muted">—</span>;
-  return <ul className="wire-colors" aria-label="Цвета">
-    {names.map((name) => {
-      const background = colorBackground(name);
-      return <li key={name}>{background ? <i className="wire-dot" style={{ background }} aria-hidden="true" /> : <i className="wire-dot wire-dot-none" aria-hidden="true" />}{name}</li>;
-    })}
-  </ul>;
+// Each colour is its own row (owner 20.10.2026: «имелось ввиду каждый цвет своя строка»): the row's colour, its dot
+// and its name.
+function WireColor({ name }: { name: string }) {
+  const text = name.trim();
+  if (!text) return <span className="muted">—</span>;
+  const background = colorBackground(text);
+  return <span className="wire-color">{background ? <i className="wire-dot" style={{ background }} aria-hidden="true" /> : <i className="wire-dot wire-dot-none" aria-hidden="true" />}{text}</span>;
 }
+/** A typed colour by the palette («кр» → «красный»), else as typed; a list is refused by the server in words. */
+const oneColor = (value: string): string => canonicalColor(value.trim()) ?? value.trim();
 
 const UNPARSED = "Не разобраны";
 // A wire's own set (owner 15.10.2026: «у монтажных мне надо материал жилы и материал оболочки»): the core and jacket
@@ -251,7 +250,8 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     (a.hookup ? 0 : 1) - (b.hookup ? 0 : 1)
     || (a.hookup?.series ?? "").localeCompare(b.hookup?.series ?? "", "ru")
     || (byId.get(a.hookup?.gauge_id ?? "")?.section_mm2 ?? 0) - (byId.get(b.hookup?.gauge_id ?? "")?.section_mm2 ?? 0)
-    || a.cable.localeCompare(b.cable, "ru", { numeric: true })), [data.rows, byId]);
+    || a.cable.localeCompare(b.cable, "ru", { numeric: true })
+    || (a.record?.fields[COLOR] ?? "").localeCompare(b.record?.fields[COLOR] ?? "", "ru")), [data.rows, byId]);
   // What every size of a series shares goes into the group header and is not repeated per row (a series of 2+ sizes only).
   const shared = useMemo(() => {
     const bySeries = new Map<string, CableRow[]>();
@@ -275,13 +275,15 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   const sharedOf = (row: CableRow) => row.hookup ? shared.get(row.hookup.series) : undefined;
   const makerNames = useMemo(() => makerSuggestions(data.rows.map((item) => item.record?.fields[MAKERS] ?? "")), [data.rows]);
   const seriesColors = (series: string) => [...new Set(rows.filter((item) => item.hookup?.series === series.trim())
-    .flatMap((item) => parseColors(item.record?.fields["Цвета"] ?? "")))].join(", ");
+    .flatMap((item) => parseColors(item.record?.fields[COLOR] ?? "")))].join(", ");
   // The table itself appends « · N» — the number of sizes in the group.
   const groupLabel = (name: string) => {
     const own = name === UNPARSED ? undefined : shared.get(name);
     return [name, own?.jacket, own?.voltage && `${own.voltage} В`, own?.temp && `${own.temp} °C`].filter(Boolean).join(" · ");
   };
   const gaugeOf = (row: CableRow) => row.hookup ? byId.get(row.hookup.gauge_id) ?? null : null;
+  // The structure is the mark's: a new colour of a structured mark takes it (`HookupEditor`).
+  const hookupOf = (mark: string) => rows.find((item) => item.hookup && markKey(item.cable) === markKey(mark))?.hookup ?? null;
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
   const clip = (text: string) => <span className="cable-clip" title={text}>{text}</span>;
   // «открыть» — the supplier's page of the wire, as on the coax lists.
@@ -334,6 +336,10 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       <strong>{row.cable}</strong>
       {!row.hookup && <> <span className="tone-warn" title={row.hookup_problem || "Жила не выбрана из таблицы сечений"}>не разобран</span></>}
     </> },
+    // The row's one colour (owner 20.10.2026: «каждый цвет своя строка») right after the mark — the rows of a mark
+    // differ by it: a dot and a name; typed as text («кр») it goes by the palette, the picker is in the window.
+    { key: "color", title: "Цвет", value: (row) => field(row, COLOR), render: (row) => <WireColor name={field(row, COLOR)} />,
+      edit: canEdit ? fieldCellEdit<CableRow>(COLOR, (row) => row.record, true, oneColor) : undefined },
     // The series is the group header (owner 16.10: «серию исключить») — kept in «Колонки», hidden.
     {
       key: "series", title: "Серия", hidden: true, value: (row) => row.hookup?.series ?? "", edit: hookupEdit("series"),
@@ -349,10 +355,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "insulation", title: "Изоляция", hidden: true, value: (row) => row.hookup?.insulation ?? "", render: (row) => clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
     { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
     { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", edit: tempEdit },
-    // Colours as dots; typed as text («красный, синий») they go by the palette, the picker stays in the wire's window.
-    { key: "colors", title: "Цвета", value: (row) => field(row, COLORS), render: (row) => <WireColors text={field(row, COLORS)} />,
-      edit: canEdit ? fieldCellEdit<CableRow>(COLORS, (row) => row.record, own.includes(COLORS), normalizeColors) : undefined },
-    ...kindCols.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name) && !COAX_ONLY.has(name)).map((name): DataColumn<CableRow> => ({
+    ...kindCols.filter((name) => name !== MARK && name !== CORE_COLORS && name !== COLOR && name !== STRANDS && !MIRRORED.includes(name) && !COAX_ONLY.has(name)).map((name): DataColumn<CableRow> => ({
       key: name, title: name, value: (row) => field(row, name), hidden: !WIRE_SHOWN.has(name) && (!own.includes(name) || OTHER_LISTS.has(name)),
       // The series' common jacket material is in the group header (owner 15.10: «Изоляция» — a rudiment).
       render: (row) => name === JACKET_MATERIAL && sharedOf(row)?.jacket ? null : name === LINK ? supplierLink(row) : clip(field(row, name)),
@@ -374,13 +377,13 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   const columns = [...rest.slice(0, outer + 1), ...materials, ...rest.slice(outer + 1, after), ...supply, ...rest.slice(after)];
   const detail = (row: CableRow) => canEdit
     ? <HookupEditor key={`${row.id}:${JSON.stringify(row.hookup ?? null)}:${JSON.stringify(row.record?.fields ?? {})}:${row.kind}`}
-      row={row} columns={kindCols} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
+      row={row} columns={kindCols} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} hookupOf={hookupOf} />
     : <HookupCard row={row} gauge={gaugeOf(row)} columns={kindCols} />;
   const unparsed = rows.filter((row) => !row.hookup).length;
   return <>
     {adding && <div className="panel db-edit">
       <div className="manual-stock-head"><h2>Новый монтажный провод</h2></div>
-      <HookupEditor row={null} columns={kindCols} gauges={gauges} onSaved={async (message) => { setAdding(false); await onSaved(message); }} onError={onError} onCancel={() => setAdding(false)} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
+      <HookupEditor row={null} columns={kindCols} gauges={gauges} onSaved={async (message) => { setAdding(false); await onSaved(message); }} onError={onError} onCancel={() => setAdding(false)} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} hookupOf={hookupOf} />
     </div>}
     <DataTable
       label="Монтажные провода"
@@ -388,7 +391,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       columns={columns}
       rowKey={(row) => row.id}
       rowLabel={(row) => row.cable}
-      storageKey="db:cables:wire-structured:4"
+      storageKey="db:cables:wire-structured:5"
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
       groupSort
@@ -398,7 +401,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       presets={[
         ...(unparsed ? [{ label: "Не разобраны", test: (row: CableRow) => !row.hookup }] : []),
         { label: "Без Ø", test: (row: CableRow) => row.hookup?.outer_d_mm === null || row.hookup?.outer_d_mm === undefined },
-        { label: "Без цветов", test: (row: CableRow) => !field(row, "Цвета").trim() },
+        { label: "Без цвета", test: (row: CableRow) => !field(row, COLOR).trim() },
       ].filter((preset) => rows.some(preset.test))}
       onEdited={() => onSaved("")}
       emptyText="Монтажных проводов нет — добавьте провод."
@@ -415,7 +418,11 @@ function HookupCard({ row, gauge, columns }: { row: CableRow; gauge: WireGauge |
   </div>;
 }
 
-const COLORS = "Цвета";
+// A монтажный wire row has ONE colour («Цвет»); «Цвета» is the multicore list, no column of this list.
+const COLOR = "Цвет";
+const CORE_COLORS = "Цвета";
+/** The ETK generator's cable key (backend `cable_key`): no case, spaces, hyphens. */
+const markKey = (mark: string) => mark.toLowerCase().replace(/[\s-]/g, "");
 const STRANDS = "Жила: проволок × диаметр, мм";
 // Short labels of the form; the cell keeps its column name.
 const CELL_LABELS: Record<string, string> = {
@@ -426,8 +433,10 @@ const CELL_LABELS: Record<string, string> = {
 const SECTION_CELLS = [[MARK, TYPE, "Число жил", STRANDS], [CORE_MATERIAL, JACKET_MATERIAL, "Ток, А"], ["Экран", "Волновое сопротивление, Ом", "Масса, г/м"],
   ["Поставщик", "Цена посл., ₽/м без НДС", "Закупок", "Ссылка на datasheet", "Источник данных"]];
 
-function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSelect, seriesColors, makerNames }: {
+function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSelect, seriesColors, makerNames, hookupOf }: {
   seriesColors: (series: string) => string;
+  /** The structure of a mark already in the list (another colour of it), null — none. */
+  hookupOf?: (mark: string) => HookupWire | null;
   makerNames: string[];
   row: CableRow | null;
   columns: string[];
@@ -440,7 +449,7 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
   const original = hookupPayload(row?.hookup ?? row?.hookup_suggestion);
   const ownFields = (record: TechOperationRecord | null) => record
     ? Object.fromEntries(Object.entries(record.fields).filter(([name]) => !MIRRORED.includes(name) && columns.includes(name)))
-    : Object.fromEntries(columns.filter((name) => !MIRRORED.includes(name)).map((name) => [name, name === TYPE ? "монтажный" : name === "Число жил" ? "1" : ""]));
+    : Object.fromEntries(columns.filter((name) => !MIRRORED.includes(name) && name !== CORE_COLORS).map((name) => [name, name === TYPE ? "монтажный" : name === "Число жил" ? "1" : ""]));
   const [wire, setWire] = useState<HookupPayload>(original);
   const [fields, setFields] = useState<Record<string, string>>(() => ownFields(row?.record ?? null));
   const [kind, setKind] = useState<CableKind>(row?.kind ?? "wire");
@@ -462,8 +471,11 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
           .map(([name, value]) => ({ field: name, old: record?.fields[name] ?? "", value }));
         if (edits.length) record = await referencesApi.editRecord(record.id, edits);
       }
-      if (changedWire && record && kind === "wire") {
-        await referencesApi.saveHookup(record.id, { ...wire, old: row?.hookup ? hookupPayload(row.hookup) : null });
+      // a new colour of a structured mark: the mark's structure is the old one, written only when changed here
+      const shared = row ? null : hookupOf?.(fields[MARK] ?? "") ?? null;
+      const sharedChanged = shared && (Object.keys(wire) as Array<keyof HookupPayload>).some((name) => wire[name].trim() !== hookupPayload(shared)[name].trim());
+      if (changedWire && record && kind === "wire" && (!shared || sharedChanged)) {
+        await referencesApi.saveHookup(record.id, { ...wire, old: row?.hookup ? hookupPayload(row.hookup) : shared ? hookupPayload(shared) : null });
       }
       if (row?.record && kind !== row.kind) await referencesApi.moveCable(row.record.id, kind);
       const mark = (fields[MARK] || record?.display_text || "").trim();
@@ -487,7 +499,7 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
   const cell = (name: string) => name in fields && <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{CELL_LABELS[name] ?? name}</small>
     <input aria-label={CELL_LABELS[name] ?? name} value={fields[name] ?? ""} onChange={(event) => setCell(name, event.target.value)} />
   </label>;
-  const grouped = new Set([...SECTION_CELLS.flat(), COLORS, STANDARD, MAKERS]);
+  const grouped = new Set([...SECTION_CELLS.flat(), COLOR, STANDARD, MAKERS]);
   const rest = Object.keys(fields).filter((name) => !grouped.has(name));
   return <div className="cable-editor">
     {row && !row.hookup && <div className="warning-inline">Не разобран: {row.hookup_problem || "жила не выбрана"}. Поля заполнены по строке БД.ПРОВ — проверьте и сохраните.</div>}
@@ -523,7 +535,7 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
         {cell("Волновое сопротивление, Ом")}
         {cell("Масса, г/м")}
       </div>
-      {COLORS in fields && <ColorPicker value={fields[COLORS] ?? ""} onChange={(value) => setCell(COLORS, value)} seriesColors={seriesColors(wire.series)} />}
+      {COLOR in fields && <ColorPicker single label="Цвет" value={fields[COLOR] ?? ""} onChange={(value) => setCell(COLOR, value)} seriesColors={seriesColors(wire.series)} />}
     </section>
     <section className="form-section"><h4>Закупка и источник</h4>
       <div className="cable-form">

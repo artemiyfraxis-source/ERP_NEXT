@@ -180,6 +180,11 @@ def _prepared(tmp_path, uow):
     return gauges
 
 
+def _all(uow):
+    with uow:
+        return list(uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=1000))
+
+
 def _records(uow):
     with uow:
         return {cable: record for record in uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=1000)
@@ -221,12 +226,18 @@ def test_import_updates_in_place_creates_missing_sizes_and_a_second_run_changes_
     assert {item["key"] for item in report.refused} == {
         "0,01 мм²", "UL1007 26AWG", "UL1061 30AWG", "M22759 22AWG", "МГТФ 0,6"}
     assert report.unchanged == 0 and report.hookups_created == 2 and report.hookups_updated == 2  # ПВАМ: 48 V already
-    records = _records(uow)
-    assert all(records[mark].id == record_id for mark, record_id in ids.items())  # nothing renamed or deleted
+    by_id = {record.id: record for record in _all(uow)}
+    assert set(ids.values()) <= set(by_id)  # nothing renamed or deleted
+    records = {**_records(uow), **{mark: by_id[record_id] for mark, record_id in ids.items()}}
     mgtf = records["МГТФ 0,20"]
     assert mgtf.edited_in_erp and mgtf.fields["Стандарт"] == "ТУ 16-505.185-71"
     assert mgtf.fields["Жила: проволок × диаметр, мм"] == "7×0,19"
-    assert mgtf.fields["Цвета"] == "белый, красный, чёрный" and mgtf.fields["Изоляция"] == "фторопласт-4"
+    # each colour its own row (owner 20.10.2026): the mark's row without a colour takes the first, each other colour is
+    # a new row with the mark's values
+    assert mgtf.fields["Цвет"] == "белый" and mgtf.fields["Изоляция"] == "фторопласт-4"
+    colours = [record for record in _all(uow) if record.fields.get("Марка") == "МГТФ 0,20"]
+    assert sorted(record.fields["Цвет"] for record in colours) == ["белый", "красный", "чёрный"]
+    assert all({**record.fields, "Цвет": ""} == {**mgtf.fields, "Цвет": ""} and record.edited_in_erp for record in colours)
     assert (mgtf.fields["Наружный диаметр, мм"], mgtf.fields["Темп. от, °C"], mgtf.fields["Темп. до, °C"]) == ("0,97", "-60", "220")
     assert mgtf.fields["Сечение, мм2"] == "0,20"  # the same size: the cell stays as typed
     assert mgtf.fields["Источник данных"].startswith("Справочник; ТУ 16-505.185-71; ТУ 16-505.185-71, п. 1.2")
@@ -249,7 +260,7 @@ def test_import_updates_in_place_creates_missing_sizes_and_a_second_run_changes_
     assert hookups["мгтф0,20"].gauge_id == by_awg["24"].id and hookups["мгтф0,20"].insulation_thickness_mm == Decimal("0.2")
     new = records["МГТФ 0,07"]
     assert new.edited_in_erp and new.fields["Тип провода"] == "монтажный" and new.fields["Число жил"] == "1"
-    assert new.fields["Цвета"] == "белый" and new.fields["Сечение, мм2"] == "0,07"
+    assert new.fields["Цвет"] == "белый" and new.fields["Сечение, мм2"] == "0,07"
     assert hookups["мгтф0,07"].gauge_id == next(gauge.id for gauge in catalog.gauges if gauge.awg is None)
     kinds = {row.cable: row.kind for row in catalog.rows}
     assert kinds["МГТФ 0,07"] == kinds["МГТФ 0,20"] == CableKind.WIRE
@@ -262,7 +273,8 @@ def test_import_updates_in_place_creates_missing_sizes_and_a_second_run_changes_
 
     again = import_hookups(_factory(uow)(), _payload(), ACTOR, NOW)
     assert (again.changed, again.created, again.updated, again.gauges_added) == (0, [], [], [])
-    assert again.unchanged == 5 and again.hookups_created == again.hookups_updated == 0
+    # 5 sizes in 7 rows: МГТФ 0,20 is three colours now
+    assert again.unchanged == 7 and again.hookups_created == again.hookups_updated == 0
 
     # a mirror reload keeps what the import wrote
     load_mirror(_mirror(tmp_path / "again", prov=PROV), uow, dry_run=False, now=NOW)
