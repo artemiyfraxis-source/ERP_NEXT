@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { productionApi, type ProductionBox, type ProductionOperation, type ProjectTechcard } from "./api";
 import { parseDefects } from "./etkOperation";
+import { etkOpRuns } from "./etkRoute";
 import "./pfTask.css";
 
 /** Задание по ПФ (13.10): у операции задания есть операции ЭТК. Пусто — прежняя операция с одной операцией ЭТК. */
@@ -17,7 +18,8 @@ export function operationName(operation: Pick<ProductionOperation, "etk_ops" | "
 /** «оп. 05·06·07» — номера операций ЭТК этого ПФ по порядку; обычная операция — пусто. */
 export function pfOpsText(operation: Pick<ProductionOperation, "etk_ops">): string {
   const ops = operation.etk_ops ?? [];
-  return ops.length ? `оп. ${ops.map((item) => String(item.position).padStart(2, "0")).join("·")}` : "";
+  // Подряд — диапазоном: «оп. 15–21», а не семь номеров через точку (владелец 20.10: «сложно для восприятия»).
+  return ops.length ? `оп. ${etkOpRuns(ops.map((item) => item.position), (value) => String(value).padStart(2, "0"))}` : "";
 }
 
 type Requirement = { position: number; controls: string[]; defects: string[] };

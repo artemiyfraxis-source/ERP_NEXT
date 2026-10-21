@@ -1,3 +1,5 @@
+import type { Sto, TdFinding, TdIssue, TdIssueInput, TdPrintModel } from "./tdTypes";
+
 export type AccessMode = "view" | "edit";
 export const AUTH_REQUIRED_EVENT = "erp:auth-required";
 
@@ -3177,6 +3179,13 @@ export const productionApi = {
         ? { version, operator_id: operatorId, remove: true }
         : { version, operator_id: operatorId, quantity, requested_start: requestedStart }),
     }),
+  // Ввод готовых мастером (владелец 20.10): штуки этапа мимо терминала; operatorId — чьи (пусто — без исполнителя);
+  // fillInputs — пропущенные этапы-входы отбить готовыми.
+  manualOutput: (taskId: string, operationId: string, goodQuantity: number, operatorId: string, fillInputs: boolean) =>
+    api<{ box: ProductionBox; filled: ProductionBox[]; warnings: string[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/manual-output`, {
+      method: "POST",
+      body: JSON.stringify({ good_quantity: goodQuantity, operator_id: operatorId || null, fill_inputs: fillInputs }),
+    }),
   cancel: (taskId: string, version: number, cancelled: boolean) =>
     api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/cancel`, {
       method: "POST",
@@ -4573,3 +4582,27 @@ export const documentsApi = {
   acknowledge: (versionId: string, secret: string) =>
     api<DocumentsOverview>(`/api/documents/versions/${encodeURIComponent(versionId)}/acknowledge`, { method: "POST", body: JSON.stringify({ secret }) }),
 };
+
+/* Комплект ТД по ЕСТД: выпуски, нормоконтроль, печать. 422 при смене статуса несёт detail.findings (ApiError.detail). */
+const tdPath = (id: string) => `/api/techcards/td-issues/${encodeURIComponent(id)}`;
+const tdPost = (body: unknown) => ({ method: "POST", body: JSON.stringify(body) });
+const tdCardPath = (cardId: string) => `/api/techcards/projects/${encodeURIComponent(cardId)}/td-issues`;
+
+export const listTdIssues = (cardId: string) => api<TdIssue[]>(tdCardPath(cardId));
+export const createTdIssue = (cardId: string, input: TdIssueInput) => api<TdIssue>(tdCardPath(cardId), tdPost(input));
+export const getTdIssue = (id: string) => api<TdIssue>(tdPath(id));
+export const updateTdIssue = (id: string, version: number, input: TdIssueInput) =>
+  api<TdIssue>(tdPath(id), { method: "PUT", body: JSON.stringify({ version, ...input }) });
+export const resnapshotTdIssue = (id: string, version: number) => api<TdIssue>(`${tdPath(id)}/resnapshot`, tdPost({ version }));
+export const setTdIssueStatus = (id: string, version: number, to: "signing" | "draft" | "active" | "annulled") =>
+  api<TdIssue>(`${tdPath(id)}/status`, tdPost({ version, to }));
+export const getTdNormcontrol = (id: string) => api<{ findings: TdFinding[] }>(`${tdPath(id)}/normcontrol`);
+export const getTdPrintModel = (id: string) => api<TdPrintModel>(`${tdPath(id)}/print`);
+export const getSto = () => api<Sto>("/api/techcards/sto");
+
+/** Замечания нормоконтроля из отказа 422 (смена статуса заблокирована); пусто, если отказ другой. */
+export function tdFindingsOf(reason: unknown): TdFinding[] {
+  if (!(reason instanceof ApiError) || reason.status !== 422) return [];
+  const findings = (reason.detail as { findings?: unknown } | undefined)?.findings;
+  return Array.isArray(findings) ? (findings as TdFinding[]) : [];
+}

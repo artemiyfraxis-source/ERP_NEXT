@@ -7,6 +7,7 @@
 - [Screens rules](erp-screens-rules.md) — every UI change: skill erp-screens + design-critique, demo run-demo.sh + shoot.mjs
 - [Edit in windows](edit-in-windows.md) — every record card / edit form opens as a modal PageWindow, never a side panel
 - [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, update-server.yml release, backups (+ off-server copy), LAN + Tailscale
+- [Prod screen check](prod-screen-check.md) — I HAVE the owner's prod web login (~/.claude/secrets/erp-server.env): check released screens on prod myself, no local tabs, never ask for a login
 - [Staff and sites](staff-and-sites.md) — ЦАР/ЖУК fitters, masters, full-access roles, PIN
 - [SUPPLYMAP legacy diffs](supplymap-parity.md) — SUPPLYMAP retired 05.10; deliberate ERP differences, box numbers, out of scope
 - Modules: [projects](module-projects.md) · [techcards](module-techcards.md) · [reference DB](module-reference-db.md) · [warehouse](module-warehouse.md) · [fulfillment](module-fulfillment.md) · [production](module-production.md) · [shipping](module-shipping.md) · [procurement](module-procurement.md)
@@ -27,6 +28,8 @@
 - [Prod reference write](prod-reference-write.md) — owner wants DB fills written straight to prod: ssh + import_rows by natural key, old="" guard, backup-now
 - [ETK auto revisions](etk-auto-revisions.md) — since 19.10 reference/builder changes issue new ETK revisions automatically (ETK_AUTO_REVISION=1 on prod); no «Пересобрать»
 - [Coax contact depth](coax-contact-depth.md) — заглубление = body face → contact by tracing lines; SMA male E 0,38…1,14, female H+I+J 1,88…2,41; mm only
+- [U.FL is not MHF1](ufl-not-mhf.md) — owner 20.10: Hirose U.FL ≠ I-PEX MHF1/IPEX; never merge across series even with one supplier code
+- [Coax pin type](coax-pin-type.md) — angled = «пайка внутри корпуса», never crimp; 2.92/3.5 = «цанга»; seller «обжимной» is the shield, not the pin
 - [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
 - [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
 - [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range

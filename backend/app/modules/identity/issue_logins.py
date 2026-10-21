@@ -26,38 +26,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import build_engine
-from app.modules.identity.domain import hash_password, verify_password
+from app.modules.identity.domain import hash_password, short_login, translit, verify_password
 from app.modules.identity.infrastructure import IdentityCredentialRow, IdentityIdentifierRow, IdentityUserRow
 
-TRANSLIT = {
-    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z", "и": "i", "й": "y",
-    "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f",
-    "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
-}
+__all__ = ["issue", "short_login", "translit"]
+
 # No 0/O, 1/l/I: the list is read off paper.
 ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 # Passwords printed in this repo (the local demo «preview» admin, scripts/demo). An account moved from a local base
 # with one of them would be open to anyone who reads the repo, so it is switched off (active=False, reversible).
 PUBLIC_PASSWORDS = ("Preview-2026!",)
-
-
-def translit(text: str) -> str:
-    out = "".join(TRANSLIT.get(ch, ch) for ch in text.casefold())
-    return "".join(ch for ch in out if ch.isascii() and ch.isalnum())
-
-
-def short_login(name: str, taken: set[str]) -> str:
-    parts = name.split()
-    surname = translit(parts[0]) if parts else ""
-    first = translit(parts[1])[:1] if len(parts) > 1 else ""
-    base = surname or "user"
-    for candidate in (base, base + first):
-        if candidate and candidate not in taken:
-            return candidate
-    n = 2
-    while f"{base}{first}{n}" in taken:
-        n += 1
-    return f"{base}{first}{n}"
 
 
 def new_password() -> str:

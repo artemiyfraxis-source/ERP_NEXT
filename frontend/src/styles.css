@@ -2538,6 +2538,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mb-only select { width: auto; padding: 4px 8px; font-size: 13px; }
 .mb-only input[type="date"] { width: auto; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
 .mb-only small { flex-basis: 100%; }
+.mb-made { border-top: 1px solid var(--border); padding-top: 6px; }
+.mb-made b { color: var(--foreground); font-size: 13px; }
+.mb-made input[type="number"] { width: 80px; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.mb-made span { font-variant-numeric: tabular-nums; }
+.mb-made label { white-space: nowrap; }
+.mb-made input[type="checkbox"] { width: auto; margin: 0; }
 .mb-remove p { margin: 12px 0 4px; }
 .mb-remove ul { margin: 4px 0 12px; padding-left: 20px; display: grid; gap: 4px; }
 .mb-chip.done { background: #ecfdf3; color: #067647; }

@@ -69,6 +69,7 @@ from .execution import (
     CorrectBoxCommand,
     DecideDefectCommand,
     HandoffBoxCommand,
+    ManualOutputCommand,
     ReturnBoxCommand,
     SessionCommand,
     StartWorkCommand,
@@ -81,6 +82,7 @@ from .execution import (
     material_operation,
     operation_quantity,
     pause_work,
+    record_manual_output,
     resume_work,
     return_box,
     start_work,
@@ -214,6 +216,13 @@ class SubmitWorkPayload(BaseModel):
     defect_quantity: NonnegativeDecimal = Decimal("0")
     defect_character: str = Field(default="", max_length=255)
     defect_description: str = Field(default="", max_length=5000)
+
+
+class ManualOutputPayload(BaseModel):
+    good_quantity: int = Field(gt=0, le=1_000_000)
+    # Монтажник, чьи штуки; без него — запись мастера.
+    operator_id: UUID | None = None
+    fill_inputs: bool = False
 
 
 class BoxVersionPayload(BaseModel):
@@ -1127,6 +1136,33 @@ def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: An
         "session": _session_result(session), "box": _box_result(box),
         "output_id": str(output.id), "defect": _defect_result(defect) if defect else None,
     }
+
+
+@router.post("/tasks/{task_id}/operations/{operation_id}/manual-output")
+def manual_output(
+    task_id: UUID,
+    operation_id: UUID,
+    payload: ManualOutputPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    """Ввод готовых мастером: штуки этапа, сделанные мимо терминала, и «отбить готовыми» пропущенные входы."""
+    performer = _performer(uow_factory, principal, payload.operator_id)
+    if payload.operator_id is not None and performer is None:
+        performer = principal.actor
+    box, output, filled, closed = _execution(lambda: record_manual_output(ManualOutputCommand(
+        task_id=task_id, operation_id=operation_id, good_quantity=Decimal(payload.good_quantity),
+        actor=principal.actor, now=now, performer=performer, fill_inputs=payload.fill_inputs,
+    ), uow_factory()))
+    warnings = [f"Записано {_number(box.quantity)} шт на этап {box.operation_position}, коробка {box.code or box.number}."]
+    if filled:
+        warnings.append("Отбиты готовыми: " + ", ".join(
+            f"этап {item.operation_position} — {_number(item.quantity)} шт" for item in sorted(filled, key=lambda item: item.operation_position)
+        ) + ".")
+    if closed:
+        warnings.append("Снята открытая работа: " + ", ".join(closed) + ".")
+    return {"box": _box_result(box), "output_id": str(output.id), "filled": [_box_result(item) for item in filled], "warnings": warnings}
 
 
 @router.get("/work-time")

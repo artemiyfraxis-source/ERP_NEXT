@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { EtkRoute } from "./api";
 import type { PfArt } from "./etkPfArt";
-import { etkPfGroups, etkPfOutName, etkRouteChips, etkRouteDiagram, etkRouteSummary, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
+import { etkOpRuns, etkPfGroups, etkPfOutName, etkRouteChips, etkRouteDiagram, etkRouteSummary, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
 import { formatQty } from "./format";
 import { CableArt } from "./RouteCanvas";
 import "./EtkRouteDiagram.css";
@@ -18,7 +18,13 @@ import "./EtkRouteDiagram.css";
    Владелец 19.10 («чуть раздвинуть; чтобы связи подсвечивались, когда нажимаешь по карточке; вся карточка сначала
    кликабельна для выбора, после выбора уже проваливаться внутрь»): первый щелчок по карточке выбирает ПФ — связи и
    соседи горят, пока выбор не снят (и на планшете); щелчок по операции выбранного или открытого ПФ открывает её;
-   щелчок по пустому месту схемы или Esc снимает выбор. Колонки и блоки — с запасом места между ними. */
+   щелчок по пустому месту схемы или Esc снимает выбор. Колонки и блоки — с запасом места между ними.
+   Владелец 20.10 («расстояние между блоками по горизонтали раза в три шире, чтобы нормально были стрелочки, а её я буду
+   листать по бокам»): промежуток между колонками втрое шире — на планшете 12" видно две-три колонки, остальное вбок.
+   В задании монтажника (без `onPick`) операции не открываются: его ПФ раскрыт, его операции (`marked`) подсвечены.
+   Владелец 20.10 («на планшете так крупно эта схема, что вообще не влезает»): в задании чужие ПФ свёрнуты до названия,
+   номеров операций и выхода, схема вписана по высоте окна (не мельче ZOOM_MIN); «− N % +» в шапке меняет масштаб
+   везде, щелчок по проценту возвращает «вписать» (в техкарте — 100 %); выбор помнится в этом браузере. */
 
 /** Ширина компактной колонки: не уже — текст и эскиз не читаются; не шире — блок растянут пустотой. */
 export const COLUMN_MIN = 280;
@@ -27,11 +33,38 @@ export const COLUMN_MAX = 520;
 export const OPEN_MIN = 560;
 export const OPEN_MAX = 820;
 const OPEN_RATIO = 1.6;
-const GAP = 96;
+/** Между колонками, px: место под стрелки (владелец 20.10 — втрое шире прежних 96). */
+export const GAP = 288;
 /** Между блоками колонки, px. */
 const ROW_GAP = 24;
 const PAD = 12;
 const SHOWN_INPUTS = 5;
+/** Масштаб схемы: «вписать» — не мельче ZOOM_MIN (мельче не читается); кнопки «− +» — шагом ZOOM_STEP до ZOOM_MAX. */
+export const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 1.5;
+const ZOOM_STEP = 0.1;
+/** Запас под полосой прокрутки и краем окна задания, px. */
+const FIT_MARGIN = 40;
+
+/** Масштаб, при котором схема высотой `height` входит в `room` по высоте: шагом 5 %, от ZOOM_MIN до 1. */
+export function etkDiagramFit(height: number, room: number): number {
+  if (height <= 0 || room <= 0) return 1;
+  return clamp(Math.floor((room / height) * 20) / 20, ZOOM_MIN, 1);
+}
+
+function readZoom(key: string): number | null {
+  try {
+    const value = Number(window.localStorage.getItem(key));
+    return value >= ZOOM_MIN && value <= ZOOM_MAX ? value : null;
+  } catch { return null; }
+}
+
+function writeZoom(key: string, value: number | null) {
+  try {
+    if (value == null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, String(value));
+  } catch { /* приватное окно: масштаб просто не запомнится */ }
+}
 
 type Box = { x: number; y: number; w: number; h: number };
 type Geo = { boxes: Record<string, Box>; w: number; h: number };
@@ -57,13 +90,16 @@ export function etkDiagramWidths(open: boolean[], room: number, gap = GAP, pad =
   return open.map((on) => (on ? Math.floor(wide) : narrow));
 }
 
-export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }>({ route, list, batch, current, onPick, title, sub, art, actions }: {
+export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }>({ route, list, batch, current, marked, onPick, title, sub, art, actions }: {
   route: EtkRoute;
   list: T[];
   batch: number;
   /** 1-based позиция открытой операции в `list`. */
   current: number;
-  onPick: (position: number) => void;
+  /** Подсвеченные операции (1-based): задание монтажника; по умолчанию — открытая `current`. */
+  marked?: number[];
+  /** Открыть операцию; нет — схема только показывает (задание монтажника). */
+  onPick?: (position: number) => void;
   /** Название операции в блоке — своё, из генератора («Надеть ТТК X4 «A6» — ТТК 12/4»), и вторая строка раскрытого
    *  блока (код карты, разъём, «правлена»). */
   title: (operation: T) => string;
@@ -87,14 +123,24 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
   // Касание планшета: подсветка связей — только мышью и клавиатурой, иначе после касания чужие блоки остаются тусклыми.
   const touch = useRef(false);
   const [geo, setGeo] = useState<Geo>({ boxes: {}, w: 0, h: 0 });
+  // Масштаб: выбранный кнопками (помнится отдельно для задания и техкарты) или null — «вписать» в задании, 100 % в техкарте.
+  const zoomKey = `etk-dag-zoom:${onPick ? "card" : "task"}`;
+  const [zoom, setZoomState] = useState<number | null>(() => readZoom(zoomKey));
+  const setZoom = (value: number | null) => { setZoomState(value); writeZoom(zoomKey, value); };
+  // Высота под схему в задании: от её верхнего края на экране (шапки окна и задания выше) до низа окна.
+  const [fitRoom, setFitRoom] = useState(0);
+  const scale = zoom ?? (onPick ? 1 : etkDiagramFit(geo.h, fitRoom));
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
   const measure = useCallback(() => {
     const node = frame.current;
     if (!node) return;
-    const base = node.getBoundingClientRect();
+    // Блоки меряются на экране (уже в масштабе), стрелки рисуются внутри рамки до масштаба.
+    const base = node.getBoundingClientRect(), k = scaleRef.current || 1;
     const boxes: Record<string, Box> = {};
     node.querySelectorAll<HTMLElement>("[data-pf]").forEach((element) => {
       const rect = element.getBoundingClientRect();
-      boxes[element.dataset.pf || ""] = { x: rect.left - base.left, y: rect.top - base.top, w: rect.width, h: rect.height };
+      boxes[element.dataset.pf || ""] = { x: (rect.left - base.left) / k, y: (rect.top - base.top) / k, w: rect.width / k, h: rect.height / k };
     });
     const next = { boxes, w: node.scrollWidth, h: node.scrollHeight };
     setGeo((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next));
@@ -108,7 +154,11 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
   useEffect(() => {
     const node = scroller.current;
     if (!node) return undefined;
-    const fit = () => setRoom(node.clientWidth);
+    const fit = () => {
+      setRoom(node.clientWidth);
+      const top = Math.min(Math.max(node.getBoundingClientRect().top, 0), window.innerHeight / 2);
+      setFitRoom(Math.max(0, window.innerHeight - top - FIT_MARGIN));
+    };
     fit();
     if (typeof ResizeObserver === "undefined") return undefined;
     const watcher = new ResizeObserver(() => { fit(); measure(); sides(); });
@@ -126,18 +176,21 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
     const box = [...(frame.current?.querySelectorAll<HTMLElement>("[data-pf]") ?? [])].find((element) => element.dataset.pf === active);
     if (!node || !box) return;
     // Положение блока в ряду — от рамки, не от колонки (offsetLeft считался бы от колонки).
-    const left = box.getBoundingClientRect().left - node.getBoundingClientRect().left + node.scrollLeft, right = left + box.offsetWidth;
+    const rect = box.getBoundingClientRect();
+    const left = rect.left - node.getBoundingClientRect().left + node.scrollLeft, right = left + rect.width;
     if (left >= node.scrollLeft && right <= node.scrollLeft + node.clientWidth) return;
     const target = Math.max(0, Math.min(left - PAD, right - node.clientWidth + PAD));
     if (typeof node.scrollTo === "function") node.scrollTo({ left: right - left > node.clientWidth ? left - PAD : target, behavior: "smooth" });
-  }, [active, room]);
+  }, [active, room, scale]);
   const page = (direction: number) => {
     const node = scroller.current;
     if (node && typeof node.scrollBy === "function") node.scrollBy({ left: direction * node.clientWidth * 0.8, behavior: "smooth" });
   };
 
   const open = diagram.columns.map((column) => column.boxes.some((box) => box.key === active));
-  const widths = etkDiagramWidths(open, room);
+  // Колонки делят видимую ширину рамки в масштабе схемы.
+  const widths = etkDiagramWidths(open, room / scale);
+  const zoomBy = (direction: number) => setZoom(clamp(Math.round((scale + direction * ZOOM_STEP) * 10) / 10, ZOOM_MIN, ZOOM_MAX));
 
   const incoming = new Map<string, number>();
   diagram.edges.forEach((edge) => incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1));
@@ -159,10 +212,17 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
   const note = (arrow: (typeof arrows)[number]) => `${names.get(arrow.edge.from)} → ${names.get(arrow.edge.to)}${arrow.edge.text ? `: ${arrow.edge.text}` : ""}`;
   const numberOf = (position: number) => opNumber(list[position - 1]?.position || position);
   const wide = edges.left || edges.right;
+  const mine = new Set(marked ?? [current]);
 
   return <section className="etk-route" aria-label="Схема полуфабрикатов">
     <div className="etk-route-head">
       <strong>Схема ПФ</strong><small>{etkRouteSummary(etkRouteChips(route))}</small>
+      <span className="etk-dag-zoomer" role="group" aria-label="Масштаб схемы">
+        <button type="button" className="secondary small" aria-label="Схема мельче" title="Мельче" disabled={scale <= ZOOM_MIN + 0.001} onClick={() => zoomBy(-1)}>−</button>
+        <button type="button" className="secondary small etk-dag-zoom-now" title={onPick ? "Обычный размер" : "Вписать по высоте окна"}
+          aria-label={`Масштаб ${Math.round(scale * 100)} %, ${onPick ? "вернуть обычный" : "вписать по высоте"}`} onClick={() => setZoom(null)}>{Math.round(scale * 100)} %</button>
+        <button type="button" className="secondary small" aria-label="Схема крупнее" title="Крупнее" disabled={scale >= ZOOM_MAX - 0.001} onClick={() => zoomBy(1)}>+</button>
+      </span>
       {wide && <span className="etk-dag-pager">
         <small>листайте схему вбок</small>
         <button type="button" className="secondary small" aria-label="Схема влево" title="Схема влево" disabled={!edges.left} onClick={() => page(-1)}>‹</button>
@@ -173,7 +233,9 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
     <div className={`etk-dag-view${edges.left ? " more-left" : ""}${edges.right ? " more-right" : ""}`}>
       <div className="etk-dag-scroll" ref={scroller} onScroll={sides} tabIndex={wide ? 0 : undefined} role={wide ? "group" : undefined}
         aria-label={wide ? "Схема ПФ, листается вбок" : undefined}>
-        <div className={`etk-dag${hot ? " hot" : ""}`} ref={frame} style={{ padding: PAD, columnGap: GAP }}
+        <div className="etk-dag-fit" style={scale !== 1 && geo.w ? { width: geo.w * scale, height: geo.h * scale, overflow: "hidden" } : undefined}>
+        <div className={`etk-dag${hot ? " hot" : ""}`} ref={frame}
+          style={{ padding: PAD, columnGap: GAP, ...(scale !== 1 ? { transform: `scale(${scale})`, transformOrigin: "0 0" } : {}) }}
           onClick={(event) => { if (!(event.target as HTMLElement).closest?.("[data-pf]")) setPicked(null); }}>
           <svg className="etk-dag-svg" width={geo.w} height={geo.h} aria-hidden="true">
             <defs><marker id="etk-dag-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
@@ -193,8 +255,10 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
             {column.boxes.map((box) => {
               const group = groups.get(box.key);
               const open = box.key === active;
-              const inputs = open ? box.inputs : box.inputs.slice(0, SHOWN_INPUTS);
-              const sketch = group ? art(group, box.inputs.map((input) => input.text)) : null;
+              // Задание: чужой ПФ — только название, номера операций и выход (схема входит в планшет).
+              const brief = !onPick && !open;
+              const inputs = brief ? [] : open ? box.inputs : box.inputs.slice(0, SHOWN_INPUTS);
+              const sketch = group && !brief ? art(group, box.inputs.map((input) => input.text)) : null;
               const output = group?.output[0];
               const state = hot ? (linked(box.key) ? " near" : " dim") : "";
               const label = `ПФ ${box.label}`;
@@ -203,7 +267,7 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
               const enter = (go: () => void) => { if (inside) { setPicked(box.key); go(); } else setPicked(box.key); };
               return <section key={box.key} data-pf={box.key} aria-label={`${label} · ${box.name}`} aria-current={open ? "step" : undefined}
                 className={`etk-dag-box${open ? " on" : ""}${picked === box.key ? " picked" : ""}${box.final ? " final" : ""}${box.kit ? " kit" : ""}${state}`}
-                title={inside ? undefined : "Щелчок — выбрать ПФ и подсветить связи; затем щелчок по операции — открыть её"}
+                title={inside ? undefined : onPick ? "Щелчок — выбрать ПФ и подсветить связи; затем щелчок по операции — открыть её" : "Щелчок — подсветить связи ПФ"}
                 onClick={() => { if (picked !== box.key) setPicked(box.key); }}
                 onKeyDown={(event) => { if (event.key === "Escape") setPicked(null); }}
                 onPointerDown={(event) => { touch.current = event.pointerType !== "mouse"; }}
@@ -212,10 +276,12 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
                 onFocus={() => !touch.current && setHot(box.key)} onBlur={() => setHot(null)}>
                 <button type="button" className="etk-dag-title" disabled={!group?.ops.length}
                   title={[`${label} · ${box.name}`, ...box.inputs.map((input) => `← ПФ ${input.label}: ${input.text}${input.times ? ` ${input.times}` : ""}`)].join("\n")}
-                  onClick={(event) => { event.stopPropagation(); enter(() => group?.ops.length && onPick(group.ops[0])); }}>
+                  onClick={(event) => { event.stopPropagation(); enter(() => group?.ops.length && onPick?.(group.ops[0])); }}>
                   <span className="etk-dag-top"><b>{label}</b>{box.kit && <small>комплект</small>}{box.final && <em className="etk-route-final">изделие</em>}
+                    {!onPick && open && <em className="etk-route-final etk-dag-here">ваше задание</em>}
                     {group && group.minutes > 0 && <span className="etk-dag-time" title="Норма ПФ на партию">{formatMinutes(group.minutes)} мин</span>}</span>
                   <span className="etk-dag-name">{box.name}</span>
+                  {brief && group && group.ops.length > 0 && <small className="etk-dag-brief">оп. {etkOpRuns(group.ops.map((position) => list[position - 1]?.position || position), opNumber)}</small>}
                 </button>
                 {inputs.length > 0 && <span className="etk-dag-ins" aria-label="Вход">
                   {inputs.map((input) => <span key={`${input.label}:${input.text}`} className="etk-dag-in">
@@ -228,16 +294,20 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
                     : <img src={sketch.main.image} alt="" />)}
                   {sketch.layers && <div dangerouslySetInnerHTML={{ __html: sketch.layers }} />}
                 </div>}
-                {group && group.ops.length > 0 && <ol className="etk-dag-ops" aria-label={`Операции ${label}`}>{group.ops.map((position) => {
+                {group && group.ops.length > 0 && !brief && <ol className="etk-dag-ops" aria-label={`Операции ${label}`}>{group.ops.map((position) => {
                   const operation = list[position - 1];
                   if (!operation) return null;
                   const second = open ? sub(operation) : "";
-                  return <li key={position}><button type="button" className={position === current ? "on" : undefined}
-                    aria-current={position === current ? "step" : undefined} title={title(operation)}
-                    onClick={(event) => { event.stopPropagation(); enter(() => onPick(position)); }}>
+                  const line = <>
                     <span className="etk-no">{numberOf(position)}</span>
                     <span className="etk-dag-op">{title(operation)}{second && <small>{second}</small>}</span>
-                  </button></li>;
+                  </>;
+                  const on = mine.has(position);
+                  if (!onPick) return <li key={position}><span className={`etk-dag-opline${on ? " on" : ""}`}
+                    aria-current={on ? "step" : undefined} title={title(operation)}>{line}</span></li>;
+                  return <li key={position}><button type="button" className={on ? "on" : undefined}
+                    aria-current={on ? "step" : undefined} title={title(operation)}
+                    onClick={(event) => { event.stopPropagation(); enter(() => onPick(position)); }}>{line}</button></li>;
                 })}</ol>}
                 {output && <div className="etk-dag-out" aria-label={`Выход ${label}`}>
                   <span title={group.output.map((row) => row.name).filter(Boolean).join("; ") || undefined}>→ {etkPfOutName(group) || "—"}{group.output.length > 1 ? ` и ещё ${group.output.length - 1}` : ""}</span>
@@ -246,6 +316,7 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
               </section>;
             })}
           </div>)}
+        </div>
         </div>
       </div>
     </div>

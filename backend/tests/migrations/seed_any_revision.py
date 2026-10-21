@@ -33,7 +33,7 @@ ROWS = 6
 _CHECK_IN = re.compile(r"(\w+).*?'([^']*)'", re.DOTALL)
 _IN_LIST = re.compile(r"\bIN\s*\(|=\s*ANY\s*\(", re.IGNORECASE)
 _CHECK_NULL_OR = re.compile(r"\s*\(*\s*(\w+)\s+IS\s+NULL\s*\)?\s+OR\b", re.IGNORECASE)
-# `(tab = 'prov' AND cable_kind IN (…)) OR (tab <> 'prov' AND cable_kind IS NULL)` (0129): the column stays empty on a
+# `(tab = 'prov' AND cable_kind IN (…)) OR (tab <> 'prov' AND cable_kind IS NULL)` (0130): the column stays empty on a
 # row of any other value of the first column (the seeder never picks the one value that needs it).
 _CHECK_NULL_BRANCH = re.compile(r"\bOR\b.*?<>.*?\bAND\s*\(?\s*(\w+)\s+IS\s+NULL", re.IGNORECASE | re.DOTALL)
 _WAREHOUSES = ("ЦАР", "ЖУК")
@@ -162,9 +162,9 @@ def _database_assigns(table: Table, column: Column, dialect: str) -> bool:
 
 # Pairs a CHECK ties together that the column-by-column fill can't see: identity_documents.scope takes 'all' from its
 # `IN (…)` list, and `scope = 'all'` demands an empty scope_value (0100_identity_documents); fulfillment_lines.absent_at
-# is left empty (`absent_at IS NULL OR …`), and «who» goes with «when» (0106_fulfillment_line_absent); a КБ shipped
-# nothing before ERP, so its acceptance acts (row i: i + 1 pcs) equal its «принято» moves (row i: i + 1 pcs) — the
-# `finished_goods_acts_mismatch` check of db_integrity (0128_finished_goods_acts).
+# is left empty (`absent_at IS NULL OR …`), and «who» goes with «when» (0106_fulfillment_line_absent).
+# finished_goods.before_erp is 0: the acts of a КБ (0128) sum to its «принято» moves less what was shipped before ERP,
+# and row i of the moves and of the acts both take the i-th КБ and i + 1 pieces, so the sums meet only without it.
 _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("identity_documents", "scope_value"): "",
     ("fulfillment_lines", "absent_by"): None,

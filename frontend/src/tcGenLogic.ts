@@ -3481,7 +3481,8 @@ export function onCoaxConnChange(D: GenData, S: GenState, side: Side): GenState 
     const pinKey = side === "A" ? "pinA" : "pinB";
     if (!(rec && rec.pinType) && /r\s*\/\s*a\b|угл/i.test(`${s.art} ${s.name || ""}`)) coax = { ...coax, [pinKey]: "внутри корпуса" };
     if (rec) {
-      if (rec.pinType) coax = { ...coax, [pinKey]: /внутри/i.test(rec.pinType) ? "внутри корпуса" : /обжим/i.test(rec.pinType) ? COAX_PIN_CRIMP : "пайка" };
+      if (rec.pinType) coax = { ...coax, [pinKey]: /внутри/i.test(rec.pinType) ? "внутри корпуса" : /обжим/i.test(rec.pinType) ? COAX_PIN_CRIMP
+        : COLLET_RE_.test(rec.pinType) ? COAX_PIN_COLLET : "пайка" };
       // Пустой «Тип пина» не значит «пайка»: цанговый центральный контакт (N-111C/8D…) не паяется.
       if (!/внутри/i.test(rec.pinType) && COLLET_RE_.test(rec.centerContact || "")) coax = { ...coax, [pinKey]: COAX_PIN_COLLET };
       // Тип экрана — по записи БД.КОАКС разъёма своей стороны (обжим / пайка / прижим); ручной выбор потом перекрывает.

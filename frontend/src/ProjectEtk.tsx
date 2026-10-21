@@ -29,6 +29,7 @@ import { EtkHarnessE4, wireMapModel } from "./EtkHarnessE4";
 import { etkLinkScheme } from "./etkLinkScheme";
 import { changesByOperation, changeValue, revisionActor, revisionChanges } from "./etkRevisions";
 import { PageWindow } from "./PageWindow";
+import { TdIssuesPanel } from "./TdIssuesPanel";
 import { pinCoreColor, withCoreColors } from "./etkCoreColors";
 import { LinkSchemeView, type LinkScheme } from "./PinoutLinks";
 import { EtkPfList } from "./EtkPfList";
@@ -629,19 +630,6 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
   };
   const several = task ? focusOperations(list, focus) : [];
 
-  // Задание по ПФ: только его операции в порядке работы, каждая свёрнута до щелчка (инструкция не мешает списку).
-  if (several.length) {
-    return <div className="etk-task-ops" aria-label="Операции задания">{several.map((position) => {
-      const item = list[position - 1];
-      return <details key={`${etkOperationKey(item)}:${position}`} className="etk-task-op">
-        <summary><span className="etk-no">{String(item.position || position).padStart(2, "0")}</span><b>{etkTitle(item)}</b>{navSub(item) && <small>{navSub(item)}</small>}</summary>
-        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch} route={route}
-          sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(item)} canEdit={false} url={sketchUrl}
-            sketch={sketches.find((sketch) => sketch.operation_key === etkOperationKey(item))} onChanged={onSketches} />} />
-      </details>;
-    })}</div>;
-  }
-
   /** Операция из схемы ПФ (1-based позиция в ЭТК): открыть её; панель операции за краем экрана — подвести к ней. */
   function pick(position: number) {
     setSelected(Math.min(Math.max(position, 1), list.length) - 1);
@@ -672,16 +660,34 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
   const configOp = etkConfigOp(card.document as Record<string, unknown> | null);
   const pfTitle = (item: EtkOperation) => String(configOp(item as unknown as Record<string, unknown>).label ?? "").trim() || etkTitle(item);
   const parts = Number(batch.replace(",", ".")) || 1;
-  const pins = grouped ? harnessPins(list) : {};
+  const pins = route ? harnessPins(list) : {};
   const art = (group: EtkPfGroup, inputs: string[]) => etkPfArt({
     group, inputs, document: card.document, pins, batch: parts, image: (item) => sketchOf(item as EtkOperation),
     operations: group.ops.map((position) => list[position - 1]).filter(Boolean) as Array<Record<string, unknown>>,
   });
+  // Задание монтажника: схема ПФ под схемой Э4, сразу видна (владелец 20.10: «ему нужна схема ПФ и подсвечивание на том
+  // этапе, где он»): его ПФ раскрыт и в рамке, его операции подсвечены; операции из схемы не открываются — только свои.
+  const taskScheme = task && route ? <EtkRouteDiagram route={route} list={list} batch={parts} current={several[0] ?? index + 1}
+    marked={several.length ? several : [index + 1]} title={pfTitle} sub={subOf} art={art} /> : null;
+
+  // Задание по ПФ: только его операции в порядке работы, каждая свёрнута до щелчка (инструкция не мешает списку).
+  if (several.length) {
+    return <>{taskScheme}<div className="etk-task-ops" aria-label="Операции задания">{several.map((position) => {
+      const item = list[position - 1];
+      return <details key={`${etkOperationKey(item)}:${position}`} className="etk-task-op">
+        <summary><span className="etk-no">{String(item.position || position).padStart(2, "0")}</span><b>{etkTitle(item)}</b>{navSub(item) && <small>{navSub(item)}</small>}</summary>
+        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch} route={route}
+          sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(item)} canEdit={false} url={sketchUrl}
+            sketch={sketches.find((sketch) => sketch.operation_key === etkOperationKey(item))} onChanged={onSketches} />} />
+      </details>;
+    })}</div></>;
+  }
+
   const navigation = grouped && route ? (pfEditing
     ? <EtkPfList card={card} list={list} selected={index} onSaved={onRouteSaved} onClose={() => setPfEditing(false)}
       onPick={(position) => { setSelected(position); setEditing(false); }} title={etkTitle} sub={subOf} />
     : <EtkRouteDiagram route={route} list={list} batch={parts} current={index + 1} onPick={pick} title={pfTitle} sub={subOf} art={art}
-      actions={canEdit ? <button type="button" className="secondary small" onClick={() => setPfEditing(true)}>Править ПФ</button> : null} />) : null;
+      actions={canEdit ? <button type="button" className="secondary small" onClick={() => setPfEditing(true)}>Править ПФ</button> : null} />) : taskScheme;
   const view = <div className={task ? "etk-wrap etk-wrap-task" : grouped ? "etk-wrap etk-wrap-pf" : "etk-wrap"}>
     {!task && !grouped && <nav className="etk-nav-route" aria-label="Маршрут ЭТК">{list.map((item, position) =>
       <button key={`${etkOperationKey(item)}:${position}`} className={position === index ? "on" : ""} onClick={() => { setSelected(position); setEditing(false); }}>
@@ -788,6 +794,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+    {list.length > 0 && !task && <TdIssuesPanel cardId={card.id} canEdit={canEdit} />}
     {card.review_note && <div className="warning-inline etk-review" role="status"><strong>Нужна проверка технолога:</strong> {card.review_note}</div>}
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}

@@ -6,6 +6,11 @@
 .etk-route-actions { display: flex; gap: 6px; margin-left: auto; }
 .etk-dag-pager { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .etk-dag-pager + .etk-route-actions { margin-left: 4px; }
+/* «− N % +» — масштаб схемы; щелчок по проценту — вписать (задание) или 100 % (техкарта). */
+.etk-dag-zoomer { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.etk-dag-zoomer + .etk-dag-pager, .etk-dag-zoomer + .etk-route-actions { margin-left: 4px; }
+.etk-dag-zoomer button { min-width: 34px; font-size: 16px; line-height: 1; }
+.etk-dag-zoomer .etk-dag-zoom-now { min-width: 58px; font-size: 13px; font-variant-numeric: tabular-nums; }
 .etk-dag-pager button { min-width: 34px; font-size: 18px; line-height: 1; }
 .etk-route-final { flex: none; align-self: center; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); font-size: 12px; font-style: normal; font-weight: 700; }
 /* Рамка листания: ряд колонок шире рамки — полоса прокрутки снизу и тень у края, за которым ещё блоки; страница не едет. */
@@ -48,6 +53,10 @@
 .etk-dag-time { margin-left: auto; font-size: 13px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .etk-dag-top .etk-route-final + .etk-dag-time { margin-left: 0; }
 .etk-dag-top .etk-route-final { margin-left: auto; }
+.etk-dag-top .etk-route-final + .etk-dag-here { margin-left: 0; }
+/* «ваше задание» — ПФ монтажника в схеме задания. */
+.etk-dag-here { background: var(--primary); color: #fff; }
+.etk-dag-brief { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
 .etk-dag-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
 .etk-dag-ins { display: grid; padding-top: 5px; border-top: 1px solid var(--border); font-size: 13px; }
 .etk-dag-in { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 18px; }
@@ -64,9 +73,9 @@
 .etk-dag-box.on .etk-dag-art > div, .etk-dag-box.on .etk-dag-art img, .etk-dag-box.on .etk-dag-art svg { max-height: 460px; }
 .etk-dag-cable .rc-cable-art { width: 100%; height: auto; }
 .etk-dag-ops { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
-.etk-dag-ops button { display: flex; width: 100%; gap: 8px; align-items: baseline; min-height: 30px; padding: 4px 7px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--foreground); font-size: 14px; text-align: left; }
+.etk-dag-ops button, .etk-dag-opline { display: flex; width: 100%; gap: 8px; align-items: baseline; min-height: 30px; padding: 4px 7px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--foreground); font-size: 14px; text-align: left; }
 .etk-dag-ops button:hover { border-color: var(--border); background: var(--accent); }
-.etk-dag-ops button.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--card)); font-weight: 600; }
+.etk-dag-ops button.on, .etk-dag-opline.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--card)); font-weight: 600; }
 .etk-dag-ops .etk-no { flex: none; color: var(--primary); font-weight: 800; font-variant-numeric: tabular-nums; }
 /* Название операции — своё, из генератора, бывает длинным: две строки в компактном блоке, целиком в раскрытом. */
 .etk-dag-op { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; min-width: 0; overflow: hidden; overflow-wrap: anywhere; }
@@ -77,6 +86,6 @@
 .etk-dag-box.on .etk-dag-out > span:first-child { white-space: normal; }
 .etk-dag-out .num { flex: none; font-variant-numeric: tabular-nums; }
 @media (pointer: coarse) {
-  .etk-dag-ops button { min-height: 40px; align-items: center; }
-  .etk-dag-pager button { min-width: 44px; min-height: 40px; }
+  .etk-dag-ops button, .etk-dag-opline { min-height: 40px; align-items: center; }
+  .etk-dag-pager button, .etk-dag-zoomer button { min-width: 44px; min-height: 40px; }
 }
