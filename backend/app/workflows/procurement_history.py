@@ -180,7 +180,21 @@ def _procurement_event(kind: str, d: dict) -> tuple[str, str]:
             return "Отменена", _join(f"причина: {d['reason']}" if d.get("reason") else "", move)
         case "procurement.line_deleted":
             return "Строка удалена", ""
+        case "procurement.rb_imported":
+            return "Перенесено из Roller_Buyer", _join(
+                f"заявка {d['rb_request']}" if d.get("rb_request") else "",
+                f"там «{RB_STATUS_LABELS.get(d.get('rb_status', ''), d.get('rb_status'))}»" if d.get("rb_status") else "",
+                f"здесь «{d['to_status']}»" if d.get("to_status") else "")
     return kind.removeprefix("procurement."), move
+
+
+# Roller_Buyer's LINE_STATUS_LABELS (packages/shared/src/requests.ts): what the line was there when it moved here.
+RB_STATUS_LABELS = {
+    "new": "Новая", "requote": "Перезапрос", "tolling": "Давальческое — ждём М-15", "from_stock": "Взять со склада",
+    "cancelled": "Отменена", "in_rfq": "Запрошены КП", "quoted": "Есть КП", "decided": "Жду счёт",
+    "ordered": "Счёт получен", "to_pay": "В оплате", "paid": "Счёт оплачен", "shipped": "В доставке",
+    "partial": "Частично на складе", "delivered": "На складе",
+}
 
 
 _RECEIVING_TITLES = {
