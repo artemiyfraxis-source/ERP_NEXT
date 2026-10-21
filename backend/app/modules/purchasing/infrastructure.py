@@ -205,7 +205,7 @@ class RfqLineRow(Base):
     budget_unit_gross: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    # Why the line left (migration 0126): «new» — back to the free lines, «requote» — «Перезапрос»; NULL with removed_at
+    # Why the line left (migration 0128): «new» — back to the free lines, «requote» — «Перезапрос»; NULL with removed_at
     # — closed with the request (read as «Перезапрос», as before). The note says who answered what.
     removed_reason: Mapped[str | None] = mapped_column(String(16))
     removed_note: Mapped[str | None] = mapped_column(Text)
@@ -252,7 +252,7 @@ QUOTE_SOURCES = ("manual", "paste", "file", "invoice")
 
 
 class RfqDeclinedSuggestionRow(Base):
-    """A rotation suggestion the buyer unticked when creating the request (migration 0126, Roller declinedSuggestion):
+    """A rotation suggestion the buyer unticked when creating the request (migration 0128, Roller declinedSuggestion):
     the supplier was offered a turn and passed — not asked, but on record."""
 
     __tablename__ = "purchasing_rfq_declined_suggestions"
@@ -296,7 +296,7 @@ class QuoteRow(Base):
     note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
-    # Migration 0126: «Номер КП», the PDF it came in (purchasing_document_files), the Kaiten invoice it was made from.
+    # Migration 0128: «Номер КП», the PDF it came in (purchasing_document_files), the Kaiten invoice it was made from.
     number: Mapped[str | None] = mapped_column(String(64))
     file_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_document_files.id", ondelete="SET NULL"))
     invoice_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_invoices.id", ondelete="SET NULL"))
@@ -367,7 +367,7 @@ class DecisionRow(Base):
     gate_override_reason: Mapped[str | None] = mapped_column(Text)
     not_cheapest_reason: Mapped[str | None] = mapped_column(Text)
     analog_approved_by: Mapped[str | None] = mapped_column(String(255))
-    # Migration 0126: Roller's fixed reason lists (shared/decisions.ts); the *_reason text is the label or, for
+    # Migration 0128: Roller's fixed reason lists (shared/decisions.ts); the *_reason text is the label or, for
     # «other», the buyer's own words.
     gate_override_code: Mapped[str | None] = mapped_column(String(32))
     not_cheapest_code: Mapped[str | None] = mapped_column(String(32))
@@ -611,6 +611,43 @@ class PriceRefRow(Base):
     source: Mapped[str] = mapped_column(String(512), nullable=False)
     source_row: Mapped[int | None] = mapped_column(Integer)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+# ---- supplier orders (migration 0127): «Счета и поставки» -----------------------------------------------------------
+# An ERP supplier order is the procurement lines sharing one № ЗАКАЗА (PO-NNN). Procurement keeps the lines, their
+# stage, invoice and payment; the facts below are the ones it has no place for (Roller_Buyer orders kept them): when
+# the invoice went to the accountant, when the supplier shipped and how to find the parcel, the delivery billed on
+# top, a note. Rubles with kopecks like procurement's own sums. The promised date is not stored: it is derived on
+# read from the audit of the lines' ОЖИД. ДАТА (app/workflows/purchasing_orders.py).
+
+ORDER_NOTE_MAX = 2000
+SHIPMENT_NOTE_MAX = 500
+
+
+class OrderFactRow(Base):
+    __tablename__ = "purchasing_order_facts"
+    __table_args__ = (
+        CheckConstraint("length(trim(order_number)) > 0", name="ck_purchasing_order_facts_number"),
+        CheckConstraint("delivery_cost IS NULL OR delivery_cost >= 0", name="ck_purchasing_order_facts_delivery"),
+        CheckConstraint(f"length(shipment_note) <= {SHIPMENT_NOTE_MAX}", name="ck_purchasing_order_facts_shipment_note"),
+        CheckConstraint(f"length(note) <= {ORDER_NOTE_MAX}", name="ck_purchasing_order_facts_note"),
+        CheckConstraint("version >= 1", name="ck_purchasing_order_facts_version"),
+    )
+
+    order_number: Mapped[str] = mapped_column(String(32), primary_key=True)
+    sent_to_pay_on: Mapped[date | None] = mapped_column(Date)
+    shipped_on: Mapped[date | None] = mapped_column(Date)
+    shipment_note: Mapped[str] = mapped_column(String(SHIPMENT_NOTE_MAX), nullable=False, default="")
+    delivery_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    updated_by_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
 class SqlAlchemyPurchasingUnitOfWork:

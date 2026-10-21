@@ -15,6 +15,7 @@ const COMMANDS: Command[] = [
   { label: "Оформить заявку", section: "newrequest" },
   { label: "Сегодня", section: "procurement", params: { tab: "today" }, option: "procurement.today", words: "закупка" },
   { label: "Запросы КП", section: "procurement", params: { tab: "rfq" }, option: "procurement.rfq", words: "коммерческое предложение" },
+  { label: "Счета и поставки", section: "procurement", params: { tab: "orders" }, option: "procurement.orders", words: "заказы поставщикам оплата доставка" },
   { label: "Склад", section: "stock", words: "остатки ГРН" },
   { label: "Приёмка", section: "receiving", words: "входной контроль" },
   { label: "Поставщики", section: "procurement", params: { tab: "directory" }, option: "references.suppliers" },

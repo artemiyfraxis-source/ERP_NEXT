@@ -22,6 +22,7 @@ from .invoice_file import (
 )
 from .domain import (
     AUTOFILL_TOPIC,
+    EXPECTED_ARRIVAL_EDITABLE,
     FACTS_EDITABLE,
     LINE_DOCUMENT_KINDS,
     _PAID_STATUSES,
@@ -2910,6 +2911,63 @@ def pay_supplier_order(
             uow.outbox.add(expected)
         uow.commit()
         return paid
+
+
+@dataclass(frozen=True)
+class SetOrderExpectedArrivalCommand:
+    order_number: str
+    expected_arrival: date
+    lines: Sequence[OrderLineRef]
+    actor: Actor
+    now: datetime
+
+
+def set_order_expected_arrival(
+    command: SetOrderExpectedArrivalCommand,
+    uow: UnitOfWork,
+    receiving: ExpectedArrivalCopier | None = None,
+) -> list[ProcurementLine]:
+    """ОЖИД. ДАТА for the whole supplier order at once («Счета и поставки», option procurement.orders): every own line
+    of the order whose date can still move («Жду счет» … «Карантин»; `-Д` backorders keep their own date), all or
+    none, each audited like the single-line change (`procurement.expected_arrival_set` with the previous date). The rows
+    sent must be exactly those lines with their versions; open deliveries in Receiving follow, as for one line."""
+    reference = _order_reference(command.order_number)
+    requested = _order_refs(command.lines)
+    with uow:
+        order_lines = _buyer_order_lines(reference, command.actor, uow)
+        editable = {
+            line.id for line in order_lines if line.status in EXPECTED_ARRIVAL_EDITABLE and not line.is_backorder
+        }
+        if not editable or requested != editable:
+            raise OrderLinesMismatch(
+                f"Заказ {reference} изменился: ожидаемая дата меняется сразу у всех его строк от "
+                f"«{ProcurementStatus.AWAITING_INVOICE.value}» до «{ProcurementStatus.QUARANTINE.value}» "
+                f"({len(editable)}) — обновите данные"
+            )
+        planned = []
+        for current in _versioned_rows(order_lines, command.lines):
+            try:
+                planned.append((current, current.set_expected_arrival(command.expected_arrival, command.actor)))
+            except ProcurementValidationError as error:
+                raise ProcurementValidationError(f"{current.legacy_id}: {error}") from error
+        saved = [
+            _save_transition(
+                current, updated, event_type="procurement.expected_arrival_set", actor=command.actor, now=command.now,
+                uow=uow, details={
+                    "order_reference": reference,
+                    "expected_arrival": command.expected_arrival.isoformat(),
+                    "previous_expected_arrival": current.expected_arrival.isoformat() if current.expected_arrival else "",
+                },
+            )
+            for current, updated in planned
+        ]
+        if any(after != before for after, (before, _) in zip(saved, planned)):
+            uow.commit()
+    if receiving is not None:
+        moved = {line.id: line.expected_arrival for line in saved if line.status in RECEIPT_STAGES}
+        if moved:
+            receiving.copy_expected_arrivals(moved, command.actor, command.now)
+    return saved
 
 
 def buyer_in_work_lines(actor: Actor, uow: UnitOfWork) -> list[ProcurementLine]:

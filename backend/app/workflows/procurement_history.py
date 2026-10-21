@@ -105,6 +105,8 @@ def _procurement_event(kind: str, d: dict) -> tuple[str, str]:
     move = _status_move(d)
     match kind:
         case "procurement.created":
+            if d.get("split_from"):
+                return "Отделена от строки", _join(d["split_from"], _num(d.get("quantity")))
             return "Передана в закупку", "строка появилась в очереди закупки"
         case "procurement.taken_in_work":
             return "Взята в работу", move
@@ -165,12 +167,17 @@ def _procurement_event(kind: str, d: dict) -> tuple[str, str]:
             return "Решение по замене", _join(d.get("decision"))
         case "procurement.split":
             return "Строка раздроблена", ""
+        case "procurement.split_quantity":
+            return "Строка разделена", _join(
+                f"отделено {_num(d.get('quantity'))} → {d['created_legacy_id']}" if d.get("created_legacy_id") else "",
+                f"осталось {_num(d.get('kept'))}" if d.get("kept") else "",
+                f"КП из {d['rfq_number']} — у обеих частей" if d.get("rfq_number") else "")
         case "procurement.approval_requested":
             return "Отправлена на согласование", move
         case "procurement.approved":
             return "Согласована, возобновлена", move
         case "procurement.cancelled":
-            return "Отменена", move
+            return "Отменена", _join(f"причина: {d['reason']}" if d.get("reason") else "", move)
         case "procurement.line_deleted":
             return "Строка удалена", ""
     return kind.removeprefix("procurement."), move

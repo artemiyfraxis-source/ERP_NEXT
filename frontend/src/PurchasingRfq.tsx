@@ -12,6 +12,7 @@ import {
 } from "./purchasingRfqApi";
 import { picksOf, RfqPool, suggestionKey, SuggestionList } from "./RfqPool";
 import { rfqLinkState, syncRfqUrl } from "./rfqLinks";
+import { useStageOption } from "./StageOptions";
 import { QuoteDialog } from "./RfqQuoteDialog";
 import { Dialog, money, number, quantity } from "./rfqUi";
 import { RfqLetters } from "./RfqLetters";
@@ -120,6 +121,7 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
   // Lines ticked for the selection bar (request line ids) and «показать отменённые и убранные».
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [showRemoved, setShowRemoved] = useState(false);
+  const requestsOn = useStageOption("procurement.requests_rb"); // «Разделить» is the requests slice's command
   // «Подбор»: request line → the offer taken for it while the buyer assembles a set; null — the mode is off.
   const [basket, setBasket] = useState<Map<string, string> | null>(null);
   const pick = (ids: string[], on: boolean) => setPicked((current) => {
@@ -269,10 +271,10 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       <MatrixTable
         matrix={matrix} lines={showRemoved ? lines : lines.filter((line) => !line.cancelled)} editable={editable}
         picked={picked} onPick={pick} basket={basket} actions={{
-          onSplit: (line) => {
+          onSplit: requestsOn ? (line) => {
             const task = askSplit(line);
             if (task) void task().then((message) => linesChanged(message)).catch((reason) => setError(failureText(reason, "Строка не разделена")));
-          },
+          } : undefined,
           onOpen: (lineId, supplierId) => setDecisionFor({ lineId, supplierId }),
           onBasket: (lineId, quoteLineId) => setBasket((current) => {
             if (!current) return current;

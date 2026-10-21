@@ -2,6 +2,7 @@
 «Подбор», invoice-request letters, quote import header, decision reason codes."""
 
 import base64
+import json
 import hashlib
 from datetime import date, datetime
 from decimal import Decimal
@@ -9,7 +10,9 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 
+from app.main import app
 from app.modules.procurement.infrastructure import ProcurementLineRow
+from app.workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
 from app.modules.purchasing import rfq as rfq_service
 from app.modules.purchasing import rfq_batch
 from app.modules.purchasing.infrastructure import (
@@ -21,7 +24,8 @@ from app.modules.purchasing.quote_import import read_header
 from app.modules.purchasing.rfq_kaiten import invoice_vat, pack_in_name, quantity_in
 from tests.pdf_samples import identity_pdf
 from app.workflows.procurement_history import line_history
-from app.workflows.procurement_rfq_requote import requote_lines
+from app.modules.purchasing.rfq_line_states import states as rfq_line_states
+from app.shared import stage_options
 from tests.purchasing.test_rfq_api import BASE, NOW, _as, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — the fixture
 
 
@@ -110,13 +114,14 @@ def test_nobody_has_it_the_line_goes_to_requote_with_who_had_nothing_then_into_a
     assert removed["reason"] == "requote" and removed["reason_label"] == "перезапрос"
     assert removed["note"] == "Запрос КП КП-2609-001 от 15.09.2026: Альфа — отказ; Бета — не ответил"
     with sessions() as session:
-        state = requote_lines(session, [lines[0].id, lines[1].id])
-    assert list(state) == [lines[0].id] and state[lines[0].id]["rfq_number"] == "КП-2609-001"
+        state = rfq_line_states(session, [lines[0].id, lines[1].id])
+    assert state[lines[0].id].requote and state[lines[0].id].requote_from == "КП-2609-001"
+    assert not state[lines[1].id].requote and state[lines[1].id].rfq_number == "КП-2609-001"
     # «Перезапрос» goes into the next request like a new line; then it is not «перезапрос» any more.
     assert str(lines[0].id) in {item["id"] for item in client.get(f"{BASE}/candidates").json()["lines"]}
     _rfq(client, lines[:1])
     with sessions() as session:
-        assert requote_lines(session, [lines[0].id]) == {}
+        assert not rfq_line_states(session, [lines[0].id])[lines[0].id].requote
     with sessions() as session:
         events = line_history(session, lines[0].id)["events"]
     out = next(event for event in events if "Выведена из запроса" in event["title"])
@@ -141,7 +146,7 @@ def test_back_to_new_a_line_with_prices_goes_only_on_confirmation_a_chosen_one_n
     removed = client.get(f"{BASE}/{rfq['id']}").json()["removed"][0]
     assert removed["reason"] == "new" and "Альфа — 22,33 ₽" in removed["note"]  # the price is not lost
     with sessions() as session:
-        assert requote_lines(session, [lines[0].id]) == {}  # back to new is not «перезапрос»
+        assert not rfq_line_states(session, [lines[0].id])[lines[0].id].requote  # back to new is not «перезапрос»
 
     _quote(client, rfq["id"], alfa, second["id"], unit_price="500")
     cell = _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[1].id)["cells"][alfa]
@@ -577,4 +582,39 @@ def test_a_request_created_as_sent_and_with_a_declined_rotation_suggestion(rfq_a
     # The declined one is not asked: rotation still sees him as never asked.
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(RfqSupplierRow).where(RfqSupplierRow.supplier_id == UUID(rotation_id))) == 0
+
+
+# ── «Отменить» / «Разделить» from the request: the requests slice's real commands (CONTRACTS.md) ─────────────────
+
+
+def test_cancel_and_split_from_the_request_go_through_the_requests_commands(rfq_api, monkeypatch, tmp_path):
+    client, lines, sessions = rfq_api
+    options = tmp_path / "both.json"
+    options.write_text(json.dumps({"procurement.rfq": True, "procurement.requests_rb": True}), encoding="utf-8")
+    monkeypatch.setenv(stage_options.ENV, str(options))
+    monkeypatch.setattr(app.state, "procurement_stock_uow_factory", lambda: SqlAlchemyProcurementStockUnitOfWork(sessions), raising=False)
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, lines[0].id)
+        row.calculated_quantity = Decimal("10")
+        session.commit()
+    rfq = _rfq(client, lines)
+    alfa = _supplier(client, rfq["id"], "Альфа")
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    first, second = _line_of(matrix, lines[0].id), _line_of(matrix, lines[1].id)
+    _quote(client, rfq["id"], alfa, first["id"], unit_price="10")
+    first = _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[0].id)
+
+    split = client.post(f"/api/procurement/{lines[0].id}/split-qty", json={"version": first["version"], "quantity": "4"})
+    assert split.status_code == 200, split.text
+    after = client.get(f"{BASE}/{rfq['id']}").json()
+    parts = [line for line in after["lines"] if line["name"] == first["name"]]
+    assert len(parts) == 3  # the two lines of the fixture share the name: the split part joined the request
+    new_part = next(line for line in parts if line["procurement_line_id"] not in {str(lines[0].id), str(lines[1].id)})
+    assert alfa in new_part["cells"] and new_part["cells"][alfa]["unit_price"] == "10"  # the quote was copied
+
+    cancelled = client.post("/api/procurement/cancel-many", json={
+        "lines": [{"id": str(lines[1].id), "version": second["version"]}], "reason": "не закупаем"})
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["cancelled"] == [str(lines[1].id)]
+    assert _line_of(client.get(f"{BASE}/{rfq['id']}").json(), lines[1].id)["cancelled"] is True
 

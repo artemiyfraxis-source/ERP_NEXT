@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProcurementPage } from "./ProcurementPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { RequestsPage } from "./RequestsPage";
-import type { InternalProject, Principal, RequestSchema } from "./api";
+import type { InternalProject, Principal, RequestRow, RequestSchema } from "./api";
+import { projectFromDesignation } from "./projectNumber";
 import { projectLabel, resetInternalProjects } from "./internalProjects";
 import { chooseProject, emptyHeader, internalProjectKey, projectKind } from "./requestFormV2Logic";
 import { resetStageOptions } from "./StageOptions";
@@ -196,5 +197,59 @@ describe("«ВП-001 · Название» wherever a reference is shown", () =>
     expect(label("591К.3")).toBe("591К.3");
     expect(label("ВП-777")).toBe("ВП-777");
     expect(label(null)).toBe("");
+  });
+});
+
+describe("«Заявки» без «Цели» (owner, 16.10: «Убери „Цель закупки“»)", () => {
+  const row = (patch: Partial<RequestRow>): RequestRow => ({
+    id: "r1", legacy_id: "SM-20261016-01", designation: "708К.4.012", status: "Новый", stage: "Новый",
+    created_at: "2026-10-16T10:00:00", initiator: "Иванов", department: "РНД", purpose: "RND", project_reference: null,
+    delivery_point: "", name: "Разъём", item_type: "Комплектующие", category: "Общепром", quantity: "5", unit: "шт",
+    priority: "", planned_date: "2026-10-30", ...patch,
+  });
+
+  function stubRows(formOn: boolean, rows: RequestRow[]) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = decodeURIComponent(String(input));
+      if (path === "/api/stage-options") return json({ available: true, options: [option("projects.internal", true), option("requests.form", formOn)] });
+      if (path === "/api/purchasing/internal-projects") return json({ projects: [project()] });
+      if (path === "/api/requests/schema") return json(schema);
+      if (path === "/api/requests") return json({ requests: rows });
+      return json({ lines: [], buyers: [], stages: [], next_cursor: null, requests: [] });
+    });
+  }
+
+  it("shows «Проект» — the reference, the project the designation starts with, never the purpose", async () => {
+    stubRows(true, [
+      row({ id: "a", legacy_id: "SM-A", project_reference: "ВП-001", designation: "RND.001" }),
+      row({ id: "b", legacy_id: "SM-B", designation: "708К.4.012" }),
+      row({ id: "c", legacy_id: "SM-C", designation: "RND.002", purpose: "RND" }),
+    ]);
+    window.history.replaceState({}, "", "/?section=requests");
+    render(<RequestsPage principal={principal} />);
+    await screen.findByText("SM-A");
+    await waitFor(() => expect(screen.getAllByRole("columnheader", { name: /Проект/ }).length).toBeGreaterThan(0));
+    expect(screen.queryByRole("columnheader", { name: /^Цель/ })).not.toBeInTheDocument();
+    const cell = (text: string) => screen.queryAllByRole("cell").some((td) => td.textContent === text);
+    await waitFor(() => expect(cell("ВП-001 · Стенд испытаний")).toBe(true));
+    expect(cell("708К.4")).toBe(true);
+    expect(screen.queryAllByText("НИОКР (опытный образец)")).toHaveLength(0);
+  });
+
+  it("keeps «Цель» while the new request form is off", async () => {
+    stubRows(false, [row({ id: "c", legacy_id: "SM-C", designation: "RND.002", purpose: "RND" })]);
+    window.history.replaceState({}, "", "/?section=requests");
+    render(<RequestsPage principal={principal} />);
+    await screen.findByText("SM-C");
+    expect(screen.getAllByRole("columnheader", { name: /Цель/ }).length).toBeGreaterThan(0);
+  });
+
+  it("projectFromDesignation reads only real project numbers", () => {
+    expect(projectFromDesignation("708К.4.012")).toBe("708К.4");
+    expect(projectFromDesignation("708K.4 · КБ1 · Жгут")).toBe("708К.4");
+    expect(projectFromDesignation("2000К.003")).toBe("2000К.1");
+    expect(projectFromDesignation("RND.002")).toBe("");
+    expect(projectFromDesignation("Склад")).toBe("");
+    expect(projectFromDesignation(null)).toBe("");
   });
 });
