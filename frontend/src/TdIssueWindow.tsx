@@ -12,6 +12,9 @@ export const TD_METHODS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "88", label: "88 — сборка" },
   { value: "80", label: "80 — пайка" },
 ];
+/** Участки, где работает комплект ТД (ЦАР — Москва, ЖУК — Раменское). */
+export const TD_SITES: ReadonlyArray<string> = ["ЦАР", "ЖУК"];
+export const TD_DEFAULT_WORKSHOP = "Цех электромонтажа";
 const SIGNATORY_ROWS: ReadonlyArray<{ key: keyof TdSignatories; label: string }> = [
   { key: "developer", label: "Разработал" },
   { key: "checker", label: "Проверил" },
@@ -24,9 +27,12 @@ const emptySignatories = (): TdSignatories => ({ developer: EMPTY, checker: EMPT
 
 const sameName = (a: string, b: string) => a.trim() !== "" && a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/** Проверка формы выпуска: Н. контроль не совпадает с разработчиком и проверяющим; извещение и причина — не у первого выпуска. */
+/** Проверка формы выпуска: цех и участок заданы; Н. контроль не совпадает с разработчиком и проверяющим; извещение и
+ *  причина — не у первого выпуска. */
 export function tdFormProblems(input: TdIssueInput, needsNotice: boolean): string[] {
   const problems: string[] = [];
+  if (!input.workshop.trim()) problems.push("Укажите цех.");
+  if (!TD_SITES.includes(input.site)) problems.push("Выберите участок: ЦАР или ЖУК.");
   const { developer, checker, normcontrol } = input.signatories;
   if (sameName(normcontrol.name, developer.name) || sameName(normcontrol.name, checker.name)) {
     problems.push("Нормоконтролёр не может быть разработчиком или проверяющим этого комплекта: укажите другого сотрудника.");
@@ -36,7 +42,8 @@ export function tdFormProblems(input: TdIssueInput, needsNotice: boolean): strin
   return problems;
 }
 
-/** Окно выпуска комплекта ТД: новый выпуск (`issue` пуст) или правка проекта. `previous` — подписанты берутся из него. */
+/** Окно выпуска комплекта ТД: новый выпуск (`issue` пуст) или правка проекта. `previous` — подписанты, цех и участок
+ *  берутся из него. */
 export function TdIssueWindow({ cardId, issue, previous, isFirst, close, onSaved }: {
   cardId: string; issue: TdIssue | null; previous: TdIssue | null; isFirst: boolean; close: () => void; onSaved: (issue: TdIssue) => void;
 }) {
@@ -45,6 +52,8 @@ export function TdIssueWindow({ cardId, issue, previous, isFirst, close, onSaved
   const [litera, setLitera] = useState(source?.litera ?? "");
   const [method, setMethod] = useState(source?.method_code ?? "85");
   const [signatories, setSignatories] = useState<TdSignatories>(source?.signatories ?? emptySignatories());
+  const [workshop, setWorkshop] = useState(source?.workshop || TD_DEFAULT_WORKSHOP);
+  const [site, setSite] = useState(source?.site ?? "");
   const [noticeNo, setNoticeNo] = useState(issue?.notice_no ?? "");
   const [reason, setReason] = useState(issue?.reason ?? "");
   const [problems, setProblems] = useState<string[]>([]);
@@ -57,7 +66,10 @@ export function TdIssueWindow({ cardId, issue, previous, isFirst, close, onSaved
   async function save(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
-    const input: TdIssueInput = { litera, method_code: method, signatories, notice_no: needsNotice ? noticeNo.trim() : "", reason: needsNotice ? reason.trim() : "" };
+    const input: TdIssueInput = {
+      litera, method_code: method, signatories, notice_no: needsNotice ? noticeNo.trim() : "", reason: needsNotice ? reason.trim() : "",
+      workshop: workshop.trim(), site,
+    };
     const found = tdFormProblems(input, needsNotice);
     setProblems(found);
     if (found.length) return;
@@ -82,6 +94,13 @@ export function TdIssueWindow({ cardId, issue, previous, isFirst, close, onSaved
         <label>Вид ТП
           <select value={method} onChange={(event) => setMethod(event.target.value)}>
             {TD_METHODS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </select></label>
+        <label>Цех
+          <input value={workshop} onChange={(event) => setWorkshop(event.target.value)} /></label>
+        <label>Участок
+          <select value={site} onChange={(event) => setSite(event.target.value)}>
+            {!site && <option value="">не выбран</option>}
+            {TD_SITES.map((item) => <option key={item} value={item}>{item}</option>)}
           </select></label>
         {needsNotice && <label>№ извещения
           <input value={noticeNo} onChange={(event) => setNoticeNo(event.target.value)} /></label>}
