@@ -93,7 +93,7 @@ function GroupRow({ item }: { item: TodayItem }) {
 
 function SectionCard({ section }: { section: TodaySection }) {
   return (
-    <section className={`today-card tone-${section.tone}`} aria-label={section.title}>
+    <section className={`today-card today-tone-${section.tone}`} aria-label={section.title}>
       <header>
         <h3>
           {section.title} <span className="today-count">{section.count}</span>
@@ -137,7 +137,7 @@ export function ProcurementToday({ ordersOn = false }: { ordersOn?: boolean } = 
         <span className="muted">{data ? `${formatDate(data.today)} · ${total ? `дел: ${total}` : "дел нет"}` : ""}</span>
         <span className="spacer" />
         {ordersOn && (
-          <a className="secondary" href={hrefOf({ tab: "orders" })} onClick={(event) => follow(event, { tab: "orders" })}>Счета и поставки</a>
+          <button type="button" className="secondary" onClick={() => openPlace("procurement", { tab: "orders" })}>Счета и поставки</button>
         )}
         <button type="button" className="primary" onClick={() => openPlace("newrequest")}>Новая заявка</button>
       </div>

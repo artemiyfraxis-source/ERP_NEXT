@@ -188,3 +188,9 @@ def test_order_followups_on_the_orders_board_read_the_same_rules(rfq_api, monkey
     _options(monkeypatch, tmp_path, **{"procurement.requests_rb": True})
     view = client.get("/api/procurement/requests-view").json()
     assert view["projects"][0]["counts"] == {"to_pay": 2}
+
+    with sessions() as session:
+        session.get(ProcurementLineRow, lines[1].id).status = "Готово"
+        session.commit()
+    pay = _sections(client)["pay"]["items"]
+    assert [item["detail"] for item in pay] == ["в оплате · часть товара уже на складе"]

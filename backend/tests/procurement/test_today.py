@@ -174,9 +174,9 @@ def test_unpaid_invoices_are_one_item_per_order_the_oldest_first():
     a = view(**common, order_number="PO-1", invoice_date=date(2026, 9, 15))
     b = view(**common, order_number="PO-1", invoice_date=date(2026, 9, 16))
     c = view(**common, order_number="PO-2", invoice_date=date(2026, 9, 1))
-    pay = section(page(a, b, c), "pay")
+    pay = section(page(a, b, c, received_orders=frozenset({"PO-2"})), "pay")
     assert [(item["title"], item["detail"], item["days"]) for item in pay["items"]] == [
-        ("ООО Г · заказ PO-2", "не передан в оплату", 19),
+        ("ООО Г · заказ PO-2", "не передан в оплату · часть товара уже на складе", 19),
         ("ООО Г · заказ PO-1", "не передан в оплату · 2 позиции", 5),
     ]
 

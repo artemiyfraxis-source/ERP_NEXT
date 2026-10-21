@@ -3911,21 +3911,21 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
    раскрываются на месте. Только токены — светлая и тёмная тема. */
 .today-head { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
 .today-head .spacer { flex: 1; }
-.today-head a.secondary { text-decoration: none; }
-.today-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; align-items: start; }
+/* At most three columns: on a wide screen the cards grow instead of leaving empty tracks and cutting the details. */
+.today-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(360px, calc((100% - 28px) / 3)), 1fr)); gap: 14px; align-items: start; }
 .today-card { --tone: var(--muted-foreground); border: 1px solid var(--border); border-top: 3px solid var(--tone); border-radius: 12px; background: var(--card); overflow: hidden; }
-.today-card.tone-danger { --tone: var(--tone-danger); }
-.today-card.tone-warning { --tone: var(--tone-warn); }
-.today-card.tone-accent { --tone: var(--primary); }
-.today-card.tone-neutral { --tone: var(--muted-foreground); }
-.today-card.tone-success { --tone: var(--tone-ok); }
+.today-card.today-tone-danger { --tone: var(--tone-danger); }
+.today-card.today-tone-warning { --tone: var(--tone-warn); }
+.today-card.today-tone-accent { --tone: var(--primary); }
+.today-card.today-tone-neutral { --tone: var(--muted-foreground); }
+.today-card.today-tone-success { --tone: var(--tone-ok); }
 .today-card header { padding: 12px 14px 8px; }
 .today-card h3 { margin: 0 0 2px; font-size: 14px; }
 .today-card header .muted { font-size: 12.5px; }
 .today-count { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 10px; background: color-mix(in srgb, var(--tone) 15%, transparent); color: var(--tone); font-size: 12px; text-align: center; }
 .today-positions { font-size: 12px; font-weight: 400; }
 .today-card ul { list-style: none; margin: 0; padding: 0 0 6px; }
-.today-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; width: 100%; padding: 6px 14px; border: 0; border-top: 1px solid var(--border); color: inherit; background: none; font: inherit; text-align: left; text-decoration: none; }
+.today-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; width: 100%; padding: 6px 14px; border: 0; border-top: 1px solid var(--border); color: var(--foreground); background: none; font: inherit; font-size: 14px; text-align: left; text-decoration: none; }
 a.today-row, button.today-row { cursor: pointer; }
 a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix(in srgb, var(--primary) 7%, transparent); }
 .today-caret { display: inline-block; width: 12px; color: var(--muted-foreground); }

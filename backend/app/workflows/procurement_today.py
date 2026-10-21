@@ -52,6 +52,8 @@ INVOICES_OPTION = "documents.chain"
 UPD_OPTION = "documents.upd"
 UPD_TO_CHECK = "Требует проверки"
 _CHUNK = 500
+_TO_PAY = ProcurementStatus.TO_PAY.value
+_RECEIVED = (ProcurementStatus.QUARANTINE.value, ProcurementStatus.DONE.value)
 
 PurposesOf = Callable[[Sequence[ViewLine]], dict[UUID, str]]
 
@@ -155,6 +157,17 @@ def _upd_to_check(session: Session) -> int | None:
     )) or 0)
 
 
+def _received_orders(session: Session, facts: TodayFacts) -> frozenset[str]:
+    """The unpaid orders («Счета не оплачены») a line of which is already received (Карантин, Готово)."""
+    unpaid = sorted({line.order_number for line in facts.lines if line.order_number and line.status == _TO_PAY})
+    found: set[str] = set()
+    for start in range(0, len(unpaid), _CHUNK):
+        found |= set(session.scalars(select(R.order_number).where(
+            R.order_number.in_(unpaid[start:start + _CHUNK]), R.status.in_(_RECEIVED),
+        ).distinct()))
+    return frozenset(found)
+
+
 def _available(session: Session) -> int:
     return int(session.scalar(
         select(func.count()).select_from(R).where(R.status == ProcurementStatus.NEW.value)
@@ -188,6 +201,7 @@ def today_facts(
     return replace(
         facts, pricebook_leads=_pricebook(session, wanted), kaiten=_kaiten(session),
         upd_to_check=_upd_to_check(session), available=_available(session),
+        received_orders=_received_orders(session, facts),
     )
 
 

@@ -67,11 +67,12 @@ it("shows «Сегодня» first: sections in the order of doing with their to
   expect(tab.parentElement?.firstElementChild).toBe(tab);
   const cards = await screen.findAllByRole("region");
   expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["Просрочены поставки", "Запросить КП"]);
-  expect(cards[0]).toHaveClass("today-card", "tone-danger");
+  expect(cards[0]).toHaveClass("today-card", "today-tone-danger");
   expect(within(cards[0]).getByText("шаг: Просрочены поставки")).toBeInTheDocument();
   expect(within(cards[0]).getByText("2 дн")).toBeInTheDocument();
   expect(screen.getByText("21.10.2026 · дел: 4")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Счета и поставки" })).toHaveAttribute("href", "?section=procurement&tab=orders");
+  fireEvent.click(screen.getByRole("button", { name: "Счета и поставки" }));
+  expect(Object.fromEntries(new URL(window.location.href).searchParams)).toEqual({ section: "procurement", tab: "orders" });
 });
 
 it("shows eight items of a section, then «и ещё N»", async () => {

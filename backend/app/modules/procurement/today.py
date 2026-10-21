@@ -255,6 +255,7 @@ class TodayFacts:
     upd_to_check: int | None = None  # None — option documents.upd is off
     available: int = 0
     rfq_on: bool = False
+    received_orders: frozenset[str] = frozenset()  # orders with a line already received (Карантин, Готово)
 
 
 @dataclass(frozen=True)
@@ -308,6 +309,7 @@ class Payment:
     sent_to_pay: bool
     days: int
     lines: tuple[_Line, ...]
+    received: bool = False  # another line of the order is already received
 
 
 @dataclass(frozen=True)
@@ -361,6 +363,7 @@ def followups(facts: TodayFacts, today: date, settings: TodaySettings, lines: Se
             order_number=view.order_number, supplier=next((line.view.supplier for line in group if line.view.supplier), "") or "",
             invoiced_on=invoiced, sent_to_pay=any(line.status == "to_pay" for line in group),
             days=(today - invoiced).days, lines=tuple(group),
+            received=bool(view.order_number) and view.order_number in facts.received_orders,
         ))
     payments.sort(key=lambda entry: -entry.days)
     decided = []
@@ -625,6 +628,10 @@ def _pay(follow: Followups) -> list[dict]:
         detail = "в оплате" if payment.sent_to_pay else "не передан в оплату"
         if len(payment.lines) > 1:
             detail = f"{detail} · {positions_word(len(payment.lines))}"
+        if payment.received:
+            # RB says «товар уже на складе» when the whole order came before the payment; in ERP a line is paid before
+            # it travels, so only the order's other (paid) lines can be here already.
+            detail = f"{detail} · часть товара уже на складе"
         items.append({"title": _order_title(first), "detail": detail, "link": _order_link(first), "days": payment.days})
     return items
 
