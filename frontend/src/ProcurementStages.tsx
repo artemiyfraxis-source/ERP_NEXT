@@ -5,8 +5,10 @@ import {
   failureText, type ApplyOrderDocumentInput, type ManualRatePrompt, type OrderDocumentKind, type OrderDocumentRecognition, type ProcurementLine,
 } from "./api";
 import { formatDate, formatDay } from "./format";
+import { useLineHistory } from "./LineHistory";
 import { ActualDateCell, ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { RowActions, type MenuItem } from "./ProcurementRowMenu";
+import { PriceHint, usePriceHistory } from "./PriceHistoryHint";
 import { waitsForGrn } from "./ProcurementStockPicker";
 import { formatAmount } from "./ProcurementSheetColumns";
 import { LoadMore } from "./LoadMore";
@@ -39,6 +41,7 @@ function useLinePanel(
   busyId: string,
 ) {
   const [open, setOpen] = useState<{ id: string; label: string } | null>(null);
+  const history = useLineHistory(); // option procurement.history: «История» is the last action of the row
   const line = open ? lines.find((item) => item.id === open.id) : undefined;
   const action = open && line ? actionsOf(line).find((item) => item.label === open.label && item.panel) : undefined;
   // Строка ушла на другую стадию — форма закрывается и не всплывёт, если строка вернётся.
@@ -48,16 +51,19 @@ function useLinePanel(
     <RowActions
       label={`Действия ${row.legacy_id}`}
       disabled={disabled || busyId === row.id}
-      items={actionsOf(row).map((item): MenuItem => ({
-        label: item.label,
-        short: item.short,
-        title: item.title,
-        disabled: item.disabled,
-        run: () => {
-          if (item.panel) setOpen(open?.id === row.id && open.label === item.label ? null : { id: row.id, label: item.label });
-          else item.run?.();
-        },
-      }))}
+      items={[
+        ...actionsOf(row).map((item): MenuItem => ({
+          label: item.label,
+          short: item.short,
+          title: item.title,
+          disabled: item.disabled,
+          run: () => {
+            if (item.panel) setOpen(open?.id === row.id && open.label === item.label ? null : { id: row.id, label: item.label });
+            else item.run?.();
+          },
+        })),
+        ...(history.enabled ? [{ label: "История", run: () => history.open(row.id, row.legacy_id) }] : []),
+      ]}
     />
   );
 
@@ -74,7 +80,7 @@ function useLinePanel(
     </div>
   ) : null;
 
-  return { menu, node };
+  return { menu, node: <>{node}{history.node}</> };
 }
 
 /** Свёрнут ли блок «Моих позиций»; помнится в браузере по ключу блока. */
@@ -571,6 +577,7 @@ export function OrderList({
     return next;
   });
 
+  const priceHistory = usePriceHistory(useMemo(() => lines.map((line) => line.id), [lines]));
   const groupOf = new Map(groups.flatMap((group) => group.lines.map((line) => [line.id, group] as const)));
   const allColumns: GroupColumn[] = [
     { key: "id", title: "ID", render: (line) => <strong>{line.legacy_id}</strong> },
@@ -582,7 +589,7 @@ export function OrderList({
       },
     },
     { key: "qty", title: "Кол-во факт", render: qtyOf },
-    { key: "price", title: "Цена факт, ₽", numeric: true, render: (line) => formatAmount(line.actual_price_with_vat) },
+    { key: "price", title: "Цена факт, ₽", numeric: true, render: (line) => <>{formatAmount(line.actual_price_with_vat)}<PriceHint info={priceHistory[line.id]} /></> },
     { key: "sum", title: "Сумма факт, ₽", numeric: true, render: sumCell },
     { key: "calc", title: "Расчёт, ₽", numeric: true, render: (line) => formatAmount(line.calculated_sum) },
     // Счёт заказа открывается из его заголовка; у строки он только если отличается от счёта заказа.
@@ -715,7 +722,7 @@ const isNumber = (value: string) => decimal(value) !== "" && Number.isFinite(Num
  *  нашёл каждую; цены правятся здесь же, если распознано не то. Подтверждение пишет все строки заказа или ни одной:
  *  КП — только цены, строки ждут счёт; счёт — цены и счёт, строки уходят «В оплату» (ожидаемая дата обязательна,
  *  цена — нет: без неё окно предупреждает, «Оплачено» ждёт цену). */
-function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply, onClose }: {
+export function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply, onClose }: {
   group: OrderGroup;
   /** Строки стадии, к которым относится документ: «Жду счет», а для «Заменить счёт» — «В оплату». */
   lines: ProcurementLine[];

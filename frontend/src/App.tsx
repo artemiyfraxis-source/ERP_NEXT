@@ -36,6 +36,7 @@ import { QualityPage } from "./QualityPage";
 import { RequestsPage } from "./RequestsPage";
 import { ReceivingPage } from "./ReceivingPage";
 import { WarehousePage } from "./WarehousePage";
+import { EquipmentPage } from "./EquipmentPage";
 import { ShippingPage } from "./ShippingPage";
 import { ProductionIntakePage } from "./ProductionIntakePage";
 import { ReferencesPage } from "./ReferencesPage";
@@ -52,14 +53,21 @@ import { StaffPage } from "./StaffPage";
 import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
+import { reloadRefusedStageOptions, StageOptionsPanel, useEnabledStageOptions } from "./StageOptions";
+import { isTsdAddress } from "./devicesApi";
+import { TsdEntry, TsdLogin, TsdScreen } from "./TsdPage";
+import { ThemeSwitch } from "./ThemeSwitch";
+import { GlobalSearch } from "./CommandPalette";
 import { ViewAsBanner } from "./ViewAs";
 
-/** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once. */
-type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string; library?: boolean } };
+/** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once.
+ *  `tsd`: the ТСД screen (stage option warehouse.tsd, `?section=tsd`) — full screen, its own PIN sign-in. */
+type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string; library?: boolean }; tsd?: boolean };
 
 function placeFromUrl(): Place {
   const params = new URLSearchParams(window.location.search);
   const value = params.get("section");
+  if (isTsdAddress()) return { section: "cabinet", block: null, tsd: true };
   if (value === "warehouse") return { section: "stock", block: null };
   if (value === "projects" && params.get("project") && params.get("harness")) {
     return { section: value, block: null, harness: { project: params.get("project")!, index: params.get("harness")!, library: params.get("library") === "1" } };
@@ -73,6 +81,8 @@ export function App() {
   const [principal, setPrincipal] = useState<Principal | null>(null);
   const [loading, setLoading] = useState(true);
   const [place, setPlace] = useState<Place>(placeFromUrl);
+  // The address bar changed under us (global search, back button): pages that read their start filter from it remount.
+  const [visit, setVisit] = useState(0);
   const [shellError, setShellError] = useState("");
   // On a tablet the sidebar is a drawer behind «☰»; any navigation closes it.
   const [navOpen, setNavOpen] = useState(false);
@@ -85,12 +95,18 @@ export function App() {
   // Unsent forms per user (F07); lives as long as the tab, never in browser storage.
   const drafts = useRef(new DraftStore()).current;
 
+  // Signed in: the stage options asked before it (answered 401) are asked again, before any screen reads them.
+  function signedIn(next: Principal) {
+    reloadRefusedStageOptions();
+    setPrincipal(next);
+  }
+
   function loadPrincipal() {
     setLoading(true);
     setBootError("");
     identityApi
       .me()
-      .then(setPrincipal)
+      .then(signedIn)
       .catch((error) => {
         if (error instanceof ApiError && error.status === 401) return;
         setBootError(failureText(error, "ERP не ответила"));
@@ -101,7 +117,7 @@ export function App() {
   useEffect(loadPrincipal, []);
 
   useEffect(() => {
-    const listener = () => setPlace(placeFromUrl());
+    const listener = () => { setPlace(placeFromUrl()); setVisit((count) => count + 1); };
     window.addEventListener("popstate", listener);
     return () => window.removeEventListener("popstate", listener);
   }, []);
@@ -114,8 +130,10 @@ export function App() {
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, requireLogin);
   }, []);
 
-  const visibleNav = useMemo(() => (principal ? visibleNavFor(principal) : []), [principal]);
-  const blocks = useMemo(() => (principal ? visibleBlocks(principal) : []), [principal]);
+  // Sections behind stage options («Оборудование») appear while one of their options is «Новое».
+  const enabledOptions = useEnabledStageOptions();
+  const visibleNav = useMemo(() => (principal ? visibleNavFor(principal, enabledOptions) : []), [principal, enabledOptions]);
+  const blocks = useMemo(() => (principal ? visibleBlocks(principal, enabledOptions) : []), [principal, enabledOptions]);
 
   function go(next: Place) {
     const url = new URL(window.location.href);
@@ -123,6 +141,8 @@ export function App() {
     url.searchParams.delete("block");
     url.searchParams.delete("project");
     url.searchParams.delete("user");
+    url.searchParams.delete("tab");
+    url.searchParams.delete("q");
     url.searchParams.delete("harness");
     url.searchParams.delete("library");
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);
@@ -210,7 +230,7 @@ export function App() {
   // (the `key` below), and the first user's unsent forms stay keyed to them, out of the newcomer's sight.
   function signInAgain(next: Principal) {
     setExpired(false);
-    setPrincipal(next);
+    signedIn(next);
   }
 
   if (loading) return <div className="screen-center muted">Загружаем ERP…</div>;
@@ -220,7 +240,16 @@ export function App() {
       <button className="primary" onClick={loadPrincipal}>Повторить</button>
     </div>;
   }
-  if (!principal) return <LoginPage onLogin={setPrincipal} />;
+  if (!principal) return place.tsd ? <TsdEntry onLogin={signedIn} /> : <LoginPage onLogin={signedIn} />;
+  // ТСД склада (stage option warehouse.tsd): its own full-screen frame and PIN sign-in; without the option or the
+  // warehouse section the screen hands over to the ordinary shell.
+  if (place.tsd) {
+    return <>
+      <TsdScreen key={principal.user.id} principal={principal} onSignOut={() => void signOut()}
+        onLeave={() => go({ section: "cabinet", block: null })} />
+      {expired && <div className="tsd-relogin"><TsdLogin onLogin={signInAgain} title="Сессия истекла — войдите снова" /></div>}
+    </>;
+  }
   const relogin = expired && <SessionExpiredDialog onLogin={signInAgain} />;
   // A section or block the principal cannot open falls back to the home screen.
   const activeSection = visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
@@ -281,6 +310,8 @@ export function App() {
             </button>
           )}
           <ProfilePanel openCard={() => openCard()} />
+          <StageOptionsPanel canSwitch={hasFullAccess(principal)} />
+          <ThemeSwitch />
           <button
             className="link-button"
             onClick={() => void signOut()}
@@ -289,23 +320,25 @@ export function App() {
           </button>
         </div>
       </aside>
+      <GlobalSearch principal={principal} />
       <main className="workspace main">
         <ViewAsBanner principal={principal} onExit={exitViewAs} />
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}
         {runsTheSystem(principal) && <UpdateFailure />}
         {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
         {activeBlock && <BlockPage principal={principal} block={activeBlock} navigate={navigate} home={() => go({ section: "cabinet", block: null })} />}
-        {activeSection === "projects" && <ProjectsPage principal={principal} />}
+        {activeSection === "projects" && <ProjectsPage key={visit} principal={principal} />}
         {activeSection === "techcards" && <TechcardsPage principal={principal} view="projects" />}
         {activeSection === "tctemplates" && <ReferencesPage principal={principal} initialTab="templates" />}
         {activeSection === "newrequest" && <RequestsPage principal={principal} view="create" />}
         {activeSection === "myrequests" && <RequestsPage principal={principal} view="mine" />}
         {activeSection === "requests" && <RequestsPage principal={principal} />}
-        {activeSection === "procurement" && <ProcurementPage readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name} />}
+        {activeSection === "procurement" && <ProcurementPage key={visit} readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name} />}
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
-        {activeSection === "stock" && <WarehousePage admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
+        {activeSection === "stock" && <WarehousePage key={visit} admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
           canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
         {activeSection === "intake" && <ProductionIntakePage principal={principal} />}
+        {activeSection === "equipment" && <EquipmentPage readOnly={!canAct(principal, "warehouse")} admin={hasFullAccess(principal)} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}

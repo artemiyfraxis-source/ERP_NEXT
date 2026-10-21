@@ -70,6 +70,28 @@ export interface RequestSchema {
   projects?: string[];
   /** ТИП combobox options (REQUEST_FORM_FIELDS «ТИП»). */
   item_types?: string[];
+  /** Stage option projects.internal: open internal projects «ВП-001» (empty while the option is off). */
+  internal_projects?: InternalProjectBrief[];
+}
+
+export interface InternalProjectBrief {
+  number: string;
+  name: string;
+  purpose: string;
+}
+
+/** Stage option projects.internal: a project of the company itself; requests refer to it by `number`. */
+export interface InternalProject extends InternalProjectBrief {
+  id: string;
+  responsible_id: string | null;
+  responsible: string | null;
+  note: string | null;
+  closed: boolean;
+  closed_at: string | null;
+  version: number;
+  /** Procurement lines of the project by stage. */
+  lines: Record<string, number>;
+  open_requests: number;
 }
 
 export interface RequestRow {
@@ -300,6 +322,8 @@ export interface ReceivingLine {
   name: string;
   item_type: string;
   purpose: string;
+  /** The project the line was bought for (ЦЕЛЬ): «591К.3» or an internal «ВП-001». */
+  goal?: string;
   supplier: string;
   ordered_quantity: string;
   unit: string;
@@ -497,6 +521,20 @@ export interface WarehouseShelfPlaces {
   shelf: string;
   occupied: string[];
   next_number: number | null;
+}
+
+/** Stage option warehouse.scan: «lot» — the scanned ГРН's lots, «place» — what lies on the scanned place. */
+export interface WarehouseScan {
+  kind: "lot" | "place";
+  code: string;
+  place: string;
+  lots: WarehouseLot[];
+}
+
+/** Stage option warehouse.undo: what «Отменить последнее» would take back (null — and why not). */
+export interface WarehouseUndoPreview {
+  undo: { label: string; occurred_at: string } | null;
+  reason: string;
 }
 
 export interface WarehouseArticleInfo {
@@ -2334,6 +2372,14 @@ export const accessApi = {
     }),
 };
 
+export const internalProjectsApi = {
+  list: () => api<{ projects: InternalProject[] }>("/api/purchasing/internal-projects"),
+  create: (body: { name: string; purpose: string; responsible_id?: string | null; note?: string | null }) =>
+    api<InternalProject>("/api/purchasing/internal-projects", { method: "POST", body: JSON.stringify(body) }),
+  close: (id: string) => api<InternalProject>(`/api/purchasing/internal-projects/${id}/close`, { method: "POST" }),
+  reopen: (id: string) => api<InternalProject>(`/api/purchasing/internal-projects/${id}/reopen`, { method: "POST" }),
+};
+
 export const requestsApi = {
   schema: () => api<RequestSchema>("/api/requests/schema"),
   list: (q = "", signal?: AbortSignal) =>
@@ -2861,6 +2907,12 @@ export const warehouseApi = {
     const suffix = params.size ? `?${params}` : "";
     return api<WarehouseTotals>(`/api/stock/totals${suffix}`);
   },
+  scan: (code: string) => api<WarehouseScan>(`/api/stock/scan?code=${encodeURIComponent(code)}`),
+  undoPreview: (lotId: string) => api<WarehouseUndoPreview>(`/api/stock/batches/${lotId}/undo`),
+  undo: (lotId: string, version: number) => api<{ lot: WarehouseLot; undone: string }>(`/api/stock/batches/${lotId}/undo`, {
+    method: "POST",
+    body: JSON.stringify({ version }),
+  }),
   shelfPlaces: (warehouse: string, shelf: string) => api<WarehouseShelfPlaces>(
     `/api/stock/places?warehouse=${encodeURIComponent(warehouse)}&shelf=${encodeURIComponent(shelf)}`,
   ),

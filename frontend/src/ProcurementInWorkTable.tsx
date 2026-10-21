@@ -1,10 +1,12 @@
-import { Fragment, useRef, useState, type ClipboardEvent, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useMemo, useRef, useState, type ClipboardEvent, type MouseEvent, type ReactNode } from "react";
 import { ApiError, failureText, procurementApi, type ProcurementLine } from "./api";
 import { selectRange } from "./bulk";
 import { readSaved, writeSaved, type Saved } from "./DataTable";
 import { NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { ProcurementNoLotCover, ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
 import { RowActions } from "./ProcurementRowMenu";
+import { useLineHistory } from "./LineHistory";
+import { PriceHint, usePriceHistory } from "./PriceHistoryHint";
 import { formatMoney } from "./ProcurementSheetColumns";
 import { BulkStatus, StageHeading, stageSummary, useCollapsed, type BulkState } from "./ProcurementStages";
 
@@ -211,6 +213,7 @@ export function ProcurementInWorkTable({
   renderDetail: (line: ProcurementLine) => ReactNode;
 }) {
   const [collapsed, toggleCollapsed] = useCollapsed("inwork");
+  const history = useLineHistory(); // option procurement.history
   // Правки — только тронутые ячейки поверх свежих данных строки: дозаполнение с сервера или перечитанная
   // очередь не стирают набранное, а нетронутые ячейки показывают то, что пришло.
   const [edits, setEdits] = useState<Record<string, Partial<InWorkDraft>>>({});
@@ -352,6 +355,8 @@ export function ProcurementInWorkTable({
     } catch { /* итог показывает блок, выбор остаётся */ }
   }
 
+  const priceHistory = usePriceHistory(useMemo(() => lines.map((line) => line.id), [lines]));
+
   function stockToggle(id: string) {
     setOpen(null);
     setStockFor((current) => {
@@ -369,7 +374,7 @@ export function ProcurementInWorkTable({
     }
     if (field.key === "price") {
       const price = calculatedPriceOf(line);
-      return <span className="cell-ro" title={price}>{price}</span>;
+      return <span className="cell-ro" title={price}>{price}<PriceHint info={priceHistory[line.id]} /></span>;
     }
     const key = field.key;
     const value = draftOf(line)[key];
@@ -407,6 +412,7 @@ export function ProcurementInWorkTable({
 
   return (
     <section className="panel table-panel procurement-stage stage-block" aria-label="В работе">
+      {history.node}
       <StageHeading title="В работе" count={lines.length} hint={IN_WORK_HINT} summary={lines.length ? stageSummary(lines) : undefined} collapsed={collapsed} onToggle={toggleCollapsed}>
         {edited.length > 0 && <span className="dirty-note">изменено: {edited.length}</span>}
         <button type="button" className={edited.length ? "primary small" : "secondary small"} disabled={disabled || saving || !edited.length} onClick={() => void saveAll()}>
@@ -501,6 +507,7 @@ export function ProcurementInWorkTable({
                   { label: "Документы, прослеживаемость…", short: "Документы…", run: () => { setStockFor(new Set()); setOpen(open === line.id ? null : line.id); } },
                   { label: "Есть на складе, без ГРН", run: () => { setOpen(null); setNoLotFor(noLotFor === line.id ? null : line.id); } },
                   { label: "Отменить строку", run: () => onCancel(line) },
+                  ...(history.enabled ? [{ label: "История", run: () => history.open(line.id, line.legacy_id) }] : []),
                 ];
                 const rowClass = [dirty.size ? "edited" : "", selected.has(line.id) ? "selected" : "", ready ? "ready" : ""].join(" ").trim();
                 return (

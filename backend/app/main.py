@@ -23,8 +23,10 @@ from .shared.security_headers import SecurityHeadersMiddleware
 from .shared.stop_file import watch_stop_file
 from .shared.warehouse_location import configured_rack_layout
 from .modules.procurement import api as procurement_api
+from .modules.procurement import requests_api as procurement_requests_api
 from .modules.receiving import api as receiving_api
 from .modules.warehouse import api as warehouse_api
+from .modules.warehouse import labels_api as warehouse_labels_api
 from .modules.fulfillment import api as fulfillment_api
 from .modules.production import api as production_api
 from .modules.production import plan_api as production_plan_api
@@ -49,10 +51,20 @@ from .modules.techcards import harness_api
 from .modules.techcards import td_issues_api
 from .shared.bulk_import import MAX_IMPORT_BODY_BYTES
 from .shared.http_auth import techcards_router_principal
-from .workflows import employee_card_api, leave_api
+from .workflows import devices_api, employee_card_api, leave_api, search_api, stage_options_api
+from .shared import device_gate
 from .workflows import documents_api
+from .modules.purchasing import api_documents as purchasing_documents_api
+from .modules.purchasing import api_internal_projects as purchasing_internal_projects_api
+from .modules.purchasing import api_items as purchasing_items_api
+from .modules.purchasing import api_orders as purchasing_orders_api
+from .modules.purchasing import api_prices as purchasing_prices_api
+from .modules.purchasing import api_rfq as purchasing_rfq_api
+from .modules.purchasing import api_settings as purchasing_settings_api
+from .modules.purchasing import api_suppliers as purchasing_suppliers_api
 from .workflows import finished_goods_api
 from .workflows import production_intake_api
+from .modules.purchasing import api_upd as purchasing_upd_api
 
 app = FastAPI(
     title="Fraxis ERP Next",
@@ -82,7 +94,7 @@ app.add_middleware(
     max_bytes=1_048_576,
     path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576,
                  "/api/procurement/invoice-files": 30 * 1_048_576, "/api/receiving/files": 30 * 1_048_576,
-                 "/api/techcards/assembly/drawings": 30 * 1_048_576,
+                 "/api/techcards/assembly/drawings": 30 * 1_048_576, "/api/purchasing/upd/import-edo": 30 * 1_048_576,
                  "/api/references/import": MAX_IMPORT_BODY_BYTES},
 )
 app.add_middleware(IdentitySessionMiddleware)
@@ -100,8 +112,10 @@ app.include_router(harness_catalog_api.router)
 app.include_router(identity_api.router)
 app.include_router(requests_api.router)
 app.include_router(procurement_api.router)
+app.include_router(procurement_requests_api.router)
 app.include_router(receiving_api.router)
 app.include_router(warehouse_api.router)
+app.include_router(warehouse_labels_api.router)
 app.include_router(fulfillment_api.router)
 app.include_router(production_api.router)
 app.include_router(production_plan_api.router)
@@ -123,12 +137,20 @@ app.include_router(operations_api.router)
 app.include_router(employee_card_api.router)
 app.include_router(leave_api.router)
 app.include_router(documents_api.router)
+app.include_router(stage_options_api.router)
+app.include_router(devices_api.router)
+app.include_router(search_api.router)
+for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasing_items_api, purchasing_rfq_api,
+               purchasing_internal_projects_api, purchasing_prices_api, purchasing_upd_api, purchasing_documents_api,
+               purchasing_orders_api):
+    app.include_router(_purchasing.router)
 app.include_router(finished_goods_api.router)
 app.include_router(production_intake_api.router)
 
 if database_url := os.getenv("ERP_DATABASE_URL"):
     configure_database(app, database_url)
 watch_stop_file()  # локальная ERP на ПК: обновление останавливает API файлом-стопом (scripts/update-local.ps1)
+device_gate.SUPERVISOR.start()  # стенд, опция warehouse.tsd: ворота для ТСД; без ERP_STAGE_OPTIONS ничего не делает
 
 
 def signed_in_principal(request: Request) -> Principal | None:

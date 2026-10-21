@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from app.shared.document_url import normalize_document_url
 from app.shared.events import OutboxMessage
 from app.shared.identity import Actor
+from app.shared.project_number import normalize_project_number, project_from_purpose
 
 from .money import (
     EMPTY_MONEY,
@@ -1653,6 +1654,172 @@ def split_line(
     if buyer is None:
         return result
     return [copy.take_in_work(buyer) for copy in result]
+
+
+# --- «Заявки» закупщика (stage option procurement.requests_rb; Roller_Buyer RequestsPage) ------------------------
+
+NO_PROJECT_KEY = "none"
+# A project number starts so (`requests.domain._PROJECT_NUMBER`) or is an internal «ВП-001» (option projects.internal).
+_PROJECT_START = re.compile(r"^[1-9]\d*(?:К[А-Я]?|МФ)")
+_INTERNAL_PROJECT_NUMBER = re.compile(r"^ВП-\d{3,}$")
+# НАЗНАЧЕНИЕ is «<purpose or calc project>.NNN» (`requests.domain.next_designation`): the counter is the batch.
+_DESIGNATION_COUNTER = re.compile(r"\.\d{3,}$")
+
+
+@dataclass(frozen=True)
+class LineProject:
+    """The project a procurement line is worked under, for grouping and the `&project=` filter.
+
+    `key` is what screens compare and put in the address; `kind` says how it was found — "project" (a number, the
+    screen shows an internal «ВП-…» by its name), "purpose" (an internal purpose such as «Обеспечение производства»),
+    "none" (nothing known: «Без проекта»); `value` is the number or the purpose as shown."""
+
+    key: str
+    kind: str
+    value: str
+
+
+def line_project(project_reference: str | None, designation: str | None, purpose: str | None = None) -> LineProject:
+    """One project chain for «Заявки» and «Сегодня»: № ПРОЕКТА → the project НАЗНАЧЕНИЕ starts with («708К.4.012» →
+    «708К.4», a calc import with an odd number keeps it only there) → the request's purpose (ЦЕЛЬ: an internal purpose,
+    `RequestPurposeLookup`; without it НАЗНАЧЕНИЕ without its «.NNN») → «Без проекта»."""
+    reference = normalize_project_number(project_reference) if _text(project_reference) else ""
+    if reference:
+        return LineProject(reference, "project", reference)
+    from_designation = project_from_purpose(designation)
+    if from_designation and (
+        _PROJECT_START.match(from_designation) or _INTERNAL_PROJECT_NUMBER.match(from_designation)
+    ):
+        return LineProject(from_designation, "project", from_designation)
+    label = " ".join(_text(purpose).split()) or " ".join(_DESIGNATION_COUNTER.sub("", _text(designation)).split())
+    if label:
+        return LineProject(label, "purpose", label)
+    return LineProject(NO_PROJECT_KEY, "none", "")
+
+
+def batch_key(project: LineProject, designation: str | None) -> str:
+    """One request batch of «Заявки»: the lines that share НАЗНАЧЕНИЕ under one project. `create_request_batch` gives
+    every batch (per purpose) the next «.NNN», and split copies, retransfer revisions and `-Д` keep it."""
+    return f"{project.key}|{designation_key(designation)}"
+
+
+CANCEL_REASON_MAX_LENGTH = 500
+
+
+def cancel_reason(value: str | None) -> str:
+    """«Отменить выбранные»: the reason is required and kept with the cancellation (audit `procurement.cancelled`)."""
+    text = " ".join(_text(value).split())
+    if not text:
+        raise ProcurementValidationError("Укажите причину отмены")
+    if len(text) > CANCEL_REASON_MAX_LENGTH:
+        raise ProcurementValidationError(f"Причина отмены длиннее {CANCEL_REASON_MAX_LENGTH} символов")
+    return text
+
+
+_QUANTITY_STEP = Decimal("0.000001")  # КОЛ-ВО columns are NUMERIC(18, 6)
+
+
+def _scaled_sum(total: Decimal | None, part: Decimal, whole: Decimal) -> Decimal | None:
+    if total is None or whole <= 0:
+        return None
+    return (total * part / whole).quantize(Decimal("0.01"))
+
+
+def split_by_quantity(
+    source: ProcurementLine,
+    quantity: Decimal,
+    existing_ids: Iterable[str],
+    day: date,
+    now: datetime,
+    actor: Actor,
+    *,
+    keep_supplier: bool = True,
+) -> tuple[ProcurementLine, ProcurementLine]:
+    """«Разделить» (Roller_Buyer `splitRequestLine`): `quantity` of what is still to buy goes to a new line of the same
+    request, for example to take one part from one supplier and the rest from another.
+
+    Only the line's own buyer, and only on the desk before the supplier request (`В работе` / `Готов к запросу` — after
+    it the order is formed for the whole quantity). КОЛ-ВО (Расчет) and СУММА (Расчет) are shared between the parts,
+    the unit prices stay; КОЛ-ВО (факт) of the original drops by the part. The new line has a new System ID, the same
+    request data, buyer and facts, and no stock cover, money, note or replacement permit document. In a live request for
+    quotes (`keep_supplier=False`) its ПОСТАВЩИК stays empty: the quotes are copied to it and its choice is its own."""
+    if source.status not in FACTS_EDITABLE:
+        if source.status is ProcurementStatus.NEW:
+            raise ProcurementValidationError("Сначала возьмите строку в работу")
+        raise ProcurementValidationError(
+            f"Делят строку до запроса поставщику — в «{ProcurementStatus.IN_WORK.value}» или "
+            f"«{ProcurementStatus.READY.value}»"
+        )
+    source._require_owner(actor)
+    try:
+        amount = Decimal(str(quantity))
+    except (DecimalException, ValueError) as error:
+        raise ProcurementValidationError("Количество — число") from error
+    if not amount.is_finite():
+        raise ProcurementValidationError("Количество — число")
+    if amount != amount.quantize(_QUANTITY_STEP):
+        raise ProcurementValidationError("Количество — не больше 6 знаков после запятой")
+    if not Decimal("0") < amount < source.to_buy:
+        raise ProcurementValidationError(
+            f"Отделить можно больше нуля и меньше {_shown_quantity(source.to_buy)} {source.calculated_unit}"
+        )
+    whole = source.calculated_quantity
+    kept_quantity = whole - amount
+    part_sum = _scaled_sum(source.calculated_sum, amount, whole)
+    kept_sum = source.calculated_sum - part_sum if part_sum is not None else source.calculated_sum
+    actual = source.actual_quantity
+    if actual is not None:
+        actual = actual - amount if actual - amount > 0 else source.to_buy - amount
+    original = replace(
+        source,
+        calculated_quantity=kept_quantity,
+        calculated_sum=kept_sum,
+        actual_quantity=actual,
+        version=source.version + 1,
+    ).with_work_stage()
+    legacy_id = next_system_id(existing_ids, day)
+    created = ProcurementLine(
+        id=uuid4(),
+        source_event_id=uuid4(),
+        source_idempotency_key=f"procurement:{source.id}:split-qty:v{source.version}",
+        source_request_id=source.source_request_id,
+        legacy_id=legacy_id,
+        revision=source.revision,
+        status=ProcurementStatus.IN_WORK,
+        version=1,
+        created_at=now,
+        request_date=source.request_date,
+        initiator=source.initiator,
+        department=source.department,
+        task_type=source.task_type,
+        designation=source.designation,
+        project_reference=source.project_reference,
+        priority=source.priority,
+        delivery_point=source.delivery_point,
+        planned_date=source.planned_date,
+        link=source.link,
+        item_type=source.item_type,
+        design_article=source.design_article,
+        category=source.category,
+        calculated_name=source.calculated_name,
+        calculated_quantity=amount,
+        calculated_unit=source.calculated_unit,
+        quality_document=source.quality_document,
+        calculated_price=source.calculated_price,
+        calculated_price_with_vat=source.calculated_price_with_vat,
+        calculated_sum=part_sum,
+        buyer=source.buyer,
+        supplier=source.supplier if keep_supplier else None,
+        site_name=source.site_name if keep_supplier else None,
+        actual_quantity=amount,
+        actual_unit=_text(source.actual_unit) or _text(source.calculated_unit) or None,
+        replacement=source.replacement,
+        replacement_decision=source.replacement_decision,
+        initiator_id=source.initiator_id,
+        trace=source.trace,
+        datasheet=source.datasheet,
+    ).with_work_stage()
+    return original, created
 
 
 # --- «Со склада» (owner 2026-10-04) ------------------------------------------------------------------
