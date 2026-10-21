@@ -15,7 +15,8 @@ function issue(over: Partial<TdIssue> = {}): TdIssue {
     current_etk_revision: 3, has_changes: false, sequence_no: 1, org_code: "ФРАК", method_code: "85", litera: "О1",
     designations: { vtd: "ФРАК.60185.00001", mk: "", ke: "", ok: "", ok_tk: "", vm: "", vo: "" },
     signatories: { developer: person("Иванов И.И.", "Технолог"), checker: person("Петров П.П."), normcontrol: person("Сидоров С.С."), approver: person(), agreed_vp: person() },
-    notice_no: "", reason: "", created_at: "2026-10-01T10:00:00+03:00", created_by: "u", approved_at: null, annulled_at: null, ...over,
+    notice_no: "", reason: "", workshop: "Цех электромонтажа", site: "ЖУК",
+    created_at: "2026-10-01T10:00:00+03:00", created_by: "u", approved_at: null, annulled_at: null, ...over,
   };
 }
 
@@ -106,7 +107,44 @@ it("the form requires notice and reason from the second issue on and saves with 
   fireEvent.change(within(dialog).getByLabelText("№ извещения"), { target: { value: "ИЗВ-7" } });
   fireEvent.change(within(dialog).getByLabelText("Причина изменения"), { target: { value: "Замена контакта" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Сохранить" }));
-  await waitFor(() => expect(calls.find((call) => call.method === "PUT")?.body).toMatchObject({ version: 4, notice_no: "ИЗВ-7", reason: "Замена контакта", litera: "О1" }));
+  await waitFor(() => expect(calls.find((call) => call.method === "PUT")?.body).toMatchObject({
+    version: 4, notice_no: "ИЗВ-7", reason: "Замена контакта", litera: "О1", workshop: "Цех электромонтажа", site: "ЖУК",
+  }));
+});
+
+it("the form requires the workshop and the site; a new issue copies them from the previous one", async () => {
+  const calls = mount([issue({ workshop: "", site: "" })]);
+  fireEvent.click(await screen.findByRole("button", { name: "Править" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByLabelText("Цех")).toHaveValue("Цех электромонтажа"); // пустой цех — по умолчанию
+  fireEvent.change(within(dialog).getByLabelText("Цех"), { target: { value: " " } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Сохранить" }));
+  expect(await within(dialog).findByText("Укажите цех.")).toBeInTheDocument();
+  expect(within(dialog).getByText("Выберите участок: ЦАР или ЖУК.")).toBeInTheDocument();
+  expect(calls.some((call) => call.method === "PUT")).toBe(false);
+  fireEvent.change(within(dialog).getByLabelText("Цех"), { target: { value: "Цех сборки" } });
+  fireEvent.change(within(dialog).getByLabelText("Участок"), { target: { value: "ЦАР" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(calls.find((call) => call.method === "PUT")?.body).toMatchObject({ workshop: "Цех сборки", site: "ЦАР" }));
+});
+
+it("the notice form takes the workshop and site of the latest issue", async () => {
+  mount([issue({ status: "active", status_label: "действует", has_changes: true, current_etk_revision: 4 })]);
+  fireEvent.click(await screen.findByRole("button", { name: "Оформить извещение" }));
+  const dialog = await screen.findByRole("dialog", { name: "Извещение об изменении" });
+  expect(within(dialog).getByLabelText("Цех")).toHaveValue("Цех электромонтажа");
+  expect(within(dialog).getByLabelText("Участок")).toHaveValue("ЖУК");
+});
+
+it("marks automatic issues and hides the notice banner while a change is already in work", async () => {
+  mount([
+    issue({ id: "i2", change_no: 1, status: "draft", etk_revision: 5, current_etk_revision: 5, created_by: "система",
+      designations: { vtd: "ФРАК.40185.00001 изм. 1", mk: "", ke: "", ok: "", ok_tk: "", vm: "", vo: "" } }),
+    issue({ status: "active", status_label: "действует", has_changes: true, etk_revision: 3, current_etk_revision: 5 }),
+  ]);
+  expect(await screen.findByText("автоматически")).toBeInTheDocument();
+  expect(screen.getAllByText("автоматически")).toHaveLength(1);
+  expect(screen.queryByText(/Оформите извещение об изменении/)).toBeNull();
 });
 
 it("the first issue asks no notice", async () => {

@@ -49,6 +49,12 @@ type OwnColumns = { names: string[]; canEdit: boolean; onEdited: () => Promise<u
     её только показывает). */
 type OpEditing = { canEdit: boolean; equipment: TechOperationRecord[] };
 
+/** Разряд исполнителя комплекта ТД (opGrade): 1–6, пусто — по ЕТКС для семейства операции. */
+const GRADE_OPTIONS: DataCellOption[] = [{ value: "", label: "по ЕТКС" }, ...["1", "2", "3", "4", "5", "6"].map((value) => ({ value, label: value }))];
+const BY_ETKS = "Пусто — по умолчанию по ЕТКС для семейства операции (комплект ТД)";
+// Поля комплекта ТД хранятся под ключами схемы: у строки их может ещё не быть — ячейка всё равно правится.
+const tdKey = (key: string) => () => key;
+
 const findKey = (pattern: RegExp) => (fields: Record<string, string>) => Object.keys(fields).find((key) => pattern.test(key.trim()));
 const TIME_KEY = findKey(/^время операции/i);
 
@@ -124,6 +130,12 @@ function OperationsTable({ entries, onOpen, toolbar, own, editing }: { entries: 
     { key: "controls", title: "Контролей", numeric: true, value: (entry) => entry.template ? entry.template.controls ?? 0 : "" },
     { key: "tooling", title: "Оснастки", numeric: true, value: (entry) => entry.template?.tooling ?? "" },
     machineColumn,
+    { key: "profession", title: "Профессия", hint: BY_ETKS, wrap: true, maxWidth: 200, value: (entry) => entry.op?.opProfession?.trim() ?? "",
+      render: (entry) => entry.op?.opProfession?.trim() || <span className="muted" title={BY_ETKS}>по ЕТКС</span>,
+      edit: can ? opCell(tdKey("opProfession")) : undefined },
+    { key: "grade", title: "Разряд", hint: BY_ETKS, numeric: true, value: (entry) => entry.op?.opGrade?.trim() ?? "",
+      render: (entry) => entry.op?.opGrade?.trim() || <span className="muted" title={BY_ETKS}>по ЕТКС</span>,
+      edit: can ? opCell(tdKey("opGrade"), () => GRADE_OPTIONS) : undefined },
     { key: "type", title: "Тип операции", value: (entry) => entry.op?.["Тип операции"]?.trim() ?? "",
       edit: can ? opCell((fields) => ("Тип операции" in fields ? "Тип операции" : undefined),
         () => [{ value: "", label: "не задано" }, ...OP_TYPES.map((type) => ({ value: type.value, label: `${type.value} — ${type.hint}` }))]) : undefined },

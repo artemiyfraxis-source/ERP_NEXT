@@ -150,6 +150,15 @@ def _revision(card: ProjectTechcard, reason: str, actor: Actor, now: datetime, s
     )
 
 
+def _record_revision(uow: UnitOfWork, card: ProjectTechcard, revision: TechcardRevision) -> None:
+    """A new revision of an issued ETK, and the ТД kit follows it in the same unit of work (app/workflows/td_auto.py:
+    the first issue on «Выдана», a change on a later revision; never raises)."""
+    uow.techcards.add_revision(revision)
+    from app.workflows.td_auto import on_revision  # lazy: the workflow reads this module's neighbours
+
+    on_revision(uow, card, revision.reason, revision.occurred_at)
+
+
 def _with_inputs(card: ProjectTechcard, inputs: dict[str, Any] | None) -> ProjectTechcard:
     return replace(card, inputs=deepcopy(inputs)) if isinstance(inputs, dict) else card
 
@@ -253,7 +262,7 @@ def rebuild_project_techcard(command: RebuildProjectTechcardCommand, uow: UnitOf
         updated = _with_inputs(current.rebuild(_keep_hand_route(current.document, command.document), command.now), command.inputs)
         uow.techcards.save(updated)
         if updated.revision > current.revision:
-            uow.techcards.add_revision(_revision(updated, "Пересборка", command.actor, command.now))
+            _record_revision(uow, updated, _revision(updated, "Пересборка", command.actor, command.now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=updated.id, event_type="techcards.project_rebuilt",
             actor=command.actor, occurred_at=command.now,
@@ -278,7 +287,7 @@ def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: U
         updated = _with_inputs(current.rebuild(_keep_hand_route(current.document, document), command.now), command.inputs)
         uow.techcards.save(updated)
         if updated.revision > current.revision:
-            uow.techcards.add_revision(_revision(updated, command.reason, command.actor, command.now))
+            _record_revision(uow, updated, _revision(updated, command.reason, command.actor, command.now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=updated.id, event_type="techcards.project_auto_built",
             actor=command.actor, occurred_at=command.now,
@@ -308,7 +317,7 @@ def issue_project_techcard(command: ChangeProjectTechcardCommand, uow: UnitOfWor
     with uow:
         updated = _current(command, uow).issue(command.now)
         uow.techcards.save(updated)
-        uow.techcards.add_revision(_revision(updated, "Первая выдача", command.actor, command.now))
+        _record_revision(uow, updated, _revision(updated, "Первая выдача", command.actor, command.now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=updated.id, event_type="techcards.project_issued",
             actor=command.actor, occurred_at=command.now,
@@ -420,7 +429,7 @@ def edit_project_operation(command: EditTechcardOperationCommand, uow: UnitOfWor
             reason = f"{reason} — и в шаблон"
         uow.techcards.save(updated)
         if updated.revision > current.revision:
-            uow.techcards.add_revision(_revision(updated, reason, command.actor, command.now))
+            _record_revision(uow, updated, _revision(updated, reason, command.actor, command.now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=updated.id, event_type="techcards.operation_edited",
             actor=command.actor, occurred_at=command.now,
@@ -452,7 +461,7 @@ def save_project_route(command: SaveTechcardRouteCommand, uow: UnitOfWork) -> Pr
         updated = _with_route_override(updated, _route_override(document))
         uow.techcards.save(updated)
         if issued:
-            uow.techcards.add_revision(_revision(updated, command.reason, command.actor, command.now))
+            _record_revision(uow, updated, _revision(updated, command.reason, command.actor, command.now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=updated.id, event_type="techcards.route_edited",
             actor=command.actor, occurred_at=command.now,

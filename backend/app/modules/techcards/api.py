@@ -59,6 +59,7 @@ from .domain.coax import Сторона as КоаксСторона
 from .domain.coax import построить_коакс
 from .domain.harness import Провод, Разъём, Сборка, построить
 from .etk_read import IssuedLots, card_views
+from .td_grades import reference_grades
 from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardValidationError
 from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
@@ -360,6 +361,20 @@ def _operation_norms(references_factory: Callable[[], ReferencesUnitOfWork] | No
                 "setup_seconds": str(record.fields.get("tPrep") or ""),
             }
     return norms
+
+
+def operation_grade_reference(
+    references_factory: Annotated[
+        Callable[[], ReferencesUnitOfWork] | None,
+        Depends(optional_references_uow_factory),
+    ],
+) -> dict[str, dict[str, str]]:
+    """БД.ОП by operation code → профессия и разряд комплекта ТД (td_grades.reference_grades); {} — справочника нет."""
+    if references_factory is None:
+        return {}
+    with references_factory() as references_uow:
+        records = references_uow.tech_operations.list(tab=TechOperationTab.OPERATION, query="", limit=100_000)
+    return reference_grades(record.fields for record in records)
 
 
 def _operation_card_result(

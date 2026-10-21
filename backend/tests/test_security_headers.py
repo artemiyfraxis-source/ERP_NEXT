@@ -21,3 +21,21 @@ def test_https_responses_enable_hsts():
     response = TestClient(app, base_url="https://erp.example.test").get("/api/health")
 
     assert response.headers["strict-transport-security"].startswith("max-age=31536000")
+
+
+def test_a_rejected_body_is_not_echoed_back():
+    # 21.10: a malformed login answered 422 with the submitted password in `input`.
+    import asyncio
+    import json
+
+    from fastapi.exceptions import RequestValidationError
+
+    from app.main import validation_error_without_input
+
+    error = RequestValidationError([{"type": "string_type", "loc": ("body", "login"), "msg": "Input should be a valid string",
+                                     "input": {"login": ["x"], "password": "Secret-Echo-123"}}])
+    response = asyncio.run(validation_error_without_input(None, error))
+
+    assert response.status_code == 422
+    assert "Secret-Echo-123" not in response.body.decode()
+    assert json.loads(response.body)["detail"] == [{"type": "string_type", "loc": ["body", "login"], "msg": "Input should be a valid string"}]

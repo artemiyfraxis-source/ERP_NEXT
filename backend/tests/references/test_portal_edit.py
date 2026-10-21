@@ -200,6 +200,29 @@ def _op(client, number, name="Резка"):
     })
 
 
+def test_operation_profession_and_grade_are_kept_checked_and_exported(references_api):
+    # Комплект ТД: «Профессия» / «Разряд» — ключи схемы без колонки листа; правятся, разряд — только 1–6.
+    row = _op(references_api, "PRS_TERMINAL_auto", "Опрессовка").json()
+    assert "opGrade" not in row["fields"]
+
+    saved = references_api.patch(f"/api/references/tech-operations/{row['id']}", json={"edits": [
+        {"field": "opProfession", "old": "", "value": "Монтажник РЭА"}, {"field": "opGrade", "old": "", "value": "4"},
+    ]})
+    wrong = references_api.patch(f"/api/references/tech-operations/{row['id']}", json={
+        "edits": [{"field": "opGrade", "old": "4", "value": "7"}],
+    })
+    fields = references_api.get("/api/references/import/op/file/fields").json()["fields"]
+
+    assert saved.status_code == 200, saved.text
+    assert (saved.json()["fields"]["opProfession"], saved.json()["fields"]["opGrade"]) == ("Монтажник РЭА", "4")
+    assert wrong.status_code == 422 and wrong.json()["detail"] == "Разряд — целое число от 1 до 6, а не «7»"
+    assert {"opProfession", "opGrade", "Номер"} <= set(fields)
+    created = references_api.post("/api/references/tech-operations", json={
+        "tab": "op", "fields": {"Номер": "SDR_tin", "Название": "Лужение", "opGrade": "0"},
+    })
+    assert created.status_code == 422
+
+
 def test_operation_number_is_unique_on_create_and_rename(references_api):
     first = _op(references_api, "CUT").json()
     second = _op(references_api, "STRIP", "Зачистка").json()
