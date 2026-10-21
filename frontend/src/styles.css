@@ -4878,3 +4878,13 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
   .order-fact-form { grid-template-columns: minmax(0, 1fr); }
   .order-fact-form label.wide { grid-column: auto; }
 }
+
+/* «+ Комплектующее» под «Данными из листа»: поля в порядке колонок таблицы. */
+.tcgen .kit-add { display: grid; grid-template-columns: minmax(90px, 0.7fr) minmax(140px, 2fr) minmax(120px, 1.4fr) 80px; gap: 6px; margin-top: 8px; }
+.tcgen .kit-add input.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .kit-add-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.tcgen .kit-add .error-banner { grid-column: 1 / -1; }
+.tcgen .gsec > .warning-inline, .tcgen .gsec > .error-banner { margin-top: 8px; }
+.tcgen .gtable td.nowrap { white-space: nowrap; }
+.tcgen .gtable .num .btn-remove { margin-left: 4px; width: 22px; height: 22px; vertical-align: middle; }
+@media (max-width: 720px) { .tcgen .kit-add { grid-template-columns: 1fr 1fr; } }

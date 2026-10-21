@@ -909,3 +909,42 @@ def test_a_kit_line_marked_absent_makes_the_position_short_and_is_ordered_once(k
     second = client.post("/api/techcards/kitsets/708К.4/order-missing", json={"articles": ["43025-0400"]}).json()
     assert second["created"] == []
     assert second["skipped"][0]["kind"] == "уже в закупке"
+
+
+def test_technologist_adds_a_component_that_goes_into_the_kit_and_survives_refresh(kitset_api):
+    """Владелец 21.10.2026: технолог добавляет комплектующее в генераторе — оно само встаёт в комплектацию."""
+    client, _lot = kitset_api
+    _load(client)
+    url = "/api/techcards/kitsets/708К.4/bom/КБ1/components"
+    added = client.post(url, json={"type": "ТТК", "art": "ТТК 4,8/1,6мм", "name": "Трубка ТТК 4,8/1,6", "per": "0,04"})
+    assert added.status_code == 200, added.text
+    assert added.json()["note"] == ""
+    row = added.json()["bom"]["components"][-1]
+    assert (row["art"], row["type"], row["qty"], row["manual"]) == ("ТТК 4,8/1,6мм", "ТТК", "0.04", True)
+    assert not any(item.get("manual") for item in added.json()["bom"]["components"][:-1])
+
+    assert client.post(url, json={"art": "ТТК 4,8/1,6мм", "per": "1"}).status_code == 422
+    assert client.post(url, json={"art": "Лента", "per": "0"}).status_code == 422
+    assert client.post("/api/techcards/kitsets/708К.4/bom/КБ9/components", json={"art": "Лента", "per": "1"}).status_code == 422
+
+    assert _load(client, number="708К.4").status_code == 200
+    card = client.get("/api/techcards/kitsets/708К.4").json()
+    assert "ТТК 4,8/1,6мм" in [item["art"] for item in card["assemblies"][0]["components"]]
+
+    assert client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"}).status_code == 200
+    with app.state.fulfillment_uow_factory() as uow:
+        kb1 = next(request for request in uow.fulfillment.list(limit=10) if "КБ1" in request.purpose)
+    assert "Трубка ТТК 4,8/1,6" in [line.name for line in kb1.lines]
+
+    late = client.post(url, json={"art": "Лента тканевая 19мм", "per": "0,9"})
+    assert late.status_code == 200, late.text
+    assert late.json()["note"].startswith("КБ1 уже отправлена на комплектацию")
+
+    remove = f"{url}/remove"
+    assert client.post(remove, json={"art": "UL1007 22AWG"}).status_code == 422  # строка расчёта
+    removed = client.post(remove, json={"art": "Лента тканевая 19мм"})
+    assert removed.status_code == 200, removed.text
+    assert "Лента тканевая 19мм" not in [item["art"] for item in removed.json()["bom"]["components"]]
+
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "view", "tcgen": "view"})
+    assert client.post(url, json={"art": "Лента", "per": "1"}).status_code == 403

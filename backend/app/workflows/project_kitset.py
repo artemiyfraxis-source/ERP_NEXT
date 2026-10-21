@@ -282,12 +282,14 @@ def generator_bom(kitset: Kitset, assembly: KitAssembly, calc_ops: list[dict[str
     `calc_ops` — строки листа КБn расчёта (`calc_ops_by_link`). Тот же ответ читает пакетная генерация."""
     components = []
     for position, component in enumerate(assembly.components):
-        use = kit_article(component.article, component.name)
+        # Строку технолога вводят артикулом к применению: её название — не замена провода сметчиком.
+        use = {"art": component.article, "kd": ""} if component.manual else kit_article(component.article, component.name)
         components.append({
             "id": f"kit-{position}", "type": component.type,
             "name": use["art"] if use["kd"] else (component.name or component.article),
             "art": use["art"], "kd": use["kd"], "qty": kit_number_payload(component.per_unit or Decimal("1")),
             "scrap": kit_number_payload(component.scrap_pct / 100),
+            **({"manual": True} if component.manual else {}),
         })
     return {
         "project": kitset.project, "index": assembly.index, "name": assembly.name,
