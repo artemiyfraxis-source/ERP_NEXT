@@ -33,6 +33,8 @@ ROWS = 6
 _CHECK_IN = re.compile(r"(\w+).*?'([^']*)'", re.DOTALL)
 _IN_LIST = re.compile(r"\bIN\s*\(|=\s*ANY\s*\(", re.IGNORECASE)
 _CHECK_NULL_OR = re.compile(r"\s*\(*\s*(\w+)\s+IS\s+NULL\s*\)?\s+OR\b", re.IGNORECASE)
+# A one-value `IN ('kaiten')`: PostgreSQL keeps it as `((source)::text = 'kaiten'::text)` — the whole CHECK is one equality.
+_CHECK_EQ = re.compile(r"^\(*\s*\(?(\w+)\)?(?:::[\w ]+)?\s*=\s*'([^']*)'(?:::[\w ]+)?\s*\)*\s*$", re.DOTALL)
 # `(tab = 'prov' AND cable_kind IN (…)) OR (tab <> 'prov' AND cable_kind IS NULL)` (0131): the column stays empty on a
 # row of any other value of the first column (the seeder never picks the one value that needs it).
 _CHECK_NULL_BRANCH = re.compile(r"\bOR\b.*?<>.*?\bAND\s*\(?\s*(\w+)\s+IS\s+NULL", re.IGNORECASE | re.DOTALL)
@@ -96,6 +98,10 @@ def _check_values(connection: Connection, metadata: MetaData) -> dict[tuple[str,
             match = _CHECK_IN.search(text)
             if match and match.group(1) in table.c and _IN_LIST.search(text):
                 found[(table.name, match.group(1))] = match.group(2)
+                continue
+            equal = _CHECK_EQ.match(text)
+            if equal and equal.group(1) in table.c:
+                found[(table.name, equal.group(1))] = equal.group(2)
     return found
 
 
