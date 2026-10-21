@@ -8,10 +8,11 @@ JSON-ready dicts (Decimals as strings)."""
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -24,12 +25,15 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from . import settings as purchasing_settings
+from .decision_reasons import GATE_OVERRIDE_REASONS, NOT_CHEAPEST_REASONS, ReasonError, reason_text
 from .suppliers import supplier_key
 from .infrastructure import (
     ITEM_CATEGORIES,
     RFQ_SUPPLIER_REASONS,
     DecisionRow,
+    DocumentFileRow,
     ItemRow,
+    RfqDeclinedSuggestionRow,
     LineItemRow,
     QuoteLineRow,
     QuoteRow,
@@ -52,6 +56,7 @@ from .offers import (
     current_offers,
     delta_pct,
     gate_status,
+    gross_unit,
     normalize_decision,
     read_tiers,
 )
@@ -114,6 +119,12 @@ class LineView:
     actual_unit: str | None = None
     project: str | None = None  # ПРОЕКТ as written (the client shows an internal project by its label)
     item_type: str | None = None  # ТИП — the nomenclature category guess falls back to it
+    designation: str | None = None  # НАЗНАЧЕНИЕ of the request line
+    delivery_point: str | None = None  # ТОЧКА ОТГРУЗКИ: the invoice-request letter's delivery address
+    link: str | None = None  # ССЫЛКА: where the calculation found its price («План» links to it)
+    manufacturer: str | None = None  # ИЗГОТОВИТЕЛЬ the buyer wrote on the line
+    order_number: str | None = None  # № ЗАКАЗА once the supplier request is formed
+    invoice_number: str | None = None  # № СЧЕТА once the invoice is in
 
 
 class ProcurementLines(Protocol):
@@ -295,12 +306,18 @@ def stored_reason(reason: str) -> str:
 
 def create_rfq(
     uow: UnitOfWork, lines: ProcurementLines, actor: Actor, now: datetime, line_ids: Sequence[UUID], title: str | None,
-    suppliers: Sequence[SupplierPick] = (),
+    suppliers: Sequence[SupplierPick] = (), sent_on: date | None = None, declined: Sequence[UUID] = (),
 ) -> dict:
-    """The request with its lines and, in the same transaction, the suppliers picked from the suggestion."""
+    """The request with its lines and, in the same transaction, the suppliers picked from the suggestion.
+
+    `sent_on` — the request already went out that day (Roller RfqCreatePanel «Дата отправки»): every supplier is marked
+    sent; omitted — each is marked when his letter is used. `declined` — rotation suggestions the buyer unticked: kept
+    on record (Roller declinedSuggestion), not asked."""
     ids = list(dict.fromkeys(line_ids))
     if not ids:
         raise Refused("Выберите строки для запроса")
+    if sent_on is not None and (sent_on > _today(now) or sent_on < _today(now) - timedelta(days=60)):
+        raise Refused("Дата отправки — не позже сегодняшней и не раньше чем за 60 дней")
     views = lines.get_many(ids)
     for line_id in ids:
         view = views.get(line_id)
@@ -353,15 +370,28 @@ def create_rfq(
             else:
                 added[supplier.id] = (reason, asked)
         session.flush()
+        sent_at = None
+        if sent_on is not None:
+            sent_at = now if sent_on == _today(now) else datetime.combine(sent_on, time(12), now.tzinfo)
+        refused = list(dict.fromkeys(declined))
+        if set(refused) & set(added):
+            raise Refused("Поставщик не может быть одновременно в запросе и в отказе от подсказки")
+        for supplier_id in refused:
+            row = session.get(SupplierRow, supplier_id)
+            if row is None:
+                raise NotFound("Поставщик не найден")
+            session.add(RfqDeclinedSuggestionRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier_id, reason="rotation",
+                                                 created_at=now, created_by=actor.id))
         everything = set(rfq_line_of.values())
         for supplier_id, (reason, asked) in added.items():
-            rfq_supplier = RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier_id, reason=reason, created_at=now)
+            rfq_supplier = RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier_id, reason=reason, sent_at=sent_at,
+                                          created_at=now)
             session.add(rfq_supplier)
             if asked is not None and not asked >= everything:
                 session.flush()
                 _ask_for(session, rfq_supplier.id, asked, everything)
         _audit(uow, rfq.id, "purchasing.rfq_created", actor, now,
-               {"number": rfq.number, "lines": str(len(ids)), "suppliers": str(len(added))})
+               {"number": rfq.number, "lines": str(len(ids)), "suppliers": str(len(added)), "declined": str(len(refused))})
         uow.commit()
         return {"id": str(rfq.id), "number": rfq.number, "suppliers": len(added)}
 
@@ -691,10 +721,43 @@ def line_offers(session: Session, rfq_id: UUID, lines: dict[UUID, RfqLineRow], v
     return {line_id: [entry.offer for entry in found] for line_id, found in _entries(session, rfq_id, lines, valid_days).items()}
 
 
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def first_email(text: str | None) -> str | None:
+    """The address to write to: the first e-mail in the card's field (it may hold several, or a name with it)."""
+    found = EMAIL.search(text or "")
+    return found.group(0) if found else None
+
+
+def _terms(line: QuoteLineRow, cover_quantity: Decimal | None, budget: Decimal | None, gross: Decimal | None) -> dict:
+    """How the seller sells it, for the matrix (RB renderOfferCell): the base price and every break with VAT, the break
+    the bought quantity falls into, the packs it takes, the gap to the plan."""
+    tiers = read_tiers(line.tiers)
+    vat = Decimal(line.vat_rate)
+    applied = None
+    if cover_quantity is not None:
+        applied = next((tier for tier in reversed(tiers) if tier.from_quantity <= cover_quantity), None)
+    packs = None
+    if line.pack and cover_quantity is not None and applied is None and line.pack > 0:
+        count = cover_quantity / line.pack
+        packs = count if count == count.to_integral_value() else None
+    return {
+        "base_gross": num(gross_unit(line.unit_price, line.vat_included, vat)) if line.unit_price is not None else None,
+        "tiers_gross": [{"from": num(tier.from_quantity), "gross": num(gross_unit(tier.price, line.vat_included, vat))}
+                        for tier in tiers],
+        "applied_from": num(applied.from_quantity) if applied else None,
+        "packs": num(packs),
+        "plan_pct": num(delta_pct(gross, budget)),
+    }
+
+
 def _cell(entry: _Entry, *, current: bool, best: Offer | None, base: Offer | None, decision: DecisionRow | None,
-          requires: list[str]) -> dict:
+          requires: list[str], budget: Decimal | None = None) -> dict:
     line, quote, offer = entry.line, entry.quote, entry.offer
     return {
+        **_terms(line, entry.cover_quantity, budget, offer.gross_unit),
+        "quote_number": quote.number,
         "asked": True,
         "quote_line_id": str(line.id), "quote_id": str(quote.id),
         "received_on": quote.received_on.isoformat(),
@@ -720,8 +783,34 @@ def _decision_result(decision: DecisionRow, supplier_id: UUID | None) -> dict:
         "cheapest_unit_gross": num(decision.cheapest_unit_gross), "priced_quotes": decision.priced_quotes,
         "gate_override_reason": decision.gate_override_reason, "not_cheapest_reason": decision.not_cheapest_reason,
         "analog_approved_by": decision.analog_approved_by,
+        "gate_override_code": decision.gate_override_code, "not_cheapest_code": decision.not_cheapest_code,
         "decided_at": decision.decided_at.isoformat(), "applied_at": decision.applied_at.isoformat() if decision.applied_at else None,
     }
+
+
+CANCELLED = "Отменено"  # ProcurementStatus.CANCELLED as LineView carries it
+REMOVED_REASONS = {"new": "в новые", "requote": "перезапрос"}
+
+
+def _removed_lines(session: Session, lines: ProcurementLines, rfq_id: UUID) -> list[dict]:
+    """Lines taken out of the request (newest first), for «показать убранные»: why, when and who answered what."""
+    rows = list(session.scalars(
+        select(RfqLineRow).where(RfqLineRow.rfq_id == rfq_id, RfqLineRow.removed_at.is_not(None))
+        .order_by(RfqLineRow.removed_at.desc(), RfqLineRow.name)
+    ))
+    views = lines.get_many([row.procurement_line_id for row in rows]) if rows else {}
+    return [
+        {
+            "id": str(row.id), "procurement_line_id": str(row.procurement_line_id),
+            "legacy_id": views[row.procurement_line_id].legacy_id if row.procurement_line_id in views else None,
+            "name": row.name, "article": row.article, "quantity": num(Decimal(row.quantity)), "unit": row.unit,
+            "removed_at": row.removed_at.isoformat() if row.removed_at else None,
+            # NULL — closed with the request: «Перезапрос» as before (CONTRACTS.md).
+            "reason": row.removed_reason or "requote", "reason_label": REMOVED_REASONS.get(row.removed_reason or "requote"),
+            "note": row.removed_note,
+        }
+        for row in rows
+    ]
 
 
 def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID, today: date) -> dict:
@@ -753,6 +842,10 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
             for row in session.scalars(select(DecisionRow).where(DecisionRow.rfq_line_id.in_(list(by_id))))
         } if by_id else {}
         views = lines.get_many([line.procurement_line_id for line in rfq_lines])
+        item_ids = [line.item_id for line in rfq_lines if line.item_id]
+        manufacturers = dict(session.execute(
+            select(ItemRow.id, ItemRow.manufacturer).where(ItemRow.id.in_(item_ids))).all()) if item_ids else {}
+        delivery_default = Decimal(values["delivery_default"])
         supplier_of_quote_line = {entry.line.id: entry.quote.supplier_id for found in entries.values() for entry in found}
         used_quotes = {
             entry.quote.id for line_id, found in entries.items() for entry in found
@@ -790,15 +883,21 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
                     )
                 ] if live is not None and live.offer.priced else []
                 cells[str(supplier.id)] = _cell(shown, current=live is not None, best=best, base=base, decision=decision,
-                                                requires=requires)
+                                                requires=requires, budget=line.budget_unit_gross)
             view = views.get(line.procurement_line_id)
             price = decision.unit_gross if decision is not None else (best.gross_unit if best else None)
             line_results.append({
                 "id": str(line.id), "procurement_line_id": str(line.procurement_line_id),
                 "legacy_id": view.legacy_id if view else None, "status": view.status if view else None,
                 "version": view.version if view else None, "editable": bool(view and view.editable),
+                # The procurement line was cancelled (Заявки / «Отменить» here): not asked any more, shown struck.
+                "cancelled": bool(view and view.status == CANCELLED),
                 "name": line.name, "article": line.article, "quantity": num(Decimal(line.quantity)), "unit": line.unit,
                 "need_by": line.need_by.isoformat() if line.need_by else None,
+                "project": view.project if view else None, "designation": view.designation if view else None,
+                "item_type": view.item_type if view else None,
+                "manufacturer": (manufacturers.get(line.item_id) if line.item_id else None) or (view.manufacturer if view else None),
+                "plan_supplier": view.supplier if view else None, "plan_link": view.link if view else None,
                 "budget_unit_gross": num(line.budget_unit_gross),
                 "delta_pct": num(delta_pct(price, line.budget_unit_gross)),
                 "gate": {"priced": gate.priced, "required": gate.required, "has_non_key": gate.has_non_key,
@@ -821,7 +920,8 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
             terms = latest_terms.get(supplier.id)
             delivery = terms.delivery_cost if terms else None
             minimum = terms.min_order_sum if terms else None
-            basket = sum(totals, Decimal(0)) + (delivery or 0) if totals else None
+            # A delivery the quote does not name costs the settings' constant: nothing comes for free (RB rfq-matrix).
+            basket = sum(totals, Decimal(0)) + (delivery if delivery is not None else delivery_default) if totals else None
             chosen = sum(
                 (decision.total_gross for decision in decisions.values()
                  if supplier_of_quote_line.get(decision.quote_line_id) == supplier.id),
@@ -835,14 +935,15 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
                     warning = f"Даже всё у него — меньше минимального заказа {num(minimum)} ₽"
             supplier_results.append({
                 "supplier_id": str(supplier.id), "name": supplier.name, "is_key": supplier.is_key,
-                "reason": rfq_supplier.reason,
+                "reason": rfq_supplier.reason, "email": first_email(supplier.email),
+                "contact_person": supplier.contact_person, "phone": supplier.phone, "site": supplier.site,
                 "line_ids": None if asked_of[supplier.id] is None
                 else [str(line.id) for line in rfq_lines if line.id in asked_of[supplier.id]],
                 "sent_at": rfq_supplier.sent_at.isoformat() if rfq_supplier.sent_at else None,
                 "declined_at": rfq_supplier.declined_at.isoformat() if rfq_supplier.declined_at else None,
                 "decline_note": rfq_supplier.decline_note,
                 "answered": terms is not None,
-                "delivery_cost": num(delivery), "min_order_sum": num(minimum),
+                "delivery_cost": num(delivery), "min_order_sum": num(minimum), "delivery_known": delivery is not None,
                 "basket_total": num(basket), "basket_lines": len(totals), "chosen_total": num(chosen) if chosen else None,
                 "min_order_warning": warning,
             })
@@ -850,9 +951,20 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
             "rfq": {
                 "id": str(rfq.id), "number": rfq.number, "title": rfq.title, "created_at": rfq.created_at.isoformat(),
                 "closed_at": rfq.closed_at.isoformat() if rfq.closed_at else None, "mine": rfq.buyer_id == actor.id,
+                "note": rfq.note, "version": rfq.version,
             },
+            "removed": _removed_lines(session, lines, rfq.id),
+            # Rotation suggestions unticked when the request was created: offered a turn, not asked.
+            "declined_suggestions": [
+                {"supplier_id": str(supplier.id), "name": supplier.name}
+                for supplier in session.scalars(
+                    select(SupplierRow).join(RfqDeclinedSuggestionRow, RfqDeclinedSuggestionRow.supplier_id == SupplierRow.id)
+                    .where(RfqDeclinedSuggestionRow.rfq_id == rfq.id).order_by(SupplierRow.name))
+                if supplier.id not in {pair[1].id for pair in suppliers}
+            ],
             "settings": {"gate_min_quotes": min_quotes, "gate_require_non_key": require_non_key,
-                         "default_vat_rate": num(Decimal(values["default_vat_rate"]))},
+                         "default_vat_rate": num(Decimal(values["default_vat_rate"])),
+                         "quote_wait_days": int(values["quote_wait_days"]), "delivery_default": num(delivery_default)},
             "suppliers": supplier_results,
             "lines": line_results,
             "quotes": [
@@ -861,7 +973,8 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
                     "received_on": quote.received_on.isoformat(),
                     "valid_until": quote.valid_until.isoformat() if quote.valid_until else None,
                     "delivery_cost": num(quote.delivery_cost), "min_order_sum": num(quote.min_order_sum),
-                    "source": quote.source, "used": quote.id in used_quotes,
+                    "source": quote.source, "used": quote.id in used_quotes, "number": quote.number, "note": quote.note,
+                    "has_file": quote.file_id is not None,
                 }
                 for quote in quotes
             ],
@@ -897,6 +1010,9 @@ class QuoteInput:
     min_order_sum: Decimal | None = None
     source: str = "manual"
     note: str | None = None
+    number: str | None = None  # «Номер КП» as the supplier wrote it
+    file_name: str | None = None  # the PDF the quote came in, kept with it (purchasing_document_files)
+    file_content: bytes | None = None
 
 
 def _positive(value: Decimal | None, label: str) -> Decimal | None:
@@ -961,13 +1077,21 @@ def add_quote(uow: UnitOfWork, actor: Actor, now: datetime, rfq_id: UUID, data: 
                 in_stock=item.in_stock, declined=item.declined, analog=item.analog,
                 analog_note=((item.analog_note or "").strip()[:512] or None) if item.analog else None,
             ))
+        # A supplier who answers without being asked still counts as asked (Roller routes/rfqs.ts): in the request, sent
+        # no later than his answer.
+        answered_at = now if received_on >= _today(now) else datetime.combine(received_on, time(12), now.tzinfo)
         if rfq_supplier is None:
-            session.add(RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier.id, reason="manual", created_at=now))
+            session.add(RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier.id, reason="manual",
+                                       sent_at=answered_at, created_at=now))
+        elif rfq_supplier.sent_at is None:
+            rfq_supplier.sent_at = answered_at
+        stored = _stored_pdf(session, data.file_name, data.file_content, now) if data.file_content else None
         session.add(QuoteRow(
             id=quote_id, rfq_id=rfq.id, supplier_id=supplier.id, supplier_is_key=supplier.is_key,
             received_on=received_on, valid_until=data.valid_until, currency="RUB", delivery_cost=data.delivery_cost,
             min_order_sum=data.min_order_sum, source=data.source, note=(data.note or "").strip() or None,
-            created_at=now, created_by=actor.id,
+            number=" ".join((data.number or "").split())[:64] or None, created_at=now, created_by=actor.id,
+            file_id=stored.id if stored else None, file_name=stored.file_name[:255] if stored else None,
         ))
         session.flush()
         session.add_all(rows)
@@ -975,6 +1099,39 @@ def add_quote(uow: UnitOfWork, actor: Actor, now: datetime, rfq_id: UUID, data: 
                {"number": rfq.number, "supplier": supplier.name, "lines": str(len(rows))})
         uow.commit()
         return {"id": str(quote_id)}
+
+
+QUOTE_PDF_LIMIT = 20 * 1024 * 1024
+
+
+def _stored_pdf(session: Session, name: str | None, content: bytes, now: datetime) -> DocumentFileRow:
+    """The quote's PDF in the ERP's document files: one row per distinct content (the same file twice is kept once)."""
+    if len(content) > QUOTE_PDF_LIMIT:
+        raise Refused("PDF больше 20 МБ")
+    if b"%PDF" not in content[:1024]:
+        raise Refused("К КП прикладывается только PDF")
+    digest = hashlib.sha256(content).hexdigest()
+    found = session.scalar(select(DocumentFileRow).where(DocumentFileRow.sha256 == digest))
+    if found is not None:
+        return found
+    clean = " ".join((name or "").split()) or "КП.pdf"
+    row = DocumentFileRow(id=uuid4(), sha256=digest, file_name=clean[:1024], size=len(content), content=content, created_at=now)
+    session.add(row)
+    session.flush()
+    return row
+
+
+def quote_file(uow: UnitOfWork, quote_id: UUID) -> tuple[bytes, str]:
+    """The PDF a quote came in."""
+    with uow:
+        session = _session(uow)
+        quote = session.get(QuoteRow, quote_id)
+        if quote is None or quote.file_id is None:
+            raise NotFound("У этого КП нет файла")
+        row = session.get(DocumentFileRow, quote.file_id)
+        if row is None:
+            raise NotFound("У этого КП нет файла")
+        return bytes(row.content), quote.file_name or row.file_name
 
 
 def delete_quote(uow: UnitOfWork, actor: Actor, now: datetime, quote_id: UUID) -> None:
@@ -1254,46 +1411,99 @@ class DecisionInput:
     gate_override_reason: str | None = None
     not_cheapest_reason: str | None = None
     analog_approved_by: str | None = None
+    # Roller's fixed lists (decision_reasons.py): a code wins over the free text; «other» carries the buyer's words.
+    gate_override_code: str | None = None
+    gate_override_note: str | None = None
+    not_cheapest_code: str | None = None
+    not_cheapest_note: str | None = None
+
+    def reasons(self) -> tuple[Reasons, str | None, str | None]:
+        """The texts the rules check and the codes behind them."""
+        try:
+            gate = reason_text(self.gate_override_code, self.gate_override_note, GATE_OVERRIDE_REASONS, "Причина обхода")
+            pricier = reason_text(self.not_cheapest_code, self.not_cheapest_note, NOT_CHEAPEST_REASONS,
+                                  "Почему не самое дешёвое")
+        except ReasonError as error:
+            raise Refused(str(error)) from error
+        return (
+            Reasons(gate if self.gate_override_code else self.gate_override_reason,
+                    pricier if self.not_cheapest_code else self.not_cheapest_reason, self.analog_approved_by),
+            self.gate_override_code or None, self.not_cheapest_code or None,
+        )
+
+
+@dataclass(frozen=True)
+class CheckedPick:
+    """A choice that passed every check: what decide() writes."""
+
+    line: RfqLineRow
+    quote_line: QuoteLineRow
+    view: LineView
+    entries: list[_Entry]
+    reasons: Reasons
+    gate_code: str | None
+    pricier_code: str | None
+
+
+def _rules(values: dict, today: date) -> dict:
+    return {"today": today, "min_quotes": int(values["gate_min_quotes"]),
+            "require_non_key": bool(values["gate_require_non_key"])}
+
+
+def check_pick(session: Session, lines: ProcurementLines, actor: Actor, rfq: RfqRow, data: DecisionInput,
+               values: dict, today: date, views: dict[UUID, LineView] | None = None) -> CheckedPick:
+    """Every rule of a choice, nothing written: the line, the offer, the buyer, the stage, the gate and the reasons."""
+    line = session.get(RfqLineRow, data.rfq_line_id)
+    if line is None or line.rfq_id != rfq.id or line.removed_at is not None:
+        raise NotFound("Строки нет в этом запросе")
+    quote_line = session.get(QuoteLineRow, data.quote_line_id)
+    if quote_line is None or quote_line.rfq_line_id != line.id:
+        raise Refused("Это КП не относится к строке запроса")
+    if session.scalar(select(DecisionRow.id).where(DecisionRow.rfq_line_id == line.id)) is not None:
+        raise Conflict("По строке уже есть решение — сначала отмените его")
+    view = (views if views is not None else lines.get_many([line.procurement_line_id])).get(line.procurement_line_id)
+    if view is None:
+        raise Refused("Строка закупки не найдена")
+    if view.buyer_id != actor.id:
+        raise Forbidden("Поставщика выбирает только закупщик строки")
+    if not view.editable:
+        raise Refused(f"{view.legacy_id} уже «{view.status}» — поставщик в строку не пишется")
+    if data.expected_version is not None and data.expected_version != view.version:
+        raise LineChanged("Строку закупки изменили — обновите")
+    rules = _rules(values, today)
+    entries = _entries(session, rfq.id, {line.id: line}, int(values["quote_valid_days"]))[line.id]
+    offers = [entry.offer for entry in entries]
+    asked, gate_code, pricier_code = data.reasons()
+    violations = check_decision(offers, quote_line.id, reasons=asked, **rules)
+    if violations:
+        raise Refused(" ".join(violation.message for violation in violations), violations)
+    reasons = normalize_decision(offers, quote_line.id, reasons=asked, **rules)
+    return CheckedPick(
+        line, quote_line, view, entries, reasons,
+        gate_code if reasons.gate_override_reason else None, pricier_code if reasons.not_cheapest_reason else None,
+    )
 
 
 def decide(
     uow: UnitOfWork, lines: ProcurementLines, actor: Actor, now: datetime, rfq_id: UUID, data: DecisionInput,
+    today: date | None = None,
 ) -> dict:
-    """check_decision → the decision with its snapshots (baseline, cheapest, priced quotes) → the procurement line's
+    """check_pick → the decision with its snapshots (baseline, cheapest, priced quotes) → the procurement line's
     ПОСТАВЩИК / КОЛ-ВО / ЕД.ИЗМ (факт) through the bridge, with the line's version → applied_at.
 
     Nothing is written to the purchasing tables before procurement accepts the facts; if the decision then fails to
-    save, the facts stay — a retry of the same choice writes nothing new there (the save is idempotent)."""
-    today = _today(now)
+    save, the facts stay — a retry of the same choice writes nothing new there (the save is idempotent).
+
+    `today` — the day the rules see the offers on (a choice made from an invoice is made on the invoice's day)."""
+    today = today or _today(now)
     with uow:
         session = _session(uow)
         rfq = _open(_own(_rfq(session, rfq_id), actor))
-        line = session.get(RfqLineRow, data.rfq_line_id)
-        if line is None or line.rfq_id != rfq.id or line.removed_at is not None:
-            raise NotFound("Строки нет в этом запросе")
-        quote_line = session.get(QuoteLineRow, data.quote_line_id)
-        if quote_line is None or quote_line.rfq_line_id != line.id:
-            raise Refused("Это КП не относится к строке запроса")
-        if session.scalar(select(DecisionRow.id).where(DecisionRow.rfq_line_id == line.id)) is not None:
-            raise Conflict("По строке уже есть решение — сначала отмените его")
-        view = lines.get_many([line.procurement_line_id]).get(line.procurement_line_id)
-        if view is None:
-            raise Refused("Строка закупки не найдена")
-        if view.buyer_id != actor.id:
-            raise Forbidden("Поставщика выбирает только закупщик строки")
-        if not view.editable:
-            raise Refused(f"{view.legacy_id} уже «{view.status}» — поставщик в строку не пишется")
         values = purchasing_settings.load(session)
-        rules = {"today": today, "min_quotes": int(values["gate_min_quotes"]),
-                 "require_non_key": bool(values["gate_require_non_key"])}
-        entries = _entries(session, rfq.id, {line.id: line}, int(values["quote_valid_days"]))[line.id]
-        offers = [entry.offer for entry in entries]
-        asked = Reasons(data.gate_override_reason, data.not_cheapest_reason, data.analog_approved_by)
-        violations = check_decision(offers, quote_line.id, reasons=asked, **rules)
-        if violations:
-            raise Refused(" ".join(violation.message for violation in violations), violations)
-        reasons = normalize_decision(offers, quote_line.id, reasons=asked, **rules)
-        current = current_offers(offers, today)
+        checked = check_pick(session, lines, actor, rfq, replace(data, expected_version=None), values, today)
+        line, quote_line, view, entries, reasons = checked.line, checked.quote_line, checked.view, checked.entries, checked.reasons
+        rules = _rules(values, today)
+        current = current_offers([entry.offer for entry in entries], today)
         best, base = cheapest(current), baseline(current)
         gate = gate_status(current, rules["min_quotes"], rules["require_non_key"])
         chosen = next(entry for entry in entries if entry.line.id == quote_line.id)
@@ -1309,6 +1519,7 @@ def decide(
             baseline_unit_gross=base.gross_unit if base else None, cheapest_unit_gross=best.gross_unit if best else None,
             priced_quotes=gate.priced, gate_override_reason=reasons.gate_override_reason,
             not_cheapest_reason=reasons.not_cheapest_reason, analog_approved_by=reasons.analog_approved_by,
+            gate_override_code=checked.gate_code, not_cheapest_code=checked.pricier_code,
             decided_at=now, decided_by=actor.id, applied_at=now,
         )
         session.add(decision)

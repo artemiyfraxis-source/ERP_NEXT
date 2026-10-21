@@ -31,6 +31,7 @@ import { PurchasingInvoices } from "./PurchasingInvoices";
 import { PurchasingItems } from "./PurchasingItems";
 import { PurchasingOrders } from "./PurchasingOrders";
 import { PurchasingRfq } from "./PurchasingRfq";
+import { openRfq } from "./rfqLinks";
 import { PurchasingSettings } from "./PurchasingSettings";
 import { PurchasingSuppliers } from "./PurchasingSuppliers";
 import { PurchasingUpd } from "./PurchasingUpd";
@@ -175,8 +176,6 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
     upd: updOn, invoices: chainOn, chain: chainOn, docsearch: chainOn,
   };
   const [picked, setPicked] = useState<ProcurementTab | null>(initialTab);
-  // `&tab=rfq&rfq=<id>` (CONTRACTS.md; «Сегодня», «Заявки») or an in-page link → the request to open in «Запросы КП».
-  const [rfqFocus, setRfqFocus] = useState<string | undefined>(() => (urlParam("tab") === "rfq" && urlParam("rfq")) || undefined);
   // Своих и свободных позиций нет — очереди пусты: первым открывается «Весь лист», а не пустой экран (аудит 10.10, СН-1).
   const [autoOpened, setAutoOpened] = useState(false);
   const pickedByHand = useRef(picked !== null); // a tab from the URL counts as chosen by hand
@@ -225,8 +224,8 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
       {tab === "today" && <ProcurementToday ordersOn={ordersOn} />}
       {tab === "requests" && <ProcurementRequests readOnly={readOnly} />}
       {tab === "kpi" && <ProcurementKpi />}
-      {tab === "rfq" && <PurchasingRfq readOnly={readOnly} focusId={rfqFocus} />}
-      {tab === "orders" && <PurchasingOrders readOnly={readOnly} onOpenUpd={openUpd} onOpenRfq={rfqOn ? (id) => { setRfqFocus(id); pick("rfq"); } : undefined} />}
+      {tab === "rfq" && <PurchasingRfq readOnly={readOnly} />}
+      {tab === "orders" && <PurchasingOrders readOnly={readOnly} onOpenUpd={openUpd} onOpenRfq={rfqOn ? (id) => openRfq(id) : undefined} />}
       {tab === "directory" && <PurchasingSuppliers readOnly={readOnly} onOpenUpd={openUpd} />}
       {tab === "items" && <PurchasingItems readOnly={readOnly} onOpenUpd={openUpd} />}
       {tab === "catalog" && <PurchasingCatalog readOnly={readOnly} onOpenUpd={openUpd} />}

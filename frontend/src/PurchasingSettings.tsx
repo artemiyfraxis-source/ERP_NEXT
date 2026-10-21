@@ -57,7 +57,8 @@ export function PurchasingSettings({ readOnly = false }: { readOnly?: boolean } 
       for (const row of rows) {
         const value = draft[row.key];
         if (value === undefined) continue;
-        changes[row.key] = typeof value === "boolean" || Array.isArray(value) ? value : value.trim().replace(",", ".");
+        changes[row.key] = typeof value === "boolean" || Array.isArray(value) ? value
+          : row.kind === "text" ? value : value.trim().replace(",", ".");
       }
       setRows(await purchasingDirectoryApi.saveSettings(changes));
       setDraft({});
@@ -107,7 +108,12 @@ export function PurchasingSettings({ readOnly = false }: { readOnly?: boolean } 
             <div className="purchasing-setting" key={row.key}>
               <label>
                 <span>{row.label}</span>
-                {row.kind === "bool" ? (
+                {row.kind === "text" ? (
+                  <textarea
+                    aria-label={row.label} rows={3} value={String(current(row))} disabled={!canEdit} maxLength={1000}
+                    onChange={(event) => setDraft({ ...draft, [row.key]: event.target.value })}
+                  />
+                ) : row.kind === "bool" ? (
                   <input
                     type="checkbox"
                     aria-label={row.label}
@@ -130,7 +136,7 @@ export function PurchasingSettings({ readOnly = false }: { readOnly?: boolean } 
                 )}
               </label>
               <p className="page-sub">{row.hint}</p>
-              <span className="purchasing-setting-default">по умолчанию: {shown(row.default)}</span>
+              {row.kind !== "text" && <span className="purchasing-setting-default">по умолчанию: {shown(row.default)}</span>}
             </div>
           ))}
           {canEdit && (
