@@ -17,9 +17,15 @@ export function esc(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 
-/** Внутренние коды видов операций («CUT_WIRE_auto», «CUT_WIRE+1crimp») в печать не попадают. */
+// Коды операций БД.ОП («CUT_WIRE_auto», «CUT_WIRE+1crimp», «INS_terminal_2,54-6,3»). Только эти семейства: слово с «_»
+// из наименования по КД заказчика («…100mm LED_STRIP») — часть наименования, его печатаем как есть.
+const OP_FAMILY = "(?:CUT|STRIP|PRS|SDR|HEAT|INS|MOLD|OTK|TWIST|TWST|US|PREP|LASER|PRINT|BOX|BUY)";
+const TEMPLATE_PREFIX = new RegExp(`^\\s*${OP_FAMILY}(?:_[^|]*|\\+[^|]*)?\\s*\\|\\s*`);
+const OP_CODE = new RegExp(`\\b${OP_FAMILY}_[A-Za-z0-9_,./-]*(?:\\+[A-Za-z0-9_]+)*`, "g");
+
+/** Внутренние коды видов операций в печать не попадают: префикс названия шаблона «КОД | …» и коды БД.ОП в тексте. */
 export function cleanCodes(value: string): string {
-  return value.replace(/\b[A-Za-z]+_[A-Za-z0-9_]*(\+[A-Za-z0-9_]+)*/g, "").replace(/^[\s|·—-]+/, "").replace(/[ \t]{2,}/g, " ").trim();
+  return value.replace(TEMPLATE_PREFIX, "").replace(OP_CODE, "").replace(/^[\s|·—-]+/, "").replace(/[ \t]{2,}/g, " ").trim();
 }
 
 function text(value: unknown): string { return value == null ? "" : String(value); }
