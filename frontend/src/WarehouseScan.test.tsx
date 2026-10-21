@@ -44,7 +44,7 @@ function stage(on: boolean | string[], routes: Record<string, (call: Call) => Re
       return json({ available: true, options: ["warehouse.scan", "warehouse.undo"].map((key) => (
         { key, block: "Склад", title: "t", before: "", after: "", enabled: enabled.includes(key) })) });
     }
-    if (call.path === "/api/stock" && call.method === "GET") return json({ lots: [lot, other], total: 2, truncated: 0, next_cursor: null });
+    if (call.path.split("?")[0] === "/api/stock" && call.method === "GET") return json({ lots: [lot, other], total: 2, truncated: 0, next_cursor: null });
     const route = routes[`${call.method} ${call.path}`];
     if (route) return route(call);
     return json({ detail: `Unexpected request: ${call.path}` }, 500);

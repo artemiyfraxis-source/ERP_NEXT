@@ -1466,6 +1466,7 @@ it("asks the server to sort the whole stock when a column is clicked, from the f
   fireEvent.click(screen.getByRole("button", { name: /^ГРН/ }));
 
   await waitFor(() => expect(paths).toContain("/api/stock?sort=grn&desc=true"));
+});
 
 function stageFetch(enabledKeys: string[]) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -1474,7 +1475,7 @@ function stageFetch(enabledKeys: string[]) {
       return json({ available: true, options: ["warehouse.word_search", "warehouse.strict_quantities"].map((key) => (
         { key, block: "Склад", title: key, before: "", after: "", enabled: enabledKeys.includes(key) })) });
     }
-    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 }
@@ -1515,7 +1516,7 @@ function itemsFetch(on: boolean, calls: string[], posted: string[] = []) {
     if (path === "/api/stage-options") {
       return json({ available: true, options: [{ key: "references.items", block: "Номенклатура", title: "t", before: "", after: "", enabled: on }] });
     }
-    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     if (path.startsWith("/api/purchasing/items/for-lots")) {
       return json({ [lot.id]: { item_id: "i1", name: "Разъём SMA (номенклатура)", category: "connector", via: "chain" } });
     }
