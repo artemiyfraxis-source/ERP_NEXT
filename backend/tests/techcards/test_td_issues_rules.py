@@ -99,7 +99,7 @@ def test_unset_tolerance_and_latin_codes_block():
     operation = _operation(
         title="Опрессовка cutWireStrip",
         card={"name": "Опрессовка", "steps": [
-            {"number": "2", "kind": "Контроль", "text": "Обжать по HEX_TABLE", "tolerance": "Размер HEX не задан"},
+            {"number": "2", "kind": "Контроль", "text": "Обжать как в SDR_TABLE", "tolerance": "Размер HEX не задан"},
         ]},
         result=[{"name": "ПФ INS_housing_GX", "norm": "1", "unit": "Шт."}],
     )
@@ -107,8 +107,17 @@ def test_unset_tolerance_and_latin_codes_block():
     blocking = {item["code"]: item for item in findings if item["severity"] == "blocking"}
 
     assert set(blocking) == {"tolerance_missing", "internal_code"}
-    assert "внутренний код HEX_TABLE, INS_housing_GX —" in blocking["internal_code"]["text"]  # cutWireStrip без «_»
+    assert "внутренний код INS_housing_GX, SDR_TABLE —" in blocking["internal_code"]["text"]  # cutWireStrip без «_»
     assert blocking["internal_code"]["operation_key"] == "PRS_TERMINAL_auto::A::A"
+
+
+def test_kd_name_with_underscore_and_comma_prefix_are_not_internal_codes():
+    # 719К.2 КБ11: «…100mm LED_STRIP» — наименование по КД заказчика; «INS_terminal_2,54-6,3 | …» — префикс шаблона.
+    operation = _operation(
+        title="INS_terminal_2,54-6,3 | Монтаж терминалов (A)",
+        result=[{"name": "Кабельная сборка SHR-03V-S-B to Open-End 28AWG 100mm LED_STRIP", "norm": "1", "unit": "Шт."}],
+    )
+    assert not [item for item in normcontrol(_issue([operation])) if item["code"] == "internal_code"]
 
 
 def test_operation_code_field_itself_is_not_a_printed_text():

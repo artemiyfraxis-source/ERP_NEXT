@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 import type { ProjectTechcard } from "./api";
 import { buildRouteSheetHtml } from "./routeSheetPrint";
 import { buildStoHtml } from "./stoPrint";
-import { buildTdKitHtml } from "./tdPrintSheets";
+import { buildTdKitHtml, cleanCodes } from "./tdPrintSheets";
 import type { Sto, TdPrintModel } from "./tdTypes";
 
 declare const process: { cwd(): string };
@@ -226,4 +226,11 @@ it("сопроводительный лист: шапка, операции, м�
   const out = buildRouteSheetHtml(model({ change_no: 1 }), { serial: "SN-001", batch: "П-5", qty: "20" });
   for (const part of ["ФРАК.10185.00007", "SN-001", "П-5", "20", "<th>Участок</th><td>ЦАР</td>", "Исполнитель (ФИО, подпись)", "Партии материалов", "Отметка ОТК", "Отметка ВП", "Изделие принял: ОТК", "Автомат резка + опрессовка", "005", "010"]) expect(out).toContain(part);
   expect(out).not.toContain("CUT_WIRE");
+});
+
+it("коды БД.ОП убираются, наименование по КД с «_» и префикс с запятой — печатаются как надо", () => {
+  expect(cleanCodes("INS_terminal_2,54-6,3 | Монтаж терминалов (A)")).toBe("Монтаж терминалов (A)");
+  expect(cleanCodes("CUT_WIRE+1crimp+tin | Резка")).toBe("Резка");
+  expect(cleanCodes("Кабельная сборка SHR-03V-S-B to Open-End 28AWG 100mm LED_STRIP"))
+    .toBe("Кабельная сборка SHR-03V-S-B to Open-End 28AWG 100mm LED_STRIP");
 });
