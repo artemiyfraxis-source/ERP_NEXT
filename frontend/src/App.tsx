@@ -51,17 +51,21 @@ import { StaffPage } from "./StaffPage";
 import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
-import { StageOptionsPanel, useEnabledStageOptions } from "./StageOptions";
+import { reloadRefusedStageOptions, StageOptionsPanel, useEnabledStageOptions } from "./StageOptions";
+import { isTsdAddress } from "./devicesApi";
+import { TsdEntry, TsdLogin, TsdScreen } from "./TsdPage";
 import { ThemeSwitch } from "./ThemeSwitch";
 import { GlobalSearch } from "./CommandPalette";
 import { ViewAsBanner } from "./ViewAs";
 
-/** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once. */
-type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string; library?: boolean } };
+/** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once.
+ *  `tsd`: the ТСД screen (stage option warehouse.tsd, `?section=tsd`) — full screen, its own PIN sign-in. */
+type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string; library?: boolean }; tsd?: boolean };
 
 function placeFromUrl(): Place {
   const params = new URLSearchParams(window.location.search);
   const value = params.get("section");
+  if (isTsdAddress()) return { section: "cabinet", block: null, tsd: true };
   if (value === "warehouse") return { section: "stock", block: null };
   if (value === "projects" && params.get("project") && params.get("harness")) {
     return { section: value, block: null, harness: { project: params.get("project")!, index: params.get("harness")!, library: params.get("library") === "1" } };
@@ -89,12 +93,18 @@ export function App() {
   // Unsent forms per user (F07); lives as long as the tab, never in browser storage.
   const drafts = useRef(new DraftStore()).current;
 
+  // Signed in: the stage options asked before it (answered 401) are asked again, before any screen reads them.
+  function signedIn(next: Principal) {
+    reloadRefusedStageOptions();
+    setPrincipal(next);
+  }
+
   function loadPrincipal() {
     setLoading(true);
     setBootError("");
     identityApi
       .me()
-      .then(setPrincipal)
+      .then(signedIn)
       .catch((error) => {
         if (error instanceof ApiError && error.status === 401) return;
         setBootError(failureText(error, "ERP не ответила"));
@@ -218,7 +228,7 @@ export function App() {
   // (the `key` below), and the first user's unsent forms stay keyed to them, out of the newcomer's sight.
   function signInAgain(next: Principal) {
     setExpired(false);
-    setPrincipal(next);
+    signedIn(next);
   }
 
   if (loading) return <div className="screen-center muted">Загружаем ERP…</div>;
@@ -228,7 +238,16 @@ export function App() {
       <button className="primary" onClick={loadPrincipal}>Повторить</button>
     </div>;
   }
-  if (!principal) return <LoginPage onLogin={setPrincipal} />;
+  if (!principal) return place.tsd ? <TsdEntry onLogin={signedIn} /> : <LoginPage onLogin={signedIn} />;
+  // ТСД склада (stage option warehouse.tsd): its own full-screen frame and PIN sign-in; without the option or the
+  // warehouse section the screen hands over to the ordinary shell.
+  if (place.tsd) {
+    return <>
+      <TsdScreen key={principal.user.id} principal={principal} onSignOut={() => void signOut()}
+        onLeave={() => go({ section: "cabinet", block: null })} />
+      {expired && <div className="tsd-relogin"><TsdLogin onLogin={signInAgain} title="Сессия истекла — войдите снова" /></div>}
+    </>;
+  }
   const relogin = expired && <SessionExpiredDialog onLogin={signInAgain} />;
   // A section or block the principal cannot open falls back to the home screen.
   const activeSection = visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
@@ -316,7 +335,7 @@ export function App() {
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
         {activeSection === "stock" && <WarehousePage key={visit} admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
           canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
-        {activeSection === "equipment" && <EquipmentPage readOnly={!canAct(principal, "warehouse")} />}
+        {activeSection === "equipment" && <EquipmentPage readOnly={!canAct(principal, "warehouse")} admin={hasFullAccess(principal)} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
