@@ -162,8 +162,8 @@ def hookup_summary(report: ImportReport, mode: str) -> str:
         *block("   обновлены:", (f"{item['key']}: " + "; ".join(f"{name} «{old}» → «{new}»" for name, (old, new) in item["changes"].items())
                                  for item in report.updated)),
         *block("   отклонены:", (f"{item['key']}: {item['reason']}" for item in report.refused)),
-        "3. Ушли из монтажных в «прочие»: не считается — загрузка класс строк не меняет" if report.fill_empty else
-        f"3. Ушли из монтажных в «прочие» (марка не из базы монтажных): {len(report.moved_out_of_montage)}",
+        "3. Монтажные не из базы монтажных: не считается — загрузка класс строк не меняет" if report.fill_empty else
+        f"3. Монтажные не из базы монтажных (марка без серии базы — без структуры): {len(report.moved_out_of_montage)}",
         *block("   марки:", report.moved_out_of_montage),
     ]
     return "\n".join(lines)

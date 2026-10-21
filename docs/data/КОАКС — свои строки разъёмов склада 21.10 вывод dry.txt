@@ -1,0 +1,16 @@
+== БД.КОАКС: 608 строк
+   создать SMA-JWB2-F × RG-405: строки нет — будет создана
+     проба: «SMA-male R/A | RG-405», полей 28, Артикул «SMA-JWB2-F», Провод «RG-405», Производитель «HenryTech (Hengliti)», coaxArticle «SMA-JWB2-F», coaxWire «RG-405», coaxType «SMA-male R/A», coaxMfr «HenryTech (Hengliti)»
+   создать SMA-JW2CG × —: строки нет — будет создана
+     проба: «SMA-male R/A», полей 22, Артикул «SMA-JW2CG», Провод «», Производитель «», coaxArticle «SMA-JW2CG», coaxWire «», coaxType «SMA-male R/A», coaxMfr «»
+   SMA-JWB3-F-1 · coaxMfr: ок
+   SMA-JWB3-F-1 · L1: ок
+   SMA-JWB3-F-1 · Тип экрана: ок
+   SMA-JWB3-F-1 · Частота до, ГГц: ок
+   SMA-JWB3-F-1 · КСВ: ок
+   SMA-JWB3-F-1 · Ссылка: ок
+   SMA-JWB3-F-1 · Примечание: ок
+   SMA-JWB3-F-1 · Источник данных: ок
+   партия OLD.26.0000071: артикул «ISMA-JB3 SMA-male RG402» → «ISMA-JB3»
+   журнал «Склад → база» по этим партиям: 0 строк
+== dry: проблем нет, ничего не записано

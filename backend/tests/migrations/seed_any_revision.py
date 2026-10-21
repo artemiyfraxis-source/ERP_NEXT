@@ -33,6 +33,9 @@ ROWS = 6
 _CHECK_IN = re.compile(r"(\w+).*?'([^']*)'", re.DOTALL)
 _IN_LIST = re.compile(r"\bIN\s*\(|=\s*ANY\s*\(", re.IGNORECASE)
 _CHECK_NULL_OR = re.compile(r"\s*\(*\s*(\w+)\s+IS\s+NULL\s*\)?\s+OR\b", re.IGNORECASE)
+# `(tab = 'prov' AND cable_kind IN (…)) OR (tab <> 'prov' AND cable_kind IS NULL)` (0131): the column stays empty on a
+# row of any other value of the first column (the seeder never picks the one value that needs it).
+_CHECK_NULL_BRANCH = re.compile(r"\bOR\b.*?<>.*?\bAND\s*\(?\s*(\w+)\s+IS\s+NULL", re.IGNORECASE | re.DOTALL)
 _WAREHOUSES = ("ЦАР", "ЖУК")
 # Stock quantities per lot row, and what each holder takes of one lot: 3 holders × 1 ≤ РЕЗЕРВ 20 ≤ balance.
 _LOT_QUANTITIES = {
@@ -86,7 +89,7 @@ def _check_values(connection: Connection, metadata: MetaData) -> dict[tuple[str,
     for table in metadata.tables.values():
         for check in inspector.get_check_constraints(table.name):
             text = str(check.get("sqltext", ""))
-            empty = _CHECK_NULL_OR.match(text)
+            empty = _CHECK_NULL_OR.match(text) or _CHECK_NULL_BRANCH.search(text)
             if empty and empty.group(1) in table.c and table.c[empty.group(1)].nullable:
                 found[(table.name, empty.group(1))] = None
                 continue

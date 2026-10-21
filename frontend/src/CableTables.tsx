@@ -1,7 +1,7 @@
 import { PageWindow } from "./PageWindow";
 import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataCellEdit, type DataColumn } from "./DataTable";
-import { CABLE_KIND_LABELS, CoaxCardView, freq, kindColumn, num, range, spanText } from "./CableStructure";
+import { CABLE_KIND_LABELS, CoaxCardView, freq, kindColumn, kindColumns, moveText, num, range, spanText } from "./CableStructure";
 import {
   failureText,
   referencesApi,
@@ -13,7 +13,7 @@ import {
   type CoaxParam,
   type TechOperationRecord,
 } from "./api";
-import { CATEGORIES, CATEGORY_CELL, cableCategory, cableFamily, cableGroup, compareByFamily, compareCables } from "./cableCategory";
+import { CATEGORIES, CATEGORY_CELL, cableCategory, cableFamily, compareByFamily } from "./cableCategory";
 import { coaxGroupOf, coaxOtherNames, sortCoax } from "./coaxFamilies";
 import { coaxArticle, coaxSeries, coaxSupplier, coaxType, seriesRank } from "./CoaxConnectors";
 import { cellFailure, fieldCellEdit, ownCellEdit } from "./CustomColumn";
@@ -25,7 +25,7 @@ import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
    list a row is in comes from the server (references/cables.py); the user moves a row from its editor. */
 
 export { CABLE_KIND_LABELS };
-const KINDS: CableKind[] = ["coax", "wire", "multi", "other"];
+const KINDS: CableKind[] = ["coax", "wire", "multi"];
 
 /** «Вкладка» of a БД.ПРОВ row: the list it is in, and why (rule or a manual move). */
 export function kindSelect(row: CableRow, value: CableKind, onChange: (kind: CableKind) => void): ReactNode {
@@ -33,6 +33,7 @@ export function kindSelect(row: CableRow, value: CableKind, onChange: (kind: Cab
     <select aria-label="Вкладка" value={value} onChange={(event) => onChange(event.target.value as CableKind)}>
       {KINDS.map((item) => <option key={item} value={item}>{CABLE_KIND_LABELS[item]}{item === row.auto_kind && row.manual ? " (по правилу)" : ""}</option>)}
     </select>
+    {value !== row.kind && <span className="muted">Заполненные значения строки сохранятся при переносе.</span>}
     <span className="muted">{row.manual ? `перенесён вручную; по правилу — ${CABLE_KIND_LABELS[row.auto_kind].toLowerCase()}` : `по правилу: ${row.reason}`}</span>
   </label>;
 }
@@ -74,8 +75,6 @@ const SHOWN: Record<CableKind, string[]> = {
   wire: ["Сечение, мм2", "AWG", "Наружный диаметр, мм", "Жила: проволок × диаметр, мм", "Материал жилы", "Изоляция", "Цвета",
     "Темп. от, °C", "Темп. до, °C", "Напряжение, В", ...SUPPLY],
   multi: ["Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", ...MULTI_MATERIALS, "Стандарт", "Производители", ...SUPPLY],
-  other: ["Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", ...MULTI_MATERIALS, "Волновое сопротивление, Ом", "Напряжение, В",
-    "Стандарт", "Производители", ...SUPPLY],
 };
 // Each list has its own set (owner 15.10.2026: «для каждой группы свои требования»): an own column listed for another
 // list — the coax materials on the multicore list — stays in «Колонки», hidden, instead of a column of dashes.
@@ -90,7 +89,6 @@ const NEW_TYPE: Record<CableKind, Record<string, string>> = {
   coax: { [TYPE]: "коаксиальный", "Число жил": "1" },
   wire: { [TYPE]: "монтажный", "Число жил": "1" },
   multi: { [TYPE]: "многожильный" },
-  other: {},
 };
 /** One frequency column (owner 15.10.2026: «мне нужен один — с диапазоном»): the VNA span, else DC up to the rated
     maximum operating frequency; never the cut-off. */
@@ -120,7 +118,7 @@ type Draft = { fields: Record<string, string>; dia: Record<Diameter, string>; ki
 /** An existing row edits its own cells (the server refuses a field the record has not); a new one — the БД.ПРОВ header. */
 function draftOf(row: CableRow | null, columns: string[], kind: CableKind): Draft {
   return {
-    fields: row ? { ...(row.record?.fields ?? {}) } : Object.fromEntries(columns.map((name) => [name, NEW_TYPE[kind][name] ?? ""])),
+    fields: row ? Object.fromEntries(Object.entries(row.record?.fields ?? {}).filter(([name]) => columns.includes(name))) : Object.fromEntries(columns.map((name) => [name, NEW_TYPE[kind][name] ?? ""])),
     dia: { D1: row?.dia?.D1 ?? "", D2: row?.dia?.D2 ?? "", D3: row?.dia?.D3 ?? "" },
     kind: row?.kind ?? kind,
   };
@@ -137,15 +135,13 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
   removeColumn?: (name: string) => (() => void) | undefined;
 }) {
   const [adding, setAdding] = useState(false);
-  const grouped = kind === "multi" || kind === "other";
   const cells = (row: CableRow): Record<string, string> => ({ "Марка": row.cable, ...(row.record?.fields ?? {}) });
   // «Многожильные» (owner 15.10.2026): groups by mark (ПВВС, КДВВГ, КДВЭВГ, F/UTP Cat5e…; each mark its own group), cores and section
-  // as numbers inside; «Прочие» — by category and screen, natural order inside.
+  // as numbers inside.
   const rows = useMemo(() => {
     const own = data.rows.filter((row) => row.kind === kind);
-    return kind === "multi" ? own.sort((a, b) => compareByFamily(cells(a), cells(b)))
-      : grouped ? own.sort((a, b) => compareCables(cells(a), cells(b))) : kind === "coax" ? sortCoax(own) : own;
-  }, [data.rows, kind, grouped]);
+    return kind === "multi" ? own.sort((a, b) => compareByFamily(cells(a), cells(b))) : kind === "coax" ? sortCoax(own) : own;
+  }, [data.rows, kind]);
   const coaxGroup = useMemo(() => coaxGroupOf(rows), [rows]);
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
   // A cell edited right in the table goes the way of the record's editor: one field with its old value (the server
@@ -169,7 +165,8 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
   } : undefined;
 
   // Rows stay one line high like a sheet: long text (insulation, screen, sources) is cut, full text on hover.
-  const own = data.custom_columns ?? [];
+  // The list's own columns only (owner 20.10.2026): another list's are neither shown nor offered in «Колонки».
+  const { columns: kindCols, own } = kindColumns(data, kind);
   // «Категория» — the editor's choice list in the cell: empty — by the rule (named per row), else one of the categories.
   const categoryEdit: DataCellEdit<CableRow> | undefined = canEdit ? {
     ...(own.includes(CATEGORY_CELL) ? ownCellEdit<CableRow>(CATEGORY_CELL, (row) => row.record) : fieldCellEdit<CableRow>(CATEGORY_CELL, (row) => row.record)),
@@ -190,7 +187,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
     };
   };
   // An own column not added yet (the materials before the fill) is not drawn empty; base БД.ПРОВ columns always are.
-  const shown = SHOWN[kind].filter((name) => !OWN_LISTED.has(name) || data.columns.includes(name));
+  const shown = SHOWN[kind].filter((name) => !OWN_LISTED.has(name) || kindCols.includes(name));
   // The card's value stands in for an empty БД.ПРОВ cell; the cell edit still writes (and starts from) the БД.ПРОВ value.
   const paramColumn = (item: CoaxParamColumn): DataColumn<CableRow> => {
     const base = textColumn(item.field, false);
@@ -240,7 +237,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       { key: "__op", title: "Рабочая частота, ГГц", numeric: true, hidden: true, computed: true, value: (row: CableRow) => row.card?.max_operating_ghz ?? "", render: (row: CableRow) => num(row.card?.max_operating_ghz) || <span className="cell-empty">—</span> },
       { key: "__fc", title: "Частота среза, ГГц", numeric: true, hidden: true, computed: true, value: (row: CableRow) => row.card?.fc_ghz ?? "", render: (row: CableRow) => num(row.card?.fc_ghz) || <span className="cell-empty">—</span> },
     ] : []),
-    ...data.columns.filter((name) => name !== MARK && !shown.includes(name)).map((name) => textColumn(name, !own.includes(name) || LISTED_ANYWHERE.has(name))),
+    ...kindCols.filter((name) => name !== MARK && !shown.includes(name)).map((name) => textColumn(name, !own.includes(name) || LISTED_ANYWHERE.has(name))),
     kindColumn(canEdit, onSaved),
     { key: "__reason", title: "Почему здесь", computed: true, value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
@@ -252,7 +249,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
     {canEdit
       ? <CableEditor key={`${row.id}:${JSON.stringify(row.record?.fields ?? {})}:${row.dia ? diaText(row.dia) : ""}:${row.kind}`}
         row={row} kind={kind} data={data} onSaved={onSaved} onError={onError} />
-      : <CableCard row={row} columns={data.columns} />}
+      : <CableCard row={row} columns={kindCols} />}
   </>;
 
   return <>
@@ -277,7 +274,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       renderDetail={kind === "coax" ? undefined : detail}
       onRowClick={kind === "coax" ? (row) => setOpenId(row.id) : undefined}
       collapsibleGroups={kind === "coax"}
-      groupBy={kind === "multi" ? (row) => cableFamily(cells(row)).family : grouped ? (row) => cableGroup(cells(row)).label : kind === "coax" ? coaxGroup : undefined}
+      groupBy={kind === "multi" ? (row) => cableFamily(cells(row)).family : kind === "coax" ? coaxGroup : undefined}
       // Each group sorts its own rows (owner 16.10: «у каждой группы своя»); every row of the list at once, no page.
       groupSort
       pageSize={Infinity}
@@ -466,23 +463,25 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
   onError: (message: string) => void;
   onCancel?: () => void;
 }) {
-  const [draft, setDraft] = useState<Draft>(() => draftOf(row, data.columns, kind));
+  const kindCols = kindColumns(data, row?.kind ?? kind).columns;
+  const [draft, setDraft] = useState<Draft>(() => draftOf(row, kindCols, kind));
   const makerNames = useMemo(() => makerSuggestions(data.rows.map((item) => item.record?.fields[MAKERS] ?? "")), [data.rows]);
   const [busy, setBusy] = useState(false);
   const isCoax = row ? row.kind === "coax" || Boolean(row.dia) : kind === "coax";
   const diaOnly = Boolean(row && !row.record);
-  const original = draftOf(row, data.columns, kind);
+  const original = draftOf(row, kindCols, kind);
   const hint = row?.dia_hint ?? null;
 
   async function save() {
     if (busy) return;
+    if (row?.record && draft.kind !== row.kind && !window.confirm(moveText(row.cable, draft.kind))) return;
     setBusy(true);
     const changedDia = DIAMETERS.some((name) => draft.dia[name].trim() !== original.dia[name].trim());
     let created: TechOperationRecord | null = null;
     try {
       let record = row?.record ?? null;
       if (!row) {
-        record = created = await referencesApi.createRecord("prov", draft.fields);
+        record = created = await referencesApi.createRecord("prov", draft.fields, kind);
       }
       const cable = row ? row.cable : (draft.fields[MARK] || record?.display_text || "").trim();
       if (isCoax && changedDia && cable) {
@@ -502,7 +501,7 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
         if (draft.kind !== row.kind) await referencesApi.moveCable(row.record.id, draft.kind);
       }
       await onSaved(row
-        ? draft.kind !== row.kind ? `«${row.cable}» перенесён во вкладку «${CABLE_KIND_LABELS[draft.kind]}»` : `«${row.cable}» сохранён`
+        ? draft.kind !== row.kind ? `«${row.cable}» перенесён во вкладку «${CABLE_KIND_LABELS[draft.kind]}», заполненные значения сохранены` : `«${row.cable}» сохранён`
         : `«${cable}» добавлен`);
     } catch (reason) {
       onError(failureText(reason, "Запись не сохранена"));

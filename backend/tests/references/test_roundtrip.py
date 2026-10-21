@@ -25,8 +25,8 @@ from tests.factories import Actor
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
 
 PROV = [
-    {"Марка": "МГТФ 0,2", "Тип провода": "монтажный", "Сечение, мм2": "0,2", "Цвета": "белый"},
-    {"Марка": "МГШВ 0,5", "Тип провода": "монтажный", "Сечение, мм2": "0,5", "Цвета": "красный"},
+    {"Марка": "МГТФ 0,2", "Тип провода": "монтажный", "Сечение, мм2": "0,2", "Цвет": "белый"},
+    {"Марка": "МГШВ 0,5", "Тип провода": "монтажный", "Сечение, мм2": "0,5", "Цвет": "красный"},
 ]
 
 
@@ -94,7 +94,7 @@ def _prov(client: TestClient) -> dict[str, dict]:
 
 def test_the_downloaded_file_carries_id_version_every_field_and_the_screen_titles(references_api):
     records = _seed(references_api)
-    rows = _rows(_download(references_api, titles={"Цвета": "Цвет изоляции"}))
+    rows = _rows(_download(references_api, titles={"Цвет": "Цвет изоляции"}))
 
     assert rows[0][:2] == ["ID записи", "Версия"]
     assert "Марка" in rows[0] and "Цвет изоляции" in rows[0]
@@ -126,7 +126,7 @@ def test_a_changed_cell_is_previewed_without_a_write_then_applied_and_audited(re
     content = _download(references_api)
 
     def edit(rows):
-        colors = rows[0].index("Цвета")
+        colors = rows[0].index("Цвет")
         row = next(row for row in rows if row[0] == target["id"])
         row[colors] = "синий"
 
@@ -136,17 +136,17 @@ def test_a_changed_cell_is_previewed_without_a_write_then_applied_and_audited(re
     body = preview.json()
     assert body["dry_run"] is True and body["applied"] is False
     assert body["updated"] == [{"row": body["updated"][0]["row"], "id": target["id"], "title": "МГТФ 0,2",
-                                "changes": [{"field": "Цвета", "title": "Цвета", "old": "белый", "new": "синий"}]}]
+                                "changes": [{"field": "Цвет", "title": "Цвет", "old": "белый", "new": "синий"}]}]
     assert body["unchanged"] == 1
-    assert _prov(references_api)[target["id"]]["Цвета"] == "белый"  # the dry run wrote nothing
+    assert _prov(references_api)[target["id"]]["Цвет"] == "белый"  # the dry run wrote nothing
     assert _audit("references.tech_record_edited") == []
 
     applied = _upload(references_api, edited, dry_run=0).json()
 
     assert applied["applied"] is True and len(applied["updated"]) == 1
-    assert _prov(references_api)[target["id"]]["Цвета"] == "синий"
+    assert _prov(references_api)[target["id"]]["Цвет"] == "синий"
     [event] = _audit("references.tech_record_edited")
-    assert event.details["record_id"] == target["id"] and event.details["fields"] == ["Цвета"]
+    assert event.details["record_id"] == target["id"] and event.details["fields"] == ["Цвет"]
     assert event.details["via"] == "file"
 
 
@@ -158,7 +158,7 @@ def test_a_row_without_id_is_created_and_a_missing_row_is_left_alone(references_
         width = len(rows[0])
         new = [""] * width
         new[rows[0].index("Марка")] = "ПВАМ 0,75"
-        new[rows[0].index("Цвета")] = "чёрный"
+        new[rows[0].index("Цвет")] = "чёрный"
         rows.append(new)
         del rows[1]  # a row taken out of the file: «не трогать», never a delete
 
@@ -168,7 +168,7 @@ def test_a_row_without_id_is_created_and_a_missing_row_is_left_alone(references_
     assert [item["title"] for item in applied["created"]] == ["ПВАМ 0,75"]
     assert len(after) == 3 and all(record["id"] in after for record in records)
     created = next(fields for fields in after.values() if fields.get("Марка") == "ПВАМ 0,75")
-    assert created["Цвета"] == "чёрный"
+    assert created["Цвет"] == "чёрный"
     [event] = _audit("references.tech_record_created")
     assert event.details["via"] == "file"
 
@@ -183,7 +183,7 @@ def test_unknown_id_conflict_and_a_refused_row_are_reported_while_the_rest_appli
         "edits": [{"field": "Тип провода", "old": "монтажный", "value": "силовой"}]}).status_code == 200
 
     def edit(rows):
-        colors = rows[0].index("Цвета")
+        colors = rows[0].index("Цвет")
         kind = rows[0].index("Тип провода")
         for row in rows[1:]:
             if row[0] == first["id"]:
@@ -207,8 +207,8 @@ def test_unknown_id_conflict_and_a_refused_row_are_reported_while_the_rest_appli
     assert body["not_found"][0]["reason"] == NOT_FOUND_REASON
     assert len(body["errors"]) == 1 and "Формулы" in body["errors"][0]["reason"]
     assert [item["id"] for item in body["updated"]] == [second["id"]]
-    assert after[first["id"]]["Цвета"] == "белый" and after[first["id"]]["Тип провода"] == "силовой"
-    assert after[second["id"]]["Цвета"] == "жёлтый"
+    assert after[first["id"]]["Цвет"] == "белый" and after[first["id"]]["Тип провода"] == "силовой"
+    assert after[second["id"]]["Цвет"] == "жёлтый"
     assert len(after) == 2
 
 
@@ -228,7 +228,7 @@ def test_a_row_refused_after_its_write_leaves_nothing_behind(references_api, mon
     monkeypatch.setattr(roundtrip._TechTable, "update", failing)
 
     def edit(rows):
-        colors = rows[0].index("Цвета")
+        colors = rows[0].index("Цвет")
         for row in rows[1:]:
             row[colors] = "оранжевый"
 
@@ -237,7 +237,7 @@ def test_a_row_refused_after_its_write_leaves_nothing_behind(references_api, mon
 
     assert len(body["errors"]) == 1 and len(body["updated"]) == 1
     by_mark = {fields["Марка"]: fields for fields in after.values()}
-    assert by_mark["МГТФ 0,2"]["Цвета"] == "белый" and by_mark["МГШВ 0,5"]["Цвета"] == "оранжевый"
+    assert by_mark["МГТФ 0,2"]["Цвет"] == "белый" and by_mark["МГШВ 0,5"]["Цвет"] == "оранжевый"
     assert len(_audit("references.tech_record_edited")) == 1
     assert {record["id"] for record in records} == set(after)
 
@@ -420,11 +420,11 @@ def test_the_coax_cable_list_carries_d1_d3_and_only_that_list(references_api):
     wires = _rows(_download(references_api, kind="wire"))
     everything = _rows(_download(references_api))
 
-    assert coax[0][-3:] == ["D1, мм", "D2, мм", "D3, мм"]
+    assert coax[0][-3:] == ["D1 жила, мм", "D2 диэлектрик, мм", "D3 оплётка, мм"]
     by_mark = {row[coax[0].index("Марка")]: row for row in coax[1:]}
     assert by_mark["RG316"][-3:] == ["0,5", "1,48", "1,95"] and by_mark["RG174"][-3:] == ["", "", ""]
-    assert "D1, мм" not in wires[0] and "D1, мм" not in everything[0]
-    assert wires[0][-3:] == ["Серия провода", "Материал жилы", "Толщина изоляции, мм"]
+    assert "D1 жила, мм" not in wires[0] and "D1 жила, мм" not in everything[0]
+    assert wires[0][-3:] == ["Серия", "Материал жилы (серия)", "Толщина изоляции, мм"]
     [wire] = wires[1:]
     assert wire[-3:] == ["UL1061", "медь луженая", "0,2"]
 
@@ -446,8 +446,8 @@ def test_an_edited_d_value_is_applied_through_the_cable_save_and_audited(referen
     content = _download(references_api, kind="coax")
 
     def edit(rows):
-        next(row for row in rows if row[0] == records["RG316"]["id"])[_column(rows, "D2, мм")] = "1,5"
-        next(row for row in rows if row[0] == records["RG174"]["id"])[_column(rows, "D1, мм")] = "0,48"
+        next(row for row in rows if row[0] == records["RG316"]["id"])[_column(rows, "D2 диэлектрик, мм")] = "1,5"
+        next(row for row in rows if row[0] == records["RG174"]["id"])[_column(rows, "D1 жила, мм")] = "0,48"
 
     edited = _edited(content, edit)
     preview = _upload(references_api, edited, dry_run=1).json()
@@ -471,8 +471,8 @@ def test_a_bad_d_value_is_refused_for_its_row_only(references_api):
     content = _download(references_api, kind="coax")
 
     def edit(rows):
-        next(row for row in rows if row[0] == records["RG316"]["id"])[_column(rows, "D1, мм")] = "много"
-        next(row for row in rows if row[0] == records["RG174"]["id"])[_column(rows, "D3, мм")] = "2,9"
+        next(row for row in rows if row[0] == records["RG316"]["id"])[_column(rows, "D1 жила, мм")] = "много"
+        next(row for row in rows if row[0] == records["RG174"]["id"])[_column(rows, "D3 оплётка, мм")] = "2,9"
 
     body = _upload(references_api, _edited(content, edit), dry_run=0).json()
 
@@ -487,8 +487,8 @@ def test_edited_wire_structure_is_applied_through_the_wire_save(references_api):
 
     def edit(rows):
         row = rows[1]
-        row[_column(rows, "Серия провода")] = "UL1007"
-        row[_column(rows, "Материал жилы")] = "медь"
+        row[_column(rows, "Серия")] = "UL1007"
+        row[_column(rows, "Материал жилы (серия)")] = "медь"
         row[_column(rows, "Толщина изоляции, мм")] = "0,25"
 
     body = _upload(references_api, _edited(content, edit), dry_run=0).json()
@@ -508,7 +508,7 @@ def test_a_bad_structure_value_is_refused_and_nothing_is_left(references_api):
     content = _download(references_api, kind="wire")
 
     def edit(rows):
-        rows[1][_column(rows, "Серия провода")] = "UL1007"
+        rows[1][_column(rows, "Серия")] = "UL1007"
         rows[1][_column(rows, "Толщина изоляции, мм")] = "минус"
 
     body = _upload(references_api, _edited(content, edit), dry_run=0).json()

@@ -3,7 +3,9 @@
 One framework every per-table importer (`POST /api/references/import/<table>?dry_run=1|0`, body `ImportRequest`,
 answer `ImportReport`) runs through, so a program with an API token (`refs:write`) or a person loads rows the same way:
 
-* rows are matched to the table by a natural key (`ImportTable.key_fields`, values joined by `KEY_SEPARATOR`);
+* rows are matched to the table by a natural key (`ImportTable.key_fields`, values joined by `KEY_SEPARATOR`); a key
+  field in `ImportTable.optional_keys` may be empty (БД.ПРОВ «Цвет»: only a монтажный wire has one) and is then left
+  out of the key string;
 * a key not in the table is created, a known one is updated field by field, the rest is counted as unchanged;
 * nothing is ever deleted, and a field that is null or absent in the row stays as it is (`""` clears it);
 * `old` — the values the caller read before: a field whose current value differs is the whole row refused with
@@ -122,15 +124,24 @@ class ImportTable:
     event_type: str  # the audit event of one apply, e.g. "references.connectors_imported"
     aggregate_id: UUID
     normalize: Callable[[str, Any], Any] = clean_value
+    optional_keys: frozenset[str] = frozenset()  # key fields a row may leave empty (not part of the key then)
 
     def __post_init__(self) -> None:
         if not self.key_fields or not set(self.key_fields) <= self.fields:
             raise ValueError("Key fields must be a non-empty subset of the table fields.")
+        if not self.optional_keys < set(self.key_fields):
+            raise ValueError("Optional keys must be key fields, and not all of them.")
+
+    @property
+    def required_keys(self) -> tuple[str, ...]:
+        return tuple(name for name in self.key_fields if name not in self.optional_keys)
 
 
 def row_key(table: ImportTable, fields: Mapping[str, Any]) -> str:
-    """The natural key as one string: the target uses it for its own rows too, so both sides match."""
-    return KEY_SEPARATOR.join(str(fields.get(name) or "") for name in table.key_fields)
+    """The natural key as one string: the target uses it for its own rows too, so both sides match. An empty optional
+    key field is left out."""
+    return KEY_SEPARATOR.join(str(fields.get(name) or "") for name in table.key_fields
+                              if name not in table.optional_keys or fields.get(name))
 
 
 class ImportTarget(Protocol):
@@ -204,7 +215,7 @@ def _parse(table: ImportTable, row: ImportRowIn) -> _Row:
     if unknown:
         raise RowRefused("неизвестное поле: " + ", ".join(dict.fromkeys(unknown)))
     fields = {name: table.normalize(name, value) for name, value in row.fields.items()}
-    missing = [name for name in table.key_fields if not fields.get(name)]
+    missing = [name for name in table.required_keys if not fields.get(name)]
     if missing:
         raise RowRefused("не заполнен ключ: " + ", ".join(missing))
     old = None if row.old is None else {name: table.normalize(name, value) for name, value in row.old.items()}
@@ -233,7 +244,7 @@ def run_import(
         try:
             parsed.append((number, _parse(table, row)))
         except (RowRefused, ValueError) as error:
-            key = row_key(table, row.fields) if all(row.fields.get(name) for name in table.key_fields) else ""
+            key = row_key(table, row.fields) if all(row.fields.get(name) for name in table.required_keys) else ""
             report.refused.append(ImportRefusal(key=key or f"#{number}", reason=str(error)))
     counts: dict[str, int] = defaultdict(int)
     for _number, row in parsed:

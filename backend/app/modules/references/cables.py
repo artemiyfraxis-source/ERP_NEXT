@@ -1,8 +1,10 @@
-"""«Кабели и провода» (owner 04.10.2026, 10.10.2026): БД.ПРОВ and the coax D1·D2·D3 table (СПР.КАБ · коаксиал) as four
-lists — коаксиальные кабели, монтажные провода, многожильные кабели («разобрать позже»), прочие кабели.
+"""«Кабели и провода» (owner 04.10.2026, 10.10.2026): БД.ПРОВ and the coax D1·D2·D3 table (СПР.КАБ · коаксиал) as three
+lists — коаксиальные кабели, монтажные провода, многожильные кабели («Прочие кабели» closed 20.10.2026).
 
 Storage stays as SUPPLYMAP keeps it: БД.ПРОВ rows (`prov`) and the D-table rows (`kab_coax`) the ETK generator reads
-by cable name. This module only classifies and joins them; nothing here changes what the generator looks up."""
+by cable name. Each БД.ПРОВ row stores its list (`TechOperationRecord.cable_kind`, migration 0129); the rule here
+(`auto_kind`) gives the list of a row being created and the «auto» shown beside a moved one. This module only
+classifies and joins; nothing here changes what the generator looks up."""
 
 from __future__ import annotations
 
@@ -19,12 +21,10 @@ class CableKind(str, Enum):
     COAX = "coax"
     WIRE = "wire"
     MULTI = "multi"
-    OTHER = "other"
 
 
 CABLE_KIND_LABELS = {
     CableKind.COAX: "Коаксиальные кабели", CableKind.WIRE: "Монтажные провода", CableKind.MULTI: "Многожильные кабели",
-    CableKind.OTHER: "Прочие кабели",
 }
 DIAMETERS = ("D1", "D2", "D3")
 MARK_FIELD = "Марка"
@@ -107,7 +107,7 @@ def hookup_series_rest(mark: str) -> tuple[str, str] | None:
     return None
 
 
-def shape_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> tuple[CableKind, str]:
+def shape_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> tuple[CableKind | None, str]:
     """The class a БД.ПРОВ row has by its shape alone, first rule that fits:
     1. «Тип провода» starts with «коакс» → коаксиальный;
     2. the mark has a row in the D1·D2·D3 table → коаксиальный;
@@ -116,7 +116,7 @@ def shape_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | 
        в отдельную вкладку»; UL2725 is listed with one core but typed as a multi-core cable);
     5. one core («Число жил» = 1) → монтажный провод;
     6. cores not given, type starts with «монтаж» or «силикон» → монтажный провод;
-    7. everything else → прочие кабели."""
+    7. everything else → None: the shape does not tell (`auto_kind` decides)."""
     kind_type = str(fields.get(TYPE_FIELD) or "").strip()
     lowered = kind_type.casefold()
     if lowered.startswith("коакс"):
@@ -134,28 +134,34 @@ def shape_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | 
         return CableKind.WIRE, "одна жила"
     if cores is None and lowered.startswith(("монтаж", "силикон")):
         return CableKind.WIRE, f"тип «{kind_type}»"
-    if cores is not None:
-        return CableKind.OTHER, f"жил: {cores}"
-    return CableKind.OTHER, f"тип «{kind_type}»" if kind_type else "тип не указан"
+    return None, f"жил: {cores}" if cores is not None else f"тип «{kind_type}»" if kind_type else "тип не указан"
 
 
 def auto_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> tuple[CableKind, str]:
     """Deterministic class of a БД.ПРОВ row and the reason shown to the user. Коаксиальные and многожильные — by
-    shape (`shape_kind`); монтажные провода — only the series of the база монтажных (`hookup_series`), whatever the
-    row's type or core count says (ПВАМ typed «силовой» is one); every other mark → прочие кабели. A manual move
-    (`cable_kind` map) still beats this rule."""
+    shape (`shape_kind`); every other row is a монтажный провод: of a series of the база монтажных (`hookup_series`),
+    whatever its type or core count says (ПВАМ typed «силовой» is one), or a mark of no series (NOT_HOOKUP_REASON — no
+    structure is made for it). «Прочие кабели» is closed (owner 20.10.2026): a row that used to land there has at most
+    one core, so it is монтажный. A row stores its list; this rule gives the list of a row being created."""
     kind, reason = shape_kind(fields, mark, dia_keys)
     if kind in (CableKind.COAX, CableKind.MULTI):
         return kind, reason
     series = hookup_series(mark)
     if series is None:
-        return CableKind.OTHER, NOT_HOOKUP_REASON
+        return CableKind.WIRE, NOT_HOOKUP_REASON
     return (kind, reason) if kind == CableKind.WIRE else (CableKind.WIRE, f"серия {series} из базы монтажных")
 
 
+def resolve_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str],
+                 overrides: Mapping[str, CableKind]) -> CableKind:
+    """The list of a БД.ПРОВ row being created: where a row of its mark was moved by hand, else the rule."""
+    return overrides.get(cable_key(mark)) or auto_kind(fields, mark, dia_keys)[0]
+
+
 def left_hookups(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> bool:
-    """A row the shape rule calls монтажный that the база монтажных sends to прочие (a single-core mark of no series)."""
-    return shape_kind(fields, mark, dia_keys)[0] == CableKind.WIRE and auto_kind(fields, mark, dia_keys)[0] == CableKind.OTHER
+    """A row the shape rule calls монтажный whose mark is of no series of the база монтажных: it stays in the
+    монтажные, without a structure (it used to go to «прочие» before 20.10.2026)."""
+    return shape_kind(fields, mark, dia_keys)[0] == CableKind.WIRE and hookup_series(mark) is None
 
 
 @dataclass(frozen=True)
@@ -187,12 +193,12 @@ def family_dia(key: str, index: Mapping[str, TechOperationRecord]) -> TechOperat
 
 
 def cable_rows(
-    wires: Sequence[TechOperationRecord], diameters: Sequence[TechOperationRecord], overrides: Mapping[str, CableKind],
+    wires: Sequence[TechOperationRecord], diameters: Sequence[TechOperationRecord],
     cards: Mapping[str, CoaxCard] | None = None,
 ) -> list[CableRow]:
-    """БД.ПРОВ rows, each with its class, plus the D-table cables that have no БД.ПРОВ coax row of the same name, plus
-    the coax cards no row is named as. `overrides` — cable key → the class the user moved the row to; it beats the
-    automatic rule. Every coax row carries its card (`card_for`)."""
+    """БД.ПРОВ rows, each in the list it stores (`cable_kind`; «перенесён вручную» when the rule says another), plus the
+    D-table cables that have no БД.ПРОВ coax row of the same name, plus the coax cards no row is named as. Every coax
+    row carries its card (`card_for`)."""
     cards = cards or {}
     index = diameter_index(diameters)
     dia_keys = frozenset(index)
@@ -202,15 +208,14 @@ def cable_rows(
         mark = cable_mark(record)
         key = cable_key(mark)
         auto, reason = auto_kind(record.fields, mark, dia_keys)
-        manual = overrides.get(key)
-        kind = manual or auto
+        kind = CableKind(record.cable_kind)
         dia = index.get(key) if kind == CableKind.COAX else None
         if dia is not None:
             joined.add(key)
         card, exact = card_for(key, cards) if kind == CableKind.COAX else (None, False)
         rows.append(CableRow(
-            kind=kind, auto=auto, reason="перенесён вручную" if manual and manual != auto else reason,
-            manual=bool(manual and manual != auto), cable=mark, record=record, dia=dia,
+            kind=kind, auto=auto, reason="перенесён вручную" if kind != auto else reason,
+            manual=kind != auto, cable=mark, record=record, dia=dia,
             dia_hint=family_dia(key, index) if kind == CableKind.COAX and dia is None else None,
             card=card, card_exact=exact,
         ))
