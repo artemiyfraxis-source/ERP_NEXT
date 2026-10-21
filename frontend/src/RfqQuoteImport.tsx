@@ -63,7 +63,9 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
 }) {
   const [mode, setMode] = useState<"none" | "paste" | "text">("none");
   const [pasteText, setPasteText] = useState("");
+  // «цены с НДС»: read from the price column's title until the buyer says otherwise.
   const [vatIncluded, setVatIncluded] = useState(true);
+  const [vatTouched, setVatTouched] = useState(false);
   const [paste, setPaste] = useState<PastePreview | null>(null);
   const [importText, setImportText] = useState("");
   const [review, setReview] = useState<Review | null>(null);
@@ -74,8 +76,9 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
     setBusy(true);
     setError("");
     try {
-      const result = await rfqApi.paste(rfqId, pasteText, supplierId, { vat_included: vatIncluded, ...(columns ? { columns } : {}) });
+      const result = await rfqApi.paste(rfqId, pasteText, supplierId, { ...(vatTouched ? { vat_included: vatIncluded } : {}), ...(columns ? { columns } : {}) });
       setPaste(result);
+      setVatIncluded(result.vat_included);
       setReview({ rows: result.rows, choices: result.rows.map((row) => row.rfq_line_id), vatIncluded: result.vat_included,
         source: "paste", header: null, file: null, unread: [] });
     } catch (reason) {
@@ -153,7 +156,7 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
             placeholder="Скопируйте строки таблицы в Excel (можно с заголовком) и вставьте сюда"
           />
           <div className="quote-import-actions">
-            <label className="rfq-basket-check"><input type="checkbox" checked={vatIncluded} onChange={(event) => setVatIncluded(event.target.checked)} /> цены с НДС</label>
+            <label className="rfq-basket-check"><input type="checkbox" checked={vatIncluded} onChange={(event) => { setVatIncluded(event.target.checked); setVatTouched(true); }} /> цены с НДС</label>
             <button type="button" className="secondary small" disabled={!pasteText.trim() || busy} onClick={() => void parsePaste()}>Разобрать</button>
           </div>
           {paste && (

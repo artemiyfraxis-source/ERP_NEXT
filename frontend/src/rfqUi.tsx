@@ -16,10 +16,12 @@ export const localToday = () => {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 };
 
-export function Dialog({ title, wide = false, onClose, children }: { title: string; wide?: boolean; onClose: () => void; children: ReactNode }) {
+export function Dialog({ title, wide = false, className = "", onClose, children }: {
+  title: string; wide?: boolean; className?: string; onClose: () => void; children: ReactNode;
+}) {
   return (
     <div className="dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className={`panel move-dialog${wide ? " wide" : ""}`} role="dialog" aria-label={title}>
+      <div className={`panel move-dialog${wide ? " wide" : ""}${className ? ` ${className}` : ""}`} role="dialog" aria-label={title}>
         <h2>{title}</h2>
         {children}
       </div>

@@ -171,7 +171,7 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
   const small: CSSProperties = { width: 80 };
   const pool = [...matrix.suppliers.map((item) => item.name), ...directory.map((item) => item.name)];
   return (
-    <Dialog title={supplier ? `КП от «${supplier.name}»` : "Внести КП"} wide onClose={onClose}>
+    <Dialog title={supplier ? `КП от «${supplier.name}»` : "Внести КП"} wide className="rfq-quote-dialog" onClose={onClose}>
       <div className="rfq-quote-head">
         {!supplier && (
           <label>Поставщик
@@ -220,7 +220,7 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
               const tiersBad = !row.declined && row.tiers.trim() !== "" && parseTiers(row.tiers) === null;
               return (
                 <tr key={line.id}>
-                  <td style={{ whiteSpace: "normal", minWidth: 200 }}><strong>{line.name}</strong> <small className="muted">{line.article ?? ""}</small></td>
+                  <td style={{ whiteSpace: "normal", minWidth: 200 }}><strong>{line.name}</strong> <small className="muted">{line.article && line.article.trim().toLowerCase() !== line.name.trim().toLowerCase() ? line.article : ""}</small></td>
                   <td>{quantity(line.quantity)} {line.unit}</td>
                   <td><input aria-label={`Цена ${line.name}`} inputMode="decimal" disabled={row.declined} value={row.price} onChange={(event) => patch(line.id, { price: event.target.value })} style={{ width: 100 }} /></td>
                   <td><input type="checkbox" aria-label={`НДС в цене ${line.name}`} checked={row.vat_included} onChange={(event) => patch(line.id, { vat_included: event.target.checked })} /></td>

@@ -275,7 +275,9 @@ export function MatrixTable({ matrix, lines, editable, selectable = editable, pi
         <tbody>
           {lines.map((line) => {
             const hint = nobodyHint(matrix, line);
-            const meta = [line.article, line.legacy_id, line.status, line.need_by ? `к ${formatDay(line.need_by)}` : ""].filter(Boolean).join(" · ");
+            // The article repeats the name on most calc lines — shown only when it adds something (as in the pool).
+            const article = line.article && line.article.trim().toLowerCase() !== line.name.trim().toLowerCase() ? line.article : "";
+            const meta = [article, line.legacy_id, line.status, line.need_by ? `к ${formatDay(line.need_by)}` : ""].filter(Boolean).join(" · ");
             const where = [project(line.project ?? null) || line.project, line.designation].filter(Boolean).join(" · ");
             return (
               <tr key={line.id} className={line.cancelled ? "rfq-row-cancelled" : picked.has(line.id) ? "rfq-row-picked" : undefined}>
