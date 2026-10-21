@@ -10,9 +10,22 @@ BNC-C58P,OLD.26.0000180,ЦАР,19C2A,550,BNC-male RG-58,БД.КОАКС,BNC-C58P
 "DOSIN-806-1841, SMA-Female R/A RG58",OLD.26.0000047,ЦАР,7C3,500,SMA-female R/A RG-58,разбор описания,,своей строки нет,
 "DS1-1215F1007-A, SMA-Female R/A RG174/RG316",OLD.26.0000056; OLD.26.0000057; OLD.26.0000058; OLD.26.0000059; OLD.26.0000060,ЦАР,18G3,5000,SMA-female R/A RG-174/RG-316,разбор описания,,своей строки нет,
 F male RG316 RG174,OLD.26.0000263,ЦАР,19E6C,50,F-male RG-316/RG-174,разбор описания,,своей строки нет,
-ISMA-JB3 SMA-male RG402,OLD.26.0000071,ЦАР,18C2E,426,SMA-male RG-402,разбор кода,,своей строки нет,"план (не записано): артикул партии → «ISMA-JB3» (edit_lot_identity), привязка к строке ISMA-JB3 × RG-402"
-ISMA-KB2-F,OLD.26.0000073; OLD.26.0000074; OLD.26.0000075; OLD.26.0000076; OLD.26.0000077; OLD.26.0000078,ЦАР,18C3A; 18C3B; 18C3C; 18C3D; 18C3E; 18C3F,2998,SMA-female RG-405,БД.КОАКС,ISMA-KB2-F / RG-405,своя строка,план (не записано): привязка 6 партий в журнале «Склад → база»
-ISMA-KB3A,OLD.26.0000064; OLD.26.0000065,ЦАР,18C2A; 18C2B,806,SMA-female RG-402,БД.КОАКС,ISMA-KB3A / RG-402,своя строка,план (не записано): привязка 2 партий в журнале «Склад → база»
+FAKCB-201-Z,OLD.26.0000611; OLD.26.0000614,ЦАР,18B1A,20,short female 90 RTK031 non waterproof all code,не опознан,,своей строки нет,
+FAKCF-004-Z,OLD.26.0000610,ЦАР,18B1A,10,short male 0 RTK031 non waterproof all code,не опознан,,своей строки нет,
+FAKCF-201-Z,OLD.26.0000615,ЦАР,18B1A,10,long female 0 RTK031 waterproof all code,не опознан,,своей строки нет,
+FAKCM-005-Z,OLD.26.0000612,ЦАР,18B1A,10,short female 0 RTK031 non waterproof all code,не опознан,,своей строки нет,
+FAKCM-202-Z,OLD.26.0000613,ЦАР,18B1A,10,long male 0 RTK031 waterproof all code,не опознан,,своей строки нет,
+HSDCB-102-P,OLD.26.0000616,ЦАР,18B1A,10,HSD female 90 4 pin non waterproof all code,не опознан,,своей строки нет,
+HSDCB-105-P,OLD.26.0000621,ЦАР,18B1A,10,HSD female 90 4+2 pin waterproof all code,не опознан,,своей строки нет,
+HSDCE-101-P,OLD.26.0000623,ЦАР,18B1A,10,HSD female 0 4+2 pin non waterpproof all code,не опознан,,своей строки нет,
+HSDCF-101-P,OLD.26.0000617,ЦАР,18B1A,10,HSD male 0 4 pin waterproof all code,не опознан,,своей строки нет,
+HSDCF-107-Z,OLD.26.0000619,ЦАР,18B1A,10,HSD male 0 4 pin non waterproof all code,не опознан,,своей строки нет,
+HSDCG-101-P,OLD.26.0000622,ЦАР,18B1A,10,HSD male 0 4+2 pin non waterpproof all code,не опознан,,своей строки нет,
+HSDCM-102-P,OLD.26.0000620,ЦАР,18B1A,10,HSD female 0 4 pin non waterproof all code,не опознан,,своей строки нет,
+HSDCM-105-P,OLD.26.0000618,ЦАР,18B1A,10,HSD female 0 4 pin non waterproof all code,не опознан,,своей строки нет,
+ISMA-JB3,OLD.26.0000071,ЦАР,18C2E,426,SMA-male RG-402,БД.КОАКС,ISMA-JB3 / RG-402,своя строка,21.10: артикул партии «ISMA-JB3 SMA-male RG402» → «ISMA-JB3»; журнал «Привязана» к ISMA-JB3 × RG-402
+ISMA-KB2-F,OLD.26.0000073; OLD.26.0000074; OLD.26.0000075; OLD.26.0000076; OLD.26.0000077; OLD.26.0000078,ЦАР,18C3A; 18C3B; 18C3C; 18C3D; 18C3E; 18C3F,2998,SMA-female RG-405,БД.КОАКС,ISMA-KB2-F / RG-405,своя строка,21.10: 6 партий — журнал «Привязана»
+ISMA-KB3A,OLD.26.0000064; OLD.26.0000065,ЦАР,18C2A; 18C2B,806,SMA-female RG-402,БД.КОАКС,ISMA-KB3A / RG-402,своя строка,21.10: 2 партии — журнал «Привязана»
 MCX KWHT,OLD.26.0000260,ЦАР,19E5C,10,MCX-female R/A,разбор кода,,своей строки нет,
 MCX male RG316 RG174 11-111L,OLD.26.0000258,ЦАР,19E5A,166,MCX-male RG-316/RG-174,разбор описания,,своей строки нет,
 MCX male Semi Regid R/A RG405,OLD.26.0000259,ЦАР,19E5B,100,MCX-male R/A RG-405,разбор описания,,своей строки нет,
@@ -50,6 +63,8 @@ NGD N-1128D female 8D-FB,OLD.26.0000272,ЦАР,19F1A,6,N-female,разбор о�
 "RHT-612-0678, SMA-Male RG58C/U",OLD.26.0000046,ЦАР,18D4B,447,SMA-male RG-58,разбор описания,,своей строки нет,
 "RHT-612-0694, SMA-Female RG58C/U",OLD.26.0000045,ЦАР,18D4A,500,SMA-female RG-58,разбор описания,,своей строки нет,
 "RHT-612-6007, SMA-Female RG178",OLD.26.0000053; OLD.26.0000054; OLD.26.0000055,ЦАР,7C4,3000,SMA-female RG-178,разбор описания,,своей строки нет,
+RMFCF-111-Z,OLD.26.0000609,ЦАР,18B1A,10,Mini FAKRA male 2pin RTK031 non waterproof,не опознан,,своей строки нет,
+RMFCF-112-Z,OLD.26.0000608,ЦАР,18B1A,10,Mini FAKRA male 4pin RTK031 non waterproof,не опознан,,своей строки нет,
 RP-SMA female RG316 RG174,OLD.26.0000125,ЦАР,18E7B,650,RP-SMA-female RG-316/RG-174,разбор описания,,своей строки нет,
 "RP-SMA-Female RG1,37",OLD.26.0000015; OLD.26.0000138; OLD.26.0000163,ЦАР,18F4B; 7B6; 7B6A,2994,RP-SMA-female,разбор кода,,своей строки нет,
 RP-SMA-Female RG174,OLD.26.0000164,ЦАР,18F4C,1000,RP-SMA-female RG-174,разбор кода,,своей строки нет,
@@ -104,9 +119,9 @@ SMA-Female RG405,OLD.26.0000028,ЦАР,18E4C,19,SMA-female RG-405,разбор �
 SMA-Female RG58 S-211F NGT. Арт. 526,OLD.26.0000007,ЦАР,18E1B,74,SMA-female RG-58,код поставщика,,своей строки нет,
 SMA-JB2C,OLD.26.0000066; OLD.26.0000067,ЦАР,18C1C; 18C1D,1000,SMA-male RG-405,БД.КОАКС,SMA-JB2C / RG-405,своя строка,
 SMA-JR угловой,OLD.26.0000128,ЦАР,18F1A,72,SMA-male R/A,разбор кода,,своей строки нет,
-SMA-JW2CG,OLD.26.0000070,ЦАР,18C2D,100,SMA-male R/A,разбор кода,,своей строки нет,"план (не записано): своя строка SMA-JW2CG, провод пуст — изготовитель не установлен (у HenryTech нет, ближайший HL-SMA-JWB2CG)"
-SMA-JWB2-F,OLD.26.0000062; OLD.26.0000063,ЦАР,18C1A; 18C1B,1000,SMA-male R/A RG-405,разбор кода,,своей строки нет,план (не записано): своя строка SMA-JWB2-F × RG-405 по HenryTech HL-SMA-JWB2-F
-SMA-JWB3-F-1,OLD.26.0000068,ЦАР,18E6B,200,SMA-male R/A RG-402,БД.КОАКС,SMA-JWB3-F-1 / RG-402,своя строка,"план (не записано): дозаполнить строку по HenryTech HL-SMA-JWB3-F (L1 аналог, экран, частота, КСВ, ссылка)"
+SMA-JW2CG,OLD.26.0000070,ЦАР,18C2D,100,SMA-male R/A,БД.КОАКС,SMA-JW2CG / —,своя строка,21.10: своя строка SMA-JW2CG создана (провод пуст — изготовитель не установлен); журнал «Создана»
+SMA-JWB2-F,OLD.26.0000062; OLD.26.0000063,ЦАР,18C1A; 18C1B,1000,SMA-male R/A RG-405,БД.КОАКС,SMA-JWB2-F / RG-405,своя строка,21.10: своя строка SMA-JWB2-F × RG-405 создана по HenryTech HL-SMA-JWB2-F; журнал «Создана» / «Привязана»
+SMA-JWB3-F-1,OLD.26.0000068,ЦАР,18E6B,200,SMA-male R/A RG-402,БД.КОАКС,SMA-JWB3-F-1 / RG-402,своя строка,21.10: строка дозаполнена по HenryTech HL-SMA-JWB3-F (8 ячеек); журнал «Обновлена»
 "SMA-LC174P@RUICHI, SMA-Male R/A RG174/RG316",OLD.26.0000022; OLD.26.0000032; OLD.26.0000134; OLD.26.0000135; OLD.26.0000136; OLD.26.0000137; OLD.26.0000153,ЦАР,18E3B; 18E6A; 19D4A; 19D4B,4700,SMA-male R/A RG-174/RG-316,БД.КОАКС,SMA-LC174P / RG-174; SMA-LC174P / RG-316,своя строка,
 SMA-LC58P,OLD.26.0000029,ЦАР,18E5A,253,SMA-male RG-58,БД.КОАКС,SMA-LC58P / RG-58,своя строка,
 SMA-Male  R/A RG58C/U,OLD.26.0000144,ЦАР,19D5B,500,SMA-male R/A RG-58,разбор кода,,своей строки нет,
