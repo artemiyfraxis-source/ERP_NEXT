@@ -23,7 +23,7 @@ from app.workflows.terminal_crimp import crimp_display
 from .connector_catalog_data import (
     AUTO, BTB, CATALOG_SERIES, IFACE, JST_PDF, LUGS, PLUG, POWER, RF, ROUND, SIDE, SIDE_SMT, TOP, TOP_SMT, WTB, WTW,
 )
-from .connector_housings import CATALOG_SAMPLES, FAMILIES, housing_of, normalize_article
+from .connector_housings import CATALOG_SAMPLES, FAMILIES, gender_title, housing_of, normalize_article
 
 
 def _counts(first: int, last: int, *extra: int) -> tuple[int, ...]:
@@ -76,18 +76,18 @@ JST_SERIES: tuple[dict[str, Any], ...] = (
      "headers": ((TOP, "B{}B-PHDSS", tuple(range(10, 35, 2))), (SIDE, "S{}B-PHDSS", tuple(range(10, 35, 2))))},
     # SM 18 circuits is a two-row housing (12.4 mm across) — the family draws one row up to 12, so it is left out.
     {"id": "jst-sm", "title": "JST SM", "sheet": "eSM", "terminals": ("SMR", "SMP", "SM", "BL2018"),
-     "variants": (("Розетка SMR, чёрная", "jst-sm-r", "SMR-{:02d}V-B", _counts(2, 12)),
-                  ("Розетка SMR, белая", "jst-sm-r", "SMR-{:02d}V-N", _counts(2, 12)),
-                  ("Вилка SMP, чёрная", "jst-sm-p", "SMP-{:02d}V-BC", _counts(2, 12)),
-                  ("Вилка SMP, белая", "jst-sm-p", "SMP-{:02d}V-NC", _counts(2, 12))),
-     # eSM «Contact»: the receptacle SMR takes the pin contact, the plug SMP the socket contact.
-     "contacts": (("SYM-001T-P0.6", "штырь, в розетку SMR, AWG 28–22"), ("SHF-001T-0.8BS", "гнездо, в вилку SMP, AWG 28–22")),
+     "variants": (("Вилка SMR, чёрная", "jst-sm-r", "SMR-{:02d}V-B", _counts(2, 12)),
+                  ("Вилка SMR, белая", "jst-sm-r", "SMR-{:02d}V-N", _counts(2, 12)),
+                  ("Розетка SMP, чёрная", "jst-sm-p", "SMP-{:02d}V-BC", _counts(2, 12)),
+                  ("Розетка SMP, белая", "jst-sm-p", "SMP-{:02d}V-NC", _counts(2, 12))),
+     # eSM «Contact»: SMR (the maker's «receptacle») takes the pin contact — вилка; SMP (the maker's «plug») the socket contact — розетка.
+     "contacts": (("SYM-001T-P0.6", "штырь, в вилку SMR, AWG 28–22"), ("SHF-001T-0.8BS", "гнездо, в розетку SMP, AWG 28–22")),
      "headers": (), "note": "18 конт. — двухрядный корпус, в базе не рисуется"},
     {"id": "jst-rcy", "title": "JST RCY", "sheet": "eRCY", "terminals": ("SYR", "SYP"),
-     "variants": (("Розетка SYR, штыри", "jst-rcy", "SYR-{:02d}T", (2,)),
-                  ("Розетка SYR, белая V-0", "jst-rcy", "SYR-{:02d}TV", (2,)),
-                  ("Вилка SYP, гнёзда", "jst-rcy-p", "SYP-{:02d}T-1", (2,)),
-                  ("Вилка SYP, белая V-0", "jst-rcy-p", "SYP-{:02d}TV-1", (2,))),
+     "variants": (("Вилка SYR, штыри", "jst-rcy", "SYR-{:02d}T", (2,)),
+                  ("Вилка SYR, белая V-0", "jst-rcy", "SYR-{:02d}TV", (2,)),
+                  ("Розетка SYP, гнёзда", "jst-rcy-p", "SYP-{:02d}T-1", (2,)),
+                  ("Розетка SYP, белая V-0", "jst-rcy-p", "SYP-{:02d}TV-1", (2,))),
      "headers": ()},
 )
 
@@ -119,35 +119,37 @@ GROUPS: tuple[dict[str, Any], ...] = (
 
 # Series known only from БД.ТЕР «Series» / «Product Name» (and the shop's data): no housing table in the ERP, so the card
 # shows the terminals and the picture of the closest shape (`pic` = a family whose sample is drawn), never a made-up
-# model number. (id, title, maker, category, pic, terminal keys).
-_LOOSE: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (
-    # CTX50 terminals go into the Mini50 / CTX50 housings, Pico-EZmate is sold as cable assemblies (36920): no housing
-    # part number the maker lists for them was found, so they keep the closest shape.
-    ("molex-ctx50", "Molex CTX50", "Molex", WTB, "jst-xh", ("CTX50",)),
-    ("molex-picoezmate", "Molex Pico-EZmate", "Molex", WTB, "molex-picoblade", ("Pico-EZmate", "Pico-EZmate Plus")),
-    ("jst-wp", "JST WP (JWPF)", "JST", AUTO, "te-superseal", ("WP (JWPF)",)),
-    ("hsm-phu", "Hsuan Mao PHU / MHU / MX", "Hsuan Mao", WTB, "jst-ph", ("PHU/MHU/MX", "HC (PAP)")),
-    ("kls", "KLS Electronic", "KLS", WTB, "connfly-ds1071", ("KLS1-2.50", "KLS1-2.54", "KLS1-XL4-1.25 (HRS DF13 type)")),
-    ("jr-servo", "Сервоконнектор JR / Futaba", "", WTB, "connfly-ds1071", ("JR/Futaba servo connector contact",)),
-    ("te-matenlok", "TE MATE-N-LOK", "TE", WTW, "molex-minifit-jr", ("MATE-N-LOK",)),
-    ("te-multilock-070", "TE Multilock 070", "TE", AUTO, "te-multilock-040", ("AMP MULTILOCK 070",)),
-    ("te-mcon12", "TE MCON 1.2", "TE", AUTO, "te-superseal", ("MCON 1.2 LL (Locking-Lance)", "MCON 1.2mm")),
-    ("te-mcp15", "TE MCP 1.5K", "TE", AUTO, "te-superseal", ("AMP MCP 1.5K", "AMP MCP 1.5K (Automation Ready)")),
-    ("te-mcp28", "TE MCP 2.8K", "TE", AUTO, "te-superseal", ("AMP MCP 2.8K", "AMP MCP 2.8 (HDSCS/Timer)", "AMP MCP 2.8mm", "MCP")),
-    ("te-microtimer", "TE Micro Timer", "TE", AUTO, "te-superseal", ("AMP TIMER, Micro Timer II", "AMP TIMER, Micro-Timer III")),
-    ("te-jpt", "TE Junior Power Timer", "TE", AUTO, "te-superseal", ("Junior Power Timer", "AMP TIMER (receptacle)")),
-    ("te-mqs", "TE MQS", "TE", AUTO, "te-superseal", ("MQS",)),
-    ("te-ampseal", "TE AMPSEAL", "TE", AUTO, "te-superseal", ("AMPSEAL",)),
-    ("te-superseal-10", "TE Superseal 1.0", "TE", AUTO, "te-superseal", ("AMP SUPERSEAL 1.0",)),
-    ("te-amp-1528", "TE AMP 1.5/2.8", "TE", AUTO, "te-superseal", ("AMP 1.5/2.8 Connector System (RECPT AND TAB)",)),
-    ("te-din72585", "TE Round 2,5 (DIN 72585)", "TE", AUTO, "te-superseal", ("AMP Round Connector System 2,5mm (DIN 72585)",)),
-    ("sumitomo-ts", "Sumitomo TS Sealed", "Sumitomo", AUTO, "te-superseal", ("TS Sealed Series (0,64мм/025)",)),
-    ("te-amplimite", "TE AMPLIMITE HD-20", "TE", IFACE, "dsub", ("AMPLIMITE HD-20 (HDP-20)",)),
-    ("te-intercontec", "TE Intercontec", "TE", ROUND, "aviation-gx", ("Intercontec circular contact", "Intercontec circular contact socket")),
+# model number; `note` says why the housings are not there (16.10.2026: te.com and molex.com do not answer from the
+# shop's network either; the automotive contact systems go into the carmakers' own housings).
+# (id, title, maker, category, pic, terminal keys, note).
+NO_TE = "чертежи TE недоступны (сайт TE закрыт), таблицы корпусов нет"
+CAR_SYSTEM = "система контактов для корпусов автопроизводителей — своей таблицы корпусов у серии нет"
+_LOOSE: tuple[tuple[str, str, str, str, str, tuple[str, ...], str], ...] = (
+    # CTX50 (Mini50), Hsuan Mao MX / HC and the JR servo plug have housing tables in `connector_catalog_data` (16.10.2026).
+    ("te-matenlok", "TE MATE-N-LOK", "TE", WTW, "molex-minifit-jr", ("MATE-N-LOK",), NO_TE),
+    ("te-multilock-070", "TE Multilock 070", "TE", AUTO, "te-multilock-040", ("AMP MULTILOCK 070",), NO_TE),
+    ("te-mcon12", "TE MCON 1.2", "TE", AUTO, "te-superseal", ("MCON 1.2 LL (Locking-Lance)", "MCON 1.2mm"), CAR_SYSTEM),
+    ("te-mcp15", "TE MCP 1.5K", "TE", AUTO, "te-superseal", ("AMP MCP 1.5K", "AMP MCP 1.5K (Automation Ready)"), CAR_SYSTEM),
+    ("te-mcp28", "TE MCP 2.8K", "TE", AUTO, "te-superseal", ("AMP MCP 2.8K", "AMP MCP 2.8 (HDSCS/Timer)", "AMP MCP 2.8mm", "MCP"),
+     CAR_SYSTEM),
+    ("te-microtimer", "TE Micro Timer", "TE", AUTO, "te-superseal", ("AMP TIMER, Micro Timer II", "AMP TIMER, Micro-Timer III"),
+     CAR_SYSTEM),
+    ("te-jpt", "TE Junior Power Timer", "TE", AUTO, "te-superseal", ("Junior Power Timer", "AMP TIMER (receptacle)"), CAR_SYSTEM),
+    ("te-mqs", "TE MQS", "TE", AUTO, "te-superseal", ("MQS",), CAR_SYSTEM),
+    ("te-ampseal", "TE AMPSEAL", "TE", AUTO, "te-superseal", ("AMPSEAL",), NO_TE),
+    ("te-superseal-10", "TE Superseal 1.0", "TE", AUTO, "te-superseal", ("AMP SUPERSEAL 1.0",), NO_TE),
+    ("te-amp-1528", "TE AMP 1.5/2.8", "TE", AUTO, "te-superseal", ("AMP 1.5/2.8 Connector System (RECPT AND TAB)",), CAR_SYSTEM),
+    ("te-din72585", "TE Round 2,5 (DIN 72585)", "TE", AUTO, "te-superseal", ("AMP Round Connector System 2,5mm (DIN 72585)",),
+     NO_TE),
+    ("sumitomo-ts", "Sumitomo TS Sealed", "Sumitomo", AUTO, "te-superseal", ("TS Sealed Series (0,64мм/025)",), CAR_SYSTEM),
+    ("te-amplimite", "TE AMPLIMITE HD-20", "TE", IFACE, "dsub", ("AMPLIMITE HD-20 (HDP-20)",), NO_TE),
+    ("te-intercontec", "TE Intercontec", "TE", ROUND, "aviation-gx", ("Intercontec circular contact", "Intercontec circular contact socket"),
+     NO_TE),
     ("flat-quick", "Плоские клеммы быстрого соединения", "", LUGS, "lug",
      ("РПИ-М", "РППИ-М", "РПИ-П", "РПИ-М(н)", "FDD", "Fully Insulated Female Disconnect", "FLVDDF", "InsulKrimp Quick Disconnect",
       "TAB, FASTIN-FASTON", "Контакт штыревой 6,3", "Клемма гнездовая с замком", "Контакт гнездовой",
-      "Контакт гнездовой серии 2,8мм", "Контакт гнездовой серии 2,8мм (с фиксирующим усиком)")),
+      "Контакт гнездовой серии 2,8мм", "Контакт гнездовой серии 2,8мм (с фиксирующим усиком)"),
+     "клеммы без корпуса"),
 )
 
 # ВЧ (coax) series from БД.КОАКС «Тип/Серия»: the part before «-male / -female / -plug». (id, title, category, bases).
@@ -156,7 +158,9 @@ _RF: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ("rf-bnc", "BNC", RF, ("BNC",)), ("rf-tnc", "TNC", RF, ("TNC",)), ("rf-uhf", "UHF", RF, ("UHF",)),
     ("rf-mcx", "MCX", RF, ("MCX",)), ("rf-mmcx", "MMCX", RF, ("MMCX",)), ("rf-smb", "SMB", RF, ("SMB",)),
     ("rf-smp", "SMP", RF, ("SMP",)), ("rf-ssmc", "SSMC", RF, ("SSMC",)), ("rf-qma", "QMA", RF, ("QMA",)),
-    ("rf-mhf", "MHF1 / U.FL", RF, ("MHF1", "U.FL")), ("rf-f", "F-тип", RF, ("F",)), ("rf-292", "2,92 мм", RF, ("2.92MM",)),
+    ("rf-ufl", "U.FL (Hirose)", RF, ("U.FL",)),
+    ("rf-mhf", "MHF / IPEX (I-PEX)", RF, ("MHF1", "MHF", "MHF2", "MHF3", "MHF4", "IPEX", "IPX", "W.FL")), ("rf-f", "F-тип", RF, ("F",)), ("rf-292", "2,92 мм", RF, ("2.92MM",)),
+    ("rf-35", "3,5 мм", RF, ("3.5MM",)),
     ("rf-sr50", "СР-50", RF, ("СР-50",)), ("rf-fakra", "Fakra", AUTO, ("FAKRA",)),
 )
 
@@ -178,6 +182,13 @@ def _number(value: object) -> float | None:
         return None
 
 
+# The card edits the БД.ТЕР record itself: its id and the stored values of the cells it can edit (the old value of each
+# edit is what the record holds, not what the card shows normalised).
+RECORD_ID_KEY = "__id"
+EDITABLE_KEYS = ("terType", "terGender", "awgFrom", "awgTo", "mm2From", "mm2To", "terStrip", "terApplicator",
+                 "terCrimpHeight", "terInsCrimpHeight", "terPullForceMin", "terPullForceMax")
+
+
 def terminals_for(keys: Iterable[str], records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """БД.ТЕР rows whose «Series» names one of the housing prefixes (or whose «Series» / «Product Name» is the key)."""
     wanted = {_key(key) for key in keys}
@@ -192,6 +203,8 @@ def terminals_for(keys: Iterable[str], records: Iterable[Mapping[str, Any]]) -> 
         kind = str(fields.get("terType") or "").strip()
         out.append({
             "article": article,
+            "id": str(fields.get(RECORD_ID_KEY) or ""),
+            "raw": {key: str(fields[key]) for key in EDITABLE_KEYS if key in fields},
             "maker": str(fields.get("terManufacturer") or "").strip(),
             "product": str(fields.get("terComponent") or "").strip(),
             "series": str(fields.get("terSeries") or "").strip(),
@@ -200,7 +213,8 @@ def terminals_for(keys: Iterable[str], records: Iterable[Mapping[str, Any]]) -> 
             "mm2_from": str(fields.get("mm2From") or "").strip(), "mm2_to": str(fields.get("mm2To") or "").strip(),
             "strip": str(fields.get("terStrip") or "").strip(),
             "applicator": str(fields.get("terApplicator") or "").strip(),
-            **crimp_display(fields.get("terCrimpHeight"), fields.get("terPullForceMin"), fields.get("terPullForceMax")),
+            **crimp_display(fields.get("terCrimpHeight"), fields.get("terPullForceMin"), fields.get("terPullForceMax"),
+                            fields.get("terInsCrimpHeight")),
         })
     return out
 
@@ -249,6 +263,8 @@ def _summary(series: dict[str, Any]) -> dict[str, Any]:
         housing_count=len(housings), counts=counts,
         pitch=first.get("pitch"), color=first.get("color"),
         checked=bool(layouts) and all(layout.get("conf") == "high" for layout in layouts),
+        # checked by the owner on the real part, not on a maker drawing (Connfly Dupont, 17.10.2026)
+        checked_on_part=bool(layouts) and all(str(layout.get("src") or "").startswith("сверено владельцем") for layout in layouts),
         sample=housings[0] if housings else _picture(series.get("pic")),
     )
     series.pop("pic", None)
@@ -285,12 +301,13 @@ def _rf_catalog(bases: tuple[str, ...], coax_records: list[Mapping[str, Any]]) -
 
 
 def _bare(series_id: str, title: str, maker: str, category: str, *, terminals: list[dict[str, Any]] | None = None,
-          catalog: list[dict[str, str]] | None = None, pic: str | None = None) -> dict[str, Any]:
-    """A series with no housing table in the ERP: only terminals / БД.КОАКС articles and the picture of the closest shape."""
+          catalog: list[dict[str, str]] | None = None, pic: str | None = None, note: str = "") -> dict[str, Any]:
+    """A series with no housing table in the ERP: only terminals / БД.КОАКС articles and the picture of the closest shape;
+    `note` — why the housings are not there."""
     terminals = terminals or []
     return _summary({
         "id": series_id, "title": title, "maker": maker, "category": category, "variants": [], "range_checked": False,
-        "range_src": "", "datasheet": "", "note": "", "terminals": terminals, "wire": wire_range(terminals),
+        "range_src": "", "datasheet": "", "note": note, "terminals": terminals, "wire": wire_range(terminals),
         "catalog": catalog or [], "pic": pic,
     })
 
@@ -324,7 +341,8 @@ def _catalog_series(spec: Mapping[str, Any], records: list[Mapping[str, Any]], k
     for variant in spec["variants"]:
         title, family, articles = _variant_articles(variant)
         housings = [h for h in (_housing(article, headers) for article in articles) if h]
-        variants.append({"title": title, "family": family, "housings": housings})
+        mate = housings[0]["housing"].get("mate") if housings else None
+        variants.append({"title": gender_title(title, mate and mate["contacts"]), "family": family, "housings": housings})
     terminals = terminals_for(spec["terminals"], records)
     return _summary({
         "id": spec["id"], "title": spec["title"], "maker": spec["maker"], "category": spec["category"],
@@ -411,9 +429,9 @@ def connector_series(
     for series in by_id.values():
         result.append(_summary(series))
     ids |= set(by_id)
-    for series_id, title, maker, category, pic, keys in _LOOSE:
+    for series_id, title, maker, category, pic, keys, note in _LOOSE:
         if series_id not in ids:
-            result.append(_bare(series_id, title, maker, category, terminals=terminals_for(keys, records), pic=pic))
+            result.append(_bare(series_id, title, maker, category, terminals=terminals_for(keys, records), pic=pic, note=note))
     for series_id, title, category, bases in _RF:
         result.append(_bare(series_id, title, "", category, catalog=_rf_catalog(bases, coax), pic="dc-barrel"))
     return sorted(result, key=_order)

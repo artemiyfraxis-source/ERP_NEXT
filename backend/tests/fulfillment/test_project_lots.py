@@ -280,6 +280,112 @@ def test_off_book_line_mark_unmark_and_return_refuses_good_back(api):
     ]
 
 
+def test_off_book_quantity_covering_the_whole_wait_marks_every_line(api):
+    client, factory = api
+    kb1 = create(client, "728К.2 · КБ1 · Жгут", ("КД-1", "Разъём", "4"))
+    kb2 = create(client, "728К.2 · КБ2 · Жгут", ("КД-1", "Разъём", "3"))
+
+    marked = bind_lots(client, "728К.2", {kb1["id"]: kb1["version"], kb2["id"]: kb2["version"]},
+                       off_book=True, off_book_quantity="7")
+
+    assert marked.status_code == 200, marked.text
+    body = marked.json()
+    assert [(row["kb"], row["quantity"], row["off_book"]) for row in body["bound"]] == [
+        ("КБ1", "4", True), ("КБ2", "3", True),
+    ]
+    assert body["short"] == "0"
+    assert body["message"] == "«Разъём»: есть, но не заведено — 7 шт в 2 КБ."
+    for kit in (kb1, kb2):
+        request = fetch(client, kit["id"])
+        assert [line["off_book"] for line in item_lines(request)] == [True]
+        assert request["status"] == "Укомплектован"
+
+
+def test_off_book_quantity_splits_the_line_where_it_runs_out_and_the_rest_waits(api):
+    client, factory = api
+    kb3 = create(client, "728К.2 · КБ3 · Жгут", ("КД-1", "Разъём", "5"))
+    kb2 = create(client, "728К.2 · КБ2 · Жгут", ("КД-1", "Разъём", "3"), ("КД-2", "Провод", "2"))
+    kb1 = create(client, "728К.2 · КБ1 · Жгут", ("КД-1", "Разъём", "4"))
+    versions = {item["id"]: item["version"] for item in (kb1, kb2, kb3)}
+
+    marked = bind_lots(client, "728К.2", versions, off_book=True, off_book_quantity="6")
+
+    assert marked.status_code == 200, marked.text
+    body = marked.json()
+    assert [(row["kb"], row["quantity"], row["off_book"], row["lot_id"]) for row in body["bound"]] == [
+        ("КБ1", "4", True, None), ("КБ2", "2", True, None),
+    ]
+    assert body["short"] == "6"
+    assert body["message"] == (
+        "«Разъём»: есть, но не заведено — 6 шт в 2 КБ; не хватает 6 шт — эти позиции ждут поставки."
+    )
+    assert {item["id"]: item["version"] for item in body["requests"]} == {
+        kb1["id"]: kb1["version"] + 1, kb2["id"]: kb2["version"] + 1,
+    }
+    second = fetch(client, kb2["id"])
+    assert [(line["requirement"], line["off_book"], line["lot"], line["reserved"]) for line in item_lines(second)] == [
+        ("2", True, None, "0"), ("1", False, None, "0"),
+    ]
+    assert second["status"] == "Недоукомплектован"
+    assert "Разъём (ГРН не выбран): −1" in second["shortfall"]
+    third = fetch(client, kb3["id"])
+    assert third["version"] == kb3["version"]  # the quantity ran out before КБ3: untouched
+    assert [(line["requirement"], line["off_book"]) for line in item_lines(third)] == [("5", False)]
+
+    # The split remainder is an ordinary waiting line: the next press covers it (КБ2 first, then КБ3).
+    versions = {kb2["id"]: second["version"], kb3["id"]: third["version"]}
+    rest = bind_lots(client, "728К.2", versions, off_book=True, off_book_quantity="1.5")
+    assert rest.status_code == 200, rest.text
+    assert [(row["kb"], row["quantity"]) for row in rest.json()["bound"]] == [("КБ2", "1"), ("КБ3", "0.5")]
+    assert [(line["requirement"], line["off_book"]) for line in item_lines(fetch(client, kb3["id"]))] == [
+        ("0.5", True), ("4.5", False),
+    ]
+
+
+def test_off_book_quantity_over_the_wait_or_not_positive_is_refused_and_nothing_moves(api):
+    client, factory = api
+    lot = stock("FRX.26.0000001", "10")
+    put_lots(factory, lot)
+    kb1 = create(client, "728К.2 · КБ1 · Жгут", ("КД-1", "Разъём", "4"))
+    kb2 = create(client, "728К.2 · КБ2 · Жгут", ("КД-1", "Разъём", "3"))
+    versions = {kb1["id"]: kb1["version"], kb2["id"]: kb2["version"]}
+
+    over = bind_lots(client, "728К.2", versions, off_book=True, off_book_quantity="7.5")
+    zero = bind_lots(client, "728К.2", versions, off_book=True, off_book_quantity="0")
+    negative = bind_lots(client, "728К.2", versions, off_book=True, off_book_quantity="-2")
+    with_lots = bind_lots(client, "728К.2", versions, lot_ids=[str(lot.id)], off_book_quantity="2")
+
+    assert over.status_code == 422, over.text
+    assert over.json()["detail"] == "Есть 7.5 шт, а ждут только 7 шт — укажи не больше"
+    assert zero.status_code == 422 and "больше нуля" in zero.json()["detail"]
+    assert negative.status_code == 422 and "больше нуля" in negative.json()["detail"]
+    assert with_lots.status_code == 422, with_lots.text
+    assert fetch(client, kb1["id"])["version"] == kb1["version"]
+    assert fetch(client, kb2["id"])["version"] == kb2["version"]
+
+
+def test_off_book_quantity_on_one_line_splits_it_and_keeps_the_version_check(api):
+    client, factory = api
+    kb1 = create(client, "728К.2 · КБ1 · Жгут", ("КД-1", "Разъём", "4"))
+    url = f"/api/issues/{kb1['id']}/lines/{kb1['lines'][0]['id']}/off-book"
+
+    over = client.post(url, json={"version": kb1["version"], "quantity": "5"})
+    marked = client.post(url, json={"version": kb1["version"], "quantity": "2.5"})
+    stale = client.post(url, json={"version": kb1["version"], "quantity": "1"})
+
+    assert over.status_code == 422, over.text
+    assert marked.status_code == 200, marked.text
+    lines = marked.json()["request"]["lines"]
+    assert [(line["requirement"], line["off_book"]) for line in lines] == [("2.5", True), ("1.5", False)]
+    assert marked.json()["request"]["status"] == "Недоукомплектован"
+    assert stale.status_code == 409
+    with factory() as uow:
+        details = list(uow.session.scalars(
+            select(AuditEventRow.details).where(AuditEventRow.event_type == "fulfillment.off_book_marked")
+        ))
+    assert [item["quantity"] for item in details] == ["2.5"]
+
+
 def kit_reserve(lot: StockLot, project: str, item_index: str, quantity: str) -> KitReserve:
     return KitReserve(
         id=uuid4(), project=project, item_index=item_index, article="КД-1", lot_id=lot.id,
@@ -347,3 +453,23 @@ def test_single_bind_takes_only_its_own_kb_reserve(api):
         assert uow.kit_reserves.get(reserve.id).quantity == Decimal("3")
         assert uow.warehouse.get(lot.id).reserved == Decimal("5")
         assert uow.session.scalar(select(func.count()).select_from(WriteOffEntryRow)) == 0
+
+
+def test_picker_shows_lots_other_projects_hold_in_full_only_to_see_them(api):
+    client, factory = api
+    lot = stock("FRX.26.0000002", "200")
+    reserve = kit_reserve(lot, "591К.4", "КБ2", "200")
+    with factory() as uow:
+        uow.warehouse.add(lot.reserve(Decimal("200")))
+        uow.kit_reserves.add(reserve)
+        uow.commit()
+
+    other = client.get("/api/issues/lots", params={"project": "719К.2"}).json()
+    own = client.get("/api/issues/lots", params={"project": "591К.4"}).json()
+    plain = client.get("/api/issues/lots").json()
+
+    assert other["lots"] == []
+    assert [(row["grn"], row["available"], row["reserved"], row["held_by"]) for row in other["reserved_lots"]] == [
+        ("FRX.26.0000002", "0", "200", "591К.4 КБ2")]
+    assert [row["available"] for row in own["lots"]] == ["200"] and own["reserved_lots"] == []
+    assert "reserved_lots" not in plain

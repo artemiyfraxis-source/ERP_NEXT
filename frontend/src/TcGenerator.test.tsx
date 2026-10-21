@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import type { KitsetBom, ProjectTechcard } from "./api";
@@ -73,13 +73,16 @@ it("pairs the pin lists of both ends in order and shows the crossover under the 
   mockApi();
   render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
   const [pinsA, pinsB] = await screen.findAllByPlaceholderText("1, 3 или 1-2");
-  expect(screen.getAllByText(/Контакты стыкуются по жилам: k-я жила здесь ↔ k-я на другой стороне/)).toHaveLength(1);
-  expect(screen.getByLabelText("Соединения по распиновке")).not.toHaveTextContent("А1 → В1");
+  // Подсказка про стыковку по жилам и текстовая сводка «провод · А1 → В1: 1→2» убраны (владелец 14.10): схема связей показывает то же.
+  expect(screen.queryByText(/Контакты стыкуются по жилам/)).toBeNull();
   fireEvent.change(pinsA, { target: { value: "1-2" } });
   fireEvent.change(pinsB, { target: { value: "2, 1" } });
   const links = await screen.findByLabelText("Соединения по распиновке");
-  expect(links).toHaveTextContent("МГТФ 0,12 · А1 → В1: 1→2, 2→1");
-  expect(links.querySelectorAll("b")).toHaveLength(2);
+  expect(links).not.toHaveTextContent("А1 → В1");
+  expect(links.querySelectorAll("b")).toHaveLength(0);
+  expect(links.querySelector(".pin-routes")).toBeNull();
+  const svg = within(links).getByRole("img", { name: "Провода с контакта на контакт, сростки и хвосты" });
+  expect([...svg.querySelectorAll(".pin-links-line")].map((l) => `${l.getAttribute("data-a")}→${l.getAttribute("data-b")}`)).toEqual(["А1·1→В1·2", "А1·2→В1·1"]);
 });
 
 it("adds a missing coax connector to БД.КОАКС through the references record", async () => {
@@ -105,6 +108,68 @@ it("adds a missing coax connector to БД.КОАКС through the references reco
   await waitFor(() => expect(created).toEqual({ tab: "coax", fields: {
     coaxArticle: "SMA-J", coaxWire: "RG316", l1: "4", pinType: "пайка", shieldType: "обжим", connArticle: "SMA-J",
   } }));
+});
+
+it("chooses coax stripping on the rotary machine or separately and keeps the choice in the saved form (owner 14.10)", async () => {
+  mockApi();
+  const onBuild = vi.fn();
+  render(<TcGenerator card={{ ...card, product_name: "Сборка RG316 150mm" }} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kitOf("Сборка RG316 150mm", [
+    { type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
+    { type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
+    { type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
+  ])} />);
+
+  const mode = await screen.findByRole("radiogroup", { name: "Разделка" });
+  expect(within(mode).getByRole("radio", { name: "Резка с разделкой на станке" })).toHaveAttribute("aria-checked", "true");
+  // Ø кабеля неизвестен — большой станок; выбор технолога сохраняется.
+  const machine = screen.getByRole("radiogroup", { name: "Станок" });
+  expect(within(machine).getByRole("radio", { name: /BZW-50X \(большой\)/ })).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(within(machine).getByRole("radio", { name: /BZW-886\+Q2 \(малый\)/ }));
+  expect(screen.getAllByText("Резка с разделкой (А и В)")[0]).toBeInTheDocument();
+  expect(screen.queryByText("Разделка коаксиала (А)")).toBeNull();
+
+  fireEvent.click(within(mode).getByRole("radio", { name: "Резка, затем разделка А и В" }));
+  expect(screen.queryByRole("radiogroup", { name: "Станок" })).toBeNull();
+  expect(screen.getAllByText("Разделка коаксиала (А)")[0]).toBeInTheDocument();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  pressBuild();
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  const config = onBuild.mock.calls[0][0];
+  // В моке только карта CUT_WIRE_auto — операции без карты в сборку не идут.
+  expect(config.ops.map((op: { opKey: string }) => op.opKey)).toEqual(["coaxCut"]);
+  expect(config.ops[0]).not.toHaveProperty("machine");
+  expect(config.gen_state.S.coax).toMatchObject({ stripMode: "separate", machine: "small" });
+});
+
+it("a collet centre contact from БД.КОАКС selects «Цанга, без пайки» and drops the pin soldering (16.10)", async () => {
+  mockApi((path) => (path.startsWith("/api/references/tech-operations?") && path.includes("tab=coax") ? json({ metadata: null, columns: [],
+    records: [{ id: "c1", tab: "coax", display_text: "N-111C/8D", source_sheet: "", fields: {
+      coaxArticle: "N-111C/8D", coaxWire: "8D-FB", "Тип экрана": "обжим", "Центральный контакт": "цанговый, не требует пайки", L1: "9" } }] }) : undefined));
+  render(<TcGenerator card={{ ...card, product_name: "Сборка 8D-FB 1m" }} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Сборка 8D-FB 1m", [
+    { type: "Кабель", name: "8D-FB", art: "8D-FB", qty: 1 },
+    { type: "Соед", name: "N", art: "N-111C/8D", qty: 1 },
+  ])} />);
+
+  const pin = await screen.findByRole("radiogroup", { name: "Тип пина А" });
+  await waitFor(() => expect(within(pin).getByRole("radio", { name: "Цанга, без пайки" })).toHaveAttribute("aria-checked", "true"));
+  expect(screen.queryByText("Пайка центрального контакта (А)")).toBeNull();
+  expect(screen.getAllByText("Монтаж корпуса (А) — цанговый контакт, без пайки")[0]).toBeInTheDocument();
+});
+
+it("a crimped centre contact from БД.КОАКС selects «Обжим» and the pin is pressed, not soldered (19.10)", async () => {
+  mockApi((path) => (path.startsWith("/api/references/tech-operations?") && path.includes("tab=coax") ? json({ metadata: null, columns: [],
+    records: [{ id: "c1", tab: "coax", display_text: "SMA-JW3", source_sheet: "", fields: {
+      coaxArticle: "SMA-JW3", coaxWire: "RG-316", "Тип пина": "обжим", "Тип экрана": "обжим", L1: "2,6" } }] }) : undefined));
+  render(<TcGenerator card={{ ...card, product_name: "Сборка RG-316 0,3m" }} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Сборка RG-316 0,3m", [
+    { type: "Кабель", name: "RG-316", art: "RG-316", qty: 1 },
+    { type: "Соед", name: "SMA", art: "SMA-JW3", qty: 1 },
+  ])} />);
+
+  const pin = await screen.findByRole("radiogroup", { name: "Тип пина А" });
+  expect(within(pin).getAllByRole("radio").map((radio) => radio.textContent)).toEqual(["Пайка", "Пайка внутри корпуса", "Обжим", "Цанга, без пайки"]);
+  await waitFor(() => expect(within(pin).getByRole("radio", { name: "Обжим" })).toHaveAttribute("aria-checked", "true"));
+  expect(screen.getAllByText("Опрессовка центрального контакта (А)")[0]).toBeInTheDocument();
+  expect(screen.queryByText("Пайка центрального контакта (А)")).toBeNull();
 });
 
 it("takes cut lengths and tinning from the КБn sheet of the calculation (tcCalcOps_)", async () => {
@@ -235,8 +300,8 @@ it("«Термоусадка на жгут»: ТТК из состава даё�
   (await screen.findAllByText("Резка — МГТФ 0,12"))[0];
   const toggle = screen.getByRole("switch", { name: /Термоусадка на жгут/ });
   if (!(toggle as HTMLInputElement).checked) fireEvent.click(toggle);
-  expect(await screen.findByText(/ТТК 6\/3 — отрезок/)).toBeInTheDocument();
-  expect(screen.getByText("Отрезков на изделие")).toBeInTheDocument();
+  expect(await screen.findByLabelText("ТТК 6/3: отрезок")).toHaveValue("2000");
+  expect(screen.getByLabelText("ТТК 6/3: отрезков на изделие")).toHaveValue("1");
   expect(screen.queryByText(/В составе проекта нет термоусадки/)).toBeNull();
 });
 

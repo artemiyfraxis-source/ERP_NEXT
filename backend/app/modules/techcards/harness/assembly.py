@@ -19,11 +19,13 @@ UNROUTED_NAME = "Не в маршруте КД"
 
 # Within a block: cut, then strip, twist, slide the tubes on, terminate, splice, shrink, insert, wrap; the route's own
 # assembly steps last. Ties keep the drawing's order (wire by wire).
+# Свивка — после опрессовки терминалов, до пайки и монтажа в разъём (владелец 15.10.2026: «свивка после опрессовки»),
+# как в генераторе техкарт (tcGenLogic `getActiveOps`).
 STAGE = {
     "cutWire": 0, "cutWireStrip": 0, "cutWireCrimp": 0, "cutTut": 0, "stripCable": 1, "coaxStrip": 1, "tin": 2,
-    "twist": 3, "insTut": 4, "prsTerm": 5, "solderConn": 5, "splice": 6, "heatTut": 7, "insTerm": 8, "insWrap": 9,
+    "insTut": 3, "prsTerm": 4, "twist": 5, "solderConn": 6, "splice": 7, "heatTut": 8, "insTerm": 9, "insWrap": 10,
 }
-ASSEMBLY_STAGE = 10
+ASSEMBLY_STAGE = 11
 # The route's own operations that the per-wire operations do not already cover (cut / strip / crimp they do).
 ROUTE_ONLY_MODES = frozenset({"assembly", "tin"})
 CUT_TYPES = frozenset({"cutWire", "cutWireStrip"})

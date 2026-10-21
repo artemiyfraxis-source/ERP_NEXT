@@ -1209,16 +1209,70 @@ def warehouse_lots(
     query: str = "",
     warehouse: str | None = None,
     include_zero: bool = False,
+    sort: str | None = None,
+    desc: bool = False,
+    group: str = "",
 ) -> tuple[list[StockLot], int]:
     with uow:
         if after_id is not None and uow.warehouse.get(after_id) is None:
             raise KeyError(f"Warehouse cursor not found: {after_id}")
+        if sort:
+            # The order is the whole filter's, then the page is cut: the cursor is the last lot of the previous page.
+            lots = sort_stock_lots(uow.warehouse.filtered(query, warehouse, include_zero), sort, desc, group)
+            start = 0
+            if after_id is not None:
+                start = next((index + 1 for index, lot in enumerate(lots) if lot.id == after_id), len(lots))
+            return lots[start:start + limit], len(lots)
         page = getattr(uow.warehouse, "page", None)
         if callable(page):  # one pass over the lots for the page and the count (SqlAlchemyWarehouseRepository)
             lots, total = page(limit, after_id, query, warehouse, include_zero)
             return list(lots), total
         lots = uow.warehouse.list(limit, after_id, query, warehouse, include_zero)
         return list(lots), uow.warehouse.count(query, warehouse, include_zero)
+
+
+STOCK_SORT_KEYS = ("type", "grn", "balance", "reserved", "available", "lots", "place", "series", "article", "name", "warehouse")
+
+
+def _natural(value: str) -> list:
+    """Natural order like the screen's `Intl.Collator("ru", {numeric: true, sensitivity: "base"})`: digit runs by value."""
+    return [int(part) if index % 2 else part.casefold() for index, part in enumerate(re.split(r"(\d+)", value))]
+
+
+def sort_stock_lots(lots: list[StockLot], sort: str, desc: bool, group: str = "") -> list[StockLot]:
+    """All lots in the order of the grouped stock table (frontend `warehouseGroups` + `compareArticles`): groups of the
+    chosen grouping by name (the empty one last), inside a group the article rows by the sorted column's value
+    (numbers by value, text naturally, the article key breaks ties), a row's lots together in the id order."""
+    if sort not in STOCK_SORT_KEYS:
+        raise ValueError(f"Unknown stock sort: {sort}")
+    if group not in STOCK_GROUPS:
+        raise ValueError(f"Unknown stock group: {group}")
+    rows: dict[tuple[str, str], list[StockLot]] = {}
+    for lot in lots:
+        rows.setdefault((stock_group_value(lot, group), stock_article_key(lot)), []).append(lot)
+
+    def joined(items: list[StockLot], attribute: str) -> str:
+        return " · ".join(dict.fromkeys(str(getattr(item, attribute) or "") for item in items if getattr(item, attribute)))
+
+    def value(items: list[StockLot]):
+        if sort == "balance":
+            return sum((item.balance for item in items), Decimal(0))
+        if sort == "reserved":
+            return sum((item.reserved for item in items), Decimal(0))
+        if sort == "available":
+            return sum((item.available for item in items), Decimal(0))
+        if sort == "lots":
+            return len(items)
+        attribute = {"type": "item_type", "place": "storage_location"}.get(sort, sort)
+        if sort == "article":
+            return _natural(items[0].article)
+        return _natural(joined(items, attribute))
+
+    keys = list(rows)
+    keys.sort(key=lambda key: _natural(key[1]))
+    keys.sort(key=lambda key: value(rows[key]), reverse=desc)
+    keys.sort(key=lambda key: (not key[0], _natural(key[0])))
+    return [lot for key in keys for lot in rows[key]]
 
 
 STOCK_GROUPS = ("", "type", "place", "name", "series", "grn")

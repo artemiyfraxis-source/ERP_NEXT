@@ -19,7 +19,7 @@ from app.shared.http_auth import (
 from app.shared.stored_files import decode_upload, file_response
 
 from .application import (
-    AttachUpdCommand, attach_upd_file,
+    AttachCardUpdCommand, AttachUpdCommand, attach_upd_file, store_card_upd_file, UPD_FILE_URL_PREFIX, upd_file_url,
     ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand,
     LayOutCommand, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
     RequestedGood, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
@@ -114,6 +114,11 @@ class AddresseePayload(BaseModel):
     pays: str | None = Field(default=None, max_length=255)
     customer_address: str | None = Field(default=None, max_length=5000)
     hours: str | None = Field(default=None, max_length=255)
+    # План отгрузки: дата (null стирает) и комментарий; новая отправка берёт их, если свои пусты.
+    plan_date: date | None = None
+    note: str | None = Field(default=None, max_length=5000)
+    # Бумажная УПД, приложенная заранее (ссылка из POST /upd-files с `project`); пустая строка убирает её.
+    upd_url: str | None = Field(default=None, max_length=1024)
 
 
 class ProjectPackPayload(BaseModel):
@@ -172,8 +177,12 @@ class BoxesPayload(VersionPayload):
     tk_note: str = Field(default="", max_length=5000)
 
 
-class UpdFilePayload(VersionPayload):
-    shipment_id: UUID
+class UpdFilePayload(BaseModel):
+    """Файл УПД: к отправке (`shipment_id` + `version`) или к данным отправки проекта (`project`), хранилище одно."""
+
+    shipment_id: UUID | None = None
+    version: int | None = Field(default=None, ge=1)
+    project: str | None = Field(default=None, max_length=255)
     file_name: str = Field(min_length=1, max_length=512)
     content_type: str = Field(default="", max_length=255)
     content_base64: str = Field(min_length=1, max_length=28_000_000)
@@ -240,7 +249,7 @@ def _good_result(good: FinishedGood) -> dict:
         "accepted": _number(good.accepted), "shipped": _number(good.shipped),
         "remaining": _number(good.remaining), "sent": _number(good.sent), "before_erp": _number(good.before_erp),
         "received_at": good.received_at.isoformat() if good.received_at else None,
-        "grn": good.grn, "note": good.note,
+        "grn": good.grn, "note": good.note, "location": good.location,
     }
 
 
@@ -253,7 +262,31 @@ def _addressee_result(addressee: ProjectAddressee) -> dict:
         "updated_by": addressee.updated_by,
         "updated_at": addressee.updated_at.isoformat() if addressee.updated_at else None,
         **{key: getattr(addressee, key) for key in ADDRESSEE_REQUISITE_FIELDS},
+        "plan_date": addressee.plan_date.isoformat() if addressee.plan_date else None, "note": addressee.note,
+        "upd_url": addressee.upd_url, "upd_file_name": "",
     }
+
+
+def _file_id(url: str) -> UUID | None:
+    if not url.startswith(UPD_FILE_URL_PREFIX):
+        return None
+    try:
+        return UUID(url[len(UPD_FILE_URL_PREFIX):])
+    except ValueError:
+        return None
+
+
+def _addressee_results(addressees, uow_factory: Callable[[], UnitOfWork]) -> list[dict]:
+    """Карточки с подписью файла УПД («УПД: имя файла») — имена читаются одним запросом."""
+    results = [_addressee_result(addressee) for addressee in addressees]
+    ids = {result["project"]: _file_id(result["upd_url"]) for result in results}
+    wanted = [file_id for file_id in ids.values() if file_id is not None]
+    if wanted:
+        with uow_factory() as uow: names = uow.files.names(wanted)
+        for result in results:
+            file_id = ids[result["project"]]
+            result["upd_file_name"] = names.get(file_id, "") if file_id is not None else ""
+    return results
 
 
 def _shipment_result(shipment: Shipment) -> dict:
@@ -364,7 +397,7 @@ def project_addressee(
     if not name:
         raise HTTPException(status_code=422, detail="Проект обязателен")
     with uow_factory() as uow: addressee = uow.addressees.get(name)
-    return {"addressee": _addressee_result(addressee or ProjectAddressee(project=name))}
+    return {"addressee": _addressee_results([addressee or ProjectAddressee(project=name)], uow_factory)[0]}
 
 
 @router.get("/project-addressees")
@@ -374,7 +407,7 @@ def project_addressees(
 ) -> dict:
     """All project cards at once, like `portalShipList` returns `projects` for the «Проекты» tab."""
     with uow_factory() as uow: rows = uow.addressees.list()
-    return {"addressees": [_addressee_result(addressee) for addressee in rows]}
+    return {"addressees": _addressee_results(rows, uow_factory)}
 
 
 @router.post("/project-pack")
@@ -429,7 +462,8 @@ def ship_project_goods(
 @router.put("/project-addressee")
 def save_project_addressee(
     payload: AddresseePayload,
-    principal: Annotated[Principal, Depends(shipping_manager_principal)],
+    # Карточку (и план отгрузки) правят и менеджер, и склад (владелец 14.10.2026).
+    principal: Annotated[Principal, Depends(shipping_editor_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
 ) -> dict:
@@ -439,7 +473,7 @@ def save_project_addressee(
         project=payload.project, fields=fields, expected_version=payload.version,
         actor=principal.actor, now=now,
     ), uow_factory()))
-    return {"addressee": _addressee_result(addressee)}
+    return {"addressee": _addressee_results([addressee], uow_factory)[0]}
 
 
 @router.get("/shipments")
@@ -563,8 +597,11 @@ def print_documents(
         customer = shipment.customer or next((good.customer for good in goods if good and good.customer), "") or shipment.receiver
         # «Штамп / подпись кладовщика» — кто упаковал (владелец 13.10.2026), не менеджер отправки.
         packer = packer_short(uow.shipments.packer(shipment_id))
+        # Реквизиты формы 04.1 (заказ, договор, счёт, кто платит, адрес заказчика, время работы) — карточка проекта.
+        project = next((line.project for line in shipment.lines if line.project), "")
+        card = uow.addressees.get(project) if project else None
     try:
-        forms = build_packing_lists(shipment, packer) if document == "pl" else [build_delivery_note(shipment, customer, packer)]
+        forms = build_packing_lists(shipment, packer) if document == "pl" else [build_delivery_note(shipment, customer, packer, card)]
     except ShippingValidationError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return {"forms": [form.to_dict() for form in forms]}
@@ -607,8 +644,21 @@ def upload_upd(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
 ) -> dict:
-    """`portalShipUpdFile`: файл УПД к отправке, ссылка на него встаёт в отправку."""
+    """`portalShipUpdFile`: файл УПД к отправке, ссылка на него встаёт в отправку. С `project` вместо отправки —
+    бумажная УПД к данным отправки проекта (владелец 14.10.2026): возвращается ссылка, в карточку её ставит PUT
+    /project-addressee с `upd_url`."""
     content = decode_upload(payload.content_base64, "Файл УПД повреждён")
+    if payload.shipment_id is None:
+        project = str(payload.project or "").strip()
+        if not project:
+            raise HTTPException(status_code=422, detail="Укажите отправку или проект")
+        stored = _run(lambda: store_card_upd_file(AttachCardUpdCommand(
+            project=project, file_name=payload.file_name, content_type=payload.content_type, content=content,
+            actor=principal.actor, now=now,
+        ), uow_factory()))
+        return {"file": {"id": str(stored.id), "url": upd_file_url(stored.id), "name": stored.file_name}}
+    if payload.version is None:
+        raise HTTPException(status_code=422, detail="Не передана версия отправки")
     shipment = _run(lambda: attach_upd_file(AttachUpdCommand(
         shipment_id=payload.shipment_id, expected_version=payload.version, actor=principal.actor, now=now,
         file_name=payload.file_name, content_type=payload.content_type, content=content,

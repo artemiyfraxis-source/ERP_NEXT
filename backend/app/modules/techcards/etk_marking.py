@@ -26,7 +26,8 @@ OTHER = "other"
 # Порядок важен: «Бирка маркировочная TMS-SCE…» — термоусаживаемая (коэф. усадки 3:1 в БД.МАТ), «Термотрубка» — не ПВХ.
 _KIND_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("flag", re.compile(r"хляст|флаж|флаш", re.IGNORECASE)),
-    ("heat", re.compile(r"термо|\bтут|\bттк|усаж|tms-?sce", re.IGNORECASE)),
+    # «Маркировка "5" 4/2мм» (713К.4 КБ1): размер «до/после усадки» — термоусадочная трубка (генератор markTubeShrinks).
+    ("heat", re.compile(r"термо|\bтут|\bттк|усаж|tms-?sce|\d+(?:[.,]\d+)?\s*/\s*\d+(?:[.,]\d+)?\s*мм", re.IGNORECASE)),
     ("pvc", re.compile(r"кембрик|пвх|трубк", re.IGNORECASE)),
     ("ring", re.compile(r"кольц|колеч", re.IGNORECASE)),
     ("tag", re.compile(r"бирк|этикет|ярлык", re.IGNORECASE)),
@@ -131,8 +132,13 @@ def mark_length(item: Mapping[str, Any]) -> Decimal:
     return number if number > 0 else Decimal(0)
 
 
+# «№ изделия» в надписи (генератор, frontend markSerial.ts): `{№}` или `{№:3}` — номер изделия, его разворачивает
+# задание. В шагах ЭТК надпись — шаблоном «{№}», без разрядности.
+_SERIAL = re.compile(r"\{№:[1-6]\}")
+
+
 def _label(item: Mapping[str, Any]) -> str:
-    return str(item.get("text") or item.get("target") or "").strip() or "метка"
+    return _SERIAL.sub("{№}", str(item.get("text") or item.get("target") or "").strip()) or "метка"
 
 
 def _sizes(marks: Sequence[Mapping[str, Any]]) -> tuple[str, str]:
@@ -221,7 +227,7 @@ def _time_rows(counts: Mapping[str, Decimal], op: Mapping[str, Any], batch: Deci
             missing = str(norm.get("code") or "") if norm else ""
             warnings.append(f"Операция {position} ({code}): нет нормы времени «{label}»{f' ({missing})' if missing else ''} — в расчётное время не вошла")
             continue
-        minutes = (seconds * pieces * batch + _amount(norm.get("setup_seconds"))) / 60
+        minutes = seconds * pieces * batch / 60
         rows.append({"name": label, "norm": _format(minutes)})
     return rows
 

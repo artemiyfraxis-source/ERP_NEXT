@@ -64,14 +64,20 @@ def _cores(fields: Mapping[str, str]) -> int | None:
 
 
 # The база монтажных проводов (owner 12.10.2026: «UL1061 UL1571 UL1007 UL3239 НВ-4 600 ПВАМ МГТФ МГШВ МС 16-13
-# МС 15-11 МК 26-13 ПУГВ … остальные марки туда не заноси»): series key → the start of a mark that names it. Spaces
+# МС 15-11 МК 26-13 ПУГВ … остальные марки туда не заноси»); 15.10.2026: «Прочие кабели» closed — every single-core
+# series it held moves here (UL1015 … Кабель высоковольтный). Series key → the start of a mark that names it. Spaces
 # and hyphens inside a series name are free («МС16-13» = «МС 16-13»), the next character must not continue the name
-# (МГТФЭ, ПуГВнг(А)-LS, UL10610 are other wires), a mark is matched from its start (МНВ-4 is not НВ-4).
+# (МГТФЭ, ПуГВнг(А)-LS for ПуГВ, UL10610 are other wires), a mark is matched from its start (МНВ-4 is not НВ-4).
+# The order is the column order of «Ø изоляции по маркам» (`wire_dia`): new series go to the end.
 HOOKUP_SERIES = (
     ("UL1061", r"UL[\s-]*1061"), ("UL1571", r"UL[\s-]*1571"), ("UL1007", r"UL[\s-]*1007"), ("UL3239", r"UL[\s-]*3239"),
     ("НВ-4", r"НВ[\s-]*4"), ("ПВАМ", r"ПВАМ"), ("МГТФ", r"МГТФ"), ("МГШВ", r"МГШВ"),
     ("МС 16-13", r"МС[\s-]*16[\s-]*13"), ("МС 15-11", r"МС[\s-]*15[\s-]*11"), ("МК 26-13", r"МК[\s-]*26[\s-]*13"),
     ("ПуГВ", r"ПУГВ"),
+    ("UL1015", r"UL[\s-]*1015"), ("UL3135", r"UL[\s-]*3135"), ("UL758", r"UL[\s-]*758"), ("НВМ", r"НВМ"),
+    ("МНВ-4", r"МНВ[\s-]*4"), ("ПГВА", r"ПГВА"), ("ПуГВнг(А)-LS", r"ПУГВНГ\s*\(\s*А\s*\)[\s-]*LS"),
+    ("Силиконовый провод", r"СИЛИКОНОВЫЙ[\s-]+ПРОВОД"), ("AGR2", r"AGR[\s-]*2"),
+    ("Кабель высоковольтный", r"КАБЕЛЬ[\s-]+ВЫСОКОВОЛЬТНЫЙ"),
 )
 _HOOKUP_PATTERNS = tuple(
     (key, re.compile(rf"^(?:ПРОВОД\s+)?{pattern}(?![0-9A-ZА-ЯЁ(])")) for key, pattern in HOOKUP_SERIES
@@ -83,12 +89,21 @@ NOT_HOOKUP_REASON = "марка не из базы монтажных"
 
 def hookup_series(mark: str) -> str | None:
     """The series key of a mark from the база монтажных проводов, or None: «МС16-13 0,08» → «МС 16-13», «НВ-4 600
-    0,20» → «НВ-4», «ПуГВ 1,0» → «ПуГВ»; «ПуГВнг(А)-LS 1х1,0», «МНВ-4 0,12», «UL1015 26AWG», «НВМ 0,35» → None."""
+    0,20» → «НВ-4», «ПуГВ 1,0» → «ПуГВ», «ПуГВнг(А)-LS 1х1,0» → «ПуГВнг(А)-LS», «МНВ-4 0,12» → «МНВ-4»; «МГТФЭ 0,2»,
+    «UL10610 28AWG», «M22759/16 22AWG» → None."""
+    found = hookup_series_rest(mark)
+    return found[0] if found else None
+
+
+def hookup_series_rest(mark: str) -> tuple[str, str] | None:
+    """The series key and what follows the series name in the mark («Провод МС 16-13 0,08 красный» → («МС 16-13»,
+    « 0,08 КРАСНЫЙ»), upper case) — where the size of the wire is written; None — not a series of the база."""
     text = " ".join(str(mark or "").split()).upper().replace("Ё", "Е")
     for candidate in (text, text.translate(_LATIN_TWINS)):
         for key, pattern in _HOOKUP_PATTERNS:
-            if pattern.match(candidate):
-                return key
+            match = pattern.match(candidate)
+            if match:
+                return key, candidate[match.end():]
     return None
 
 
@@ -139,7 +154,7 @@ def auto_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | s
 
 
 def left_hookups(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> bool:
-    """A row the shape rule calls монтажный that the база монтажных sends to прочие (UL1015, AGR2, силиконовый…)."""
+    """A row the shape rule calls монтажный that the база монтажных sends to прочие (a single-core mark of no series)."""
     return shape_kind(fields, mark, dia_keys)[0] == CableKind.WIRE and auto_kind(fields, mark, dia_keys)[0] == CableKind.OTHER
 
 
@@ -215,6 +230,50 @@ def cable_rows(
                 cable=card.name, record=None, dia=None, dia_hint=family_dia(key, index), card=card, card_exact=True,
             ))
     return rows
+
+
+# «Совместимые разъёмы» of a coax cable (owner 19.10.2026: «совместимые разъёмы … должны подтягиваться — из базы
+# коаксиальных разъёмов»): the БД.КОАКС rows whose «Провод» (`coaxWire`) is this cable. Only the cells the card shows.
+CONNECTOR_FIELDS = ("coaxArticle", "Артикул", "coaxType", "Тип/Серия", "coaxWire", "Провод", "Серия", "Пол", "Исполнение",
+                    "Монтаж", "Поставщик", "Ссылка", "Источник данных", "Цена, ₽", "Дата цены")
+
+
+def connector_cable(record: TechOperationRecord) -> str:
+    """The cable a БД.КОАКС row is for: «coaxWire», else the sheet's «Провод»."""
+    return str(record.fields.get("coaxWire") or record.fields.get("Провод") or "").strip()
+
+
+def connectors_by_cable(records: Iterable[TechOperationRecord]) -> dict[str, list[TechOperationRecord]]:
+    """Cable key → the БД.КОАКС rows made for it, in list order."""
+    index: dict[str, list[TechOperationRecord]] = {}
+    for record in records:
+        key = cable_key(connector_cable(record))
+        if key:
+            index.setdefault(key, []).append(record)
+    return index
+
+
+def compatible_connectors(row: CableRow, index: Mapping[str, Sequence[TechOperationRecord]]) -> tuple[list[TechOperationRecord], str]:
+    """БД.КОАКС rows for a coax row: by its mark, and — when the card is this very cable — by the card's name and its
+    aliases (another spelling of the same cable: «RG58» finds the rows written «RG-58»). A row with none of its own and
+    a family card («5D-FB» for «5D-FB CCA PE AL PE» — the same dimensions, other materials) takes the family's
+    (owner 19.10.2026: «они сами должны подтягиваться»); the second item is then the family card's name. Each row once."""
+    if row.kind != CableKind.COAX:
+        return [], ""
+
+    def found_by(keys: Iterable[str]) -> list[TechOperationRecord]:
+        found: dict[object, TechOperationRecord] = {}
+        for key in dict.fromkeys(keys):
+            for record in index.get(key, ()):
+                found.setdefault(record.id, record)
+        return list(found.values())
+
+    card_keys = [row.card.name_key, *(alias.alias_key for alias in row.card.aliases)] if row.card is not None else []
+    own = found_by([row.key, *(card_keys if row.card_exact else [])])
+    if own or row.card is None or row.card_exact:
+        return own, ""
+    family = found_by(card_keys)
+    return family, row.card.name if family else ""
 
 
 def cable_counts(rows: Iterable[CableRow]) -> dict[str, int]:

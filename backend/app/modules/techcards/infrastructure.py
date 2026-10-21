@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, or_, select
+from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
@@ -15,6 +16,7 @@ from .harness_infrastructure import (
     SqlAlchemyHarnessComponentRepository, SqlAlchemyHarnessRevisionRepository, SqlAlchemyHarnessRouteRepository,
 )
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
+from .td_issues_infrastructure import SqlAlchemyTdIssueRepository
 from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
 from .template_sheets import TemplateDraft
@@ -44,6 +46,12 @@ class ProjectTechcardRow(Base):
     # № проекта для сравнения (`normalize_project_number` ≡ `kitsets.project_key`): карты проекта — по индексу.
     # Ставится при записи `project`; NULL — строка мимо ORM (читается и сверяется в Python).
     project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Из чего собрана карта и что поправлено руками (автоматическая ревизия): конфиг генератора как пришёл — до
+    # дополнения нормами справочников; правки технолога по ключу операции и ручное деление на ПФ (`route`).
+    inputs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    overrides: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    derived_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -58,6 +66,7 @@ class TechcardRevisionRow(Base):
     __table_args__ = (
         Index("ux_techcard_revisions_card_revision", "project_card_id", "revision", unique=True),
         Index("ix_techcard_revisions_card_time", "project_card_id", "occurred_at"),
+        CheckConstraint("source IN ('manual', 'auto')", name="ck_techcard_revisions_source"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -71,6 +80,21 @@ class TechcardRevisionRow(Base):
     actor_name: Mapped[str] = mapped_column(String(255), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     document: Mapped[dict] = mapped_column(JSON, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual", server_default="manual")
+    diff: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class RefreshRequestRow(Base):
+    """Запрос на пересборку ЭТК после правки справочника или правила; обработанный помечается `processed_at`."""
+
+    __tablename__ = "techcard_refresh_requests"
+    __table_args__ = (Index("ix_techcard_refresh_requests_processed", "processed_at"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    reason: Mapped[str] = mapped_column(Text(), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class OperationCardTemplateRow(Base):
@@ -88,7 +112,7 @@ class OperationCardTemplateRow(Base):
     images: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     source_commit: Mapped[str] = mapped_column(String(40), nullable=False)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    # Правка записи в ERP поверх снимка (SUPPLYMAP БД.ОП-ТК: ИЗМЕНЕНО / КЕМ); переживает замену библиотеки.
+    # Правка записи в ERP поверх исходного шаблона (SUPPLYMAP БД.ОП-ТК: ИЗМЕНЕНО / КЕМ).
     edited: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     edited_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -117,6 +141,9 @@ class OperationCardDraftRow(Base):
 
 
 class OperationCardSnapshotRow(Base):
+    """The row «current»: written by the first load of the library (`load`), locked by a new operation
+    (workflows/new_operation.py) so creations go one at a time. Its commit is the old SUPPLYMAP provenance."""
+
     __tablename__ = "techcard_operation_template_snapshots"
 
     name: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -177,6 +204,10 @@ class SqlAlchemyTechcardRepository:
             created_at=row.created_at,
             updated_at=row.updated_at,
             issued_at=row.issued_at,
+            inputs=row.inputs,
+            overrides=row.overrides,
+            review_note=row.review_note,
+            derived_hash=row.derived_hash,
         )
 
     def get(self, card_id: UUID) -> ProjectTechcard | None:
@@ -237,6 +268,10 @@ class SqlAlchemyTechcardRepository:
             "created_at",
             "updated_at",
             "issued_at",
+            "inputs",
+            "overrides",
+            "review_note",
+            "derived_hash",
         ):
             setattr(row, field, getattr(card, field))
         row.status = card.status.value
@@ -252,6 +287,8 @@ class SqlAlchemyTechcardRepository:
                 actor_name=revision.actor_name,
                 occurred_at=revision.occurred_at,
                 document=revision.document,
+                source=revision.source,
+                diff=revision.diff,
             )
         )
 
@@ -282,6 +319,8 @@ class SqlAlchemyTechcardRepository:
                 actor_name=row.actor_name,
                 occurred_at=row.occurred_at,
                 document=row.document,
+                source=row.source,
+                diff=row.diff,
             )
             for row in rows
         ]
@@ -352,6 +391,24 @@ class SqlAlchemyOperationCardRepository:
         row = self.session.get(OperationCardTemplateRow, source_id)
         return self._domain(row) if row is not None else None
 
+    def matching(self, ids: Iterable[str], codes: Iterable[str]) -> list[OperationCardTemplate]:
+        """The templates with one of the ids or codes, in the order of `list` (how a build picks a card by code) —
+        what the live cards of the ETKs being read need, without parsing the whole library."""
+        ids, codes = list(ids), list(codes)
+        if not ids and not codes:
+            return []
+        rows = self.session.scalars(
+            select(OperationCardTemplateRow)
+            .where(or_(OperationCardTemplateRow.id.in_(ids), OperationCardTemplateRow.code.in_(codes)))
+            .order_by(
+                OperationCardTemplateRow.category,
+                OperationCardTemplateRow.code,
+                OperationCardTemplateRow.side,
+                OperationCardTemplateRow.id,
+            )
+        )
+        return [self._domain(row) for row in rows]
+
     def edit(self, code: str, edit: OperationRecordEdit, *, changed_at: datetime, changed_by: str) -> int:
         """One record = one operation code (SUPPLYMAP tcRecordsByCode_): the edit lands on every (A)/(B) block of the
         code. Returns how many templates were changed (0 — no such code)."""
@@ -366,29 +423,9 @@ class SqlAlchemyOperationCardRepository:
             row.document = self._domain(row).document()
         return len(rows)
 
-    def edited_records(self) -> list[str]:
-        """SUPPLYMAP tcRecordsSync report.editedInPortal: «КОД (ИЗМЕНЕНО, КЕМ)» for every record edited in the portal,
-        one per operation code."""
-        rows = self.session.scalars(
-            select(OperationCardTemplateRow).where(OperationCardTemplateRow.edited_at.is_not(None))
-            .order_by(OperationCardTemplateRow.code, OperationCardTemplateRow.side, OperationCardTemplateRow.id)
-        )
-        found: dict[str, str] = {}
-        for row in rows:
-            found.setdefault(row.code, f"{row.code} ({row.edited_at.strftime('%d.%m.%Y %H:%M')}, {row.edited_by or ''})")
-        return list(found.values())
-
-    def replace(
-        self, cards: tuple[OperationCardTemplate, ...], *, source_commit: str, imported_at: datetime,
-    ) -> None:
-        """Replace the snapshot whole (SUPPLYMAP tcRecordsSync rewrites БД.ОП-ТК with an empty ИЗМЕНЕНО): edits made
-        in ERP are dropped. Refusing when there are edits is the application's job."""
-        # Шаблон-лист, сохранённый в ERP из черновика, снимок не затирает: ERP-версия остаётся.
-        saved = set(self.session.scalars(
-            select(OperationCardTemplateRow.id).where(OperationCardTemplateRow.saved_at.is_not(None))
-        ))
-        self.session.execute(delete(OperationCardTemplateRow).where(OperationCardTemplateRow.saved_at.is_(None)))
-        self.session.flush()
+    def load(self, cards: tuple[OperationCardTemplate, ...], *, imported_at: datetime) -> None:
+        """The base templates of a fresh database (`seed_library`), added as they are; the caller loads them only
+        into an empty library."""
         self.session.add_all(OperationCardTemplateRow(
             id=card.source_id,
             code=card.code,
@@ -405,16 +442,13 @@ class SqlAlchemyOperationCardRepository:
                 }
                 for image in card.images
             ],
-            source_commit=source_commit,
+            source_commit="",
             imported_at=imported_at,
-        ) for card in cards if card.source_id not in saved)
-        snapshot = self.session.get(OperationCardSnapshotRow, "current")
-        if snapshot is None:
-            snapshot = OperationCardSnapshotRow(name="current")
-            self.session.add(snapshot)
-        snapshot.source_commit = source_commit
-        snapshot.imported_at = imported_at
-        snapshot.template_count = len(cards)
+        ) for card in cards)
+        if self.session.get(OperationCardSnapshotRow, "current") is None:
+            self.session.add(OperationCardSnapshotRow(
+                name="current", source_commit="", imported_at=imported_at, template_count=len(cards),
+            ))
 
     # ── Шаблоны-листы: каталог и черновики (SUPPLYMAP TcTemplates.gs) ──
 
@@ -436,13 +470,12 @@ class SqlAlchemyOperationCardRepository:
         row = self.session.get(OperationCardTemplateRow, card.source_id)
         created = row is None
         if row is None:
-            snapshot = self.session.get(OperationCardSnapshotRow, "current")
             sibling = self.session.scalars(select(OperationCardTemplateRow).where(
                 OperationCardTemplateRow.code == card.code, OperationCardTemplateRow.edited_at.is_not(None),
             )).first()
             row = OperationCardTemplateRow(
                 id=card.source_id,
-                source_commit=snapshot.source_commit if snapshot is not None else "",
+                source_commit="",
                 imported_at=saved_at,
                 # Одна запись на код (tcRecordsByCode_): новый блок кода с правленой записью получает ту же правку.
                 edited=sibling.edited if sibling is not None else None,
@@ -524,14 +557,9 @@ class SqlAlchemyOperationCardRepository:
         return True
 
     def metadata(self) -> dict | None:
-        row = self.session.get(OperationCardSnapshotRow, "current")
-        if row is None:
-            return None
-        return {
-            "source_commit": row.source_commit,
-            "imported_at": row.imported_at,
-            "template_count": row.template_count,
-        }
+        """None — the library has no templates (nothing to build an ETK from)."""
+        count = self.session.scalar(select(func.count()).select_from(OperationCardTemplateRow)) or 0
+        return {"template_count": count} if count else None
 
 
 class SqlAlchemyTechcardsUnitOfWork:
@@ -549,6 +577,7 @@ class SqlAlchemyTechcardsUnitOfWork:
         self.harness_revisions = SqlAlchemyHarnessRevisionRepository(self.session)
         self.harness_components = SqlAlchemyHarnessComponentRepository(self.session)
         self.harness_routes = SqlAlchemyHarnessRouteRepository(self.session)
+        self.td_issues = SqlAlchemyTdIssueRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         return self
 

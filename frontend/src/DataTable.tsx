@@ -1,6 +1,8 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { selectRange } from "./bulk";
 import { EMPTY, displayCell, formatNumber } from "./format";
+import { matchesSearch, searchRows } from "./searchText";
+import { LoadMore } from "./LoadMore";
 
 /* Общая таблица разделов — то, что в SUPPLYMAP давал лист Google и портальные таблицы (portalGetView,
    portalSaveUserCols): поиск по всем словам, фильтр по значениям колонки, сортировка по заголовку,
@@ -39,6 +41,34 @@ export interface DataColumn<T> {
   align?: "left" | "center" | "right";
   /** Подсказка при наведении на заголовок (например, полное название при сокращённом). */
   hint?: string;
+  /** Правка ячейки прямо в таблице, как в Google Таблицах (по выбору колонки; без неё ячейка только для чтения). */
+  edit?: DataCellEdit<T>;
+  /** Свой столбец пользователя («+ Столбец»): в «Колонках» у него кнопка «Удалить» — экран спрашивает подтверждение. */
+  remove?: () => void;
+  /** Считается из других данных («Почему здесь», диапазон, статус карточки): в таблице с правкой ячейка выглядит
+      только для чтения. */
+  computed?: boolean;
+}
+
+export interface DataCellOption {
+  value: string;
+  label: string;
+  /** Как ещё пишут этот вариант при вводе и вставке («22», «22 AWG», «0,35»). */
+  aliases?: string[];
+}
+
+export interface DataCellEdit<T> {
+  /** Записать значение ячейки тем же путём, что окно записи (со старым значением для проверки). Отказ — Error с текстом
+      для ячейки: введённое остаётся в поле. */
+  save: (row: T, value: string) => Promise<unknown>;
+  /** Текст в поле правки; по умолчанию — значение колонки. */
+  value?: (row: T) => string;
+  /** Можно ли править ячейку этой строки (у записи есть такое поле…); по умолчанию — да. */
+  enabled?: (row: T) => boolean;
+  /** Ячейка — выбор из списка (сечение из таблицы сечений, категория, вкладка): правка — выпадающий список в ячейке,
+      `value` — значение варианта. Ввод буквы выбирает первый вариант на неё, вставка и Ctrl+D ищут вариант по значению,
+      подписи или `aliases`. */
+  options?: (row: T) => DataCellOption[];
 }
 
 export interface DataPreset<T> {
@@ -71,7 +101,7 @@ export interface DataTableProps<T> {
   allLast?: boolean;
   groupBy?: (row: T) => string;
   /** Подпись заголовка группы (по умолчанию — её имя); например, заказ и поставщик. */
-  groupLabel?: (name: string, rows: T[]) => string;
+  groupLabel?: (name: string, rows: T[]) => ReactNode;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
   collapsibleGroups?: boolean;
   bulkActions?: DataBulkAction<T>[];
@@ -90,6 +120,8 @@ export interface DataTableProps<T> {
   toolbar?: ReactNode;
   /** Поиск сразу по всем записям на сервере (строки на экране — только страница): «Найти» или Enter в том же поле. */
   onSearch?: (query: string) => void;
+  /** Что ещё строки ищет поиск, кроме колонок: скрытые опознаватели записи (полное имя, артикул BAG, синонимы). */
+  searchText?: (row: T) => CellValue[];
   searchLabel?: string;
   searchPlaceholder?: string;
   /** Пока строк меньше — без строки поиска/фильтров/колонок и без «Показано N из N»: маленькой таблице они
@@ -100,22 +132,85 @@ export interface DataTableProps<T> {
   /** На телефоне (≤ 720 px, `responsive.css`) строки идут карточками «колонка: значение» вместо таблицы, которую
       пришлось бы листать вбок. `false` — таблица остаётся таблицей и на телефоне (сетки с правкой в ячейках). */
   phoneCards?: boolean;
+  /** После записи ячеек в таблице (и после отказа): перечитать строки с сервера. */
+  onEdited?: () => Promise<unknown> | void;
+  /** Сортировка внутри групп (owner 16.10.2026: «у каждой группы своя, и это во всех кабелях»; 19.10: «сделай просто
+      вверху столбцов сортировку»): щелчок по заголовку сортирует строки в каждой группе, порядок групп не меняется. */
+  groupSort?: boolean;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
 
 export interface Saved {
   hidden?: string[];
+  /** Колонки, которые таблица уже видела при сохранении (владелец 19.10: «почему пропал частотный диапазон»): колонка не
+      из этого списка — новая, она показывается или прячется по своему умолчанию, а не по старому `hidden`. */
+  known?: string[];
   sort?: Sort;
   preset?: string;
+  /** Порядок колонок пользователя (ключи); колонка, которой нет в списке, встаёт после своей соседки слева. */
+  order?: string[];
+  /** Ширины колонок, перетянутые пользователем (px текста ячейки). */
+  widths?: Record<string, number>;
+  /** Свои подписи колонок. */
+  titles?: Record<string, string>;
 }
 
-/** Все слова запроса — хотя бы в одной ячейке строки (SUPPLYMAP stock05Match_). */
+const MIN_WIDTH = 40;
+const MAX_WIDTH = 900;
+const WIDTH_STEP = 16;
+/** Поля ячейки слева и справа (`.data-table th, td { padding: 6px 12px }`): ширина колонки = текст + они. */
+const CELL_PAD = 24;
+const clampWidth = (value: number) => Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value)));
+
+/** Колонки в порядке пользователя; новые колонки (их нет в сохранённом порядке) — после соседки слева по описанию. */
+export function orderColumns<T>(columns: DataColumn<T>[], order: string[] | undefined): DataColumn<T>[] {
+  if (!order?.length) return columns;
+  const byKey = new Map(columns.map((column) => [column.key, column]));
+  const known = [...new Set(order)].filter((key) => byKey.has(key));
+  const result = known.map((key) => byKey.get(key)!);
+  columns.forEach((column, index) => {
+    if (known.includes(column.key)) return;
+    const left = columns.slice(0, index).reverse().find((item) => result.includes(item));
+    result.splice(left ? result.indexOf(left) + 1 : 0, 0, column);
+  });
+  return result;
+}
+
+/** Ключ `key` встаёт на место `target` (тащим вправо — после него, влево — перед ним). */
+export function moveKey(keys: string[], key: string, target: string): string[] {
+  const from = keys.indexOf(key);
+  const to = keys.indexOf(target);
+  if (from < 0 || to < 0 || from === to) return keys;
+  const next = keys.filter((item) => item !== key);
+  next.splice(to, 0, key);
+  return next;
+}
+
+/** Сохранённое состояние любой прошлой версии таблицы: битые поля порядка, ширин и подписей отбрасываются, остальное
+    (в том числе поля, которые хранят в том же ключе экраны, — `groups` листа «В работе») остаётся как было. */
+function cleanSaved(raw: unknown): Saved {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const saved = { ...(raw as Record<string, unknown>) } as Saved & Record<string, unknown>;
+  const map = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value as Record<string, unknown>) : [];
+  const order = Array.isArray(saved.order) ? saved.order.filter((item): item is string => typeof item === "string") : [];
+  const widths = map(saved.widths).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]));
+  const titles = map(saved.titles).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim() !== "");
+  delete saved.order;
+  delete saved.widths;
+  delete saved.titles;
+  delete saved.groupSorts; // прежняя сортировка в строке группы (до 19.10) — не читается
+  if (order.length) saved.order = order;
+  if (widths.length) saved.widths = Object.fromEntries(widths.map(([key, width]) => [key, clampWidth(width)]));
+  if (titles.length) saved.titles = Object.fromEntries(titles);
+  if (saved.hidden !== undefined && !Array.isArray(saved.hidden)) delete saved.hidden;
+  if (saved.known !== undefined && !(Array.isArray(saved.known) && saved.known.every((item) => typeof item === "string"))) delete saved.known;
+  return saved;
+}
+
+/** Все слова запроса — хотя бы в одной ячейке строки (SUPPLYMAP stock05Match_); правила сравнения — searchText.ts. */
 export function matchesWords(values: CellValue[], query: string) {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!words.length) return true;
-  const text = values.map((value) => String(value ?? "").toLowerCase()).join(" ");
-  return words.every((word) => text.includes(word));
+  return matchesSearch(values, query);
 }
 
 function numberOf(value: CellValue) {
@@ -134,6 +229,25 @@ export function compareCells(a: CellValue, b: CellValue, numeric = false) {
     if (!Number.isNaN(left) && !Number.isNaN(right)) return left - right;
   }
   return String(a).localeCompare(String(b), "ru", { numeric: true, sensitivity: "base" });
+}
+
+/** Сравнение в направлении сортировки; пустые — внизу в обоих направлениях. */
+function directed(a: CellValue, b: CellValue, direction: 1 | -1, numeric = false) {
+  const empty = (value: CellValue) => value === null || value === undefined || value === "";
+  return empty(a) || empty(b) ? compareCells(a, b) : direction * compareCells(a, b, numeric);
+}
+
+/** Вариант списка ячейки по введённому или вставленному тексту: значение, подпись или другое написание (без учёта
+    регистра и лишних пробелов), иначе единственная подпись, которая с него начинается. */
+export function findOption(options: DataCellOption[], text: string): DataCellOption | null {
+  const fold = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+  const wanted = fold(text);
+  const exact = options.find((option) => option.value === text.trim()
+    || [option.label, ...(option.aliases ?? [])].some((name) => fold(name) === wanted));
+  if (exact) return exact;
+  if (!wanted) return null;
+  const starts = options.filter((option) => fold(option.label).startsWith(wanted));
+  return starts.length === 1 ? starts[0] : null;
 }
 
 /** Текст выгрузки: табуляция, заголовок первой строкой, CRLF — Excel открывает как таблицу. */
@@ -199,7 +313,7 @@ function wrapStyle<T>(column: DataColumn<T>): CSSProperties | undefined {
 export function readSaved(storageKey?: string): Saved {
   if (!storageKey) return {};
   try {
-    return JSON.parse(window.localStorage.getItem(`erp-table:${storageKey}`) ?? "{}") as Saved;
+    return cleanSaved(JSON.parse(window.localStorage.getItem(`erp-table:${storageKey}`) ?? "{}"));
   } catch {
     return {};
   }
@@ -211,6 +325,14 @@ export function writeSaved(storageKey: string | undefined, saved: Saved) {
     window.localStorage.setItem(`erp-table:${storageKey}`, JSON.stringify(saved));
   } catch { /* хранилище недоступно — настройки живут до перезагрузки */ }
 }
+
+type CellRef = { row: string; col: string };
+type Editing = CellRef & { draft: string; error: string; saving: boolean };
+type Step = "up" | "down" | "left" | "right" | "next" | "prev";
+type Note = { tone: "ok" | "danger" | "info"; text: string };
+
+const failure = (reason: unknown) => reason instanceof Error && reason.message ? reason.message : "Не записано";
+const sameCell = (a: CellRef | null, b: CellRef | null) => Boolean(a && b && a.row === b.row && a.col === b.col);
 
 export function DataTable<T>({
   rows,
@@ -236,11 +358,14 @@ export function DataTable<T>({
   pageSize = 200,
   toolbar,
   onSearch,
+  searchText,
   searchLabel,
   searchPlaceholder,
   compactBelow = 0,
   hideSearch = false,
   phoneCards = true,
+  onEdited,
+  groupSort = false,
 }: DataTableProps<T>) {
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
@@ -249,15 +374,35 @@ export function DataTable<T>({
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<Sort>(saved.sort ?? null);
   const [preset, setPreset] = useState(saved.preset || defaultPreset);
-  const [hidden, setHidden] = useState<string[]>(
-    saved.hidden ?? columns.filter((column) => column.hidden).map((column) => column.key),
-  );
+  const defaultHidden = () => columns.filter((column) => column.hidden).map((column) => column.key);
+  const [hidden, setHidden] = useState<string[]>(() => {
+    if (!saved.hidden) return defaultHidden();
+    if (!saved.known) return saved.hidden;
+    // Новая колонка (её не было при сохранении) — по своему умолчанию; остальные — как оставил пользователь.
+    const known = new Set(saved.known);
+    const fresh = columns.filter((column) => !known.has(column.key));
+    return [...saved.hidden.filter((key) => !fresh.some((column) => column.key === key)),
+      ...fresh.filter((column) => column.hidden).map((column) => column.key)];
+  });
+  const [order, setOrder] = useState<string[] | undefined>(saved.order);
+  const [widths, setWidths] = useState<Record<string, number>>(saved.widths ?? {});
+  const [titles, setTitles] = useState<Record<string, string>>(saved.titles ?? {});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [limit, setLimit] = useState(pageSize);
   const [choosingColumns, setChoosingColumns] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [running, setRunning] = useState("");
+  // Cell editing like a sheet: the active cell (and a range in its column from `rangeFrom`), the open editor, the note
+  // about a pasted or filled range.
+  const [active, setActive] = useState<CellRef | null>(null);
+  const [rangeFrom, setRangeFrom] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const editingRef = useRef<Editing | null>(null);
+  editingRef.current = editing;
+  const [note, setNote] = useState<Note | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const dragKey = useRef<string | null>(null);
   // An opened row's card stays inside the visible part of a table wider than the screen (its cell spans
   // every column): the card is pinned to the left edge and as wide as the scroll box, not the table.
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -279,31 +424,47 @@ export function DataTable<T>({
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => writeSaved(storageKey, { hidden, sort, preset }), [storageKey, hidden, sort, preset]);
+  // A screen may keep its own fields under the same key (the «В работе» sheet's groups): they are written back as found.
+  useEffect(() => {
+    const { order: _order, widths: _widths, titles: _titles, ...kept } = readSaved(storageKey);
+    writeSaved(storageKey, {
+    ...kept, hidden, known: [...new Set([...(kept.known ?? []), ...columns.map((column) => column.key)])], sort, preset,
+    ...(order ? { order } : {}),
+    ...(Object.keys(widths).length ? { widths } : {}),
+    ...(Object.keys(titles).length ? { titles } : {}),
+    });
+  }, [storageKey, hidden, sort, preset, order, widths, titles, columns]);
 
-  const visible = columns.filter((column) => !hidden.includes(column.key));
+  // The user's order and captions: everything below (headers, search hint, filters, Excel) reads these columns.
+  const ordered = useMemo(() => orderColumns(columns, order), [columns, order]);
+  const arranged = useMemo(() => ordered.map((column) => {
+    const title = titles[column.key]?.trim();
+    return title && title !== column.title ? { ...column, title, hint: column.hint ?? column.title } : column;
+  }), [ordered, titles]);
+  const visible = arranged.filter((column) => !hidden.includes(column.key));
   const activePreset = presets.find((item) => item.label === preset);
 
-  const searched = useMemo(() => rows.filter((row) => {
+  const searched = useMemo(() => searchRows(rows.filter((row) => {
     for (const [key, wanted] of Object.entries(filters)) {
       if (!wanted) continue;
       const column = columns.find((item) => item.key === key);
       if (column && String(column.value(row) ?? "") !== wanted) return false;
     }
-    return matchesWords(columns.map((column) => column.value(row)), query);
-  }), [rows, columns, filters, query]);
+    return true;
+  }), (row) => [...columns.map((column) => column.value(row)), ...(searchText?.(row) ?? [])], query), [rows, columns, filters, query, searchText]);
   const counted = presetCountsFollowSearch ? searched : rows;
 
   const filtered = useMemo(() => {
     const result = searched.filter((row) => !activePreset || activePreset.test(row));
-    if (sort) {
+    // With a sort inside groups the rows keep the screen's order here (it places the groups); the groups sort below.
+    if (sort && !groupSort) {
       const column = columns.find((item) => item.key === sort.key);
       if (column) {
         result.sort((a, b) => sort.direction * compareCells(column.value(a), column.value(b), column.numeric));
       }
     }
     return result;
-  }, [searched, columns, sort, activePreset]);
+  }, [searched, columns, sort, activePreset, groupSort]);
 
   const shown = filtered.slice(0, limit);
   const keys = new Set(rows.map(rowKey));
@@ -327,9 +488,9 @@ export function DataTable<T>({
   // Shift+щелчок по флажку отмечает (или снимает) все строки от прошлого щелчка до этого, как в таблицах.
   const anchor = useRef<string | null>(null);
   function toggleRow(key: string, checked: boolean, shift: boolean) {
-    const order = shown.map(rowKey);
+    const sequence = shown.map(rowKey);
     const from = anchor.current;
-    setSelected((current) => selectRange(order, current, from, key, checked, shift));
+    setSelected((current) => selectRange(sequence, current, from, key, checked, shift));
     anchor.current = key;
   }
 
@@ -374,6 +535,50 @@ export function DataTable<T>({
     URL.revokeObjectURL(url);
   }
 
+  // --- Columns: order, width, caption ---
+  const moveColumn = (key: string, target: string) => setOrder(moveKey(ordered.map((column) => column.key), key, target));
+  function shiftColumn(key: string, delta: number) {
+    const list = ordered.map((column) => column.key);
+    const target = list[list.indexOf(key) + delta];
+    if (target) setOrder(moveKey(list, key, target));
+  }
+  const setWidth = (key: string, width: number | null) => setWidths((current) => {
+    const next = { ...current };
+    if (width === null) delete next[key]; else next[key] = clampWidth(width);
+    return next;
+  });
+  /** Ширина текста колонки сейчас: перетянутая или измеренная по заголовку на экране. */
+  function widthNow(key: string) {
+    if (widths[key]) return widths[key];
+    const head = [...(tableRef.current?.querySelectorAll<HTMLElement>("th[data-col]") ?? [])].find((item) => item.dataset.col === key);
+    const measured = (head?.getBoundingClientRect().width ?? 0) - CELL_PAD;
+    return measured > 0 ? measured : 120;
+  }
+  function startResize(event: ReactPointerEvent<HTMLSpanElement>, key: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const start = event.clientX;
+    const base = widthNow(key);
+    try { handle.setPointerCapture(event.pointerId); } catch { /* jsdom, старые браузеры */ }
+    const move = (next: PointerEvent) => setWidth(key, base + next.clientX - start);
+    const stop = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+  }
+  function resetView() {
+    setOrder(undefined);
+    setWidths({});
+    setTitles({});
+    setHidden(defaultHidden());
+  }
+  const customized = Boolean(order || Object.keys(widths).length || Object.keys(titles).length);
+
   const selectable = bulkActions.length > 0;
   const sized = !fixedLayout;
   const filler = sized && !visible.some((column) => column.grow);
@@ -389,7 +594,342 @@ export function DataTable<T>({
       if (!byName.has(name)) { byName.set(name, []); groups.push([name, byName.get(name)!]); }
       byName.get(name)!.push(row);
     }
+    // The header's sort orders the rows inside every group; the groups stay where they are.
+    const column = groupSort && sort ? columns.find((item) => item.key === sort.key) : undefined;
+    if (column && sort) {
+      for (const [, groupRows] of groups) groupRows.sort((a, b) => directed(column.value(a), column.value(b), sort.direction, column.numeric));
+    }
   } else groups.push(["", shown]);
+
+  // --- Cells edited in place ---
+  const lines = groups.flatMap(([name, groupRows]) => collapsibleGroups && collapsed.has(name) ? [] : groupRows);
+  const byKey = new Map(rows.map((row) => [rowKey(row), row]));
+  const editable = (column: DataColumn<T> | undefined, row: T | undefined): column is DataColumn<T> & { edit: DataCellEdit<T> } =>
+    Boolean(column?.edit && row && (column.edit.enabled?.(row) ?? true));
+  const textOf = (column: DataColumn<T>, row: T) => column.edit?.value ? column.edit.value(row) : String(column.value(row) ?? "");
+  // A choice cell copies what it shows (the size «22», not the size row's id); a paste finds the option again.
+  const copyOf = (column: DataColumn<T>, row: T) => column.edit?.options ? String(column.value(row) ?? "") : textOf(column, row);
+  /** The value a typed or pasted text writes: a choice cell takes an option of its list, or refuses. */
+  function resolve(column: DataColumn<T>, row: T, text: string): string {
+    const options = column.edit?.options?.(row);
+    if (!options || text === textOf(column, row)) return text;
+    const option = findOption(options, text);
+    if (!option) throw new Error(`«${text}» — нет в списке`);
+    return option.value;
+  }
+  const nameOf = (row: T) => rowLabel?.(row) ?? rowKey(row);
+  // A choice opened by the mouse shows its list at once; arrows in a closed list only move the draft (Enter writes it),
+  // a pick by the mouse is written at once.
+  const pickerOnOpen = useRef(false);
+  const keyed = useRef(false);
+  const hasEditing = visible.some((column) => column.edit);
+  // The grid is one Tab stop: the active cell, or the first editable one.
+  const entry: CellRef | null = active ?? (() => {
+    for (const row of lines) {
+      const column = visible.find((item) => editable(item, row));
+      if (column) return { row: rowKey(row), col: column.key };
+    }
+    return null;
+  })();
+
+  function step(cell: CellRef, where: Step): CellRef | null {
+    const r = lines.findIndex((row) => rowKey(row) === cell.row);
+    const c = visible.findIndex((column) => column.key === cell.col);
+    if (r < 0 || c < 0) return null;
+    if (where === "up" || where === "down") {
+      const by = where === "down" ? 1 : -1;
+      for (let i = r + by; i >= 0 && i < lines.length; i += by) {
+        if (editable(visible[c], lines[i])) return { row: rowKey(lines[i]), col: cell.col };
+      }
+      return null;
+    }
+    const forward = where === "right" || where === "next";
+    const wrap = where === "next" || where === "prev";
+    let i = r;
+    let j = c;
+    for (;;) {
+      j += forward ? 1 : -1;
+      if (j < 0 || j >= visible.length) {
+        if (!wrap) return null;
+        i += forward ? 1 : -1;
+        if (i < 0 || i >= lines.length) return null;
+        j = forward ? 0 : visible.length - 1;
+      }
+      if (editable(visible[j], lines[i])) return { row: rowKey(lines[i]), col: visible[j].key };
+    }
+  }
+
+  /** Rows of the selected range (in the active cell's column, as they stand on the screen), top first. */
+  function rangeRows(): T[] {
+    if (!active) return [];
+    const column = visible.find((item) => item.key === active.col);
+    const at = lines.findIndex((row) => rowKey(row) === active.row);
+    const from = rangeFrom === null ? at : lines.findIndex((row) => rowKey(row) === rangeFrom);
+    if (!column || at < 0 || from < 0) return [];
+    return lines.slice(Math.min(at, from), Math.max(at, from) + 1).filter((row) => editable(column, row));
+  }
+
+  function select(cell: CellRef | null, extend = false) {
+    if (!cell) return;
+    if (extend && active && active.col === cell.col) setRangeFrom((current) => current ?? active.row);
+    else setRangeFrom(null);
+    setActive(cell);
+  }
+
+  function startEdit(cell: CellRef, draft?: string, byPointer = false) {
+    const row = byKey.get(cell.row);
+    const column = visible.find((item) => item.key === cell.col);
+    if (!editable(column, row)) return;
+    const current = textOf(column, row!);
+    let text = draft ?? current;
+    const options = column.edit.options?.(row!);
+    if (options && draft !== undefined) {
+      // A typed letter picks the first option starting with it; Delete — the empty option when the list has one.
+      const fold = (value: string) => value.toLowerCase();
+      const option = draft === "" ? options.find((item) => item.value === "")
+        : findOption(options, draft) ?? options.find((item) => fold(item.label).startsWith(fold(draft)));
+      text = option ? option.value : current;
+    }
+    setNote(null);
+    setRangeFrom(null);
+    setActive(cell);
+    keyed.current = false;
+    pickerOnOpen.current = Boolean(options && byPointer);
+    setEditing({ ...cell, draft: text, error: "", saving: false });
+  }
+
+  async function refresh() {
+    try { await onEdited?.(); } catch { /* перечитать не вышло — строки остаются прежними */ }
+  }
+
+  async function commit(then: Step | "stay") {
+    const edit = editingRef.current;
+    if (!edit || edit.saving) return;
+    const row = byKey.get(edit.row);
+    const column = visible.find((item) => item.key === edit.col);
+    const value = column?.edit?.options ? edit.draft : edit.draft.trim();
+    const move = () => { if (then !== "stay") select(step(edit, then) ?? edit); };
+    if (!editable(column, row) || value === textOf(column, row!).trim()) {
+      setEditing(null);
+      move();
+      return;
+    }
+    setEditing({ ...edit, saving: true, error: "" });
+    const still = (current: Editing | null) => sameCell(current, edit);
+    try {
+      await column.edit.save(row!, value);
+    } catch (reason) {
+      const text = failure(reason);
+      // The typed value stays in the cell with the reason; the rows are read again, so Enter writes over the fresh value.
+      setEditing((current) => still(current) ? { ...edit, saving: false, error: text } : current);
+      if (!still(editingRef.current)) setNote({ tone: "danger", text: `${nameOf(row!)}, ${column.title}: ${text}` });
+      await refresh();
+      return;
+    }
+    await refresh();
+    setEditing((current) => still(current) ? null : current);
+    if (still(editingRef.current)) move();
+  }
+
+  /** Paste and fill-down: the same save per cell, one after another, and one line about the result. */
+  async function writeMany(column: DataColumn<T>, cells: Array<{ row: T; value: string }>) {
+    if (!column.edit) return;
+    const failed: string[] = [];
+    // A choice cell writes the option the text names; a text that names none is refused for that row.
+    const todo = cells.filter((cell) => editable(column, cell.row)).flatMap((cell) => {
+      try { return [{ row: cell.row, value: resolve(column, cell.row, cell.value.trim()) }]; } catch (reason) {
+        failed.push(`${nameOf(cell.row)} — ${failure(reason)}`);
+        return [];
+      }
+    }).filter((cell) => cell.value !== textOf(column, cell.row).trim());
+    const total = todo.length + failed.length;
+    if (!total) return;
+    setNote({ tone: "info", text: `Записываем ячеек: ${todo.length}…` });
+    for (const cell of todo) {
+      try { await column.edit.save(cell.row, cell.value); } catch (reason) { failed.push(`${nameOf(cell.row)} — ${failure(reason)}`); }
+    }
+    await refresh();
+    setNote(failed.length
+      ? { tone: "danger", text: `Не записано ${failed.length} из ${total}: ${failed.slice(0, 3).join("; ")}${failed.length > 3 ? "…" : ""}` }
+      : { tone: "ok", text: `${column.title}: записано ячеек — ${todo.length}` });
+  }
+
+  function paste(text: string) {
+    if (!active) return;
+    const column = visible.find((item) => item.key === active.col);
+    if (!column?.edit) return;
+    // A column copied from Excel or Sheets: one value per line (the first cell of a line copied with several columns).
+    const values = text.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n").map((line) => line.split("\t")[0]);
+    const range = rangeRows();
+    if (values.length === 1 && range.length > 1) {
+      void writeMany(column, range.map((row) => ({ row, value: values[0] })));
+      return;
+    }
+    const start = lines.indexOf(range[0] ?? byKey.get(active.row)!);
+    const targets = lines.slice(Math.max(start, 0)).filter((row) => editable(column, row)).slice(0, values.length);
+    void writeMany(column, targets.map((row, index) => ({ row, value: values[index] })));
+  }
+
+  function fillDown() {
+    if (!active) return;
+    const column = visible.find((item) => item.key === active.col);
+    if (!column?.edit) return;
+    const range = rangeRows();
+    if (range.length > 1) {
+      const value = textOf(column, range[0]);
+      void writeMany(column, range.slice(1).map((row) => ({ row, value })));
+      return;
+    }
+    // One cell: the value of the editable cell above, as Ctrl+D in a sheet.
+    const above = step(active, "up");
+    const source = above && byKey.get(above.row);
+    const row = byKey.get(active.row);
+    if (source && row) void writeMany(column, [{ row, value: textOf(column, source) }]);
+  }
+
+  function cellKeys(event: ReactKeyboardEvent<HTMLTableCellElement>, cell: CellRef) {
+    if (event.target !== event.currentTarget) return;
+    const ctrl = event.ctrlKey || event.metaKey;
+    const arrows: Record<string, Step> = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
+    if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); startEdit(cell); return; }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setActive(null);
+      setRangeFrom(null);
+      const line = event.currentTarget.closest("tr");
+      if (line?.tabIndex === 0) line.focus(); else event.currentTarget.blur();
+      return;
+    }
+    if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); startEdit(cell, ""); return; }
+    if (ctrl && event.code === "KeyD") { event.preventDefault(); fillDown(); return; }
+    if (arrows[event.key]) {
+      event.preventDefault();
+      const where = arrows[event.key];
+      select(step(cell, where), event.shiftKey && (where === "up" || where === "down"));
+      return;
+    }
+    if (event.key === "Tab") {
+      const next = step(cell, event.shiftKey ? "prev" : "next");
+      if (next) { event.preventDefault(); select(next); }
+      return;
+    }
+    if (!ctrl && !event.altKey && event.key.length === 1) { event.preventDefault(); startEdit(cell, event.key); }
+  }
+
+  function editorKeys(event: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>) {
+    event.stopPropagation();
+    if (event.key === "Enter") { event.preventDefault(); void commit(event.shiftKey ? "up" : "down"); }
+    else if (event.key === "Tab") { event.preventDefault(); void commit(event.shiftKey ? "prev" : "next"); }
+    else if (event.key === "Escape") { event.preventDefault(); setEditing(null); }
+  }
+
+  // Keyboard focus follows the active cell (not while its editor is open: the editor has it).
+  useEffect(() => {
+    if (!active || (editing && sameCell(editing, active))) return;
+    const cell = [...(tableRef.current?.querySelectorAll<HTMLElement>("td[data-col]") ?? [])]
+      .find((item) => item.dataset.col === active.col && item.dataset.row === active.row);
+    if (cell && document.activeElement !== cell) cell.focus();
+  }, [active, editing]);
+
+  const inRange = new Set(rangeFrom !== null ? rangeRows().map(rowKey) : []);
+
+  function renderCell(row: T, column: DataColumn<T>, index: number) {
+    const key = rowKey(row);
+    const width = widths[column.key];
+    const sizedColumn = width ? { ...column, width } : column;
+    const classes = [columnClass(sizedColumn, index, sized), width ? "dt-w" : ""];
+    const style = width ? { "--dt-w": `${width}px` } as CSSProperties : undefined;
+    const content = column.render ? column.render(row) : cellContent(column, column.value(row));
+    const body = column.wrap
+      ? <div className="cell-wrap" style={wrapStyle(column)}>{content}</div>
+      // A narrowed column cuts long text with «…»: the whole value on hover.
+      : width ? <div className="dt-clip" title={String(column.value(row) ?? "") || undefined}>{content}</div> : content;
+    if (!editable(column, row)) {
+      if (column.computed && hasEditing) classes.push("dt-computed");
+      return <td key={column.key} className={classes.filter(Boolean).join(" ") || undefined} style={style} data-label={column.title}>{body}</td>;
+    }
+    const cell = { row: key, col: column.key };
+    const isActive = sameCell(active, cell);
+    const edit = editing && sameCell(editing, cell) ? editing : null;
+    const options = edit ? column.edit.options?.(row) : undefined;
+    if (column.edit.options) classes.push("dt-choice");
+    classes.push("dt-editable", isActive ? "dt-active" : "", inRange.has(key) && active?.col === column.key ? "dt-in-range" : "",
+      edit ? "dt-editing" : "", edit?.error ? "dt-error" : "");
+    return (
+      <td
+        key={column.key}
+        className={classes.filter(Boolean).join(" ")}
+        style={style}
+        data-label={column.title}
+        data-row={key}
+        data-col={column.key}
+        tabIndex={edit ? undefined : sameCell(entry, cell) ? 0 : -1}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (edit) return;
+          if (isActive && !event.shiftKey) startEdit(cell, undefined, true); else select(cell, event.shiftKey);
+        }}
+        onDoubleClick={(event) => { event.stopPropagation(); if (!edit) startEdit(cell, undefined, true); }}
+        onKeyDown={(event) => cellKeys(event, cell)}
+        onCopy={(event) => {
+          if (edit || event.target !== event.currentTarget) return;
+          event.preventDefault();
+          const range = rangeRows();
+          event.clipboardData.setData("text/plain", (range.length ? range : [row]).map((item) => copyOf(column, item)).join("\r\n"));
+        }}
+        onPaste={(event) => {
+          if (edit || event.target !== event.currentTarget) return;
+          event.preventDefault();
+          paste(event.clipboardData.getData("text/plain"));
+        }}
+      >
+        {edit ? <>
+          {options ? <select
+            className="dt-cell-input dt-cell-select"
+            aria-label={`${column.title}: ${nameOf(row)}`}
+            aria-invalid={edit.error ? true : undefined}
+            aria-busy={edit.saving || undefined}
+            autoFocus
+            disabled={edit.saving}
+            value={edit.draft}
+            ref={(select) => {
+              if (!select || !pickerOnOpen.current) return;
+              pickerOnOpen.current = false;
+              try { (select as HTMLSelectElement & { showPicker?: () => void }).showPicker?.(); } catch { /* the list opens on the next click */ }
+            }}
+            onPointerDown={() => { keyed.current = false; }}
+            onChange={(event) => {
+              const draft = event.target.value;
+              const next = { ...edit, draft, error: "" };
+              setEditing((current) => current && sameCell(current, edit) ? next : current);
+              if (!keyed.current) { editingRef.current = next; void commit("stay"); }
+            }}
+            onKeyDown={(event) => { keyed.current = true; editorKeys(event); }}
+            onClick={(event) => event.stopPropagation()}
+            onBlur={() => { const current = editingRef.current; if (current && sameCell(current, edit) && !current.saving && !current.error) void commit("stay"); }}
+          >
+            {!options.some((option) => option.value === edit.draft) && <option value={edit.draft}>{copyOf(column, row) || EMPTY}</option>}
+            {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select> : <input
+            className="dt-cell-input"
+            autoComplete="off"
+            aria-label={`${column.title}: ${nameOf(row)}`}
+            aria-invalid={edit.error ? true : undefined}
+            aria-busy={edit.saving || undefined}
+            autoFocus
+            inputMode={column.numeric ? "decimal" : undefined}
+            readOnly={edit.saving}
+            value={edit.draft}
+            onChange={(event) => { const draft = event.target.value; setEditing((current) => current && sameCell(current, edit) ? { ...current, draft, error: "" } : current); }}
+            onKeyDown={editorKeys}
+            onClick={(event) => event.stopPropagation()}
+            onBlur={() => { const current = editingRef.current; if (current && sameCell(current, edit) && !current.saving && !current.error) void commit("stay"); }}
+          />}
+          {edit.error && <small className="cell-edit-error" role="alert">{edit.error}</small>}
+        </> : body}
+      </td>
+    );
+  }
 
   function renderRow(row: T) {
     const key = rowKey(row);
@@ -413,14 +953,7 @@ export function DataTable<T>({
               <label className="sel-hit"><input type="checkbox" aria-label={rowLabel ? `Выбрать: ${rowLabel(row)}` : `Выбрать ${key}`} checked={selected.has(key)} onChange={() => undefined} onClick={(event) => toggleRow(key, event.currentTarget.checked, event.shiftKey)} /></label>
             </td>
           )}
-          {visible.map((column, index) => {
-            const content = column.render ? column.render(row) : cellContent(column, column.value(row));
-            return (
-              <td key={column.key} className={columnClass(column, index, sized)} data-label={column.title}>
-                {column.wrap ? <div className="cell-wrap" style={wrapStyle(column)}>{content}</div> : content}
-              </td>
-            );
-          })}
+          {visible.map((column, index) => renderCell(row, column, index))}
           {filler && <td className="dt-fill" aria-hidden="true" />}
         </tr>
         {open && renderDetail && (
@@ -430,7 +963,7 @@ export function DataTable<T>({
     );
   }
 
-  const filterColumns = columns.filter((column) => column.filter);
+  const filterColumns = arranged.filter((column) => column.filter);
   // A filter is on when a value is chosen; "" means «все».
   const activeFilters = filterColumns.filter((column) => (filters[column.key] ?? "") !== "");
 
@@ -448,7 +981,7 @@ export function DataTable<T>({
         )}
         <div className="toolbar-end">
           {toolbar}
-          <button type="button" className="secondary small" onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
+          <button type="button" className="secondary small" aria-expanded={choosingColumns} onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
           {exportName && <button type="button" className="secondary small" onClick={download}>Excel</button>}
         </div>
       </div>}
@@ -473,12 +1006,38 @@ export function DataTable<T>({
       {choosingColumns && (
         <fieldset className="column-chooser">
           <legend>Показывать колонки</legend>
-          {columns.map((column) => (
-            <label key={column.key} className="check-inline">
-              <input type="checkbox" checked={!hidden.includes(column.key)} onChange={(event) => setHidden((current) => event.target.checked ? current.filter((key) => key !== column.key) : [...current, column.key])} />
-              {column.title}
-            </label>
-          ))}
+          <div className="column-chooser-head">
+            <span>Порядок и ширину можно менять и в заголовке: перетащите его или его правый край.</span>
+            <button type="button" className="secondary small" disabled={!customized && hidden.join() === defaultHidden().join()} onClick={resetView}>Сбросить вид</button>
+          </div>
+          <ol className="column-list">
+            {ordered.map((column, index) => {
+              const width = widths[column.key];
+              return (
+                <li key={column.key} className="column-item">
+                  <span className="column-name">
+                    <label className="check-inline">
+                      <input type="checkbox" checked={!hidden.includes(column.key)} onChange={(event) => setHidden((current) => event.target.checked ? current.filter((key) => key !== column.key) : [...current, column.key])} />
+                      {column.title}
+                    </label>
+                    {column.remove && <button type="button" className="link-button danger-link column-remove" aria-label={`Удалить столбец: ${column.title}`} title="Удалить свой столбец" onClick={column.remove}>Удалить</button>}
+                  </span>
+                  <input
+                    className="column-caption" aria-label={`Своя подпись: ${column.title}`} placeholder="своя подпись…" maxLength={60} autoComplete="off"
+                    value={titles[column.key] ?? ""}
+                    onChange={(event) => { const value = event.target.value; setTitles((current) => { const next = { ...current, [column.key]: value }; if (!value.trim()) delete next[column.key]; return next; }); }}
+                  />
+                  <span className="column-tools">
+                    <button type="button" className="secondary small" aria-label={`Выше: ${column.title}`} title="Выше" disabled={index === 0} onClick={() => shiftColumn(column.key, -1)}>↑</button>
+                    <button type="button" className="secondary small" aria-label={`Ниже: ${column.title}`} title="Ниже" disabled={index === ordered.length - 1} onClick={() => shiftColumn(column.key, 1)}>↓</button>
+                    <button type="button" className="secondary small" aria-label={`Уже: ${column.title}`} title="Уже" onClick={() => setWidth(column.key, widthNow(column.key) - WIDTH_STEP)}>−</button>
+                    <button type="button" className="link-button column-width" aria-label={`Ширина ${column.title}: ${width ? `${width} пикселей, вернуть по содержимому` : "по содержимому"}`} title={width ? "Вернуть ширину по содержимому" : undefined} disabled={!width} onClick={() => setWidth(column.key, null)}>{width ? `${width}\u00a0px` : "авто"}</button>
+                    <button type="button" className="secondary small" aria-label={`Шире: ${column.title}`} title="Шире" onClick={() => setWidth(column.key, widthNow(column.key) + WIDTH_STEP)}>+</button>
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
         </fieldset>
       )}
       {presets.length > 0 && (
@@ -504,17 +1063,58 @@ export function DataTable<T>({
         </div>
       )}
       <div className="table-wrap" ref={wrapRef}>
-        <table ref={tableRef} className={["grid wide", selectable ? "selectable" : "", sized ? "sized" : ""].filter(Boolean).join(" ")}>
+        <table ref={tableRef} className={["grid wide", selectable ? "selectable" : "", sized ? "sized" : "", hasEditing ? "dt-edit-grid" : ""].filter(Boolean).join(" ")}>
           <thead>
             <tr>
               {selectable && <th><label className="sel-hit"><input type="checkbox" aria-label="Выбрать все показанные" checked={allShownSelected} onChange={(event) => toggleAll(event.target.checked)} /></label></th>}
               {visible.map((column, index) => {
                 const direction = sort?.key === column.key ? sort.direction : 0;
+                const width = widths[column.key];
+                const dragged = dragKey.current;
+                const drop = dropTarget === column.key && dragged
+                  ? visible.findIndex((item) => item.key === dragged) < index ? "dt-drop-after" : "dt-drop-before" : "";
                 return (
-                  <th key={column.key} className={columnClass(column, index, sized)} style={column.width ? { width: column.width } : undefined} title={column.hint} aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}>
+                  <th
+                    key={column.key}
+                    data-col={column.key}
+                    className={[columnClass(width ? { ...column, width } : column, index, sized), width ? "dt-w" : "", drop].filter(Boolean).join(" ") || undefined}
+                    style={width ? { "--dt-w": `${width}px` } as CSSProperties : column.width ? { width: column.width } : undefined}
+                    title={column.hint ?? (column.computed && hasEditing ? "Считается — в таблице не правится"
+                      : groupSort ? "Сортировка — внутри каждой группы" : undefined)}
+                    aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}
+                    draggable
+                    onDragStart={(event) => {
+                      if ((event.target as HTMLElement).closest?.(".dt-resize")) { event.preventDefault(); return; }
+                      dragKey.current = column.key;
+                      if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", column.title); }
+                    }}
+                    onDragOver={(event) => {
+                      if (!dragKey.current || dragKey.current === column.key) return;
+                      event.preventDefault();
+                      if (dropTarget !== column.key) setDropTarget(column.key);
+                    }}
+                    onDragLeave={() => setDropTarget((current) => current === column.key ? null : current)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const moved = dragKey.current;
+                      dragKey.current = null;
+                      setDropTarget(null);
+                      if (moved && moved !== column.key) moveColumn(moved, column.key);
+                    }}
+                    onDragEnd={() => { dragKey.current = null; setDropTarget(null); }}
+                  >
                     <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
                       {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
                     </button>
+                    <span
+                      className="dt-resize"
+                      aria-hidden="true"
+                      title="Тянуть — ширина, двойной щелчок — по содержимому"
+                      draggable={false}
+                      onPointerDown={(event) => startResize(event, column.key)}
+                      onDoubleClick={() => setWidth(column.key, null)}
+                      onClick={(event) => event.stopPropagation()}
+                    />
                   </th>
                 );
               })}
@@ -560,11 +1160,13 @@ export function DataTable<T>({
             {!shown.length && <tr><td colSpan={span} className="empty">{emptyText}</td></tr>}
           </tbody>
         </table>
+        {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
       </div>
       {!compact && (
         <div className="table-footer">
           <span>Показано {shown.length} из {filtered.length}{filtered.length !== rows.length ? ` (всего ${rows.length})` : ""}</span>
-          {filtered.length > shown.length && <button type="button" className="secondary small" onClick={() => setLimit((current) => current + pageSize)}>Показать ещё</button>}
+          {note && <span className={`dt-edit-note tone-${note.tone}`} role="status">{note.text}</span>}
+          {!note && hasEditing && <span className="dt-edit-hint">Щелчок по ячейке и ввод — правка · Enter — записать · Esc — отмена · Tab — дальше · Ctrl+V — вставить столбец · Ctrl+D — заполнить вниз</span>}
         </div>
       )}
     </section>

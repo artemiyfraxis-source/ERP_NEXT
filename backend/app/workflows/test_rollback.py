@@ -202,6 +202,14 @@ def resolve_user(session: Session, text: str) -> IdentityUserRow:
         return found
     users = list(session.scalars(select(IdentityUserRow)))
     folded = value.casefold()
+    if "@" in folded:
+        # Адрес — только по полю e-mail, без запасных поисков по логину и ФИО.
+        hits = [user for user in users if (user.email or "").strip().casefold() == folded]
+        if not hits:
+            raise RollbackError(f"Сотрудник с e-mail «{value}» не найден")
+        if len(hits) > 1:
+            raise RollbackError(f"E-mail «{value}» у нескольких сотрудников: {', '.join(sorted(user.name for user in hits))} — укажите id")
+        return hits[0]
     for match in (
         lambda user: (user.email or "").casefold() == folded,
         lambda user: (user.login or "").casefold() == folded,

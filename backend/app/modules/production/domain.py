@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -159,6 +160,21 @@ class OperationInput:
 
 
 @dataclass(frozen=True)
+class EtkOperation:
+    """Операция ЭТК внутри полуфабриката (ПФ, владелец + Василий, 13.10): её номер в ЭТК, код и название этапа.
+    Порядок операций в ПФ — порядок блока схемы; номера ЭТК не меняются."""
+    position: int
+    code: str
+    stage: str
+
+    def __post_init__(self) -> None:
+        if self.position <= 0:
+            raise ProductionValidationError("Номер операции ЭТК должен быть больше нуля")
+        object.__setattr__(self, "code", str(self.code or "").strip())
+        object.__setattr__(self, "stage", str(self.stage or "").strip())
+
+
+@dataclass(frozen=True)
 class ProductionOperation:
     id: UUID
     position: int
@@ -179,6 +195,9 @@ class ProductionOperation:
     # position остаётся порядком показа и топологическим порядком; связи этапов — только в inputs.
     stage_key: str | None = None
     inputs: tuple[OperationInput, ...] = ()
+    # Задание по ПФ (13.10): операция задания — один полуфабрикат схемы, его операции ЭТК в порядке ПФ.
+    # Пусто — операция задания и есть одна операция ЭТК (запуск без схемы, задания до миграции 0120).
+    etk_ops: tuple[EtkOperation, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.shares:
@@ -200,6 +219,17 @@ class ProductionOperation:
         object.__setattr__(self, "operator_ids", ids)
         object.__setattr__(self, "planned_start", min(starts) if starts else None)
         object.__setattr__(self, "planned_finish", max(finishes) if finishes else None)
+
+    @property
+    def skill_codes(self) -> tuple[str, ...]:
+        """Коды, к которым нужен допуск: все коды операций ПФ (без пустых и повторов); без ПФ — код операции."""
+        codes = tuple(dict.fromkeys(item.code for item in self.etk_ops if item.code))
+        return codes or (self.code,)
+
+    @property
+    def etk_positions(self) -> tuple[int, ...]:
+        """Номера операций ЭТК этой операции задания: операции ПФ по порядку; без ПФ — её номер."""
+        return tuple(item.position for item in self.etk_ops) or (self.position,)
 
     @property
     def split(self) -> bool:
@@ -227,6 +257,7 @@ class ProductionOperation:
         setup_seconds: Decimal,
         quantity: int,
         stage_key: str | None = None,
+        etk_ops: tuple[EtkOperation, ...] = (),
     ) -> ProductionOperation:
         if position <= 0:
             raise ProductionValidationError("Номер этапа должен быть больше нуля")
@@ -236,6 +267,9 @@ class ProductionOperation:
         setup = Decimal(setup_seconds)
         if not unit.is_finite() or not setup.is_finite() or unit < 0 or setup < 0:
             raise ProductionValidationError("Нормативы операции не могут быть отрицательными")
+        etk_ops = tuple(etk_ops)
+        if len({item.position for item in etk_ops}) != len(etk_ops):
+            raise ProductionValidationError("Операция ЭТК входит в полуфабрикат дважды")
         return cls(
             id=uuid4(),
             position=position,
@@ -246,6 +280,7 @@ class ProductionOperation:
             setup_seconds=setup,
             norm_seconds=ceil(setup + unit * quantity),
             stage_key=str(stage_key or "").strip() or None,
+            etk_ops=etk_ops,
         )
 
     def assign(
@@ -697,10 +732,20 @@ class SkillCheck:
 
 def skill_of(
     skills: dict[str, dict[UUID, OperatorSkill]],
-    operation_code: str,
+    operation_code: str | tuple[str, ...],
     operator_id: UUID,
 ) -> SkillCheck:
-    """prodSkillOf_: no row for the code yet — not checked; a row exists — no allowed row means no admission."""
+    """prodSkillOf_: no row for the code yet — not checked; a row exists — no allowed row means no admission.
+
+    Several codes (a ПФ task operation, `ProductionOperation.skill_codes`): the fitter needs admission to every one
+    of them, and the ПФ goes at his lowest coefficient among them (stars — the lowest of the checked codes)."""
+    if not isinstance(operation_code, str):
+        checks = [skill_of(skills, code, operator_id) for code in operation_code] or [skill_of(skills, "", operator_id)]
+        checked = [item for item in checks if item.checked]
+        return SkillCheck(
+            bool(checked), all(item.allowed for item in checks), min((item.stars for item in checked), default=0),
+            min(item.coefficient for item in checks),
+        )
     by_code = skills.get(str(operation_code or ""))
     if not by_code:
         return SkillCheck(False, True, 0, Decimal(1))
@@ -886,7 +931,7 @@ def plan_operation(
 ) -> PlanResult:
     if not operator_ids:
         return PlanResult(None, None, ())
-    checks = [skill_of(skills or {}, operation.code, operator_id) for operator_id in operator_ids]
+    checks = [skill_of(skills or {}, operation.skill_codes, operator_id) for operator_id in operator_ids]
     if operator_rate is None and skills is not None:
         operator_rate = sum((item.coefficient for item in checks), Decimal(0))
     duration = operation_duration_seconds(
@@ -912,7 +957,7 @@ def plan_operation(
     for operator_id, check in zip(operator_ids, checks):
         name = (names or {}).get(operator_id, "Оператор")
         if not check.allowed:
-            warnings.append(f"{name}: нет допуска к операции {operation.code}")
+            warnings.append(f"{name}: нет допуска к операции {', '.join(operation.skill_codes)}")
         for interval in busy.get(operator_id, ()):
             if interval.start < finish and start < interval.finish:
                 warnings.append(
@@ -920,3 +965,21 @@ def plan_operation(
                     f"{interval.start:%d.%m.%Y %H:%M}–{interval.finish:%d.%m.%Y %H:%M}"
                 )
     return PlanResult(start, finish, tuple(warnings))
+
+
+def mark_serial_range(task: ProductionTask, project_tasks: Iterable[ProductionTask]) -> tuple[int, int]:
+    """Номера изделий задания для «№ изделия» в надписях меток по КД (ЭТК, «Печать надписей»): первый и последний.
+
+    Нумерация сквозная по позиции проекта (решено агентом — проверить): задания той же позиции (`item`), запущенные
+    раньше этого (по времени запуска, при равном — по номеру ПЗ), занимают номера подряд, следующее задание
+    продолжает — два изделия одной КБ не получат одну надпись. Отменённое задание свои номера не отдаёт: отмену
+    можно снять, а напечатанная надпись не должна сдвинуться."""
+    def order(item: ProductionTask) -> tuple[datetime, int, str]:
+        digits = "".join(char for char in item.number if char.isdigit())
+        return item.created_at, int(digits) if digits else 0, item.number
+
+    key = task.item.strip().casefold()
+    mine = order(task)
+    before = sum(max(other.quantity, 0) for other in project_tasks
+                 if other.id != task.id and other.item.strip().casefold() == key and order(other) < mine)
+    return before + 1, before + max(task.quantity, 0)

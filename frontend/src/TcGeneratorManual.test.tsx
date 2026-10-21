@@ -478,7 +478,7 @@ it("«Перенести в блок…» moves an operation to another block", 
 
 it("a long generated block name shows short by its operations on the card, the card code in the operation's tooltip, the full name in the pane", async () => {
   await twoBlocksWithOps();
-  const long = "Разъём XHP-2 смонтирован (ст. А, 4 пров.) (со свивкой) (маркирован)";
+  const long = "Разъём XHP-2 смонтирован (сторона А, 4 провода) (со свивкой) (маркирован)";
   fireEvent.change(screen.getByLabelText("Название блока"), { target: { value: long } });
   const block = blockCard(/^Резка$/);
   expect(block.querySelector(".rc-op")).toHaveAttribute("title", "Открыть операцию 1: Резка\nКарта CUT_WIRE_hand");

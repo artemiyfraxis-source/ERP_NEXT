@@ -1,0 +1,1607 @@
+{
+ "source": "прод, 713К.4 КБ1, техкарта ревизия 17 (17.10.2026): build_config.gen_state, состав набора (generator_bom) и собранные операции/схема ПФ — только чтение",
+ "components": [
+  {
+   "id": "kit-0",
+   "type": "Соед",
+   "name": "I-DS1071-SCB01X3",
+   "art": "I-DS1071-SCB01X3",
+   "qty": 1
+  },
+  {
+   "id": "kit-1",
+   "type": "Соед",
+   "name": "I-DS1071-SCB02X3",
+   "art": "I-DS1071-SCB02X3",
+   "qty": 1
+  },
+  {
+   "id": "kit-2",
+   "type": "Терминал",
+   "name": "T-DS1071-SC600",
+   "art": "T-DS1071-SC600",
+   "qty": 7
+  },
+  {
+   "id": "kit-3",
+   "type": "Соед",
+   "name": "SMP-02V-BC",
+   "art": "SMP-02V-BC",
+   "qty": 1
+  },
+  {
+   "id": "kit-4",
+   "type": "Терминал",
+   "name": "SHF-001T-0.8BS",
+   "art": "SHF-001T-0.8BS",
+   "qty": 2
+  },
+  {
+   "id": "kit-5",
+   "type": "Соед",
+   "name": "SMR-02V-B",
+   "art": "SMR-02V-B",
+   "qty": 2
+  },
+  {
+   "id": "kit-6",
+   "type": "Соед",
+   "name": "SMR-04V-B",
+   "art": "SMR-04V-B",
+   "qty": 1
+  },
+  {
+   "id": "kit-7",
+   "type": "Терминал",
+   "name": "SYM-001T-P0.6",
+   "art": "SYM-001T-P0.6",
+   "qty": 7
+  },
+  {
+   "id": "kit-8",
+   "type": "Др",
+   "name": "НШВ 1,0-8",
+   "art": "НШВ 1,0-8",
+   "qty": 2
+  },
+  {
+   "id": "kit-9",
+   "type": "Др",
+   "name": "НШВ 0,5-8",
+   "art": "НШВ 0,5-8",
+   "qty": 2
+  },
+  {
+   "id": "kit-10",
+   "type": "Провод",
+   "name": "НВ4 0,5 красный",
+   "art": "НВ4 0,5 красный",
+   "qty": 0.16
+  },
+  {
+   "id": "kit-11",
+   "type": "Провод",
+   "name": "НВ4 0,5 черный",
+   "art": "НВ4 0,5 черный",
+   "qty": 0.16
+  },
+  {
+   "id": "kit-12",
+   "type": "Провод",
+   "name": "НВ4 0,2 красный",
+   "art": "НВ4 0,2 красный",
+   "qty": 0.43
+  },
+  {
+   "id": "kit-13",
+   "type": "Провод",
+   "name": "НВ4 0,2 черный",
+   "art": "НВ4 0,2 черный",
+   "qty": 0.43
+  },
+  {
+   "id": "kit-14",
+   "type": "Провод",
+   "name": "НВ4 0,12 синий",
+   "art": "НВ4 0,12 синий",
+   "qty": 0.38
+  },
+  {
+   "id": "kit-15",
+   "type": "Провод",
+   "name": "НВ4 0,12 белый",
+   "art": "НВ4 0,12 белый",
+   "qty": 0.38
+  },
+  {
+   "id": "kit-16",
+   "type": "Провод",
+   "name": "НВ4 0,2 белый",
+   "art": "НВ4 0,2 белый",
+   "qty": 0.32
+  },
+  {
+   "id": "kit-17",
+   "type": "Провод",
+   "name": "НВ4 0,2 желтый",
+   "art": "НВ4 0,2 желтый",
+   "qty": 0.32
+  },
+  {
+   "id": "kit-18",
+   "type": "Провод",
+   "name": "НВ4 0,2 зеленый",
+   "art": "НВ4 0,2 зеленый",
+   "qty": 0.32
+  },
+  {
+   "id": "kit-19",
+   "type": "ТТК",
+   "name": "ТТК 3/1мм, черная",
+   "art": "ТТК 3/1мм, черная",
+   "qty": 0.06
+  },
+  {
+   "id": "kit-20",
+   "type": "ТТК",
+   "name": "ТТК 6/2мм, черная",
+   "art": "ТТК 6/2мм, черная",
+   "qty": 0.04
+  },
+  {
+   "id": "kit-21",
+   "type": "ТТК",
+   "name": "ТТК 8/2мм, черная",
+   "art": "ТТК 8/2мм, черная",
+   "qty": 0.02
+  },
+  {
+   "id": "kit-22",
+   "type": "ТТК",
+   "name": "ТТК 12/4мм, черная",
+   "art": "ТТК 12/4мм, черная",
+   "qty": 0.045
+  },
+  {
+   "id": "kit-23",
+   "type": "Др",
+   "name": "XP-3",
+   "art": "XP-3",
+   "qty": 0.48
+  },
+  {
+   "id": "kit-24",
+   "type": "Маркировка",
+   "name": "Маркировка \"5\" 4/2мм",
+   "art": "Маркировка \"5\" 4/2мм",
+   "qty": 1
+  },
+  {
+   "id": "kit-25",
+   "type": "Маркировка",
+   "name": "Маркировка \"I3\" 4/2мм",
+   "art": "Маркировка \"I3\" 4/2мм",
+   "qty": 1
+  },
+  {
+   "id": "kit-26",
+   "type": "Маркировка",
+   "name": "Маркировка \"C\" 4/2мм",
+   "art": "Маркировка \"C\" 4/2мм",
+   "qty": 1
+  },
+  {
+   "id": "kit-27",
+   "type": "Маркировка",
+   "name": "Маркировка \"A6\" 4/2мм",
+   "art": "Маркировка \"A6\" 4/2мм",
+   "qty": 1
+  }
+ ],
+ "gen_state": {
+  "v": 1,
+  "kit": [
+   {
+    "id": "kit-0",
+    "key": "соед|i-ds1071-scb01x3"
+   },
+   {
+    "id": "kit-1",
+    "key": "соед|i-ds1071-scb02x3"
+   },
+   {
+    "id": "kit-2",
+    "key": "терминал|t-ds1071-sc600"
+   },
+   {
+    "id": "kit-3",
+    "key": "соед|smp-02v-bc"
+   },
+   {
+    "id": "kit-4",
+    "key": "терминал|shf-001t-0.8bs"
+   },
+   {
+    "id": "kit-5",
+    "key": "соед|smr-02v-b"
+   },
+   {
+    "id": "kit-6",
+    "key": "соед|smr-04v-b"
+   },
+   {
+    "id": "kit-7",
+    "key": "терминал|sym-001t-p0.6"
+   },
+   {
+    "id": "kit-8",
+    "key": "др|ншв 1,0-8"
+   },
+   {
+    "id": "kit-9",
+    "key": "др|ншв 0,5-8"
+   },
+   {
+    "id": "kit-10",
+    "key": "провод|нв4 0,5 красный"
+   },
+   {
+    "id": "kit-11",
+    "key": "провод|нв4 0,5 черный"
+   },
+   {
+    "id": "kit-12",
+    "key": "провод|нв4 0,2 красный"
+   },
+   {
+    "id": "kit-13",
+    "key": "провод|нв4 0,2 черный"
+   },
+   {
+    "id": "kit-14",
+    "key": "провод|нв4 0,12 синий"
+   },
+   {
+    "id": "kit-15",
+    "key": "провод|нв4 0,12 белый"
+   },
+   {
+    "id": "kit-16",
+    "key": "провод|нв4 0,2 белый"
+   },
+   {
+    "id": "kit-17",
+    "key": "провод|нв4 0,2 желтый"
+   },
+   {
+    "id": "kit-18",
+    "key": "провод|нв4 0,2 зеленый"
+   },
+   {
+    "id": "kit-19",
+    "key": "ттк|ттк 3/1мм, черная"
+   },
+   {
+    "id": "kit-20",
+    "key": "ттк|ттк 6/2мм, черная"
+   },
+   {
+    "id": "kit-21",
+    "key": "ттк|ттк 8/2мм, черная"
+   },
+   {
+    "id": "kit-22",
+    "key": "ттк|ттк 12/4мм, черная"
+   },
+   {
+    "id": "kit-23",
+    "key": "др|xp-3"
+   },
+   {
+    "id": "kit-24",
+    "key": "маркировка|маркировка \"5\" 4/2мм"
+   },
+   {
+    "id": "kit-25",
+    "key": "маркировка|маркировка \"i3\" 4/2мм"
+   },
+   {
+    "id": "kit-26",
+    "key": "маркировка|маркировка \"c\" 4/2мм"
+   },
+   {
+    "id": "kit-27",
+    "key": "маркировка|маркировка \"a6\" 4/2мм"
+   }
+  ],
+  "S": {
+   "tab": "complex",
+   "wires": [
+    {
+     "idx": 0,
+     "compId": "kit-16",
+     "length": 320,
+     "qty": 1
+    },
+    {
+     "idx": 1,
+     "compId": "kit-18",
+     "length": 320,
+     "qty": 1
+    },
+    {
+     "idx": 2,
+     "compId": "kit-17",
+     "length": 320,
+     "qty": 1
+    },
+    {
+     "idx": 3,
+     "compId": "kit-14",
+     "length": 130,
+     "qty": 1
+    },
+    {
+     "idx": 4,
+     "compId": "kit-15",
+     "length": 130,
+     "qty": 1
+    },
+    {
+     "idx": 5,
+     "compId": "kit-15",
+     "length": 137,
+     "qty": 1
+    },
+    {
+     "idx": 6,
+     "compId": "kit-14",
+     "length": 137,
+     "qty": 1
+    },
+    {
+     "idx": 7,
+     "compId": "kit-10",
+     "length": 130,
+     "qty": 1
+    },
+    {
+     "idx": 8,
+     "compId": "kit-11",
+     "length": 130,
+     "qty": 1
+    },
+    {
+     "idx": 9,
+     "compId": "kit-12",
+     "length": 65,
+     "qty": 1
+    },
+    {
+     "idx": 10,
+     "compId": "kit-12",
+     "length": 180,
+     "qty": 1
+    },
+    {
+     "idx": 11,
+     "compId": "kit-12",
+     "length": 180,
+     "qty": 1
+    },
+    {
+     "idx": 12,
+     "compId": "kit-13",
+     "length": 65,
+     "qty": 1
+    },
+    {
+     "idx": 13,
+     "compId": "kit-13",
+     "length": 180,
+     "qty": 1
+    },
+    {
+     "idx": 14,
+     "compId": "kit-13",
+     "length": 200,
+     "qty": 1
+    },
+    {
+     "idx": 15,
+     "compId": "kit-15",
+     "length": 65,
+     "qty": 1
+    },
+    {
+     "idx": 16,
+     "compId": "kit-14",
+     "length": 65,
+     "qty": 1
+    }
+   ],
+   "nextWireIdx": 17,
+   "endpoints": [
+    {
+     "id": "a1",
+     "side": "A",
+     "connId": "kit-5",
+     "method": "crimp",
+     "methodAuto": true,
+     "sdrTmpl": null,
+     "termId": "kit-7",
+     "wireIdxs": [
+      7,
+      8
+     ],
+     "otp": false,
+     "double": false,
+     "label": "X1",
+     "solderStrip": "",
+     "tutLen": "",
+     "termAuto": true,
+     "pins": {
+      "7": "1",
+      "8": "2"
+     },
+     "shrinkOn": true,
+     "shrinkMat": "kit-21",
+     "shrinkLen": "15",
+     "braidLen": "110"
+    },
+    {
+     "id": "b1",
+     "side": "B",
+     "connId": "kit-0",
+     "method": "crimp",
+     "methodAuto": true,
+     "sdrTmpl": null,
+     "termId": "kit-2",
+     "wireIdxs": [
+      10,
+      11,
+      13
+     ],
+     "otp": false,
+     "double": false,
+     "label": "X5",
+     "solderStrip": "",
+     "tutLen": "",
+     "termAuto": true,
+     "pins": {
+      "10": "1",
+      "11": "2",
+      "13": "3"
+     }
+    },
+    {
+     "id": "e2",
+     "side": "A",
+     "connId": "kit-5",
+     "method": "crimp",
+     "methodAuto": true,
+     "sdrTmpl": null,
+     "termId": "kit-7",
+     "wireIdxs": [
+      3,
+      4
+     ],
+     "otp": false,
+     "double": false,
+     "label": "X2",
+     "solderStrip": "",
+     "tutLen": "",
+     "termAuto": true,
+     "pins": {
+      "3": "2",
+      "4": "1"
+     },
+     "shrinkOn": true,
+     "shrinkMat": "kit-21",
+     "shrinkLen": "15",
+     "braidLen": "110"
+    },
+    {
+     "id": "e3",
+     "side": "A",
+     "connId": "kit-3",
+     "method": "crimp",
+     "methodAuto": true,
+     "sdrTmpl": null,
+     "termId": "kit-4",
+     "wireIdxs": [
+      5,
+      6
+     ],
+     "otp": false,
+     "double": false,
+     "label": "X3",
+     "solderStrip": "",
+     "tutLen": "",
+     "termAuto": true,
+     "pins": {
+      "5": "1",
+      "6": "2"
+     },
+     "shrinkOn": true,
+     "shrinkMat": "kit-21",
+     "shrinkLen": "15",
+     "braidLen": "110"
+    },
+    {
+     "id": "e4",
+     "side": "A",
+     "connId": "kit-6",
+     "method": "crimp",
+     "methodAuto": true,
+     "sdrTmpl": null,
+     "termId": "kit-7",
+     "wireIdxs": [
+      0,
+      1,
+      2
+     ],
+     "otp": false,
+     "double": false,
+     "label": "X4",
+     "solderStrip": "",
+     "tutLen": "",
+     "termAuto": true,
+     "pins": {
+      "0": "2",
+      "1": "3",
+      "2": "4"
+     },
+     "shrinkOn": true,
+     "shrinkMat": "kit-22",
+     "shrinkLen": "15",
+     "braidLen": "110"
+    },
+    {
+     "id": "e5",
+     "side": "B",
+     "connId": "kit-1",
+     "method": "crimp",
+     "methodAuto": true,
+     "sdrTmpl": null,
+     "termId": "kit-2",
+     "wireIdxs": [
+      0,
+      1,
+      2,
+      14
+     ],
+     "otp": false,
+     "double": false,
+     "label": "X6",
+     "solderStrip": "",
+     "tutLen": "",
+     "termAuto": true,
+     "pins": {
+      "0": "5",
+      "1": "4",
+      "2": "3",
+      "14": "2"
+     }
+    }
+   ],
+   "nextEndpointId": 6,
+   "advancedLength": true,
+   "measureMode": "cut",
+   "drawingLength": 0,
+   "sharedLengthText": "",
+   "lenFromCalc": false,
+   "rotor": true,
+   "crimpCut": false,
+   "crimpCutManual": false,
+   "crimpCutSide": "",
+   "twist": {
+    "enabled": true,
+    "mode": "pairs",
+    "pairs": [
+     {
+      "a": "4",
+      "b": "3"
+     },
+     {
+      "a": "5",
+      "b": "6"
+     }
+    ],
+    "wires": null,
+    "pitch": "20",
+    "z0": "",
+    "dia": "",
+    "diaManual": false
+   },
+   "spl": {
+    "enabled": true,
+    "count": "4",
+    "wires": "4,4,3,3",
+    "tut": "10",
+    "tutMat": "kit-19",
+    "strip": "",
+    "fold": false,
+    "method": "solder"
+   },
+   "hs": {
+    "enabled": true,
+    "manual": true,
+    "rows": [
+     {
+      "compId": "kit-22",
+      "len": "30",
+      "cnt": "1"
+     }
+    ]
+   },
+   "mark": true,
+   "markRows": [
+    {
+     "target": "Разъём X1 (SMR-02V-B)",
+     "text": "5",
+     "material": "Маркировка \"5\" 4/2мм",
+     "place": "conn",
+     "mm": "50",
+     "where": "",
+     "qty": "1",
+     "len": "15"
+    },
+    {
+     "target": "Разъём X2 (SMR-02V-B)",
+     "text": "I3",
+     "material": "Маркировка \"I3\" 4/2мм",
+     "place": "conn",
+     "mm": "50",
+     "where": "",
+     "qty": "1",
+     "len": "15"
+    },
+    {
+     "target": "Разъём X3 (SMP-02V-BC)",
+     "text": "C",
+     "material": "Маркировка \"C\" 4/2мм",
+     "place": "conn",
+     "mm": "50",
+     "where": "",
+     "qty": "1",
+     "len": "15"
+    },
+    {
+     "target": "Разъём X4 (SMR-04V-B)",
+     "text": "A6",
+     "material": "Маркировка \"A6\" 4/2мм",
+     "place": "conn",
+     "mm": "50",
+     "where": "",
+     "qty": "1",
+     "len": "15"
+    }
+   ],
+   "freeStrip": {
+    "enabled": false,
+    "len": ""
+   },
+   "cap": {
+    "enabled": false,
+    "tut": "",
+    "len": ""
+   },
+   "tailTin": {
+    "enabled": true,
+    "strip": "3"
+   },
+   "wrap": {
+    "enabled": true,
+    "slots": [
+     {
+      "mat": "kit-23",
+      "kind": "braid",
+      "len": "460"
+     },
+     {
+      "mat": "",
+      "kind": "tape",
+      "len": ""
+     },
+     {
+      "mat": "",
+      "kind": "tape",
+      "len": ""
+     },
+     {
+      "mat": "",
+      "kind": "tape",
+      "len": ""
+     }
+    ]
+   },
+   "seal": {
+    "enabled": false,
+    "mat": "",
+    "places": ""
+   },
+   "tin": {
+    "enabled": false,
+    "wires": null,
+    "stripLen": "5"
+   },
+   "coax": {
+    "len": "",
+    "tutEnabled": true,
+    "tutLen": "",
+    "pinA": "пайка",
+    "pinB": "пайка",
+    "coverA": "",
+    "coverB": "",
+    "stripB": false,
+    "shield": "обжим",
+    "sideA": {
+     "art": "I-DS1071-SCB01X3",
+     "name": "I-DS1071-SCB01X3"
+    },
+    "sideB": {
+     "art": "I-DS1071-SCB02X3",
+     "name": "I-DS1071-SCB02X3"
+    },
+    "stripMode": "machine",
+    "machine": ""
+   },
+   "selectedTemplates": {
+    "cutWire": "cut-wire-2crimp-автомат-резка-опрессовка",
+    "twist": "twist-свивка",
+    "insMark": "ins-mark-монтаж-маркировки",
+    "prsTermA1": "prs-terminal-auto-опрессовка-терминалов-a",
+    "insTermA1": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "prsTermA2": "prs-terminal-auto-опрессовка-терминалов-a",
+    "insTermA2": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "prsTermA3": "prs-terminal-auto-опрессовка-терминалов-a",
+    "insTermA3": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "prsTermA4": "prs-terminal-auto-опрессовка-терминалов-a",
+    "insTermA4": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "prsTermB1": "prs-terminal-auto-опрессовка-терминалов-b",
+    "insTermB1": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+    "prsTermB2": "prs-terminal-auto-опрессовка-терминалов-b",
+    "insTermB2": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+    "cutShr1": "cut-tut-short-резка",
+    "cutShr2": "cut-tut-short-резка",
+    "cutHs1": "cut-tut-short-резка",
+    "insSleeves": "ins-tut-монтаж",
+    "insWrap": "ins-braid-монтаж-оплётки",
+    "insWrap2": "ins-braid-монтаж-оплётки",
+    "insWrap3": "ins-braid-монтаж-оплётки",
+    "insWrap4": "ins-braid-монтаж-оплётки",
+    "stripSpl": "strip-wire-разделка",
+    "cutSpl": "cut-tut-short-резка",
+    "insSpl": "ins-tut-монтаж",
+    "splice": "sdr-w-w-пайка",
+    "heatSpl": "heat-ttk-short-усадка",
+    "heatShrA1": "heat-ttk-short-усадка",
+    "heatShrA2": "heat-ttk-short-усадка",
+    "heatShrA3": "heat-ttk-short-усадка",
+    "heatShrA4": "heat-ttk-short-усадка",
+    "heatHs": "heat-ttk-short-усадка",
+    "stripTail": "strip-wire-разделка",
+    "tinTail": "sdr-tin-лужение",
+    "cutMark": "ins-mark-tube-auto-печать-и-резка-маркировочной-трубки",
+    "onMark": "ins-tut-монтаж",
+    "heatMark": "heat-tyt-short-усадка",
+    "cutWire1": "cut-wire-1crimp-автомат-резка-опрессовка",
+    "cutWire2": "cut-wire-1crimp-автомат-резка-опрессовка",
+    "cutWire3": "cut-wire-2strip-tin-резка-с-зачисткой-двух-концов-и-лужением",
+    "cutWire4": "cut-wire-1crimp-автомат-резка-опрессовка",
+    "cutTubes": "cut-tut-short-резка",
+    "cutBraid": "cut-neylon-резка-линейных-материалов",
+    "onTubesA1": "ins-tut-монтаж",
+    "braidA1": "ins-braid-монтаж-оплётки",
+    "onTubesA2": "ins-tut-монтаж",
+    "braidA2": "ins-braid-монтаж-оплётки",
+    "twistA2": "twist-свивка",
+    "onTubesA3": "ins-tut-монтаж",
+    "braidA3": "ins-braid-монтаж-оплётки",
+    "twistA3": "twist-свивка",
+    "onTubesA4": "ins-tut-монтаж",
+    "braidA4": "ins-braid-монтаж-оплётки",
+    "insSpl1": "ins-tut-монтаж",
+    "splice1": "sdr-w-w-пайка",
+    "heatSpl1": "heat-ttk-short-усадка",
+    "insSpl2": "ins-tut-монтаж",
+    "splice2": "sdr-w-w-пайка",
+    "heatSpl2": "heat-ttk-short-усадка",
+    "onMarkA1": "ins-tut-монтаж",
+    "heatMarkA1": "heat-tyt-short-усадка",
+    "onMarkA2": "ins-tut-монтаж",
+    "heatMarkA2": "heat-tyt-short-усадка",
+    "onMarkA3": "ins-tut-монтаж",
+    "heatMarkA3": "heat-tyt-short-усадка",
+    "onMarkA4": "ins-tut-монтаж",
+    "heatMarkA4": "heat-tyt-short-усадка"
+   },
+   "manualTemplates": [],
+   "times": {},
+   "materialsSheet": false,
+   "opOrder": [],
+   "splices": [
+    {
+     "id": "s1",
+     "ends": [
+      {
+       "idx": 7,
+       "unit": 0,
+       "side": "B"
+      },
+      {
+       "idx": 10,
+       "unit": 0,
+       "side": "A"
+      },
+      {
+       "idx": 11,
+       "unit": 0,
+       "side": "A"
+      },
+      {
+       "idx": 9,
+       "unit": 0,
+       "side": "A"
+      }
+     ]
+    },
+    {
+     "id": "s2",
+     "ends": [
+      {
+       "idx": 8,
+       "unit": 0,
+       "side": "B"
+      },
+      {
+       "idx": 13,
+       "unit": 0,
+       "side": "A"
+      },
+      {
+       "idx": 14,
+       "unit": 0,
+       "side": "A"
+      },
+      {
+       "idx": 12,
+       "unit": 0,
+       "side": "A"
+      }
+     ]
+    },
+    {
+     "id": "s3",
+     "ends": [
+      {
+       "idx": 4,
+       "unit": 0,
+       "side": "B"
+      },
+      {
+       "idx": 5,
+       "unit": 0,
+       "side": "B"
+      },
+      {
+       "idx": 15,
+       "unit": 0,
+       "side": "A"
+      }
+     ]
+    },
+    {
+     "id": "s4",
+     "ends": [
+      {
+       "idx": 3,
+       "unit": 0,
+       "side": "B"
+      },
+      {
+       "idx": 6,
+       "unit": 0,
+       "side": "B"
+      },
+      {
+       "idx": 16,
+       "unit": 0,
+       "side": "A"
+      }
+     ]
+    }
+   ],
+   "tails": [
+    {
+     "idx": 9,
+     "unit": 0,
+     "side": "B"
+    },
+    {
+     "idx": 12,
+     "unit": 0,
+     "side": "B"
+    },
+    {
+     "idx": 15,
+     "unit": 0,
+     "side": "B"
+    },
+    {
+     "idx": 16,
+     "unit": 0,
+     "side": "B"
+    }
+   ]
+  },
+  "terEdits": {},
+  "coaxAdd": {}
+ },
+ "expected": {
+  "ops": [
+   {
+    "opKey": "cutWire",
+    "type": "cutWireCrimp",
+    "label": "Резка с обжимом А и В (SYM-001T-P0.6 / T-DS1071-SC600) — 3 кабеля",
+    "templateId": "cut-wire-2crimp-автомат-резка-опрессовка",
+    "opNum": "CUT_WIRE+2crimp"
+   },
+   {
+    "opKey": "cutWire1",
+    "type": "cutWireCrimp",
+    "label": "Резка с обжимом А (SYM-001T-P0.6) и зачисткой В — 4 кабеля",
+    "templateId": "cut-wire-1crimp-автомат-резка-опрессовка",
+    "opNum": "CUT_WIRE+1crimp"
+   },
+   {
+    "opKey": "cutWire2",
+    "type": "cutWireCrimp",
+    "label": "Резка с обжимом А (SHF-001T-0.8BS) и зачисткой В — 2 кабеля",
+    "templateId": "cut-wire-1crimp-автомат-резка-опрессовка",
+    "opNum": "CUT_WIRE+1crimp"
+   },
+   {
+    "opKey": "cutWire3",
+    "type": "cutWireStrip",
+    "label": "Резка с зачисткой двух концов и лужением — 4 кабеля",
+    "templateId": "cut-wire-2strip-tin-резка-с-зачисткой-двух-концов-и-лужением",
+    "opNum": "CUT_WIRE+2strip+tin"
+   },
+   {
+    "opKey": "cutWire4",
+    "type": "cutWireCrimp",
+    "label": "Резка с обжимом В (T-DS1071-SC600) и зачисткой А — 4 кабеля",
+    "templateId": "cut-wire-1crimp-автомат-резка-опрессовка",
+    "opNum": "CUT_WIRE+1crimp"
+   },
+   {
+    "opKey": "cutTubes",
+    "type": "cutTut",
+    "label": "Резка трубок — ТТК 8/2 3×15 мм, ТТК 12/4 1×15 мм, ТТК 12/4 1×30 мм, ТТК 3/1 4×10 мм",
+    "templateId": "cut-tut-short-резка",
+    "opNum": "CUT_TUT_short"
+   },
+   {
+    "opKey": "cutBraid",
+    "type": "cutTut",
+    "label": "Резка оплётки XP-3 — X1 «5» 110 мм, X2 «I3» 110 мм, X3 «C» 110 мм, X4 «A6» 110 мм",
+    "templateId": "cut-neylon-резка-линейных-материалов",
+    "opNum": "CUT_NEYLON"
+   },
+   {
+    "opKey": "cutMark",
+    "type": "cutTut",
+    "label": "Печать и резка маркировки — «5» 15 мм, «I3» 15 мм, «C» 15 мм, «A6» 15 мм",
+    "templateId": "ins-mark-tube-auto-печать-и-резка-маркировочной-трубки",
+    "opNum": "INS_MARK_TUBE_AUTO"
+   },
+   {
+    "opKey": "insTermA1",
+    "type": "insTerm",
+    "label": "Монтаж контактов в разъём X1 «5» — SMR-02V-B",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "opNum": "INS_terminal_2,54-6,3"
+   },
+   {
+    "opKey": "braidA1",
+    "type": "insWrap",
+    "label": "Надеть оплётку X1 «5» — XP-3, 110 мм",
+    "templateId": "ins-braid-монтаж-оплётки",
+    "opNum": "INS_BRAID"
+   },
+   {
+    "opKey": "onTubesA1",
+    "type": "insTut",
+    "label": "Надеть ТТК X1 «5» — ТТК 8/2",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "onMarkA1",
+    "type": "insTut",
+    "label": "Надеть маркировку X1 «5» — «5»",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "heatShrA1",
+    "type": "heatTut",
+    "label": "Усадка ТТК на разъёме X1 «5» — ТТК 8/2",
+    "templateId": "heat-ttk-short-усадка",
+    "opNum": "HEAT_TTK_short"
+   },
+   {
+    "opKey": "heatMarkA1",
+    "type": "heatTut",
+    "label": "Усадка маркировки X1 «5» — «5»",
+    "templateId": "heat-tyt-short-усадка",
+    "opNum": "HEAT_TYT_short"
+   },
+   {
+    "opKey": "insTermA2",
+    "type": "insTerm",
+    "label": "Монтаж контактов в разъём X2 «I3» — SMR-02V-B",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "opNum": "INS_terminal_2,54-6,3"
+   },
+   {
+    "opKey": "twistA2",
+    "type": "twist",
+    "label": "Свивка X2 «I3» — 1 пара",
+    "templateId": "twist-свивка",
+    "opNum": "TWIST"
+   },
+   {
+    "opKey": "braidA2",
+    "type": "insWrap",
+    "label": "Надеть оплётку X2 «I3» — XP-3, 110 мм",
+    "templateId": "ins-braid-монтаж-оплётки",
+    "opNum": "INS_BRAID"
+   },
+   {
+    "opKey": "onTubesA2",
+    "type": "insTut",
+    "label": "Надеть ТТК X2 «I3» — ТТК 8/2",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "onMarkA2",
+    "type": "insTut",
+    "label": "Надеть маркировку X2 «I3» — «I3»",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "heatShrA2",
+    "type": "heatTut",
+    "label": "Усадка ТТК на разъёме X2 «I3» — ТТК 8/2",
+    "templateId": "heat-ttk-short-усадка",
+    "opNum": "HEAT_TTK_short"
+   },
+   {
+    "opKey": "heatMarkA2",
+    "type": "heatTut",
+    "label": "Усадка маркировки X2 «I3» — «I3»",
+    "templateId": "heat-tyt-short-усадка",
+    "opNum": "HEAT_TYT_short"
+   },
+   {
+    "opKey": "insTermA3",
+    "type": "insTerm",
+    "label": "Монтаж контактов в разъём X3 «C» — SMP-02V-BC",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "opNum": "INS_terminal_2,54-6,3"
+   },
+   {
+    "opKey": "twistA3",
+    "type": "twist",
+    "label": "Свивка X3 «C» — 1 пара",
+    "templateId": "twist-свивка",
+    "opNum": "TWIST"
+   },
+   {
+    "opKey": "braidA3",
+    "type": "insWrap",
+    "label": "Надеть оплётку X3 «C» — XP-3, 110 мм",
+    "templateId": "ins-braid-монтаж-оплётки",
+    "opNum": "INS_BRAID"
+   },
+   {
+    "opKey": "onTubesA3",
+    "type": "insTut",
+    "label": "Надеть ТТК X3 «C» — ТТК 8/2",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "onMarkA3",
+    "type": "insTut",
+    "label": "Надеть маркировку X3 «C» — «C»",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "heatShrA3",
+    "type": "heatTut",
+    "label": "Усадка ТТК на разъёме X3 «C» — ТТК 8/2",
+    "templateId": "heat-ttk-short-усадка",
+    "opNum": "HEAT_TTK_short"
+   },
+   {
+    "opKey": "heatMarkA3",
+    "type": "heatTut",
+    "label": "Усадка маркировки X3 «C» — «C»",
+    "templateId": "heat-tyt-short-усадка",
+    "opNum": "HEAT_TYT_short"
+   },
+   {
+    "opKey": "insTermA4",
+    "type": "insTerm",
+    "label": "Монтаж контактов в разъём X4 «A6» — SMR-04V-B",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+    "opNum": "INS_terminal_2,54-6,3"
+   },
+   {
+    "opKey": "braidA4",
+    "type": "insWrap",
+    "label": "Надеть оплётку X4 «A6» — XP-3, 110 мм",
+    "templateId": "ins-braid-монтаж-оплётки",
+    "opNum": "INS_BRAID"
+   },
+   {
+    "opKey": "onTubesA4",
+    "type": "insTut",
+    "label": "Надеть ТТК X4 «A6» — ТТК 12/4",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "onMarkA4",
+    "type": "insTut",
+    "label": "Надеть маркировку X4 «A6» — «A6»",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "heatShrA4",
+    "type": "heatTut",
+    "label": "Усадка ТТК на разъёме X4 «A6» — ТТК 12/4",
+    "templateId": "heat-ttk-short-усадка",
+    "opNum": "HEAT_TTK_short"
+   },
+   {
+    "opKey": "heatMarkA4",
+    "type": "heatTut",
+    "label": "Усадка маркировки X4 «A6» — «A6»",
+    "templateId": "heat-tyt-short-усадка",
+    "opNum": "HEAT_TYT_short"
+   },
+   {
+    "opKey": "splice1",
+    "type": "splice",
+    "label": "Сростки С1, С2 — 2 шт по 4 провода",
+    "templateId": "sdr-w-w-пайка",
+    "opNum": "SDR_W_W"
+   },
+   {
+    "opKey": "insSpl1",
+    "type": "insTut",
+    "label": "Надеть трубку на сростки С1, С2 — 2 шт",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "heatSpl1",
+    "type": "heatTut",
+    "label": "Усадка трубки на сростках С1, С2 — 2 шт",
+    "templateId": "heat-ttk-short-усадка",
+    "opNum": "HEAT_TTK_short"
+   },
+   {
+    "opKey": "splice2",
+    "type": "splice",
+    "label": "Сростки С3, С4 — 2 шт по 3 провода",
+    "templateId": "sdr-w-w-пайка",
+    "opNum": "SDR_W_W"
+   },
+   {
+    "opKey": "insSpl2",
+    "type": "insTut",
+    "label": "Надеть трубку на сростки С3, С4 — 2 шт",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "heatSpl2",
+    "type": "heatTut",
+    "label": "Усадка трубки на сростках С3, С4 — 2 шт",
+    "templateId": "heat-ttk-short-усадка",
+    "opNum": "HEAT_TTK_short"
+   },
+   {
+    "opKey": "insSleeves",
+    "type": "insTut",
+    "label": "Надеть трубки: ТТК 12/4мм, черная на жгут — 1 шт",
+    "templateId": "ins-tut-монтаж",
+    "opNum": "INS_TUT"
+   },
+   {
+    "opKey": "heatHs",
+    "type": "heatTut",
+    "label": "Усадка термоусадки на жгуте — 1 шт",
+    "templateId": "heat-ttk-short-усадка",
+    "opNum": "HEAT_TTK_short"
+   },
+   {
+    "opKey": "insTermB1",
+    "type": "insTerm",
+    "label": "Монтаж контактов в разъём X5 — I-DS1071-SCB01X3",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+    "opNum": "INS_terminal_2,54-6,3"
+   },
+   {
+    "opKey": "insTermB2",
+    "type": "insTerm",
+    "label": "Монтаж контактов в разъём X6 — I-DS1071-SCB02X3",
+    "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+    "opNum": "INS_terminal_2,54-6,3"
+   }
+  ],
+  "route": {
+   "source": "generated",
+   "blocks": [
+    {
+     "key": "pf-cutWire",
+     "name": "Резка + обжим А и В — X4→X6",
+     "ops": [
+      1
+     ],
+     "kit": true,
+     "final": false
+    },
+    {
+     "key": "pf-cutWire1",
+     "name": "Резка + обжим SYM, зачистка — X1, X2",
+     "ops": [
+      2
+     ],
+     "kit": true,
+     "final": false
+    },
+    {
+     "key": "pf-cutWire2",
+     "name": "Резка + обжим SHF, зачистка — X3",
+     "ops": [
+      3
+     ],
+     "kit": true,
+     "final": false
+    },
+    {
+     "key": "pf-cutWire3",
+     "name": "Резка хвостов + лужение",
+     "ops": [
+      4
+     ],
+     "kit": true,
+     "final": false
+    },
+    {
+     "key": "pf-cutWire4",
+     "name": "Резка + обжим T-DS1071, зачистка — X5, X6",
+     "ops": [
+      5
+     ],
+     "kit": true,
+     "final": false
+    },
+    {
+     "key": "pf-tubes",
+     "name": "Резка трубок",
+     "ops": [
+      6
+     ],
+     "kit": true,
+     "final": false
+    },
+    {
+     "key": "pf-braid",
+     "name": "Резка оплётки",
+     "ops": [
+      7
+     ],
+     "kit": true,
+     "final": false
+    },
+    {
+     "key": "pf-mark",
+     "name": "Маркировка",
+     "ops": [
+      8
+     ],
+     "kit": true,
+     "final": false
+    },
+    {
+     "key": "pf-A1",
+     "name": "Ветвь X1 «5», сторона А",
+     "ops": [
+      9,
+      10,
+      11,
+      12,
+      13,
+      14
+     ],
+     "kit": false,
+     "final": false
+    },
+    {
+     "key": "pf-A2",
+     "name": "Ветвь X2 «I3», сторона А",
+     "ops": [
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21
+     ],
+     "kit": false,
+     "final": false
+    },
+    {
+     "key": "pf-A3",
+     "name": "Ветвь X3 «C», сторона А",
+     "ops": [
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28
+     ],
+     "kit": false,
+     "final": false
+    },
+    {
+     "key": "pf-A4",
+     "name": "Ветвь X4 «A6», сторона А",
+     "ops": [
+      29,
+      30,
+      31,
+      32,
+      33,
+      34
+     ],
+     "kit": false,
+     "final": false
+    },
+    {
+     "key": "pf-spl1",
+     "name": "Пайка С1, С2",
+     "ops": [
+      35,
+      36,
+      37
+     ],
+     "kit": false,
+     "final": false
+    },
+    {
+     "key": "pf-spl2",
+     "name": "Пайка С3, С4",
+     "ops": [
+      38,
+      39,
+      40
+     ],
+     "kit": false,
+     "final": false
+    },
+    {
+     "key": "pf-hs",
+     "name": "ТУТ на месте Б",
+     "ops": [
+      41,
+      42
+     ],
+     "kit": false,
+     "final": false
+    },
+    {
+     "key": "pf-final",
+     "name": "Кабельная сборка Жгут НВ4",
+     "ops": [
+      43,
+      44
+     ],
+     "kit": false,
+     "final": true
+    }
+   ],
+   "edges": [
+    {
+     "from": "pf-A2",
+     "to": "pf-spl2",
+     "per_unit": 1,
+     "item": "Ветвь X2 «I3», сторона А"
+    },
+    {
+     "from": "pf-A1",
+     "to": "pf-spl1",
+     "per_unit": 1,
+     "item": "Ветвь X1 «5», сторона А"
+    },
+    {
+     "from": "pf-A3",
+     "to": "pf-spl2",
+     "per_unit": 1,
+     "item": "Ветвь X3 «C», сторона А"
+    },
+    {
+     "from": "pf-cutWire",
+     "to": "pf-A4",
+     "per_unit": 1,
+     "item": "НВ4 0,2 белый, зеленый, желтый — 3 шт"
+    },
+    {
+     "from": "pf-cutWire1",
+     "to": "pf-A2",
+     "per_unit": 1,
+     "item": "НВ4 0,12 синий, белый — 2 шт"
+    },
+    {
+     "from": "pf-cutWire1",
+     "to": "pf-A1",
+     "per_unit": 1,
+     "item": "НВ4 0,5 красный, черный — 2 шт"
+    },
+    {
+     "from": "pf-cutWire2",
+     "to": "pf-A3",
+     "per_unit": 1,
+     "item": "НВ4 0,12 белый, синий — 2 шт"
+    },
+    {
+     "from": "pf-cutWire3",
+     "to": "pf-spl1",
+     "per_unit": 1,
+     "item": "НВ4 0,2 красный, черный — 2 шт"
+    },
+    {
+     "from": "pf-cutWire3",
+     "to": "pf-spl2",
+     "per_unit": 1,
+     "item": "НВ4 0,12 белый, синий — 2 шт"
+    },
+    {
+     "from": "pf-cutWire4",
+     "to": "pf-spl1",
+     "per_unit": 1,
+     "item": "НВ4 0,2 красный ×2, черный ×2 — 4 шт"
+    },
+    {
+     "from": "pf-tubes",
+     "to": "pf-A1",
+     "per_unit": 1,
+     "item": "ТТК 8/2 — 1 шт"
+    },
+    {
+     "from": "pf-tubes",
+     "to": "pf-A2",
+     "per_unit": 1,
+     "item": "ТТК 8/2 — 1 шт"
+    },
+    {
+     "from": "pf-tubes",
+     "to": "pf-A3",
+     "per_unit": 1,
+     "item": "ТТК 8/2 — 1 шт"
+    },
+    {
+     "from": "pf-tubes",
+     "to": "pf-A4",
+     "per_unit": 1,
+     "item": "ТТК 12/4 — 1 шт"
+    },
+    {
+     "from": "pf-tubes",
+     "to": "pf-hs",
+     "per_unit": 1,
+     "item": "ТТК 12/4 — 1 шт"
+    },
+    {
+     "from": "pf-tubes",
+     "to": "pf-spl1",
+     "per_unit": 1,
+     "item": "ТТК 3/1 — 2 шт"
+    },
+    {
+     "from": "pf-tubes",
+     "to": "pf-spl2",
+     "per_unit": 1,
+     "item": "ТТК 3/1 — 2 шт"
+    },
+    {
+     "from": "pf-braid",
+     "to": "pf-A1",
+     "per_unit": 1,
+     "item": "Оплётка XP-3 110 мм — 1 шт"
+    },
+    {
+     "from": "pf-braid",
+     "to": "pf-A2",
+     "per_unit": 1,
+     "item": "Оплётка XP-3 110 мм — 1 шт"
+    },
+    {
+     "from": "pf-braid",
+     "to": "pf-A3",
+     "per_unit": 1,
+     "item": "Оплётка XP-3 110 мм — 1 шт"
+    },
+    {
+     "from": "pf-braid",
+     "to": "pf-A4",
+     "per_unit": 1,
+     "item": "Оплётка XP-3 110 мм — 1 шт"
+    },
+    {
+     "from": "pf-mark",
+     "to": "pf-A1",
+     "per_unit": 1,
+     "item": "Маркировка «5» — 1 шт"
+    },
+    {
+     "from": "pf-mark",
+     "to": "pf-A2",
+     "per_unit": 1,
+     "item": "Маркировка «I3» — 1 шт"
+    },
+    {
+     "from": "pf-mark",
+     "to": "pf-A3",
+     "per_unit": 1,
+     "item": "Маркировка «C» — 1 шт"
+    },
+    {
+     "from": "pf-mark",
+     "to": "pf-A4",
+     "per_unit": 1,
+     "item": "Маркировка «A6» — 1 шт"
+    },
+    {
+     "from": "pf-hs",
+     "to": "pf-final",
+     "per_unit": 1,
+     "item": "ТУТ на месте Б"
+    },
+    {
+     "from": "pf-A4",
+     "to": "pf-hs",
+     "per_unit": 1,
+     "item": "Ветвь X4 «A6», сторона А"
+    },
+    {
+     "from": "pf-spl1",
+     "to": "pf-hs",
+     "per_unit": 1,
+     "item": "Пайка С1, С2"
+    },
+    {
+     "from": "pf-spl2",
+     "to": "pf-hs",
+     "per_unit": 1,
+     "item": "Пайка С3, С4"
+    }
+   ]
+  }
+ }
+}

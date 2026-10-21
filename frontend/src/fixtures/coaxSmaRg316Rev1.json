@@ -1,0 +1,1243 @@
+{
+ "source": "прод, КБ1 «Кабельная сборка SMA-Male to SMA-Female RG316 275mm», кол-во 2000, ревизия 1, выдан 19.10.2026 10:41 — только чтение; карточки операций убраны, поля разъёмов дополнены как при чтении (with_coax_connectors)",
+ "name": "Кабельная сборка SMA-Male to SMA-Female RG316 275mm",
+ "revision": 1,
+ "document": {
+  "build_config": {
+   "mode": "coax",
+   "tab": "coax",
+   "assemblyIndex": "КБ1",
+   "assemblyName": "Кабельная сборка SMA-Male to SMA-Female RG316 275mm",
+   "partQty": 2000,
+   "coax": {
+    "cableLength": 285,
+    "tutLength": 20,
+    "tutArt": "ТУТ 4/2мм, черная",
+    "tutName": "Трубка 60086 ТУТнг-LS-4/2 термоусаживаемая Dвнутр=4/2мм черная (КВТ Калуга)",
+    "cableArt": "RG316",
+    "cableName": "RG316",
+    "sleeveArt": "",
+    "sleeveName": "",
+    "shieldType": "обжим",
+    "sideA": {
+     "article": "SMA-C174P",
+     "connName": "SMA-C174P",
+     "type": "SMA-male",
+     "wire": "RG-316",
+     "mfr": "RUICHI",
+     "program": "",
+     "d1": "0,5",
+     "d2": "1,48",
+     "d3": "1,95",
+     "l1": "2,5",
+     "l2": "3,5",
+     "l3": "7,5",
+     "lPlus": "",
+     "lMinus": "",
+     "pinType": "пайка",
+     "crimpHex": "3,25"
+    },
+    "sideB": {
+     "article": "SMA-C316F",
+     "connName": "SMA-C316F",
+     "type": "SMA-female bulkhead",
+     "wire": "RG-316",
+     "mfr": "RUICHI",
+     "program": "",
+     "d1": "0,5",
+     "d2": "1,48",
+     "d3": "1,95",
+     "l1": "2,5",
+     "l2": "4,8",
+     "l3": "10",
+     "lPlus": "",
+     "lMinus": "",
+     "pinType": "пайка",
+     "crimpHex": "3,25"
+    }
+   },
+   "ops": [
+    {
+     "type": "coaxCut",
+     "opKey": "coaxCutStrip",
+     "side": "",
+     "units": 1,
+     "templateId": "cut-coax-2strip-резка-с-разделкой",
+     "opNum": "CUT_COAX+2strip",
+     "tPrep": "1200",
+     "tOp": "10.50",
+     "tMachine": "10.50",
+     "machine": {
+      "model": "BZW-886+Q2",
+      "inventory": "ОБ.094",
+      "name": "Станок резки провода с роторной зачисткой мал."
+     },
+     "stripSides": [
+      "A",
+      "B"
+     ],
+     "linearTiming": {
+      "rollSpeed": "3",
+      "toolSeconds": "2,5",
+      "toolOps": "3"
+     }
+    },
+    {
+     "type": "coaxCutTut",
+     "opKey": "coaxCutTut",
+     "side": "",
+     "units": 2,
+     "templateId": "cut-tut-short-резка",
+     "opNum": "CUT_TUT_short",
+     "tPrep": "300",
+     "tOp": "1.00",
+     "tMachine": "1.00",
+     "linearTiming": {
+      "rollSpeed": "3",
+      "toolSeconds": "0,5",
+      "toolOps": "1"
+     }
+    },
+    {
+     "type": "coaxPin",
+     "opKey": "coaxPinA",
+     "side": "A",
+     "units": 1,
+     "templateId": "sdr-coax-pin-пайка-a",
+     "opNum": "SDR_COAX_pin",
+     "tPrep": "120",
+     "tOp": "25.00",
+     "tMachine": "3.00"
+    },
+    {
+     "type": "coaxPin",
+     "opKey": "coaxPinB",
+     "side": "B",
+     "units": 1,
+     "templateId": "sdr-coax-pin-пайка-b",
+     "opNum": "SDR_COAX_pin",
+     "tPrep": "120",
+     "tOp": "25.00",
+     "tMachine": "3.00"
+    },
+    {
+     "type": "coaxInsTut",
+     "opKey": "coaxInsTut",
+     "side": "",
+     "units": 2,
+     "templateId": "ins-tut-монтаж",
+     "opNum": "INS_TUT",
+     "tPrep": "120",
+     "tOp": "3.00",
+     "tMachine": "0.00"
+    },
+    {
+     "type": "coaxInsSleeve",
+     "opKey": "coaxInsSleeve",
+     "side": "",
+     "units": 2,
+     "templateId": "ins-sleeve-coax-монтаж",
+     "opNum": "INS_SLEEVE_coax",
+     "tPrep": "0",
+     "tOp": "3.00",
+     "tMachine": "0.00"
+    },
+    {
+     "type": "coaxHousing",
+     "opKey": "coaxHousingA",
+     "side": "A",
+     "units": 1,
+     "templateId": "ins-housing-coax-монтаж-корпуса-a",
+     "opNum": "INS_housing_COAX",
+     "tPrep": "120",
+     "tOp": "10.00",
+     "tMachine": "0.00"
+    },
+    {
+     "type": "coaxHousing",
+     "opKey": "coaxHousingB",
+     "side": "B",
+     "units": 1,
+     "templateId": "ins-housing-coax-монтаж-корпуса-b",
+     "opNum": "INS_housing_COAX",
+     "tPrep": "120",
+     "tOp": "10.00",
+     "tMachine": "0.00"
+    },
+    {
+     "type": "coaxShield",
+     "opKey": "coaxShield",
+     "side": "",
+     "units": 2,
+     "templateId": "prs-sleeve-coax-опрессовка",
+     "opNum": "PRS_SLEEVE_coax",
+     "tPrep": "120",
+     "tOp": "8.00",
+     "tMachine": "2.00"
+    },
+    {
+     "type": "coaxHeat",
+     "opKey": "coaxHeat",
+     "side": "",
+     "units": 2,
+     "templateId": "heat-tyt-short-усадка",
+     "opNum": "HEAT_TYT_short",
+     "tPrep": "120",
+     "tOp": "9.00",
+     "tMachine": "5.00"
+    }
+   ],
+   "materialsSheet": false,
+   "gen_state": {
+    "v": 1,
+    "kit": [
+     {
+      "id": "kit-0",
+      "key": "разъем|sma-c174p"
+     },
+     {
+      "id": "kit-1",
+      "key": "разъем|sma-c316f"
+     },
+     {
+      "id": "kit-2",
+      "key": "кабель|rg316"
+     },
+     {
+      "id": "kit-3",
+      "key": "тут|тут 4/2мм, черная"
+     }
+    ],
+    "S": {
+     "tab": "coax",
+     "wires": [
+      {
+       "idx": 0,
+       "compId": "kit-2",
+       "length": 275,
+       "qty": 1
+      }
+     ],
+     "nextWireIdx": 1,
+     "endpoints": [
+      {
+       "id": "a1",
+       "side": "A",
+       "connId": "kit-0",
+       "method": "crimp",
+       "methodAuto": true,
+       "sdrTmpl": null,
+       "termId": "",
+       "wireIdxs": [],
+       "otp": false,
+       "double": false,
+       "label": "",
+       "solderStrip": "",
+       "tutLen": ""
+      },
+      {
+       "id": "b1",
+       "side": "B",
+       "connId": "kit-1",
+       "method": "crimp",
+       "methodAuto": true,
+       "sdrTmpl": null,
+       "termId": "",
+       "wireIdxs": [],
+       "otp": false,
+       "double": false,
+       "label": "",
+       "solderStrip": "",
+       "tutLen": ""
+      }
+     ],
+     "nextEndpointId": 2,
+     "advancedLength": false,
+     "measureMode": "inner",
+     "drawingLength": 275,
+     "sharedLengthText": "275",
+     "lenFromCalc": false,
+     "rotor": true,
+     "crimpCut": false,
+     "crimpCutManual": false,
+     "crimpCutSide": "",
+     "twist": {
+      "enabled": false,
+      "mode": "pairs",
+      "pairs": [],
+      "wires": null,
+      "pitch": "",
+      "z0": "",
+      "dia": "",
+      "diaManual": false
+     },
+     "spl": {
+      "enabled": false,
+      "count": "1",
+      "wires": "3",
+      "tut": "",
+      "tutMat": "",
+      "strip": "",
+      "fold": false,
+      "method": "sleeve"
+     },
+     "hs": {
+      "enabled": false,
+      "manual": false,
+      "rows": [
+       {
+        "compId": "kit-3",
+        "len": "40",
+        "cnt": "1",
+        "auto": true
+       }
+      ]
+     },
+     "mark": false,
+     "markRows": [],
+     "freeStrip": {
+      "enabled": false,
+      "len": ""
+     },
+     "cap": {
+      "enabled": true,
+      "tut": "kit-3",
+      "len": ""
+     },
+     "tailTin": {
+      "enabled": false,
+      "strip": "3"
+     },
+     "wrap": {
+      "enabled": false,
+      "slots": [
+       {
+        "mat": "",
+        "kind": "tape",
+        "len": ""
+       },
+       {
+        "mat": "",
+        "kind": "tape",
+        "len": ""
+       },
+       {
+        "mat": "",
+        "kind": "tape",
+        "len": ""
+       },
+       {
+        "mat": "",
+        "kind": "tape",
+        "len": ""
+       }
+      ]
+     },
+     "seal": {
+      "enabled": false,
+      "mat": "",
+      "places": ""
+     },
+     "tin": {
+      "enabled": false,
+      "wires": null,
+      "stripLen": "5"
+     },
+     "coax": {
+      "len": "285",
+      "tutEnabled": true,
+      "tutLen": "",
+      "pinA": "пайка",
+      "pinB": "пайка",
+      "coverA": "",
+      "coverB": "",
+      "stripB": false,
+      "shield": "обжим",
+      "sideA": {
+       "art": "SMA-C174P",
+       "name": "SMA-C174P"
+      },
+      "sideB": {
+       "art": "SMA-C316F",
+       "name": "SMA-C316F"
+      },
+      "stripMode": "machine",
+      "machine": ""
+     },
+     "selectedTemplates": {
+      "coaxCutStrip": "cut-coax-2strip-резка-с-разделкой",
+      "coaxCutTut": "cut-tut-short-резка",
+      "coaxPinA": "sdr-coax-pin-пайка-a",
+      "coaxPinB": "sdr-coax-pin-пайка-b",
+      "coaxInsTut": "ins-tut-монтаж",
+      "coaxInsSleeve": "ins-sleeve-coax-монтаж",
+      "coaxHousingA": "ins-housing-coax-монтаж-корпуса-a",
+      "coaxHousingB": "ins-housing-coax-монтаж-корпуса-b",
+      "coaxShield": "prs-sleeve-coax-опрессовка",
+      "coaxHeat": "heat-tyt-short-усадка"
+     },
+     "manualTemplates": [],
+     "times": {},
+     "materialsSheet": false,
+     "opOrder": []
+    },
+    "terEdits": {},
+    "coaxAdd": {}
+   }
+  },
+  "operations": [
+   {
+    "position": 1,
+    "code": "CUT_COAX+2strip",
+    "type": "coaxCut",
+    "side": "",
+    "connector": "1",
+    "connector_article": "",
+    "template_id": "cut-coax-2strip-резка-с-разделкой",
+    "title": "CUT_COAX+2strip | Резка с разделкой",
+    "components": [
+     {
+      "art": "RG316",
+      "name": "RG316",
+      "norm": "570",
+      "unit": "М."
+     }
+    ],
+    "semis": [],
+    "result": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result_label": "Полуфабрикат",
+    "time": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны",
+      "norm": "253,17"
+     }
+    ],
+    "times": {
+     "operation_seconds": "10.50",
+     "setup_seconds": "1200",
+     "machine_seconds": "10.50"
+    },
+    "fields": {
+     "lengthKd": "285мм",
+     "cutTolerance": "±3 мм",
+     "coax": {
+      "cable": "RG316",
+      "connector": "SMA-C174P",
+      "d1": "0,5",
+      "d2": "1,48",
+      "d3": "1,95",
+      "l1": "2,5",
+      "l2": "3,5",
+      "l3": "7,5",
+      "lPlus": "",
+      "lMinus": "",
+      "connectorType": "SMA-Male",
+      "gender": "вилка"
+     },
+     "coaxB": {
+      "cable": "RG316",
+      "connector": "SMA-C316F",
+      "d1": "0,5",
+      "d2": "1,48",
+      "d3": "1,95",
+      "l1": "2,5",
+      "l2": "4,8",
+      "l3": "10",
+      "lPlus": "",
+      "lMinus": "",
+      "connectorType": "SMA-Female bulkhead",
+      "gender": "розетка"
+     },
+     "machine": {
+      "model": "BZW-886+Q2",
+      "inventory": "ОБ.094",
+      "name": "Станок резки провода с роторной зачисткой мал."
+     }
+    }
+   },
+   {
+    "position": 2,
+    "code": "CUT_TUT_short",
+    "type": "coaxCutTut",
+    "side": "",
+    "connector": "2",
+    "connector_article": "",
+    "template_id": "cut-tut-short-резка",
+    "title": "CUT_TUT_short | Резка",
+    "components": [
+     {
+      "art": "ТУТ 4/2мм, черная",
+      "name": "Трубка 60086 ТУТнг-LS-4/2 термоусаживаемая Dвнутр=4/2мм черная (КВТ Калуга)",
+      "norm": "4000",
+      "unit": "Шт."
+     }
+    ],
+    "semis": [],
+    "result": [
+     {
+      "name": "Трубка ТУТ 4/2мм, черная нарезана: 2 отрезка по 20 мм",
+      "norm": "4000",
+      "unit": "Шт."
+     }
+    ],
+    "result_label": "Полуфабрикат",
+    "time": [
+     {
+      "name": "Трубка ТУТ 4/2мм, черная нарезана: 2 отрезка по 20 мм",
+      "norm": "33,78"
+     }
+    ],
+    "times": {
+     "operation_seconds": "1.00",
+     "setup_seconds": "300",
+     "machine_seconds": "1.00"
+    },
+    "fields": {
+     "lengthKd": "20мм"
+    }
+   },
+   {
+    "position": 3,
+    "code": "SDR_COAX_pin",
+    "type": "coaxPin",
+    "side": "A",
+    "connector": "A",
+    "connector_article": "",
+    "template_id": "sdr-coax-pin-пайка-a",
+    "title": "SDR_COAX_pin | Пайка (A)",
+    "components": [
+     {
+      "art": "SMA-C174P",
+      "name": "SMA-C174P",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "semis": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; сторона А: припаян центральный контакт",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result_label": "Полуфабрикат",
+    "time": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; сторона А: припаян центральный контакт",
+      "norm": "833,33"
+     }
+    ],
+    "times": {
+     "operation_seconds": "25.00",
+     "setup_seconds": "120",
+     "machine_seconds": "3.00"
+    },
+    "fields": {
+     "coaxEnd": {
+      "cable": "RG316",
+      "connector": "SMA-C174P",
+      "d1": "0,5",
+      "d2": "1,48",
+      "d3": "1,95",
+      "l1": "2,5",
+      "l2": "3,5",
+      "l3": "7,5",
+      "lPlus": "",
+      "lMinus": "",
+      "side": "А",
+      "pinType": "пайка",
+      "connectorType": "SMA-Male",
+      "gender": "вилка"
+     }
+    }
+   },
+   {
+    "position": 4,
+    "code": "SDR_COAX_pin",
+    "type": "coaxPin",
+    "side": "B",
+    "connector": "B",
+    "connector_article": "",
+    "template_id": "sdr-coax-pin-пайка-b",
+    "title": "SDR_COAX_pin | Пайка (B)",
+    "components": [
+     {
+      "art": "SMA-C316F",
+      "name": "SMA-C316F",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "semis": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; сторона А: припаян центральный контакт",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result_label": "Полуфабрикат",
+    "time": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон",
+      "norm": "833,33"
+     }
+    ],
+    "times": {
+     "operation_seconds": "25.00",
+     "setup_seconds": "120",
+     "machine_seconds": "3.00"
+    },
+    "fields": {
+     "coaxEnd": {
+      "cable": "RG316",
+      "connector": "SMA-C316F",
+      "d1": "0,5",
+      "d2": "1,48",
+      "d3": "1,95",
+      "l1": "2,5",
+      "l2": "4,8",
+      "l3": "10",
+      "lPlus": "",
+      "lMinus": "",
+      "side": "В",
+      "pinType": "пайка",
+      "connectorType": "SMA-Female bulkhead",
+      "gender": "розетка"
+     }
+    }
+   },
+   {
+    "position": 5,
+    "code": "INS_TUT",
+    "type": "coaxInsTut",
+    "side": "",
+    "connector": "5",
+    "connector_article": "",
+    "template_id": "ins-tut-монтаж",
+    "title": "INS_TUT | Монтаж",
+    "components": [],
+    "semis": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон",
+      "norm": "2000",
+      "unit": "Шт."
+     },
+     {
+      "name": "Трубка ТУТ 4/2мм, черная нарезана: 2 отрезка по 20 мм",
+      "norm": "4000",
+      "unit": "Шт."
+     }
+    ],
+    "result": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result_label": "Полуфабрикат",
+    "time": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная",
+      "norm": "200"
+     }
+    ],
+    "times": {
+     "operation_seconds": "3.00",
+     "setup_seconds": "120",
+     "machine_seconds": "0.00"
+    },
+    "fields": {
+     "coaxParts": {
+      "kind": "tube",
+      "name": "ТУТ 4/2мм, черная",
+      "count": 2,
+      "cable": "RG316",
+      "length": "20",
+      "ends": [
+       {
+        "cable": "RG316",
+        "connector": "SMA-C174P",
+        "connectorType": "SMA-Male",
+        "gender": "вилка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "3,5",
+        "l3": "7,5",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "А",
+        "pinType": "пайка"
+       },
+       {
+        "cable": "RG316",
+        "connector": "SMA-C316F",
+        "connectorType": "SMA-Female bulkhead",
+        "gender": "розетка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "4,8",
+        "l3": "10",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "В",
+        "pinType": "пайка"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "position": 6,
+    "code": "INS_SLEEVE_coax",
+    "type": "coaxInsSleeve",
+    "side": "",
+    "connector": "6",
+    "connector_article": "",
+    "template_id": "ins-sleeve-coax-монтаж",
+    "title": "INS_SLEEVE_coax | Монтаж",
+    "components": [],
+    "semis": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result_label": "Полуфабрикат",
+    "time": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана",
+      "norm": "200"
+     }
+    ],
+    "times": {
+     "operation_seconds": "3.00",
+     "setup_seconds": "0",
+     "machine_seconds": "0.00"
+    },
+    "fields": {
+     "coaxParts": {
+      "kind": "sleeve",
+      "name": "",
+      "count": 2,
+      "cable": "RG316",
+      "length": "",
+      "ends": [
+       {
+        "cable": "RG316",
+        "connector": "SMA-C174P",
+        "connectorType": "SMA-Male",
+        "gender": "вилка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "3,5",
+        "l3": "7,5",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "А",
+        "pinType": "пайка"
+       },
+       {
+        "cable": "RG316",
+        "connector": "SMA-C316F",
+        "connectorType": "SMA-Female bulkhead",
+        "gender": "розетка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "4,8",
+        "l3": "10",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "В",
+        "pinType": "пайка"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "position": 7,
+    "code": "INS_housing_COAX",
+    "type": "coaxHousing",
+    "side": "A",
+    "connector": "A",
+    "connector_article": "",
+    "template_id": "ins-housing-coax-монтаж-корпуса-a",
+    "title": "INS_housing_COAX | Монтаж корпуса (A)",
+    "components": [],
+    "semis": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана; сторона А: установлен корпус разъёма",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result_label": "Полуфабрикат",
+    "time": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана; сторона А: установлен корпус разъёма",
+      "norm": "333,33"
+     }
+    ],
+    "times": {
+     "operation_seconds": "10.00",
+     "setup_seconds": "120",
+     "machine_seconds": "0.00"
+    },
+    "fields": {
+     "coaxEnd": {
+      "cable": "RG316",
+      "connector": "SMA-C174P",
+      "d1": "0,5",
+      "d2": "1,48",
+      "d3": "1,95",
+      "l1": "2,5",
+      "l2": "3,5",
+      "l3": "7,5",
+      "lPlus": "",
+      "lMinus": "",
+      "side": "А",
+      "pinType": "пайка",
+      "connectorType": "SMA-Male",
+      "gender": "вилка"
+     }
+    }
+   },
+   {
+    "position": 8,
+    "code": "INS_housing_COAX",
+    "type": "coaxHousing",
+    "side": "B",
+    "connector": "B",
+    "connector_article": "",
+    "template_id": "ins-housing-coax-монтаж-корпуса-b",
+    "title": "INS_housing_COAX | Монтаж корпуса (B)",
+    "components": [],
+    "semis": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана; сторона А: установлен корпус разъёма",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана; корпуса разъёмов установлены с двух сторон",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result_label": "Полуфабрикат",
+    "time": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана; корпуса разъёмов установлены с двух сторон",
+      "norm": "333,33"
+     }
+    ],
+    "times": {
+     "operation_seconds": "10.00",
+     "setup_seconds": "120",
+     "machine_seconds": "0.00"
+    },
+    "fields": {
+     "coaxEnd": {
+      "cable": "RG316",
+      "connector": "SMA-C316F",
+      "d1": "0,5",
+      "d2": "1,48",
+      "d3": "1,95",
+      "l1": "2,5",
+      "l2": "4,8",
+      "l3": "10",
+      "lPlus": "",
+      "lMinus": "",
+      "side": "В",
+      "pinType": "пайка",
+      "connectorType": "SMA-Female bulkhead",
+      "gender": "розетка"
+     }
+    }
+   },
+   {
+    "position": 9,
+    "code": "PRS_SLEEVE_coax",
+    "type": "coaxShield",
+    "side": "",
+    "connector": "9",
+    "connector_article": "",
+    "template_id": "prs-sleeve-coax-опрессовка",
+    "title": "PRS_SLEEVE_coax | Опрессовка",
+    "components": [],
+    "semis": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана; корпуса разъёмов установлены с двух сторон",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана; корпуса разъёмов установлены с двух сторон; втулки экрана обжаты",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result_label": "Полуфабрикат",
+    "time": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана; корпуса разъёмов установлены с двух сторон; втулки экрана обжаты",
+      "norm": "533,33"
+     }
+    ],
+    "times": {
+     "operation_seconds": "8.00",
+     "setup_seconds": "120",
+     "machine_seconds": "2.00"
+    },
+    "fields": {
+     "coaxParts": {
+      "kind": "sleeve",
+      "name": "",
+      "count": 2,
+      "cable": "RG316",
+      "length": "",
+      "ends": [
+       {
+        "cable": "RG316",
+        "connector": "SMA-C174P",
+        "connectorType": "SMA-Male",
+        "gender": "вилка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "3,5",
+        "l3": "7,5",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "А",
+        "pinType": "пайка"
+       },
+       {
+        "cable": "RG316",
+        "connector": "SMA-C316F",
+        "connectorType": "SMA-Female bulkhead",
+        "gender": "розетка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "4,8",
+        "l3": "10",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "В",
+        "pinType": "пайка"
+       }
+      ]
+     },
+     "crimpHex": [
+      {
+       "side": "А",
+       "connector": "SMA-C174P",
+       "hex": "3,25 мм"
+      },
+      {
+       "side": "В",
+       "connector": "SMA-C316F",
+       "hex": "3,25 мм"
+      }
+     ]
+    }
+   },
+   {
+    "position": 10,
+    "code": "HEAT_TYT_short",
+    "type": "coaxHeat",
+    "side": "",
+    "connector": "10",
+    "connector_article": "",
+    "template_id": "heat-tyt-short-усадка",
+    "title": "HEAT_TYT_short | Усадка",
+    "components": [],
+    "semis": [
+     {
+      "name": "Кабель RG316 нарезан: 285 мм; концы А и В разделаны; центральные контакты припаяны с двух сторон; надеты трубки ТУТ 4/2мм, черная; надеты втулки экрана; корпуса разъёмов установлены с двух сторон; втулки экрана обжаты",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result": [
+     {
+      "name": "Кабельная сборка SMA-Male to SMA-Female RG316 275mm",
+      "norm": "2000",
+      "unit": "Шт."
+     }
+    ],
+    "result_label": "Изделие",
+    "time": [
+     {
+      "name": "Кабельная сборка SMA-Male to SMA-Female RG316 275mm",
+      "norm": "600"
+     }
+    ],
+    "times": {
+     "operation_seconds": "9.00",
+     "setup_seconds": "120",
+     "machine_seconds": "5.00"
+    },
+    "fields": {
+     "coaxParts": {
+      "kind": "tube",
+      "name": "ТУТ 4/2мм, черная",
+      "count": 2,
+      "cable": "RG316",
+      "length": "20",
+      "ends": [
+       {
+        "cable": "RG316",
+        "connector": "SMA-C174P",
+        "connectorType": "SMA-Male",
+        "gender": "вилка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "3,5",
+        "l3": "7,5",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "А",
+        "pinType": "пайка"
+       },
+       {
+        "cable": "RG316",
+        "connector": "SMA-C316F",
+        "connectorType": "SMA-Female bulkhead",
+        "gender": "розетка",
+        "d1": "0,5",
+        "d2": "1,48",
+        "d3": "1,95",
+        "l1": "2,5",
+        "l2": "4,8",
+        "l3": "10",
+        "lPlus": "",
+        "lMinus": "",
+        "side": "В",
+        "pinType": "пайка"
+       }
+      ]
+     }
+    }
+   }
+  ],
+  "route": {
+   "source": "generated",
+   "final": "final",
+   "blocks": [
+    {
+     "key": "wires",
+     "name": "Нарезанный и разделанный кабель",
+     "ops": [
+      1
+     ],
+     "final": false,
+     "components": [],
+     "outputs": 1,
+     "inputs": 0,
+     "minutes": 253.17,
+     "unit_minutes": 0.1266,
+     "rolled_minutes": 0.1266,
+     "rolled_ops": 1,
+     "label": "1.1"
+    },
+    {
+     "key": "tubes",
+     "name": "Нарезанные трубки",
+     "ops": [
+      2
+     ],
+     "final": false,
+     "components": [],
+     "outputs": 1,
+     "inputs": 0,
+     "minutes": 33.78,
+     "unit_minutes": 0.0169,
+     "rolled_minutes": 0.0169,
+     "rolled_ops": 1,
+     "label": "1.2"
+    },
+    {
+     "key": "crimpedA",
+     "name": "Кабель с центральным контактом, сторона А",
+     "ops": [
+      3
+     ],
+     "final": false,
+     "components": [],
+     "outputs": 1,
+     "inputs": 1,
+     "minutes": 833.33,
+     "unit_minutes": 0.4167,
+     "rolled_minutes": 0.5433,
+     "rolled_ops": 2,
+     "label": "2"
+    },
+    {
+     "key": "crimpedB",
+     "name": "Кабель с центральным контактом, сторона В",
+     "ops": [
+      4
+     ],
+     "final": false,
+     "components": [],
+     "outputs": 1,
+     "inputs": 1,
+     "minutes": 833.33,
+     "unit_minutes": 0.4167,
+     "rolled_minutes": 0.9599,
+     "rolled_ops": 3,
+     "label": "3"
+    },
+    {
+     "key": "A",
+     "name": "Сторона А собрана",
+     "ops": [
+      5,
+      6,
+      7
+     ],
+     "final": false,
+     "components": [],
+     "outputs": 1,
+     "inputs": 2,
+     "minutes": 733.33,
+     "unit_minutes": 0.3667,
+     "rolled_minutes": 1.3435,
+     "rolled_ops": 7,
+     "label": "4"
+    },
+    {
+     "key": "B",
+     "name": "Сторона В собрана",
+     "ops": [
+      8
+     ],
+     "final": false,
+     "components": [],
+     "outputs": 1,
+     "inputs": 1,
+     "minutes": 333.33,
+     "unit_minutes": 0.1667,
+     "rolled_minutes": 1.5101,
+     "rolled_ops": 8,
+     "label": "5"
+    },
+    {
+     "key": "final",
+     "name": "Кабельная сборка SMA-Male to SMA-Female RG316 275mm",
+     "ops": [
+      9,
+      10
+     ],
+     "final": true,
+     "components": [],
+     "outputs": 1,
+     "inputs": 1,
+     "minutes": 1133.33,
+     "unit_minutes": 0.5667,
+     "rolled_minutes": 2.0768,
+     "rolled_ops": 10,
+     "label": "6"
+    }
+   ],
+   "edges": [
+    {
+     "from": "wires",
+     "to": "crimpedA",
+     "per_unit": 1
+    },
+    {
+     "from": "tubes",
+     "to": "A",
+     "per_unit": 1
+    },
+    {
+     "from": "crimpedA",
+     "to": "crimpedB",
+     "per_unit": 1
+    },
+    {
+     "from": "crimpedB",
+     "to": "A",
+     "per_unit": 1
+    },
+    {
+     "from": "A",
+     "to": "B",
+     "per_unit": 1
+    },
+    {
+     "from": "B",
+     "to": "final",
+     "per_unit": 1
+    }
+   ]
+  },
+  "topology": {
+   "nodes": [],
+   "edges": []
+  },
+  "kit": {
+   "project": "",
+   "item": "",
+   "index": "КБ1",
+   "name": "Кабельная сборка SMA-Male to SMA-Female RG316 275mm",
+   "part_quantity": "2000",
+   "mode": "coax"
+  }
+ }
+}

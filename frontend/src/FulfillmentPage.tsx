@@ -16,10 +16,10 @@ import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
 import { StatusChip } from "./StatusChip";
-import { BulkLotsPanel, CANDIDATE_LEGEND, absentMark, bindPosition, bulkApi, candidateTone, isOffBook, matchText, type BulkPosition } from "./FulfillmentBulkLots";
+import { BulkLotsPanel, absentPosition, absentTargets, searchSeed, CANDIDATE_LEGEND, OffBookQtyPopover, absentMark, bindPosition, bulkApi, candidateTone, isOffBook, matchText, type BulkPosition } from "./FulfillmentBulkLots";
 
 /** One position of a project card: article + name, the same key for the groups and for the candidates. */
-const positionKey = (article: string, name: string) => `${article}|${name}`.trim().toLocaleLowerCase("ru");
+export const positionKey = (article: string, name: string) => `${article}|${name}`.trim().toLocaleLowerCase("ru");
 
 /* NAV-1: one request, two sections (SUPPLYMAP ISS_MODES_, owner 02.09.2026): «Запросы на комплектацию» picks and
    only reserves, «Выдача со списанием» hands the kit out and writes it off. «Готов к выдаче» is the joint and reads as
@@ -105,7 +105,7 @@ function picked(line: FulfillmentLine) {
 }
 
 /** A line is closed by a lot that covers it, or by «есть, не заведено» (the part is there, not entered yet). */
-function closedLine(line: FulfillmentLine) {
+export function closedLine(line: FulfillmentLine) {
   return isOffBook(line) || (Boolean(line.lot) && picked(line) >= Number(line.requirement));
 }
 
@@ -536,6 +536,8 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
   const round = (value: number) => Math.round(value * 100) / 100;
   const done = positions.filter((position) => round(position.got + position.off) >= round(position.need)).length;
   const [bulkKey, setBulkKey] = useState<string | null>(null);
+  // «Есть, не заведено» → «Сколько есть?» (owner 14.10.2026): the position whose popover is open and its button.
+  const [offBookAt, setOffBookAt] = useState<{ key: string; anchor: HTMLElement } | null>(null);
   const canBulk = cardProps.canEdit && cardProps.showPick;
   const versionKey = requests.map((request) => `${request.id}:${request.version}`).join(",");
   const bulkOf = (position: (typeof positions)[number]): BulkPosition => ({
@@ -555,6 +557,8 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
       .catch(() => { if (alive) setMaybe(new Map()); });
     return () => { alive = false; };
   }, [project, versionKey, canBulk]);
+  // «Нет на складе» is offered while some КБ line of the position is still unmarked (a marked one is lifted per КБ).
+  const absentable = (position: (typeof positions)[number]) => absentTargets(bulkOf(position)).length > 0;
   // Both actions go through the page's mutate: one busy lock, the banner, the reload; a 409 reloads and says so.
   const runBulk = (operation: () => Promise<{ message: string }>) => void cardProps.mutate(`project:${project}`, operation);
   // «Выдать…» (owner 06.10.2026): the whole order or the КБ ticked, in one call; the chooser closes once it went through.
@@ -628,9 +632,9 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
           return <Fragment key={key}>
             <tr className={canBulk && offered ? `cand-row cand-${tone}` : undefined}>
               <td><strong>{position.article || "—"}</strong></td><td>{position.name}</td>
-              <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got)} / {round(kb.need)}{kb.off > 0 ? " · не заведено" : ""}{kb.absent > 0 ? " · нет на складе" : ""}</button>)}</td>
+              <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got + kb.off)} / {round(kb.need)}{kb.off > 0 ? ` · ${round(kb.off)} не заведено` : ""}{kb.absent > 0 ? " · нет на складе" : ""}</button>)}</td>
               <td className="num">{round(position.need)} {position.unit}</td>
-              <td className="num">{round(position.got)}{position.off > 0 && <small>{round(position.off)} есть, не заведено</small>}{position.absent > 0 && <small>{round(position.absent)} нет на складе</small>}</td>
+              <td className="num">{round(position.got + position.off)}{position.off > 0 && <small>из них {round(position.off)} есть, не заведено</small>}{position.absent > 0 && <small>{round(position.absent)} нет на складе</small>}</td>
               {canBulk && <td className="cand-cell">{tone === "done" ? <span className="t-sub">—</span>
                 : !offered ? <span className="t-sub">…</span>
                 : best ? <button type="button" className="link-button" aria-expanded={bulkKey === key} disabled={Boolean(busyId)} title={`${matchText(best)} · ${best.name}`} onClick={() => setBulkKey(bulkKey === key ? null : key)}>
@@ -640,7 +644,13 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
                 : <span className="cand-none-text">не найдено</span>}</td>}
               {canBulk && <td>{open && <>
                 <button type="button" className="secondary small" aria-expanded={bulkKey === key} disabled={Boolean(busyId)} onClick={() => setBulkKey(bulkKey === key ? null : key)}>ГРН на все КБ</button>{" "}
-                <button type="button" className="secondary small" disabled={Boolean(busyId)} aria-label={`Есть, не заведено: ${position.name}`} onClick={() => runBulk(() => bindPosition(project, bulkOf(position), [], true))}>Есть, не заведено</button>
+                <button type="button" className="secondary small" disabled={Boolean(busyId)} aria-label={`Есть, не заведено: ${position.name}`} aria-haspopup="dialog" aria-expanded={offBookAt?.key === key}
+                  onClick={(event) => { const anchor = event.currentTarget; setOffBookAt((at) => at?.key === key ? null : { key, anchor }); }}>Есть, не заведено</button>
+                {offBookAt?.key === key && <OffBookQtyPopover anchor={offBookAt.anchor} name={position.name} unit={position.unit} max={position.remaining}
+                  scope={`по ${bulkOf(position).kbs.length} КБ`} busy={Boolean(busyId)} onCancel={() => setOffBookAt(null)}
+                  onConfirm={(quantity) => { const chosen = bulkOf(position); setOffBookAt(null); runBulk(() => bindPosition(project, chosen, [], true, quantity)); }} />}{" "}
+                {absentable(position) && <button type="button" className="secondary small" disabled={Boolean(busyId)} aria-label={`Нет на складе: ${position.name}`} title="Детали физически нет на складе: строки останутся недобором, снабжение получит уведомление"
+                  onClick={() => runBulk(() => absentPosition(bulkOf(position)))}>Нет на складе</button>}
               </>}</td>}
             </tr>
             {open && bulkKey === key && <tr className="detail"><td colSpan={7}>
@@ -915,6 +925,7 @@ function FulfillmentLineRow({ request, line, lots, canEdit, busy, mutate }: {
   mutate: Mutate;
 }) {
   const [picking, setPicking] = useState(false);
+  const [asking, setAsking] = useState<HTMLElement | null>(null);
   const off = isOffBook(line);
   const absent = absentMark(line);
   return <>
@@ -934,7 +945,10 @@ function FulfillmentLineRow({ request, line, lots, canEdit, busy, mutate }: {
             ? <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => bulkApi.absent(request.id, line.id, request.version, false))}>Снять отметку</button>
             : <>
             <button className="secondary small" disabled={busy} aria-expanded={picking} onClick={() => setPicking((value) => !value)}>Выбрать ГРН</button>{" "}
-            <button className="secondary small" disabled={busy} title="Деталь физически есть, но ещё не заведена на склад: строка закроется без списания" onClick={() => void mutate(request.id, () => bulkApi.offBook(request.id, line.id, request.version, true))}>Есть, не заведено</button>{" "}
+            <button className="secondary small" disabled={busy} aria-haspopup="dialog" aria-expanded={Boolean(asking)} title="Деталь физически есть, но ещё не заведена на склад: строка закроется без списания"
+              onClick={(event) => { const anchor = event.currentTarget; setAsking((at) => at ? null : anchor); }}>Есть, не заведено</button>{" "}
+            {asking && <OffBookQtyPopover anchor={asking} name={line.name} unit={line.unit} max={Number(line.requirement)} busy={busy} onCancel={() => setAsking(null)}
+              onConfirm={(quantity) => { setAsking(null); void mutate(request.id, () => bulkApi.offBook(request.id, line.id, request.version, true, quantity)); }} />}
             <button className="secondary small" disabled={busy} title="Детали физически нет на складе: строка останется недобором, снабжение получит уведомление" onClick={() => void mutate(request.id, () => bulkApi.absent(request.id, line.id, request.version, true))}>Нет на складе</button>
           </>)}</td>
     </tr>
@@ -953,7 +967,7 @@ function LotPicker({ line, lots, busy, onPick }: {
   busy: boolean;
   onPick: (lotId: string) => void;
 }) {
-  const [query, setQuery] = useState(line.name);
+  const [query, setQuery] = useState(searchSeed(line.name, line.article));
   const found = lots.filter((lot) => matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query));
   const need = Number(line.requirement);
   return <div className="lot-picker">

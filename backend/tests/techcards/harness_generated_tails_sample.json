@@ -472,8 +472,8 @@
      "y": 148
     },
     "drawing": {
-     "x": 700,
-     "y": 190
+     "x": 1047,
+     "y": 184
     }
    },
    "layerIds": {
@@ -599,8 +599,8 @@
      "y": 344
     },
     "drawing": {
-     "x": 700,
-     "y": 372
+     "x": 1047,
+     "y": 366
     }
    },
    "layerIds": {
@@ -760,6 +760,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "to": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.8,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -795,6 +813,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "from": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.5,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -825,6 +861,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "from": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.5,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -855,6 +909,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "from": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.5,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -894,6 +966,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "to": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.8,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -929,6 +1019,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "from": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.5,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -959,6 +1067,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "from": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.5,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -998,6 +1124,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "from": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.5,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -1045,6 +1189,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "to": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.39,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -1075,6 +1237,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "from": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.39,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -1110,6 +1290,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "to": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.39,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -1145,6 +1343,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "to": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.39,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -1175,6 +1391,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "from": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.39,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   },
   {
@@ -1210,6 +1444,24 @@
    "layerIds": {
     "e4": "wires",
     "drawing": "wires"
+   },
+   "stripProfiles": {
+    "to": {
+     "sourceId": "генератор ТК",
+     "snapshotId": "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17",
+     "snapshotSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "recordId": "0000000000000000000000000000000000000000000000000000000000000000",
+     "entityType": "coax-termination",
+     "sourceKey": "Зачистка под сросток 5 мм",
+     "displayName": "Зачистка под сросток 5 мм",
+     "layers": [
+      {
+       "index": 1,
+       "diameterMm": 0.39,
+       "stripLengthMm": 5
+      }
+     ]
+    }
    }
   }
  ],
@@ -1410,66 +1662,59 @@
     "direction": "left"
    },
    {
-    "id": "gen-j1",
+    "id": "gen-j0",
     "position": {
-     "x": 409,
+     "x": 387,
      "y": 337
     }
    },
    {
-    "id": "gen-n-gen-sp3",
+    "id": "gen-j1",
     "position": {
-     "x": 469,
-     "y": 417
+     "x": 867,
+     "y": 337
     }
    },
    {
-    "id": "gen-n-gen-sp4",
+    "id": "gen-z2-in",
     "position": {
-     "x": 469,
-     "y": 257
+     "x": 509,
+     "y": 337
     }
    },
    {
-    "id": "gen-n-gen-sp1",
+    "id": "gen-z2-out",
     "position": {
-     "x": 255,
-     "y": 163
+     "x": 585,
+     "y": 337
     }
    },
    {
-    "id": "gen-n-gen-sp2",
+    "id": "gen-z1-in",
     "position": {
-     "x": 332,
-     "y": 250
+     "x": 669,
+     "y": 337
     }
    },
    {
-    "id": "gen-n-gen-sp1-w4",
+    "id": "gen-z1-out",
     "position": {
-     "x": 315,
-     "y": 110
+     "x": 745,
+     "y": 337
     }
    },
    {
-    "id": "gen-n-gen-sp2-w4",
+    "id": "gen-z1-tail",
     "position": {
-     "x": 392,
-     "y": 197
+     "x": 1127,
+     "y": 674
     }
    },
    {
-    "id": "gen-n-gen-sp3-w3",
+    "id": "gen-z2-tail",
     "position": {
-     "x": 517,
-     "y": 481
-    }
-   },
-   {
-    "id": "gen-n-gen-sp4-w3",
-    "position": {
-     "x": 517,
-     "y": 193
+     "x": 1127,
+     "y": 584
     }
    }
   ],
@@ -1477,128 +1722,132 @@
    {
     "id": "gen-s1",
     "from": "gen-n1",
-    "to": "gen-n-gen-sp1",
+    "to": "gen-j0",
     "path": {
-     "kind": "routed",
+     "kind": "polyline",
      "points": []
-    }
-   },
-   {
-    "id": "gen-s1-1",
-    "from": "gen-n-gen-sp1",
-    "to": "gen-n-gen-sp2",
-    "path": {
-     "kind": "routed",
-     "points": []
-    }
-   },
-   {
-    "id": "gen-s1-2",
-    "from": "gen-n-gen-sp2",
-    "to": "gen-j1",
-    "path": {
-     "kind": "routed",
-     "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s2",
     "from": "gen-n2",
-    "to": "gen-j1",
+    "to": "gen-j0",
     "path": {
-     "kind": "routed",
+     "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s3",
     "from": "gen-n3",
-    "to": "gen-j1",
+    "to": "gen-j0",
     "path": {
-     "kind": "routed",
+     "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s4",
     "from": "gen-n4",
-    "to": "gen-j1",
+    "to": "gen-j0",
     "path": {
-     "kind": "routed",
+     "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s5",
-    "from": "gen-j1",
-    "to": "gen-n5",
+    "from": "gen-j0",
+    "to": "gen-z2-in",
     "path": {
-     "kind": "routed",
+     "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s6",
-    "from": "gen-j1",
-    "to": "gen-n6",
+    "from": "gen-z2-in",
+    "to": "gen-z2-out",
     "path": {
-     "kind": "routed",
+     "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s7",
-    "from": "gen-j1",
-    "to": "gen-n-gen-sp3",
+    "from": "gen-z2-out",
+    "to": "gen-z1-in",
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s8",
-    "from": "gen-j1",
-    "to": "gen-n-gen-sp4",
+    "from": "gen-z1-in",
+    "to": "gen-z1-out",
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
+   },
+   {
+    "id": "gen-s9",
+    "from": "gen-z1-out",
+    "to": "gen-j1",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    },
+    "opacity": 0
+   },
+   {
+    "id": "gen-s10",
+    "from": "gen-j1",
+    "to": "gen-n5",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s11",
-    "from": "gen-n-gen-sp1",
-    "to": "gen-n-gen-sp1-w4",
+    "from": "gen-j1",
+    "to": "gen-n6",
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s12",
-    "from": "gen-n-gen-sp2",
-    "to": "gen-n-gen-sp2-w4",
+    "from": "gen-j1",
+    "to": "gen-z1-tail",
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s13",
-    "from": "gen-n-gen-sp3",
-    "to": "gen-n-gen-sp3-w3",
+    "from": "gen-j1",
+    "to": "gen-z2-tail",
     "path": {
      "kind": "polyline",
      "points": []
-    }
-   },
-   {
-    "id": "gen-s14",
-    "from": "gen-n-gen-sp4",
-    "to": "gen-n-gen-sp4-w3",
-    "path": {
-     "kind": "polyline",
-     "points": []
-    }
+    },
+    "opacity": 0
    }
   ],
   "routes": [
@@ -1608,6 +1857,18 @@
      {
       "segmentId": "gen-s1",
       "reverse": false
+     },
+     {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
      }
     ]
    },
@@ -1615,15 +1876,11 @@
     "wireId": "gen-sp1-w3",
     "steps": [
      {
-      "segmentId": "gen-s1-1",
+      "segmentId": "gen-s9",
       "reverse": false
      },
      {
-      "segmentId": "gen-s1-2",
-      "reverse": false
-     },
-     {
-      "segmentId": "gen-s5",
+      "segmentId": "gen-s10",
       "reverse": false
      }
     ]
@@ -1632,15 +1889,11 @@
     "wireId": "gen-sp1-w2",
     "steps": [
      {
-      "segmentId": "gen-s1-1",
+      "segmentId": "gen-s9",
       "reverse": false
      },
      {
-      "segmentId": "gen-s1-2",
-      "reverse": false
-     },
-     {
-      "segmentId": "gen-s5",
+      "segmentId": "gen-s10",
       "reverse": false
      }
     ]
@@ -1649,7 +1902,11 @@
     "wireId": "gen-sp1-w4",
     "steps": [
      {
-      "segmentId": "gen-s11",
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s12",
       "reverse": false
      }
     ]
@@ -1662,7 +1919,15 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s1-1",
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
       "reverse": false
      }
     ]
@@ -1671,11 +1936,11 @@
     "wireId": "gen-sp2-w3",
     "steps": [
      {
-      "segmentId": "gen-s1-2",
+      "segmentId": "gen-s9",
       "reverse": false
      },
      {
-      "segmentId": "gen-s6",
+      "segmentId": "gen-s11",
       "reverse": false
      }
     ]
@@ -1684,11 +1949,11 @@
     "wireId": "gen-sp2-w2",
     "steps": [
      {
-      "segmentId": "gen-s1-2",
+      "segmentId": "gen-s9",
       "reverse": false
      },
      {
-      "segmentId": "gen-s5",
+      "segmentId": "gen-s10",
       "reverse": false
      }
     ]
@@ -1696,6 +1961,10 @@
    {
     "wireId": "gen-sp2-w4",
     "steps": [
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
      {
       "segmentId": "gen-s12",
       "reverse": false
@@ -1710,7 +1979,7 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s7",
+      "segmentId": "gen-s5",
       "reverse": false
      }
     ]
@@ -1718,6 +1987,18 @@
    {
     "wireId": "gen-sp3-w3",
     "steps": [
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
      {
       "segmentId": "gen-s13",
       "reverse": false
@@ -1732,7 +2013,7 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s7",
+      "segmentId": "gen-s5",
       "reverse": false
      }
     ]
@@ -1745,7 +2026,7 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s8",
+      "segmentId": "gen-s5",
       "reverse": false
      }
     ]
@@ -1754,7 +2035,19 @@
     "wireId": "gen-sp4-w3",
     "steps": [
      {
-      "segmentId": "gen-s14",
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s13",
       "reverse": false
      }
     ]
@@ -1767,7 +2060,7 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s8",
+      "segmentId": "gen-s5",
       "reverse": false
      }
     ]
@@ -1780,7 +2073,27 @@
       "reverse": false
      },
      {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
       "segmentId": "gen-s6",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s11",
       "reverse": false
      }
     ],
@@ -1794,7 +2107,27 @@
       "reverse": false
      },
      {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
       "segmentId": "gen-s6",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s11",
       "reverse": false
      }
     ],
@@ -1808,7 +2141,27 @@
       "reverse": false
      },
      {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
       "segmentId": "gen-s6",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s11",
       "reverse": false
      }
     ],
@@ -1819,6 +2172,154 @@
  "drawingDocuments": {
   "tables": [],
   "leaders": [],
-  "bomOrder": []
+  "bomOrder": [],
+  "volumeShading": false,
+  "showDimensions": true,
+  "dimensions": [
+   {
+    "id": "gen-d1",
+    "segmentId": "gen-s1",
+    "from": 0,
+    "to": 1,
+    "pointCount": 2,
+    "routeKey": "[\"gen-s1\",\"gen-n1\",\"gen-j0\",0]",
+    "mode": "horizontal",
+    "modeOverride": true,
+    "offset": 40,
+    "lengthMm": 150,
+    "auxiliary": true
+   },
+   {
+    "id": "gen-d2",
+    "segmentId": "gen-s10",
+    "from": 0,
+    "to": 1,
+    "pointCount": 2,
+    "routeKey": "[\"gen-s10\",\"gen-j1\",\"gen-n5\",0]",
+    "mode": "horizontal",
+    "modeOverride": true,
+    "offset": -179,
+    "lengthMm": 160,
+    "auxiliary": true
+   },
+   {
+    "id": "gen-d3",
+    "segmentId": "gen-s11",
+    "from": 0,
+    "to": 1,
+    "pointCount": 2,
+    "routeKey": "[\"gen-s11\",\"gen-j1\",\"gen-n6\",0]",
+    "mode": "horizontal",
+    "modeOverride": true,
+    "offset": 150,
+    "lengthMm": 180,
+    "auxiliary": true
+   },
+   {
+    "id": "gen-d4",
+    "segmentId": "gen-s12",
+    "from": 0,
+    "to": 1,
+    "pointCount": 2,
+    "routeKey": "[\"gen-s12\",\"gen-j1\",\"gen-z1-tail\",0]",
+    "mode": "horizontal",
+    "modeOverride": true,
+    "offset": 34,
+    "lengthMm": 60,
+    "auxiliary": true
+   },
+   {
+    "id": "gen-d5",
+    "segmentId": "gen-s13",
+    "from": 0,
+    "to": 1,
+    "pointCount": 2,
+    "routeKey": "[\"gen-s13\",\"gen-j1\",\"gen-z2-tail\",0]",
+    "mode": "horizontal",
+    "modeOverride": true,
+    "offset": 34,
+    "lengthMm": 60,
+    "auxiliary": true
+   }
+  ],
+  "graphics": [
+   {
+    "id": "gen-g1",
+    "view": "drawing",
+    "kind": "text",
+    "points": [
+     {
+      "x": 687,
+      "y": 307
+     }
+    ],
+    "text": "С1, С2",
+    "fontSize": 13,
+    "color": "#17384b",
+    "fontFamily": "Arial"
+   },
+   {
+    "id": "gen-g2",
+    "view": "drawing",
+    "kind": "text",
+    "points": [
+     {
+      "x": 1141,
+      "y": 634
+     }
+    ],
+    "text": "Своб. концы от С1, С2",
+    "fontSize": 12,
+    "color": "#17384b"
+   },
+   {
+    "id": "gen-g3",
+    "view": "drawing",
+    "kind": "text",
+    "points": [
+     {
+      "x": 527,
+      "y": 307
+     }
+    ],
+    "text": "С3, С4",
+    "fontSize": 13,
+    "color": "#17384b",
+    "fontFamily": "Arial"
+   },
+   {
+    "id": "gen-g4",
+    "view": "drawing",
+    "kind": "text",
+    "points": [
+     {
+      "x": 1141,
+      "y": 544
+     }
+    ],
+    "text": "Своб. концы от С3, С4",
+    "fontSize": 12,
+    "color": "#17384b"
+   }
+  ],
+  "hideObjectIndices": true,
+  "indexOffsets": {
+   "gen-x1": {
+    "x": -156.5,
+    "y": 21.13
+   },
+   "gen-x2": {
+    "x": -165,
+    "y": 19.85
+   },
+   "gen-x3": {
+    "x": -156.5,
+    "y": 21.13
+   },
+   "gen-x4": {
+    "x": -165,
+    "y": 35.85
+   }
+  }
  }
 }

@@ -26,6 +26,7 @@ import { PhysicalTopologyPanel } from "./PhysicalTopologyPanel";
 import { routePhysicalWires } from "./physical-wire-routing";
 import { physicalRouteEndPoint, physicalWireDisplay, physicalWirePoints } from "./physical-wire-geometry";
 import { openWireEndMetadata } from "./open-wire-ends";
+import { stripEndMetadata } from "./strip-callouts";
 import { ensureConnectorExits, branchPhysicalSegment, connectPhysicalNodeToSegment } from "./physical-topology";
 import { physicalNodePoint } from "./physical-ports";
 import { joiningPipeEndpoint, joiningPipeExit, migrateJoiningPipes } from "./physical-joining-pipes";
@@ -78,7 +79,11 @@ import { collectE4Diagnostics } from "./e4-diagnostics";
 import {
   builtInConnectorSeries,
   createBuiltInConnectorInstance,
+  freeConnectorTemplateCatalogId,
 } from "./connector-series-demo";
+import { connectorTopView } from "../../connectorTopView";
+import { housingFace, housingFaceEntry } from "./housing-face";
+import type { ConnectorHousing } from "../../connectorArt";
 import type { E4DifferentialPairState, E4ScreenState } from "./e4-wire-selection-state";
 import { builtInWireColors, createCustomWireColor, resolveWireColorHex } from "./wire-reference-catalog";
 import { buildWireStripProfileGeometry } from "./wire-strip-profile-geometry";
@@ -359,6 +364,7 @@ function contactPointForWire(
     : connector;
   const point = connectorContactPosition(fallbackConnector, contactId, view);
   if (!point) return null;
+  if (view === "drawing" && connector.housing && connector.housingView === "face") return point; // торец разъёма: провод идёт из центра гнезда
   const height = Math.max(72, 44 + connector.contacts.length * 16);
   const useLeft = other ? other.positions[view].x < connector.positions[view].x : false;
   return {
@@ -379,6 +385,12 @@ export function ComponentGraphErrorAlert({
     <span>{message}</span>
     <button type="button" onClick={onRetry}>Повторить загрузку видов</button>
   </div>;
+}
+
+/** Вид сверху корпуса как самостоятельный SVG-файл (для рисования на поле чертежа); null — вида сверху у корпуса нет. */
+export function housingTopViewSvg(housing: ConnectorHousing): string | null {
+  const top = connectorTopView(housing, 480, 300);
+  return top ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${top.w} ${top.h}" width="${top.w}" height="${top.h}">${top.body}</svg>` : null;
 }
 
 export function designToScene(
@@ -448,6 +460,19 @@ export function designToScene(
         ...(diagnosticObjectIds.has(connector.id) ? { diagnostic: "error" } : {}),
       });
     }
+    // Чертёж генератора: торец разъёма, из гнёзд которого идут провода (цвета жил — на гнёздах); иначе вид сверху корпуса.
+    const faceColors = Object.fromEntries(connector.contacts.filter((contact) => contact.color).map((contact) => [contact.number, contact.color]));
+    const face = view === "drawing" && connector.housing && connector.housingView === "face" ? housingFace(connector.housing, faceColors, connector.schematic.orientation === "contacts-left") : null;
+    const topView = view === "drawing" && connector.housing && !face ? housingTopViewSvg(connector.housing) : null;
+    if (face) {
+      metadata.faceSvg = face.svg;
+      const left = connector.schematic.orientation === "contacts-left", direction = left ? "left" : "right";
+      metadata.materializedContactPoints = JSON.stringify(connector.contacts.map((contact) => {
+        const pin = housingFaceEntry(face, contact.number);
+        return pin ? { x: pin.x, y: pin.y, direction, status: contact.connectionStatus } : null;
+      }));
+    }
+    else if (topView) metadata.topViewSvg = topView;
     return {
       id: connector.id,
       layerId: connector.layerIds[view],
@@ -455,8 +480,8 @@ export function designToScene(
       label: connector.designation,
       x: connector.positions[view].x,
       y: connector.positions[view].y,
-      width: geometry?.width ?? 118,
-      height: geometry?.height ?? Math.max(72, 44 + connector.contacts.length * 16),
+      width: geometry?.width ?? face?.width ?? (topView ? 300 : 118),
+      height: geometry?.height ?? face?.height ?? Math.max(topView ? 230 : 72, 44 + connector.contacts.length * 16),
       color: "#416579",
       metadata,
     };
@@ -511,7 +536,8 @@ export function designToScene(
         freeFrom: String(!!wire.drawingEndpoints && !document.connectors.some(connector => connector.id === wire.from.connectorId)),
         freeTo: String(!!wire.drawingEndpoints && !document.connectors.some(connector => connector.id === wire.to.connectorId)),
         detachedDrawing: String(!!wire.drawingEndpoints),
-        ...openWireEndMetadata(wire),
+        ...openWireEndMetadata(wire, !document.drawingDocuments?.hideObjectIndices),
+        ...(view === "drawing" ? stripEndMetadata(wire) : {}),
         drawingPairId: document.diffPairs.find(pair => pair.wireIds.includes(wire.id))?.id ?? "",
         drawingPairWireIds: JSON.stringify(document.diffPairs.find(pair => pair.wireIds.includes(wire.id))?.wireIds ?? []),
         materialSourceKey: wire.materialBinding?.sourceKey ?? "",
@@ -1520,6 +1546,19 @@ export function HarnessDesignEditor({
         setMessage(error instanceof Error ? error.message : "Не удалось разместить библиотечный компонент.");
         return;
       }
+    } else if (item.housing) {
+      // Корпус из базы разъёмов: свободный соединитель на n контактов с артикулом корпуса; на чертеже — его вид сверху.
+      const pins = item.housing.grid.flat().filter((pin) => pin > 0).length;
+      preview = {
+        ...createBuiltInConnectorInstance(freeConnectorTemplateCatalogId, {
+          id,
+          designation: `XS${index + 1}`,
+          e4Position: { x: 0, y: 0 },
+          freeContactCount: Math.max(1, Math.min(300, item.housing.n || pins || 1)),
+        }),
+        partNumber: item.defaultPartNumber || item.title,
+        housing: item.housing,
+      };
     } else {
       preview = createBuiltInConnectorInstance(item.id, {
         id,
@@ -1880,11 +1919,11 @@ export function HarnessDesignEditor({
           <DrawingRangeControl label="Прозрачность П/ОП" accessibleLabel="Прозрачность пайпов и объединяющих пайпов" min={0} max={100} step={1} digits={0} unit="%" value={pipeOpacityPreview??Math.round((1-(history.present.drawingDocuments?.pipeOpacity??.72))*100)} onPreview={setPipeOpacityPreview} onCommit={transparency=>{const pipeOpacity=1-transparency/100;if(pipeOpacity!==(history.present.drawingDocuments?.pipeOpacity??.72))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),pipeOpacity}});}} hint="Единая прозрачность всех пайпов и объединяющих пайпов на чертеже. Электрические связи и геометрия не меняются."/>
           {drawingRealSizeScale(history.present)===null&&<DrawingRangeControl label="Толщина" accessibleLabel="Масштаб толщины проводов" min={.2} max={8} step={.05} value={thicknessPreview??history.present.drawingDocuments?.physicalScale??1} onPreview={setThicknessPreview} onCommit={physicalScale=>{if(physicalScale!==(history.present.drawingDocuments?.physicalScale??1))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),physicalScale}});}} hint={`Опорный диаметр: ${drawingReferenceDiameter(history.present)} мм. Отношения диаметров сохраняются.`}/>}
           {history.present.diffPairs.map((pair,index)=><DrawingRangeControl key={pair.id} label={history.present.diffPairs.length===1?"Шаг витой пары":`Шаг пары ${index+1}`} accessibleLabel={`Шаг витой пары ${index+1}`} min={5} max={Math.max(150,Math.ceil(pair.step/50)*50)} step={1} digits={0} unit=" мм" value={pairPitchPreview?.id===pair.id?pairPitchPreview.step:pair.step} onPreview={step=>setPairPitchPreview(step===null?null:{id:pair.id,step})} onCommit={step=>{if(step!==pair.step)run({type:"update-diff-pair",groupId:pair.id,step});}} hint={`Провода ${pair.wireIds.map(id=>history.present.wires.find(wire=>wire.id===id)?.circuit||id).join(" и ")}. Шаг сохраняется в паре Э4; на чертеже учитывается масштаб толщины.`}/>)}
-          <DrawingRangeControl label="Диаметры 1:" unit="" digits={1} accessibleLabel="Соотношение диаметров оболочек" min={1.1} max={4} step={.1} value={coveringRatioPreview??history.present.drawingDocuments?.coveringDiameterRatio??2} onPreview={setCoveringRatioPreview} onCommit={coveringDiameterRatio=>{if(coveringDiameterRatio!==(history.present.drawingDocuments?.coveringDiameterRatio??2))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),coveringDiameterRatio}});}} hint="Глобальное правило 1:x для соседних оболочек. При увеличении ширины переходы сохраняют форму; локальные ширины и материал не меняются."/>
+          <DrawingRangeControl label="Диаметр проводов" unit="" digits={1} accessibleLabel="Соотношение диаметров оболочек" min={1.1} max={4} step={.1} value={coveringRatioPreview??history.present.drawingDocuments?.coveringDiameterRatio??2} onPreview={setCoveringRatioPreview} onCommit={coveringDiameterRatio=>{if(coveringDiameterRatio!==(history.present.drawingDocuments?.coveringDiameterRatio??2))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),coveringDiameterRatio}});}} hint="Глобальное правило 1:x для соседних оболочек. При увеличении ширины переходы сохраняют форму; локальные ширины и материал не меняются."/>
           <DrawingRangeControl label="Радиус" accessibleLabel="Радиус изгибов чертежа" min={0} max={200} step={1} digits={0} unit="" value={bendRadiusPreview??drawingBendRadius(history.present)} onPreview={setBendRadiusPreview} onCommit={bendRadius=>{if(bendRadius!==drawingBendRadius(history.present))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),bendRadius}});}} hint="Радиус в координатах чертежа: 0 — острый угол. На коротких плечах радиус автоматически уменьшается. Заданные длины проводов и точки перегиба сохраняются."/>
           <DrawingRangeControl label="Позиции" accessibleLabel="Масштаб позиционных обозначений" min={.25} max={4} step={.05} value={leaderScalePreview??history.present.drawingDocuments?.leaderScale??1} onPreview={setLeaderScalePreview} onCommit={leaderScale=>{if(leaderScale!==(history.present.drawingDocuments?.leaderScale??1))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),leaderScale}});}} hint="Размер кружков, номеров и точек выносок. Ручное положение сохраняется. Escape отменяет изменение; отпускание ползунка сохраняет его одним шагом отмены."/>
-          <DrawingRangeControl label="Индексы ×" accessibleLabel="Масштаб индексов объектов" min={.25} max={4} step={.05} value={indexScalePreview??history.present.drawingDocuments?.indexScale??1} onPreview={setIndexScalePreview} onCommit={indexScale=>{if(indexScale!==(history.present.drawingDocuments?.indexScale??1))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),indexScale}});}} hint="Общий размер индексов соединителей, проводов и оболочек. Размер сохраняется в этом чертеже."/>
-          <DrawingRangeControl label="Размеры ×" accessibleLabel="Масштаб размерных обозначений" min={.25} max={4} step={.05} value={dimensionScalePreview??history.present.drawingDocuments?.dimensionScale??1} onPreview={setDimensionScalePreview} onCommit={dimensionScale=>{if(dimensionScale!==(history.present.drawingDocuments?.dimensionScale??1))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),dimensionScale}});}} hint="Общий размер текста, стрелок, точек и линий размеров. Значения длин и привязки не меняются."/>
+          <DrawingRangeControl label="Масштаб индексов" accessibleLabel="Масштаб индексов объектов" min={.25} max={4} step={.05} value={indexScalePreview??history.present.drawingDocuments?.indexScale??1} onPreview={setIndexScalePreview} onCommit={indexScale=>{if(indexScale!==(history.present.drawingDocuments?.indexScale??1))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),indexScale}});}} hint="Общий размер индексов соединителей, проводов и оболочек. Размер сохраняется в этом чертеже."/>
+          <DrawingRangeControl label="Масштаб размеров" accessibleLabel="Масштаб размерных обозначений" min={.25} max={4} step={.05} value={dimensionScalePreview??history.present.drawingDocuments?.dimensionScale??1} onPreview={setDimensionScalePreview} onCommit={dimensionScale=>{if(dimensionScale!==(history.present.drawingDocuments?.dimensionScale??1))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),dimensionScale}});}} hint="Общий размер текста, стрелок, точек и линий размеров. Значения длин и привязки не меняются."/>
           <DrawingRangeControl label="Мин. нахлёст" accessibleLabel="Минимальная длина новой оболочки поверх оболочки" min={20} max={500} step={5} digits={0} unit="px" value={minimumOverlapPreview??history.present.drawingDocuments?.minimumCoveringOverlapPx??100} onPreview={setMinimumOverlapPreview} onCommit={minimumCoveringOverlapPx=>{if(minimumCoveringOverlapPx!==(history.present.drawingDocuments?.minimumCoveringOverlapPx??100))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),minimumCoveringOverlapPx}});}} hint="Новая оболочка занимает 5% длины нижней, но не меньше заданного значения; если нижняя короче, покрывается доступный участок."/>
           <DrawingRangeControl label="Выступ ОП" accessibleLabel="Ширина выступа оболочки ОП на переходе" min={0} max={24} step={1} digits={0} unit="px" value={opCoveringEdgePreview??history.present.drawingDocuments?.opCoveringEdgePx??2} onPreview={setOpCoveringEdgePreview} onCommit={opCoveringEdgePx=>{if(opCoveringEdgePx!==(history.present.drawingDocuments?.opCoveringEdgePx??2))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),opCoveringEdgePx}});}} hint="Дополнительная ширина краёв оболочки на переходе ОП↔П. Нулевое значение убирает выступ; значение сохраняется в этом чертеже."/>
           <label>Размеры<select aria-label="Общее направление размеров" value={history.present.drawingDocuments?.dimensionMode??"aligned"} onChange={e=>run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),dimensionMode:e.target.value as import("./drawing-dimensions").DimensionMode}})}><option value="aligned">Между концами</option><option value="horizontal">Горизонтально</option><option value="vertical">Вертикально</option><option value="path">Вдоль пайпа</option></select></label>

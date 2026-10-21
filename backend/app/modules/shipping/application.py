@@ -22,7 +22,7 @@ from app.shared.notifications import (
 )
 
 from .domain import (
-    DeliveryTerms, FinishedGood, GoodMove, MoveContext, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
     plan_project_queue,
 )
@@ -46,6 +46,8 @@ class FinishedGoodsRepository(Protocol):
     def list(self, limit: int = 500) -> Sequence[FinishedGood]: ...
     def add(self, good: FinishedGood, move: MoveContext | None = None) -> tuple[GoodMove, ...]: ...
     def reserve_grn(self, year: int) -> str: ...
+    def record_act(self, good: FinishedGood, moves: tuple[GoodMove, ...]) -> AcceptanceAct | None: ...
+    def acts(self, good_ids: Sequence[UUID]) -> dict[UUID, tuple[AcceptanceAct, ...]]: ...
     def by_project(self, project: str) -> Sequence[FinishedGood]: ...
     def for_project(self, project: str) -> Sequence[FinishedGood]: ...
     def in_shipments(self, good_ids: Sequence[UUID]) -> set[UUID]: ...
@@ -78,6 +80,7 @@ class AppendOnlyRepository(Protocol):
 class UpdFileRepository(Protocol):
     def add(self, stored: StoredFile, content: bytes) -> None: ...
     def get(self, file_id: UUID) -> tuple[StoredFile, bytes] | None: ...
+    def names(self, file_ids: Sequence[UUID]) -> dict[UUID, str]: ...
 
 
 class UnitOfWork(Protocol):
@@ -158,6 +161,7 @@ class AcceptGoodCommand:
     limit: Decimal | None = None
     limit_basis: str = "сдано цехом"
     reason: str = ""
+    location: str = ""
 
 
 @dataclass(frozen=True)
@@ -382,7 +386,7 @@ def accept_good(command: AcceptGoodCommand, uow: UnitOfWork) -> FinishedGood:
         good = _good(command.good_id, command.expected_version, uow)
         updated = accept_into_stock(
             uow, good, command.quantity, received_at=command.received_at, actor=command.actor, now=command.now,
-            limit=command.limit, limit_basis=command.limit_basis, reason=command.reason,
+            limit=command.limit, limit_basis=command.limit_basis, reason=command.reason, location=command.location,
         )
         uow.commit()
         return updated
@@ -391,9 +395,11 @@ def accept_good(command: AcceptGoodCommand, uow: UnitOfWork) -> FinishedGood:
 def accept_into_stock(
     uow, good: FinishedGood, quantity: Decimal, *, received_at: date, actor: Actor, now: datetime,
     limit: Decimal | None = None, limit_basis: str = "сдано цехом", reason: str = "", id_seed: UUID | None = None,
+    location: str = "",
 ) -> FinishedGood:
     """«Принято складом» без фиксации: в производстве → принято, не больше `limit` всего по КБ (сдано цехом).
-    Зовут приёмка одной КБ и пакетная «Из производства» — фиксирует вызывающий."""
+    Зовут приёмка одной КБ и пакетная «Из производства» — фиксирует вызывающий. `location` — место хранения КБ на
+    складе ГП: непустое заменяет прежнее, пустое его оставляет."""
     amount = Decimal(quantity)
     if not amount.is_finite() or amount <= 0:
         raise ShippingValidationError(f"{good.project} {good.item_index}: количество должно быть больше нуля")
@@ -403,11 +409,12 @@ def accept_into_stock(
             f"{good.project} {good.item_index}: {limit_basis} {_plain(limit)} {good.unit}, уже принято "
             f"{_plain(good.accepted)} — принять можно ещё {_plain(left)}"
         )
-    grn = good.grn or uow.goods.reserve_grn(now.year)
-    updated = good.accept(amount, received_at, grn)
-    uow.goods.add(updated, _context(actor, now, reason=reason, id_seed=id_seed))
+    updated = good.accept(amount, received_at, good.grn or uow.goods.reserve_grn(now.year), location)
+    # Акт приёмки со своим ГРН (владелец 19.10.2026): первый — ГРН КБ, каждая следующая часть — новый номер.
+    act = uow.goods.record_act(updated, uow.goods.add(updated, _context(actor, now, reason=reason, id_seed=id_seed)))
     _audit(good.id, "shipping.good_accepted", actor, now, {
-        "quantity": str(amount), "grn": grn, **({"reason": reason} if reason else {}),
+        "quantity": str(amount), "grn": act.grn, **({"reason": reason} if reason else {}),
+        **({"location": updated.location} if updated.location != good.location else {}),
     }, uow)
     return updated
 
@@ -436,10 +443,11 @@ def _create_shipment(
     if not lines:
         raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
     # The shipment's project is its first line's (`shipHeadEff_`).
+    card = uow.addressees.get(lines[0].project)
     address = effective_address(
         receiver=command.receiver, shipping_point=command.shipping_point, contact=command.contact,
         phone=command.phone, terms=command.terms, carrier=command.carrier, upd_type=command.upd_type,
-        project=uow.addressees.get(lines[0].project),
+        project=card,
         customer_fallback=command.customer or next((name for name in customers if name), ""),
     )
     if not address.shipping_point:
@@ -448,9 +456,13 @@ def _create_shipment(
         number=uow.shipments.reserve_number(command.now.date()), created_at=command.now,
         customer=command.customer, receiver=address.receiver, shipping_point=address.shipping_point,
         contact=address.contact, phone=address.phone, terms=address.terms,
-        carrier=address.carrier, deadline=command.deadline, upd_type=address.upd_type,
-        upd_number=command.upd_number, upd_date=command.upd_date, upd_url=command.upd_url,
-        manager=command.actor.name, note=command.note, lines=tuple(lines),
+        carrier=address.carrier, upd_type=address.upd_type,
+        # Срок и комментарий, не заданные в заявке, — из плана отгрузки карточки проекта (копия на момент заведения).
+        deadline=command.deadline or (card.plan_date if card is not None else None),
+        upd_number=command.upd_number, upd_date=command.upd_date,
+        upd_url=str(command.upd_url or "").strip() or _card_upd(card, address.upd_type, uow),
+        manager=command.actor.name, note=str(command.note or "").strip() or (card.note if card is not None else ""),
+        lines=tuple(lines),
         manager_id=command.actor.id, inherited=_unset_fields(command), id=shipment_id,
     )
     uow.shipments.add(shipment)
@@ -466,6 +478,18 @@ def _create_shipment(
     if taken and not command.no_docs:
         shipment = _pack(shipment, command.actor, command.now, uow)
     return shipment
+
+
+def _card_upd(card: ProjectAddressee | None, upd_type: UpdType | None, uow: UnitOfWork) -> str:
+    """Бумажная УПД, приложенная к данным отправки заранее (владелец 14.10.2026), — новой отправке с бумажной УПД.
+    Один файл — одной отправке: ушёл с другой (не отменённой) отправкой проекта — следующей нужен свой."""
+    if card is None or not card.upd_url or upd_type != UpdType.PAPER:
+        return ""
+    taken = any(
+        other.upd_url == card.upd_url and other.status != ShipmentStatus.CANCELLED
+        for other in uow.shipments.for_project(card.project)
+    )
+    return "" if taken else card.upd_url
 
 
 def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
@@ -651,6 +675,35 @@ def _notify_upd(shipment: Shipment, now: datetime, uow: UnitOfWork) -> None:
     ))
 
 
+def notify_dispatch_gaps(uow, project: str, items: Sequence[str], key: str, now: datetime) -> bool:
+    """Склад принял КБ проекта, а данных отправки нет (владелец 14.10.2026) — менеджеру проекта, один раз на приёмку.
+
+    Менеджер проекта — менеджер последней не отменённой отправки проекта (как трек уходит менеджеру отправки); отправок
+    нет — все менеджеры проектов (`shipTrackRecipients_`). `uow` — с `addressees`, `shipments` и `outbox` в той же
+    транзакции, что и приёмка."""
+    card = uow.addressees.get(project) or ProjectAddressee.empty(project)
+    gaps = card.dispatch_gaps()
+    if not gaps:
+        return False
+    shipments = [item for item in uow.shipments.for_project(project) if item.status != ShipmentStatus.CANCELLED and item.manager_id]
+    manager_id = max(shipments, key=lambda item: item.created_at).manager_id if shipments else None
+    kbs = ", ".join(dict.fromkeys(str(item).strip() for item in items if str(item).strip()))
+    return publish_notification(uow.outbox, notification_requested(
+        key=f"shipping:dispatch-gaps:{key}:{project}",
+        now=now,
+        title=f"Нет данных отправки: проект {project}",
+        body=(
+            f"Приняли на склад КБ {kbs} проекта {project}, а данных отправки нет: {', '.join(gaps)}. "
+            "Заполните в „Приёмке с производства“ → „Данные отправки“."
+            "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."
+        ),
+        kind="ship",
+        reference=project,
+        user_ids=(manager_id,),
+        audiences=() if manager_id else (PROJECT_MANAGER_AUDIENCE,),
+    ))
+
+
 @dataclass(frozen=True)
 class AttachUpdCommand(ShipmentCommand):
     file_name: str
@@ -658,8 +711,11 @@ class AttachUpdCommand(ShipmentCommand):
     content: bytes
 
 
+UPD_FILE_URL_PREFIX = "/api/shipping/files/"
+
+
 def upd_file_url(file_id: UUID) -> str:
-    return f"/api/shipping/files/{file_id}"
+    return f"{UPD_FILE_URL_PREFIX}{file_id}"
 
 
 def attach_upd_file(command: AttachUpdCommand, uow: UnitOfWork) -> Shipment:
@@ -670,6 +726,39 @@ def attach_upd_file(command: AttachUpdCommand, uow: UnitOfWork) -> Shipment:
         updated = _attach_upd(shipment, command.file_name, command.content_type, command.content, command.actor, command.now, uow)
         uow.commit()
         return updated
+
+
+@dataclass(frozen=True)
+class AttachCardUpdCommand:
+    """Файл бумажной УПД к данным отправки проекта — отправки ещё нет; ссылку в карточку ставит её правка."""
+
+    project: str
+    file_name: str
+    content_type: str
+    content: bytes
+    actor: Actor
+    now: datetime
+
+
+def store_card_upd_file(command: AttachCardUpdCommand, uow: UnitOfWork) -> StoredFile:
+    """То же хранилище, что у файлов УПД отправок: файл помечен проектом, имя — как его приложили."""
+    _check_upd_file(command.content)
+    project = str(command.project or "").strip()
+    if not project:
+        raise ShippingValidationError("Не указан проект")
+    name = str(command.file_name or "").strip().replace("/", "_").replace("\\", "_")[:512] or "УПД"
+    stored = StoredFile(
+        id=uuid4(), shipment_id=None, project=project, file_name=name,
+        content_type=stored_content_type(command.content), size=len(command.content),
+        uploaded_by=command.actor.name, uploaded_at=command.now,
+    )
+    with uow:
+        uow.files.add(stored, command.content)
+        _audit(_addressee_id(project), "shipping.addressee_upd_stored", command.actor, command.now, {
+            "project": project, "file_id": str(stored.id), "name": name,
+        }, uow)
+        uow.commit()
+    return stored
 
 
 def _check_upd_file(content: bytes) -> None:

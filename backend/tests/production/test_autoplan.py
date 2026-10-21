@@ -1,5 +1,6 @@
 """Автоплан (чистые правила): ключ наладки, цена переналадки, расчёт с партиями, станками и дедлайнами."""
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -20,11 +21,15 @@ from app.modules.production.autoplan import (
 from app.modules.production.domain import (
     DEFAULT_SHIFT,
     BusyInterval,
+    EtkOperation,
+    OperationShare,
     OperatorSkill,
     PlanResult,
     ProductionOperation,
     ProductionTask,
 )
+from app.modules.production.machine_load import machine_load, task_occupancies, task_steps
+from tests.production.test_machine_load import etk
 
 ANNA = UUID("20000000-0000-0000-0000-00000000000a")
 BORIS = UUID("20000000-0000-0000-0000-00000000000b")
@@ -337,3 +342,87 @@ def test_a_realistic_week_is_planned_quickly():
     assert len(result.placements) + len(result.unplaced) == 90
     assert result.changeovers < result.changeovers_naive
     assert elapsed < 20, elapsed
+
+
+# --- станки по операциям ЭТК (загрузка станков, 16.10) ---------------------------------------------------------
+
+# ПФ из двух операций ЭТК на двух станках: резка 600 + 3 × 100 с на ОБ.010, опрессовка 1200 + 6 × 100 с на ОБ.027.
+PF_CARD = etk(
+    {"code": "CUT", "stage": "Резка", "prep": "600", "op": "5", "machine_time": "3", "machine": "ОБ.010.1", "name": "Автомат резки"},
+    {"code": "PRS", "stage": "Опрессовка", "prep": "1200", "op": "8", "machine_time": "6", "machine": "ОБ.027.1", "name": "Пресс"},
+)
+
+
+def semifinished(position: int = 1) -> ProductionOperation:
+    return ProductionOperation.create(
+        position=position, code="CUT", stage="ПФ 1", description="", seconds_per_unit=Decimal(20),
+        setup_seconds=Decimal(1800), quantity=100,
+        etk_ops=(EtkOperation(1, "CUT", "Резка"), EtkOperation(2, "PRS", "Опрессовка")),
+    )
+
+
+def with_steps(tasks, document, **options) -> AutoplanInput:
+    """Вход автоплана со станками по шагам ЭТК; наладка у каждого задания своя (не налаживается вместе)."""
+    keys = {item.id: SetupKey(current.number, (current.number,), (current.number,), current.number)
+            for current in tasks for item in current.operations}
+    steps = {}
+    for current in tasks:
+        own, warnings = task_steps(current, document)
+        assert warnings == ()
+        steps.update(own)
+    return replace(data(tasks, keys, **options), steps=steps)
+
+
+def machine_days(tasks, windows, document):
+    """Загрузка станков (тот же расчёт, что сетка мастера) по окнам плана: (станок, день) → пик и перегруз."""
+    placed_tasks = [
+        replace(current, operations=tuple(
+            item.with_shares((OperationShare(windows[item.id][0], None, windows[item.id][1], windows[item.id][2]),), "Мастер")
+            for item in current.operations
+        )) for current in tasks
+    ]
+    occupancies = [
+        occupancy for current in placed_tasks
+        for occupancy in task_occupancies(current, task_steps(current, document)[0], frozenset(), DEFAULT_SHIFT)
+    ]
+    days = sorted({occupancy.start.date() for occupancy in occupancies})
+    return {
+        (row.machine, day.day): (day.peak, row.over(day))
+        for row in machine_load(occupancies, {}, days, frozenset(), DEFAULT_SHIFT, None) for day in row.days
+    }
+
+
+def test_two_semifinished_on_one_machine_take_turns_per_etk_step_not_for_the_whole_window():
+    tasks = [task(number, [semifinished()]) for number in (1, 2)]
+
+    result = plan(with_steps(tasks, PF_CARD))
+
+    first, second = (by_operation(result)[current.operations[0].id] for current in tasks)
+    # Монтажников хватает, но резка и пресс в одном экземпляре: второй ПФ ждёт, пока первый освободит станки, —
+    # не весь первый ПФ (ручная работа идёт параллельно на другом монтажнике).
+    assert first.start == MONDAY and first.operator_id != second.operator_id
+    assert MONDAY < second.start < first.finish
+    load = machine_days(tasks, {item.operation_id: (item.operator_id, item.start, item.finish) for item in result.placements}, PF_CARD)
+    assert set(load) == {("ОБ.010", MONDAY.date()), ("ОБ.027", MONDAY.date())}
+    assert all(peak == 1 and not over for peak, over in load.values())
+    # Без шагов ЭТК (старый вход) станки ключа не учтены — оба ПФ сразу, станки перегружены.
+    keys = {current.operations[0].id: SetupKey(current.number, (current.number,), (current.number,), current.number) for current in tasks}
+    blind = plan(data(tasks, keys))
+    assert {item.start for item in blind.placements} == {MONDAY}
+    blind_load = machine_days(tasks, {item.operation_id: (item.operator_id, item.start, item.finish) for item in blind.placements}, PF_CARD)
+    assert all(over for _, over in blind_load.values())
+    # Двух единиц каждого станка хватает на два ПФ сразу.
+    both = plan(with_steps(tasks, PF_CARD, capacity={"ОБ.010": 2, "ОБ.027": 2}))
+    assert {item.start for item in both.placements} == {MONDAY}
+
+
+def test_machine_without_any_time_and_steps_without_a_machine_do_not_hold_anything():
+    card = etk(
+        {"code": "CUT", "stage": "Резка", "prep": "600", "op": "5"},  # только инструмент — станка нет
+        {"code": "PRS", "stage": "Опрессовка", "machine": "ОБ.050.1", "name": "Ручной пресс"},  # станок без времён
+    )
+    tasks = [task(number, [semifinished()]) for number in (1, 2)]
+
+    result = plan(with_steps(tasks, card))
+
+    assert {item.start for item in result.placements} == {MONDAY}

@@ -8,6 +8,7 @@ import base64
 import binascii
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any
@@ -33,6 +34,9 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, kitset_tiles_principal, projects_edit_principal, projects_view_principal
 from app.shared.stored_files import file_response
 from app.workflows import kitset_reserve as reserve_flow
+from app.workflows.folders_from_calc import (
+    NO_ACCESS, NO_CALC, DriveError, FolderError, drive_reader_from_env, find_folder, save_folder,
+)
 from app.workflows import project_kitset as flow
 from app.workflows import project_track as track_flow
 
@@ -40,6 +44,7 @@ from .application import CreateProjectTechcardCommand, create_project_techcard
 from .kitsets import (
     Kitset,
     KitsetNotFound,
+    clean_folder_url,
     KitsetValidationError,
     document_json,
     document_kind,
@@ -322,6 +327,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
         documents = uow.kitsets.documents(kitset.project)
     return {
         "project": kitset.project, "customer": kitset.customer, "calc_source": kitset.calc_source,
+        "folder_url": kitset.folder_url or None,
         "updated_at": kitset.updated_at.isoformat(), "updated_by": kitset.updated_by, "version": kitset.version,
         "status": stage.status, "blocker": blocker,
         "blocker_info": None if active is None else {
@@ -701,6 +707,58 @@ def journal_note(
         known_projects=(kitset.project,), actor=principal.actor, now=now,
     ), factory()))
     return {"card": _card(request, kitset)}
+
+
+class FolderPayload(BaseModel):
+    url: str = Field(default="", max_length=4000)
+
+
+@router.put("/{project}/folder")
+def set_folder(
+    project: str,
+    payload: FolderPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Ссылка на папку проекта: поставить, сменить или убрать (пустая строка); правка идёт в журнал проекта."""
+    factory = production_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+
+    def save():
+        url = clean_folder_url(payload.url)
+        save_folder(techcards_factory(request), factory, project, url, principal.actor, now)
+        return _kitset(request, project)
+
+    return {"card": _card(request, _run(save))}
+
+
+@router.post("/{project}/folder/from-calc")
+def folder_from_calc(
+    project: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Папка проекта — прямой родитель файла расчёта на Диске (только чтение). Заданную вручную папку не трогает."""
+    factory = production_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    kitset = _kitset(request, project)
+    if kitset.folder_url:
+        return {"card": _card(request, kitset)}
+    if not kitset.calc_source:
+        raise HTTPException(status_code=422, detail=NO_CALC)
+    try:
+        reader = getattr(request.app.state, "drive_reader", None) or drive_reader_from_env()
+        found = find_folder(reader, kitset.calc_source)
+    except DriveError as error:
+        raise HTTPException(status_code=422, detail=NO_ACCESS) from error
+    except FolderError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    _run(lambda: save_folder(techcards_factory(request), factory, project, found.url, principal.actor, now, found_by_calc=True))
+    return {"card": _card(request, _kitset(request, project))}
 
 
 class DocumentPayload(BaseModel):

@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
-from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item, saved_harness
+from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item, pinned_card, saved_harness
 from app.workflows.etk_lots import IssuedKitLots
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import MOSCOW, moscow_now
@@ -54,25 +54,27 @@ from .application import (
     set_task_done,
     update_flow,
 )
-from .domain import FLOW_MODE_NAMES, FlowMode, OperatorSkill, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift, delivered_total
+from .domain import (
+    FLOW_MODE_NAMES, FlowMode, OperatorSkill, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift, delivered_total,
+    mark_serial_range,
+)
 from .flow import EARLY_LIMIT, EARLY_NOTICE
 from .launchable import (
     item_id, launch_operations, launch_route, launched_quantity, operation_code, operation_codes, ready_cards,
-    route_from_document, stage_name,
+    norms_outdated, route_from_document, semifinished_steps, stage_name,
 )
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
 from .execution import (
-    BoxCommand,
     CorrectBoxCommand,
     DecideDefectCommand,
     HandoffBoxCommand,
+    ManualOutputCommand,
     ReturnBoxCommand,
     SessionCommand,
     StartWorkCommand,
     SubmitWorkCommand,
     cancel_work,
-    confirm_box,
     correct_box,
     decide_defect,
     handoff_box,
@@ -80,12 +82,13 @@ from .execution import (
     material_operation,
     operation_quantity,
     pause_work,
+    record_manual_output,
     resume_work,
     return_box,
     start_work,
     submit_work,
 )
-from .traceability import BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, ProductionOutput, WorkSession
+from .traceability import TAKEABLE_BOX, BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, ProductionOutput, WorkSession
 from .worklog import SUMMARY_KEYS, WorkTimeEntry, percent, time_fact
 from .quality import (
     DecideQcRejectionCommand,
@@ -215,6 +218,13 @@ class SubmitWorkPayload(BaseModel):
     defect_description: str = Field(default="", max_length=5000)
 
 
+class ManualOutputPayload(BaseModel):
+    good_quantity: int = Field(gt=0, le=1_000_000)
+    # Монтажник, чьи штуки; без него — запись мастера.
+    operator_id: UUID | None = None
+    fill_inputs: bool = False
+
+
 class BoxVersionPayload(BaseModel):
     version: int = Field(ge=1)
 
@@ -293,10 +303,18 @@ def _op_state(processed: Decimal, quantity: Decimal) -> str:
 
 
 def _facts(uow, tasks, boxes=None, outputs=None) -> dict:
-    """prodWorkFacts_ + prodWip_: per operation — good/scrap/processed and pieces in confirmed or waiting boxes.
+    """prodWorkFacts_ + prodWip_: per operation — good/scrap/processed and pieces in usable or waiting boxes.
 
+    «ok» — штуки, которые можно брать дальше: сданные коробки операций без ОТК и принятые ОТК коробки последней
+    операции; «closed» — ждут: коробки последней операции до ОТК, возвращённые на исправление, открытые.
     boxes/outputs — уже прочитанные строки этих заданий (экран «Мои задания» читает только свои ПЗ)."""
     task_ids = {task.id for task in tasks}
+    finals = set()
+    for task in tasks:
+        try:
+            finals.add(task.final_operation.id)
+        except ProductionValidationError:
+            continue
     facts: dict[UUID, dict] = {}
     for output in (outputs if outputs is not None else uow.outputs.active_for_tasks(tuple(task_ids))):
         fact = facts.setdefault(output.operation_id, {"good": Decimal(0), "defect": Decimal(0), "ok": Decimal(0), "closed": Decimal(0)})
@@ -306,10 +324,10 @@ def _facts(uow, tasks, boxes=None, outputs=None) -> dict:
         if box.task_id not in task_ids or box.available <= 0:
             continue
         fact = facts.setdefault(box.operation_id, {"good": Decimal(0), "defect": Decimal(0), "ok": Decimal(0), "closed": Decimal(0)})
-        if box.status is BoxStatus.CONFIRMED:
+        if box.status is BoxStatus.CONFIRMED or (box.status is BoxStatus.OPERATOR_CLOSED and box.operation_id not in finals):
             fact["ok"] += box.available
         elif box.status in {BoxStatus.OPEN, BoxStatus.OPERATOR_CLOSED, BoxStatus.RETURNED}:
-            # Решено агентом: у SUPPLYMAP нет «Открытой» коробки, её штуки тоже ждут подтверждения мастера.
+            # Решено агентом: у SUPPLYMAP нет «Открытой» коробки, её штуки тоже ждут.
             fact["closed"] += box.available
     return facts
 
@@ -371,6 +389,11 @@ def _result(task: ProductionTask, facts: dict | None = None, delivered: int | No
                 "transfer_batch": _number(item.transfer_batch) if item.transfer_batch is not None else None,
             } for item in operation.inputs],
             "final": operation.id == final_id,
+            # Задание по ПФ (13.10): операции ЭТК этого полуфабриката по порядку; пусто — операция задания и есть
+            # одна операция ЭТК (номер ЭТК = position).
+            "etk_ops": [{
+                "position": item.position, "code": operation_code(item.code), "stage": stage_name(item.stage),
+            } for item in operation.etk_ops],
             # Доли по людям: штуки (None — вся операция бригадой), своё окно, факт «взял»/«закончил».
             "shares": [{
                 "operator_id": str(share.operator_id), "quantity": share.quantity,
@@ -610,9 +633,13 @@ _MY_TASK_LIMIT = 300
 _MY_BOX_LIMIT = 2_000
 
 
-def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
-    """Готовность входов операции для карточки монтажника: можно ли начинать и какие подтверждённые коробки
-    этого ПЗ можно взять. Коробки другого ПЗ сюда не попадают."""
+def _readiness(task: ProductionTask, operation, boxes, state: str, progress: dict[str, dict] | None = None) -> dict:
+    """Готовность входов операции для карточки монтажника: можно ли начинать и какие сданные коробки
+    этого ПЗ можно взять. Коробки другого ПЗ сюда не попадают.
+
+    progress — строки операций задания из `_result` по id (сдано и сколько сдать). Готово — `available`: сколько штук
+    этой операции дают коробки входов (у сборки — по самому бедному входу). Ждёт — с какого этапа и сколько тот сдал
+    из нужного (владелец, 16.10: «ждёт: … не сдан» должно говорить, сколько не хватает)."""
     if state == "выполнена":
         return {"state": "done", "text": "выполнена", "boxes": []}
     if not operation.inputs:
@@ -620,32 +647,56 @@ def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
     by_id = {item.id: item for item in task.operations}
     ready: list[dict] = []
     missing = []
+    pieces: list[Decimal] = []
     for edge in operation.inputs:
         source = by_id.get(edge.input_operation_id)
         position = source.position if source else 0
-        found = [box for box in boxes if box.operation_id == edge.input_operation_id and box.status is BoxStatus.CONFIRMED and box.available > 0]
+        found = [box for box in boxes if box.operation_id == edge.input_operation_id and box.status in TAKEABLE_BOX and box.available > 0]
         if found:
             ready.extend({
                 "id": str(box.id), "number": box.number, "code": box.code, "quantity": _number(box.available),
                 "operation_position": box.operation_position,
                 "stage": (stage_name(source.stage) if source else "") or f"этап {position}",
             } for box in sorted(found, key=lambda item: (item.created_at, item.number or "")))
+            per_unit = edge.per_unit if edge.per_unit > 0 else Decimal(1)
+            pieces.append((sum((box.available for box in found), Decimal(0)) / per_unit).to_integral_value(rounding=ROUND_FLOOR))
         else:
             missing.append((edge, source, position))
     if not missing:
         return {"state": "assembly" if len(operation.inputs) > 1 else "ready",
-                "text": "готово к сборке" if len(operation.inputs) > 1 else "можно начинать", "boxes": ready}
+                "text": "готово к сборке" if len(operation.inputs) > 1 else "можно начинать", "boxes": ready,
+                "available": _number(min(pieces))}
     edge, source, position = missing[0]
     label = (stage_name(source.stage) if source else "") or f"этап {position}"
+    where = f"этап {position} «{label}»" if position else label
+    # Сданные коробки входа берутся сразу (подтверждения мастера больше нет); ждать можно только коробку,
+    # которую монтажник ещё исправляет. Состояние «waiting_master» — прежнее имя в API.
     at_master = any(
         box.operation_id == edge.input_operation_id and box.available > 0
-        and box.status in {BoxStatus.OPEN, BoxStatus.OPERATOR_CLOSED, BoxStatus.RETURNED}
+        and box.status in {BoxStatus.OPEN, BoxStatus.RETURNED}
         for box in boxes
     )
+    row = (progress or {}).get(str(edge.input_operation_id)) or {}
+    handed = Decimal(row.get("fact", {}).get("good") or 0)
+    need = Decimal(row.get("required_quantity") or 0)
+    if at_master:
+        text = f"ждёт {where} — коробку исправляют"
+    elif need and handed < need:
+        text = f"ждёт {where}: сдано {_number(handed)} из {_number(need)}"
+        if handed > 0:
+            text += f", не хватает {_number(need - handed)} шт"
+    elif need:
+        # Этап-вход сдал всё, но его коробки уже взяли в работу (напарник по операции).
+        text = f"ждёт {where}: всё сданное уже взято в работу"
+    else:
+        text = f"ждёт {where}: не сдан"
     return {
         "state": "waiting_master" if at_master else "waiting_stage",
-        "text": f"ждёт: {label} — коробка ещё у мастера" if at_master else f"ждёт: {label} не сдан",
+        "text": text,
         "boxes": ready,
+        "source_position": position or None,
+        "handed": _number(handed),
+        "need": _number(need),
     }
 
 
@@ -666,6 +717,7 @@ def _remaining(task: ProductionTask, operation, viewed: UUID, outputs, result: d
 def my_operations(
     principal: Annotated[Principal, Depends(production_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
     operator_id: UUID | None = None,
 ) -> dict:
     with uow_factory() as uow:
@@ -682,6 +734,8 @@ def my_operations(
         logged: dict[UUID, list[WorkTimeEntry]] = {}
         for entry in uow.work_log.entries(operator_id=viewed, operation_ids=own_operations):
             logged.setdefault(entry.operation_id, []).append(entry)
+        # Версии карточек ЭТК, записанные на первом «Начать» операции.
+        started_cards = uow.work.card_versions(own_operations)
         # Свои задания — сам; чужие — работает ли за него смотрящий (иначе экран остаётся только просмотром).
         # Действия идут через гейт правки «Заданий» (production_view_work_principal) — без неё только просмотр.
         can_act = section_allowed(principal, ("myops",), "edit") and (viewed == principal.actor.id or _may_act_for(
@@ -690,6 +744,9 @@ def my_operations(
     boxes_by_task: dict[UUID, list[ProductionBox]] = {}
     for box in boxes:
         boxes_by_task.setdefault(box.task_id, []).append(box)
+    etk_views = _issued_etk_views(techcards_factory, [
+        (task.project, task.item) for task in mine if any(viewed in item.operator_ids for item in task.operations)
+    ])
     operations = []
     for task in mine:
         result = _result(task, facts)
@@ -704,9 +761,17 @@ def my_operations(
                     "my_share": next(item for item in result["operations"][index]["shares"] if item["operator_id"] == str(share.operator_id)) if share else None,
                     "first": not operation.inputs,
                     "mates": [names.get(item, str(item)) for item in operation.operator_ids if item != viewed],
-                    "readiness": _readiness(task, operation, boxes_by_task.get(task.id, ()), result["operations"][index]["state"]),
+                    "readiness": _readiness(
+                        task, operation, boxes_by_task.get(task.id, ()), result["operations"][index]["state"],
+                        {row["id"]: row for row in result["operations"]},
+                    ),
                     "remaining": _remaining(task, operation, viewed, outputs, result["operations"][index]),
                     "time_fact": _time_fact_result(logged.get(operation.id, ())),
+                    # «по шаблону от 17.10» / «правлена в ТК» по операциям ЭТК этого ПФ: как сейчас и как на начале.
+                    "etk_cards": {
+                        "live": _card_versions(etk_views.get((task.project, task.item)), operation.etk_positions),
+                        "started": started_cards.get(operation.id),
+                    },
                 }]})
     operations.sort(key=lambda item: (
         (item["operations"][0]["my_share"] or {}).get("planned_start") or item["operations"][0]["planned_start"] or "9999",
@@ -747,7 +812,7 @@ def available_inputs(
         rows = [box for box in uow.boxes.list(task_id=task_id) if (
             box.item == task.item
             and box.operation_id in sources
-            and box.status is BoxStatus.CONFIRMED
+            and box.status in TAKEABLE_BOX
             and box.available > 0
         )]
         materials = []
@@ -763,6 +828,52 @@ def available_inputs(
             "reserved": _number(item.reserved), "available": _number(item.available),
         } for item in materials],
     }
+
+
+def _card_versions(view: dict | None, positions: tuple[int, ...]) -> list[dict]:
+    """Откуда сейчас карточки операций ЭТК операции задания (etk_live): номер операции в ЭТК, источник (template /
+    edited / snapshot) и дата шаблона или правки. Своя операция ручной сборки (без шаблона) строки не даёт."""
+    document = view.get("document") if isinstance(view, dict) else None
+    ops = document.get("operations") if isinstance(document, dict) else None
+    if not isinstance(ops, list):
+        return []
+    rows = []
+    for position in positions:
+        op = ops[position - 1] if 1 <= position <= len(ops) else None
+        source = str(op.get("card_source") or "") if isinstance(op, dict) else ""
+        if source:
+            rows.append({"position": position, "source": source, "changed_at": str(op.get("card_changed_at") or "")})
+    return rows
+
+
+def _issued_etk_views(
+    techcards_factory: Callable[[], TechcardsUnitOfWork] | None, items: list[tuple[str, str]],
+) -> dict[tuple[str, str], dict]:
+    """Выданные ЭТК позиций (проект, изделие) с живыми карточками операций — одно чтение шаблонов на все."""
+    keys = list(dict.fromkeys(items))
+    if techcards_factory is None or not keys:
+        return {}
+    with techcards_factory() as techcards:
+        cards = {key: issued_card_for_item(techcards, *key) for key in keys}
+        found = [(key, card) for key, card in cards.items() if card is not None]
+        views = card_views(techcards, [card for _, card in found]) if found else []
+    return {key: view for (key, _), view in zip(found, views)}
+
+
+def _start_card_versions(
+    task_id: UUID, operation_id: UUID, uow_factory: Callable[[], UnitOfWork],
+    techcards_factory: Callable[[], TechcardsUnitOfWork] | None,
+) -> tuple[dict, ...] | None:
+    """Версии карточек ЭТК для первого «Начать» операции; уже записаны или ЭТК не прочитать — None (нечего писать)."""
+    if techcards_factory is None:
+        return None
+    with uow_factory() as uow:
+        task = uow.production.get(task_id)
+        operation = next((item for item in task.operations if item.id == operation_id), None) if task else None
+        if operation is None or uow.work.card_versions((operation_id,)):
+            return None
+    view = _issued_etk_views(techcards_factory, [(task.project, task.item)]).get((task.project, task.item))
+    return tuple(_card_versions(view, operation.etk_positions))
 
 
 def _etk_task_access(task_id: UUID, operation_id: UUID, principal: Principal, uow_factory: Callable[[], UnitOfWork]):
@@ -796,10 +907,23 @@ def operation_etk(
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     with techcards_factory() as techcards:
         card = issued_card_for_item(techcards, task.project, task.item)
-        result = card_views(techcards, [card], issued=issued_lots)[0] if card is not None else None
+        if card is not None:
+            shown, revision = pinned_card(techcards, card, task.techcard_revision)
+            result = card_views(techcards, [shown], issued=issued_lots,
+                                frozen=shown is not card)[0]
+        else:
+            result = revision = None
     if result is None:
         raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
-    return {"card": result, "focus": {"position": operation.position, "code": operation_code(operation.code)}}
+    # position — операция ЭТК, на которой открыть карту (у ПФ — его первая); positions — все операции ЭТК этой
+    # операции задания по порядку ПФ (без ПФ — одна).
+    positions = list(operation.etk_positions)
+    # serial — номера изделий задания для «№ изделия» в надписях меток (сквозь задания позиции, mark_serial_range).
+    with uow_factory() as uow:
+        first, last = mark_serial_range(task, uow.production.for_project(task.project))
+    return {"card": result, "revision": revision, "focus": {
+        "position": positions[0], "positions": positions, "code": operation_code(operation.code),
+    }, "serial": {"first": first, "last": last, "task": task.number}}
 
 
 @router.get("/my/tasks/{task_id}/harness")
@@ -954,16 +1078,18 @@ def start_execution(
     principal: Annotated[Principal, Depends(production_view_work_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
     on_behalf_of: UUID | None = None,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict:
     performer = _performer(uow_factory, principal, on_behalf_of)
+    card_versions = _start_card_versions(task_id, operation_id, uow_factory, techcards_factory)
     session = _execution(lambda: start_work(StartWorkCommand(
         task_id=task_id, operation_id=operation_id,
         box_numbers=tuple(payload.inputs),
         actor=principal.actor, now=now,
         materials=tuple(MaterialInput(item.fulfillment_line_id, item.quantity) for item in payload.materials),
-        performer=performer, idempotency_key=_replay_key(idempotency_key),
+        performer=performer, idempotency_key=_replay_key(idempotency_key), card_versions=card_versions,
     ), uow_factory()))
     return {"session": _session_result(session)}
 
@@ -1010,6 +1136,33 @@ def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: An
         "session": _session_result(session), "box": _box_result(box),
         "output_id": str(output.id), "defect": _defect_result(defect) if defect else None,
     }
+
+
+@router.post("/tasks/{task_id}/operations/{operation_id}/manual-output")
+def manual_output(
+    task_id: UUID,
+    operation_id: UUID,
+    payload: ManualOutputPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    """Ввод готовых мастером: штуки этапа, сделанные мимо терминала, и «отбить готовыми» пропущенные входы."""
+    performer = _performer(uow_factory, principal, payload.operator_id)
+    if payload.operator_id is not None and performer is None:
+        performer = principal.actor
+    box, output, filled, closed = _execution(lambda: record_manual_output(ManualOutputCommand(
+        task_id=task_id, operation_id=operation_id, good_quantity=Decimal(payload.good_quantity),
+        actor=principal.actor, now=now, performer=performer, fill_inputs=payload.fill_inputs,
+    ), uow_factory()))
+    warnings = [f"Записано {_number(box.quantity)} шт на этап {box.operation_position}, коробка {box.code or box.number}."]
+    if filled:
+        warnings.append("Отбиты готовыми: " + ", ".join(
+            f"этап {item.operation_position} — {_number(item.quantity)} шт" for item in sorted(filled, key=lambda item: item.operation_position)
+        ) + ".")
+    if closed:
+        warnings.append("Снята открытая работа: " + ", ".join(closed) + ".")
+    return {"box": _box_result(box), "output_id": str(output.id), "filled": [_box_result(item) for item in filled], "warnings": warnings}
 
 
 @router.get("/work-time")
@@ -1076,14 +1229,10 @@ def correct_execution_box(box_id: UUID, payload: CorrectBoxPayload, principal: A
     }
 
 
-@router.post("/boxes/{box_id}/confirm")
-def confirm_execution_box(box_id: UUID, payload: BoxVersionPayload, principal: Annotated[Principal, Depends(production_edit_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
-    box = _execution(lambda: confirm_box(BoxCommand(box_id, payload.version, principal.actor, now), uow_factory()))
-    return {"box": _box_result(box)}
-
-
+# Подтверждения мастером нет (владелец, 13.10.2026: «ОТК подтверждает и все»): маршрута /confirm больше нет,
+# «Вернуть…» — действие очереди ОТК, по правке «ОТК».
 @router.post("/boxes/{box_id}/return")
-def return_execution_box(box_id: UUID, payload: ReturnBoxPayload, principal: Annotated[Principal, Depends(production_edit_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+def return_execution_box(box_id: UUID, payload: ReturnBoxPayload, principal: Annotated[Principal, Depends(production_quality_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
     box = _execution(lambda: return_box(ReturnBoxCommand(
         box_id=box_id, expected_version=payload.version, actor=principal.actor,
         now=now, reason=payload.reason,
@@ -1625,8 +1774,9 @@ def _flow_result(view: FlowView, card) -> dict:
             "techcard_id": str(card.id) if card is not None else None,
             "revision": task.techcard_revision,
             "current_revision": current,
-            # Нормы задания старее выданной ЭТК — мастер обновляет кнопкой, сами нормы не меняются.
-            "outdated": current is not None and (task.techcard_revision is None or current > task.techcard_revision),
+            # Нормы задания отличаются от тех, что даёт выданная ЭТК (а не просто ревизия новее) — мастер обновляет
+            # кнопкой, сами нормы не меняются. Уведомление «есть новая ревизия» — по номерам, на экране техкарты.
+            "outdated": current is not None and task.techcard_revision != current and norms_outdated(task, card.document),
         },
     }
 
@@ -1675,6 +1825,19 @@ def refresh_task_norms(
     if card is None or card.status is not TechcardStatus.ISSUED:
         raise HTTPException(status_code=422, detail=f"Техкарта «{task.project} {task.item}» не выдана — нормы брать неоткуда")
     steps = launch_route(card.document).steps
+    if any(operation.etk_ops for operation in task.operations):
+        # Задание по ПФ: нормы ПФ — суммы его операций; состав ПФ (операции ЭТК и их коды) должен быть прежним.
+        try:
+            steps = semifinished_steps(steps)
+        except ProductionValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        fresh ={step.position: [(item.position, item.code) for item in step.etk_ops] for step in steps}
+        own = {operation.position: [(item.position, item.code) for item in operation.etk_ops] for operation in task.operations}
+        if fresh != own:
+            raise HTTPException(status_code=422, detail=(
+                "Полуфабрикаты техкарты изменились (другой состав ПФ или коды операций) — нормы не обновлены. "
+                "Запустите новое задание по выданной техкарте"
+            ))
     norms = {step.position: (step.code, step.seconds_per_unit, step.setup_seconds) for step in steps}
     return _run(lambda: refresh_norms(RefreshNormsCommand(
         task_id=task_id, expected_version=payload.version, techcard_id=card.id, revision=card.revision,

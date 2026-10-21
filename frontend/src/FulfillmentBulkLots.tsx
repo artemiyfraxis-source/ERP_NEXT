@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, failureText, type FulfillmentCandidate, type FulfillmentLine, type FulfillmentLot, type FulfillmentRequest } from "./api";
 import { matchesWords } from "./DataTable";
-import { fifoOrder, fifoPick } from "./FulfillmentPage";
+import { closedLine, fifoOrder, fifoPick, positionKey } from "./FulfillmentPage";
 import { matchText } from "./stockCandidates";
 
 /* Комплектация: «ГРН на все КБ» и «Есть, не заведено» (owner 05.10.2026). One position of a project is closed for every
@@ -12,14 +12,18 @@ import { matchText } from "./stockCandidates";
 export type BulkBound = { request_id: string; number: string; kb: string; line_id: string; lot_id: string; grn: string; quantity: string };
 export type BulkResult = { bound: BulkBound[]; short: string | number; message?: string };
 
+/** A lot other projects hold in full: shown greyed, not to take — to see where the rest of the stock lies. */
+export type ReservedLot = FulfillmentLot & { reserved: string; held_by: string };
+
 export const bulkApi = {
   /** available = free for this project + its own reserve, so a re-pick sees what the project already holds. */
-  lots: (project: string) => api<{ lots: FulfillmentLot[] }>(`/api/issues/lots?project=${encodeURIComponent(project)}`),
-  bind: (project: string, body: { article: string; name: string; lot_ids: string[]; off_book: boolean; versions: Record<string, number> }) =>
+  lots: (project: string) => api<{ lots: FulfillmentLot[]; reserved_lots?: ReservedLot[] }>(`/api/issues/lots?project=${encodeURIComponent(project)}`),
+  bind: (project: string, body: { article: string; name: string; lot_ids: string[]; off_book: boolean; off_book_quantity?: string | null; versions: Record<string, number> }) =>
     api<BulkResult>(`/api/issues/projects/${encodeURIComponent(project)}/bind-lots`, { method: "POST", body: JSON.stringify(body) }),
-  offBook: (requestId: string, lineId: string, version: number, on: boolean) =>
+  /** quantity — «сколько есть» below the line's need (the server splits the line); null — the whole need. */
+  offBook: (requestId: string, lineId: string, version: number, on: boolean, quantity: string | null = null) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/lines/${lineId}/off-book`, {
-      method: on ? "POST" : "DELETE", body: JSON.stringify({ version }),
+      method: on ? "POST" : "DELETE", body: JSON.stringify(on && quantity !== null ? { version, quantity } : { version }),
     }),
   /** «Нет на складе» (owner 12.10.2026): the line stays open as a shortage; a repeat on a marked line changes nothing. */
   absent: (requestId: string, lineId: string, version: number, on: boolean) =>
@@ -76,11 +80,38 @@ export function bulkBanner(result: BulkResult, unit: string, offBook: boolean) {
   return `Назначено: ${parts.join("; ")}${short > 0 ? `; не хватает ${short}` : ""}`;
 }
 
+/** The search box of a lot picker opens filled with the position's name (its article when the name is empty): the list is
+    already narrowed to that item, the person erases or edits it. «Возможно есть» lots stay on the list whatever it says. */
+export const searchSeed = (name: string, article: string) => name.trim() || article.trim();
+
+/** «Нет на складе» for a position: every still open, unmarked line of it in the КБ of the position. */
+export function absentTargets(position: BulkPosition) {
+  const key = positionKey(position.article, position.name);
+  return position.kbs.flatMap((kb) => (kb.request.lines ?? [])
+    .filter((line) => positionKey(line.article, line.name) === key && !closedLine(line) && absentMark(line) === null)
+    .map((line) => ({ request: kb.request, line })));
+}
+
+/** One «Нет на складе» call per КБ line, the same endpoint as the per-КБ button; a request's version moves on after
+    each call, so the next line of the same request takes the version the server returned. */
+export async function absentPosition(position: BulkPosition) {
+  const versions = new Map<string, number>();
+  const targets = absentTargets(position);
+  for (const { request, line } of targets) {
+    const result = await bulkApi.absent(request.id, line.id, versions.get(request.id) ?? request.version, true);
+    versions.set(request.id, result.request?.version ?? (versions.get(request.id) ?? request.version) + 1);
+  }
+  return { message: `Отмечено «нет на складе»: ${position.name || position.article}, строк ${targets.length}` };
+}
+
 /** One call of (a) for a position; a 409 says the requests moved on. Result is shaped for the page's mutate. */
-export async function bindPosition(project: string, position: BulkPosition, lotIds: string[], offBook: boolean) {
+export async function bindPosition(project: string, position: BulkPosition, lotIds: string[], offBook: boolean, offBookQuantity: string | null = null) {
   const versions = Object.fromEntries(position.kbs.map((kb) => [kb.request.id, kb.request.version]));
   try {
-    const result = await bulkApi.bind(project, { article: position.article, name: position.name, lot_ids: offBook ? [] : lotIds, off_book: offBook, versions });
+    const body = offBook
+      ? { article: position.article, name: position.name, lot_ids: [], off_book: true, off_book_quantity: offBookQuantity, versions }
+      : { article: position.article, name: position.name, lot_ids: lotIds, off_book: false, versions };
+    const result = await bulkApi.bind(project, body);
     return { message: bulkBanner(result, position.unit, offBook) };
   } catch (reason) {
     if (reason instanceof ApiError && reason.status === 409) throw new ApiError(STALE_TEXT, 409, reason.detail);
@@ -100,15 +131,16 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
   onClose: () => void;
 }) {
   const [lots, setLots] = useState<FulfillmentLot[] | null>(null);
+  const [reservedLots, setReservedLots] = useState<ReservedLot[]>([]);
   const [error, setError] = useState("");
-  const [query, setQuery] = useState(suggested.length ? "" : position.name);
+  const [query, setQuery] = useState(searchSeed(position.name, position.article));
   const [chosen, setChosen] = useState<string[]>([]);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
     setError("");
-    bulkApi.lots(project).then((result) => { if (alive) setLots(result.lots); })
+    bulkApi.lots(project).then((result) => { if (alive) { setLots(result.lots); setReservedLots(result.reserved_lots ?? []); } })
       .catch((reason) => { if (alive) setError(failureText(reason, "Не удалось загрузить партии")); });
     return () => { alive = false; };
   }, [project, versionKey, attempt]);
@@ -117,6 +149,8 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
   const found = (lots ?? [])
     .filter((lot) => chosen.includes(lot.id) || offered.has(lot.id) || matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query))
     .sort((a, b) => (offered.get(a.id)?.index ?? 1e9) - (offered.get(b.id)?.index ?? 1e9));
+  // Занятые чужими проектами — только по запросу, после доступных (владелец 16.10: «на складе ищет другие позиции, а тут нет»).
+  const held = query.trim() ? reservedLots.filter((lot) => matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query)) : [];
   const selected = useMemo(() => (lots ?? []).filter((lot) => chosen.includes(lot.id)), [lots, chosen]);
   const preview = useMemo(() => previewSplit(position, selected), [position, selected]);
   const total = round(position.kbs.reduce((sum, kb) => sum + kb.remaining, 0));
@@ -129,13 +163,19 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
     {!error && lots === null && <div className="empty">Загрузка…</div>}
     {lots !== null && <>
       <input className="search" type="search" aria-label={`Поиск партий для ${position.name}`} placeholder="поиск: вилка usb · 3B4 · ГРН-2026 …" value={query} onChange={(event) => setQuery(event.target.value)} />
-      {!found.length && <div className="empty">{lots.length ? `По запросу ничего нет. Сотри слова — покажется весь склад (${lots.length} строк).` : "На складе нет ни одной строки с остатком."}</div>}
-      {found.length > 0 && <table className="grid wide"><thead><tr><th /><th>Наименование</th><th>ГРН</th><th className="num">Доступно</th></tr></thead><tbody>
+      {!found.length && !held.length && <div className="empty">{lots.length ? `По запросу ничего нет. Сотри слова — покажется весь склад (${lots.length} строк).` : "На складе нет ни одной строки с остатком."}</div>}
+      {(found.length > 0 || held.length > 0) && <table className="grid wide"><thead><tr><th /><th>Наименование</th><th>ГРН</th><th className="num">Доступно</th></tr></thead><tbody>
         {found.slice(0, 200).map((lot) => <tr key={lot.id}>
           <td><input type="checkbox" aria-label={`ГРН ${lot.grn}`} checked={chosen.includes(lot.id)} onChange={() => toggle(lot.id)} /></td>
           <td className="text"><strong>{lot.article || "—"}</strong> <span>{lot.name}</span><small>{lot.storage_location || "без места"}</small>{offered.has(lot.id) && <small className="cand-tag">возможно есть · {matchText(offered.get(lot.id)!.candidate)}</small>}</td>
           <td>{lot.grn}<small>{lot.warehouse}{lot.package ? ` · пакет ${lot.package}` : ""}</small></td>
           <td className="num">{lot.available} {lot.unit}</td>
+        </tr>)}
+        {held.slice(0, 50).map((lot) => <tr key={lot.id} className="lot-held">
+          <td><input type="checkbox" aria-label={`ГРН ${lot.grn} в резерве`} disabled /></td>
+          <td className="text"><strong>{lot.article || "—"}</strong> <span>{lot.name}</span><small>{lot.storage_location || "без места"}</small><small className="cand-tag">в резерве: {lot.held_by || "комплектация"}</small></td>
+          <td>{lot.grn}<small>{lot.warehouse}{lot.package ? ` · пакет ${lot.package}` : ""}</small></td>
+          <td className="num">0 {lot.unit}<small>резерв {lot.reserved}</small></td>
         </tr>)}
       </tbody></table>}
       {found.length > 200 && <p className="page-sub">Показаны первые 200 из {found.length} — уточни поиск.</p>}
@@ -153,4 +193,96 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
       <button type="button" className="secondary" onClick={onClose}>Закрыть</button>
     </div>
   </div>;
+}
+
+/** A quantity as the input shows it: up to 6 decimals, no trailing zeros. */
+export const qtyText = (value: number) => String(Math.round(value * 1e6) / 1e6);
+
+/** «Сколько есть?»: the error for what was typed, "" — fine. A comma is a decimal point; шт of a whole need — whole. */
+export function offBookQtyError(text: string, max: number, unit: string) {
+  const raw = text.trim().replace(",", ".");
+  if (!/^\d+(\.\d+)?$/.test(raw) || Number(raw) <= 0) return "Укажи число больше нуля";
+  const value = Number(raw);
+  if (value > Math.round(max * 1e6) / 1e6) return `Больше, чем ждут: не больше ${qtyText(max)} ${unit}`.trimEnd();
+  if (/^шт/i.test(unit.trim()) && Number.isInteger(max) && !Number.isInteger(value)) return "В штуках — целое число";
+  return "";
+}
+
+/* «Есть, не заведено» → «Сколько есть?» (owner 14.10.2026). A small popover under the button: the default is everything
+   that still waits, Enter or «Отметить» confirms, Esc, «Отмена» or a click outside closes. Less than waits — the server
+   marks that much (КБ in order) and splits the line where it runs out; the rest keeps waiting. The default untouched
+   sends null (the whole wait), so a need with more decimals than the screen shows is never left a crumb short. */
+export function OffBookQtyPopover({ anchor, name, unit, max, scope, busy, onConfirm, onCancel }: {
+  anchor: HTMLElement | null;
+  name: string;
+  unit: string;
+  /** Everything that still waits: the default and the most that can be marked. */
+  max: number;
+  /** Where it waits, e.g. «по 3 КБ»; empty for one line. */
+  scope?: string;
+  busy: boolean;
+  /** null — the whole wait; otherwise the quantity as the server takes it ("2.5"). */
+  onConfirm: (quantity: string | null) => void;
+  onCancel: () => void;
+}) {
+  const initial = qtyText(max);
+  const [text, setText] = useState(initial);
+  const box = useRef<HTMLFormElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
+  const error = offBookQtyError(text, max, unit);
+  const hintId = useId();
+
+  useLayoutEffect(() => {
+    const locate = () => {
+      if (!anchor || !box.current) return;
+      const at = anchor.getBoundingClientRect();
+      const width = box.current.offsetWidth || 300;
+      const height = box.current.offsetHeight || 160;
+      const left = Math.max(8, Math.min(at.right - width, window.innerWidth - width - 8));
+      const below = at.bottom + 4;
+      setPlace({ left, top: below + height > window.innerHeight - 8 && at.top - height - 4 > 8 ? at.top - height - 4 : below });
+    };
+    locate();
+    window.addEventListener("resize", locate);
+    window.addEventListener("scroll", locate, true);
+    return () => { window.removeEventListener("resize", locate); window.removeEventListener("scroll", locate, true); };
+  }, [anchor]);
+
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+    const outside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (box.current?.contains(target) || anchor?.contains(target)) return;
+      onCancel();
+    };
+    document.addEventListener("mousedown", outside);
+    return () => document.removeEventListener("mousedown", outside);
+  }, [anchor, onCancel]);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (busy || error) return;
+    const raw = text.trim().replace(",", ".");
+    onConfirm(raw === initial ? null : String(Number(raw)));
+  };
+
+  return <form ref={box} className="offbook-pop" role="dialog" aria-label={`Сколько есть: ${name}`} noValidate
+    style={place ? { top: place.top, left: place.left } : { visibility: "hidden" }}
+    onSubmit={submit} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onCancel(); } }}>
+    <div className="offbook-pop-head"><strong>Сколько есть?</strong><span>{name}</span></div>
+    <label className="offbook-pop-qty">
+      <input ref={input} type="text" inputMode="decimal" autoComplete="off" aria-label="Сколько есть" aria-invalid={Boolean(error)}
+        aria-describedby={hintId} value={text} onChange={(event) => setText(event.target.value)} />
+      <span>{unit}</span>
+    </label>
+    <small id={hintId} className={error ? "offbook-pop-error" : undefined} role={error ? "alert" : undefined}>
+      {error || `Ждут ${initial} ${unit}${scope ? ` ${scope}` : ""}. Меньше — остальное останется в ожидании поставки.`}
+    </small>
+    <div className="offbook-pop-acts">
+      <button type="submit" className="primary small" disabled={busy || Boolean(error)}>Отметить</button>
+      <button type="button" className="secondary small" onClick={onCancel}>Отмена</button>
+    </div>
+  </form>;
 }

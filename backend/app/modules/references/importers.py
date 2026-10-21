@@ -69,7 +69,7 @@ from .domain import (
     normalized_supplier_key, validate_entries,
 )
 from .technology import (
-    _TECH_SCHEMA, _normalized_article, _range_indexes, _resolve_schema, contact_gender, normalize_material,
+    _TECH_SCHEMA, _normalized_article, _range_indexes, _resolve_schema, contact_gender, is_coax_cable_column, normalize_material,
     pull_force_newtons, schema_display_text, schema_keys, sync_schema_fields, terminal_card_fields,
     terminal_card_indexes, terminal_card_problems,
 )
@@ -766,11 +766,12 @@ def _ter_forms(values: tuple[str, ...]) -> tuple[tuple[str, object], ...]:
 
 # The coax connector card (owner 13.10.2026, the 311 connectors of gsm-repiteri.ru): БД.КОАКС sheet columns a load may
 # bring before any row has them. «Тип пина» / «Тип экрана» are the sheet's own (the generator reads them); the site's
-# words for the pin and the shield go to «Центральный контакт» / «Крепление экрана».
+# words for the pin and the shield go to «Центральный контакт» / «Крепление экрана». «КСВ» — по карточке поставщика
+# (владелец 19.10.2026). A card column is edited in a cell of any row, even one that does not carry it yet.
 COAX_CARD_COLUMNS = (
     "Тип пина", "Тип экрана", "Серия", "Пол", "Полярность", "Исполнение", "Монтаж", "Центральный контакт",
-    "Крепление экрана", "Волновое сопротивление, Ом", "Частота до, ГГц", "Материал корпуса", "Покрытие", "Габариты",
-    "Наименование", "Ссылка", "Примечание", "Источник данных",
+    "Крепление экрана", "Волновое сопротивление, Ом", "Частота до, ГГц", "КСВ", "Материал корпуса", "Покрытие", "Габариты",
+    "Наименование", "Ссылка", "Примечание", "Источник данных", "Артикул поставщика",
 )
 
 # БД.ТЕР columns a load may bring before any row has them: the note on where a terminal's L− came from (owner
@@ -796,7 +797,9 @@ def _sheet_columns(table: _TechTable, records: Sequence[TechOperationRecord]) ->
     if not table.sheet_columns:
         return list(BASE_COLUMNS[table.tab])
     keys = schema_keys(table.tab.value)
-    return list(dict.fromkeys([*(name for record in records for name in record.fields if name not in keys),
+    coax = table.tab == TechOperationTab.COAX  # the cable's D1–D3 are no column of a connector row (owner 16.10.2026)
+    return list(dict.fromkeys([*(name for record in records for name in record.fields
+                                 if name not in keys and not (coax and is_coax_cable_column(name))),
                                *table.card_columns]))
 
 

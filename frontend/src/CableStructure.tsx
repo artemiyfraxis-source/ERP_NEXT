@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { DataTable, type DataColumn } from "./DataTable";
+import { cellFailure, fieldCellEdit, ownCellEdit } from "./CustomColumn";
+import { DataTable, type DataCellEdit, type DataColumn } from "./DataTable";
 import {
   failureText,
   referencesApi,
@@ -7,7 +8,6 @@ import {
   type CableRow,
   type CablesResult,
   type CoaxCard,
-  type CoaxParam,
   type HookupPayload,
   type HookupWire,
   type TechOperationRecord,
@@ -28,11 +28,58 @@ export const CABLE_KIND_LABELS: Record<CableKind, string> = {
 /** A number as the shop reads it: comma decimal, no trailing zeros. */
 export const num = (value: number | null | undefined): string =>
   value === null || value === undefined ? "" : String(value).replace(".", ",");
-const freq = (mhz: number | null): string =>
+export const freq = (mhz: number | null): string =>
   mhz === null ? "" : mhz >= 1000 ? `${num(Math.round(mhz / 10) / 100)} ГГц` : `${num(mhz)} МГц`;
 const signed = (value: number | null) => value === null ? "" : value > 0 ? `+${value}` : String(value).replace("-", "−");
-const range = (low: number | null, high: number | null) =>
+export const range = (low: number | null, high: number | null) =>
   low === null && high === null ? "" : `${low === null ? "…" : signed(low)} … ${high === null ? "…" : signed(high)}`;
+const TEMP_NUMBER = /^[+-]?\d+(?:[.,]\d+)?$/;
+/** Temperature typed into one cell as the table shows it — «−60 … +200», also «-60...200», «от -60 до +200», «-60 – 200»,
+    «… +80» (no lower bound) — into the pair the wire's window has; an empty text clears both. A text that is not a
+    range is refused with the way to write it. */
+export function parseTempRange(text: string): { min: string; max: string } {
+  const plain = text.replace(/−/g, "-").replace(/°\s*[CС]?/gi, "").replace(/^\s*от\s*/i, "").trim();
+  if (!plain) return { min: "", max: "" };
+  const parts = plain.split(/\s*(?:…|\.{2,}|до|–|—|;|\/)\s*/i);
+  let [low, high] = parts.length === 2 ? parts : ["", ""];
+  if (parts.length !== 2) {
+    const dashed = plain.match(/^([+-]?\d+(?:[.,]\d+)?)\s*-\s*([+-]?\d+(?:[.,]\d+)?)$/) ?? plain.match(/^(\S+)\s+(\S+)$/);
+    if (!dashed) throw new Error("Температура — «от … до», например −60 … +200");
+    [low, high] = [dashed[1], dashed[2]];
+  }
+  const bound = (value: string) => {
+    const clean = value.trim();
+    if (!clean || clean === "…") return "";
+    if (!TEMP_NUMBER.test(clean)) throw new Error("Температура — «от … до», например −60 … +200");
+    return clean.replace(/^\+/, "");
+  };
+  const min = bound(low);
+  const max = bound(high);
+  if (min && max && Number(min.replace(",", ".")) > Number(max.replace(",", "."))) throw new Error("Температура «от» больше «до»");
+  return { min, max };
+}
+
+const KIND_ORDER: CableKind[] = ["coax", "wire", "multi", "other"];
+/** «Вкладка» of a БД.ПРОВ row as a cell — the choice of the row window's «Вкладка» (`kindSelect`): the row moves to that
+    list by the same server path, «по правилу» marks where the rule would put it. Hidden in «Колонки» by default. */
+export function kindColumn(canEdit: boolean, onSaved: (message: string) => Promise<void> | void): DataColumn<CableRow> {
+  return {
+    key: "__kind", title: "Вкладка", hidden: true, value: (row) => CABLE_KIND_LABELS[row.kind],
+    edit: canEdit ? {
+      enabled: (row) => Boolean(row.record),
+      value: (row) => row.kind,
+      options: (row) => KIND_ORDER.map((kind) => ({
+        value: kind, label: `${CABLE_KIND_LABELS[kind]}${kind === row.auto_kind && row.manual ? " (по правилу)" : ""}`,
+      })),
+      save: async (row, value) => {
+        const kind = value as CableKind;
+        try { await referencesApi.moveCable(row.record!.id, kind); } catch (reason) { throw cellFailure(reason); }
+        await onSaved(`«${row.cable}» перенесён во вкладку «${CABLE_KIND_LABELS[kind]}»`);
+      },
+    } : undefined,
+  };
+}
+
 export const spanText = (card: CoaxCard): string =>
   card.span_to_ghz === null ? "" : `${freq(card.span_from_mhz)} – ${num(card.span_to_ghz)} ГГц`;
 
@@ -64,7 +111,14 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
   const columns: DataColumn<WireGauge>[] = [
     { key: "awg", title: "AWG", value: (gauge) => gauge.awg, render: (gauge) => gauge.awg ? <strong>{gauge.awg}</strong> : <span className="muted">только ГОСТ</span> },
     { key: "section", title: "Сечение, мм²", numeric: true, value: (gauge) => gauge.section_mm2, render: (gauge) => num(gauge.section_mm2) },
-    { key: "dia", title: "Ø жилы, мм", numeric: true, value: (gauge) => gauge.conductor_d_mm ?? "", render: (gauge) => num(gauge.conductor_d_mm) || <span className="muted">—</span> },
+    // Ø жилы правится прямо в ячейке тем же сохранением, что форма сечения; AWG и сечение — ключ строки, в форме.
+    { key: "dia", title: "Ø жилы, мм", numeric: true, value: (gauge) => gauge.conductor_d_mm ?? "", render: (gauge) => num(gauge.conductor_d_mm) || <span className="muted">—</span>,
+      edit: canEdit ? {
+        value: (gauge) => num(gauge.conductor_d_mm),
+        save: async (gauge, value) => {
+          try { await referencesApi.saveGauge(gauge.id, { ...gaugeDraft(gauge), conductor_d_mm: value }); } catch (reason) { throw cellFailure(reason); }
+        },
+      } : undefined },
     { key: "wires", title: "Монтажных проводов", numeric: true, value: (gauge) => gauge.wires, render: (gauge) => gauge.wires || <span className="muted">—</span> },
   ];
   return <>
@@ -80,6 +134,9 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
       storageKey="db:gauges"
       exportName="Сечения AWG - мм2"
       renderDetail={canEdit ? (gauge) => <GaugeEditor key={`${gauge.id}:${gaugeOption(gauge)}`} gauge={gauge} onSaved={onSaved} onError={onError} /> : undefined}
+      rowLabel={(gauge) => gauge.label}
+      presets={gauges.some((gauge) => gauge.conductor_d_mm === null) ? [{ label: "Без Ø жилы", test: (gauge) => gauge.conductor_d_mm === null }] : undefined}
+      onEdited={() => onSaved("")}
       emptyText="Таблица сечений пуста — добавьте сечение."
       toolbar={canEdit && !adding ? <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Сечение</button> : undefined}
     />
@@ -136,23 +193,33 @@ const hookupPayload = (wire: Partial<HookupWire> | null | undefined): HookupPayl
   outer_d_mm: num(wire?.outer_d_mm), voltage_v: num(wire?.voltage_v), temp_min_c: num(wire?.temp_min_c), temp_max_c: num(wire?.temp_max_c),
 });
 
+// One colour per line, its dot and its name (owner 19.10.2026: «каждый цвет новой строчкой и текстом»).
 function WireColors({ text }: { text: string }) {
   const names = parseColors(text);
   if (!names.length) return <span className="muted">—</span>;
-  return <span className="wire-dots" title={names.join(", ")}>
+  return <ul className="wire-colors" aria-label="Цвета">
     {names.map((name) => {
       const background = colorBackground(name);
-      return background
-        ? <i key={name} className="wire-dot" style={{ background }} role="img" aria-label={name} title={name} />
-        : <span key={name} className="wire-dot-name">{name}</span>;
+      return <li key={name}>{background ? <i className="wire-dot" style={{ background }} aria-hidden="true" /> : <i className="wire-dot wire-dot-none" aria-hidden="true" />}{name}</li>;
     })}
-  </span>;
+  </ul>;
 }
 
 const UNPARSED = "Не разобраны";
-type Shared = { insulation?: string; voltage?: string; temp?: string };
+// A wire's own set (owner 15.10.2026: «у монтажных мне надо материал жилы и материал оболочки»): the core and jacket
+// materials, the standard, the maker and the supply columns; the structured «Изоляция» and the other lists' materials
+// (dielectric, core insulation, screen) stay in «Колонки», hidden.
+const LINK = "Ссылка";
+const SUPPLY = ["Поставщик", "Артикул поставщика", LINK, "Цена поставщика, ₽/м", "Дата цены"];
+const WIRE_SHOWN = new Set(["Материал жилы", "Материал оболочки", "Стандарт", "Производители", ...SUPPLY]);
+const OTHER_LISTS = new Set(["Материал диэлектрика", "Материал изоляции жилы", "Материал экрана"]);
+// The coax parameters (owner 19.10.2026: «эти параметры для монтажных не нужны») are not columns of this list at all.
+const COAX_ONLY = new Set(["Погонная ёмкость, пФ/м", "Радиус изгиба неподвижно, мм", "Радиус изгиба многократно, мм"]);
+const CORE_MATERIAL = "Материал жилы";
+const JACKET_MATERIAL = "Материал оболочки";
+type Shared = { jacket?: string; voltage?: string; temp?: string };
 
-export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar }: {
+export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar, removeColumn }: {
   data: CablesResult;
   canEdit: boolean;
   onSaved: (message: string) => Promise<void> | void;
@@ -160,6 +227,8 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   /** The «Вкладка» control of a row (moving it to another list), from CableTables. */
   kindSelect: (row: CableRow, value: CableKind, onChange: (kind: CableKind) => void) => ReactNode;
   toolbar?: ReactNode;
+  /** «Удалить столбец» своего столбца БД.ПРОВ (окно подтверждения — у страницы). */
+  removeColumn?: (name: string) => (() => void) | undefined;
 }) {
   const [adding, setAdding] = useState(false);
   const gauges = useMemo(() => data.gauges ?? [], [data.gauges]);
@@ -177,13 +246,13 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     const result = new Map<string, Shared>();
     for (const [series, list] of bySeries) {
       if (list.length < 2) continue;
-      const same = (pick: (wire: HookupWire) => string) => {
-        const values = new Set(list.map((row) => pick(row.hookup as HookupWire)));
+      const same = (pick: (wire: HookupWire, row: CableRow) => string) => {
+        const values = new Set(list.map((row) => pick(row.hookup as HookupWire, row).trim()));
         const [only] = [...values];
         return values.size === 1 && only ? only : undefined;
       };
       result.set(series, {
-        insulation: same((wire) => wire.insulation),
+        jacket: same((_wire, row) => row.record?.fields[JACKET_MATERIAL] ?? ""),
         voltage: same((wire) => wire.voltage_v === null ? "" : String(wire.voltage_v)),
         temp: same((wire) => range(wire.temp_min_c, wire.temp_max_c)),
       });
@@ -197,31 +266,99 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   // The table itself appends « · N» — the number of sizes in the group.
   const groupLabel = (name: string) => {
     const own = name === UNPARSED ? undefined : shared.get(name);
-    return [name, own?.insulation, own?.voltage && `${own.voltage} В`, own?.temp && `${own.temp} °C`].filter(Boolean).join(" · ");
+    return [name, own?.jacket, own?.voltage && `${own.voltage} В`, own?.temp && `${own.temp} °C`].filter(Boolean).join(" · ");
   };
   const gaugeOf = (row: CableRow) => row.hookup ? byId.get(row.hookup.gauge_id) ?? null : null;
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
   const clip = (text: string) => <span className="cable-clip" title={text}>{text}</span>;
-  const columns: DataColumn<CableRow>[] = [
-    { key: "cable", title: "Марка провода", value: (row) => row.cable, render: (row) => <strong>{row.cable}</strong> },
+  // «открыть» — the supplier's page of the wire, as on the coax lists.
+  const supplierLink = (row: CableRow) => {
+    const href = field(row, LINK).trim();
+    if (!href) return null;
+    return /^https?:\/\//i.test(href)
+      ? <a href={href} target="_blank" rel="noreferrer" title={href} aria-label={`Открыть страницу ${row.cable} у поставщика`}
+        onClick={(event) => event.stopPropagation()}>открыть</a>
+      : clip(href);
+  };
+  const own = data.custom_columns ?? [];
+  // Every value of a parsed wire is written from its cell the way the wire's window writes it: the whole structure with
+  // the old values (the server refuses it when the wire changed meanwhile). The size is a pick from «Сечения AWG ↔ мм²»,
+  // the temperature is typed as «−60 … +200». A wire not parsed yet is set up in its window.
+  const writeHookup = async (row: CableRow, change: Partial<HookupPayload>) => {
+    const old = hookupPayload(row.hookup);
+    try {
+      await referencesApi.saveHookup(row.record!.id, { ...old, ...change, old });
+    } catch (reason) { throw cellFailure(reason); }
+  };
+  const parsed = (row: CableRow) => Boolean(row.hookup && row.record);
+  const hookupEdit = (key: "series" | "outer_d_mm" | "insulation" | "voltage_v"): DataCellEdit<CableRow> | undefined => canEdit ? {
+    enabled: parsed,
+    value: (row) => hookupPayload(row.hookup)[key],
+    save: (row, value) => writeHookup(row, { [key]: value }),
+  } : undefined;
+  const sizes = useMemo(() => [...gauges].sort((a, b) => a.section_mm2 - b.section_mm2), [gauges]);
+  const gaugeEdit = (by: "awg" | "section"): DataCellEdit<CableRow> | undefined => canEdit ? {
+    enabled: parsed,
+    value: (row) => row.hookup?.gauge_id ?? "",
+    // AWG is typed or pasted as «22» / «22 AWG», the section as «0,35» / «0.35».
+    options: () => sizes.map((gauge) => ({
+      value: gauge.id, label: gaugeOption(gauge),
+      aliases: by === "awg" ? (gauge.awg ? [gauge.awg, `${gauge.awg} AWG`, `AWG ${gauge.awg}`] : [])
+        : [num(gauge.section_mm2), String(gauge.section_mm2), `${num(gauge.section_mm2)} мм²`],
+    })),
+    save: (row, value) => writeHookup(row, { gauge_id: value }),
+  } : undefined;
+  const tempEdit: DataCellEdit<CableRow> | undefined = canEdit ? {
+    enabled: parsed,
+    value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "",
+    save: (row, value) => {
+      const { min, max } = parseTempRange(value);
+      return writeHookup(row, { temp_min_c: min, temp_max_c: max });
+    },
+  } : undefined;
+  const base: DataColumn<CableRow>[] = [
+    { key: "cable", title: "Марка провода", value: (row) => row.cable, render: (row) => <>
+      <strong>{row.cable}</strong>
+      {!row.hookup && <> <span className="tone-warn" title={row.hookup_problem || "Жила не выбрана из таблицы сечений"}>не разобран</span></>}
+    </> },
+    // The series is the group header (owner 16.10: «серию исключить») — kept in «Колонки», hidden.
     {
-      key: "series", title: "Серия", value: (row) => row.hookup?.series ?? "",
+      key: "series", title: "Серия", hidden: true, value: (row) => row.hookup?.series ?? "", edit: hookupEdit("series"),
       render: (row) => row.hookup ? row.hookup.series : <span className="tone-warn" title={row.hookup_problem || "Жила не выбрана из таблицы сечений"}>не разобран</span>,
     },
-    { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "" },
-    { key: "section", title: "Сечение, мм²", numeric: true, value: (row) => gaugeOf(row)?.section_mm2 ?? "", render: (row) => num(gaugeOf(row)?.section_mm2) },
-    { key: "core", title: "Ø жилы, мм", numeric: true, value: (row) => gaugeOf(row)?.conductor_d_mm ?? "", render: (row) => num(gaugeOf(row)?.conductor_d_mm) },
-    { key: "strands", title: "Скрутка", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span> },
-    { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm) },
-    { key: "insulation", title: "Изоляция", value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? "") },
-    { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "" },
-    { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
-    { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => <WireColors text={field(row, "Цвета")} /> },
-    ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
-      key: name, title: name, value: (row) => field(row, name), hidden: true, render: (row) => clip(field(row, name)),
+    { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "", edit: gaugeEdit("awg") },
+    { key: "section", title: "Сечение, мм²", numeric: true, value: (row) => gaugeOf(row)?.section_mm2 ?? "", render: (row) => num(gaugeOf(row)?.section_mm2), edit: gaugeEdit("section") },
+    // Ø жилы is the size row's (it changes with the size, or in «Сечения AWG ↔ мм²» for every wire of that size).
+    { key: "core", title: "Ø жилы, мм", numeric: true, computed: true, hint: "По сечению — правится в «Сечения AWG ↔ мм²»", value: (row) => gaugeOf(row)?.conductor_d_mm ?? "", render: (row) => num(gaugeOf(row)?.conductor_d_mm) },
+    { key: "strands", title: "Структура жилы", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
+      edit: canEdit ? fieldCellEdit<CableRow>(STRANDS, (row) => row.record) : undefined },
+    { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm), edit: hookupEdit("outer_d_mm") },
+    { key: "insulation", title: "Изоляция", hidden: true, value: (row) => row.hookup?.insulation ?? "", render: (row) => clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
+    { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
+    { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", edit: tempEdit },
+    // Colours as dots; typed as text («красный, синий») they go by the palette, the picker stays in the wire's window.
+    { key: "colors", title: "Цвета", value: (row) => field(row, COLORS), render: (row) => <WireColors text={field(row, COLORS)} />,
+      edit: canEdit ? fieldCellEdit<CableRow>(COLORS, (row) => row.record, own.includes(COLORS), normalizeColors) : undefined },
+    ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name) && !COAX_ONLY.has(name)).map((name): DataColumn<CableRow> => ({
+      key: name, title: name, value: (row) => field(row, name), hidden: !WIRE_SHOWN.has(name) && (!own.includes(name) || OTHER_LISTS.has(name)),
+      // The series' common jacket material is in the group header (owner 15.10: «Изоляция» — a rudiment).
+      render: (row) => name === JACKET_MATERIAL && sharedOf(row)?.jacket ? null : name === LINK ? supplierLink(row) : clip(field(row, name)),
+      // «Тип провода» is free text as in the window; the list a wire is in — the «Вкладка» cell.
+      edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldCellEdit<CableRow>(name, (row) => row.record),
+      remove: own.includes(name) ? removeColumn?.(name) : undefined,
     })),
-    { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
+    kindColumn(canEdit, onSaved),
+    { key: "__reason", title: "Почему здесь", computed: true, value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
+  // The materials right after «Ø наружный» (owner 16.10: «материалы после наружного диаметра»); the supply columns
+  // together, in the order of the coax lists.
+  const materials = base.filter((column) => column.key === CORE_MATERIAL || column.key === JACKET_MATERIAL);
+  const supply = SUPPLY.map((name) => base.find((column) => column.key === name)).filter((column): column is DataColumn<CableRow> => Boolean(column));
+  const rest = base.filter((column) => !materials.includes(column) && !supply.includes(column));
+  const outer = rest.findIndex((column) => column.key === "outer");
+  const tail = rest.findIndex((column) => column.key === "__kind");
+  const after = tail < 0 ? rest.length : tail;
+  const columns = [...rest.slice(0, outer + 1), ...materials, ...rest.slice(outer + 1, after), ...supply, ...rest.slice(after)];
   const detail = (row: CableRow) => canEdit
     ? <HookupEditor key={`${row.id}:${JSON.stringify(row.hookup ?? null)}:${JSON.stringify(row.record?.fields ?? {})}:${row.kind}`}
       row={row} columns={data.columns} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
@@ -237,12 +374,20 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       rows={rows}
       columns={columns}
       rowKey={(row) => row.id}
-      storageKey="db:cables:wire-structured"
+      rowLabel={(row) => row.cable}
+      storageKey="db:cables:wire-structured:4"
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
+      groupSort
+      pageSize={Infinity}
       exportName="Монтажные провода"
       renderDetail={detail}
-      presets={unparsed ? [{ label: "Не разобраны", test: (row) => !row.hookup }] : undefined}
+      presets={[
+        ...(unparsed ? [{ label: "Не разобраны", test: (row: CableRow) => !row.hookup }] : []),
+        { label: "Без Ø", test: (row: CableRow) => row.hookup?.outer_d_mm === null || row.hookup?.outer_d_mm === undefined },
+        { label: "Без цветов", test: (row: CableRow) => !field(row, "Цвета").trim() },
+      ].filter((preset) => rows.some(preset.test))}
+      onEdited={() => onSaved("")}
       emptyText="Монтажных проводов нет — добавьте провод."
       toolbar={<>{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Провод</button>}</>}
     />
@@ -261,11 +406,11 @@ const COLORS = "Цвета";
 const STRANDS = "Жила: проволок × диаметр, мм";
 // Short labels of the form; the cell keeps its column name.
 const CELL_LABELS: Record<string, string> = {
-  [STRANDS]: "Скрутка: проволок × Ø, мм", "Цена посл., ₽/м без НДС": "Цена посл., ₽/м", "Ссылка на datasheet": "Datasheet",
+  [STRANDS]: "Структура жилы: проволок × Ø, мм", "Цена посл., ₽/м без НДС": "Цена посл., ₽/м", "Ссылка на datasheet": "Datasheet",
   "Источник данных": "Источник", "Волновое сопротивление, Ом": "Волновое, Ом", [STANDARD]: "Стандарт (ГОСТ / ТУ / UL)",
   "Сечение, мм2": "Сечение, мм²",
 };
-const SECTION_CELLS = [[MARK, TYPE, "Число жил", STRANDS], ["Ток, А"], ["Экран", "Волновое сопротивление, Ом", "Масса, г/м"],
+const SECTION_CELLS = [[MARK, TYPE, "Число жил", STRANDS], [CORE_MATERIAL, JACKET_MATERIAL, "Ток, А"], ["Экран", "Волновое сопротивление, Ом", "Масса, г/м"],
   ["Поставщик", "Цена посл., ₽/м без НДС", "Закупок", "Ссылка на datasheet", "Источник данных"]];
 
 function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSelect, seriesColors, makerNames }: {
@@ -321,6 +466,10 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
     <input aria-label={label} inputMode={decimal ? "decimal" : undefined} value={wire[name]} onChange={(event) => setWire({ ...wire, [name]: event.target.value })} />
   </label>;
   const setCell = (name: string, value: string) => setFields({ ...fields, [name]: value });
+  // The materials are own БД.ПРОВ columns: a wire without a value has no such cell yet, the form still offers it.
+  const material = (name: string) => (name in fields || columns.includes(name)) && <label key={name}><small>{name}</small>
+    <input aria-label={name} value={fields[name] ?? ""} onChange={(event) => setCell(name, event.target.value)} />
+  </label>;
   const cell = (name: string) => name in fields && <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{CELL_LABELS[name] ?? name}</small>
     <input aria-label={CELL_LABELS[name] ?? name} value={fields[name] ?? ""} onChange={(event) => setCell(name, event.target.value)} />
   </label>;
@@ -344,9 +493,10 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
         {input("outer_d_mm", "Ø наружный, мм", true)}
       </div>
     </section>
-    <section className="form-section"><h4>Изоляция и режим</h4>
+    <section className="form-section"><h4>Материалы и режим</h4>
       <div className="cable-form">
-        {input("insulation", "Изоляция")}
+        {material(CORE_MATERIAL)}
+        {material(JACKET_MATERIAL)}
         {input("voltage_v", "Напряжение, В", true)}
         {input("temp_min_c", "Темп. от, °C", true)}
         {input("temp_max_c", "Темп. до, °C", true)}
@@ -389,12 +539,6 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
 
 // --- «Коаксиальные кабели»: the card ---
 
-const PARAM_LABELS: Array<[CoaxParam, string, string]> = [
-  ["impedance_ohm", "Волновое сопротивление", "Ом"], ["velocity_pct", "Коэф. укорочения", "%"],
-  ["capacitance_pf_m", "Погонная ёмкость", "пФ/м"], ["shielding_db", "Экранировка", "дБ"],
-  ["bend_static_mm", "Радиус изгиба, неподвижно", "мм"], ["bend_dynamic_mm", "Радиус изгиба, многократно", "мм"],
-  ["voltage_max_v", "Напряжение, макс.", "В"], ["max_power_w", "Мощность, макс.", "Вт"], ["weight_g_m", "Масса", "г/м"],
-];
 const KIND_LABELS: Record<string, string> = { nominal: "ном.", typical: "тип.", max: "макс." };
 const CONFIDENCE_TONE: Record<string, string> = { высокая: "tone-ok", средняя: "tone-ok", низкая: "tone-warn" };
 
@@ -415,7 +559,10 @@ const sourceName = (source: string): string => {
   try { return new URL(source).hostname.replace(/^www\./, ""); } catch { return source; }
 };
 
-export function CoaxCardView({ card, exact }: { card: CoaxCard; exact: boolean }) {
+/** The card of a coax cable holds only what the VNA check needs (owner 19.10.2026: «внутри карточки оставляем только
+    параметры для векторника, ну и совместимые разъёмы»): header, markers, the source's attenuation, notes, sources.
+    Construction and parameters are table columns; `aside` — the row's compatible connectors, next to the markers. */
+export function CoaxCardView({ card, exact, aside, compact = false }: { card: CoaxCard; exact: boolean; aside?: ReactNode; compact?: boolean }) {
   // dB/m at a marker: a published point first (typical / nominal, then max), else the interpolated one.
   const lossAt = (mhz: number | null) => {
     const points = card.attenuation.filter((point) => point.freq_mhz === mhz);
@@ -425,7 +572,6 @@ export function CoaxCardView({ card, exact }: { card: CoaxCard; exact: boolean }
   const onMarkers = new Set(card.markers.map((marker) => marker.freq_mhz));
   const datasheet = card.attenuation.some((point) => point.unit !== "dB/m" || point.kind === "max" || point.interpolated || !onMarkers.has(point.freq_mhz));
   const temp = range(card.params.temp_min_c ?? null, card.params.temp_max_c ?? null);
-  const params = PARAM_LABELS.filter(([key]) => card.params[key] !== undefined);
   const lossTemp = card.attenuation.find((point) => point.temp_c !== null)?.temp_c ?? null;
   const hasReference = card.markers.some((marker) => marker.vswr_ref !== null);
   const hasEstimate = card.markers.some((marker) => lossAt(marker.freq_mhz)?.interpolated);
@@ -446,34 +592,18 @@ export function CoaxCardView({ card, exact }: { card: CoaxCard; exact: boolean }
   return <section className="coax-card" aria-label={`Карточка кабеля ${card.name}`}>
     <header className="coax-card-head">
       <div className="coax-title">
-        <h3>{card.name}{!exact && <small> — карточка семейства</small>}</h3>
-        {card.family && <span className="coax-desc">{ruDecimals(card.family)}</span>}
+        {compact
+          ? !exact && <h3><small>Карточка семейства {card.name}</small></h3> // the window above already names the cable and its family
+          : <h3>{card.name}{!exact && <small> — карточка семейства</small>}</h3>}
+        {!compact && card.family && <span className="coax-desc">{ruDecimals(card.family)}</span>}
         <span className={`coax-flag ${card.verified ? CONFIDENCE_TONE[card.confidence] ?? "tone-ok" : "tone-warn"}`}>{flag}</span>
       </div>
-      <dl className="coax-facts">{facts.filter(([, value]) => value).map(([label, value, note]) => <div key={label} title={note}>
+      {!compact && <dl className="coax-facts">{facts.filter(([, value]) => value).map(([label, value, note]) => <div key={label} title={note}>
         <dt>{label}</dt><dd>{value}</dd>
-      </div>)}</dl>
+      </div>)}</dl>}
     </header>
     {card.span_note && <p className="coax-note">Диапазон: {ruDecimals(card.span_note)}</p>}
     <div className="coax-grid">
-      <div className="coax-col">
-        {card.layers.length > 0 && <table className="coax-mini" aria-label="Конструкция">
-          <caption>Конструкция</caption>
-          <thead><tr><th>Слой</th><th>Материал</th><th className="num">Ø, мм</th></tr></thead>
-          <tbody>{card.layers.map((layer) => <tr key={layer.layer}>
-            <td>{layer.label}</td><td className="wrap">{layer.material ? ruDecimals(layer.material) : "—"}</td><td className="num">{num(layer.diameter_mm) || "—"}</td>
-          </tr>)}</tbody>
-        </table>}
-        {card.connectors.length > 0 && <table className="coax-mini" aria-label="Разъёмы">
-          <caption>Разъёмы</caption>
-          <thead><tr><th>Разъём</th><th>Предел разъёма</th><th>Диапазон сборки</th></tr></thead>
-          <tbody>{card.connectors.map((connector) => <tr key={connector.family}>
-            <td className="wrap">{connector.family}</td>
-            <td className="wrap" title={connector.max_note ? ruDecimals(connector.max_note) : undefined}>{connector.max_ghz !== null ? `до ${num(connector.max_ghz)} ГГц` : connector.max_note ? ruDecimals(connector.max_note) : "—"}</td>
-            <td>{connector.span_to_ghz !== null ? <strong>до {num(connector.span_to_ghz)} ГГц</strong> : <span className="muted">как у кабеля</span>}</td>
-          </tr>)}</tbody>
-        </table>}
-      </div>
       <div className="coax-col">
         <table className="coax-mini" aria-label="Маркеры VNA">
           <caption>Маркеры VNA <small>КСВН — норма приёмки (предложено)</small></caption>
@@ -494,16 +624,7 @@ export function CoaxCardView({ card, exact }: { card: CoaxCard; exact: boolean }
         </table>
         {hasEstimate && <p className="coax-legend">≈ — в источнике нет точки на этой частоте: значение посчитано между соседними точками таблицы или по аппроксимации.</p>}
       </div>
-      {params.length > 0 && <div className="coax-col">
-        <table className="coax-mini" aria-label="Параметры кабеля">
-          <caption>Параметры</caption>
-          <tbody>{params.map(([key, label, unit]) => <tr key={key} title={card.param_notes[key] ? ruDecimals(card.param_notes[key]) : undefined}>
-            <th scope="row">{label}</th>
-            <td className="num">{num(card.params[key])} <span className="muted">{unit}</span>{key === "max_power_w" && card.params.max_power_at_mhz !== undefined ? ` на ${freq(card.params.max_power_at_mhz)}` : ""}</td>
-          </tr>)}</tbody>
-        </table>
-        {card.param_notes.mechanical && <p className="coax-legend">{ruDecimals(card.param_notes.mechanical)}</p>}
-      </div>}
+      {aside && <div className="coax-col">{aside}</div>}
     </div>
     {datasheet && <div className="coax-wide"><table className="coax-mini coax-datasheet" aria-label="Затухание по источнику">
       <caption>Затухание по источнику</caption>

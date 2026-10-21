@@ -29,7 +29,7 @@ from enum import Enum
 from hashlib import sha256
 import json
 from typing import Any, Mapping, Sequence
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
@@ -37,7 +37,6 @@ from app.shared.project_number import normalize_project_number
 
 from .application import (
     DuplicateLaunch,
-    LaunchProductionCommand,
     UnitOfWork,
     _busy,
     _progress,
@@ -49,7 +48,6 @@ from .application import (
 from .autoplan import (
     AUTOPLAN_MARK,
     AUTOPLAN_SITE,
-    NEW_TASK_PREFIX,
     AutoplanInput,
     AutoplanResult,
     Batch,
@@ -60,10 +58,21 @@ from .autoplan import (
     operation_keys,
     plan,
 )
+# Будущее задание КБ и его запуск — общие с доской мастера (board.py).
+from .board import (
+    NO_RUN_REASON,
+    CardSnapshot,
+    NewTask,
+    Skipped,
+    card_key,
+    future_task as _new_task,
+    launch_command as _launch_command,
+    unlaunched_cards as _ready_unlaunched,
+)
 from .dispatch import localize
 from .domain import ProductionStatus, ProductionTask, ProductionValidationError
-from .launchable import ReadyCard, launch_operations, stage_name
-from .plan import kit_stage_key
+from .launchable import ReadyCard, stage_name
+from .machine_load import MachineStep, task_steps
 from .scheduling import work_seconds_between
 
 # Дальше восьми недель автоплан не заглядывает (владелец, 12.10: «capped at a sane maximum»).
@@ -72,9 +81,6 @@ MAX_HORIZON_DAYS = 56
 DEFAULT_CONTEXT_DAYS = 7
 # Начало расчёта округляется вверх до четверти часа: предпросмотр и применение через минуту дают один и тот же план.
 _ROUND_MINUTES = 15
-NO_RUN_REASON = "Нет тиража — запустите через «+ Запустить задание»"
-# Идентификаторы будущих заданий в предпросмотре: стабильные от техкарты, чтобы применение узнало тот же план.
-_NEW_TASK_NAMESPACE = UUID("6f1c2a52-9a43-4f0e-9d6b-5a0e8f6c7b31")
 
 
 class AutoplanForbidden(PermissionError):
@@ -88,18 +94,6 @@ class StaleAutoplan(RuntimeError):
 class AutoplanMode(str, Enum):
     SHOP = "shop"  # «Весь цех»
     PROJECT = "project"  # «По проекту»
-
-
-@dataclass(frozen=True)
-class CardSnapshot:
-    """Текущая выданная техкарта позиции: её документ — источник ключей наладки."""
-    id: UUID
-    version: int
-    document: Mapping[str, Any] | None
-
-
-def card_key(project: str, index: str) -> tuple[str, str]:
-    return (" ".join(str(project or "").split()).casefold(), " ".join(str(index or "").split()).casefold())
 
 
 @dataclass(frozen=True)
@@ -118,20 +112,6 @@ class ApplyAutoplanCommand:
     plan: AutoplanCommand  # тот же запрос, что в предпросмотре: он входит в отпечаток
     items: tuple[tuple[UUID, UUID, UUID], ...]  # (задание, операция, монтажник) — подмножество предпросмотра
     fingerprint: str
-
-
-@dataclass(frozen=True)
-class NewTask:
-    """Будущее задание КБ в расчёте: выданная техкарта и задание, каким его создаст применение."""
-    card: ReadyCard
-    task: ProductionTask
-
-
-@dataclass(frozen=True)
-class Skipped:
-    """КБ к запуску, которую автоплан не может взять сам (нет тиража, маршрут не собрался)."""
-    card: ReadyCard
-    reason: str
 
 
 @dataclass(frozen=True)
@@ -197,37 +177,6 @@ def _fingerprint(payload: dict) -> str:
     return sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
 
 
-def _new_task(card: ReadyCard, quantity: int, actor: Actor, now: datetime) -> ProductionTask:
-    """Задание, каким его создаст запуск по техкарте, со стабильными id (от техкарты и номера этапа)."""
-    task_id = uuid5(_NEW_TASK_NAMESPACE, f"{card.techcard_id}:{card.version}")
-    operations = launch_operations(card.route.steps, quantity)
-    ids = {operation.id: uuid5(task_id, str(operation.position)) for operation in operations}
-    operations = tuple(replace(
-        operation, id=ids[operation.id],
-        inputs=tuple(replace(edge, input_operation_id=ids[edge.input_operation_id]) for edge in operation.inputs),
-    ) for operation in operations)
-    task = ProductionTask.create(
-        number=f"{NEW_TASK_PREFIX}{card.project} {card.index}", source_idempotency_key="autoplan",
-        source_fingerprint="preview", project=card.project, item=card.index, name=card.name, quantity=quantity,
-        fulfillment_request_id=None, deadline=card.deadline, launched_by=actor.name, operations=operations,
-        created_at=now, techcard_id=card.techcard_id, techcard_revision=card.revision if card.revision >= 1 else None,
-    )
-    return replace(task, id=task_id)
-
-
-def _launch_command(
-    card: ReadyCard, quantity: int, key: str, actor: Actor, now: datetime, seen_launch_seq: int,
-) -> LaunchProductionCommand:
-    """Тот же запуск, что «Создать задание» на доске: весь тираж, срок техкарты, без комплекта; номер запуска КБ —
-    следующий после того, что автоплан видел до расчёта."""
-    return LaunchProductionCommand(
-        idempotency_key=key, project=card.project, item=card.index, name=card.name, quantity=quantity,
-        fulfillment_request_id=None, deadline=card.deadline, operations=launch_operations(card.route.steps, quantity),
-        actor=actor, now=now, techcard_id=card.techcard_id,
-        techcard_revision=card.revision if card.revision >= 1 else None, seen_launch_seq=seen_launch_seq,
-    )
-
-
 @dataclass(frozen=True)
 class _Scope:
     """Что входит в расчёт: запущенные задания, будущие задания КБ, пропущенные КБ и люди."""
@@ -245,25 +194,6 @@ class _Scope:
 
 def _in_project(command: AutoplanCommand, project: str) -> bool:
     return command.mode is AutoplanMode.SHOP or normalize_project_number(project) == normalize_project_number(command.project)
-
-
-def _ready_unlaunched(
-    uow: UnitOfWork, stored: Sequence[ProductionTask], ready: Sequence[ReadyCard],
-    cards: Mapping[tuple[str, str], CardSnapshot],
-) -> list[ReadyCard]:
-    """КБ с выданной техкартой, по которым нет ни одного задания (кроме отменённых): как «к запуску» на доске."""
-    done = uow.production.with_status(ProductionStatus.DONE)
-    launched = {kit_stage_key(task.project, task.item) for task in (*stored, *done)}
-    groups: dict[str, list[ReadyCard]] = {}
-    for card in ready:
-        if card.key not in launched:
-            groups.setdefault(card.key, []).append(card)
-    result: list[ReadyCard] = []
-    for group in groups.values():
-        # Две выданные техкарты одной КБ — берём текущую (последнюю выданную), как ключи наладки.
-        current = cards.get(card_key(group[0].project, group[0].index))
-        result.append(next((card for card in group if current is not None and card.techcard_id == current.id), group[-1]))
-    return sorted(result, key=lambda item: (item.project, item.index))
 
 
 def _scope(
@@ -378,6 +308,7 @@ def _prepare(
     holidays = uow.calendar.holidays()
     shift = _shift(uow.calendar)
     keys: dict[UUID, SetupKey] = {}
+    steps: dict[UUID, tuple[MachineStep, ...]] = {}
     used_cards: dict[str, int] = {}
     free_tasks = {task.id for task in planned_tasks if any(operation.id in free for operation in task.operations)}
     for task in planned_tasks:
@@ -389,17 +320,19 @@ def _prepare(
             used_cards[str(card.id)] = card.version
         task_keys, task_warnings = operation_keys(task, card.document if card is not None else None)
         keys.update(task_keys)
+        # Станки по операциям ЭТК; код, разошедшийся с техкартой, уже в предупреждениях наладки.
+        steps.update(task_steps(task, card.document if card is not None else None)[0])
         if task.id in free_tasks:
             warnings.extend(task_warnings)
-    machines = sorted({key.machine for key in keys.values() if key.limited})
+    machines = machine_names(keys, steps)
     capacity = {machine: max(1, int(units.get(machine, 0)) or 1) for machine in machines}
-    needed = {keys[operation_id].machine for operation_id in free if keys[operation_id].limited}
+    needed = machine_names({item: keys[item] for item in free}, {item: steps[item] for item in free if item in steps})
     for machine in machines:
         if machine in needed and machine not in units:
             warnings.append(f"Станок {machine} не найден в БД.ОБ — считаю, что он один")
     data = AutoplanInput(
         tasks=planned_tasks, free=frozenset(free), keys=keys, team=team, skills=skills, busy=busy,
-        capacity=capacity, start=start, end=end, holidays=holidays, shift=shift,
+        capacity=capacity, start=start, end=end, holidays=holidays, shift=shift, steps=steps,
     )
     result = plan(data)
     fingerprint = _fingerprint({
@@ -434,6 +367,14 @@ def _prepare(
         batches=batches(result.placements),
         period=(start, _last_day(command, start, end, result.placements, [*scope.eligible, *(item.task for item in scope.new_tasks.values())])),
         scope=(len([task for task in scope.eligible if task.id in free_tasks]), len(scope.new_tasks), len(team)),
+    )
+
+
+def machine_names(keys: Mapping[UUID, SetupKey], steps: Mapping[UUID, Sequence[MachineStep]]) -> list[str]:
+    """Учётные станки работы: каждой операции ЭТК со станком, у операции без шагов — станок ключа наладки."""
+    return sorted(
+        {step.machine for own in steps.values() for step in own}
+        | {key.machine for operation_id, key in keys.items() if key.limited and operation_id not in steps}
     )
 
 

@@ -7,11 +7,17 @@ import tailsSample from "../../backend/tests/techcards/harness_generated_tails_s
 import { pinoutEnds, pinoutRecord, pinUnits, restorePinout, routingWarnings } from "./pinoutCheck";
 import { linkLayout } from "./PinoutLinks";
 import { assignPinJoined, leaveJoin, linkWires, setTail, spliceLabel } from "./tcGenSplices";
-import { complexByHand, initState, makeGen, updateEndpoint, type GenData, type GenState } from "./tcGenLogic";
-import { BARE, D, end, harness, id, R } from "./tcGenRealHarness.fixture";
+import { complexByHand, initState, makeGen, setTailMode, updateEndpoint, type GenData, type GenState } from "./tcGenLogic";
+import { BARE, D, DSA, end, fullHarness, harness, id, R } from "./tcGenRealHarness.fixture";
 
 // Чертёж заказчика «Жгут НВ4» (tcGenRealHarness.fixture.ts) — набран руками через генератор.
 const termOf = (data: GenData, S: GenState) => S.endpoints.map((e) => `${e.label || e.id}:${makeGen(data, S).getCompById(e.termId)?.art ?? "—"}`);
+
+it("a cable split over two connectors of one side (one core to each, pins assigned) gets no «соединения по порядку» warning", () => {
+  const S = harness(D), gen = makeGen(D, S);
+  expect(gen.connections_().warnings).toEqual([]);
+  expect(gen.validate().warnings.filter((w) => w.includes("соединения по порядку"))).toEqual([]);
+});
 
 it("a new «Сложная сборка» card starts with no wire configuration: no cables, lengths or twist picked by the generator", () => {
   expect(initState(D).wires.length).toBeGreaterThan(1);
@@ -55,8 +61,11 @@ it("rebuilds the drawing: every contact, four splices, four tails — nothing le
   expect(S.spl).toMatchObject({ enabled: true, count: "4", wires: "4,4,3,3" });
   expect(gen.freeEnds_()).toBe(4);
   const labels = gen.getActiveOps().map((o) => o.label);
-  expect(labels).toContain("Сростки — 4 шт по 4, 4, 3, 3 провода");
-  expect(labels).toContain("Зачистка концов под сростки — 14 конц.");
+  // Новая форма — опрессовка гильзой (владелец 16.10: «основа это обжим»); гильз в этом составе нет. Сростки — группами по
+  // разъёмам А, с которых приходят провода; концы под сростки зачищает станок резки (отдельной зачистки нет).
+  expect(labels).toEqual(expect.arrayContaining(["Сростки С1, С2 опрессовкой гильзой — 2 шт по 4 провода",
+    "Сростки С3, С4 опрессовкой гильзой — 2 шт по 3 провода"]));
+  expect(labels.some((label) => label.startsWith("Зачистка концов под сростки"))).toBe(false);
 });
 
 it("cuts each segment by its own drawing length plus L+ of the terminal at its crimped ends (a splice or tail end adds nothing)", () => {
@@ -156,4 +165,23 @@ it("the editor model keeps an open end: one per wire, parsed back with its point
   expect(parsed.wires.find((w) => w.id === tail.id)!.to).toEqual(tail.to);
   const both = { ...drawing.document, wires: drawing.document.wires.map((w) => (w.id === tail.id ? { ...w, from: createFreeEndpoint({ x: 0, y: 0 }) } : w)) };
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(both)))).toThrow(/только один конец/);
+});
+
+it("the drawing strips each splice end 5 mm and each tinned tail 3 mm — as the cut machine does (713К.4, owner 17.10)", () => {
+  const ends = (S: GenState) => {
+    const plan = planFromGenerator(DSA, S);
+    const doc = parseHarnessDesignDocument(JSON.parse(JSON.stringify(buildHarnessDocument(plan, freeSources(plan)).document)));
+    return doc.wires.flatMap((w) => (["from", "to"] as const).map((side) => {
+      const at = w[side], profile = w.stripProfiles?.[side];
+      const kind = isJunctionEndpoint(at) ? "сросток" : isFreeEndpoint(at) ? "хвост" : "контакт";
+      return `${kind}:${profile ? `${profile.displayName}/${profile.layers.map((l) => `L${l.index}=${l.stripLengthMm}`).join(",")}` : "—"}`;
+    }));
+  };
+  const count = (list: string[]) => list.reduce<Record<string, number>>((acc, x) => ({ ...acc, [x]: (acc[x] || 0) + 1 }), {});
+  // Четыре сростка (4+4+3+3 провода) — 14 концов по 5 мм; хвосты облужены — 4 конца по 3 мм; на контактах — без профиля.
+  const S = fullHarness();
+  expect(count(ends(S))).toEqual({ "сросток:Зачистка под сросток 5 мм/L1=5": 14, "хвост:Зачистка хвоста 3 мм/L1=3": 4, "контакт:—": 16 });
+  // Своя длина в форме — на чертеже она; хвосты под трубку (без лужения) не зачищаются.
+  const own = { ...setTailMode(S, "cap"), spl: { ...S.spl, strip: "4" } };
+  expect(count(ends(own))).toEqual({ "сросток:Зачистка под сросток 4 мм/L1=4": 14, "хвост:—": 4, "контакт:—": 16 });
 });

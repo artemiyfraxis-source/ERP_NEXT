@@ -238,7 +238,7 @@ def test_master_launches_route_snapshot_assigns_multiple_people_and_preserves_ca
     assert task["number"] == "ПЗ-0001"
     assert (task["project"], task["item"], task["name"]) == ("591K.3", "КБ1", "Жгут")
     assert task["operations"][0]["code"] == "OP-01"
-    assert task["operations"][0]["norm_seconds"] == 720
+    assert task["operations"][0]["norm_seconds"] == 600  # 60 с × 10 шт., подготовка 120 с в плане не считается
     assert assigned.status_code == 200, assigned.text
     assert assigned_task["operations"][0]["operator_ids"] == [str(operator_id)]
     assert cancelled.status_code == 200, cancelled.text
@@ -367,6 +367,7 @@ def test_native_production_plan_combines_project_snapshot_techcard_task_and_jour
     }]
     assert row["deadline"] == "2026-09-30"
     assert row["days_left"] == 8
+    assert row["work_days_left"] == 6
     assert row["blocker"]["type"] == "СТОП"
     assert row["plan"] == {"tasks": 1, "assigned": 0, "total": 1, "start": None, "finish": None}
     assert [event["kind"] for event in row["events"]] == ["Дедлайн", "Блокер"]
@@ -576,6 +577,16 @@ def test_operator_corrects_returned_box_down_through_api(production_api):
     ).json()["session"]
     box = client.post(f"/api/production/work/{started['id']}/submit", json={"good_quantity": "10"}).json()["box"]
     app.dependency_overrides[authenticated_principal] = master
+    # Подтверждения мастером нет (13.10): маршрута /confirm нет, вернуть коробку мастер без правки «ОТК» не может.
+    assert client.post(f"/api/production/boxes/{box['id']}/confirm", json={"version": box["version"]}).status_code in (404, 405)
+    refused = client.post(
+        f"/api/production/boxes/{box['id']}/return", json={"version": box["version"], "reason": "Пересчитать"},
+    )
+    assert refused.status_code == 403
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=UUID("10000000-0000-0000-0000-000000000001"), name="Контролёр", department="ОТК"),
+        email="qc@example.test", roles=frozenset({"qc"}), permissions={"quality": "edit"},
+    )
     box = client.post(
         f"/api/production/boxes/{box['id']}/return", json={"version": box["version"], "reason": "Пересчитать"},
     ).json()["box"]
@@ -599,7 +610,7 @@ def test_operator_corrects_returned_box_down_through_api(production_api):
     assert corrected.json()["box"]["status"] == "Закрыта оператором"
     assert corrected.json()["output"]["correction_of_id"] == outputs.json()["outputs"][0]["id"]
     assert again.status_code == 422
-    assert "не возвращена мастером" in again.json()["detail"]
+    assert "не возвращена" in again.json()["detail"]
     assert [item["id"] for item in after.json()["outputs"]] == [corrected.json()["output"]["id"]]
 
 

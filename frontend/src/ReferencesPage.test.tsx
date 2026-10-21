@@ -1,7 +1,7 @@
 import { CRIMP_COLUMN_TITLE } from "./CrimpCell";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ReferencesPage } from "./ReferencesPage";
+import { ReferencesPage, visibleTabs, type DbTab } from "./ReferencesPage";
 import type { Principal } from "./api";
 
 const admin: Principal = {
@@ -25,6 +25,15 @@ function json(body: unknown) {
 
 afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); window.history.replaceState({}, "", "/"); });
 
+/** Правка ячейки как в листе: щелчок, Enter, ввод, Enter. */
+function typeInCell(cell: HTMLElement, value: string) {
+  fireEvent.click(cell);
+  fireEvent.keyDown(cell, { key: "Enter" });
+  const input = within(cell).getByRole("textbox");
+  fireEvent.change(input, { target: { value } });
+  fireEvent.keyDown(input, { key: "Enter" });
+}
+
 it("edits and atomically saves all reference maps", async () => {
   let payload: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -44,9 +53,12 @@ it("edits and atomically saves all reference maps", async () => {
   });
 
   render(<ReferencesPage principal={admin} initialTab="suppliers" />);
-  fireEvent.change(await screen.findByLabelText("Поставщик 1"), { target: { value: "Новый поставщик" } });
+  typeInCell((await screen.findByText("Поставщик", { selector: "td" })), "Новый поставщик");
+  await screen.findByText("Новый поставщик", { selector: "td" });
+  expect(screen.getByText("Есть несохранённые изменения")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Изготовитель → страна" }));
-  fireEvent.change(screen.getByLabelText("Страна 1"), { target: { value: "Китай" } });
+  typeInCell(await screen.findByText("Россия", { selector: "td" }), "Китай");
+  await screen.findByText("Китай", { selector: "td" });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить справочники" }));
 
   await waitFor(() => expect(payload).toEqual({
@@ -88,7 +100,9 @@ it("shows the versioned technology snapshot as a table of its own columns", asyn
   expect(screen.getByRole("columnheader", { name: "Артикул контакта" })).toBeInTheDocument();
   // «Операции» is the erptctpl tab; БД.ОБ / БД.ПРОВ / БД.МАТ are working bases (owner: «с оборудованием то же самое»).
   expect(screen.queryByRole("button", { name: /^Операции/ })).toBeNull();
-  for (const kept of [/^Оборудование/, /^Монтажные провода/, /^Прочие кабели/, /^Материалы/]) expect(screen.getByRole("button", { name: kept })).toBeInTheDocument();
+  // «Прочие кабели» shows while its count is unknown or not 0 (owner 15.10.2026); «Материалы» is dissolved into purpose tabs
+  for (const kept of [/^Оборудование/, /^Монтажные провода/, /^Прочие кабели/, /^Оболочки/, /^Расходники/]) expect(screen.getByRole("button", { name: kept })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Материалы/ })).toBeNull();
   expect(screen.queryByRole("button", { name: /^Провода и кабели/ })).toBeNull();
 });
 
@@ -223,12 +237,12 @@ it("lets the buyer edit supplier maps and shows no separate ГОСТ→AWG map (
   });
 
   render(<ReferencesPage principal={{ ...admin, roles: ["tech_lead"], access_level: "tech_lead", permissions: { erpref: "view", procurement: "edit" } }} initialTab="suppliers" />);
-  expect(await screen.findByLabelText("Поставщик 1")).toBeEnabled();
+  expect(await screen.findByText("Склад", { selector: "td" })).toHaveClass("dt-editable");
   expect(screen.queryByRole("button", { name: "ГОСТ → AWG" })).toBeNull();
   expect(screen.getByRole("button", { name: "Сохранить справочники" })).toBeInTheDocument();
 });
 
-it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them out of the edit form", async () => {
+it("shows no D1–D3 at the connectors (they are the cable's) and keeps them out of the edit form", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
@@ -248,10 +262,9 @@ it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them
   });
 
   render(<ReferencesPage principal={admin} initialTab="coax" />);
-  expect(await screen.findByText("1 · 2,95 · 3,5")).toBeInTheDocument(); // D of RG58, not the connector's own «9»
-  expect(screen.queryByText(/9 · 9/)).toBeNull();
-  expect(screen.getAllByText("нет у кабеля")).toHaveLength(1);
-  expect(screen.getByRole("columnheader", { name: "D1 · D2 · D3 кабеля" })).toBeInTheDocument();
+  expect(await screen.findByText("BNC-C58P")).toBeInTheDocument();
+  expect(screen.queryByText(/2,95/)).toBeNull(); // D кабеля в таблице разъёмов нет (владелец 17.10)
+  expect(screen.queryByRole("columnheader", { name: /D1/ })).toBeNull();
   // Строка открывает карточку разъёма, правка — кнопкой в ней.
   fireEvent.click(screen.getByText("BNC-C58P"));
   fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
@@ -284,7 +297,7 @@ it("shows БД.ОБ as cards by type with every column and the БД.ОП operati
   fireEvent.click(screen.getByText("ОБ.015"));
   expect(screen.getByText("900 000,00")).toBeInTheDocument();
   expect(screen.getByText("CUT_WIRE_auto")).toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: /^Править/ }).length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: /^Наименование: Автомат мерной резки — править/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Ещё такой же" })).toBeInTheDocument();
   expect(screen.queryByRole("columnheader", { name: "Код терминалов" })).toBeNull(); // only crimp tools and dies have terminal codes
 });
@@ -329,7 +342,7 @@ it("БД-1: terminals show Russian headers and «гнездо/штырь» inste
   expect(headers.join("|")).not.toMatch(/Product|Series|REEL|DATASHEET|, N/);
   // Обжим: по строке на сечение, сечение один раз; пустой обжим — одно «—»; «От/До AWG» — одна колонка «30–26».
   const crimpRows = Array.from(document.querySelectorAll(".crimp-row")).map((row) => row.textContent);
-  expect(crimpRows).toEqual(["28 AWG0,52–0,5810 Н", "26 AWG0,56–0,6220 Н"]);
+  expect(crimpRows).toEqual(["28 AWG0,52–0,58—10 Н", "26 AWG0,56–0,62—20 Н"]);
   expect(screen.getByText("30–26")).toBeInTheDocument();
   expect(headers).not.toContain("От AWG");
   // Female/Male → гнездо/штырь (значение в форме правки остаётся как на листе).
@@ -420,7 +433,7 @@ it("the new record form asks for the essentials first, proposes the inventory nu
   expect((posted[0].fields as Record<string, string>)["Инв. номер"]).toBe("ОБ.105");
 });
 
-it("БД.ОБ: the machine card is a side panel — the list stays, another row switches it, × and Esc close it, a reload reopens it", async () => {
+it("БД.ОБ: the machine card is a window — the list stays, another row switches it, × and Esc close it, a reload reopens it", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
@@ -435,64 +448,86 @@ it("БД.ОБ: the machine card is a side panel — the list stays, another row 
   window.history.replaceState({}, "", "/");
   const { unmount } = render(<ReferencesPage principal={admin} initialTab="ob" />);
   fireEvent.click(await screen.findByText("ОБ.010"));
-  const panel = screen.getByRole("complementary", { name: "Карточка оборудования" });
-  expect(within(panel).getByText("Станция паяльная")).toBeInTheDocument();
+  const panel = screen.getByRole("dialog", { name: "Карточка оборудования" });
+  expect(within(panel).getAllByText("Станция паяльная").length).toBeGreaterThan(0);
   expect(within(panel).getByText("8620DX-Pro · SUGON · Оборудование · ЦАР")).toBeInTheDocument();
   expect(within(panel).getByText("расчёт")).toBeInTheDocument(); // окупаемость is derived
   expect(screen.getByText("Блок питания")).toBeInTheDocument(); // the list is still there
   expect(window.location.search).toContain("equipment=a1");
 
   fireEvent.click(screen.getByText("Блок питания"));
-  expect(within(screen.getByRole("complementary", { name: "Карточка оборудования" })).getByText("APS3010H · Оборудование")).toBeInTheDocument();
+  expect(within(screen.getByRole("dialog", { name: "Карточка оборудования" })).getByText("APS3010H · Оборудование")).toBeInTheDocument();
   expect(window.location.search).toContain("equipment=b1");
 
-  fireEvent.keyDown(document, { key: "Escape" });
-  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Карточка оборудования" }), { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "Карточка оборудования" })).toBeNull();
   expect(window.location.search).not.toContain("equipment");
   expect(screen.getByText("ОБ.010")).toBeInTheDocument();
 
   fireEvent.click(screen.getByText("ОБ.010"));
   fireEvent.click(screen.getByRole("button", { name: "Закрыть карточку" }));
-  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Карточка оборудования" })).toBeNull();
 
   fireEvent.click(screen.getByText("ОБ.010"));
   unmount();
   render(<ReferencesPage principal={admin} initialTab="ob" />);
-  expect(await screen.findByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
+  expect(await screen.findByRole("dialog", { name: "Карточка оборудования" })).toBeInTheDocument();
   window.history.replaceState({}, "", "/");
 });
 
-it("БД.ОБ: a picked row opens the edit form in the right panel, the list stays, saving patches the record and returns to the card", async () => {
-  const patched: Array<Record<string, unknown>> = [];
+it("БД.ОБ: a click on a value edits it in the card — a model value goes to every unit, a unit's place to that unit only; operations are only listed", async () => {
+  const patched: Array<{ id: string; edits: Array<{ field: string; old: string; value: string }> }> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     if (path === "/api/references/bases") return json({ bases: [] });
     if (path.includes("tab=ob")) return json({ metadata: null, records: [
-      { id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields("ОБ.010") },
-      { id: "b1", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.044", "Наменование": "Блок питания", "Для базы": "X/Блок питания" } },
+      { id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields("ОБ.010.1") },
+      { id: "a2", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields("ОБ.010.2") },
     ] });
-    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [
+      { id: "o1", tab: "op", display_text: "Усадка", source_sheet: "БД.ОП", fields: { opNumber: "HEAT_TYT_short", "Название": "Усадка", "Машина": "8620DX-Pro/Станция паяльная" } },
+    ] });
     if (path === "/api/references/tech-operations/crimp-codes") return json({ missing: [] });
-    if (path === "/api/references/tech-operations/a1" && init?.method === "PATCH") {
-      patched.push(JSON.parse(String(init.body)));
-      return json({ id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: {} });
+    const id = path.match(/tech-operations\/(a\d)$/)?.[1];
+    if (id && init?.method === "PATCH") {
+      patched.push({ id, ...JSON.parse(String(init.body)) });
+      return json({ id, tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: {} });
     }
     throw new Error(`Unexpected request: ${path}`);
   });
   window.history.replaceState({}, "", "/");
   render(<ReferencesPage principal={admin} initialTab="ob" />);
-  fireEvent.click(await screen.findByText("ОБ.010"));
-  fireEvent.click(within(screen.getByRole("complementary", { name: "Карточка оборудования" })).getByRole("button", { name: /^Править/ }));
-  const panel = screen.getByRole("complementary", { name: "Правка оборудования" });
-  expect(within(panel).getByLabelText("Артикул")).toHaveValue("8620DX-Pro");
-  expect(screen.getByText("Блок питания")).toBeInTheDocument(); // the list stays on the left
-  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
-  fireEvent.change(within(panel).getByLabelText("Артикул"), { target: { value: "9999" } });
-  fireEvent.click(within(panel).getByRole("button", { name: "Сохранить запись" }));
-  await waitFor(() => expect(patched).toHaveLength(1));
-  expect((patched[0].edits as Array<{ field: string; value: string }>).some((edit) => edit.field === "Артикул" && edit.value === "9999")).toBe(true);
-  await waitFor(() => expect(screen.queryByRole("complementary", { name: "Правка оборудования" })).toBeNull());
-  expect(screen.getByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
+  fireEvent.click(await screen.findByText("Станция паяльная"));
+  const card = screen.getByRole("dialog", { name: "Карточка оборудования" });
+  expect(within(card).queryByRole("button", { name: /^Править/ })).toBeNull(); // no separate edit form
+  expect(within(card).getByText("HEAT_TYT_short")).toBeInTheDocument();
+  expect(within(card).queryByLabelText("Найти операцию")).toBeNull(); // tied in the operation's card
+  expect(within(card).queryByRole("button", { name: /Отвязать/ })).toBeNull();
+
+  fireEvent.click(within(card).getByRole("button", { name: "Артикул: 8620DX-Pro — править" }));
+  const article = within(card).getByLabelText("Артикул");
+  fireEvent.change(article, { target: { value: "8620DX-Pro2" } });
+  fireEvent.keyDown(article, { key: "Enter" });
+  await waitFor(() => expect(patched).toHaveLength(2));
+  expect(patched.map((item) => item.id).sort()).toEqual(["a1", "a2"]);
+  expect(patched.every((item) => item.edits[0].field === "Артикул" && item.edits[0].old === "8620DX-Pro" && item.edits[0].value === "8620DX-Pro2")).toBe(true);
+
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Карточка оборудования" })).getByRole("button", { name: "Расположение ОБ.010.2: ЦАР — править" }));
+  const place = screen.getByLabelText("Расположение ОБ.010.2");
+  fireEvent.change(place, { target: { value: "ЖУК" } });
+  fireEvent.blur(place);
+  await waitFor(() => expect(patched).toHaveLength(3));
+  expect(patched[2]).toMatchObject({ id: "a2", edits: [{ field: "Расположение", old: "ЦАР", value: "ЖУК" }] });
   window.history.replaceState({}, "", "/");
+});
+
+
+it("hides «Прочие кабели» once it is empty (owner 15.10.2026: «закрыть»), keeps it while it has rows, is unknown or open", () => {
+  const tabs = [{ id: "cab_wire" as const }, { id: "cab_other" as const }];
+  const ids = (n: number | null, active: DbTab = "cab_wire") => visibleTabs(tabs, (tab) => (tab.id === "cab_other" ? n : 5), active).map((tab) => tab.id);
+  expect(ids(0)).toEqual(["cab_wire"]);
+  expect(ids(2)).toEqual(["cab_wire", "cab_other"]);
+  expect(ids(null)).toEqual(["cab_wire", "cab_other"]);
+  expect(ids(0, "cab_other")).toEqual(["cab_wire", "cab_other"]);
 });

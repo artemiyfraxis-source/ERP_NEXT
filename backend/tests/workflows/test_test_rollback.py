@@ -49,7 +49,7 @@ from app.modules.production.traceability import BoxStatus, MaterialInput
 from app.shared.clock import MOSCOW
 from app.shared.identity import Actor
 from app.shared.persistence import AuditEventRow, create_schema
-from app.workflows.test_rollback import RollbackError, parse_moment, run
+from app.workflows.test_rollback import RollbackError, make_scope, parse_moment, resolve_user, run
 
 OWNER = Actor(UUID("20000000-0000-0000-0000-000000000001"), "Артемий Васильев", "Администрация")
 ELINA = Actor(UUID("20000000-0000-0000-0000-000000000002"), "Богородская Элина", "Производство")
@@ -335,3 +335,21 @@ def test_a_manual_stage_change_by_the_tester_is_taken_back(shop):
     assert code == 0, text
     assert "Этап КБ 180К.11" in text
     assert [(row.who, row.value) for row in shop.rows(ProductionPlanEventRow)] == [(MASTER.name, "В работе")]
+
+
+def test_actor_email_selects_exactly_the_user_with_that_email(shop):
+    # Вася Пупкин — тестовая учётка с e-mail владельца; у «Артемия» тот же адрес стоит логином (не e-mail).
+    vasya = UUID("20000000-0000-0000-0000-000000000009")
+    with shop.sessions() as session:
+        session.add(IdentityUserRow(id=vasya, login="vasya", email="Artemiyfraxis@Gmail.com", name="Вася Пупкин", department="", role="staff", site="", active=True))
+        session.add(IdentityUserRow(id=UUID("20000000-0000-0000-0000-00000000000a"), login="artemiyfraxis@gmail.com", email="other@example.test", name="Артемий Иванов", department="", role="staff", site="", active=True))
+        session.commit()
+    with shop.sessions() as session:
+        assert resolve_user(session, " ARTEMIYFRAXIS@gmail.com ").id == vasya
+        assert resolve_user(session, "owner@example.test").id == OWNER.id
+        scope = make_scope(session, since=SINCE, until=UNTIL, actor="artemiyfraxis@gmail.com", employee=None)
+        assert scope.actor_ids == frozenset({vasya})
+        with pytest.raises(RollbackError, match="e-mail .* не найден"):
+            resolve_user(session, "nobody@example.test")
+        with pytest.raises(RollbackError, match="не найден"):
+            resolve_user(session, "other@example")  # часть адреса не подбирает чужого

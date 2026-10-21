@@ -44,7 +44,7 @@ const wireRow = (mark: string, fields: Record<string, string>) => ({
   hookup: { series: "ПВАМ", gauge_id: "g1", insulation: "", outer_d_mm: 2, voltage_v: 48, temp_min_c: -50, temp_max_c: 65 },
 });
 const data = {
-  columns: Object.keys(FIELDS), counts: { coax: 0, wire: 2, multi: 0, other: 0 }, gauges: [gauge],
+  columns: [...Object.keys(FIELDS), "Материал жилы", "Материал оболочки"], counts: { coax: 0, wire: 2, multi: 0, other: 0 }, gauges: [gauge],
   rows: [wireRow("ПВАМ 0,50", FIELDS), wireRow("ПВАМ 0,75", sibling)],
 } as unknown as Parameters<typeof HookupWireTable>[0]["data"];
 
@@ -58,12 +58,21 @@ function open() {
 
 it("shows the sections, the standard as one field and the makers as chips", () => {
   open();
-  for (const title of ["Основное", "Изоляция и режим", "Доп. параметры", "Закупка и источник"]) expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
+  for (const title of ["Основное", "Материалы и режим", "Доп. параметры", "Закупка и источник"]) expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
   expect(screen.getByLabelText("Стандарт (ГОСТ / ТУ / UL)")).toHaveValue("ТУ 16-505");
   const makers = screen.getByRole("group", { name: "Производители" });
   expect(within(makers).getByText("Cabeus")).toBeInTheDocument();
   expect(within(makers).getByText("ParLan")).toBeInTheDocument();
   expect(screen.queryByLabelText("Стандарт / производитель")).toBeNull();
+});
+
+it("asks the core and jacket materials instead of the rudimentary «Изоляция» (owner 15.10)", async () => {
+  const edit = open();
+  expect(screen.queryByLabelText("Изоляция")).toBeNull();
+  expect(screen.getByLabelText("Материал жилы")).toHaveValue("");
+  fireEvent.change(screen.getByLabelText("Материал оболочки"), { target: { value: "ПВХ" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(edit).toHaveBeenCalledWith("ПВАМ 0,50", [{ field: "Материал оболочки", old: "", value: "ПВХ" }]));
 });
 
 it("adds and removes makers and saves them as a comma-joined cell", async () => {
@@ -105,9 +114,9 @@ it("shows the stranding of the wire in its own column and form field, not in the
   expect(screen.queryByText("7×0,16")).toBeNull();
 });
 
-it("puts «Скрутка» under «Основное» of the wire form and as a table column", () => {
+it("puts «Структура жилы» under «Основное» of the wire form and as a table column", () => {
   open();
   expect(screen.getAllByText("7×0,16").length).toBeGreaterThan(0);
   const main = screen.getByRole("heading", { name: "Основное" }).closest("section") as HTMLElement;
-  expect(within(main).getByLabelText("Скрутка: проволок × Ø, мм")).toHaveValue("7×0,16");
+  expect(within(main).getByLabelText("Структура жилы: проволок × Ø, мм")).toHaveValue("7×0,16");
 });

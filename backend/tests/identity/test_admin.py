@@ -71,7 +71,8 @@ def test_cli_takes_the_level_and_the_legacy_role_still_maps_to_one(monkeypatch, 
 
     boss, preview, master = (_row(admin_database, login) for login in ("boss", "preview", "master"))
     assert (boss.access_level, boss.role) == ("superadmin", "")
-    assert (preview.access_level, preview.role) == ("admin", "admin")
+    # The legacy role admin lands on superadmin: «Администратор» is no level since 14.10.2026.
+    assert (preview.access_level, preview.role) == ("superadmin", "admin")
     assert (master.access_level, master.site_master, master.shop_worker) == ("foreman", True, False)
     with pytest.raises(SystemExit, match="--level"):
         create_user(args("nobody", "nobody@example.test", [], level=None), admin_database)

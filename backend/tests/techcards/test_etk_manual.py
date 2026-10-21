@@ -50,7 +50,7 @@ CONFIG = {
 
 
 def build(config: dict) -> dict:
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(config, CARDS)
 
 
 def manual(**changes) -> dict:
@@ -89,11 +89,11 @@ def test_library_and_custom_operations_build_an_etk_chained_into_a_manual_scheme
     assert cut["semis"] == []
     assert solder["semis"] == [{"name": "Полуфабрикат после «Резка»", "norm": "10", "unit": "Шт."}]
     assert crimp["semis"] == [{"name": "Провод с припаянным лепестком", "norm": "10", "unit": "Шт."}]
-    # Результат: the last operation hands over the product; time = (sec × qty × batch + setup) / 60.
+    # Результат: the last operation hands over the product; time = sec × qty × batch / 60 (setup is not in the norm since ETK 4).
     assert [item["result_label"] for item in document["operations"]] == ["Полуфабрикат", "Полуфабрикат", "Изделие"]
     assert crimp["result"] == [{"name": "Провод нетиповой 300мм", "norm": "10", "unit": "Шт."}]
-    assert cut["time"] == [{"name": "Полуфабрикат после «Резка»", "norm": "4"}]
-    assert solder["time"][0]["norm"] == "12,5"
+    assert cut["time"] == [{"name": "Полуфабрикат после «Резка»", "norm": "2"}]
+    assert solder["time"][0]["norm"] == "7,5"
     assert crimp["time"][0]["norm"] == "3,33"
     assert cut["times"] == {"operation_seconds": "6", "setup_seconds": "120", "machine_seconds": ""}
     assert cut["fields"] == {"perItem": "2", "params": "L = 300 мм", "note": "провод из бухты"}
@@ -107,7 +107,7 @@ def test_library_and_custom_operations_build_an_etk_chained_into_a_manual_scheme
     ]
     assert route["blocks"][2]["name"] == "Провод нетиповой 300мм"
     assert [(edge["from"], edge["to"]) for edge in route["edges"]] == [("b1", "b2"), ("b2", "b3")]
-    assert route["blocks"][2]["rolled_minutes"] == pytest.approx((4 + 12.5 + 3.33) / 10)
+    assert route["blocks"][2]["rolled_minutes"] == pytest.approx((2 + 7.5 + 3.33) / 10)
     # The read path gives back the same scheme.
     assert document_route(document) == route
 
@@ -145,8 +145,8 @@ def test_hand_drawn_scheme_feeds_blocks_with_their_quantities_and_names_the_prod
         ("Опрессовка терминалов", "PRS_TERMINAL_hand", "end"),
     ]
     assert [(item.block, str(item.per_unit)) for item in steps[2].inputs] == [("cut", "2"), ("lug", "1")]
-    # The ETK norm: 6 s × 2 «на изделие» per item + 120 s setup per batch (was 6 s per item: «на изделие» dropped).
-    assert steps[0].seconds_per_unit == 12 and steps[0].setup_seconds == 120
+    # The ETK norm: 6 s × 2 «на изделие» per item (was 6 s per item: «на изделие» dropped); the 120 s setup is not planned.
+    assert steps[0].seconds_per_unit == 12 and steps[0].setup_seconds == 0
 
 
 def test_simultaneous_operations_are_branches_the_next_operation_joins():
@@ -258,6 +258,5 @@ def test_generator_operations_of_existing_schemes_keep_their_etk_keys():
     expected = json.loads((Path(__file__).parent / "fixtures" / "manual-etk-keys.json").read_text(encoding="utf-8"))
     assert set(expected) == set(golden.KITS)
     for kit, keys in expected.items():
-        document = build_etk(generator_to_assembly(golden._kit(kit)), golden.CARDS,
-                             operation_library_commit=golden.LIBRARY["sourceCommit"])
+        document = build_etk(generator_to_assembly(golden._kit(kit)), golden.CARDS)
         assert [operation_key(operation) for operation in document["operations"]] == keys, kit

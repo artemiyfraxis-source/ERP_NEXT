@@ -37,16 +37,16 @@ ROWS = [
     ["UL1061 28AWG", "монтажный", "UL AWM Style 1061, SR-PVC", "0,08", "28", "", "1", "", "0,89", "ПВХ", "-10", "80", "", ""],
     ["ПВАМ 0,50", "силовой", "", "0,5", "", "", "1", "", "1,6", "ПВХ", "-40", "105", "48 (ном.) / 1000 (испыт.)", ""],
     ["МС16-13 0,08", "монтажный (высокотемпературный)", "ТУ 16-505.083-78", "0,08", "", "", "1", "", "", "", "", "", "", ""],
-    ["UL1015 26AWG", "монтажный (AWM)", "UL AWM Style 1015", "0,13", "26", "", "1", "", "", "", "", "", "", ""],
-    ["AGR2 Core 0,3", "силиконовый (аккумуляторный/RC)", "", "0,3", "", "", "", "", "", "", "", "", "", ""],
-    ["МНВ-4 0,12", "монтажный", "", "0,12", "", "", "1", "", "", "", "", "", "", ""],
-    ["НВМ 0,35", "монтажный", "", "0,35", "", "", "1", "", "", "", "", "", "", ""],
-    ["UL758 10AWG", "монтажный", "", "5,26", "10", "", "1", "", "", "", "", "", "", ""],
+    ["M22759/16 26AWG", "монтажный (AWM)", "SAE AS22759/16", "0,13", "26", "", "1", "", "", "", "", "", "", ""],
+    ["GXL Core 0,3", "силиконовый (аккумуляторный/RC)", "", "0,3", "", "", "", "", "", "", "", "", "", ""],
+    ["FLRY-B 0,12", "монтажный", "", "0,12", "", "", "1", "", "", "", "", "", "", ""],
+    ["TXL 0,35", "монтажный", "", "0,35", "", "", "1", "", "", "", "", "", "", ""],
+    ["SXL 10AWG", "монтажный", "", "5,26", "10", "", "1", "", "", "", "", "", "", ""],
     ["RG316", "коаксиальный", "", "", "", "", "1", "", "2,45", "", "", "", "", ""],
     ["КСПВГ 4x0,20", "многожильный", "", "0,20", "", "", "4", "", "", "", "", "", "", ""],
 ]
 PROV = "\n".join("\t".join(row) for row in [HEADER, *ROWS]) + "\n"
-MOVED_OUT = {"UL1015 26AWG", "AGR2 Core 0,3", "МНВ-4 0,12", "НВМ 0,35", "UL758 10AWG"}
+MOVED_OUT = {"M22759/16 26AWG", "GXL Core 0,3", "FLRY-B 0,12", "TXL 0,35", "SXL 10AWG"}
 
 
 def _payload() -> dict:
@@ -66,15 +66,28 @@ def test_the_twelve_series_are_the_base(mark, series):
     assert hookup_series(mark) == series
 
 
+# Owner 15.10.2026: «Прочие кабели» closed — the single-core series it held are series of the base now.
+@pytest.mark.parametrize(("mark", "series"), [
+    ("UL1015 26AWG", "UL1015"), ("UL 1015 10AWG", "UL1015"), ("UL3135 22AWG", "UL3135"), ("UL758 10AWG", "UL758"),
+    ("НВМ 0,35", "НВМ"), ("МНВ-4 0,12", "МНВ-4"), ("МНВ4 0,2", "МНВ-4"), ("ПГВА 0,50", "ПГВА"),
+    ("ПуГВнг(А)-LS 1х1,0", "ПуГВнг(А)-LS"), ("ПУГВНГ(A)-LS 1х2,5", "ПуГВнг(А)-LS"),
+    ("Силиконовый провод 28AWG", "Силиконовый провод"), ("AGR2 Core 0,3", "AGR2"),
+    ("Кабель высоковольтный 150kV 0,75мм2 8мм", "Кабель высоковольтный"),
+])
+def test_the_series_moved_from_other_cables(mark, series):
+    assert hookup_series(mark) == series
+    assert auto_kind({"Тип провода": "силовой", "Число жил": "1"}, mark, frozenset())[0] == CableKind.WIRE
+
+
 @pytest.mark.parametrize("mark", [
-    "UL1015 26AWG", "МНВ-4 0,12", "AGR2 Core 0,3", "UL758 10AWG", "НВМ 0,35", "ПуГВнг(А)-LS 1х1,0", "МГТФЭ 0,2",
-    "UL10610 28AWG", "Силиконовый провод 28AWG", "МГШВЭ 0,5", "",
+    "МГТФЭ 0,2", "UL10610 28AWG", "UL10150 22AWG", "UL7580 10AWG", "НВМЭ 0,35", "ПГВАЭ 0,5", "ПуГВнг(А)-HF 1х1,0",
+    "МГШВЭ 0,5", "M22759/16 22AWG", "FLRY-B 0,35", "Силиконовый кабель 2x0,5", "",
 ])
 def test_other_brands_are_not(mark):
     assert hookup_series(mark) is None
 
 
-@pytest.mark.parametrize("mark", ["UL1015 26AWG", "МНВ-4 0,12", "AGR2 Core 0,3", "UL758 10AWG", "НВМ 0,35"])
+@pytest.mark.parametrize("mark", ["M22759/16 26AWG", "FLRY-B 0,12", "GXL Core 0,3", "TXL 0,35", "SXL 10AWG"])
 def test_a_single_core_brand_outside_the_base_goes_to_others(mark):
     fields = {"Тип провода": "монтажный", "Число жил": "1"}
     assert auto_kind(fields, mark, frozenset()) == (CableKind.OTHER, NOT_HOOKUP_REASON)
@@ -96,7 +109,7 @@ def test_the_base_goes_to_hookup_wires_whatever_the_row_type(mark):
 def test_a_manual_move_still_wins_both_ways(tmp_path, uow):
     load_mirror(_mirror(tmp_path, prov=PROV), uow, dry_run=False, now=NOW)
     rows ={item.cable: item for item in cable_catalog(uow).rows}
-    moved = set_cable_kind(SetCableKindCommand(rows["UL1015 26AWG"].record.id, CableKind.WIRE, ACTOR, NOW), uow)
+    moved = set_cable_kind(SetCableKindCommand(rows["M22759/16 26AWG"].record.id, CableKind.WIRE, ACTOR, NOW), uow)
     assert (moved.kind, moved.auto, moved.manual) == (CableKind.WIRE, CableKind.OTHER, True)
     out = set_cable_kind(SetCableKindCommand(rows["МГТФ 0,20"].record.id, CableKind.OTHER, ACTOR, NOW), uow)
     assert (out.kind, out.manual) == (CableKind.OTHER, True)
@@ -113,10 +126,10 @@ def test_fixture_validates_and_refuses_bad_rows_alone():
     assert seed.series[0].sizes[0].colors.value == "белый, красный, чёрный"
     assert small.insulation_thickness_mm.value == Decimal("0.15")
     refused = {item["key"]: item["reason"] for item in seed.refused}
-    assert set(refused) == {"0,01 мм²", "UL1007 26AWG", "UL1061 30AWG", "UL1015 22AWG"}
+    assert set(refused) == {"0,01 мм²", "UL1007 26AWG", "UL1061 30AWG", "M22759 22AWG"}
     assert "не марка серии UL1061" in refused["UL1007 26AWG"]
     assert "«от» должна быть ниже «до»" in refused["UL1061 30AWG"]
-    assert "не марка из базы монтажных" in refused["UL1015 22AWG"]
+    assert "не марка из базы монтажных" in refused["M22759 22AWG"]
     assert [gauge.awg for gauge in seed.gauges] == ["24", "28", "26", None]
 
 
@@ -205,7 +218,7 @@ def test_import_updates_in_place_creates_missing_sizes_and_a_second_run_changes_
     assert report.created == ["МГТФ 0,07"]
     assert {item["key"] for item in report.updated} == {"МГТФ 0,20", "UL1061 28AWG", "МС16-13 0,08", "ПВАМ 0,50"}
     assert {item["key"] for item in report.refused} == {
-        "0,01 мм²", "UL1007 26AWG", "UL1061 30AWG", "UL1015 22AWG", "МГТФ 0,6"}
+        "0,01 мм²", "UL1007 26AWG", "UL1061 30AWG", "M22759 22AWG", "МГТФ 0,6"}
     assert report.unchanged == 0 and report.hookups_created == 2 and report.hookups_updated == 2  # ПВАМ: 48 V already
     records = _records(uow)
     assert all(records[mark].id == record_id for mark, record_id in ids.items())  # nothing renamed or deleted
@@ -286,7 +299,7 @@ def test_cli_prints_every_step_and_dry_run_writes_nothing(tmp_path, uow, monkeyp
     assert load_cables.main(["--hookups", "--dry-run", "--file", str(FIXTURE)]) == 0
     out = capsys.readouterr().out
     assert "проверка, ничего не записано" in out and "добавлено 1" in out and "создано 1" in out
-    assert "UL1015 26AWG" in out and "26 AWG · 0,13 мм²: в таблице 0,12 мм²" in out
+    assert "M22759/16 26AWG" in out and "26 AWG · 0,13 мм²: в таблице 0,12 мм²" in out
     assert "МГТФ 0,07" not in _records(uow)
 
     assert load_cables.main(["--hookups", "--file", str(FIXTURE)]) == 0

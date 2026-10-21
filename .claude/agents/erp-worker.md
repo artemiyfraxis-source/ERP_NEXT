@@ -15,7 +15,8 @@ branch and run the full gate; your job is a clean, tested commit on your branch.
    and moves a fresh worktree onto local `main` when it lags.
 2. `git log --oneline -1` and `git status` — note the base you start from.
 3. Read the files the brief names, and `CLAUDE.md` rules that apply. A screen change: load the `erp-screens`
-   skill first. Porting a SUPPLYMAP rule: read it in `../SUPPLYMAP` (read-only, never run anything there).
+   skill first. SUPPLYMAP is legacy (owner, 05.10): don't consult `../SUPPLYMAP` — the ERP's own code,
+   data and the owner's words decide.
 
 ## Work
 - Stay inside the task's zone. If the task needs a file outside it, or a schema change the brief did not

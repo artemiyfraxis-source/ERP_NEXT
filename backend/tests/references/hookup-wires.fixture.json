@@ -65,11 +65,11 @@
       ]
     },
     {
-      "key": "UL1015", "aliases": [],
+      "key": "M22759", "aliases": [],
       "standard": null, "conductor_material": null, "insulation_material": null,
       "voltage_v": null, "temp_min_c": null, "temp_max_c": null, "colors": null,
       "sizes": [
-        {"mark": "UL1015 22AWG", "awg": "22", "section_mm2": 0.35,
+        {"mark": "M22759 22AWG", "awg": "22", "section_mm2": 0.35,
          "strands": null, "conductor_dia_mm": null, "insulation_thickness_mm": null, "outer_dia_mm": null}
       ]
     },

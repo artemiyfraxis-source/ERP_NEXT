@@ -1,5 +1,4 @@
 {
- "library_commit": "d0a030b37e6364d241fdb827c20e6af54c532085",
  "cases": {
   "345К.2-КБ1": {
    "keys": [
@@ -16,18 +15,18 @@
     "topology": "48ce7198f411b8c10c45",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "a5292843d75faaeff438",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "d016c8368ef84e69d49e",
-    "fd2a23723b2b06cb129b",
-    "b7fc6312fc40395ca452",
-    "9539f78b295840cb13a0",
-    "25ad8bd46696a3990eb3",
-    "6458afb813cd8e12067f",
-    "be8dc2c2b817cd9ac6e9",
-    "e3a968a8c45ec18adcb5",
-    "21d2e20ac6c7ea273de8"
+    "1dbdbd44bc61869205e4",
+    "9595c7515ff3c4b1a52b",
+    "554b84b6f50c16886e4a",
+    "c22eea68c4db40a50405",
+    "1faaf9137de5ec45f683",
+    "6694eade6d2c0882b62d",
+    "5f007020ab583cdb6a2b",
+    "3c5c04a79bbe786deca6",
+    "9683875f3387b6469db8"
    ]
   },
   "591К.5-КБ2": {
@@ -45,19 +44,19 @@
     "topology": "06f79160ec9ef8780f2b",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "8dd2c55bdbf6bdfdc241",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "da598f493221f8a3f28e",
-    "4f4885a2de0a20b9cddb",
-    "c6045c4a6cbfbb3bc75c",
-    "d59ac0d33691d70932dd",
-    "77327dfd483b8098419c",
-    "56f5e14f9d844505bf8d",
-    "33053a7bba410ef3d83d",
-    "4c5d945ff4e611c371c4",
-    "6b4908f35706142934e2",
-    "565c97f203594ea76b5c"
+    "e3c482d761f395c04b2d",
+    "93e0595bd724c9be212d",
+    "ea79ddbb24fe3541cc2b",
+    "478bce568cdc142165dd",
+    "ae9d3a9e8f2ba0eb7723",
+    "d19246ad1d3bf262e82d",
+    "05bb06dbe038aa21ff98",
+    "5b8d0bc7d89cac67a7e4",
+    "518a3c5de5e4da210536",
+    "b712df56907acd502472"
    ]
   },
   "708К.2-КБ1": {
@@ -75,24 +74,24 @@
     "topology": "9e174ba015dab2da2f64",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "5c6feae636e4fdd62816",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "71e5d113fe6fc25fb7f9",
-    "153bb7d97f27bc9425f9",
-    "aed65f1bdfbf1ff361d3",
-    "0e5678aafc93a038413f",
-    "543351beeaa988a21399",
-    "c48bcec18e5d49b2315b",
-    "4f7edd1752771a136708",
-    "e8d0b9e4ec39fec0c1cb",
-    "d7689b7d5d4fde638a66",
-    "4fa2f324c94d48970c3a",
-    "accf02a5db17cfa95adf",
-    "33c8fd7f222a47ffc496",
-    "cb779877d2478248f9da",
-    "7674ee52962b1879bd84",
-    "24b935816842bcdfc8ea"
+    "c0b593f7190dc15b6c56",
+    "a334a6084dd1c9e87f46",
+    "d7f042c35976576a7fd6",
+    "5ae3f3f57b2cb8df279f",
+    "7d351d2024f44d13b61d",
+    "cfda124bde4467ad0b59",
+    "f23ec6c21a528f045b4a",
+    "b367a951722545437cdb",
+    "6abcf89259d498d1333c",
+    "9799c882241a9298e782",
+    "3efa56a24dc96417b48d",
+    "7ccb03dd80d4058984e1",
+    "eb056d5e169966dd834f",
+    "3d447f13e315292ac58c",
+    "44201dbd0744f4809cc7"
    ]
   },
   "708К.2-КБ1 без длины": {
@@ -110,24 +109,24 @@
     "topology": "9e174ba015dab2da2f64",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "26b59fa121eabcb273ef",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "71e5d113fe6fc25fb7f9",
-    "153bb7d97f27bc9425f9",
-    "aed65f1bdfbf1ff361d3",
-    "0e5678aafc93a038413f",
-    "543351beeaa988a21399",
-    "c48bcec18e5d49b2315b",
-    "4f7edd1752771a136708",
-    "e8d0b9e4ec39fec0c1cb",
-    "d7689b7d5d4fde638a66",
-    "4fa2f324c94d48970c3a",
-    "accf02a5db17cfa95adf",
-    "33c8fd7f222a47ffc496",
-    "cb779877d2478248f9da",
-    "7674ee52962b1879bd84",
-    "24b935816842bcdfc8ea"
+    "c0b593f7190dc15b6c56",
+    "a334a6084dd1c9e87f46",
+    "d7f042c35976576a7fd6",
+    "5ae3f3f57b2cb8df279f",
+    "7d351d2024f44d13b61d",
+    "cfda124bde4467ad0b59",
+    "f23ec6c21a528f045b4a",
+    "b367a951722545437cdb",
+    "6abcf89259d498d1333c",
+    "9799c882241a9298e782",
+    "3efa56a24dc96417b48d",
+    "7ccb03dd80d4058984e1",
+    "eb056d5e169966dd834f",
+    "3d447f13e315292ac58c",
+    "44201dbd0744f4809cc7"
    ]
   },
   "708К.5-КБ1": {
@@ -145,24 +144,24 @@
     "topology": "9196fd20731320edc3be",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "f36d80174c20ea5feb98",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "7fcb22be8a2dcbcea324",
-    "9af61ab0171a09d88f22",
-    "55188431eb32a6ea259d",
-    "03b7882ee2909bfe98ff",
-    "f5932c4c9057550aa97b",
-    "e2509287d7f409ccbcfb",
-    "af1fc12dedf0d9578260",
-    "10c64f45a996fb520c36",
-    "033a3507f9b0f50d8ac8",
-    "fea59f0a2326f94c7e7d",
-    "ef86f074ae71131877cb",
-    "7d887373a940312f67ed",
-    "51e0acc6c9bf6069691a",
-    "aa7b2ac1ddfaf017eb09",
-    "c623d39aa88ea4cf03df"
+    "69fbb321b0086864258c",
+    "2112b50fc792bc4e3ba7",
+    "fc75eff3cead681a455f",
+    "b3a37df5eedf381a2799",
+    "89dbc75adfa22807d592",
+    "a65219b432d5a35440b7",
+    "e324cbcdbfd04bbc7b9d",
+    "66bd7d28c21343a93fce",
+    "325403010d78b6525045",
+    "a780086318e874b02bc7",
+    "0971e52e0d3a6ccae356",
+    "9963e3b11caf9f6979a8",
+    "0375f48a046b237f70aa",
+    "06dee05b6de892a642ac",
+    "69eadc88489a069fe64f"
    ]
   },
   "708К.5-КБ1 нормы терминалов": {
@@ -180,24 +179,24 @@
     "topology": "9196fd20731320edc3be",
     "warnings": "d0c5e45b6d8b981d2aae",
     "build_config": "9e73a25e6f3af9c803c3",
-    "source": "5966769930d591c116fa"
+    "source": "1a26f1db46d28457aaa9"
    },
    "operations": [
-    "7fcb22be8a2dcbcea324",
-    "9af61ab0171a09d88f22",
-    "55188431eb32a6ea259d",
-    "03b7882ee2909bfe98ff",
-    "f5932c4c9057550aa97b",
-    "3160c962e2c9d70e8821",
-    "af1fc12dedf0d9578260",
-    "10c64f45a996fb520c36",
-    "f575525f56195b17b782",
-    "fea59f0a2326f94c7e7d",
-    "176fe6dd8da3e9a87ada",
-    "7d887373a940312f67ed",
-    "a85fd5da70f278e98577",
-    "aa7b2ac1ddfaf017eb09",
-    "c623d39aa88ea4cf03df"
+    "69fbb321b0086864258c",
+    "2112b50fc792bc4e3ba7",
+    "fc75eff3cead681a455f",
+    "b3a37df5eedf381a2799",
+    "89dbc75adfa22807d592",
+    "df209bc352fe053d6963",
+    "e324cbcdbfd04bbc7b9d",
+    "66bd7d28c21343a93fce",
+    "aa80d710f89bc5c412d6",
+    "a780086318e874b02bc7",
+    "903c519cc8458716dcff",
+    "9963e3b11caf9f6979a8",
+    "43dcab7ee176aeb63249",
+    "06dee05b6de892a642ac",
+    "69eadc88489a069fe64f"
    ]
   },
   "720К.-КБ1": {
@@ -215,14 +214,14 @@
     "topology": "a7c88eb97a06b8429586",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "c66c5d18a442324b1250",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "f72286607d01d308f7e2",
-    "b1319126a238725a002e",
-    "17540e4a248c4a588b4a",
-    "4359c262f0c93d7719f5",
-    "cfaff9acf0121bbeb91f"
+    "4df2e5b2b76633bb8ec7",
+    "82dd11198832f3b0d6ff",
+    "a36dfd1a33c27490792f",
+    "feb32b5b59bf8e3ac6b3",
+    "a8a138e026fb58201e89"
    ]
   },
   "720К.-КБ1 нет шаблона": {
@@ -240,14 +239,14 @@
     "topology": "a7c88eb97a06b8429586",
     "warnings": "c46ee1b68adf53f23449",
     "build_config": "d6eb647ae6c6b58b4ec5",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "23218b6e8215b7f51204",
-    "b1319126a238725a002e",
-    "17540e4a248c4a588b4a",
-    "4359c262f0c93d7719f5",
-    "cfaff9acf0121bbeb91f"
+    "8acff480eee48587358d",
+    "82dd11198832f3b0d6ff",
+    "a36dfd1a33c27490792f",
+    "feb32b5b59bf8e3ac6b3",
+    "a8a138e026fb58201e89"
    ]
   },
   "720К.-КБ1 нормы терминалов": {
@@ -265,14 +264,14 @@
     "topology": "a7c88eb97a06b8429586",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "08cc7cddde184ded2b31",
-    "source": "5966769930d591c116fa"
+    "source": "1a26f1db46d28457aaa9"
    },
    "operations": [
-    "f72286607d01d308f7e2",
-    "8e32835a3c2d170e102e",
-    "17540e4a248c4a588b4a",
-    "a442b7198ea011822dd8",
-    "cfaff9acf0121bbeb91f"
+    "4df2e5b2b76633bb8ec7",
+    "07fe8cf904a838aae4ea",
+    "a36dfd1a33c27490792f",
+    "512ddc6c5daedb5c5de4",
+    "a8a138e026fb58201e89"
    ]
   },
   "720К.-КБ1 распиновка": {
@@ -290,14 +289,14 @@
     "topology": "a7c88eb97a06b8429586",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "d56edef9570d8d21fe58",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "f72286607d01d308f7e2",
-    "b1319126a238725a002e",
-    "5af96d27a6fab4a40ec8",
-    "4359c262f0c93d7719f5",
-    "cfaff9acf0121bbeb91f"
+    "4df2e5b2b76633bb8ec7",
+    "82dd11198832f3b0d6ff",
+    "d809ec73c2df0c3388f3",
+    "feb32b5b59bf8e3ac6b3",
+    "a8a138e026fb58201e89"
    ]
   },
   "720К.-КБ1 соединения": {
@@ -317,14 +316,14 @@
     "connections": "821c6a09da78d0ea39d3",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "f1a9158ab459c1d83c11",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "f72286607d01d308f7e2",
-    "b1319126a238725a002e",
-    "cd86dcc1d19bdf1391d7",
-    "4359c262f0c93d7719f5",
-    "8b51105eae1f8a243514"
+    "4df2e5b2b76633bb8ec7",
+    "82dd11198832f3b0d6ff",
+    "3884643e173a6b16fb36",
+    "feb32b5b59bf8e3ac6b3",
+    "d2d9faf8c6fc4a1d642e"
    ]
   },
   "720К.1.2-КБ1": {
@@ -342,13 +341,13 @@
     "topology": "ba12490554947ff1681f",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "5ebcc6063f11ee5c295f",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "0d61b868beef962badbf",
-    "f70085235e3e28c21689",
-    "5fdb2c0314c98af26fb9",
-    "60c672ef3fc14cdce98a"
+    "27119628f0c5eae78e1b",
+    "381993ffa60522df4745",
+    "66ceb206e41a2a3014bb",
+    "4f04b7dc14776de90913"
    ]
   },
   "720К.1.2-КБ1 нормы терминалов": {
@@ -366,13 +365,13 @@
     "topology": "ba12490554947ff1681f",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "66e9a86075cb40e496e8",
-    "source": "5966769930d591c116fa"
+    "source": "1a26f1db46d28457aaa9"
    },
    "operations": [
-    "ec4cd86c2b005b948601",
-    "f70085235e3e28c21689",
-    "69bdf205a583be3decd0",
-    "60c672ef3fc14cdce98a"
+    "9c009349a9062bddfc61",
+    "381993ffa60522df4745",
+    "96f525b8157958d7823a",
+    "4f04b7dc14776de90913"
    ]
   },
   "729К.2-КБ1": {
@@ -390,15 +389,15 @@
     "topology": "3c7ec778d0d2e4b03a2b",
     "warnings": "4f53cda18c2baa0c0354",
     "build_config": "e935192873c0af90e1a9",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "b783957a8abeb8ef08d4",
-    "12c8692c7d457c3caf1f",
-    "d5b62457bf07054650f5",
-    "60beceb50a2e36d2d45e",
-    "2c64efcdc00c8f9138a4",
-    "0855aa3cdaee228738c0"
+    "8dccdc2c01d912b2cc91",
+    "420592b1605f57062145",
+    "b1dff89707d4b9694399",
+    "a5ac629ad3bf01ff86a2",
+    "6a296649211fb3926208",
+    "5206d9e2684e44eaa886"
    ]
   },
   "коаксиал": {
@@ -416,11 +415,11 @@
     "topology": "a461bf77bc4e4d732f7a",
     "warnings": "40551347c5bdd2d9614e",
     "build_config": "1097cfe7a43685a552eb",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "972b48c4a187b332d125",
-    "c314a92c22cc11117c64"
+    "59e6593f78198e3f09b9",
+    "687658821136873ff5ec"
    ]
   },
   "резка без длины": {
@@ -438,7 +437,7 @@
     "topology": "a461bf77bc4e4d732f7a",
     "warnings": "c7b07187ed0d688a9a05",
     "build_config": "a62fe8d6636e06dbba81",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
     "6e12a227b6c43f558eb2"
@@ -459,10 +458,10 @@
     "topology": "96bb8986084f15265118",
     "warnings": "cd75d795bff8aec65303",
     "build_config": "c98ca3c309322a9220cf",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "ca814102f330decd3a75",
+    "3848885695a81ed0d8f8",
     "44446c389b5e72c4f88a"
    ]
   },
@@ -481,10 +480,10 @@
     "topology": "96bb8986084f15265118",
     "warnings": "cd75d795bff8aec65303",
     "build_config": "9f419bf8a09dd16b40ed",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "3c83bf8ae37e3c44aeb1",
+    "f55355251f7d21ee5480",
     "b3ab4102284a134ac62d"
    ]
   },
@@ -503,10 +502,10 @@
     "topology": "e93dfae404655c11860f",
     "warnings": "cd75d795bff8aec65303",
     "build_config": "142627d4e3d034ac385f",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "45ceda049cb2bc4c161a",
+    "57e5eb24539d15108f16",
     "fd084aec9575693b7ccf"
    ]
   },
@@ -525,14 +524,14 @@
     "topology": "4b33b032edcef09b7510",
     "warnings": "31e65096fb479e46968f",
     "build_config": "2b4386c0b0bff4dc42ee",
-    "source": "d3a5a409f348cff48fc8"
+    "source": "44136fa355b3678a1146"
    },
    "operations": [
     "75839781b78b1cc69bf6",
-    "ecf3d1184d45a4f4959f",
-    "e402ca7a218d69e7ddd9",
-    "2fb2cd0a5672586c6d1b",
-    "b4883620c97e78ac0779"
+    "493d39e66f3228bec193",
+    "0d0f839ad49169f14c26",
+    "b91a48163bdfddc6be43",
+    "93f1cf8cbd22e3da4a59"
    ]
   }
  }

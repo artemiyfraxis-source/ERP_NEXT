@@ -1,5 +1,13 @@
 import { expect, it } from "vitest";
-import { cleanHeader, headerLabel, valueLabel } from "./referenceLabels";
+import { cleanHeader, headerLabel, terFieldHint, valueLabel } from "./referenceLabels";
+
+it("L+ / L− of a terminal say what they measure: the wire end in the housing, not the contact length", () => {
+  expect(terFieldHint("terLPlus")).toBe("L+ — глубина конца жилы от торца корпуса со стороны провода");
+  expect(terFieldHint("L+")).toBe(terFieldHint("terLPlus"));
+  expect(terFieldHint("L-")).toBe("L− — от конца жилы до стыковочного торца");
+  expect(terFieldHint("terLMinus")).toBe(terFieldHint("L-"));
+  expect(terFieldHint("Шаг разьема")).toBeUndefined();
+});
 
 it("cleans sheet headers: no line breaks, no space before a comma", () => {
   expect(cleanHeader("Шаг\nразьема")).toBe("Шаг разьема");

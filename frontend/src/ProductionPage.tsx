@@ -12,6 +12,7 @@ import {
   type ProductionMaterialSource,
   type ProductionLaunchable,
   type ProductionAssignPlan,
+  type EtkRevisionNotice,
   type ProductionOperation,
   type ProductionOperator,
   type ProductionOutput,
@@ -23,10 +24,14 @@ import {
 } from "./api";
 import { canAct, canSee, hasFullAccess } from "./navigation";
 import { EtkSheet } from "./ProjectEtk";
+import { etkCardsChangedNote, etkCardsNote } from "./etkCardSource";
+import type { MarkSerialRange } from "./markSerial";
+import { PfCardBlocks, isPfOperation, operationName, pfOpsText } from "./PfTaskBlocks";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay, formatDayMonth, formatMoment } from "./format";
 import { MasterBoard, type ProjectDeadlines } from "./MasterBoard";
 import { AutoplanPanel } from "./AutoplanPanel";
+import { PageWindow } from "./PageWindow";
 import { DowntimeControl } from "./DowntimeControl";
 import { DowntimeReport } from "./DowntimeReport";
 import { JobPanel } from "./JobPlan";
@@ -40,7 +45,6 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [operators, setOperators] = useState<ProductionOperator[]>([]);
   const [viewerSite, setViewerSite] = useState("");
   const [execution, setExecution] = useState<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>({ session: null, boxes: [] });
-  const [boxes, setBoxes] = useState<ProductionBox[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -77,16 +81,13 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
         mine
           ? Promise.resolve({ operators: [{ id: principal.user.id, name: principal.user.name, site: "" }] })
           : canOverview ? productionApi.operators() : Promise.resolve({ operators: [] }),
-        mine
-          ? productionApi.execution(viewAs)
-          : canOverview ? productionApi.boxes() : Promise.resolve({ boxes: [] }),
+        mine ? productionApi.execution(viewAs) : Promise.resolve(null),
       ]);
       setTasks(taskResult.tasks);
       setActFor((taskResult as { can_act?: boolean }).can_act ? viewAs : null);
       setOperators(operatorResult.operators);
       setViewerSite((operatorResult as { viewer_site?: string }).viewer_site ?? "");
-      if (mine) setExecution(executionResult as { session: ProductionWorkSession | null; boxes: ProductionBox[] });
-      else setBoxes(executionResult.boxes);
+      if (mine && executionResult) setExecution(executionResult);
       if (!mine && canOverview) {
         // Праздники — для подсветки Ганта, компетенции — для метки допуска в карточке назначения (prodSkillTag_).
         const [calendarResult, skillResult] = await Promise.all([
@@ -150,25 +151,29 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   return <section className="page production-page">
     <header className="page-head">
       <h1>{mine && viewAs ? "Задания" : mine ? "Мои задания" : "Ресурсное планирование"}</h1>
-      <span className="page-count">{tasks.length}</span>
+      {/* «Мои задания»: счётчик — невыполненные (выполненные — в «Выполнено · N»), владелец 16.10. */}
+      {mine
+        ? <span className="page-count" title="Невыполненных операций">{tasks.filter((task) => !isDoneCard(task)).length}</span>
+        : <span className="page-count">{tasks.length}</span>}
       {canPick && <label className="view-as">Сотрудник
         <select aria-label="Сотрудник" style={{ width: "auto" }} value={viewAs} onChange={(event) => setViewAs(event.target.value)}>
           <option value="">Мои задания</option>
           {viewable.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
       </label>}
-      {canOverview && !mine && <div className="page-actions"><button className="secondary" aria-pressed={showDowntime} onClick={() => setShowDowntime((value) => !value)}>Простои</button>{canEdit && <><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></>}</div>}
+      {canOverview && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowDowntime(true)}>Простои</button>{canEdit && <><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar(true)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills(true)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch(true)}>+ Запустить задание</button></>}</div>}
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {mine && viewAs && <div className={`view-strip${acting ? " acting" : ""}`} role="status"><span>{acting ? `Работаете за сотрудника ${viewedName}` : `Вид сотрудника ${viewedName} — только просмотр`}</span><button type="button" className="secondary" onClick={() => setViewAs("")}>Вернуться к моим заданиям</button></div>}
-    {showDowntime && canOverview && !mine && <DowntimeReport close={() => setShowDowntime(false)} />}
-    {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
-    {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
+    {showDowntime && canOverview && !mine && <PageWindow label="Простои" dismissable close={() => setShowDowntime(false)}><DowntimeReport close={() => setShowDowntime(false)} /></PageWindow>}
+    {showCalendar && canEdit && <PageWindow label="Календарь цеха" close={() => setShowCalendar(false)}><CalendarForm operators={operators} close={() => setShowCalendar(false)} /></PageWindow>}
+    {showSkills && canEdit && <PageWindow label="Компетенции" width={1280} close={() => { setShowSkills(false); void reload(); }}><SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} /></PageWindow>}
     {showAutoplan && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} close={() => setShowAutoplan(false)} onApplied={(count, created) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций${created ? `, создано заданий: ${created}` : ""}`); void reload(); }} />}
-    {showLaunch && canEdit && <LaunchForm tasks={tasks} projectDeadlines={projectDeadlines} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
+    {showLaunch && canEdit && <PageWindow label="Запустить задание" close={() => setShowLaunch(false)}><LaunchForm tasks={tasks} projectDeadlines={projectDeadlines} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} /></PageWindow>}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
-    {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
+    {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт
+        на вход следующей операции, коробку последней операции принимает или возвращает «Очередь ОТК». */}
     {/* Задания — первыми (кнопки действий видны сразу), коробки сотрудника — под ними. */}
     {mine && <MyQueue principal={principal} tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={viewAs ? viewedName : ""} onBehalfOf={onBehalfOf}
@@ -467,7 +472,7 @@ function factText(task: ProductionTask, operation: ProductionOperation) {
   const main = processed ? `сдано ${fact?.good} из ${requiredOf(task, operation)}${Number(fact?.defect) ? `, брак ${fact?.defect}` : ""}` : "факта нет";
   const ok = Number(operation.wip?.ok ?? 0);
   const closed = Number(operation.wip?.closed ?? 0);
-  return main + (ok || closed ? ` · в коробках ${ok}${closed ? ` + ${closed} ждут подтверждения` : ""}` : "");
+  return main + (ok || closed ? ` · в коробках ${ok}${closed ? ` + ${closed} ждут ОТК` : ""}` : "");
 }
 
 // Задание (prodRenderTask_): Гант операций с фактом, авторасчёт, отмена; клик по операции — карточка назначения.
@@ -722,10 +727,9 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
     const base = `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}, ${weekdays[date.getDay()]}`;
     return diff === 0 ? `Сегодня · ${base}` : diff === 1 ? `Завтра · ${base}` : diff < 0 ? (started ? `Начато ранее · ${base}` : `Просрочено · план ${base.slice(0, 5)}`) : base;
   };
-  const isDone = (task: ProductionTask) => {
-    const operation = task.operations[0];
-    return Boolean(operation && (operation.state === "выполнена" || operation.my_share?.finished_at));
-  };
+  const isDone = isDoneCard;
+  // Код операции (PRS_TERMINAL_auto) — мастеру и технологу; монтажнику он не нужен (владелец 16.10, erp-screens §1).
+  const showCodes = canSee(principal, "production") || canSee(principal, "techcards");
   const isRunning = (task: ProductionTask) => Boolean(session && session.task_id === task.id && session.operation_id === task.operations[0]?.id);
   const renderCard = (task: ProductionTask, last: { title: string | null }) => {
     const operation = task.operations[0];
@@ -744,36 +748,62 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
     const done = isDone(task);
     const late = Boolean(finishAt && finishAt < now && !done);
     const key = `${task.id}:${operation.id}`;
-    const stage = operation.stage || `Этап ${operation.position}`;
+    const pf = isPfOperation(operation);
+    const stage = operationName(operation);
     const state = cardState(operation, running, done, now);
     const fact = operation.time_fact;
     const work = { onBehalfOf };
     const paused = running?.status === "Пауза";
+    // Ждёт этап-вход, а коробок нет: «Начать» серая, причина рядом (владелец 16.10: пустой выбор коробок не открывать).
+    const blocked = !operation.first && (operation.readiness?.state === "waiting_stage" || operation.readiness?.state === "waiting_master");
+    const own = ownPieces(task, operation);
+    const norm = cardNorm(task, operation);
+    // Начато раньше плана (до смены): один раз, справкой, а не запретом (владелец 16.10).
+    const begun = parseDate(running?.started_at ?? share?.started_at);
+    const early = !done && begun && startAt ? startAt.getTime() - begun.getTime() : 0;
+    const handed = handedText(task, operation);
+    const factParts = [
+      share?.started_at ? `взял ${formatMoment(share.started_at)}` : "",
+      share?.finished_at ? `закончил ${formatMoment(share.finished_at)}` : "",
+    ].filter(Boolean);
+    const stateId = `mo-state-${key}`;
+    // Версия шаблона (владелец 17.10): откуда карточки операций ЭТК сейчас и не поменялись ли после первого «Начать».
+    const cardNote = etkCardsNote(operation.etk_cards?.live ?? []);
+    const cardChanged = etkCardsChangedNote(operation.etk_cards);
+    // Версия на начале — только с датой: «на начале: по шаблону» без даты ничего не говорит.
+    const startedNote = etkCardsNote(operation.etk_cards?.started ?? []);
     return <div key={key}>
       {header}
       <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
         <div className="mo-h">
-          <div className="mo-name"><b>{stage}</b>{operation.code && <small className="op-code">{operation.code}</small>}</div>
+          <div className="mo-name"><b>{stage}</b>{cardChanged && <span className="mo-state tone-warn">{cardChanged}</span>}{pf ? <small className="op-code">{pfOpsText(operation)}</small> : showCodes && operation.code && <small className="op-code">{operation.code}</small>}{cardNote && <small className="op-code">{cardNote}{cardChanged && /\d/.test(startedNote) ? ` · на начале: ${startedNote}` : ""}</small>}</div>
           <div className="mo-side">
-            {state && <span className={`mo-state ${state.tone}`} role="status">{state.text}</span>}
+            {state && <span id={stateId} className={`mo-state ${state.tone}`} role="status">{state.text}</span>}
             {!readOnly && running && <>
               {paused
                 ? <button className="primary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "resume", { ...work, key: stepKey(running, "resume") }))}>Продолжить</button>
                 : <button className="secondary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "pause", { ...work, key: stepKey(running, "pause") }))}>Пауза</button>}
               <button className={paused ? "secondary" : "primary"} aria-expanded={submitting} onClick={() => setSubmitting((value) => !value)}>Сдать…</button>
             </>}
-            {!readOnly && !running && !done && <button className="primary" aria-expanded={starting === key} disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдайте начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>Начать</button>}
-            <button className="secondary" aria-expanded={etkOpen === key} onClick={() => setEtkOpen(etkOpen === key ? "" : key)}>ЭТК</button>
+            {!readOnly && !running && !done && <button className="primary" aria-expanded={starting === key} aria-describedby={blocked && state ? stateId : undefined}
+              disabled={Boolean(session) || Boolean(busy) || blocked} title={session ? "Сначала сдайте начатую работу" : blocked ? state?.text : undefined}
+              onClick={() => setStarting(starting === key ? "" : key)}>Начать</button>}
+            <button className="secondary" aria-haspopup="dialog" onClick={() => setEtkOpen(key)}>{pf ? "Инструкция" : "ЭТК"}</button>
           </div>
         </div>
-        <div className="mo-s">{task.number} · этап {operation.position} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{share?.quantity != null ? <> · <b>ваши {share.quantity} шт</b></> : null}</div>
-        {operation.description && !operation.description.startsWith(stage) && <div className="mo-d">{operation.description}</div>}
-        <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span> · норма {hours(operation.norm_seconds)}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
-        <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatMoment(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatMoment(share.finished_at)}` : ""}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>
+        <div className="mo-s">{task.number} · {pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{own != null ? <> · <b className="mo-own">ваша доля {own} из {task.quantity}</b></> : null}</div>
+        {/* Монтажнику — без «из этапов … ×0,142857» (коробки и их этапы — в «Получить…» и в форме старта) и без строки кодов
+            карт у ПФ (операции — в «Инструкции»); владелец 20.10: «как-то сложно для восприятия». */}
+        {!pf && operation.description && !operation.description.startsWith(operation.stage || stage) && <div className="mo-d">{operation.description}</div>}
+        <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span>{early >= EARLY_NOTE_MS ? <span className="mo-early tone-info"> — начато раньше на {spanText(early)}</span> : null} · <span className="mo-norm" title="Как «Расчётное время» в «Результате» ЭТК: подготовка + время на изделие × штуки. «Время» в шапке ЭТК — на одно действие (один обжим, один рез)">{norm}</span>{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
+        {(handed || factParts.length > 0 || fact) && <div className="mo-fact">{handed}{handed && factParts.length ? " · " : ""}{factParts.join(" · ")}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>}
+        {pf && <PfCardBlocks taskId={task.id} operation={operation} onBehalfOf={onBehalfOf} showInputs={!done && !operation.first} />}
         {!done && <DowntimeControl taskId={task.id} operationId={operation.id} primary={firstOfTask.has(key)} performerId={onBehalfOf || principal.user.id} master={canAct(principal, "production")} readOnly={readOnly} onBehalfOf={onBehalfOf} />}
         {!readOnly && running && submitting && <SubmitWorkForm session={running} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => { setSubmitting(false); onSubmitted(number, box); }} />}
-        {!readOnly && !running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} />}
-        {etkOpen === key && <OperationEtk principal={principal} task={task} operation={operation} />}
+        {!readOnly && !running && !done && !session && !blocked && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} />}
+        {etkOpen === key && <PageWindow label={`${pf ? "Инструкция" : "ЭТК"}: ${stage}`} width={1280} dismissable close={() => setEtkOpen("")}>
+          <OperationEtk principal={principal} task={task} operation={operation} title={`${task.number} · ${pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · ${stage}`} close={() => setEtkOpen("")} />
+        </PageWindow>}
       </div>
     </div>;
   };
@@ -824,7 +854,64 @@ function stepKey(session: ProductionWorkSession, action: string): string {
   return `${session.id}:${action}:${session.pause_seconds}:${session.pause_started_at ?? ""}`;
 }
 
-/** Строка состояния карточки рядом с главной кнопкой. */
+/** Выполнена ли карточка «Моих заданий»: операция выполнена или свою долю монтажник закончил. */
+export function isDoneCard(task: ProductionTask): boolean {
+  const operation = task.operations[0];
+  return Boolean(operation && (operation.state === "выполнена" || operation.my_share?.finished_at));
+}
+
+/** Своя доля монтажника в штуках — только когда операция поделена между людьми (иначе «× тираж» и есть его работа). */
+export function ownPieces(task: ProductionTask, operation: ProductionOperation): number | null {
+  const own = operation.my_share?.quantity;
+  return own != null && own < task.quantity ? own : null;
+}
+
+/** «1 мин 23 с», «6 с»: время на штуку. */
+function perUnitText(seconds: number): string {
+  const total = Math.round(seconds);
+  return total < 60 ? `${total} с` : `${Math.floor(total / 60)} мин${total % 60 ? ` ${total % 60} с` : ""}`;
+}
+
+/** «2 ч 38 мин», «45 мин». */
+export function spanText(ms: number): string {
+  const total = Math.round(ms / 60_000);
+  const whole = Math.floor(total / 60);
+  return whole ? `${whole} ч${total % 60 ? ` ${total % 60} мин` : ""}` : `${total} мин`;
+}
+
+/** Не говорить «начато раньше» из-за пары минут. */
+const EARLY_NOTE_MS = 15 * 60_000;
+
+/** Норма карточки — «Расчётное время» ЭТК (подготовка + время на штуку × штуки), на свою долю, с разбивкой: в шапке ЭТК
+ *  «Время» — время одного действия карточки операции (одного обжима), а не изделия (владелец 16.10: «два разных времени»). */
+export function cardNorm(task: ProductionTask, operation: ProductionOperation): string {
+  const own = ownPieces(task, operation);
+  const pieces = own ?? requiredOf(task, operation);
+  const setup = Number(operation.setup_seconds) || 0;
+  const unit = Number(operation.seconds_per_unit) || 0;
+  const seconds = own != null ? setup + unit * own : operation.norm_seconds;
+  const parts = [setup ? `подготовка ${Math.round(setup / 60)} мин` : "", unit ? `${perUnitText(unit)} на изделие` : ""].filter(Boolean);
+  return `норма ${hours(seconds)} на ${pieces}\u00a0шт${parts.length ? ` (${parts.join(" + ")})` : ""}`;
+}
+
+/** Строка «сдано» — только когда что-то сдано (владелец 16.10: «Ещё не сдавали» на каждой карточке — шум). У поделённой
+ *  операции — своё из своей доли и всего по этапу. */
+export function handedText(task: ProductionTask, operation: ProductionOperation): string {
+  const good = Number(operation.fact?.good ?? 0) || 0;
+  const defect = Number(operation.fact?.defect ?? 0) || 0;
+  const required = requiredOf(task, operation);
+  const own = ownPieces(task, operation);
+  const left = Number(operation.remaining);
+  const mine = own != null && operation.remaining !== undefined && Number.isFinite(left) ? Math.max(0, own - left) : null;
+  if (mine != null && own != null) {
+    if (!mine && !good) return "";
+    return `сдано вами ${mine} из ${own} · по этапу ${good} из ${required}${defect ? `, брак ${defect}` : ""}`;
+  }
+  if (!good && !defect) return "";
+  return `сдано ${good} из ${required}${defect ? ` · брак ${defect}` : ""}${operation.state ? ` · ${operation.state}` : ""}`;
+}
+
+/** Строка состояния карточки рядом с главной кнопкой. Готово — сколько штук можно начать (не больше своего остатка). */
 function cardState(operation: ProductionOperation, running: ProductionWorkSession | null, done: boolean, now: Date): { text: string; tone: string } | null {
   if (running) {
     const since = formatMoment(running.started_at);
@@ -837,13 +924,27 @@ function cardState(operation: ProductionOperation, running: ProductionWorkSessio
   if (done) return { text: "выполнена", tone: "tone-neutral" };
   const readiness = operation.readiness;
   if (!readiness || readiness.state === "done") return null;
-  const text = `${readiness.text}${readiness.boxes.length > 0 && !operation.first ? ` · коробок: ${readiness.boxes.length}` : ""}`;
-  return { text, tone: readiness.state === "ready" || readiness.state === "assembly" ? "tone-ok" : "tone-warn" };
+  const ready = readiness.state === "ready" || readiness.state === "assembly";
+  const boxes = readiness.boxes.length > 0 && !operation.first ? ` · коробок: ${readiness.boxes.length}` : "";
+  if (ready && !operation.first && readiness.available !== undefined) {
+    const left = Number(operation.remaining);
+    const can = Math.min(Number(readiness.available) || 0, Number.isFinite(left) && left > 0 ? left : Infinity);
+    return { text: `${readiness.state === "assembly" ? "готово к сборке" : "можно начать"}: ${can}\u00a0шт${boxes}`, tone: "tone-ok" };
+  }
+  return { text: `${readiness.text}${boxes}`, tone: ready ? "tone-ok" : "tone-warn" };
 }
 
-// ЭТК операции для монтажника: выданная карта проекта и изделия, только чтение, открыта на этой операции.
-function OperationEtk({ principal, task, operation }: { principal: Principal; task: ProductionTask; operation: ProductionOperation }) {
-  const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string } } | undefined>(undefined);
+// ЭТК операции для монтажника: выданная карта проекта и изделия, только чтение, открыта на этой операции — в окне поверх
+// списка (владелец 16.10: раскрытая в списке ЭТК сдвигала карточки; правило «правка и карточки — окнами»).
+/** Сообщение монтажнику: карта получила новую ревизию, а задание идёт по своей; нет закреплённой ревизии — почему показана текущая. */
+export function etkRevisionNotice(revision: EtkRevisionNotice | undefined): string {
+  if (!revision) return "";
+  if (revision.newer && revision.pinned != null) return `Есть новая ревизия ТК ${revision.current} — задание идёт по ревизии ${revision.pinned}`;
+  return revision.fallback ?? "";
+}
+
+function OperationEtk({ principal, task, operation, title, close }: { principal: Principal; task: ProductionTask; operation: ProductionOperation; title: string; close: () => void }) {
+  const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string }; revision?: EtkRevisionNotice; serial?: MarkSerialRange } | undefined>(undefined);
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
@@ -855,9 +956,11 @@ function OperationEtk({ principal, task, operation }: { principal: Principal; ta
   // Только чтение: правка и пересборка ЭТК — у технолога.
   const viewer: Principal = { ...principal, permissions: { myops: "view" } };
   return <div className="panel mo-etk">
+    <div className="manual-stock-head"><h2>{title}</h2><button className="link-button" onClick={close}>Закрыть</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!error && !view && <div className="empty">Загрузка…</div>}
-    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} task taskId={task.id} sketchSource={{
+    {view && etkRevisionNotice(view.revision) && <div className="warning-inline" role="status">{etkRevisionNotice(view.revision)}</div>}
+    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} task taskId={task.id} serial={view.serial} sketchSource={{
       list: () => productionApi.operationEtkSketches(task.id, operation.id),
       url: (key, at) => productionApi.operationEtkSketchUrl(task.id, operation.id, key, at),
     }} />}
@@ -1010,7 +1113,9 @@ function BoxCorrection({ box, busy, mutate, onDone, onBehalfOf = "" }: {
 }
 
 // prodWorkStart_: первая операция начинается сразу (складские партии — по желанию), дальше оператор вводит номера
-// входных коробок с предыдущего этапа, подтверждённых мастером; штуки из них берутся при сдаче.
+// входных коробок с предыдущего этапа — сданных (подтверждения мастером нет с 13.10); штуки из них берутся при сдаче.
+// Владелец 20.10 («как-то сложно»): заголовок говорит, что это шаг перед началом; без «×0,142857» и «сданные» — этап
+// написан на самой коробке; с каждого этапа одна готовая коробка — она отмечена сразу, остаётся «Начать работу».
 function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
   task: ProductionTask;
   operation: ProductionOperation;
@@ -1025,16 +1130,23 @@ function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
   const [error, setError] = useState("");
   const first = isFirst(operation);
   const source = feedsText(task, operation);
+  const [loaded, setLoaded] = useState(false);
   // Ключ повтора на эту форму: двойной клик «Начать работу» не начинает дважды.
   const key = useRef(crypto.randomUUID());
   useEffect(() => {
     productionApi.inputs(task.id, operation.id, onBehalfOf)
       .then((result) => { setBoxes(result.boxes); setMaterials(result.materials); })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Коробки не загружены"));
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Коробки не загружены"))
+      .finally(() => setLoaded(true));
   }, [task.id, operation.id, operation.position]);
-  const [picked, setPicked] = useState<string[]>([]);
   const chips = operation.readiness?.boxes.map((box) => ({ id: box.id, number: box.number ?? "", code: box.code ?? null, quantity: box.quantity, stage: box.stage, position: box.operation_position }))
     ?? boxes.map((box) => ({ id: box.id, number: box.number ?? "", code: box.code, quantity: box.available, stage: "", position: box.operation_position }));
+  // Одна готовая коробка на каждый этап-вход — отмечена сразу (`chosen` = null, пока монтажник не щёлкнул сам).
+  const [chosen, setChosen] = useState<string[] | null>(null);
+  const single = new Set(chips.map((chip) => chip.position)).size === chips.length;
+  const picked = chosen ?? (single ? chips.map((chip) => chip.number) : []);
+  // Готовых коробок нет — с каких этапов их ждать: номер и название этапа, без штук на изделие.
+  const awaited = (operation.inputs ?? []).map((input) => `${input.position ?? "?"}${input.stage ? ` «${input.stage}»` : ""}`);
   const typed = numbers.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
   const inputs = [...picked, ...typed.filter((item) => !picked.includes(item))];
   const materialInputs = materials.flatMap((material) => {
@@ -1049,9 +1161,10 @@ function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
     {error && <small className="danger-text">{error}</small>}
     {first && materials.map((material) => <label key={material.fulfillment_line_id}>{material.grn}{material.package ? ` · ${material.package}` : ""} · {material.article || material.name} · доступно {material.available} {material.unit}<input aria-label={`Количество из партии ${material.grn} ${material.package}`} type="number" min="0" max={material.available} step="any" value={quantities[material.fulfillment_line_id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [material.fulfillment_line_id]: event.target.value }))} /></label>)}
     {!first && <>
-      <div className="sw-title">Из каких коробок берёте детали <small>({source ? `${source}; подтверждённые мастером` : `с этапа ${previousStage(operation)}, подтверждённые мастером`})</small></div>
+      <div className="sw-title">Перед началом отметьте коробки, из которых берёте детали</div>
+      {loaded && !chips.length && <small className="sw-why">Готовых коробок {awaited.length > 1 ? `с этапов ${awaited.join(", ")}` : `с этапа ${awaited[0] ?? previousStage(operation)}`} пока нет — введите код с коробки</small>}
       {chips.length > 0 && <div className="box-chips" role="group" aria-label="Готовые коробки">{chips.map((chip) => <button key={chip.id} type="button" className={`box-chip${picked.includes(chip.number) ? " on" : ""}`} aria-pressed={picked.includes(chip.number)}
-        onClick={() => setPicked((current) => current.includes(chip.number) ? current.filter((item) => item !== chip.number) : [...current, chip.number])}>
+        onClick={() => setChosen(picked.includes(chip.number) ? picked.filter((item) => item !== chip.number) : [...picked, chip.number])}>
         <b>{boxTitle(chip)}</b><span>{chip.quantity} шт{source ? ` · ${chip.stage || `этап ${chip.position}`}` : ""}</span></button>)}</div>}
       {chips.length > 0 && !manual && !typed.length
         ? <button type="button" className="link-button sw-manual-toggle" onClick={() => setManual(true)}>Ввести код вручную</button>
@@ -1059,43 +1172,6 @@ function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
     </>}
     <button className="primary sw-go" disabled={busy || needBox || wrongMaterial} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs, { onBehalfOf, key: key.current }))}>Начать работу</button>
     {why && <small className="sw-why">{why}</small>}
-  </div>;
-}
-
-function BoxReview({ boxes, operators, busy, mutate }: {
-  boxes: ProductionBox[];
-  operators: ProductionOperator[];
-  busy: boolean;
-  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-}) {
-  const [reasons, setReasons] = useState<Record<string, string>>({});
-  const [returning, setReturning] = useState<Record<string, boolean>>({});
-  const [query, setQuery] = useState("");
-  const pending = boxes.filter((box) => box.status === "Закрыта оператором");
-  if (!pending.length) return null;
-  const shown = pending.filter((box) => boxMatches(box, query));
-  const confirmAll = () => mutate("confirm-all", async () => {
-    for (const box of pending) await productionApi.boxAction(box.id, "confirm", box.version);
-  });
-  return <div className="panel box-review"><div className="manual-stock-head"><h2>Коробки на подтверждение</h2><span className="page-count">{pending.length}</span>
-    {pending.length > 3 && <input className="search box-search" type="search" aria-label="Найти коробку по коду" placeholder="Код с коробки или номер" value={query} onChange={(event) => setQuery(event.target.value)} />}
-    {pending.length > 1 && <button className="primary small" disabled={busy} onClick={() => void confirmAll()}>Подтвердить все</button>}</div>
-    {!shown.length && <div className="empty">Нет коробки с кодом «{query}» — проверьте код на коробке.</div>}
-    <div className="box-grid">{shown.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
-      <BoxName box={box} />
-      <span>{box.item} · этап {box.operation_position}</span>
-      <span>{box.quantity} шт · {operators.find((operator) => operator.id === box.operator_id)?.name ?? box.operator_id}</span>
-      <button className="primary small" disabled={busy} onClick={() => void mutate(box.id, () => productionApi.boxAction(box.id, "confirm", box.version))}>Подтвердить</button>
-      {returning[box.id]
-        ? <>
-          <label>Причина возврата<textarea value={reasons[box.id] ?? ""} onChange={(event) => setReasons((current) => ({ ...current, [box.id]: event.target.value }))} /></label>
-          <div className="box-return-act">
-            <button className="secondary small" disabled={busy || !(reasons[box.id] ?? "").trim()} onClick={() => void mutate(box.id, () => productionApi.returnBox(box.id, box.version, reasons[box.id]))}>Вернуть оператору</button>
-            <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: false }))}>Отмена</button>
-          </div>
-        </>
-        : <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: true }))}>Вернуть…</button>}
-    </div>)}</div>
   </div>;
 }
 

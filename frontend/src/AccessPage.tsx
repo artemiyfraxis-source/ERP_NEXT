@@ -5,9 +5,9 @@ import { accessApi, type AccessLevel, type AccessMode, type AccessOverview, type
 
 /** NAV-ACCESS «Доступы» (SUPPLYMAP Portal.gs portalAccessGet/portalAccessSave, PortalApp.html openAccessHub and the
  *  per-person «Доступ» of «Сотрудники»): the level × section matrix and personal exceptions that are stronger than the
- *  level (owner 04.10.2026, docs/migration/access-levels-plan.md). The rows of the matrix are the six levels:
- *  «Суперадминистратор» and «Администратор» are always full and not editable (`full` in the answer), the other four
- *  are edited here. An empty cell = «закрыт»; a person's exception left empty = «как у уровня». */
+ *  level (owner 04.10.2026, docs/migration/access-levels-plan.md). The columns of the matrix are the levels the server
+ *  lists (14.10.2026: seven, «Администратор» gone, «Менеджер по проектам» and «Кладовщик» added): «Суперадминистратор»
+ *  is always full and not editable (`full` in the answer), the others are edited here. An empty cell = «закрыт»; a person's exception left empty = «как у уровня». */
 
 const MODE_LABEL: Record<AccessSetting, string> = { none: "закрыт", view: "просмотр", edit: "полный" };
 /** The chip's colour is the app's tone of the mode (green / blue / red), the same classes as the statuses elsewhere. */

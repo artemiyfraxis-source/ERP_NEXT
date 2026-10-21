@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import { addEndpoint, initState, makeGen, switchGenTab, updateEndpoint, type GenData, type GenState, type TerRec } from "./tcGenLogic";
-import { pinoutRecord, restorePinout, setCoreNet } from "./pinoutCheck";
+import { doublePin, pinoutEnds, pinoutRecord, restorePinout, setCoreNet, undoublePin } from "./pinoutCheck";
 import {
   buildHarnessDocument, planFromGenerator, resolveConnectorSources, wireSectionOf, type ConnectorSource, type GeneratorDrawingPlan,
 } from "./generatorToHarness";
@@ -112,7 +112,9 @@ it("splits a 3-ended harness: trunk from A to a branch node, a branch per B end"
   ]);
   const [, b1, b2] = document.connectors;
   expect(b1.positions.drawing.y).toBeLessThan(b2.positions.drawing.y);
-  expect(document.drawingDocuments).toEqual({ tables: [], leaders: [], bomOrder: [] });
+  // Голые жилы — без объёмной подсветки; подписи проводов и разъёма А разведены по месту.
+  expect(document.drawingDocuments).toMatchObject({ tables: [], leaders: [], bomOrder: [], volumeShading: false });
+  expect(Object.keys(document.drawingDocuments!.indexOffsets ?? {}).sort()).toEqual(["gen-w1", "gen-w2", "gen-w3", "gen-w4", "gen-x1"]);
   expect(document.wires.every((w) => w.lengthMm === 300)).toBe(true);
   expect(warnings).toContain("Длины ствола и веток генератор не знает — размеры на чертеже не проставлены, длины проводов перенесены.");
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
@@ -168,7 +170,7 @@ it("places a connector from the component library by its article", async () => {
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
 });
 
-it("puts a solder TUT on every wire at its contact (not one tube over the bundle) and the braid over the whole harness", () => {
+it("puts a solder TUT on every wire at its contact (not one tube over the bundle) and the braid on its branch", () => {
   const S = threeEnded();
   const solder = updateEndpoint(D, S, "a1", { method: "solder", tutLen: "15" });
   const braided = { ...solder, wrap: { enabled: true, slots: [{ mat: "w", kind: "braid" as const, len: "320" }, ...solder.wrap.slots.slice(1)] } };
@@ -190,7 +192,8 @@ it("puts a solder TUT on every wire at its contact (not one tube over the bundle
     ["ТУТ на пайку XS1 · конт. 2", "heat-shrink", 15, ["gen-s2"]],
     ["ТУТ на пайку XS1 · конт. 3", "heat-shrink", 15, ["gen-s3"]],
     ["ТУТ на пайку XS1 · конт. 4", "heat-shrink", 15, ["gen-s4"]],
-    ["МГТФ 0,12 белый", "braid", 320, ["gen-s5", "gen-s6", "gen-s7"]],
+    // Оплётка ветви («Оплётка ветви» формы) — на ветви разъёма XS1 длиной по форме, а не на весь жгут.
+    ["МГТФ 0,12 белый · XS1", "braid", 320, ["gen-s5"]],
   ]);
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
 });
@@ -250,4 +253,69 @@ it("matches the sample the server validator checks (backend/tests/techcards/harn
   const plan = planFromGenerator(D, updateEndpoint(D, twisted, "a1", { method: "solder", tutLen: "15" }));
   const { document } = buildHarnessDocument(plan, sourcesOf(plan, free(4, "JST XH")));
   expect(document).toEqual(serverSample);
+});
+
+it("double crimp in one contact: both wires into В·1 on the drawing, one terminal less in the build config, kept by the pinout record", () => {
+  const S0 = twoEnded();
+  const S = doublePin(D, S0, "b1", idx(S0, "k"), 0, 1);
+  expect(S.endpoints.find((e) => e.id === "b1")!.doublePins).toEqual([1]);
+  expect(pinoutEnds(makeGen(D, S), S).find((e) => e.id === "b1")).toMatchObject({ dups: [], doubled: [1] });
+  // Третий провод в тот же контакт не встаёт.
+  expect(doublePin(D, S, "b1", idx(S, "w"), 0, 1)).toBe(S);
+
+  const plan = planFromGenerator(D, S);
+  expect(plan.wires.filter((w) => w.to.pin === 1 && w.to.connector === "b1").map((w) => w.mark)).toEqual(["МГТФ 0,12 красный", "МГТФ 0,12 черный"]);
+  const { document, warnings } = buildHarnessDocument(plan, sourcesOf(plan, free()));
+  expect(warnings.filter((w) => /не лёг|без трассы/.test(w))).toEqual([]);
+  // У контакта редактора один вывод: второй провод — в узле на первом у самого контакта; на чертеже оба проложены.
+  const b1 = document.connectors.find((c) => c.designation === "XS2")!;
+  const contact = b1.contacts.find((c) => c.number === 1)!;
+  const atContact = document.wires.filter((w) => [w.from, w.to].some((end) => "contactId" in end && end.connectorId === b1.id && end.contactId === contact.id));
+  expect(atContact).toHaveLength(1);
+  const crimp = document.junctions.find((j) => j.id.startsWith("gen-dc"))!;
+  expect(crimp.wireIds).toHaveLength(2);
+  expect(crimp.wireIds).toContain(atContact[0].id);
+  expect(document.wires).toHaveLength(4);
+  expect(document.wires.every((w) => document.physicalTopology!.routes.some((r) => r.wireId === w.id))).toBe(true);
+
+  const gen = makeGen(D, S);
+  const { cfg } = gen.validate();
+  const prs = (cfg.ops as Array<{ type: string; label?: string; ep?: { doublePins?: number[] }; side?: string }>).find((op) => op.type === "prsTerm" && op.side === "B")!;
+  expect(prs.ep!.doublePins).toEqual([1]);
+  expect(gen.getActiveOps().find((op) => op.type === "prsTerm" && op.side === "B")!.label).toMatch(/\(двойной обжим: конт\. 1\)$/);
+  expect(gen.epDoublePins_(S.endpoints.find((e) => e.id === "b1")!)).toEqual([1]);
+
+  // Сборка → перезагрузка формы: контакт с двойным обжимом остаётся.
+  const record = pinoutRecord(gen, S)!;
+  expect(record.ends.find((e) => e.end === "В1")!.double).toEqual([1]);
+  expect(restorePinout(D, S0, { pinout: record }).endpoints.find((e) => e.id === "b1")!.doublePins).toEqual([1]);
+
+  // «Убрать второй провод»: красный остаётся, чёрный снят; двойного обжима больше нет.
+  const back = undoublePin(D, S, "b1", 1, { idx: idx(S, "r"), unit: 0 });
+  expect(back.endpoints.find((e) => e.id === "b1")!.doublePins).toBeUndefined();
+  expect(makeGen(D, back).getActiveOps().find((op) => op.type === "prsTerm" && op.side === "B")!.label).not.toMatch(/двойной/);
+});
+
+it("draws no sheath without a jacketed cable or a wrap: the channels are invisible, twisted pairs are the bare coloured wires", () => {
+  const S = twoEnded();
+  const twisted = { ...S, twist: { ...S.twist, enabled: true, mode: "pairs" as const, pairs: [{ a: "0", b: "1" }, { a: "2", b: "3" }] } };
+  const plan = planFromGenerator(D, twisted);
+  expect(plan.pairs).toHaveLength(2);
+  const { document } = buildHarnessDocument(plan, sourcesOf(plan, free(4)));
+  const topology = document.physicalTopology!;
+  expect(topology.segments.length).toBeGreaterThan(0);
+  expect(topology.segments.every((s) => s.opacity === 0 && s.color === undefined && s.specificationItemId === undefined)).toBe(true);
+  expect(topology.coverings ?? []).toEqual([]);
+  expect(document.diffPairs).toHaveLength(2);
+});
+
+it("a wrap on the harness is a drawn sheath: the braid covers the trunk", () => {
+  const S = twoEnded();
+  const wrapped = { ...S, wrap: { enabled: true, slots: [{ mat: "w", kind: "braid" as const, len: "" }, ...S.wrap.slots.slice(1)] } };
+  const plan = planFromGenerator(D, wrapped);
+  const { document } = buildHarnessDocument(plan, sourcesOf(plan, free(4)));
+  const coverings = document.physicalTopology!.coverings ?? [];
+  expect(coverings).toHaveLength(1);
+  expect(coverings[0]).toMatchObject({ kind: "braid" });
+  expect(coverings[0].spans.length).toBeGreaterThan(0);
 });

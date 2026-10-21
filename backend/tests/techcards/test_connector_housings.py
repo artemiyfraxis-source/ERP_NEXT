@@ -1,4 +1,4 @@
-from app.modules.techcards.connector_housings import attach_housings, housing_grid, housing_of
+from app.modules.techcards.connector_housings import MATING_PAIRS, attach_housings, housing_grid, housing_of, mating_pairs
 
 
 def test_current_supplymap_connector_families_resolve_wire_side_layouts():
@@ -143,11 +143,21 @@ def test_jst_gh_xh_ph_zh_and_microfit_follow_the_maker_drawings():
 
 
 def test_series_without_a_checked_drawing_keep_the_warning():
-    for article in ("51047-0400", "43645-0400", "43020-0400", "43640-0400", "22-55-2081", "DS1033-09F"):
+    # 16.10.2026: PicoBlade 51047 and Micro-Fit 43645 / 43020 / 43640 were read from the Molex drawings (see
+    # test_connector_numbering); SL 22-55 (molex.com closed, only part sheets) and D-Sub (the Connfly drawing has no
+    # numbers) stay unchecked — D-Sub was then marked checked by the standard (DIN 41652, numbers moulded on the insert).
+    for article in ("22-55-2081",):
         assert housing_of(article)["conf"] != "high", article
     # Searched for a maker drawing on 04.10 and found none that fixes the side: the note says what is missing.
-    for article in ("51047-0400", "XT60H-M", "QS8-S-M", "LP-12-C04PE", "GX12M-4"):
+    for article in ("XT60H-M", "QS8-S-M", "LP-12-C04PE", "GX12M-4"):
         assert housing_of(article)["conf"] != "high" and housing_of(article)["note"], article
+
+
+def test_dsub_follows_the_standard_from_the_solder_side():
+    plug, socket = housing_of("DB9M"), housing_of("DB9F")
+    assert plug["conf"] == socket["conf"] == "high"
+    assert plug["grid"][0] == [5, 0, 4, 0, 3, 0, 2, 0, 1] and plug["grid"][1] == [0, 9, 0, 8, 0, 7, 0, 6, 0]
+    assert socket["grid"][0] == [1, 0, 2, 0, 3, 0, 4, 0, 5] and socket["grid"][1] == [0, 6, 0, 7, 0, 8, 0, 9, 0]
 
 
 def test_jst_ze_nsh_pni_rcy_follow_the_jst_drawings():
@@ -198,11 +208,24 @@ def test_connfly_ds1069_and_hirose_follow_the_maker_drawings():
 
 
 def test_series_whose_drawing_has_no_contact_one_say_so():
-    # CZHR, FI-X and Connfly DS1071 have no circuit-1 mark on any maker drawing reachable — the warning stays.
-    for article in ("CZHR-04V-S", "FI-X30HL", "I-DS1071-SCB02X5"):
+    # FI-X has no circuit-1 mark on any maker drawing reachable — the warning stays.
+    for article in ("FI-X30HL",):
         layout = housing_of(article)
         assert layout["conf"] == "low" and not layout["src"] and "чертеже" in layout["note"], article
-    assert housing_of("CZHR-04V-S")["grid"] == [[1, 2, 3, 4]]  # unchanged until checked on a part
+    # CZHR: no mark of its own, but eCZ-F makes it interchangeable with the CZ IDC socket, whose ▽ is on the left of the
+    # front face (lock on the back face) — wire side, lock up: 1 left, as drawn before.
+    cz = housing_of("CZHR-04V-S")
+    assert (cz["grid"], cz["latch"], cz["conf"]) == ([[1, 2, 3, 4]], "ramp", "high") and "eCZ-F" in cz["src"]
+
+
+def test_connfly_dupont_contact_one_is_left_under_the_slots_by_the_owner():
+    # Owner, 17.10.2026, by the real part («стрелочка слева, прорези сверху … так же и у 2.54»): Connfly DS1071 (2,54) and
+    # DS1071-01 (2,0) — wire side, lance windows up: contact 1 on the left at the arrow, a window over every contact.
+    for article, family in (("I-DS1071-SCB01X4", "connfly-ds1071"), ("I-DS1071-01-SCB01X4", "connfly-ds1071-01")):
+        layout = housing_of(article)
+        assert (layout["family"], layout["grid"], layout["conf"]) == (family, [[1, 2, 3, 4]], "high"), article
+        assert layout["roof"] == {"kind": "slots", "at": "contacts", "src": "сверено владельцем по детали, 17.10.2026"}
+    assert housing_of("I-DS1071-SCB02X3")["grid"] == [[1, 3, 5], [2, 4, 6]]
 
 
 def test_eh_pa_vh_phd_picoblade_minifit_and_usb_follow_the_maker_drawings():
@@ -239,4 +262,86 @@ def test_picoblade_plug_51047_is_split_from_the_checked_receptacle():
     plug, receptacle = housing_of("Molex 510470300"), housing_of("Molex 510210300")
     assert plug["family"] == "molex-picoblade-plug" and receptacle["family"] == "molex-picoblade"
     assert plug["title"] == receptacle["title"] == "Molex PicoBlade" and plug["n"] == 3
-    assert plug["conf"] == "medium" and receptacle["conf"] == "high"
+    assert plug["conf"] == receptacle["conf"] == "high"
+    # 510470000-SD: CIRCUIT 1 INDICATOR MARK on the wire end at contact 1 — mark face up, 1 on the LEFT (was TR, no cue).
+    assert (plug["grid"], plug["latch"], plug["src"]) == ([[1, 2, 3]], "mark", "Molex 510470000-SD")
+
+
+def test_every_mating_pair_has_two_different_sourced_sides():
+    # Owner 17.10: «а почему у тебя розетка и вилка одинаково выглядит» — each half of a pair carries its side by the
+    # maker's sheet: pins vs sockets, the shroud vs the housing that goes in, the lock arm vs its catch / window.
+    pairs = mating_pairs()
+    assert len(pairs) == len(MATING_PAIRS)
+    for pair in pairs:
+        a, b = pair["a"], pair["b"]
+        assert a and b, pair["series"]
+        assert a["mate"]["src"] and b["mate"]["src"], pair["series"]
+        assert {a["mate"]["contacts"], b["mate"]["contacts"]} == {"pin", "socket"}, pair["series"]
+        if a["mate"].get("shell") or b["mate"].get("shell"):
+            assert {a["mate"].get("shell"), b["mate"].get("shell")} == {"outer", "inner"}, pair["series"]
+        if a["mate"].get("lock") or b["mate"].get("lock"):
+            assert a["mate"].get("lock") != b["mate"].get("lock"), pair["series"]
+
+
+def test_jst_sm_sides_follow_the_esm_sheet():
+    # eSM p. 3: «Receptacle housing (for pin contact)» SMR is the hood with the lock lever on top (p. 1), «Plug housing
+    # (for socket contact)» SMP goes in, the catch on its top, the panel arms on both row ends.
+    smr, smp = housing_of("SMR-04V-B"), housing_of("SMP-04V-BC")
+    assert {key: smr["mate"][key] for key in ("gender", "contacts", "shell", "lock")} == {
+        "gender": "receptacle", "contacts": "pin", "shell": "outer", "lock": "arm"}
+    assert (smp["mate"]["gender"], smp["mate"]["contacts"], smp["mate"]["shell"], smp["mate"]["lock"]) == ("plug", "socket", "inner", "catch")
+    assert "eSM" in smr["mate"]["src"] and smr["roof"]["at"] == smp["roof"]["at"] == "center"
+    # Outlines from the eSM housing table (4 contacts: SMR hood 13 × 7.5, body 10.5, 18.2 long; SMP 10.5 × 7.4 × 11.7).
+    a = (smr["n"] - 1) * smr["pitch"]
+    assert (a + smr["body"]["hood"]["extra"], smr["body"]["hood"]["h"], a + smr["body"]["extra"], smr["body"]["len"]) == (13.0, 7.5, 10.5, 18.2)
+    assert (a + smp["body"]["extra"], smp["body"]["h"], smp["body"]["len"]) == (10.5, 7.4, 11.7)
+    assert smp["body"]["wings"]["out"] > 0 and "wings" not in smr["body"] and "hood" not in smp["body"]
+    assert (smr["model"], smp["model"]) == ("hood", "arms")
+    two = housing_of("SMR-02V-B")
+    assert (two["n"] - 1) * two["pitch"] + two["body"]["hood"]["extra"] == 8.0  # eSM: SMR-02V hood 8
+    # The analogue BL2018P is drawn as the SMP plug.
+    assert housing_of("BL2018P-04")["mate"]["contacts"] == "socket"
+
+
+def test_jst_el_sides_come_from_the_article_and_picoblade_plug_windows_pair_up():
+    assert housing_of("ELR-03V")["mate"]["contacts"] == "pin" and housing_of("ELP-03V")["mate"]["contacts"] == "socket"
+    assert housing_of("51047-0300")["roof"]["at"] == "center" and housing_of("51047-0400")["roof"]["at"] == "pair"
+    assert "pair_from" not in housing_of("51047-0400")["roof"]
+
+
+def test_series_without_a_sheet_for_the_side_get_no_mate():
+    assert housing_of("GHR-04V-S")["mate"] is None
+    assert housing_of("QS8-S-M")["mate"] is None  # Amass QS8: no maker sheet — no mating side
+    assert housing_of("DS1033-09M")["mate"]["contacts"] == "pin" and housing_of("DS1033-09F")["mate"]["contacts"] == "socket"
+
+
+def test_mating_side_of_round_power_and_sealed_series_comes_from_the_part_number():
+    """17.10.2026: Deutsch DT (DT04 receptacle / DT06 plug drawings), TE Superseal (C-282106 tab / C-282088 plug), Amass
+    XT60 (-M / -F), Weipu SA8 (catalogue P05-03: SA810 cable plug vs SA811/812/815, P/S contacts), CNLINKO LP-12 (C/J,
+    PE/SX/PP by the Linko part-number rules)."""
+    side = lambda article: {k: v for k, v in housing_of(article)["mate"].items() if k != "src"}
+    assert side("DT04-4P") == {"gender": "receptacle", "contacts": "pin", "shell": "outer", "lock": "catch"}
+    assert side("DT06-4S") == {"gender": "plug", "contacts": "socket", "shell": "inner", "lock": "arm"}
+    assert side("282106-1") == {"contacts": "pin", "shell": "outer", "lock": "catch"}
+    assert side("282088-1") == {"gender": "plug", "contacts": "socket", "shell": "inner", "lock": "arm"}
+    assert side("XT60H-M") == {"contacts": "pin", "shell": "outer"} and side("XT60H-F") == {"contacts": "socket", "shell": "inner"}
+    assert side("SA810/P4") == {"gender": "plug", "contacts": "pin", "shell": "outer"}
+    assert side("SA812/S4") == {"gender": "receptacle", "contacts": "socket", "shell": "inner"}
+    assert side("LP-12-C04PE") == {"gender": "plug", "contacts": "pin", "lock": "arm"}
+    assert side("LP-12-J04SX") == {"gender": "receptacle", "contacts": "socket"}
+    assert side("LP-12-J04PP") == {"contacts": "socket"}
+
+
+def test_roof_by_part_number_and_sourced_plain_tops():
+    """A roof that differs inside a family by the part number (FI-X H / HL, Hsuan Mao MX Y / N), and a sheet that shows a
+    plain top — recorded as `roof_plain` with its source instead of a guessed lock."""
+    assert housing_of("FI-X30HL")["roof"]["kind"] == "latch" and housing_of("FI-X30HL")["roof"]["at"] == "ends"
+    assert housing_of("FI-X30H")["roof"]["kind"] == "slots" and housing_of("FI-X30H")["roof_plain"] == ""
+    assert housing_of("H5080-04PYW000")["roof"]["kind"] == "latch"
+    no_rib = housing_of("H5080-04PNW000")
+    assert no_rib["roof"] is None and "Body Option N" in no_rib["roof_plain"]
+    for article in ("SYR-02T", "XT60H-M", "I-DS1070-SCV04", "DF1BA-5EP-2.5RC", "DF1BA-10DEP-2.5RC"):
+        layout = housing_of(article)
+        assert layout["roof"] is None and len(layout["roof_plain"]) > 10, article
+    for article in ("GHR-04V-S", "QS8-S-M", "JR-H-Female", "RA-1011"):
+        assert housing_of(article)["roof_plain"] == "", article

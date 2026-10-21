@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import re
 from typing import Collection, Iterable, Mapping
 from uuid import UUID, uuid4
@@ -162,6 +162,19 @@ def _fact_index(key: str, facts: Mapping[str, Collection[str]], manual_tc: bool)
     return stage_index
 
 
+# Факты склада (владелец 15.10.2026: «не произошла смена статуса после принятия на склад»): приёмка ГП, упаковка и
+# отгрузка — физические события, ручной этап ниже них их не перекрывает и ниже них не опускается.
+_WAREHOUSE_FACTS = ("shipped", "packed", "stock")
+
+
+def _warehouse_floor(key: str, facts: Mapping[str, Collection[str]]) -> int:
+    """Ladder index of the highest warehouse fact of the КБ (-1 — none)."""
+    for fact in _WAREHOUSE_FACTS:
+        if key in facts.get(fact, ()):
+            return _KIT_STAGE_FACTS.index(fact)
+    return -1
+
+
 def project_stage(
     project: str,
     item_indexes: Iterable[str],
@@ -178,8 +191,8 @@ def project_stage(
         mark = marks.get(key, KitMark())
         manual_index = KIT_STAGES.index(mark.stage) if mark.stage in KIT_STAGES else -1
         # Контрактное производство: отгрузка по проекту — последний статус, ручной этап её не перекрывает
-        # (владелец 29.09; в SUPPLYMAP ручной этап перекрывал и отгрузку).
-        if key in facts.get("shipped", ()):
+        # (владелец 29.09; в SUPPLYMAP ручной этап перекрывал и отгрузку); так же приёмка ГП и упаковка (15.10).
+        if manual_index < _warehouse_floor(key, facts):
             manual_index = -1
         status_index = manual_index if manual_index >= 0 else stage_index
         stages.append(KitStage(
@@ -226,6 +239,12 @@ class KitStageNow:
     # The stage the facts alone give — what «авто» returns to.
     auto_status: str
     shipped: bool = False
+    # The warehouse fact the КБ is held at («Принято складом» / «Упаковано» / «Отгружено»; "" — none): no lower stage.
+    floor: str = ""
+
+    @property
+    def held_at(self) -> str:
+        return self.floor or ("Отгружено" if self.shipped else "")
 
 
 @dataclass(frozen=True)
@@ -284,9 +303,10 @@ def project_stage_now(
         fact_index = _fact_index(key, facts, manual_tc)
         mark = marks.get(key, KitMark())
         shipped = key in facts.get("shipped", ())
+        floor = _warehouse_floor(key, facts)
         manual = mark.stage in KIT_STAGES
-        status = mark.stage if manual and not shipped else KIT_STAGES[fact_index]
-        kits.append(KitStageNow(item_index, status, manual, KIT_STAGES[fact_index], shipped))
+        status = mark.stage if manual and KIT_STAGES.index(mark.stage) >= floor else KIT_STAGES[fact_index]
+        kits.append(KitStageNow(item_index, status, manual, KIT_STAGES[fact_index], shipped, KIT_STAGES[floor] if floor >= 0 else ""))
     if not kits:
         mark = marks.get(kit_stage_key(project, ""), KitMark())
         auto = KIT_STAGES[1 if manual_tc else 0]
@@ -333,7 +353,7 @@ def plan_stage_change(kits: Iterable[KitStageNow], value: object, kb: object = "
         if current == target:
             note = "Уже на этом этапе."
         elif back:
-            note = "Отгружено по факту — ниже не опускаем."
+            note = f"{kit.held_at} по факту — ниже не опускаем."
         else:
             note = "Выше выбранного этапа — не понижаем."
         return KitStageKept(kit.item_index, kit.status, note)
@@ -348,15 +368,26 @@ def plan_stage_change(kits: Iterable[KitStageNow], value: object, kb: object = "
             tuple(change(kit) for kit in targets if KIT_STAGES.index(kit.status) < target),
             tuple(kept(kit) for kit in targets if KIT_STAGES.index(kit.status) >= target),
         )
-    # Назад: причина обязательна, ниже факта отгрузки не опускаем.
-    lowered = tuple(change(kit) for kit in targets if not kit.shipped)
-    held = tuple(kept(kit, back=True) for kit in targets if kit.shipped)
+    # Назад: причина обязательна, ниже факта склада (принято / упаковано / отгружено) не опускаем.
+    def held_back(kit: KitStageNow) -> bool:
+        return bool(kit.held_at) and target < KIT_STAGES.index(kit.held_at)
+
+    lowered = tuple(change(kit) for kit in targets if not held_back(kit))
+    held = tuple(kept(kit, back=True) for kit in targets if held_back(kit))
     error = ""
     if not lowered:
-        error = (
-            f"{kb} отгружена по факту — этап ниже «Отгружено» не ставится." if kb
-            else "Все КБ проекта отгружены по факту — этап ниже «Отгружено» не ставится."
-        )
+        floors = {kit.held_at for kit in targets}
+        if floors == {"Отгружено"}:
+            error = (
+                f"{kb} отгружена по факту — этап ниже «Отгружено» не ставится." if kb
+                else "Все КБ проекта отгружены по факту — этап ниже «Отгружено» не ставится."
+            )
+        else:
+            lowest = min(floors, key=KIT_STAGES.index)
+            error = (
+                f"{kb} по факту склада — «{lowest}»: этап ниже не ставится." if kb
+                else f"Все КБ проекта по факту склада не ниже «{lowest}»: этап ниже не ставится."
+            )
     return StagePlan(value, kb, STAGE_BACK, lowered, held, error)
 
 
@@ -419,6 +450,24 @@ def days_left(deadline: object, today: date | datetime) -> int | None:
     return (parsed - current).days
 
 
+def work_days_left(
+    deadline: object, today: date | datetime, holidays: Collection[date] = (), weekdays: Collection[int] = (0, 1, 2, 3, 4),
+) -> int | None:
+    """Рабочих дней до дедлайна (владелец 14.10): рабочие дни после сегодня по день дедлайна включительно — по графику
+    смены (`weekdays`) без праздников календаря цеха; просрочка — минус рабочие дни после дедлайна по сегодня."""
+    parsed = _date(deadline)
+    if parsed is None:
+        return None
+    current = today.date() if isinstance(today, datetime) else today
+    start, end, sign = (current, parsed, 1) if parsed >= current else (parsed, current, -1)
+    count, day = 0, start + timedelta(days=1)
+    while day <= end:
+        if day.weekday() in weekdays and day not in holidays:
+            count += 1
+        day += timedelta(days=1)
+    return sign * count
+
+
 @dataclass(frozen=True)
 class SupplyPosition:
     project: str
@@ -436,6 +485,8 @@ class SupplySummary:
     request: int = 0
     customer_supplied: int = 0
     customer_supplied_stock: int = 0
+    # Bought positions (paid: «В пути», «Карантин», or already «Готово»), customer-supplied ones aside — the ЗКП column.
+    purchased: int = 0
     eta: str = ""
 
 
@@ -447,7 +498,7 @@ def summarize_supply(positions: Iterable[SupplyPosition]) -> dict[str, SupplySum
         project = normalize_project_number(position.project)
         row = counters.setdefault(project, {
             "total": 0, "stock": 0, "transit": 0, "buying": 0, "request": 0,
-            "customer_supplied": 0, "customer_supplied_stock": 0, "eta": "",
+            "customer_supplied": 0, "customer_supplied_stock": 0, "purchased": 0, "eta": "",
         })
         row["total"] += 1
         row[position.bucket] += 1
@@ -455,6 +506,8 @@ def summarize_supply(positions: Iterable[SupplyPosition]) -> dict[str, SupplySum
             row["customer_supplied"] += 1
             if position.bucket == "stock":
                 row["customer_supplied_stock"] += 1
+        elif position.bucket in {"transit", "stock"}:
+            row["purchased"] += 1
         current_eta = str(row["eta"])
         if position.bucket != "stock" and (_date(position.eta) or date.min) > (_date(current_eta) or date.min):
             row["eta"] = position.eta

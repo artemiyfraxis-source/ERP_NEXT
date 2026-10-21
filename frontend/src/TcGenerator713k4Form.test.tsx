@@ -1,0 +1,162 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { TcGenerator } from "./TcGenerator";
+import { resetPinoutHousings } from "./PinoutDiagram";
+import { resetPreviewTemplates } from "./GenDrawingPreview";
+import { genSnapshot } from "./genBuildState";
+import { makeGen } from "./tcGenLogic";
+import { DSA, FULL_OPS, FULL_TEMPLATES, fullHarness, harness, R } from "./tcGenRealHarness.fixture";
+import type { KitsetBom, ProjectTechcard } from "./api";
+
+// Вся форма перерисовывается на каждое поле: в jsdom ~1 с на правку, прогон — около минуты.
+vi.setConfig({ testTimeout: 150_000 });
+
+/*
+ * Владелец 17.10: «проверить функциональность генератора — что всё, что мы делали, я смогу повторить сам». 713К.4 КБ1:
+ * разъёмы, кабели, контакты, сростки и хвосты уже набраны (снимок формы), всю обработку владелец задаёт полями формы —
+ * оплётка XP-3 по ветвям, ТТК 8/2 поверх разъёмов, ТТК 12/4 на ствол, свивка, пайка сростков с ТТК 3/1, лужение хвостов,
+ * маркировка «По разъёмам». «Создать» отдаёт ту же сборку, что набранная в коде (tcGenRealHarness.fixture.ts): операции
+ * и 16 ПФ.
+ */
+const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+const records = (rows: Array<Record<string, string>>) => ({ metadata: null, columns: [], records: rows.map((fields, i) => ({ id: `r${i}`, fields })) });
+
+beforeAll(() => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+});
+afterAll(() => { vi.unstubAllGlobals(); });
+beforeEach(() => {
+  resetPinoutHousings();
+  resetPreviewTemplates();
+  window.localStorage.clear();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: FULL_TEMPLATES.map((t) => ({ ...t, code: t.title.split("|")[0].trim(), side: "", name: t.category })) });
+    if (path.startsWith("/api/references/tech-operations?tab=op")) return json(records(FULL_OPS.map((o) => ({ ...o }))));
+    if (path.startsWith("/api/references/tech-operations?tab=ter")) return json(records(DSA.terRecords.map((t) => ({
+      terArticle: t.article, terSeries: String(t.fields?.terSeries ?? ""), terApplicator: t.applicator, mm2From: t.mm2From, mm2To: t.mm2To,
+      terStep: t.step, terStrip: t.strip, terLPlus: t.lPlus }))));
+    if (path.includes("connector-families")) return json({ items: [], match: null });
+    if (path === "/api/references/technology/resolve-terminal") return json({ applicator: "", crimp_height: "", pull_force: "", by_section: [] });
+    if (path.includes("/harness/") && method === "GET") return json({ document: null, design: null, revision: null, warnings: [] });
+    if (method !== "GET") throw new Error(`Unexpected write: ${method} ${path}`);
+    return json({ metadata: null, items: [], columns: [], records: [] });
+  });
+});
+
+// Набрано до обработки: разъёмы «5», «I3», «C», «A6» и SCB01X3/SCB02X3, кабели по чертежу, контакты, четыре сростка, хвосты.
+const topology = harness(DSA);
+const card: ProjectTechcard = {
+  id: "40000000-0000-0000-0000-000000000713", version: 1, project: "713К.4", item_index: "КБ1", product_name: "Кабельная сборка Жгут НВ4",
+  source_calculation: "", deadline: null, status: "Черновик", revision: 0,
+  document: { build_config: { tab: "complex", gen_state: genSnapshot(DSA.components, topology, {}, {}) } } as ProjectTechcard["document"],
+  manual_operation_keys: [], created_at: "2026-10-17T10:00:00+03:00", updated_at: "2026-10-17T10:00:00+03:00", issued_at: null,
+};
+const kit: KitsetBom = {
+  project: "713К.4", index: "КБ1", name: card.product_name, run: "500", part_qty: "500", calc_source: "", calc_ops: [],
+  components: DSA.components.map((c) => ({ id: c.id, type: c.type, name: c.name, art: c.art, kd: "", qty: c.qty })),
+};
+
+const type = (label: string | HTMLElement, value: string) =>
+  fireEvent.change(typeof label === "string" ? screen.getByLabelText(label) : label, { target: { value } });
+// Большая форма: поиск по роли в jsdom медленный — переключатели, кнопки и группы ищутся по подписи и тексту.
+const switchOn = (title: string) => {
+  const sw = [...document.querySelectorAll<HTMLElement>(".gsw")].find((el) => el.querySelector(".gsw-text > span")?.textContent === title)!
+    .querySelector("input") as HTMLInputElement;
+  if (!sw.checked) fireEvent.click(sw);
+};
+const radio = (group: string, name: string) => fireEvent.click([...document.querySelectorAll(`[role="radiogroup"][aria-label="${group}"] button`)]
+  .find((el) => el.textContent === name)!);
+const button = (name: string) => fireEvent.click([...document.querySelectorAll("button")].find((el) => el.getAttribute("aria-label") === name || el.textContent === name)!);
+const block = (label: string) => document.querySelector(`div[aria-label="${label}"]`) as HTMLElement;
+
+it("713К.4 КБ1: the owner sets the processing through the form and gets the same operations and 16 ПФ", async () => {
+  const onBuild = vi.fn();
+  render(<TcGenerator card={card} kit={kit} busy={false} onBuild={onBuild} onDiscard={vi.fn()} />);
+  await screen.findByText("Обработка", { selector: "h3" });
+
+  // Свободные концы — зачистка 3 мм и лужение.
+  switchOn("Свободные концы");
+  radio("Обработка свободных концов", "Зачистка и лужение хвостов");
+  type("Зачистка хвоста", "3");
+  // Свивка пары белый/синий 0,12, шаг 20 мм.
+  switchOn("Свивка");
+  // Одна свивка — своя пара; что форма предложила сама, убирается.
+  while (document.querySelector('[aria-label="Убрать свивку 2"]')) button("Убрать свивку 2");
+  type("Свивка 1, провод 1", String(R.w12));
+  type("Свивка 1, провод 2", String(R.b12));
+  type("Шаг свивки", "20");
+  // Сростки пайкой, трубка ТТК 3/1 по 20 мм.
+  switchOn("Сростки");
+  // Сростки нарисованы на схеме — список «С1…С4» вместо набранных чисел; складывание жилы — только при опрессовке гильзой.
+  const rows = [...document.querySelectorAll(".spl-row")].map((el) => el.textContent || "");
+  expect(rows).toHaveLength(4);
+  expect(rows.map((t) => t.match(/^С(\d)(\d) пров/)?.slice(1, 3).join(":"))).toEqual(["1:4", "2:4", "3:3", "4:3"]);
+  expect(rows[0]).toMatch(/от .*конт\. \d/);
+  expect(document.querySelector(".spl-rows")).toHaveTextContent("Сростки задаются на схеме");
+  expect(screen.queryByLabelText("Проводов в сростке")).toBeNull();
+  expect(screen.queryByLabelText("Сростков на изделие")).toBeNull();
+  expect(screen.getByText("Складывание жилы перед гильзой")).toBeTruthy();
+  radio("Способ сростка", "Пайка");
+  expect(screen.queryByText("Складывание жилы перед гильзой")).toBeNull();
+  type("Трубка сростка, длина", "20");
+  type("Трубка сростка", "ttk3");
+  // Оплётка XP-3 до термоусадки, по ветвям 120/110/110/120 мм.
+  switchOn("Лента / оплётка на жгут");
+  type((screen.getAllByLabelText("Материал 1") as HTMLSelectElement[]).find((el) => [...el.options].some((o) => o.value === "xp3"))!, "xp3");
+  type(screen.getAllByLabelText("Вид")[0], "braid");
+  type(screen.getAllByLabelText(/^Длина на изделие/)[0], "460");
+  const braid: Record<string, string> = { "А1": "120", "А2": "110", "А3": "110", "А4": "120" };
+  Object.entries(braid).forEach(([end, len]) => type(`Оплётка ветви ${end}, отрезок`, len));
+  // Владелец 18.10 («почему 460»): у всех ветвей свой отрезок — общей длины нет, видны отрезки и их сумма; материалы — по одному.
+  expect(screen.getByText(/^Отрезки по ветвям: .*120 · .*110 · .*110 · .*120 мм, всего 460 мм\./)).toBeInTheDocument();
+  expect(screen.queryAllByLabelText(/^Длина на изделие/)).toHaveLength(0);
+  expect(screen.getByLabelText("Материал 2")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Материал 3")).toBeNull();
+  // ТТК 8/2 поверх разъёмов X1–X3 по 15 мм.
+  ["А1", "А2", "А3"].forEach((end) => {
+    const box = block(`Термоусадка поверх разъёма ${end}`);
+    fireEvent.click(box.querySelector('input[type="checkbox"]')!);
+    type(box.querySelector("select")!, "ttk8");
+    type(within(box).getByLabelText("Длина"), "15");
+  });
+  // Термоусадка на жгут: засеянные ТТК 8/2 и ТТК 3/1 уже стоят на разъёмах и сростках — на ствол не идут; ТТК 12/4 — 25 мм × 2.
+  switchOn("Термоусадка на жгут");
+  const trunk = document.querySelector('[aria-label="Трубки на жгут"]') as HTMLElement;
+  expect(trunk).toHaveTextContent("ТТК 8/2мм, черная" + "уже на разъёмах");
+  expect(trunk).toHaveTextContent("ТТК 3/1мм, черная" + "уже на сростках");
+  type("ТТК 12/4мм, черная: отрезок", "25");
+  type("ТТК 12/4мм, черная: отрезков на изделие", "2");
+  // Маркировка «По разъёмам»: у каждого разъёма А — своя трубка состава, 15 мм; разъёмы В не метят.
+  switchOn("Маркировка жгута");
+  button("По разъёмам");
+  button("Удалить метку 6");
+  button("Удалить метку 5");
+  const marks = within(screen.getByLabelText("Маркировка по КД"));
+  expect([1, 2, 3, 4].map((n) => [(marks.getByLabelText(`Надпись ${n}`) as HTMLTextAreaElement).value,
+    (marks.getByLabelText(`Материал ${n}`) as HTMLSelectElement).value, (marks.getByLabelText(`Длина трубки ${n}`) as HTMLInputElement).value])).toEqual([
+    ["5", "Маркировка \"5\" 4/2мм", "15"], ["I3", "Маркировка \"I3\" 4/2мм", "15"], ["C", "Маркировка \"C\" 4/2мм", "15"], ["A6", "Маркировка \"A6\" 4/2мм", "15"],
+  ]);
+
+  // Предупреждения формы (Ø провода свивки не в справочнике теста, гильзы НШВ состава при пайке не нужны) — «Всё равно создать».
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  button("Создать");
+  if (document.querySelector('[role="dialog"][aria-label="Распиновка не проверена"]')) button("Создать всё равно");
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  expect(confirm).toHaveBeenCalledTimes(1);
+  const config = onBuild.mock.calls[0][0] as { ops: Array<{ label: string; templateId: string }>; route: { blocks: Array<{ key: string; name?: string }> } };
+
+  const expected = makeGen(DSA, fullHarness()).buildConfig() as typeof config;
+  expect(config.ops.map((o) => o.label)).toEqual(expected.ops.map((o) => o.label));
+  expect(config.ops.map((o) => o.templateId)).toEqual(expected.ops.map((o) => o.templateId));
+  expect(config.ops.map((o) => o.label)).toEqual(expect.arrayContaining([
+    "Резка трубок — ТТК 8/2 3×15 мм, ТТК 12/4 2×25 мм, ТТК 3/1 4×20 мм",
+    "Резка оплётки XP-3 — X1 «5» 120 мм, X2 «I3» 110 мм, X3 «C» 110 мм, X4 «A6» 120 мм",
+    "Печать и резка маркировки — «5» 15 мм, «I3» 15 мм, «C» 15 мм, «A6» 15 мм",
+    "Надеть трубки: ТТК 12/4мм, черная на жгут — 2 шт", "Усадка термоусадки на жгуте — 2 шт",
+  ]));
+  expect(config.route.blocks).toHaveLength(16);
+  expect(config.route.blocks.map((b) => [b.key, b.name])).toEqual(expected.route.blocks.map((b) => [b.key, b.name]));
+});

@@ -30,7 +30,7 @@ def _config(name: str, part_quantity: int = 100) -> dict:
 
 
 def _build(config: dict) -> dict:
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(config, CARDS)
 
 
 def _etk_minutes(document: dict) -> Decimal:
@@ -49,18 +49,18 @@ def test_plan_of_a_kit_at_its_etk_batch_equals_the_etk_time(name: str):
     etk = _etk_minutes(document)
 
     assert _plan_minutes(steps, 100) == pytest.approx(etk, abs=Decimal("0.01"))
-    # Per operation too: setup is the card's tPrep, the rest of the ETK norm is spread over the batch.
+    # Per operation too: the whole ETK norm is spread over the batch, the plan counts no setup (owner 18.10).
     config_ops = document["build_config"]["ops"]
     for step, operation, op in zip(steps, document["operations"], config_ops):
         norm = sum((Decimal(row["norm"].replace(",", ".")) for row in operation["time"]), Decimal(0))
         assert (step.setup_seconds + step.seconds_per_unit * 100) / 60 == pytest.approx(norm, abs=Decimal("0.0001"))
-        assert step.setup_seconds == min(Decimal(str(op.get("tPrep") or 0)), norm * 60)
+        assert step.setup_seconds == 0
 
 
 def test_plan_was_4_to_6_times_short_on_wire_kits_and_is_the_etk_now():
     """The bug: the plan counted the card's tOp once per item; the ETK multiplies it by wires × cores × batch."""
-    for name, etk_minutes, old_minutes in (("591К.5-КБ2", "1560.26", "239.5"), ("708К.2-КБ1", "1954.7", "448.8"),
-                                           ("720К.-КБ1", "895.32", "126.2")):
+    for name, etk_minutes, old_minutes in (("591К.5-КБ2", "1493.30", "239.5"), ("708К.2-КБ1", "1856.62", "448.8"),
+                                           ("720К.-КБ1", "828.32", "126.2")):
         config = _config(name)
         document = _build(config)
         old = sum((Decimal(str(op.get("tOp") or 0)) * 100 + Decimal(str(op.get("tPrep") or 0)) for op in config["ops"]),
@@ -79,8 +79,9 @@ def test_a_launched_task_carries_the_etk_norms_and_scales_with_its_quantity():
     ]
     total = sum((item.setup_seconds + item.seconds_per_unit * 250 for item in operations), Decimal(0)) / 60
     setup = sum((step.setup_seconds for step in steps), Decimal(0)) / 60
-    # 250 pieces: setup once per operation, the rest 2.5 × that of the ETK's batch of 100.
-    assert total == pytest.approx(setup + (_etk_minutes(document) - setup) * Decimal("2.5"), abs=Decimal("0.01"))
+    # 250 pieces: no setup in the plan, so the time is 2.5 × that of the ETK's batch of 100.
+    assert setup == 0
+    assert total == pytest.approx(_etk_minutes(document) * Decimal("2.5"), abs=Decimal("0.01"))
 
 
 def _manual_with_generator_ops_and_two_branches() -> dict:
@@ -115,20 +116,21 @@ def test_manual_card_with_generator_ops_launches_both_drawn_branches():
     assert [step.block for step in steps] == ["w1", "w2", "w2"] + ["harness"] * 8
     assert [step.final for step in steps] == [False] * 3 + [True] * 8
 
+    # Задание по ПФ (13.10): одна операция задания на блок схемы, обе ветки сходятся в сборку.
     operations = launch_operations(steps, 100)
     position_of = {item.id: item.position for item in operations}
     inputs = {item.position: [(position_of[entry.input_operation_id], entry.per_unit) for entry in item.inputs]
               for item in operations}
-    # Both branches start on their own and both feed the first operation of the assembly block.
-    assert inputs[1] == [] and inputs[2] == []
-    assert inputs[3] == [(2, Decimal(1))]
-    assert inputs[4] == [(1, Decimal(1)), (3, Decimal(1))]
-    assert all(inputs[position] == [(position - 1, Decimal(1))] for position in range(5, 12))
-    assert [item.stage_key for item in operations] == ["w1", "w2", "w2"] + ["harness"] * 8
+    assert inputs == {1: [], 2: [], 3: [(1, Decimal(1)), (2, Decimal(1))]}
+    assert [item.stage_key for item in operations] == ["w1", "w2", "harness"]
+    assert [[part.position for part in item.etk_ops] for item in operations] == [[1], [2, 3], list(range(4, 12))]
+    assert [item.code for item in operations] == [steps[0].code, steps[1].code, steps[3].code]
+    assert sum((item.setup_seconds + item.seconds_per_unit * 100 for item in operations), Decimal(0)) == sum(
+        (step.setup_seconds + step.seconds_per_unit * 100 for step in steps), Decimal(0))
 
-    # Norms as the ETK shows them, the own operation with its «на изделие» 2: 15 s × 2 per item + 60 s setup.
+    # Norms as the ETK shows them, the own operation with its «на изделие» 2: 15 s × 2 per item, the 60 s setup is not planned.
     assert _plan_minutes(steps, 100) == pytest.approx(_etk_minutes(document), abs=Decimal("0.01"))
-    assert (steps[10].seconds_per_unit, steps[10].setup_seconds) == (Decimal(30), Decimal(60))
+    assert (steps[10].seconds_per_unit, steps[10].setup_seconds) == (Decimal(30), Decimal(0))
 
 
 def test_a_drawn_scheme_that_no_longer_fits_launches_as_a_chain_with_a_warning():

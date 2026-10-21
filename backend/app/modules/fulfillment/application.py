@@ -62,8 +62,8 @@ class FulfillmentRepository(Protocol):
     def add(self, request: FulfillmentRequest) -> None: ...
     def delete(self, request_id: UUID) -> None: ...
     def open_requests(self) -> Sequence[FulfillmentRequest]: ...
-    # Read model for the ETK (`app.workflows.etk_lots`): (project_key, item_index, article, name, grn, package).
-    def issued_lots(self, kits: Sequence[tuple[str, str]]) -> Sequence[tuple[str, str, str, str, str, str]]: ...
+    # Read model for the ETK (`app.workflows.etk_lots`): (project_key, item_index, article, name, grn, package, request number).
+    def issued_lots(self, kits: Sequence[tuple[str, str]]) -> Sequence[tuple[str, str, str, str, str, str, str]]: ...
 
 
 class WarehouseRepository(Protocol):
@@ -191,6 +191,8 @@ class OffBookCommand(VersionedFulfillmentCommand):
 
     line_id: UUID
     off_book: bool = True
+    # How much is on the shelf (owner 14.10.2026); None — the whole need. Less than the need splits the line.
+    quantity: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -214,6 +216,9 @@ class BindProjectLotsCommand:
     versions: dict[UUID, int]
     actor: Actor
     now: datetime
+    # «Сколько есть?» (owner 14.10.2026): only this much of the waiting need is «есть, но не заведено», КБ in order,
+    # the line where it runs out is split; None — every waiting line.
+    off_book_quantity: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -352,6 +357,26 @@ def project_reserve_by_lot(
             if _serves_kit(reserve, project, kb):
                 held[reserve.lot_id] = held.get(reserve.lot_id, Decimal("0")) + reserve.quantity
     return held
+
+
+def reserve_holders(uow, lots: Sequence[StockLot]) -> dict[UUID, list[str]]:
+    """Who holds the РЕЗЕРВ of each lot: «Со склада» covers by project, techcard reserves by «project КБ» — for the
+    picker to show a lot that is all reserved for other projects (владелец 16.10: «на складе ищет другие позиции, а тут
+    нет»). A lot whose reserve none of them explains (kit lines) gets nothing here. Without the ports → {}."""
+    ids = [lot.id for lot in lots if lot.reserved > 0]
+    holders: dict[UUID, list[str]] = {}
+    if not ids:
+        return holders
+    covers = getattr(uow, "stock_covers", None)
+    if covers is not None:
+        for cover in covers.active_on_lots(ids):
+            if cover.lot_id and cover.project_reference:
+                holders.setdefault(cover.lot_id, []).append(cover.project_reference.strip())
+    reserves = getattr(uow, "kit_reserves", None)
+    if reserves is not None:
+        for reserve in reserves.active_on_lots(ids):
+            holders.setdefault(reserve.lot_id, []).append(f"{reserve.project} {reserve.item_index}".strip())
+    return {lot_id: list(dict.fromkeys(names)) for lot_id, names in holders.items()}
 
 
 def free_for_project(lot: StockLot, held: dict[UUID, Decimal]) -> Decimal:
@@ -896,14 +921,17 @@ def set_off_book(command: OffBookCommand, uow: UnitOfWork) -> FulfillmentRequest
         line = next((item for item in request.lines if item.id == command.line_id), None)
         if line is None:
             raise FulfillmentValidationError("Позиция заявки не найдена")
+        details = _off_book_details(line)
         if command.off_book:
-            updated = request.mark_off_book(line.id).stamped(command.now)
+            updated = request.mark_off_book(line.id, command.quantity).stamped(command.now)
             event = "fulfillment.off_book_marked"
+            if command.quantity is not None:
+                details["quantity"] = _display_number(Decimal(command.quantity))
         else:
             updated = request.clear_off_book(line.id).stamped(command.now)
             event = "fulfillment.off_book_cleared"
         uow.fulfillment.add(updated)
-        _audit(updated, event, command.actor, command.now, _off_book_details(line), uow)
+        _audit(updated, event, command.actor, command.now, details, uow)
         _audit_auto_complete(request, updated, command.actor, command.now, uow)
         uow.commit()
         return updated
@@ -1032,7 +1060,9 @@ def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> Proje
     КБ go in natural order, lots FIFO by ГРН number. Each waiting line of the item takes what the current lot gives
     (`_reserve_for_kit`: the project's covers, then the КБ's techcard reserve, then ДОСТУПНО); a lot that falls short
     splits the line and the next lot takes the remainder; what no lot covers stays a waiting line. Lines that already
-    have a lot (or «есть, но не заведено») are left alone. `off_book` marks every waiting line of the item instead."""
+    have a lot (or «есть, но не заведено») are left alone. `off_book` marks every waiting line of the item instead, or
+    only `off_book_quantity` of it: КБ in the same order, the line where the quantity runs out is split like a short
+    lot — its covered part is marked, the rest and the lines after it keep waiting (`short`)."""
     with uow:
         key = project_key(command.project)
         wanted_item = _item_key(command.article, command.name)
@@ -1045,6 +1075,13 @@ def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> Proje
             raise FulfillmentValidationError("Либо партии, либо «есть, но не заведено» — не вместе")
         if not command.off_book and not lot_ids:
             raise FulfillmentValidationError("Выбери хотя бы одну партию")
+        have = command.off_book_quantity
+        if have is not None:
+            have = Decimal(have)
+            if not command.off_book:
+                raise FulfillmentValidationError("Количество указывают только для «есть, но не заведено»")
+            if not have.is_finite() or have <= 0:
+                raise FulfillmentValidationError("Сколько есть — укажи число больше нуля")
 
         for request_id, version in command.versions.items():
             current = uow.fulfillment.get(request_id)
@@ -1071,6 +1108,15 @@ def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> Proje
             raise ConcurrentFulfillmentUpdate(
                 f"В проекте появились заявки, которых нет на экране ({', '.join(unseen)}) — обнови экран"
             )
+        if have is not None:
+            waiting_lines = [line for request in requests for line in request.lines if waiting(line)]
+            total = sum((line.requirement for line in waiting_lines), Decimal("0"))
+            if have > total:
+                unit_text = f" {waiting_lines[0].unit}" if waiting_lines else ""
+                raise FulfillmentValidationError(
+                    f"Есть {_display_number(have)}{unit_text}, а ждут только {_display_number(total)}{unit_text} — "
+                    "укажи не больше"
+                )
 
         lots: list[StockLot] = []
         for lot_id in lot_ids:
@@ -1092,13 +1138,20 @@ def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> Proje
                 line = next(row for row in request.lines if row.id == line_id)
                 unit = unit or line.unit
                 if command.off_book:
-                    request = request.mark_off_book(line_id)
+                    part = line.requirement if have is None else min(line.requirement, have)
+                    if part <= 0:  # the quantity ran out on an earlier line: this one keeps waiting
+                        short += line.requirement
+                        continue
+                    request = request.mark_off_book(line_id, None if part == line.requirement else part)
+                    if have is not None:
+                        have -= part
+                    short += line.requirement - part
                     bound.append(ProjectBinding(
                         request_id=request.id, number=request.number, kb=kb, line_id=line_id,
-                        quantity=line.requirement, off_book=True,
+                        quantity=part, off_book=True,
                     ))
                     _audit(request, "fulfillment.off_book_marked", command.actor, command.now, {
-                        **_off_book_details(line), "project": command.project,
+                        **_off_book_details(line), "quantity": _display_number(part), "project": command.project,
                     }, uow)
                     continue
                 request, need, filled = _fill_line_fifo(

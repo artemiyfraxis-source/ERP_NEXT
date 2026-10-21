@@ -1,12 +1,15 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { CrimpCell } from "./CrimpCell";
+import { cellFailure } from "./CustomColumn";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
-  failureText, techcardsApi,
+  failureText, referencesApi, techcardsApi,
   type ConnectorFamily, type ConnectorSeries, type ConnectorSeriesHousing, type ConnectorSeriesMatch, type ConnectorTerminal,
 } from "./api";
-import { connectorFace, connectorFaceUnits, connectorSummary, type ConnectorHousing } from "./connectorArt";
+import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, type ConnectorHousing } from "./connectorArt";
 import { connectorModel } from "./connectorModel";
+import { connectorTopView } from "./connectorTopView";
+import { searchRows } from "./searchText";
 
 /* «База данных → Разъёмы» по сериям (владелец, 10.10.2026: «идти по сериям: серия GHR, внутри все доступные разъёмы
    и их модели»). Список серий → серия: все корпуса по каталогу производителя (модель + вид со стороны проводов),
@@ -51,10 +54,11 @@ function Face({ housing, width = 250 }: { housing: ConnectorHousing; width?: num
   return <Svg box={{ w: face.w + 20, h: face.h + 8, body: face.body }} label="Вид со стороны проводов" />;
 }
 
-/** Картинка серии в списке: модель по шаблону серии, иначе торец со стороны проводов. */
+/** Картинка серии в списке — объёмный корпус у всех серий одного вида (владелец 16.10: «мешанина вида нужна
+ *  однообразность»): модель по чертежу серии, а без неё — объёмная картинка серии по её раскладке. */
 function Thumb({ housing }: { housing: ConnectorHousing }) {
-  const model = connectorModel(housing, 92, 56);
-  return model ? <Svg box={model} label={`Модель ${housing.title ?? ""}`} /> : <Face housing={housing} width={90} />;
+  const model = connectorModel(housing, 92, 56) || connectorPicture(housing, 92, 56);
+  return <Svg box={model} label={`Модель ${housing.title ?? ""}`} />;
 }
 
 // From this many contact widths on, a housing card gets a wider column so the face numbers stay readable.
@@ -62,42 +66,67 @@ const WIDE_UNITS = 9;
 
 function HousingCard({ item, hit, wide = false }: { item: ConnectorSeriesHousing; hit: boolean; wide?: boolean }) {
   const hs = item.housing;
-  const model = connectorModel(hs, 130, 84);
+  // Два вида (владелец 16.10: «зачем мне три вида»): корпус, развёрнутый видом сверху, и торец с нумерацией контактов.
+  const top = connectorTopView(hs, wide ? 240 : 170, 120);
   return <div className={hit ? "conn-housing conn-hit" : "conn-housing"} id={`conn-${item.article}`}>
     <div className="conn-housing-head">
       <b>{item.article}</b><span>{item.n} конт.</span>
+      {hs.mate && <span title={hs.mate.src}>{hs.mate.contacts === "pin" ? "штыри" : "гнёзда"}</span>}
       {hs.conf !== "high" && <small className="conn-warn" title={hs.note || undefined}>нумерация не сверена</small>}
     </div>
-    <div className="conn-housing-model">{model
-      ? <Svg box={model} label={`Модель ${item.article}`} />
-      : <small className="conn-muted">модель не сверена</small>}</div>
-    <div className="conn-face"><Face housing={hs} width={wide ? 400 : 250} /></div>
+    <div className="conn-housing-views">
+      {top && <div className="conn-housing-top"><Svg box={top} label={`Вид сверху ${item.article}`} /></div>}
+      <div className="conn-face"><Face housing={hs} width={wide ? 400 : 250} /></div>
+    </div>
     {item.headers.length > 0 && <small className="conn-headers">
       {item.headers.map((header) => <span key={header.article} title={header.title}>{header.article}<i> — {header.title.replace("Вилка на плату", "").replace(/^,?\s*/, "")}</i></span>)}
     </small>}
   </div>;
 }
 
-const TERMINAL_COLUMNS: DataColumn<ConnectorTerminal>[] = [
-  { key: "article", title: "Артикул контакта", value: (t) => t.article, render: (t) => <b>{t.article}</b> },
-  { key: "kind", title: "Контакт", value: (t) => t.kind },
-  { key: "product", title: "Серия", value: (t) => t.product },
-  { key: "series", title: "Корпуса", value: (t) => t.series },
-  { key: "awg", title: "AWG", value: (t) => (t.awg_from && t.awg_to && t.awg_from !== t.awg_to ? `${t.awg_from}–${t.awg_to}` : t.awg_from || t.awg_to) },
-  { key: "mm2", title: "Сечение, мм²", value: (t) => (t.mm2_from && t.mm2_to && t.mm2_from !== t.mm2_to ? `${t.mm2_from}–${t.mm2_to}` : t.mm2_from || t.mm2_to) },
-  { key: "strip", title: "Зачистка, мм", value: (t) => t.strip, numeric: true },
-  { key: "crimp", title: CRIMP_COLUMN_TITLE, value: (t) => crimpText({ conductor: t.crimp_height, pull: t.pull_force }),
-    render: (t) => <CrimpCell values={{ conductor: t.crimp_height, pull: t.pull_force }} /> },
-  { key: "applicator", title: "Аппликатор", value: (t) => t.applicator },
-];
+const contactGender = (text: string) => (/^(female|гнезд)/i.test(text) ? "Female" : /^(male|штыр)/i.test(text) ? "Male" : "");
+const terminalCrimp = (t: ConnectorTerminal) => ({ conductor: t.crimp_height, insulation: t.ins_crimp_height, pull: t.pull_force });
 
-type ContactRow = NonNullable<ConnectorSeries["contacts"]>[number];
-const CONTACT_COLUMNS: DataColumn<ContactRow>[] = [
-  { key: "article", title: "Артикул контакта", value: (c) => c.article, render: (c) => <b>{c.article}</b> },
-  { key: "wire", title: "Провод, исполнение", value: (c) => c.wire },
-  { key: "base", title: "Во вкладке «Терминалы»", value: (c) => (c.in_base ? "есть" : "нет"),
-    render: (c) => (c.in_base ? <span className="tone-ok">есть</span> : <span className="tone-warn">нет — добавить</span>) },
-];
+const range = (from: string, to: string) => (from && to && from !== to ? `${from}–${to}` : from || to);
+const splitRange = (text: string): [string, string] => {
+  const parts = text.split(/\s*[–—-]\s*/).map((part) => part.trim()).filter(Boolean);
+  return parts.length > 1 ? [parts[0], parts[parts.length - 1]] : [parts[0] ?? "", parts[0] ?? ""];
+};
+const GENDERS = [{ value: "Female", label: "гнездо", aliases: ["Female", "гнездо"] }, { value: "Male", label: "штырь", aliases: ["Male", "штырь"] }];
+
+/** Правка ячейки терминала в карточке серии — путь «Базы данных»: одна правка записи БД.ТЕР со старым значением, после
+    записи карточка перечитывается. Без права на правку колонки только для чтения. */
+function terminalColumns(save?: (t: ConnectorTerminal, edits: Array<{ field: string; value: string }>) => Promise<void>): DataColumn<ConnectorTerminal>[] {
+  const cell = (fields: (t: ConnectorTerminal, text: string) => Array<{ field: string; value: string }>, value: (t: ConnectorTerminal) => string,
+    extra: Partial<NonNullable<DataColumn<ConnectorTerminal>["edit"]>> = {}) => save
+    ? { enabled: (t: ConnectorTerminal) => Boolean(t.id), value, save: (t: ConnectorTerminal, text: string) => save(t, fields(t, text.trim())), ...extra }
+    : undefined;
+  return [
+    { key: "article", title: "Артикул контакта", value: (t) => t.article, render: (t) => <b>{t.article}</b> },
+    { key: "kind", title: "Контакт", value: (t) => t.kind,
+      edit: cell((t, text) => [{ field: "terType", value: text }, ...("terGender" in (t.raw ?? {}) ? [{ field: "terGender", value: contactGender(text) }] : [])],
+        (t) => t.raw?.terType ?? "", { options: (t) => {
+          const own = t.raw?.terType ?? "";
+          return own && !GENDERS.some((g) => g.value === own) ? [{ value: own, label: t.kind }, ...GENDERS] : GENDERS;
+        } }) },
+    { key: "product", title: "Серия", value: (t) => t.product },
+    { key: "series", title: "Корпуса", value: (t) => t.series },
+    { key: "awg", title: "AWG", value: (t) => range(t.awg_from, t.awg_to),
+      edit: cell((_t, text) => { const [from, to] = splitRange(text); return [{ field: "awgFrom", value: from }, { field: "awgTo", value: to }]; },
+        (t) => range(t.awg_from, t.awg_to)) },
+    { key: "mm2", title: "Сечение, мм²", value: (t) => range(t.mm2_from, t.mm2_to),
+      edit: cell((_t, text) => { const [from, to] = splitRange(text); return [{ field: "mm2From", value: from }, { field: "mm2To", value: to }]; },
+        (t) => range(t.mm2_from, t.mm2_to)) },
+    { key: "strip", title: "Зачистка, мм", value: (t) => t.strip, numeric: true, edit: cell((_t, text) => [{ field: "terStrip", value: text }], (t) => t.strip) },
+    { key: "conductor", title: "Обжим по жиле, мм", value: (t) => t.crimp_height, render: (t) => <CrimpCell values={terminalCrimp(t)} only="conductor" />,
+      edit: cell((_t, text) => [{ field: "terCrimpHeight", value: text }], (t) => t.crimp_height) },
+    { key: "insulation", title: "Обжим по изоляции, мм", value: (t) => t.ins_crimp_height ?? "", render: (t) => <CrimpCell values={terminalCrimp(t)} only="insulation" />,
+      edit: cell((_t, text) => [{ field: "terInsCrimpHeight", value: text }], (t) => t.ins_crimp_height ?? "") },
+    { key: "pull", title: "Отрыв, Н", value: (t) => t.pull_force, render: (t) => <CrimpCell values={terminalCrimp(t)} only="pull" />,
+      edit: cell((t, text) => [{ field: "terPullForceMin", value: text }, ...(t.raw?.terPullForceMax ? [{ field: "terPullForceMax", value: "" }] : [])], (t) => t.pull_force) },
+    { key: "applicator", title: "Аппликатор", value: (t) => t.applicator, edit: cell((_t, text) => [{ field: "terApplicator", value: text }], (t) => t.applicator) },
+  ];
+}
 
 type CatalogRow = ConnectorSeries["catalog"][number];
 const CATALOG_COLUMNS: DataColumn<CatalogRow>[] = [
@@ -107,11 +136,21 @@ const CATALOG_COLUMNS: DataColumn<CatalogRow>[] = [
   { key: "maker", title: "Производитель", value: (c) => c.maker },
 ];
 
-const missing = (series: ConnectorSeries) => (series.contacts ?? []).filter((c) => !c.in_base).length;
-
-function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match: ConnectorSeriesMatch | null; onBack: () => void }) {
+function SeriesView({ series, match, onBack, canEdit, onSaved }: {
+  series: ConnectorSeries; match: ConnectorSeriesMatch | null; onBack: () => void; canEdit: boolean; onSaved: () => Promise<void>;
+}) {
+  const columns = useMemo(() => terminalColumns(canEdit ? async (t, edits) => {
+    const raw = t.raw ?? {};
+    try {
+      await referencesApi.editRecord(t.id ?? "", edits.filter((edit) => edit.value !== (raw[edit.field] ?? ""))
+        .map((edit) => ({ field: edit.field, old: raw[edit.field] ?? "", value: edit.value })));
+    } catch (reason) { throw cellFailure(reason); }
+    await onSaved();
+  } : undefined), [canEdit, onSaved]);
   const hit = match?.series === series.id ? match.article : null;
   const range = countsText(series.counts);
+  // Вилка и розетка серии различаются контактами (штыри / гнёзда) — легенда рисунка, только где сторона пары известна.
+  const mated = series.variants.some((variant) => variant.housings.some((item) => item.housing.mate));
   useEffect(() => {
     if (hit) document.getElementById(`conn-${hit}`)?.scrollIntoView?.({ block: "center" });
   }, [hit]);
@@ -131,17 +170,16 @@ function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match:
         ? <span className="order-chip tone-warn" title="Каталога корпусов серии в ERP нет — показаны только данные из баз «Терминалы» и «Коакс»">корпуса не добавлены</span>
         : <>
           {series.checked
-            ? <span className="order-chip tone-ok">нумерация сверена с чертежом</span>
+            ? <span className="order-chip tone-ok">{series.checked_on_part ? "нумерация сверена по детали" : "нумерация сверена с чертежом"}</span>
             : <span className="order-chip tone-warn">нумерация не сверена с чертежом</span>}
           {series.range_checked
             ? <span className="order-chip tone-neutral">ряд корпусов по каталогу {series.range_src.replace(", Housing", "")}</span>
             : <span className="order-chip tone-warn" title="Каталога серии в ERP нет — показаны корпуса, которые ERP уже знает">диапазон не сверен</span>}
         </>}
       {series.wire && <span className="order-chip tone-info">провод {wireText(series.wire)}</span>}
-      {missing(series) > 0 && <button type="button" className="order-chip tone-warn conn-jump"
-        onClick={() => document.getElementById("conn-contacts")?.scrollIntoView?.({ block: "start" })}>
-        контактов нет в «Терминалы»: {missing(series)} ↓</button>}
-      {series.housing_count > 0 && <span className="muted">вид со стороны проводов, контакт 1 — красная метка{series.note ? ` · ${series.note}` : ""}</span>}
+      {series.housing_count > 0
+        ? <span className="muted">вид со стороны проводов, контакт 1 — красная метка{mated ? ", штырь — металл, гнездо — окно с кольцом" : ""}{series.note ? ` · ${series.note}` : ""}</span>
+        : series.note && <span className="muted">{series.note}</span>}
     </div>
     {match?.series === series.id && !match.article && <div className="warning-inline">
       Такого корпуса нет в {series.range_checked ? "каталоге серии" : "известных ERP"} — ниже он нарисован по правилу серии.
@@ -160,15 +198,9 @@ function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match:
       <DataTable label={`Артикулы ${series.title}`} rows={series.catalog} columns={CATALOG_COLUMNS} rowKey={(c) => c.article}
         storageKey="db:conn-catalog" exportName={`Коакс ${series.title}`} hideSearch compactBelow={30} />
     </section>}
-    {series.contacts && series.contacts.length > 0 && <section className="conn-variant" id="conn-contacts">
-      <h3>Контакты по каталогу <span className="muted">{series.contacts.length}
-        {missing(series) ? ` · нет во вкладке «Терминалы»: ${missing(series)}` : " · все есть во вкладке «Терминалы»"}</span></h3>
-      <DataTable label={`Контакты по каталогу ${series.title}`} rows={series.contacts} columns={CONTACT_COLUMNS} rowKey={(c) => c.article}
-        storageKey="db:conn-contacts" exportName={`Контакты ${series.title}`} hideSearch compactBelow={30} />
-    </section>}
     {(series.terminals.length > 0 || series.catalog.length === 0) && <section className="conn-variant">
       <h3>Терминалы <span className="muted">{series.terminals.length ? `${series.terminals.length} · из вкладки «Терминалы»` : ""}</span></h3>
-      <DataTable label={`Терминалы ${series.title}`} rows={series.terminals} columns={TERMINAL_COLUMNS} rowKey={(t) => t.article}
+      <DataTable label={`Терминалы ${series.title}`} rows={series.terminals} columns={columns} rowKey={(t) => t.article}
         storageKey="db:conn-terminals" exportName={`Терминалы ${series.title}`} hideSearch compactBelow={30}
         emptyText="В «Терминалы» нет контактов этой серии." />
     </section>}
@@ -194,7 +226,7 @@ function SeriesCard({ series, onOpen }: { series: ConnectorSeries; onOpen: () =>
   </button>;
 }
 
-export function ConnectorGallery() {
+export function ConnectorGallery({ canEdit = false }: { canEdit?: boolean }) {
   const [series, setSeries] = useState<ConnectorSeries[] | null>(null);
   const [error, setError] = useState("");
   const [article, setArticle] = useState("");
@@ -203,17 +235,19 @@ export function ConnectorGallery() {
   const [match, setMatch] = useState<ConnectorSeriesMatch | null>(null);
   const [unknown, setUnknown] = useState<{ article: string; housing: ConnectorFamily["housing"] | null } | null>(null);
 
-  useEffect(() => {
-    techcardsApi.connectorSeries().then((result) => setSeries(result.series))
-      .catch((reason) => { setSeries([]); setError(failureText(reason, "База разъёмов не загрузилась")); });
-  }, []);
+  const reload = useCallback(() => techcardsApi.connectorSeries().then((result) => setSeries(result.series))
+    .catch((reason) => { setSeries((current) => current ?? []); setError(failureText(reason, "База разъёмов не загрузилась")); }), []);
+  useEffect(() => { void reload(); }, [reload]);
 
-  const query = article.trim().toUpperCase().replace(/\s+/g, "");
-  const shown = useMemo(() => (series ?? []).filter((item) => !query
-    || `${item.title} ${item.maker}`.toUpperCase().replace(/\s+/g, "").includes(query)
-    || item.variants.some((variant) => variant.housings.some((h) => h.article.toUpperCase().includes(query)))
-    || item.terminals.some((t) => t.article.toUpperCase().replace(/\s+/g, "").includes(query))
-    || item.catalog.some((c) => c.article.toUpperCase().replace(/\s+/g, "").includes(query))), [series, query]);
+  // Серия, производитель, артикулы корпусов, терминалов и каталога — по правилам поиска баз (searchText.ts): «ghr 04»,
+  // «GHR-04V-S» и «ghr04vs» находят одну серию.
+  const shown = useMemo(() => searchRows(series ?? [], (item) => [
+    item.title, item.maker,
+    ...item.variants.flatMap((variant) => variant.housings.map((h) => h.article)),
+    ...item.terminals.map((t) => t.article),
+    ...item.catalog.map((c) => c.article),
+    ...(item.contacts ?? []).map((c) => c.article),
+  ], article), [series, article]);
   // Sections in the order the server sends them (fixed category order); counts follow the search.
   const sections = useMemo(() => {
     // Inside a section the server sends the series by maker, then pitch; a maker label only where makers differ.
@@ -267,7 +301,7 @@ export function ConnectorGallery() {
         onClick={() => setCategory(name)}>{name}<span className="ship-tab-count">{shown.filter((item) => item.category === name).length}</span></button>)}
     </div>}
     {open
-      ? <SeriesView series={open} match={match} onBack={() => { setOpenId(null); setMatch(null); }} />
+      ? <SeriesView series={open} match={match} canEdit={canEdit} onSaved={reload} onBack={() => { setOpenId(null); setMatch(null); }} />
       : <div className="conn-sections">{visible.length
         ? visible.map((section) => <section key={section.name} className="conn-section">
           <h3>{section.name} <span className="muted">{section.items.length}</span></h3>

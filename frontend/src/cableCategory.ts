@@ -74,3 +74,85 @@ export function compareCables(a: Record<string, string>, b: Record<string, strin
     || numberOf(a["Сечение, мм2"] ?? "") - numberOf(b["Сечение, мм2"] ?? "")
     || (a["Марка"] ?? "").localeCompare(b["Марка"] ?? "", "ru", { numeric: true });
 }
+
+/* «Многожильные кабели» by mark family (owner 15.10.2026: «нормальная сортировка по маркам — ПВВС, КДЭВГ, CAT5e, CAT6 и
+   т.д.»): the family comes from the mark (the type and makers only name a twisted pair's category), the record's cell
+   «Семейство» wins when filled. Inside a family — cores, then section as numbers. The screen stays a column. */
+export const FAMILY_CELL = "Семейство";
+const TWISTED_PAIR = "Витая пара";
+// Russian power cords and control cables first, then the imported control cables, the twisted pair, the rest; the
+// order of this list is the order on the screen.
+const FAMILY_RULES: Array<[string, RegExp]> = [
+  ["ПВС", /^пвс(?![а-яё])/i], ["ПВВС", /^пввс/i], ["ШВВП", /^шввп/i], ["ШВПМ", /^швпм/i], ["H05RN-F", /^h0[57]\s?rn-?f/i],
+  // Каждая марка — своя группа (владелец 15.10: «ты смешал два в один, так нельзя»): КДВВГ ≠ КДВЭВГ, КСПВ ≠ КСПВГ.
+  ["КДВВГ", /^кдввг/i], ["КДВЭВГ", /^кдвэвг/i], ["КДЭВГ", /^кдэвг/i],
+  ["КСПВ", /^кспв(?![а-яё])/i], ["КСПВГ", /^кспвг(?![а-яё])/i], ["КСПЭВ", /^кспэв(?![а-яё])/i], ["КСПЭВГ", /^кспэвг(?![а-яё])/i],
+  ["КСВВ", /^ксвв/i], ["МКШ", /^мкш/i], ["РВВП", /^(рввп|rvvp)/i], ["ШТЛЭн", /^штлэн/i], ["ШТСПЭн", /^штспэн/i],
+  ["LiYCY", /liycy/i], ["FLEXICORE", /flexicore/i], ["PAAR-TRONIC-CY", /paar-?tronic/i],
+  ["UL2464 CCC", /^ccc-/i], ["UL2464 CCCU", /^cccu-/i], ["UL2464", /ul\s?2464/i], ["UL2725", /ul\s?2725/i],
+  [TWISTED_PAIR, /^$/], // the slot of the twisted pair families, computed below
+  ["Шлейфы плоские", /шлейф|ribbon|ds\s?1057/i], ["PROFIBUS", /profibus|6xv1830/i], ["USB", /\busb\b|tsk1160/i],
+  ["Мультикор SDI / RGB", /мультикор|multicore|\bsdi\b/i],
+];
+const FAMILY_RANK = new Map(FAMILY_RULES.map(([name], index) => [name, index]));
+export const PAIR_CATEGORIES = ["Cat5", "Cat5e", "Cat6", "Cat6A", "Cat7", "Cat7A", "Cat8"] as const;
+export const PAIR_SCREENS = ["U/UTP", "F/UTP", "S/UTP", "SF/UTP", "U/FTP", "S/FTP"] as const;
+const IS_PAIR = /cat\.?\s?\d|(?:^|[\s/-])[usf]{0,2}\/?[uf]tp\b|\bsstp\b|витая\s+пара|parlan|\blan\b/i;
+
+function pairCategory(text: string): string {
+  const match = text.match(/cat(?:egory)?\.?\s?(5e|5|6a|6|7a|7|8)(?![0-9])/i) ?? text.match(/категори[яи]\s?(5e|5|6a|6|7a|7)/i);
+  return match ? `Cat${match[1].toUpperCase().replace("E", "e")}` : "";
+}
+
+function pairScreen(mark: string, screen: string): string {
+  if (/s\/ftp|\bsstp|pimf/i.test(mark)) return "S/FTP";
+  if (/sf\/utp|\bsftp/i.test(mark)) return "SF/UTP";
+  if (/u\/ftp/i.test(mark)) return "U/FTP";
+  if (/f\/utp|\bftp|-f\/u-/i.test(mark)) return "F/UTP";
+  if (/u\/utp|\butp/i.test(mark)) return "U/UTP";
+  const text = screen.toLowerCase();
+  const foil = /фольг|f\/utp|ftp/.test(text);
+  const braid = /оплёт|оплет|braid/.test(text);
+  if (foil && braid) return "SF/UTP";
+  if (braid) return "S/UTP";
+  if (foil) return "F/UTP";
+  return screenSplit(screen) === "экранированный" ? "экранированная" : "U/UTP";
+}
+
+export interface CableFamily { family: string; manual: boolean; rank: number }
+
+/** The mark family of a multi-core cable: the cell «Семейство», else the first rule over the mark, a twisted pair as
+ *  «<экран> <категория>» («F/UTP Cat5e»), else the mark without its size («МКШ 2x0,75» → «МКШ»). */
+export function cableFamily(fields: Record<string, string>): CableFamily {
+  const manual = String(fields[FAMILY_CELL] ?? "").trim();
+  if (manual) return { family: manual, manual: true, rank: FAMILY_RANK.get(manual) ?? FAMILY_RULES.length };
+  const mark = String(fields["Марка"] ?? "").trim();
+  const type = String(fields["Тип провода"] ?? "");
+  for (const [name, pattern] of FAMILY_RULES) {
+    if (name !== TWISTED_PAIR && pattern.test(name === "USB" ? `${mark} ${type}` : mark)) {
+      return { family: name, manual: false, rank: FAMILY_RANK.get(name) ?? 0 };
+    }
+  }
+  const more = `${type} ${fields["Производители"] ?? ""}`;
+  if (IS_PAIR.test(mark) || /витая\s+пара/i.test(type)) {
+    const category = pairCategory(mark) || pairCategory(more);
+    const screen = pairScreen(mark, fields["Экран"] ?? "");
+    const catRank = category ? (PAIR_CATEGORIES as readonly string[]).indexOf(category) : PAIR_CATEGORIES.length;
+    const screenRank = Math.max(0, (PAIR_SCREENS as readonly string[]).indexOf(screen));
+    return {
+      family: `${screen} ${category || "(категория не указана)"}`, manual: false,
+      rank: (FAMILY_RANK.get(TWISTED_PAIR) ?? 0) + (catRank * 10 + screenRank) / 1000,
+    };
+  }
+  return { family: cableSeries(mark).replace(/-\d[\w-]*$/, "") || mark, manual: false, rank: FAMILY_RULES.length };
+}
+
+/** «Многожильные»: family by its rank (an unknown family — after the known ones, by name), then cores, then section. */
+export function compareByFamily(a: Record<string, string>, b: Record<string, string>): number {
+  const [fa, fb] = [cableFamily(a), cableFamily(b)];
+  return fa.rank - fb.rank
+    || fa.family.localeCompare(fb.family, "ru", { numeric: true, sensitivity: "base" })
+    || numberOf(a["Число жил"] ?? "") - numberOf(b["Число жил"] ?? "")
+    || numberOf(a["Сечение, мм2"] ?? "") - numberOf(b["Сечение, мм2"] ?? "")
+    || (a["Марка"] ?? "").localeCompare(b["Марка"] ?? "", "ru", { numeric: true });
+}

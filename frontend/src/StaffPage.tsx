@@ -1,3 +1,4 @@
+import { PageWindow } from "./PageWindow";
 import { useEffect, useMemo, useState } from "react";
 import { identityApi, staffApi, type Employee, type EmployeeCreate, type StaffDirectory } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
@@ -10,7 +11,7 @@ import { SuggestInput } from "./SuggestInput";
  *  never shown again; the list says whether a PIN is assigned (`pinSet`). Кадровые поля «Личной карточки»
  *  (табельный номер, должность, квалификация, «в должности с», руководитель) and the department heads live here too.
  *  Доступ — уровень (owner 04.10.2026) плюс два флага человека, «Монтажник» и «Мастер площадки»; the levels
- *  «Суперадминистратор» и «Администратор» are given and taken only by a superadministrator. */
+ *  «Суперадминистратор» is given and taken only by a superadministrator. */
 
 /** `managerText` is what the manager field shows; `manager_id` is set only when it names someone from the list. */
 type Draft = EmployeeCreate & { active: boolean; managerText: string };
@@ -23,7 +24,7 @@ const EMPTY_DRAFT: Draft = {
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 /** Tooltips that keep the two things apart: the access level drives permissions, the position is a personnel fact. */
 const LEVEL_HINT = "что сотрудник может открывать и править в ERP; должность — в блоке «Кадры»";
-const LEVEL_LOCKED_HINT = "Уровни «Суперадминистратор» и «Администратор» выдаёт и снимает только суперадминистратор";
+const LEVEL_LOCKED_HINT = "Уровень «Суперадминистратор» выдаёт и снимает только суперадминистратор";
 const SITE_HINT = "ЦАР / ЖУК — площадка, на которой работает сотрудник; пусто — все площадки";
 const SHOP_WORKER_HINT = "Исполнитель операций в цеху: ему назначают задания производства";
 const SITE_MASTER_HINT = "Руководит монтажниками площадки: они видны в его личной карточке";
@@ -296,7 +297,7 @@ export function StaffPage({ openCard, openUserId }: {
 function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange, onSave, onCancel }: {
   data: StaffDirectory;
   labels: Map<string, string>;
-  /** The session is a superadministrator: the only level that may give or take «Суперадминистратор» / «Администратор». */
+  /** The session is a superadministrator: the only level that may give or take «Суперадминистратор». */
   actorIsSuperadmin: boolean;
   editing: { id: string | null; draft: Draft };
   busy: boolean;
@@ -317,7 +318,7 @@ function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange
   const storedLevel = id === null ? undefined : data.users.find((user) => user.id === id)?.access_level;
   const levelLocked = !actorIsSuperadmin && data.levels.some((level) => level.full && level.key === storedLevel);
   const setManager = (text: string) => onChange({ ...draft, managerText: text, manager_id: managerIdByLabel.get(text.trim()) ?? null });
-  return <div className="panel" id="staff-edit-form">
+  return <PageWindow label={creating ? "Новый сотрудник" : "Правка сотрудника"} width={1100} close={onCancel}><div className="panel" id="staff-edit-form">
     <h2>{creating ? "Новый сотрудник" : `Правка: ${draft.name}`}</h2>
     <section className="staff-form-block" aria-labelledby="staff-form-hr">
       <h3 id="staff-form-hr">Кадры</h3>
@@ -338,8 +339,8 @@ function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange
       <h3 id="staff-form-access">Доступ в ERP</h3>
       <div className="form-grid staff-form">
         {creating && <>
-          <label className="pair">E-mail<input aria-label="E-mail" type="email" value={draft.email} onChange={(event) => set("email", event.target.value)} /></label>
-          <label>Логин<input aria-label="Логин" placeholder="пусто — e-mail" value={draft.login} onChange={(event) => set("login", event.target.value)} /></label>
+          <label className="pair">E-mail<input aria-label="E-mail" type="email" placeholder="пусто — сгенерируем из ФИО" value={draft.email} onChange={(event) => set("email", event.target.value)} /></label>
+          <label>Логин<input aria-label="Логин" placeholder="пусто — e-mail или фамилия" value={draft.login} onChange={(event) => set("login", event.target.value)} /></label>
         </>}
         <label title={levelLocked ? LEVEL_LOCKED_HINT : LEVEL_HINT}>Уровень доступа<select aria-label="Уровень доступа" value={draft.access_level} disabled={levelLocked} onChange={(event) => set("access_level", event.target.value)}>
           {data.levels.map((level) => {
@@ -364,5 +365,5 @@ function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange
       <button className="primary" disabled={busy} onClick={onSave}>{creating ? "Завести сотрудника" : "Сохранить сотрудника"}</button>{" "}
       <button className="secondary" onClick={onCancel}>Отмена</button>
     </div>
-  </div>;
+  </div></PageWindow>;
 }

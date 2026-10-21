@@ -74,6 +74,9 @@ it("reads the card in Russian: gender as штырь / гнездо, wire by AWG 
   expect(shown["Диаметр изоляции, мм"]).toBe("1,3–3,1");
   expect(shown["Высота обжима изоляции, мм"]).toBe(""); // null-spec: nothing averaged or guessed
   expect(shown["L+ / L−, мм"]).toBe("L+ 0,5");
+  const hint = crimp.find(([title]) => title === "L+ / L−, мм")?.[2]?.hint ?? "";
+  expect(hint).toContain("глубина конца жилы от торца корпуса со стороны провода");
+  expect(hint).toContain("от конца жилы до стыковочного торца");
   expect(terminalCardLines({ ...EMPTY, gender: "Male" }).contact[0][1]).toBe("Штырь (папа)");
   expect(terminalCardLines({ ...EMPTY, gender: "Обжимной контакт" }).contact[0][1]).toBe("");
 });
@@ -83,7 +86,7 @@ it("opens the contact card from a «Терминалы» row, keeps it in the ad
   render(<ReferencesPage principal={admin} initialTab="ter" />);
   fireEvent.click(await screen.findByText("39000038")); // an article of digits is a code: not «39 000 038»
 
-  const card = await screen.findByRole("complementary", { name: "Карточка контакта" });
+  const card = await screen.findByRole("dialog", { name: "Карточка контакта" });
   expect(within(card).getByText("Molex · Mini-Fit Jr. · 5556")).toBeInTheDocument();
   for (const [title, value] of [["Пол", "Гнездо (мама)"], ["Артикул BAG (россыпь)", "39000039"], ["Материал / покрытие", "Brass / Tin"],
     ["Макс. ток, А", "9"], ["Диаметр изоляции, мм", "1,3–3,1"], ["Провод", "24–18 AWG"], ["Аппликатор", "M5"]]) {
@@ -96,8 +99,8 @@ it("opens the contact card from a «Терминалы» row, keeps it in the ad
   fireEvent.click(within(card).getByRole("button", { name: "Править запись" }));
   expect(await screen.findByRole("button", { name: "Сохранить запись" })).toBeInTheDocument();
 
-  fireEvent.keyDown(window, { key: "Escape" });
-  await waitFor(() => expect(screen.queryByRole("complementary", { name: "Карточка контакта" })).toBeNull());
+  fireEvent.keyDown(card, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Карточка контакта" })).toBeNull());
   expect(window.location.search).toBe("");
 });
 
@@ -105,7 +108,7 @@ it("shows the card to a viewer without editing", async () => {
   mockApi();
   window.history.replaceState({}, "", `/?terminal=${record.id}`);
   render(<ReferencesPage principal={viewer} initialTab="ter" />);
-  const card = await screen.findByRole("complementary", { name: "Карточка контакта" });
+  const card = await screen.findByRole("dialog", { name: "Карточка контакта" });
   expect(within(card).getByText("39000038", { selector: "b" })).toBeInTheDocument();
   expect(within(card).queryByRole("button", { name: "Править запись" })).toBeNull();
 });

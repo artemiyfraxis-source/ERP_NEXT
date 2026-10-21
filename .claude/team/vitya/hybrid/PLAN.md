@@ -37,7 +37,7 @@
 `procurement.rfq`, `procurement.dense`, `projects.internal`, `references.suppliers`, `references.items`,
 `warehouse.word_search`, `warehouse.strict_quantities`, `warehouse.scan`, `warehouse.undo`, `ui.dark_theme`, `ui.search`.
 
-**Волна 4 — блок закупки и документы из Roller_Buyer целиком (13.10, миграция `0124_purchasing_documents`)**
+**Волна 4 — блок закупки и документы из Roller_Buyer целиком (13.10, миграция `0135_purchasing_documents`)**
 - Данные: `python -m app.modules.purchasing.rb_import --snapshot <копия buyer.db> --data-dir <DATA_DIR> [--apply]` —
   поставщики (без нашего ИНН 5040191181), номенклатура, названия у поставщиков, справочные цены, реестр УПД (Google и
   ЭДО) со строками и файлами, счета Kaiten с позициями, платёжками и файлами, решения «счёт ↔ УПД». Файлы — в базе
@@ -54,7 +54,7 @@
 
 **Волна 5 — «Сегодня», «Заявки», «Запросы КП», «Счета и поставки», этикетки ГРН и ТСД из Roller_Buyer (16–21.10)**
 Первая группа вкладок «Листа закупки» — как меню Roller_Buyer: «Сегодня · Заявки · Запросы КП · Счета и поставки».
-Миграции 0125_warehouse_labels → 0127_purchasing_order_facts → 0128_purchasing_rfq_rb (после 0124).
+Миграции 0136_warehouse_labels → 0137_purchasing_order_facts → 0138_purchasing_rfq_rb (после 0124).
 - `procurement.today` (обновлена) — «Сегодня» как в RB: разделы в порядке дел (просрочки, приедет, не успевает к сроку
   по оценке даты, запросить КП, нет ответа, выбрать, ждём счёт, не оплачены, Kaiten, УПД, карантин, свободные), карточки
   проектов и заказов, ссылки на место следующего шага, «Всё спокойно», обновление раз в минуту. Проект строки — одна

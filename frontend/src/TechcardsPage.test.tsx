@@ -112,12 +112,11 @@ it("keeps the generator's JSON configuration to superadmin and admin, whatever t
   expect(await screen.findByLabelText("Конфигурация автоматической сборки")).toBeInTheDocument();
 });
 
-it("shows the imported operation library and opens a structured template", async () => {
+it("shows the operation library and opens a structured template", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/techcards/projects") return json({ items: [] });
     if (path === "/api/techcards/templates") return json({
-      metadata: { source_commit: "df683f87768f98735a87e68bde2be023b48dc03a", imported_at: "2026-09-23T10:00:00Z", template_count: 1 },
       items: [{ id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 }],
     });
     if (path === "/api/techcards/templates/cut") return json({
@@ -207,7 +206,7 @@ it("walks the ETK route with ← → like SUPPLYMAP renderEtk_", async () => {
   expect(await screen.findByText("Отрезать провод")).toBeInTheDocument();
   expect(screen.getByText(/операция 1 из 2/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "← Назад" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Далее: Опрессовка →" }));
+  fireEvent.click(screen.getByRole("button", { name: "Далее: Опрессовка терминалов →" }));
   expect(await screen.findByText("Проверить высоту обжима")).toBeInTheDocument();
   expect(screen.queryByText("Отрезать провод")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Далее: — →" })).toBeDisabled();
@@ -363,10 +362,10 @@ it("prints the ETK through the shared print contract (etkPrint_)", async () => {
   const html = written.join("");
   expect(html).toContain("Технологическая карта сборки");
   expect(html).toContain("ТК.P-100.CUT_WIRE_auto");
-  expect(html).toContain("Операция 2. Опрессовка — XS1");
+  expect(html).toContain("Операция 2. Опрессовка терминалов — XS1");
   expect(html).toContain("Автомат резки");
   expect(html).toContain("Первая выдача");
-  expect(html).toContain("ГОСТ 3.1407-86");
+  expect(html).not.toContain("ГОСТ 3.1407-86");
 });
 
 const libraryItems = [
@@ -428,16 +427,9 @@ it("shows a template as a techcard sheet and saves an edit with who/when (portal
   });
 
   render(<TechcardsPage principal={engineer} view="templates" />);
+  // У технолога щелчок по строке открывает шаблон сразу в правке (владелец 17.10).
   fireEvent.click(await screen.findByText("CUT_WIRE_auto"));
-  expect(await screen.findByText("Автомат резки")).toBeInTheDocument();
-  expect(screen.getByText("ОБ.001")).toBeInTheDocument();
-  expect(screen.getByText("прогр. 5")).toBeInTheDocument();
-  expect(screen.getByText("3,50 с")).toBeInTheDocument();
-  expect(screen.getByText("180 с")).toBeInTheDocument();
-  expect(screen.getByText("Перенесено из шаблона БД.ТК, в ERP не правилась")).toBeInTheDocument();
-
-  fireEvent.click(screen.getByRole("button", { name: /Править/ }));
-  expect(screen.getByText("Работать в очках")).toHaveClass("tc-preview");
+  expect(await screen.findByText("Работать в очках")).toHaveClass("tc-preview");
   fireEvent.change(screen.getByLabelText("Шаг 1"), { target: { value: "Отрезать провод в размер" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 
@@ -450,6 +442,13 @@ it("shows a template as a techcard sheet and saves an edit with who/when (portal
   });
   expect(await screen.findByText(/Изменено .* · Инженер/)).toBeInTheDocument();
   expect(screen.getByText("Отрезать провод в размер")).toBeInTheDocument();
+  // После записи — лист: оснастка, нормы, контроль.
+  expect(screen.getByText("ОБ.001")).toBeInTheDocument();
+  expect(screen.getByText("прогр. 5")).toBeInTheDocument();
+  expect(screen.getByText("3,50 с")).toBeInTheDocument();
+  expect(screen.getByText("180 с")).toBeInTheDocument();
+  expect(screen.queryByText(/Перенесено из шаблона/)).toBeNull();
+  expect(screen.getByText("Контроль", { selector: ".op-ctl-chip" })).toBeInTheDocument();
 });
 
 it("edits a template sheet through a draft and saves it (portalTcTplDraft → portalTcTplSave)", async () => {
@@ -552,8 +551,9 @@ it("merges БД.ОП into the operation cards: op-only codes get a card and ever
   expect(screen.queryByText("CUT_WIRE_auto")).not.toBeInTheDocument();
   fireEvent.click(screen.getByText("LASER_MARK"));
   expect(await screen.findByText(/Шаблона листа \(БД\.ТК\) у этой операции нет/)).toBeInTheDocument();
-  expect(screen.getByText("Программа")).toBeInTheDocument();
-  expect(screen.getByText("60 с")).toBeInTheDocument();
+  expect(screen.queryByText("Программа")).toBeNull();
+  expect(screen.getByText("Параметры операции")).toBeInTheDocument();
+  expect(screen.getAllByText("60 с").length).toBeGreaterThan(0);
   expect(paths.some((path) => path.includes("tab=op"))).toBe(true);
 });
 
@@ -580,4 +580,245 @@ it("ЭТК-3/ЭТК-6: an issued techcard shows a status chip and keeps the gene
   expect(await screen.findByText("Свернуть генератор")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Свернуть генератор" }));
   expect(screen.queryByText("Свернуть генератор")).toBeNull();
+});
+
+const opRows = [
+  { id: "o1", tab: "op", display_text: "Резка", source_sheet: "БД.ОП", fields: { opNumber: "CUT_WIRE_auto", opName: "Резка", tOp: "3,50", "Номер": "CUT_WIRE_auto", "Название": "Резка", "Машина": "EW-05F", "Тип операции": "Погонный", "Время Операции": "3,50", "Уд.Цена МШ, сек": "0,1", "Цвет": "красный" } },
+  { id: "o2", tab: "op", display_text: "Лазерная маркировка", source_sheet: "БД.ОП", fields: { opNumber: "LASER_MARK", opName: "Лазерная маркировка", tOp: "12", "Номер": "LASER_MARK", "Название": "Лазерная маркировка", "Машина": "Лазер", "Время Операции": "12" } },
+];
+
+it("edits БД.ОП right in the operations table: the time cell and the machine picked from БД.ОБ (owner 17.10: «как в Экселе»)", async () => {
+  const patches: Array<{ id: string; edits: Array<Record<string, string>> }> = [];
+  const ob = [
+    { id: "e1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.015", "Наменование": "Автомат резки", "Для базы": "EW-05F" } },
+    { id: "e2", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.016", "Наменование": "Автомат резки большой", "Для базы": "EW-09" } },
+  ];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?tab=ob")) return json({ metadata: null, records: ob });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: opRows });
+    const id = path.match(/tech-operations\/(o\d)$/)?.[1];
+    if (id && init?.method === "PATCH") {
+      patches.push({ id, ...JSON.parse(String(init.body)) });
+      return json(opRows.find((row) => row.id === id));
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  const row = (await screen.findByText("LASER_MARK")).closest("tr") as HTMLElement;
+  const cell = (key: string) => row.querySelector(`td[data-col="${key}"]`) as HTMLElement;
+  fireEvent.doubleClick(cell("seconds"));
+  const time = within(row).getByRole("textbox");
+  fireEvent.change(time, { target: { value: "15" } });
+  fireEvent.keyDown(time, { key: "Enter" });
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0]).toEqual({ id: "o2", edits: [{ field: "Время Операции", old: "12", value: "15" }] });
+
+  await waitFor(() => expect(screen.getByText("LASER_MARK").closest("tr")?.querySelector('td[data-col="machine"]')).toBeTruthy());
+  const machineRow = screen.getByText("LASER_MARK").closest("tr") as HTMLElement;
+  fireEvent.doubleClick(machineRow.querySelector('td[data-col="machine"]') as HTMLElement);
+  const pick = within(machineRow).getByRole("combobox");
+  expect([...(pick as HTMLSelectElement).options].map((option) => option.value)).toEqual(["", "EW-05F", "EW-09", "Лазер"]);
+  fireEvent.change(pick, { target: { value: "EW-09" } });
+  await waitFor(() => expect(patches).toHaveLength(2));
+  expect(patches[1]).toEqual({ id: "o2", edits: [{ field: "Машина", old: "Лазер", value: "EW-09" }] });
+});
+
+it("«Операции»: профессия и разряд комплекта ТД правятся в ячейке, пусто — «по ЕТКС»", async () => {
+  const patches: Array<{ id: string; edits: Array<Record<string, string>> }> = [];
+  const rows = [opRows[0], { ...opRows[1], fields: { ...opRows[1].fields, opProfession: "Оператор лазерной установки" } }];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?tab=ob")) return json({ metadata: null, records: [] });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: rows });
+    const id = path.match(/tech-operations\/(o\d)$/)?.[1];
+    if (id && init?.method === "PATCH") {
+      patches.push({ id, ...JSON.parse(String(init.body)) });
+      return json(rows.find((row) => row.id === id));
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  const row = (await screen.findByText("LASER_MARK")).closest("tr") as HTMLElement;
+  expect(within(row).getByText("Оператор лазерной установки")).toBeInTheDocument();
+  const cell = row.querySelector('td[data-col="grade"]') as HTMLElement;
+  expect(cell.textContent).toBe("по ЕТКС");
+  fireEvent.doubleClick(cell);
+  const pick = within(row).getByRole("combobox");
+  expect([...(pick as HTMLSelectElement).options].map((option) => option.value)).toEqual(["", "1", "2", "3", "4", "5", "6"]);
+  fireEvent.change(pick, { target: { value: "4" } });
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0]).toEqual({ id: "o2", edits: [{ field: "opGrade", old: "", value: "4" }] });
+});
+
+it("«Операции»: the cyclogram is open in the table — «Подготовка» first, a cell edit writes the recomputed time with it, the time cell then is a formula (owner 18.10)", async () => {
+  const patches: Array<{ id: string; edits: Array<Record<string, string>> }> = [];
+  const crimp = { id: "o3", tab: "op", display_text: "Опрессовка", source_sheet: "БД.ОП", fields: {
+    opNumber: "PRS_TERMINAL_auto", opName: "Опрессовка", tOp: "6,00", tPrep: "120", "Номер": "PRS_TERMINAL_auto", "Название": "Опрессовка",
+    "Время Операции": "6,00", "Время подготовки, сек": "120", "Время Чел, сек/оп; сек/м": "6,00", "Время машины, сек/оп; сек/м": "3,00",
+    "Время ручных работ для взятия полуфабриката": "4", "Время ручных работ": "", "Время ручных работ для снятия полуфабриката": "2",
+    "Скорость проката, сек/м": "", "Скорость работы инструмента": "3,0", "Кол-во операций инструмента": "1" } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?tab=ob")) return json({ metadata: null, records: [] });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [...opRows, crimp] });
+    if (path.endsWith("/tech-operations/o3") && init?.method === "PATCH") {
+      patches.push({ id: "o3", ...JSON.parse(String(init.body)) });
+      return json(crimp);
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  const row = (await screen.findByText("PRS_TERMINAL_auto")).closest("tr") as HTMLElement;
+  const keys = [...row.querySelectorAll("td[data-col]")].map((td) => td.getAttribute("data-col"));
+  // Правятся ячейки циклограммы; «Время, с» при заполненной циклограмме — формула, не правится.
+  expect(keys).toEqual(["profession", "grade", "prep", "cycle:take", "cycle:manual", "cycle:put", "cycle:roll", "cycle:tool", "cycle:toolOps"]);
+  const heads = screen.getAllByRole("columnheader").map((th) => th.textContent ?? "");
+  const at = (title: string) => heads.findIndex((text) => text.startsWith(title));
+  expect(heads.some((text) => /Инструмент|Аппликаторы/.test(text))).toBe(false);
+  expect(heads.slice(at("Подготовка, с"), at("Время, с") + 1).map((text) => text.replace(/[▲▼↑↓]/g, "").trim()))
+    .toEqual(["Подготовка, с", "Взять ПФ, с", "Ручные, с", "Снять ПФ, с", "Прокат, м/с", "Ход инстр., с", "Ходов", "Время, с"]);
+  const cell = (key: string) => row.querySelector(`td[data-col="${key}"]`) as HTMLElement;
+  fireEvent.doubleClick(cell("cycle:manual"));
+  const manual = within(row).getByRole("textbox");
+  fireEvent.change(manual, { target: { value: "10" } });
+  fireEvent.keyDown(manual, { key: "Enter" });
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].edits).toEqual([
+    { field: "Время Операции", old: "6,00", value: "16,00" },
+    { field: "Время Чел, сек/оп; сек/м", old: "6,00", value: "16,00" },
+    { field: "Время ручных работ", old: "", value: "10" },
+  ]);
+});
+
+it("an operation without a template opens, edits its parameters and sends only the changed fields", async () => {
+  const patches: Array<{ edits: Array<Record<string, string>> }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: opRows });
+    if (path === "/api/references/tech-operations/o2" && init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body));
+      patches.push(body);
+      return json({ ...opRows[1], fields: { ...opRows[1].fields, "Машина": "Лазер-2" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  fireEvent.click(await screen.findByText("LASER_MARK"));
+  expect(await screen.findByText(/Шаблона листа \(БД\.ТК\) у этой операции нет/)).toBeInTheDocument();
+  expect(screen.queryByText(/Строка БД\.ОП/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Править" }));
+  fireEvent.change(screen.getByLabelText("Машина"), { target: { value: "Лазер-2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].edits).toEqual([{ field: "Машина", old: "Лазер", value: "Лазер-2" }]);
+  expect(await screen.findByText("Лазер-2")).toBeInTheDocument();
+});
+
+it("one «Править» edits the template and the parameters; an unchanged template is not re-saved, changed fields only", async () => {
+  const calls: string[] = [];
+  const patches: Array<{ edits: Array<Record<string, string>> }> = [];
+  const detail = {
+    ...libraryItems[0], changed_at: null, changed_by: "",
+    document: { safety: "", defects: "", revision: "", steps: [{ number: "1", kind: "Операция", text: "Отрезать провод", tolerance: "-" }], tooling: [] },
+    raw_rows: [],
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    calls.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: opRows });
+    if (path === "/api/techcards/templates/cut") return json(detail);
+    if (path === "/api/references/tech-operations/o1" && init?.method === "PATCH") {
+      patches.push(JSON.parse(String(init.body)));
+      return json({ ...opRows[0], fields: { ...opRows[0].fields, "Тип операции": "Статичный" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  fireEvent.click(await screen.findByText("CUT_WIRE_auto"));
+  // Сразу правка: шаблон и параметры строки БД.ОП одной формой.
+  const type = await screen.findByLabelText("Тип операции");
+  expect(type).toHaveValue("Погонный");
+  expect(screen.getByText("по длине провода")).toBeInTheDocument();
+  fireEvent.change(type, { target: { value: "Статичный" } });
+  expect(screen.getByText("фиксированное на штуку")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].edits).toEqual([{ field: "Тип операции", old: "Погонный", value: "Статичный" }]);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Сохранить" })).toBeNull());
+  expect(calls.some((call) => call.startsWith("PUT"))).toBe(false);
+});
+
+it("a «Погонная» operation shows its machine nodes and the piece time for the wire length L", async () => {
+  const crimp = { id: "o3", tab: "op", display_text: "Автомат резка + опрессовка", source_sheet: "БД.ОП", fields: {
+    opNumber: "CUT_WIRE+1crimp", opName: "Автомат резка + опрессовка", tOp: "4,00", "Номер": "CUT_WIRE+1crimp", "Название": "Автомат резка + опрессовка",
+    "Машина": "BZW-2.0", "Тип операции": "Погонный", "Время Операции": "4,00", "Расход на настройку м; шт;": "2", "Уд.Цена ЧЛ, сек": "0,42",
+    "Время ручных работ для взятия полуфабриката": "", "Скорость проката, сек/м": "3", "Скорость работы инструмента": "0,2", "Кол-во операций инструмента": "5",
+  } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [crimp] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  fireEvent.click(await screen.findByText("CUT_WIRE+1crimp"));
+  const nodes = await screen.findByRole("group", { name: "Узлы станка и ручные работы" });
+  expect(within(nodes).getByText("Скорость проката")).toBeInTheDocument();
+  expect(within(nodes).getByText("Расход на настройку")).toBeInTheDocument();
+  expect(within(nodes).getByText("м/с (подача)")).toBeInTheDocument();
+  expect(nodes).toHaveTextContent("На 1 шт при L = мм: 1,03 с (подача 0,03 с + инструмент 1,00 с)");
+  fireEvent.change(within(nodes).getByLabelText("L"), { target: { value: "1000" } });
+  expect(nodes).toHaveTextContent("1,33 с (подача 0,33 с + инструмент 1,00 с)");
+  expect(nodes).toHaveTextContent("«Время операции» не применяется");
+});
+
+it("«Операции»: «+ Столбец» of БД.ОП — the own column stands after the code, is edited in the cell of a БД.ОП row and offers «Удалить»", async () => {
+  const patches: Array<{ path: string; body: unknown }> = [];
+  const own = opRows.map((row) => ({ ...row, fields: { ...row.fields, Полка: row.id === "o2" ? "Б-1" : "" } }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, columns: ["Номер", "Полка"], custom_columns: ["Полка"], records: own });
+    if (path.startsWith("/api/references/tech-operations/") && init?.method === "PATCH") {
+      patches.push({ path, body: JSON.parse(String(init.body)) });
+      return json(own[1]);
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  await screen.findByText("LASER_MARK");
+  expect(screen.getByRole("button", { name: "+ Столбец" })).toBeInTheDocument();
+  const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+  expect(heads.indexOf("Полка")).toBe(heads.indexOf("Категория") + 1);
+  const cell = within(screen.getByText("LASER_MARK").closest("tr") as HTMLElement).getAllByRole("cell")[heads.indexOf("Полка")] as HTMLElement;
+  expect(cell).toHaveTextContent("Б-1");
+  fireEvent.click(cell);
+  fireEvent.keyDown(cell, { key: "Enter" });
+  const input = within(cell).getByRole("textbox");
+  fireEvent.change(input, { target: { value: "Б-2" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(patches).toEqual([{ path: "/api/references/tech-operations/o2", body: { edits: [{ field: "Полка", old: "Б-1", value: "Б-2" }] } }]));
+
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
+  expect(screen.getByRole("dialog", { name: "Удалить столбец" })).toHaveTextContent("записей — 1");
+});
+
+it("«Операции»: no own-column tools without the reference edit right", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, custom_columns: ["Полка"], records: opRows });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "view" } }} view="templates" />);
+  await screen.findByText("LASER_MARK");
+  expect(screen.queryByRole("button", { name: "+ Столбец" })).toBeNull();
+  expect(document.querySelector("td.dt-editable")).toBeNull();
 });

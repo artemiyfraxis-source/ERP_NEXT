@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CRIMP_COLUMN_TITLE } from "./CrimpCell";
 import { ConnectorGallery, countsText, wireText } from "./ConnectorGallery";
 import type { ConnectorSeries } from "./api";
 import { connectorModel, hasModel } from "./connectorModel";
@@ -23,7 +22,8 @@ const GH: ConnectorSeries = {
   datasheet: "https://www.jst-mfg.com/product/pdf/eng/eGH.pdf", note: "",
   variants: [{ title: "Корпус", family: "jst-gh", housings: [housing(2), housing(3), housing(4)] }],
   terminals: [{ article: "SSHL-002T-P0.2", maker: "JST", product: "GHD, GH", series: "GHDR, GHR", kind: "гнездо",
-    awg_from: "30", awg_to: "26", mm2_from: "0,05", mm2_to: "0,12", strip: "1,7", applicator: "S4/M4/A4", crimp_height: "26 AWG: 0,62; 28 AWG: 0,70", pull_force: "26 AWG: 15; 28 AWG: 12" }],
+    awg_from: "30", awg_to: "26", mm2_from: "0,05", mm2_to: "0,12", strip: "1,7", applicator: "S4/M4/A4", crimp_height: "26 AWG: 0,62; 28 AWG: 0,70", pull_force: "26 AWG: 15; 28 AWG: 12",
+    ins_crimp_height: "26 AWG: 1,35–1,50" }],
   wire: { awg_thin: 30, awg_thick: 26, mm2_min: 0.05, mm2_max: 0.12 },
   housing_count: 3, counts: [2, 3, 4], pitch: 1.25, color: "#efe6cf", checked: true, sample: housing(2),
   category: "Провод — плата", catalog: [],
@@ -117,20 +117,20 @@ describe("ConnectorGallery — разъёмы по сериям", () => {
     expect(screen.getByRole("link", { name: "Чертёж производителя (PDF)" })).toHaveAttribute("href", GH.datasheet);
     expect(screen.getByText("провод AWG 30–26 · 0,05–0,12 мм²")).toBeInTheDocument();
     expect(screen.getByText("SSHL-002T-P0.2")).toBeInTheDocument();
-    expect(screen.getByText(CRIMP_COLUMN_TITLE)).toBeInTheDocument();
+    for (const title of ["Обжим по жиле, мм", "Обжим по изоляции, мм", "Отрыв, Н"]) expect(screen.getByText(title)).toBeInTheDocument();
     const rows = Array.from(document.querySelectorAll(".crimp-row")).map((row) => row.textContent);
-    expect(rows).toEqual(["26 AWG0,6215 Н", "28 AWG0,7012 Н"]);
-    expect(screen.getAllByRole("img", { name: /^Модель GHR/ })).toHaveLength(3);
+    expect(rows).toEqual(["26 AWG0,62", "28 AWG0,70", "26 AWG1,35–1,50", "26 AWG15 Н", "28 AWG12 Н"]);
+    expect(screen.getAllByRole("img", { name: /^Вид сверху GHR/ })).toHaveLength(3);
     fireEvent.click(screen.getByRole("button", { name: "← Все серии" }));
     expect(await screen.findByRole("button", { name: "Серия JST GH" })).toBeInTheDocument();
   });
 
-  it("shows «модель не сверена» instead of a model for a series without a checked template", async () => {
+  it("draws a housing without a drawing template the same way: top view and the numbered face", async () => {
     mockApi();
     render(<ConnectorGallery />);
     fireEvent.click(await screen.findByRole("button", { name: "Серия Molex Mini-Fit Jr." }));
     const card = screen.getByText("39012080").closest(".conn-housing") as HTMLElement;
-    expect(within(card).getByText("модель не сверена")).toBeInTheDocument();
+    expect(within(card).getByRole("img", { name: "Вид сверху 39012080" })).toBeInTheDocument();
     expect(within(card).getByRole("img", { name: "Вид со стороны проводов" })).toBeInTheDocument();
     expect(screen.getByText("В «Терминалы» нет контактов этой серии.")).toBeInTheDocument();
   });
@@ -200,7 +200,7 @@ describe("ConnectorGallery — каталоги производителей (12
       { article: "DF1-PD2428SCFB", wire: "штырь, AWG 28–24, золото", in_base: false }],
   };
 
-  it("labels each maker inside a section, shows the documents and which catalogue contacts «Терминалы» lacks", async () => {
+  it("labels each maker inside a section and shows the documents; the catalogue contacts block is gone (owner 17.10)", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(
       JSON.stringify({ series: [GH, MINIFIT, DF1B], match: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
     render(<ConnectorGallery />);
@@ -214,10 +214,79 @@ describe("ConnectorGallery — каталоги производителей (12
     const doc = await screen.findByRole("link", { name: "Hirose DF1B, каталог 01.07.2020" });
     expect(doc).toHaveAttribute("href", "https://datasheet.lcsc.com/df1b.pdf");
     expect(screen.queryByRole("link", { name: "Чертёж производителя (PDF)" })).toBeNull();
-    expect(screen.getByText(/нет во вкладке «Терминалы»: 1/)).toBeInTheDocument();
-    // the long housing list pushes the table down: a chip at the top jumps to it
-    expect(screen.getByRole("button", { name: "контактов нет в «Терминалы»: 1 ↓" })).toBeInTheDocument();
-    const missingRow = screen.getByText("DF1-PD2428SCFB").closest("tr")!;
-    expect(within(missingRow).getByText("нет — добавить")).toBeInTheDocument();
+    expect(screen.queryByText(/Контакты по каталогу/)).toBeNull();
+    expect(screen.queryByText("DF1-PD2428SCFB")).toBeNull();
+    expect(screen.queryByRole("button", { name: /контактов нет в «Терминалы»/ })).toBeNull();
+  });
+});
+
+describe("ConnectorGallery — терминалы правятся в таблице карточки серии (owner 17.10)", () => {
+  const EDITABLE: ConnectorSeries = {
+    ...GH, terminals: [{ ...GH.terminals[0], id: "rec-1", raw: {
+      terType: "Female", terGender: "Female", awgFrom: "30", awgTo: "26", mm2From: "0,05", mm2To: "0,12", terStrip: "1,7", terApplicator: "S4/M4/A4",
+      terCrimpHeight: "26 AWG: 0,62; 28 AWG: 0,70", terInsCrimpHeight: "26 AWG: 1,35–1,50", terPullForceMin: "26 AWG: 15; 28 AWG: 12" } }],
+  };
+  function setup() {
+    const calls: Array<{ path: string; method: string; body: unknown }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
+      const body = method === "PATCH" ? { id: "rec-1", fields: {} } : { series: [EDITABLE], match: null };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    return calls;
+  }
+  const cellOf = (header: string) => {
+    const row = screen.getByText("SSHL-002T-P0.2").closest("tr") as HTMLElement;
+    const index = screen.getAllByRole("columnheader").findIndex((head) => head.textContent === header);
+    return row.querySelectorAll("td")[index] as HTMLElement;
+  };
+  const type = (cell: HTMLElement, value: string) => {
+    fireEvent.click(cell);
+    fireEvent.keyDown(cell, { key: "Enter" });
+    const input = within(cell).getByRole("textbox");
+    fireEvent.change(input, { target: { value } });
+    fireEvent.keyDown(input, { key: "Enter" });
+  };
+
+  it("writes a crimp cell to the БД.ТЕР record with its old value, then reads the card again", async () => {
+    const calls = setup();
+    render(<ConnectorGallery canEdit />);
+    fireEvent.click(await screen.findByRole("button", { name: "Серия JST GH" }));
+    type(cellOf("Обжим по жиле, мм"), "26 AWG: 0,60; 28 AWG: 0,68");
+    await waitFor(() => expect(calls.find((call) => call.method === "PATCH")).toMatchObject({
+      path: "/api/references/tech-operations/rec-1",
+      body: { edits: [{ field: "terCrimpHeight", old: "26 AWG: 0,62; 28 AWG: 0,70", value: "26 AWG: 0,60; 28 AWG: 0,68" }] },
+    }));
+    await waitFor(() => expect(calls.filter((call) => call.path === "/api/techcards/connector-series")).toHaveLength(2));
+  });
+
+  it("splits the AWG range into «от AWG» and «до AWG»", async () => {
+    const calls = setup();
+    render(<ConnectorGallery canEdit />);
+    fireEvent.click(await screen.findByRole("button", { name: "Серия JST GH" }));
+    type(cellOf("AWG"), "28–24");
+    await waitFor(() => expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({
+      edits: [{ field: "awgFrom", old: "30", value: "28" }, { field: "awgTo", old: "26", value: "24" }],
+    }));
+  });
+
+  it("keeps the article and the whole table read-only without the right to edit", async () => {
+    setup();
+    render(<ConnectorGallery />);
+    fireEvent.click(await screen.findByRole("button", { name: "Серия JST GH" }));
+    fireEvent.click(cellOf("AWG"));
+    fireEvent.keyDown(cellOf("AWG"), { key: "Enter" });
+    expect(within(cellOf("AWG")).queryByRole("textbox")).toBeNull();
+  });
+
+  it("does not open the article for editing", async () => {
+    setup();
+    render(<ConnectorGallery canEdit />);
+    fireEvent.click(await screen.findByRole("button", { name: "Серия JST GH" }));
+    fireEvent.click(cellOf("Артикул контакта"));
+    fireEvent.keyDown(cellOf("Артикул контакта"), { key: "Enter" });
+    expect(within(cellOf("Артикул контакта")).queryByRole("textbox")).toBeNull();
   });
 });

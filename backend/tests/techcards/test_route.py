@@ -25,7 +25,7 @@ def kit(name: str) -> dict:
 
 
 def build(config: dict) -> dict:
-    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    return build_etk(config, CARDS)
 
 
 def edges(route: dict) -> list[tuple]:
@@ -48,7 +48,7 @@ def test_linear_card_is_a_chain_of_one_operation_blocks_ending_in_the_product():
     document = build(config)
     route = document["route"]
 
-    assert document["schema_version"] == ETK_VERSION == 3
+    assert document["schema_version"] == ETK_VERSION == 4
     assert route["source"] == "derived" and route["final"] == "b5"
     assert [(block["key"], block["ops"], block["final"]) for block in route["blocks"]] == [
         ("b1", [1], False), ("b2", [2], False), ("b3", [3], False), ("b4", [4], False), ("b5", [5], True),
@@ -72,8 +72,8 @@ def test_tut_pieces_are_a_side_branch_into_the_operation_that_puts_them_on():
         ("b6", "b7", 1), ("b7", "b8", 1), ("b8", "b9", 1),
     ]
     by_key = blocks(route)
-    assert by_key["b2"]["name"] == "ТУТ 10/5мм, черная: 2×30мм" and by_key["b2"]["inputs"] == 0
-    assert by_key["b3"]["name"].endswith("(ТУТ надет)") and by_key["b3"]["inputs"] == 2
+    assert by_key["b2"]["name"] == "Трубка ТУТ 10/5мм, черная нарезана: 2 шт по 30 мм" and by_key["b2"]["inputs"] == 0
+    assert by_key["b3"]["name"].endswith("; трубка надета на провода") and by_key["b3"]["inputs"] == 2
     assert by_key["b6"]["inputs"] == 2 and by_key["b9"]["final"]
 
 
@@ -93,7 +93,7 @@ def test_strip_and_splice_stay_in_the_chain_they_work_on():
     }
     route = build(config)["route"]
     assert edges(route) == [("b1", "b2", 1), ("b2", "b3", 1), ("b3", "b4", 1)]
-    assert blocks(route)["b2"]["name"] == "ПВ3 300мм (концы разделаны)"
+    assert blocks(route)["b2"]["name"] == "Провода нарезаны: ПВ3 — 2 шт по 300 мм; концы разделаны"
 
 
 def test_tut_pieces_nobody_puts_on_and_a_late_cut_still_reach_the_product():
@@ -131,7 +131,8 @@ def test_hand_edited_scheme_groups_operations_into_blocks_and_rolls_up_per_unit(
 
     assert document["operations"] == plain["operations"] and document["topology"] == plain["topology"]
     assert route["source"] == "manual" and route["final"] == "B"
-    assert [(block["key"], block["ops"]) for block in route["blocks"]] == [("cut", [1]), ("A", [2, 3]), ("B", [4, 5])]
+    # A hand-made block keeps its order of work (ПФ, 13.10): «3, 2» stays «3, 2».
+    assert [(block["key"], block["ops"]) for block in route["blocks"]] == [("cut", [1]), ("A", [3, 2]), ("B", [4, 5])]
     by_key = blocks(route)
     assert by_key["cut"]["name"] == blocks(plain["route"])["b1"]["name"]
     assert by_key["A"]["name"] == "Сторона А" and by_key["B"]["name"] == config["assemblyName"]
@@ -271,7 +272,8 @@ def test_supplymap_etk_without_generator_types_reads_as_a_chain_timed_from_secon
     route = document_route(document)
     assert [(block["key"], block["name"]) for block in route["blocks"]] == [("b1", "Резка"), ("b2", "Опрессовка")]
     assert edges(route) == [("b1", "b2", 1)]
-    assert blocks(route)["b1"]["minutes"] == 1.2083 and blocks(route)["b2"]["rolled_minutes"] == 1.3417
+    # Без норм-строк время = секунды на изделие × партия, подготовка (setup_seconds) не считается (ETK 4).
+    assert blocks(route)["b1"]["minutes"] == 0.2083 and blocks(route)["b2"]["rolled_minutes"] == 0.3417
 
 
 def test_read_survives_documents_without_operations_or_with_odd_time():
@@ -280,3 +282,79 @@ def test_read_survives_documents_without_operations_or_with_odd_time():
     odd = {"operations": [{"code": "10", "time": 10}, {"code": "20", "time": 20, "result": "x"}]}
     route = document_route(odd)
     assert [block["name"] for block in route["blocks"]] == ["10", "20"] and route["blocks"][1]["minutes"] == 0
+
+
+# ── route v2 («Сложная сборка», 16.10): what flows on an edge, kit blocks, level labels ────────────────────────────
+
+V2_OPS = [RouteOp(position, name=f"Операция {position}") for position in range(1, 6)]
+V2 = {
+    "blocks": [
+        {"key": "W", "ops": [1], "kit": True}, {"key": "V", "ops": [2]}, {"key": "X", "ops": [3]},
+        {"key": "Y", "ops": [4]}, {"key": "Z", "ops": [5], "final": True},
+    ],
+    "edges": [
+        {"from": "W", "to": "X", "item": " НВ4 0,12 белый ×2 "},
+        {"from": "W", "to": "Y", "item": "НВ4 0,12 белый ×2; ТТК 8/2 ×1"},
+        {"from": "V", "to": "Y"}, {"from": "X", "to": "Z"}, {"from": "Y", "to": "Z", "item": ""},
+    ],
+}
+
+
+def v2_json(raw: dict) -> dict:
+    route = parse_route(raw, V2_OPS)
+    return route_json(route, route_totals(route, {}, Decimal(1)))
+
+
+def test_edge_items_kit_blocks_and_level_labels_round_trip():
+    payload = v2_json(V2)
+
+    assert [(block["key"], block.get("kit"), block["label"]) for block in payload["blocks"]] == [
+        ("W", True, "1.1"), ("V", None, "1.2"), ("X", None, "2.1"), ("Y", None, "2.2"), ("Z", None, "3"),
+    ]
+    assert [(edge["from"], edge["to"], edge.get("item")) for edge in payload["edges"]] == [
+        ("W", "X", "НВ4 0,12 белый ×2"), ("W", "Y", "НВ4 0,12 белый ×2; ТТК 8/2 ×1"),
+        ("V", "Y", None), ("X", "Z", None), ("Y", "Z", None),
+    ]
+    # Read back (the stored route, «Сохранить ПФ»): the same JSON byte for byte.
+    assert json.dumps(v2_json(payload), ensure_ascii=False) == json.dumps(payload, ensure_ascii=False)
+
+
+def test_a_level_with_one_block_is_its_number_and_the_longest_path_decides_the_level():
+    route = parse_route(_scheme(
+        {"key": "a", "ops": [1]}, {"key": "b", "ops": [2]}, {"key": "c", "ops": [3], "final": True},
+        edges=[("a", "b"), ("a", "c"), ("b", "c")],
+    ), OPS)
+    payload = route_json(route, route_totals(route, {}, Decimal(1)))
+    assert [block["label"] for block in payload["blocks"]] == ["1", "2", "3"]
+
+
+def test_a_route_without_items_or_kits_keeps_its_old_shape_and_reads_back_byte_equal():
+    document = build(kit("345К.2-КБ1"))
+    old = document["route"]
+    assert all(set(block) == {"key", "name", "ops", "final", "components", "outputs", "inputs", "minutes",
+                              "unit_minutes", "rolled_minutes", "rolled_ops", "label"} for block in old["blocks"])
+    assert all(set(edge) == {"from", "to", "per_unit"} for edge in old["edges"])
+    stored = deepcopy(old) | {"source": "manual"}
+    document["route"] = stored
+    assert json.dumps(document_route(document), ensure_ascii=False) == json.dumps(stored, ensure_ascii=False)
+    # A route stored before the labels reads with them added and nothing else changed.
+    unlabelled = deepcopy(stored)
+    for block in unlabelled["blocks"]:
+        del block["label"]
+    document["route"] = unlabelled
+    assert document_route(document) == stored
+
+
+def test_one_edge_per_pair_still_holds_with_items_and_an_item_must_be_text():
+    doubled = deepcopy(V2)
+    doubled["edges"].append({"from": "W", "to": "X", "item": "ТТК 8/2 ×1"})
+    with pytest.raises(RouteError, match="стрелка «Операция 1» → «Операция 3» повторяется"):
+        parse_route(doubled, V2_OPS)
+    numbered = deepcopy(V2)
+    numbered["edges"][0]["item"] = 2
+    with pytest.raises(RouteError, match="подпись стрелки №1 должна быть текстом"):
+        parse_route(numbered, V2_OPS)
+    # Only `true` makes a kit (a string «false» is not one).
+    loose = deepcopy(V2)
+    loose["blocks"][0]["kit"] = "false"
+    assert "kit" not in v2_json(loose)["blocks"][0]

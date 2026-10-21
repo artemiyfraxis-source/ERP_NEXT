@@ -246,7 +246,7 @@ def test_correction_is_refused_without_writing_anything():
     closed = box
     other_box, other_output, _ = _submit(factory, operator, task, now, good="4", inputs=(WorkInput(source.id, Decimal("4")),))
 
-    with pytest.raises(ProductionValidationError, match="не возвращена мастером"):
+    with pytest.raises(ProductionValidationError, match="не возвращена"):
         _correct(factory, operator, closed, output, now, good="5")
     returned = _close_and_return(factory, master, operator, closed, now)
     stranger = Actor(name="Чужой", department="Производство")

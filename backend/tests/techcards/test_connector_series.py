@@ -95,6 +95,16 @@ def test_terminals_match_the_housing_prefix_not_a_substring():
     assert wire_range([]) is None
 
 
+def test_terminal_carries_its_record_id_and_stored_cells_for_in_place_editing():
+    rows = [{**TERMINALS[0], "__id": "rec-1", "terCrimpHeight": "26 AWG: 0,62"}]
+    terminal = terminals_for(("GHR",), rows)[0]
+
+    assert terminal["id"] == "rec-1"
+    assert terminal["raw"]["terCrimpHeight"] == "26 AWG: 0,62"
+    assert "terArticle" not in terminal["raw"] and "__id" not in terminal["raw"]
+    assert terminals_for(("GHR",), TERMINALS)[0]["id"] == ""  # a row without an id is not editable
+
+
 def test_terminals_reach_the_series_view():
     series = _series(TERMINALS)
     assert [t["article"] for t in series["jst-nsh"]["terminals"]] == ["SSHL-003T-P0.2"]
@@ -167,16 +177,32 @@ def test_coax_articles_fill_the_rf_series_by_type():
         {"coaxArticle": "SMA-male RG-316", "coaxType": "SMA-male", "coaxMfr": "LenoRF", "coaxWire": "RG-316"},
         {"coaxArticle": "RP-SMA-female RG-316", "coaxType": "RP-SMA-female", "coaxMfr": "", "coaxWire": "RG-316"},
         {"coaxArticle": "U.FL", "coaxType": "U.FL-female R/A", "coaxMfr": "", "coaxWire": ""},
+        {"coaxArticle": "MHF1-plug RG-178", "coaxType": "MHF1-plug", "coaxMfr": "", "coaxWire": "RG-178"},
+        {"coaxArticle": "IPEX-female", "coaxType": "IPEX-female", "coaxMfr": "", "coaxWire": ""},
         {"coaxArticle": "Fakra Z-Female", "coaxType": "Fakra-female", "coaxMfr": "", "coaxWire": ""},
         {"coaxArticle": "QMA-KPD7", "coaxType": "QMA", "coaxMfr": "", "coaxWire": ""},
     ]
     series = {item["id"]: item for item in connector_series((), coax)}
     assert [c["article"] for c in series["rf-sma"]["catalog"]] == ["SMA-male RG-316"]
     assert [c["article"] for c in series["rf-rpsma"]["catalog"]] == ["RP-SMA-female RG-316"]
-    assert [c["article"] for c in series["rf-mhf"]["catalog"]] == ["U.FL"]
+    assert [c["article"] for c in series["rf-ufl"]["catalog"]] == ["U.FL"]  # Hirose U.FL is not I-PEX MHF (owner 20.10)
+    assert [c["article"] for c in series["rf-mhf"]["catalog"]] == ["MHF1-plug RG-178", "IPEX-female"]
     assert [c["article"] for c in series["rf-qma"]["catalog"]] == ["QMA-KPD7"]
     assert series["rf-fakra"]["category"] == "Автомобильные" and len(series["rf-fakra"]["catalog"]) == 1
     assert series["rf-bnc"]["catalog"] == [] and series["rf-bnc"]["housing_count"] == 0
+
+
+def test_millimetre_series_and_smp_take_their_stock_articles():
+    # Склад 19.10: 2.92-JB2G-F, 3.5-JB2AG, SMP-KW2 — серии 2,92 мм, 3,5 мм и SMP открываются по «Тип/Серия».
+    coax = [
+        {"coaxArticle": "2.92-JB2G-F", "coaxType": "2.92mm-male", "coaxMfr": "", "coaxWire": "RG-405"},
+        {"coaxArticle": "3.5-JB2AG", "coaxType": "3.5mm-male", "coaxMfr": "", "coaxWire": "RG-405"},
+        {"coaxArticle": "SMP-KW2", "coaxType": "SMP-female R/A", "coaxMfr": "", "coaxWire": "RG-178"},
+    ]
+    series = {item["id"]: item for item in connector_series((), coax)}
+    assert [c["article"] for c in series["rf-292"]["catalog"]] == ["2.92-JB2G-F"]
+    assert [c["article"] for c in series["rf-35"]["catalog"]] == ["3.5-JB2AG"]
+    assert [c["article"] for c in series["rf-smp"]["catalog"]] == ["SMP-KW2"]
 
 
 def test_terminal_payload_carries_crimp_height_and_pull_force():
@@ -191,6 +217,18 @@ def test_terminal_payload_carries_crimp_height_and_pull_force():
     assert (b["crimp_height"], b["pull_force"]) == ("26 AWG: 0,62; 28 AWG: 0,70", "26 AWG: 15; 28 AWG: 12")
     assert (c["crimp_height"], c["pull_force"]) == ("24 AWG: 0,76–0,81; 22 AWG: 0,84", "24 AWG: 29,3–35; 22 AWG: 44,1")
     assert (d["crimp_height"], d["pull_force"]) == ("", "")
+    assert [t["ins_crimp_height"] for t in (a, b, c, d)] == ["", "", "", ""]
+
+
+def test_terminal_payload_carries_insulation_crimp_height_per_awg():
+    plain = {"terSeries": "GHR", "terArticle": "P-1", "terCrimpHeight": "0,85", "terInsCrimpHeight": "1,50 - 1,65"}
+    profiled = {"terSeries": "GHR", "terArticle": "P-2", "terCrimpHeight": "28 AWG: 0,52 - 0,58\n26 AWG: 0,56 - 0,62",
+                "terInsCrimpHeight": "28 AWG: 1,30 - 1,45\n26 AWG: 1,35 - 1,50"}
+    a, b = terminals_for(("GHR",), [plain, profiled])
+
+    assert a["ins_crimp_height"] == "1,50–1,65"
+    assert b["ins_crimp_height"] == "28 AWG: 1,30–1,45; 26 AWG: 1,35–1,50"
+    assert b["crimp_height"] == "28 AWG: 0,52–0,58; 26 AWG: 0,56–0,62"
 
 
 # --- housing catalogues from the makers' documents (connector_catalog_data, 12.10.2026) -------------------------------
@@ -271,9 +309,12 @@ def test_gallery_runs_by_maker_then_pitch_inside_a_section():
 
 def test_a_checked_catalogue_series_says_where_contact_one_is():
     series = _series()
-    for series_id in ("jst-suh", "jst-shj", "jst-ra", "te-minict", "te-sl156", "hirose-df14", "hirose-df11", "hirose-df19"):
+    for series_id in ("jst-suh", "jst-shj", "jst-ra", "te-minict", "te-sl156", "hirose-df14", "hirose-df11", "hirose-df19",
+                      "jst-pud", "jst-pad", "jst-zpd", "jst-nshd", "jst-cz", "hirose-df13", "hirose-df20"):
         assert series[series_id]["checked"], series_id
-    for series_id in ("jst-el", "jst-pud", "hirose-df1b", "connfly-ds1072", "samtec-isd2"):
+    for series_id in ("hirose-df1b", "hirose-df61"):  # 17.10.2026: DEP and DF61 read from the Hirose drawings
+        assert series[series_id]["checked"], series_id
+    for series_id in ("jst-el", "jst-pnd", "jst-gvh", "connfly-ds1072", "samtec-isd2"):
         assert not series[series_id]["checked"], series_id  # no circuit-1 mark placed on the wire side: warning stays
     assert re.search(r"контакт 1 справа", housing_of("RA-2011")["note"])
 
@@ -291,5 +332,44 @@ def test_molex_sales_drawing_tables():
     # A family whose drawing was not found keeps the ERP's own housing, and the series says «диапазон не сверен».
     clik = series["molex-clikmate"]
     assert [variant["family"] for variant in clik["variants"]] == ["molex-clikmate-20", "molex-clikmate"]
-    assert not clik["range_checked"] and _articles(clik, 1) == ["5025780600"]
+    assert not clik["range_checked"] and _articles(clik, 1) == [f"502578-{n:02d}00" for n in range(2, 16)]
     assert [h["n"] for h in series["molex-clikmate"]["variants"][0]["housings"]] == [*range(2, 11), 12, 13, 14, 15]
+
+
+def _word(text, word):
+    return re.search(rf"(?<!\w){word}(?!\w)", text.lower()) is not None
+
+
+def test_every_housing_with_known_contacts_is_named_by_them_вилка_for_pins_розетка_for_sockets():
+    # Owner 17.10.2026 («давай по-русски»): вилка = pin contacts, розетка = socket contacts, whatever the maker's
+    # «plug» / «receptacle» says (JST: the receptacle SMR takes pins — it is the вилка here).
+    right = {"pin": "вилка", "socket": "розетка"}
+    wrong = {"pin": "розетка", "socket": "вилка"}
+    seen = set()
+    for series in connector_series(()):
+        for variant in series["variants"]:
+            for housing in variant["housings"]:
+                mate = housing["housing"].get("mate")
+                if not mate:
+                    continue
+                for text in (variant["title"], housing["housing"]["title"]):
+                    assert not _word(text, wrong[mate["contacts"]]), (housing["article"], text)
+                    if _word(text, right[mate["contacts"]]):
+                        seen.add(right[mate["contacts"]])
+    assert seen == {"вилка", "розетка"}
+    for family in FAMILIES:
+        layout = housing_of(CATALOG_SAMPLES.get(family["id"], ""))
+        mate = layout and layout.get("mate")
+        if mate:
+            assert not _word(family["title"], wrong[mate["contacts"]]), family["id"]
+
+
+def test_jst_sm_el_rcy_sections_follow_the_contacts():
+    series = _series()
+    assert [v["title"] for v in series["jst-sm"]["variants"]] == [
+        "Вилка SMR, чёрная", "Вилка SMR, белая", "Розетка SMP, чёрная", "Розетка SMP, белая"]
+    assert [v["title"] for v in series["jst-rcy"]["variants"]][::2] == ["Вилка SYR, штыри", "Розетка SYP, гнёзда"]
+    el = [v["title"] for v in series["jst-el"]["variants"]]
+    assert el[0].startswith("Вилка ELR") and el[3].startswith("Розетка ELP")
+    assert housing_of("SMR-04V-B")["title"] == "JST SM (вилка)" and housing_of("SMP-04V-BC")["title"] == "JST SM (розетка)"
+    assert housing_of("43020-0400")["title"].endswith("(вилка)")

@@ -27,6 +27,7 @@ import {
 import { LoginPage, SessionExpiredDialog } from "./LoginPage";
 import { UpdateFailure } from "./UpdateBanner";
 import { BlockIcon } from "./BlockIcon";
+import { countLabel } from "./format";
 import { FulfillmentPage } from "./FulfillmentPage";
 import { ProcurementPage } from "./ProcurementPage";
 import { ProductionPage } from "./ProductionPage";
@@ -37,6 +38,7 @@ import { ReceivingPage } from "./ReceivingPage";
 import { WarehousePage } from "./WarehousePage";
 import { EquipmentPage } from "./EquipmentPage";
 import { ShippingPage } from "./ShippingPage";
+import { ProductionIntakePage } from "./ProductionIntakePage";
 import { ReferencesPage } from "./ReferencesPage";
 import { NotificationsPage } from "./NotificationsPage";
 import { NotificationBell } from "./NotificationBell";
@@ -336,6 +338,7 @@ export function App() {
         {activeSection === "stock" && <WarehousePage key={visit} admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
           canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
         {activeSection === "equipment" && <EquipmentPage readOnly={!canAct(principal, "warehouse")} admin={hasFullAccess(principal)} />}
+        {activeSection === "intake" && <ProductionIntakePage principal={principal} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
@@ -414,7 +417,8 @@ function Home({
                 <span className="t-sub">{block.items.length >= 3 ? block.sub : names}</span>
                 {block.items.length >= 3 && <span className="t-in">{names}</span>}
               </span>
-              <span className="tile-count">{block.items.length}</span>
+              {/* Счётчик с подписью (владелец 16.10: «1, 2, 2 — непонятно, что считают»): разделы блока, открытые сотруднику. */}
+              <span className="tile-count">{countLabel(block.items.length, ["раздел", "раздела", "разделов"])}</span>
             </button>
           );
         })}

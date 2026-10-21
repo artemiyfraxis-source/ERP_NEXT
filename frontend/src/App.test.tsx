@@ -69,6 +69,8 @@ it("draws the block tiles with line icons, never emoji (audit М-6)", async () =
   tiles.forEach((tile) => {
     expect(tile.querySelector(".tile-icon svg.block-icon")).not.toBeNull();
     expect(tile.querySelector(".tile-icon")?.textContent).toBe("");
+    // Счётчик подписан (владелец 16.10: «1, 2, 2 — непонятно, что считают»).
+    expect(tile.querySelector(".tile-count")?.textContent).toMatch(/^\d+ раздел(а|ов)?$/);
   });
 });
 
@@ -89,7 +91,7 @@ it("ID-6: a view grant opens procurement, receiving and stock read-only", async 
     if (path === "/api/auth/me") return json({
       ...as("commercial", { procurement: "view", receiving: "view", warehouse: "view" }),
     });
-    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -106,7 +108,7 @@ it("ID-6: a storekeeper keeps the edit controls", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/auth/me") return json(as("foreman", { warehouse: "edit" }));
-    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path === "/api/stock/item-types") return json({ types: [], choices: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -122,7 +124,7 @@ it("opens the native warehouse at the live ERP stock route", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/auth/me") return json(as("foreman", { warehouse: "edit" }));
-    if (path === "/api/stock") {
+    if (path.split("?")[0] === "/api/stock") {
       return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     }
     throw new Error(`Unexpected request: ${path}`);
@@ -230,8 +232,8 @@ it("opens native finished-goods and shipping at the shipping route", async () =>
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "Отгрузка", level: 1 })).toBeInTheDocument();
-  // Кладовщик начинает с того, что сдал цех: первой открывается «Из производства».
-  expect(await screen.findByText("В производстве нет КБ, которые ждут склада.")).toBeInTheDocument();
+  // Приёмка с производства — отдельный раздел; «Отгрузка» открывается на «На складе».
+  expect(await screen.findByText(/На складе ничего не ждёт упаковки/)).toBeInTheDocument();
 });
 
 it("opens native references at the references route", async () => {

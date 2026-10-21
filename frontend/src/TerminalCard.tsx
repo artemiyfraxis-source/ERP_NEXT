@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { PageWindow } from "./PageWindow";
+import { TER_L_MINUS_HINT, TER_L_PLUS_HINT } from "./referenceLabels";
 import type { TechOperationRecord } from "./api";
 
 /** «База данных → Терминалы»: карточка контакта по протоколу v5.2 (владелец 12–13.10.2026) — справа от списка, как
@@ -82,11 +83,11 @@ function Datasheet({ url }: { url: string }) {
   </>;
 }
 
-type Line = [title: string, value: string, options?: { wide?: boolean; link?: boolean }];
+type Line = [title: string, value: string, options?: { wide?: boolean; link?: boolean; hint?: string }];
 
 function Fields({ lines }: { lines: Line[] }) {
   return <dl className="op-fields">{lines.map(([title, value, options]) => <div key={title}>
-    <dt>{title}</dt>
+    <dt title={options?.hint}>{title}</dt>
     <dd className={options?.link ? undefined : "pre-line tnum"}>{value
       ? options?.link && /^https?:\/\//.test(value) ? <Datasheet url={value} /> : value
       : <span className="muted" title="Нет в спецификации производителя">—</span>}</dd>
@@ -114,7 +115,8 @@ export function terminalCardLines(card: TerminalCardData): { contact: Line[]; cr
       ["Диаметр изоляции, мм", rangeText(card.ins_od_from, card.ins_od_to)],
       ["Усилие обрыва, Н", pullText(card)],
       ["Длина зачистки, мм", trim(card.strip)],
-      ["L+ / L−, мм", lengths],
+      ["L+ / L−, мм", lengths, { hint: `${TER_L_PLUS_HINT}
+${TER_L_MINUS_HINT}` }],
       ["Аппликатор", trim(card.applicator)],
     ],
   };
@@ -126,18 +128,11 @@ export function TerminalCard({ record, canEdit, onEdit, onClose }: {
   onEdit: (record: TechOperationRecord) => void;
   onClose: () => void;
 }) {
-  const panelRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [onClose]);
-  useEffect(() => { panelRef.current?.scrollTo?.({ top: 0 }); }, [record.id]);
   const card = record.card;
   const subtitle = card ? [card.maker, card.series, card.product].map(trim).filter(Boolean)
     .filter((part, index, parts) => parts.indexOf(part) === index).join(" · ") : "";
   const lines = card ? terminalCardLines(card) : null;
-  return <aside className="eq-panel" aria-label="Карточка контакта" ref={panelRef}>
+  return <PageWindow label="Карточка контакта" width={640} dismissable close={onClose}>
     <article className="panel eq-card">
       <header className="eq-head">
         <div className="eq-title"><b className="tnum">{trim(card?.article) || record.display_text || "—"}</b>{subtitle && <span className="muted">{subtitle}</span>}</div>
@@ -153,5 +148,5 @@ export function TerminalCard({ record, canEdit, onEdit, onClose }: {
         </>
         : <div className="empty">Карточка не пришла с сервера — обновите страницу.</div>}
     </article>
-  </aside>;
+  </PageWindow>;
 }

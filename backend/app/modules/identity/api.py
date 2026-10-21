@@ -52,6 +52,7 @@ from .domain import (
     AccessMode,
     IdentityUser,
     IdentityValidationError,
+    level_label,
     secret_hash,
 )
 from .staff import (
@@ -383,7 +384,7 @@ def deactivate_user_route(
 
 class EmployeeCreateInput(BaseModel):
     login: str = Field(default="", max_length=255)
-    email: str = Field(min_length=1, max_length=255)
+    email: str = Field(default="", max_length=255)  # empty → a placeholder address from the name
     name: str = Field(min_length=1, max_length=255)
     department: str = Field(default="", max_length=255)
     # Уровень доступа; the legacy `role` (one release) sets it when the level is not sent.
@@ -457,8 +458,7 @@ def _level(user: IdentityUser) -> str:
 
 
 def _level_label(user: IdentityUser) -> str:
-    level = _level(user)
-    return LEVEL_LABELS.get(level, level)
+    return level_label(_level(user))
 
 
 def _employee(user: IdentityUser, pin_set: bool = False) -> dict:

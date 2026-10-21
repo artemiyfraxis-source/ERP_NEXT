@@ -163,16 +163,13 @@ class CheckedConfig:
 
 
 def check_config(config: Mapping[str, Any], uow) -> CheckedConfig:
-    """Build the ETK in memory as «Собрать ЭТК» would (library cards of the current snapshot) and drop it: errors are
+    """Build the ETK in memory as «Собрать ЭТК» would (the library's cards) and drop it: errors are
     raised in Russian, warnings returned. Nothing is written."""
     if not isinstance(config, Mapping) or config.get("mode") != MANUAL_MODE:
         raise AssemblyDraftError("Черновик — это «Ручная сборка»: в build_config нужен mode = «manual»")
-    metadata = uow.operation_cards.metadata()
-    cards = uow.operation_cards.list() if metadata is not None else []
+    cards = uow.operation_cards.list()
     try:
-        document = checked_document(build_etk(
-            config, cards, operation_library_commit=metadata["source_commit"] if metadata else "",
-        ))
+        document = checked_document(build_etk(config, cards))
     except ValueError as error:
         raise AssemblyDraftError(str(error)) from error
     except (TypeError, KeyError, AttributeError, ArithmeticError) as error:
@@ -180,7 +177,7 @@ def check_config(config: Mapping[str, Any], uow) -> CheckedConfig:
             "Схема сборки не собирается: в build_config непонятные данные — сверьте с build-config.schema.json",
         ) from error
     warnings = list(document.get("warnings") or [])
-    if metadata is None:
+    if not cards:
         warnings.insert(0, "Библиотека операционных карт не загружена — карточки операций не проверены")
     return CheckedConfig(tuple(warnings), len(document["operations"]), document.get("route"))
 

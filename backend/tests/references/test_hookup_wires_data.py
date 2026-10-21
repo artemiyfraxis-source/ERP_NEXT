@@ -8,7 +8,7 @@ DATA = Path(__file__).resolve().parents[2] / "data" / "cables" / "hookup-wires.j
 SERIES_P = ("standard", "conductor_material", "insulation_material", "voltage_v", "temp_min_c", "temp_max_c", "colors")
 SIZE_P = ("strands", "conductor_dia_mm", "insulation_thickness_mm", "outer_dia_mm")
 NUMERIC = {"voltage_v", "temp_min_c", "temp_max_c", "conductor_dia_mm", "insulation_thickness_mm", "outer_dia_mm"}
-SERIES_KEYS = {"UL1061", "UL1571", "UL1007", "UL3239", "НВ-4 (600 В)", "ПВАМ", "МГТФ", "МГШВ", "МС 16-13", "МС 15-11", "МК 26-13", "ПуГВ"}
+SERIES_KEYS = {"UL1061", "UL1571", "UL1007", "UL3239", "UL3135", "НВ-4 (600 В)", "ПВАМ", "МГТФ", "МГШВ", "МС 16-13", "МС 15-11", "МК 26-13", "ПуГВ"}
 
 
 def _load():
@@ -23,7 +23,7 @@ def _check_p(name, p):
             assert isinstance(p["value"], (int, float)) and not isinstance(p["value"], bool), name
 
 
-def test_file_parses_and_lists_exactly_the_twelve_series():
+def test_file_parses_and_lists_exactly_the_thirteen_series():
     doc = _load()
     assert doc["version"] == 1
     assert {s["key"] for s in doc["series"]} == SERIES_KEYS
@@ -72,5 +72,11 @@ def test_strand_lay_and_series_colours_are_filled_where_a_source_gives_them():
     for key in ("ПВАМ", "ПуГВ"):
         colors = series[key]["colors"]["value"]
         assert len(colors) >= 11 and len(set(colors)) == len(colors) and "чёрный" in colors, key
-    assert series["МК 26-13"]["colors"] is None and all(size["strands"] is None for size in series["МК 26-13"]["sizes"])
-    assert series["МГТФ"]["colors"] is None
+    # 16.10.2026: МК 26-13 by the Chuvashkabel technical description (ТУ 16.К05-016-2003) — seven colours («белый или
+    # натуральный», no green), 0,50 mm² is Ø 1,40; МГТФ is not dyed.
+    mk = series["МК 26-13"]
+    assert mk["colors"]["value"] == ["белый", "натуральный", "жёлтый", "оранжевый", "красный", "синий", "коричневый", "чёрный"]
+    assert mk["standard"]["value"] == "ТУ 16.К05-016-2003" and "chuvkab.nt-rt.ru/images/manuals/mk_26_13.pdf" in mk["standard"]["source"]
+    assert [size["strands"]["value"] for size in mk["sizes"]] == ["14×0,08", "24×0,08", "19×0,12", "19×0,15", "19×0,18"]
+    assert [size["outer_dia_mm"]["value"] for size in mk["sizes"]] == [0.75, 0.87, 1.04, 1.19, 1.4]
+    assert series["МГТФ"]["colors"]["value"] == ["натуральный"]

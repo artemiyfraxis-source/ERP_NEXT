@@ -1,14 +1,19 @@
+import type { Sto, TdFinding, TdIssue, TdIssueInput, TdPrintModel } from "./tdTypes";
+
 export type AccessMode = "view" | "edit";
 export const AUTH_REQUIRED_EVENT = "erp:auth-required";
 
-/** Access levels (owner 04.10.2026), strongest first; names as in backend identity LEVEL_LABELS. */
+/** Access levels (owner 04.10.2026, 14.10.2026), strongest first; names as in backend identity LEVEL_LABELS. «admin» is
+ *  no level a person holds since 14.10.2026 — only the session of «Режим админа» carries it (backend ADMIN_MODE_LEVEL). */
 export const ACCESS_LEVEL_LABELS: Readonly<Record<string, string>> = {
   superadmin: "Суперадминистратор",
-  admin: "Администратор",
   commercial: "Коммерческое руководство",
   tech_lead: "Технический руководитель",
+  pm: "Менеджер по проектам",
+  storekeeper: "Кладовщик",
   foreman: "Бригадир",
   operator: "Оператор",
+  admin: "Администратор",
 };
 
 /** The level's Russian name; an unknown key is shown as is, an empty one as a dash. */
@@ -26,7 +31,8 @@ export interface Principal {
   };
   /** The access level key, one element (backend keeps the legacy name for one release); `access_level` is the same key. */
   roles: string[];
-  /** superadmin | admin | commercial | tech_lead | foreman | operator — the effective level, the admin mode included. */
+  /** superadmin | commercial | tech_lead | pm | storekeeper | foreman | operator — the effective level; «admin» while
+   *  the admin mode is on. */
   access_level?: string;
   /** Section → mode. superadmin/admin carry every section on edit; the screens never read anything else. */
   permissions: Record<string, AccessMode>;
@@ -598,17 +604,70 @@ export interface PrintSheet {
   sign: string;
 }
 
-/** Лист PL/DN отгрузки по образцу владельца: шапка «подпись | значение | реквизиты», позиции, пустые строки. */
-export interface ShippingForm {
-  kind: "pl" | "dn";
-  title: string;
-  head: { label: string; value: string; side: string }[];
-  columns: string[];
-  rows: string[][];
-  blank_rows: number;
-  sign_label: string;
-  sign_name: string;
+/** Строка раздела «Описание» PL/DN (shipping/documents.py `FormRow`): у PL — номер этикетки, у DN — PL и места. */
+export interface ShippingFormRow {
+  part: string;
+  name: string;
+  quantity: string;
+  unit: string;
+  batch: string;
+  pl: string;
+  boxes: string;
 }
+
+/** PL одного короба — форма 04.2 (shipping/documents.py `PackingList`); пустое поле — клетка для руки. */
+export interface PackingListForm {
+  kind: "pl";
+  title: string;
+  /** «PL | 533К.10 | - | 1». */
+  number: string[];
+  place: string;
+  places: string;
+  package: string;
+  dims: string;
+  net: string;
+  gross: string;
+  seal: string;
+  rows: ShippingFormRow[];
+  packed_at: string;
+  shipped_at: string;
+  packer: string;
+}
+
+/** DN отправки — форма 04.1 (shipping/documents.py `DeliveryNote`); реквизиты заказа — из карточки проекта. */
+export interface DeliveryNoteForm {
+  kind: "dn";
+  title: string;
+  number: string[];
+  date: string;
+  customer: string;
+  po: string;
+  contract: string;
+  spec: string;
+  invoice: string;
+  terms: string;
+  pays: string;
+  customer_address: string;
+  shipping_address: string;
+  hours: string;
+  contact: string;
+  phone: string;
+  carrier: string;
+  track: string;
+  tk_note: string;
+  rows: ShippingFormRow[];
+  upd_edo: boolean;
+  upd_paper: boolean;
+  paper_box: string;
+  note: string;
+  places: string;
+  gross: string;
+  upd: string;
+  shipped_at: string;
+  packer: string;
+}
+
+export type ShippingForm = PackingListForm | DeliveryNoteForm;
 
 export interface FulfillmentRequest {
   id: string;
@@ -692,6 +751,9 @@ export interface ProductionOperator {
   department?: string;
 }
 
+/** Откуда карточка операции ЭТК (`position` — номер в ЭТК): template / edited / snapshot и дата шаблона или правки. */
+export interface EtkCardVersion { position: number; source: string; changed_at: string }
+
 export interface ProductionOperation {
   id: string;
   position: number;
@@ -718,9 +780,14 @@ export interface ProductionOperation {
   remaining?: string;
   /** «Факт / норма» сданного исполнителем по журналу времени: факт без пауз, норма на сданные штуки. */
   time_fact?: { actual_seconds: number; norm_seconds: number; percent: number | null; finishes: number } | null;
+  /** «Мои задания»: откуда карточки операций ЭТК этой операции сейчас (`live`) и на первом «Начать» (`started`;
+   *  null — ещё не начинали). Записанное на начале не меняется. */
+  etk_cards?: { live: EtkCardVersion[]; started: EtkCardVersion[] | null };
   // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
   // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
   stage_key?: string | null;
+  /** Задание по ПФ (13.10): операции ЭТК этого полуфабриката по порядку; пусто или нет — прежняя операция с одной операцией ЭТК. */
+  etk_ops?: Array<{ position: number; code: string; stage: string }>;
   inputs?: ProductionOperationInput[];
   final?: boolean;
   required_quantity?: string;
@@ -742,6 +809,12 @@ export interface ProductionReadiness {
   text: string;
   /** Подтверждённые мастером коробки этого ПЗ, которые можно взять на вход. */
   boxes: ProductionReadyBox[];
+  /** Готово: сколько штук этой операции дают коробки входов (у сборки — по самому бедному входу). */
+  available?: string;
+  /** Ждёт: номер этапа-входа, сколько он сдал и сколько должен сдать. */
+  source_position?: number | null;
+  handed?: string;
+  need?: string;
 }
 
 export interface ProductionOperationInput {
@@ -811,6 +884,9 @@ export interface ProductionTask {
   team?: string[];
   /** «Сдано N шт» площадки без отменённых; null — не считалось в этом ответе. */
   delivered?: number | null;
+  /** Доска мастера: будущее задание КБ с выданной техкартой (в базе его ещё нет) и версия техкарты для назначения. */
+  pending?: boolean;
+  techcard_version?: number | null;
 }
 
 export type ProductionFlowMode = "sequential" | "parallel" | "mixed";
@@ -895,6 +971,8 @@ export interface ProductionPlanRow {
   opened_on: string | null;
   deadline: string | null;
   days_left: number | null;
+  /** Рабочих дней до дедлайна: график смены и праздники календаря цеха. */
+  work_days_left?: number | null;
   stage: string;
   /** Registry status is terminal (closed/cancelled): the row is dimmed and out of «В работе». */
   terminal: boolean;
@@ -1142,6 +1220,9 @@ export interface GenealogyResult {
   edges: Array<{ source: string; target: string; quantity: string; relation: string }>;
 }
 
+/** Способ УПД: ЭДО, бумага или отгрузка без УПД (закрывается без файла и номера). */
+export type UpdType = "ЭДО" | "БУМАГА" | "БЕЗ УПД";
+
 export interface FinishedGood {
   id: string;
   version: number;
@@ -1162,6 +1243,8 @@ export interface FinishedGood {
   received_at: string | null;
   grn: string | null;
   note: string;
+  /** Место хранения на складе. */
+  location?: string | null;
 }
 
 /** Состояние штук КБ в регистре готовой продукции: В производстве → Принято складом → Упаковано → Отгружено. */
@@ -1264,7 +1347,7 @@ export interface Shipment {
   terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК" | null;
   carrier: string;
   deadline: string | null;
-  upd_type: "ЭДО" | "БУМАГА" | null;
+  upd_type: UpdType | null;
   upd_number: string;
   upd_date: string | null;
   upd_url: string;
@@ -1304,7 +1387,7 @@ export interface ProjectAddressee {
   phone: string;
   terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК" | null;
   carrier: string;
-  upd_type: "ЭДО" | "БУМАГА" | null;
+  upd_type: UpdType | null;
   updated_by: string;
   updated_at: string | null;
   po: string;
@@ -1314,6 +1397,12 @@ export interface ProjectAddressee {
   pays: string;
   customer_address: string;
   hours: string;
+  /** Плановая дата отгрузки проекта (ISO) и комментарий — новые отправки берут их, пока свои пусты. */
+  plan_date?: string | null;
+  note?: string;
+  /** Бумажная УПД, приложенная к данным отправки заранее: ссылка и имя файла («УПД: имя»). */
+  upd_url?: string;
+  upd_file_name?: string;
 }
 
 export interface ReferencePair {
@@ -1439,6 +1528,11 @@ export interface CableRow {
   /** Coax: the card by the exact name (`card_exact`) or of the family («RG-58» for «RG-58 C/U»). */
   card?: CoaxCard | null;
   card_exact?: boolean;
+  /** Coax: the БД.КОАКС rows made for this cable (by its mark, the exact card's name and aliases), only the cells the
+      card shows — «Совместимые разъёмы» (owner 19.10.2026). */
+  connectors?: Array<{ id: string; fields: Record<string, string> }>;
+  /** The connectors are the family card's («5D-FB» for «5D-FB CCA PE AL PE»): its name; "" — the row's own. */
+  connectors_family?: string;
   /** Монтажный wire: its structure, or — not structured yet — why, and what the БД.ПРОВ row suggests. */
   hookup?: HookupWire | null;
   hookup_problem?: string;
@@ -1447,13 +1541,15 @@ export interface CableRow {
 
 export interface CablesResult {
   columns: string[];
+  /** Столбцы, добавленные владельцем («+ Столбец»), в конце `columns`. */
+  custom_columns?: string[];
   counts: Record<CableKind, number>;
   rows: CableRow[];
   gauges?: WireGauge[];
 }
 
 /** «Оболочки»: БД.МАТ rows that cover a harness, grouped and parsed by the server (`coverings.py`). */
-export type CoveringGroup = "tut" | "ttk" | "braid" | "corrugated" | "other";
+export type CoveringGroup = "tut" | "ttk" | "cambric" | "corrugated" | "braid" | "tape" | "other";
 export interface CoveringRow {
   id: string;
   name: string;
@@ -1475,6 +1571,8 @@ export interface CoveringRow {
   inner_mm: number | null;
   outer_mm: number | null;
   split: boolean | null;
+  /** Ленты: ширина, мм. */
+  width_mm?: number | null;
   material: string;
   material_short: string;
   temp_min_c: number | null;
@@ -1526,6 +1624,7 @@ export interface TechOperationResult {
     record_count: number;
   };
   columns?: string[];
+  custom_columns?: string[];
   records: TechOperationRecord[];
 }
 
@@ -1544,16 +1643,23 @@ export interface EtkRouteBlock {
   unit_minutes: number;
   rolled_minutes: number;
   rolled_ops: number;
+  /** ПФ-комплект («Сложная сборка», 16.10): резка, трубки, оплётка, маркировка для нескольких ПФ — один на изделие. */
+  kit?: boolean;
+  /** Уровень на схеме: «2» — один блок на уровне, «2.1» — первый из нескольких (считает сервер). */
+  label?: string;
 }
 
 export interface EtkRouteEdge {
   from: string;
   to: string;
   per_unit: number;
+  /** Что идёт по стрелке: «НВ4 0,12 белый ×2; ТТК 8/2 ×1». */
+  item?: string;
 }
 
 export interface EtkRoute {
-  source: "derived" | "manual";
+  /** derived — по ПФ на операцию (схема до 13.10), generated — разбивка по правилу генератора, manual — технолог. */
+  source: "derived" | "generated" | "manual";
   final: string;
   blocks: EtkRouteBlock[];
   edges: EtkRouteEdge[];
@@ -1574,6 +1680,8 @@ export interface ProjectTechcard {
   created_at: string;
   updated_at: string;
   issued_at: string | null;
+  /** Нужна проверка технолога после автоматической ревизии (текст причины); нет — null. */
+  review_note?: string | null;
 }
 
 export interface TechcardRevision {
@@ -1582,6 +1690,10 @@ export interface TechcardRevision {
   reason: string;
   actor_name: string;
   occurred_at: string;
+  /** «manual» — выпустил человек; «auto» — система после правки справочника или правила. */
+  source?: "manual" | "auto";
+  /** У автоматической ревизии — список {operation_key, label, field, old, new}. */
+  diff?: unknown;
   document: Record<string, unknown>;
 }
 
@@ -1688,9 +1800,14 @@ export interface ConnectorSeriesHousing {
 }
 
 export interface ConnectorTerminal {
+  /** Запись БД.ТЕР и то, что она хранит в правимых ячейках (старое значение для правки). */
+  id?: string;
+  raw?: Record<string, string>;
   article: string; maker: string; product: string; series: string; kind: string;
   awg_from: string; awg_to: string; mm2_from: string; mm2_to: string; strip: string; applicator: string; crimp_height: string;
   pull_force: string;
+  /** Высота обжима по изоляции, тем же текстом по AWG, что crimp_height. */
+  ins_crimp_height?: string;
 }
 
 export interface ConnectorSeries {
@@ -1709,6 +1826,7 @@ export interface ConnectorSeries {
   pitch: number | null;
   color: string | null;
   checked: boolean;
+  checked_on_part?: boolean;
   sample: ConnectorSeriesHousing | null;
   /** Раздел галереи: «Провод — плата», «Автомобильные», … — у каждой серии ровно один. */
   category: string;
@@ -2747,14 +2865,23 @@ export type WarehouseTotals = {
 };
 
 export const warehouseApi = {
-  list: ({ after, query = "", includeZero = false, warehouse = "" }: {
+  list: ({ after, query = "", includeZero = false, warehouse = "", sort = "", desc = false, group = "" }: {
     after?: string;
     query?: string;
     includeZero?: boolean;
     warehouse?: string;
+    /** The column of the grouped table: the server orders the whole filter by it before the page is cut. */
+    sort?: string;
+    desc?: boolean;
+    group?: string;
   } = {}) => {
     const params = new URLSearchParams();
     if (after) params.set("after", after);
+    if (sort) {
+      params.set("sort", sort);
+      if (desc) params.set("desc", "true");
+      if (group) params.set("group", group);
+    }
     if (query.trim()) params.set("q", query.trim());
     if (includeZero) params.set("zero", "true");
     if (warehouse) params.set("warehouse", warehouse);
@@ -3024,7 +3151,32 @@ export interface AutoplanPreview {
   fingerprint: string;
 }
 
+export type EtkRevisionNotice = { pinned: number | null; current: number; newer: boolean; fallback: string | null };
+
+export interface BoardEquipment { key: string; label: string; limited: boolean }
+export interface BoardTask extends ProductionTask {
+  operations: Array<ProductionOperation & { equipment: BoardEquipment }>;
+  run?: string;
+  warnings?: string[];
+}
+export interface BoardSkipped { techcard_id: string; techcard_version: number; project: string; index: string; name: string; reason: string }
+export interface BoardData { project: string; tasks: BoardTask[]; future: BoardTask[]; skipped: BoardSkipped[] }
+export type BoardAssignItem =
+  | { task_id: string; task_version: number; operation_id: string }
+  | { techcard_id: string; techcard_version: number; position: number; quantity?: number };
+export interface BoardAssignResult {
+  tasks: ProductionTask[];
+  created: Array<{ id: string; number: string }>;
+  placed: Array<{ task_id: string; task_number: string; operation_id: string; position: number; quantity: number | null; start: string; finish: string }>;
+  refused: Array<{ task_id: string | null; techcard_id: string | null; operation_id: string | null; position: number | null; reason: string }>;
+  warnings: string[];
+}
+
 export const productionApi = {
+  /** Доска мастера: задания с группой оборудования операций, будущие задания КБ и КБ, которые не собрались. */
+  board: (project = "") => api<BoardData>(`/api/production/board${project ? `?project=${encodeURIComponent(project)}` : ""}`),
+  boardAssign: (payload: { operator_id: string; requested_start: string | null; items: BoardAssignItem[] }) =>
+    api<BoardAssignResult>("/api/production/board/assign", { method: "POST", body: JSON.stringify(payload) }),
   autoplanContext: (payload: AutoplanRequest) => api<AutoplanContext>("/api/production/autoplan/context", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -3074,6 +3226,13 @@ export const productionApi = {
       body: JSON.stringify(remove
         ? { version, operator_id: operatorId, remove: true }
         : { version, operator_id: operatorId, quantity, requested_start: requestedStart }),
+    }),
+  // Ввод готовых мастером (владелец 20.10): штуки этапа мимо терминала; operatorId — чьи (пусто — без исполнителя);
+  // fillInputs — пропущенные этапы-входы отбить готовыми.
+  manualOutput: (taskId: string, operationId: string, goodQuantity: number, operatorId: string, fillInputs: boolean) =>
+    api<{ box: ProductionBox; filled: ProductionBox[]; warnings: string[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/manual-output`, {
+      method: "POST",
+      body: JSON.stringify({ good_quantity: goodQuantity, operator_id: operatorId || null, fill_inputs: fillInputs }),
     }),
   cancel: (taskId: string, version: number, cancelled: boolean) =>
     api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/cancel`, {
@@ -3126,7 +3285,11 @@ export const productionApi = {
   /** Сохранённый чертёж жгута позиции задания — только чтение, без раздела «Проекты» (нет чертежа — `design: null`). */
   taskHarness: (taskId: string) => api<HarnessDrawing>(`/api/production/my/tasks/${taskId}/harness`),
   operationEtk: (taskId: string, operationId: string) =>
-    api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
+    api<{ card: ProjectTechcard; focus: { position: number; positions?: number[]; code: string };
+      /** Ревизия, по которой идёт задание: показанная, последняя, есть ли новее и почему показана текущая ЭТК. */
+      revision?: EtkRevisionNotice;
+      /** Номера изделий задания для «№ изделия» в надписях меток (сквозь задания позиции проекта). */
+      serial?: { first: number; last: number; task: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
   inputs: (taskId: string, operationId: string, operatorId = "") =>
     api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs${operatorId ? `?operator_id=${operatorId}` : ""}`),
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
@@ -3141,10 +3304,6 @@ export const productionApi = {
   submitWork: (sessionId: string, goodQuantity: string, defectQuantity: string, defectCharacter = "", defectDescription = "", work: WorkCall = {}) =>
     api<{ session: ProductionWorkSession; box: ProductionBox; output_id: string; defect: ProductionDefect | null }>(`/api/production/work/${sessionId}/submit${behalfQuery(work.onBehalfOf)}`, {
       method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ good_quantity: goodQuantity, defect_quantity: defectQuantity, defect_character: defectCharacter, defect_description: defectDescription }),
-    }),
-  boxAction: (boxId: string, action: "confirm", version: number) =>
-    api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/${action}`, {
-      method: "POST", body: JSON.stringify({ version }),
     }),
   boxOutputs: (boxId: string) => api<{ outputs: ProductionOutput[] }>(`/api/production/boxes/${boxId}/outputs`),
   correctBox: (boxId: string, version: number, input: CorrectBoxInput, onBehalfOf = "") =>
@@ -3244,6 +3403,10 @@ export const shippingApi = {
   uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
     method: "POST", body: JSON.stringify({ shipment_id: shipmentId, version, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
   }),
+  /** Файл бумажной УПД к данным отправки проекта (то же хранилище); ссылку в карточку ставит `saveAddressee` с `upd_url`. */
+  uploadCardUpd: (project: string, file: { name: string; type: string; base64: string }) => api<{ file: { id: string; url: string; name: string } }>("/api/shipping/upd-files", {
+    method: "POST", body: JSON.stringify({ project, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
+  }),
   saveAddressee: (payload: Record<string, unknown>) => api<{ addressee: ProjectAddressee }>("/api/shipping/project-addressee", {
     method: "PUT", body: JSON.stringify(payload),
   }),
@@ -3312,6 +3475,11 @@ export const referencesApi = {
   coaxDia: () => api<TechOperationResult>("/api/references/coax-dia"),
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
+  addColumn: (tab: TechOperationTab, name: string) =>
+    api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns", { method: "POST", body: JSON.stringify({ tab, name }) }),
+  /** Удалить свой столбец: сервер откажет, пока в нём есть данные. */
+  removeColumn: (tab: TechOperationTab, name: string) =>
+    api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns/remove", { method: "POST", body: JSON.stringify({ tab, name }) }),
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
   equipmentNumber: (type: string) =>
@@ -3349,16 +3517,18 @@ export const techcardsApi = {
   list: () => api<{ items: ProjectTechcard[] }>("/api/techcards/projects"),
   /** Одна карточка ТК по id — генератор и вкладка «ТК КБn» не тянут весь список со всеми ЭТК. */
   get: (cardId: string) => api<ProjectTechcard>(`/api/techcards/projects/${encodeURIComponent(cardId)}`),
-  templates: () => api<{
-    metadata: null | { source_commit: string; imported_at: string; template_count: number };
-    items: OperationCardSummary[];
-  }>("/api/techcards/templates"),
+  templates: () => api<{ items: OperationCardSummary[] }>("/api/techcards/templates"),
   template: (templateId: string) =>
     api<OperationCardDetail>(`/api/techcards/templates/${encodeURIComponent(templateId)}`),
   saveTemplate: (templateId: string, record: OperationRecordEdit) =>
     api<OperationCardDetail>(`/api/techcards/templates/${encodeURIComponent(templateId)}`, {
       method: "PUT",
       body: JSON.stringify(record),
+    }),
+  /** «Создать операцию»: строка БД.ОП и карточка БД.ТК вместе — пустая или копия `copy_of`. */
+  createOperation: (body: { code: string; name: string; copy_of?: string; category?: string }) =>
+    api<{ code: string; name: string; record: TechOperationRecord; templates: OperationCardDetail[] }>("/api/techcards/operations", {
+      method: "POST", body: JSON.stringify(body),
     }),
   templateSheets: () => api<{ list: TemplateSheet[]; drafts: TemplateSheetDraft[] }>("/api/techcards/template-sheets"),
   openTemplateDraft: (templateId: string, title: string) =>
@@ -3378,11 +3548,21 @@ export const techcardsApi = {
     api<{ dropped: boolean }>(`/api/techcards/template-sheets/drafts/${draftId}`, { method: "DELETE" }),
   deleteTemplateSheet: (templateId: string) =>
     api<{ deleted: boolean; id: string; title: string }>(`/api/techcards/template-sheets/${encodeURIComponent(templateId)}`, { method: "DELETE" }),
-  editOperation: (cardId: string, version: number, operationKey: string, operation: Record<string, unknown>) =>
+  /** «Править операцию»; `toTemplate` — «Сохранить также в шаблон»: правка уходит и в шаблон операции. */
+  editOperation: (cardId: string, version: number, operationKey: string, operation: Record<string, unknown>, toTemplate = false) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/operations/${encodeURIComponent(operationKey)}`, {
       method: "PUT",
-      body: JSON.stringify({ version, operation }),
+      body: JSON.stringify(toTemplate ? { version, operation, to_template: true } : { version, operation }),
     }),
+  /** «Сохранить ПФ»: операции ЭТК по полуфабрикатам (блоки схемы, порядок операций в блоке — порядок работы). */
+  saveRoute: (cardId: string, version: number, route: Record<string, unknown>) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/route`, {
+      method: "PUT",
+      body: JSON.stringify({ version, route }),
+    }),
+  /** «Предложить разбивку на ПФ»: схема по правилу генератора (ручная сборка — её блоки); ничего не сохраняет. */
+  proposeRoute: (cardId: string) =>
+    api<{ route: EtkRoute; same: boolean; rule: "generator" | "blocks" }>(`/api/techcards/projects/${cardId}/route/propose`, { method: "POST" }),
   importGrapher: (filename: string, contentBase64: string, components: Array<{ id: string; article: string; name: string }> = [],
     sheet: GrapherSheetRow[] = []) =>
     api<GrapherImportResult>("/api/techcards/grapher/import", {
@@ -3925,6 +4105,8 @@ export interface KitsetCard {
   project: string;
   customer: string;
   calc_source: string;
+  /** Ссылка на папку проекта (http/https); null — не задана. */
+  folder_url?: string | null;
   updated_at: string;
   updated_by: string;
   version: number;
@@ -4110,6 +4292,9 @@ export const kitsetsApi = {
     api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify(payload) }),
   journal: (project: string, payload: { kind: "note" | "deadline"; text: string; deadline?: string | null }) =>
     api<{ card: KitsetCard }>(`${kitsetPath(project)}/journal`, { method: "POST", body: JSON.stringify(payload) }),
+  setFolder: (project: string, url: string) =>
+    api<{ card: KitsetCard }>(`${kitsetPath(project)}/folder`, { method: "PUT", body: JSON.stringify({ url }) }),
+  folderFromCalc: (project: string) => api<{ card: KitsetCard }>(`${kitsetPath(project)}/folder/from-calc`, { method: "POST" }),
   addDocument: (project: string, payload: { index: string; file_name: string; content_type: string; content_b64: string }) =>
     api<{ res: KitsetDocument }>(`${kitsetPath(project)}/documents`, { method: "POST", body: JSON.stringify(payload) }),
   documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
@@ -4441,3 +4626,27 @@ export const documentsApi = {
   acknowledge: (versionId: string, secret: string) =>
     api<DocumentsOverview>(`/api/documents/versions/${encodeURIComponent(versionId)}/acknowledge`, { method: "POST", body: JSON.stringify({ secret }) }),
 };
+
+/* Комплект ТД по ЕСТД: выпуски, нормоконтроль, печать. 422 при смене статуса несёт detail.findings (ApiError.detail). */
+const tdPath = (id: string) => `/api/techcards/td-issues/${encodeURIComponent(id)}`;
+const tdPost = (body: unknown) => ({ method: "POST", body: JSON.stringify(body) });
+const tdCardPath = (cardId: string) => `/api/techcards/projects/${encodeURIComponent(cardId)}/td-issues`;
+
+export const listTdIssues = (cardId: string) => api<TdIssue[]>(tdCardPath(cardId));
+export const createTdIssue = (cardId: string, input: TdIssueInput) => api<TdIssue>(tdCardPath(cardId), tdPost(input));
+export const getTdIssue = (id: string) => api<TdIssue>(tdPath(id));
+export const updateTdIssue = (id: string, version: number, input: TdIssueInput) =>
+  api<TdIssue>(tdPath(id), { method: "PUT", body: JSON.stringify({ version, ...input }) });
+export const resnapshotTdIssue = (id: string, version: number) => api<TdIssue>(`${tdPath(id)}/resnapshot`, tdPost({ version }));
+export const setTdIssueStatus = (id: string, version: number, to: "signing" | "draft" | "active" | "annulled") =>
+  api<TdIssue>(`${tdPath(id)}/status`, tdPost({ version, to }));
+export const getTdNormcontrol = (id: string) => api<{ findings: TdFinding[] }>(`${tdPath(id)}/normcontrol`);
+export const getTdPrintModel = (id: string) => api<TdPrintModel>(`${tdPath(id)}/print`);
+export const getSto = () => api<Sto>("/api/techcards/sto");
+
+/** Замечания нормоконтроля из отказа 422 (смена статуса заблокирована); пусто, если отказ другой. */
+export function tdFindingsOf(reason: unknown): TdFinding[] {
+  if (!(reason instanceof ApiError) || reason.status !== 422) return [];
+  const findings = (reason.detail as { findings?: unknown } | undefined)?.findings;
+  return Array.isArray(findings) ? (findings as TdFinding[]) : [];
+}

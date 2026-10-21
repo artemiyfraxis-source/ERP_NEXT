@@ -10,6 +10,8 @@ import type {
   ComponentTemplateSummary,
 } from "../component-library/component-template-api";
 import { builtInConnectorTemplates } from "./connector-series-demo";
+import { techcardsApi, type ConnectorSeries } from "../../api";
+import { hasTopView } from "../../connectorTopView";
 import { normalizeWireStripProfileBinding } from "./model";
 import { wireDatabaseOption, formatWireSection, builtInWireOptions, isSelectableWirePayload, type WireDatabaseOption } from "./wire-database";
 import type {
@@ -72,8 +74,49 @@ export const remoteEditorCatalogSources: readonly RemoteCatalogSource[] = [
   { id: "technology-connectors", label: "Разъёмы", description: "База разъёмов ERP", entityTypes: ["connector-family"], accent: "#3f718b" },
 ];
 
+/** «Корпуса, вид сверху»: корпуса из «База данных → Разъёмы»; карточка и фигура на поле — один и тот же вид сверху. */
+export const housingSource: EditorCatalogSource = {
+  id: "connector-housings",
+  label: "Корпуса, вид сверху",
+  description: "Корпуса разъёмов из базы: объёмный корпус, развёрнутый видом сверху",
+};
+
+export function housingCatalogItems(series: readonly ConnectorSeries[]): readonly EditorCatalogItem[] {
+  const seen = new Set<string>();
+  const items: EditorCatalogItem[] = [];
+  for (const entry of series) for (const variant of entry.variants) for (const h of variant.housings) {
+    if (seen.has(h.article) || !hasTopView(h.housing)) continue;
+    seen.add(h.article);
+    items.push({
+      id: `connector-housing:${h.article}`, title: h.article, category: housingSource.label, accent: "#3f718b",
+      subtitle: [entry.title, `${h.n} конт.`, h.housing.pitch ? `шаг ${String(h.housing.pitch).replace(".", ",")} мм` : ""].filter(Boolean).join(" · "),
+      placement: "connector", templateKind: "free", defaultPartNumber: h.article, housing: h.housing,
+    });
+  }
+  return items;
+}
+
+/** Корпусов в базе больше полутора тысяч: показываем по страницам, как у справочников с сервера. */
+export const housingPageSize = 60;
+
+/** База разъёмов читается один раз за сессию редактора: повторный выбор «Корпуса, вид сверху» открывается сразу. */
+let housingCache: Promise<readonly EditorCatalogItem[]> | null = null;
+function loadHousingItems(reload: boolean): Promise<readonly EditorCatalogItem[]> {
+  if (reload || !housingCache) {
+    housingCache = techcardsApi.connectorSeries().then((result) => housingCatalogItems(result.series));
+    housingCache.catch(() => { housingCache = null; });
+  }
+  return housingCache;
+}
+
+export function filterHousingItems(items: readonly EditorCatalogItem[], query: string): readonly EditorCatalogItem[] {
+  const normalized = query.trim().toLocaleLowerCase("ru");
+  return normalized ? items.filter((item) => `${item.title} ${item.subtitle}`.toLocaleLowerCase("ru").includes(normalized)) : items;
+}
+
 export const editorCatalogSources: readonly EditorCatalogSource[] = [
   componentLibrarySource,
+  housingSource,
   localSource,
   ...remoteEditorCatalogSources,
 ];
@@ -516,6 +559,31 @@ export function useEditorReferenceCatalog(
   const requestGeneration = useRef(0);
   const source = remoteEditorCatalogSources.find((item) => item.id === selectedSourceId) ?? null;
   const isComponentLibrary = selectedSourceId === componentLibrarySource.id;
+  const isHousings = selectedSourceId === housingSource.id;
+  const [housingItems, setHousingItems] = useState<readonly EditorCatalogItem[]>([]);
+  const [housingLimit, setHousingLimit] = useState(housingPageSize);
+  const housingReloads = useRef(reloadToken);
+  const filteredHousings = useMemo(() => filterHousingItems(housingItems, query), [housingItems, query]);
+
+  useEffect(() => setHousingLimit(housingPageSize), [query, selectedSourceId]);
+
+  useEffect(() => {
+    if (!isHousings) return;
+    const generation = ++requestGeneration.current;
+    const reload = housingReloads.current !== reloadToken;
+    housingReloads.current = reloadToken;
+    setLoadState("loading");
+    setMessage(null);
+    void loadHousingItems(reload).then((items) => {
+      if (requestGeneration.current !== generation) return;
+      setHousingItems(items);
+      setLoadState("ready");
+    }).catch((error: unknown) => {
+      if (requestGeneration.current !== generation) return;
+      setLoadState("error");
+      setMessage(error instanceof Error ? error.message : "Не удалось загрузить базу разъёмов.");
+    });
+  }, [isHousings, reloadToken]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300);
@@ -541,7 +609,7 @@ export function useEditorReferenceCatalog(
   }, [componentApi, isComponentLibrary, reloadToken]);
 
   useEffect(() => {
-    if (isComponentLibrary) return;
+    if (isComponentLibrary || isHousings) return;
     if (!source) {
       requestGeneration.current += 1;
       setRemoteItems([]);
@@ -581,9 +649,13 @@ export function useEditorReferenceCatalog(
       setMessage(error instanceof Error ? error.message : "Не удалось загрузить справочник.");
     });
     return () => controller.abort();
-  }, [api, debouncedQuery, isComponentLibrary, reloadToken, source]);
+  }, [api, debouncedQuery, isComponentLibrary, isHousings, reloadToken, source]);
 
   const loadMore = useCallback(() => {
+    if (isHousings) {
+      setHousingLimit((limit) => limit + housingPageSize);
+      return;
+    }
     if (!source || !nextCursor || loadState === "loading" || loadState === "loading-more") return;
     const generation = ++requestGeneration.current;
     setLoadState("loading-more");
@@ -618,7 +690,7 @@ export function useEditorReferenceCatalog(
       setLoadState("error");
       setMessage(error instanceof Error ? error.message : "Не удалось загрузить следующую страницу.");
     });
-  }, [api, debouncedQuery, loadState, nextCursor, source]);
+  }, [api, debouncedQuery, isHousings, loadState, nextCursor, source]);
 
   return {
     sources: editorCatalogSources,
@@ -626,10 +698,12 @@ export function useEditorReferenceCatalog(
     query,
     items: isComponentLibrary
       ? filterComponentTemplates(componentTemplates, query)
+      : isHousings ? filteredHousings.slice(0, housingLimit)
       : source ? remoteItems : filterBuiltInConnectors(query),
     loadState,
     message,
-    hasMore: !isComponentLibrary && source !== null && nextCursor !== null,
+    hasMore: isHousings ? filteredHousings.length > housingLimit
+      : !isComponentLibrary && source !== null && nextCursor !== null,
     selectSource: (sourceId) => {
       if (editorCatalogSources.some((item) => item.id === sourceId)) {
         requestGeneration.current += 1;

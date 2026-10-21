@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ShippingPage } from "./ShippingPage";
+import { ShippingPage, destination, nextStep } from "./ShippingPage";
+import { isoDay } from "./Gantt";
 import { capturePrintFrames } from "./testPrintFrames";
 
 const principal = {
@@ -14,15 +15,6 @@ const good = {
   remaining: "6", sent: "0", before_erp: "0", received_at: "2026-09-22", grn: "ГП.26.0000001", note: "",
 };
 const other = { ...good, id: "g2", project: "600К.1", item_index: "КБ7", customer: "Другой", grn: "ГП.26.0000002", name: "Кабель" };
-
-const incoming = [
-  { project: "591К.3", item_index: "КБ1", name: "Жгут", unit: "шт", needed: "40", delivered: "26", accepted: "6", remaining: "20", in_production: "34",
-    good_id: "g1", good_version: 1, tasks: [{ number: "ПЗ-0001", status: "Запущено", site: "ЖУК", quantity: 40, delivered: "26" }] },
-  { project: "591К.3", item_index: "КБ2", name: "Кабель сигнальный", unit: "шт", needed: "10", delivered: "10", accepted: "0", remaining: "10", in_production: "10",
-    good_id: null, good_version: null, tasks: [{ number: "ПЗ-0002", status: "Выполнено", site: "", quantity: 10, delivered: "10" }] },
-  { project: "600К.1", item_index: "КБ7", name: "Кабель", unit: "шт", needed: "5", delivered: "0", accepted: "0", remaining: "0", in_production: "5",
-    good_id: "g2", good_version: 1, tasks: [{ number: "ПЗ-0003", status: "Запущено", site: "", quantity: 5, delivered: "0" }] },
-];
 
 const shipment = {
   id: "s1", number: "ОТГ-20260922-01", version: 3, created_at: "2026-09-22T09:00:00", status: "Собрана",
@@ -40,19 +32,17 @@ const card = {
 
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status }); }
 
-function stub(shipments: unknown[] = [], goods: unknown[] = [good], addressees: unknown[] = [], rows: unknown[] = incoming) {
+function stub(shipments: unknown[] = [], goods: unknown[] = [good], addressees: unknown[] = []) {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url === "/api/shipping/goods" && method === "GET") return json({ goods });
     if (url === "/api/shipping/shipments" && method === "GET") return json({ shipments });
     if (url === "/api/shipping/shipments" && method === "POST") return json({ shipment: { ...shipment, version: 1 } });
-    if (url === "/api/shipping/finished-goods/from-production") return json({ rows });
-    if (url === "/api/shipping/finished-goods/accept") return json({ goods: [good], replayed: false });
     if (url === "/api/shipping/upd-files") return json({ shipment: { ...shipment, version: 2 } });
     if (url === "/api/shipping/project-addressees") return json({ addressees });
-    if (url === "/api/production/finished-goods-ready") return json({ boxes: [] });
-    if (url.startsWith("/api/shipping/shipments/s1/print")) return json({ forms: [{ kind: "pl", title: "УПАКОВОЧНАЯ ВЕДОМОСТЬ", head: [{ label: "Номер документа", value: "PL1", side: "" }], columns: ["GRN"], rows: [["КБ1"]], blank_rows: 0, sign_label: "Штамп / подпись кладовщика:", sign_name: "" }] });
+    if (url === "/api/shipping/project-addressee" && method === "PUT") return json({ addressee: { ...card, ...JSON.parse(String(init?.body)), version: 3 } });
+    if (/^\/api\/shipping\/shipments\/s\d+\/print/.test(url)) return json({ forms: [{ kind: "pl", title: "PL1-1", number: ["PL", "1", "-", "1"], place: "1", places: "1", package: "Короб", dims: "", net: "", gross: "", seal: "", rows: [{ part: "КБ1", name: "", quantity: "1", unit: "шт", batch: "", pl: "", boxes: "" }], packed_at: "", shipped_at: "", packer: "" }] });
     if (url === "/api/shipping/shipments/s1/labels") return json({ labels: [{ shipper: "ООО «ЗЭП ФРАКСИС»", consignee: "Получатель", address: "Москва", project: "591К.3", pl_number: "PL1", place: "Упаковка 1/1", items: [{ item_index: "КБ1", quantity: "6", unit: "шт" }], net: "11", dims: "32x25x21" }] });
     if (url === "/api/shipping/shipments/s1/ship") return json({ shipment, closed: true, why: "" });
     if (url === "/api/shipping/shipments/s2/unship") return json({ shipment: { ...shippedOne, status: "Упакована", shipped_at: null } });
@@ -73,7 +63,7 @@ const keyOf = (url: string, index = 0) => {
   const init = vi.mocked(fetch).mock.calls.filter(([target]) => String(target) === url)[index]?.[1];
   return new Headers(init?.headers).get("Idempotency-Key");
 };
-const loaded = () => screen.findByText("КБ1", { selector: "strong" });
+const loaded = () => screen.findByText("591К.3", { selector: "strong" });
 
 describe("ShippingPage", () => {
   beforeEach(() => {
@@ -83,79 +73,6 @@ describe("ShippingPage", () => {
     stub();
   });
 
-  it("opens on «Из производства» with three counted tabs and what the shop delivered, by project", async () => {
-    render(<ShippingPage principal={principal} />);
-    await loaded();
-    expect(screen.getByRole("heading", { name: "Отгрузка", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Из производства\s*2/ })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: /На складе\s*1/ })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Отправки\s*0/ })).toBeInTheDocument();
-    expect(screen.getByText("591К.3 · Заказчик", { selector: ".group-row strong" })).toBeInTheDocument();
-    expect(screen.getByText("ПЗ-0001 · ЖУК")).toBeInTheDocument();
-    // КБ, по которой цех ещё ничего не сдал, — не в «Можно принять», а в «Ещё в производстве».
-    expect(screen.queryByText("КБ7", { selector: "strong" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ещё в производстве · 1" }));
-    expect(screen.getByText("КБ7", { selector: "strong" })).toBeInTheDocument();
-    expect(screen.getByText("ещё в производстве")).toBeInTheDocument();
-  });
-
-  it("accepts the ticked КБ in one request with a partial quantity, the date and an idempotency key", async () => {
-    render(<ShippingPage principal={principal} />);
-    await loaded();
-    expect(screen.getByRole("button", { name: "Принять на склад · 0 шт" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Сколько принять 591К.3 КБ1"), { target: { value: "12" } });
-    fireEvent.click(screen.getByLabelText("Принять 591К.3 КБ2"));
-    fireEvent.change(screen.getByLabelText("Дата приёмки"), { target: { value: "2026-10-11" } });
-    fireEvent.click(screen.getByRole("button", { name: "Принять на склад · 22 шт" }));
-
-    expect(await screen.findByText("Принято на склад: 2 КБ · 22 шт")).toBeInTheDocument();
-    expect(writes()).toHaveLength(1);
-    expect(sent("/api/shipping/finished-goods/accept")).toEqual({
-      lines: [{ project: "591К.3", item_index: "КБ1", quantity: "12" }, { project: "591К.3", item_index: "КБ2", quantity: "10" }],
-      received_at: "2026-10-11",
-    });
-    expect(keyOf("/api/shipping/finished-goods/accept")).toBeTruthy();
-  });
-
-  it("selects every delivered КБ at once and refuses more than delivered without sending", async () => {
-    render(<ShippingPage principal={principal} />);
-    await loaded();
-    fireEvent.click(screen.getByLabelText("Отметить всё сданное · 2"));
-    expect(screen.getByRole("button", { name: "Принять на склад · 30 шт" })).toBeEnabled();
-    fireEvent.change(screen.getByLabelText("Сколько принять 591К.3 КБ1"), { target: { value: "25" } });
-    fireEvent.click(screen.getByRole("button", { name: "Принять на склад · 35 шт" }));
-    expect(screen.getByText("больше сданного: можно 20")).toBeInTheDocument();
-    expect(writes()).toHaveLength(0);
-  });
-
-  it("shows a refused batch (422) at its row, accepts nothing and retries with the same key", async () => {
-    const base = vi.mocked(fetch).getMockImplementation()!;
-    let refuse = true;
-    vi.mocked(fetch).mockImplementation(async (input, init) => String(input) === "/api/shipping/finished-goods/accept" && refuse
-      ? json({ detail: "591К.3 КБ1: сдано цехом 26 шт, уже принято 10 — принять можно ещё 16" }, 422) : base(input, init));
-    render(<ShippingPage principal={principal} />);
-    await loaded();
-    fireEvent.click(screen.getByLabelText("Принять 591К.3 КБ1"));
-    fireEvent.click(screen.getByRole("button", { name: "Принять на склад · 20 шт" }));
-
-    expect(await screen.findByText("сдано цехом 26 шт, уже принято 10 — принять можно ещё 16")).toHaveClass("ship-row-error");
-    expect(screen.getByLabelText("Сколько принять 591К.3 КБ1")).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByText(/^Ничего не принято: 591К.3 КБ1/)).toBeInTheDocument();
-
-    refuse = false;
-    fireEvent.change(screen.getByLabelText("Сколько принять 591К.3 КБ1"), { target: { value: "16" } });
-    fireEvent.click(screen.getByRole("button", { name: "Принять на склад · 16 шт" }));
-    expect(await screen.findByText("Принято на склад: 1 КБ · 16 шт")).toBeInTheDocument();
-    expect(keyOf("/api/shipping/finished-goods/accept", 1)).toBe(keyOf("/api/shipping/finished-goods/accept", 0));
-  });
-
-  it("gives a view grant the delivered list but no accept controls", async () => {
-    render(<ShippingPage principal={{ ...principal, roles: ["commercial"], access_level: "commercial", permissions: { shipping: "view" } }} />);
-    await loaded();
-    expect(screen.queryByLabelText("Принять 591К.3 КБ1")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Принять на склад/ })).not.toBeInTheDocument();
-  });
-
   it("«На складе» packs a project into a shipment with one request and does not ship it", async () => {
     stub([], [good, { ...other, remaining: "0", accepted: "0" }], [card]);
     render(<ShippingPage principal={principal} />);
@@ -163,7 +80,7 @@ describe("ShippingPage", () => {
     tab(/^На складе/);
     expect(screen.queryByText("600К.1", { selector: "strong" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
-    expect(screen.getByLabelText("Адрес отгрузки проекта 591К.3")).toHaveValue("Склад заказчика");
+    expect(screen.getByLabelText("Адрес доставки проекта 591К.3")).toHaveValue("Склад заказчика");
     expect(screen.queryByRole("button", { name: /^Отгрузить/ })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Сколько упаковать КБ1"), { target: { value: "4" } });
     fireEvent.change(screen.getByLabelText("Отгрузить до: проект 591К.3"), { target: { value: "2026-10-09" } });
@@ -184,8 +101,8 @@ describe("ShippingPage", () => {
     tab(/^На складе/);
     fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
     fireEvent.click(screen.getByRole("button", { name: "Упаковать · 6 шт" }));
-    expect(screen.getByText("Укажите адрес отгрузки")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Адрес отгрузки проекта 591К.3"), { target: { value: "Тула" } });
+    expect(screen.getByText("Укажите адрес доставки")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Адрес доставки проекта 591К.3"), { target: { value: "Тула" } });
     fireEvent.change(screen.getByLabelText("Сколько упаковать КБ1"), { target: { value: "9" } });
     fireEvent.click(screen.getByRole("button", { name: "Упаковать · 9 шт" }));
     expect(screen.getByText("КБ1: на складе только 6")).toBeInTheDocument();
@@ -210,13 +127,47 @@ describe("ShippingPage", () => {
     await loaded();
     tab(/^На складе/);
     fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
-    expect(screen.getByLabelText("Адрес отгрузки проекта 591К.3")).toBeDisabled();
     expect(screen.queryByLabelText("№ УПД проекта 591К.3")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "+ Добавить КБ проекта" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Упаковать · 6 шт" }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(sent("/api/shipping/project-ship")).toEqual({ project: "591К.3", addressee_version: 2, lines: [{ good_id: "g1", version: 1, quantity: "6" }], ship: false });
-    expect(vi.mocked(fetch).mock.calls.map(([target]) => String(target))).toContain("/api/production/finished-goods-ready");
+    expect(vi.mocked(fetch).mock.calls.map(([target]) => String(target))).not.toContain("/api/shipping/finished-goods/from-production");
+  });
+
+  it("the storekeeper fills the dispatch data too: the card is saved first, then the pack goes with its new version", async () => {
+    stub([], [good], [card]);
+    render(<ShippingPage principal={{ ...principal, roles: ["foreman"], access_level: "foreman", permissions: { shipping_goods: "edit" } }} />);
+    await loaded();
+    tab(/^На складе/);
+    fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
+    fireEvent.change(screen.getByLabelText("Телефон проекта 591К.3"), { target: { value: "+7 900 000-00-00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Упаковать · 6 шт" }));
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    expect(sent("/api/shipping/project-addressee", "PUT")).toEqual({ project: "591К.3", version: 2, phone: "+7 900 000-00-00" });
+    expect(sent("/api/shipping/project-ship")).toEqual({ project: "591К.3", addressee_version: 3, lines: [{ good_id: "g1", version: 1, quantity: "6" }], ship: false });
+  });
+
+  it("shows the four dispatch fields of the project, the rest under «Ещё», and the paper УПД file", async () => {
+    stub([], [good], [{ ...card, upd_type: "БУМАГА", upd_url: "/api/shipping/files/f1", upd_file_name: "УПД 591К.3.pdf", contact: "Иван" }]);
+    render(<ShippingPage principal={principal} />);
+    await loaded();
+    tab(/^На складе/);
+    fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
+    const dispatch = screen.getByRole("heading", { name: "Данные отправки" }).parentElement!;
+    expect(within(dispatch).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(
+      ["Получатель проекта 591К.3", "Адрес доставки проекта 591К.3", "Телефон проекта 591К.3"]);
+    expect(within(dispatch).getByLabelText("УПД проекта 591К.3")).toHaveValue("БУМАГА");
+    expect(within(dispatch).getByRole("link", { name: "УПД 591К.3.pdf" })).toHaveAttribute("href", "/api/shipping/files/f1");
+    expect(within(dispatch).queryByLabelText("Контактное лицо проекта 591К.3")).not.toBeInTheDocument();
+    const more = screen.getByText(/^Ещё: УПД, контакт, доставка, план/).closest("details")!;
+    expect(more).not.toHaveAttribute("open");
+    expect(within(more).getByLabelText("№ УПД проекта 591К.3")).toBeInTheDocument();
+    expect(within(more).getByLabelText("Дата УПД проекта 591К.3")).toBeInTheDocument();
+    expect(within(more).getByLabelText("Отгрузить до: проект 591К.3")).toBeInTheDocument();
+    expect(within(dispatch).queryByLabelText("№ УПД проекта 591К.3")).not.toBeInTheDocument();
+    expect(within(more).getByLabelText("Контактное лицо проекта 591К.3")).toHaveValue("Иван");
+    expect(within(more).getByLabelText("Условия доставки проекта 591К.3")).toHaveValue("САМОВЫВОЗ");
   });
 
   it("«Отправки» groups shipments by status and ships a packed one", async () => {
@@ -226,7 +177,8 @@ describe("ShippingPage", () => {
     await loaded();
     tab(/^Отправки/);
     expect(await screen.findByText("Собирается", { selector: ".group-row strong" })).toBeInTheDocument();
-    expect(screen.getByText("просрочена")).toBeInTheDocument();
+    // Срок 01.09 раньше заведения 22.09 — похоже на опечатку: дата красная и просит её проверить.
+    expect(screen.getByText("· проверьте дату")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Отгружена · 1" }));
     expect(screen.getByText("Отгружена", { selector: ".group-row strong" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "В работе · 1" }));
@@ -354,38 +306,14 @@ describe("ShippingPage", () => {
     expect(screen.getByRole("tab", { name: /^Отправки/ })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("accepts confirmed final boxes with lineage under «Из производства»", async () => {
-    let payload: unknown;
-    const base = vi.mocked(fetch).getMockImplementation()!;
-    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "/api/production/finished-goods-ready") return json({ boxes: [{
-        id: "b1", number: "104233-7", version: 3, task_id: "t1", operation_id: "o1",
-        item: "591К.3.КБ1", operation_position: 3, operator_id: "u1", quantity: "5",
-        consumed: "0", reserved: "0", available: "5", status: "Подтверждена",
-        created_at: "2026-09-23T09:00:00", closed_at: null, closed_by: null,
-        confirmed_at: "2026-09-23T10:00:00", confirmed_by: "Мастер", return_reason: "",
-        project: "591К.3", task_item: "591К.3.КБ1",
-      }] });
-      if (url === "/api/production/boxes/b1/handoff" && init?.method === "POST") {
-        payload = JSON.parse(String(init.body));
-        return json({ box: {}, finished_good: {}, receipt_id: "r1" });
-      }
-      return base(input, init);
-    });
-    render(<ShippingPage principal={principal} />);
-    fireEvent.click(await screen.findByLabelText("Выбрать: коробка 104233-7"));
-    fireEvent.click(screen.getByRole("button", { name: "Принять на склад" }));
-    await waitFor(() => expect(payload).toEqual({ version: 3, finished_good_id: "g1" }));
-  });
-
-  it("gives the manager the manual КБ registration and requests, but not the accept step", async () => {
+  it("gives the manager the manual КБ registration and requests", async () => {
     render(<ShippingPage principal={{ ...principal, roles: ["commercial"], access_level: "commercial", permissions: { shipping: "edit" } }} />);
-    await loaded();
-    expect(screen.queryByLabelText("Принять 591К.3 КБ1")).not.toBeInTheDocument();
-    expect(vi.mocked(fetch).mock.calls.map(([target]) => String(target))).not.toContain("/api/production/finished-goods-ready");
-    tab(/^На складе/);
-    expect(await screen.findByRole("button", { name: "+ Добавить КБ проекта" })).toBeInTheDocument();
+    await screen.findByText("591К.3", { selector: "strong" });
+    const menu = screen.getByText("Ещё", { selector: ".ship-menu > summary" }).closest("details")!;
+    expect(menu).not.toHaveAttribute("open");
+    expect(within(menu).getByRole("button", { name: "+ Добавить КБ проекта" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Статус КБ" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Куда" })).toBeInTheDocument();
     tab(/^Отправки/);
     expect(await screen.findByRole("button", { name: "+ Заявка на отгрузку" })).toBeInTheDocument();
   });
@@ -396,11 +324,145 @@ describe("ShippingPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Раздел закрыт");
   });
 
-  it("keeps the selection inside the table rows", async () => {
+  it("opens on «На складе» with three counted tabs and falls back there from the removed «Из производства» link", async () => {
+    window.history.replaceState({}, "", "/?section=shipping&tab=production");
+    stub([shipment], [{ ...good, location: "Стеллаж 3" }]);
     render(<ShippingPage principal={principal} />);
     await loaded();
-    const row = screen.getByText("КБ2", { selector: "strong" }).closest("tr")!;
-    fireEvent.click(within(row).getByLabelText("Принять 591К.3 КБ2"));
-    expect(row).toHaveClass("ship-row-picked");
+    expect(screen.getAllByRole("tab").map((item) => item.textContent?.replace(/\d+$/, ""))).toEqual(["На складе", "Отправки", "Журнал"]);
+    expect(screen.getByRole("tab", { name: /^На складе/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab", { name: /Из производства/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Место хранения")).toBeInTheDocument();
+    expect(screen.getByText("Стеллаж 3")).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.map(([target]) => String(target))).not.toContain("/api/shipping/finished-goods/from-production");
+  });
+
+  it("«Журнал» has one row per shipment line in the sheet column order and shows a partial shipment", async () => {
+    const partial = {
+      ...shipment, id: "s3", number: "ОТГ-20260924-03", status: "Отгружена", shipped_at: "2026-09-25", upd_type: "БЕЗ УПД", track_number: "TRK-77",
+      terms: "ДОСТАВКА ТК", carrier: "СДЭК", contact: "Иван", phone: "+7 900", note: "хрупкое", dn_number: "DN591К.3-3", pl_number: "PL591К.3-3",
+      boxes: [
+        { place: 1, kind: "Короб", dims: "30х30х30", net: "5", gross: "6,5", seal: "", items: [] },
+        { place: 2, kind: "Короб", dims: "20х20х20", net: "2", gross: "3", seal: "", items: [] },
+      ],
+      lines: [
+        { ...shipment.lines[0], id: "l1", requested: "10", picked: "6", shortage: "4" },
+        { ...shipment.lines[0], id: "l2", item_index: "КБ2", name: "Кабель", requested: "5", picked: "5", shortage: "0", grn: "ГП.26.0000002" },
+      ],
+    };
+    stub([partial, { ...shipment, status: "Отменена" }]);
+    const printed = capturePrintFrames();
+    render(<ShippingPage principal={principal} />);
+    await loaded();
+    tab(/^Журнал\s*2/);
+    const table = await screen.findByRole("table");
+    const headers = within(table).getAllByRole("columnheader").map((cell) => cell.textContent?.replace(/[▲▼↑↓⇅]/gu, "").trim()).filter(Boolean);
+    expect(headers).toEqual(["Дата", "ГРН", "Проект", "Заказчик", "КБ", "Наименование", "В заказе", "Отгружено", "Ед.", "№ PL", "Дата упаковки", "Условия доставки",
+      "Способ отгрузки", "Трек-номер", "Дата отгрузки", "Статус", "Адрес доставки", "Контактное лицо", "Телефон", "УПД", "№ УПД", "Дата УПД", "№ DN", "Вес", "Габариты", "Комментарий"]);
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(2); // отменённая заявка в журнал не идёт
+    const first = within(rows[0]);
+    expect(first.getByText("недогруз 4")).toBeInTheDocument(); // заказано 10, уехало 6
+    expect(first.getByText("TRK-77")).toBeInTheDocument();
+    expect(first.getByText("9,5")).toBeInTheDocument(); // брутто по местам
+    expect(first.getByText("30х30х30; 20х20х20")).toBeInTheDocument();
+    expect(first.getByText("Без УПД")).toBeInTheDocument();
+    expect(within(rows[1]).queryByText(/недогруз/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Excel" })).toBeInTheDocument();
+    fireEvent.click(first.getByRole("button", { name: "PL591К.3-3" }));
+    await waitFor(() => expect(printed.print).toHaveBeenCalled());
+    expect(vi.mocked(fetch).mock.calls.map(([target]) => String(target))).toContain("/api/shipping/shipments/s3/print?document=pl");
+  });
+
+  it("«Без УПД» ships without a missing-file warning and the ship button stays on", async () => {
+    stub([{ ...shipment, upd_type: "БЕЗ УПД", inherited: [] }, { ...shippedOne, id: "s9", number: "ОТГ-20260921-09", upd_type: "БЕЗ УПД", upd_number: "", upd_url: "", inherited: [] }]);
+    render(<ShippingPage principal={principal} />);
+    await loaded();
+    tab(/^Отправки/);
+    fireEvent.click(await screen.findByText("ОТГ-20260922-01"));
+    expect(screen.queryByText("файла УПД нет")).not.toBeInTheDocument();
+    expect(screen.getByText("Без УПД", { selector: ".ship-card-head span" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Загрузить УПД ОТГ-20260922-01")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Отгрузить" })).toBeEnabled();
+    // отгружено без УПД — не «без УПД» в отборе проблемных
+    fireEvent.click(screen.getByRole("button", { name: "Отгружено без УПД · 0" }));
+  });
+
+  it("lets the storekeeper edit the shipment head and choose the УПД type", async () => {
+    stub([{ ...shipment, inherited: [] }]);
+    render(<ShippingPage principal={{ ...principal, roles: ["foreman"], access_level: "foreman", permissions: { shipping_goods: "edit" } }} />);
+    await loaded();
+    tab(/^Отправки/);
+    fireEvent.click(await screen.findByText("ОТГ-20260922-01"));
+    const point = screen.getByLabelText("Адрес отгрузки ОТГ-20260922-01");
+    expect(point).toBeEnabled();
+    fireEvent.change(point, { target: { value: "Казань" } });
+    fireEvent.blur(point);
+    await waitFor(() => expect(sent("/api/shipping/shipments/s1/head", "PUT")).toEqual({ version: 3, shipping_point: "Казань" }));
+    const select = screen.getByLabelText("Тип УПД ОТГ-20260922-01");
+    expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["из карточки проекта", "ЭДО", "Бумага", "Без УПД"]);
+    fireEvent.change(select, { target: { value: "БЕЗ УПД" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить документы" }));
+    await waitFor(() => expect(sent("/api/shipping/shipments/s1/documents", "PUT")).toMatchObject({ upd_type: "БЕЗ УПД" }));
+  });
+
+  it("«Отправки»: in one line — next step, receiver and place without repeats, overdue days, УПД with its type and number", async () => {
+    const daysAgo = (days: number) => isoDay(new Date(Date.now() - days * 86_400_000));
+    const packed = {
+      ...shipment, status: "Упакована", created_at: `${daysAgo(10)}T09:00:00`, deadline: daysAgo(3), upd_number: "474",
+      receiver: "самовывоз", shipping_point: "самовывоз", terms: "САМОВЫВОЗ", carrier: "Самовывоз",
+    };
+    const paper = { ...shipment, id: "s3", number: "ОТГ-20260922-03", status: "Упакована", upd_type: "БУМАГА", upd_url: "", deadline: null,
+      receiver: "ООО \"МЕГАТРОН\"", shipping_point: "Самовывоз", terms: "САМОВЫВОЗ", carrier: "Самовывоз" };
+    stub([packed, paper]);
+    render(<ShippingPage principal={{ ...principal, permissions: { shipping: "edit" as const, shipping_goods: "edit" as const } }} />);
+    await loaded();
+    tab(/^Отправки/);
+    const row = (number: string) => within(screen.getByText(number).closest("tr")!);
+    expect(row("ОТГ-20260922-01").getByText("Отгрузить")).toHaveAttribute("title", expect.stringContaining("PL и DN готовы"));
+    expect(row("ОТГ-20260922-01").getByText("Самовывоз")).toBeInTheDocument();
+    expect(row("ОТГ-20260922-01").getByText("· просрочено на 3 дн.")).toBeInTheDocument();
+    expect(row("ОТГ-20260922-01").getByText("ЭДО № 474")).toBeInTheDocument();
+    expect(row("ОТГ-20260922-03").getByText("Загрузить УПД")).toBeInTheDocument();
+    expect(row("ОТГ-20260922-03").getByText("ООО \"МЕГАТРОН\" · Самовывоз")).toBeInTheDocument();
+    expect(row("ОТГ-20260922-03").getByText("Бумага · нет файла")).toBeInTheDocument();
+    // Печать PL — прямо из строки, строка при этом не раскрывается.
+    const printed = capturePrintFrames();
+    fireEvent.click(row("ОТГ-20260922-01").getByRole("button", { name: "PL591К.3-1" }));
+    await waitFor(() => expect(printed.print).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Отгрузить" })).not.toBeInTheDocument();
+    // Бумажная УПД без файла: «Отгрузить» в карточке выключено, пока файл не приложен.
+    fireEvent.click(screen.getByText("ОТГ-20260922-03"));
+    expect(screen.getByRole("button", { name: "Отгрузить" })).toBeDisabled();
+  });
+
+  it("names the next step of a shipment the way the server gates it", () => {
+    const line = shipment.lines[0];
+    const step = (over: Record<string, unknown>) => nextStep({ ...shipment, ...over } as never)?.text ?? null;
+    expect(step({ status: "Новая", lines: [{ ...line, picked: "0" }] })).toBe("Набрать со склада");
+    expect(step({ status: "Собрана", pl_number: "" })).toBe("Сформировать PL и DN");
+    expect(step({ status: "Упакована", upd_type: "БУМАГА", upd_url: "" })).toBe("Загрузить УПД");
+    expect(step({ status: "Упакована", upd_type: "БЕЗ УПД" })).toBe("Отгрузить");
+    expect(step({ status: "Отгружена", upd_type: "ЭДО", upd_number: "", upd_url: "", terms: "ДОСТАВКА ТК", track_number: "" })).toBe("Внести: № УПД, файл УПД, трек-номер");
+    expect(step({ status: "Отгружена", upd_type: "БЕЗ УПД", terms: "САМОВЫВОЗ" })).toBe("Закрыть");
+    expect(step({ status: "Закрыта" })).toBeNull();
+    expect(step({ status: "Отменена" })).toBeNull();
+  });
+
+  it("joins receiver, address, terms and carrier once each", () => {
+    expect(destination({ receiver: "самовывоз", shipping_point: "самовывоз", terms: "САМОВЫВОЗ", carrier: "" })).toBe("Самовывоз");
+    expect(destination({ receiver: "ООО «Север»", shipping_point: "г. Тула, ул. Оружейная, 12", terms: "ДОСТАВКА ТК", carrier: "СДЭК" }))
+      .toBe("ООО «Север» · г. Тула, ул. Оружейная, 12 · Доставка ТК · СДЭК");
+  });
+
+  it("saves the project planned date and comment from the project card", async () => {
+    stub([], [good], [{ ...card, plan_date: null, note: "" }]);
+    render(<ShippingPage principal={principal} />);
+    await loaded();
+    fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
+    const date = screen.getByLabelText("Плановая дата проекта 591К.3");
+    fireEvent.change(date, { target: { value: "2026-10-20" } });
+    fireEvent.blur(date);
+    await waitFor(() => expect(sent("/api/shipping/project-addressee", "PUT")).toEqual({ project: "591К.3", version: 2, plan_date: "2026-10-20" }));
   });
 });

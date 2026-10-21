@@ -7,15 +7,16 @@ const BLANK = { personnel_number: "", job_title: "", qualification: "", job_sinc
 const NO_FLAGS = { shop_worker: false, site_master: false };
 const LEVELS = [
   { key: "superadmin", label: "Суперадминистратор", full: true },
-  { key: "admin", label: "Администратор", full: true },
   { key: "commercial", label: "Коммерческое руководство", full: false },
   { key: "tech_lead", label: "Технический руководитель", full: false },
+  { key: "pm", label: "Менеджер по проектам", full: false },
+  { key: "storekeeper", label: "Кладовщик", full: false },
   { key: "foreman", label: "Бригадир", full: false },
   { key: "operator", label: "Оператор", full: false },
 ];
 const DIRECTORY: StaffDirectory = {
   users: [
-    { id: "u1", login: "admin", email: "admin@example.test", name: "Админов", department: "ИТ", access_level: "admin", site: "", active: true, pin_set: true, ...NO_FLAGS, ...BLANK },
+    { id: "u1", login: "admin", email: "admin@example.test", name: "Админов", department: "ИТ", access_level: "superadmin", site: "", active: true, pin_set: true, ...NO_FLAGS, ...BLANK },
     { id: "u2", login: "buyer@example.test", email: "buyer@example.test", name: "Закупкин", department: "Снабжение", access_level: "tech_lead", site: "ЦАР", active: true, pin_set: false, ...NO_FLAGS, ...BLANK },
   ],
   departments: ["ИТ", "Снабжение"],
@@ -23,6 +24,7 @@ const DIRECTORY: StaffDirectory = {
   levels: LEVELS,
   sites: [{ code: "ЦАР", city: "Москва" }, { code: "ЖУК", city: "Раменское" }],
 };
+// The session in «Режим админа»: full access, but not a superadministrator.
 const ME_ADMIN = { user: { id: "u1", email: "admin@example.test", name: "Админов", department: "ИТ" }, roles: ["admin"], permissions: {}, access_level: "admin" };
 const ME_SUPERADMIN = { ...ME_ADMIN, roles: ["superadmin"], access_level: "superadmin" };
 
@@ -63,7 +65,8 @@ it("lists employees with the access level label and creates a new one with a lev
   render(<StaffPage />);
   const list = await screen.findByRole("region", { name: "Сотрудники" });
   expect(within(list).getByRole("cell", { name: "Технический руководитель" })).toBeInTheDocument();
-  expect(within(list).getByRole("cell", { name: "Администратор" })).toBeInTheDocument();
+  expect(within(list).getByRole("cell", { name: "Суперадминистратор" })).toBeInTheDocument();
+  expect(within(list).queryByRole("cell", { name: "Администратор" })).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "+ Сотрудник" }));
   fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "new@example.test" } });
@@ -102,9 +105,9 @@ it("edits an employee, keeps the password when the field is empty and shows the 
 
   // The flags were not touched, so they are not sent and the server keeps them (KEEP).
   await waitFor(() => expect(updates).toEqual([
-    { name: "Админов", department: "ИТ", access_level: "admin", site: "", active: false, password: null, pin: null, ...BLANK },
+    { name: "Админов", department: "ИТ", access_level: "superadmin", site: "", active: false, password: null, pin: null, ...BLANK },
   ]));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Нужен хотя бы один активный суперадминистратор или администратор");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Нужен хотя бы один активный суперадминистратор");
 });
 
 it("saves the department list and renames a department", async () => {
@@ -292,21 +295,24 @@ it("explains the level, the site and the two flags in tooltips", async () => {
   );
 });
 
-it("offers the six levels with the owner's names; «Суперадминистратор» and «Администратор» are shut for an administrator", async () => {
+it("offers the seven levels with the owner's names, no «Администратор»; «Суперадминистратор» is shut below a superadministrator", async () => {
   serve(DIRECTORY);
   render(<StaffPage />);
   await rowAction("Править", "Закупкин");
   const select = screen.getByLabelText("Уровень доступа");
   expect(select).toHaveValue("tech_lead");
   expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual([
-    "Суперадминистратор", "Администратор", "Коммерческое руководство", "Технический руководитель", "Бригадир", "Оператор",
+    "Суперадминистратор", "Коммерческое руководство", "Технический руководитель", "Менеджер по проектам", "Кладовщик",
+    "Бригадир", "Оператор",
   ]);
-  await waitFor(() => expect(within(select).getByRole("option", { name: "Администратор" })).toBeDisabled());
-  expect(within(select).getByRole("option", { name: "Суперадминистратор" })).toBeDisabled();
+  expect(within(select).getAllByRole("option").map((option) => (option as HTMLOptionElement).value)).toEqual([
+    "superadmin", "commercial", "tech_lead", "pm", "storekeeper", "foreman", "operator",
+  ]);
+  await waitFor(() => expect(within(select).getByRole("option", { name: "Суперадминистратор" })).toBeDisabled());
   expect(within(select).getByRole("option", { name: "Суперадминистратор" })).toHaveAttribute(
-    "title", "Уровни «Суперадминистратор» и «Администратор» выдаёт и снимает только суперадминистратор",
+    "title", "Уровень «Суперадминистратор» выдаёт и снимает только суперадминистратор",
   );
-  for (const name of ["Коммерческое руководство", "Технический руководитель", "Бригадир", "Оператор"]) {
+  for (const name of ["Коммерческое руководство", "Технический руководитель", "Менеджер по проектам", "Кладовщик", "Бригадир", "Оператор"]) {
     expect(within(select).getByRole("option", { name })).toBeEnabled();
   }
 });
@@ -315,19 +321,19 @@ it("a superadministrator can give any level, an administrator cannot move a hold
   serve(DIRECTORY, () => undefined, ME_SUPERADMIN);
   const view = render(<StaffPage />);
   await rowAction("Править", "Закупкин");
-  await waitFor(() => expect(within(screen.getByLabelText("Уровень доступа")).getByRole("option", { name: "Администратор" })).toBeEnabled());
-  expect(within(screen.getByLabelText("Уровень доступа")).getByRole("option", { name: "Суперадминистратор" })).toBeEnabled();
+  await waitFor(() => expect(within(screen.getByLabelText("Уровень доступа")).getByRole("option", { name: "Суперадминистратор" })).toBeEnabled());
+  expect(within(screen.getByLabelText("Уровень доступа")).getByRole("option", { name: "Кладовщик" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
   await rowAction("Править", "Админов");
   expect(screen.getByLabelText("Уровень доступа")).toBeEnabled();
   view.unmount();
   vi.restoreAllMocks();
 
-  serve(DIRECTORY); // the session is an administrator
+  serve(DIRECTORY); // the session is in «Режим админа»
   render(<StaffPage />);
   await rowAction("Править", "Админов");
   const select = screen.getByLabelText("Уровень доступа");
-  expect(select).toHaveValue("admin");
+  expect(select).toHaveValue("superadmin");
   expect(select).toBeDisabled();
   expect(select.closest("label")).toHaveAttribute("title", expect.stringContaining("только суперадминистратор"));
 });
@@ -338,7 +344,7 @@ it("sends a flag only when its switch was touched (the rest is KEEP) and shows t
     if (path === "/api/auth/staff/u3" && init?.method === "PUT") {
       updates.push(JSON.parse(String(init.body)));
       return updates.length === 1
-        ? json({ detail: "Уровни «Суперадминистратор» и «Администратор» выдаёт и снимает только суперадминистратор." }, 403)
+        ? json({ detail: "Уровень «Суперадминистратор» выдаёт и снимает только суперадминистратор." }, 403)
         : json({ user: { ...TEAM.users[2], shop_worker: true, site_master: false } });
     }
   });
@@ -388,7 +394,7 @@ it("keeps the position and the access level in separate table columns", async ()
   expect(cell("Закупкин", "Должность")).toHaveTextContent("—");
   expect(cell("Закупкин", "Должность")).not.toHaveTextContent("Технический руководитель");
   expect(cell("Закупкин", "Доступ")).toHaveTextContent("Технический руководитель");
-  expect(cell("Админов", "Доступ")).toHaveTextContent("Администратор");
+  expect(cell("Админов", "Доступ")).toHaveTextContent("Суперадминистратор");
 });
 
 it("shows the current manager and refuses a name typed but not picked from the list", async () => {

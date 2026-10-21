@@ -30,7 +30,7 @@ const SECTION_FIELDS: Record<string, ToolField[]> = {
 /** Что считает генератор: чипы параметров шапки, вход, эскиз, результат — в форме на своих местах, без правки. */
 export type EditContext = { chips?: ReactNode; input?: ReactNode; sketch?: ReactNode; result?: ReactNode };
 
-export function TcCardEditForm({ code, initial, nameEditable = true, number, saveNote, context, onCancel, onSave }: {
+export function TcCardEditForm({ code, initial, nameEditable = true, number, saveNote, extra, context, onCancel, onSave }: {
   code: string;
   initial: OperationRecordEdit;
   nameEditable?: boolean;
@@ -38,6 +38,8 @@ export function TcCardEditForm({ code, initial, nameEditable = true, number, sav
   number?: number;
   /** Короткая строка у кнопок: «Сохранение — ревизия 2». */
   saveNote?: string;
+  /** Своё у кнопок сохранения (ЭТК: «Сохранить также в шаблон»). */
+  extra?: ReactNode;
   /** Разделы ЭТК, которые считает генератор: показываются на своих местах без правки. */
   context?: EditContext;
   onCancel: () => void;
@@ -102,6 +104,7 @@ export function TcCardEditForm({ code, initial, nameEditable = true, number, sav
     {context?.result && <ReadOnlySection number={next()} title="Результат">{context.result}</ReadOnlySection>}
     <div className="tc-bar">
       {saveNote && <span className="tc-note">{saveNote}</span>}
+      {extra}
       {message && <span className="error-banner tc-error" role="alert">{message}</span>}
       <button className="secondary" type="button" onClick={cancel}>Отмена</button>
       <button className="primary" type="button" disabled={saving} onClick={() => void save()}>{saving ? "Сохраняю…" : "Сохранить"}</button>

@@ -60,7 +60,7 @@ it("19 cores pin to pin: 19 terminals on each end, the cable cut once, core colo
   expect(units.slice(0, 3).map((u) => [u.num, u.colorName])).toEqual([["1.1", "белый"], ["1.2", "коричневый"], ["1.3", "зелёный"]]);
   // Без ротора кабель разделывают у каждого конца — у обжима тоже, по разу на сторону.
   expect(g(S).getActiveOps().filter((op) => op.opKey.startsWith("stripCable")).map((op) => [op.label, op.tmplHint])).toEqual([
-    ["Разделка кабеля под обжим А1 — 1 конц.", "STRIP_CABLE"], ["Разделка кабеля под обжим В1 — 1 конц.", "STRIP_CABLE"],
+    ["Разделка кабеля под обжим А1 (оболочка 20 мм, жилы ? мм) — 1 конц.", "STRIP_CABLE"], ["Разделка кабеля под обжим В1 (оболочка 20 мм, жилы ? мм) — 1 конц.", "STRIP_CABLE"],
   ]);
   expect(routingWarnings(D, S)).toEqual([]);
 });
@@ -91,7 +91,7 @@ it("splits the cores of one cable 10/9 across В1 and В2: each end counts its o
   expect(routingWarnings(D, S)).toEqual([]);
   // Оболочку на стороне В снимают один раз — у В1, для жил В1 и В2.
   expect(g(S).getActiveOps().filter((op) => op.opKey.startsWith("stripCable")).map((op) => op.label)).toEqual([
-    "Разделка кабеля под обжим А1 — 1 конц.", "Разделка кабеля под обжим В1, В2 — 1 конц.",
+    "Разделка кабеля под обжим А1 (оболочка 20 мм, жилы ? мм) — 1 конц.", "Разделка кабеля под обжим В1, В2 (оболочка 20 мм, жилы ? мм) — 1 конц.",
   ]);
   // Перенос одной жилы с В2 на В1 не сдвигает остальные жилы кабеля.
   const moved = assignPin(D, unassignPin(D, S, "e2", idx, 18), "b1", idx, 18, 5);

@@ -14,6 +14,7 @@ import {
 } from "./api";
 import { StageChangeDialog } from "./StageChangeDialog";
 import { canAct } from "./navigation";
+import { MachineLoadGrid } from "./MachineLoad";
 import { PeopleLoadGrid } from "./PeopleLoad";
 import { PlanBaseline } from "./PlanBaseline";
 import { EMPTY, formatDate, formatDayMonth, formatMoment } from "./format";
@@ -105,6 +106,9 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   const activeCount = data.rows.filter((row) => (row.group ?? (row.terminal ? "closed" : "active")) !== "closed" && !row.terminal && row.stage !== "Отгружено").length;
   const selected = data.rows.find((row) => row.project === selectedProject) ?? null;
 
+  // Сетка станков перечитывает занятость, когда пришли новые задания (назначили, сдвинули).
+  const planVersion = useMemo(() => tasks.map((task) => `${task.id}:${task.version}`).join(","), [tasks]);
+
   const unassigned = useMemo(() => {
     const live = tasks.filter((task) => task.status !== "Отменено");
     const operations = live.flatMap((task) => task.operations.filter((operation) => !operation.operator_ids.length && operation.state !== "выполнена"));
@@ -180,6 +184,13 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
       {loadError
         ? <div className="empty">Загрузка людей недоступна: {loadError}</div>
         : <PeopleLoadGrid operators={operators} tasks={tasks} absences={absences} holidays={holidays} shift={shift} week={week} onWeekChange={setWeek} />}
+    </section>
+
+    <section className="panel plan-load" aria-label="Загрузка станков">
+      <div className="plan-section-head"><h2>Загрузка станков</h2></div>
+      {loadError
+        ? <div className="empty">Загрузка станков недоступна: {loadError}</div>
+        : <MachineLoadGrid holidays={holidays} shift={shift} week={week} onWeekChange={setWeek} refreshKey={planVersion} />}
     </section>
   </section>;
 }

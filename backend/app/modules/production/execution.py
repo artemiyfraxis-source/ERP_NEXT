@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.modules.fulfillment.domain import FulfillmentStatus
-from app.modules.shipping.domain import FinishedGood, MoveContext
+from app.modules.shipping.domain import AcceptanceAct, FinishedGood, MoveContext
 
 from .application import CalendarRepository, ConcurrentProductionUpdate, OperatorRepository, ProductionRepository, SkillRepository, record_fact, release_fact
 from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, operation_duration_seconds
@@ -60,6 +60,8 @@ class WorkRepository(Protocol):
     def save(self, session: WorkSession) -> None: ...
     def add_inputs(self, session_id: UUID, inputs: tuple[WorkInput, ...]) -> None: ...
     def add_material_inputs(self, session_id: UUID, inputs: tuple[MaterialInput, ...]) -> None: ...
+    def record_card_versions(self, operation_id: UUID, versions: Sequence[dict]) -> bool: ...
+    def card_versions(self, operation_ids: Sequence[UUID]) -> dict[UUID, list[dict]]: ...
 
 
 class OutputRepository(Protocol):
@@ -90,6 +92,7 @@ class FinishedGoodsRepository(Protocol):
     def get(self, good_id: UUID) -> FinishedGood | None: ...
     def add(self, good: FinishedGood, move: MoveContext | None = None) -> object: ...
     def reserve_grn(self, year: int) -> str: ...
+    def record_act(self, good: FinishedGood, moves: object) -> AcceptanceAct | None: ...
 
 
 class FinishedGoodsReceiptRepository(Protocol):
@@ -161,6 +164,9 @@ class StartWorkCommand:
     performer: Actor | None = field(default=None, kw_only=True)
     # Ключ повтора: тот же ключ второй раз ничего не делает и отдаёт уже записанное (двойной клик, повтор запроса).
     idempotency_key: str | None = field(default=None, kw_only=True)
+    # Откуда карточки операций ЭТК этой операции сейчас ([{position, source, changed_at}], etk_live): первое начало
+    # операции записывает их один раз. None — ЭТК не читали (база техкарт не настроена): ничего не пишется.
+    card_versions: tuple[dict, ...] | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -430,6 +436,9 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
             "materials": {str(item.fulfillment_line_id): str(item.quantity) for item in command.materials},
         }, uow, worker)
         _log(uow, command, session, WorkEvent.START, task, operation)
+        if command.card_versions is not None:
+            # Версия шаблона, по которой начали (владелец 17.10): только первое начало, дальше запись не меняется.
+            uow.work.record_card_versions(operation.id, command.card_versions)
         # «Взял»: окно доли начинается сейчас, работа после неё сдвигается или подтягивается.
         record_fact(
             uow, task_id=task.id, operation_id=operation.id, operator_id=worker.id,
@@ -620,7 +629,155 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
         return completed, output_box, output, defect_record
 
 
+@dataclass(frozen=True)
+class ManualOutputCommand:
+    """Ввод готовых мастером (владелец, 20.10.2026: «люди уже начали работать и сделали какое-то кол-во — нужен ручной
+    ввод и отбития готовых»): штуки, сделанные мимо терминала, без сессии и без времени работы."""
+    task_id: UUID
+    operation_id: UUID
+    good_quantity: Decimal
+    actor: Actor
+    now: datetime
+    # Монтажник, чьи это штуки (назначен на этап); None — без исполнителя, запись мастера.
+    performer: Actor | None = field(default=None, kw_only=True)
+    # Входов в учёте не хватает — этапы-входы «отбиваются готовыми» на нехватку (по цепочке вверх), запись мастера.
+    fill_inputs: bool = field(default=False, kw_only=True)
+
+
+def _manual_sources(task: ProductionTask, positions: tuple[int, ...], uow: ExecutionUnitOfWork) -> list[ProductionBox]:
+    """Коробки этапов-входов задания, которые можно взять, — старые первыми."""
+    boxes = [
+        box for box in uow.boxes.list(task_id=task.id, limit=10_000)
+        if box.operation_position in positions and not box.input_error(item=task.item, previous_position=positions, task_id=task.id)
+    ]
+    return sorted(boxes, key=lambda box: (box.created_at, box.number or ""))
+
+
+def _close_open_work(
+    task: ProductionTask, operation: ProductionOperation, operator_ids: Sequence[UUID],
+    command: ManualOutputCommand, uow: ExecutionUnitOfWork, closed: list[str],
+) -> None:
+    """Открытая работа этапа, которую закрыл ввод готовых (владелец 20.10: «удали из активных»), отменяется, как
+    «Отменить» на терминале: в журнале времени — отмена, «взял» без своих штук снимается."""
+    for operator_id in dict.fromkeys(operator_ids):
+        session = uow.work.current(operator_id)
+        if session is None or session.task_id != task.id or session.operation_id != operation.id:
+            continue
+        operator = uow.operators.get(operator_id)
+        performer = Actor(id=operator_id, name=operator.name if operator else "?", department=operator.department if operator else "")
+        step = SessionCommand(session_id=session.id, actor=command.actor, now=command.now, performer=performer)
+        cancelled = session.cancel()
+        uow.work.save(cancelled)
+        _log(uow, step, cancelled, WorkEvent.CANCEL, task, operation)
+        _audit(cancelled.id, "production.work_cancelled", command.actor, command.now, {"reason": "ввод готовых"}, uow, performer)
+        release_fact(uow, task_id=task.id, operation_id=operation.id, operator_id=operator_id, now=command.now)
+        closed.append(f"{performer.name} (этап {operation.position})")
+
+
+def _enter_output(
+    task: ProductionTask, operation: ProductionOperation, worker: Actor, good: Decimal,
+    command: ManualOutputCommand, uow: ExecutionUnitOfWork, filled: list[ProductionBox], closed: list[str],
+) -> tuple[ProductionBox, ProductionOutput]:
+    done = uow.outputs.total_for_operation(operation.id)
+    required = operation_quantity(task, operation)
+    label = f"Этап {operation.position} «{stage_name(operation.stage)}»"
+    if done + good > required:
+        left = max(Decimal(0), required - done)
+        raise ProductionValidationError(
+            f"{label}: уже сдано {_count(done)} из {_count(required)}, осталось {_count(left)}.",
+        )
+    stages = input_stages(task, operation)
+    positions = tuple(stage.position for stage in stages)
+    sources = _manual_sources(task, positions, uow) if stages else []
+    short = []
+    for stage in stages:
+        have = sum((box.available for box in sources if box.operation_position == stage.position), Decimal(0))
+        need = good * stage.per_unit
+        if have >= need:
+            continue
+        if not command.fill_inputs:
+            short.append(f"{stage.label} — есть {_count(have)}, нужно {_count(need)}")
+            continue
+        box, _ = _enter_output(task, task.operation(stage.operation_id), command.actor, need - have, command, uow, filled, closed)
+        filled.append(box)
+        sources.append(box)
+    if short:
+        raise ProductionValidationError(
+            f"{label}: в учёте не хватает полуфабрикатов: {'; '.join(short)}. "
+            "Введите готовые на этих этапах или отметьте «Пропущенные этапы-входы отбить готовыми».",
+        )
+    inputs = take_inputs(stages, sources, good) if stages else ()
+    output_box = ProductionBox.submitted(
+        task_id=task.id, operation_id=operation.id, item=task.item,
+        operation_position=operation.position, operator_id=worker.id,
+        number=uow.boxes.reserve_number(), good=good, actor=worker.name, now=command.now,
+        code=uow.boxes.reserve_code(project=task.project, item=task.item, operator_id=worker.id, day=_shop_day(command.now)),
+    )
+    output = ProductionOutput(
+        id=uuid4(), session_id=None, task_id=task.id,
+        operation_id=operation.id, operator_id=worker.id,
+        started_at=command.now, finished_at=command.now, pause_seconds=0,
+        good_quantity=good, defect_quantity=Decimal(0), output_box_id=output_box.id,
+    )
+    uow.boxes.save(output_box)
+    uow.outputs.add(output)
+    for item in inputs:
+        source = uow.boxes.get(item.box_id)
+        if source is None:
+            raise ProductionValidationError("Входная коробка исчезла")
+        uow.boxes.save(source.reserve(item.quantity, item=task.item, previous_position=positions).consume(item.quantity))
+        uow.consumption.add(ConsumptionEdge(
+            id=uuid4(), source_box_id=item.box_id, target_box_id=output_box.id,
+            quantity=item.quantity, output_id=output.id,
+        ))
+    _audit(output.id, "production.output_entered", command.actor, command.now, {
+        "task_id": str(task.id), "operation_id": str(operation.id), "good": str(good),
+        "box_id": str(output_box.id), "manual": True,
+    }, uow, worker)
+    # Штуки монтажника двигают его план, как сдача с терминала (без доли — плана нет, record_fact ничего не делает).
+    factor = unit_factor(task, operation)
+    mine = sum((
+        item.good_quantity + item.defect_quantity for item in uow.outputs.active_for_tasks((task.id,))
+        if item.operation_id == operation.id and item.operator_id == worker.id
+    ), Decimal(0))
+    record_fact(
+        uow, task_id=task.id, operation_id=operation.id, operator_id=worker.id,
+        actor=command.actor, now=command.now, mine=mine / factor, total=(done + good) / factor,
+    )
+    # Штуки монтажника записаны — его открытая работа по этапу закрывается; этап сдан целиком — у всех на нём.
+    _close_open_work(task, operation, operation.operator_ids if done + good >= required else (worker.id,), command, uow, closed)
+    return output_box, output
+
+
+def record_manual_output(command: ManualOutputCommand, uow: ExecutionUnitOfWork) -> tuple[ProductionBox, ProductionOutput, tuple[ProductionBox, ...], tuple[str, ...]]:
+    """Готовые штуки этапа без терминала: коробка сданных, входы — из коробок этапов-входов задания (старые первыми).
+    Журнал времени не пишется: времени работы нет, «факт / норма» монтажника эти штуки не трогают. Ошибся —
+    коробку возвращают и исправляют, как любую сдачу. Открытая работа, которую закрыли эти штуки, отменяется.
+    Возвращает коробку, запись, коробки отбитых входов и чья открытая работа снята."""
+    with uow:
+        task = uow.production.get(command.task_id)
+        if task is None:
+            raise KeyError(f"Production task not found: {command.task_id}")
+        if task.status is not ProductionStatus.RUNNING:
+            raise ProductionValidationError(f"Задание {task.number} не в работе — готовые не вводятся")
+        if task.handed_to:
+            raise ProductionValidationError(f"Задание {task.number} отдано в {task.handed_to} — там «Сдано N шт»")
+        operation = task.operation(command.operation_id)
+        if command.performer is not None and command.performer.id not in operation.operator_ids:
+            raise ProductionValidationError(f"{command.performer.name} не назначен(а) на этот этап")
+        good = Decimal(command.good_quantity)
+        if not good.is_finite() or good <= 0 or good != good.to_integral_value():
+            raise ProductionValidationError("Готовых — целое число штук больше нуля")
+        filled: list[ProductionBox] = []
+        closed: list[str] = []
+        box, output = _enter_output(task, operation, _worker(command), good, command, uow, filled, closed)
+        uow.commit()
+        return box, output, tuple(filled), tuple(closed)
+
+
 def confirm_box(command: BoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:
+    """Подтверждение мастером — до 13.10.2026, без маршрута API: подтверждает ОТК (quality.inspect_box), а коробки
+    остальных операций годятся на вход сразу после сдачи. Остаётся ради старых событий журнала и их отката."""
     with uow:
         box = _box(command, uow)
         updated = box.confirm(command.actor.name, command.now)
@@ -631,11 +788,18 @@ def confirm_box(command: BoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:
 
 
 def return_box(command: ReturnBoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:
+    """«Вернуть…» — действие ОТК (владелец, 13.10.2026): сданная коробка, из которой ещё ничего не брали и которую ОТК
+    не принимал, уходит монтажнику на исправление; после «Исправить» она снова «Закрыта оператором» (коробка последней
+    операции — снова в очереди ОТК). Взятую на вход или принятую ОТК вернуть нельзя (`return_to_operator`)."""
     with uow:
         box = _box(command, uow)
+        if uow.qc.by_box(box.id) is not None:
+            raise ProductionValidationError("Коробка уже принята ОТК — вернуть её нельзя")
         updated = box.return_to_operator(command.reason)
         uow.boxes.save(updated)
-        _audit(box.id, "production.box_returned", command.actor, command.now, {"reason": command.reason}, uow)
+        _audit(box.id, "production.box_returned", command.actor, command.now, {
+            "number": box.number, "reason": str(command.reason or "").strip(),
+        }, uow)
         uow.commit()
         return updated
 
@@ -763,18 +927,19 @@ def handoff_box(command: HandoffBoxCommand, uow: ExecutionUnitOfWork) -> tuple[P
         ):
             raise ProductionValidationError("Коробка не соответствует позиции готовой продукции")
         quantity = box.available
-        grn = good.grn or uow.goods.reserve_grn(command.now.year)
-        updated_good = good.accept(quantity, command.now.date(), grn)
+        updated_good = good.accept(quantity, command.now.date(), good.grn or uow.goods.reserve_grn(command.now.year))
         updated_box = box.handoff()
+        # Ход журнала ГП «в производстве → принято складом» и акт приёмки со своим ГРН (владелец 19.10.2026) —
+        # вместе с коробкой, в той же транзакции; сдача коробки — отдельная приёмка КБ.
+        act = uow.goods.record_act(updated_good, uow.goods.add(updated_good, MoveContext(
+            actor=command.actor.name, actor_id=command.actor.id, occurred_at=command.now,
+            reason=f"коробка {box.number or box.id}",
+        )))
+        grn = act.grn
         receipt = FinishedGoodsReceipt(
             id=uuid4(), source_box_id=box.id, finished_good_id=good.id,
             grn=grn, quantity=quantity, received_at=command.now,
         )
-        # Ход журнала ГП «в производстве → принято складом» — вместе с коробкой, в той же транзакции.
-        uow.goods.add(updated_good, MoveContext(
-            actor=command.actor.name, actor_id=command.actor.id, occurred_at=command.now,
-            reason=f"коробка {box.number or box.id}",
-        ))
         uow.boxes.save(updated_box)
         uow.finished_goods_receipts.add(receipt)
         uow.serials.mark_handed(box.id, grn)

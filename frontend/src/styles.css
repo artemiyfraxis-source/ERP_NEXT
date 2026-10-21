@@ -561,6 +561,11 @@ details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 
 .place-busy { background: var(--bg-amber-5); border-color: var(--ln-amber-2); }
 /* «Переместить» (SUPPLYMAP wh05Move): a modal over the stock list, opened from a lot card or the toolbar. */
 .dialog-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(0, 26, 24, .35); }
+/* PageWindow: панель страницы окном поверх неё (Простои, Календарь цеха, Компетенции, Запуск задания). */
+.page-window { max-height: calc(100vh - 32px); overflow: auto; overscroll-behavior: contain; outline: none; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); border-radius: 12px; }
+.page-window > .panel { margin: 0; padding: 18px; }
+/* Шапка окна с «Закрыть» остаётся видна при прокрутке длинного списка (Компетенции). */
+.page-window .manual-stock-head:first-child { position: sticky; top: -18px; z-index: 2; margin: -18px -18px 0; padding: 18px 18px 10px; background: var(--card); border-bottom: 1px solid var(--border); }
 .move-dialog { display: grid; gap: 12px; width: min(640px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 18px 20px; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); }
 .move-dialog > h2:first-child { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
 .move-dialog h3 { margin: 4px 0 -4px; font-size: 13px; font-weight: 600; }
@@ -640,6 +645,20 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .fulfillment-project .table-wrap .grid tbody tr.cand-maybe:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-warn) 14%, transparent); }
 .fulfillment-project .table-wrap .grid tbody tr.cand-none:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-danger) 10%, transparent); }
 .fulfillment-project .table-wrap .grid tbody tr.cand-done:not(.detail):not(.group-row) > td { color: var(--muted-foreground); }
+/* «Есть, не заведено» → «Сколько есть?» (owner 14.10.2026): a popover under the button, fixed so the table's scroll
+   box does not clip it. */
+.offbook-pop { position: fixed; z-index: 41; display: grid; gap: 8px; width: 300px; padding: 12px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 26, 24, .18); font-size: 13px; text-align: left; white-space: normal; }
+.offbook-pop-head { display: grid; gap: 2px; }
+.offbook-pop-head strong { font-size: 14px; }
+.offbook-pop-head span { color: var(--muted-foreground); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.offbook-pop-qty { display: flex; align-items: center; gap: 8px; }
+.offbook-pop-qty input { flex: 1; min-width: 0; height: 32px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; }
+.offbook-pop-qty input[aria-invalid="true"] { border-color: var(--tone-danger); }
+.offbook-pop-qty span { min-width: 24px; color: var(--muted-foreground); }
+.offbook-pop small { color: var(--muted-foreground); font-size: 12px; line-height: 1.35; }
+.offbook-pop small.offbook-pop-error { color: var(--tone-danger); }
+.offbook-pop-acts { display: flex; justify-content: flex-end; gap: 6px; }
+@media (pointer: coarse) { .offbook-pop-qty input, .offbook-pop-acts button { min-height: 40px; } }
 /* The project's «Снабжение» (DataTable): the same tints on the rows short of stock, over the zebra. */
 .kit-pane .data-table .grid tbody tr.cand-ok:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-ok) 12%, var(--card)); }
 .kit-pane .data-table .grid tbody tr.cand-maybe:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-warn) 14%, var(--card)); }
@@ -655,6 +674,7 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .issue-writeoff .table-wrap { margin-top: 8px; }
 @media (pointer: coarse) { .issue-chooser td.check input { width: 22px; height: 22px; } }
 .lot-picker { display: grid; gap: 8px; }
+.lot-picker .lot-held td { color: var(--muted-foreground); }
 .lot-picker .status { margin-left: 6px; }
 .danger-link { color: var(--fg-red-2); }
 .return-form { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }
@@ -843,7 +863,6 @@ table.ship-lines td:first-child { width: 1%; }
 .goods-panel-head .link-button { padding: 0; font-size: 13px; }
 /* ГРН — цифрами одной ширины, без моноширинного шрифта: у него нет кириллицы и «ГП» выглядит строчными. */
 .goods-grn { font-variant-numeric: tabular-nums slashed-zero; white-space: nowrap; }
-.kit-sostav td.kit-goods .goods-counts { display: grid; grid-template-columns: auto auto; gap: 0 12px; justify-content: start; }
 @media (pointer: coarse) {
   .shipping-page .ship-take .ship-qty, .shipping-page .ship-accept-bar .primary, .shipping-page .ship-accept-bar input, .shipping-page .ship-rollback input, .shipping-page .ship-rollback button { min-height: 40px; }
   .shipping-page .ship-take input[type="checkbox"], .shipping-page .ship-accept-bar input[type="checkbox"] { width: 22px; height: 22px; }
@@ -878,7 +897,7 @@ table.ship-lines td:first-child { width: 1%; }
 .db-tab.active .db-tab-count { color: var(--primary); }
 .db-clamp { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
 .db-clip { display: block; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.db-cell-input { width: 100%; min-width: 160px; }
+.db-clip.db-clip-narrow { max-width: 16ch; }
 .db-dirty { color: var(--muted-foreground); font-size: 12px; }
 .db-edit { margin-bottom: 14px; padding: 16px 18px; }
 .db-form label { display: grid; gap: 3px; min-width: 180px; }
@@ -896,12 +915,24 @@ table.ship-lines td:first-child { width: 1%; }
 .cable-kind .muted { font-size: 12px; }
 .wire-dots { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .wire-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.35); display: inline-block; }
-.wire-dot-name { font-size: 12px; color: var(--muted-foreground); }
+.wire-colors { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.wire-colors li { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.wire-dot-none { background: transparent; border-style: dashed; }
 .cable-clip { display: block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cable-card { padding: 4px 0; }
 .cable-card small { font-size: 11px; text-transform: none; }
+.cable-sheet { display: grid; gap: 12px; min-width: 0; font-variant-numeric: tabular-nums; }
+.cable-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cable-sheet-head h2 { margin: 0; font-size: 18px; }
+.cable-sheet-actions { display: flex; gap: 8px; }
+.cable-sheet-sec { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--sheet-line); }
+.cable-sheet-sec h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.cable-sheet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 20px; margin: 0; }
+.cable-sheet-grid > div { display: grid; align-content: start; gap: 1px; min-width: 0; }
+.cable-sheet-grid > div.wide { grid-column: 1 / -1; }
+.cable-sheet-grid dt { color: var(--muted-foreground); font-size: 12px; }
+.cable-sheet-grid dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
 /* Structured cable reference (10.10.2026): the coax card a tester reads at the VNA, «разобрать позже». */
-.db-later { align-self: center; padding: 3px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--tone-warn); font-size: 12px; }
 .hookup-form select { min-width: 0; }
 /* Wire form in short sections (12.10.2026): small heading, dense grid, list fields as swatches / chips. */
 .form-section { display: grid; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--sheet-line); }
@@ -1008,7 +1039,6 @@ table.ship-lines td:first-child { width: 1%; }
 .stock-metrics dd { margin: 4px 0 0; font-size: 18px; font-weight: 800; }
 
 .project-etk { margin-top: 18px; }
-.etk-route { display: grid; gap: 14px; margin: 14px 0; }
 .etk-operation { border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--bg-green-1); }
 .etk-operation > header { display: flex; align-items: center; gap: 12px; }
 .etk-operation > header div { display: grid; gap: 2px; }
@@ -1024,9 +1054,7 @@ table.ship-lines td:first-child { width: 1%; }
 .etk-fig svg { max-width: 760px; height: auto; }
 .etk-steps { display: grid; gap: 8px; margin: 12px 0 0; padding-left: 28px; }
 .etk-steps li { padding-left: 4px; white-space: pre-line; font-size: 12px; }
-.etk-steps li > span { margin-right: 8px; color: var(--primary); font-weight: 700; }
-.etk-steps li > small { display: block; margin-top: 3px; color: var(--muted-foreground); }
-.etk-steps li > small.tone-danger { color: var(--tone-danger); font-weight: 600; }
+.etk-step-text > span { margin-right: 8px; color: var(--primary); font-weight: 700; }
 .housing-view { display: grid; justify-items: center; gap: 6px; margin-top: 14px; padding: 12px; border-radius: 10px; background: var(--bg-gray-3); }
 .housing-view > small { color: var(--muted-foreground); text-align: center; }
 .housing-grid { display: grid; gap: 5px; padding: 12px; border: 2px solid var(--ln-teal-1); border-radius: 8px; }
@@ -1184,6 +1212,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* Липкая полоса действий внизу карточки. */
 .tc-bar { position: sticky; z-index: 5; display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: 0 -18px; padding: 10px 18px; border-top: 1px solid var(--border); border-radius: 0 0 12px 12px; background: var(--card); box-shadow: 0 -6px 16px rgba(0, 26, 24, .06); }
 .tc-note { margin-right: auto; color: var(--muted-foreground); font-size: 12.5px; }
+.tc-to-template { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; white-space: nowrap; }
 .tc-bar .tc-error { margin: 0; padding: 6px 10px; }
 .tc-bar .primary, .tc-bar .secondary { min-width: 110px; padding: 8px 16px; }
 /* Липкая позиция считается от края прокрутки .workspace за вычетом её отступа — полоса опускается на этот отступ. */
@@ -1538,6 +1567,68 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table .table-footer { font-size: 12px; color: var(--muted-foreground); }
 .calendar-chip.active { color: var(--primary-foreground); background: var(--primary); }
 .column-chooser { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; }
+/* «Колонки» DataTable: показ, своя подпись, порядок (↑ ↓) и ширина (− авто +) каждой колонки — то же, что мышью в
+   заголовке, но с клавиатуры и пальцем на планшете. Список идёт сверху вниз по столбцам, как порядок колонок. */
+.data-table .column-chooser { display: block; padding: 8px 12px 12px; background: var(--card); }
+.data-table .column-chooser legend { padding: 0 4px; font-size: 13px; font-weight: 600; }
+.column-chooser-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; color: var(--muted-foreground); font-size: 12px; }
+.column-list { max-height: min(50vh, 520px); overflow: auto; columns: 440px; column-gap: 24px; margin: 0; padding: 0; list-style: none; }
+.column-item { display: grid; grid-template-columns: minmax(0, 1fr) 132px auto; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 6px; break-inside: avoid; font-size: 13px; }
+.column-item:hover, .column-item:focus-within { background: var(--accent); }
+.column-item .check-inline { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Quiet until the row is pointed at: thirty rows of framed inputs and buttons read as noise. */
+.column-item .column-caption { height: 28px; padding: 2px 8px; border-color: transparent; background: transparent; font-size: 12px; }
+.column-item .column-caption:not(:placeholder-shown), .column-item:hover .column-caption, .column-item .column-caption:focus { border-color: var(--border); background: var(--card); }
+.column-item .column-caption:focus { border-color: var(--primary); }
+.column-tools { display: inline-flex; align-items: center; gap: 4px; }
+.column-tools .small { min-width: 28px; min-height: 28px; padding: 0 6px; border-color: transparent; background: transparent; color: var(--muted-foreground); line-height: 1; }
+.column-item:hover .column-tools .small, .column-item:focus-within .column-tools .small { border-color: var(--border); background: var(--card); color: var(--foreground); }
+.column-tools .small:disabled, .column-item:hover .column-tools .small:disabled { border-color: transparent; background: transparent; opacity: .35; }
+.column-tools .column-width { min-width: 52px; padding: 0; color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
+.column-tools .column-width:disabled { color: var(--muted-foreground); text-decoration: none; cursor: default; }
+/* «Удалить» своего столбца — рядом с названием, чтобы подписи и кнопки строк «Колонок» стояли в один столбик. */
+.column-item .column-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.column-item .column-remove { flex: none; min-height: 28px; padding: 0 4px; font-size: 12px; }
+/* Заголовок: тянуть — переставить колонку, правый край — ширина; перетянутая колонка режет длинный текст многоточием. */
+.data-table thead th[draggable="true"] { cursor: grab; }
+.data-table thead th .dt-resize { position: absolute; top: 0; right: 0; bottom: 0; z-index: 1; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
+.data-table thead th .dt-resize::after { content: ""; position: absolute; top: 6px; right: 0; bottom: 6px; width: 1px; background: transparent; }
+.data-table thead th:hover .dt-resize::after { background: var(--border); }
+.data-table thead th .dt-resize:hover::after { width: 2px; background: var(--primary); }
+.data-table thead th.dt-drop-before { box-shadow: inset 3px 0 0 var(--primary), 0 1px 0 var(--border); }
+.data-table thead th.dt-drop-after { box-shadow: inset -3px 0 0 var(--primary), 0 1px 0 var(--border); }
+.data-table th.dt-w > .sort-head { display: block; width: var(--dt-w); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: inherit; }
+.data-table td.dt-w > .dt-clip { width: var(--dt-w); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.data-table td.dt-w > .cell-wrap { width: var(--dt-w); min-width: 0; max-width: none; }
+.data-table td.dt-w .cable-clip { max-width: none; }
+/* Правка в ячейке, как в Google Таблицах: рамка у выбранной ячейки, поле на месте текста, отказ сервера — под полем. */
+.data-table td.dt-editable { cursor: cell; }
+.data-table td.dt-editable:focus { outline: none; }
+.data-table td.dt-editable:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
+.data-table td.dt-active, .data-table td.dt-editing { box-shadow: inset 0 0 0 2px var(--primary); }
+.data-table tbody tr td.dt-in-range, .data-table tbody tr:nth-child(even) td.dt-in-range { background: var(--sheet-selected); }
+.data-table td.dt-editing { padding: 0; background: var(--card); }
+.data-table td.dt-editing.dt-error { box-shadow: inset 0 0 0 2px var(--tone-danger); }
+.data-table .dt-cell-input { display: block; width: 100%; min-width: 64px; height: 31px; padding: 0 12px; border: 0; border-radius: 0; background: transparent; font: inherit; font-size: 13px; box-shadow: none; }
+.data-table .dt-cell-input:focus { border: 0; box-shadow: none; }
+.data-table td.num .dt-cell-input { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table td.dt-editing .cell-edit-error { max-width: 320px; margin: 0; padding: 0 12px 6px; }
+/* Выбор из списка в ячейке (сечение, категория, вкладка) — стрелка списка справа, текст как в соседних ячейках. */
+.data-table td.dt-choice.dt-editing { position: relative; }
+.data-table select.dt-cell-select { position: absolute; inset: 0; width: 100%; min-width: 0; height: 100%; min-height: 0; padding: 0 20px 0 8px; cursor: pointer; }
+.data-table td.dt-choice.dt-editing .cell-edit-error { position: absolute; top: 100%; left: 0; z-index: 3; min-width: 220px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--card); }
+/* Считаемая колонка в таблице с правкой — серый текст: видно, что ячейку не правят. */
+.data-table td.dt-computed { color: var(--muted-foreground); cursor: default; }
+.dt-edit-hint, .dt-edit-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-edit-note { color: var(--foreground); }
+@media (pointer: coarse) {
+  .data-table thead th .dt-resize { width: 20px; }
+  .column-item { grid-template-columns: minmax(0, 1fr) 132px auto; }
+  .column-item .column-caption { height: 40px; border-color: var(--border); background: var(--card); }
+  .column-tools .small, .column-tools .column-width, .column-item .column-remove { min-width: 40px; min-height: 40px; }
+  .column-tools .small:not(:disabled) { border-color: var(--border); color: var(--foreground); }
+  .data-table .dt-cell-input { height: 40px; }
+}
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--accent); }
 .table-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted-foreground); font-size: 12px; }
 .table-toolbar .small { min-height: var(--control-h); }
@@ -1650,7 +1741,19 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .field-label { display: grid; gap: 3px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
 .tcgen .opt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 10px; align-items: end; }
 .tcgen .opt-grid > .span2 { grid-column: span 2; }
+.tcgen .opt-grid > .span-all { grid-column: 1 / -1; }
 .tcgen .opt-note { margin: 0; padding: 2px 0; color: var(--muted-foreground); font-size: 12px; }
+/* «Термоусадка на жгут»: строка на трубку — название, отрезок, штук, убрать; занятая трубка засева — серым с причиной. */
+.tcgen .hs-rows { display: grid; gap: 4px; max-width: 560px; }
+.tcgen .hs-row { display: grid; grid-template-columns: minmax(0, 1fr) 104px 56px 28px; gap: 6px; align-items: center; }
+.tcgen .hs-head { color: var(--muted-foreground); font-size: 12px; }
+.tcgen .hs-head > span:nth-child(3) { text-align: right; }
+.tcgen .hs-name { min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.tcgen .hs-name small { display: block; color: var(--muted-foreground); font-size: 11.5px; }
+.tcgen .hs-row.is-off .hs-name { color: var(--muted-foreground); }
+.tcgen .hs-off { display: flex; grid-column: span 2; flex-wrap: wrap; gap: 2px 8px; align-items: center; color: var(--muted-foreground); font-size: 12px; }
+.tcgen .hs-row .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen select.hs-add { justify-self: start; width: auto; margin-top: 4px; color: var(--primary); font-weight: 600; }
 
 /* Сегменты — как .seg-tabs, мельче. */
 .tcgen .gseg { display: inline-flex; flex-wrap: wrap; gap: 2px; justify-self: start; max-width: 100%; padding: 3px; border-radius: 9px; background: var(--seg-bg); }
@@ -1690,27 +1793,57 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks-head .muted { font-size: 12px; }
 .tcgen .gen-marks-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .tcgen .gen-marks .gtable-wrap { max-height: none; overflow-x: auto; }
-.tcgen .gen-marks .gtable { table-layout: fixed; min-width: 640px; }
+.tcgen .gen-marks .gtable { table-layout: fixed; min-width: 700px; }
 .tcgen .gen-marks .gtable td { padding: 3px 4px; vertical-align: top; }
 .tcgen .gen-marks .gtable td:first-child { padding: 9px 6px 0 10px; color: var(--muted-foreground); }
 .tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select { width: 100%; height: 28px; }
 .tcgen .gen-marks .gtable input.num { text-align: right; }
 .tcgen .gen-marks .gtable textarea.auto-textarea { width: 100%; height: 28px; min-height: 28px; line-height: 18px; padding-top: 4px; padding-bottom: 4px; }
 .tcgen .gen-marks .gtable td small { padding: 1px 2px 0; }
-.tcgen .gen-marks col.c-n { width: 34px; }
-.tcgen .gen-marks col.c-target { width: 17%; }
-.tcgen .gen-marks col.c-text { width: 38%; }
-.tcgen .gen-marks col.c-mat { width: 13%; }
-.tcgen .gen-marks col.c-place { width: 20%; }
-.tcgen .gen-marks col.c-qty { width: 64px; }
-.tcgen .gen-marks col.c-len { width: 84px; }
+/* Ширины по содержимому (16", панель генератора ~650 px): «Изделие КБ1», «Термотрубка», «На изделии» / «От конца, мм»
+   видны целиком, «Надпись» берёт остаток и переносится; заголовок — в две строки. Широкая панель (27") — доли. */
+.tcgen .gen-marks .gtable th { padding: 5px 4px; line-height: 1.25; vertical-align: bottom; white-space: normal; }
+.tcgen .gen-marks .gtable th:first-child { padding-left: 10px; }
+.tcgen .gen-marks .gtable input:not(.num) { padding-left: 6px; padding-right: 6px; }
+.tcgen .gen-marks .gtable select { padding-left: 6px; padding-right: 22px; background-position: right 7px center; }
+.tcgen .gen-marks col.c-n { width: 30px; }
+.tcgen .gen-marks col.c-target { width: 120px; }
+.tcgen .gen-marks col.c-text { width: auto; }
+.tcgen .gen-marks col.c-mat { width: 184px; }
+.tcgen .gen-marks col.c-place { width: 120px; }
+.tcgen .gen-marks col.c-qty { width: 50px; }
+.tcgen .gen-marks col.c-len { width: 58px; }
 .tcgen .gen-marks col.c-x { width: 32px; }
-.tcgen .gen-marks-place { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 4px; }
-.tcgen .gen-marks-place > select:only-child { grid-column: 1 / -1; }
+.tcgen .gen-marks .gtable td:last-child { padding-left: 2px; padding-right: 2px; }
+@container (min-width: 900px) {
+  .tcgen .gen-marks .gtable th { padding: 6px 8px; }
+  .tcgen .gen-marks col.c-target { width: 14%; }
+  .tcgen .gen-marks col.c-mat { width: 21%; }
+  .tcgen .gen-marks col.c-place { width: 16%; }
+  .tcgen .gen-marks col.c-qty { width: 64px; }
+  .tcgen .gen-marks col.c-len { width: 84px; }
+  .tcgen .gen-marks col.c-x { width: 32px; }
+  .tcgen .gen-marks-place > select { flex: 3 1 0; }
+  .tcgen .gen-marks-place > :not(select) { flex: 2 1 0; }
+}
+.tcgen .gen-marks .gen-marks-matname { display: block; padding: 1px 2px 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; }
+.tcgen .gen-marks-place { display: flex; flex-wrap: wrap; gap: 4px; }
+.tcgen .gen-marks-place > * { flex: 1 1 100%; min-width: 0; }
 .tcgen .gen-marks .btn-x { width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); font-size: 16px; cursor: pointer; }
 .tcgen .gen-marks .btn-x:hover { color: var(--tone-danger); }
+/* «№ изделия» под надписью: у надписи с номером — разрядность и пример; иначе кнопка вставки в строке с фокусом. */
+.tcgen .gen-marks-serial { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-top: 3px; }
+.tcgen .gen-marks tr:not(:focus-within) .gen-marks-serial:not(.on) { display: none; }
+.tcgen .gen-marks .gen-marks-serial-add { height: 24px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card);
+  color: var(--primary); font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.tcgen .gen-marks .gen-marks-serial-add:hover { border-color: var(--primary); }
+.tcgen .gen-marks .gen-marks-serial-add:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.tcgen .gen-marks .gtable .gen-marks-serial select { width: auto; max-width: 100%; height: 26px; padding-top: 0; padding-bottom: 0; font-size: 12px;
+  padding-left: 5px; padding-right: 18px; background-position: right 5px center; }
+.tcgen .gen-marks-serial small { padding: 0; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 @media (pointer: coarse) {
   .tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select, .tcgen .gen-marks .btn-x { height: 40px; }
+  .tcgen .gen-marks .gen-marks-serial-add, .tcgen .gen-marks .gtable .gen-marks-serial select { height: 40px; }
   .tcgen .gen-marks .gtable textarea.auto-textarea { min-height: 40px; padding-top: 10px; }
   .tcgen .gen-marks .btn-x { width: 40px; }
   .tcgen .gen-marks .gtable td:first-child { padding-top: 15px; }
@@ -1768,6 +1901,13 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .wire-row.cores { grid-template-columns: minmax(0, 1fr) 76px 64px 100px 28px; }
 .tcgen .wire-row.adv.cores { grid-template-columns: minmax(0, 1fr) 112px 76px 64px 100px 28px; }
 .tcgen .wire-row.head { margin-bottom: -3px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+/* «Термоусадка на срез оболочки» под строкой кабеля в оболочке: стороны чипами, трубка и длина — в одну строку. */
+.tcgen .wire-row > .cable-js { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: -2px; font-size: 12.5px; }
+.tcgen .cable-js-cap { color: var(--muted-foreground); font-weight: 600; }
+.tcgen .cable-js .gfield { display: flex; align-items: center; gap: 6px; }
+.tcgen .cable-js .gfield-label { margin: 0; white-space: nowrap; }
+.tcgen .cable-js-tube select { width: 200px; }
+.tcgen .cable-js-len .gunit { width: 96px; }
 
 /* Сторона — разъёмы строками внутри секции (без рамки в рамке); пустая сторона — одна строка. */
 .tcgen .ep-side { container-type: inline-size; }
@@ -2154,6 +2294,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .tcgen .gchip { min-height: 40px; align-items: center; }
   .tcgen .btn-link, .tcgen .btn-add { min-height: 40px; }
   .tcgen .btn-remove { width: 40px; height: 40px; }
+  .tcgen .hs-row { grid-template-columns: minmax(0, 1fr) 104px 56px 40px; }
   .tcgen .manual-op-tools button, .tcgen .manual-add button { min-width: 40px; min-height: 40px; }
   .tcgen .manual-op-tools .small { min-width: 40px; min-height: 40px; }
   .tcgen .manual-op-fold, .tcgen .manual-op-norm, .tcgen .manual-summary-pick { min-width: 40px; min-height: 40px; }
@@ -2443,27 +2584,24 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-schema summary, .etk-revs summary, .etk-warnings summary, .gen-more summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 .etk-harness { display: flex; justify-content: center; overflow-x: auto; }
 .etk-harness svg { max-width: 900px; width: 100%; height: auto; }
+.etk-link-scheme { margin-top: 8px; }
 .etk-warnings { border-radius: 10px; padding: 8px 12px; color: var(--fg-orange-8); background: var(--bg-orange-4); font-size: 12.5px; }
 .etk-warnings > div { margin-top: 4px; white-space: pre-line; }
 .etk-revs { font-size: 12.5px; }
 .etk-revs > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+.etk-rev-row { align-items: center; }
+.etk-rev-row > span:first-child { flex: 1 1 auto; min-width: 0; }
+.etk-review { padding: 8px 12px; border-radius: 10px; font-size: 13px; }
+.etk-changes-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.etk-changes-op h3 { margin: 12px 0 4px; font-size: 14px; }
+.etk-changes table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.etk-changes th:first-child { width: 44%; }
+.etk-changes th, .etk-changes td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.etk-changes th { font-size: 12px; color: var(--muted-foreground); font-weight: 600; }
+.etk-change-old { color: var(--muted-foreground); text-decoration: line-through; }
+.etk-change-new { font-weight: 600; }
 .etk-sheet .etk-wrap { grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); }
 .etk-sheet .etk-nav-route button { padding: 8px 10px; font-size: 13px; }
-/* Полоса «Маршрут» у ветвящейся схемы полуфабрикатов: чипы блоков по порядку «источники → потребители». */
-.etk-route { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 8px 12px 10px; }
-.etk-route-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
-.etk-route-head small { color: var(--muted-foreground); font-size: 12px; }
-.etk-route-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
-.etk-route-chip { display: flex; align-items: flex-start; gap: 8px; max-width: 320px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 13px; }
-.etk-route-chip:hover:not(:disabled) { border-color: var(--primary); }
-.etk-route-chip.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); }
-.etk-route-chip:disabled { cursor: default; opacity: 1; }
-.etk-route-n { flex: none; min-width: 18px; font-weight: 800; color: var(--primary); text-align: center; }
-.etk-route-text { display: grid; gap: 2px; min-width: 0; }
-.etk-route-text small { color: var(--muted-foreground); font-size: 12px; }
-.etk-route-meta > span { white-space: nowrap; }
-.etk-route-feed { overflow-wrap: anywhere; }
-.etk-route-final { flex: none; align-self: center; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); font-size: 11px; font-style: normal; font-weight: 700; }
 .etk-op { display: grid; gap: 14px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
 .etk-op-head { display: flex; align-items: flex-start; gap: 12px; }
 .etk-op-head > div { display: grid; gap: 3px; flex: 1; min-width: 0; }
@@ -2481,7 +2619,21 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-op .etk-steps { margin: 0; gap: 6px; padding-left: 22px; }
 .etk-op .etk-steps li { font-size: 13px; line-height: 1.45; }
 .etk-op .etk-steps li.ctl { padding: 4px 8px; border-left: 3px solid var(--ln-red-3); background: var(--bg-red-1); border-radius: 0 6px 6px 0; }
-.etk-op .etk-steps li > span { color: var(--tone-danger); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.etk-op .etk-step-text > span { color: var(--tone-danger); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+/* Допуск шага — колонкой справа, размером текста шага (владелец 17.10: «почему допуски так мелко»): строка на значение,
+   подпись серым, цифры жирно. Шаг без допуска занимает всю ширину. */
+.etk-step { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 30%); gap: 4px 18px; align-items: start; }
+.etk-step-text:last-child { grid-column: 1 / -1; }
+.etk-step-tol { display: grid; gap: 2px; margin: 0; padding-left: 12px; border-left: 2px solid var(--border); font-size: 13px; line-height: 1.45; white-space: normal; }
+.etk-step-tol > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+.etk-step-tol dt { color: var(--muted-foreground); }
+.etk-step-tol dd { margin: 0; color: var(--foreground); }
+.etk-step-tol b { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.etk-step-tol.tone-danger dd { color: var(--tone-danger); font-weight: 600; }
+@media (max-width: 900px) {
+  .etk-step { grid-template-columns: minmax(0, 1fr); }
+  .etk-step-tol { padding-left: 8px; }
+}
 .etk-op .etk-fig { display: flex; justify-content: center; border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
 .etk-fig-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
 .etk-fig-row > .etk-fig { flex: 1 1 520px; }
@@ -2524,16 +2676,17 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .conn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
 .conn-grid-wide { grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); margin-top: 8px; }
 .conn-grid-wide .conn-face svg { max-height: 150px; }
-.conn-housing { display: grid; grid-template-columns: 1fr 130px; grid-template-areas: "head model" "face face" "boards boards"; gap: 4px 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.conn-housing { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "views" "boards"; gap: 4px 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
 .conn-housing.conn-hit { border-color: var(--primary); box-shadow: 0 0 0 2px var(--accent); }
 .conn-housing-head { grid-area: head; align-self: start; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .conn-housing-head b { font-size: 13px; }
 .conn-housing-head span { font-size: 12px; color: var(--muted-foreground); }
 .conn-housing-head small { font-size: 12px; }
-.conn-housing-model { grid-area: model; display: flex; justify-content: center; }
-.conn-housing .conn-face { grid-area: face; display: flex; justify-content: center; }
+.conn-housing-views { grid-area: views; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 16px; }
+.conn-housing .conn-face { display: flex; justify-content: center; min-width: 0; }
 .conn-housing .conn-face svg { max-height: 120px; width: auto; }
-.conn-housing-model svg { max-height: 84px; width: auto; }
+.conn-housing-top { display: flex; justify-content: center; min-width: 0; }
+.conn-housing-top svg { max-width: 100%; height: auto; }
 .conn-headers { grid-area: boards; display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--foreground); }
 .conn-headers i { font-style: normal; color: var(--muted-foreground); }
 .conn-base .warning-inline .conn-grid { margin-top: 8px; }
@@ -2566,7 +2719,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-def small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4; color: var(--muted-foreground); }
 .etk-def-text { white-space: pre-line; font-size: 12.5px; }
 /* 6 Результат: таблица «что отдаём дальше — сколько» + плитка расчётного времени отдельной цифрой. */
-.etk-result { display: grid; grid-template-columns: minmax(0, 960px) minmax(240px, 320px); gap: 10px; align-items: start; }
+.etk-result { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 40px; }
 /* Метки по КД в «Ходе операции» маркировки — та же таблица, что у результата. */
 .etk-marks { width: 100%; margin-bottom: 10px; border-collapse: collapse; border: 1px solid var(--border); font-size: 13px; }
 .etk-marks caption { padding: 0 0 4px; text-align: left; font-size: 12px; font-weight: 700; color: var(--foreground); }
@@ -2574,27 +2727,19 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-marks td { padding: 6px 10px; border-top: 1px solid var(--border); vertical-align: top; }
 .etk-marks .num { width: 1%; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .etk-marks td.num:not(:first-child) { font-weight: 600; }
+.etk-marks .etk-mark-serial { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.etk-marks-print { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: -4px 0 10px; font-size: 12px; }
 .etk-result-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
 .etk-result-table th { padding: 6px 12px; text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-foreground); background: var(--accent); }
 .etk-result-table td { padding: 7px 12px; border-top: 1px solid var(--border); vertical-align: top; }
-.etk-result-table .num, .etk-time .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
+.etk-result-table .num, .etk-time-list .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
 .etk-result-table th:not(:first-child) { text-align: right; width: 1%; white-space: nowrap; }
 .etk-links { margin: 8px auto 0; width: auto; min-width: 640px; }
 .etk-links th:not(:first-child) { text-align: left; width: auto; }
 .etk-links th:first-child, .etk-links th:nth-child(4), .etk-links th:nth-child(6) { text-align: right; }
 .etk-links td { padding: 4px 12px; }
 .etk-fig { display: grid; gap: 2px; align-content: start; padding: 8px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
-.etk-fig > small { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
-.etk-fig > b { font-size: 18px; line-height: 1.2; font-variant-numeric: tabular-nums; }
-.etk-fig > b > span { font-size: 13px; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; }
-.etk-time ul { margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); display: grid; gap: 3px; font-size: 12px; }
-.etk-time li { display: flex; justify-content: space-between; gap: 8px; }
-.etk-result-one { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
-.etk-result-name { display: grid; gap: 2px; flex: 1 1 260px; align-content: start; padding: 8px 0; font-size: 14px; font-weight: 600; }
-.etk-result-name > small { font-size: 12px; color: var(--muted-foreground); }
-.etk-figs { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 10px; flex: 0 1 460px; }
-.etk-result:not(:has(.etk-result-table)):not(.etk-result-one) { grid-template-columns: minmax(220px, 280px); }
-@media (max-width: 1100px) { .etk-result { grid-template-columns: 1fr; } .etk-op .etk-flow { grid-auto-flow: row; } .etk-op .etk-block { border-left: 0; border-top: 1px solid var(--border); } }
+@media (max-width: 1100px) { .etk-op .etk-flow { grid-auto-flow: row; } .etk-op .etk-block { border-left: 0; border-top: 1px solid var(--border); } }
 
 /* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
 .seg-tabs.sub { margin-bottom: 8px; }
@@ -2661,6 +2806,19 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* Экран мастера: неделя монтажников — часы по дням, клик по дню ставит выбранную операцию. */
 .mb-week-nav { margin-left: auto; display: flex; gap: 4px; }
 .mb-week-nav .small { padding: 3px 9px; }
+/* Доска мастера: вид проекта «По оборудованию», метка нового задания, ответ сервера на назначение. */
+.mb-project-head .mb-view { margin: 0 0 0 auto; padding: 2px; }
+.mb-project-head .mb-view button { padding: 3px 10px; font-size: 12px; }
+.mb-new { height: 20px; font-size: 12px; }
+.mb-note { margin-bottom: 8px; display: grid; gap: 2px; font-size: 13px; }
+.mb-group-assign { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: var(--muted-foreground); }
+.mb-group-assign label { display: flex; align-items: center; gap: 6px; }
+.mb-group-assign select { width: auto; padding: 4px 8px; font-size: 13px; }
+.mb-group-assign input[type="date"] { width: auto; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.mb-group .mb-ops th:first-child, .mb-group .mb-ops td:first-child { width: 250px; text-align: left; color: inherit; }
+.mb-group .mb-ops th:nth-child(2) { width: auto; }
+.mb-group .mb-ops th:nth-child(3), .mb-group .mb-ops td:nth-child(3), .mb-group .mb-ops th:nth-child(4), .mb-group .mb-ops td:nth-child(4) { width: 80px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mb-group td .mb-new { margin-left: 6px; }
 .mb-week { width: 100%; border-collapse: separate; border-spacing: 2px; table-layout: fixed; font-size: 12px; }
 .mb-week thead th { font-weight: 500; color: var(--muted-foreground); text-align: center; padding: 2px 0; line-height: 1.2; }
 .mb-week thead th span { display: block; font-size: 11px; }
@@ -2722,6 +2880,20 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* Доли операции по штукам (владелец, 30.09: «дробить операцию между людьми»). */
 .mb-pieces { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 2px; font-size: 12px; color: var(--muted-foreground); }
 .mb-pieces input { width: 88px; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+/* «Назначить только …»: монтажник, день и одна кнопка с датой и часом (владелец 16.10). */
+.mb-only { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; color: var(--muted-foreground); }
+.mb-only label { display: flex; align-items: center; gap: 6px; }
+.mb-only select { width: auto; padding: 4px 8px; font-size: 13px; }
+.mb-only input[type="date"] { width: auto; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.mb-only small { flex-basis: 100%; }
+.mb-made { border-top: 1px solid var(--border); padding-top: 6px; }
+.mb-made b { color: var(--foreground); font-size: 13px; }
+.mb-made input[type="number"] { width: 80px; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.mb-made span { font-variant-numeric: tabular-nums; }
+.mb-made label { white-space: nowrap; }
+.mb-made input[type="checkbox"] { width: auto; margin: 0; }
+.mb-remove p { margin: 12px 0 4px; }
+.mb-remove ul { margin: 4px 0 12px; padding-left: 20px; display: grid; gap: 4px; }
 .mb-chip.done { background: var(--bg-green-2); color: var(--fg-green-4); }
 .mb-until, .mb-placed { font-size: 12px; font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; }
 .mb-handed { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--bg-amber-7); color: var(--fg-orange-6); font-size: 12px; font-weight: 600; }
@@ -3122,7 +3294,7 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-day-col { width: var(--zg-day); }
 .zg-table th, .zg-table td { height: var(--zg-row); padding: 0 4px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--card); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .zg-table thead th { position: sticky; top: 0; z-index: 4; height: auto; padding: 0 3px; background: var(--zg-head); color: var(--foreground); font-size: var(--zg-head-font); font-weight: 600; line-height: 1.15; letter-spacing: 0; text-transform: none; white-space: nowrap; text-align: center; }
-.zg-table thead th.zg-col-head { vertical-align: bottom; padding-bottom: 7px; border-bottom-color: var(--zg-edge); }
+.zg-table thead th.zg-col-head { vertical-align: bottom; padding-bottom: 5px; border-bottom-color: var(--zg-edge); white-space: normal; overflow-wrap: normal; }
 .zg-table thead th.zg-left { text-align: left; padding-left: 6px; }
 .zg-table thead .zg-head-days th { top: var(--zg-month-h); height: var(--zg-days-h); border-bottom-color: var(--zg-edge); }
 .zg-freeze { position: sticky; left: var(--zg-left); z-index: 2; }
@@ -3266,6 +3438,8 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .ec-page > .panel, .ec-grid > .panel { margin-top: 0; }
 .profile-panel { display: grid; justify-items: start; }
 .profile-panel .profile-card { justify-self: stretch; }
+.change-password { display: grid; gap: 8px; }
+.change-password form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; align-items: center; }
 .ec-head { display: flex; align-items: center; gap: 16px; padding: 16px 20px; }
 .ec-avatar { flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--primary) 14%, var(--card)); color: var(--primary); font-size: 20px; font-weight: 600; }
 .ec-id { flex: 1; min-width: 0; }
@@ -3594,8 +3768,12 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .mo-h { align-items: flex-start; justify-content: space-between; }
 .mo-side { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-left: auto; }
 .mo-side button { min-width: 96px; }
-.mo-state { font-size: 13px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Причина рядом с серой «Начать» читается с планшета: 14 px, переносится, а не обрезается (владелец 16.10). */
+.mo-state { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; max-width: 56ch; }
 .mo-plan .mo-window { color: var(--foreground); font-variant-numeric: tabular-nums; }
+.mo-plan .mo-early { font-weight: 600; font-variant-numeric: tabular-nums; }
+.mo-plan .mo-norm, .mo-own { font-variant-numeric: tabular-nums; }
+.mo-own { color: var(--foreground); }
 .mo-tf { font-weight: 600; font-variant-numeric: tabular-nums; }
 .mo-submit { padding: 10px; border-radius: 8px; background: var(--accent); }
 .view-strip.acting { border-color: var(--primary); background: var(--chip-ok-bg); }
@@ -3684,10 +3862,10 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 
 /* Чертёж жгута на весь экран: шапка в одну строку, редактор занимает остальную высоту. */
 .harness-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; padding: 8px 12px 0; background: var(--background); }
-.harness-page-head { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; min-width: 0; }
+.harness-page-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding-bottom: 8px; min-width: 0; }
 .harness-page-head h1 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .harness-page-head > .muted, .harness-save { white-space: nowrap; }
-.harness-page-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex-shrink: 0; }
+.harness-page-actions { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px 8px; min-width: 0; }
 .harness-page-note { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .harness-conflict { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 6px 10px; border: 1px solid var(--warn-border); border-radius: 6px; background: var(--warn-soft); color: var(--foreground); font-size: 13px; }
 .harness-conflict > span { flex: 1; min-width: 0; }
@@ -3798,6 +3976,15 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .kit-review-danger { color: var(--chip-danger-fg); }
 .kit-meta .kit-calc-link { color: var(--primary); text-decoration: none; }
 .kit-meta .kit-calc-link:hover { text-decoration: underline; }
+.kit-links { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.kit-links .link-button { font-size: inherit; }
+.kit-kd-list { position: relative; }
+.kit-kd-list summary { cursor: pointer; color: var(--primary); list-style: none; }
+.kit-kd-list summary::-webkit-details-marker { display: none; }
+.kit-kd-list ul { position: absolute; z-index: 5; top: 100%; left: 0; margin: 4px 0 0; padding: 6px 10px; list-style: none; min-width: 220px; background: var(--card, var(--background)); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+.kit-kd-list li { padding: 3px 0; white-space: nowrap; }
+.kit-kd-list a { color: var(--primary); text-decoration: none; }
+.kit-kd-list a:hover { text-decoration: underline; }
 /* «Ещё ▾» за чертой после рабочих кнопок: удаление отдельно от них (ПР-2). */
 .kit-head .kit-more { margin-left: 4px; }
 .kit-more .more-menu-list button.kit-more-danger { color: var(--tone-danger); }
@@ -3877,6 +4064,7 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .block-icon { display: block; }
 
 .quality-page .box-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.quality-page .qc-review .box-grid { grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); }
 .quality-page .production-box { gap: 6px; padding: 10px; }
 .quality-page .production-box > strong { font-size: 15px; }
 .quality-page .danger-text { color: var(--tone-danger); }
@@ -3884,11 +4072,14 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .ec-legend { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
 
 /* Обжим по сечениям (вкладка «Терминалы», карточка серии): сечение написано один раз, значения — столбиками. */
-.crimp { display: grid; gap: 1px; }
-.crimp-row { display: grid; grid-template-columns: repeat(var(--crimp-n, 1), minmax(11ch, auto)); gap: 0 12px; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.crimp-row.has-awg { grid-template-columns: 9ch repeat(var(--crimp-n, 1), minmax(11ch, auto)); }
+/* Owner 16.10: столбцы фиксированной ширины — AWG │ по жиле │ по изоляции │ отрыв, длинное не вылезает в соседние колонки. */
+.crimp { display: grid; gap: 1px; max-width: 100%; overflow: hidden; }
+.crimp-row { display: grid; grid-template-columns: 10ch 11ch 13ch 10ch; gap: 0 12px; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.crimp-row.crimp-one { grid-template-columns: 10ch 11ch; }
+.crimp-row > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .crimp-awg { color: var(--muted-foreground); font-weight: 600; border-right: 1px solid var(--border); padding-right: 8px; }
 .crimp-val { text-align: right; }
+.crimp-none { color: var(--muted-foreground); }
 .crimp-unit { font-style: normal; color: var(--muted-foreground); }
 @media (pointer: coarse) { .crimp-row { font-size: 13px; line-height: 20px; } }
 /* Опции стенда (Витя): «Было / Новое» по блокам; на проде не показывается. */
@@ -4181,6 +4372,8 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 /* Холст маршрута (RouteCanvas, владелец 12.10): карточки полуфабрикатов со связями — «Схема полуфабрикатов» генератора
    и «Маршрут КБn» позиции с чертежом. Карточка: вид маленьким ярлыком, название, «N … · шт · мин», рисунок. */
 :root { --rc-dot: color-mix(in srgb, var(--muted-foreground) 22%, transparent); --rc-link: #8a94a6; --rc-tube: #3b4248; --rc-final-fg: #00756a; }
+/* Кабель в оболочке на рисунке полуфабриката — цвета рисунка провода (harness/wire-blank-artwork.ts). */
+:root { --rc-jacket: #5b6670; --rc-outline: #303438; --rc-metal: #929699; --rc-copper: #c88954; --rc-tin: #a5adb2; }
 .rc { display: grid; gap: 8px; min-width: 0; }
 .rc-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .rc-tools-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
@@ -4227,7 +4420,24 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .rc-tube rect { fill: var(--rc-tube); }
 .rc-tube line { stroke: var(--panel-soft); stroke-width: 1; opacity: .5; }
 .rc-row-label { overflow: hidden; font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+/* Кабель в оболочке на рисунке полуфабриката: одна строка — оболочка, жилы веером; подпись — марка и «4 жилы · А1 → В1». */
+.rc-row.is-cable { grid-template-columns: 128px minmax(0, 1fr); height: 36px; }
+.rc-row.is-cable .rc-row-label { display: grid; line-height: 1.25; }
+.rc-row.is-cable .rc-row-label b, .rc-row.is-cable .rc-row-label small { overflow: hidden; text-overflow: ellipsis; }
+.rc-row.is-cable .rc-row-label small { color: var(--muted-foreground); font-size: 11px; }
+.rc-cable-art { display: block; width: 128px; height: 32px; }
+.rc-jacket { fill: var(--rc-jacket); stroke: var(--rc-outline); stroke-width: 1; }
+.rc-core { fill: none; stroke-width: 2.4; stroke-linecap: round; }
+.rc-core-edge { fill: none; stroke: var(--rc-outline); stroke-width: 3.6; stroke-linecap: round; }
+.rc-core-cu { stroke: var(--rc-copper); stroke-width: 3; stroke-linecap: round; }
+.rc-core-tin { stroke: var(--rc-tin); stroke-width: 3; stroke-linecap: round; }
+.rc-core-term { fill: var(--rc-metal); stroke: var(--rc-outline); stroke-width: .8; }
 .rc-more { color: var(--muted-foreground); font-size: 12px; line-height: 16px; }
+/* Схема ПФ «Сложной сборки»: что входит в ПФ — подписи входящих стрелок строками. */
+.rc-art:has(> .rc-inputs) { flex: 0 0 auto; align-items: flex-start; justify-content: flex-start; }
+.rc-inputs { display: grid; width: 100%; margin: 0; padding: 0; list-style: none; }
+.rc-inputs li { overflow: hidden; font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.tcgen .route-input-item { color: var(--muted-foreground); }
 .rc-faces { display: flex; align-items: flex-end; justify-content: center; gap: 12px; width: 100%; }
 .rc-face-cell { display: grid; justify-items: center; gap: 2px; min-width: 0; margin: 0; }
 .rc-face-cell figcaption { max-width: 120px; overflow: hidden; color: var(--muted-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
@@ -4307,11 +4517,9 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .cov-title { margin: 0 0 8px; font-size: 16px; font-weight: 500; }
 .cov-other { display: grid; gap: 8px; justify-items: start; }
 .cov-other > .cov-group { justify-self: stretch; }
-/* БД.ОБ master–detail: the list stays on the left, the machine card is a right-hand panel (full-screen on a tablet). */
+/* БД.ОБ master–detail: the list stays on the left, the machine card opens as a PageWindow. */
 .eq-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
-.eq-split.has-card { grid-template-columns: minmax(0, 1fr) minmax(380px, 40%); }
 .eq-list { min-width: 0; }
-.eq-panel { position: sticky; top: 0; max-height: calc(100dvh - 60px); overflow: auto; overscroll-behavior: contain; min-width: 0; }
 .eq-card { display: grid; gap: 12px; padding: 12px 16px; }
 .eq-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .eq-title { display: grid; gap: 2px; min-width: 0; }
@@ -4332,8 +4540,6 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .eq-calc { margin-left: 6px; padding: 0 5px; border: 1px dashed var(--border); border-radius: 4px; font-size: 11px; font-style: normal; }
 .eq-split .eq-selected td { background: color-mix(in srgb, var(--primary) 14%, var(--card)); }
 @media (max-width: 1100px), (pointer: coarse) {
-  .eq-split.has-card { grid-template-columns: minmax(0, 1fr); }
-  .eq-panel { position: fixed; inset: 0; z-index: 45; max-height: none; padding: 8px; background: var(--background, #f6f8f8); }
   .eq-econ { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 700px) { .eq-econ { grid-template-columns: minmax(0, 1fr); } }
@@ -4587,3 +4793,89 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
   .order-fact-form { grid-template-columns: minmax(0, 1fr); }
   .order-fact-form label.wide { grid-column: auto; }
 }
+
+/* Карточка операции (OperationCard): параметры строки БД.ОП тремя-четырьмя группами, как лист ЭТК. */
+.op-params h4 { font-size: 14px; }
+.op-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px 24px; align-items: start; }
+.op-group h5 { margin: 0 0 4px; padding-bottom: 3px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.op-group dl { display: grid; margin: 0; }
+.op-row { display: grid; grid-template-columns: minmax(110px, 40%) minmax(0, 1fr); gap: 10px; align-items: center; min-height: 30px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.op-row dt { color: var(--muted-foreground); font-size: 12.5px; }
+.op-row dt label { font: inherit; color: inherit; }
+.op-row dd { display: flex; align-items: baseline; gap: 6px; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.op-row dd small { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.op-row dd .cell-empty { color: var(--muted-foreground); }
+.op-row input, .op-row select { flex: 1 1 auto; min-width: 0; height: 28px; padding: 2px 8px; font-size: 13px; }
+.op-row > .op-hint { grid-column: 1 / -1; margin: -6px 0 5px; }
+.op-hint { margin: 4px 0 0; color: var(--muted-foreground); font-size: 11.5px; line-height: 1.35; }
+.op-row.op-type dd b { font-size: 13.5px; }
+.op-calc { display: grid; gap: 2px; margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; background: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; }
+.op-calc input { width: 72px; height: 26px; padding: 2px 6px; font-size: 13px; text-align: right; }
+.op-calc > span { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.op-calc label { display: inline; margin: 0; font: inherit; color: inherit; }
+.op-calc small { color: var(--muted-foreground); font-size: 11.5px; }
+.op-raw { margin-top: 4px; }
+.op-raw summary { cursor: pointer; color: var(--muted-foreground); font-size: 12.5px; }
+.op-raw summary span { margin-left: 6px; font-weight: 400; }
+.op-raw .op-groups { margin-top: 8px; }
+.op-ctl-chip { display: inline-block; margin-bottom: 2px; padding: 0 7px; border-radius: 999px; background: var(--ctl-bg); color: var(--ctl-text); border: 1px solid var(--ctl-line); font-size: 11px; font-weight: 600; line-height: 1.6; }
+.tr-steps tr.ctl td:first-child { box-shadow: inset 3px 0 0 var(--ctl-line); }
+.op-bar { bottom: 0; margin: 12px -18px -16px; }
+.tr-paper.template-detail { padding: 16px 18px; }
+.tr-head.with-act { grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; }
+.tr-head > .tr-head-act { display: flex; gap: 8px; margin-left: 10px; white-space: nowrap; }
+@media (max-width: 1048px) { .tr-head.with-act { grid-template-columns: 1fr; } .tr-head-act { margin-left: 0; } }
+.tc-edit .op-params { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+
+/* 6 Результат (14.10): полуфабрикат — главное (жирно, короткими строками), справа тесная пара «подпись над значением»;
+   «Вход» — таблица «Что взять / Сколько / Откуда». Одни цифры — tabular-nums. */
+.etk-result-table { width: auto; min-width: 420px; max-width: 100%; }
+.etk-result-name { display: grid; gap: 1px; min-width: 0; max-width: 72ch; align-content: start; }
+.etk-result-name > small, .etk-kv dt { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
+.etk-result-name > b { font-size: 14px; line-height: 1.35; }
+.etk-prod { display: grid; }
+.etk-prod-line { display: block; overflow-wrap: anywhere; }
+.etk-kv { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0; align-items: flex-start; }
+.etk-kv > div, .etk-kv > .etk-time { display: grid; gap: 1px; margin: 0; }
+.etk-kv dd { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.35; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.etk-kv dd > span { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
+.etk-time-list { flex: 1 0 100%; margin: 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); display: grid; gap: 3px; font-size: 12px; max-width: 520px; }
+.etk-time-list li { display: flex; justify-content: space-between; gap: 8px; }
+.etk-pick { width: max-content; min-width: min(100%, 640px); max-width: 100%; justify-self: start; border-collapse: collapse; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
+.etk-pick th.num { text-align: right; }
+.etk-pick th { padding: 5px 12px; text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-foreground); background: var(--accent); white-space: nowrap; }
+.etk-pick td { padding: 5px 12px; border-top: 1px solid var(--border); vertical-align: top; }
+.etk-pick td > b { display: block; font-weight: 600; }
+.etk-pick td > small { display: block; font-size: 11px; color: var(--muted-foreground); }
+.etk-pick td.num { text-align: right; width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
+.etk-pick-from { color: var(--muted-foreground); white-space: nowrap; }
+.etk-pick .etk-pick-name { max-width: min(62vw, 640px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.etk-pick-src { display: block; }
+.etk-pick-semi td { background: color-mix(in srgb, var(--primary) 6%, transparent); }
+
+/* Параметры операции в шапке ЭТК: Сторона А | Общие | Сторона В. Значения читаются с руки у станка. */
+.etk-params { display: grid; gap: 0; margin: 12px 0 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #f7f9f7; }
+.etk-params section { padding: 8px 14px 10px; border-left: 1px solid var(--border); min-width: 0; }
+.etk-params section:first-child { border-left: 0; }
+.etk-params section > strong { display: block; margin: 0 0 4px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-foreground); }
+.etk-params dl { margin: 0; display: grid; max-width: 520px; }
+.etk-params dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 3px 0; border-top: 1px dotted var(--border); }
+.etk-params dl > div:first-child { border-top: 0; }
+.etk-params dt { font-size: 12px; color: var(--muted-foreground); flex: none; }
+.etk-params dd { margin: 0; font-size: 16px; font-weight: 600; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+/* Значение по сечениям партии — строка на сечение: сечение мелко слева, значение крупно справа. */
+.etk-params dl > div.etk-param-rows { align-items: flex-start; }
+.etk-params .etk-param-rows dd { display: grid; gap: 2px; }
+.etk-params .etk-param-rows dd > span { display: flex; justify-content: flex-end; align-items: baseline; gap: 10px; }
+.etk-params .etk-param-rows small { font-size: 12px; font-weight: 400; color: var(--muted-foreground); white-space: nowrap; }
+@media (max-width: 1100px) { .etk-params { grid-template-columns: 1fr !important; } .etk-params section { border-left: 0; border-top: 1px solid var(--border); } .etk-params section:first-child { border-top: 0; } }
+.etk-result-art { max-width: 640px; margin-top: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+
+/* Подгрузка в конце списка (LoadMore): метка без кнопки, «Загружаем…» — пока идёт порция. */
+.load-more { position: sticky; left: 0; min-height: 1px; padding: 4px 0; text-align: center; font-size: 12px; color: var(--muted-foreground); }
+
+/* Сростки «Сложной сборки»: список со схемы, только чтение */
+.tcgen .spl-rows { display: flex; flex-direction: column; gap: 2px; }
+.tcgen .spl-row { display: grid; grid-template-columns: 28px 76px minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.tcgen .spl-size { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.tcgen .spl-wires { display: flex; flex-wrap: wrap; gap: 2px 14px; min-width: 0; }

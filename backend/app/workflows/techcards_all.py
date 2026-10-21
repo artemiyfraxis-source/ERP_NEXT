@@ -1,29 +1,24 @@
 """Техкарты по проектам ERP (владелец 29.09.2026: «отгенерировать ТК по проектам, что заведены … отгруженные не
-трогай и холд тоже»). Два шага, оба повторяемые:
+трогай и холд тоже»). Шаги повторяемые:
 
-    python -m app.workflows.techcards_all supplymap [--dry-run] [--project №]   # выданные в SUPPLYMAP ТК → ЭТК ERP
-    python -m app.workflows.techcards_all generate [--dry-run] [--project №]    # «Создать техкарты» остальным сборкам
+    python -m app.workflows.techcards_all generate [--dry-run] [--project №]    # «Создать техкарты» сборкам
+    python -m app.workflows.techcards_all refresh [--dry-run]                   # пересборка ЭТК старого сборщика
 
 С 30.09.2026 скрипты обновления и загрузки эти шаги не зовут: владелец снёс проекты и заводит их сам или по одному
-(`scripts/projects_import.py load` делает оба шага только для загружаемого проекта). Без --project шаг идёт по всем
+(`scripts/projects_import.py load` делает генерацию только для загружаемого проекта). Без --project шаг идёт по всем
 проектам базы — только руками.
-
-``supplymap`` читает лист «Техкарты» таблицы «ERP — Производство» (Google только читается, ключ erp-reader из
-``ERP_GOOGLE_SERVICE_ACCOUNT_JSON``). Маршрут каждого выданного там изделия (ИЗДЕЛИЕ = проект + КБ, как
-`tcSplitItem_`) становится выданной ЭТК сборки: этапы, коды операций, времена и ссылка на файл ТК. Сборка, у
-которой ЭТК уже выдана в ERP, не трогается; несобранный черновик уступает место выданной ТК.
 
 ``generate`` — то, что человек делал бы кнопкой: открыть «Генератор» сборки и нажать «Создать». Форму генератора
 исполняет её же код (frontend/src/tcGenBatch.ts, собранный ``npm run build:tcgen``) в Node.js; сюда приходит готовый
-config, ЭТК собирается тем же `auto_build_project_techcard` и сразу выдаётся, как кнопкой (SUPPLYMAP «Создать
-техкарты»): выданную технолог смотрит и правит по операциям, проверку отмечает в плане. Не выдаётся (остаётся
+config, ЭТК собирается тем же `auto_build_project_techcard` и сразу выдаётся, как кнопкой «Создать
+техкарты»: выданную технолог смотрит и правит по операциям, проверку отмечает в плане. Не выдаётся (остаётся
 черновиком, в итоге — почему) ЭТК, которой не хватает длины резки. Пропускаются отгруженные проекты и КБ, проекты с
 блокером ХОЛД и со статусом Отказ / Слился / Отменён, проекты с ручными ТК и сборки с выданной ЭТК; черновик
 пересобирается. Длины резки и лужение генератор берёт из листа КБn расчёта, если ключ Google задан; без ключа —
 только из состава.
 
 В конце печатается итог по-русски. Код выхода: 0 — всё сделано; 1 — часть сборок не сделана (список в итоге);
-2 — нет базы, ключа (для supplymap) или собранного генератора/Node.js.
+2 — нет базы или собранного генератора/Node.js.
 """
 
 from __future__ import annotations
@@ -31,7 +26,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -53,10 +47,8 @@ from app.modules.techcards.application import (
     AutoBuildProjectTechcardCommand,
     ChangeProjectTechcardCommand,
     CreateProjectTechcardCommand,
-    ImportIssuedTechcardCommand,
     auto_build_project_techcard,
     create_project_techcard,
-    import_issued_techcard,
     issue_project_techcard,
 )
 from app.modules.techcards.etk_builder import ETK_REBUILD_VERSION
@@ -74,11 +66,8 @@ from app.workflows.project_kitset import (
 from app.workflows.techcard_build import with_technology
 
 
-PROD_SPREADSHEET = "1cxYr4lVHUI0RNw3eBn5cKOTus5SdYAJeA043LCUBj0w"  # «ERP — Производство» (SUPPLYMAP SS_PROD)
-TECHCARDS_SHEET = "Техкарты"
 SHIPPED = "Отгружено"
 HOLD = "ХОЛД"
-IMPORT_REASON = "Перенос выданной ТК из SUPPLYMAP"
 # Слова формы генератора, которые в итоге без формы не понять.
 ERROR_HINTS = {
     "Выберите шаблон хотя бы для одной операции.":
@@ -151,134 +140,6 @@ def generation_scope(
                 continue
             targets.append((kitset, assembly, card))
     return targets
-
-
-# ── Выданные в SUPPLYMAP ТК ──────────────────────────────────────────────────
-
-
-def split_item(item: object) -> tuple[str, str]:
-    """`tcSplitItem_`: «708К.4КБ1» → («708К.4», «КБ1»)."""
-    text = str(item or "").strip()
-    match = re.match(r"^(.*?)(КБ\d+[A-Za-zА-Яа-я0-9]*)$", text, flags=re.I)
-    return (match[1].strip(), match[2].upper()) if match else (text, "")
-
-
-def _header(value: object) -> str:
-    return " ".join(str(value or "").split()).upper()
-
-
-def _seconds(value: object) -> float:
-    try:
-        number = float(str(value or "").replace(" ", "").replace(" ", "").replace(",", "."))
-    except ValueError:
-        return 0
-    return number if number > 0 else 0
-
-
-def supplymap_routes(grid: list[list[str]]) -> dict[str, dict[str, Any]]:
-    """Лист «Техкарты» (`erpTechmapWriteToProd_`): строка = этап маршрута изделия. → {ИЗДЕЛИЕ: {name, file_url, stages}}."""
-    if not grid:
-        return {}
-    columns = {_header(title): position for position, title in enumerate(grid[0])}
-
-    def cell(row: list[str], title: str) -> str:
-        position = columns.get(title)
-        return str(row[position]).strip() if position is not None and position < len(row) else ""
-
-    routes: dict[str, dict[str, Any]] = {}
-    for row in grid[1:]:
-        item = cell(row, "ИЗДЕЛИЕ")
-        if not item:
-            continue
-        route = routes.setdefault(item, {"name": "", "file_url": "", "stages": []})
-        route["name"] = route["name"] or cell(row, "НАИМЕНОВАНИЕ")
-        comment = cell(row, "КОММЕНТАРИЙ")
-        url = next((word for word in comment.split() if word.startswith(("http://", "https://"))), "")
-        route["file_url"] = route["file_url"] or url
-        route["stages"].append({
-            "n": cell(row, "№ ЭТАПА"), "stage": cell(row, "ЭТАП"), "code": cell(row, "КОД ОПЕРАЦИИ"),
-            "descr": cell(row, "ОПИСАНИЕ ШАГА"), "tOp": _seconds(cell(row, "ВРЕМЯ НА ЕД, СЕК")),
-            "tPrep": _seconds(cell(row, "ВРЕМЯ ПОДГОТОВКИ, СЕК")),
-        })
-    return routes
-
-
-def supplymap_document(item: str, route: Mapping[str, Any], read_at: datetime) -> dict[str, Any]:
-    """Выданная ЭТК из маршрута SUPPLYMAP. `build_config.ops` несёт этапы полями генератора (stage, opNumber, descr,
-    tOp, tPrep) — по ним `route_from_document` строит задания цеха, как SUPPLYMAP по листу «Техкарты». Карточек
-    операций (шагов, оснастки) у такой ЭТК нет: они в файле ТК по ссылке; пересборка генератором заменит её новой
-    ревизией."""
-    operations, config_ops, keys = [], [], set()
-    for position, stage in enumerate(route["stages"], start=1):
-        number = stage["n"] or str(position)
-        code = stage["code"] or "БЕЗ КОДА"
-        connector = ""
-        while f"{code}::{connector}" in keys:
-            connector = f"этап {number}" if not connector else f"{connector}."
-        keys.add(f"{code}::{connector}")
-        operations.append({
-            "position": number, "code": code, "connector": connector, "side": "",
-            "title": stage["stage"] or stage["code"] or f"Этап {number}", "description": stage["descr"],
-            "times": {"operation_seconds": stage["tOp"], "setup_seconds": stage["tPrep"]}, "card": None,
-        })
-        config_ops.append({
-            "stage": stage["stage"], "opNumber": stage["code"], "descr": stage["descr"],
-            "tOp": stage["tOp"], "tPrep": stage["tPrep"],
-        })
-    return {
-        "source": {
-            "system": "SUPPLYMAP", "sheet": TECHCARDS_SHEET, "item": item, "file_url": route["file_url"],
-            "read_at": read_at.isoformat(timespec="seconds"),
-        },
-        "operations": operations,
-        "warnings": [],
-        "build_config": {"source": "SUPPLYMAP", "ops": config_ops},
-    }
-
-
-def import_supplymap(
-    grid: list[list[str]], techcards_factory: Callable[[], Any], *, actor: Actor, now: datetime, apply: bool,
-    only: set[str] | None = None,
-) -> Report:
-    """only — номера проектов (`project_key`), которыми ограничиться: загрузка по одному (projects_import.py load)."""
-    report = Report()
-    with techcards_factory() as uow:
-        kitsets = [kitset for kitset in uow.kitsets.list() if only is None or project_key(kitset.project) in only]
-        cards = {_card_key(card.project, card.item_index): card for card in uow.techcards.list()}
-    by_project = {project_key(kitset.project): kitset for kitset in kitsets}
-    for item, route in supplymap_routes(grid).items():
-        project, index = split_item(item)
-        if only is not None and project_key(project) not in only:
-            continue
-        kitset = by_project.get(project_key(project)) if index else None
-        assembly = kitset.assembly(index) if kitset is not None else None
-        if assembly is None:
-            report.skip("проекта или КБ нет в ERP (отгружен или не заведён)", item)
-            continue
-        label = _label(kitset.project, assembly.index)
-        card = cards.get(_card_key(kitset.project, assembly.index))
-        if card is not None and card.status is TechcardStatus.ISSUED:
-            report.skip("ЭТК уже выдана в ERP — не перезаписываю", label)
-            continue
-        stages = len(route["stages"])
-        if not apply:
-            report.done.append(f"{label} — этапов {stages}")
-            continue
-        try:
-            imported = import_issued_techcard(ImportIssuedTechcardCommand(
-                project=kitset.project, item_index=assembly.index,
-                product_name=assembly.name or route["name"] or item_id(kitset.project, assembly.index),
-                source_calculation=kitset.calc_source,
-                document=supplymap_document(item, route, now), reason=IMPORT_REASON, actor=actor, now=now,
-            ), techcards_factory())
-        except TechcardValidationError as error:
-            report.failed.append(f"{label}: {error}")
-            continue
-        if imported is None:
-            report.skip("ЭТК уже выдана в ERP — не перезаписываю", label)
-        else:
-            report.done.append(f"{label} — этапов {stages}")
-    return report
 
 
 # ── Генерация ────────────────────────────────────────────────────────────────
@@ -361,7 +222,7 @@ def generate(
     state: Any, generator: Callable[[dict], dict], reader: SheetsReader | None, *,
     actor: Actor, now: datetime, apply: bool, only: set[str] | None = None,
 ) -> Report:
-    """only — как у `import_supplymap`."""
+    """only — номера проектов (`project_key`), которыми ограничиться: загрузка по одному (projects_import.py load)."""
     report = Report()
     techcards = state.techcards_uow_factory
     with techcards() as uow:
@@ -408,7 +269,7 @@ def generate(
                 ), techcards())
             config, technology_source = with_technology(result["config"], getattr(state, "references_uow_factory", None))
             built = auto_build_project_techcard(AutoBuildProjectTechcardCommand(
-                card_id=card.id, expected_version=card.version, config=config, actor=actor, now=now,
+                card_id=card.id, expected_version=card.version, config=config, inputs=result["config"], actor=actor, now=now,
                 technology_source=technology_source,
             ), techcards())
         except TechcardValidationError as error:
@@ -432,8 +293,8 @@ def generate(
 def refresh(state: Any, *, actor: Actor, now: datetime, apply: bool) -> Report:
     """Issued generator ETKs built by an older builder (document schema_version < ETK_REBUILD_VERSION) are rebuilt
     from their own saved build_config: a new revision «Автопересборка», hand-edited operations kept (manual keys).
-    ETKs moved from SUPPLYMAP (build_config.source) stay as they are. A rerun finds nothing to do. Version 3 only
-    added `route`, derived on read for older documents, so it alone makes no new revision."""
+    A rerun finds nothing to do. Version 3 only added `route`, derived on read for older documents, so it alone makes
+    no new revision."""
     report = Report()
     techcards = state.techcards_uow_factory
     with techcards() as uow:
@@ -442,7 +303,7 @@ def refresh(state: Any, *, actor: Actor, now: datetime, apply: bool) -> Report:
         label = _label(card.project, card.item_index)
         document = card.document if isinstance(card.document, dict) else {}
         config = document.get("build_config")
-        if card.status is not TechcardStatus.ISSUED or not isinstance(config, dict) or config.get("source") == "SUPPLYMAP":
+        if card.status is not TechcardStatus.ISSUED or not isinstance(config, dict):
             continue
         if int(document.get("schema_version") or 0) >= ETK_REBUILD_VERSION:
             continue
@@ -452,7 +313,7 @@ def refresh(state: Any, *, actor: Actor, now: datetime, apply: bool) -> Report:
         try:
             built_config, technology_source = with_technology(config, getattr(state, "references_uow_factory", None))
             built = auto_build_project_techcard(AutoBuildProjectTechcardCommand(
-                card_id=card.id, expected_version=card.version, config=built_config, actor=actor, now=now,
+                card_id=card.id, expected_version=card.version, config=built_config, inputs=config, actor=actor, now=now,
                 technology_source=technology_source,
             ), techcards())
         except TechcardValidationError as error:
@@ -488,8 +349,8 @@ def _google_reader() -> SheetsReader | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Техкарты по всем проектам ERP: перенос выданных из SUPPLYMAP и генерация остальных.")
-    parser.add_argument("step", choices=("supplymap", "generate", "refresh"))
+    parser = argparse.ArgumentParser(description="Техкарты по всем проектам ERP: генерация и пересборка.")
+    parser.add_argument("step", choices=("generate", "refresh"))
     parser.add_argument("--dry-run", action="store_true", help="только показать, что будет сделано")
     parser.add_argument("--project", action="append", default=[], help="только этот № проекта (можно несколько)")
     args = parser.parse_args(argv)
@@ -506,21 +367,9 @@ def main(argv: list[str] | None = None) -> int:
 
     holder = SimpleNamespace(state=SimpleNamespace())
     engine = configure_database(holder, url)
-    actor = Actor(id=uuid.uuid4(), name="перенос из SUPPLYMAP" if args.step == "supplymap" else "пакетная генерация ТК", department="")
+    actor = Actor(id=uuid.uuid4(), name="пакетная генерация ТК", department="")
     try:
-        if args.step == "supplymap":
-            reader = _google_reader()
-            if reader is None:
-                print("Ключ Google не задан (ERP_GOOGLE_SERVICE_ACCOUNT_JSON) — выданные ТК SUPPLYMAP не перенесены", file=sys.stderr)
-                return 2
-            _title, sheets = _retrying(lambda: reader.read_sheets(PROD_SPREADSHEET, (TECHCARDS_SHEET,)))
-            if TECHCARDS_SHEET not in sheets:
-                print(f"В «ERP — Производство» нет листа «{TECHCARDS_SHEET}»", file=sys.stderr)
-                return 2
-            report = import_supplymap(sheets[TECHCARDS_SHEET], holder.state.techcards_uow_factory,
-                                      actor=actor, now=moscow_now(), apply=not args.dry_run, only=only)
-            print(format_report("Выданные ТК из SUPPLYMAP", report, apply=not args.dry_run, done_title="Перенесено"))
-        elif args.step == "refresh":
+        if args.step == "refresh":
             report = refresh(holder.state, actor=actor, now=moscow_now(), apply=not args.dry_run)
             print(format_report("Пересборка выданных ЭТК новым генератором", report, apply=not args.dry_run,
                                 done_title="Пересобрано"))

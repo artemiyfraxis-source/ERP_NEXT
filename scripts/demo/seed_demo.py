@@ -346,9 +346,41 @@ def stock():
 FIX = json.load(open(f"{BACKEND}/tests/techcards/fixtures/current-etk.json", encoding="utf-8"))["files"]
 
 
-def _card(eng, project, index, name, kit_file, qty, *, issue):
+def _branch_708(cfg):
+    """708К.2 КБ1 as a «Сложная сборка» ETK: the generator's own labels on the operations, a branch X1 «I3» with its
+    braid, ТТК sleeve and marking «I3», and the ПФ scheme kit → splice → branches → product (screens of the ПФ
+    diagram, owner 17.10)."""
+    ops = cfg["ops"]
+    del ops[10]  # the second braid layer
+    ops[10]["marks"] = [{"art": "Трубка маркировочная 4/2", "name": "Трубка маркировочная 4/2", "qty": 1,
+                         "target": "X1", "text": "I3", "place": "в 40 мм от разъёма", "placeKind": "dist", "placeMm": "40"}]
+    sleeve = {"tutArt": "ТТК 12/4", "tutName": "Трубка ТТК 12/4 клеевая", "tutCount": 1, "side": "A", "branch": "X1 «I3»"}
+    ops[11:11] = [{**ops[2], **sleeve, "opKey": "onTubesA1"}, {**ops[4], **sleeve, "opKey": "heatShrA1"}]
+    labels = [
+        "Резка проводов ПВАМ — 14 отрезков", "Резка трубок ТТК 4,8/1,6 — 3 × 20 мм", "Надеть ТТК на сросток С1 — ТТК 4,8/1,6",
+        "УЗ сварка сростка С1", "Усадка ТТК на сростке С1", "Опрессовка контактов X1 «I3» — 173681-1",
+        "Монтаж контактов в разъём X1 «I3» — 174047-2", "Свивка X1 «I3» — 3 пары", "Намотка ленты X1 «I3» — Temflex 1300",
+        "Надеть оплётку X1 «I3» — XS-3, 1000 мм", "Надеть маркировку X1 «I3» — «I3»", "Надеть ТТК X1 «I3» — ТТК 12/4",
+        "Усадка ТТК на разъёме X1 «I3» — ТТК 12/4", "Опрессовка контактов X2 — 173681-1", "Монтаж контактов в разъём X2 — 174047-2",
+        "Обмотка жгута лентой — 0171519"]
+    for op, label in zip(ops, labels):
+        op["label"] = label
+    cfg["route"] = {"blocks": [
+        {"key": "cut", "name": "Провода нарезаны", "ops": [1], "kit": True},
+        {"key": "tubes", "name": "Трубки нарезаны", "ops": [2], "kit": True},
+        {"key": "s1", "name": "Сросток С1", "ops": [3, 4, 5]},
+        {"key": "x1", "name": "Ветвь X1 «I3», сторона А", "ops": [6, 7, 8, 9, 10, 11, 12, 13]},
+        {"key": "x2", "name": "Ветвь X2, сторона Б", "ops": [14, 15]},
+        {"key": "final", "ops": [16], "final": True}],
+        "edges": [{"from": "cut", "to": "s1"}, {"from": "tubes", "to": "s1"}, {"from": "s1", "to": "x1"},
+                  {"from": "s1", "to": "x2"}, {"from": "x1", "to": "final"}, {"from": "x2", "to": "final"}]}
+
+
+def _card(eng, project, index, name, kit_file, qty, *, issue, tweak=None):
     cfg = json.loads(json.dumps(FIX[kit_file]["payload"]["config"]))
     cfg.update(projectNo=project, assemblyIndex=index, assemblyName=name, partQty=qty)
+    if tweak:
+        tweak(cfg)
     created = eng.ok("POST", "/api/techcards/projects", "techcards",
                      json={"project": project, "item_index": index, "product_name": name, "deadline": D(25)})
     if not created:
@@ -370,7 +402,7 @@ def techcards():
     S["card1"] = _card(eng, "614К.1", "КБ1", "Жгут питания стойки", "kit-720К.1.2-КБ1.json", 100, issue=True)
     S["card2"] = _card(eng, "614К.1", "КБ2", "Жгут питания блока Molex 12P", "kit-720К.-КБ1.json", 40, issue=True)
     S["card3"] = _card(eng, "621К.2", "КБ1", "Кабель интерфейсный КСПВГ / DB-9", "kit-345К.2-КБ1.json", 25, issue=False)
-    _card(eng, "708К.2", "КБ1", "Кабель питания контроллера", "kit-708К.2-КБ1.json", 10, issue=True)
+    _card(eng, "708К.2", "КБ1", "Кабель питания контроллера", "kit-708К.2-КБ1.json", 10, issue=True, tweak=_branch_708)
     # kitsets need a Google Sheets URL (kitsets/load reads a live calculation) — skipped, see report.
 
 
@@ -406,7 +438,8 @@ def production():
             "transfer_batch": pv["variants"][0]["transfer_batch"]})
         if ap:
             task = ap["task"]
-    # task 2: scheduled too, then driven through the whole route (op by op, boxes confirmed) up to ОТК / ГП
+    # task 2: scheduled too, then driven through the whole route (op by op) up to ОТК / ГП. A box handed in is taken by
+    # the next operation at once: the master's «confirm» step is gone since 13.10 (POST …/confirm answers 405).
     task2 = None
     if t2:
         tk2 = t2["task"]
@@ -430,9 +463,6 @@ def production():
             if not dn:
                 break
             prev = dn["box"]
-            cf = m.ok("POST", f"/api/production/boxes/{prev['id']}/confirm", "boxes_confirmed", json={"version": prev["version"]})
-            if cf:
-                prev = cf.get("box", prev)
         S["last_box2"] = prev
         if prev:
             iid = None
@@ -447,7 +477,9 @@ def production():
             print("  qc:", bool(r))
             if r and r.get("box"):
                 S["last_box2"] = r["box"]
-    # execution on task 1: op1 -> box; op2 started and left in progress
+    # execution on task 1 (the fitter's «Мои задания» of the stage-3 demo): op1 done by Смирнова in two boxes (97 good,
+    # 3 scrap); Волков takes the 60-box into op2 and hands in 60 — op2 has handed part, 37 more wait in op1's box;
+    # op3 is split: Смирнова 40, Волков 60 («ваша доля 40 из 100», «можно начать: 40 шт»); op4 waits for op3.
     first = task["operations"][0]
     st = sm.ok("POST", f"/api/production/tasks/{task['id']}/operations/{first['id']}/work/start", "work_sessions",
                json={"inputs": [], "materials": []})
@@ -456,11 +488,7 @@ def production():
             "good_quantity": "60", "defect_quantity": "2", "defect_character": "Обрыв жилы",
             "defect_description": "Брак при резке, 2 шт"})
         if done:
-            box = done["box"]
-            S["box1"] = box
-            c = m.ok("POST", f"/api/production/boxes/{box['id']}/confirm", "boxes_confirmed", json={"version": box["version"]})
-            if c:
-                S["box1"] = c.get("box", box)
+            S["box1"] = done["box"]
             st2 = sm.ok("POST", f"/api/production/tasks/{task['id']}/operations/{first['id']}/work/start", "work_sessions",
                         json={"inputs": [], "materials": []})
             if st2:
@@ -470,8 +498,19 @@ def production():
     second = task["operations"][1]
     box = S.get("box1")
     if box:
-        vk.ok("POST", f"/api/production/tasks/{task['id']}/operations/{second['id']}/work/start", "work_sessions",
-              json={"inputs": [box["number"]], "materials": []})
+        ws = vk.ok("POST", f"/api/production/tasks/{task['id']}/operations/{second['id']}/work/start", "work_sessions",
+                   json={"inputs": [box["number"]], "materials": []})
+        if ws:
+            vk.ok("POST", f"/api/production/work/{ws['session']['id']}/submit", "boxes",
+                  json={"good_quantity": "60", "defect_quantity": "0"})
+    fresh = next((item for item in (m.ok("GET", "/api/production/tasks") or {}).get("tasks", []) if item["id"] == task["id"]), None)
+    if fresh and len(fresh["operations"]) > 2:
+        task = fresh
+        third = task["operations"][2]
+        shared = m.ok("POST", f"/api/production/tasks/{task['id']}/operations/{third['id']}/share", "shares", json={
+            "version": task["version"], "operator_id": ops["Смирнова Елена"], "quantity": 40, "requested_start": None})
+        if shared:
+            task = shared["task"]
     defects = m.ok("GET", "/api/production/defects")
     rows = (defects or {}).get("defects") or []
     if rows:
@@ -575,35 +614,29 @@ def shipping():
                  json={"version": box.get("version", 1), "finished_good_id": g2["id"]})
         handed = bool(h)
         print("  handoff:", handed)
+    # Склад ГП принимает только сданное цехом: КБ2 пришла передачей коробки после ОТК (39 из 40), КБ1 ещё в цеху
+    # (этапы 2–4) — её «принять» нечего (422 «принять можно ещё 0»). Обе отгрузки — из принятой КБ2.
     goods = {g["item_index"]: g for g in wh.ok("GET", "/api/shipping/goods")["goods"] if g["project"] == "614К.1"}
-    g1, g2 = goods.get("КБ1"), goods.get("КБ2")
-    for key in ("КБ1", "КБ2"):
-        g = goods.get(key)
-        if g and not (handed and key == "КБ2"):
-            r = wh.ok("POST", f"/api/shipping/goods/{g['id']}/accept", "goods_accepted",
-                      json={"version": g["version"], "quantity": "60" if key == "КБ1" else "40"})
-            if r:
-                goods[key] = r["good"]
-    g1, g2 = goods.get("КБ1"), goods.get("КБ2")
+    g2 = goods.get("КБ2")
+    print("  КБ2 accepted:", (g2 or {}).get("accepted"))
     wh.ok("PUT", "/api/shipping/project-addressee", json={
         "project": "614К.1", "receiver": "ООО «Стойка-Про»", "shipping_point": "г. Тула, ул. Оружейная, 12",
         "contact": "Соколов А.", "phone": "+7 900 555-01-14", "terms": "ДОСТАВКА ТК", "carrier": "СДЭК",
         "upd_type": "ЭДО"})
-    if g1:
+    if g2 and handed:
         made = wh.ok("POST", "/api/shipping/shipments", "shipments", json={
             "customer": "ООО «Стойка-Про»", "receiver": "ООО «Стойка-Про»", "shipping_point": "г. Тула, ул. Оружейная, 12",
             "contact": "Соколов А.", "phone": "+7 900 555-01-14", "terms": "ДОСТАВКА ТК", "carrier": "СДЭК",
-            "upd_type": "ЭДО", "lines": [{"good_id": g1["id"], "quantity": "40"}]})
+            "upd_type": "ЭДО", "lines": [{"good_id": g2["id"], "quantity": "20"}]})
         if made:
             sh = made["shipment"]
             print("  shipment 1:", sh["status"])
             s2 = wh.ok("POST", f"/api/shipping/shipments/{sh['id']}/ship", "shipments_shipped", json={"version": sh["version"]})
             if s2:
                 print("  shipment 1 ->", s2["shipment"]["status"])
-    if g2:
         made = wh.ok("POST", "/api/shipping/shipments", "shipments", json={
             "customer": "ООО «Стойка-Про»", "receiver": "ООО «Стойка-Про»", "shipping_point": "г. Тула, ул. Оружейная, 12",
-            "terms": "САМОВЫВОЗ", "upd_type": "БУМАГА", "lines": [{"good_id": g2["id"], "quantity": "25"}]})
+            "terms": "САМОВЫВОЗ", "upd_type": "БУМАГА", "lines": [{"good_id": g2["id"], "quantity": "15"}]})
         if made:
             print("  shipment 2:", made["shipment"]["status"])
 

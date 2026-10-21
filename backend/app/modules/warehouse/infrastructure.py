@@ -305,9 +305,17 @@ def lot_matcher(query: str) -> Callable[[object], bool]:
             lot.purpose,
             lot.storage_location,
         )))
-        return all(word in haystack for word in words)
+        return all(_word_found(word, haystack) for word in words)
 
     return matches
+
+
+def _word_found(word: str, haystack: str) -> bool:
+    """A query word without digits matches from the start of a word («male» no longer finds «female»); a word with
+    digits (article, size, ГРН) stays a substring — «0.35», «33н», «000001» are found inside longer codes."""
+    if any(char.isdigit() for char in word):
+        return word in haystack
+    return re.search(rf"(?<![^\W_]){re.escape(word)}", haystack) is not None
 
 
 def _domain(row: StockLotRow) -> StockLot:

@@ -54,6 +54,8 @@ from .domain import (
     normalize_level,
     normalize_role,
     normalize_site,
+    placeholder_email,
+    short_login,
 )
 from .level_migration import followed_flags, level_for_role, shop_worker_rule, site_master_rule
 
@@ -61,9 +63,9 @@ from .level_migration import followed_flags, level_for_role, shop_worker_rule, s
 DEPARTMENTS_AGGREGATE = uuid5(NAMESPACE_URL, "fraxis-erp:identity:departments")
 DEPARTMENTS_LIMIT = 500
 LAST_ADMIN = (
-    "Нужен хотя бы один активный суперадминистратор или администратор — иначе некому будет вернуть права."
+    "Нужен хотя бы один активный суперадминистратор — иначе некому будет вернуть права."
 )
-SUPERADMIN_ONLY = "Уровни «Суперадминистратор» и «Администратор» выдаёт и снимает только суперадминистратор."
+SUPERADMIN_ONLY = "Уровень «Суперадминистратор» выдаёт и снимает только суперадминистратор."
 
 
 class StaffConflict(ValueError):
@@ -235,8 +237,11 @@ def create_employee(
     data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfWork, *, actor_level: str | None = None,
 ) -> CreatedEmployee:
     """`actor_level` — the level of the session that makes the change (None: read the actor's stored level)."""
-    email = normalize_email(data.email)
-    login = normalize_login(data.login or email)
+    # Blank e-mail → a placeholder address; blank login → the e-mail, or a short login when the e-mail is generated too.
+    typed_email = str(data.email or "").strip()
+    typed_login = str(data.login or "").strip()
+    email = normalize_email(typed_email) if typed_email else ""
+    login = normalize_login(typed_login or email) if typed_login or email else ""
     name = normalize_name(data.name)
     department = normalize_department(data.department)
     role = normalize_role(data.role) if str(data.role or "").strip() else ""
@@ -259,6 +264,11 @@ def create_employee(
     with uow:
         if level in FULL_ACCESS_LEVELS:
             _ensure_superadmin(uow, actor, actor_level)
+        users = uow.identity.all_users()
+        if not email or not login:
+            taken = {value for user in users for value in (user.login, user.email)}
+            login = login or short_login(name, taken)
+            email = email or placeholder_email(name, taken | {login})
         if uow.identity.identifiers_taken({login, email}):
             raise StaffConflict("Сотрудник с таким логином или e-mail уже есть.")
         user = IdentityUser(
@@ -270,7 +280,6 @@ def create_employee(
             ),
             site_master=site_master_rule(role) if data.site_master is None else bool(data.site_master),
         )
-        users = uow.identity.all_users()
         _check_personnel(uow, user, None, users)
         # The sections come from the level's «Доступы» matrix row; nothing personal is seeded.
         uow.identity.add_user(user, password_hash, {}, pin_hash)

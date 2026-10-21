@@ -128,6 +128,8 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
   }, [controls, fitted]);
 
   const byId = new Map(shown.map((card) => [card.id, card]));
+  // Связь обходит чужие карточки на пути, а не идёт под ними.
+  const geometry = (link: CanvasLink) => linkGeometry(byId.get(link.from)!, byId.get(link.to)!, shown.filter((card) => card.id !== link.from && card.id !== link.to));
   const step = (delta: number) => setManualZoom(clamp(Math.round((zoom + delta) * 10) / 10, ZOOM_MIN, ZOOM_MAX));
 
   function pointerDown(card: CanvasCard, event: ReactPointerEvent<HTMLElement>) {
@@ -170,7 +172,7 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
     return byId.has(link.from) && byId.has(link.to) && (qty || onInsert || onRemoveLink);
   });
   const toolX = spreadLinkTools(toolLinks.map((link) => {
-    const { mid } = linkGeometry(byId.get(link.from)!, byId.get(link.to)!);
+    const { mid } = geometry(link);
     return { id: link.id, x: mid.x, y: mid.y };
   }));
   return <div className="rc">
@@ -198,12 +200,12 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
               const from = byId.get(link.from), to = byId.get(link.to);
               if (!from || !to) return null;
               const active = selected === link.from || selected === link.to;
-              return <path key={link.id} className={active ? "rc-link is-active" : "rc-link"} d={linkGeometry(from, to).d} markerEnd="url(#rc-arrow)" />;
+              return <path key={link.id} className={active ? "rc-link is-active" : "rc-link"} d={geometry(link).d} markerEnd="url(#rc-arrow)" />;
             })}
           </svg>
           {toolLinks.map((link) => {
             const qty = link.qty != null && link.qty !== 1 ? link.qty : null;
-            const { mid } = linkGeometry(byId.get(link.from)!, byId.get(link.to)!);
+            const { mid } = geometry(link);
             // «+» и «×» раскрываются при наведении и фокусе на метке связи (Tab по кнопкам тоже раскрывает), число штук видно всегда.
             return <div key={link.id} className="rc-link-tools" style={{ left: toolX.get(link.id) ?? mid.x, top: mid.y }}>
               {qty !== null && <span className="rc-qty" title={`Берёт ${formatPerUnit(qty)} шт на одну штуку`}>{formatPerUnit(qty)} шт</span>}
@@ -247,10 +249,15 @@ function Overflow({ count, word }: { count: number; word: string }) {
 /** Нарезанные провода: заготовка с концами после резки и «А1:1 → В1:1». */
 export function WireThumbs({ wires }: { wires: WireThumb[] }) {
   return <div className="rc-rows">
-    {wires.slice(0, ART_ROWS).map((wire) => <div className="rc-row" key={wire.key} title={wire.title}>
-      <span className="rc-wire" aria-hidden="true" dangerouslySetInnerHTML={{ __html: wireSvg(wire) }} />
-      <span className="rc-row-label">{wire.label}</span>
-    </div>)}
+    {wires.slice(0, ART_ROWS).map((wire) => (wire.cable
+      ? <div className="rc-row is-cable" key={wire.key} title={wire.title}>
+        <span className="rc-wire" aria-hidden="true"><CableArt wire={wire} /></span>
+        <span className="rc-row-label"><b>{wire.label}</b><small>{wire.cable.sub}</small></span>
+      </div>
+      : <div className="rc-row" key={wire.key} title={wire.title}>
+        <span className="rc-wire" aria-hidden="true" dangerouslySetInnerHTML={{ __html: wireSvg(wire) }} />
+        <span className="rc-row-label">{wire.label}</span>
+      </div>))}
     <Overflow count={wires.length} word={wires.length - ART_ROWS === 1 ? "провод" : "проводов"} />
   </div>;
 }
@@ -260,6 +267,40 @@ function wireSvg(wire: WireThumb): string {
     return renderWireSvg({ left: wire.left, right: wire.right, color: fullHex(wire.color), title: wire.label })
       .replace(/<title[^>]*>.*?<\/title>/, "").replace(' role="img" aria-labelledby="title"', "");
   } catch { return ""; }
+}
+
+/** Кабель в оболочке: оболочка посередине, жилы веером из неё к обоим концам в своих цветах; конец жилы — как у провода
+    (срез, медь, олово, наконечник). Белая жила видна по тёмному контуру. Тот же рисунок — у резки кабеля в списке ПФ ЭТК
+    (EtkPfList). */
+export function CableArt({ wire }: { wire: WireThumb }) {
+  const cores = wire.cable?.cores ?? [];
+  const n = Math.max(1, cores.length), W = 160, H = 40, mid = H / 2, jacketL = 50, jacketR = W - 50;
+  const ys = cores.map((_, k) => (n === 1 ? mid : 4 + (k * (H - 8)) / (n - 1)));
+  const tip = (end: WireThumb["left"], x: number, y: number, dir: 1 | -1, key: string) => {
+    if (end === "copper" || end === "tin") return <line key={key} x1={x} y1={y} x2={x + dir * 8} y2={y} className={end === "tin" ? "rc-core-tin" : "rc-core-cu"} />;
+    if (end === "terminal" || end === "sealed" || end === "sealed-pin") {
+      const w = 16;
+      return <rect key={key} x={dir === 1 ? x : x - w} y={y - 3.2} width={w} height={6.4} rx={1.2} className="rc-core-term" />;
+    }
+    return null;
+  };
+  // Жила: от оболочки к концу — плавный изгиб; конец у края рисунка (наконечник шире — жила короче).
+  const side = (dir: 1 | -1, end: WireThumb["left"]) => cores.map((core, k) => {
+    const from = dir === 1 ? jacketL : jacketR, reach = end === "terminal" || end === "sealed" || end === "sealed-pin" ? 17 : end === "cut" ? 2 : 10;
+    const to = dir === 1 ? reach : W - reach;
+    const y0 = mid + (k - (n - 1) / 2) * 2.2, y = ys[k];
+    const d = `M${from} ${y0} C${from - dir * 14} ${y0} ${to + dir * 16} ${y} ${to} ${y}`;
+    return <g key={`${dir}-${k}`}>
+      <path d={d} className="rc-core-edge" />
+      <path d={d} className="rc-core" style={{ stroke: fullHex(core.color) }} />
+      {tip(end, to, y, dir === 1 ? -1 : 1, "t")}
+    </g>;
+  });
+  return <svg className="rc-cable-art" viewBox={`0 0 ${W} ${H}`}>
+    {side(1, wire.left)}
+    {side(-1, wire.right)}
+    <rect x={jacketL} y={mid - 7} width={jacketR - jacketL} height={14} rx={4} className="rc-jacket" />
+  </svg>;
 }
 
 /** Нарезанные трубки: отрезок трубки и «Резка ТУТ — 4×20 мм». */

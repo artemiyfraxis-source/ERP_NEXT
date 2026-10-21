@@ -15,6 +15,6 @@ The owner often sends 3–5 requests (screenshots + one line each) while a turn 
 - On each new mid-turn request, reply at once with a numbered queue (№ · screen · what · state: план / в работе / проверка / PR), and keep showing the updated queue in every status message.
 - Each new item goes straight to `erp-planner` (background) or, if the plan is obvious, an `erp-worker` — in parallel, never wait for the current item to finish. The main session only plans, merges, verifies, reports ([[owner-working-rules]], skill `orchestrate`).
 - One branch/PR per screen-topic; items touching the same module go to one planner so workers don't collide.
-- Worker worktrees symlink `frontend/node_modules` and `backend/.venv` to the main checkout: `rmdir` the links before `git worktree remove`, never `--force` over them.
+- Worker worktrees link `frontend/node_modules` and `backend/.venv` to the main checkout → [[worktree-symlink-removal]] before removing one.
 
 **Merge only on green (2026-10-05 incident):** `gh pr checks N | head -1 && gh pr merge N` merged #211 with a RED check — `head` exits 0 regardless. Always gate the merge on the check state: `S=$(gh pr checks N --json state --jq '.[0].state'); [ "$S" = SUCCESS ] && gh pr merge N --merge --delete-branch`. Frontend tests must not depend on the runner's time zone (CI is UTC) — vite.config.ts sets `process.env.TZ = "Europe/Moscow"` (PR #212).

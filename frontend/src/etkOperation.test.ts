@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { parseDefects, solderMode, toolingSections } from "./etkOperation";
+import { etkOperationName, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections } from "./etkOperation";
+
+describe("etkOperationName", () => {
+  it("names a coax operation by its kind where the card says only the first word (796К.2 КБ1, owner 15.10)", () => {
+    expect(etkOperationName("Резка", "coaxCut")).toBe("Резка кабеля");
+    expect(etkOperationName("Резка", "coaxCutTut")).toBe("Резка ТУТ");
+    expect(etkOperationName("Монтаж", "coaxInsTut")).toBe("Монтаж ТУТ");
+    expect(etkOperationName("Монтаж", "coaxInsSleeve")).toBe("Монтаж втулки экрана");
+    expect(etkOperationName("Пайка", "coaxPin")).toBe("Пайка центрального контакта");
+    expect(etkOperationName("Опрессовка", "coaxShield")).toBe("Опрессовка втулки экрана");
+    expect(etkOperationName("Усадка", "coaxHeat")).toBe("Усадка ТУТ");
+    // Своё имя карты — как есть; без имени — пусто (дальше заголовок шаблона).
+    expect(etkOperationName("Монтаж корпуса", "coaxHousing")).toBe("Монтаж корпуса");
+    expect(etkOperationName("Автомат резка + опрессовка", "cutWireCrimp")).toBe("Автомат резка + опрессовка");
+    expect(etkOperationName("Резка", "")).toBe("Резка");
+    expect(etkOperationName("", "coaxCut")).toBe("");
+  });
+});
 
 const tooling = (equipment: string, parameters = "") => [
   { section: "Расходники", name: "Припой Sn63Pb37", parameters: "от 190 °С до 270 °С" },
@@ -21,18 +38,18 @@ describe("solderMode", () => {
     const mode = solderMode({ code: "SDR_COAX_pin", card: { tooling: tooling("T21(R) | Станция паяльная"), steps: [
       { text: "Выставить рабочую температуру жала (согласно технологической инструкции)" },
     ] } });
-    expect(mode).toMatchObject({ temperature: "320–350 °C", tipAssumed: true, temperatureAssumed: true });
+    expect(mode).toMatchObject({ temperature: "240 °C", tipAssumed: true, temperatureAssumed: true });
   });
 
   it("knows a tinning bath and induction need no tip", () => {
     expect(solderMode({ code: "SDR_tin", card: { tooling: tooling("CT-53D | Ванна паяльная"), steps: [] } }))
-      .toMatchObject({ method: "bath", temperature: "250–270 °C", temperatureAssumed: true });
+      .toMatchObject({ method: "bath", temperature: "240 °C", temperatureAssumed: true });
     expect(solderMode({ code: "SDR_tin", card: { tooling: [{ section: "Оборудование", name: "CT-53D | Ванна паяльная", program: "200 °C" }], steps: [] } }))
       .toMatchObject({ method: "bath", temperature: "200 °C", temperatureAssumed: false });
     // Резка с обжимом и лужением: станок BZW-5.0+Z лудит погружением, как ванна.
     expect(solderMode({ code: "CUT_WIRE+1crimp+tin", card: { name: "Автомат резка + опрессовка + лужение",
       tooling: [{ section: "Оборудование", name: "BZW-5.0+Z | Станок резки/ обжим+лужение", program: "A19" }], steps: [] } }))
-      .toMatchObject({ method: "bath", temperature: "250–270 °C", temperatureAssumed: true });
+      .toMatchObject({ method: "bath", temperature: "240 °C", temperatureAssumed: true });
     expect(solderMode({ code: "SDR_COAX_housing", card: { tooling: tooling("DW-OHF-6KW | Установка индукционной пайки"), steps: [] } }))
       .toMatchObject({ method: "induction", tipAssumed: false });
   });
@@ -79,4 +96,23 @@ it("reads the one-line and sentence-per-line defect formats (HEAT_TYT, STRIP_WIR
     ["Надрезы, царапины или обрыв проволочек жилы", ""], ["Несоответствие длины зачистки чертежу", ""],
     ["Смятие изоляции от губок", ""], ["Отсутствие юбки втулки", "Приводит к подрезке проволочек."],
   ]);
+});
+
+describe("etkToleranceLines / etkToleranceParts", () => {
+  it("splits a step tolerance into a line per value with its label, normalising ± and ranges", () => {
+    expect(etkToleranceLines("Допуск: Сторона В: 2–3 мм")).toEqual([{ label: "Сторона В", value: "2–3 мм" }]);
+    expect(etkToleranceLines("(+/-) 10 °C")).toEqual([{ label: "", value: "± 10 °C" }]);
+    expect(etkToleranceLines("Время: ≤ 2,0 сек\nЗазор: 0,5 - 1,5 мм")).toEqual([
+      { label: "Время", value: "≤ 2,0 сек" }, { label: "Зазор", value: "0,5–1,5 мм" },
+    ]);
+    expect(etkToleranceLines("ГОСТ 23592-96; КД")).toEqual([{ label: "", value: "ГОСТ 23592-96" }, { label: "", value: "КД" }]);
+    expect(etkToleranceLines("-")).toEqual([]);
+    expect(etkToleranceLines(undefined)).toEqual([]);
+  });
+
+  it("bolds the numbers with their unit and sign, never inside a reference to a standard", () => {
+    expect(etkToleranceParts("± 10 °C")).toEqual([{ text: "± 10 °C", strong: true }]);
+    expect(etkToleranceParts("не более 3 сек")).toEqual([{ text: "не более ", strong: false }, { text: "3 сек", strong: true }]);
+    expect(etkToleranceParts("IPC/WHMA-A-620F (Раздел 3)")).toEqual([{ text: "IPC/WHMA-A-620F (Раздел 3)", strong: false }]);
+  });
 });

@@ -13,6 +13,7 @@ from app.modules.production.plan import (
     KitReview,
     SupplyPosition,
     days_left,
+    work_days_left,
     kit_key_from_purpose,
     kit_stage_key,
     normalize_project_number,
@@ -54,6 +55,8 @@ def test_supply_buckets_and_summary_match_current_supplymap():
     ))["708К.4"]
     assert (summary.total, summary.stock, summary.transit, summary.buying) == (3, 1, 1, 1)
     assert summary.customer_supplied_stock == 1
+    # Куплено — оплаченные позиции (в пути и на складе), давальческие не в счёт.
+    assert summary.purchased == 1
     assert summary.eta == "05.10.2026"
 
 
@@ -287,3 +290,17 @@ def test_shipment_overrides_a_manual_stage_and_the_journal_closes_or_reopens_a_p
     assert project_terminal(None, closed) == "Отменён"
     with pytest.raises(ProductionValidationError, match="статус"):
         validate_plan_note({"project": "708К.4", "kind": "status", "value": "Готово"}, ("708К.4",))
+
+
+def test_work_days_left_skips_weekends_and_shop_holidays():
+    # Ср 14.10.2026 → пт 16.10: чт и пт; → пн 19.10: ещё пн, выходные не в счёт.
+    assert work_days_left(date(2026, 10, 16), date(2026, 10, 14)) == 2
+    assert work_days_left(date(2026, 10, 19), datetime(2026, 10, 14, 18)) == 3
+    assert work_days_left(date(2026, 10, 14), date(2026, 10, 14)) == 0
+    # Праздник 04.11 (ср) из календаря цеха не считается.
+    assert work_days_left(date(2026, 11, 6), date(2026, 11, 2), holidays={date(2026, 11, 4)}) == 3
+    # Просрочка: рабочие дни после дедлайна по сегодня, со знаком минус.
+    assert work_days_left(date(2026, 10, 9), date(2026, 10, 14)) == -3
+    # Шестидневка: суббота рабочая.
+    assert work_days_left(date(2026, 10, 19), date(2026, 10, 14), weekdays=(0, 1, 2, 3, 4, 5)) == 4
+    assert work_days_left("", date(2026, 10, 14)) is None

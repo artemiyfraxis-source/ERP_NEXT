@@ -11,12 +11,15 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels its previous run; runs on main are never cancelled (each merge is checked, and a cancelled
+# run mails the owner like a failure — 14.10).
 concurrency:
   group: check-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
+  # Backend and frontend run side by side; `check` below is the one status to read before a merge.
+  backend:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -29,12 +32,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
       - run: pip install -r requirements.lock.txt
         working-directory: backend
-      - run: npm ci
-        working-directory: frontend
       - name: Script syntax
         run: |
           node --check scripts/run-backend-tests.mjs
@@ -44,8 +43,33 @@ jobs:
         run: npm test
       - name: Backend tests
         run: npm run test:backend
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
       - name: Frontend tests and build
         run: npm run test:frontend
+
+  # The gate: green only when both halves are green (a failed or cancelled half turns it red, not skipped).
+  check:
+    if: always()
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Backend and frontend green
+        run: |
+          echo "backend: ${{ needs.backend.result }}, frontend: ${{ needs.frontend.result }}"
+          test "${{ needs.backend.result }}" = success && test "${{ needs.frontend.result }}" = success
 
   # Migrations on the production engine (PostgreSQL 16), which the SQLite tests above never touch: an empty database
   # up to head; the last migration over rows seeded at head-1, with an integrity snapshot before and after

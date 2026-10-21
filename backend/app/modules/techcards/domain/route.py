@@ -8,6 +8,11 @@ operation in exactly one block. The scheme is for planning; the operation cards 
 Without a hand-edited scheme it is derived from the generator operations, one per block, the way the ETK chains its
 semi-finished products: a cut starts a branch, TUT pieces (cutTut) wait for the operation that puts them on (insTut /
 endCap), every other operation takes all open branches and continues them.
+
+Route v2 («Сложная сборка», 16.10): an edge may say what flows along it (`item`, «НВ4 0,12 белый ×2; ТТК 8/2 ×1» —
+still one edge per pair of blocks, several items joined with «; »); a block may be a kit (`kit`: cut batches, tube
+cut, braid cut, marking — parts one source prepares for several ПФ, made once per product, not once per consumer).
+Every block gets a level label for the diagram (`label`, «2.1»). A scheme without item/kit reads and writes as before.
 """
 
 from __future__ import annotations
@@ -20,9 +25,11 @@ from typing import Any, Mapping, Sequence
 
 
 PREFIX = "Схема полуфабрикатов"
-TUT_CUT = "cutTut"
-TUT_TAKERS = frozenset({"insTut", "endCap"})
-SOURCE_TYPES = frozenset({"cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut", "coaxCutTut"})
+# Tube pieces wait for the operation that puts them on: «Надеть ТУТ», the cap of a free end, the coax «Монтаж ТУТ»
+# (796К.2 КБ1, 15.10: the coax tubes went into «Пайка центрального контакта А» although «Монтаж ТУТ» takes them).
+TUT_CUTS = frozenset({"cutTut", "coaxCutTut"})
+TUT_TAKERS = frozenset({"insTut", "endCap", "coaxInsTut"})
+SOURCE_TYPES = frozenset({"cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"})
 
 
 class RouteError(ValueError):
@@ -39,6 +46,8 @@ class Block:
     ops: tuple[int, ...]
     final: bool = False
     components: tuple[Any, ...] = ()
+    # A source ПФ that prepares parts for several consumers: one kit per product (production plans it at factor 1).
+    kit: bool = False
 
 
 @dataclass(frozen=True)
@@ -46,6 +55,7 @@ class Edge:
     source: str
     target: str
     per_unit: Decimal = Decimal(1)
+    item: str = ""  # what flows along the edge, for the diagram; "" — not said
 
 
 @dataclass(frozen=True)
@@ -53,6 +63,9 @@ class Route:
     blocks: tuple[Block, ...]
     edges: tuple[Edge, ...]
     manual: bool = False
+    # The ПФ split the generator's rule made (domain/pf_split.py): production launches by its blocks like a hand-made
+    # one; a later hand edit («Править ПФ») is `manual` and wins over it on a rebuild.
+    generated: bool = False
 
     @property
     def final(self) -> Block:
@@ -69,6 +82,8 @@ class RouteOp:
     code: str = ""
     name: str = ""
     minutes: Decimal = Decimal(0)
+    side: str = ""  # «A» / «B» — the harness side the generator put the operation on, "" — none
+    key: str = ""   # the generator's opKey (shieldA1, insSpl…), "" — unknown
 
 
 @dataclass(frozen=True)
@@ -84,15 +99,19 @@ def _label(block: Block) -> str:
     return f"«{block.name or block.key}»"
 
 
-def _ordered(blocks: Sequence[Block], edges: Sequence[Edge], manual: bool) -> Route:
-    """Blocks by their first operation, operations ascending, edges by their blocks' order."""
+def _ordered(blocks: Sequence[Block], edges: Sequence[Edge], manual: bool, generated: bool = False) -> Route:
+    """Blocks by their first operation number, edges by their blocks' order. Operations of a derived block go
+    ascending; a hand-made (manual) block keeps the technologist's order — it IS the order of work inside the
+    semi-finished product (ПФ, owner + Vasily 13.10): «05, 03» in one ПФ is allowed, ETK numbers stay as they are."""
     blocks = sorted(
-        (Block(item.key, item.name, tuple(sorted(item.ops)), item.final, item.components) for item in blocks),
+        (Block(item.key, item.name, tuple(item.ops) if manual else tuple(sorted(item.ops)), item.final, item.components,
+               item.kit)
+         for item in blocks),
         key=lambda item: (min(item.ops, default=0), item.key),
     )
     order = {block.key: index for index, block in enumerate(blocks)}
     edges = sorted(edges, key=lambda item: (order.get(item.source, -1), order.get(item.target, -1)))
-    return Route(tuple(blocks), tuple(edges), manual)
+    return Route(tuple(blocks), tuple(edges), manual, generated)
 
 
 def derive_route(ops: Sequence[RouteOp], final_name: str = "") -> Route:
@@ -108,7 +127,7 @@ def derive_route(ops: Sequence[RouteOp], final_name: str = "") -> Route:
         key = f"b{op.position}"
         final = op.position == last
         blocks.append(Block(key, (final_name or op.name) if final else op.name, (op.position,), final))
-        if op.type == TUT_CUT:
+        if op.type in TUT_CUTS:
             tut.append(key)
             continue
         if op.type in SOURCE_TYPES or op.code.upper().startswith("CUT_"):
@@ -186,6 +205,14 @@ def _components(value: object, label: str) -> tuple[Any, ...]:
     return tuple(result)
 
 
+def _item(value: object, index: int) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise RouteError(f"подпись стрелки №{index} должна быть текстом")
+    return value.strip()
+
+
 def parse_route(
     raw: object, ops: Sequence[RouteOp], final_name: str = "", *, manual: bool = True,
 ) -> Route:
@@ -213,8 +240,10 @@ def parse_route(
         final = bool(item.get("final"))
         name = str(item.get("name") or "").strip()
         if not name and positions:
-            name = (final_name if final else "") or names.get(max(positions), "")
-        blocks.append(Block(key, name, positions, final, _components(item.get("components"), f"«{name or key}»")))
+            # The product of the block is what its last operation hands on: the last by the hand-made order.
+            name = (final_name if final else "") or names.get(positions[-1] if manual else max(positions), "")
+        blocks.append(Block(key, name, positions, final, _components(item.get("components"), f"«{name or key}»"),
+                            item.get("kit") is True))
     raw_edges = raw.get("edges")
     if raw_edges is None:
         raw_edges = []
@@ -229,7 +258,7 @@ def parse_route(
         if not source or not target:
             raise RouteError(f"у стрелки №{index} не указано, из какого блока в какой она ведёт")
         per_unit = _per_unit(item.get("per_unit"), labels.get(source, f"«{source}»"), labels.get(target, f"«{target}»"))
-        edges.append(Edge(source, target, per_unit))
+        edges.append(Edge(source, target, per_unit, _item(item.get("item"), index)))
     route = _ordered(blocks, edges, manual)
     validate_route(route, [op.position for op in ops])
     return route
@@ -358,16 +387,38 @@ def _number(value: Decimal, places: int = 4) -> int | float:
     return int(rounded) if rounded == rounded.to_integral_value() else float(rounded)
 
 
-def route_json(route: Route, totals: Mapping[str, BlockTotals]) -> dict[str, Any]:
-    """The `document.route` shape (ETK version 3)."""
+def route_levels(route: Route) -> dict[str, str]:
+    """Level label of every block for the diagram: the level is the longest path from a source (sources are level 1,
+    the product is the last level); «N» when the level holds one block, «N.k» when several — k by the blocks' order
+    (first operation)."""
+    incoming: dict[str, list[str]] = {block.key: [] for block in route.blocks}
+    for edge in route.edges:
+        incoming[edge.target].append(edge.source)
+    level: dict[str, int] = {}
+    for key in _topological(route):
+        level[key] = 1 + max((level[source] for source in incoming[key]), default=0)
+    members: dict[int, list[str]] = {}
+    for block in route.blocks:
+        members.setdefault(level[block.key], []).append(block.key)
     return {
-        "source": "manual" if route.manual else "derived",
+        key: str(number) if len(keys) == 1 else f"{number}.{index}"
+        for number, keys in members.items() for index, key in enumerate(keys, start=1)
+    }
+
+
+def route_json(route: Route, totals: Mapping[str, BlockTotals]) -> dict[str, Any]:
+    """The `document.route` shape (ETK version 3). `kit` and an edge's `item` are written only when set, so a scheme
+    without them keeps its shape; `label` is computed on every write, as the totals are."""
+    labels = route_levels(route)
+    return {
+        "source": "generated" if route.generated else "manual" if route.manual else "derived",
         "final": route.final.key,
         "blocks": [{
             "key": block.key,
             "name": block.name,
             "ops": list(block.ops),
             "final": block.final,
+            **({"kit": True} if block.kit else {}),
             "components": deepcopy(list(block.components)),
             "outputs": 1,
             "inputs": _number(totals[block.key].inputs),
@@ -375,6 +426,101 @@ def route_json(route: Route, totals: Mapping[str, BlockTotals]) -> dict[str, Any
             "unit_minutes": _number(totals[block.key].unit_minutes),
             "rolled_minutes": _number(totals[block.key].rolled_minutes),
             "rolled_ops": totals[block.key].rolled_ops,
+            "label": labels[block.key],
         } for block in route.blocks],
-        "edges": [{"from": edge.source, "to": edge.target, "per_unit": _number(edge.per_unit)} for edge in route.edges],
+        "edges": [{"from": edge.source, "to": edge.target, "per_unit": _number(edge.per_unit),
+                   **({"item": edge.item} if edge.item else {})} for edge in route.edges],
     }
+
+
+# ── ПФ documents (owner + Vasily 13.10): the ETK is cut into semi-finished products; a ПФ document is one block of
+# the scheme, not an entity of its own — computed from the document every time, nothing is stored.
+
+def _batch(document: Mapping[str, Any]) -> Decimal:
+    config = document.get("build_config") if isinstance(document.get("build_config"), Mapping) else {}
+    kit = document.get("kit") if isinstance(document.get("kit"), Mapping) else {}
+    for value in (config.get("partQty"), kit.get("part_quantity")):
+        number = _decimal_or_none(value)
+        if number is not None and number > 0:
+            return number
+    return Decimal(1)
+
+
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = Decimal(str(value).strip().replace(",", "."))
+    except (InvalidOperation, ValueError):
+        return None
+    return number if number.is_finite() else None
+
+
+def _sum_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Rows of one article (or name, without an article) and unit added up; a row without a number stays its own."""
+    result: list[dict[str, Any]] = []
+    index: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        article, name = str(row.get("art") or "").strip(), str(row.get("name") or "").strip()
+        unit = str(row.get("unit") or "").strip()
+        norm = _decimal_or_none(row.get("norm"))
+        key = (article or name, unit)
+        same = index.get(key) if norm is not None and (article or name) else None
+        if same is not None:
+            same["norm"] = _text(_decimal_or_none(same["norm"]) + norm)
+            continue
+        item = deepcopy(dict(row))
+        if norm is not None:
+            item["norm"] = _text(norm)
+            if article or name:
+                index[key] = item
+        result.append(item)
+    return result
+
+
+def _text(value: Decimal) -> str:
+    number = _number(value)
+    return str(number).replace(".", ",") if isinstance(number, float) else str(number)
+
+
+def pf_documents(document: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """The ПФ documents of an ETK — one per block of its `route` (pass a document with its route attached:
+    `etk_builder.attach_route`), in the scheme's order, numbered ПФ-1… Each one: its operations in the order of work
+    (`ops` — ETK positions, the order of `block.ops`), the components all of them take (one article added up), the
+    semi-finished pieces that come from outside the ПФ (incoming edges: the source ПФ, per one piece and per batch),
+    what it hands on (the result of its last operation) and its time norm. No route or no operations — empty."""
+    if not isinstance(document, Mapping):
+        return []
+    route = document.get("route") if isinstance(document.get("route"), Mapping) else {}
+    raw_blocks = [item for item in route.get("blocks") or [] if isinstance(item, Mapping) and item.get("key")]
+    operations = [item for item in document.get("operations") or [] if isinstance(item, Mapping)]
+    if not raw_blocks or not operations:
+        return []
+    batch = _batch(document)
+    number = {str(block["key"]): index for index, block in enumerate(raw_blocks, start=1)}
+    names = {str(block["key"]): str(block.get("name") or "") for block in raw_blocks}
+    result: list[dict[str, Any]] = []
+    for block in raw_blocks:
+        key = str(block["key"])
+        positions = [_position(value) for value in block.get("ops") or []]
+        own = [operations[position - 1] for position in positions if 0 < position <= len(operations)]
+        components = _sum_rows([row for operation in own for row in operation.get("components") or []
+                                if isinstance(row, Mapping)])
+        inputs = []
+        for edge in route.get("edges") or []:
+            if not isinstance(edge, Mapping) or str(edge.get("to") or "") != key or str(edge.get("from") or "") not in number:
+                continue
+            source = str(edge["from"])
+            per_unit = _decimal_or_none(edge.get("per_unit")) or Decimal(1)
+            inputs.append({"block": source, "number": number[source], "name": names[source],
+                           "per_unit": _number(per_unit), "norm": _text(per_unit * batch), "unit": "шт"})
+        inputs.sort(key=lambda item: item["number"])
+        last = own[-1] if own else {}
+        result.append({
+            "number": number[key], "key": key, "name": str(block.get("name") or ""),
+            "final": bool(block.get("final")), "ops": positions,
+            "components": components, "inputs": inputs,
+            "output": [deepcopy(dict(row)) for row in last.get("result") or [] if isinstance(row, Mapping)],
+            "minutes": block.get("minutes", 0), "unit_minutes": block.get("unit_minutes", 0),
+        })
+    return result

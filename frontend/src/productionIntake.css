@@ -1,0 +1,32 @@
+/* «Приёмка с производства»: свои мелочи; остальное — общие классы (.ship-take, .ship-accept-bar, .seg-tabs, .form-grid). */
+.intake-group { display: inline-flex; align-items: center; gap: 12px; }
+.intake-group .small { font-weight: 400; }
+.intake-page .seg-tabs { margin-bottom: 10px; }
+.intake-page .ship-handoff { margin-top: 16px; }
+.ship-inline .intake-location { width: 170px; flex: none; padding: 4px 8px; }
+.intake-page .data-table .grid th, .intake-page .data-table .grid td { padding-left: 6px; padding-right: 6px; }
+.intake-page .ship-take .ship-qty { width: 68px; }
+.intake-page .ship-inline { flex: none; }
+@media (pointer: coarse) {
+  .intake-page .ship-take .ship-qty, .intake-page .ship-accept-bar .primary, .intake-page .ship-accept-bar input { min-height: 40px; }
+  .intake-page .ship-take input[type="checkbox"], .intake-page .ship-accept-bar input[type="checkbox"] { width: 22px; height: 22px; }
+}
+/* Строка — одна линия (владелец 15.10): длинное обрезается «…», целиком — в подсказке; ширина имени — от экрана. */
+.intake-clip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.intake-name { max-width: clamp(200px, 16vw, 640px); }
+/* Плотные строки ≈ 32 px: поля количества и места — 26 px (на планшете min-height 40 из блока pointer: coarse). */
+.intake-page .data-table .grid td { padding-top: 3px; padding-bottom: 3px; }
+.intake-page .ship-take .ship-qty, .intake-page .intake-place { height: 26px; padding-top: 2px; padding-bottom: 2px; }
+.intake-stage { max-width: 120px; }
+.intake-place { width: 116px; padding: 3px 8px; }
+.intake-due, .intake-all { font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.intake-due.tone-danger { font-weight: 600; }
+.intake-all { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+@media (pointer: coarse) {
+  .intake-page .intake-place { min-height: 40px; }
+  .intake-page .intake-all input[type="checkbox"] { width: 22px; height: 22px; }
+}
+.intake-take { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; max-width: 150px; }
+.intake-take .ship-row-error { flex-basis: auto; max-width: 150px; white-space: normal; }
+/* Принятое (владелец 19.10): акт приёмки — своя зелёная строка с ГРН, без ввода; остаток — обычная строка ниже. */
+.intake-page .data-table .grid tbody tr.intake-act-row:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-ok) 12%, var(--card)); }

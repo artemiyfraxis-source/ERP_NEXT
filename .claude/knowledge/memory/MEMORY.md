@@ -2,10 +2,12 @@
 - [Owner working rules](owner-working-rules.md) — Russian replies, no questions, merge/deploy permissions, one server update per batch of parallel PRs, batch access asks
 - [Owner request queue](owner-request-queue.md) — owner piles requests mid-turn: numbered visible queue, dispatch each via orchestrator at once
 - [Owner goals 05.10](owner-goals-1005.md) — goal 1: minimal chain закупка→приёмка→выдача; goal 2: debug production; receiving answers
-- [Live data protocol](live-data-protocol.md) — no migration to prod without backup → rehearsal on a copy → row-count/integrity check; hold migration PRs until the pipeline exists
+- [Live data protocol](live-data-protocol.md) — no migration to prod without backup → rehearsal on a copy → row-count/integrity check; update.sh + rehearse.sh do it since 05.10
 - [Vasily code permission](vasily-code-permission.md) — TECHMAP-GRAPHER code may be ported/copied with attribution (author OK via owner, 06.10)
 - [Screens rules](erp-screens-rules.md) — every UI change: skill erp-screens + design-critique, demo run-demo.sh + shoot.mjs
-- [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, LAN + Tailscale, push.ps1
+- [Edit in windows](edit-in-windows.md) — every record card / edit form opens as a modal PageWindow, never a side panel
+- [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, update-server.yml release, backups (+ off-server copy), LAN + Tailscale
+- [Prod screen check](prod-screen-check.md) — I HAVE the owner's prod web login (~/.claude/secrets/erp-server.env): check released screens on prod myself, no local tabs, never ask for a login
 - [Staff and sites](staff-and-sites.md) — ЦАР/ЖУК fitters, masters, full-access roles, PIN
 - [SUPPLYMAP legacy diffs](supplymap-parity.md) — SUPPLYMAP retired 05.10; deliberate ERP differences, box numbers, out of scope
 - Modules: [projects](module-projects.md) · [techcards](module-techcards.md) · [reference DB](module-reference-db.md) · [warehouse](module-warehouse.md) · [fulfillment](module-fulfillment.md) · [production](module-production.md) · [shipping](module-shipping.md) · [procurement](module-procurement.md)
@@ -14,12 +16,27 @@
 - [Agent decisions to review](runlog-decisions.md) — «решено агентом — проверить» from RUNLOG, tagged by module
 - [Cloud threads setup](cloud-threads-setup.md) — cwd above three repos, no repo hooks/plugins, manual drift report
 - [Merge gotchas](erp-merge-gotchas.md) — CRLF conflicts, shallow SUPPLYMAP, Python 3.12, parallel merges
-- [Local demo](erp-local-demo.md) — owner's PC demo over Remote Control, ports, Auto-mode limits
-- [Gate red without failures](gate-red-without-failures.md) — pytest-current symlink exit 1 (fixed by conftest basetemp); drift tests blind for 9 of 11 modules
+- [Local demo](erp-local-demo.md) — local preview vs seeded demo, ports, Remote Control Auto-mode limits (old ERP_NEXT-demo folder gone)
+- [Gate red without failures](gate-red-without-failures.md) — pytest-current symlink exit 1 (fixed by conftest basetemp); `&&` chain stops at the first red stage
 - [Windows Python CRLF](windows-python-crlf.md) — Python text-mode writes CRLF into the LF-only repo; use newline=""
 - [Techcards per project](techcards-bulk.md) — projects wiped 30.09 (migration 0078); owner creates them, one project from Google only on request
-- [Parallel sessions and worktrees](parallel-sessions-worktrees.md) — never remove a worktree or commit on a branch another session owns
+- [Parallel sessions and worktrees](parallel-sessions-worktrees.md) — never remove a worktree or commit on a branch another session owns; reflog check, drive-letter case, own ports per worker
 - [Worktree symlink removal](worktree-symlink-removal.md) — worker worktrees link main node_modules + .venv: rmdir the links before removing a worktree
 - [Resume at limit reset](resume-at-limit-reset.md) — on «session limit» schedule a cron at the reset time and resume workers
 - [Repo public for CI](repo-public-ci.md) — owner made ERP_NEXT public 10.10 after Actions billing block; keep secrets/vuln write-ups out
 - [Crimp contacts protocol](crimp-contacts-protocol.md) — owner's old v5.2 terminal DB rules: keep REEL+BAG in one row, null-spec, N units; ERP keeps Molex hyphens; field gaps vs TerminalRecord
+- [Prod reference write](prod-reference-write.md) — owner wants DB fills written straight to prod: ssh + import_rows by natural key, old="" guard, backup-now
+- [ETK auto revisions](etk-auto-revisions.md) — since 19.10 reference/builder changes issue new ETK revisions automatically (ETK_AUTO_REVISION=1 on prod); no «Пересобрать»
+- [Coax contact depth](coax-contact-depth.md) — заглубление = body face → contact by tracing lines; SMA male E 0,38…1,14, female H+I+J 1,88…2,41; mm only
+- [U.FL is not MHF1](ufl-not-mhf.md) — owner 20.10: Hirose U.FL ≠ I-PEX MHF1/IPEX; never merge across series even with one supplier code
+- [Coax pin type](coax-pin-type.md) — angled = «пайка внутри корпуса», never crimp; 2.92/3.5 = «цанга»; seller «обжимной» is the shield, not the pin
+- [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
+- [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
+- [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range
+- [Connector 3D only on card](connector-3d-only-on-card.md) — 3D connector picture only on the catalog series card; ETK sketches: top view + mounting side; ПФ/scheme pictures: real top view, wire exit to the harness, never a box
+- [Maker docs from Russia](maker-docs-from-russia.md) — te.com/molex/mouser 403 by geo; Web Archive in browser, JST guide, chipdip/eicom mirrors, KiCad/LCSC for pin 1
+- [Maker docs over shop values](maker-docs-over-shop-values.md) — owner 17.10: the maker's document beats shop values; overwrite, keep the old one in the journal
+- [713К.4 agreed deviations](713k4-accepted-deviations.md) — НВ4 0,5 on SYM-001T-P0.6 and unused НШВ ferrules are owner-agreed; don't flag
+- [One article, one row](one-article-one-row.md) — owner 19.10: each supplier article its own row, cheapest seller; coax card = VNA + connectors from БД.КОАКС
+- [Connector gender names](connector-gender-names.md) — вилка = штыри, розетка = гнёзда во всех сериях; слово берётся из contacts (owner 17.10)
+- [Hook-up wire suppliers](hookup-wire-suppliers.md) — Снабкабель + Паритет base for монтажные провода; what each sells, price quirks, colours as a list

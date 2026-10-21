@@ -63,6 +63,26 @@ export function pageRule(options: PrintPageOptions): string {
  * "noopener,…")` always returned null (noopener hides the handle), so every print button silently did nothing.
  * An iframe has no popup blocker, works after an `await` and needs no window handle. The iframe is removed
  * after printing. */
+/** The site's CSP (`style-src 'self'`, backend/app/shared/security_headers.py) also governs the srcdoc frame: the
+ * browser drops its `<style>` blocks and `style="…"` attributes, and a form prints as bare text (PL 533К.11, owner
+ * 15.10.2026: «пока слабо»). CSSOM is not subject to that policy, so the same rules are laid on from here: the
+ * `<style>` text as a constructed sheet, every `style` attribute through `element.style`. */
+export function applyPrintStyles(doc: Document, html: string): void {
+  const css = [...html.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((match) => match[1]).join("\n");
+  const view = doc.defaultView as (Window & typeof globalThis) | null;
+  if (css && view && "adoptedStyleSheets" in doc && typeof view.CSSStyleSheet === "function") {
+    try {
+      const sheet = new view.CSSStyleSheet();
+      sheet.replaceSync(css);
+      doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+    } catch { /* an engine without constructed sheets keeps the <style> it was allowed */ }
+  }
+  doc.querySelectorAll<HTMLElement | SVGElement>("[style]").forEach((element) => {
+    const inline = element.getAttribute("style");
+    if (inline && !element.style.cssText) element.style.cssText = inline;
+  });
+}
+
 export function openPrintHtml(html: string): void {
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
@@ -70,6 +90,7 @@ export function openPrintHtml(html: string): void {
   frame.onload = () => {
     const win = frame.contentWindow;
     if (!win) { frame.remove(); return; }
+    if (frame.contentDocument) applyPrintStyles(frame.contentDocument, html);
     win.addEventListener("afterprint", () => frame.remove());
     win.focus();
     win.print();

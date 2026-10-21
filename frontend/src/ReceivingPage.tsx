@@ -12,6 +12,7 @@ import { usePurposeLabel } from "./purposeLabels";
 import { VIA_LABELS, purchasingItemsApi, type ItemBrief } from "./purchasingItemsApi";
 import { SupplierReturnPanel } from "./SupplierReturnPanel";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
+import { LoadMore } from "./LoadMore";
 
 const MANUAL_CHECKS = [
   "Механическое повреждение / брак",
@@ -648,7 +649,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
           />
         )}
       />
-      {nextCursor && <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => void reload(nextCursor)}>Показать ещё</button>}
+      {nextCursor && <LoadMore busy={loading || Boolean(busy)} token={lines.length} onMore={() => void reload(nextCursor)} />}
     </section>
   );
 }

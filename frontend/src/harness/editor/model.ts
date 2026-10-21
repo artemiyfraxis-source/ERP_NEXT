@@ -11,6 +11,8 @@ import { materializedContactWorldRepresentation } from "./materialized-contact-r
 import { terminalArticleLabel } from "./terminal-article-label";
 import { clearDecorationSpans } from "./e4-decoration-spans";
 import { wireBlankEnds, type WireBlankEnd } from "../WireBlankCatalog";
+import type { ConnectorHousing } from "../../connectorArt";
+import { housingFace, housingFaceEntry } from "./housing-face";
 
 export type EditorView = "e4" | "drawing";
 
@@ -280,6 +282,11 @@ export interface ConnectorInstance {
   readonly positions: Readonly<Record<EditorView, Point>>;
   readonly layerIds: Readonly<Record<EditorView, string>>;
   readonly libraryBinding?: ConnectorLibraryBinding;
+  /** Корпус из базы разъёмов (свободный соединитель): на чертеже рисуется его вид сверху. */
+  readonly housing?: ConnectorHousing;
+  /** Как корпус рисуется на чертеже: вид сверху (по умолчанию, каталог) или торец с гнёздами, из которых идут провода
+   *  (чертёж генератора ТК: housing-face.ts). */
+  readonly housingView?: "top" | "face";
 }
 
 export interface ConnectorTerminalCatalog {
@@ -1154,6 +1161,9 @@ export function connectorContactPosition(
     const point = connectorE4TableGeometry(connector).contactPoints[contactId];
     return point ? { x: origin.x + point.x, y: origin.y + point.y } : null;
   }
+  const face = connector.housing && connector.housingView === "face" ? housingFace(connector.housing, null, connector.schematic.orientation === "contacts-left") : null;
+  const pin = face ? housingFaceEntry(face, connector.contacts[index]!.number) : undefined;
+  if (pin) return { x: origin.x + pin.x, y: origin.y + pin.y };
   return { x: origin.x + 118, y: origin.y + 28 + index * 16 };
 }
 
@@ -1246,6 +1256,8 @@ function parseConnector(value: unknown): ConnectorInstance {
       drawing: requireText(layerIds.drawing, "Слой соединителя чертежа"),
     },
     libraryBinding,
+    ...(record.housing === undefined ? {} : { housing: parseConnectorHousing(record.housing) }),
+    ...(record.housingView === "face" || record.housingView === "top" ? { housingView: record.housingView } : {}),
   };
   validateConnectorLibraryMetadata(connector);
   connector = restoreTemplateContactNumbers(connector);
@@ -2120,6 +2132,17 @@ function requirePositive(value: unknown, name: string): number {
 function parsePoint(value: unknown): Point {
   const record = requireRecord(value, "Координата задана неверно.");
   return { x: requireNumber(record.x, "Координата X"), y: requireNumber(record.y, "Координата Y") };
+}
+
+/** Корпус хранится как есть (данные базы разъёмов); проверяется только то, без чего вид сверху не построить. */
+function parseConnectorHousing(value: unknown): ConnectorHousing {
+  const record = requireRecord(value, "Корпус соединителя задан неверно.");
+  const grid = record.grid;
+  if (!Number.isInteger(record.rows) || !Number.isInteger(record.cols) || (record.rows as number) < 1 || (record.cols as number) < 1 ||
+      !Array.isArray(grid) || grid.length > 8 || grid.some(row => !Array.isArray(row) || row.length > 100 || row.some(pin => !Number.isFinite(pin)))) {
+    throw new Error("Корпус соединителя задан неверно.");
+  }
+  return record as unknown as ConnectorHousing;
 }
 
 function requireRecord(value: unknown, message: string): Record<string, unknown> {

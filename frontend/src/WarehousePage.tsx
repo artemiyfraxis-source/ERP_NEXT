@@ -1,4 +1,5 @@
 import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { LoadMore } from "./LoadMore";
 import { urlParam } from "./navigation";
 import { SuggestInput } from "./SuggestInput";
 import { useStageOption } from "./StageOptions";
@@ -23,6 +24,7 @@ import {
 } from "./api";
 import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
+import { lotReceivedAt, printLotLabels } from "./lotLabel";
 import { countLabel } from "./format";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { UndoLast, WarehouseScanBar } from "./WarehouseScan";
@@ -169,6 +171,10 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     return () => observer.disconnect();
   }, [flat]);
 
+  /** The grouped table is ordered by the server over the whole filter (a page holds the top of the whole warehouse,
+   *  not of what happened to be loaded); the flat table keeps the id order. */
+  const serverOrder = () => flat ? {} : { sort: sort.key, desc: sort.desc, group: groupBy };
+
   /** The first server page only: the table is on screen after one request; the rest comes on demand. */
   async function reload() {
     const version = ++requestVersion.current;
@@ -176,7 +182,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     setLoading(true);
     setError("");
     try {
-      const page = await warehouseApi.list({ query, includeZero, warehouse });
+      const page = await warehouseApi.list({ query, includeZero, warehouse, ...serverOrder() });
       if (version !== requestVersion.current) return;
       setLots(mergeLots([], page.lots));
       setTotal(page.total);
@@ -199,7 +205,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       let next: string | null = cursor;
       let loaded = lots;
       do {
-        const page = await warehouseApi.list({ after: next, query, includeZero, warehouse });
+        const page = await warehouseApi.list({ after: next, query, includeZero, warehouse, ...serverOrder() });
         if (version !== requestVersion.current) return;
         loaded = mergeLots(loaded, page.lots);
         setLots(loaded);
@@ -223,7 +229,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   useEffect(() => {
     const timer = window.setTimeout(() => void reload(), 250);
     return () => window.clearTimeout(timer);
-  }, [query, warehouse, includeZero]);
+  }, [query, warehouse, includeZero, flat, sort.key, sort.desc, groupBy]);
 
   useEffect(() => {
     if (!itemsOn || lots.length === 0) { setLotItems({}); return; }
@@ -412,7 +418,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       </div>}
       {cursor && <div className="table-more">
         <span className="page-sub" role="status">Показано {lots.length} из {total}.{totalsState.error ? ` ${totalsState.error}.` : ""}</span>
-        <button className="secondary small" disabled={loadingMore || loading} onClick={() => void loadMore(false)}>{loadingMore ? "Загружаем…" : "Показать ещё"}</button>
+        <LoadMore busy={loadingMore || loading} token={lots.length} onMore={() => void loadMore(false)} />
         <button className="secondary small" disabled={loadingMore || loading} onClick={() => void loadMore(true)}>Загрузить всё</button>
       </div>}
       {!lots.length && !loading && <div className="empty">{includeZero ? "Склад пуст." : "Позиций с остатком нет. Включите «показывать нулевые», чтобы увидеть израсходованные партии."}</div>}
@@ -744,6 +750,7 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
   const [quantity, setQuantity] = useState("");
   const [storageLocation, setStorageLocation] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const printAfter = useRef(false);
   const [articleSource, setArticleSource] = useState("");
   // Already entered positions by article: pick one to copy its name/series/type, then change the article.
   const knownArticles = useMemo(() => {
@@ -832,6 +839,8 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
     <form className="panel manual-stock-form" noValidate onSubmit={async (event) => {
       event.preventDefault();
       if (submitting) return;
+      const withLabels = printAfter.current;
+      printAfter.current = false;
       const current = currentItem();
       const items = [...rows.map((row) => row.item), ...(current ? [current] : [])];
       if (!items.length) {
@@ -843,6 +852,14 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
         const result = await onAdded(items);
         if (!result) return;
         if (current) clearRow();
+        // «Внести и печатать этикетки»: по одной на каждую созданную партию, дата поступления — сегодня.
+        if (withLabels && result.assigned.length) {
+          const today = new Date().toISOString().slice(0, 10);
+          printLotLabels(result.assigned.map((row) => ({
+            grn: row.grn, article: row.article, name: items[row.i]?.name ?? "", quantity: `${row.quantity} ${row.unit}`,
+            place: row.storage_location, warehouse: row.warehouse, receivedAt: today,
+          })));
+        }
         const refused = result.errors.map(({ i, error }) => ({ item: items[i], error: `${i + 1} — ${error}` }));
         setRows(refused);
         // SUPPLYMAP wording (PortalApp.html: «Записано: N. Не приняты строки (M): i+1 — ошибка; …»).
@@ -915,6 +932,7 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
           setReport("");
         }}>+ В список</button>
         <button className="primary" disabled={busy || submitting}>{submitting ? "Вносим…" : pending > 1 ? `Внести (${pending})` : "Внести"}</button>
+        <button className="secondary" disabled={busy || submitting} onClick={() => { printAfter.current = true; }}>{pending > 1 ? `Внести и печать этикеток (${pending})` : "Внести и печать этикетки"}</button>
       </div>
     </form>
   );
@@ -1466,6 +1484,19 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
   const brief = itemsCtx.items[lot.id];
   const undoOn = useStageOption("warehouse.undo");
   const labelsOn = useStageOption(LABELS_OPTION);
+  const [printing, setPrinting] = useState(false);
+  const printLabel = async () => {
+    setPrinting(true);
+    try {
+      const receivedAt = await lotReceivedAt(lot.grn, lot.package);
+      printLotLabels([{
+        grn: lot.grn, package: lot.package, article: lot.article, name: lot.name, quantity: `${lot.balance} ${lot.unit}`,
+        place: lot.storage_location, warehouse: lot.warehouse, receivedAt,
+      }]);
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   return (
     <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
@@ -1481,7 +1512,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
       {itemsCtx.on && brief && <p className="lot-card-meta"><small className="muted lot-item-chip" title={`Связь: ${VIA_LABELS[brief.via]}`}>Позиция: {brief.name}</small></p>}
-      {(!readOnly || history || canLink) && <div className="lot-card-actions">
+      <div className="lot-card-actions">
         {!readOnly && <>
           <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
           {writtenOff && <button className="secondary small" disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => setDialog("return")}>Вернуть на склад</button>}
@@ -1492,7 +1523,8 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
         {!readOnly && itemsCtx.on && <button className="secondary small" disabled={disabled} onClick={() => setDialog("item")}>Позиция номенклатуры…</button>}
         {canLink && <button className="secondary small" title="Привязать к записи базы или создать запись" onClick={() => setDialog("link")}>В базу данных…</button>}
         {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
-      </div>}
+        {!(labelsOn && !readOnly) && <button className="secondary small" disabled={printing} onClick={() => void printLabel()}>{printing ? "Готовим этикетку…" : "Печать этикетки"}</button>}
+      </div>
       {!readOnly && undoOn && <UndoLast lot={lot} disabled={disabled} mutate={mutate} />}
       {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}

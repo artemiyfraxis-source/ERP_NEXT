@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -34,6 +35,8 @@ from .modules.production import ship_plan_api as production_ship_plan_api
 from .modules.production import leftovers_api as production_leftovers_api
 from .modules.production import downtime_api as production_downtime_api
 from .modules.production import baseline_api as production_baseline_api
+from .modules.production import machine_load_api as production_machine_load_api
+from .modules.production import board_api as production_board_api
 from .modules.shipping import api as shipping_api
 from .modules.references import api as references_api
 from .modules.references import wire_dia_api as references_wire_dia_api
@@ -45,6 +48,7 @@ from .modules.techcards import kitset_api as kitsets_api
 from .modules.techcards import assembly_api
 from .modules.techcards import harness_catalog_api
 from .modules.techcards import harness_api
+from .modules.techcards import td_issues_api
 from .shared.bulk_import import MAX_IMPORT_BODY_BYTES
 from .shared.http_auth import techcards_router_principal
 from .workflows import devices_api, employee_card_api, leave_api, search_api, stage_options_api
@@ -60,12 +64,23 @@ from .modules.purchasing import api_settings as purchasing_settings_api
 from .modules.purchasing import api_suppliers as purchasing_suppliers_api
 from .workflows import finished_goods_api
 from .modules.purchasing import api_upd as purchasing_upd_api
+from .workflows import production_intake_api
 
 app = FastAPI(
     title="Fraxis ERP Next",
     description="Gradual replacement for the Google Apps Script ERP contour",
     version="0.1.0",
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_without_input(_request: Request, error: RequestValidationError) -> JSONResponse:
+    """FastAPI's 422 echoes the whole rejected body back (`input`) — a password among it on a bad login (21.10).
+    Keep only where and what failed."""
+    return JSONResponse(status_code=422, content={"detail": [
+        {key: item[key] for key in ("type", "loc", "msg") if key in item} for item in error.errors()]})
+
+
 app.state.cookie_secure = os.getenv("ERP_COOKIE_SECURE", "1").strip().lower() not in {
     "0",
     "false",
@@ -89,6 +104,10 @@ app.include_router(
     techcards_api.router,
     dependencies=[Depends(techcards_router_principal)],
 )
+app.include_router(
+    td_issues_api.router,
+    dependencies=[Depends(techcards_router_principal)],
+)
 app.include_router(harness_catalog_api.router)
 app.include_router(identity_api.router)
 app.include_router(requests_api.router)
@@ -105,6 +124,8 @@ app.include_router(production_ship_plan_api.router)
 app.include_router(production_leftovers_api.router)
 app.include_router(production_downtime_api.router)
 app.include_router(production_baseline_api.router)
+app.include_router(production_machine_load_api.router)
+app.include_router(production_board_api.router)
 app.include_router(kitsets_api.router)
 app.include_router(assembly_api.router)
 app.include_router(harness_api.router)
@@ -124,6 +145,7 @@ for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasin
                purchasing_orders_api):
     app.include_router(_purchasing.router)
 app.include_router(finished_goods_api.router)
+app.include_router(production_intake_api.router)
 
 if database_url := os.getenv("ERP_DATABASE_URL"):
     configure_database(app, database_url)

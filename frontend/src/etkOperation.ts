@@ -2,6 +2,8 @@
 // режим пайки (жало и температура — в шаблонах они только в тексте шагов) и типовые дефекты, разобранные из
 // текста в список (рисунки «Норма | Брак» — etkDefectArt.ts). Считается при показе и печати, поэтому выданные ТК перевыпускать не нужно.
 
+import { opTypeName } from "./tcGenLogic";
+
 type Row = Record<string, unknown>;
 
 function obj(value: unknown): Row {
@@ -53,9 +55,12 @@ function isSoldering(operation: Row): boolean {
   return /^SDR/i.test(str(operation.code)) || /пайк|лужен/i.test(names);
 }
 
+/** Температура пайки и лужения по умолчанию (владелец 17.10: 240 °C, допуск ±10 °C). */
+export const SOLDER_DEFAULT_TEMPERATURE = "240 °C";
+
 /** Режим пайки операции: жало паяльника и температура. Сначала — параметры оборудования и текст шагов карты
  *  (параметры/программа ванны «200 °C»; в шагах «Паяльная станция, тонкое жало; t° 320–350 °C», допуск «(+/-) 10 °C»); чего в карте нет — по умолчанию
- *  для Sn63Pb37: паяльник 320–350 °C (от 370 °C — массивное жало), ванна лужения 250–270 °C. */
+ *  для Sn63Pb37: паяльник 240 °C, ванна лужения — те же 240 °C (владелец 17.10: «на пайке 240»). */
 export function solderMode(operation: Row): SolderMode | null {
   if (!isSoldering(operation)) return null;
   const card = obj(operation.card);
@@ -76,7 +81,7 @@ export function solderMode(operation: Row): SolderMode | null {
   const tolerance = toleranceMatch ? `±${toleranceMatch[1]} °C` : "±10 °C";
   const tipLine = stepText.split("\n").find((line) => /жал/i.test(line) && TIP_CLASSES.some(([pattern]) => pattern.test(line.split(/жал/i)[0])));
   if (method === "bath") {
-    return { method, tip: "Не требуется — лужение погружением в ванну", temperature: temperature || "250–270 °C", tolerance,
+    return { method, tip: "Не требуется — лужение погружением в ванну", temperature: temperature || SOLDER_DEFAULT_TEMPERATURE, tolerance,
       tipAssumed: false, temperatureAssumed: !temperature };
   }
   if (method === "induction") {
@@ -86,7 +91,7 @@ export function solderMode(operation: Row): SolderMode | null {
   const upper = Number((temperature.match(/(\d{3})\s*°/) || [])[1] || 0);
   const tipFromCard = tipLine ? TIP_CLASSES.find(([pattern]) => pattern.test(tipLine.split(/жал/i)[0]))?.[1] || "" : "";
   const tip = tipFromCard || (upper >= 370 ? TIP_CLASSES[2][1] : upper >= 350 ? TIP_CLASSES[3][1] : "Клиновидное, 1,6–2,4 мм");
-  return { method, tip, temperature: temperature || (upper >= 370 ? "350–380 °C" : "320–350 °C"), tolerance,
+  return { method, tip, temperature: temperature || SOLDER_DEFAULT_TEMPERATURE, tolerance,
     tipAssumed: !tipFromCard, temperatureAssumed: !temperature };
 }
 
@@ -156,6 +161,17 @@ export function parseDefects(raw: unknown): Defects {
   return { intro, groups: groups.filter((item) => item.items.length) };
 }
 
+/** Название операции ЭТК: имя карты, а когда оно только начало названия вида операции генератора («Резка» у резки
+ *  кабеля и резки ТУТ, «Монтаж» у ТУТ и втулки экрана, «Пайка» центрального контакта) — полное название вида, иначе
+ *  в маршруте коакса две «Резки» и две «Монтаж» подряд (владелец 15.10, ТК КБ1 796К.2). Считается при показе — выданные
+ *  ЭТК перевыпускать не нужно. */
+export function etkOperationName(cardName: string, type: unknown): string {
+  const name = cardName.trim();
+  const full = opTypeName(str(type));
+  if (!name || full === "Операция") return name;
+  return full.length > name.length && full.toLowerCase().startsWith(`${name.toLowerCase()} `) ? full : name;
+}
+
 /** Категория карточки по префиксу кода (SUPPLYMAP PortalApp.html TC_REC_CATS_ / tcRecCat_). */
 export const RECORD_CATEGORIES: Array<[string, string]> = [
   ["CUT", "Резка"], ["STRIP", "Разделка"], ["TWIST", "Свивка"], ["PRS", "Опрессовка"], ["SDR", "Пайка и лужение"],
@@ -165,4 +181,46 @@ export const RECORD_CATEGORIES: Array<[string, string]> = [
 export function recordCategory(code: string): string {
   const prefix = String(code).split("_")[0];
   return RECORD_CATEGORIES.find(([key]) => key === prefix)?.[1] ?? "Прочее";
+}
+
+/** Строка допуска шага: подпись («Сторона В», «Время», «Зазор») и значение («2–3 мм», «≤ 2,0 сек»). */
+export type ToleranceLine = { label: string; value: string };
+
+/** Допуск шага строками — каждое значение своей строкой (владелец 17.10: «почему допуски так мелко»): «Допуск:» в начале
+ *  лишнее, «(+/-) 10 °C» → «± 10 °C», «0,5 - 1,5 мм» → «0,5–1,5 мм»; части по переносу строки и «; ». Пусто и «-» —
+ *  допуска нет. Тот же разбор — на экране и в печати. */
+export function etkToleranceLines(raw: unknown): ToleranceLine[] {
+  const text = str(raw).trim();
+  if (!text || text === "-") return [];
+  return text.replace(/^допуск\s*:\s*/i, "").split(/\n|;\s+/).map((part) => part.trim()).filter((part) => part && part !== "-")
+    .map((part) => (etkToleranceIsReference(part) ? part : part
+      .replace(/\(\s*\+\s*\/\s*-\s*\)|\+\s*\/\s*-/g, "±")
+      .replace(/(\d)\s*-\s*(?=\d)/g, "$1–")
+      .replace(/\s{2,}/g, " ")))
+    .map((part) => {
+      const found = part.match(/^([^:\d]{1,40}):\s*(.+)$/);
+      return found ? { label: found[1].trim(), value: found[2].trim() } : { label: "", value: part };
+    });
+}
+
+/** Ссылка на стандарт или КД («IPC/WHMA-A-620F (Раздел 13)», «ГОСТ 23592-96», «Согласно КД») — не размер: цифры в
+ *  ней не выделяются. */
+export function etkToleranceIsReference(value: string): boolean {
+  return /IPC|WHMA|ГОСТ|ОСТ\b|\bКД\b|Раздел|ТУ\b/i.test(value);
+}
+
+/** Значение допуска кусками: числа с единицей и знаком (± 10 °C, 2–3 мм, ≤ 2,0 сек) — `strong`, остальное — текст. */
+export function etkToleranceParts(value: string): Array<{ text: string; strong: boolean }> {
+  if (etkToleranceIsReference(value)) return [{ text: value, strong: false }];
+  const pattern = /(?:[±≤≥<>]\s?)?\d+(?:[.,]\d+)?(?:\s?[–-]\s?\d+(?:[.,]\d+)?)?(?:\s?(?:мм|°\s?[CС]|сек|мин|с|%|Н|кгс|м))?(?![\p{L}\d])/gu;
+  const parts: Array<{ text: string; strong: boolean }> = [];
+  let at = 0;
+  for (const match of value.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    if (start > at) parts.push({ text: value.slice(at, start), strong: false });
+    parts.push({ text: match[0], strong: true });
+    at = start + match[0].length;
+  }
+  if (at < value.length) parts.push({ text: value.slice(at), strong: false });
+  return parts.length ? parts : [{ text: value, strong: false }];
 }

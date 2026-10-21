@@ -1,55 +1,141 @@
 import type { CableRow } from "./api";
 
-/* «Коаксиальные кабели» grouped by series/family (owner 13.10.2026): RG-174, RG-316 … one group per RG number, LMR as one
-   family, every other mark by its first word. The family comes from the card when the row has one, else from the mark. */
+/* «Коаксиальные кабели» grouped by the mark family. 16.10.2026 the owner asked for a sort by the head of the mark («взять
+   за головную например RG, SF, SAT итд»); 19.10.2026, seeing every supplier article with its own materials as its own
+   row, he said: «почему все RG в одном, почему все D-FB в одном». So a group is now the family — the head letters plus
+   the numbers of the mark as `coaxPlace` reads them: RG-58 (RG-58, RG-58 A/U, RG-58 CU PE AL PVC …), RG-6, RG-174, 5D-FB,
+   8D-FB, 10D-FB (each its own), LMR-195, RF 1.37, РК50-2-22 … Spellings fold together (RG58 = RG-58, 5D FB = 5D-FB). The
+   label is the family's base mark as written in the list (the row without a variant, else the shortest mark). A family
+   of one row is no group: such rows of one head gather in «<head> — разные», before that head's families; a head with
+   only one such row overall goes to «Прочие». Marks that start with an inch size (1/2″, 7/8 Baltic Signal …) stay one
+   group «Фидеры». Order: by head (Latin, then Cyrillic), then by the family's numbers (RG-6, RG-11, RG-58, RG-142 …;
+   5D-FB, 8D-FB, 10D-FB); «Фидеры» and «Прочие» last; inside a group the base mark before its variants (A/U, C/U, FEP,
+   UF…). Spellings are normalised only for grouping and order; the marks stay as written. A column header sort inside a
+   group still overrides it. */
 
-export const NO_FAMILY = "Без семейства";
-const RG = /^rg[-\s]?(\d+)(?![.\d])/i; // «RG1.37» is a micro-coax of its own, not RG-1
+export const NO_FAMILY = "Без марки";
+export const FEEDERS = "Фидеры";
+export const OTHERS = "Прочие";
 
-/** «RG316», «RG-316 A/U», «rg 316» → «RG-316»; «LMR-195», «LMR400» → «LMR»; else the mark up to the first space/digit group. */
-export function coaxFamilyName(text: string): string {
-  const name = String(text ?? "").trim();
-  if (!name) return NO_FAMILY;
-  const rg = name.match(RG);
-  if (rg) return `RG-${Number(rg[1])}`;
-  if (/^lmr/i.test(name)) return "LMR";
-  const word = name.split(/[\s/]+/)[0].replace(/[-_]?\d.*$/, "");
-  return (word || name.split(/\s+/)[0]).toUpperCase();
+type Place = { head: string; numbers: number[]; variant: string };
+
+const decimal = (text: string) => Number(text.replace(",", "."));
+const text = (a: string, b: string) => a.localeCompare(b, "ru", { numeric: true, sensitivity: "base" });
+
+/** The head of a mark, its numbers in order and the variant suffix after them ("" — the base mark). */
+export function coaxPlace(mark: string): Place {
+  const name = String(mark ?? "").trim().replace(/\s+/g, " ");
+  if (!name) return { head: NO_FAMILY, numbers: [], variant: "" };
+  let match: RegExpMatchArray | null;
+  // «1/2″», «7/8 Baltic Signal …»: an inch size first.
+  if ((match = name.match(/^(\d+)\/(\d+)\s*(?:"|″|'')?(.*)$/))) {
+    return { head: FEEDERS, numbers: [Number(match[1]) / Number(match[2])], variant: match[3].trim() };
+  }
+  // «5D-FB Cu»: the size before the letters.
+  if ((match = name.match(/^(\d+)\s*D[-\s]?FB(.*)$/i))) return { head: "D-FB", numbers: [Number(match[1])], variant: variantOf(match[2]) };
+  match = name.match(/^([A-Za-zА-Яа-яЁё]+)(.*)$/);
+  if (!match) return { head: OTHERS, numbers: [], variant: name };
+  const head = match[1].toUpperCase();
+  const rest = match[2];
+  // The numbers of the mark: «RG-58 C/U» → 58; «RF 1.37» → 1.37; «РК50-2-22» → 50, 2, 22; «SF-141 100 Ом» → 141.
+  const body = rest.match(/^[-\s]*(\d+(?:[.,]\d+)?(?:-\d+(?:[.,]\d+)?)*)(.*)$/);
+  if (!body) return { head, numbers: [], variant: variantOf(rest) };
+  return { head, numbers: body[1].split("-").map(decimal), variant: variantOf(body[2]) };
 }
 
-// The card's own `family` is a descriptive class («Гибкий тонкий»), not a series: the family comes from the mark.
-export const coaxFamily = (row: CableRow): string => coaxFamilyName(row.cable);
+const variantOf = (rest: string) => rest.replace(/^[-\s/]+/, "").trim();
 
-/** Order of groups: RG by number, LMR, other families A–Я, «Прочие семейства», the unnamed last. */
-export function compareFamilies(a: string, b: string): number {
-  const rank = (name: string) => name === NO_FAMILY ? 4 : name === OTHER_FAMILIES ? 3 : RG.test(name) ? 0 : name === "LMR" ? 1 : 2;
-  const number = (name: string) => Number(name.match(RG)?.[1] ?? 0);
-  return rank(a) - rank(b) || number(a) - number(b) || a.localeCompare(b, "ru", { numeric: true });
+/** Order of two marks inside one group: by their numbers, the base mark before its variants, then the spelling. */
+function compareInGroup(a: string, b: string): number {
+  const left = coaxPlace(a);
+  const right = coaxPlace(b);
+  for (let index = 0; index < Math.max(left.numbers.length, right.numbers.length); index += 1) {
+    const difference = (left.numbers[index] ?? -1) - (right.numbers[index] ?? -1);
+    if (difference) return difference;
+  }
+  return Number(left.variant !== "") - Number(right.variant !== "") || text(left.variant, right.variant) || text(a, b);
 }
 
-/** A family of one cable would be a header as tall as its row (RG-141, RG-142, RG-178 …): those gather in one group. */
-export const OTHER_FAMILIES = "Прочие семейства";
+const LAST = [FEEDERS, OTHERS, NO_FAMILY];
+const latin = (name: string) => /^[A-Z]/.test(name);
 
-/** Group label per row: the family, or «Прочие семейства» when the family has a single cable (the unnamed stay apart). */
-export function coaxGroupOf(rows: CableRow[]): (row: CableRow) => string {
-  const sizes = new Map<string, number>();
-  for (const row of rows) sizes.set(coaxFamily(row), (sizes.get(coaxFamily(row)) ?? 0) + 1);
-  return (row) => {
-    const family = coaxFamily(row);
-    return family !== NO_FAMILY && sizes.get(family) === 1 ? OTHER_FAMILIES : family;
+type Slot = { label: string; head: string; rank: number; numbers: number[]; own?: string };
+const familyKey = (place: Place) => `${place.head}|${place.numbers.join("-")}`;
+const SINGLES = " — разные";
+
+/** Where each row of the list goes: its family's group, or «<head> — разные», or «Прочие». Keyed by the mark as written. */
+function layout(rows: CableRow[]): (cable: string) => Slot {
+  const families = new Map<string, string[]>();
+  for (const item of rows) {
+    const place = coaxPlace(item.cable);
+    if (LAST.includes(place.head)) continue;
+    const key = familyKey(place);
+    const marks = families.get(key) ?? [];
+    marks.push(item.cable);
+    families.set(key, marks);
+  }
+  const singlesPerHead = new Map<string, number>();
+  for (const [key, marks] of families) {
+    if (marks.length === 1) singlesPerHead.set(key.split("|")[0], (singlesPerHead.get(key.split("|")[0]) ?? 0) + 1);
+  }
+  const labels = new Map<string, string>();
+  for (const [key, marks] of families) {
+    const pool = marks.filter((mark) => coaxPlace(mark).variant === "");
+    labels.set(key, [...(pool.length ? pool : marks)].sort((a, b) => Number(b.includes("-")) - Number(a.includes("-")) || a.length - b.length || text(a, b))[0]);
+  }
+  return (cable) => {
+    const place = coaxPlace(cable);
+    if (LAST.includes(place.head)) return { label: place.head, head: place.head, rank: 1, numbers: place.numbers };
+    const key = familyKey(place);
+    if ((families.get(key)?.length ?? 0) > 1) return { label: labels.get(key) ?? cable, head: place.head, rank: 1, numbers: place.numbers };
+    if ((singlesPerHead.get(place.head) ?? 0) > 1) return { label: place.head + SINGLES, head: place.head, rank: 0, numbers: [] };
+    return { label: OTHERS, head: OTHERS, rank: 1, numbers: [], own: place.head };
   };
 }
 
-/** Rows by group (single-cable families gathered into «Прочие семейства» before the unnamed), then family, then mark. */
-export function sortCoax(rows: CableRow[]): CableRow[] {
-  const group = coaxGroupOf(rows);
-  return [...rows].sort((a, b) => compareFamilies(group(a), group(b)) || compareFamilies(coaxFamily(a), coaxFamily(b))
-    || a.cable.localeCompare(b.cable, "ru", { numeric: true, sensitivity: "base" }));
+function compareSlots(a: Slot, b: Slot): number {
+  const last = LAST.indexOf(a.head) - LAST.indexOf(b.head);
+  if (last) return last;
+  if (LAST.includes(a.head)) { // inside «Прочие» the marks go by their own head letters
+    const [left, right] = [a.own ?? "", b.own ?? ""];
+    return Number(!latin(left)) - Number(!latin(right)) || text(left, right);
+  }
+  const byHead = Number(!latin(a.head)) - Number(!latin(b.head)) || text(a.head, b.head);
+  if (byHead || a.rank !== b.rank) return byHead || a.rank - b.rank;
+  for (let index = 0; index < Math.max(a.numbers.length, b.numbers.length); index += 1) {
+    const difference = (a.numbers[index] ?? -1) - (b.numbers[index] ?? -1);
+    if (difference) return difference;
+  }
+  return text(a.label, b.label);
 }
 
-type Naming = { full_name?: string; aliases?: Array<{ alias: string }> };
-/** Full name and aliases the card carries (the API sends them; the shared `CoaxCard` type does not list them). */
-export const coaxNaming = (row: CableRow): { fullName: string; aliases: string[] } => {
-  const card = (row.card ?? {}) as Naming;
-  return { fullName: card.full_name?.trim() ?? "", aliases: (card.aliases ?? []).map((item) => item.alias).filter(Boolean) };
+/** Group label per row: its mark family, «<head> — разные» for single-row families, «Прочие» for a lone one. */
+export function coaxGroupOf(rows: CableRow[]): (row: CableRow) => string {
+  const slot = layout(rows);
+  return (row) => slot(row.cable).label;
+}
+
+/** Catalogue order of two rows within a list: group, then the mark's numbers and variant. */
+export function compareCoaxRows(rows: CableRow[]): (a: CableRow, b: CableRow) => number {
+  const slot = layout(rows);
+  return (a, b) => compareSlots(slot(a.cable), slot(b.cable)) || compareInGroup(a.cable, b.cable);
+}
+
+/** Rows in catalogue order, without touching the input. */
+export function sortCoax(rows: CableRow[]): CableRow[] {
+  return [...rows].sort(compareCoaxRows(rows));
+}
+
+type Naming = { name?: string; aliases?: Array<{ alias: string; kind?: string; supplier?: string }> };
+const nameKey = (value: string) => String(value || "").toLowerCase().replace(/[\s-]/g, "");
+/** Other names of the very cable of the row (the API sends the card's aliases; the shared `CoaxCard` type does not list
+    them): a spelling of the mark, a supplier's name without materials in it, an article with its supplier. A family
+    card's names belong to another cable; a name that only repeats the mark or the card is not shown (owner 19.10.2026:
+    «разные артикулы кабелей записал в одно» — offers of other materials are no aliases since). */
+export const coaxOtherNames = (row: CableRow): string[] => {
+  if (!row.card || !row.card_exact) return [];
+  const card = row.card as Naming;
+  const own = new Set([nameKey(row.cable), nameKey(card.name ?? "")]);
+  return (card.aliases ?? []).filter((item) => item.alias && !own.has(nameKey(item.alias)))
+    .map((item) => item.kind === "supplier_article" ? `арт. ${item.alias}${item.supplier ? ` (${item.supplier})` : ""}` : item.alias);
 };

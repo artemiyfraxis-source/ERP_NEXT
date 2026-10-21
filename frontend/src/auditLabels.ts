@@ -158,6 +158,7 @@ const EVENT_NAMES: Record<string, string> = {
   "techcards.harness_component_created": "Шаблон компонента создан",
   "techcards.harness_component_published": "Опубликована версия шаблона",
   "techcards.operation_library_replaced": "Библиотека операций обновлена",
+  "techcards.operation_library_loaded": "Библиотека операций загружена",
   "techcards.template_sheet_saved": "Шаблон-лист сохранён",
   "techcards.template_sheet_deleted": "Шаблон-лист удалён",
   "techcards.erp_templates_seeded": "Шаблоны ERP загружены",
@@ -232,7 +233,8 @@ const DETAIL_LABELS: Record<string, string> = {
 /* Уровни доступа по ключу: `level` и `access_level` в деталях событий хранят ключ, а не подпись. */
 const LEVEL_NAMES: Record<string, string> = {
   superadmin: "Суперадминистратор", admin: "Администратор", commercial: "Коммерческое руководство",
-  tech_lead: "Технический руководитель", foreman: "Бригадир", operator: "Оператор",
+  tech_lead: "Технический руководитель", pm: "Менеджер по проектам", storekeeper: "Кладовщик", foreman: "Бригадир",
+  operator: "Оператор",
 };
 const LEVEL_KEYS = new Set(["level", "access_level"]);
 

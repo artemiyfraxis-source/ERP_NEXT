@@ -126,3 +126,44 @@ def test_last_confirmed_box_is_handed_to_matching_finished_good_grn_once():
     assert receipt.grn == accepted.grn
     assert receipt.source_box_id == box.id
     engine.dispose()
+
+
+def _handed(factory, task, operator, master, now, good, number: int, quantity: int):
+    box = ProductionBox.create(
+        task_id=task.id, operation_id=task.operations[0].id, item=task.item,
+        operation_position=1, operator_id=operator.id, created_at=now,
+    ).add_output(Decimal(quantity))
+    box = box.close(format_box_number(number), operator.name, now).confirm(master.name, now)
+    with factory() as uow:
+        uow.boxes.save(box)
+        uow.commit()
+    box, _inspection, _serials = inspect_box(InspectBoxCommand(
+        box_id=box.id, expected_version=box.version, accepted=quantity, rejected=0,
+        defect_character="", defect_description="", instrument_ids=(), actor=master, now=now,
+    ), factory())
+    return handoff_box(HandoffBoxCommand(
+        box_id=box.id, expected_version=box.version, actor=master, now=now, finished_good_id=good.id,
+    ), factory())
+
+
+def test_each_box_handed_over_is_its_own_acceptance_act_with_its_own_grn():
+    """Владелец 19.10.2026: «когда идёт приёмка разными частями — ГРН один и тот же» — у каждой части свой ГРН."""
+    engine, _sessions, factory, master, operator, task, _line_id, now = stage_three_setup(fulfillment=False)
+    good = FinishedGood.create(
+        project="591K.3", item_index="КБ1", customer="Заказчик", article="", name="Жгут", ordered=Decimal("10"), unit="шт",
+    )
+    with factory() as uow:
+        uow.goods.add(good)
+        uow.commit()
+
+    _box1, first_good, first = _handed(factory, task, operator, master, now, good, 1, 4)
+    _box2, second_good, second = _handed(factory, task, operator, master, now, good, 2, 3)
+
+    assert first.grn == "ГП.26.0000001" == first_good.grn == second_good.grn
+    assert second.grn == "ГП.26.0000002"
+    with factory() as uow:
+        acts = uow.goods.acts([good.id])[good.id]
+    assert [(act.grn, act.quantity, act.move_id is not None) for act in acts] == [
+        ("ГП.26.0000001", Decimal("4"), True), ("ГП.26.0000002", Decimal("3"), True),
+    ]
+    engine.dispose()

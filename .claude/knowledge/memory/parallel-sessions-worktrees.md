@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: be43bccf-ce4c-4562-96ff-e0fbf3ca21a2
-  modified: 2026-10-04T15:27:30.874Z
+  modified: 2026-10-17T12:02:18.129Z
 ---
 
 On 2026-10-04 two orchestrator sessions ran at once on the owner's PC (erp-next-5b and erp-next-e7). e7 saw a
@@ -25,4 +25,11 @@ leaving a gutted directory.
 - Unsure whose a worktree/branch is → ask the owning session via `SendMessage` (ListAgents) before touching it.
 - An owner's screenshot of another session's report with no text is context, not an assignment to take that work over.
 - Tell workers to commit a WIP early so a lost worktree doesn't lose everything.
+- Before rebasing/releasing the main checkout's branch, check `git reflog` for fresh merges: a live peer session may be
+  orchestrating on it (17.10: batch-1017b was rebased under erp-next-23). Release from a separate branch + worktree.
+- `erp-worker` / `isolation: "worktree"` can refuse to start when the session cwd's drive letter case (`c:` vs `C:`)
+  differs from git's path. Workaround: `git worktree add ../erp-<task>` + junctions, run a general-purpose agent there;
+  unlink the junctions before removing that worktree ([[worktree-symlink-removal]]).
+- Workers that start the app need their own ports (14.10: three workers collided on 8021/8031/8047) — give each
+  `ERP_API_PORT` / `ERP_WEB_PORT` in the brief (defaults 8021/5176 belong to the owner's preview, [[erp-local-demo]]).
 - Related: [[erp-merge-gotchas]], [[owner-working-rules]].

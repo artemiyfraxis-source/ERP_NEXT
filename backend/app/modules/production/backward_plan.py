@@ -10,8 +10,13 @@
 допуском, у которого она начнётся позже всех: окно ищется назад от «закончить к» в обход его занятости и отсутствий.
 Порядок готовых: позднее «закончить к» раньше, потом номер ПЗ и этап — от больших. Всё детерминировано.
 
-Упрощения (решено агентом): полная подготовка по карте у каждой операции (без экономии наладки), станки не
-ограничивают, вход отдаётся всем количеством (передаточные партии не учитываются) — обратный план осторожнее
+Станки (владелец, 16.10 «загрузка станков»): операция занимает станок каждой своей операцией ЭТК (у ПФ — каждым своим
+станком) по правилу загрузки станков (machine_load). Станок в окне уже занят всеми единицами — операция уходит раньше
+ровно настолько, чтобы её занятость станка кончилась к началу самой поздней мешающей, как при занятости монтажника. Если
+из-за этого она встаёт раньше «сейчас» — предупреждение «Станок … занят …». Операции без шагов ЭТК станки не ограничивают.
+
+Упрощения (решено агентом): полная подготовка по карте у каждой операции (без экономии наладки), вход отдаётся всем
+количеством (передаточные партии не учитываются) — обратный план осторожнее
 прямого, поэтому «начать не позже» не обещает лишнего. Занятость в прошлом не мешает: операция, которой не хватило
 времени, встаёт раньше «сейчас», и на сколько раньше — столько рабочего времени и не хватает. Ничего не пишет."""
 
@@ -26,6 +31,7 @@ from uuid import UUID
 from .autoplan import AUTOPLAN_SITE, AutoplanInput, Unplaced
 from .domain import ProductionOperation, ProductionValidationError, clock_between, clock_seconds, rewind_clock
 from .launchable import stage_name
+from .machine_load import lay_out, operation_occupancies, peak, planned_windows
 from .scheduling import _allowed, _rate, network_order
 
 _SLOT_ATTEMPTS = 400
@@ -114,8 +120,22 @@ class _Backward:
                 if item.finish > item.start and item.finish > data.start
             ] for operator_id in data.team
         }
+        # Станки: занятость назначенной работы по шагам ЭТК, прошлое не мешает.
+        self.machines: dict[str, list[tuple[datetime, datetime]]] = {}
+        self.labels: dict[str, str] = {}
+        for task in data.tasks:
+            for operation in task.operations:
+                steps = data.steps.get(operation.id)
+                for step in steps or ():
+                    self.labels.setdefault(step.machine, step.machine_label or step.machine)
+                if operation.id in data.free or not steps:
+                    continue
+                for item in operation_occupancies(task, operation, steps, planned_windows(operation), data.holidays, data.shift):
+                    if item.finish > data.start:
+                        self.machines.setdefault(item.machine, []).append((item.start, item.finish))
         self.slots: dict[UUID, LatestSlot] = {}
         self.unplaced: dict[UUID, str] = {}
+        self.warnings: list[str] = []
 
     def bound(self, operation_id: UUID) -> datetime:
         """«Закончить к»: срок или начало самого раннего потребителя (расставленного или назначенного вручную)."""
@@ -138,28 +158,66 @@ class _Backward:
             key=self.order,
         )
 
-    def slot(self, operation: ProductionOperation, operator_id: UUID, bound: datetime) -> tuple[datetime, datetime] | None:
+    def machine_use(self, operation: ProductionOperation, start: datetime, finish: datetime) -> list[tuple[str, datetime, datetime]]:
+        """Где операция в окне занимает станки: шаги ЭТК тем же расчётом, что загрузка станков."""
+        steps = self.data.steps.get(operation.id)
+        if not steps:
+            return []
+        units = self.task_of[operation.id].operation_units(operation.id)
+        return [
+            (step.machine, begin, end)
+            for step, begin, end in lay_out(steps, start, finish, units, self.data.holidays, self.data.shift)
+        ]
+
+    def machine_clash(self, operation: ProductionOperation, start: datetime, finish: datetime) -> tuple[str, datetime, int] | None:
+        """Станок окна, уже занятый всеми единицами: (станок, начало занятости операции на нём, на сколько секунд смены
+        уйти раньше, чтобы кончить к началу самой поздней мешающей). Из нескольких — наименьший сдвиг."""
+        data = self.data
+        best: tuple[str, datetime, int] | None = None
+        for machine, begin, end in self.machine_use(operation, start, finish):
+            overlapping = [
+                (item_start, item_finish) for item_start, item_finish in self.machines.get(machine, ())
+                if item_start < end and item_finish > begin
+            ]
+            if not overlapping or peak(overlapping, begin, end) < max(1, data.capacity.get(machine, 1)):
+                continue
+            shift = max(1, clock_between(max(item_start for item_start, _ in overlapping), end, data.holidays, data.shift))
+            if best is None or shift < best[2]:
+                best = (machine, begin, shift)
+        return best
+
+    def slot(
+        self, operation: ProductionOperation, operator_id: UUID, bound: datetime,
+    ) -> tuple[datetime, datetime, tuple[str, datetime] | None] | None:
+        """Самое позднее окно и первый станок, из-за которого пришлось уйти раньше (станок, начало его занятости)."""
         data = self.data
         task = self.task_of[operation.id]
-        rate = _rate(data.skills, operation.code, (operator_id,))
+        rate = _rate(data.skills, operation.skill_codes, (operator_id,))
         net = ceil(operation.setup_seconds + operation.seconds_per_unit * task.operation_units(operation.id) / (rate if rate > 0 else Decimal(1)))
         clock = clock_seconds(net, data.shift)
         finish = _latest_moment(bound, data.holidays, data.shift)
+        machine_hit: tuple[str, datetime] | None = None
         for _ in range(_SLOT_ATTEMPTS):
             start = rewind_clock(finish, clock, data.holidays, data.shift)
             overlapping = [busy_start for busy_start, busy_finish in self.busy.get(operator_id, ()) if busy_start < finish and busy_finish > start]
-            if not overlapping:
-                return start, finish
-            finish = _latest_moment(max(overlapping), data.holidays, data.shift)
+            if overlapping:
+                finish = _latest_moment(max(overlapping), data.holidays, data.shift)
+                continue
+            clash = self.machine_clash(operation, start, finish)
+            if clash is None:
+                return start, finish, machine_hit
+            machine, begin, shift = clash
+            machine_hit = machine_hit or (machine, begin)
+            finish = _latest_moment(rewind_clock(finish, shift, data.holidays, data.shift), data.holidays, data.shift)
         return None
 
     def place(self, operation_id: UUID) -> None:
         operation = self.ops[operation_id]
         bound = self.bound(operation_id)
-        best: tuple[tuple, UUID, datetime, datetime] | None = None
+        best: tuple[tuple, UUID, datetime, datetime, tuple[str, datetime] | None] | None = None
         allowed = False
         for index, operator_id in enumerate(self.data.team):
-            if not _allowed(self.data.skills, operation.code, operator_id):
+            if not _allowed(self.data.skills, operation.skill_codes, operator_id):
                 continue
             allowed = True
             try:
@@ -177,9 +235,18 @@ class _Backward:
                 f"Нет монтажников {AUTOPLAN_SITE} с допуском к операции {operation.code or stage_name(operation.stage)} — заполните компетенции"
             )
             return
-        _, operator_id, start, finish = best
+        _, operator_id, start, finish, machine_hit = best
         self.busy.setdefault(operator_id, []).append((start, finish))
+        for machine, begin, end in self.machine_use(operation, start, finish):
+            self.machines.setdefault(machine, []).append((begin, end))
         self.slots[operation_id] = LatestSlot(self.task_of[operation_id].id, operation_id, operator_id, start, finish)
+        if machine_hit is not None and start < self.data.start:
+            machine, moment = machine_hit
+            task = self.task_of[operation_id]
+            self.warnings.append(
+                f"Станок {self.labels.get(machine, machine)} занят {moment:%d.%m}: {task.number} · этап {operation.position} "
+                f"«{stage_name(operation.stage)}» уходит раньше «сейчас» — к отгрузке не успевает"
+            )
 
     def run(self) -> None:
         pending = {operation_id for operation_id in self.data.free if operation_id in self.ops}
@@ -205,7 +272,7 @@ def backward_plan(data: AutoplanInput, ship_date: date) -> BackwardResult:
     due = due_moment(ship_date, data.start.tzinfo, data.holidays, data.shift)
     planner = _Backward(data, due)
     planner.run()
-    warnings: list[str] = []
+    warnings: list[str] = list(planner.warnings)
     for task in data.tasks:
         if not any(operation.id in data.free for operation in task.operations):
             continue

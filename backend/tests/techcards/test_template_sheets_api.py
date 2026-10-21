@@ -8,15 +8,12 @@ from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.identity import Actor
 from app.modules.techcards.template_sheets import captured_block, make_template_id, slugify
 
-from .test_operation_card_api import SOURCE_COMMIT, _template, operation_library_api  # noqa: F401
+from .library import load_library
+from .test_operation_card_api import _template, operation_library_api  # noqa: F401
 
 
 def _import(client, *templates):
-    response = client.put(
-        "/api/techcards/templates/supplymap-library",
-        json={"sourceCommit": SOURCE_COMMIT, "templates": list(templates)},
-    )
-    assert response.status_code == 200, response.text
+    load_library(app.state.techcards_uow_factory, templates)
 
 
 def _grid(code: str, step: str = "Выполнить операцию") -> list[list[str]]:
@@ -98,19 +95,6 @@ def test_edit_through_draft_updates_the_same_template(operation_library_api):
     detail = operation_library_api.get("/api/techcards/templates/cut-wire").json()
     assert detail["document"]["steps"][0]["text"] == "Отрезать провод"
     assert detail["category"] == "Резка"
-
-
-def test_saved_sheet_survives_library_reimport(operation_library_api):
-    _import(operation_library_api, _template("cut-wire", "CUT_WIRE"))
-    draft = operation_library_api.post("/api/techcards/template-sheets/drafts", json={"template_id": "cut-wire"}).json()
-    operation_library_api.put(f"/api/techcards/template-sheets/drafts/{draft['id']}", json={"rows": _grid("CUT_WIRE", "Правка ERP")})
-    operation_library_api.post(f"/api/techcards/template-sheets/drafts/{draft['id']}/save", json={"title": "CUT_WIRE | Операция"})
-
-    _import(operation_library_api, _template("cut-wire", "CUT_WIRE"), _template("strip", "STRIP_WIRE"))
-
-    detail = operation_library_api.get("/api/techcards/templates/cut-wire").json()
-    assert detail["document"]["steps"][0]["text"] == "Правка ERP"
-    assert {item["id"] for item in operation_library_api.get("/api/techcards/templates").json()["items"]} == {"cut-wire", "strip"}
 
 
 def test_save_rejects_a_block_without_steps_and_keeps_the_draft(operation_library_api):

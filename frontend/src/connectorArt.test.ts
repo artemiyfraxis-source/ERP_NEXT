@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { connectorFace, connectorFaceUnits, connectorLook, connectorPicture, connectorSummary, shade } from "./connectorArt";
 import { harnessPins } from "./ProjectEtk";
 
-const gh = { art: "GHR-04V-S", family: "jst-gh", title: "JST GH", pitch: 1.25, rows: 1, cols: 4, n: 4, kind: "grid",
+const latchRoof = { kind: "latch", at: "center", src: "JST eGH, Housing" } as const;
+const slotsRoof = { kind: "slots", at: "contacts", src: "JST eSH, Housing" } as const;
+const gh = { art: "GHR-04V-S", family: "jst-gh", title: "JST GH", pitch: 1.25, rows: 1, cols: 4, n: 4, kind: "grid", roof: latchRoof,
   color: "#efe6cf", latch: "ramp", cavity: "square", labels: null, grid: [[1, 2, 3, 4]], round: null };
 const dsub = { art: "DS1033-09F", family: "dsub", title: "D-Sub", pitch: 2.77, rows: 2, cols: 9, n: 9, kind: "dsub",
   color: "#c9ccd0", latch: "none", cavity: "square", labels: null, male: false,
@@ -17,17 +19,17 @@ describe("connectorArt — рисунки серий", () => {
   });
 
   it("keeps real proportions: a 4.2 mm Mini-Fit is wider than a 1.0 mm SH at the same pixels per mm", () => {
-    const sh = { ...gh, family: "jst-sh", pitch: 1.0, latch: "mark" };
+    const sh = { ...gh, roof: slotsRoof, family: "jst-sh", pitch: 1.0, latch: "mark" };
     const minifit = { ...gh, family: "molex-minifit-jr", pitch: 4.2, latch: "lever" };
     expect(connectorFace(minifit, 0, 0, 4.2 * 8, null).w).toBeGreaterThan(connectorFace(sh, 0, 0, 1.0 * 8, null).w * 3);
   });
 
   it("draws JST SH by the JST drawing: B × 2.8 body with protrusions, ▽ over contact 1 on the right", () => {
-    const sh = { ...gh, art: "SHR-02V-S-B", family: "jst-sh", title: "JST SH", pitch: 1.0, cols: 2, n: 2, latch: "mark", grid: [[2, 1]],
+    const sh = { ...gh, roof: slotsRoof, art: "SHR-02V-S-B", family: "jst-sh", title: "JST SH", pitch: 1.0, cols: 2, n: 2, latch: "mark", grid: [[2, 1]],
       body: { extra: 2.0, h: 2.8, rear_h: 2.1, len: 5.0, front_len: 1.8, ear_len: 1.0, win: [0.6, 1.3], ears: 1.0 } };
     const face = connectorFace(sh, 0, 0, 40, { 1: "черный" });
     expect(face.w).toBeCloseTo(5.0 * 40, 5);
-    expect(face.body.match(/<rect/g)?.length).toBe(3 + 2);
+    expect(face.body.match(/<rect/g)?.length).toBe(3 + 2 + 2); // + две выемки ключа на крыше
     expect(connectorFaceUnits(sh)).toBe(5);
     const arrow = face.body.match(/fill="#d7322d"/g);
     expect(arrow?.length).toBe(1);
@@ -42,8 +44,8 @@ describe("connectorArt — рисунки серий", () => {
     expect(face.body.match(/<rect/g)?.length).toBe(1 + 1 + 4);
     expect(face.body.match(/fill="#d7322d"/g)?.length).toBe(1);
     expect(connectorPicture(ghBody, 150, 90).w).toBeLessThanOrEqual(152);
-    const ph = { ...gh, art: "PHR-4", family: "jst-ph", pitch: 2.0, latch: "windows", body: { extra: 3.8, h: 4.5, len: 6.85, win: [1.0, 1.6] } };
-    expect(connectorFace(ph, 0, 0, 30, null).body.match(/<rect/g)?.length).toBe(1 + 4 + 4);
+    const ph = { ...gh, roof: slotsRoof, art: "PHR-4", family: "jst-ph", pitch: 2.0, latch: "windows", body: { extra: 3.8, h: 4.5, len: 6.85, win: [1.0, 1.6] } };
+    expect(connectorFace(ph, 0, 0, 30, null).body.match(/<rect/g)?.length).toBe(1 + 4 + 4); // окна фиксаторов сами и есть прорези крыши, лишних выемок нет
     const microfit = { ...gh, art: "43025-0600", family: "molex-microfit", pitch: 3.0, rows: 2, cols: 3, n: 6, latch: "lever", color: "#2b2b2b",
       grid: [[6, 5, 4], [3, 2, 1]], body: { extra: 3.85, h: 6.86, len: 14, lock_w: 3.86, lock_h: 1.4, win: [2.2, 2.2] } };
     const mf = connectorFace(microfit, 0, 0, 30, { 1: "красный" });

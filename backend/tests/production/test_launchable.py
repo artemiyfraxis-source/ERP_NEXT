@@ -160,12 +160,14 @@ def test_every_scheme_that_does_not_fit_tells_the_master_why():
         assert launch_route({"build_config": {"ops": ops}, "route": route}).warnings == ()
 
 
-def test_steps_take_the_etk_norm_and_split_it_into_setup_and_per_unit():
+def test_steps_of_an_old_etk_take_the_norm_without_the_setup_inside_it_and_plan_no_setup():
+    # schema_version 3: the norm still includes the card's tPrep, so it is taken out first; the plan has no setup.
     document = {
+        "schema_version": 3,
         "build_config": {"partQty": 10, "ops": [
-            {"type": "cutWire", "tOp": 5, "tPrep": 120},   # ETK: 5 s × 4 wires × 10 + 120 s ≈ 5,34 min (two rows)
-            {"type": "coaxCut", "tOp": 60, "tPrep": 120},  # ETK shows tOp alone (1 min): setup is cut to the norm
-            {"type": "assembly", "tOp": 7, "tPrep": 30},   # no time rows (moved from SUPPLYMAP): the card times
+            {"type": "cutWire", "tOp": 5, "tPrep": 120},   # ETK 3: 5 s × 4 wires × 10 + 120 s ≈ 5,34 min (two rows)
+            {"type": "coaxCut", "tOp": 60, "tPrep": 120},  # ETK shows tOp alone (1 min): tPrep is cut to the norm
+            {"type": "assembly", "tOp": 7, "tPrep": 30},   # no time rows (moved from SUPPLYMAP): the card's tOp
         ]},
         "operations": [{"time": [{"name": "Провод 1", "norm": "2,67"}, {"name": "Провод 2", "norm": "2,67"}]},
                        {"time": [{"name": "Кабель", "norm": "1"}]}, {"times": {"operation_seconds": "7"}}],
@@ -173,6 +175,28 @@ def test_steps_take_the_etk_norm_and_split_it_into_setup_and_per_unit():
 
     steps = route_from_document(document)
 
+    # per unit = (norm − tPrep) / batch: (320,4 − 120) / 10 = 20,04; the norm of 60 s is all setup → 0; no norm → tOp.
     assert [(step.seconds_per_unit, step.setup_seconds) for step in steps] == [
-        (Decimal("20.04"), Decimal(120)), (Decimal(0), Decimal(60)), (Decimal(7), Decimal(30)),
+        (Decimal("20.04"), Decimal(0)), (Decimal(0), Decimal(0)), (Decimal(7), Decimal(0)),
+    ]
+
+
+def test_steps_of_an_etk_4_take_the_whole_norm_per_unit_and_plan_no_setup():
+    # schema_version 4: the norm has no setup (owner 18.10), tPrep stays on the card as information only.
+    document = {
+        "schema_version": 4,
+        "build_config": {"partQty": 10, "ops": [
+            {"type": "cutWire", "tOp": 5, "tPrep": 120},   # ETK 4: 5 s × 4 wires × 10 = 200 s ≈ 3,34 min (two rows)
+            {"type": "coaxCut", "tOp": 60, "tPrep": 120},  # 60 s × 1 × 10 = 10 min
+            {"type": "assembly", "tOp": 7, "tPrep": 30},   # no time rows: the card's tOp
+        ]},
+        "operations": [{"time": [{"name": "Провод 1", "norm": "1,67"}, {"name": "Провод 2", "norm": "1,67"}]},
+                       {"time": [{"name": "Кабель", "norm": "10"}]}, {"times": {"operation_seconds": "7"}}],
+    }
+
+    steps = route_from_document(document)
+
+    # per unit = norm / batch: 200,4 / 10 = 20,04; 600 / 10 = 60; no norm → tOp. Setup is 0 everywhere.
+    assert [(step.seconds_per_unit, step.setup_seconds) for step in steps] == [
+        (Decimal("20.04"), Decimal(0)), (Decimal(60), Decimal(0)), (Decimal(7), Decimal(0)),
     ]

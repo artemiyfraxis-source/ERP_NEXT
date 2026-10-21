@@ -18,9 +18,9 @@ from app.shared.http_auth import (
 )
 
 from .application import (
-    CreateRecordCommand, EditRecordCommand, FieldEdit, ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
+    ColumnCommand, CreateRecordCommand, EditRecordCommand, FieldEdit, ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
     SetCableKindCommand, SetCoaxDiametersCommand, SetCoveringGroupCommand, StaleRecordError, UnitOfWork, create_record, edit_record, list_cables,
-    replace_maps, replace_snapshot, set_cable_kind, set_coax_diameters, set_covering_group, coverings_catalog,
+    replace_maps, replace_snapshot, set_cable_kind, add_column, custom_columns, remove_column, set_coax_diameters, set_covering_group, coverings_catalog,
 )
 from .crimps import change_target, change_terminal, crimp_codes, crimp_overview
 from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
@@ -32,7 +32,7 @@ from .application import (
 from .cable_structure import (
     LAYER_LABELS, CoaxCard, HookupWire, WireGauge, parse_hookup,
 )
-from .cables import DIAMETERS, CableKind, CableRow, cable_counts
+from .cables import CONNECTOR_FIELDS, DIAMETERS, CableKind, CableRow, cable_counts, compatible_connectors
 from .domain import (
     BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, merge_country_pairs, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
     StockLinkEntry, TechOperationTab,
@@ -40,6 +40,7 @@ from .domain import (
 from .technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION,
     TerminalRecord,
+    is_coax_cable_column,
     fold_wire_section,
     import_supplymap_snapshot,
     normalize_terminal_fields,
@@ -176,7 +177,13 @@ def save_maps(payload: MapsPayload, principal: Annotated[Principal, Depends(refe
     return {**_shown_maps(_maps(entries)), "can_edit": rights}
 
 
-def _columns(tab: TechOperationTab | None, records: Sequence[TechOperationRecord]) -> list[str]:
+def _columns(tab: TechOperationTab | None, records: Sequence[TechOperationRecord], own: Sequence[str] = ()) -> list[str]:
+    """The tab's columns, the owner's own («+ Столбец») after the sheet's."""
+    base = _sheet_columns(tab, records)
+    return base + [name for name in own if name not in base]
+
+
+def _sheet_columns(tab: TechOperationTab | None, records: Sequence[TechOperationRecord]) -> list[str]:
     """Known sheet schema first (so an empty tab still has a create form). ОБ/ОП/ТЕР/КОАКС: the sheet's own columns
     kept by the import, without the schema values derived from them; a snapshot without them shows the schema keys."""
     if tab in BASE_COLUMNS:
@@ -186,6 +193,8 @@ def _columns(tab: TechOperationTab | None, records: Sequence[TechOperationRecord
     keys = schema_keys(tab.value)
     richest = max(records, key=lambda item: sum(1 for key in item.fields if key not in keys))
     sheet = [key for key in richest.fields if key not in keys]
+    if tab == TechOperationTab.COAX:  # D1–D3 are the cable's («Коаксиальные кабели»), not a connector column
+        sheet = [key for key in sheet if not is_coax_cable_column(key)]
     if tab == TechOperationTab.EQUIPMENT:  # the fields ERP adds to the sheet's columns (code, tool, links)
         sheet += [key for key in EXTRA_KEYS if key not in sheet]
     return sheet or list(richest.fields)
@@ -202,6 +211,7 @@ def tech_operations(
     with uow_factory() as uow:
         records = uow.tech_operations.list(tab=tab, query=q, limit=limit)
         metadata = uow.tech_operations.metadata()
+        own = custom_columns(tab, uow) if tab is not None else []
     return {
         "metadata": None if metadata is None else {
             **metadata,
@@ -209,7 +219,8 @@ def tech_operations(
             "imported_at": metadata["imported_at"].isoformat(),
         },
         # Known sheet schema first (so an empty tab still has a create form), else the first row's keys.
-        "columns": _columns(tab, records),
+        "columns": _columns(tab, records, own),
+        "custom_columns": own,
         "records": [{
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet,
@@ -425,6 +436,13 @@ def _cable_json(row: CableRow, catalog: CableCatalog | None = None) -> dict:
         "dia": _dia_json(row.dia), "dia_hint": _dia_json(row.dia_hint),
         "card": _card_json(row.card), "card_exact": row.card_exact,
     }
+    if catalog is not None and row.kind == CableKind.COAX:
+        connectors, family = compatible_connectors(row, catalog.connectors)
+        result["connectors"] = [
+            {"id": str(record.id), "fields": {name: record.fields[name] for name in CONNECTOR_FIELDS if record.fields.get(name)}}
+            for record in connectors
+        ]
+        result["connectors_family"] = family
     if catalog is not None and row.kind == CableKind.WIRE:
         wire = catalog.hookups.get(row.key)
         result["hookup"] = _hookup_json(wire)
@@ -447,11 +465,12 @@ def cables(
 ) -> dict:
     """«Кабели и провода»: БД.ПРОВ rows split into коаксиальные / монтажные / многожильные / прочие (`cables.auto_kind`,
     or where the user moved them). A coax cable is joined with the D1·D2·D3 row the generator uses for its name and
-    its card; D-table cables and cards without a БД.ПРОВ row are coax rows of their own. A монтажный wire carries its
+    its card and the БД.КОАКС connectors made for it (`cables.compatible_connectors`); D-table cables and cards without
+    a БД.ПРОВ row are coax rows of their own. A монтажный wire carries its
     structure (series, size row, …) or, not structured yet, what its БД.ПРОВ row suggests. `gauges` — «Сечения AWG ↔
     мм²» with the number of wires on each size."""
     catalog = cable_catalog(uow_factory())
-    return {"columns": list(BASE_COLUMNS[TechOperationTab.WIRE]), "counts": cable_counts(catalog.rows),
+    return {"columns": list(BASE_COLUMNS[TechOperationTab.WIRE]) + catalog.columns, "custom_columns": catalog.columns, "counts": cable_counts(catalog.rows),
             "rows": [_cable_json(row, catalog) for row in catalog.rows],
             "gauges": [_gauge_json(gauge, catalog.usage.get(gauge.id, 0)) for gauge in catalog.gauges]}
 
@@ -662,6 +681,37 @@ def edit_tech_record(
         actor=principal.actor, now=now,
     ), uow_factory()))
     return _record_json(record)
+
+
+class ColumnPayload(BaseModel):
+    tab: TechOperationTab
+    name: str = Field(min_length=1, max_length=200)  # the limit proper (60) is the use case's, with its own words
+
+
+@router.post("/tech-operations/columns", status_code=201, dependencies=[Depends(refuse_api_tokens("Токен API не меняет состав столбцов."))])
+def add_tech_column(
+    payload: ColumnPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """«+ Столбец»: an empty column of the owner's own in every record of the table (БД.ПРОВ, БД.МАТ, БД.КОАКС, БД.ТЕР, БД.ОП)."""
+    records = _run_edit(lambda: add_column(ColumnCommand(
+        tab=payload.tab, name=payload.name, actor=principal.actor, now=now), uow_factory()))
+    return {"tab": payload.tab.value, "name": " ".join(payload.name.split()), "records": records}
+
+
+@router.post("/tech-operations/columns/remove", dependencies=[Depends(refuse_api_tokens("Токен API не меняет состав столбцов."))])
+def remove_tech_column(
+    payload: ColumnPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """Removes the owner's own column, only when it is empty everywhere."""
+    records = _run_edit(lambda: remove_column(ColumnCommand(
+        tab=payload.tab, name=payload.name, actor=principal.actor, now=now), uow_factory()))
+    return {"tab": payload.tab.value, "name": payload.name, "records": records}
 
 
 @router.post("/tech-operations", status_code=201)

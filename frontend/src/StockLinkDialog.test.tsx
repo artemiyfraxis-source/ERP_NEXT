@@ -62,7 +62,7 @@ it("creates a record prefilled from the lot and shows what was done", async () =
 
   const status = await screen.findByRole("status");
   expect(status).toHaveTextContent("Создана запись: GHR-04V-S · JST");
-  expect(status).toHaveTextContent("terManufacturer: — → JST");
+  expect(status).toHaveTextContent("Производитель: — → JST");
   const post = fetch.mock.calls.find(([, init]) => init?.method === "POST")!;
   expect(JSON.parse(String(post[1]?.body))).toEqual({
     lot_id: lot.id, tab: "ter",

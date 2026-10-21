@@ -237,6 +237,25 @@ it("«Изменить схему» adds «Выше/Ниже» to the opened blo
   expect(screen.getByRole("button", { name: "Изменить схему" })).toBeInTheDocument();
 });
 
+it("«Сложная сборка»: draws the generator's ПФ graph as it is — a card per block with its level, kits, what comes in", () => {
+  // Схема генератора (владелец 16.10): резка провода и резка ТУТ — ПФ-комплекты, «Надеть ТУТ» берёт их, пайка с усадкой — изделие.
+  const graph: Route = {
+    blocks: [{ ...block("cut", [1]), kit: true }, { ...block("tubes", [2]), kit: true, name: "Нарезанные трубки" },
+      { ...block("on", [3]), name: "Ветвь А1" }, block("final", [4, 5], true)],
+    edges: [{ from: "cut", to: "on", per_unit: 1, item: "НВ4 0,5 красный ×1; НВ4 0,5 черный ×1" },
+      { from: "tubes", to: "on", per_unit: 1, item: "ТУТ 3/1 ×2" }, { from: "on", to: "final", per_unit: 1, item: "Ветвь А1" }],
+  };
+  const onChange = mount({ blockView: true, derive: () => graph });
+  expect(cards().map((card) => card.querySelector(".rc-title")?.textContent)).toEqual(["1.1 · Резка провода", "1.2 · Нарезанные трубки", "2 · Ветвь А1", "3 · Жгут XH"]);
+  expect(cards()[0].querySelector(".rc-meta")?.textContent).toContain("комплект на изделие");
+  expect([...cards()[2].querySelectorAll(".rc-inputs li")].map((item) => item.textContent)).toEqual(["НВ4 0,5 красный ×1", "НВ4 0,5 черный ×1", "ТУТ 3/1 ×2"]);
+  expect(screen.getByText(/4 ПФ · 5 операций/)).toBeInTheDocument();
+  // Блок открывается по операции; во входах блока — что идёт по стрелке.
+  fireEvent.click(op(/Надеть ТУТ/));
+  expect(within(screen.getByRole("region", { name: "Блок «Ветвь А1»" })).getByText(/ТУТ 3\/1 ×2/)).toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalled();
+});
+
 it("moves a hand-edited scheme with its blocks: the operations get new numbers, blocks and arrows stay", () => {
   const onMove = vi.fn();
   mount({ value: manual, onMove });
@@ -257,7 +276,7 @@ it("offers «Вернуть порядок генератора» when the order
   expect(onResetOrder).toHaveBeenCalled();
 });
 
-it("draws «Обжатые провода» between the cut wires and the sides with the wires and their terminals", () => {
+it("draws the crimp of each side right before it with the wires crimped on that side (owner 14.10)", () => {
   const ops: RouteOp[] = [
     { position: 1, key: "cutWire", type: "cutWire", code: "", label: "Резка — 2 кабеля", minutes: null },
     { position: 2, key: "prsTermA1", type: "prsTerm", code: "", label: "Опрессовка терминалов А1", minutes: null, side: "A" },
@@ -266,10 +285,18 @@ it("draws «Обжатые провода» between the cut wires and the sides 
     { position: 5, key: "insTermB1", type: "insTerm", code: "", label: "Монтаж в разъём В1", minutes: null, side: "B" },
   ];
   const wire = { key: "u1", label: "А1:1 → В1:1", title: "1 · НВ4 красный", color: "#d7322d", left: "cut" as const, right: "cut" as const };
-  mount({ ops, art: { wires: [wire], tubes: [], crimped: [{ ...wire, left: "terminal", right: "terminal" }], faces: { A: [], B: [] } } });
-  expect(cards().map((card) => card.querySelector(".rc-title")?.textContent)).toEqual(["Нарезанные провода", "Обжатые провода", "Сторона А собрана", "Готовый кабель"]);
-  const crimped = cards()[1];
-  expect([...crimped.querySelectorAll(".rc-op-name")].map((name) => name.textContent)).toEqual(["Опрессовка терминалов А1", "Опрессовка терминалов В1"]);
-  expect(crimped.querySelectorAll(".rc-wire svg")).toHaveLength(1);
-  expect(crimped).toHaveTextContent("А1:1 → В1:1");
+  const second = { ...wire, key: "u2", label: "А1:2 → В1:2" };
+  mount({ ops, art: {
+    wires: [wire, second], tubes: [], crimped: [{ ...wire, left: "terminal", right: "terminal" }, { ...second, left: "terminal", right: "terminal" }],
+    crimpedBy: { A: [{ ...wire, left: "terminal" }], B: [{ ...wire, right: "terminal" }, { ...second, right: "terminal" }] },
+    faces: { A: [], B: [] },
+  } });
+  expect(cards().map((card) => card.querySelector(".rc-title")?.textContent)).toEqual([
+    "Нарезанные провода", "Обжатые провода, сторона А", "Сторона А собрана", "Обжатые провода, сторона В", "Готовый кабель"]);
+  const [, crimpA, , crimpB] = cards();
+  expect([...crimpA.querySelectorAll(".rc-op-name")].map((name) => name.textContent)).toEqual(["Опрессовка терминалов А1"]);
+  expect([...crimpB.querySelectorAll(".rc-op-name")].map((name) => name.textContent)).toEqual(["Опрессовка терминалов В1"]);
+  expect(crimpA.querySelectorAll(".rc-wire svg")).toHaveLength(1);
+  expect(crimpA).toHaveTextContent("А1:1 → В1:1");
+  expect(crimpB.querySelectorAll(".rc-wire svg")).toHaveLength(2);
 });

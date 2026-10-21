@@ -3,9 +3,9 @@
 
 Same shape as the СПР.КАБ table the generator parsed (`tcGenLogic.wireDiaFromRecords`): one row per size of
 «Сечения AWG ↔ мм²» in its order, columns `AWG · ГОСТ · Ø жилы` and then one column per series of the база
-монтажных (`cables.HOOKUP_SERIES`, the 12 series) holding that series' Ø наружный for the size, «—» when there is
-none. A ГОСТ-only size (0,07 мм²) has an empty AWG. Marks outside the 12 series (UL1015, M22759, силиконовый…) have
-no column: the generator shows «Ø провода не найден…» for them instead of a number from nowhere.
+монтажных (`cables.HOOKUP_SERIES`, 12 series of 12.10 + 10 moved from «Прочие кабели» 15.10) holding that series' Ø
+наружный for the size, «—» when there is none. A ГОСТ-only size (0,07 мм²) has an empty AWG. Marks outside the series
+(M22759, TXL…) have no column: the generator shows «Ø провода не найден…» for them instead of a number from nowhere.
 
 Ø наружный of a series and size = the `outer_d_mm` of its монтажные провода (`hookup_wires`); a wire belongs to the
 series its mark names (`cables.hookup_series`, the same rule that puts it in the монтажные list). Several wires of one

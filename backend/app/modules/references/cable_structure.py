@@ -649,6 +649,7 @@ class ArticlesPlan:
     no_card: tuple[str, ...]  # marks of the file no card is named as: their names wait until the card exists
     refused: tuple[str, ...]  # «alias»: why it is not loaded
     family_only: int  # offers of the family only («у поставщика RG-58 без суффикса») — never an alias
+    variants: int = 0  # offers of another cable, materials in the name («5D-FB CCA PE AL PE») — never an alias
 
 
 def _alias(text: object, kind: str, supplier: object = "", url: object = "") -> CoaxAlias:
@@ -656,13 +657,40 @@ def _alias(text: object, kind: str, supplier: object = "", url: object = "") -> 
     return CoaxAlias(clean, cable_key(clean), kind, _text(supplier), _text(url))
 
 
+# Codes of the core / dielectric / screen / jacket a supplier writes into the name of an offer (owner 19.10.2026: «ты
+# разные артикулы кабелей записал в одно, там же разные материалы»): «5D-FB CCA PE AL PE» and «5D-FB CU PE TC PVC» are
+# two cables, neither is the card «5D-FB». Matched as whole words only — «CF-141-50-FEP» is a model code, not a jacket.
+MATERIAL_WORDS = frozenset({
+    "CU", "CCA", "CCS", "SPC", "PE", "PVC", "LSZH", "AL", "TC", "FEP", "PTFE", "FR", "SOLID", "МНОГОЖИЛЬНЫЙ",
+})
+_WORD_SPLIT = re.compile(r"[\s,;()/«»\"]+")
+
+
+def states_materials(name: object, marks: Iterable[object] = ()) -> bool:
+    """The offer's name states materials beyond what the cable's own mark says: «Кабель 5D-FB CU PVC (черный)» does for
+    «5D-FB», «Кабель VEGATEL 5D-FB Cu (ГОСТ, синий)» does not for «5D-FB Cu» (its mark says Cu), «Кабель RG-316 50 Ом»
+    never does. `marks` — the mark and its spellings; the longest one found in the name is taken out first."""
+    text = _text(name)
+    for mark in sorted((_text(item) for item in marks), key=len, reverse=True):
+        if not mark:
+            continue
+        pattern = r"[\s-]*".join(re.escape(part) for part in re.split(r"[\s-]+", mark) if part)
+        found = re.search(rf"(?<![\w.]){pattern}(?![\w.])", text, re.IGNORECASE)
+        if found:
+            text = text[:found.start()] + " " + text[found.end():]
+            break
+    return any(word.upper() in MATERIAL_WORDS for word in _WORD_SPLIT.split(text) if word)
+
+
 def names_from_articles(document: Mapping[str, Any], cards: Sequence[CoaxCard]) -> ArticlesPlan:
     """The supplier file (`backend/data/cables/coax-articles.json`: cables[{mark, aliases[], offers[{supplier, article,
-    full_name, url, family_only}]}]) → the full name and aliases of each card.
+    full_name, url, family_only, variant}]}]) → the full name and aliases of each card.
 
     An entry belongs to the card named as its mark or as one of its spellings — never to a family card («RG-58 A/U»
     is not «RG-58»). Its aliases: the mark and its spellings, then the full name and the article of every offer of
-    this very cable (a family-only offer is not one). The full name of a card is the first such offer's. An alias
+    this very cable. A family-only offer is not one; nor is a `variant` — an offer whose name states materials
+    (`states_materials`: «5D-FB CCA PE AL PE» is another cable than the card «5D-FB», owner 19.10.2026), which becomes
+    a БД.ПРОВ row of its own. The full name of a card is the first remaining offer's. An alias
     that is only the card's own key is dropped as a repeat. Refused, with the reason: an alias that is the name of
     another card, or one two cables of the file both claim (an article of «5D-FB» and of «5D-FB Cu» — while only one
     of them has a card, it is that card's)."""
@@ -671,7 +699,7 @@ def names_from_articles(document: Mapping[str, Any], cards: Sequence[CoaxCard]) 
     owners: list[str | None] = []
     candidates: list[list[CoaxAlias]] = []
     full_names: list[str] = []
-    family_only = 0
+    family_only = variants = 0
     for entry in entries:
         spellings = [_alias(entry.get("mark"), "mark")] + [_alias(item, "mark") for item in entry.get("aliases") or []]
         owners.append(next((alias.alias_key for alias in spellings if alias.alias_key in by_key), None))
@@ -682,6 +710,9 @@ def names_from_articles(document: Mapping[str, Any], cards: Sequence[CoaxCard]) 
                 continue
             if offer.get("family_only"):
                 family_only += 1
+                continue
+            if offer.get("variant"):
+                variants += 1
                 continue
             name = _alias(offer.get("full_name"), "full_name", offer.get("supplier"), offer.get("url"))
             article = _alias(offer.get("article"), "supplier_article", offer.get("supplier"), offer.get("url"))
@@ -710,7 +741,8 @@ def names_from_articles(document: Mapping[str, Any], cards: Sequence[CoaxCard]) 
                 continue
             kept.append(alias)
         names[owner] = CoaxNames(names[owner].full_name or full_name, tuple(kept))
-    return ArticlesPlan(names, tuple(no_card), tuple(f"«{alias}»: {why}" for alias, why in refused.items()), family_only)
+    return ArticlesPlan(names, tuple(no_card), tuple(f"«{alias}»: {why}" for alias, why in refused.items()), family_only,
+                        variants)
 
 
 def _alias_problem(alias: CoaxAlias, owner: str, by_key: Mapping[str, CoaxCard], claims: Mapping[str, set]) -> str:

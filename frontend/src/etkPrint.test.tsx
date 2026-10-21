@@ -47,7 +47,8 @@ it("shows «Оснастка» with all three sections, an empty one as «нет
   expect(sections).toEqual([["Инструмент", ""], ["Оборудование", ""], ["Расходники", "нет"]]);
 
   const input = screen.getByRole("region", { name: "Вход" });
-  expect(within(input).getByText(/^184,8\sм$/).className).toBe("etk-in-qty");
+  expect(within(input).getByText(/^184,8\sм$/).className).toBe("num");
+  expect(within(input).getByText("со склада по комплектации")).toBeInTheDocument();
   const result = screen.getByRole("region", { name: "Результат" });
   expect(within(result).getByText("ПВАМ 1,5 264мм")).toBeInTheDocument();
   expect(within(result).getByText(/^700\sшт$/)).toBeInTheDocument();
@@ -88,29 +89,37 @@ function twoContacts(): Record<string, unknown> {
   };
 }
 
-it("puts each contact's crimp spec on its own line in «Комплектующие» and labels the header chips per end", async () => {
+it("shortens the contact line in «Вход» to end and wire, and puts the crimp parameters in the side columns of the header", async () => {
   stubFetch();
   render(<EtkSheet card={techcard(twoContacts())} principal={principal} onChange={() => undefined} />);
   const input = await screen.findByRole("region", { name: "Вход" });
   const specs = [...input.querySelectorAll(".etk-spec")].map((node) => node.textContent);
   expect(specs).toEqual([
-    "Конец A · НВ4 0,2 (24 AWG) · аппликатор не задано · обжим проводника не задано · отрыв не задано · зачистка 3,5 мм",
-    "Конец B · НВ4 0,2 (24 AWG) · аппликатор A2 · обжим проводника 0,60–0,75 мм · отрыв 9,8–39,2 Н · зачистка 2,5 мм",
+    "Конец A · НВ4 0,2 (24 AWG)",
+    "Конец B · НВ4 0,2 (24 AWG)",
   ]);
-  // Провод — без строки спецификации; «не задано» — тоном опасности, «?» нигде нет.
-  expect(input.querySelectorAll(".etk-spec .tone-danger")).toHaveLength(3);
-  const chips = screen.getByLabelText("Параметры операции");
-  expect(chips).toHaveTextContent("Высота обжимаA (DS1071) не задано · B (SXH) 0,60–0,75 мм");
-  expect(chips).toHaveTextContent("АппликаторA (DS1071) не задано · B (SXH) A2");
-  expect(chips).toHaveTextContent("ОтрывA (DS1071) не задано · B (SXH) 9,8–39,2 Н");
+  // Параметры обжима — в шапке, по колонкам сторон; «не задано» — тоном опасности, «?» нигде нет.
+  expect(input.querySelectorAll(".etk-spec .tone-danger")).toHaveLength(0);
+  const block = screen.getByLabelText("Параметры операции");
+  const sideA = within(block).getByRole("region", { name: "Сторона А" }), sideB = within(block).getByRole("region", { name: "Сторона В" });
+  expect(sideA).toHaveTextContent("ТерминалT-DS1071-SC600");
+  expect(sideA).toHaveTextContent("Высота обжимане задано");
+  expect(sideA.querySelectorAll(".tone-danger").length).toBe(3);
+  expect(sideB).toHaveTextContent("Высота обжима0,60–0,75 мм");
+  expect(sideB).toHaveTextContent("АппликаторA2");
+  expect(sideB).toHaveTextContent("Отрыв9,8–39,2 Н");
+  expect(within(block).getByRole("region", { name: "Общие" })).toBeInTheDocument();
   expect(document.body.textContent).not.toMatch(/\?\s*\(/);
 });
 
 it("prints the contact's crimp spec under its name and the per-end crimp facts", () => {
   const html = buildPrintDocumentHtml("ТК", etkPrintPages(techcard(twoContacts()), []));
   const operationPage = html.slice(html.indexOf("Операция 1."));
-  expect(operationPage).toContain("<td>Контакт XH Female\nКонец B · НВ4 0,2 (24 AWG) · аппликатор A2 · обжим проводника 0,60–0,75 мм");
-  expect(operationPage).toContain("Высота обжима: A (DS1071) не задано · B (SXH) 0,60–0,75 мм");
+  expect(operationPage).toContain("<td>Контакт XH Female\nКонец B · НВ4 0,2 (24 AWG)");
+  expect(operationPage).toContain("<th>СТОРОНА А</th>");
+  expect(operationPage).toContain("<th>СТОРОНА В</th>");
+  expect(operationPage).toContain("Высота обжима: 0,60–0,75 мм");
+  expect(operationPage).toContain("Терминал: T-DS1071-SC600");
   expect(operationPage).toContain("<td>Провод НВ4 0,2 белый</td>");
 });
 
@@ -120,7 +129,7 @@ it("shows an ETK issued before the per-end spec as it was, without «?»", async
   issued.fields = { applicator: "A14/A2", crimpHeight: "? (А) / 0,60 - 0,75 (В)", pullForce: "? (А) / 9,8 - 39,2 (В)" };
   render(<EtkSheet card={techcard(issued)} principal={principal} onChange={() => undefined} />);
   const chips = await screen.findByLabelText("Параметры операции");
-  expect(chips).toHaveTextContent("Высота обжимане задано (А) / 0,60–0,75 (В) мм");
+  expect(within(chips).getByRole("region", { name: "Общие" })).toHaveTextContent("Высота обжимане задано (А) / 0,60–0,75 (В) мм");
   expect(document.querySelectorAll(".etk-spec")).toHaveLength(0);
 });
 

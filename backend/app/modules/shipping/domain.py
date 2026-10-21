@@ -45,6 +45,15 @@ class DeliveryTerms(str, Enum):
 class UpdType(str, Enum):
     EDO = "ЭДО"
     PAPER = "БУМАГА"
+    # Владелец 14.10.2026: отправка уходит и закрывается без УПД — ни файла, ни номера не нужно.
+    NONE = "БЕЗ УПД"
+
+
+# Без файла УПД груз уезжает только по ЭДО или «без УПД» (`shipGateMiss_`).
+UPD_WITHOUT_FILE = frozenset({UpdType.EDO, UpdType.NONE})
+
+
+LOCATION_MAX = 255
 
 
 @dataclass(frozen=True)
@@ -69,6 +78,8 @@ class FinishedGood:
     sent: Decimal = Decimal("0")
     # Отгружено ещё в Google, до ERP (комментарий строки «ОТГРУЖЕН» листа цеха «ЗАГРУЗ»); входит в accepted/shipped/sent.
     before_erp: Decimal = Decimal("0")
+    # Место хранения принятого на складе ГП (стеллаж, полка): одно на КБ, последняя приёмка с местом его заменяет.
+    location: str = ""
 
     @classmethod
     def create(
@@ -87,12 +98,17 @@ class FinishedGood:
     def remaining(self) -> Decimal:
         return max(self.accepted - self.shipped, Decimal("0"))
 
-    def accept(self, quantity: Decimal, received_at: date, grn: str) -> FinishedGood:
+    def accept(self, quantity: Decimal, received_at: date, grn: str, location: str = "") -> FinishedGood:
+        """Пустое место хранения оставляет прежнее."""
+        place = str(location or "").strip()
+        if len(place) > LOCATION_MAX:
+            raise ShippingValidationError(f"Место хранения — не длиннее {LOCATION_MAX} символов")
         return replace(
             self,
             accepted=self.accepted + _positive(quantity, "Количество"),
             received_at=received_at,
             grn=self.grn or _text(grn, "ГРН"),
+            location=place or self.location,
             version=self.version + 1,
         )
 
@@ -325,12 +341,71 @@ def balance_moves(
     return tuple(moves)
 
 
-ADDRESSEE_CONTACT_FIELDS = ("shipping_point", "contact", "phone")
+@dataclass(frozen=True)
+class AcceptanceAct:
+    """Акт приёмки ГП (владелец 19.10.2026): каждая приёмка КБ складом — свой ГРН «ГП.YY.NNNNNNN», даже когда КБ
+    принимают частями. Первый акт КБ носит ГРН самой КБ (`FinishedGood.grn` — его видят этикетки, PL/DN, строки
+    отправок), следующие — новые номера. Акт ровно один на ход «принято» журнала (`move_id`); отгруженное до ERP
+    акта не получает. `rolled_back` — сколько штук акта вернул в производство откат руководителя (`roll_back_acts`)."""
+
+    id: UUID
+    finished_good_id: UUID
+    move_id: UUID
+    grn: str
+    quantity: Decimal
+    received_at: date
+    location: str
+    actor: str
+    created_at: datetime
+    rolled_back: Decimal = Decimal("0")
+
+    @property
+    def net(self) -> Decimal:
+        """Штук акта на складе с учётом откатов «принято → в производство»."""
+        return self.quantity - self.rolled_back
+
+
+def acceptance_act(good: FinishedGood, moves: tuple[GoodMove, ...], grn: str) -> AcceptanceAct | None:
+    """Акт для хода «принято» из `moves` (ходы одного `FinishedGoodsRepository.add`); нет такого хода — нет акта."""
+    move = next((item for item in moves if item.kind is MoveKind.ACCEPT), None)
+    if move is None:
+        return None
+    return AcceptanceAct(
+        id=uuid5(move.id, "acceptance-act"), finished_good_id=good.id, move_id=move.id, grn=_text(grn, "ГРН"),
+        quantity=move.quantity, received_at=good.received_at or move.occurred_at.date(), location=good.location,
+        actor=move.actor, created_at=move.occurred_at,
+    )
+
+
+def roll_back_acts(
+    acts: tuple[AcceptanceAct, ...], rollbacks: tuple[tuple[datetime, Decimal], ...],
+) -> tuple[AcceptanceAct, ...]:
+    """Акты КБ (старые первыми) за вычетом откатов «принято → в производство» [(когда, штук)]: откат снимает штуки
+    с самого нового акта, принятого к его моменту, остаток — с предыдущего. Акт и откат в один момент — акт раньше."""
+    taken = [Decimal("0")] * len(acts)
+    order = sorted(range(len(acts)), key=lambda index: acts[index].created_at)
+    for when, quantity in sorted(rollbacks, key=lambda item: item[0]):
+        left = Decimal(quantity)
+        for index in reversed([index for index in order if acts[index].created_at <= when]):
+            take = min(left, acts[index].quantity - taken[index])
+            if take > 0:
+                taken[index] += take
+                left -= take
+            if left <= 0:
+                break
+    return tuple(replace(act, rolled_back=taken[index]) if taken[index] else act for index, act in enumerate(acts))
+
+
+ADDRESSEE_CONTACT_FIELDS =("shipping_point", "contact", "phone")
 ADDRESSEE_CARD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type")
 # Шапка отправки, которую правят руками (`SHIP_HEAD_FIELDS_` без УПД и трека — они в «Документах»).
 SHIPMENT_HEAD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "deadline", "note")
 # Реквизиты отгрузочной ведомости (форма 04.1) в карточке проекта: `SHIP_PROJ_COLS_` «ЗАКАЗ №» … «ВРЕМЯ РАБОТЫ».
 ADDRESSEE_REQUISITE_FIELDS = ("po", "contract", "spec", "invoice", "pays", "customer_address", "hours")
+# План отгрузки в карточке проекта (владелец 14.10.2026): склад и менеджер заносят его заранее, пока КБ в цехе;
+# новая отправка берёт из него срок и комментарий, если свои пусты. `upd_url` (0125) — бумажная УПД, приложенная
+# заранее: новая отправка с бумажной УПД берёт её, если своей нет и файл ещё не ушёл с другой отправкой.
+ADDRESSEE_PLAN_FIELDS = ("plan_date", "note", "upd_url")
 
 
 @dataclass(frozen=True)
@@ -355,6 +430,9 @@ class ProjectAddressee:
     pays: str = ""
     customer_address: str = ""
     hours: str = ""
+    plan_date: date | None = None
+    note: str = ""
+    upd_url: str = ""
 
     @classmethod
     def empty(cls, project: str) -> ProjectAddressee:
@@ -372,7 +450,7 @@ class ProjectAddressee:
 
     def edit(self, fields: dict) -> ProjectAddressee:
         """Card edit (`shipProjectSet_(…, replace)`, `shipProjShipFields_`): a sent field replaces, empty erases."""
-        unknown = set(fields) - set(ADDRESSEE_CARD_FIELDS) - set(ADDRESSEE_REQUISITE_FIELDS)
+        unknown = set(fields) - set(ADDRESSEE_CARD_FIELDS) - set(ADDRESSEE_REQUISITE_FIELDS) - set(ADDRESSEE_PLAN_FIELDS)
         if unknown:
             raise ShippingValidationError("Неизвестное поле адресата: " + ", ".join(sorted(unknown)))
         changes = {}
@@ -381,12 +459,42 @@ class ProjectAddressee:
                 changes[key] = DeliveryTerms(value) if value else None
             elif key == "upd_type":
                 changes[key] = UpdType(value) if value else None
+            elif key == "plan_date":
+                changes[key] = _day(value)
             else:
                 changes[key] = str(value or "").strip()
         return replace(self, **changes)
 
     def differs(self, other: ProjectAddressee) -> bool:
-        return any(getattr(self, key) != getattr(other, key) for key in ADDRESSEE_CARD_FIELDS + ADDRESSEE_REQUISITE_FIELDS)
+        return any(
+            getattr(self, key) != getattr(other, key)
+            for key in ADDRESSEE_CARD_FIELDS + ADDRESSEE_REQUISITE_FIELDS + ADDRESSEE_PLAN_FIELDS
+        )
+
+    def dispatch_gaps(self) -> tuple[str, ...]:
+        """Чего не хватает в «Данных отправки» (владелец 14.10.2026): получатель, адрес, телефон, вариант УПД,
+        у бумажной УПД — её файл."""
+        gaps = [label for key, label in (("receiver", "получатель"), ("shipping_point", "адрес доставки"), ("phone", "телефон"))
+                if not str(getattr(self, key) or "").strip()]
+        if self.upd_type is None:
+            gaps.append("вариант УПД")
+        elif self.upd_type == UpdType.PAPER and not self.upd_url.strip():
+            gaps.append("файл бумажной УПД")
+        return tuple(gaps)
+
+
+def _day(value: object) -> date | None:
+    """Дата из карточки: date, ISO-строка или пусто (стирает)."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError as error:
+        raise ShippingValidationError("Дата отгрузки по плану — в виде ГГГГ-ММ-ДД") from error
 
 
 @dataclass(frozen=True)
@@ -676,13 +784,13 @@ class Shipment:
 
     def mark_shipped(self, day: date) -> Shipment:
         """`shipShipped_`: груз уехал из любого активного статуса; гейт — `shipGateMiss_('Отгружена')`:
-        набрана хоть одна позиция и, кроме ЭДО, приложен файл УПД."""
+        набрана хоть одна позиция и, кроме ЭДО и «без УПД», приложен файл УПД."""
         if self.status not in {ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
             raise ShippingValidationError("Отгрузить можно только активную заявку")
         if not any(line.picked > 0 for line in self.lines):
             raise ShippingValidationError("Нельзя отгрузить: ни одна позиция не набрана")
-        if self.upd_type != UpdType.EDO and not self.upd_url:
-            raise ShippingValidationError("Нельзя отгрузить: не хватает — файл УПД (без файла — только по ЭДО)")
+        if self.upd_type not in UPD_WITHOUT_FILE and not self.upd_url:
+            raise ShippingValidationError("Нельзя отгрузить: не хватает — файл УПД (без файла — только по ЭДО или «без УПД»)")
         return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=self.shipped_at or day, version=self.version + 1)
 
     def unship(self) -> Shipment:
@@ -732,9 +840,9 @@ class Shipment:
         if self.status != ShipmentStatus.SHIPPED:
             raise ShippingValidationError("Закрыть можно только отгруженную заявку")
         missing = []
-        if not self.upd_number:
+        if self.upd_type != UpdType.NONE and not self.upd_number:
             missing.append("№ УПД")
-        if not self.upd_url:
+        if self.upd_type != UpdType.NONE and not self.upd_url:
             missing.append("файл УПД")
         if self.terms == DeliveryTerms.CARRIER and not self.track_number:
             missing.append("трек-номер")
@@ -767,15 +875,16 @@ def _plain(value: Decimal) -> str:
 
 @dataclass(frozen=True)
 class StoredFile:
-    """Метаданные файла УПД в хранилище отгрузки."""
+    """Метаданные файла УПД в хранилище отгрузки: у отправки (`shipment_id`) или у данных отправки проекта (`project`)."""
 
     id: UUID
-    shipment_id: UUID
+    shipment_id: UUID | None
     file_name: str
     content_type: str
     size: int
     uploaded_by: str
     uploaded_at: datetime
+    project: str = ""
 
 
 @dataclass(frozen=True)

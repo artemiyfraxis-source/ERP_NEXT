@@ -23,7 +23,9 @@ from app.modules.production.infrastructure import (
 )
 from app.modules.production.traceability import ProductionOutput
 from app.modules.shipping.domain import FinishedGood
-from app.modules.shipping.infrastructure import FinishedGoodMoveRow, SqlAlchemyShippingUnitOfWork
+from app.modules.shipping.infrastructure import (
+    FinishedGoodMoveRow, FinishedGoodsActRow, ShippingSequenceRow, SqlAlchemyShippingUnitOfWork,
+)
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
@@ -152,6 +154,36 @@ def test_batch_accept_is_all_or_nothing_and_never_over_what_the_shop_delivered(f
     assert other.status_code == 409
     rows = client.get("/api/shipping/finished-goods/from-production").json()["rows"]
     assert [(row["item_index"], row["remaining"], row["in_production"]) for row in rows] == [("КБ1", "0", "20"), ("КБ3", "0", "20")]
+
+
+def _acts(sessions) -> list[tuple[str, str, Decimal]]:
+    with sessions() as session:
+        rows = session.execute(select(FinishedGoodsActRow.grn, FinishedGoodMoveRow.item_index, FinishedGoodsActRow.quantity)
+                               .join(FinishedGoodMoveRow, FinishedGoodMoveRow.id == FinishedGoodsActRow.move_id)
+                               .order_by(FinishedGoodsActRow.grn)).all()
+    return [(grn, item, Decimal(quantity)) for grn, item, quantity in rows]
+
+
+def test_every_acceptance_of_a_batch_is_an_act_with_its_own_grn_and_a_replay_writes_none(flow_api):
+    """Владелец 19.10.2026: «когда идёт приёмка разными частями — ГРН один и тот же» — у каждой части свой ГРН."""
+    client, sessions = flow_api
+    both = _accept(client, [("708К.4", "КБ1", "10"), ("708К.4", "КБ2", "4")], key="a-1")
+    assert both.status_code == 200, both.text
+    assert _acts(sessions) == [("ГП.26.0000001", "КБ1", Decimal(10)), ("ГП.26.0000002", "КБ2", Decimal(4))]
+
+    assert _accept(client, [("708К.4", "КБ1", "5")], key="a-2").status_code == 200
+    third = _accept(client, [("708К.4", "КБ1", "15")], key="a-3")
+    assert third.status_code == 200
+    assert third.json()["goods"][0]["grn"] == "ГП.26.0000001"  # ГРН КБ — её первый акт
+    assert [act for act in _acts(sessions) if act[1] == "КБ1"] == [
+        ("ГП.26.0000001", "КБ1", Decimal(10)), ("ГП.26.0000003", "КБ1", Decimal(5)), ("ГП.26.0000004", "КБ1", Decimal(15)),
+    ]
+
+    again = _accept(client, [("708К.4", "КБ1", "15")], key="a-3")
+    assert again.status_code == 200 and again.json()["replayed"] is True
+    assert len(_acts(sessions)) == 4
+    with sessions() as session:
+        assert session.scalar(select(ShippingSequenceRow.value).where(ShippingSequenceRow.name == "grn-26")) == 4
 
 
 def test_accept_needs_the_storekeepers_shipping_rights(flow_api):

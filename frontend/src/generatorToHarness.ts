@@ -17,9 +17,12 @@
  *  • buildGeneratorDrawing — всё вместе для кнопки.
  */
 import { wireColorKnown, type ConnectorHousing } from "./connectorArt";
-import { endJoined, JACKET_STRIP_MM_, makeGen, parseDecimal_, sideRu_, type GenData, type GenState, type Side } from "./tcGenLogic";
+import { hasTopView } from "./connectorTopView";
+import { housingFace } from "./harness/editor/housing-face";
+import { endJoined, JACKET_STRIP_MM_, makeGen, parseDecimal_, sideRu_, spliceStripMm, tailStripMm, type GenData, type GenState, type Side } from "./tcGenLogic";
 import { spliceLabel, spliceOf } from "./tcGenSplices";
-import { coreColor, SHIELD_COLOR } from "./pinoutCheck";
+import { markSpecs } from "./tcGenMarks";
+import { coreColor, SHIELD_COLOR, wireSectionOf } from "./pinoutCheck";
 import { planTwist } from "./twistGroups";
 import { withTwistNotes } from "./twistDrawing";
 import { applyEditorCommand, createConnector, createWire, type EditorCommand } from "./harness/editor/commands";
@@ -29,6 +32,8 @@ import {
 } from "./harness/editor/component-template-placement";
 import { normalizeConnectorArticle } from "./harness/editor/connector-pitch";
 import { segmentDimensionKey, type DrawingDimension } from "./harness/editor/drawing-dimensions";
+import type { DrawingDocuments } from "./harness/editor/drawing-documents";
+import { zoneAnnotations } from "./generatorDrawingNotes";
 import { DRAWING_VIEW_PLACEMENT_ID } from "./harness/editor/drawing-scale";
 import { selectMaterializedContactRepresentation } from "./harness/editor/materialized-contact-representation";
 import {
@@ -46,11 +51,13 @@ import {
   type HarnessDesignDocument,
   type Point,
   type WireEndpoint,
+  type WireStripProfileBinding,
 } from "./harness/editor/model";
 import type { CoveringKind, PhysicalCovering } from "./harness/editor/physical-coverings";
 import { physicalNodeLocalPoint, physicalNodePoint } from "./harness/editor/physical-ports";
-import type { PhysicalNode, PhysicalRoute, PhysicalSegment, PhysicalStep, PhysicalTopology } from "./harness/editor/physical-topology-model";
+import type { PhysicalNode, PhysicalRoute, PhysicalSegment, PhysicalTopology } from "./harness/editor/physical-topology-model";
 import { routePhysicalWires } from "./harness/editor/physical-wire-routing";
+import { fanWidth, orderByPartners, placeDrawingLabels, trunkGeometry, trunkTopology, type TrunkGeometry, type TrunkParts } from "./drawingLayout";
 import type { ComponentTemplateApi, ComponentTemplateSummary } from "./harness/component-library/component-template-api";
 
 // ── План: что рисовать ──────────────────────────────────────────────────────────────────────────────────────────
@@ -67,6 +74,14 @@ export interface PlanConnector {
   readonly terminal: string;
   /** ТУТ на концах пайки: длина, мм (null — длина не задана); undefined — ТУТ нет. */
   readonly tutLengthMm?: number | null;
+  /** Трубка на разъёме ветви (ТТК поверх разъёма, форма «Трубка на разъёме»): наименование и длина, мм. */
+  readonly shrink?: { readonly name: string; readonly lengthMm: number | null };
+  /** Оплётка на ветви разъёма А («Оплётка ветви»): наименование и длина, мм. */
+  readonly braid?: { readonly name: string; readonly lengthMm: number | null };
+  /** Маркировка у разъёма (строки «Маркировка» с местом «У разъёма»): текст, материал, длина отрезка, мм. */
+  readonly marks?: readonly { readonly text: string; readonly name: string; readonly lengthMm: number | null }[];
+  /** «Ветвь по КД, мм» формы: размер ветви на схеме жгута как на СБ; нет — по длинам проводов. */
+  readonly kdBranchMm?: number;
 }
 
 export interface PlanWire {
@@ -99,7 +114,9 @@ export interface PlanCable {
 }
 
 export interface PlanCovering {
-  readonly kind: "tut" | "sleeve" | "wrap";
+  /** `zone` — общая трубка на зону сростков (по КД «ТУТ на месте Б»): `zone` — номер зоны. */
+  readonly kind: "tut" | "sleeve" | "wrap" | "zone";
+  readonly zone?: number;
   readonly name: string;
   readonly lengthMm: number | null;
   /** Конец жгута (разъём), у которого лежит отрезок; у оплётки/ленты — весь жгут. */
@@ -135,6 +152,8 @@ export interface GeneratorDrawingPlan {
   readonly wires: readonly PlanWire[];
   /** Сростки «Сложной сборки»; нет — пусто. */
   readonly splices?: readonly PlanSplice[];
+  /** Зоны сростков — ключи сростков, лежащих физически вместе: на чертеже одна зона «С1–С4» вместо цепочки узлов. */
+  readonly zones?: readonly (readonly string[])[];
   /** Провода с контакта в свободный конец (хвост без сростка): `end` — контакт, `side` — его сторона. */
   readonly tails?: readonly PlanSpliceWire[];
   /** Кабели в оболочке (на форме — кабель с числом жил больше одной). */
@@ -145,6 +164,10 @@ export interface GeneratorDrawingPlan {
   readonly twistGroups?: readonly (readonly string[])[];
   readonly twistPitchMm: number | null;
   readonly coverings: readonly PlanCovering[];
+  /** Зачистка концов в сростках, мм (форма, по умолчанию 5 мм); нет сростков — не задана. */
+  readonly spliceStripMm?: number | null;
+  /** Зачистка хвостов под лужение, мм (по умолчанию 3 мм); хвосты не лудятся — не задана. */
+  readonly tailStripMm?: number | null;
   readonly warnings: readonly string[];
 }
 
@@ -165,13 +188,8 @@ export function wireColorHex(mark: string): string {
   return hex6(wireColorKnown(mark));
 }
 
-/** Сечение из марки: «24 AWG», иначе число с запятой («МГТФ 0,12» → «0,12 мм²»); нет — "". */
-export function wireSectionOf(mark: string): string {
-  const awg = /(\d+)\s*awg/i.exec(mark);
-  if (awg) return `${awg[1]} AWG`;
-  const decimals = mark.replace(/\d+\s*[хx×*]\s*(?=\d)/g, " ").match(/\d+[.,]\d+/g);
-  return decimals ? `${decimals[decimals.length - 1].replace(".", ",")} мм²` : "";
-}
+/** Сечение из марки — в pinoutCheck.ts (его читает и схема связей генератора, без кода редактора). */
+export { wireSectionOf };
 
 /** Что рисовать по форме генератора: те же соединения, что уходят в ЭТК (`connections_`: жила за жилой — её контакт
  *  на первом разъёме, А раньше В, ↔ её контакт на каждом следующем), но с номером кабеля и разъёмом формы. Жилы кабеля
@@ -187,7 +205,17 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
     const record = term ? gen.findTerRecord_(term.art || term.name) : null;
     if (term && !record) warnings.push(`${sideRu_(ep.side)}${gen.endpointOrdinal_(ep)}: терминала «${term.art || term.name}» нет в БД.ТЕР — в таблице контактов он не указан.`);
     const tut = ep.method === "solder" && !ep.tutOff ? { tutLengthMm: positive(ep.tutLen) } : {};
-    return { key: ep.id, side: ep.side, designation: label || `XS${index + 1}`, article: compText(ep.connId), terminal: record?.article ?? "", ...tut };
+    const designation = label || `XS${index + 1}`;
+    const sh = ep.side === "A" ? gen.shrinkOf_(ep) : null;
+    const slot = ep.side === "A" && gen.braidEp_(ep) ? S.wrap.slots.find((sl) => sl.kind === "braid" && sl.mat && gen.getCompById(sl.mat)) : undefined;
+    const braidComp = slot ? gen.getCompById(slot.mat) : null;
+    const braidLen = slot ? positive(ep.braidLen) ?? positive(gen.braidLenDefault_(slot.len)) : null;
+    const marks = (S.mark ? markSpecs(S.markRows || [], D.components) : []).filter((m) => m.placeKind === "conn" && m.target.split(/[\s()]+/).includes(designation))
+      .map((m) => ({ text: m.text, name: m.name, lengthMm: m.lengthMm ?? null }));
+    return { key: ep.id, side: ep.side, designation, article: compText(ep.connId), terminal: record?.article ?? "", ...tut,
+      ...(sh ? { shrink: { name: sh.comp.art || sh.comp.name || "", lengthMm: positive(sh.len) } } : {}),
+      ...(braidComp ? { braid: { name: braidComp.art || braidComp.name || "", lengthMm: braidLen } } : {}),
+      ...(marks.length ? { marks } : {}), ...(positive(ep.kdBranch) ? { kdBranchMm: positive(ep.kdBranch)! } : {}) };
   });
 
   const active = gen.activeWires_();
@@ -284,23 +312,43 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
     if (c.tutLengthMm === undefined) return;
     coverings.push({ kind: "tut", name: `ТУТ на пайку ${c.designation}`, lengthMm: c.tutLengthMm, at: c.key, coveringKind: "heat-shrink" });
   });
+  // Сростки одной зоны: с одних разъёмов стороны А — одна группа ПФ («Пайка С1, С2»); есть общая термоусадка на жгут
+  // («ТУТ на месте Б») — все сростки под одной трубкой, одна зона. Зона нужна уже здесь: общая трубка садится на неё.
+  const zoneKeys = (list: readonly PlanSplice[]): string[][] => {
+    if (!list.length) return [];
+    if (S.hs.enabled && S.hs.rows.some((row) => gen.getCompById(row.compId) && parseInt(row.cnt, 10) > 0)) return [list.map((sp) => sp.key)];
+    const groups = new Map<string, string[]>();
+    list.forEach((sp) => {
+      const ids = [...new Set(sp.wires.filter((w) => w.side === "A").map((w) => w.end.connector))].sort();
+      const ids2 = [...new Set(sp.wires.filter((w) => w.side === "B").map((w) => w.end.connector))].sort();
+      const key = ids.length ? `A:${ids.join(",")}` : ids2.length ? `B:${ids2.join(",")}` : `S:${sp.key}`;
+      groups.set(key, [...(groups.get(key) ?? []), sp.key]);
+    });
+    return [...groups.values()];
+  };
+  const planSplicesEarly = [...splices].flatMap(([id, got]) => (got.wires.length ? [{ key: id, label: spliceLabel(S, id), wires: got.wires, tails: got.tails }] : []));
+  const zones = zoneKeys(planSplicesEarly);
   if (S.hs.enabled) {
     const ends = connectors.map((c) => c.key);
-    let next = 0;
+    let next = 0, zoned = 0;
     S.hs.rows.forEach((row) => {
       const comp = gen.getCompById(row.compId);
       const count = Math.max(0, parseInt(row.cnt, 10) || 0);
       if (!comp || !count) return;
       for (let i = 0; i < count; i++) {
+        // Первые трубки — по одной на зону сростков, остальные — у концов жгута.
+        if (zoned < zones.length) { coverings.push({ kind: "zone", zone: zoned++, name: comp.art || comp.name, lengthMm: positive(row.len), coveringKind: "heat-shrink" }); continue; }
         coverings.push({ kind: "sleeve", name: comp.art || comp.name, lengthMm: positive(row.len), at: ends[next % Math.max(1, ends.length)], coveringKind: "heat-shrink" });
         next++;
       }
     });
   }
+  // Оплётка на ветвях разъёмов (форма «Оплётка ветви») рисуется на ветвях; общая на весь жгут — только когда ветвей с ней нет.
+  const braidOnBranches = connectors.some((c) => c.braid);
   if (S.wrap.enabled) {
     S.wrap.slots.forEach((slot) => {
       const comp = slot.mat ? gen.getCompById(slot.mat) : null;
-      if (!comp) return;
+      if (!comp || (braidOnBranches && slot.kind === "braid")) return;
       coverings.push({ kind: "wrap", name: comp.art || comp.name, lengthMm: positive(slot.len), coveringKind: slot.kind === "braid" ? "braid" : "tape" });
     });
   }
@@ -310,15 +358,17 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
     if (got.loose.length) warnings.push(`Сросток ${label}: ${got.loose.join(", ")} — на чертеже не показан, задайте второй конец.`);
     return got.wires.length ? [{ key: sp.id, label, wires: got.wires, tails: got.tails }] : [];
   });
+  const tailed = tails.length > 0 || planSplices.some((sp) => sp.tails.length > 0);
   return { connectors, wires, cables, pairs, ...(twist.groups.length ? { twistGroups: twist.groups } : {}), twistPitchMm: positive(S.twist.pitch), coverings, warnings,
-    ...(planSplices.length ? { splices: planSplices } : {}), ...(tails.length ? { tails } : {}) };
+    ...(planSplices.length ? { splices: planSplices, zones: zoneKeys(planSplices), spliceStripMm: positive(spliceStripMm(S)) } : {}), ...(tails.length ? { tails } : {}),
+    ...(tailed && S.tailTin?.enabled ? { tailStripMm: positive(tailStripMm(S)) } : {}) };
 }
 
 // ── Разъём по артикулу: библиотека компонентов или свободный корпус ─────────────────────────────────────────────────
 
 export type ConnectorSource =
   | { readonly kind: "template"; readonly template: ComponentTemplatePlacementEnvelope; readonly articleVariantId: string }
-  | { readonly kind: "free"; readonly contactCount: number | null; readonly libraryCode: string | null };
+  | { readonly kind: "free"; readonly contactCount: number | null; readonly libraryCode: string | null; readonly housing?: ConnectorHousing | null };
 
 const sameArticle = (left: string, right: string) => {
   const a = normalizeConnectorArticle(left);
@@ -347,7 +397,8 @@ export async function resolveConnectorSources(
   const sources: Record<string, ConnectorSource> = {};
   for (const connector of plan.connectors) {
     const housing = connector.article ? housings[connector.article] ?? null : null;
-    const free: ConnectorSource = { kind: "free", contactCount: housing?.n ?? null, libraryCode: housing?.title?.trim() || housing?.family?.trim() || null };
+    const free: ConnectorSource = { kind: "free", contactCount: housing?.n ?? null, libraryCode: housing?.title?.trim() || housing?.family?.trim() || null,
+      ...(housing && hasTopView(housing) ? { housing } : {}) };
     const summary = connector.article && templates ? findTemplateFor(connector.article, summaries) : null;
     if (summary && templates) {
       const key = `${summary.templateId}@${summary.version}`;
@@ -382,6 +433,10 @@ export interface GeneratorDrawing {
 /** Свободный корпус на чертеже: прямоугольник 118 в ширину, контакты по правому краю через 16 (как его рисует редактор). */
 const FREE_WIDTH = 118;
 const freeHeight = (contacts: number) => Math.max(72, 44 + contacts * 16);
+/** Корпус из базы разъёмов (торец с гнёздами) — размеры рисунка; обычная рамка — null. */
+const faceOf = (connector: ConnectorInstance) => (connector.housing && connector.housingView === "face" ? housingFace(connector.housing, null, connector.schematic.orientation === "contacts-left") : null);
+/** Выход провода от торца разъёма из базы: короче, чем от рамки (провода уже идут из гнёзд). */
+const FACE_EXIT = 56;
 /** Раскладка Э4: колонка А слева, колонка В справа (просвет — по ступеньке на провод), между разъёмами по вертикали — 48.
  *  Всё в положительных координатах: редактор открывается с началом координат в левом верхнем углу поля. */
 const E4_GAP_X = 240, E4_GAP_Y = 48;
@@ -391,8 +446,8 @@ const DRAWING_B_X = 700, DRAWING_GAP_Y = 90, EXIT = 60, DRAWING_TOP = 40;
 const TUT_STUB = 60;
 /** Хвост на схеме Э4: свободный конец от узла по горизонтали, следующий хвост того же узла — ступенькой ниже. */
 const TAIL_E4 = 64, TAIL_E4_STEP = 22;
-/** Хвост на чертеже: от сростка до свободного конца; ветка к сростку от узла ветвления. */
-const TAIL_DRAWING = 80, SPLICE_BRANCH = 80;
+/** Узел двойного обжима на схеме Э4 — на столько от контакта по первому проводу. */
+const DOUBLE_E4 = 18;
 const COVER_COLOR: Record<CoveringKind, string> = {
   "heat-shrink": "#424c53", nylon: "#b19c77", braid: "#b19c77", "metal-braid": "#73838d", tape: "#b19c77", band: "#b19c77",
 };
@@ -404,6 +459,26 @@ const SHIELD_HEX = hex6(SHIELD_COLOR);
 
 function run(document: HarnessDesignDocument, command: EditorCommand): HarnessDesignDocument {
   return applyEditorCommand(document, command);
+}
+
+/** Диаметр жилы по сечению из марки («0,2 мм²», «24 AWG»), мм; сечение не прочитано — 1 мм. */
+export function coreDiameterMm(section: string): number {
+  const awg = /^(\d+)\s*AWG$/i.exec(section.trim());
+  const mm2 = parseDecimal_(section.replace(/\s*мм².*$/, ""));
+  const d = awg ? 0.127 * 92 ** ((36 - Number(awg[1])) / 39) : mm2 > 0 ? 2 * Math.sqrt(mm2 / Math.PI) : 1;
+  return Math.max(0.01, Math.round(d * 100) / 100);
+}
+
+/** Зачистка конца провода на чертеже (владелец 17.10: зачистку под сросток «так же в чертеже надо обновить»): профиль
+ *  разделки из одного слоя — жила, L1 — длина зачистки. Профиль рисует генератор, а не справочник БД.КОАКС: источник
+ *  «генератор ТК», снимок и запись — постоянные. */
+const GEN_STRIP_SNAPSHOT = "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17";
+const GEN_STRIP_RECORD = "0".repeat(64);
+export function generatorStripProfile(lengthMm: number, section: string, title: string): WireStripProfileBinding {
+  const mm = String(lengthMm).replace(".", ",");
+  return { sourceId: "генератор ТК", snapshotId: GEN_STRIP_SNAPSHOT, snapshotSha256: GEN_STRIP_RECORD, recordId: GEN_STRIP_RECORD,
+    entityType: "coax-termination", sourceKey: `${title} ${mm} мм`, displayName: `${title} ${mm} мм`,
+    layers: [{ index: 1, diameterMm: coreDiameterMm(section), stripLengthMm: lengthMm }] };
 }
 
 /** Документ чертежа по плану. Разъёмы — по `sources` (нет записи — свободный корпус по наибольшему контакту). Бросает
@@ -444,11 +519,13 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
       }
     }
     if (!connector) {
-      const free = source?.kind === "free" ? source : { contactCount: null, libraryCode: null };
+      const free: Extract<ConnectorSource, { kind: "free" }> = source?.kind === "free" ? source : { kind: "free", contactCount: null, libraryCode: null };
       const count = Math.max(free.contactCount ?? 0, maxPin(c.key), 1);
       const base = createConnector(id, c.designation, count, { x: 0, y: 0 }, { x: 0, y: 0 }, c.article || c.designation);
       // Таблица как у Василия: №, Цепь, Терминал, Марка, Сечение, Цвет — «Тип» у свободного корпуса пуст, скрыт.
-      connector = { ...base, libraryCode: free.libraryCode || "FREE", schematic: { ...base.schematic,
+      // Корпус из базы разъёмов — торец серии с гнёздами (тот же рисунок, что в «Распиновке»), провода идут из гнёзд; нет гнёзд — рамка.
+      const face = free.housing && housingFace(free.housing) ? { housing: free.housing, housingView: "face" as const } : {};
+      connector = { ...base, libraryCode: free.libraryCode || "FREE", ...face, schematic: { ...base.schematic,
         baseColumns: base.schematic.baseColumns.map((column) => (column.key === "contactType" ? { ...column, visible: false } : column)) } };
       warnings.push(`${label(c)}: нет в библиотеке компонентов — нарисован свободным корпусом на ${count} конт.${free.contactCount ? "" : " (число контактов — по распиновке)"}`);
     }
@@ -460,7 +537,11 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
 
   // 2. Таблица контактов: марка, сечение, цвет, терминал и цепь — на обоих концах провода.
   const terminalWarned = new Set<string>();
+  // Двойной обжим: второй провод в том же контакте строку таблицы не переписывает — в ней провод, что пришёл первым.
+  const filled = new Set<string>();
   for (const { end, wire } of contactEnds) {
+    if (filled.has(`${end.connector}:${end.pin}`)) continue;
+    filled.add(`${end.connector}:${end.pin}`);
     {
       const c = used.find((item) => item.key === end.connector)!;
       const connector = connectorOf(end.connector);
@@ -481,9 +562,17 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   }
 
   // 3. Чертёж: А слева, В справа, по вертикали — вокруг нуля. Шаблон смотрит выходом не туда — поворот рисунка:
-  //    А выходом вправо, В — влево.
+  //    А выходом вправо, В — влево. Колонка В — в порядке партнёров на стороне А (меньше перекрёстков).
   const sideOf = (side: Side) => used.filter((c) => c.side === side);
-  const columns = [sideOf("A"), sideOf("B")];
+  const sideKey = new Map(used.map((c) => [c.key, c.side]));
+  const links: Array<[string, string]> = [];
+  plan.wires.forEach((w) => {
+    const [a, b] = sideKey.get(w.from.connector) === "A" ? [w.from.connector, w.to.connector] : [w.to.connector, w.from.connector];
+    if (sideKey.get(a) === "A" && sideKey.get(b) === "B") links.push([a, b]);
+  });
+  (plan.splices || []).forEach((sp) => sp.wires.filter((w) => w.side === "A")
+    .forEach((a) => sp.wires.filter((w) => w.side === "B").forEach((b) => links.push([a.end.connector, b.end.connector]))));
+  const columns = [sideOf("A"), orderByPartners(sideOf("A").map((c) => c.key), sideOf("B"), (c) => c.key, links)];
   for (const c of used) {
     const connector = connectorOf(c.key);
     if (connector.libraryBinding?.mode !== "template") continue;
@@ -494,7 +583,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   }
   const extent = (c: PlanConnector) => {
     const connector = connectorOf(c.key);
-    if (connector.libraryBinding?.mode !== "template") return { top: 0, height: freeHeight(connector.contacts.length) };
+    if (connector.libraryBinding?.mode !== "template") return { top: 0, height: faceOf(connector)?.height ?? freeHeight(connector.contacts.length) };
     const ys = connector.contacts.map((contact) => connectorContactPosition(connector, contact.id, "drawing")?.y ?? 0)
       .map((y) => y - connector.positions.drawing.y);
     return { top: Math.min(...ys) - 30, height: Math.max(...ys) - Math.min(...ys) + 60 };
@@ -518,6 +607,8 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     let next = placed;
     const failed: string[] = [];
     const done = new Map<string, string>();
+    /** Узлы двойного обжима → разъём плана, у которого они стоят. */
+    const doubled = new Map<string, string>();
     const e4Width = Math.max(0, ...columns[0].map((c) => connectorE4TableGeometry(connectorOf(c.key)).width));
     const heightsOf = (column: PlanConnector[]) => column.map((c) => connectorE4TableGeometry(connectorOf(c.key)).height);
     const total = (column: PlanConnector[]) => heightsOf(column).reduce((sum, h) => sum + h, 0) + E4_GAP_Y * Math.max(0, column.length - 1);
@@ -531,18 +622,48 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
         y += heights[i] + E4_GAP_Y;
       });
     });
+    // Двойной обжим (два провода в одном контакте): у контакта редактора один вывод — второй провод приходит в узел на
+    // первом проводе у самого контакта (как «подключение к проводу» в редакторе); на чертеже узел — у выхода разъёма.
+    const taken = new Map<string, string>();
     plan.wires.forEach((wire, index) => {
       const id = `gen-w${index + 1}`;
       const from = { connectorId: ids.get(wire.from.connector)!, contactId: contactOf(wire.from.connector, wire.from.pin).id };
       const to = { connectorId: ids.get(wire.to.connector)!, contactId: contactOf(wire.to.connector, wire.to.pin).id };
+      const keyOf = (end: PlanWire["from"]) => `${end.connector}:${end.pin}`;
+      const shared = [wire.to, wire.from].find((end) => taken.has(keyOf(end)));
+      if (shared) {
+        try {
+          const firstId = taken.get(keyOf(shared))!;
+          const first = next.wires.find((w) => w.id === firstId)!;
+          const contact = { connectorId: ids.get(shared.connector)!, contactId: contactOf(shared.connector, shared.pin).id };
+          const pts = [wireEndpointE4Anchor(next, first.from)!.position, ...first.e4Route, wireEndpointE4Anchor(next, first.to)!.position];
+          const atEnd = first.to.connectorId === contact.connectorId && (first.to as typeof contact).contactId === contact.contactId;
+          const [tip, toward] = atEnd ? [pts[pts.length - 1], pts[pts.length - 2]] : [pts[0], pts[1]];
+          const span = Math.hypot(toward.x - tip.x, toward.y - tip.y) || 1;
+          const step = Math.min(DOUBLE_E4, span / 2);
+          const position = { x: tip.x + ((toward.x - tip.x) / span) * step, y: tip.y + ((toward.y - tip.y) / span) * step };
+          const tag = `gen-dc${index + 1}`;
+          const other = shared === wire.to ? from : to;
+          const node = createJunctionEndpoint(tag);
+          next = run(next, { type: "create-junction", junction: { id: tag, position, wireIds: [firstId, id] },
+            branchWire: createWire(id, shared === wire.to ? other : node, shared === wire.to ? node : other, wire.lengthMm, wire.circuit, wire.color || "#334155", 0, 0, 1, wire.color ? other : undefined) });
+          done.set(wire.key, id);
+          doubled.set(tag, shared.connector);
+        } catch (reason) {
+          failed.push(`${wire.mark || "Провод"} ${wire.from.pin}→${wire.to.pin}: двойной обжим не лёг на схему (${reason instanceof Error ? reason.message : "ошибка"}).`);
+        }
+        return;
+      }
       try {
         next = run(next, { type: "add-wire", wire: createWire(id, from, to, wire.lengthMm, wire.circuit, wire.color || "#334155", 0, 0, 1, wire.color ? from : undefined) });
         done.set(wire.key, id);
+        taken.set(keyOf(wire.from), id);
+        taken.set(keyOf(wire.to), id);
       } catch (reason) {
         failed.push(`${wire.mark || "Провод"} ${wire.from.pin}→${wire.to.pin}: не лёг на схему (${reason instanceof Error ? reason.message : "ошибка"}).`);
       }
     });
-    return { next, failed, done };
+    return { next, failed, done, doubled };
   };
   let wired = wireUp(false);
   if (wired.failed.length) {
@@ -551,6 +672,8 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   }
   doc = wired.next;
   const wireIds = wired.done;
+  const crimpNodes = wired.doubled;
+  const crimpAt = new Set(crimpNodes.values());
   warnings.push(...wired.failed);
 
   // 4а. Сростки — узлы соединения схемы: провода с контактов и хвосты сходятся в узле. Узел редактора держится не меньше
@@ -567,6 +690,8 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     const room = Math.max(24, (right ? bLeft - from.x : from.x - aRight) / 2);
     return createFreeEndpoint({ x: Math.round(from.x + (right ? 1 : -1) * Math.min(TAIL_E4, room)), y: Math.round(from.y + index * TAIL_E4_STEP) });
   };
+  /** Провода сростков и хвостов → сечение (диаметр жилы в профиле зачистки их концов). */
+  const stripped = new Map<string, string>();
   (plan.splices || []).forEach((sp, index) => {
     const tag = `gen-sp${index + 1}`;
     const contact = (w: PlanSpliceWire) => ({ connectorId: ids.get(w.end.connector)!, contactId: contactOf(w.end.connector, w.end.pin).id });
@@ -596,6 +721,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
       next = run(next, { type: "reconnect-wire", wireId: first, end: "to", endpoint: node });
       members.forEach((m, j) => { if (j && j !== branchAt) next = run(next, { type: "add-wire", wire: memberWire(m, `${tag}-w${j + 1}`, position) }); });
       doc = next;
+      members.forEach((m, j) => stripped.set(`${tag}-w${j + 1}`, (m.wire ?? m.tail)!.section));
     } catch (reason) {
       warnings.push(`Сросток ${sp.label}: узел на схему не лёг (${reason instanceof Error ? reason.message : "ошибка"}) — дорисуйте его в редакторе.`);
     }
@@ -606,9 +732,22 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     try {
       doc = run(doc, { type: "add-wire", wire: createWire(`gen-t${index + 1}`, from, tailEnd(e4At(from), 0), tail.lengthMm, tail.circuit,
         tail.color || "#334155", 0, 0, 1, tail.color ? from : undefined) });
+      stripped.set(`gen-t${index + 1}`, tail.section);
     } catch (reason) {
       warnings.push(`${tail.mark || "Провод"} ${tail.end.pin}→хвост: не лёг на схему (${reason instanceof Error ? reason.message : "ошибка"}).`);
     }
+  });
+
+  // Зачистка концов на чертеже — та же, что у станка резки: конец в сростке (5 мм по умолчанию), хвост под лужение (3 мм).
+  stripped.forEach((section, wireId) => {
+    const wire = doc.wires.find((w) => w.id === wireId);
+    if (!wire) return;
+    (["from", "to"] as const).forEach((end) => {
+      const at = wire[end];
+      const [mm, title] = isJunctionEndpoint(at) && at.junctionId.startsWith("gen-sp") ? [plan.spliceStripMm, "Зачистка под сросток"]
+        : isFreeEndpoint(at) ? [plan.tailStripMm, "Зачистка хвоста"] : [null, ""];
+      if (mm) doc = run(doc, { type: "set-wire-strip-profile", wireId, end, profile: generatorStripProfile(mm, section, title) });
+    });
   });
 
   // 4б. Кабели в оболочке: жилы — провода чертежа, собранные в кабель (длина реза и снятие оболочки — у кабеля).
@@ -649,23 +788,61 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   const routed = (from: string, to: string): PhysicalSegment => ({ id: `gen-s${segments.length + 1}`, from, to, path: { kind: "routed", points: [] } });
   /** Отрезки «провод у контакта» разъёмов с ТУТ: ключ разъёма плана → участок и номер контакта. */
   const stubs = new Map<string, Array<{ segmentId: string; pin: number }>>();
-  used.forEach((c, index) => {
+  /** Выход разъёма на чертеже: точка за корпусом против середины занятых контактов (с ТУТ — ещё на отрезок дальше). */
+  const exitOf = (c: PlanConnector) => {
     const connector = connectorOf(c.key);
-    const id = `gen-n${index + 1}`;
     const wiresAt = (contactId: string) => doc.wires.filter((wire) => [wire.from, wire.to].some((end) => end.connectorId === connector.id && end.contactId === contactId));
     const touched = connector.contacts.filter((contact) => wiresAt(contact.id).length > 0);
     const points = touched.flatMap((contact) => { const p = connectorContactPosition(connector, contact.id, "drawing"); return p ? [p] : []; });
     const centre = points.length ? points.reduce((sum, p) => sum + p.y, 0) / points.length : connector.positions.drawing.y + extent(c).height / 2;
     const free = connector.libraryBinding?.mode !== "template";
+    const face = faceOf(connector);
+    const out = face ? FACE_EXIT : EXIT;
     const x = c.side === "A"
-      ? (free ? connector.positions.drawing.x + FREE_WIDTH : Math.max(...points.map((p) => p.x))) + EXIT
-      : (free ? connector.positions.drawing.x : Math.min(...points.map((p) => p.x))) - EXIT;
+      ? (free ? connector.positions.drawing.x + (face?.width ?? FREE_WIDTH) : Math.max(...points.map((p) => p.x))) + out
+      : (free ? connector.positions.drawing.x : Math.min(...points.map((p) => p.x))) - out;
+    const stub = (c.tutLengthMm !== undefined || crimpAt.has(c.key)) && touched.length ? (c.side === "A" ? TUT_STUB : -TUT_STUB) : 0;
+    return { connector, wiresAt, touched, centre, free, x, common: { x: x + stub, y: centre } };
+  };
+  // Жгут с несколькими разъёмами А, сростками или хвостами — один ствол (drawingLayout.ts): колонка В встаёт за концом
+  // ствола, веером вокруг его линии (один разъём В — прямо на линии ствола).
+  const aSide = sideOf("A"), bSide = sideOf("B");
+  // Зоны сростков: узлы схемы, которые физически лежат вместе (plan.zones) — одна зона на стволе вместо цепочки узлов.
+  const spliceTag = new Map((plan.splices || []).map((sp, i) => [sp.key, `gen-sp${i + 1}`]));
+  const zonePlan = (plan.zones || []).map((keys, index) => ({ index, keys, junctions: keys.map((k) => spliceTag.get(k)!).filter((id) => doc.junctions.some((j) => j.id === id) && !crimpNodes.has(id)) }))
+    .filter((zone) => zone.junctions.length > 0);
+  const zoneJunctions = zonePlan.map((zone) => zone.junctions);
+  const zonedJunctions = new Set(zoneJunctions.flat());
+  const parts: TrunkParts = { aBranches: [], bBranches: [], zones: [] };
+  const trunked = aSide.length > 1 || doc.junctions.length > 0 || doc.wires.some((wire) => isFreeEndpoint(wire.from) || isFreeEndpoint(wire.to));
+  let geometry: TrunkGeometry | null = null;
+  if (trunked) {
+    const trunk = trunkGeometry(columns[0].map((c) => exitOf(c).common), doc.junctions.filter((j) => !crimpNodes.has(j.id) && !zonedJunctions.has(j.id)).length + zoneJunctions.length * 1.5);
+    geometry = trunk;
+    const column = columns[1], boxes = column.map(extent);
+    let y = Math.max(DRAWING_TOP, trunk.trunkY - drawingTotal(column) / 2);
+    column.forEach((c, i) => {
+      doc = run(doc, { type: "move-connector", connectorId: ids.get(c.key)!, view: "drawing", position: { x: DRAWING_B_X, y: Math.round(y - boxes[i].top) } });
+      y += boxes[i].height + DRAWING_GAP_Y;
+    });
+    const exits = column.map((c) => exitOf(c).common);
+    const targetX = column.length > 1 ? trunk.endX + fanWidth(exits.map((p) => p.y - trunk.trunkY)) : trunk.endX;
+    column.forEach((c, i) => {
+      const at = connectorOf(c.key).positions.drawing;
+      doc = run(doc, { type: "move-connector", connectorId: ids.get(c.key)!, view: "drawing",
+        position: { x: Math.round(at.x + targetX - exits[i].x), y: Math.round(at.y + (column.length === 1 ? trunk.trunkY - exits[i].y : 0)) } });
+    });
+  }
+  used.forEach((c, index) => {
+    const { connector, wiresAt, touched, centre, free, x } = exitOf(c);
+    const id = `gen-n${index + 1}`;
     const exit = (nodeId: string, world: Point, wireIds?: string[]): PhysicalNode => {
       const draft: PhysicalNode = { id: nodeId, connectorId: connector.id, position: { x: 0, y: 0 }, ...(wireIds ? { wireIds } : {}) };
       return { ...draft, position: physicalNodeLocalPoint(doc, draft, world), ...(free ? { direction: c.side === "A" ? "right" as const : "left" as const } : {}) };
     };
     nodeOf.set(c.key, id);
-    if (c.tutLengthMm === undefined || !touched.length) {
+    // Разъём с двойным обжимом — как с ТУТ: у каждого контакта свой выход до общего узла; второй провод приходит в общий.
+    if ((c.tutLengthMm === undefined && !crimpAt.has(c.key)) || !touched.length) {
       nodes.push(exit(id, { x, y: centre }));
       return;
     }
@@ -682,8 +859,13 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     stubs.set(c.key, own);
   });
   const stubIds = new Set([...stubs.values()].flat().map((stub) => stub.segmentId));
-  const aSide = sideOf("A"), bSide = sideOf("B");
-  if (aSide.length === 1 && bSide.length === 1) {
+  const sideOfId = (connectorId: string) => used.find((c) => ids.get(c.key) === connectorId)?.side ?? null;
+  let spliceRoutes: PhysicalRoute[] = [];
+  if (geometry) {
+    spliceRoutes = trunkTopology({ doc, nodes, segments, geometry, sideOf: sideOfId,
+      atConnector: new Map([...crimpNodes].map(([junction, key]) => [junction, nodeOf.get(key)!])),
+      aExits: columns[0].map((c) => nodeOf.get(c.key)!), bExits: columns[1].map((c) => nodeOf.get(c.key)!), zones: zoneJunctions, out: parts });
+  } else if (aSide.length === 1 && bSide.length === 1) {
     segments.push(routed(nodeOf.get(aSide[0].key)!, nodeOf.get(bSide[0].key)!));
   } else {
     const exits = (list: PlanConnector[]) => list.map((c) => nodes.find((n) => n.id === nodeOf.get(c.key))!);
@@ -696,41 +878,59 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     aSide.forEach((c) => segments.push(routed(nodeOf.get(c.key)!, junction.id)));
     bSide.forEach((c) => segments.push(routed(junction.id, nodeOf.get(c.key)!)));
   }
-  const spliceRoutes = spliceTopology(doc, nodes, segments, stubIds, nodeOf, (key) => used.find((c) => c.key === key)!.side, ids);
   /** Ствол и ветки — без отрезков провода у контакта. */
   const main = segments.filter((segment) => !stubIds.has(segment.id));
   let topology: PhysicalTopology = { snap: true, nodes, segments, routes: spliceRoutes };
   topology = routePhysicalWires({ ...doc, physicalTopology: topology }, topology);
   // Участок, по которому идут все жилы кабеля и только они, — кабель в оболочке (ствол до разделки); ветки к разным
   // разъёмам после узла — жилы россыпью (кабель разделан, жилы разведены по разъёмам).
-  if (cableMembers.size) {
+  // Канал участка (серый «пайп» редактора) — это оболочка: рисуем её только у кабеля в оболочке. Без кабеля жилы идут
+  // голыми проводами своих цветов (свитые — свитыми), оплётка, лента и термоусадка рисуются своими отрезками ниже
+  // (владелец 14.10: «тут же нет оплётки, почему на чертеже она есть»).
+  {
     const through = (segmentId: string) => new Set(topology.routes.filter((route) => route.steps.some((step) => step.segmentId === segmentId)).map((route) => route.wireId));
     topology = { ...topology, segments: topology.segments.map((segment) => {
-      if (stubIds.has(segment.id)) return segment;
+      if (stubIds.has(segment.id)) return { ...segment, opacity: 0 };
       const inside = through(segment.id);
       const cable = [...cableMembers].find(([, members]) => members.length === inside.size && members.every((id) => inside.has(id)));
-      return cable ? { ...segment, specificationItemId: cable[0], mode: "round" as const, color: CABLE_JACKET } : segment;
+      return cable ? { ...segment, specificationItemId: cable[0], mode: "round" as const, color: CABLE_JACKET } : { ...segment, opacity: 0 };
     }) };
   }
   doc = run(doc, { type: "set-physical-topology", topology });
   const unrouted = doc.wires.filter((wire) => !topology.routes.some((route) => route.wireId === wire.id)).length;
   if (unrouted) warnings.push(`${unrouted} провод(а) без трассы на чертеже — проложите их в редакторе.`);
 
-  // 7. Оболочки: ТУТ на пайку — трубка на каждый провод у своего контакта; отрезки термоусадки — у своего конца поверх
-  //    пучка; оплётка/лента — по всему жгуту.
+  // 7. Оболочки: ТУТ на пайку — трубка на каждый провод у своего контакта; общая трубка — на зону сростков; трубка, маркировка
+  //    и оплётка ветви — на ветви своего разъёма А (маркировка у разъёма, за ней трубка, оплётка поверх); отрезки
+  //    термоусадки на жгут — у своего конца поверх пучка; оплётка/лента на жгут — по всему жгуту.
   const coverings: PhysicalCovering[] = [];
-  const endSpan = (key: string, share: number) => {
+  const branchSegment = (key: string) => {
     const node = nodeOf.get(key);
-    const segment = main.find((s) => s.from === node || s.to === node);
-    if (!segment) return null;
-    return segment.from === node ? { segmentId: segment.id, from: 0, to: share } : { segmentId: segment.id, from: 1 - share, to: 1 };
+    return main.find((s) => s.from === node || s.to === node) ?? null;
   };
+  const spanOf = (key: string, from: number, to: number) => {
+    const segment = branchSegment(key);
+    if (!segment) return null;
+    return segment.from === nodeOf.get(key) ? { segmentId: segment.id, from, to } : { segmentId: segment.id, from: 1 - to, to: 1 - from };
+  };
+  const endSpan = (key: string, share: number) => spanOf(key, 0, share);
+  /** Выноски поверх чертежа: текст → участок и доля его длины, где лежит оболочка. */
+  const callouts: Array<{ text: string; label: string; segmentId: string; at: number }> = [];
+  const tubeShort = (name: string) => { const m = /^(.*?\d+(?:[.,]\d+)?\s*\/\s*\d+(?:[.,]\d+)?)/.exec(name); return (m ? m[1] : name).replace(/\s+/g, " ").trim(); };
+  const mmText = (mm: number | null) => (mm === null ? "" : `, ${String(mm).replace(".", ",")} мм`);
   const stacked = new Map<string, number>();
   plan.coverings.forEach((covering) => {
     const length = covering.lengthMm === null ? { lengthMode: "auto" as const, lengthMm: null } : { lengthMode: "manual" as const, lengthMm: covering.lengthMm };
     const common = () => ({ id: `gen-c${coverings.length + 1}`, name: covering.name, kind: covering.coveringKind, width: 0, color: COVER_COLOR[covering.coveringKind], ...length });
     if (covering.kind === "wrap") {
       coverings.push({ ...common(), spans: main.map((s) => ({ segmentId: s.id, from: 0, to: 1 })) });
+      return;
+    }
+    if (covering.kind === "zone") {
+      const zone = parts.zones.find((z) => z.index === zonePlan.findIndex((p) => p.index === covering.zone));
+      if (!zone) return;
+      coverings.push({ ...common(), spans: [{ segmentId: zone.segmentId, from: 0, to: 1 }] });
+      callouts.push({ text: `Трубка ${tubeShort(covering.name)}${mmText(covering.lengthMm)}`, label: `Трубка ${tubeShort(covering.name)}`, segmentId: zone.segmentId, at: 0.5 });
       return;
     }
     if (!covering.at || !ids.has(covering.at)) return;
@@ -744,151 +944,56 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     const span = endSpan(covering.at, Math.min(0.45, 0.14 + layer * 0.06));
     if (span) coverings.push({ ...common(), spans: [span] });
   });
+  used.forEach((c) => {
+    const lay = (name: string, kind: CoveringKind, lengthMm: number | null, from: number, to: number, label: string) => {
+      const span = spanOf(c.key, from, to);
+      if (!span) return;
+      const length = lengthMm === null ? { lengthMode: "auto" as const, lengthMm: null } : { lengthMode: "manual" as const, lengthMm };
+      coverings.push({ id: `gen-c${coverings.length + 1}`, name: `${name} · ${c.designation}`, kind, width: 0, color: COVER_COLOR[kind], ...length, spans: [span] });
+      callouts.push({ text: `${label}${lengthMm === null || label.startsWith("Маркировка") ? "" : mmText(lengthMm)}`, label, segmentId: span.segmentId, at: (span.from + span.to) / 2 });
+    };
+    const marks = c.marks ?? [];
+    marks.forEach((mark, i) => lay(mark.name || "Маркировка", "heat-shrink", mark.lengthMm, 0.03 + i * 0.07, 0.09 + i * 0.07, `Маркировка «${mark.text}»`));
+    if (c.shrink) lay(c.shrink.name, "heat-shrink", c.shrink.lengthMm, 0.11 + marks.length * 0.07, 0.3 + marks.length * 0.07, `Трубка ${tubeShort(c.shrink.name)}`);
+    if (c.braid) lay(c.braid.name, "braid", c.braid.lengthMm, 0.14, 0.97, `Оплётка ${c.braid.name}`);
+  });
   if (coverings.length) doc = run(doc, { type: "set-physical-topology", topology: { ...doc.physicalTopology!, coverings } });
 
-  // 8. Размер: один участок А → В и одна длина у всех проводов — размер на участке (длины проводов идут от него).
+  // Жилы без оболочки — голые цветные провода: без объёмной подсветки (она сереет цвета) и, если есть свивка, покрупнее,
+  // чтобы цвета пар не тонули в подложке соседней пары.
+  const bare = !doc.physicalTopology!.segments.some((segment) => segment.specificationItemId);
+  const strands = bare ? { volumeShading: false, ...(plan.pairs.length ? { physicalScale: 1.8 } : {}) } : {};
+
+  // 8. Размеры. Зона сростков (СБ владельца): размеры от центра ветвления — ветвь А, зона, ветви к В и жгут свободных
+  //    концов; длины — из генератора (длины резки проводов зоны, длина общей трубки), провод доходит до середины зоны.
+  //    Иначе — один участок А → В и одна длина у всех проводов: размер на участке (длины проводов идут от него).
   const lengths = [...new Set(doc.wires.map((wire) => wire.lengthMm))];
   const trunk = main.length === 1 ? doc.physicalTopology!.segments.find((segment) => segment.id === main[0].id) : undefined;
-  if (trunk && lengths.length === 1 && lengths[0] !== null) {
+  // Пустые документы чертежа: без них редактор рисует «старые» размеры каждого провода косыми линиями через поле.
+  let documents: DrawingDocuments = { tables: [], leaders: [], bomOrder: [], ...strands };
+  if (zonePlan.length && parts.zones.length) {
+    documents = { ...documents, ...zoneAnnotations({ doc, plan, zones: zonePlan, parts, trunkY: geometry!.trunkY, callouts, depthMm: (c) => { const src = sources[c.key]; return src?.kind === "free" ? src.housing?.body?.len ?? null : null; },
+      connectorAt: (exitNode) => used.find((c) => nodeOf.get(c.key) === exitNode) }) };
+  } else if (trunk && lengths.length === 1 && lengths[0] !== null) {
     const dimension: DrawingDimension = {
       id: "gen-d1", segmentId: trunk.id, from: 0, to: trunk.path.points.length + 1, pointCount: trunk.path.points.length + 2,
       routeKey: segmentDimensionKey(doc, trunk.id), mode: "aligned", modeOverride: false, offset: 40, lengthMm: lengths[0],
     };
-    doc = run(doc, { type: "set-drawing-documents", documents: { tables: [], leaders: [], bomOrder: [], showDimensions: true, dimensions: [dimension] } });
-  } else {
-    // Пустые документы чертежа: без них редактор рисует «старые» размеры каждого провода косыми линиями через поле.
-    doc = run(doc, { type: "set-drawing-documents", documents: { tables: [], leaders: [], bomOrder: [] } });
-    if (main.length > 1 && lengths.some((length) => length !== null)) {
-      warnings.push("Длины ствола и веток генератор не знает — размеры на чертеже не проставлены, длины проводов перенесены.");
-    }
+    documents = { ...documents, showDimensions: true, dimensions: [dimension] };
+  } else if (main.length > 1 && lengths.some((length) => length !== null)) {
+    warnings.push("Длины ствола и веток генератор не знает — размеры на чертеже не проставлены, длины проводов перенесены.");
   }
+  doc = run(doc, { type: "set-drawing-documents", documents });
 
   const twisted = withTwistNotes(doc, plan);
   doc = twisted.document;
   warnings.push(...twisted.warnings);
+  // Подписи проводов и разъёмов — без наложений (и у прямого жгута, где провода идут одной трассой).
+  doc = placeDrawingLabels(doc, sideOfId);
 
   const document = JSON.parse(JSON.stringify(doc)) as HarnessDesignDocument;
   parseHarnessDesignDocument(document);
   return { document, warnings: [...new Set(warnings)], connectors: doc.connectors.length, wires: doc.wires.length };
-}
-
-/** Сростки и хвосты на чертеже (шаг 6): узел сростка с проводами с обеих сторон — на участке разъёма А его первого провода
- *  (несколько — по порядку); сросток только одной стороны — на своей ветке от узла ветвления; без узла ветвления (один
- *  разъём А, один В) — на единственном участке. Хвост — участок от сростка (или выхода разъёма) до свободного конца.
- *  Провода сростков и хвостов прокладываются здесь же (автотрасса редактора ведёт только провода между разъёмами).
- *  Меняет `nodes` и `segments`, возвращает трассы этих проводов. */
-function spliceTopology(
-  doc: HarnessDesignDocument, nodes: PhysicalNode[], segments: PhysicalSegment[], stubIds: ReadonlySet<string>,
-  nodeOf: ReadonlyMap<string, string>, sideOf: (key: string) => Side, ids: ReadonlyMap<string, string>,
-): PhysicalRoute[] {
-  const keyOf = new Map([...ids].map(([key, id]) => [id, key]));
-  const nodeById = (id: string) => nodes.find((n) => n.id === id)!;
-  const at = (id: string) => physicalNodePoint(doc, nodeById(id));
-  const hub = nodes.find((n) => n.id === "gen-j1");
-  const contactSide = (end: WireEndpoint) => (end.connectorId && keyOf.has(end.connectorId) ? sideOf(keyOf.get(end.connectorId)!) : null);
-  const spliceNode = new Map<string, string>();
-  const tipNode = new Map<string, string>();
-  /** Куда от сростка уходят его хвосты (единичный вектор). */
-  const outward = new Map<string, Point>();
-  const unit = (x: number, y: number) => { const n = Math.hypot(x, y) || 1; return { x: x / n, y: y / n }; };
-  const exits = nodes.filter((n) => n.connectorId).map((n) => physicalNodePoint(doc, n));
-  const middle = { x: exits.reduce((sum, p) => sum + p.x, 0) / Math.max(1, exits.length), y: exits.reduce((sum, p) => sum + p.y, 0) / Math.max(1, exits.length) };
-  const freshSegment = (from: string, to: string): PhysicalSegment => {
-    let n = segments.length + 1;
-    while (segments.some((s) => s.id === `gen-s${n}`)) n++;
-    // Прямой отрезок: ветка к сростку и хвост рисуются по прямой, без S-изгиба автотрассы.
-    return { id: `gen-s${n}`, from, to, path: { kind: "polyline", points: [] } };
-  };
-  const along = new Map<string, string[]>();
-  let branches = 0;
-  doc.junctions.forEach((junction) => {
-    const wires = doc.wires.filter((w) => junction.wireIds.includes(w.id));
-    const ends = wires.flatMap((w) => [w.from, w.to]).filter((end) => !isJunctionEndpoint(end) && !isFreeEndpoint(end));
-    const sides = new Set(ends.map(contactSide).filter((side): side is Side => !!side));
-    const id = `gen-n-${junction.id}`;
-    spliceNode.set(junction.id, id);
-    const anchor = ends.find((end) => contactSide(end) === "A") ?? ends[0];
-    const anchorNode = anchor ? nodeOf.get(keyOf.get(anchor.connectorId)!) : undefined;
-    const own = segments.find((s) => !stubIds.has(s.id) && (s.from === anchorNode || s.to === anchorNode));
-    if (hub && sides.size < 2) {
-      // Ветка от узла ветвления к сростку: вниз и вверх по очереди, дальше от ствола с каждой парой.
-      const k = branches++, sign = k % 2 ? -1 : 1, centre = at(hub.id);
-      const position = { x: Math.round(centre.x + SPLICE_BRANCH * 0.75), y: Math.round(centre.y + sign * SPLICE_BRANCH * (1 + Math.floor(k / 2))) };
-      nodes.push({ id, position });
-      segments.push(freshSegment(hub.id, id));
-      outward.set(id, unit(position.x - centre.x, position.y - centre.y));
-    } else if (own) along.set(own.id, [...(along.get(own.id) || []), id]);
-    else nodes.push({ id, position: at(nodes[0].id) });
-  });
-  // Сростки на участке: участок режется на цепочку от его начала к концу, узлы — на равных долях.
-  along.forEach((chain, segmentId) => {
-    const index = segments.findIndex((s) => s.id === segmentId);
-    const segment = segments[index];
-    const a = at(segment.from), b = at(segment.to);
-    chain.forEach((id, k) => {
-      const t = (k + 1) / (chain.length + 1);
-      const position = { x: Math.round(a.x + (b.x - a.x) * t), y: Math.round(a.y + (b.y - a.y) * t) };
-      nodes.push({ id, position });
-      // Поперёк участка, наружу от середины жгута.
-      const across = unit(-(b.y - a.y), b.x - a.x);
-      const sign = across.x * (position.x - middle.x) + across.y * (position.y - middle.y) >= 0 ? 1 : -1;
-      outward.set(id, { x: across.x * sign, y: across.y * sign });
-    });
-    const stops = [segment.from, ...chain, segment.to];
-    segments.splice(index, 1, ...stops.slice(1).map((to, k) => ({ ...segment, id: k ? `${segment.id}-${k}` : segment.id, from: stops[k], to })));
-  });
-  // Хвосты: свободный конец — от сростка наружу (поперёк его участка или по его ветке), от выхода разъёма — вдоль жгута
-  //     и в сторону; несколько — веером.
-  const fan = new Map<string, number>();
-  doc.wires.forEach((wire) => {
-    const free = isFreeEndpoint(wire.from) ? "from" : isFreeEndpoint(wire.to) ? "to" : null;
-    if (!free) return;
-    const other = free === "from" ? wire.to : wire.from;
-    const base = isJunctionEndpoint(other) ? spliceNode.get(other.junctionId)
-      : nodes.find((n) => n.connectorId === other.connectorId && (!n.wireIds || n.wireIds.includes(wire.id)))?.id;
-    if (!base) return;
-    const k = fan.get(base) ?? 0;
-    fan.set(base, k + 1);
-    const origin = at(base);
-    const dir = outward.get(base) ?? unit(isJunctionEndpoint(other) || sideOf(keyOf.get(other.connectorId)!) === "A" ? 1 : -1, origin.y >= middle.y ? 1 : -1);
-    const fanOut = (k % 2 ? -1 : 1) * Math.ceil(k / 2) * 28;
-    const id = `gen-n-${wire.id}`;
-    nodes.push({ id, position: { x: Math.round(origin.x + dir.x * TAIL_DRAWING - dir.y * fanOut), y: Math.round(origin.y + dir.y * TAIL_DRAWING + dir.x * fanOut) } });
-    segments.push(freshSegment(base, id));
-    tipNode.set(wire.id, id);
-  });
-  // Трассы: кратчайший путь по участкам; через выход чужого разъёма провод не идёт.
-  const endNodes = (wireId: string, end: WireEndpoint) => {
-    if (isJunctionEndpoint(end)) return [spliceNode.get(end.junctionId)].filter((id): id is string => !!id);
-    if (isFreeEndpoint(end)) return [tipNode.get(wireId)].filter((id): id is string => !!id);
-    return nodes.filter((n) => n.connectorId === end.connectorId && (!n.wireIds || n.wireIds.includes(wireId))).map((n) => n.id);
-  };
-  const routes: PhysicalRoute[] = [];
-  doc.wires.forEach((wire) => {
-    if (![wire.from, wire.to].some((end) => isJunctionEndpoint(end) || isFreeEndpoint(end))) return;
-    const sources = endNodes(wire.id, wire.from), targets = new Set(endNodes(wire.id, wire.to));
-    const previous = new Map<string, { node: string; step: PhysicalStep }>();
-    const queue = [...sources];
-    const seen = new Set(sources);
-    while (queue.length) {
-      const current = queue.shift()!;
-      if (targets.has(current)) {
-        const steps: PhysicalStep[] = [];
-        for (let node = current; previous.has(node); node = previous.get(node)!.node) steps.unshift(previous.get(node)!.step);
-        if (steps.length) routes.push({ wireId: wire.id, steps });
-        break;
-      }
-      if (nodeById(current).connectorId && !sources.includes(current)) continue;
-      segments.forEach((s) => {
-        const next = s.from === current ? s.to : s.to === current ? s.from : null;
-        if (!next || seen.has(next)) return;
-        seen.add(next);
-        previous.set(next, { node: current, step: { segmentId: s.id, reverse: s.to === current } });
-        queue.push(next);
-      });
-    }
-  });
-  return routes;
 }
 
 // ── Кнопка: план → разъёмы → документ ────────────────────────────────────────────────────────────────────────────

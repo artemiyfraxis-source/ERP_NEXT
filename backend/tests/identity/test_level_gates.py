@@ -127,11 +127,24 @@ def test_route_role_lists_are_gone():
 def test_level_sections_are_the_old_ones_without_staffdir_plus_the_split_sections():
     # «Кадры» (`hr`, 0089) came after the transfer: the matrix offers it, the transfer never saw it.
     assert set(LEVEL_SECTION_LABELS) == (set(OLD_SECTIONS) - {"staffdir"}) | {"myops", "quality", "shipping_goods", "hr"}
-    assert domain.FULL_ACCESS_LEVELS == {"superadmin", "admin"}
+    # "admin" stays full only as the «Режим админа» session level; it is no level a person holds (14.10.2026).
+    assert domain.FULL_ACCESS_LEVELS == {"superadmin", domain.ADMIN_MODE_LEVEL} == {"superadmin", "admin"}
     assert domain.LEVEL_LABELS == {
-        "superadmin": "Суперадминистратор", "admin": "Администратор", "commercial": "Коммерческое руководство",
-        "tech_lead": "Технический руководитель", "foreman": "Бригадир", "operator": "Оператор",
+        "superadmin": "Суперадминистратор", "commercial": "Коммерческое руководство",
+        "tech_lead": "Технический руководитель", "pm": "Менеджер по проектам", "storekeeper": "Кладовщик",
+        "foreman": "Бригадир", "operator": "Оператор",
     }
+    assert domain.ACCESS_LEVELS == tuple(domain.LEVEL_LABELS)
+    assert set(domain.LEVEL_SEED) == set(domain.ACCESS_LEVELS) - domain.FULL_ACCESS_LEVELS
+
+
+def test_admin_is_no_level_to_give_but_the_admin_mode_session_keeps_full_access_and_its_name():
+    with pytest.raises(domain.IdentityValidationError, match="Уровня «Администратор» больше нет"):
+        domain.normalize_level("admin")
+    assert domain.normalize_level("pm") == "pm" and domain.normalize_level("storekeeper") == "storekeeper"
+    assert domain.level_label("admin") == "Администратор" and domain.level_label("storekeeper") == "Кладовщик"
+    full = domain.level_permissions(domain.ADMIN_MODE_LEVEL, {}, {"warehouse": domain.AccessMode.NONE})
+    assert full == {section: domain.AccessMode.EDIT for section in domain.FULL_LEVEL_SECTIONS}
 
 
 # ── The split sections over HTTP: myops (reads / writes), quality, shipping_goods ─────────────────────

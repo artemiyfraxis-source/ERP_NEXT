@@ -10,7 +10,9 @@
 * «Из производства» (`from_production`): КБ с живыми заданиями, которые склад принял не целиком — сдано, принято,
   можно принять сейчас;
 * приёмка (`accept_batch`, `accept_one`): не больше сданного цехом. КБ без живых заданий в ERP (сделана до ERP, задания
-  закрыты ручным этапом) принимается до тиража — с причиной в журнале (решено агентом 12.10 — проверить);
+  закрыты ручным этапом) принимается до тиража — с причиной в журнале (решено агентом 12.10 — проверить); нет данных
+  отправки проекта (получатель, адрес, телефон, вариант УПД, файл бумажной УПД) — уведомление менеджеру проекта, одно
+  на приёмку и проект, в той же транзакции (владелец 14.10.2026);
 * сквозной статус проекта (`project_status`): по КБ штуки в каждом состоянии, отправки и журнал.
 
 Всё читается и пишется в ОДНОЙ сессии (`SqlAlchemyFinishedGoodsFlowUnitOfWork`, как `stage_cascade`): пакет приёмки
@@ -39,6 +41,7 @@ from app.modules.production.plan import kit_stage_key, normalize_project_number
 from app.modules.shipping.application import (
     ConcurrentShippingUpdate,
     accept_into_stock,
+    notify_dispatch_gaps,
 )
 from app.modules.shipping.domain import (
     FinishedGood,
@@ -51,11 +54,12 @@ from app.modules.shipping.domain import (
 )
 from app.modules.shipping.infrastructure import (
     SqlAlchemyFinishedGoodsRepository,
+    SqlAlchemyProjectAddresseeRepository,
     SqlAlchemyShipmentRepository,
 )
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
-from app.shared.persistence import AuditEventRow, SqlAlchemyAuditRepository
+from app.shared.persistence import AuditEventRow, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
 ZERO = Decimal("0")
 DELIVERED_BASIS = "сдано цехом"
@@ -69,8 +73,8 @@ BATCH_EVENT = "shipping.goods_accepted_batch"
 
 
 class SqlAlchemyFinishedGoodsFlowUnitOfWork:
-    """Задания, сдачи площадок и выход операций (Production), строки ГП, их журнал и отправки (Shipping) и аудит — в
-    одной сессии SQLAlchemy."""
+    """Задания, сдачи площадок и выход операций (Production), строки ГП, их журнал, отправки и данные отправки
+    (Shipping), аудит и очередь уведомлений — в одной сессии SQLAlchemy."""
 
     def __init__(self, session_factory: Callable[[], Session]):
         self.session_factory = session_factory
@@ -85,7 +89,9 @@ class SqlAlchemyFinishedGoodsFlowUnitOfWork:
         self.outputs = SqlAlchemyOutputRepository(self.session)
         self.goods = SqlAlchemyFinishedGoodsRepository(self.session)
         self.shipments = SqlAlchemyShipmentRepository(self.session)
+        self.addressees = SqlAlchemyProjectAddresseeRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
+        self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
@@ -260,6 +266,8 @@ class AcceptLine:
     project: str
     item_index: str
     quantity: Decimal
+    # Место хранения на складе ГП; пусто — прежнее место КБ.
+    location: str = ""
 
 
 @dataclass(frozen=True)
@@ -284,7 +292,8 @@ def accept_batch_id(idempotency_key: str) -> UUID:
 def accept_batch_fingerprint(command: AcceptBatchCommand) -> str:
     body = {
         "actor": str(command.actor.id),
-        "lines": [[kit_stage_key(line.project, line.item_index), format(Decimal(line.quantity).normalize(), "f")]
+        "lines": [[kit_stage_key(line.project, line.item_index), format(Decimal(line.quantity).normalize(), "f"),
+                   *([line.location.strip()] if line.location.strip() else [])]
                   for line in command.lines],
         "received_at": command.received_at.isoformat() if command.received_at else None,
     }
@@ -351,7 +360,7 @@ def accept_batch(command: AcceptBatchCommand, uow_factory) -> AcceptBatchResult:
             limit, basis, reason = _limit(kb, good)
             accepted.append(accept_into_stock(
                 uow, good, line.quantity, received_at=received_at, actor=command.actor, now=command.now,
-                limit=limit, limit_basis=basis, reason=reason, id_seed=batch_id,
+                limit=limit, limit_basis=basis, reason=reason, id_seed=batch_id, location=line.location,
             ))
         uow.audit.add(AuditEvent(
             id=uuid5(batch_id, "batch"), aggregate_id=batch_id, event_type=BATCH_EVENT, actor=command.actor,
@@ -361,6 +370,11 @@ def accept_batch(command: AcceptBatchCommand, uow_factory) -> AcceptBatchResult:
                           for good, line in zip(accepted, command.lines)],
             },
         ))
+        by_project: dict[str, list[str]] = {}
+        for good in accepted:
+            by_project.setdefault(good.project, []).append(good.item_index)
+        for project, items in by_project.items():
+            notify_dispatch_gaps(uow, project, items, f"batch:{batch_id}", command.now)
         uow.commit()
         return AcceptBatchResult(goods=tuple(accepted))
 
@@ -373,6 +387,7 @@ class AcceptOneCommand:
     received_at: date | None
     actor: Actor
     now: datetime
+    location: str = ""
 
 
 def accept_one(command: AcceptOneCommand, uow_factory) -> FinishedGood:
@@ -387,8 +402,9 @@ def accept_one(command: AcceptOneCommand, uow_factory) -> FinishedGood:
         limit, basis, reason = _limit(kb, good)
         updated = accept_into_stock(
             uow, good, command.quantity, received_at=command.received_at or command.now.date(), actor=command.actor,
-            now=command.now, limit=limit, limit_basis=basis, reason=reason,
+            now=command.now, limit=limit, limit_basis=basis, reason=reason, location=command.location,
         )
+        notify_dispatch_gaps(uow, updated.project, (updated.item_index,), f"good:{updated.id}:v{updated.version}", command.now)
         uow.commit()
         return updated
 

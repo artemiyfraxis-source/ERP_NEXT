@@ -48,7 +48,7 @@ async function openMore() {
 it("warns instead of printing when nothing is waiting to be put away", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path === "/api/receiving/putaway-sheet") {
       return json({
         detail: "Нет позиций для раскладки: нужны строки «Принято» с ГРН и пустым местом на складе.",
@@ -68,7 +68,7 @@ it("prints a putaway sheet for accepted lots waiting for a shelf — same mechan
   const printed = capturePrintFrames();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path === "/api/receiving/putaway-sheet") {
       return json({ sheet: {
         title: "ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД",
@@ -97,7 +97,7 @@ it("writes off stock with its optimistic version and stated reason", async () =>
   let writeoff: Record<string, unknown> | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     if (path.endsWith("/writeoff") && init?.method === "POST") {
       writeoff = JSON.parse(String(init.body));
       return json({ lot: { ...lot, version: 5, written_off: "2", balance: "8" } });
@@ -134,7 +134,7 @@ it("offers «Выдача в производство» as the write-off basis a
   let writeoff: Record<string, unknown> | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     if (path.endsWith("/writeoff") && init?.method === "POST") {
       writeoff = JSON.parse(String(init.body));
       return json({ lot: { ...lot, version: 5, written_off: "1", balance: "9" } });
@@ -163,7 +163,7 @@ it("returns a write-off to the lot with where it comes back from", async () => {
   let returned: Record<string, unknown> | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock") return json({ lots: [returned ? { ...written, version: 5, written_off: "1", balance: "9", available: "9" } : written], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [returned ? { ...written, version: 5, written_off: "1", balance: "9", available: "9" } : written], total: 1, truncated: 0, next_cursor: null });
     if (path === `/api/stock/batches/${lot.id}/return` && init?.method === "POST") {
       returned = JSON.parse(String(init.body));
       return json({ lot: { ...written, version: 5, written_off: "1", balance: "9", available: "9" } });
@@ -194,7 +194,7 @@ function returnStock(destinations: unknown[] | null) {
   const written = { ...lot, written_off: "4", balance: "6", available: "6" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/stock") return json({ lots: [written], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [written], total: 1, truncated: 0, next_cursor: null });
     if (path === `/api/stock/batches/${lot.id}/issued-to`) {
       if (destinations === null) throw new Error("no history");
       return json({ destinations });
@@ -246,7 +246,7 @@ it("keeps «Откуда» free text over the whole lot when it has no issue his
 it("offers no return on a lot that was never written off", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -262,7 +262,7 @@ it("edits article, description, and manufacturer series without changing the lot
   let payload: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     if (path.endsWith("/identity") && init?.method === "PUT") {
       payload = JSON.parse(String(init.body));
       return json({ lot: { ...lot, version: 5 } });
@@ -308,7 +308,7 @@ it("renders the target stock table and sends its filters to the native API", asy
   fireEvent.click(screen.getByLabelText("показывать нулевые"));
 
   await waitFor(() => expect(paths).toContain(
-    "/api/stock?q=%D1%80%D0%B0%D0%B7%D1%8A%D1%91%D0%BC&zero=true&warehouse=%D0%A6%D0%90%D0%A0",
+    "/api/stock?sort=article&group=series&q=%D1%80%D0%B0%D0%B7%D1%8A%D1%91%D0%BC&zero=true&warehouse=%D0%A6%D0%90%D0%A0",
   ));
 });
 
@@ -362,7 +362,7 @@ it("adds a manually counted lot through the live stock route", async () => {
   let payload: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) {
+    if (path.split("?")[0] === "/api/stock" && !init?.method) {
       return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     }
     if (path === "/api/stock/batches" && init?.method === "POST") {
@@ -402,7 +402,7 @@ it("sends the filled lot passport with a manual entry and shows it in the lot op
   };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) {
+    if (path.split("?")[0] === "/api/stock" && !init?.method) {
       return json({ lots: payload ? [weighed] : [], total: payload ? 1 : 0, truncated: 0, next_cursor: null });
     }
     if (path === "/api/stock/batches" && init?.method === "POST") {
@@ -440,7 +440,7 @@ it("enters a list of rows and keeps the refused ones with the reason (SK-10)", a
   let reloads = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) {
+    if (path.split("?")[0] === "/api/stock" && !init?.method) {
       reloads += 1;
       return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     }
@@ -483,7 +483,7 @@ it("enters a list of rows and keeps the refused ones with the reason (SK-10)", a
 it("shows every filled field of a listed row and brings it back with «Править»", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path.startsWith("/api/stock/article-info")) return json({ info: null });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -515,7 +515,7 @@ it("shows every filled field of a listed row and brings it back with «Прав�
 it("fills name, series, and type from the current article catalog", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path === "/api/stock/article-info?q=N-C58P") return json({ info: {
       series: "N", name: "N-male RG-58", item_type: "Коаксиальный соединитель", source: "разбор кода",
     } });
@@ -541,8 +541,8 @@ it("shows the first server page at once and joins the next page on «Показ�
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && path !== "/api/stage-options") paths.push(path);
-    if (path === "/api/stock") return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
-    if (path === "/api/stock?after=cursor-1") { await gate; return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null }); }
+    if (path.split("?")[0] === "/api/stock" && !path.includes("after=")) return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
+    if (path === "/api/stock?after=cursor-1&sort=article&group=series") { await gate; return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null }); }
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -550,7 +550,7 @@ it("shows the first server page at once and joins the next page on «Показ�
 
   // The first page is on screen while the page2 was never asked for.
   expect(await screen.findByRole("button", { name: "Показать партии (1)" })).toBeInTheDocument();
-  expect(paths).toEqual(["/api/stock"]);
+  expect(paths).toEqual(["/api/stock?sort=article&group=series"]);
   expect(screen.getByRole("status")).toHaveTextContent("Показано 1 из 2");
 
   fireEvent.click(screen.getByRole("button", { name: "Показать ещё" }));
@@ -567,16 +567,16 @@ it("«Загрузить всё» reads every remaining page", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && path !== "/api/stage-options") paths.push(path);
-    if (path === "/api/stock") return json({ lots: [lot], total: 3, truncated: 2, next_cursor: "c1" });
-    if (path === "/api/stock?after=c1") return json({ lots: [page2], total: 3, truncated: 1, next_cursor: "c2" });
-    if (path === "/api/stock?after=c2") return json({ lots: [third], total: 3, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !path.includes("after=")) return json({ lots: [lot], total: 3, truncated: 2, next_cursor: "c1" });
+    if (path === "/api/stock?after=c1&sort=article&group=series") return json({ lots: [page2], total: 3, truncated: 1, next_cursor: "c2" });
+    if (path === "/api/stock?after=c2&sort=article&group=series") return json({ lots: [third], total: 3, truncated: 0, next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Загрузить всё" }));
   expect(await screen.findByRole("button", { name: "Показать партии (3)" })).toBeInTheDocument();
-  expect(paths).toEqual(["/api/stock", "/api/stock?after=c1", "/api/stock?after=c2"]);
+  expect(paths).toEqual(["/api/stock?sort=article&group=series", "/api/stock?after=c1&sort=article&group=series", "/api/stock?after=c2&sort=article&group=series"]);
 });
 
 it("shows the same group and article totals on page 1 as after «Загрузить всё», the numbers come from the server", async () => {
@@ -590,8 +590,8 @@ it("shows the same group and article totals on page 1 as after «Загрузи�
     const path = String(input);
     requested.push(path);
     if (path.startsWith("/api/stock/totals")) return json(totals);
-    if (path === "/api/stock") return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
-    if (path === "/api/stock?after=cursor-1") return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !path.includes("after=")) return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
+    if (path === "/api/stock?after=cursor-1&sort=article&group=series") return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -618,7 +618,7 @@ it("updates only the edited row after a write-off and does not re-read the list"
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path !== "/api/stock/item-types") paths.push(`${init?.method ?? "GET"} ${path}`);
-    if (path === "/api/stock") return json({ lots: [lot, page2], total: 2, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [lot, page2], total: 2, truncated: 0, next_cursor: null });
     if (path.endsWith("/writeoff")) return json({ lot: { ...lot, version: 5, written_off: "2", balance: "8", available: "8" } });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -633,7 +633,7 @@ it("updates only the edited row after a write-off and does not re-read the list"
 
   await waitFor(() => expect(paths.some((entry) => entry.endsWith("/writeoff"))).toBe(true));
   await waitFor(() => expect(screen.getByText("8 шт", { exact: false })).toBeInTheDocument());
-  expect(paths.filter((entry) => entry === "GET /api/stock")).toHaveLength(1);
+  expect(paths.filter((entry) => entry === "GET /api/stock?sort=article&group=series")).toHaveLength(1);
 });
 
 const layout = { layout: { racks: 20, shelves: 6, perRack: {} } };
@@ -643,7 +643,7 @@ it("moves a whole storage location, the target picked from the rack layout with 
   const onShelf = { ...lot, id: "40000000-0000-0000-0000-000000000009", grn: "FRX.26.0000009", storage_location: "18C3B" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [lot, onShelf], total: 2, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot, onShelf], total: 2, truncated: 0, next_cursor: null });
     if (path === "/api/stock/rack-layout") return json(layout);
     if (path === "/api/stock/places?warehouse=%D0%A6%D0%90%D0%A0&shelf=20B") return json({ warehouse: "ЦАР", shelf: "20B", occupied: ["20B1", "20B2", "20B3", "20B4"], next_number: 5 });
     if (path === "/api/stock/locations/move" && init?.method === "POST") {
@@ -674,7 +674,7 @@ it("moves the lot opened from its card: ГРН preset, no package field, other w
   let payload: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     if (path === "/api/stock/rack-layout") return json(layout);
     if (path === `/api/stock/batches/${lot.id}/move` && init?.method === "POST") {
       payload = JSON.parse(String(init.body));
@@ -706,7 +706,7 @@ it("asks for the package only when one typed ГРН has several", async () => {
   const first = { ...lot, package: "1" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [first, second], total: 2, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [first, second], total: 2, truncated: 0, next_cursor: null });
     if (path === "/api/stock/rack-layout") return json(layout);
     if (path.endsWith("/move") && init?.method === "POST") {
       path_ = path;
@@ -734,7 +734,7 @@ it("writes an old address as is from the lot operations and shows a lot without 
   const unplaced = { ...lot, storage_location: "" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [unplaced], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [unplaced], total: 1, truncated: 0, next_cursor: null });
     if (path.endsWith("/location") && init?.method === "PUT") {
       payload = JSON.parse(String(init.body));
       return json({ lot: { ...lot, version: 5, storage_location: "A-01" } });
@@ -759,7 +759,7 @@ it("edits the whole stock row and sends only what changed, an emptied number unt
   const stocked = { ...lot, inbound: "10", written_off: "2", balance: "8", available: "8", manufacturer: "Molex" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [stocked], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [stocked], total: 1, truncated: 0, next_cursor: null });
     if (path.endsWith("/row") && init?.method === "PUT") {
       payload = JSON.parse(String(init.body));
       return json({ lot: { ...stocked, version: 5 }, changes: [], message: "Строка FRX.26.0000001 обновлена: 4 поле(й)." });
@@ -810,7 +810,7 @@ it("hints the smallest free number on the shelf and marks a taken place without 
   let payload: { items: Array<{ storage_location: string }> } | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path.startsWith("/api/stock/places?")) {
       places.push(path);
       return json({ warehouse: "ЦАР", shelf: "12C", occupied: ["12C1", "12C2B", "12C4"], next_number: 3 });
@@ -848,7 +848,7 @@ it("hints the smallest free number on the shelf and marks a taken place without 
 it("counts the places already listed for entry as taken when it offers a number (SK-15)", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path.startsWith("/api/stock/places?")) return json({ warehouse: "ЦАР", shelf: "1F", occupied: ["1F1"], next_number: 2 });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -866,7 +866,7 @@ it("counts the places already listed for entry as taken when it offers a number 
 it("shows no hint for an unknown shelf (SK-15)", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     if (path.startsWith("/api/stock/places?")) return new Response(JSON.stringify({ detail: "Полки 18A нет" }), { status: 422 });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -901,7 +901,7 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     requested.push(`${init?.method ?? "GET"} ${path}`);
-    if (path === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -918,7 +918,7 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   expect(screen.getByRole("button", { name: "Обновить" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Таблица склада" })).toBeInTheDocument();
   // The page only reads (the stage-options probe is a read too).
-  expect(requested.every((call) => call === "GET /api/stock" || call === "GET /api/stage-options" || call.startsWith("GET /api/stock/totals"))).toBe(true);
+  expect(requested.every((call) => call === "GET /api/stock?sort=article&group=series" || call === "GET /api/stage-options" || call.startsWith("GET /api/stock/totals"))).toBe(true);
 });
 
 it("«История» is on a lot for the storekeeper too, not for a view-only user (owner 12.10.2026)", async () => {
@@ -965,7 +965,7 @@ it("shows the ГРН assigned to entered rows and copies them tab-separated", as
   Object.assign(navigator, { clipboard: { writeText } });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path === "/api/stock/batches" && init?.method === "POST") {
       return json({ added: 1, lots: [lot], errors: [], assigned: [{ i: 0, id: lot.id, grn: "OLD.26.0000007", article: "CON-001", quantity: "10", unit: "шт", storage_location: "1F4", warehouse: "ЦАР" }] });
     }
@@ -1367,7 +1367,7 @@ it("a long name is cut to its column and carries the full text as a tooltip", as
 it("quick entry suggests already entered articles by article or name and copies the position", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     if (path.startsWith("/api/stock/article-info")) return json({ info: null });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -1396,7 +1396,7 @@ function stageFetch(enabledKeys: string[]) {
       return json({ available: true, options: ["warehouse.word_search", "warehouse.strict_quantities"].map((key) => (
         { key, block: "Склад", title: key, before: "", after: "", enabled: enabledKeys.includes(key) })) });
     }
-    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 }
@@ -1437,7 +1437,7 @@ function itemsFetch(on: boolean, calls: string[], posted: string[] = []) {
     if (path === "/api/stage-options") {
       return json({ available: true, options: [{ key: "references.items", block: "Номенклатура", title: "t", before: "", after: "", enabled: on }] });
     }
-    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     if (path.startsWith("/api/purchasing/items/for-lots")) {
       return json({ [lot.id]: { item_id: "i1", name: "Разъём SMA (номенклатура)", category: "connector", via: "chain" } });
     }
@@ -1472,4 +1472,83 @@ it("shows no item chip, no action and sends no nomenclature request when referen
   expect(screen.queryByText(/Позиция:/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Позиция номенклатуры…" })).toBeNull();
   expect(calls.some((path) => path.startsWith("/api/purchasing"))).toBe(false);
+});
+
+it("«Печать этикетки» on a lot prints its label with the arrival date from the journal", async () => {
+  const frames = capturePrintFrames();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).startsWith("/api/stock/journal")) {
+      return json({ rows: [
+        { occurred_at: "2026-10-05T10:00:00+00:00", kind: "Списание", lot: "FRX.26.0000001", name: "Разъём", event: "2 шт", warehouse: "ЦАР", who: "Иванов" },
+        { occurred_at: "2026-09-01T10:00:00+00:00", kind: "Приход", lot: "FRX.26.0000001", name: "Разъём", event: "10 шт", warehouse: "ЦАР", who: "Петров" },
+      ], total: 2, truncated: 0 });
+    }
+    return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Печать этикетки" }));
+
+  await waitFor(() => expect(frames.print).toHaveBeenCalledTimes(1));
+  const html = frames.html[0];
+  for (const text of ["FRX.26.0000001", "GHR-04V-S", "Разъём", "10 шт", "1F4", "ЦАР", "Поступило 01.09.2026"]) expect(html).toContain(text);
+  expect(html).toContain("size: 58mm 40mm");
+});
+
+it("«Внести и печать этикетки» enters the row and prints the label of the created lot", async () => {
+  const frames = capturePrintFrames();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock/batches" && init?.method === "POST") {
+      return json({ added: 1, lots: [lot], errors: [], assigned: [{ i: 0, id: lot.id, grn: "OLD.26.0000007", article: "CON-001", quantity: "10", unit: "шт", storage_location: "1F4", warehouse: "ЦАР" }] });
+    }
+    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
+    return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
+  fireEvent.change(screen.getByLabelText("Наименование"), { target: { value: "Разъём 4 pin" } });
+  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
+  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F4" } });
+  fireEvent.click(screen.getByRole("button", { name: "Внести и печать этикетки" }));
+
+  await waitFor(() => expect(frames.print).toHaveBeenCalledTimes(1));
+  for (const text of ["OLD.26.0000007", "CON-001", "Разъём 4 pin", "10 шт", "1F4", "ЦАР", "Поступило "]) expect(frames.html[0]).toContain(text);
+});
+
+it("«Внести» alone does not print", async () => {
+  const frames = capturePrintFrames();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock/batches" && init?.method === "POST") return added([lot]);
+    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
+    return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+  });
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
+  fireEvent.click(screen.getByRole("button", { name: "Внести" }));
+  await screen.findByRole("button", { name: "+ Внести позиции" });
+  expect(frames.print).not.toHaveBeenCalled();
+});
+
+it("asks the server to sort the whole stock when a column is clicked, from the first page", async () => {
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    paths.push(path);
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    return json({ group: "series", groups: [], articles: [] });
+  });
+
+  render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: /^ГРН/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^ГРН/ }));
+
+  await waitFor(() => expect(paths).toContain("/api/stock?sort=grn&desc=true"));
 });

@@ -33,7 +33,7 @@ test("System ID is retained only as a legacy identifier", () => {
   assert.equal(moduleMap.legacyIdField, "legacy_id");
 });
 
-test("techcards keeps its bundled library consistent and its dependencies in the central lock", async () => {
+test("techcards keeps its dependencies in the central lock", async () => {
   const metadata = JSON.parse(
     await readFile(join(root, "backend", "app", "modules", "techcards", "SOURCE.json"), "utf8"),
   );
@@ -51,27 +51,13 @@ test("techcards keeps its bundled library consistent and its dependencies in the
     "techcards dependency packages must be included in the central ERP lock",
   );
 
-  const operationLibrary = JSON.parse(await readFile(
-    join(root, "backend", "data", "techcard-library.json"),
-    "utf8",
-  ));
-  const operationSourceCommit = metadata.operationLibrary.sourceCommit;
-  assert.equal(operationLibrary.sourceCommit, operationSourceCommit);
-  assert.equal(operationLibrary.sourceSha256, metadata.operationLibrary.sourceSha256);
-  assert.equal(operationLibrary.templates.length, metadata.operationLibrary.templateCount);
-  const buildFixtures = JSON.parse(await readFile(
-    join(root, "backend", "tests", "techcards", "fixtures", "current-etk.json"),
-    "utf8",
-  ));
-  assert.equal(buildFixtures.sourceCommit, operationSourceCommit);
-  assert.equal(Object.keys(buildFixtures.files).length, metadata.operationLibrary.buildFixtureCount);
   const techcardsModule = moduleMap.modules.find(({ id }) => id === "techcards");
   assert.equal(
     techcardsModule.implementedStage,
     "persistent-project-cards-native-etk-builder-cut-crimp-splices-connector-housings-operation-library-terminal-norms-and-grapher-import",
   );
   assert.equal(techcardsModule.routePrefixes.includes("/api/techcards"), true);
-  assert.equal(metadata.grapherImport.sourceCommit, operationSourceCommit);
+  assert.match(metadata.grapherImport.sourceCommit, /^[0-9a-f]{40}$/);
   const grapherSource = await readFile(join(root, "backend", "app", "modules", "techcards", "grapher_import.py"), "utf8");
   assert.equal(grapherSource.includes("def read_export"), true);
 });

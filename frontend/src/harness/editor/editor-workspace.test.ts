@@ -192,7 +192,7 @@ describe("harness editor workspace", () => {
     expect(getEditorSceneBounds([wire], [{ ...layers[1]!, visible: false }, layers[0]!], "drawing")).toBeNull();
   });
 
-  it("uses the wire colour for the outer strip layer and highlights selected outlines", () => {
+  it("paints the stripped conductor layer copper, not the wire colour, and highlights selected outlines", () => {
     const fills: string[] = [];
     const strokes: string[] = [];
     const contextState = {
@@ -211,7 +211,7 @@ describe("harness editor workspace", () => {
     };
 
     drawEditorSceneObject(contextState as unknown as CanvasRenderingContext2D, wire, false, "drawing");
-    expect(fills.slice(0, 2)).toEqual(["#d6ad65", "#c00"]);
+    expect(fills.slice(0, 2)).toEqual(["#d6ad65", "#c9824a"]);
     expect(strokes.slice(1, 3)).toEqual(["#344b59", "#344b59"]);
 
     strokes.length = 0;

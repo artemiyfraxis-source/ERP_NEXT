@@ -7,7 +7,6 @@ import {
   harnessApi,
   kitsetsApi,
   requestsApi,
-  shippingApi,
   type KitsetAssembly,
   type KitsetDocument,
   type KitsetCard,
@@ -22,10 +21,8 @@ import {
   type KitsetTile,
   type FulfillmentCandidate,
   type Principal,
-  type ProjectGoodsStatus,
 } from "./api";
 import { canSee } from "./navigation";
-import { GoodsStateBar, movesHint, piecesOf } from "./FinishedGoodsStates";
 import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
 import { PendingLesson } from "./AssemblyDrafts";
@@ -67,16 +64,17 @@ function remember(key: string, value: string) {
 
 /* Переключатели «Скрыть …» над списком проектов: чтобы отгруженные и закрытые по техкартам проекты не засоряли
    список. Помнятся у каждого пользователя отдельно; «Скрыть отгруженные» включён, пока его не выключили. */
-type HideKey = "shipped" | "tcReady" | "tcChecked" | "blocked";
+type HideKey = "shipped" | "working" | "tcReady" | "tcChecked" | "blocked";
 const HIDES: Array<[HideKey, string, boolean]> = [
-  ["shipped", "Скрыть отгруженные", true], ["tcReady", "Скрыть с готовыми ТК", false], ["tcChecked", "Скрыть с проверенными ТК", false],
-  ["blocked", "Скрыть с блокерами", false],
+  ["shipped", "Скрыть отгруженные", true], ["working", "Скрыть в работе", false], ["tcReady", "Скрыть с готовыми ТК", false],
+  ["tcChecked", "Скрыть с проверенными ТК", false], ["blocked", "Скрыть с блокерами", false],
 ];
 
 function hidden(item: KitsetTile, hide: Record<HideKey, boolean>, status: string) {
   const { total, tc, unreviewed } = tcProgress(item);
   // Статус «Отгружено», выбранный в фильтре явно, важнее переключателя.
   if (hide.shipped && item.status === "Отгружено" && status !== "Отгружено") return true;
+  if (hide.working && item.status === "В работе" && status !== "В работе") return true; // владелец 19.10
   if (hide.tcReady && total > 0 && tc === total) return true;             // чип «ТК на все КБ»
   if (hide.tcChecked && total > 0 && tc === total && !unreviewed) return true; // и ни одной «не проверена»
   if (hide.blocked && item.blocker) return true;                           // ХОЛД, СТОП, ОЖИД ИНФ, ОЖИД КОМПЛ, ПАУЗА
@@ -414,6 +412,17 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
   const [warning, setWarning] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [folderOpen, setFolderOpen] = useState(false);
+  const [folderFinding, setFolderFinding] = useState(false);
+
+  /** «Папка?»: сервер находит папку проекта по ссылке на расчёт (файл расчёта лежит в ней) и сохраняет ссылку. */
+  async function findFolder() {
+    if (folderFinding) return;
+    setFolderFinding(true); setError("");
+    try { setCard((await kitsetsApi.folderFromCalc(project)).card); }
+    catch (reason) { setError(message(reason, "Папка не найдена")); }
+    finally { setFolderFinding(false); }
+  }
 
   /* kitRefresh: перечитать расчёт по сохранённой ссылке. Номер карточки передаётся явно: в ячейке расчёта он бывает
      короче («720К.»), и обновление завело бы рядом вторую карточку. */
@@ -492,18 +501,28 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
       {(canEdit || (canRequest && card.calc_source)) && <CardMoreMenu project={card.project}
         refreshing={refreshing} onRefresh={canEdit ? () => void refresh() : undefined}
         onRequest={canRequest && card.calc_source ? () => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project }) : undefined}
+        onFolder={canEdit ? () => setFolderOpen(true) : undefined}
         onDelete={canEdit ? () => setDeleting(true) : undefined} />}
     </header>
-    <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a className="kit-calc-link" href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>}{card.deadline && <> · дедлайн {formatDay(card.deadline)}</>} · обновлено {formatDateTime(card.updated_at)} {card.updated_by}</p>
+    <p className="kit-meta kit-links">
+      {card.calc_source && <a className="kit-calc-link" href={card.calc_source} target="_blank" rel="noopener">Расчёт</a>}
+      {card.folder_url
+        ? <a className="kit-calc-link" href={card.folder_url} target="_blank" rel="noopener">Папка</a>
+        : canEdit && card.calc_source && <button type="button" className="link-button" disabled={folderFinding}
+            title="Найти папку проекта по ссылке на расчёт" onClick={() => void findFolder()}>Папка?</button>}
+      <KdLinks card={card} />
+    </p>
     {blockerInfo && <p className="kit-blocker"><StatusChip status={blockerInfo.type} /> <span>с {formatDay(blockerInfo.since)} · {blockerInfo.text} — {blockerInfo.who}</span></p>}
     {note && <div className="kit-actions"><span className="muted">{note}</span></div>}
+    {folderOpen && <FolderDialog project={card.project} current={card.folder_url || ""} onClose={() => setFolderOpen(false)}
+      onSaved={(next) => { setCard(next); setFolderOpen(false); }} />}
     {deleting && <DeleteProjectDialog project={card.project} remove={remove} onClose={() => setDeleting(false)} />}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {warning && <div className="warning-banner" role="alert">{warning}</div>}
     <div className="seg-tabs" role="tablist">
       {tabs.map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>{label}</button>)}
     </div>
-    {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} goodsVisible={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} openDrawing={(index) => setTab(`hn:${index}`)} />}
+    {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} openDrawing={(index) => setTab(`hn:${index}`)} />}
     {tab === "supply" && <SupplyTab project={card.project} canOrder={canEdit && canRequest} deadline={card.deadline}
       canSeeStock={canSee(principal, "warehouse") || canSee(principal, "fulfillment", "edit")} />}
     {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} setWarning={setWarning} reload={load} />}
@@ -534,8 +553,8 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
 /** «Ещё ▾» карточки проекта: «Обновить из расчёта», «Оформить заявку из расчёта» и — последним, красным — «Удалить
  *  проект…». Заявка — отдельный шаг, как в SUPPLYMAP: «Оформить заявку → Из расчёта» открывается с этой ссылкой и
  *  номером, оператор проверяет строки. Пункт показан только если действие доступно. */
-function CardMoreMenu({ project, refreshing, onRefresh, onRequest, onDelete }: {
-  project: string; refreshing: boolean; onRefresh?: () => void; onRequest?: () => void; onDelete?: () => void;
+function CardMoreMenu({ project, refreshing, onRefresh, onRequest, onFolder, onDelete }: {
+  project: string; refreshing: boolean; onRefresh?: () => void; onRequest?: () => void; onFolder?: () => void; onDelete?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -555,9 +574,70 @@ function CardMoreMenu({ project, refreshing, onRefresh, onRequest, onDelete }: {
     {open && <div className="more-menu-list" role="menu">
       {onRefresh && <button type="button" role="menuitem" autoFocus disabled={refreshing} onClick={() => { setOpen(false); onRefresh(); }}>{refreshing ? "Читаю расчёт…" : "Обновить из расчёта"}</button>}
       {onRequest && <button type="button" role="menuitem" autoFocus={!onRefresh} onClick={() => { setOpen(false); onRequest(); }}>Оформить заявку из расчёта</button>}
-      {onDelete && <button type="button" role="menuitem" className="kit-more-danger" autoFocus={!onRefresh && !onRequest} onClick={() => { setOpen(false); onDelete(); }}>Удалить проект…</button>}
+      {onFolder && <button type="button" role="menuitem" autoFocus={!onRefresh && !onRequest} onClick={() => { setOpen(false); onFolder(); }}>Папка проекта…</button>}
+      {onDelete && <button type="button" role="menuitem" className="kit-more-danger" autoFocus={!onRefresh && !onRequest && !onFolder} onClick={() => { setOpen(false); onDelete(); }}>Удалить проект…</button>}
     </div>}
   </div>;
+}
+
+/** Ссылка на папку проекта: поле адреса, «Сохранить» (пусто — то же, что убрать) и «Убрать ссылку», если она задана. */
+/** КД, приложенный к КБ проекта: один файл — прямая ссылка, несколько — список «КБ1 · имя файла»; чертёж жгута — не файл. */
+function KdLinks({ card }: { card: KitsetCard }) {
+  const files = card.assemblies.flatMap((assembly) => assembly.kd
+    .filter((document) => document.kind !== "harness" && document.kind !== "harness_unlinked")
+    .map((document) => ({
+      id: document.id, label: `${assembly.index} · ${document.name.replace(/^\S+\s+—\s+/, "")}`,
+      href: document.stored || !document.url ? kitsetsApi.documentUrl(card.project, document.id) : document.url,
+    })));
+  if (!files.length) return null;
+  if (files.length === 1) return <a className="kit-calc-link" href={files[0].href} target="_blank" rel="noopener" title={files[0].label}>КД</a>;
+  return <details className="kit-kd-list">
+    <summary>КД · {files.length}</summary>
+    <ul>{files.map((file) => <li key={file.id}><a href={file.href} target="_blank" rel="noopener">{file.label}</a></li>)}</ul>
+  </details>;
+}
+
+export function folderUrlError(value: string) {
+  const url = value.trim();
+  if (!url) return "";
+  if (url.length > 1024) return "Ссылка длиннее 1024 символов.";
+  try {
+    const parsed = new URL(url);
+    if ((parsed.protocol === "http:" || parsed.protocol === "https:") && !/\s/.test(url)) return "";
+  } catch { /* не адрес */ }
+  return "Введите ссылку, начинающуюся с http:// или https://";
+}
+
+function FolderDialog({ project, current, onSaved, onClose }: {
+  project: string; current: string; onSaved: (card: KitsetCard) => void; onClose: () => void;
+}) {
+  const [value, setValue] = useState(current);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(url: string) {
+    if (busy) return;
+    const invalid = folderUrlError(url);
+    if (invalid) { setError(invalid); return; }
+    setBusy(true); setError("");
+    try { onSaved((await kitsetsApi.setFolder(project, url.trim())).card); }
+    catch (reason) { setError(message(reason, "Не удалось сохранить ссылку")); setBusy(false); }
+  }
+  return createPortal(<div className="dialog-overlay" onKeyDown={(event) => { if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); } }}
+    onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <form className="move-dialog panel" noValidate role="dialog" aria-modal="true" aria-label={`Папка проекта ${project}`}
+      onSubmit={(event) => { event.preventDefault(); void submit(value); }}>
+      <h2>Папка проекта {project}</h2>
+      <label>Ссылка на папку
+        <input type="url" autoFocus value={value} placeholder="https://…" onChange={(event) => { setValue(event.target.value); setError(""); }} />
+      </label>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="move-actions page-actions">
+        <button type="submit" className="primary" disabled={busy}>{busy ? "Сохраняю…" : "Сохранить"}</button>
+        {current && <button type="button" className="secondary" disabled={busy} onClick={() => void submit("")}>Убрать ссылку</button>}
+        <button type="button" className="secondary" disabled={busy} onClick={onClose}>Отмена</button>
+      </div>
+    </form>
+  </div>, document.body);
 }
 
 /** Подтверждение удаления проекта: что уйдёт и что останется (DELETE_TEXT), красная кнопка с номером проекта; фокус —
@@ -641,33 +721,13 @@ function JournalTab({ card, canEdit, changed }: { card: KitsetCard; canEdit: boo
 
 const REVIEW_TONE: Record<string, string> = { "проверена": "ok", "с погрешностями": "danger", "не проверена": "neutral" };
 
-function SostavTab({ card, canEdit, goodsVisible = false, reload, setNote, setError, openGen, openTc, openDrawing }: {
-  card: KitsetCard; canEdit: boolean; goodsVisible?: boolean; reload: () => Promise<void>; setNote: (text: string) => void;
+function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, openDrawing }: {
+  card: KitsetCard; canEdit: boolean; reload: () => Promise<void>; setNote: (text: string) => void;
   setError: (text: string) => void; openGen: (index: string) => void; openTc: (index: string) => void; openDrawing: (index: string) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [kdIndex, setKdIndex] = useState("");
   const [stagePick, setStagePick] = useState<{ assembly: KitsetAssembly; value: string } | null>(null);
-  // Сквозной статус готовой продукции по КБ (владелец 12.10): В производстве → Принято складом → Упаковано → Отгружено.
-  const [goods, setGoods] = useState<{ status: ProjectGoodsStatus | null; error: string }>({ status: null, error: "" });
-  useEffect(() => {
-    if (!goodsVisible) return;
-    let live = true;
-    shippingApi.projectGoods(card.project)
-      .then((status) => { if (live) setGoods({ status, error: "" }); })
-      .catch((reason) => { if (live) setGoods({ status: null, error: failureText(reason, "Статус готовой продукции не загружен") }); });
-    return () => { live = false; };
-  }, [goodsVisible, card.project]);
-  const goodsCell = (assembly: KitsetAssembly) => {
-    if (goods.error) return <span className="muted" title={goods.error}>не загружено</span>;
-    if (!goods.status) return <span className="muted">…</span>;
-    const wanted = assembly.index.trim().toUpperCase();
-    const kb = (goods.status.kbs ?? []).find((item) => item.item_index.trim().toUpperCase() === wanted);
-    if (!kb) return <span className="muted">—</span>;
-    const moves = (goods.status.moves ?? []).filter((move) => move.item_index.trim().toUpperCase() === wanted);
-    return <GoodsStateBar pieces={piecesOf(kb.pieces)} unit={kb.unit} title={movesHint(moves)} />;
-  };
-
   async function applyKbStage(assembly: KitsetAssembly, value: string, reason: string, previewToken: string) {
     const result = await kitsetsApi.mark(card.project, { kb: assembly.index, kind: "stage", value, text: "", reason, preview_token: previewToken });
     setStagePick(null);
@@ -781,7 +841,7 @@ function SostavTab({ card, canEdit, goodsVisible = false, reload, setNote, setEr
   return <div className="kit-pane">
     <input ref={fileRef} type="file" hidden data-testid="kd-file" onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ""; }} />
     {!card.assemblies.length ? <div className="empty">В проекте нет сборок.</div> : <div className="table-wrap kit-sostav"><table className="grid" aria-label="Состав проекта">
-      <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th>{goodsVisible && <th title="Штуки КБ: в производстве · принято складом · упаковано · отгружено">Готовая продукция</th>}</tr></thead>
+      <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th></tr></thead>
       <tbody>{card.assemblies.map((assembly) => <tr key={assembly.index} title={`Открыть генератор ${assembly.index}`} onClick={(event) => {
         // Внутри строки свои кликабельные вещи — ссылка на КД, «＋ файл», выпадающие списки.
         if ((event.target as HTMLElement).closest("a, button, input, select, label")) return;
@@ -797,7 +857,6 @@ function SostavTab({ card, canEdit, goodsVisible = false, reload, setNote, setEr
           : <span className="muted">{assembly.techcard ? "не собрана" : "нет"}</span>}</td>
         <td data-label="Этап">{stageCell(assembly)}</td>
         <td data-label="Проверка ТК">{reviewCell(assembly)}</td>
-        {goodsVisible && <td className="kit-goods" data-label="Готовая продукция">{goodsCell(assembly)}</td>}
       </tr>)}</tbody>
     </table></div>}
     {stagePick && <StageChangeDialog project={card.project} kb={stagePick.assembly.index}
@@ -810,7 +869,8 @@ function SostavTab({ card, canEdit, goodsVisible = false, reload, setNote, setEr
 /* «Стадия» одним словом (владелец 12.10.2026): счётчики сверху идут в том же порядке и тех же цветах. */
 const SUPPLY_STATES: Array<[key: string, label: string, tone: string]> = [
   ["short", "Не хватает", "danger"], ["procurement", "В закупке", "warn"], ["outside", "Куплено вне системы", "neutral"],
-  ["stock", "Со склада", "info"], ["kitting", "В комплектации", "ok"], ["received", "Принято на склад", "ok"],
+  ["stock", "Со склада", "info"], ["kitting", "В комплектации", "ok"], ["issued", "Выдано в производство", "ok"],
+  ["received", "Принято на склад", "ok"],
 ];
 
 type Maybe = { items: FulfillmentCandidate[]; more: number };

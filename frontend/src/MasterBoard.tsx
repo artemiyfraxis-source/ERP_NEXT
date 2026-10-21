@@ -2,6 +2,9 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   kitsetsApi,
   productionApi,
+  type BoardAssignItem,
+  type BoardData,
+  type BoardTask,
   type KitsetTile,
   type ProductionAbsence,
   type ProductionLaunchable,
@@ -13,11 +16,14 @@ import {
   type ProductionTask,
 } from "./api";
 import { formatDayMonth, kbLabel } from "./format";
+import { MachineLoadGrid, MachineWarning } from "./MachineLoad";
 import { LoadCell, LoadLegend, shiftCapacity } from "./PeopleLoad";
 import { periodWords } from "./PlanLoadSheet";
 import { KitTile } from "./ProjectCard";
 import { deadlineChips, feedsText, operationPlanText, taskItemLabel, upstreamIds, windowText } from "./productionGraph";
 import { StatusChip } from "./StatusChip";
+import { PageWindow } from "./PageWindow";
+import { isPfOperation, operationName, pfOpsText } from "./PfTaskBlocks";
 
 // Экран мастера (владелец, 29.09): после выдачи техкарты проект приходит мастеру, разбитый на операции маршрута,
 // и мастер раздаёт их монтажникам. Слева проекты → задания → операции, справа монтажники с загрузкой.
@@ -26,6 +32,20 @@ import { StatusChip } from "./StatusChip";
 // Открытый проект переживает переход в Гант задания и обратно (доска при этом монтируется заново).
 let lastProject = "";
 export function forgetOpenProject() { lastProject = ""; }
+
+// Вид проекта на доске: по этапам КБ или по оборудованию (владелец 19.10: «раскидать сразу резку на одно и т. д.»).
+type BoardView = "stages" | "equipment";
+const VIEW_KEY = "erp.masterBoard.view";
+function readView(): BoardView {
+  try { return localStorage.getItem(VIEW_KEY) === "equipment" ? "equipment" : "stages"; } catch { return "stages"; }
+}
+function plural(count: number, forms: [string, string, string]) {
+  const tail = count % 100;
+  if (tail >= 11 && tail <= 14) return forms[2];
+  return count % 10 === 1 ? forms[0] : count % 10 >= 2 && count % 10 <= 4 ? forms[1] : forms[2];
+}
+type GroupItem = { task: ProductionTask; op: ProductionOperation };
+type EquipmentGroup = { label: string; items: GroupItem[]; seconds: number };
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<void>;
 
@@ -55,9 +75,9 @@ function isoDay(date: Date) {
 const done = (operation: ProductionOperation) => operation.state === "выполнена";
 
 // Прогресс операции для мастера (владелец, 05.10: «мастер видит, что сдано и что просрочено»). Всё считается из полей,
-// которые API уже отдаёт: fact.good, wip.closed (ждут подтверждения мастера), required_quantity, планы и дедлайн задания.
+// которые API уже отдаёт: fact.good, wip.closed (ждут ОТК или исправления), required_quantity, планы и дедлайн задания.
 export type OpFlag = "late" | "wait" | "over";
-export const FLAG_TEXT: Record<OpFlag, string> = { late: "не начато, план истёк", wait: "ждёт подтверждения", over: "позже срока задания" };
+export const FLAG_TEXT: Record<OpFlag, string> = { late: "не начато, план истёк", wait: "ждёт ОТК", over: "позже срока задания" };
 export type OpProgress = { required: number; good: number; waiting: number; percent: number; flags: OpFlag[] };
 
 export function opProgress(task: ProductionTask, operation: ProductionOperation, now: number = Date.now()): OpProgress {
@@ -89,6 +109,12 @@ export function sharesOf(operation: ProductionOperation, personId: string): Prod
   return operation.operator_ids.includes(personId)
     ? [{ operator_id: personId, quantity: null, planned_start: operation.planned_start, planned_finish: operation.planned_finish, started_at: null, finished_at: null }]
     : [];
+}
+
+// Сколько ещё можно записать готовыми на этап: нужно этапу минус сданное (годные + брак).
+export function madeLeft(task: ProductionTask, operation: ProductionOperation) {
+  const required = Number(operation.required_quantity ?? task.quantity) || 0;
+  return Math.max(0, Math.round(required - (Number(operation.fact?.processed ?? 0) || 0)));
 }
 
 const shareDone = (operation: ProductionOperation, share: ProductionShare) => done(operation) || Boolean(share.finished_at);
@@ -286,6 +312,44 @@ export function workFinish(start: number, seconds: number, shift: ProductionShif
   return time;
 }
 
+// «Назначить только …»: ближайший с дня from рабочий день монтажника (не отпуск), где после его работы есть место, и
+// момент начала — как «Назначить на день» (appendStart). null — за 60 дней места нет.
+export function firstFreeStart(operatorId: string, from: string, task: ProductionTask, operation: ProductionOperation,
+  tasks: ProductionTask[], shift: ProductionShift, holidays: string[], absences: ProductionAbsence[], now: Date = new Date()) {
+  const earliest = earliestStart(operatorId, task, operation, now);
+  for (let index = 0; index < 60; index += 1) {
+    const day = addDays(from, index);
+    if (!workingDay(day, shift, holidays)) continue;
+    if (absences.some((item) => item.operator_id === operatorId && item.from_date <= day && day <= item.to_date)) continue;
+    const start = appendStart(operatorId, day, tasks, shift, operation.id, earliest);
+    if (start != null) return { day, start };
+  }
+  return null;
+}
+
+// Почему весь этап одному не отдать: штуки начатых и законченных долей сервер не забирает (dispatch.split_shares).
+export function onlyBlocker(operation: ProductionOperation, operatorId: string, operators: ProductionOperator[]) {
+  const nameOf = (id: string) => operators.find((item) => item.id === id)?.name ?? "Монтажник";
+  const own = (operation.shares ?? []).find((share) => share.operator_id === operatorId);
+  if (own && (own.started_at || own.finished_at)) return `${nameOf(operatorId)} уже взял(а) этап — время идёт по факту`;
+  const locked = (operation.shares ?? []).find((share) => share.operator_id !== operatorId && (share.started_at || share.finished_at));
+  return locked ? `${nameOf(locked.operator_id)} уже ${locked.finished_at ? "сделал(а) свою часть" : "взял(а) этап"} — его штуки не забрать` : "";
+}
+
+// Что изменится, если снять монтажника с этапа (окно подтверждения у «×»): то же, что делает сервер (_remove_share).
+export function removalChanges(operation: ProductionOperation, operatorId: string, operators: ProductionOperator[]): string[] {
+  const nameOf = (id: string) => operators.find((item) => item.id === id)?.name ?? "Монтажник";
+  const own = sharesOf(operation, operatorId)[0];
+  const rest = operation.operator_ids.filter((id) => id !== operatorId);
+  const lines: string[] = [];
+  if (own?.planned_start) lines.push(`План ${nameOf(operatorId)} ${windowText(own.planned_start, own.planned_finish)} освободится.`);
+  if (!rest.length) lines.push("Этап останется без исполнителя — его нужно будет назначить заново.");
+  else if (own?.quantity != null) lines.push(`${own.quantity} шт станут нераспределёнными — отдайте их другому монтажнику (${rest.map(nameOf).join(", ")} остаются со своими штуками).`);
+  else lines.push(`Этап сделают ${rest.map(nameOf).join(", ")}: окно пересчитается на меньший состав, их работа после этапа сдвинется.`);
+  if (own?.started_at) lines.push(`${nameOf(operatorId)} уже брал(а) этап в работу ${formatDay(own.started_at.slice(0, 10))}.`);
+  return lines;
+}
+
 // Коэффициент монтажника по операции (prodSkillOf_): нет строк по коду — 1; есть — допущенный со своим коэффициентом.
 function rateOf(skills: ProductionSkill[], code: string, operatorId: string) {
   const skill = code ? skills.find((item) => item.operator_id === operatorId && item.operation_code === code) : undefined;
@@ -310,7 +374,7 @@ export function daySlots(operatorId: string, day: string, tasks: ProductionTask[
     const a = new Date(`${day}T${clock(from)}:00`).getTime();
     const b = new Date(`${day}T${clock(to)}:00`).getTime();
     const busy = windows.filter((window) => window.start < b && a < window.finish)
-      .map((window) => `${window.operation.stage} · ${taskItemLabel(window.task)}${pieceLabel(window.task, window.operation, window.share)}`);
+      .map((window) => `${operationName(window.operation)} · ${taskItemLabel(window.task)}${pieceLabel(window.task, window.operation, window.share)}`);
     const rest = (shift.breaks ?? []).some(([x, y]) => minutes(x) <= from && to <= minutes(y));
     // Перерыв внутри часа (обед 13:00–13:30) — подписью в ячейке: работы в этом часу меньше.
     const inside = (shift.breaks ?? []).find(([x, y]) => minutes(x) < to && from < minutes(y));
@@ -339,8 +403,6 @@ function useWidth() {
   return { ref, width };
 }
 
-// «Создать задание» у КБ без задания (владелец, 12.10: «непонятный функционал «Запустить сегодня»»).
-const CREATE_TASK_HINT = "Создаёт производственное задание на весь тираж; операции появятся в списке для назначения. Автоплан создаёт задания сам";
 
 export function MasterBoard({ tasks, operators, site = "", skills, absences, shift, holidays = [], projectDeadlines = {}, canEdit, busy, mutate, openTask }: {
   tasks: ProductionTask[];
@@ -366,8 +428,29 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const [openDay, setOpenDay] = useState<{ personId: string; day: string } | null>(null);
   // Штук монтажнику (владелец, 30.09: «дробить операцию между людьми»): по умолчанию — нераспределённое.
   const [pieces, setPieces] = useState("");
-  const keys = useRef(new Map<string, string>());
+  // «Назначить только …» (владелец 16.10): весь этап одному монтажнику одним действием; день — ближайший рабочий
+  // со свободным временем, его видно на кнопке и можно сменить.
+  const [onlyWho, setOnlyWho] = useState("");
+  const [onlyDay, setOnlyDay] = useState("");
+  // «Уже сделано» (владелец 20.10: «люди уже начали работать и сделали какое-то кол-во — нужен ручной ввод и отбития
+  // готовых»): штуки мимо терминала, чьи они и отбить ли готовыми пропущенные этапы-входы.
+  const [madeWho, setMadeWho] = useState<string | null>(null);
+  const [madePieces, setMadePieces] = useState("");
+  const [madeFill, setMadeFill] = useState(true);
+  // Снятие исполнителя — через окно подтверждения с тем, что изменится (владелец 16.10: «×» сразу пересобирал план).
+  const [removing, setRemoving] = useState<{ taskId: string; operationId: string; personId: string } | null>(null);
   const board = useWidth();
+  const [boardData, setBoardData] = useState<BoardData | null | undefined>(undefined);
+  const [boardTick, setBoardTick] = useState(0);
+  const [view, setViewState] = useState<BoardView>(readView);
+  // Ответ сервера на назначение: что не встало и предупреждения (допуск, станок занят).
+  const [note, setNote] = useState<{ refused: string[]; warnings: string[] } | null>(null);
+  const [groupSel, setGroupSel] = useState<Record<string, { who?: string; day?: string }>>({});
+
+  function setView(next: BoardView) {
+    setViewState(next);
+    try { localStorage.setItem(VIEW_KEY, next); } catch { /* без хранилища вид просто не запомнится */ }
+  }
 
   function setOpenProject(project: string) {
     lastProject = project;
@@ -428,7 +511,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   // Мастер площадки (Степан в Жуковском) видит и ставит только своих монтажников; без площадки — всех.
   const people = installers(operators).filter((person) => !site || person.site === site);
   const today = isoDay(new Date());
-  const task = selected ? live.find((item) => item.id === selected.taskId) ?? null : null;
+  const task = selected ? [...live, ...(boardData && boardData.project === openProject ? boardData.future : [])].find((item) => item.id === selected.taskId) ?? null : null;
   const operation = task?.operations.find((item) => item.id === selected?.operationId) ?? null;
   const unassigned = live.filter((item) => !item.handed_to).reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
 
@@ -437,24 +520,116 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const dayCount = board.width >= TWO_WEEKS_FROM ? WEEK_DAYS * 2 : WEEK_DAYS;
   const days = Array.from({ length: dayCount }, (_, index) => addDays(weekStart, index));
   const free = task && operation ? remainderOf(task, operation) : 0;
+  // Сетка станков перечитывает занятость после каждого назначения (версии заданий меняются).
+  const planVersion = tasks.map((item) => `${item.id}:${item.version}`).join(",");
+
+  // Операции КБ с выданной техкартой и группы оборудования — с сервера, по открытому проекту.
+  useEffect(() => {
+    if (!shown) { setBoardData(undefined); return; }
+    let alive = true;
+    productionApi.board(shown)
+      .then((result) => { if (alive) setBoardData({ project: shown, tasks: result.tasks ?? [], future: result.future ?? [], skipped: result.skipped ?? [] }); })
+      .catch(() => { if (alive) setBoardData(null); });
+    return () => { alive = false; };
+  }, [shown, planVersion, boardTick]);
+  const boardNow = boardData && boardData.project === shown ? boardData : boardData === null ? null : undefined;
+  const futureTasks: BoardTask[] = boardNow?.future ?? [];
+  const pool: ProductionTask[] = [...live, ...futureTasks];
+  const equipmentOf = new Map<string, string>();
+  for (const item of [...(boardNow?.tasks ?? []), ...futureTasks]) for (const op of item.operations) equipmentOf.set(op.id, op.equipment.label);
   const quantity = task ? Math.min(task.quantity, Math.max(0, Math.floor(Number(pieces) || 0))) : 0;
 
   function select(item: ProductionTask, op: ProductionOperation | null) {
     setSelected(op ? { taskId: item.id, operationId: op.id } : null);
     setPieces(op ? String(defaultPieces(item, op)) : "");
+    setOnlyWho("");
+    setOnlyDay("");
+    setMadeWho(null);
+    setMadePieces(op ? String(madeLeft(item, op)) : "");
+    setMadeFill(true);
   }
 
   // Мастер выбирает день (и час); доля встаёт с первого свободного времени монтажника, хвост — на следующие дни,
   // его работа после неё сдвигается (сервер, dispatch.place).
+  function boardItem(item: ProductionTask, op: ProductionOperation, pieces?: number): BoardAssignItem {
+    return item.pending
+      ? { techcard_id: item.techcard_id ?? "", techcard_version: item.techcard_version ?? 0, position: op.position, ...(pieces ? { quantity: pieces } : {}) }
+      : { task_id: item.id, task_version: item.version, operation_id: op.id };
+  }
+
+  function refusedText(entry: { task_id: string | null; techcard_id: string | null; operation_id: string | null; position: number | null; reason: string }) {
+    const owner = pool.find((item) => (entry.task_id && item.id === entry.task_id) || (entry.techcard_id && item.techcard_id === entry.techcard_id));
+    const op = owner?.operations.find((item) => item.id === entry.operation_id || item.position === entry.position);
+    return `${owner ? taskItemLabel(owner) : "Операция"}${op ? ` · этап ${op.position}` : ""}: ${entry.reason}`;
+  }
+
+  // Назначение через доску: будущие задания создаются из выданной техкарты, настоящие — как есть; одна транзакция.
+  function runBoard(key: string, operatorId: string, start: string, items: BoardAssignItem[]) {
+    setNote(null);
+    return mutate(key, async () => {
+      try {
+        const result = await productionApi.boardAssign({ operator_id: operatorId, requested_start: start, items });
+        setNote({ refused: result.refused.map(refusedText), warnings: result.warnings });
+        setSelected(null);
+        return {};
+      } finally {
+        setBoardTick((value) => value + 1);
+      }
+    });
+  }
+
   function assign(personId: string, start: number) {
     if (!task || !operation || !quantity) return;
     const date = new Date(start);
+    if (task.pending) {
+      void runBoard(operation.id, personId, `${isoDay(date)}T${clock(date.getHours() * 60 + date.getMinutes())}`, [boardItem(task, operation, quantity)]);
+      return;
+    }
     void mutate(operation.id, () => productionApi.share(task.id, operation.id, task.version, personId, quantity, `${isoDay(date)}T${clock(date.getHours() * 60 + date.getMinutes())}`));
   }
   const capacity = shiftCapacity(workShift);
 
   function unassign(item: ProductionTask, op: ProductionOperation, operatorId: string) {
+    setRemoving(null);
     void mutate(op.id, () => productionApi.share(item.id, op.id, item.version, operatorId, null, null, true));
+  }
+
+  // «Назначить только»: монтажник по умолчанию — уже назначенный на этап (первый), иначе первый в списке.
+  const onlyPerson = task && operation
+    ? people.find((person) => person.id === onlyWho) ?? people.find((person) => operation.operator_ids.includes(person.id)) ?? people[0]
+    : undefined;
+  const onlySlot = task && operation && onlyPerson
+    ? firstFreeStart(onlyPerson.id, onlyDay || today, task, operation, tasks, workShift, holidays, absences)
+    : null;
+  const onlyBlock = task && operation && onlyPerson ? onlyBlocker(operation, onlyPerson.id, operators) : "";
+  // Окно «Назначить только …» — для предупреждения о занятом станке.
+  const onlyFinish = task && operation && onlyPerson && onlySlot
+    ? workFinish(onlySlot.start, Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * task.quantity / rateOf(skills, operation.code, onlyPerson.id), workShift, holidays)
+    : null;
+  function assignOnly() {
+    if (!task || !operation || !onlyPerson || !onlySlot) return;
+    const date = new Date(onlySlot.start);
+    if (task.pending) {
+      void runBoard(operation.id, onlyPerson.id, `${isoDay(date)}T${clock(date.getHours() * 60 + date.getMinutes())}`, [boardItem(task, operation)]);
+      return;
+    }
+    void mutate(operation.id, () => productionApi.share(task.id, operation.id, task.version, onlyPerson.id, task.quantity, `${isoDay(date)}T${clock(date.getHours() * 60 + date.getMinutes())}`));
+  }
+
+  // «Уже сделано»: по умолчанию — первый назначенный, кто не закончил свою долю, иначе без исполнителя (отбить готовыми).
+  const madePerson = task && operation
+    ? madeWho ?? operation.operator_ids.find((id) => !sharesOf(operation, id)[0]?.finished_at) ?? ""
+    : "";
+  const madeCount = Math.floor(Number(madePieces));
+  const madeMax = task && operation ? madeLeft(task, operation) : 0;
+  function recordMade() {
+    if (!task || !operation || !(madeCount > 0)) return;
+    // Записано — поле пустеет, чтобы второй клик не записал те же штуки ещё раз; отказ — число остаётся для правки.
+    void mutate(`made:${operation.id}`, async () => {
+      const result = await productionApi.manualOutput(task.id, operation.id, madeCount, madePerson, madeFill && Boolean(operation.inputs?.length));
+      setMadePieces("");
+      return result;
+    });
   }
 
   function openPersonDay(personId: string, day: string, open: boolean) {
@@ -470,12 +645,58 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     void mutate(`handover:${item.id}`, () => productionApi.handOver(item.id, item.version, site));
   }
 
-  function launch(item: ProductionLaunchable) {
-    const key = keys.current.get(item.techcard_id) ?? crypto.randomUUID();
-    keys.current.set(item.techcard_id, key);
-    void mutate(`launch:${item.techcard_id}`, () => productionApi.launch(key, {
-      techcard_id: item.techcard_id, quantity: Number(item.run), deadline: item.deadline, fulfillment_request_id: null,
-    }));
+  // «По оборудованию»: все нераспределённые операции проекта (настоящие и будущие) по группе оборудования операции.
+  function renderGroups(project: string) {
+    if (boardNow === undefined) return <div className="empty">Загрузка…</div>;
+    if (boardNow === null) return <div className="empty">Не удалось получить группы оборудования — обновите страницу.</div>;
+    const groups = new Map<string, EquipmentGroup>();
+    for (const item of pool) {
+      if (item.project !== project || item.status === "Отменено" || item.handed_to) continue;
+      for (const op of item.operations) {
+        if (done(op) || op.operator_ids.length) continue;
+        const label = equipmentOf.get(op.id) ?? "Без оборудования";
+        const group = groups.get(label) ?? { label, items: [], seconds: 0 };
+        group.items.push({ task: item, op });
+        group.seconds += op.norm_seconds;
+        groups.set(label, group);
+      }
+    }
+    const list = Array.from(groups.values()).sort((a, b) => a.label.localeCompare(b.label, "ru"));
+    if (!list.length) return <div className="empty">Все операции проекта распределены.</div>;
+    return <>{list.map((group) => {
+      const choice = groupSel[group.label] ?? {};
+      const person = people.find((item) => item.id === choice.who) ?? people[0];
+      const first = group.items[0];
+      const slot = person ? firstFreeStart(person.id, choice.day || today, first.task, first.op, tasks, workShift, holidays, absences) : null;
+      const day = choice.day || slot?.day || today;
+      const start = slot ? new Date(slot.start) : null;
+      const requested = start ? `${isoDay(start)}T${clock(start.getHours() * 60 + start.getMinutes())}` : `${day}T${workShift.start}`;
+      const count = group.items.length;
+      return <div className="mb-task mb-group" key={group.label}>
+        <div className="mb-task-head">
+          <b>{group.label}</b>
+          <small>{count} {plural(count, ["операция", "операции", "операций"])} · {hours(group.seconds)} по норме</small>
+          {canEdit && person && <span className="mb-group-assign" role="group" aria-label={`Назначить группу ${group.label}`}>
+            <label>Монтажник<select aria-label={`Монтажник на группу ${group.label}`} value={person.id} onChange={(event) => setGroupSel({ ...groupSel, [group.label]: { ...choice, who: event.target.value } })}>
+              {people.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select></label>
+            <label>с дня<input type="date" aria-label={`День начала группы ${group.label}`} min={today} value={day} onChange={(event) => setGroupSel({ ...groupSel, [group.label]: { ...choice, day: event.target.value } })} /></label>
+            <button className="primary small" disabled={Boolean(busy)} onClick={() => void runBoard(`group:${group.label}`, person.id, requested, group.items.map((entry) => boardItem(entry.task, entry.op)))}>
+              Назначить группу на {formatDay(day)}{start ? ` с ${clock(start.getHours() * 60 + start.getMinutes())}` : ""}
+            </button>
+          </span>}
+        </div>
+        <table className="mb-ops">
+          <thead><tr><th>КБ</th><th>Этап</th><th>Штук</th><th>Норма</th></tr></thead>
+          <tbody>{group.items.map(({ task: item, op }) => <tr key={op.id}>
+            <td><b>{taskItemLabel(item)}</b>{item.pending && <StatusChip className="mb-new" tone="info">новое задание</StatusChip>}</td>
+            <td>{op.position}. {operationName(op)}</td>
+            <td>{item.quantity}</td>
+            <td>{hours(op.norm_seconds)}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>;
+    })}</>;
   }
 
   return <div className="master-board">
@@ -508,18 +729,33 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       {shown && [shown].map((project) => {
         const projectTasks = live.filter((item) => item.project === project);
         const projectReady = waiting.filter((item) => item.project === project);
+        const projectFuture = futureTasks;
+        const skipped = boardNow?.skipped ?? [];
         return <div className="mb-project" key={project}>
-          <div className="mb-project-head"><button className="secondary small" onClick={() => setOpenProject("")}>← Все проекты</button><b>{project}</b>{deadlineTags(project)}</div>
-          {projectTasks.map((item) => {
+          <div className="mb-project-head"><button className="secondary small" onClick={() => setOpenProject("")}>← Все проекты</button><b>{project}</b>{deadlineTags(project)}
+            <div className="seg-tabs mb-view" role="radiogroup" aria-label="Вид проекта">
+              <button type="button" role="radio" aria-checked={view === "stages"} className={view === "stages" ? "on" : ""} onClick={() => setView("stages")}>По этапам КБ</button>
+              <button type="button" role="radio" aria-checked={view === "equipment"} className={view === "equipment" ? "on" : ""} onClick={() => setView("equipment")}>По оборудованию</button>
+            </div></div>
+          {note && (note.refused.length > 0 || note.warnings.length > 0) && <div className="warning-inline mb-note" role="status">
+            {note.refused.map((line) => <div key={`r:${line}`}>Не назначено: {line}</div>)}
+            {note.warnings.map((line) => <div key={`w:${line}`}>{line}</div>)}
+          </div>}
+          {view === "equipment" && renderGroups(project)}
+          {view === "stages" && [...projectTasks, ...projectFuture].map((item) => {
             const operations = item.operations.filter((op) => (!onlyFree || (!done(op) && !op.operator_ids.length)) && hasFlag(item, op));
             if ((onlyFree || flagFilter) && !operations.length) return null;
             return <div className="mb-task" key={item.id}>
               <div className="mb-task-head">
-                <button className="link-button" onClick={() => openTask(item.id)}>{item.number} · Гант</button>
+                {item.pending
+                  ? <StatusChip className="mb-new" tone="info">новое задание</StatusChip>
+                  : <button className="link-button" onClick={() => openTask(item.id)}>{item.number} · Гант</button>}
                 <span><b>{taskItemLabel(item)}</b> × {item.quantity}{item.name ? ` · ${item.name}` : ""}</span>
                 {item.status !== "Выполнено" && deadlineChips(planOf(project), item.deadline).filter((chip) => chip.kind === "task")
                   .map((chip) => <StatusChip key={chip.kind} className="mb-deadline" tone={chip.tone} title={chip.title}>{chip.text}</StatusChip>)}
-                {item.status === "Выполнено"
+                {item.pending
+                  ? <small>тираж {item.quantity}{item.deadline ? `, срок ${formatDay(item.deadline)}` : ""}{(item as BoardTask).warnings?.length ? ` · ${(item as BoardTask).warnings!.join("; ")}` : ""}</small>
+                  : item.status === "Выполнено"
                   ? <><span className="status status-done">Выполнено</span>{item.handed_to && <small>{item.handed_to}: сдано {item.delivered ?? item.quantity} из {item.quantity}</small>}</>
                   : item.handed_to
                   ? <><span className="mb-handed">Отдано в {item.handed_to}</span>{item.delivered ? <small>сдано {item.delivered} из {item.quantity}</small> : null}{canEdit && !item.delivered && <button className="secondary small" disabled={Boolean(busy)} onClick={() => handOver(item, "")}>Вернуть на распределение</button>}{canEdit && <button className="secondary small" onClick={() => openTask(item.id)}>Отметить сдачу</button>}</>
@@ -534,12 +770,12 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                   return <tr key={op.id} className={`${active ? "active" : ""}${done(op) ? " done" : ""}`}>
                     <td>{op.position}</td>
                     <td>{canEdit && !done(op) && !item.handed_to
-                      ? <button className="mb-op" aria-pressed={active} onClick={() => select(item, active ? null : op)}>{op.stage}</button>
-                      : <span>{op.stage}</span>}
-                      {op.code ? <small className="op-code">{op.code}</small> : null}
+                      ? <button className="mb-op" aria-pressed={active} onClick={() => select(item, active ? null : op)}>{operationName(op)}</button>
+                      : <span>{operationName(op)}</span>}
+                      {isPfOperation(op) ? <small className="op-code">{pfOpsText(op)}</small> : op.code ? <small className="op-code">{op.code}</small> : null}
                       {feedsText(item, op) && <div className="ap-man">{feedsText(item, op)}</div>}
                       {op.fact && progress.required > 0 && <div className={`mb-progress tone-${progressTone(progress, done(op))}`}>
-                        <span>сдано {progress.good}/{progress.required}{progress.waiting > 0 ? ` · ${progress.waiting} ждут подтверждения` : ""}</span>
+                        <span>сдано {progress.good}/{progress.required}{progress.waiting > 0 ? ` · ${progress.waiting} ждут ОТК` : ""}</span>
                         <span className="mb-bar" role="progressbar" aria-label="Сдано" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent}><i style={{ width: `${progress.percent}%` }} /></span>
                         {!item.handed_to && progress.flags.map((flag) => <em key={flag} className={`mb-flag ${flag === "wait" ? "warn" : "danger"}`}>{FLAG_TEXT[flag]}</em>)}
                       </div>}</td>
@@ -549,7 +785,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                         const own = sharesOf(op, person.id)[0];
                         return <span className={`mb-chip${own?.finished_at ? " done" : ""}`} key={person.id} title={own?.planned_start ? windowText(own.planned_start, own.planned_finish) : undefined}>
                           {person.name}{own && pieceLabel(item, op, own) ? <b>{pieceLabel(item, op, own)}</b> : null}{own?.finished_at ? " ✓" : own?.started_at ? " · взял" : ""}
-                          {canEdit && <button className="mb-chip-x" aria-label={`Снять ${person.name}`} title="Снять с операции" disabled={Boolean(busy)} onClick={() => unassign(item, op, person.id)}>×</button>}
+                          {canEdit && <button className="mb-chip-x" aria-label={`Снять ${person.name}`} title="Снять с операции" disabled={Boolean(busy)} onClick={() => setRemoving({ taskId: item.id, operationId: op.id, personId: person.id })}>×</button>}
                         </span>;
                       })}
                       {!people.length ? <span className="mb-free">не назначено</span> : remainderOf(item, op) > 0 ? <span className="mb-free">не распределено {remainderOf(item, op)} шт</span> : null}
@@ -560,11 +796,14 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
               </table>
             </div>;
           })}
-          {!onlyFree && projectReady.map((item) => {
-            const runOk = /^\d+$/.test(item.run) && Number(item.run) > 0;
+          {/* КБ с выданной техкартой без задания — справкой, без кнопки: задания создаёт автоплан (владелец 19.10: «у кнопки
+              «Создать задание» нет никакого смысла»). */}
+          {!onlyFree && skipped.map((item) => <div className="mb-ready" key={item.techcard_id}>
+            <span><b>{kbLabel(item.project, item.index)}</b>{item.name ? ` · ${item.name}` : ""}<small> · {item.reason}</small></span>
+          </div>)}
+          {view === "stages" && !onlyFree && boardNow === null && projectReady.map((item) => {
             return <div className="mb-ready" key={item.techcard_id}>
               <span><b>{kbLabel(item.project, item.index)}</b>{item.name ? ` · ${item.name}` : ""}<small> · техкарта выдана, задания ещё нет · этапов {item.operations}, тираж {item.run || "—"}{item.deadline ? `, срок ${formatDay(item.deadline)}` : ""}</small></span>
-              <button className="secondary small" disabled={Boolean(busy) || !runOk} title={runOk ? CREATE_TASK_HINT : "Тиража нет — запустите через «+ Запустить задание»"} onClick={() => launch(item)}>Создать задание</button>
             </div>;
           })}
         </div>;
@@ -581,9 +820,34 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         </div>}
       </div>
       {site === HANDOVER_SITE ? null : task && operation
-        ? <div className="mb-target"><b>{operation.position}. {operation.stage} · {hours(operation.norm_seconds)}</b><small>{task.number} · {taskItemLabel(task)} × {task.quantity}. Нажмите на день у монтажника.</small>
+        ? <div className="mb-target"><b>{operation.position}. {operationName(operation)}{isPfOperation(operation) ? ` — ${pfOpsText(operation)}` : ""} · {hours(operation.norm_seconds)}</b><small>{task.number} · {taskItemLabel(task)} × {task.quantity}. Нажмите на день у монтажника.</small>
           <label className="mb-pieces">Штук монтажнику<input type="number" min={1} max={task.quantity} step={1} value={pieces} aria-label="Штук монтажнику" onChange={(event) => setPieces(event.target.value)} /><span>из {task.quantity}{free > 0 && free < task.quantity ? ` · не распределено ${free}` : ""} · норма {hours(Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * quantity)}</span></label>
           {quantity > free && free < task.quantity && <small>Сверх нераспределённых штуки заберём у того, кто заканчивает позже.</small>}
+          {canEdit && people.length > 0 && onlyPerson && <div className="mb-only" role="group" aria-label="Весь этап одному монтажнику">
+            <label>Только<select aria-label="Монтажник на весь этап" value={onlyPerson.id} onChange={(event) => setOnlyWho(event.target.value)}>
+              {people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
+            </select></label>
+            <label>с дня<input type="date" aria-label="День начала" min={today} value={onlyDay || onlySlot?.day || today} onChange={(event) => setOnlyDay(event.target.value)} /></label>
+            <button className="primary small" disabled={Boolean(busy) || Boolean(onlyBlock) || !onlySlot} onClick={assignOnly}>
+              {onlySlot ? `Назначить только ${onlyPerson.name} на ${formatDay(onlySlot.day)} с ${clock(new Date(onlySlot.start).getHours() * 60 + new Date(onlySlot.start).getMinutes())}` : `Назначить только ${onlyPerson.name}`}
+            </button>
+            {(onlyBlock || !onlySlot) && <small className="danger-text">{onlyBlock || "Свободного времени в ближайшие 60 дней нет — выберите другой день или монтажника."}</small>}
+            {!onlyBlock && onlySlot && operation.operator_ids.some((id) => id !== onlyPerson.id) && <small>Остальные исполнители будут сняты — все {task.quantity} шт получит {onlyPerson.name}.</small>}
+            {!onlyBlock && onlySlot && !task.pending && <MachineWarning taskId={task.id} operationId={operation.id} operatorId={onlyPerson.id} quantity={task.quantity} start={onlySlot.start} finish={onlyFinish} />}
+          </div>}
+          {canEdit && !task.pending && madeMax > 0 && <div className="mb-only mb-made" role="group" aria-label="Уже сделано без терминала">
+            <b>Уже сделано</b>
+            <label>чьи<select aria-label="Чьи штуки" value={madePerson} onChange={(event) => setMadeWho(event.target.value)}>
+              {operation.operator_ids.map((id) => <option key={id} value={id}>{operators.find((item) => item.id === id)?.name ?? "?"}</option>)}
+              <option value="">без исполнителя</option>
+            </select></label>
+            <label>штук<input type="number" min={1} max={madeMax} step={1} aria-label="Готовых штук" value={madePieces} onChange={(event) => setMadePieces(event.target.value)} /></label>
+            <span>осталось {madeMax}</span>
+            {Boolean(operation.inputs?.length) && <label><input type="checkbox" checked={madeFill} onChange={(event) => setMadeFill(event.target.checked)} />пропущенные этапы-входы отбить готовыми</label>}
+            <button className="primary small" disabled={Boolean(busy) || !(madeCount > 0) || madeCount > madeMax} onClick={recordMade}>
+              {madeCount > 0 ? `Записать готовыми ${madeCount} шт` : "Записать готовыми"}
+            </button>
+          </div>}
           <button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
         : <div className="mb-target muted">{canEdit ? "Выберите операцию в списке выше, затем день и час у монтажника." : "Нажмите на день — раскладка по часам."}</div>}
       {site === HANDOVER_SITE && <div className="mb-target muted">{HANDOVER_SITE} работает без раскладки по людям и часам: сюда падают задания с пометкой «Отдано в {HANDOVER_SITE}».</div>}
@@ -637,6 +901,9 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                 const locked = Boolean(placed && (placed.started_at || placed.finished_at));
                 // Уже стоит в этом дне — двигают кликом по часу, отдельная кнопка не нужна.
                 const here = Boolean(placed && isoDay(new Date(placed.planned_start!)) <= expanded && expanded <= isoDay(new Date(placed.planned_finish!)));
+                // Окно для проверки станков: уже стоит в этом дне — его окно, иначе то, что предлагает кнопка.
+                const machineWindow = placed && here ? { start: new Date(placed.planned_start!).getTime(), finish: new Date(placed.planned_finish!).getTime(), quantity: placed.quantity }
+                  : !locked && append != null && until != null ? { start: append, finish: until, quantity } : null;
                 return <>
                   <div className="mb-hours">{slots.map((slot) => {
                     const can = Boolean(operation && canEdit && quantity && !locked && !past(slot) && !slot.rest && !slot.busy.length);
@@ -658,6 +925,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                         <b className="mb-until">до {isoDay(new Date(until)) === expanded ? at(until) : `${formatDay(isoDay(new Date(until)))} ${at(until)}`}</b></>
                       : <span className="danger-text">{hasFree ? "После работы этого дня места нет — нажмите свободный час или выберите другой день." : "Свободных часов в этот день нет — выберите другой день."}</span>}
                     <span>Не влезает в день — хвост уйдёт на следующий рабочий день, работа монтажника после неё сдвинется.</span>
+                    {task && !task.pending && machineWindow && <MachineWarning taskId={task.id} operationId={operation.id} operatorId={person.id}
+                      quantity={machineWindow.quantity} start={machineWindow.start} finish={machineWindow.finish} />}
                   </div>}
                 </>;
               })()}
@@ -667,6 +936,27 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         })}</tbody>
       </table>}
       {site !== HANDOVER_SITE && <LoadLegend capacity={capacity} late={false} />}
+      {site !== HANDOVER_SITE && <section className="mb-machines" aria-label="Загрузка станков" style={{ marginTop: 18 }}>
+        <div className="mb-head"><h2>Загрузка станков</h2><span className="mb-count">процент смены всех единиц станка</span></div>
+        <MachineLoadGrid days={days} holidays={holidays} shift={workShift} refreshKey={planVersion} />
+      </section>}
     </aside>
+    {(() => {
+      const item = removing ? live.find((entry) => entry.id === removing.taskId) : undefined;
+      const op = item?.operations.find((entry) => entry.id === removing?.operationId);
+      if (!removing || !item || !op) return null;
+      const name = operators.find((entry) => entry.id === removing.personId)?.name ?? "Монтажник";
+      return <PageWindow label={`Снять ${name} с этапа`} width={560} dismissable close={() => setRemoving(null)}>
+        <div className="panel mb-remove">
+          <div className="manual-stock-head"><h2>Снять {name} с этапа {op.position}?</h2></div>
+          <p><b>{item.number} · {taskItemLabel(item)}</b> · этап {op.position} «{operationName(op)}»</p>
+          <ul>{removalChanges(op, removing.personId, operators).map((line) => <li key={line}>{line}</li>)}</ul>
+          <div className="form-actions">
+            <button className="secondary" onClick={() => setRemoving(null)}>Отмена</button>
+            <button className="danger" disabled={Boolean(busy)} onClick={() => unassign(item, op, removing.personId)}>Снять {name}</button>
+          </div>
+        </div>
+      </PageWindow>;
+    })()}
   </div>;
 }

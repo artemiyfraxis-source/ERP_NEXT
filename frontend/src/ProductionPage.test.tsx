@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ProductionPage, clock, goodPrefill, workedSeconds } from "./ProductionPage";
+import { ProductionPage, clock, etkRevisionNotice, goodPrefill, workedSeconds } from "./ProductionPage";
 import { forgetOpenProject } from "./MasterBoard";
 import type { Principal, ProductionOperation, ProductionTask } from "./api";
 
@@ -142,7 +142,7 @@ it("shows tasks on a Gantt, operation fact, and assigns with a server preview an
   render(<ProductionPage principal={principal} />);
   await openBoardProject("591K.3");
   fireEvent.click(await screen.findByRole("button", { name: /ПЗ-0001/ }));
-  expect(await screen.findByText(/сдано 6 из 10, брак 1 · в коробках 4 \+ 2 ждут подтверждения/)).toBeInTheDocument();
+  expect(await screen.findByText(/сдано 6 из 10, брак 1 · в коробках 4 \+ 2 ждут ОТК/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
   expect(await screen.findByText("нет допуска", { exact: false })).toBeInTheDocument();
   fireEvent.click(screen.getByLabelText("Назначить Новичок"));
@@ -314,7 +314,8 @@ it("starts the first operation from an issued GRN and package", async () => {
   });
 
   render(<ProductionPage principal={operatorPrincipal} mine />);
-  expect(await screen.findByText("Ещё не сдавали")).toBeInTheDocument();
+  expect(await screen.findByText("норма 0,2 ч на 10 шт (подготовка 2 мин + 1 мин на изделие)")).toBeInTheDocument();
+  expect(screen.queryByText("Ещё не сдавали")).not.toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
   fireEvent.change(await screen.findByLabelText("Количество из партии PPM.26.0000001 П1"), { target: { value: "3" } });
   fireEvent.click(screen.getByRole("button", { name: "Начать работу" }));
@@ -520,24 +521,119 @@ it("lets the master hand out operations of issued projects to installers and lau
     path: `/api/production/tasks/${open.id}/operations/${open.operations[0].id}/share`,
     body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000003", quantity: 4, requested_start: "2026-09-23T13:30" },
   }));
-  // Снять — крестиком на исполнителе, без отдельной кнопки у каждого.
+  // Снять — крестиком на исполнителе, без отдельной кнопки у каждого; сначала окно с тем, что изменится (16.10).
+  const posted = bodies.length;
   fireEvent.click(screen.getByRole("button", { name: "Снять Рыбкина Ольга" }));
+  const confirm = await screen.findByRole("dialog", { name: "Снять Рыбкина Ольга с этапа" });
+  expect(bodies).toHaveLength(posted);
+  expect(within(confirm).getByText("План Рыбкина Ольга 22.09 10:00–14:00 освободится.")).toBeInTheDocument();
+  expect(within(confirm).getByText("Этап останется без исполнителя — его нужно будет назначить заново.")).toBeInTheDocument();
+  fireEvent.click(within(confirm).getByRole("button", { name: "Отмена" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(bodies).toHaveLength(posted);
+  fireEvent.click(screen.getByRole("button", { name: "Снять Рыбкина Ольга" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Снять Рыбкина Ольга" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: `/api/production/tasks/${open.id}/operations/${open.operations[1].id}/share`,
     body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000002", remove: true },
   }));
 
+  // «Назначить только …» (16.10): весь этап одному монтажнику одним нажатием, ближайший рабочий день и час — на кнопке.
+  fireEvent.click(screen.getByRole("button", { name: "Обжим" }));
+  const only = screen.getByRole("group", { name: "Весь этап одному монтажнику" });
+  expect(within(only).getByLabelText("Монтажник на весь этап")).toHaveValue("10000000-0000-0000-0000-000000000002");
+  fireEvent.change(within(only).getByLabelText("Монтажник на весь этап"), { target: { value: "10000000-0000-0000-0000-000000000003" } });
+  expect(within(only).getByLabelText("День начала")).toHaveValue("2026-09-22");
+  expect(within(only).getByText("Остальные исполнители будут сняты — все 10 шт получит Попов Игнат.")).toBeInTheDocument();
+  fireEvent.click(within(only).getByRole("button", { name: "Назначить только Попов Игнат на 22.09 с 09:00" }));
+  await waitFor(() => expect(bodies.at(-1)).toEqual({
+    path: `/api/production/tasks/${open.id}/operations/${open.operations[1].id}/share`,
+    body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000003", quantity: 10, requested_start: "2026-09-22T09:00" },
+  }));
+  // Другой день — кнопка говорит его.
+  fireEvent.change(within(only).getByLabelText("День начала"), { target: { value: "2026-09-24" } });
+  expect(within(only).getByRole("button", { name: "Назначить только Попов Игнат на 24.09 с 09:00" })).toBeInTheDocument();
+
   fireEvent.click(await screen.findByRole("button", { name: "← Все проекты" }));
   await openBoardProject("708К.4");
-  const create = await screen.findByRole("button", { name: "Создать задание" });
-  expect(create).toHaveAttribute("title", expect.stringContaining("Автоплан создаёт задания сам"));
-  expect(screen.getByText(/техкарта выдана, задания ещё нет/)).toBeInTheDocument();
-  fireEvent.click(create);
-  await waitFor(() => expect(bodies.at(-1)).toEqual({
-    path: "/api/production/tasks",
-    body: { techcard_id: "80000000-0000-0000-0000-000000000009", quantity: 5, deadline: "2026-10-10", fulfillment_request_id: null },
-  }));
+  // КБ без задания — справкой, без кнопки «Создать задание» (владелец 19.10): задания создаёт автоплан.
+  expect(await screen.findByText(/техкарта выдана, задания ещё нет/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Создать задание" })).toBeNull();
   vi.useRealTimers();
+});
+
+// Доска мастера (владелец 19.10): операции КБ с выданной техкартой и вид «По оборудованию» с назначением группы.
+const WHO = "10000000-0000-0000-0000-000000000002";
+const TECHCARD = "80000000-0000-0000-0000-0000000000f1";
+const boardOp = (id: string, position: number, stage: string, norm: number, equipment: { key: string; label: string; limited: boolean }): ProductionOperation & { equipment: typeof equipment } => ({
+  ...task.operations[0], id, position, stage, code: "", norm_seconds: norm, operator_ids: [], planned_start: null, planned_finish: null, assigned_by: null, equipment,
+});
+const cutter = { key: "cut", label: "Станок резки", limited: true };
+const press = { key: "press", label: "Пресс", limited: false };
+const realTask: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000a1", version: 2, project: "708К.4", item: "708К.4КБ1", assigned: 0, quantity: 10,
+  operations: [boardOp("71000000-0000-0000-0000-0000000000a1", 1, "Резка", 600, cutter)] };
+const futureTask: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000f1", number: "Новое · 708К.4 КБ2", version: 1, project: "708К.4", item: "708К.4КБ2",
+  assigned: 0, quantity: 5, pending: true, techcard_id: TECHCARD, techcard_version: 3,
+  operations: [boardOp("71000000-0000-0000-0000-0000000000f1", 1, "Резка", 1200, cutter), boardOp("71000000-0000-0000-0000-0000000000f2", 2, "Опрессовка", 3600, press)] };
+
+function boardFetch(posts: unknown[], answer: unknown = { tasks: [], created: [], placed: [], refused: [], warnings: [] }) {
+  vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T08:00:00"));
+  masterFetch((path, init) => {
+    if (path === "/api/production/board/assign" && init?.method === "POST") { posts.push(JSON.parse(String(init.body))); return json(answer); }
+    if (path.startsWith("/api/production/board?")) return json({ project: "708К.4", tasks: [realTask], future: [futureTask], skipped: [
+      { techcard_id: "x", techcard_version: 1, project: "708К.4", index: "КБ3", name: "", reason: "не задан тираж" }] });
+    return null;
+  }, [realTask]);
+}
+
+it("shows a future operation as a new task and assigns it by the techcard reference", async () => {
+  const posts: unknown[] = [];
+  boardFetch(posts);
+  render(<ProductionPage principal={principal} />);
+  await openBoardProject("708К.4");
+  const block = (await screen.findByText("новое задание")).closest(".mb-task") as HTMLElement;
+  expect(within(block).getByText("Опрессовка")).toBeInTheDocument();
+  expect(screen.getByText(/не задан тираж/)).toBeInTheDocument();
+  fireEvent.click(within(block).getByRole("button", { name: "Резка" }));
+  const only = screen.getByRole("group", { name: "Весь этап одному монтажнику" });
+  fireEvent.click(within(only).getByRole("button", { name: "Назначить только Оператор на 22.09 с 09:00" }));
+  await waitFor(() => expect(posts).toEqual([{
+    operator_id: WHO, requested_start: "2026-09-22T09:00",
+    items: [{ techcard_id: TECHCARD, techcard_version: 3, position: 1 }],
+  }]));
+  vi.useRealTimers();
+});
+
+it("groups unassigned operations by equipment and assigns the whole group in one request", async () => {
+  const posts: unknown[] = [];
+  boardFetch(posts, { tasks: [], created: [], placed: [], warnings: ["Станок резки занят 22.09 с 09:00"],
+    refused: [{ task_id: null, techcard_id: TECHCARD, operation_id: null, position: 1, reason: "нет допуска" }] });
+  try {
+    render(<ProductionPage principal={principal} />);
+    await openBoardProject("708К.4");
+    fireEvent.click(await screen.findByRole("radio", { name: "По оборудованию" }));
+    expect(localStorage.getItem("erp.masterBoard.view")).toBe("equipment");
+    const cut = (await screen.findByText("Станок резки")).closest(".mb-group") as HTMLElement;
+    expect(within(cut).getByText("2 операции · 0,5 ч по норме")).toBeInTheDocument();
+    expect(within(cut).getAllByRole("row")).toHaveLength(3);
+    const pressGroup = screen.getByText("Пресс").closest(".mb-group") as HTMLElement;
+    expect(within(pressGroup).getByText("1 операция · 1,0 ч по норме")).toBeInTheDocument();
+    expect(within(cut).getByLabelText("День начала группы Станок резки")).toHaveValue("2026-09-22");
+    fireEvent.click(within(cut).getByRole("button", { name: "Назначить группу на 22.09 с 09:00" }));
+    await waitFor(() => expect(posts).toEqual([{
+      operator_id: WHO, requested_start: "2026-09-22T09:00",
+      items: [
+        { task_id: realTask.id, task_version: 2, operation_id: realTask.operations[0].id },
+        { techcard_id: TECHCARD, techcard_version: 3, position: 1 },
+      ],
+    }]));
+    expect(await screen.findByText(/Не назначено: .*этап 1: нет допуска/)).toBeInTheDocument();
+    expect(screen.getByText("Станок резки занят 22.09 с 09:00")).toBeInTheDocument();
+  } finally {
+    localStorage.removeItem("erp.masterBoard.view");
+    vi.useRealTimers();
+  }
 });
 
 it("hands a task to ZHUK whole and shows the ZHUK master no hourly grid", async () => {
@@ -619,7 +715,8 @@ it("keeps a chain task as it was: no «из этапов», the second stage rea
   });
   render(<ProductionPage principal={operatorPrincipal} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
-  expect(await screen.findByText(/с этапа 1, подтверждённые мастером/)).toBeInTheDocument();
+  expect(await screen.findByText("Перед началом отметьте коробки, из которых берёте детали")).toBeInTheDocument();
+  expect(await screen.findByText(/Готовых коробок с этапа 1 пока нет — введите код с коробки/)).toBeInTheDocument();
   expect(screen.queryByText(/из этапов/)).not.toBeInTheDocument();
   expect(screen.queryByText(/сдать/)).not.toBeInTheDocument();
 });
@@ -649,11 +746,17 @@ it("tells the fitter of the assembly which stages the boxes come from, and lets 
 
   // Сборка: коробки с нескольких этапов, штуки на изделие — в карточке и в форме старта.
   const { unmount } = render(<ProductionPage principal={operatorPrincipal} mine />);
-  expect(await screen.findByText(new RegExp(FEEDS))).toBeInTheDocument();
+  // Карточка монтажника — без «из этапов … ×N»: этапы видны на коробках.
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
-  expect(await screen.findByText(new RegExp(`${FEEDS}; подтверждённые мастером`))).toBeInTheDocument();
-  expect(await screen.findByRole("button", { name: /000001-8.*5 шт · этап 1/ })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /000002-6.*5 шт · этап 2/ })).toBeInTheDocument();
+  expect(screen.queryByText(new RegExp(FEEDS))).not.toBeInTheDocument();
+  // Форма старта — без «×N» и «сданные»: этап написан на коробке; по одной коробке с этапа — отмечены сразу.
+  expect(await screen.findByText("Перед началом отметьте коробки, из которых берёте детали")).toBeInTheDocument();
+  expect(screen.queryByText(/сданные/)).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /000001-8.*5 шт · этап 1/ })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: /000002-6.*5 шт · этап 2/ })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(screen.getByRole("button", { name: /000002-6/ }));
+  expect(screen.getByRole("button", { name: /000002-6/ })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByRole("button", { name: /000001-8/ })).toHaveAttribute("aria-pressed", "true");
   fireEvent.click(screen.getByRole("button", { name: "Ввести код вручную" }));
   expect(screen.getByLabelText("Номера коробок")).toBeInTheDocument();
   unmount();
@@ -668,7 +771,8 @@ it("tells the fitter of the assembly which stages the boxes come from, and lets 
 });
 
 // Owner 04.10.2026: «почему эти два блока вообще тут» — очередь ОТК, брак и средства измерения живут в разделе «ОТК».
-it("keeps only planning and the master's box confirmation on the resource planning screen", async () => {
+// Owner 13.10.2026: «ОТК подтверждает и все» — «Коробки на подтверждение» мастера убраны, коробки экран не тянет.
+it("keeps only planning on the resource planning screen: no box confirmation, no QC blocks", async () => {
   const adminPrincipal: Principal = { ...principal, roles: ["admin"], access_level: "admin", permissions: { production: "edit" } };
   const box = (id: string, number: string, status: string) => ({
     id, number, version: 1, task_id: task.id, operation_id: task.operations[0].id, item: task.item,
@@ -685,15 +789,18 @@ it("keeps only planning and the master's box confirmation on the resource planni
   }, [task]);
   render(<ProductionPage principal={adminPrincipal} />);
 
-  expect(await screen.findByRole("heading", { name: "Коробки на подтверждение" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Календарь цеха" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Календарь цеха" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Коробки на подтверждение" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Подтвердить" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Вернуть…" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "+ Запустить задание" })).toBeInTheDocument();
   for (const title of ["Очередь ОТК", "Средства измерения", "Брак ОТК", "Брак цеха"]) {
     expect(screen.queryByRole("heading", { name: title })).not.toBeInTheDocument();
   }
   expect(screen.queryByRole("button", { name: "+ Добавить СИ" })).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Годные ОТК 000012-0")).not.toBeInTheDocument();
-  // Данные ОТК экран планирования больше не тянет.
+  // Данные ОТК и коробки экран планирования больше не тянет.
+  expect(requested).not.toContain("/api/production/boxes");
   expect(requested).not.toContain("/api/production/defects");
   expect(requested).not.toContain("/api/production/instruments");
   expect(requested).not.toContain("/api/production/qc/rejections");
@@ -768,7 +875,8 @@ it("lets a planner view a fitter's queue read-only", async () => {
   fireEvent.change(select, { target: { value: fitterId } });
 
   expect(await screen.findByText("Вид сотрудника Оператор — только просмотр")).toBeInTheDocument();
-  expect(await screen.findByText("Ещё не сдавали")).toBeInTheDocument();
+  expect(await screen.findByText("ПЗ-0001", { exact: false, selector: ".mo-s" })).toBeInTheDocument();
+  expect(screen.queryByText("Ещё не сдавали")).not.toBeInTheDocument();
   expect(requested).toContain(`/api/production/my?operator_id=${fitterId}`);
   expect(screen.getByText("000009-6")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Начать" })).not.toBeInTheDocument();
@@ -890,19 +998,19 @@ it("opens the operation's ETK read-only on that operation through the production
     if (path.includes("/api/techcards/projects/")) return json({ items: [] });
     return null;
   });
-  const { container } = render(<ProductionPage principal={fitter} mine />);
+  render(<ProductionPage principal={fitter} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
   // Только операция задания: без списка операций ЭТК слева и без «← Назад / Далее» к чужим операциям.
   expect(await screen.findByRole("heading", { name: /Опрессовка терминалов/ })).toBeInTheDocument();
   expect(screen.queryByRole("navigation", { name: "Маршрут ЭТК" })).not.toBeInTheDocument();
   expect(screen.queryByText("Разделка кабеля")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Назад|Далее/ })).not.toBeInTheDocument();
-  expect(container.querySelector(".etk-sheet")).not.toBeNull();
+  expect(document.querySelector(".etk-sheet")).not.toBeNull();
   expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Пересобрать/ })).not.toBeInTheDocument();
 });
 
-it("keeps the fitter's ETK collapsed until a block is opened, shows the scheme as Э4 and remembers what this user opened", async () => {
+it("opens the fitter's ETK in a window with «Оснастка» and «Ход операции» expanded, the rest collapsed, and remembers what this user changed", async () => {
   window.localStorage.clear();
   const etk = {
     id: "80000000-0000-0000-0000-000000000001", version: 1, project: "591K.3", item_index: "КБ1", product_name: "Жгут",
@@ -928,32 +1036,43 @@ it("keeps the fitter's ETK collapsed until a block is opened, shows the scheme a
   });
   const first = render(<ProductionPage principal={fitter} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
-  const steps = await screen.findByRole("region", { name: "Ход операции" });
-  expect(steps.querySelector("details")).not.toHaveAttribute("open");
+  // Окно поверх списка (16.10): ЭТК не раздвигает карточки, закрывается кнопкой.
+  const dialog = await screen.findByRole("dialog", { name: "ЭТК: Разделка" });
+  const steps = await within(dialog).findByRole("region", { name: "Ход операции" });
+  expect(steps.querySelector("details")).toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Оснастка" }).querySelector("details")).toHaveAttribute("open");
   expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).not.toHaveAttribute("open");
   expect(screen.getByText("Требование безопасности").closest("details")).not.toHaveAttribute("open");
-  const schema = screen.getByText("Схема Э4 и таблица соединений").closest("details")!;
+  const schema = screen.getByText("Схема Э4").closest("details")!;
   expect(schema).not.toHaveAttribute("open");
   // Схема строится только открытой: чертёж не запрошен, пока блок закрыт.
   expect(seen.some((path) => path.includes("/harness/"))).toBe(false);
 
-  fireEvent.click(screen.getByText("Схема Э4 и таблица соединений"));
-  const map = await screen.findByRole("img", { name: /Схема Э4: A1, B1/ });
-  expect([...map.querySelectorAll("text.etk-wm-pintext")].map((pin) => pin.textContent)).toEqual(["1", "3", "1", "2"]);
-  expect(map.querySelector("text.etk-wm-wire")).toHaveTextContent("НВ4 0,2 красный"); // контакт 1 — первым
-  expect(screen.getByText("Таблица соединений · 2").closest("details")).not.toHaveAttribute("open");
+  fireEvent.click(screen.getByText("Схема Э4"));
+  // Чертежа монтажнику не прочитать — схема связей по таблице соединений ЭТК, как в генераторе (владелец 14.10).
+  const map = await screen.findByRole("img", { name: "Провода с контакта на контакт, сростки и хвосты" });
+  expect([...map.querySelectorAll('[data-end="A1"] .pin-links-row')].map((row) => `${row.getAttribute("data-pin")}:${row.getAttribute("data-wires") ?? ""}`))
+    .toEqual(["1:2", "2:", "3:1"]);
+  expect([...map.querySelectorAll(".pin-links-line")].map((line) => `${line.getAttribute("data-a")}→${line.getAttribute("data-b")}`)).toEqual(["A1·3→B1·2", "A1·1→B1·1"]);
+  expect(screen.queryByText("Таблица соединений · 2")).toBeNull();
   expect(map.closest(".etk-e4")).toBeNull();
 
+  // Закрыл «Ход операции» — запомнилось «закрыт»; открыл «Вход» — «открыт».
   fireEvent.click(within(steps).getByText("Ход операции"));
-  await waitFor(() => expect(steps.querySelector("details")).toHaveAttribute("open"));
-  expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:sec:Ход операции`)).toBe("1");
+  await waitFor(() => expect(steps.querySelector("details")).not.toHaveAttribute("open"));
+  fireEvent.click(within(screen.getByRole("region", { name: "Вход" })).getByText("Вход"));
+  await waitFor(() => expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:sec:Вход`)).toBe("1"));
+  expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:sec:Ход операции`)).toBe("0");
   expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:schema`)).toBe("1");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   first.unmount();
 
   render(<ProductionPage principal={fitter} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
-  expect((await screen.findByRole("region", { name: "Ход операции" })).querySelector("details")).toHaveAttribute("open");
-  expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).not.toHaveAttribute("open");
+  expect((await screen.findByRole("region", { name: "Ход операции" })).querySelector("details")).not.toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Оснастка" }).querySelector("details")).toHaveAttribute("open");
   window.localStorage.clear();
 });
 
@@ -971,31 +1090,63 @@ it("loads the ETK sketches of the fitter's operation through the production endp
     if (path.endsWith("/etk/sketches")) return json({ items: [{ operation_key: "OP-01::::", file_name: "a.png", size: 3, uploaded_by: "Технолог", uploaded_at: "2026-09-20T10:00:00+03:00" }] });
     return null;
   });
-  const { container } = render(<ProductionPage principal={fitter} mine />);
+  render(<ProductionPage principal={fitter} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
-  await waitFor(() => expect(container.querySelector(".etk-sketch img")).not.toBeNull());
-  expect(container.querySelector(".etk-sketch img")?.getAttribute("src")).toMatch(/^\/api\/production\/my\/tasks\/.+\/operations\/.+\/etk\/sketches\/OP-01%3A%3A%3A%3A\?v=/);
+  await waitFor(() => expect(document.querySelector(".etk-sketch img")).not.toBeNull());
+  expect(document.querySelector(".etk-sketch img")?.getAttribute("src")).toMatch(/^\/api\/production\/my\/tasks\/.+\/operations\/.+\/etk\/sketches\/OP-01%3A%3A%3A%3A\?v=/);
   expect(seen.some((path) => path.endsWith("/etk/sketches"))).toBe(true);
   expect(seen.some((path) => path.includes("/api/techcards/") && path.includes("/sketches"))).toBe(false);
 });
 
-it("confirms every box waiting for the master with one button", async () => {
-  const waiting = (id: string, number: string) => ({
-    id, number, version: 2, task_id: task.id, operation_id: task.operations[0].id, item: task.item, operation_position: 1,
-    operator_id: "10000000-0000-0000-0000-000000000002", quantity: "5", consumed: "0", reserved: "0", rejected: "0",
-    available: "5", status: "Закрыта оператором", created_at: "2026-09-22T09:00:00+03:00",
-    closed_at: null, closed_by: null, confirmed_at: null, confirmed_by: null, return_reason: null,
+// Демо «задачи монтажника на этапе 3» (владелец 16.10): ждущий этап не зелёный, счётчик — только активные, код операции
+// монтажнику не показывается.
+it("greys out «Начать» on a stage waiting for its input with the reason next to it and counts only active cards", async () => {
+  const waiting = readyTask({ state: "waiting_stage", text: "ждёт этап 1 «Разделка»: сдано 0 из 10", boxes: [], source_position: 1, handed: "0", need: "10" });
+  const finished: ProductionTask = { ...task, id: "70000000-0000-0000-0000-000000000009", operations: [{
+    ...task.operations[0], id: "71000000-0000-0000-0000-000000000009", state: "выполнена", fact: { good: "10", defect: "0", processed: "10" },
+  }] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [waiting, finished] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    throw new Error(`Unexpected request: ${path}`);
   });
-  const boxes = [waiting("74000000-0000-0000-0000-000000000021", "000021-2"), waiting("74000000-0000-0000-0000-000000000022", "000022-0")];
-  const confirmed: string[] = [];
-  masterFetch((path, init) => {
-    if (path === "/api/production/boxes") return json({ boxes });
-    if (path.endsWith("/confirm") && init?.method === "POST") { confirmed.push(path); return json({ box: boxes[0] }); }
-    return null;
-  }, [task]);
-  render(<ProductionPage principal={principal} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Подтвердить все" }));
-  await waitFor(() => expect(confirmed).toEqual(boxes.map((box) => `/api/production/boxes/${box.id}/confirm`)));
+  render(<ProductionPage principal={fitter} mine />);
+
+  const start = await screen.findByRole("button", { name: "Начать" });
+  expect(start).toBeDisabled();
+  const reason = screen.getByText("ждёт этап 1 «Разделка»: сдано 0 из 10");
+  expect(start).toHaveAttribute("aria-describedby", reason.id);
+  fireEvent.click(start);
+  expect(screen.queryByRole("button", { name: "Начать работу" })).not.toBeInTheDocument();
+  expect(screen.getByText("1", { selector: ".page-count" })).toBeInTheDocument();
+  expect(screen.getByText("Выполнено · 1")).toBeInTheDocument();
+  expect(screen.queryByText("OP-01")).not.toBeInTheDocument();
+  expect(screen.queryByText("Ещё не сдавали")).not.toBeInTheDocument();
+});
+
+it("shows the fitter's own share, what was handed of it and how many pieces can be started now", async () => {
+  const share = { operator_id: fitter.user.id, quantity: 4, planned_start: "2026-09-22T09:00:00+03:00", planned_finish: "2026-09-22T09:06:00+03:00", started_at: null, finished_at: null };
+  fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: readyBoxes, available: "10" },
+    { my_share: share, remaining: "3", fact: { good: "5", defect: "0", processed: "5" }, state: "в работе" }));
+  render(<ProductionPage principal={fitter} mine />);
+
+  expect(await screen.findByText("ваша доля 4 из 10")).toBeInTheDocument();
+  expect(screen.getByText("сдано вами 1 из 4 · по этапу 5 из 10")).toBeInTheDocument();
+  // Коробки дают 10 шт, своих осталось 3 — начать можно на 3.
+  expect(screen.getByText("можно начать: 3 шт · коробок: 2")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Начать" })).toBeEnabled();
+  // Норма — на свою долю: 2 мин подготовки + 1 мин × 4 шт.
+  expect(screen.getByText("норма 0,1 ч на 4 шт (подготовка 2 мин + 1 мин на изделие)")).toBeInTheDocument();
+});
+
+it("says once that the work was started earlier than planned", async () => {
+  const share = { operator_id: fitter.user.id, quantity: null, planned_start: "2026-09-22T09:00:00+03:00", planned_finish: "2026-09-22T11:50:00+03:00", started_at: "2026-09-22T06:22:00+03:00", finished_at: null };
+  fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: [] }, { my_share: share }));
+  render(<ProductionPage principal={fitter} mine />);
+  expect(await screen.findByText("— начато раньше на 2 ч 38 мин")).toBeInTheDocument();
+  expect(screen.getAllByText(/начато раньше/)).toHaveLength(1);
+  expect(screen.getByText(/^взял 22.09/)).toBeInTheDocument();
 });
 
 it("keeps «Начать» disabled with a reason until a box is chosen, then lets it go", async () => {
@@ -1051,31 +1202,6 @@ it("titles an overdue operation that was never started «Просрочено ·
   } finally { vi.useRealTimers(); }
 });
 
-it("folds the return reason behind «Вернуть…» in the boxes waiting for the master", async () => {
-  const box = {
-    id: "74000000-0000-0000-0000-000000000031", number: "000031-5", version: 2, task_id: task.id, operation_id: task.operations[0].id, item: task.item, operation_position: 1,
-    operator_id: "10000000-0000-0000-0000-000000000002", quantity: "5", consumed: "0", reserved: "0", rejected: "0",
-    available: "5", status: "Закрыта оператором", created_at: "2026-09-22T09:00:00+03:00",
-    closed_at: null, closed_by: null, confirmed_at: null, confirmed_by: null, return_reason: null,
-  };
-  const returned: unknown[] = [];
-  masterFetch((path, init) => {
-    if (path === "/api/production/boxes") return json({ boxes: [box] });
-    if (path.endsWith("/return") && init?.method === "POST") { returned.push(JSON.parse(String(init.body))); return json({ box }); }
-    return null;
-  }, [task]);
-  render(<ProductionPage principal={principal} />);
-  expect(await screen.findByText("000031-5")).toBeInTheDocument();
-  expect(screen.queryByLabelText("Причина возврата")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Вернуть оператору" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Вернуть…" }));
-  const confirm = screen.getByRole("button", { name: "Вернуть оператору" });
-  expect(confirm).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Причина возврата"), { target: { value: "Не хватает 1 шт" } });
-  fireEvent.click(confirm);
-  await waitFor(() => expect(returned).toHaveLength(1));
-});
-
 // Работа за сотрудника (12.10.2026): мастер с правкой планирования делает всё, что монтажник, — от его имени.
 it("lets a master work for a fitter: banner, start on her behalf with a replay key", async () => {
   const fitterId = "10000000-0000-0000-0000-000000000002";
@@ -1103,6 +1229,8 @@ it("lets a master work for a fitter: banner, start on her behalf with a replay k
   expect(screen.getByRole("button", { name: "Вернуться к моим заданиям" })).toBeInTheDocument();
   expect(await screen.findByText("можно начинать")).toBeInTheDocument();
   expect(screen.getByText(/^план /, { selector: ".mo-window" })).toHaveTextContent(/^план 22\.09 \d\d:00–\d\d:12$/);
+  // Мастеру код операции виден (монтажнику — нет).
+  expect(screen.getByText("OP-01", { selector: ".op-code" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Начать" }));
   fireEvent.click(await screen.findByRole("button", { name: "Начать работу" }));
 
@@ -1131,7 +1259,8 @@ it("puts pause and «Сдать…» on the running card with its timer, and the
   });
   render(<ProductionPage principal={fitter} mine />);
 
-  expect(await screen.findByText(/^в работе с \d\d:\d\d · 0:4[12]$/)).toBeInTheDocument();
+  // Начало 42 мин назад: после полуночи это вчера — тогда с датой («в работе с 16.10 23:58»).
+  expect(await screen.findByText(/^в работе с (\d\d\.\d\d )?\d\d:\d\d · 0:4[12]$/)).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: /Идёт работа/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Начать" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Сдать…" })).toBeInTheDocument();
@@ -1146,4 +1275,58 @@ it("counts worked time without pauses", () => {
   const base = { id: "s", task_id: "t", operation_id: "o", operator_id: "u", started_at: "2026-10-12T14:00:00+03:00", input_limit: null };
   expect(workedSeconds({ ...base, status: "В работе", pause_started_at: null, pause_seconds: 600 }, new Date("2026-10-12T15:00:00+03:00"))).toBe(3000);
   expect(workedSeconds({ ...base, status: "Пауза", pause_started_at: "2026-10-12T14:30:00+03:00", pause_seconds: 0 }, new Date("2026-10-12T15:00:00+03:00"))).toBe(1800);
+});
+
+const pfPrincipal: Principal = {
+  user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
+  roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
+};
+
+function mockMine(operation: ProductionOperation) {
+  const mine: ProductionTask = { ...task, operations: [{ ...operation, operator_ids: [pfPrincipal.user.id] }] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [mine] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    if (path.endsWith("/inputs")) return json({ boxes: [{
+      id: "74000000-0000-0000-0000-000000000001", number: "000001-8", code: "180К.11·КБ1·13.10·Б07·3", version: 1, task_id: task.id, operation_id: "x", item: task.item,
+      operation_position: 2, operator_id: "x", quantity: "5", consumed: "0", reserved: "0", rejected: "0", available: "5",
+      status: "Подтверждена", created_at: "2026-09-22T09:00:00+03:00", closed_at: null, closed_by: null, confirmed_at: null, confirmed_by: null, return_reason: "",
+    }], materials: [] });
+    if (path.endsWith("/etk")) return json({ card: { document: { operations: [
+      { position: 5, card: { steps: [{ kind: "КОНТРОЛЬ", text: "Высота обжима", tolerance: "1,2 мм" }], defects: "" } },
+    ] } }, focus: { position: 5, positions: [5, 6, 7], code: "OP-01" } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("shows a semi-finished task card: ПФ name, operation numbers, inputs and collapsed requirements", async () => {
+  mockMine({ ...task.operations[0], position: 3, stage: "Опрессовка", first: false,
+    etk_ops: [{ position: 5, code: "OP-5", stage: "Зачистка" }, { position: 6, code: "OP-6", stage: "Опрессовка" }, { position: 7, code: "OP-7", stage: "Контроль" }] });
+  render(<ProductionPage principal={pfPrincipal} mine />);
+  expect(await screen.findByText("ПФ-3 · Опрессовка")).toBeInTheDocument();
+  expect(screen.getByText("оп. 05–07")).toBeInTheDocument();
+  expect(await screen.findByText(/Получить от предыдущей задачи/)).toBeInTheDocument();
+  expect(await screen.findByText(/180К\.11·КБ1·13\.10·Б07·3/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Инструкция" })).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Требования"));
+  expect(await screen.findByText(/Контроль: Высота обжима \(допуск: 1,2 мм\)/)).toBeInTheDocument();
+});
+
+it("keeps an old one-ETK-operation card as it was: stage name, ЭТК button, no ПФ blocks", async () => {
+  mockMine({ ...task.operations[0], first: false });
+  render(<ProductionPage principal={pfPrincipal} mine />);
+  expect(await screen.findByText("Разделка")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "ЭТК" })).toBeInTheDocument();
+  expect(screen.queryByText("Требования")).not.toBeInTheDocument();
+  expect(screen.queryByText(/ПФ-/)).not.toBeInTheDocument();
+});
+
+it("says when the card got a newer revision than the task was launched with", () => {
+  expect(etkRevisionNotice({ pinned: 1, current: 2, newer: true, fallback: null }))
+    .toBe("Есть новая ревизия ТК 2 — задание идёт по ревизии 1");
+  expect(etkRevisionNotice({ pinned: 2, current: 2, newer: false, fallback: null })).toBe("");
+  expect(etkRevisionNotice({ pinned: 1, current: 2, newer: false, fallback: "Ревизия 1 не найдена — показана текущая ЭТК" }))
+    .toBe("Ревизия 1 не найдена — показана текущая ЭТК");
+  expect(etkRevisionNotice(undefined)).toBe("");
 });

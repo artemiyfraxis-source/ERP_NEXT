@@ -322,6 +322,44 @@ def normalize_email(value: str) -> str:
     return email
 
 
+TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z", "и": "i", "й": "y",
+    "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f",
+    "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+# Staff without a mailbox get a placeholder address, as the imported shop staff did (import_staff.py).
+PLACEHOLDER_EMAIL_DOMAIN = "fraxis.local"
+
+
+def translit(text: str) -> str:
+    out = "".join(TRANSLIT.get(ch, ch) for ch in text.casefold())
+    return "".join(ch for ch in out if ch.isascii() and ch.isalnum())
+
+
+def short_login(name: str, taken: set[str]) -> str:
+    """The transliterated surname («Безменов Никита» → bezmenov); a clash adds the first letter of the name, then a digit."""
+    parts = name.split()
+    surname = translit(parts[0]) if parts else ""
+    first = translit(parts[1])[:1] if len(parts) > 1 else ""
+    base = surname or "user"
+    for candidate in (base, base + first):
+        if candidate and candidate not in taken:
+            return candidate
+    n = 2
+    while f"{base}{first}{n}" in taken:
+        n += 1
+    return f"{base}{first}{n}"
+
+
+def placeholder_email(name: str, taken: set[str]) -> str:
+    """«Зингер Артем» → zinger.artem@fraxis.local; a clash adds a digit."""
+    local = ".".join(part for part in (translit(word) for word in name.split()[:2]) if part) or "user"
+    candidate, n = f"{local}@{PLACEHOLDER_EMAIL_DOMAIN}", 2
+    while candidate in taken:
+        candidate, n = f"{local}{n}@{PLACEHOLDER_EMAIL_DOMAIN}", n + 1
+    return candidate
+
+
 def normalize_name(value: str) -> str:
     name = str(value or "").strip()
     if not name:
@@ -442,19 +480,28 @@ def check_manager_chain(
 # (shared/http_auth.py) — no role lists. The role tables (`identity_role_access`, `identity_user_access`) and the role
 # column are legacy, kept one release. Должность is the separate free-text `job_title`.
 
-# Highest first.
-ACCESS_LEVELS = ("superadmin", "admin", "commercial", "tech_lead", "foreman", "operator")
+# Highest first: the order of the «Доступы» columns and of the level select in «Сотрудники».
+# «Администратор» is no longer a level a person can hold (owner 14.10.2026: «Администратора можно удалить»; nobody held
+# it — the 14.10 levels migration moves any stored holder to superadmin). Its key lives on only as ADMIN_MODE_LEVEL.
+ACCESS_LEVELS = ("superadmin", "commercial", "tech_lead", "pm", "storekeeper", "foreman", "operator")
 LEVEL_LABELS: dict[str, str] = {
     "superadmin": "Суперадминистратор",  # ГД, учредители
-    "admin": "Администратор",  # менеджер высшего звена, отвечающий за систему; дирекция
     "commercial": "Коммерческое руководство",  # маркетинг, продажи
     "tech_lead": "Технический руководитель",  # нач. производства, главный технолог, закупщик
-    "foreman": "Бригадир",  # бригадир, кладовщик
+    "pm": "Менеджер по проектам",  # owner 14.10.2026
+    "storekeeper": "Кладовщик",  # owner 14.10.2026
+    "foreman": "Бригадир",  # бригадир
     "operator": "Оператор",  # конечный исполнитель
 }
+# «Режим админа» (Portal.gs portalToggleAdmin): the session-only level the admin mode lifts a session to — full access,
+# but not a superadministrator (it cannot give or take the full level). Never stored, never assignable, no matrix column.
+ADMIN_MODE_LEVEL = "admin"
+ADMIN_MODE_LABEL = "Администратор"
+ADMIN_LEVEL_RETIRED = "Уровня «Администратор» больше нет — выберите «Суперадминистратор» или другой уровень."
 # Always edit everywhere, whatever the matrix or a personal exception says; only these see «Доступы», «Сотрудники» and
-# the administrator's tools.
-FULL_ACCESS_LEVELS = frozenset({"superadmin", "admin"})
+# the administrator's tools. ADMIN_MODE_LEVEL stays in the set so the admin mode (and a stray stored 'admin') keeps
+# full access: nobody loses rights by the level's removal.
+FULL_ACCESS_LEVELS = frozenset({"superadmin", ADMIN_MODE_LEVEL})
 # The level matrix: the role matrix's sections without «Сотрудники» (a full-access level's own) plus «Задания» (the
 # operator's own tasks, split off `production`), «ОТК» (quality edits, split off `production`) and «Отгрузка — склад»
 # (the storekeeper's shipping actions, split off `shipping`).
@@ -513,6 +560,32 @@ LEVEL_SEED: dict[str, dict[str, AccessMode]] = {
         "quality": AccessMode.VIEW,
         "shipping": AccessMode.VIEW,
     },
+    # owner 14.10.2026 (Ульяна): «Проекты» and «Отгрузка» are hers, planning and stock readable, «Задания» closed.
+    "pm": {
+        **_FILE_REQUESTS,
+        "projects": AccessMode.EDIT,
+        "techcards": AccessMode.VIEW,
+        "production": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
+        "requests": AccessMode.EDIT,
+        "procurement": AccessMode.VIEW,
+        "warehouse": AccessMode.VIEW,
+        "shipping": AccessMode.EDIT,
+        "shipping_goods": AccessMode.VIEW,
+    },
+    # owner 14.10.2026 (Алексей): receiving, stock, picking, handout and the shipping warehouse actions are his.
+    "storekeeper": {
+        **_FILE_REQUESTS,
+        "projects": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
+        "procurement": AccessMode.VIEW,
+        "receiving": AccessMode.EDIT,
+        "warehouse": AccessMode.EDIT,
+        "fulfillment": AccessMode.EDIT,
+        "handout": AccessMode.EDIT,
+        "shipping": AccessMode.VIEW,
+        "shipping_goods": AccessMode.EDIT,
+    },
     "foreman": {
         **_FILE_REQUESTS,
         "production": AccessMode.EDIT,
@@ -538,8 +611,15 @@ LEVEL_SEED: dict[str, dict[str, AccessMode]] = {
 FULL_LEVEL_SECTIONS: tuple[str, ...] = (*LEVEL_SECTION_LABELS, "staffdir")
 
 
+def level_label(level: str) -> str:
+    """The level's Russian name; the admin-mode session level has one too, an unknown key is shown as is."""
+    return ADMIN_MODE_LABEL if level == ADMIN_MODE_LEVEL else LEVEL_LABELS.get(level, level)
+
+
 def normalize_level(value: str) -> str:
     level = str(value or "").strip()
+    if level == ADMIN_MODE_LEVEL:
+        raise IdentityValidationError(ADMIN_LEVEL_RETIRED)
     if level not in LEVEL_LABELS:
         raise IdentityValidationError(f"Неизвестный уровень доступа «{level}».")
     return level
@@ -548,7 +628,7 @@ def normalize_level(value: str) -> str:
 def level_permissions(
     level: str, level_row: dict[str, AccessMode], exceptions: dict[str, AccessMode],
 ) -> dict[str, AccessMode]:
-    """What a person may open: superadmin/admin — every section on edit, whatever is stored (their exceptions are
+    """What a person may open: superadmin (and the admin-mode session) — every section on edit, whatever is stored (their exceptions are
     ignored); any other level — the level's matrix row overlaid with the personal exceptions (`none` or an empty cell
     closes), limited to the matrix sections."""
     if level in FULL_ACCESS_LEVELS:

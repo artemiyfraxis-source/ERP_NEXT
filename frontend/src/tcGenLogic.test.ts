@@ -1,5 +1,7 @@
-﻿import { expect, it } from "vitest";
-import { applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+﻿import { describe, expect, it } from "vitest";
+import { COAX_SHIELD_OPTIONS, coaxFromFields, coaxShieldKind_, coaxRecordFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { genCards } from "./routeCards";
+import { deriveRoute, type RouteOp } from "./routeLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -44,6 +46,10 @@ it("builds the interboard config the /build endpoint reads (TcGenInline buildCon
   expect(cfg.ops[0]).toMatchObject({ opNum: "CUT_WIRE_auto", tOp: "12", tPrep: "60", tMachine: "3" });
   expect(cfg.ops[1]).toMatchObject({ firstTerm: true, ep: { connArt: "XHP-2", termArt: "SXH-001T-P0.6" }, wireSources: [""] });
   expect(cfg.ops[3].wireSources).toEqual(["Колодка XH 2"]);
+  // Вкладка и ключи операций — по ним сервер режет ЭТК вкладки генератора на ПФ (pf_split.py), «Сложную сборку» — тоже (16.10).
+  expect(cfg.tab).toBe("inter");
+  expect(cfg.ops.map((op: any) => op.opKey)).toEqual(expect.arrayContaining(["cutWire"]));
+  expect(cfg.ops.every((op: any) => typeof op.opKey === "string" && op.opKey)).toBe(true);
 });
 
 it("a drawing with end allowances is cut by the drawing's cut length — our L+ is not added twice (owner 06.10)", () => {
@@ -134,14 +140,291 @@ it("coax kit opens the КОАКС tab and orders angled side B before the second
   const cfg = makeGen(D, S).buildConfig() as Record<string, any>;
   expect(cfg.mode).toBe("coax");
   expect(cfg.ops.map((op: any) => op.type)).toEqual([
-    "coaxCut", "coaxStrip", "coaxStrip", "coaxPin", "coaxInsSleeve", "coaxPin", "coaxHousing", "coaxShield",
+    "coaxCut", "coaxPin", "coaxInsSleeve", "coaxPin", "coaxHousing", "coaxShield",
   ]);
   expect(cfg.coax.sideB).toMatchObject({ article: "MCX-JW R/A", pinType: "внутри корпуса", type: "" });
+  const separate = { ...S, coax: { ...S.coax, stripMode: "separate" as const } };
+  expect((makeGen(D, separate).buildConfig() as Record<string, any>).ops.map((op: any) => op.type)).toEqual([
+    "coaxCut", "coaxStrip", "coaxStrip", "coaxPin", "coaxInsSleeve", "coaxPin", "coaxHousing", "coaxShield",
+  ]);
+});
+
+describe("коакс: резка с разделкой на роторном станке или резка, затем разделка А и В (владелец 14.10)", () => {
+  const coaxTemplates = [...templates,
+    { id: "cc1", title: "CUT_COAX+1strip | Резка с разделкой", category: "Резка с разделкой" },
+    { id: "cc2", title: "CUT_COAX+2strip | Резка с разделкой", category: "Резка с разделкой" },
+    { id: "strip", title: "STRIP_COAX_auto | Разделка коаксиала", category: "Разделка" },
+  ];
+  const kit = (withB = true) => [
+    { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 1.02 },
+    { id: "a", type: "Соед", name: "MMCX-Male RG316", art: "MMCX-Male RG316", qty: 1 },
+    ...(withB ? [{ id: "b", type: "Соед", name: "N-Male RG316", art: "N-Male RG316", qty: 1 }] : []),
+    { id: "t", type: "ТУТ", name: "ТУТ 3/1,5", art: "ТУТ 3/1,5", qty: 0.04 },
+  ];
+  const coaxData = (withB = true, d3 = "2,5"): GenData => ({
+    ...data(kit(withB), "Кабельная сборка MMCX-Male to N-Male RG316 1m"), templates: coaxTemplates,
+    coaxCableDia: d3 ? { byCable: { rg316: { d1: "0,51", d2: "1,52", d3 } } } : null,
+  });
+  const opsOf = (D: GenData, S: GenState) => makeGen(D, S).getActiveOps();
+
+  it("by default cuts and strips both ends in one operation first, ТУТ cut after it", () => {
+    const D = coaxData();
+    const S = initState(D);
+    expect(S.coax).toMatchObject({ stripMode: "machine", machine: "" });
+    const ops = opsOf(D, S);
+    expect(ops.slice(0, 2).map((op) => [op.type, op.label, op.tmplHint])).toEqual([
+      ["coaxCut", "Резка с разделкой (А и В)", "CUT_COAX+2strip"], ["coaxCutTut", "Резка ТУТ ×2", "CUT_TUT_short"],
+    ]);
+    expect(ops.some((op) => op.type === "coaxStrip")).toBe(false);
+    const cfg = makeGen(D, S).buildConfig() as Record<string, any>;
+    expect(cfg.ops[0]).toMatchObject({ type: "coaxCut", opKey: "coaxCutStrip", templateId: "cc2", stripSides: ["A", "B"],
+      machine: { model: "BZW-886+Q2", inventory: "ОБ.094" } });
+  });
+
+  it("picks the small machine for a cable up to Ø 5,5 mm, the big one for a thicker or unknown cable, the technologist's choice wins", () => {
+    const thin = coaxData();
+    expect(makeGen(thin, initState(thin)).coaxMachine_()).toBe("small");
+    const thick = coaxData(true, "7,2");
+    expect(makeGen(thick, initState(thick)).coaxMachine_()).toBe("big");
+    expect(opsOf(thick, initState(thick))[0].machine).toBe("BZW-50X");
+    const unknown = coaxData(true, "");
+    expect(makeGen(unknown, initState(unknown)).coaxMachine_()).toBe("big");
+    const S = initState(thin);
+    const chosen = { ...S, coax: { ...S.coax, machine: "big" as const } };
+    expect(makeGen(thin, chosen).coaxMachine_()).toBe("big");
+    expect((makeGen(thin, chosen).buildConfig() as Record<string, any>).ops[0].machine).toMatchObject({ model: "BZW-50X", inventory: "ОБ.095" });
+  });
+
+  it("one end only takes CUT_COAX+1strip; a stripped bare end B — +2strip", () => {
+    const D = coaxData(false);
+    const S = initState(D);
+    expect(opsOf(D, S)[0]).toMatchObject({ label: "Резка с разделкой (А)", tmplHint: "CUT_COAX+1strip", stripSides: ["A"] });
+    const bare = { ...S, coax: { ...S.coax, stripB: true } };
+    expect(opsOf(D, bare)[0]).toMatchObject({ label: "Резка с разделкой (А) и зачисткой (В)", tmplHint: "CUT_COAX+2strip", stripSides: ["A", "B"] });
+  });
+
+  describe("тип экрана: обжим / пайка / прижимной (владелец 19.10), по разъёму каждой стороны", () => {
+    const rec = (article: string, shield: string, extra: Record<string, string> = {}) =>
+      coaxFromFields({ coaxArticle: article, coaxWire: "RG316", coaxType: "N-male", "Тип экрана": shield, L1: "6", L2: "10", L3: "10", ...extra });
+    const clampKit = (a: string, b: string) => [
+      { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 1.02 },
+      { id: "a", type: "Соед", name: a, art: a, qty: 1 },
+      ...(b ? [{ id: "b", type: "Соед", name: b, art: b, qty: 1 }] : []),
+      { id: "t", type: "ТУТ", name: "ТУТ 3/1,5", art: "ТУТ 3/1,5", qty: 0.04 },
+    ];
+    const clampData = (shieldA: string, shieldB: string, withB = true): GenData => ({
+      ...data(clampKit("N-112B", withB ? "S-111" : ""), "Кабельная сборка N-112B S-111 RG316 1m"), templates: coaxTemplates,
+      coaxRecords: [rec("N-112B", shieldA), rec("S-111", shieldB, { coaxType: "SMA-male" })],
+    });
+    const types = (D: GenData, S: GenState) => opsOf(D, S).map((op) => `${op.type}${op.side || ""}`);
+
+    it("normalizes the spellings of «Тип экрана»", () => {
+      expect(["прижим", "Прижимной", "зажимной", "clamp", "обжимной", "Обжим втулки", "пайка", "паяный", "RG-178: пайка", "накручивание", "", undefined]
+        .map((value) => coaxShieldKind_(value))).toEqual(["прижим", "прижим", "прижим", "прижим", "обжим", "обжим", "пайка", "пайка", "пайка", "накрутка", "", ""]);
+    });
+
+    it("knows compression, twist-on and Push-On (19.10): own kinds, «самообжим» is not a crimp", () => {
+      expect(["компрессия", "компрессионный", "накрутка", "накручивающийся", "резьбовой", "самообжим", "Push-On (самообжим)", "обжим"]
+        .map((value) => coaxShieldKind_(value))).toEqual(["компрессия", "компрессия", "накрутка", "накрутка", "накрутка", "самообжим", "самообжим", "обжим"]);
+    });
+
+    it("knows the body shield (MHF, U.FL, 19.10): «корпус» / «корпусом» / «обжим корпуса», no sleeve, no ferrule press, own housing note", () => {
+      expect(["корпус", "корпусом", "обжим корпуса", "Корпусом (без гильзы)", "обжим"].map((value) => coaxShieldKind_(value)))
+        .toEqual(["корпус", "корпус", "корпус", "корпус", "обжим"]);
+      const body = clampData("корпус", "корпусом");
+      const ops = opsOf(body, initState(body));
+      expect(ops.some((op) => op.type === "coaxShield" || op.type === "coaxInsSleeve")).toBe(false);
+      expect(ops.find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса (А) — экран зажимается корпусом разъёма, без гильзы");
+      const mixed = clampData("корпус", "обжим");
+      expect(opsOf(mixed, initState(mixed)).find((op) => op.type === "coaxShield")).toMatchObject({ units: 1 });
+      expect(COAX_SHIELD_OPTIONS).toContainEqual(["корпус", "Корпусом (без гильзы)"]);
+    });
+
+    it("twist-on and Push-On sides have no shield op and no sleeve; compression is a crimp op with the tool in the label and no HEX", () => {
+      const twist = clampData("накрутка", "обжим");
+      const ops = opsOf(twist, initState(twist));
+      expect(ops.find((op) => op.type === "coaxShield")).toMatchObject({ units: 1, label: "Опрессовка втулки экрана" });
+      expect(ops.find((op) => op.type === "coaxInsSleeve")).toMatchObject({ units: 1, label: "Монтаж втулки экрана" });
+      expect(ops.find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса (А) — накручивается на кабель, экран зажимает разъём");
+      const bare = clampData("самообжим", "накрутка");
+      const bareOps = opsOf(bare, initState(bare));
+      expect(bareOps.some((op) => op.type === "coaxShield" || op.type === "coaxInsSleeve")).toBe(false);
+      expect(bareOps.find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса (А) — Push-On, без инструмента");
+      const compress = clampData("компрессия", "компрессия");
+      const compressOps = opsOf(compress, initState(compress));
+      expect(compressOps.find((op) => op.type === "coaxShield")).toMatchObject({
+        units: 2, label: "Опрессовка втулки экрана ×2 — компрессия: А, B (компрессионный инструмент, без HEX)", tmplHint: "PRS_SLEEVE_coax" });
+      const cfg = makeGen(compress, initState(compress)).buildConfig() as Record<string, any>;
+      expect([cfg.coax.sideA.shield, cfg.coax.sideB.shield]).toEqual(["компрессия", "компрессия"]);
+    });
+
+    it("takes the shield of each side from its БД.КОАКС connector, a manual choice overrides", () => {
+      const D = clampData("прижимной", "обжим");
+      const S = initState(D);
+      expect([S.coax.shield, S.coax.shieldB]).toEqual(["прижим", "обжим"]);
+      const cfg = makeGen(D, S).buildConfig() as Record<string, any>;
+      expect([cfg.coax.sideA.shield, cfg.coax.sideB.shield]).toEqual(["прижим", "обжим"]);
+      const manual = { ...S, coax: { ...S.coax, shield: "обжим" } };
+      expect(opsOf(D, manual).find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса (А)");
+      const same = { ...S, coax: { ...S.coax, shieldB: "прижим" } };
+      expect(opsOf(D, same).find((op) => op.type === "coaxHousing" && op.side === "B")?.label).toBe("Монтаж корпуса с прижимом (B)");
+    });
+
+    it("a clamp side: one «Надеть» with nut, washer, gasket and ring, the contact, one housing op — no sleeve crimp, no separate nut or braid ops", () => {
+      const both = clampData("прижим", "прижим");
+      const ops = opsOf(both, initState(both));
+      expect(ops.filter((op) => op.type !== "coaxCut").map((op) => `${op.type}${op.side || ""}`)).toEqual([
+        "coaxCutTut", "coaxPinA", "coaxPinB", "coaxInsTut", "coaxInsSleeve", "coaxHousingA", "coaxHousingB", "coaxHeat"]);
+      expect(ops.find((op) => op.type === "coaxInsSleeve")).toMatchObject({
+        label: "Надеть гайку, шайбу, уплотнитель и зажимное кольцо ×2", units: 2, clampSides: ["A", "B"], tmplHint: "INS_SLEEVE_coax" });
+      expect(ops.filter((op) => op.type === "coaxHousing").map((op) => op.label)).toEqual([
+        "Монтаж корпуса с прижимом (А)", "Монтаж корпуса с прижимом (B)"]);
+      expect(ops.map((op) => op.type)).not.toEqual(expect.arrayContaining(["coaxShield"]));
+      expect(ops.some((op) => /ClampNut|ClampBraid/.test(op.type))).toBe(false);
+      const cfg = makeGen(both, initState(both)).buildConfig() as Record<string, any>;
+      expect(cfg.ops.find((op: any) => op.type === "coaxInsSleeve")).toMatchObject({ units: 2, clampSides: ["A", "B"] });
+    });
+
+    it("mixed A clamp / B crimp: «Надеть» for both, ONE sleeve pressing for B only, solder and crimp per side", () => {
+      const mixed = clampData("прижим", "обжим");
+      const ops = opsOf(mixed, initState(mixed));
+      expect(ops.map((op) => `${op.type}${op.side || ""}`).filter((t) => t !== "coaxCut")).toEqual([
+        "coaxCutTut", "coaxPinA", "coaxPinB", "coaxInsTut", "coaxInsSleeve", "coaxHousingA", "coaxHousingB", "coaxShield", "coaxHeat"]);
+      expect(ops.find((op) => op.type === "coaxInsSleeve")).toMatchObject({
+        label: "Надеть втулку экрана (B) и гайку, шайбу, уплотнитель, зажимное кольцо (А)", units: 2, clampSides: ["A"] });
+      expect(ops.find((op) => op.type === "coaxShield")).toMatchObject({ units: 1 });
+      expect(ops.find((op) => op.type === "coaxHousing" && op.side === "B")?.label).toBe("Монтаж корпуса (B)");
+      expect(ops.find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса с прижимом (А)");
+      // Пайка у одной стороны и обжим у другой — тоже по сторонам.
+      const soldered = clampData("пайка", "обжим");
+      expect(types(soldered, initState(soldered))).toEqual(expect.arrayContaining(["coaxSolderShieldA", "coaxInsSleeve", "coaxShield"]));
+    });
+
+    it("the shield type and the centre-contact type are independent: clamp + soldered pin, clamp + crimped pin (coaxPinCrimp)", () => {
+      const D = clampData("прижим", "прижим");
+      const S = initState(D);
+      const order = (pin: string) => types(D, { ...S, coax: { ...S.coax, pinA: pin, pinB: pin } }).filter((t) => /Pin|InsSleeve|Housing|Shield/.test(t));
+      expect(order("пайка")).toEqual(["coaxPinA", "coaxPinB", "coaxInsSleeve", "coaxHousingA", "coaxHousingB"]);
+      expect(order("обжим")).toEqual(["coaxPinCrimpA", "coaxPinCrimpB", "coaxInsSleeve", "coaxHousingA", "coaxHousingB"]);
+    });
+
+    it("the clamp housing card is the ERP template once the library has it, the nearest library card before", () => {
+      const D = clampData("прижим", "прижим");
+      const clampHousings = (G: GenData) => opsOf(G, initState(G)).filter((op) => op.type === "coaxHousing");
+      expect(clampHousings(D).map((op) => op.tmplHint)).toEqual(["INS_housing_COAX", "INS_housing_COAX"]);
+      const withCards: GenData = { ...D, templates: [...coaxTemplates,
+        { id: "ha", title: "INS_housing_COAX_clamp | Монтаж корпуса с прижимом (A)", category: "Монтаж корпуса" },
+        { id: "hb", title: "INS_housing_COAX_clamp | Монтаж корпуса с прижимом (B)", category: "Монтаж корпуса" }] };
+      expect(clampHousings(withCards).map((op) => [op.tmplHint, op.tmplWant])).toEqual([
+        ["INS_housing_COAX_clamp", "INS_housing_COAX_clamp"], ["INS_housing_COAX_clamp", "INS_housing_COAX_clamp"]]);
+    });
+  });
+
+  it("separately: cut, strip A, strip B, then the ТУТ cut and everything else", () => {
+    const D = coaxData();
+    const S = initState(D);
+    const ops = opsOf(D, { ...S, coax: { ...S.coax, stripMode: "separate" } });
+    expect(ops.slice(0, 4).map((op) => op.label)).toEqual(["Резка кабеля", "Разделка коаксиала (А)", "Разделка коаксиала (B)", "Резка ТУТ ×2"]);
+    expect(ops.slice(0, 3).map((op) => op.tmplHint)).toEqual(["CUT_WIRE_auto", "STRIP_COAX_auto", "STRIP_COAX_auto"]);
+    expect(ops.some((op) => op.machine)).toBe(false);
+  });
+
+  it("a crimped centre contact («Тип пина» = обжим in БД.КОАКС) is pressed by its own operation, not soldered (19.10)", () => {
+    const rec = coaxFromFields({ coaxArticle: "SMA-JW3", coaxWire: "RG-316", coaxType: "SMA-male R/A", "Тип пина": "обжим", "Тип экрана": "обжим",
+      L1: "2,6", L2: "5,5", L3: "12" });
+    const kit = [
+      { id: "k", type: "Кабель", name: "RG-316", art: "RG-316", qty: 0.3 },
+      { id: "a", type: "Соед", name: "SMA-JW3", art: "SMA-JW3", qty: 1 },
+      { id: "b", type: "Соед", name: "N-Male RG316", art: "N-Male RG316", qty: 1 },
+    ];
+    const D: GenData = { ...data(kit, "Кабельная сборка SMA-JW3 RG-316 0,3m"), templates: coaxTemplates, coaxRecords: [rec] };
+    const S = initState(D);
+    expect(S.coax.pinA).toBe("обжим");
+    const ops = opsOf(D, S);
+    const crimp = ops.filter((op) => op.type === "coaxPinCrimp");
+    expect(crimp.map((op) => [op.side, op.label])).toEqual([["A", "Опрессовка центрального контакта (А)"]]);
+    // Своей карты PRS_PIN_coax ещё нет — карта опрессовки коакса, с пометкой, какой карты не хватает.
+    expect(crimp[0]).toMatchObject({ tmplWant: "PRS_PIN_coax" });
+    expect(ops.filter((op) => op.type === "coaxPin").map((op) => op.side)).toEqual(["B"]);
+    expect((makeGen(D, S).buildConfig() as Record<string, any>).coax.sideA.pinType).toBe("обжим");
+  });
+
+  it("the 2.92 mm and SMP stock articles are matched by article, dots and hyphens ignored (19.10); «Тип пина» цанга → no pin solder (20.10)", () => {
+    // Владелец 20.10: у 2,92 / 3,5 мм пин не паяется — «цанга»; у углового пин только паяется внутри корпуса.
+    const rec = coaxFromFields({ coaxArticle: "2.92-JB2G-F", coaxWire: "RG-405", coaxType: "2.92mm-male", "Тип пина": "цанга", "Тип экрана": "обжим" });
+    const smp = coaxFromFields({ coaxArticle: "SMP-KW2", coaxWire: "RG-178", coaxType: "SMP-female R/A", "Тип пина": "пайка внутри корпуса", "Тип экрана": "обжим" });
+    const kit = [
+      { id: "k", type: "Кабель", name: "RG-405", art: "RG-405", qty: 0.3 },
+      { id: "a", type: "Соед", name: "2.92 JB2G F", art: "2.92 JB2G F", qty: 1 },
+      { id: "b", type: "Соед", name: "SMP-KW2", art: "SMP-KW2", qty: 1 },
+    ];
+    const D: GenData = { ...data(kit, "Кабельная сборка 2.92-JB2G-F RG-405 0,3m"), templates: coaxTemplates, coaxRecords: [rec, smp] };
+    const S = initState(D);
+    expect([S.coax.pinA, S.coax.pinB]).toEqual(["цанга", "внутри корпуса"]);
+    expect(opsOf(D, S).filter((op) => op.type === "coaxPin" || op.type === "coaxPinCrimp").map((op) => op.side)).toEqual(["B"]);
+  });
+
+  it("a collet centre contact (N-111C/8D × 8D-FB) is not soldered: no pin solder, the housing says why", () => {
+    // gsm-repiteri.ru 3300: «центральный контакт - цанговый и не требует пайки»; «Тип пина» в БД.КОАКС пуст.
+    const rec = coaxFromFields({ coaxArticle: "N-111C/8D", coaxWire: "8D-FB", coaxType: "N-male", "Тип экрана": "обжим",
+      "Центральный контакт": "цанговый, не требует пайки", L1: "9", L2: "3", L3: "6" });
+    expect(rec.centerContact).toBe("цанговый, не требует пайки");
+    const collet = [
+      { id: "k", type: "Кабель", name: "8D-FB", art: "8D-FB", qty: 1.02 },
+      { id: "a", type: "Соед", name: "N-111C/8D", art: "N-111C/8D", qty: 1 },
+      { id: "b", type: "Соед", name: "N-Male RG316", art: "N-Male RG316", qty: 1 },
+      { id: "t", type: "ТУТ", name: "ТУТ 3/1,5", art: "ТУТ 3/1,5", qty: 0.04 },
+    ];
+    const D: GenData = { ...data(collet, "Кабельная сборка N-111C/8D 8D-FB 1m"), templates: coaxTemplates, coaxRecords: [rec] };
+    const S = initState(D);
+    expect([S.coax.pinA, S.coax.pinB]).toEqual(["цанга", "пайка"]);
+    const ops = opsOf(D, S);
+    expect(ops.filter((op) => op.type === "coaxPin").map((op) => op.side)).toEqual(["B"]);
+    expect(ops.filter((op) => op.type === "coaxHousing").map((op) => op.label)).toEqual([
+      "Монтаж корпуса (А) — цанговый контакт, без пайки", "Монтаж корпуса (B)"]);
+    expect((makeGen(D, S).buildConfig() as Record<string, any>).coax.sideA.pinType).toBe("цанга");
+  });
+
+  it("separately: the cut takes the coax card CUT_COAX_auto once both its card and its БД.ОП row exist", () => {
+    const card = { id: "ccut", title: "CUT_COAX_auto | Резка", category: "Резка" };
+    const row = { opNumber: "CUT_COAX_auto", opName: "Резка", tOp: "3,5", tPrep: "180", tMachine: "3,5" };
+    const S0 = initState(coaxData());
+    const S = { ...S0, coax: { ...S0.coax, stripMode: "separate" as const } };
+    const full: GenData = { ...coaxData(), templates: [...coaxTemplates, card], ops: [...coaxData().ops, row] };
+    expect(opsOf(full, S)[0]).toMatchObject({ tmplHint: "CUT_COAX_auto", tmplWant: "CUT_COAX_auto" });
+    expect((makeGen(full, S).buildConfig() as Record<string, any>).ops[0]).toMatchObject({ templateId: "ccut", opNum: "CUT_COAX_auto", tOp: "3.5" });
+    // Карта без строки БД.ОП (или строка без карты) — прежняя карта провода, чтобы у резки остались нормы.
+    const cardOnly: GenData = { ...coaxData(), templates: [...coaxTemplates, card] };
+    expect(opsOf(cardOnly, S)[0]).toMatchObject({ tmplHint: "CUT_WIRE_auto", tmplWant: "CUT_COAX_auto" });
+    const rowOnly: GenData = { ...coaxData(), ops: [...coaxData().ops, row] };
+    expect(opsOf(rowOnly, S)[0].tmplHint).toBe("CUT_WIRE_auto");
+  });
+
+  it("796К.2 КБ1: the ПФ scheme follows the order of work, the tubes go where «Монтаж ТУТ» takes them", () => {
+    // MMCX-Male RG316 → N-Male, ТУТ, втулка экрана (обжим), пайка А и В, корпуса А и В, опрессовка, усадка.
+    const D = coaxData();
+    const S = initState(D);
+    const specs = opsOf(D, { ...S, coax: { ...S.coax, stripMode: "separate" } });
+    const ops: RouteOp[] = specs.map((spec, index) => ({ position: index + 1, key: spec.opKey, type: spec.type, code: spec.tmplHint || "",
+      label: spec.label, minutes: null, ...(spec.side ? { side: spec.side } : {}) }));
+    expect(ops.map((op) => op.key)).toEqual(["coaxCut", "coaxStripA", "coaxStripB", "coaxCutTut", "coaxPinA", "coaxPinB", "coaxInsTut",
+      "coaxInsSleeve", "coaxHousingA", "coaxHousingB", "coaxShield", "coaxHeat"]);
+    const { cards, links } = genCards(deriveRoute(ops), ops);
+    expect(cards.map((card) => [card.title, card.ops.map((op) => op.position)])).toEqual([
+      ["Нарезанный и разделанный кабель", [1, 2, 3]], ["Нарезанные трубки", [4]],
+      ["Кабель с центральным контактом, сторона А", [5]], ["Кабель с центральным контактом, сторона В", [6]],
+      ["Сторона А собрана", [7, 8, 9]], ["Сторона В собрана", [10]], ["Готовый кабель", [11, 12]],
+    ]);
+    // Каждый ПФ идёт после предыдущего по номерам операций — номера ПФ совпадают с порядком работы.
+    const firsts = cards.map((card) => card.ops[0].position);
+    expect(firsts).toEqual([...firsts].sort((a, b) => a - b));
+    expect(links.map((link) => `${link.from}>${link.to}`)).toEqual(["wires>crimpedA", "tubes>A", "crimpedA>crimpedB", "crimpedB>A", "A>B", "B>final"]);
+  });
 });
 
 it("takes coax diameters from СПР.КАБ by the BOM cable, lengths from the connector record", () => {
   const rec = { article: "SMA-J", connArticle: "SMA-J", type: "SMA", wire: "RG316", mfr: "", program: "",
-    d1: "9", d2: "9", d3: "9", l1: "4", l2: "3", l3: "2", lPlus: "1", lMinus: "0,5", pinType: "", shieldType: "" };
+    l1: "4", l2: "3", l3: "2", lPlus: "1", lMinus: "0,5", pinType: "", shieldType: "" };
   const D = { ...data([
     { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
     { id: "a", type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
@@ -150,9 +433,33 @@ it("takes coax diameters from СПР.КАБ by the BOM cable, lengths from the c
   const cfg = makeGen(D, S).buildConfig() as Record<string, any>;
   expect(cfg.coax.sideA).toMatchObject({ d1: "0,51", d2: "1,52", d3: "2,5", l1: "4", l2: "3", l3: "2", lPlus: "1", lMinus: "0,5" });
   expect(makeGen(D, S).coaxInfo("A").text).toContain("D1:0,51");
-  // Кабеля нет в СПР.КАБ — запасной вариант: D1–D3 записи разъёма.
-  const noCable = { ...D, coaxCableDia: { byCable: {} } };
-  expect((makeGen(noCable, initState(noCable)).buildConfig() as Record<string, any>).coax.sideA).toMatchObject({ d1: "9", d2: "9", d3: "9" });
+  // Кабеля нет в СПР.КАБ — D нет (владелец 16.10: D у разъёма не берём, даже если в строке листа остались D1–D3).
+  const legacyRow = coaxFromFields({ Артикул: "SMA-J", Провод: "RG316", D1: "9", D2: "9", D3: "9", L1: "4", L2: "3", L3: "2" });
+  expect(legacyRow).not.toHaveProperty("d1");
+  const noCable = { ...D, coaxRecords: [{ ...rec, ...legacyRow, connArticle: "SMA-J" }], coaxCableDia: { byCable: {} } };
+  const g = makeGen(noCable, initState(noCable));
+  expect((g.buildConfig() as Record<string, any>).coax.sideA).toMatchObject({ d1: "", d2: "", d3: "", l1: "4", l2: "3", l3: "2" });
+  expect(g.coaxInfo("A").text).toContain("D1:— D2:— D3:— L1:4");
+});
+
+it("writes no D1–D3 into a new БД.КОАКС record: the diameters are the cable's", () => {
+  const fields = coaxRecordFields({ connArticle: "SMA-J", type: "SMA", wire: "RG316", mfr: "", program: "",
+    l1: "4", l2: "3", l3: "2", lPlus: "", lMinus: "", pinType: "пайка", shieldType: "обжим" });
+  expect(Object.keys(fields).filter((key) => /^d[123]$/i.test(key))).toEqual([]);
+  expect(fields).toMatchObject({ coaxArticle: "SMA-J", coaxWire: "RG316", l1: "4" });
+});
+
+it("finds the БД.КОАКС record whatever the hyphens and case: «MMCX-Male RG316» = «MMCX-male RG-316» (owner 14.10)", () => {
+  const rec = { article: "MMCX-male RG-316", connArticle: "", type: "MMCX-male", wire: "RG-316", mfr: "", program: "",
+    l1: "1,8", l2: "4,5", l3: "10", lPlus: "", lMinus: "", pinType: "пайка", shieldType: "обжим" };
+  const D = { ...data([
+    { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
+    { id: "a", type: "Соед", name: "MMCX-Male RG316", art: "MMCX-Male RG316", qty: 1 },
+  ], "Сборка RG316 150mm"), coaxRecords: [rec] };
+  const g = makeGen(D, initState(D));
+  const info = g.coaxInfo("A");
+  expect(info.missing).toBe(false);
+  expect(info.text).toContain("L1:1,8");
 });
 
 it("takes cut lengths from the calc sheet rows when the name has none", () => {
@@ -325,7 +632,9 @@ it("«Сторона А» / «Сторона В» keep the one-side machine crim
     expect(g.crimpCutSideSelected_()).toBe("A");
     const ops = g.getActiveOps();
     expect(kinds(ops)).toEqual(["cutWireCrimp:A", "insTerm:A", "prsTerm:B", "insTerm:B"]);
+    // Без ОТП вторую сторону зачищает пресс ручной опрессовки — резка её не трогает.
     expect(ops[0]).toMatchObject({ label: "Резка с обжимом А (SXH-001T-P0.6N) — Провод НВ4 0,2", tmplHint: "CUT_WIRE+1crimp" });
+    expect(ops[0].strip).toMatchObject({ a: true, b: false });
     const cfg = g.buildConfig() as Record<string, any>;
     expect(cfg.ops[0]).toMatchObject({ side: "A", templateId: "cwc", opNum: "CUT_WIRE+1crimp" });
     expect(cfg.ops.some((op: any) => "epB" in op)).toBe(false);
@@ -333,6 +642,18 @@ it("«Сторона А» / «Сторона В» keep the one-side machine crim
   const b = usbGen({ side: "B" }).g;
   expect(kinds(b.getActiveOps())).toEqual(["cutWireCrimp:B", "prsTerm:A", "insTerm:A", "insTerm:B"]);
   expect(b.getActiveOps()[0].label).toBe("Резка с обжимом В (SXH-001T-P0.6N) — Провод НВ4 0,2");
+});
+
+it("обжим на станке с одной стороны и «Без зачистки (ОТП)» с другой — резка с обжимом и зачисткой (владелец 14.10)", () => {
+  const { g } = usbGen({ side: "A", patch: (S, D) => updateEndpoint(D, S, "b1", { otp: true }) });
+  const ops = g.getActiveOps();
+  expect(kinds(ops)).toEqual(["cutWireCrimp:A", "insTerm:A", "prsTerm:B", "insTerm:B"]);
+  expect(ops[0].label).toBe("Резка с обжимом А (SXH-001T-P0.6N) и зачисткой В — Провод НВ4 0,2");
+  expect(ops[0].strip).toMatchObject({ a: true, b: true, lenB: "2" });
+  // ОТП без станка: резка с разделкой той стороны.
+  const plain = usbGen({ side: "", patch: (S, D) => updateEndpoint(D, S, "b1", { otp: true }) });
+  const manual = makeGen(plain.D, { ...plain.S, crimpCutManual: true, crimpCut: false });
+  expect(manual.getActiveOps()[0]).toMatchObject({ type: "cutWireStrip", strip: { b: true, lenB: "2" } });
 });
 
 it("a side the machine cannot crimp stays manual and says why; «Обе стороны» then falls back to the other side", () => {
@@ -414,8 +735,9 @@ it("heat-shrink over a connector: cut with other tubes, put on before this end's
   const keys = ops.map((o) => o.opKey);
   expect(ops.find((o) => o.opKey === "cutShr1")).toMatchObject({ type: "cutTut", tmplHint: "CUT_TUT_short", label: "Резка ТТК поверх разъёма А1 — 1×25 мм",
     tutArt: "ТТК 6/2", tutSegs: [{ len: "25", count: 1 }] });
-  const put = keys.indexOf("insShrA1"), shrink = keys.indexOf("heatShrA1");
-  expect(ops[put].label).toBe("Надеть ТТК на кабель (А1) — 1 шт");
+  // Надевается вместе с прочими трубками одной операцией на обе стороны — до обжима (владелец 15.10).
+  const put = keys.indexOf("insSleeves"), shrink = keys.indexOf("heatShrA1");
+  expect(ops[put]).toMatchObject({ type: "insTut", harness: true, tutCount: 1, label: "Надеть трубки (стороны А и В): ТТК 6/2 поверх разъёма А1 — 1 шт" });
   expect(ops[shrink]).toMatchObject({ label: "Усадка ТТК поверх разъёма А1", tmplHint: "HEAT_TTK_short" });
   const ownOps = ops.filter((o) => o.side === "A" && o.epId).map((o) => keys.indexOf(o.opKey));
   expect(put).toBeLessThan(Math.min(...ownOps));
@@ -434,7 +756,7 @@ it("heat-shrink over a solder connector shrinks after its mount; toggle off give
   const keys = ops.map((o) => o.opKey);
   expect(ops.find((o) => o.opKey === "cutShr1")?.tutSegs).toEqual([{ len: "20", count: 1 }]);
   const own = ops.filter((o) => o.epId === "a1").map((o) => keys.indexOf(o.opKey));
-  expect(keys.indexOf("insShrA1")).toBeLessThan(Math.min(...own));
+  expect(keys.indexOf("insSleeves")).toBeLessThan(Math.min(...own));
   expect(keys.indexOf("heatShrA1")).toBeGreaterThan(Math.max(...own));
 });
 
@@ -446,4 +768,54 @@ it("connector sleeve is not counted twice as harness sleeve; old endpoints load 
   expect(makeGen(D, base).harnessSleeveComps_().map((c) => c.id)).toEqual(["ttk"]);
   const S = updateEndpoint(D, base, "a1", { shrinkOn: true });
   expect(makeGen(D, S).harnessSleeveComps_()).toEqual([]);
+});
+
+describe("savedComplex", () => {
+  it("reads the saved tab, and an older config by what only «Сложная сборка» writes", () => {
+    expect(savedComplex({ tab: "complex" })).toBe(true);
+    expect(savedComplex({ tab: "inter", bigAssembly: true })).toBe(false);
+    expect(savedComplex({ bigAssembly: true })).toBe(true);
+    expect(savedComplex({ ops: [{ type: "seal" }] })).toBe(true);
+    expect(savedComplex({ ops: [{ ep: { label: "NODE" } }] })).toBe(true);
+    expect(savedComplex({ mode: "manual", bigAssembly: true })).toBe(false);
+    expect(savedComplex({ ops: [{ type: "cutWire" }] })).toBe(false);
+    expect(savedComplex(null)).toBe(false);
+  });
+});
+
+// Владелец 14.10: «под каждый разъём длину зачистки; если записана — из БД».
+describe("длина зачистки у разъёма", () => {
+  it("from БД.ТЕР by default; the typed value overrides it in the cut strip and the build config; empty falls back", () => {
+    const base = usbGen({ both: true });
+    expect(base.g.epStripLen_(base.S.endpoints[0])).toBe("2");
+    expect(base.g.getActiveOps()[0].strip).toEqual({ a: true, lenA: "2", b: true, lenB: "2" });
+    const over = usbGen({ both: true, patch: (S, D) => updateEndpoint(D, S, "b1", { stripLen: " 3,5 " }) });
+    expect(over.g.epStripLen_(over.S.endpoints[1])).toBe("3,5");
+    expect(over.g.getActiveOps()[0].strip).toEqual({ a: true, lenA: "2", b: true, lenB: "3,5" });
+    expect((over.g.buildConfig() as Record<string, any>).ops[0].strip).toMatchObject({ lenA: "2", lenB: "3,5" });
+    const empty = usbGen({ both: true, patch: (S, D) => updateEndpoint(D, S, "b1", { stripLen: "  " }) });
+    expect(empty.g.getActiveOps()[0].strip).toEqual({ a: true, lenA: "2", b: true, lenB: "2" });
+  });
+
+  it("one-side machine crimp + ОТП: the override of the hand-crimped side goes into the cut's strip of that side", () => {
+    const { g } = usbGen({ side: "A", patch: (S, D) => updateEndpoint(D, S, "b1", { stripLen: "4", otp: true }) });
+    expect(g.getActiveOps()[0].strip).toMatchObject({ a: true, lenA: "2", b: true, lenB: "4" });
+  });
+
+  it("no БД value and no override: «—»; an end without a terminal gives «—» too", () => {
+    const { g, S } = usbGen({ both: true, patch: (st, D) => updateEndpoint(D, st, "a1", { termId: "" }) });
+    expect(g.epStripLen_(S.endpoints[0])).toBe("—");
+    expect(g.epStripLen_(null)).toBe("—");
+  });
+
+  it("solder ends keep solderStrip, not the crimp override", () => {
+    const D = data([
+      { id: "w", type: "Провод", name: "МГТФ 0,12", art: "МГТФ 0,12", qty: 0.3 },
+      { id: "c", type: "Соед", name: "Колодка XH 2", art: "XHP-2", qty: 2 },
+    ]);
+    const S = updateEndpoint(D, initState(D), "a1", { method: "solder", solderStrip: "7", stripLen: "9" });
+    const strips = makeGen(D, S).getActiveOps().map((op) => op.strip).filter(Boolean);
+    expect(JSON.stringify(strips)).toContain('"7"');
+    expect(JSON.stringify(strips)).not.toContain('"9"');
+  });
 });

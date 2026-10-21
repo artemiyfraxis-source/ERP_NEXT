@@ -14,7 +14,7 @@ from app.main import app
 from app.modules.references.application import mirror_keys, TechRecordInput
 from app.modules.references.coax_connectors import (
     EXPORT_FILE, GSM_FILE, GsmFileError, build_export, export_body, gsm_import_rows, mirror_pairs, pair_key,
-    pin_type, shield_type,
+    pin_type, shield_type, title_part,
 )
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.references.importers import COAX_CARD_COLUMNS
@@ -63,7 +63,7 @@ def test_the_body_has_one_row_per_connector_and_cable_with_known_fields():
         assert set(row["fields"]) <= allowed, row
         assert all(isinstance(value, str) and value.strip() for value in row["fields"].values()), row
         assert row["fields"].get("Тип пина", "пайка") == "пайка"  # the base's words only
-        assert row["fields"].get("Тип экрана", "обжим") in ("обжим", "пайка")
+        assert row["fields"].get("Тип экрана", "обжим") in ("обжим", "пайка", "прижим")
     sites = {row["fields"]["Ссылка"] for row in rows}
     assert len(sites) == 311 - 2  # S-231L and N-112C/5D are on the site twice: one row, the second page in the note
 
@@ -79,10 +79,60 @@ def test_a_pair_the_base_has_gets_only_its_card():
 
 # --- the rules ---
 
-def test_an_entry_without_article_is_named_by_its_type_and_site_number():
+def test_an_entry_without_article_is_named_by_what_tells_it_apart_not_by_the_site_number():
     export = gsm_import_rows(_site(_entry(note="номер на сайте: 3148", cable=["RG-178", "RG-316"])))
-    assert [row["fields"]["coaxArticle"] for row in export.rows] == ["SMA-male №3148", "SMA-male №3148"]
+    assert [row["fields"]["coaxArticle"] for row in export.rows] == ["SMA-male для RG-178/RG-316"] * 2
     assert [row["fields"]["coaxWire"] for row in export.rows] == ["RG-178", "RG-316"]
+    named = gsm_import_rows(_site(
+        _entry(type_name="F-male", mount="резьбовой", cable=["RG-11"], url="https://gsm-repiteri.ru/f"),
+        _entry(type_name="U.FL-female", angle="угловой", cable=["RG-178"], url="https://gsm-repiteri.ru/u"),
+        _entry(type_name="FAKRA-female (тип Z)", full_name="Разъём Fakra Z для кабеля RG-174 (с интегрированной иглой)",
+               cable=["RG-174"], url="https://gsm-repiteri.ru/z"),
+        _entry(type_name="SMA-female", full_name="Разъём SMA female (на корпус, резьба M16)", mount=None,
+               cable=["RG-178"], url="https://gsm-repiteri.ru/s"),
+    ))
+    assert [row["fields"]["coaxArticle"] for row in named.rows] == [
+        "F-male резьбовой для RG-11", "U.FL-female угловой для RG-178", "FAKRA-female (тип Z) с иглой для RG-174",
+        "SMA-female на корпус для RG-178"]
+
+
+def test_an_entry_without_article_takes_the_part_number_from_the_product_name_not_a_made_up_name():
+    """Владелец 19.10: «SMA-Male 141» вместо S-115-141 — артикул берётся из названия товара, не сочиняется."""
+    export = gsm_import_rows(_site(
+        _entry(full_name="Разъём S-115-141 (SMA-male, напаиваемый, на кабель RG-402)", cable=["RG-402"],
+               note="номер на сайте: 3449", url="https://gsm-repiteri.ru/a"),
+        _entry(full_name="Разъём 11-121L (MCX-male, обжимной, угловой, на кабель RG-174)", cable=["RG-174"],
+               note="номер на сайте: 3832", url="https://gsm-repiteri.ru/b"),
+        _entry(full_name="Разъём S-115-141 NGT (SMA-male, напаиваемый, никелированный)", cable=["RG-402"],
+               note="номер на сайте: 4676", url="https://gsm-repiteri.ru/c"),
+        _entry(full_name="Разъём CRC9 (CRC9-male, обжимной)", type_name="CRC9-male", cable=["RG-174"],
+               url="https://gsm-repiteri.ru/d"),
+        _entry(full_name="Разъём Fakra тип Z (Water Blue / 5021) female", type_name="FAKRA-female (тип Z)",
+               cable=["RG-174"], url="https://gsm-repiteri.ru/e"),
+    ))
+    assert [row["fields"]["coaxArticle"] for row in export.rows] == [
+        "S-115-141", "11-121L", "S-115-141 NGT", "CRC9-male для RG-174", "FAKRA-female (тип Z) для RG-174"]
+    assert [title_part(_entry(full_name=name)) for name in (
+        "Разъём S1-111L (SMB-male)", "Разъём N-235-141 (N-female)", "Разъём TS9 (TS9-male)", "Разъём SMA female на кабели RG-178")
+    ] == ["S1-111L", "N-235-141", "", ""]
+
+
+def test_a_new_row_gets_the_site_number_as_the_supplier_code_and_a_known_pair_keeps_its_own_cell():
+    entry = _entry(article="S-115-141", cable=["RG-402"], note="номер на сайте: 3449")
+    [new] = gsm_import_rows(_site(entry)).rows
+    assert new["fields"]["Артикул поставщика"] == "gsm-repiteri.ru: 3449"
+    [known] = gsm_import_rows(_site(entry), existing={pair_key("S-115-141", "RG-402")}).rows
+    assert "Артикул поставщика" not in known["fields"]
+    [none] = gsm_import_rows(_site(_entry(article="X-1", note=None))).rows
+    assert "Артикул поставщика" not in none["fields"]  # no site number: nothing is made up
+
+
+def test_two_different_site_entries_with_one_name_keep_the_site_number_on_the_second():
+    export = gsm_import_rows(_site(
+        _entry(note="номер на сайте: 1", url="https://gsm-repiteri.ru/a"),
+        _entry(note="номер на сайте: 2", url="https://gsm-repiteri.ru/b"),
+    ))
+    assert [row["fields"]["coaxArticle"] for row in export.rows] == ["SMA-male для RG-316", "SMA-male для RG-316 №2"]
 
 
 def test_the_angled_twin_of_an_article_is_named_r_a_and_the_same_connector_twice_is_one_row():
@@ -102,9 +152,9 @@ def test_pin_and_shield_go_to_the_base_words_or_stay_empty():
     assert [pin_type(value) for value in ("пайка", "цанга", "не требуется", None)] == ["пайка", "", "", ""]
     assert [shield_type(value) for value in ("обжимной", "обжим (под клещи 0,475″)", "пайка", "RG-178: пайка",
                                             "прижимной", "накручивание на кабель", None)] == \
-        ["обжим", "обжим", "пайка", "пайка", "", "", ""]
+        ["обжим", "обжим", "пайка", "пайка", "прижим", "", ""]
     [row] = gsm_import_rows(_site(_entry(pin="цанга", shield="прижимной", max_freq_ghz=2.5))).rows
-    assert "Тип пина" not in row["fields"] and "Тип экрана" not in row["fields"]
+    assert "Тип пина" not in row["fields"] and row["fields"]["Тип экрана"] == "прижим"
     assert (row["fields"]["Центральный контакт"], row["fields"]["Крепление экрана"]) == ("цанга", "прижимной")
     assert row["fields"]["Частота до, ГГц"] == "2,5"
     assert row["fields"]["Источник данных"] == "gsm-repiteri.ru, 12.10.2026"

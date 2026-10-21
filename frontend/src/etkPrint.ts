@@ -1,15 +1,20 @@
 // Печатная форма электронной ТК (SUPPLYMAP PortalApp.html etkPrintHtml_ / etkPrint_): титул с маршрутом и
 // журналом ревизий, затем по листу на операцию — шапка документа, безопасность и разделы в порядке экрана ЭТК
 // (1 Вход · 2 Оснастка · 3 Ход операции · 4 Типовые дефекты · 5 Эскиз · 6 Результат), подписи. Через общий print.ts.
-// Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*).
-import type { ProjectTechcard, TechcardRevision } from "./api";
+// Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*). Есть распиновка или
+// таблица соединений — на титуле схема связей Э4, та же, что на экране ЭТК и в генераторе (etkLinkScheme.tsx).
+import type { EtkRoute, ProjectTechcard, TechcardRevision } from "./api";
+import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
+import { pinCoreColor, withCoreColors } from "./etkCoreColors";
 import {
-  ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkCrimpChips, etkDrawHarness, etkFigure, etkTolerance,
+  ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
   type EtkTopologyData,
 } from "./etkDraw";
-import { ETK_TOOLING_SECTIONS, solderMode, toolingSections } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, solderMode, toolingSections } from "./etkOperation";
 import { formatDateTime, unitLabel } from "./format";
-import { etkRouteLine, etkRouteOf } from "./etkRoute";
+import { etkCardSourceNote } from "./etkCardSource";
+import { etkPartSource, etkPfGroups, etkPfOutName, etkRouteDiagram, etkRouteOf, etkSemiSource, formatMinutes, opNumber, type EtkPfRow } from "./etkRoute";
+import { hasMarkSerial, markSerialList, markSerialText, type MarkSerialRange } from "./markSerial";
 import type { PrintBlock, PrintPage } from "./print";
 
 type Row = Record<string, unknown>;
@@ -34,7 +39,7 @@ function object(value: unknown): Row {
 
 /** SUPPLYMAP etkUnwrap_ keeps the text; the safety heading stays in print (only the screen folds it). */
 export function etkOperationTitle(operation: Row): string {
-  return text(object(operation.card).name) || text(operation.title) || text(operation.type) || text(operation.code);
+  return etkOperationName(text(object(operation.card).name), operation.type) || text(operation.title) || text(operation.type) || text(operation.code);
 }
 
 function head(kit: Row, revision: number, code: string): PrintBlock[] {
@@ -49,15 +54,21 @@ function head(kit: Row, revision: number, code: string): PrintBlock[] {
   ];
 }
 
-function facts(fields: Row): string {
-  const twist = object(fields.twist);
-  return [
-    // Аппликатор, высота обжима, отрыв — как чипы экрана: два разных контакта — по концам с именем контакта.
-    ...etkCrimpChips(fields).map(([label, value]) => `${label}: ${value}`),
-    fields.lengthKd && `L по КД: ${text(fields.lengthKd)}`,
-    fields.cutTolerance && `Допуск реза: ${etkTolerance(fields.cutTolerance)}`,
-    fields.twist && `Шаг свивки: ${twist.pitch ? `${text(twist.pitch)} мм` : "по КД"}`,
-  ].filter(Boolean).join(" · ");
+/** Блок параметров операции — те же три колонки, что в шапке экрана: «Сторона А» | «Общие» | «Сторона В». */
+function paramsTable(operation: Row): PrintBlock[] {
+  const params = etkParams(operation);
+  const left = params.sides.find((side) => side.end === "A"), right = params.sides.find((side) => side.end === "B");
+  const columns = [left && { title: "СТОРОНА А", items: left.items }, { title: "ОБЩИЕ", items: params.common },
+    right && { title: "СТОРОНА В", items: right.items }].filter((column) => column && column.items.length) as Array<{ title: string; items: EtkParam[] }>;
+  if (!columns.length) return [];
+  const height = Math.max(...columns.map((column) => column.items.length));
+  return [{ table: { columns: columns.map((column) => column.title), rows: Array.from({ length: height }, (_, row) =>
+    columns.map((column) => {
+      const item = column.items[row];
+      if (!item) return "";
+      // По сечениям — строкой на сечение под подписью.
+      return item[2] ? [`${item[0]}:`, ...item[2].map(([sub, value]) => `${sub} — ${value}`)].join("\n") : `${item[0]}: ${item[1]}`;
+    })) } }];
 }
 
 /** Режим пайки строками таблицы оснастки: жало и температура обязательны (значение ERP по умолчанию помечено). */
@@ -71,7 +82,7 @@ function solderRows(operation: Row): string[][] {
   ];
 }
 
-function operationKeyOf(operation: Row): string {
+export function operationKeyOf(operation: Row): string {
   return `${text(operation.code).trim()}::${text(operation.connector).trim()}::${text(operation.side).trim()}`;
 }
 
@@ -87,7 +98,7 @@ function harnessPinsOf(operations: Row[]): Record<string, Record<number, string>
     const wires = rows(object(operation.fields).wires);
     if (!article) return;
     wires.forEach((wire) => (Array.isArray(wire.pins) ? wire.pins as number[] : []).forEach((pin) => {
-      (out[`${article}::${text(operation.side)}`] ||= {})[pin] = text(wire.art || wire.name);
+      (out[`${article}::${text(operation.side)}`] ||= {})[pin] = pinCoreColor(wire, pin) || text(wire.art || wire.name);
     }));
   });
   return out;
@@ -108,26 +119,56 @@ function toolingRows(items: Row[]): string[][] {
   });
 }
 
+function pfQty(row: EtkPfRow): string {
+  return row.norm ? `${row.norm} ${unitLabel(row.unit || "")}`.trim() : "";
+}
+
+/** Полуфабрикаты на титуле — компактной таблицей «ПФ · операции · вход · выход» (владелец 17.10: схема ПФ стала
+ *  навигацией ЭТК, список ПФ слева убран). ПФ один или схемы нет — таблицы нет. */
+function pfTable(route: EtkRoute | null, operations: Row[], batch: number): PrintBlock[] {
+  if (!route || route.blocks.length < 2) return [];
+  const groups = etkPfGroups(route, operations, batch);
+  const inputs = new Map(etkRouteDiagram(route).columns.flatMap((column) => column.boxes).map((box) => [box.key, box.inputs]));
+  return [{ heading: "Полуфабрикаты" }, { table: {
+    columns: ["ПФ", "Операции", "Вход", "Выход"],
+    rows: groups.map((group) => [
+      [`ПФ ${group.label}${group.final ? " · изделие" : ""}`, group.name, group.minutes > 0 ? `${formatMinutes(group.minutes)} мин на партию` : ""].filter(Boolean).join("\n"),
+      group.ops.map((position) => `${opNumber(Number(operations[position - 1]?.position) || position)} ${operations[position - 1] ? etkOperationTitle(operations[position - 1]) : ""}`.trim()).join("\n"),
+      [...(inputs.get(group.key) ?? []).map((input) => `ПФ ${input.label}: ${input.text}${input.times ? ` ${input.times}` : ""}`),
+        ...group.components.map((row) => [row.art || row.name || "", pfQty(row)].filter(Boolean).join(" — "))].join("\n"),
+      [etkPfOutName(group), group.output[0] ? pfQty(group.output[0]) : ""].filter(Boolean).join(" — "),
+    ]),
+  } }];
+}
+
 function table(columns: string[], body: string[][]): PrintBlock[] {
   return body.length ? [{ table: { columns, rows: body } }] : [];
 }
 
-/** `sketches` — своя картинка эскиза по ключу операции (код::разъём::сторона), абсолютной ссылкой на файл в ERP. */
-export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision[], sketches: Record<string, string> = {}): PrintPage[] {
+/** `sketches` — своя картинка эскиза по ключу операции (код::разъём::сторона), абсолютной ссылкой на файл в ERP.
+ *  `serial` — номера изделий задания: надписи с «№ изделия» печатаются диапазоном, в конце — лист «Надписи меток»;
+ *  без задания — «№ по партии». Надпись без номера печатается как раньше. */
+export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision[], sketches: Record<string, string> = {},
+  serial?: MarkSerialRange | null): PrintPage[] {
   const document = object(card.document);
   const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(document.kit) };
   const revision = card.revision || 1;
-  const operations = rows(document.operations);
-  const harness = etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
-  const connections = etkConnectionRows(document.connections);
-  const routeLine = etkRouteLine(etkRouteOf(card.document));
+  const operations = withCoreColors(rows(document.operations), document);
+  const linkScheme = etkLinkScheme(card.document);
+  const linkSvg = linkScheme ? etkLinkSchemeMarkup(linkScheme) : "";
+  // Схема связей перечисляет каждый провод в таблицах разъёмов — прежние схема жгута и таблица соединений её не повторяют.
+  const harness = linkSvg ? "" : etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
+  const connections = linkSvg ? [] : etkConnectionRows(document.connections);
+  const route = etkRouteOf(card.document);
+  const batch = Number(String(object(document.kit).part_quantity ?? "").replace(",", ".")) || 1;
   const cover: PrintPage = {
     title: "Технологическая карта сборки",
     subtitle: `${text(kit.name)} · ${text(kit.project)} ${text(kit.index)} · ревизия ${revision}`,
     blocks: [
       ...head(kit, revision, ""),
-      // Схема полуфабрикатов одной строкой под шапкой — только у ветвящегося маршрута.
-      ...(routeLine ? [{ text: routeLine }] as PrintBlock[] : []),
+      // Полуфабрикаты — таблицей под шапкой, как боксы схемы ПФ на экране.
+      ...pfTable(route, operations, batch),
+      ...(linkSvg ? [{ heading: "Схема связей" }, { figure: linkSvg }] as PrintBlock[] : []),
       ...(harness ? [{ heading: "Схема жгута" }, { figure: harness }] as PrintBlock[] : []),
       ...(connections.length ? [{ heading: "Таблица соединений" }, { table: { columns: ETK_CONNECTION_COLUMNS, rows: connections } }] as PrintBlock[] : []),
       { heading: "Маршрут" },
@@ -152,7 +193,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
         } },
       ] as PrintBlock[] : []),
     ],
-    sign: `${SIGN}\nДокумент составлен в соответствии с ГОСТ 3.1407-86 · ревизия ${revision}`,
+    sign: `${SIGN}\nРевизия ${revision}`,
   };
   const pages = operations.map((operation, index): PrintPage => {
     const opCard = object(operation.card);
@@ -165,30 +206,36 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
       text(item.art) + (item.kd ? ` (по КД: ${text(item.kd)}, аналог)` : ""),
       // Обжимаемый контакт: под наименованием — спецификация обжима своего конца (как на экране).
       [text(item.name), ...etkContactSpecs(object(operation.fields), item.art)].filter(Boolean).join("\n"), text(item.grn),
-      text(item.norm), "", unitLabel(text(item.unit)),
+      text(item.norm), "", unitLabel(text(item.unit)), etkPartSource(item),
     ]);
-    const semis = numbered(rows(operation.semis), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
+    // «Что взять»: полуфабрикат — то же название, что в «Результате» прошлой операции, и откуда его брать.
+    const semiFrom = etkSemiSource(route, Number(operation.position) || index + 1);
+    const semis = numbered(rows(operation.semis), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit)), semiFrom]);
     const markRows = rows(object(operation.fields).marks);
     const withLength = markRows.some((mark) => text(mark.length));
     const marks = numbered(markRows, (mark) => [
-      text(mark.target), text(mark.text), text(mark.material), text(mark.place), ...(withLength ? [text(mark.length)] : []), text(mark.qty), text(mark.batch),
+      text(mark.target), markSerialText(text(mark.text), serial), text(mark.material), text(mark.place), ...(withLength ? [text(mark.length)] : []), text(mark.qty), text(mark.batch),
     ]);
     // Допуска нет в данных («длина не задана») — со знаком внимания, как «нет данных» у высоты обжима.
-    const steps = rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text),
-      /не задан/i.test(text(step.tolerance)) ? `⚠ ${text(step.tolerance)}` : text(step.tolerance)]);
+    // Допуск — строка на значение («Сторона В: 2–3 мм», «± 10 °C»), как колонка допусков на экране.
+    const steps = rows(opCard.steps).map((step) => {
+      const tolerance = etkToleranceLines(step.tolerance).map((line) => (line.label ? `${line.label}: ${line.value}` : line.value)).join("\n");
+      return [text(step.kind), text(step.number), text(step.text), /не задан/i.test(tolerance) ? `⚠ ${tolerance}` : tolerance];
+    });
     const defects = text(opCard.defects);
     const figure = etkFigure(operation) + sketchImg(sketches[operationKeyOf(operation)]);
     const result = numbered(rows(operation.result), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
     const time = numbered(rows(operation.time), (item) => [text(item.name), text(item.norm), ""]);
     return {
       title: `Операция ${text(operation.position || index + 1)}. ${etkOperationTitle(operation)}${operation.connector ? ` — ${text(operation.connector)}` : ""}`,
-      subtitle: facts(object(operation.fields)),
+      subtitle: etkCardSourceNote({ card_source: text(operation.card_source), card_changed_at: text(operation.card_changed_at) }),
       blocks: [
         ...head(kit, revision, text(operation.code)),
+        ...paramsTable(operation),
         { text: text(opCard.safety) },
         section("Вход"),
-        ...table(["№", "Комплектующие: артикул", "Наименование", "ГРН", "Норма", "Факт", "Ед."], components),
-        ...table(["№", "Полуфабрикат на входе", "Норма", "Факт", "Ед."], semis),
+        ...table(["№", "Что взять: полуфабрикат", "Сколько", "Факт", "Ед.", "Откуда"], semis),
+        ...table(["№", "Что взять: комплектующие, артикул", "Наименование", "ГРН", "Сколько", "Факт", "Ед.", "Откуда"], components),
         ...(components.length || semis.length ? [] : [{ text: "Комплектующих и полуфабрикатов на входе нет." }]),
         section("Оснастка: инструмент, оборудование, расходники"),
         ...table(["Раздел", "№", "Наименование", "Инв. №", "№ прог. / параметры", "Норма", "Ед."],
@@ -206,8 +253,33 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
           ...table(["№", "Расчётное время", "Норма, мин", "Факт"], time),
         ] : []),
       ],
-      sign: `${SIGN}\nДокумент составлен в соответствии с ГОСТ 3.1407-86 · ревизия ${revision}`,
+      sign: `${SIGN}\nРевизия ${revision}`,
     };
   });
-  return [cover, ...pages];
+  const labels = serial ? etkMarkLabelsPage(card, serial) : null;
+  return labels ? [cover, ...pages, labels] : [cover, ...pages];
+}
+
+/** Метки с «№ изделия» во всех операциях ЭТК, по порядку. */
+export function etkSerialMarks(document: unknown): Row[] {
+  return rows(object(document).operations).flatMap((operation) => rows(object(operation.fields).marks))
+    .filter((mark) => hasMarkSerial(text(mark.text)));
+}
+
+/** «Надписи меток» задания: строка — изделие, столбец — метка с «№ изделия»; надпись развёрнута для каждого номера.
+ *  Нет таких меток — null. Один лист на задание: его печатают к маркировке (принтер хлястиков, трубок). */
+export function etkMarkLabelsPage(card: ProjectTechcard, serial: MarkSerialRange): PrintPage | null {
+  const marks = etkSerialMarks(card.document);
+  if (!marks.length || serial.last < serial.first) return null;
+  const lists = marks.map((mark) => markSerialList(text(mark.text), serial));
+  const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(object(card.document).kit) };
+  const columns = ["№ изделия", ...marks.map((mark) => [text(mark.target) || "Метка", text(mark.material),
+    text(mark.qty) && text(mark.qty) !== "1" ? `${text(mark.qty)} шт на изделие` : ""].filter(Boolean).join(" · "))];
+  return {
+    title: "Надписи меток по КД",
+    subtitle: [text(kit.name), `${text(kit.project)} ${text(kit.index)}`.trim(), serial.task ? `задание ${serial.task}` : "",
+      `изделия № ${serial.first}–${serial.last}`].filter(Boolean).join(" · "),
+    blocks: [{ table: { columns, rows: lists[0].map((_, index) => [String(serial.first + index), ...lists.map((list) => list[index])]) } }],
+    sign: "Напечатал: ____________ / ________ Дата: ______    Проверил: ____________ / ________ Дата: ______",
+  };
 }

@@ -24,12 +24,13 @@ from app.shared.clock import moscow_now
 from app.shared.file_types import sniffed_type
 from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import (
-    TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, refuse_api_tokens, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
-    tctemplates_edit_principal, tctemplates_view_principal,
+    TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, refuse_api_tokens, tcgen_principal, techcards_edit_principal, techcards_view_principal,
+    tctemplates_edit_principal, tctemplates_view_principal, section_allowed,
 )
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import TechOperationTab
 from app.workflows.etk_lots import IssuedKitLots
+from app.workflows.new_operation import NewOperationUnitOfWork, create_operation
 from app.workflows.techcard_build import with_technology
 from app.workflows.warehouse_article import infer_article_identity
 
@@ -40,17 +41,17 @@ from .application import (
     EditOperationRecordCommand,
     EditTechcardOperationCommand,
     RebuildProjectTechcardCommand,
-    OperationLibraryEditedError,
-    ReplaceOperationLibraryCommand,
+    SaveTechcardRouteCommand,
     UnitOfWork,
     create_project_techcard,
     auto_build_project_techcard,
     edit_operation_record,
+    new_operation,
     discard_project_techcard_draft,
     edit_project_operation,
     issue_project_techcard,
     rebuild_project_techcard,
-    replace_operation_library,
+    save_project_route,
 )
 
 from .domain.coax import КоаксСборка
@@ -58,6 +59,7 @@ from .domain.coax import Сторона as КоаксСторона
 from .domain.coax import построить_коакс
 from .domain.harness import Провод, Разъём, Сборка, построить
 from .etk_read import IssuedLots, card_views
+from .td_grades import reference_grades
 from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardValidationError
 from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
@@ -65,7 +67,7 @@ from .grapher_import import GrapherComponent, GrapherImportError, read_export
 from .harness import SheetRow
 from .harness.rules import to_decimal
 from .connector_housings import attach_housings, connector_catalog, housing_of
-from .connector_series import connector_series, find_in_series
+from .connector_series import RECORD_ID_KEY, connector_series, find_in_series
 from .assembly_schema import generator_to_assembly
 from .scheme_corrections import list_scheme_corrections
 from .assembly_drafts import AssemblyDraftError, AssemblyDraftNotFound, draft_for_card, finalise_draft
@@ -78,7 +80,7 @@ from .generator_drafts import (
     get_generator_draft,
     save_generator_draft,
 )
-from .etk_builder import attach_route
+from .etk_builder import attach_route, propose_route
 from .etk_parts import attach_parts
 from .template_sheets import TemplateDraftConflict, TemplateSheetNotFound
 from .template_sheet_service import (
@@ -128,6 +130,12 @@ class AutoBuildTechcardPayload(VersionPayload):
 
 class EditOperationPayload(VersionPayload):
     operation: dict[str, Any]
+    # «Сохранить также в шаблон» — правка уходит и в шаблон операции (нужна правка «Шаблонов техкарт»).
+    to_template: bool = False
+
+
+class RoutePayload(VersionPayload):
+    route: dict[str, Any]
 
 
 class RecordStepPayload(BaseModel):
@@ -158,10 +166,14 @@ class OperationRecordPayload(BaseModel):
     tooling: list[RecordToolPayload] = Field(default_factory=list, max_length=200)
 
 
-class OperationLibraryPayload(BaseModel):
-    sourceCommit: str = Field(min_length=40, max_length=40)
-    templates: list[dict[str, Any]] = Field(min_length=1, max_length=500)
-    force: bool = False
+class NewOperationPayload(BaseModel):
+    """«Новая операция»: `code` — «Номер» (БД.ОП) and the card's code; `copy_of` — the code of an operation to copy
+    (steps, tooling, defects, safety, norms); none — a blank card. Lengths are checked with Russian messages inside."""
+
+    code: str = Field(default="", max_length=255)
+    name: str = Field(default="", max_length=1_000)
+    copy_of: str | None = Field(default=None, max_length=255)
+    category: str = Field(default="", max_length=255)
 
 
 class TemplateDraftOpenPayload(BaseModel):
@@ -276,8 +288,6 @@ def etk_part_identifier(
 def _run(operation):
     try:
         return operation()
-    except OperationLibraryEditedError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
     except TechcardValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except KeyError as error:
@@ -327,6 +337,8 @@ def _revision_result(revision: TechcardRevision) -> dict:
         "reason": revision.reason,
         "actor_name": revision.actor_name,
         "occurred_at": revision.occurred_at.isoformat(),
+        "source": revision.source,
+        "diff": revision.diff,
         "document": revision.document,
     }
 
@@ -349,6 +361,20 @@ def _operation_norms(references_factory: Callable[[], ReferencesUnitOfWork] | No
                 "setup_seconds": str(record.fields.get("tPrep") or ""),
             }
     return norms
+
+
+def operation_grade_reference(
+    references_factory: Annotated[
+        Callable[[], ReferencesUnitOfWork] | None,
+        Depends(optional_references_uow_factory),
+    ],
+) -> dict[str, dict[str, str]]:
+    """БД.ОП by operation code → профессия и разряд комплекта ТД (td_grades.reference_grades); {} — справочника нет."""
+    if references_factory is None:
+        return {}
+    with references_factory() as references_uow:
+        records = references_uow.tech_operations.list(tab=TechOperationTab.OPERATION, query="", limit=100_000)
+    return reference_grades(record.fields for record in records)
 
 
 def _operation_card_result(
@@ -415,13 +441,8 @@ def operation_card_templates(
 ) -> dict:
     with uow_factory() as uow:
         cards = uow.operation_cards.list()
-        metadata = uow.operation_cards.metadata()
     norms = _operation_norms(references_factory)
     return {
-        "metadata": None if metadata is None else {
-            **metadata,
-            "imported_at": metadata["imported_at"].isoformat(),
-        },
         "items": [_operation_card_result(card, norms=norms) for card in cards],
     }
 
@@ -526,27 +547,6 @@ def delete_template_sheet_endpoint(
     return _sheet_run(lambda: delete_template_sheet(uow_factory(), template_id, actor=principal.actor, now=now))
 
 
-@router.put("/techcards/templates/supplymap-library")
-def import_operation_card_templates(
-    payload: OperationLibraryPayload,
-    principal: Annotated[Principal, Depends(tctemplates_admin_principal)],
-    now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
-) -> dict:
-    result = _run(lambda: replace_operation_library(ReplaceOperationLibraryCommand(
-        source_commit=payload.sourceCommit,
-        templates=tuple(payload.templates),
-        actor=principal.actor,
-        now=now,
-        force=payload.force,
-    ), uow_factory()))
-    return {
-        "templates": result.templates,
-        "source_commit": payload.sourceCommit.lower(),
-        "overwritten_edited": list(result.overwritten_edited),
-    }
-
-
 @router.put("/techcards/templates/{source_id}")
 def edit_operation_card_template(
     source_id: str,
@@ -571,6 +571,37 @@ def edit_operation_card_template(
             raise HTTPException(status_code=404, detail="Карточка операции не найдена") from error
         raise
     return _operation_card_result(card, detail=True, norms=_operation_norms(references_factory))
+
+
+@router.post("/techcards/operations", status_code=201)
+def create_operation_endpoint(
+    payload: NewOperationPayload,
+    principal: Annotated[Principal, Depends(tctemplates_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    references_factory: Annotated[
+        Callable[[], ReferencesUnitOfWork] | None,
+        Depends(optional_references_uow_factory),
+    ],
+) -> dict:
+    """A new operation: its БД.ОП row and its card template in one transaction (both edit rights needed — the
+    operation row is «Справочник», the card «Шаблоны техкарт»; no API token — the template gate refuses tokens).
+    A taken code — 422."""
+    if not section_allowed(principal, ("erpref",), "edit"):
+        raise HTTPException(status_code=403, detail="Раздел «Справочник» открыт вам только на просмотр.")
+    created = _run(lambda: create_operation(
+        new_operation(payload.code, payload.name, payload.copy_of or "", payload.category),
+        principal.actor, now, NewOperationUnitOfWork(uow_factory()),
+    ))
+    norms = _operation_norms(references_factory)
+    record = created.record
+    return {
+        "code": record.fields.get("opNumber", ""),
+        "name": record.fields.get("opName", ""),
+        "record": {"id": str(record.id), "tab": record.tab.value, "display_text": record.display_text,
+                   "fields": record.fields},
+        "templates": [_operation_card_result(card, detail=True, norms=norms) for card in created.templates],
+    }
 
 
 @router.get("/techcards/projects", dependencies=[Depends(techcards_view_principal)])
@@ -660,6 +691,7 @@ def auto_build_project_etk(
         card_id=card_id,
         expected_version=payload.version,
         config=config,
+        inputs=payload.config,
         actor=principal.actor,
         now=now,
         technology_source=technology_source,
@@ -741,6 +773,8 @@ def edit_project_etk_operation(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
     etk: Annotated[EtkCards, Depends(etk_cards)],
 ) -> dict:
+    if payload.to_template and not section_allowed(principal, ("erptctpl",), "edit"):
+        raise HTTPException(status_code=403, detail="Сохранить правку в шаблон: раздел «Шаблоны техкарт» открыт вам только на просмотр.")
     card = _run(lambda: edit_project_operation(EditTechcardOperationCommand(
         card_id=card_id,
         expected_version=payload.version,
@@ -748,8 +782,47 @@ def edit_project_etk_operation(
         now=now,
         operation_key=operation_key,
         operation=payload.operation,
+        to_template=payload.to_template,
     ), uow_factory()))
     return etk.one(card)
+
+
+@router.put("/techcards/projects/{card_id}/route")
+def save_project_etk_route(
+    card_id: UUID,
+    payload: RoutePayload,
+    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
+) -> dict:
+    """«Сохранить ПФ»: операции ЭТК, разложенные технологом по полуфабрикатам (блоки схемы, порядок операций внутри
+    блока — порядок работы). Схема проверяется целиком (422 «Схема полуфабрикатов: …»); выданная ЭТК — новой ревизией."""
+    card = _run(lambda: save_project_route(SaveTechcardRouteCommand(
+        card_id=card_id,
+        expected_version=payload.version,
+        actor=principal.actor,
+        now=now,
+        route=payload.route,
+    ), uow_factory()))
+    return etk.one(card)
+
+
+@router.post("/techcards/projects/{card_id}/route/propose", dependencies=[Depends(techcards_edit_principal)])
+def propose_project_etk_route(
+    card_id: UUID,
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    """«Предложить разбивку на ПФ»: схема ПФ по правилу генератора (ручная сборка — её блоки) для правки технологом.
+    Ничего не сохраняет: сохраняет «Сохранить ПФ» (PUT …/route). `same` — ЭТК уже разбита так."""
+    with uow_factory() as uow:
+        card = uow.techcards.get(card_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Карточка проекта не найдена")
+    proposal = propose_route(card.document)
+    if proposal is None:
+        raise HTTPException(status_code=422, detail="Электронная техкарта ещё не собрана")
+    return proposal
 
 
 @router.get("/techcards/projects/{card_id}/revisions", dependencies=[Depends(techcards_view_principal)])
@@ -897,7 +970,8 @@ def connector_series_view(
     coax: list[dict] = []
     if references_factory is not None:
         with references_factory() as uow:
-            records = [record.fields for record in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)]
+            records = [{**record.fields, RECORD_ID_KEY: str(record.id)}
+                       for record in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)]
             coax = [record.fields for record in uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000)]
     series = connector_series(records, coax)
     return {"series": series, "match": find_in_series(article[:255], series) if article.strip() else None}
@@ -944,7 +1018,8 @@ class ВходСтороны(BaseModel):
     # Перечисление, а не строка: от типа посадки зависит и наличие
     # монтажа корпуса, и момент, когда надевается термоусадка. Опечатка
     # здесь дала бы правдоподобный, но неверный маршрут.
-    pin_type: Literal["пайка", "внутри корпуса"] = "пайка"
+    # «цанга» — цанговый центральный контакт: не паяется, садится при монтаже корпуса.
+    pin_type: Literal["пайка", "внутри корпуса", "цанга"] = "пайка"
     cover: Literal["", "обжим", "винт"] = ""
 
 

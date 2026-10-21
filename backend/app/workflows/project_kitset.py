@@ -967,10 +967,11 @@ def supply_kitting(project: str, requests: Iterable[FulfillmentRequest]) -> list
         if request.status is FulfillmentStatus.CANCELLED or project_from_purpose(request.purpose) != canon:
             continue
         for line in request.lines:
-            quantity = line.reserved + max(line.issued - line.returned_good, Decimal("0"))
+            issued = max(line.issued - line.returned_good, Decimal("0"))
+            quantity = line.reserved + issued
             if quantity > 0:
                 kitted.append(SupplyStock(
-                    article=line.article, name=line.name, quantity=quantity, off_book=line.off_book,
+                    article=line.article, name=line.name, quantity=quantity, off_book=line.off_book, issued=issued,
                 ))
     return kitted
 

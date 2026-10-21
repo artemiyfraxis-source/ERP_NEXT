@@ -51,8 +51,10 @@ import {
 import { resolveWireColorHex } from "./wire-reference-catalog";
 import {
   buildWireStripProfileGeometry,
+  scaleWireStripProfileGeometry,
   type WireStripProfileGeometry,
 } from "./wire-strip-profile-geometry";
+import { collectStripCallouts, drawStripCallouts, drawStripNotes, stripNotesLine } from "./strip-callouts";
 import {
   ComponentTemplateImageCache,
   drawProjectedComponentTemplateView,
@@ -70,6 +72,7 @@ import { railCatchDistance, railDistance, railParameter, snapRailEnd } from "./p
 import { snapDrawingPoint, type DrawingOutline, type DrawingSnaps } from "../component-library/drawing-geometry";
 import { materialObjectGroup } from "./MaterialObjectsPanel";
 import type { HarnessExportPort } from "../export/port";
+import { isLightWireColor, LIGHT_WIRE_OUTLINE } from "./wire-contrast";
 
 export interface CanvasViewportProps {
   readonly onFreeWireEndpointMove?: (wireId:string,end:"from"|"to",point:EditorPoint)=>void;
@@ -952,8 +955,22 @@ export function getDrawingWireStripProfileGeometries(
   if (view !== "drawing" || object.kind !== "wire" || !object.stripProfiles) return [];
   return (["from", "to"] as const).flatMap((end) => {
     const profile = object.stripProfiles?.[end];
-    const geometry = profile && buildWireStripProfileGeometry(object.points ?? [], end, profile);
-    return geometry ? [geometry] : [];
+    const built = profile && buildWireStripProfileGeometry(object.points ?? [], end, profile);
+    if (!built) return [];
+    // Полоса — в масштабе чертежа: длина зачистки / длина провода × длина его трассы (провода без длины — как были).
+    // Не короче 3 и не длиннее исходной доли; на сростке — лишь короткая метка у узла, длину несёт подпись «зач. N мм».
+    const points = object.points ?? [];
+    const route = points.slice(1).reduce((sum, p, i) => sum + Math.hypot(p.x - points[i]!.x, p.y - points[i]!.y), 0);
+    const wireMm = Number(object.metadata?.lengthMm);
+    if (!(wireMm > 0) || !(route > 0)) return [built];
+    const side = end === "from" ? "From" : "To";
+    const atSplice = object.metadata?.[`splice${side}`] === "true";
+    const stripMm = built.primitives.at(-1)!.cumulativeLengthMm;
+    const axial = Math.min(built.totalLength, Math.max(4, stripMm * route / wireMm), atSplice ? 4 : Infinity);
+    const width = Math.max(3.5,Number(object.metadata?.drawingWidth ?? 3));
+    // Конец в узле или свободный конец закрыт точкой узла — полоса начинается сразу за ней.
+    const dotted = atSplice || object.metadata?.[`open${side}`] !== undefined;
+    return [scaleWireStripProfileGeometry(built, axial, width, dotted ? 5 : 0)];
   });
 }
 
@@ -1934,6 +1951,8 @@ function drawE4Connector(
 
 const stripProfilePalette = ["#d6ad65", "#e4ebef", "#a9b7c0", "#7a929e", "#b8c9c2"] as const;
 const stripProfileOutline = "#344b59";
+/** Зачищенная жила — голая медь, а не цвет изоляции (белый провод закрашен так же). */
+const stripConductorColor = "#c9824a";
 const stripProfileStrokeWidth = 1.5;
 
 export interface FreeWireEndpointRef {
@@ -2119,7 +2138,7 @@ function drawWireDrawingEndStyles(context: CanvasRenderingContext2D, object: Edi
   context.restore();
 }
 
-function drawWireStripProfiles(
+export function drawWireStripProfiles(
   context: CanvasRenderingContext2D,
   object: EditorSceneObject,
   selected: boolean,
@@ -2137,7 +2156,7 @@ function drawWireStripProfiles(
         : context.lineTo(point.x, point.y));
       context.closePath();
       context.fillStyle = index === geometry.primitives.length - 1
-        ? object.color
+        ? stripConductorColor
         : stripProfilePalette[(primitive.layerIndex - 1) % stripProfilePalette.length]!;
       context.fill();
       if (object.metadata?.volumeShading === "true") {
@@ -2287,6 +2306,7 @@ export function drawEditorSceneObject(
       context.lineWidth = view==="drawing"&&object.kind==="wire"?Number(object.metadata?.drawingWidth??3)+(selected?1:0):selected?4:object.kind==="wire"?3:1.5;
       if (object.kind === "dimension" || object.metadata?.routeMissing === "true") context.setLineDash([7, 5]);
       if (view === "e4" && object.kind === "wire" && !selected) strokeE4Wire(context, object.color);
+      else if (view === "drawing" && object.kind === "wire" && !selected && object.metadata?.routeMissing !== "true") strokeE4Wire(context, object.color, context.lineWidth);
       else context.stroke();
       context.setLineDash([]);
       if (view === "drawing" && object.kind === "wire") {
@@ -2338,12 +2358,29 @@ export function drawEditorSceneObject(
       context.restore();
       return;
     }
+    const faceSvg = view === "drawing" ? object.metadata?.faceSvg : undefined;
+    if (faceSvg) { // торец разъёма из базы разъёмов без рамки: провода идут из центров его гнёзд (housing-face.ts)
+      const entry = componentTemplateImageCache.get("data:image/svg+xml;charset=utf-8," + encodeURIComponent(faceSvg));
+      if (entry.state === "loaded") context.drawImage(entry.image, object.x, object.y, object.width, object.height);
+      if (selected) { context.strokeStyle = "#087bb4"; context.lineWidth = 2; context.strokeRect(object.x, object.y, object.width, object.height); }
+      context.restore();
+      return;
+    }
     roundedRectangle(context, object.x, object.y, object.width, object.height, 7);
     context.fillStyle = "#ffffff";
     context.fill();
     context.strokeStyle = selected ? "#087bb4" : object.color;
     context.lineWidth = selected ? 3 : 2;
     context.stroke();
+    const topViewSvg = view === "drawing" ? object.metadata?.topViewSvg : undefined;
+    if (topViewSvg) { // корпус из базы разъёмов: его вид сверху (connectorTopView), вписанный в рамку
+      const entry = componentTemplateImageCache.get("data:image/svg+xml;charset=utf-8," + encodeURIComponent(topViewSvg));
+      if (entry.state === "loaded") {
+        const iw = entry.image.naturalWidth || object.width, ih = entry.image.naturalHeight || object.height;
+        const fit = Math.min((object.width - 8) / iw, (object.height - 8) / ih);
+        context.drawImage(entry.image, object.x + (object.width - iw * fit) / 2, object.y + (object.height - ih * fit) / 2, iw * fit, ih * fit);
+      }
+    }
     if(view!=="drawing"){
       context.fillStyle = "#17384b";
       context.font = "700 13px Inter, Arial, sans-serif";
@@ -2380,18 +2417,10 @@ export function drawEditorSceneObject(
   context.restore();
 }
 
-const E4_WHITE_WIRE_OUTLINE = "#53636c";
-
-function isWhiteWireColor(color: string): boolean {
-  const normalized = color.trim().toLowerCase().replace(/\s+/g, "");
-  return normalized === "white" || normalized === "#fff" || normalized === "#ffffff" ||
-    normalized === "#ffffffff" || normalized === "rgb(255,255,255)" || normalized === "rgba(255,255,255,1)";
-}
-
-/** Keeps a white E4 conductor visible on the pale canvas without changing its actual colour. */
+/** Keeps a light conductor (white, yellow, light grey…) visible on the pale canvas without changing its actual colour. */
 function strokeE4Wire(context: CanvasRenderingContext2D, color: string, width = 3): void {
-  if (isWhiteWireColor(color)) {
-    context.strokeStyle = E4_WHITE_WIRE_OUTLINE;
+  if (isLightWireColor(color)) {
+    context.strokeStyle = LIGHT_WIRE_OUTLINE;
     context.lineWidth = width + 2;
     context.stroke();
   }
@@ -2923,6 +2952,14 @@ export function redrawCanvas(
       componentTemplateImageCache,
       view === "drawing" ? ratio * .9 : 0,
     );
+  }
+  if (view === "drawing") {
+    // Зачистка поверх пучка и чужих проводов: полоса меди у конца и подпись длины (сросток — одна на узел).
+    const painted = objectsInPaintOrder(objects, layers, view);
+    for (const object of painted) if (object.kind === "wire" && object.stripProfiles) drawWireStripProfiles(context, object, selectedObjectIds.has(object.id));
+    const callouts = collectStripCallouts(painted);
+    drawStripCallouts(context, callouts);
+    drawStripNotes(context, painted, stripNotesLine(callouts));
   }
   if (physicalNodePreview) {
     context.save();

@@ -26,6 +26,9 @@ PLUG, LUGS, RF = "Питание и штекеры", "Наконечники и 
 TOP, SIDE = "Вилка на плату, вертикальная", "Вилка на плату, угловая"
 TOP_SMT, SIDE_SMT = "Вилка на плату SMD, вертикальная", "Вилка на плату SMD, угловая"
 IVORY, BLACK = "#efe6cf", "#2b2b2b"
+# Mini-Fit Jr (Molex SD-5557-003, wire-end view): a 3.6 mm square funnel per contact (pitch 4.2), the opening 1.9 × 2.1 with
+# the corners cut 0.7 on the side away from the latch. The mating-face polarisation chamfers are not on the wire end.
+MINIFIT_CAV = {"kind": "funnel", "w": 3.6, "h": 3.6, "hole": (1.9, 2.1), "chamfer": 0.7}
 
 JST_PDF = "https://www.jst-mfg.com/product/pdf/eng/{}.pdf"
 CONNFLY_PDF = "https://www.connfly.com/static/upload/file/pdf/{}.pdf"
@@ -77,6 +80,10 @@ SL156_TABLE = {key: count for key, count in _te_table("770849", {"": 0, "1-": 1,
 SL156_TABLE.update({f"{prefix}-770849-2": 2 for prefix in "345678"})
 
 
+MINI50_SEALED = {"2001": 2, "4001": 4, "4021": 4, "4006": 4, "1001": 10, "1005": 10, "1131": 10}
+MINI50_UNSEALED = {"0020": 2, "0040": 4, "0140": 4}
+
+
 CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # JST EL — eEL «Housing»: 2, 3, 4 in one row, 4 (04N) and 6 in two rows, 9, 12, 15 in three rows («Contact position
     # location numbers» prints the grid, but not from which side it is seen).
@@ -86,21 +93,87 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             note="раскладка по листу JST eEL; с какой стороны показаны номера, лист не пишет — сверить по детали"),
     _family("jst-gvh", "JST GVH", r"^GVHR-0*(\d+)V-S$", 1.25, latch="ramp",
             note="лист JST eGVH не показывает метку контакта 1 со стороны проводов"),
-    _family("jst-gvh-sf", "JST GVH (боковой ввод)", r"^GVHRSF-0*(\d+)V-S$", 1.25, latch="ramp",
-            note="на листе JST eGVH метка контакта 1 есть у корпуса с боковым вводом; сторону проводов лист не показывает"),
+    # GVH side feed — eGVH p. 2 «Housing / Side feed type» (read 16.10.2026): the front view has the wire end up (crimp
+    # barrels at the top), «Circuit No.1 mark» ▽ at the left of the front face; the side view puts the lock hook on the
+    # back face near the wire end. From the wire side, lock up: contact 1 on the LEFT.
+    _family("jst-gvh-sf", "JST GVH (боковой ввод)", r"^GVHRSF-0*(\d+)V-S$", 1.25, latch="ramp", conf="high",
+            src="JST eGVH, Housing (Side feed type)",
+            note="по чертежу JST eGVH: метка ▽ контакта 1 слева на лицевой грани, защёлка на обратной; со стороны проводов защёлкой вверх — контакт 1 слева"),
     # SUH — eSUH «Housing» is drawn as eSH: the wire end with the protrusions at the top, «Circuit No.1» ▽ on the left
     # of that face -> from the wire side, ▽ face up, contact 1 on the RIGHT (as SH).
     _family("jst-suh", "JST SUH", r"^SUHR-0*(\d+)V-S", 0.8, start="TR", latch="mark", conf="high",
-            src="JST eSUH, Housing", note="по чертежу JST eSUH: метка ▽ контакта 1 — со стороны проводов ▽ сверху, контакт 1 справа"),
+            src="JST eSUH, Housing", note="по чертежу JST eSUH: метка ▽ контакта 1 — со стороны проводов ▽ сверху, контакт 1 справа",
+            # eSUH p. 2 «Housing»: B = (n−1)·0.8 contact span, A = B + 1.6 (no protrusions), C = A + 2.0 with the -B protrusions.
+            # The sheet's front view looks across the wire axis (3.1 long, lance slots 1.7 tall); the end view the generator shows is
+            # A × 1.25 (the side view), and the SSUH contact (0.83 wide) gives the cavity ~0.6 × 0.8, not the slots of the front view.
+            body={"extra": 1.6, "h": 1.25, "len": 3.1, "win": (0.6, 0.8), "geom": "drawing", "geom_url": "https://www.jst-mfg.com/product/pdf/eng/eSUH.pdf"},
+            body_by=((r"V-S-B", {"ears": 1.0}),)),
     _family("jst-lbt", "JST LBT (2 силовых + сигнальные)", r"^LBTAR-0*(\d+)V-2K-K", 1.0, latch="ramp",
             note="2 силовых контакта по краям и сигнальные с шагом 1,0 — рисунок условный; метка контакта 1 на лицевой грани (JST eLBT)"),
-    _family("jst-pud", "JST PUD (2 ряда)", r"^PUDP-0*(\d+)V-S$", 2.0, rows=2, order="col", latch="ramp", note=UNCHECKED),
-    _family("jst-pad", "JST PAD (2 ряда)", r"^PADP-0*(\d+)V-1-S$", 2.0, rows=2, order="col", latch="lever", note=UNCHECKED),
-    _family("jst-pnd", "JST PND (2 ряда)", r"^PNDP-0*(\d+)V-Z$", 2.0, rows=2, order="col", latch="lever", note=UNCHECKED),
+    # PUD, ZPD, NSHD (sheets read 16.10.2026 from jst-mfg.com): the housing front view is the lock face with the flanged
+    # wire end up; the «Mark of No. 1 circuit» is a groove on the right end wall (right side view, third angle), next to
+    # the lock face — circuit 1 is the right column, lock-face row (the PUD header side view puts «No. 1 circuit» at the
+    # lock-window face too). From the wire side, lock up: 1 top-LEFT, 2 under it, odd numbers along the lock row.
+    _family("jst-pud", "JST PUD (2 ряда)", r"^PUDP-0*(\d+)V-S$", 2.0, rows=2, order="col", latch="ramp", conf="high",
+            src="JST ePUD, Housing",
+            note="по чертежу JST ePUD: метка контакта 1 на правом торце у грани защёлки; со стороны проводов защёлкой вверх — 1 слева вверху, 2 под ним"),
+    # PAD — ePAD p. 2: ▽ «Mark of No. 1 circuit» on the lever face over the right column (wire end, flange, up); the
+    # header side view has No. 1 at its lock face. From the wire side, lever up: 1 top-LEFT, 2 under it.
+    _family("jst-pad", "JST PAD (2 ряда)", r"^PADP-0*(\d+)V-1-S$", 2.0, rows=2, order="col", latch="lever", conf="high",
+            src="JST ePAD, Housing",
+            note="по чертежу JST ePAD: метка ▽ контакта 1 справа на грани рычага; со стороны проводов рычагом вверх — 1 слева вверху, 2 под ним"),
+    _family("jst-pnd", "JST PND (2 ряда)", r"^PNDP-0*(\d+)V-Z$", 2.0, rows=2, order="col", latch="lever",
+            note="на листе JST ePND у корпуса метки контакта 1 нет (No. 1 только на виде платы снизу) — сверить по детали"),
     _family("jst-sqs", "JST SQS (пиропатрон)", r"^SQSR-0*(\d+)H-1[ABC]-[KMD]$", None, color=BLACK,
             note="лист JST eSQS номеров контактов не показывает"),
-    _family("jst-zpd", "JST ZPD (2 ряда)", r"^ZPDR-0*(\d+)V-(?:S|1-Z)$", 1.5, rows=2, order="col", latch="ramp", note=UNCHECKED),
-    _family("jst-nshd", "JST NSHD (2 ряда)", r"^NSHDR-0*(\d+)V-(?:Z|[12]-Z)$", 1.0, rows=2, order="col", latch="ramp", note=UNCHECKED),
+    _family("jst-zpd", "JST ZPD (2 ряда)", r"^ZPDR-0*(\d+)V-(?:S|1-Z)$", 1.5, rows=2, order="col", latch="ramp", conf="high",
+            src="JST eZPD, Socket housing",
+            note="по чертежу JST eZPD: метка контакта 1 на правом торце у грани защёлки; со стороны проводов защёлкой вверх — 1 слева вверху, 2 под ним"),
+    _family("jst-nshd", "JST NSHD (2 ряда)", r"^NSHDR-0*(\d+)V-(?:Z|[12]-Z)$", 1.0, rows=2, order="col", latch="ramp", conf="high",
+            src="JST eNSHD, Socket housing",
+            note="по чертежу JST eNSHD: метка контакта 1 на правом торце у грани защёлки; со стороны проводов защёлкой вверх — 1 слева вверху, 2 под ним"),
+    # New JST series of «Терминалы» (owner, 16.10.2026: «добавить все серии, что есть в терминалах»), sheets read 16.10.2026.
+    # SHD — eSHD «Housing»: the front view has the thick wire end with the protrusions up (as eSH), ▽ «No.1 mark» at the
+    # LEFT of the front face, Circuit No. 3 next to it along the same row. From the wire side, ▽ face up: 1 top-RIGHT, 2
+    # under it, odd numbers along the ▽ row (the header top view agrees: Circuit No. 1 at the left of its front).
+    _family("jst-shd", "JST SHD (2 ряда)", r"^SHDR-0*(\d+)V-S", 1.0, rows=2, order="col", start="TR", latch="mark", conf="high",
+            src="JST eSHD, Housing",
+            note="по чертежу JST eSHD: метка ▽ контакта 1 слева на лицевой грани; со стороны проводов ▽ сверху — 1 справа вверху, 2 под ним"),
+    # SHL — eSHL «Socket housing»: the wire end with the protrusions (-B) up, ▽ «Mark of No. 1 circuit» at the RIGHT of the
+    # front face. From the wire side, ▽ face up: contact 1 on the LEFT.
+    _family("jst-shl", "JST SHL", r"^SHLP-0*(\d+)V-S", 1.0, latch="mark", conf="high", src="JST eSHL, Socket housing",
+            note="по чертежу JST eSHL: метка ▽ контакта 1 справа на лицевой грани; со стороны проводов ▽ сверху — контакт 1 слева"),
+    # APSH — eAPSH «Housing» (3 circuits only): the front view is the lock face with the flanged wire end up, the «Mark of
+    # No. 1 circuit» sits on the right end (right side view). From the wire side, lock up: contact 1 on the LEFT (as NSH).
+    _family("jst-apsh", "JST APSH", r"^APSHR-0*(\d+)V-S", 1.0, latch="ramp", conf="high", src="JST eAPSH, Housing",
+            note="по чертежу JST eAPSH: метка контакта 1 на правом торце, защёлка на лицевой грани; со стороны проводов защёлкой вверх — контакт 1 слева"),
+    # NV — eNV «Housing»: the end view next to the side view is the wire end (box-contact entries; the lever runs from the
+    # wire end to its hook at the mating end in the side view), lever up, «Mark of No. 1 circuit» notch under the RIGHT
+    # cavity. From the wire side, lever up: contact 1 on the RIGHT.
+    _family("jst-nv", "JST NV", r"^NVR-0*(\d+)", 5.0, start="TR", latch="lever", conf="high", src="JST eNV, Housing",
+            note="по чертежу JST eNV: с торца проводов рычагом вверх метка контакта 1 под правым гнездом — контакт 1 справа"),
+    # VB — eVB «Housing»: VBR-N, and VBR-N(M) with N contacts on M positions of 5.08 mm (a position left empty); the
+    # sheet shows no circuit-1 mark and does not say which position is empty, so the picture is by contact count.
+    _family("jst-vb", "JST VB", r"^VBR-(\d+)(?:\(\d+\))?$", 5.08,
+            note="на листе JST eVB метки контакта 1 нет; у VBR-N(M) одна позиция пустая — рисунок по числу контактов, сверить по детали"),
+    # GHD — eGHD «Housing» (tin-plated product sheet): the wire end up, «Circuit No.1 mark» at the LEFT of the front face
+    # (the lock face), as the header's ▽ on its front. From the wire side, mark up: 1 top-RIGHT, 2 under it.
+    _family("jst-ghd", "JST GHD (2 ряда)", r"^GHDR-0*(\d+)V-S", 1.25, rows=2, order="col", start="TR", latch="mark", conf="high",
+            src="JST eGHD, Housing",
+            note="по чертежу JST eGHD: метка контакта 1 слева на лицевой грани; со стороны проводов меткой вверх — 1 справа вверху, 2 под ним"),
+    _family("jst-znd", "JST ZND (2 ряда)", r"^ZNDP-0*(\d+)V-A-S$", 1.5, rows=2, order="col", latch="lever",
+            note="на листе JST eZND у корпуса ZNDP метки контакта 1 нет — сверить по детали"),
+    # JWPF — eJWPF «Housing»: tab (T) and receptacle (R) housings, 2–4 contacts in one row, 6 and 8 in two; the sheet
+    # prints no contact numbers.
+    # The receptacle housing (R) mates the PCB header B0xB-JWPF-SK-R: KiCad Connector_JST:JST_JWPF_B04B-JWPF-SK-R and the
+    # LCSC/EasyEDA footprint C2983882 (read 17.10.2026) both put pad 1 at the end of the row next to the header's latch
+    # notch; seen from above (= the housing's wire side) with the latch up, contact 1 is on the RIGHT, the two-row
+    # housings number across the rows (1-2-3 in the row at the latch, 4-5-6 below). The tab housing (T) is not on a header.
+    _family("jst-jwpf-r", "JST JWPF (гнездовой корпус)", r"^0?(\d)R-JWPF-VSLE-[SD]$", 2.0, rows_by={6: 2, 8: 2}, start="TR",
+            order="row", latch="lever", conf="high", src="KiCad JST_JWPF_B04B-JWPF-SK-R, EasyEDA C2983882",
+            note="по посадочному месту вилки B04B-JWPF-SK-R (KiCad Connector_JST и LCSC C2983882, совпадают): со стороны проводов защёлкой вверх контакт 1 справа"),
+    _family("jst-jwpf", "JST JWPF", r"^0?(\d)T-JWPF-VSLE-[SD]$", 2.0, rows_by={6: 2, 8: 2}, order="col", latch="lever",
+            note="лист JST eJWPF номеров контактов не показывает — сверить по детали"),
     # SHJ — eSHJ «Socket housing»: front view (wire end up) has «Mark of No. 1 circuit» ▽ at the RIGHT of the face ->
     # from the wire side, ▽ face up, contact 1 on the LEFT.
     _family("jst-shj", "JST SHJ", r"^SHJP-0*(\d+)V-S", 1.0, latch="mark", conf="high", src="JST eSHJ, Socket housing",
@@ -112,8 +185,17 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             conf="high", src="JST eRA, Housing",
             note="по чертежу JST eRA: на лицевой грани ▽ и нечётные номера 1, 3, 5; со стороны проводов этой гранью вверх — контакт 1 справа вверху"),
     # Hirose
-    _family("hirose-df13-2r", "Hirose DF13 (2 ряда)", r"^DF13-(\d+)DS-1[.,]25C", 1.25, rows=2, order="col", latch="ramp",
-            note=UNCHECKED),
+    # DF13 DS, DF20 — catalogues (Double Row Socket, read again 16.10.2026): the top view is the mating face with NO.1 at
+    # the left of the front-face row and NO.2 behind it; the front view has the «Contact No.1 mark» ▽ at the left of the
+    # front face. From the wire side (the bottom view keeps left and right), ▽ face up: 1 top-LEFT, 2 under it — the
+    # face cue is the ▽, as DF11 (the lock was drawn as a ramp before; on DF13 the locks sit on the back face).
+    _family("hirose-df13-2r", "Hirose DF13 (2 ряда)", r"^DF13-(\d+)DS-1[.,]25C", 1.25, rows=2, order="col", latch="mark",
+            conf="high", src="Hirose DF13, каталог, Double Row Socket",
+            note="по каталогу Hirose DF13: метка ▽ контакта 1 слева на лицевой грани, № 2 за № 1; ▽ сверху — 1 слева вверху, 2 под ним",
+            # DF13 2-row (catalogue B244: A = B + 5.4, 5.2 deep): the series' wire end is the comb of narrow open slots seen on the
+            # single-row photo (LCSC C88348), ~0.56 of the pitch wide; in two rows the slot is as tall as one row pitch allows.
+            body={"extra": 5.4, "h": 5.2, "len": 4.0, "lock_inset": 0.6, "lock_h": 0.5, "win": (0.7, 1.0), "win_y": 2.6,
+                  "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C88348.html", "geom_of": "hirose-df13"}),
     # DF19 — catalogue 01.01.2024 «Single Row Socket (Cable Type)»: the face view has the cable end up (p. 2 «Cable
     # Type»: the cable leaves the socket away from the vertical header) and the «Contact No. 1 Indicator» ▽ at the right
     # of the mating edge; the view under it is the mating end. From the wire side, ▽ face up: contact 1 on the LEFT.
@@ -121,8 +203,17 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("hirose-df19", "Hirose DF19", r"^DF19G?-(\d+)S-1C", 1.0, latch="mark", conf="high",
             src="Hirose DF19, каталог 01.01.2024, Single Row Socket (Cable Type)",
             note="по каталогу Hirose DF19: метка ▽ контакта 1 на грани у стыковочного торца; со стороны проводов ▽ сверху — контакт 1 слева"),
-    _family("hirose-df20", "Hirose DF20 (2 ряда)", r"^DF20A-(\d+)DS-1C", 1.0, rows=2, order="col", latch="ramp", note=UNCHECKED),
-    _family("hirose-df61", "Hirose DF61", r"^DF61-(\d+)S-2[.,]2C", 2.2, latch="lever", note=UNCHECKED),
+    _family("hirose-df20", "Hirose DF20 (2 ряда)", r"^DF20A-(\d+)DS-1C", 1.0, rows=2, order="col", latch="mark", conf="high",
+            src="Hirose DF20, каталог, Double Row Socket",
+            note="по каталогу Hirose DF20: метка ▽ контакта 1 слева на лицевой грани, Contact No.2 за № 1; ▽ сверху — 1 слева вверху, 2 под ним"),
+    # DF61 — EDC3-336116-04 (DF61-2S-2.2C(11), hirose.com API drawing_2d, read 17.10.2026, third angle): the front view is
+    # the face with the lock lever along its middle; the side view puts the lever hook at the top, the catalogue's swing-lock
+    # picture puts that hook at the mating end, so the wire end is the bottom of the front view. The perspective view of
+    # the same face carries the ▽ «Contact No.1 marking» at its RIGHT. From the wire side (bottom view, left and right
+    # kept), lever face up: contact 1 on the RIGHT.
+    _family("hirose-df61", "Hirose DF61", r"^DF61-(\d+)S-2[.,]2C", 2.2, start="TR", latch="lever", conf="high",
+            src="Hirose EDC3-336116-04 (DF61-2S-2.2C)",
+            note="по чертежу Hirose EDC3-336116-04: метка ▽ Contact No.1 справа на грани с рычагом замка; со стороны проводов рычагом вверх — контакт 1 справа"),
     # DF1B — catalogue 01.07.2020 (third angle). The sockets' front view has the mating end UP: the top view shows the
     # square pin entries with lead-in chamfers and the anti-mis-insertion bosses, the in-line socket's lock hook sits
     # near that end and engages the plug's lever inside its 7 mm shroud. The wire end is the bottom view, where the
@@ -130,12 +221,20 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # «Contact No1. mark» (front face) up, the bottom view keeps left and right: contact 1 on the LEFT.
     _family("hirose-df1b", "Hirose DF1B (гнездовой корпус)", r"^DF1B-(\d+)S-2[.,]5RC?$", 2.5, latch="mark", conf="high",
             src=DF1B_SRC.format("Single Row Socket"),
-            note="по каталогу Hirose DF1B: метка ① контакта 1 на лицевой грани у торца проводов; со стороны проводов этой гранью вверх — контакт 1 слева"),
+            note="по каталогу Hirose DF1B: метка ① контакта 1 на лицевой грани у торца проводов; со стороны проводов этой гранью вверх — контакт 1 слева",
+            # DF1B (catalogue Jul. 2020: A = n · 2.5, 3.5 deep, 11.5 long) has no wire-end view or photo; the 2.5 mm crimp housing
+            # of the same layout as JST XH: the XH photo (LCSC C493084, black XHP-4-BK) — open cavity ~0.72 of the pitch wide.
+            body={"extra": 2.5, "h": 3.5, "len": 11.5, "win": (1.8, 2.0), "win_y": 2.0,
+                  "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C493084.html", "geom_of": "jst-xh"}),
     # DS: «1» on the front face over the first column; the mating DF1BZ-*DP header numbers No. 1 / No. 2 across the rows
     # of one column (and DES prints 1, 3, 5 … over 2, 4, 6 …), so 2 is under 1.
     _family("hirose-df1b-2r", "Hirose DF1B (гнездовой корпус, 2 ряда)", r"^DF1B-(\d+)DS-2[.,]5RC$", 2.5, rows=2,
             order="col", latch="mark", conf="high", src=DF1B_SRC.format("Double Row Socket + Double Row Straight Pin Header"),
-            note="по каталогу Hirose DF1B: «1» на лицевой грани, у ответной вилки № 1 и № 2 в одном столбце; со стороны проводов этой гранью вверх — 1 слева вверху, 2 под ним"),
+            note="по каталогу Hirose DF1B: «1» на лицевой грани, у ответной вилки № 1 и № 2 в одном столбце; со стороны проводов этой гранью вверх — 1 слева вверху, 2 под ним",
+            # DF1B (catalogue Jul. 2020: A = n · 2.5, 8.0 deep, 11.5 long) has no wire-end view or photo; the 2.5 mm crimp housing
+            # of the same layout as JST XH: the XH photo (LCSC C493084, black XHP-4-BK) — open cavity ~0.72 of the pitch wide.
+            body={"extra": 2.5, "h": 8.0, "len": 11.5, "win": (1.8, 2.0), "win_y": 4.0,
+                  "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C493084.html", "geom_of": "jst-xh"}),
     # ES: the wire-end view prints 1, 2, 3 … n from the left along the front-face edge; the lock hook is on the back face.
     _family("hirose-df1b-es", "Hirose DF1B (гнездовой корпус на провод)", r"^DF1B-(\d+)ES-2[.,]5RC$", 2.5,
             latch="mark", conf="high", src=DF1B_SRC.format("Single Row In-line Socket (Full Lock Type)"),
@@ -147,9 +246,14 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("hirose-df1b-p", "Hirose DF1B (штыревой корпус)", r"^DF1B-(\d+)EP-2[.,]5RC$", 2.5, latch="lever", conf="high",
             src=DF1B_SRC.format("Single Row In-line Plug (Full Lock Type)"),
             note="по каталогу Hirose DF1B: цифры 1…n на торце проводов у грани с рычагом замка; рычагом вверх — контакт 1 слева"),
+    # DEP — EDC3-160056-01 (DF1B-*DEP-2.5RC, hirose.com API drawing_2d, read 17.10.2026, third angle): the top view is the
+    # mating shroud, the front view the lever face; the view under it is the wire end with the lever face at its upper
+    # edge and «CONTACT NO.1» in the lower row at the left, «CONTACT NO.2» above it. From the wire side, lever up:
+    # 1 bottom-LEFT, 2 above it, odd contacts in the row away from the lever. Cross-check: the DES socket turned hook up
+    # and mirrored (face to face) reads the same.
     _family("hirose-df1b-p2r", "Hirose DF1B (штыревой корпус, 2 ряда)", r"^DF1B-(\d+)DEP-2[.,]5RC$", 2.5, rows=2,
-            order="col", latch="lever",
-            note="в каталоге Hirose DF1B у корпуса DEP на торце проводов только метка поляризации, номеров нет — сверить по детали"),
+            order="col", start="BL", latch="lever", conf="high", src="Hirose EDC3-160056-01 (DF1B-*DEP-2.5RC)",
+            note="по чертежу Hirose EDC3-160056-01: на торце проводов рычагом вверх CONTACT NO.1 слева внизу, NO.2 над ним"),
     # DF1BA (simple lock, panel mount) numbers the other way: the wire-end view prints 1, 2, 3 from the RIGHT (DEP:
     # 1, 3, 5 over 2, 4, 6) along the front face that carries the «Contact No1. mark».
     _family("hirose-df1ba-p", "Hirose DF1BA (штыревой корпус, простой замок)", r"^DF1BA-(\d+)EP-2[.,]5RC$", 2.5,
@@ -159,17 +263,100 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             2.5, rows=2, order="col", start="TR", latch="mark", conf="high",
             src=DF1B_SRC.format("Double Row In-line Plug (Simple Lock Type)"),
             note="по каталогу Hirose DF1B: у DF1BA на торце проводов 1, 3, 5 справа у грани с меткой контакта 1, 2, 4, 6 под ними — 1 справа вверху"),
-    # JAE
-    _family("jae-fis", "JAE FI-S", r"^FI-S(\d+)S$", 1.25, latch="ramp", color="#b9c0c6", note=UNCHECKED),
-    _family("jae-fir", "JAE FI-R", r"^FI-RE(\d+)HL$", 0.5, latch="ramp", color="#b9c0c6", note=UNCHECKED),
+    # JAE — housing drawings from products.jae.com (product records → drawingSj PDF, third-angle projection), read
+    # 17.10.2026. FI-S — SJ031451 rev. 4 «FI-S※※S HOUSING»: the right-side view puts the 1.8 mm block at the face of the
+    # front view (the wire end, the thin 1.32 mm part mates into the header); that face carries the contact numbers in
+    # raised letters (NOTE 1) — «N» at the left, «1» at the right — with the top view (the face with a window over every
+    # contact) above it. The housing has no latch (friction lock), so the face cue is the window face: up -> contact 1
+    # on the RIGHT.
+    _family("jae-fis", "JAE FI-S", r"^FI-S(\d+)S$", 1.25, start="TR", color="#b9c0c6", conf="high",
+            src="JAE SJ031451 (FI-S※※S Housing)",
+            note="по чертежу JAE SJ031451: номера контактов отлиты на торце проводов, «1» справа при грани с окнами сверху; замка нет — гранью с окнами вверх контакт 1 справа"),
+    # FI-R — SJ103279 rev. 3 «FI-RE※※HL»: the main view is the top face (the windows over the contacts, the 0.5 mm comb of
+    # the mating tongue at its bottom, the lock buttons at the rear ends); the view above it is the wire end with the top
+    # face at its lower edge: NO.1 top-left, NO.2 under it half a pitch on, N top-right, N-1 under it — two staggered rows.
+    # Turned top face up: 1 bottom-RIGHT, 2 above it, the columns run right to left (odd contacts in the lower row).
+    _family("jae-fir", "JAE FI-R", r"^FI-RE(\d+)HL$", 0.5, rows=2, order="col", start="BR", latch="ramp",
+            color="#b9c0c6", conf="high", src="JAE SJ103279 (FI-RE※※HL)",
+            note="по чертежу JAE SJ103279: на торце проводов два ряда в шахматку, NO.1 и нечётные — в ряду дальше от верхней грани; верхней гранью вверх — 1 справа внизу, 2 над ним"),
     # Connfly (drawings C-DS10xx: the female housing is drawn without a circuit-1 mark that can be placed)
-    _family("connfly-ds1070", "Connfly DS1070", r"^I-DS1070-SC[A-Z](\d{2})$", 2.54, latch="ramp", note=UNCHECKED),
-    _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED),
-    _family("connfly-ds1073", "Connfly DS1073", r"^I-DS1073-SC[A-Z]0(\d{2})$", 3.96, latch="lever", note=UNCHECKED),
-    _family("connfly-ds1074", "Connfly DS1074", r"^I-DS1074-SC[A-Z]0(\d{2})$", 5.08, latch="ramp", color="#e6e8ea", note=UNCHECKED),
+    _family("connfly-ds1070", "Connfly DS1070", r"^I-DS1070-SC[A-Z](\d{2})$", 2.54, latch="ramp", note=UNCHECKED,
+            # C-DS1070 sheet 2 «Female Housing»: N·2.54 + 0.66 wide, 4.9 high end view; contact entries ~1.95 × 3.1 (read off the drawing, ±0.2).
+            body={"extra": 3.2, "h": 4.9, "len": 13.2, "win": (1.95, 3.1), "win_y": 2.6, "geom": "drawing", "geom_url": "https://www.connfly.com/static/upload/file/pdf/DS1070.pdf",
+                  "cav": {"kind": "bevel", "w": 1.95, "h": 3.1}}),
+    _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED,
+            # C-DS1072 «Female Housing»: (N−1)·3.96 + 4.24 wide, 6.2 high end view, entries ~2.6 × 4.4 (±0.3, read off the drawing).
+            body={"extra": 4.24, "h": 6.2, "len": 16.2, "lock_inset": 0, "lock_h": 0.7, "win": (2.6, 4.4), "geom": "drawing", "geom_url": "https://www.connfly.com/static/upload/file/pdf/DS1072.pdf", "cav": {"kind": "bevel", "w": 2.6, "h": 4.4}}),
+    _family("connfly-ds1073", "Connfly DS1073", r"^I-DS1073-SC[A-Z]0(\d{2})$", 3.96, latch="lever", note=UNCHECKED,
+            # DS1073 is the 3.96 mm VH-type housing (the C-DS1073 sheet repeats eVH: 5.7 / 7.2 / 10.4): wire end as the VH photo.
+            body={"extra": 3.9, "h": 5.7, "len": 13.4, "lock_w": 7.9, "lock_h": 1.8, "win": (2.8, 3.4), "win_y": 3.2, "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C274380.html", "geom_of": "jst-vh"}),
+    _family("connfly-ds1074", "Connfly DS1074", r"^I-DS1074-SC[A-Z]0(\d{2})$", 5.08, latch="ramp", color="#e6e8ea", note=UNCHECKED,
+            # DS1074 (5.08 mm, 7.6 mm thick): no wire-end view anywhere; the VH photo scaled by the pitch (cavity 0.7 × pitch).
+            body={"extra": 5.08, "h": 7.6, "len": 16.0, "lock_inset": 0, "lock_h": 0.8, "win": (3.5, 4.4), "win_y": 4.3, "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C274380.html", "geom_of": "jst-vh"}),
+    # DS1071-01 (Dupont 2,0): rows × holes per row in the part number, like DS1071. The sheet draws it symmetric; the real
+    # part (owner, 17.10.2026): lance windows on top, circuit-1 arrow at the left end.
+    _family("connfly-ds1071-01", "Connfly DS1071-01 (Dupont 2,0)", r"^I-DS1071-01-SC[A-Z]0?(\d)X0?(\d{1,2})", 2.0, grid=True,
+            order="col", start="TL", color=BLACK, conf="high", src="сверено владельцем по детали, 17.10.2026",
+            note="сверено владельцем по детали 17.10.2026: прорезями вверх контакт 1 слева — у стрелки на корпусе"),
+    # KLS L-KLS1-2.50-XX-H (2,5 мм, тип JST ZH) — KLS drawing (chipdip copy, third angle, re-read 17.10.2026): the front view
+    # is the face with the lance windows and the ▽ mark at its right end; the view below it is the wire end (the rim, the
+    # crimp-contact entries) with «6 … 1», «1» at the right, the window face at its top edge; the side view puts the lock
+    # bump on the opposite face. Windows up -> contact 1 on the right; lock bump up -> on the LEFT, the same as JST ZH.
+    _family("kls-2-50", "KLS KLS1-2.50", r"^L-KLS1-2\.50-(\d{2})-H$", 2.5, latch="ramp", conf="high",
+            src="KLS L-KLS1-2.50-XX-H, чертёж",
+            note="по чертежу KLS L-KLS1-2.50-XX-H: на торце проводов «1» справа при грани с окнами сверху; выступом защёлки (обратная грань) вверх — контакт 1 слева, как у JST ZH"),
+    # Molex Pico-EZmate 78172 — 78172-0002…0005 (Molex part sheets 78172-0002 / -0004, Farnell, Heilind) and 78172-5006 /
+    # -5007 (6 and 7 circuits, Molex series chart 78172; drawing SD-78172-001). The part sheets print no circuit numbers and
+    # the sales drawing SD-78172-007 did not open, so the numbering stays unchecked.
+    # 781720000-SD rev. A (Web Archive copy of 781720004_sd.pdf, third angle, read 17.10.2026): the main view is the top
+    # face (the open slots, «CIRCUIT 1 INDICATOR MARK» ▽ and «MXL 1A» on the strip at the far end); the view under it is the
+    # end with the contact cavities (the wire end, the top face at its upper edge) — CIRCUIT 1 at the left, CIRCUIT N at the
+    # right; 781720001-SD (6 and 7 circuits, 781725006 copy) draws the same. Top face up -> contact 1 on the LEFT.
+    _family("molex-picoezmate", "Molex Pico-EZmate", r"^0?78172-?[05]00(\d)$", 1.2, color=BLACK, conf="high",
+            src="Molex 781720000-SD / 781720001-SD",
+            note="по чертежам Molex 781720000-SD (2–5 конт.) и 781720001-SD (6–7): на торце проводов верхней гранью (с прорезями и меткой ▽ CIRCUIT 1) вверх — CIRCUIT 1 слева"),
+    # Molex Mini50 (CTX50 terminals), 1.80 mm: the circuit count is not a plain digit of the part number, so each housing a
+    # distributor listing names is in the table. Sealed 34967 with CPA (Heilind / element14 349672001 «2 Circuits,
+    # Polarization Option A, Black», RS 34967-4001 «4 way», RS 34967-1001 «10 way», Mouser 0349671131 «10 Circuits»,
+    # Arrow 349674021 «4 Circuits … Terminal Position 2 Plugged», Molex 349674006 «4 Circuits, without CPA, Polarization
+    # Option B, Light Gray», Molex part sheet 0349671005 «without CPA, 10 Circuits … Pitch 1.80mm»); unsealed 34791 (Heilind / RS 34791-0020 «2 Circuits», 34791-0040 and -0140 «4 Circuits»,
+    # -0140 bridged). No drawing with circuit numbers was reachable (molex.com does not answer).
+    # Sealed 34967 — Molex sales drawings 349674001 and 349671001 (molex.com copies in the Web Archive, read 17.10.2026),
+    # sheet 3: the front view is the mating face (the receptacle boxes inside the oval shroud of the ring seal; the mat
+    # seal sits at the wire end, sheet 4 «KEY CONFIGURATIONS» keys that face) with the CPA / lock up, «1» moulded at the
+    # left, «4» / «10» at the right (TERMINAL POSITION 1 / 4 / 10). From the wire side the view mirrors: lock up,
+    # contact 1 on the RIGHT, one row for 2, 4 and 10 circuits.
+    _family("molex-mini50-s", "Molex Mini50 (герметичный 34967)", r"^0?34967-?(\d{4})$", 1.8, start="TR", latch="lever",
+            color=BLACK, table=MINI50_SEALED, color_by=((r"4006$", "#c9cccf"),), conf="high", src="Molex 349674001 / 349671001 SD",
+            note="по чертежам Molex 349674001 и 349671001: со стороны стыковки замком (CPA) вверх «1» слева; со стороны проводов — контакт 1 справа"),
+    # Unsealed 34791 — Molex SD-34791-001 rev. L7 (347910040_sd.pdf, Web Archive, read 17.10.2026), sheet 2 «CIRCUIT ID»:
+    # the mating face (the receptacle terminal boxes in the cavities) with the lock up has «1» moulded at the left and
+    # «4» at the right, as the sealed 34967 sheets (both mate the same 34912 / 34792 / 34793 headers, sheet 4). From the
+    # wire side the view mirrors: lock up, contact 1 on the RIGHT.
+    _family("molex-mini50-u", "Molex Mini50 (негерметичный 34791)", r"^0?34791-?(\d{4})$", 1.8, start="TR", latch="lever",
+            color=BLACK, table=MINI50_UNSEALED, conf="high", src="Molex SD-34791-001 rev. L7",
+            note="по чертежу Molex SD-34791-001: со стороны стыковки замком вверх «1» слева; со стороны проводов — контакт 1 справа"),
+    # Hsuan Mao (HSM) — drawings on definum.ru (the HSM distributor; hsuanmao.com does not answer), read 16.10.2026.
+    # MX 5.08 — H5080-XXPXW000 rev. A: H5080-NN P Y|N W 000 (NN = 02…10, Y — with the locking rib, N — without), white
+    # nylon 66, 7.70 thick, 16.0 long; the views carry no circuit numbers. Distributors add «R» (RoHS).
+    _family("hsm-mx508", "Hsuan Mao MX 5,08", r"^(?:HSM)?H5080-(\d{2})P[YN]W\d{3}R?$", 5.08, latch="ramp",
+            note="на чертеже Hsuan Mao H5080-XXPXW000 номеров контактов нет — сверить по детали"),
+    # HC 2.0 (JST PAP analogue) — H2011-XXPW0000R rev. A: 2…16 circuits, white nylon 66, 5.7 thick, 7.8 long; one view has
+    # «1» at the right end of a face, but the drawing names neither the projection nor the wire end.
+    _family("hsm-hc", "Hsuan Mao HC 2,0 (аналог JST PA)", r"^(?:HSM)?H2011-(\d{2})PW[A0]000R?$", 2.0, latch="lever",
+            note="на чертеже Hsuan Mao H2011 «1» стоит у правого края грани, но с какой стороны вид и где провода, чертёж не показывает — сверить по детали"),
+    # JR / Futaba servo plug: 3 contacts at 2.54 (Pololu 1924, 1925: JR packs, 22–26 AWG crimp pins; a Futaba J plug has an
+    # extra polarising tab). No maker and no part number — the housings carry the shop's names, as the contacts in
+    # «Терминалы» (JR-T-Female / JR-T-Male).
+    _family("jr-servo", "Сервоконнектор JR / Futaba", r"^JR-H-(?:FEMALE|MALE)$", 2.54, fixed=3, color=BLACK,
+            note="контакт 1 — сигнал (оранжевый или белый провод), 2 — «+» (красный), 3 — «−» (коричневый или чёрный); с какой стороны ключ, производителя нет — сверить по детали"),
     # Samtec ISD2 — «positions per row», two rows: ISD2-05-D = 10 contacts.
+    # Samtec ISD2 / S2SD sheet F-226: the face view of the assembly (wires out at the bottom, mating end up) has the ▽ at
+    # its top RIGHT corner. From the wire side, ▽ face up: contact 1 top-RIGHT; contact 2 under it by Samtec's two-row
+    # numbering (odd / even rows of the T2M header) — the sheet does not draw it, hence "medium".
     _family("samtec-isd2", "Samtec ISD2 (2 ряда)", r"^ISD2-(\d{2})-D-[MS]", 2.0, rows=2, order="col", count_mul=2,
-            latch="lever", color=BLACK, note="на листе Samtec метка ▽ контакта 1 есть, со стороны проводов не сверена"),
+            start="TR", latch="lever", color=BLACK, conf="medium", src="Samtec ISD2 / S2SD, лист F-226",
+            note="по листу Samtec F-226 (S2SD): метка ▽ справа на грани с окнами; ▽ сверху — контакт 1 справа вверху; № 2 под ним — по нумерации Samtec, на листе не показан"),
     # Molex — sales drawings (SD) read from the copies at static.chipdip.ru / datasheet.lcsc.com (13.10.2026, third
     # angle). A view placed directly above / below the front view keeps left and right; a rear view placed beside the
     # side view mirrors them; an isometric view shows the outside. Which end takes the wires: the end with the larger
@@ -178,7 +365,8 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-minifit-jr-bk", "Molex Mini-Fit Jr. (чёрный)", r"^39-?03-?9(\d{2})2$", 4.2, rows=2, start="BR",
             latch="lever", color=BLACK, conf="high", src="Molex SD-5557-003",
             note="по чертежу Molex SD-5557-003: защёлка сверху, контакт 1 внизу справа, ряд 1…n дальше от защёлки",
-            body={"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4)}),
+            body={"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4), "cav": MINIFIT_CAV,
+                  "geom": "drawing", "geom_url": "https://www.molex.com/pdm_docs/sd/039012080_sd.pdf"}),
     # Nano-Fit 105307 — the front view (latch face, towers of the mating end up) has «CIRCUIT 1» at its right on the
     # wire-end edge; the bottom view (wire end) keeps it there -> latch up, contact 1 on the RIGHT.
     _family("molex-nanofit-1r", "Molex Nano-Fit", r"^105307-?[12]2(\d{2})$", 2.5, start="TR", latch="lever", color=BLACK,
@@ -197,8 +385,18 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-nanofit-plug", "Molex Nano-Fit (вилка, 2 ряда)", r"^201444-?[12]1(\d{2})$", 2.5, rows=2, latch="lever",
             color=BLACK, color_by=((r"^201444-?2", IVORY),), conf="high", src="Molex 2014441000-SD",
             note="по чертежу Molex 2014441000-SD: на торце проводов упором защёлки вверх CKT 1 слева вверху, CKT 2 справа от него"),
-    _family("molex-microfit-plus", "Molex Micro-Fit+ (2 ряда)", r"^206461-?(\d{2})\d{2}$", 3.0, rows=2, latch="lever",
-            color=BLACK, note="на чертеже Molex 2064610000-SD номеров контактов нет — сверить по детали"),
+    # Micro-Fit+ 206461 — Molex 2064610000-SD rev. C (static.chipdip.ru copy, read 16.10.2026): 206461-NNPC, NN = 02…24
+    # circuits, C = polarisation / colour (0 black A, 1 natural B, 2 red C, 3 blue D, 4 yellow E), P = 1 low halogen. Both
+    # sheets show the cavities and the keys but no circuit numbers.
+    # Contact 1 (17.10.2026) from the mating headers (Web Archive copies of molex.com): 2125280000 rev. C (R/A header) —
+    # the front view of the mating face, latch catch up, «LAST CIRCUIT» top-left and the PCB layouts «CIRCUIT 1» bottom-right,
+    # «CIRCUIT 2» left of it; 2068320000-SD rev. C (vertical header) — the PCB layout seen from the top, the same. The
+    # receptacle seen from its wire side looks at that face through itself: latch up, 1 bottom-RIGHT, the row of 1…n/2
+    # away from the latch (as Micro-Fit 3.0 43025).
+    _family("molex-microfit-plus", "Molex Micro-Fit+ (2 ряда)", r"^206461-?(\d{2})\d{2}$", 3.0, rows=2, start="BR", latch="lever",
+            color=BLACK, color_by=((r"1$", IVORY), (r"2$", "#c8322d"), (r"3$", "#3b6fb6"), (r"4$", "#e3c13b")),
+            conf="high", src="Molex 2125280000 (R/A header) + 2068320000-SD (vertical header)",
+            note="по чертежам ответных вилок Molex 2125280000 и 2068320000-SD: защёлкой вверх CIRCUIT 1 внизу справа, LAST CIRCUIT вверху слева; со стороны проводов розетки — так же, контакт 1 внизу справа"),
     # Mini-Fit TPA2 172708 — the wire-end views («before TPA assembly», latch up) mould 8 7 6 5 over 4 3 2 1: contact 1
     # bottom-right, as Mini-Fit Jr.
     _family("molex-minifit-tpa2", "Molex Mini-Fit TPA2 (2 ряда)", r"^172708-?0[0-2](\d{2})$", 4.2, rows=2, start="BR",
@@ -293,12 +491,42 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # Series of БД.ТЕР without a drawing the ERP could read (molex.com did not answer, 13.10.2026): the housing part
     # numbers are those Molex lists (its part sheets, or the LCSC / Heilind pages that quote them); the count comes
     # from the part number, the numbering stays unchecked.
-    _family("molex-kk396", "Molex KK 396 (41695)", r"^(?:00)?09-?50-?8(\d{2})\d$", 3.96, latch="ramp", note=NO_DRAWING),
-    _family("molex-minilock", "Molex Mini-Lock", r"^0?51163-?(\d{2})00$", 2.5, latch="lever", note=NO_DRAWING),
-    _family("molex-sl-1r", "Molex SL (1 ряд)", r"^0?50-?57-?94(\d{2})$", 2.54, latch="ramp", color=BLACK, note=NO_DRAWING),
-    _family("molex-igrid", "Molex iGrid (2 ряда)", r"^501646-?(\d{2})0[01]$", 2.0, rows=2, order="col", latch="lever",
-            color_by=((r"1$", BLACK),), note=NO_DRAWING),
-    _family("molex-boardin", "Molex Board-in", r"^0?35023-?00(\d{2})$", 2.0, note=NO_DRAWING),
+    # KK 396 41695 — Molex SD-41695 rev. L (datasheet.lcsc.com copy of 0009508041, read 16.10.2026): the front view is the
+    # mating end (square pin entries) with the optional ramps at the top and the contacts numbered from the left; the view
+    # under it (underside, carries «41695» and the moulded circuit «1») has CIRCUIT NUMBER 1 at the same left end, so the
+    # mark is on the face opposite the ramp. From the wire side the view turns over: ramp up, contact 1 on the RIGHT (the
+    # same as KK 254 2695). Parts without a ramp (09-50-8020) have no face cue — the face with the moulded «1» goes down.
+    # Sheet 3 lists the part numbers: option A (no ramp) 09-50-8NN0, 2…12; B (ramp) 09-50-8NN1, 2…14; D (ramp and
+    # polarising ribs) 09-50-8NN3, 2…14 — the two digits after «8» are the circuit count.
+    _family("molex-kk396", "Molex KK 396 (41695)", r"^(?:00)?09-?50-?8(\d{2})\d$", 3.96, start="TR", latch="ramp", conf="high",
+            src="Molex SD-41695",
+            note="по чертежу Molex SD-41695: цифра «1» на грани, противоположной рампе; со стороны проводов рампой вверх — контакт 1 справа"),
+    # Mini-Lock 51163 — 511630000-SD rev. B (Web Archive copy of 511630400_sd.pdf, read 17.10.2026): the front view is the
+    # mating face (the square pin entries); the view at the far right is the wire end with the terminals in, the lock up,
+    # «CIRCUIT 1 INDICATOR MARK» and CIRCUIT 1 at the left, CIRCUIT N at the right.
+    _family("molex-minilock", "Molex Mini-Lock", r"^0?51163-?(\d{2})00$", 2.5, latch="lever", conf="high",
+            src="Molex 511630000-SD",
+            note="по чертежу Molex 511630000-SD: на торце проводов замком вверх CIRCUIT 1 слева"),
+    # SL 70066 — SD-70066-0176-0199 rev. M (Web Archive copy of molex.com/pdm_docs/sd/050579404_sd.pdf, third angle, read
+    # 17.10.2026): the top view is the mating end (the square pin entries) with the latch arm on the far face; the side
+    # view puts that arm on the back face; the front (plain) face carries «CIRCUIT NO. 1 IDENTIFICATION» ▽ at its left.
+    # From the wire end, plain face up: 1 on the left -> latch face up: contact 1 on the RIGHT.
+    _family("molex-sl-1r", "Molex SL (1 ряд)", r"^0?50-?57-?94(\d{2})$", 2.54, start="TR", latch="ramp", color=BLACK,
+            conf="high", src="Molex SD-70066-0176-0199",
+            note="по чертежу Molex SD-70066-0176-0199: метка ▽ CIRCUIT NO. 1 слева на гладкой грани, защёлка на обратной; со стороны проводов защёлкой вверх — контакт 1 справа"),
+    # iGrid 501646 — Molex 5016460000-SD rev. A1 (datasheet.lcsc.com copy of 5016462400, read 16.10.2026): the view of the
+    # wire end (CIRCUIT No.1 ▽, trade mark and cavity numbers moulded on it) has the latch plate at its BOTTOM, circuit 1
+    # at the top-left, 2 under it, N-1 top-right, N bottom-right (columns of two, odd numbers on top). Turned latch up
+    # (the way the sketch draws every latch): 1 bottom-RIGHT, 2 above it, the columns run right to left. The list gives
+    # 10…40 circuits, even only, colours 0 natural, 1 black, 2 red, 4 blue (501646-1000, -1001, -1002, -1004).
+    _family("molex-igrid", "Molex iGrid (2 ряда)", r"^501646-?(\d{2})0[0124]$", 2.0, rows=2, order="col", start="BR", latch="lever",
+            color_by=((r"1$", BLACK), (r"2$", "#c8322d"), (r"4$", "#3b6fb6")), conf="high", src="Molex 5016460000-SD",
+            note="по чертежу Molex 5016460000-SD: на торце проводов защёлка внизу, 1 слева вверху, 2 под ней; защёлкой вверх — 1 справа внизу, 2 над ней"),
+    # Board-in 35023 — Molex SD-35023-001 (Web Archive copy of 350230004_sd.pdf, third angle, read 17.10.2026): the front
+    # view is the face with the slots the right-angle contacts 35021 lead their wires out of; «CKT NO.1» (and the CAV NO.
+    # mark) at its right end, the top face (the entries of the straight contacts 35044) up. No latch.
+    _family("molex-boardin", "Molex Board-in", r"^0?35023-?00(\d{2})$", 2.0, start="TR", conf="high", src="Molex SD-35023-001",
+            note="по чертежу Molex SD-35023-001: метка CKT NO.1 у правого края грани с прорезями под провода; этой гранью к себе, верхом вверх — контакт 1 справа"),
     # TE Mini CT — C-353908: the top view is the wire end; «CIRCUIT No.1» is at its right with the +AMP face (the lock
     # ramp) at the bottom -> from the wire side, lock up, contact 1 on the LEFT.
     _family("te-minict", "TE AMP Mini CT", r"^((?:\d-)?353908-\d)$", 1.5, latch="ramp", table=MINI_CT_TABLE, conf="high",
@@ -315,13 +543,19 @@ CATALOG_FAMILY_SAMPLES: dict[str, str] = {
     "jst-el": "ELR-03V", "jst-el-n": "ELR-04NV", "jst-gvh": "GVHR-03V-S", "jst-gvh-sf": "GVHRSF-04V-S", "jst-suh": "SUHR-04V-S", "jst-lbt": "LBTAR-05V-2K-K",
     "jst-pud": "PUDP-10V-S", "jst-pad": "PADP-10V-1-S", "jst-pnd": "PNDP-10V-Z", "jst-sqs": "SQSR-02H-1A-K",
     "jst-zpd": "ZPDR-10V-S", "jst-nshd": "NSHDR-16V-Z", "jst-shj": "SHJP-06V-S", "jst-ra": "RA-1011",
+    "jst-shd": "SHDR-20V-S-B", "jst-shl": "SHLP-06V-S-B", "jst-apsh": "APSHR-03V-S", "jst-nv": "NVR-03", "jst-vb": "VBR-3",
+    "jst-ghd": "GHDR-20V-S-1(F)", "jst-znd": "ZNDP-16V-A-S", "jst-jwpf": "04T-JWPF-VSLE-S", "jst-jwpf-r": "04R-JWPF-VSLE-S",
     "hirose-df13-2r": "DF13-10DS-1.25C", "hirose-df19": "DF19-8S-1C", "hirose-df20": "DF20A-10DS-1C", "hirose-df61": "DF61-2S-2.2C",
     "hirose-df1b": "DF1B-4S-2.5R", "hirose-df1b-2r": "DF1B-18DS-2.5RC", "hirose-df1b-es": "DF1B-4ES-2.5RC",
     "hirose-df1b-des": "DF1B-10DES-2.5RC", "hirose-df1b-p": "DF1B-5EP-2.5RC",
     "hirose-df1b-p2r": "DF1B-10DEP-2.5RC", "hirose-df1ba-p": "DF1BA-5EP-2.5RC", "hirose-df1ba-p2r": "DF1BA-10DEP-2.5RC",
     "jae-fis": "FI-S10S", "jae-fir": "FI-RE31HL",
+    "kls-2-50": "L-KLS1-2.50-04-H", "molex-picoezmate": "78172-0004",
+    "molex-mini50-s": "34967-4001", "molex-mini50-u": "34791-0040", "hsm-mx508": "H5080-04PYW000", "hsm-hc": "H2011-04PWA000R",
+    "jr-servo": "JR-H-Female",
     "connfly-ds1070": "I-DS1070-SCV04", "connfly-ds1072": "I-DS1072-SCT004", "connfly-ds1073": "I-DS1073-SCW004",
-    "connfly-ds1074": "I-DS1074-SCT004", "samtec-isd2": "ISD2-05-D-M", "te-minict": "353908-4", "te-sl156": "770849-4",
+    "connfly-ds1074": "I-DS1074-SCT004", "connfly-ds1071-01": "I-DS1071-01-SCB02X5", "samtec-isd2": "ISD2-05-D-M",
+    "te-minict": "353908-4", "te-sl156": "770849-4",
     "molex-minifit-jr-bk": "39-03-9082", "molex-nanofit-1r": "105307-1204", "molex-nanofit": "105308-1208",
     "molex-nanofit-plug-1r": "200277-1104", "molex-nanofit-plug": "201444-1108", "molex-microfit-plus": "206461-0800",
     "molex-minifit-tpa2": "172708-0008", "molex-minifit-tpa2-1r": "200453-1004", "molex-minifit-max-1r": "215913-1004",
@@ -400,10 +634,15 @@ MOLEX_SERIES: tuple[dict[str, Any], ...] = (
              ("Molex 2002771000-SD", _cd("011158288")), ("Molex 2014441000-SD", _cd("012237572"))),
             note="вилки на плату 105309, 105310, 105311–105314; гнёзда 105300, штыри 201447, TPA 105325"),
     _series("molex-microfit-plus", "Molex Micro-Fit+", "Molex", WTB, ("Micro-Fit+", "Micro-Fit+ PCIe"),
-            (("Розетка, 2 ряда, чёрная", "molex-microfit-plus", "206461-{:02d}00", _even(2, 24)),),
+            (("Розетка, 2 ряда, чёрная, ключ A", "molex-microfit-plus", "206461-{:02d}00", _even(2, 24)),
+             ("Розетка, натуральная, ключ B", "molex-microfit-plus", "206461-{:02d}01", _even(2, 12)),
+             ("Розетка, красная, ключ C", "molex-microfit-plus", "206461-{:02d}02", _even(2, 12)),
+             ("Розетка, синяя, ключ D", "molex-microfit-plus", "206461-{:02d}03", _even(2, 12)),
+             ("Розетка, жёлтая, ключ E", "molex-microfit-plus", "206461-{:02d}04", _even(2, 12)),
+             ("Розетка, чёрная, ключ A, безгалогенная", "molex-microfit-plus", "206461-{:02d}10", _even(2, 24))),
             (("Molex 2064610000-SD", _cd("034869295")),),
-            note="гнёзда 206460; цвета и ключи: -xx01 натуральная, -xx02 красная, -xx04 жёлтая; PCIe 219114 (12 + 4 конт.) не рисуется",
-            range_checked=False),
+            note="гнёзда 206460; ответные вилки 206832, 212528, 215922; PCIe 219114 (12 + 4 конт.) не рисуется",
+            range_src="Molex 2064610000-SD, таблица исполнений"),
     _series("molex-minifit-tpa2", "Molex Mini-Fit TPA2", "Molex", WTB, ("Mini-Fit TPA2",),
             (("Розетка, 2 ряда", "molex-minifit-tpa2", "172708-00{:02d}", _even(2, 24)),
              ("Розетка, 1 ряд", "molex-minifit-tpa2-1r", "200453-10{:02d}", _counts(2, 6))),
@@ -487,22 +726,42 @@ MOLEX_SERIES: tuple[dict[str, Any], ...] = (
             contacts=(("50394-8051", "AWG 30–26"), ("50394-8052", "AWG 30–26")),
             note="корпуса 151100, 151098 — чертежи не найдены", range_checked=False),
     _series("molex-clikmate", "Molex CLIK-Mate", "Molex", WTB, ("502578", "CLIK-Mate"),
-            (("Корпус шаг 2,0 (502439)", "molex-clikmate-20", "502439-{:02d}00", _counts(2, 10, 12, 13, 14, 15)),),
-            (("Molex 5024391500", _cd("031162073")),),
+            (("Корпус шаг 2,0 (502439)", "molex-clikmate-20", "502439-{:02d}00", _counts(2, 10, 12, 13, 14, 15)),
+             ("Корпус шаг 1,5 (502578), натуральный", "molex-clikmate", "502578-{:02d}00", _counts(2, 15))),
+            (("Molex 5024391500", _cd("031162073")),
+             ("Molex 5025780000-SD", LCSC.format("7be50b41f1f84bba318ef0e0ecfb8cb8", "C293593"))),
             contacts=(("5024380000", "шаг 2,0, AWG 26–22"),),
-            note="корпуса 502578, 503149, 502380 — чертежи не найдены", range_checked=False),
-    _series("molex-picoclasp", "Molex Pico-Clasp", "Molex", WTB, ("501189", "501330"),
-            (("Корпус, 1 ряд (501330)", "molex-picoclasp-1r", "501330-{:02d}00", _counts(2, 15)),),
-            (("Molex Pico-Clasp 501330, лист каталога", _cd("033381093")),),
-            note="2-рядные корпуса 501189, 501939 — чертежи не найдены", range_checked=False),
-    # Molex part sheets (static.chipdip.ru copies): each confirms one housing; the series tables and the sales drawings
-    # (SD-41695-001, 511630400_sd) were not reachable, so the range and the numbering stay unchecked.
-    _series("molex-kk396", "Molex KK 396", "Molex", WTB, ("KK 396 (legacy KK 156)", "KK 396/508"),
-            (("Корпус 41695, без защёлки", "molex-kk396", ("09-50-8020",)),
-             ("Корпус 41695, с фрикционной защёлкой", "molex-kk396", ("09-50-8051",))),
-            (("Molex 0009508020, лист детали", _cd("011657093")), ("Molex 0009508051, лист детали", _cd("029580511"))),
-            note="известны только корпуса из листов деталей; корпуса 2139 (09-50-3…) — лист не найден; контакты 2478, 2578, 6838",
+            note="корпуса 503149, 502380 — чертежи не найдены; 502578 — по листу 4 чертежа 5025780000-SD (цвета 00–09, 11, 14, 16)",
             range_checked=False),
+    _series("molex-picoclasp", "Molex Pico-Clasp", "Molex", WTB, ("501189", "501330"),
+            (("Корпус, 1 ряд (501330), натуральный", "molex-picoclasp-1r", "501330-{:02d}00", _counts(2, 15)),
+             ("Корпус, 1 ряд (501330), чёрный", "molex-picoclasp-1r", "501330-{:02d}31", _counts(2, 15)),
+             ("Корпус, 2 ряда (501189), натуральный", "molex-picoclasp", "501189-{:02d}10", (20, 30, 40, 50)),
+             ("Корпус, 2 ряда (501189), чёрный", "molex-picoclasp", "501189-{:02d}11", (20, 30, 40, 50))),
+            (("Molex Pico-Clasp 501330, лист каталога", _cd("033381093")),
+             ("Molex 5013300000-SD", LCSC.format("ddf2d5d37596f063deba3a4a832cf9f9", "C505120")),
+             ("Molex 5011890000-SD", LCSC.format("e2ea623bef0689ba7a67476abf6409c3", "C505119"))),
+            note="2-рядный корпус 501939 — чертёж не найден; 501330 по листам 1–2 чертежа 5013300000-SD: 2…15 контактов, натуральный и чёрный",
+            range_checked=False),
+    _series("molex-igrid", "Molex iGrid", "Molex", WTB, ("iGrid",),
+            (("Корпус, натуральный", "molex-igrid", "501646-{:02d}00", _even(10, 40)),
+             ("Корпус, чёрный", "molex-igrid", "501646-{:02d}01", _even(10, 40)),
+             ("Корпус, красный", "molex-igrid", "501646-{:02d}02", _even(10, 40)),
+             ("Корпус, синий", "molex-igrid", "501646-{:02d}04", _even(10, 40))),
+            (("Molex 5016460000-SD", LCSC.format("2bba935c69263afb79870b074bbaf90d", "C505342")),),
+            contacts=(("5016471000", "олово, AWG 26–22"), ("5016481000", "олово, AWG 28–26"),
+                      ("5030952201", "золото, AWG 24–22"), ("5030952200", "золото, AWG 28–26")),
+            note="ответные вилки 501645, 501876, 503091, 208659", range_checked=True, range_src="Molex 5016460000-SD, лист 2"),
+    # KK 396 41695 — the part numbers of Molex SD-41695 rev. L, sheet 3 (options A, B, D without plugged cavities).
+    _series("molex-kk396", "Molex KK 396", "Molex", WTB, ("KK 396 (legacy KK 156)", "KK 396/508"),
+            (("Корпус 41695, без защёлки (A)", "molex-kk396", "09-50-8{:02d}0", _counts(2, 12)),
+             ("Корпус 41695, с фрикционной защёлкой (B)", "molex-kk396", "09-50-8{:02d}1", _counts(2, 14)),
+             ("Корпус 41695, с защёлкой и рёбрами поляризации (D)", "molex-kk396", "09-50-8{:02d}3", _counts(2, 14))),
+            (("Molex SD-41695 (2…14 конт.)", LCSC.format("95578245b0df1f54ea5b39f283fac359", "C505033")),
+             ("Molex 0009508020, лист детали", _cd("011657093")), ("Molex 0009508051, лист детали", _cd("029580511"))),
+            note="нумерация и номера деталей — по SD-41695 (лист 3, исполнения A, B, D); корпуса с заглушёнными гнёздами "
+                 "(09-50-9…, 41695-000x) не включены; корпуса 2139 (09-50-3…) — лист не найден; контакты 2478, 2578, 6838",
+            range_src="Molex SD-41695, лист 3"),
     _series("molex-minilock", "Molex Mini-Lock", "Molex", WTB, ("Mini-Lock",),
             (("Корпус 51163, натуральный", "molex-minilock", ("51163-0400",)),),
             (("Molex 0511630400, лист детали", _cd("012341229")),),
@@ -516,15 +775,15 @@ JAE_FI_DOC = ("JAE, обзор Board-to-Cable v2.2", LCSC.format("9e3ff33ecc0cd8
 CATALOG_SERIES: tuple[dict[str, Any], ...] = (
     # --- JST catalogue sheets ---------------------------------------------------------------------------------------
     _jst("jst-el", "JST EL", "eEL", WTW, ("EL",),
-         (("Розетка ELR (под штыри SLM)", "jst-el", "ELR-{:02d}V", (2, 3, 4, 6, 9, 12, 15)),
-          ("Розетка ELR, 4 конт. в 2 ряда", "jst-el-n", ("ELR-04NV", "ELR-04NVF")),
-          ("Розетка ELR только на весу (F)", "jst-el", ("ELR-02VF",)),
-          ("Вилка ELP (под гнёзда SLF)", "jst-el", "ELP-{:02d}V", (2, 3, 4, 6, 9, 12, 15)),
-          ("Вилка ELP, 4 конт. в 2 ряда", "jst-el-n", ("ELP-04NV",))),
+         (("Вилка ELR (под штыри SLM)", "jst-el", "ELR-{:02d}V", (2, 3, 4, 6, 9, 12, 15)),
+          ("Вилка ELR, 4 конт. в 2 ряда", "jst-el-n", ("ELR-04NV", "ELR-04NVF")),
+          ("Вилка ELR только на весу (F)", "jst-el", ("ELR-02VF",)),
+          ("Розетка ELP (под гнёзда SLF)", "jst-el", "ELP-{:02d}V", (2, 3, 4, 6, 9, 12, 15)),
+          ("Розетка ELP, 4 конт. в 2 ряда", "jst-el-n", ("ELP-04NV",))),
          (), (("SLM-01T-P1.3E", "штырь, AWG 26–20"), ("SLF-01T-P1.3E", "гнездо, AWG 26–20"),
               ("SLM-41T-P1.3E", "штырь, AWG 20–16"), ("SLF-41T-P1.3E", "гнездо, AWG 20–16"),
               ("SLM-42T-P1.3E", "штырь, 2 провода"), ("SLF-42T-P1.3E", "гнездо, 2 провода")),
-         note="провод — провод: розетка ELR под штыри, вилка ELP под гнёзда"),
+         note="провод — провод: вилка ELR под штыри, розетка ELP под гнёзда"),
     _jst("jst-gvh", "JST GVH", "eGVH", WTB, ("GVH",),
          (("Корпус с боковым вводом (SF)", "jst-gvh-sf", "GVHRSF-{:02d}V-S", _counts(2, 15)),
           ("Корпус обычный", "jst-gvh", ("GVHR-03V-S",))),
@@ -574,6 +833,47 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
          (("Корпус", "jst-shj", "SHJP-{:02d}V-S(HF)", (2, 6)),),
          ((TOP_SMT, "BM{:02d}B-SHJS-TB(HF)", (6,)), (SIDE_SMT, "SM{:02d}B-SHJH-TF(HF)", (2, 6))),
          (("SSHJ-003T-P0.2", "AWG 32–28"),)),
+    # Series named in «Терминалы» that had no housing table (16.10.2026).
+    _jst("jst-shd", "JST SHD", "eSHD", WTB, ("SHD", "SHDR", "SHDP"),
+         (("Корпус, 2 ряда, с выступами", "jst-shd", "SHDR-{:02d}V-S-B", (20, 30, 40, 50)),),
+         ((TOP_SMT, "BM{:02d}B-SRDS-G-TF", (20, 30, 40, 50)), (SIDE_SMT, "SM{:02d}B-SRDS-G-TF", (20, 30, 40, 50))),
+         (("SSH-003GA-P0.2", "AWG 32–28"),), note="1,0 мм в ряду, 2 ряда; контакты как у SH"),
+    _jst("jst-shl", "JST SHL", "eSHL", WTB, ("SHL", "SHLP"),
+         (("Корпус с выступами", "jst-shl", "SHLP-{:02d}V-S-B", (2, 5, 6, 7, 8, 10, 11, 12, 14, 16, 20, 22, 26, 30)),),
+         ((SIDE_SMT, "SM{:02d}B-SHLS-TF", (2, 5, 6, 7, 8, 10, 11, 12, 14, 16, 20, 22, 26, 30)),
+          (SIDE_SMT + ", смещённая", "SM{:02d}B-SHLS-1-TF", (8, 20))),
+         (("SSHL-003T-P0.2", "AWG 32–28"),)),
+    _jst("jst-apsh", "JST APSH", "eAPSH", WTB, ("APSH",),
+         (("Корпус", "jst-apsh", ("APSHR-03V-S",)),),
+         ((TOP_SMT, "BM{:02d}B-APSHSS-ETFT", (3,)),),
+         (("SSH-003T-P0.2-H", "AWG 32–28"),), note="только 3 контакта; цвет в номере: S натуральный, K чёрный, E синий, TR красный, L жёлтый"),
+    _jst("jst-nv", "JST NV", "eNV", WTB, ("NV", "NVR"),
+         (("Корпус", "jst-nv", "NVR-{:02d}", (2, 3, 4)),),
+         ((TOP, "B{:02d}P-NV", (2, 3, 4)),),
+         (("SVH-21T-P1.1", "AWG 22–18"), ("SVH-41T-P1.1", "AWG 20–16")), note="шаг 5,0 мм; синий корпус — NVR-0N-E"),
+    _jst("jst-vb", "JST VB", "eVB", WTB, ("VB",),
+         (("Корпус", "jst-vb", ("VBR-2", "VBR-3")),
+          ("Корпус с пустой позицией, N конт. на M позициях", "jst-vb",
+           ("VBR-2(3)", "VBR-3(4)", "VBR-4(5)", "VBR-5(6)", "VBR-6(7)", "VBR-7(8)", "VBR-8(9)", "VBR-9(10)", "VBR-12(13)"))),
+         (), (("SVH-21T-P1.1", "AWG 22–18"),),
+         note="шаг позиций 5,08 мм; вилки на плату B{N}P-VB-2 и B{N}P{M}-VB-2 (с пустой позицией)"),
+    _series("jst-ghd", "JST GHD", "JST", WTB, ("GHD", "GHDR"),
+            (("Корпус, 2 ряда", "jst-ghd", "GHDR-{:02d}V-S-1(F)", _even(10, 40)),),
+            (("JST eGHD, лист каталога (копия tlcelectronics.com)", "https://www.tlcelectronics.com/pub/media/wysiwyg/Datasheets/eGHD1.pdf"),),
+            headers=((TOP_SMT, "BM{:02d}B-GHDS-TF", _even(10, 40)), (SIDE_SMT, "SM{:02d}B-GHDS-A-TF", _even(10, 40))),
+            contacts=(("SGHD-002T-C0.2A", "AWG 30–26"), ("SGHD-003T-C0.2A", "AWG 32–28")),
+            note="1,25 мм в ряду, 2 ряда; лист jst-mfg.com/eGHD не публикуется — прочитана копия листа JST", range_src="JST eGHD"),
+    _series("jst-znd", "JST ZND", "JST", WTB, ("ZND", "ZNDP"),
+            (("Корпус, 2 ряда", "jst-znd", "ZNDP-{:02d}V-A-S", _even(4, 36)),),
+            (("JST eZND-WB (jst.co.uk)", "https://www.jst.co.uk/downloads/series/eZND-WB_(22-04-18).pdf"),),
+            contacts=(("SZND-002T-P0.5", "AWG 28–24"),), note="1,5 мм в ряду, 2 ряда", range_src="JST eZND-WB"),
+    _jst("jst-wp", "JST JWPF", "eJWPF", AUTO, ("JWPF", "WP (JWPF)"),
+         (("Корпус под штыри (Tab), 1 ряд", "jst-jwpf", "{:02d}T-JWPF-VSLE-S", (2, 3, 4)),
+          ("Корпус под штыри (Tab), 2 ряда", "jst-jwpf", "{:02d}T-JWPF-VSLE-D", (6, 8)),
+          ("Корпус под гнёзда, 1 ряд", "jst-jwpf-r", "{:02d}R-JWPF-VSLE-S", (2, 3, 4)),
+          ("Корпус под гнёзда, 2 ряда", "jst-jwpf-r", "{:02d}R-JWPF-VSLE-D", (6, 8))),
+         (), (("SWPT-001T-P025", "штырь (Tab), AWG 26–22"), ("SWPR-001T-P025", "гнездо, AWG 26–22")),
+         note="герметичный провод — провод; шаг 2,0 мм"),
     _series("jst-ra", "JST RA", "JST", WTB, ("RA",),
             (("Корпус, 2 ряда", "jst-ra", "RA-{:02d}11", (10, 16, 20, 26, 30, 34, 40, 50, 60)),),
             (("JST eRA (копия листа на LCSC)", LCSC.format("68d757359fc6485c9fc0b479f24e115d", "C566594")),),
@@ -661,7 +961,7 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
             (("Корпус, прозрачный", "connfly-ds1072", "I-DS1072-SCT0{:02d}", _counts(2, 13)),),
             (("Connfly C-DS1072-XXXXX-D", CONNFLY_PDF.format("DS1072")),),
             contacts=(("T-DS1072-SC600", "AWG 24–18"),)),
-    _series("connfly-ds1073", "Connfly DS1073 (серия MF)", "Connfly", WTB, ("I-DS1073", "DS1073"),
+    _series("connfly-ds1073", "Connfly DS1073 (тип VH, шаг 3,96)", "Connfly", WTB, ("I-DS1073", "DS1073"),
             (("Корпус, белый", "connfly-ds1073", "I-DS1073-SCW0{:02d}", _counts(2, 13)),),
             (("Connfly C-DS1073-XXXXX-E", CONNFLY_PDF.format("DS1073")),),
             contacts=(("T-DS1073-SC600", "AWG 22–18"),), note="шаг 3,96, тип VH"),
@@ -678,12 +978,30 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
              ("Корпус, оранжевый", "connfly-ds1066", "I-DS1066-SCE0{:02d}", _counts(2, 15))),
             (("Connfly C-DS1066-XXXXX-C", CONNFLY_PDF.format("DS1066")),),
             contacts=(("T-DS1066-SC600", "AWG 30–24"),), note="тип PH; на складе — I-DS1066-SCW02 / SCW03"),
-    _series("connfly-ds1071", "Connfly DS1071 (Dupont 2,54)", "Connfly", WTB, ("I-DS1071-SCB01", "I-DS1071-SCB02", "BLD2, BLS2"),
+    # DS1071 — Connfly C-DS1071-XXXXX-B rev. B (read 16.10.2026): pitch 2.54, «FEMALE TERMINAL» T-DS1071-SCX00 (6 tin,
+    # 8 full gold flash), wire 0.09–0.3 mm², AWG 28–22, insulation OD 1.2–1.6; mates the 2.54 headers DS1021 / DS1022.
+    # The 2.0 mm contact T-DS1071-01-SC… («BLD2, BLS2») belongs to DS1071-01, not here.
+    _series("connfly-ds1071", "Connfly DS1071 (Dupont 2,54)", "Connfly", WTB, ("I-DS1071-SCB01", "I-DS1071-SCB02"),
             (("Корпус, 1 ряд", "connfly-ds1071", "I-DS1071-SCB01X{}", _counts(1, 40)),
              ("Корпус, 2 ряда", "connfly-ds1071", "I-DS1071-SCB02X{}", _counts(2, 40))),
-            (("Connfly C-DS1071-XXXXX-B", CONNFLY_PDF.format("DS1071")),),
-            contacts=(("T-DS1071-SC600", "AWG 28–22"),),
-            note="номер корпуса по чертежу: ряды × контактов в ряду (1×1…1×40, 2×2…2×40)"),
+            (("Connfly C-DS1071-XXXXX-B", CONNFLY_PDF.format("DS1071")),
+             ("Connfly C-DS1021 (вилка 2,54 прямая)", CONNFLY_PDF.format("DS1021")),
+             ("Connfly C-DS1022 (вилка 2,54 угловая)", CONNFLY_PDF.format("DS1022"))),
+            contacts=(("T-DS1071-SC600", "олово, AWG 28–22, 0,09–0,3 мм², изоляция Ø 1,2–1,6"),
+                      ("T-DS1071-SC800", "золото, AWG 28–22, 0,09–0,3 мм², изоляция Ø 1,2–1,6")),
+            note="шаг 2,54; номер корпуса по чертежу: ряды × контактов в ряду (1×1…1×40, 2×2…2×40); ответные вилки DS1021, DS1022"),
+    # DS1071-01 — Connfly C-DS1071-01-XXXXX-A (2.00mm TJC8, en.connfly.com/static/upload/file/DS1071-01.pdf, read 16.10.2026):
+    # housing I-DS1071-01-SCB0 + holes 1x1…1x40, 2x2…2x40; terminal T-DS1071-01-SCX00 (0 selective gold, 6 tin, 8 full
+    # gold), the sheet gives no wire range.
+    _series("connfly-ds1071-01", "Connfly DS1071-01 (Dupont 2,0)", "Connfly", WTB, ("I-DS1071-01-SCB01", "I-DS1071-01-SCB02"),
+            (("Корпус, 1 ряд", "connfly-ds1071-01", "I-DS1071-01-SCB01X{}", _counts(1, 40)),
+             ("Корпус, 2 ряда", "connfly-ds1071-01", "I-DS1071-01-SCB02X{}", _counts(2, 40))),
+            (("Connfly C-DS1071-01-XXXXX-A", "https://en.connfly.com/static/upload/file/DS1071-01.pdf"),),
+            # AWG — страница серии Connfly (en.connfly.com/list_65/528.html: «AWG#28~#24»); на чертеже провода нет (17.10.2026).
+            contacts=(("T-DS1071-01-SC000", "выборочное золото, AWG 28–24"),
+                      ("T-DS1071-01-SC600", "олово, AWG 28–24"),
+                      ("T-DS1071-01-SC800", "золото, AWG 28–24")),
+            note="шаг 2,0; номер корпуса по чертежу: ряды × контактов в ряду (1×1…1×40, 2×2…2×40)"),
     # --- Samtec, TE -------------------------------------------------------------------------------------------------
     _series("samtec-isd2", "Samtec ISD2", "Samtec", WTB, ("ISD2, ITD2", "ISD2"),
             (("Корпус с защёлкой (M)", "samtec-isd2", "ISD2-{:02d}-D-M", (5, 7, 10, 15, 20, 25, 30)),
@@ -706,10 +1024,74 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
              ("Корпус 2 конт., цветной", "te-sl156", tuple(f"{prefix}-770849-2" for prefix in "345678"))),
             (("TE C-770849 (корпус)", LCSC.format("6dfe50de0ef7803f2ab7cae28e1480bd", "C201364")),
              ("TE C-350980 (контакт)", LCSC.format("1f98bf588eacc1ea238cf5be8ffbb384", "C188440"))),
-            contacts=(("350980-1", "AWG 24–18"), ("3-350980-1", "AWG 24–18")),
-            note="цветные 2-контактные: 3- чёрный, 4- серый, 5- красный, 6- синий, 7- коричневый, 8- жёлтый",
+            contacts=(("3-350980-1", "AWG 24–18"), ("350980-1", "снят с производства, AWG 24–18")),
+            note="цветные 2-контактные: 3- чёрный, 4- серый, 5- красный, 6- синий, 7- коричневый, 8- жёлтый; "
+                 "контакт 350980-1 снят с производства (TE C-350980 Rev S) — заказывать 3-350980-1",
             range_src="TE C-770849"),
 )
 
+# Series the owner's reference-data gaps asked for (14.10.2026, closed 16.10.2026): only the housings a document or a
+# distributor listing confirms.
+GAP_SERIES: tuple[dict[str, Any], ...] = (
+    _series("kls", "KLS KLS1-2.50", "KLS", WTB, ("KLS1-2.50", "KLS1-2.54", "KLS1-XL4-1.25 (HRS DF13 type)"),
+            (("Корпус L-KLS1-2.50-XX-H", "kls-2-50", "L-KLS1-2.50-{:02d}-H", _counts(2, 20)),),
+            (("KLS L-KLS1-2.50-XX-H / -T / -S, чертёж", CHIPDIP.format("526/DOC059526514")),),
+            contacts=(("L-KLS1-2.50-T", "AWG 30–22"),),
+            headers=((TOP, "L-KLS1-2.50-{:02d}-S", _counts(2, 20)),),
+            note="2,5 мм, тип JST ZH; KLS1-2.54 и KLS1-XL4-1.25 — корпусов с номерами нет"),
+    _series("molex-picoezmate", "Molex Pico-EZmate", "Molex", WTB, ("Pico-EZmate", "Pico-EZmate Plus"),
+            (("Корпус 78172, 1 ряд, чёрный", "molex-picoezmate", "78172-000{}", (2, 3, 4, 5)),
+             ("Корпус 78172-500x, 1 ряд, чёрный", "molex-picoezmate", "78172-500{}", (6, 7))),
+            (("Molex 78172-0002 (корпус), лист детали", _cd("015211617")), ("Molex 78172-0004 (корпус), лист детали", _cd("034082924")),
+             ("Molex 78172-0410 (контакт), лист детали", _cd("027493913")),
+             ("Molex 78172-0005 (корпус), лист детали, Mouser", "https://www.mouser.com/datasheet/2/276/1/0781720005_CRIMP_HOUSINGS-175763.pdf")),
+            contacts=(("78172-0410", "AWG 30–28"),),
+            note="2–5 конт. — 78172-000x (чертёж SD-78172-007), 6 и 7 конт. — 78172-5006, -5007 (чертёж SD-78172-001); "
+                 "ответная вилка 78171; Pico-EZmate Plus (212132) — корпусов в каталоге нет",
+            range_src="Molex, таблица серии 78172"),
+    _series("molex-ctx50", "Molex CTX50 (Mini50)", "Molex", AUTO, ("CTX50",),
+            (("Mini50 герметичный 34967, 1 ряд, с CPA, чёрный, ключ A", "molex-mini50-s",
+              ("34967-2001", "34967-4001", "34967-4021", "34967-1001", "34967-1131")),
+             ("Mini50 герметичный 34967, без CPA", "molex-mini50-s", ("34967-1005", "34967-4006")),
+             ("Mini50 негерметичный 34791, 1 ряд, чёрный, ключ A", "molex-mini50-u", ("34791-0020", "34791-0040", "34791-0140"))),
+            (("Heilind 34967-2001 (2 конт., ключ A)", "https://heilind.com/mol34967-2001.html"),
+             ("element14 349672001", "https://www.element14.cn/en-CN/molex/349672001/automotive-conn-housing-rcpt-2pos/dp/3702627"),
+             ("RS 34967-4001 (4 конт.)", "https://uk.rs-online.com/web/p/automotive-connectors/1367818"),
+             ("RS 34967-1001 (10 конт.)", "https://uk.rs-online.com/web/p/automotive-connectors/1367814"),
+             ("Molex 0349671005 (10 конт., без CPA, шаг 1,80), лист детали", "https://cdn.eicom.ru/media/PDF/1030948.pdf"),
+             ("Molex 0349671131 (10 конт.), лист детали", "https://www.mouser.com/datasheet/2/276/0349671131_CRIMP_HOUSINGS-1568412.pdf"),
+             ("RS 34791-0020 (2 конт.)", "https://uk.rs-online.com/web/p/automotive-connectors/1314730"),
+             ("Heilind 34791-0040 (4 конт.)", "https://heilind.com/mol34791-0040.html"),
+             ("Heilind 34791-0140 (4 конт., с перемычкой)", "https://heilind.com/mol34791-0140.html")),
+            contacts=(("349052447", "герметичный, 0,35 мм² (AWG 22)"), ("560023-0721", "негерметичный, AWG 24")),
+            note="шаг 1,8; 34967-1005 — чёрный, ключ A, 34967-4006 — светло-серый, ключ B; 34967-4021 — гнездо 2 заглушено, 34791-0140 — с перемычкой; вилки на плату 34792, 34793, 34912; "
+                 "число контактов не читается из номера — в наборе только корпуса из листингов",
+            range_checked=False),
+    _series("hsm-mx", "Hsuan Mao MX / MHU 5,08", "Hsuan Mao", WTB, ("PHU/MHU/MX",),
+            (("Корпус с фиксирующим ребром (Y), белый", "hsm-mx508", "H5080-{:02d}PYW000", _counts(2, 10)),
+             ("Корпус без ребра (N), белый", "hsm-mx508", "H5080-{:02d}PNW000", _counts(2, 10))),
+            (("Hsuan Mao H5080-XXPXW000 rev. A", "https://definum.ru/system/files/h5080-xxpxw000-s41_2.pdf"),
+             ("Definum, серия MHU / MPW (HSM)", "https://definum.ru/materials/connectors-terminals-wafers/mhu-mpw")),
+            headers=((TOP, "W4508-{:02d}PSYTW0", (2, 3, 4, 6, 8)),),
+            contacts=(("T2410-TBE00000R", "AWG 24–18, 0,2–0,82 мм², изоляция Ø 1,4–2,8"),),
+            note="шаг 5,08, 5 А, 250 В; у дистрибьютора номер с суффиксом R (H5080-02PYW000R); корпуса шага 3,96 (PHU) — "
+                 "таблицы нет", range_src="Hsuan Mao H5080-XXPXW000"),
+    _series("hsm-hc", "Hsuan Mao HC 2,0 (аналог JST PA)", "Hsuan Mao", WTB, ("HC (PAP)", "T2011"),
+            (("Корпус, белый", "hsm-hc", "H2011-{:02d}PWA000R", _counts(2, 16)),),
+            (("Hsuan Mao H2011-XXPW0000R rev. A", "https://definum.ru/system/files/H2011-XXPW0000R.pdf"),
+             ("Definum, серия HC (PAP)", "https://definum.ru/materials/connectors-terminals-wafers/hc")),
+            contacts=(("T2011-TP200000R", "AWG 28–22, 0,08–0,35 мм²"),),
+            note="шаг 2,0, 3 А, 250 В; аналог JST PAP-NNV-S; на складе — HSM H2011-08PWA000R",
+            range_src="Hsuan Mao H2011-XXPW0000R"),
+    _series("jr-servo", "Сервоконнектор JR / Futaba", "", WTB, ("JR/Futaba servo connector contact",),
+            (("Корпус под гнёзда JR-T-Female", "jr-servo", ("JR-H-Female",)),
+             ("Корпус под штыри JR-T-Male", "jr-servo", ("JR-H-Male",))),
+            (("Pololu 1924, набор JR (гнёзда)", "https://www.pololu.com/product/1924"),
+             ("Pololu 1925, набор JR (штыри)", "https://www.pololu.com/product/1925")),
+            contacts=(("JR-T-Female", "AWG 26–22"), ("JR-T-Male", "AWG 26–22")),
+            note="3 контакта, шаг 2,54; у вилки Futaba J — дополнительный выступ-ключ; производителя и номера детали нет — "
+                 "артикулы корпусов по образцу контактов", range_src="Pololu 1924, 1925"),
+)
+
 # Molex after the rest of the catalogue: the gallery order comes from `connector_series._order`, not from here.
-CATALOG_SERIES = CATALOG_SERIES + MOLEX_SERIES
+CATALOG_SERIES = CATALOG_SERIES + MOLEX_SERIES + GAP_SERIES

@@ -29,3 +29,13 @@ def test_every_word_found_in_some_field_matches(query):
 @pytest.mark.parametrize("query", ["резистор в2", "конденсатор", "резистор б2 zzz", "1f5 резистор"])
 def test_a_missing_word_means_no_match(query):
     assert not matches(lot(), query)
+
+
+def test_a_word_without_digits_matches_from_a_word_start():
+    # Owner: «Male» found «Female» (substring). Letters match from a word start, codes with digits stay substrings.
+    female = lot(name="Разъём SMA-Female RG-316", article="S-211L")
+    male = lot(name="Разъём SMA-Male RG-316", article="S-111L")
+    assert matches(male, "male") and not matches(female, "male")
+    assert matches(female, "female") and matches(female, "sma fem")
+    assert matches(female, "211") and matches(male, "rg-316") and matches(male, "разъ")
+    assert not matches(lot(), "истор")  # «резистор» — not from a word start

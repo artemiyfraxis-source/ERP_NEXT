@@ -5,16 +5,19 @@ the card through this function and never touches the techcards infrastructure.""
 
 import re
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
 from .application import UnitOfWork
 from .connector_housings import attach_housings
-from .etk_builder import attach_route
+from .etk_builder import attach_route, fill_generator_chain
+from .etk_live import live_document, load_templates
 from .etk_parts import EtkLot, EtkLots, attach_parts
 from .harness import application as harness
 from .harness.application import HarnessNotFound
 from .kitsets import Kitset, project_key
+from .operation_cards import OperationCardTemplate
 from .project_cards import ProjectTechcard, TechcardStatus
 
 # The lots handed to the shop per (project, item index) as the ETK names them — the fulfillment read port
@@ -60,9 +63,21 @@ def card_lots(uow: Any, cards: Sequence[ProjectTechcard], issued: IssuedLots | N
 
 def card_view(
     card: ProjectTechcard, identify: Callable[[str], str] | None = None, lots: EtkLots | None = None,
+    templates: Sequence[OperationCardTemplate] = (), frozen: bool = False,
 ) -> dict[str, Any]:
     """The card as the screens read it: the document enriched with parts (ГРН by the current `lots` bindings),
-    housings and the route scheme."""
+    housings and the route scheme; operation cards nobody edited by hand come from their `templates` as they are now
+    (etk_live), each operation says where its card came from. `frozen` — the document is a stored revision: shown as
+    it was issued, without the live templates."""
+    issued = card.status is TechcardStatus.ISSUED
+    if frozen:
+        document = card.document
+    else:
+        # An issued card never changes silently: its stored revision is shown, the labels read the stored stamps;
+        # a template change reaches it as a revision (automatic or by hand). A draft follows its templates live.
+        document = live_document(
+            card.document, manual_keys=card.manual_operation_keys, templates=templates, built_at=card.updated_at,
+            stored=issued)
     return {
         "id": str(card.id),
         "version": card.version,
@@ -73,21 +88,24 @@ def card_view(
         "deadline": card.deadline.isoformat() if card.deadline else None,
         "status": card.status.value,
         "revision": card.revision,
-        "document": attach_route(attach_housings(attach_parts(card.document, identify, lots))),
+        "document": attach_route(attach_housings(attach_parts(fill_generator_chain(document), identify, lots))),
         "manual_operation_keys": list(card.manual_operation_keys),
         "created_at": card.created_at.isoformat(),
         "updated_at": card.updated_at.isoformat(),
         "issued_at": card.issued_at.isoformat() if card.issued_at else None,
+        "review_note": card.review_note or None,
     }
 
 
 def card_views(
     uow: Any, cards: Sequence[ProjectTechcard], identify: Callable[[str], str] | None = None,
-    issued: IssuedLots | None = None,
+    issued: IssuedLots | None = None, frozen: bool = False,
 ) -> list[dict[str, Any]]:
-    """`card_view` of several cards with their current ГРН bindings read in one go (`card_lots`)."""
+    """`card_view` of several cards with their current ГРН bindings (`card_lots`) and the library templates their
+    operations name read in one go."""
     lots = card_lots(uow, cards, issued) if cards else {}
-    return [card_view(card, identify, lots.get(card.id)) for card in cards]
+    templates = load_templates(getattr(uow, "operation_cards", None), [card.document for card in cards])
+    return [card_view(card, identify, lots.get(card.id), templates, frozen) for card in cards]
 
 
 def _item_index(project: str, item: str) -> str:
@@ -123,3 +141,22 @@ def issued_card_for_item(uow: UnitOfWork, project: str, item: str) -> ProjectTec
         if card is not None:
             return card if card.status is TechcardStatus.ISSUED else None
     return None
+
+
+def pinned_card(uow: Any, card: ProjectTechcard, revision: int | None) -> tuple[ProjectTechcard, dict[str, Any]]:
+    """The card as a task launched with `revision` sees it: the stored document of that revision, plus the notice for
+    the screen — `pinned` (the revision shown), `current`, `newer` (a later revision exists), `fallback` (why the
+    current document is shown instead: the task predates pinning or the revision row is missing; else None)."""
+    current = card.revision
+    info: dict[str, Any] = {"pinned": revision, "current": current, "newer": False, "fallback": None}
+    if revision is None:
+        info["fallback"] = "Задание создано до закрепления ревизии — показана текущая ЭТК"
+        return card, info
+    if revision == current:
+        return card, info
+    row = next((item for item in uow.techcards.revisions(card.id) if item.revision == revision), None)
+    if row is None or not row.document:
+        info["fallback"] = f"Ревизия {revision} не найдена — показана текущая ЭТК"
+        return card, info
+    info["newer"] = current > revision
+    return replace(card, document=row.document), info

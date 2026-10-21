@@ -128,6 +128,9 @@ def test_backfill_follows_the_counters_and_the_shipments_and_prints_the_reconcil
 
     engine = create_engine(f"sqlite+pysqlite:///{database.as_posix()}")
     try:
+        # База на 0111, а репозиторий — текущего кода: колонка поздней миграции (0122 — место хранения ГП).
+        with engine.begin() as connection:
+            connection.exec_driver_sql("ALTER TABLE finished_goods ADD COLUMN location VARCHAR(255) NOT NULL DEFAULT ''")
         with Session(engine) as session:
             goods = SqlAlchemyFinishedGoodsRepository(session)
             totals = goods.journal_totals()

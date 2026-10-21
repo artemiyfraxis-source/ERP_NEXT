@@ -25,8 +25,8 @@ def row(name, group="", **cells):
     (row("Оплётка GTRPA-10", "оплётка"), (cv.BRAID, "по группе")),
     (row("Плетёнка ПМЛ 3х6 У3", "плетёнка"), (cv.BRAID, "по группе")),
     (row("Гофра 6,8мм", "гофра"), (cv.CORRUGATED, "по группе")),
-    (row("Изолента ПВХ 15х0,13х20м", "лента"), (cv.OTHER, "по группе")),
-    (row("Трубка ТВ-40 ПВХ 4мм (кембрик)", "кембрик"), (cv.OTHER, "по группе")),
+    (row("Изолента ПВХ 15х0,13х20м", "лента"), (cv.TAPE, "по группе")),
+    (row("Трубка ТВ-40 ПВХ 4мм (кембрик)", "кембрик"), (cv.CAMBRIC, "по группе")),
     (row("Стяжка 3x60", "стяжка"), (None, "")),
     (row("Тройник 9,8x9,8x9,8", "тройник"), (None, "")),
     (row("Бирка TMS-SCE-1/4-2.0-4", "бирка"), (None, "")),
@@ -38,6 +38,9 @@ def row(name, group="", **cells):
     (row("Оплётка нейлон 6-12 мм"), (cv.BRAID, "по названию")),
     (row("Corrugated split tube 10"), (cv.CORRUGATED, "по названию")),
     (row("Гофротрубка 12"), (cv.CORRUGATED, "по названию")),
+    (row("Трубка ПВХ 4мм (кембрик)"), (cv.CAMBRIC, "по названию")),
+    (row("Изолента ПВХ 19х0,13х20м"), (cv.TAPE, "по названию")),
+    (row("Лента тканевая 20мм"), (cv.TAPE, "по названию")),
     (row("Что-то непонятное"), (None, "")),
 ])
 def test_classifier_table(fields, expected):
@@ -105,7 +108,7 @@ def test_corrugated_fields(fields, inner, outer, split):
     assert (parsed.inner_mm, parsed.outer_mm, parsed.split) == (inner, outer, split)
 
 
-def test_sorting_by_series_then_diameter_as_number():
+def test_sorting_by_diameter_as_number_then_name():
     records = [(str(i), r) for i, r in enumerate([
         row("ТУТ 12/4", "ТУТ", **{"Серия": "Б", "Размер до, мм": "12"}),
         row("ТУТ 4/2", "ТУТ", **{"Серия": "Б", "Размер до, мм": "4"}),
@@ -115,7 +118,29 @@ def test_sorting_by_series_then_diameter_as_number():
         row("ТУТ Б без Ø", "ТУТ", **{"Серия": "Б"}),
     ])]
     names = [item["name"] for item in cv.build(records)["rows"]]
-    assert names == ["ТУТ А 6", "ТУТ 4/2", "ТУТ 9/3", "ТУТ 12/4", "ТУТ Б без Ø", "ТУТ без серии"]
+    # owner 15.10.2026: inside a kind — Ø ascending (the series is a column), unknown Ø last
+    assert names == ["ТУТ без серии", "ТУТ 4/2", "ТУТ А 6", "ТУТ 9/3", "ТУТ 12/4", "ТУТ Б без Ø"]
+
+
+@pytest.mark.parametrize(("name", "width"), [
+    ("Изолента ПВХ 15х0,13х20м", 15.0), ("Изолента ПВХ 3M Temflex 1300 чёрная 15х10м", 15.0),
+    ("Лента 3M PT1100 (акриловая двусторонняя VHB, 6мм×33м)", 6.0), ("Лента нетканая 20мм", 20.0),
+    ("Медная лента Bonkeel Prof 10мм x20м", 10.0), ("Токопроводящая экранирующая лента 0,1х50мм х20м", 50.0),
+    ("Тканевая лента T150PT", None),
+])
+def test_tape_width_from_the_name(name, width):
+    assert cv.parse(row(name, "лента"), cv.TAPE).width_mm == width
+
+
+def test_tapes_sort_by_width_and_cambric_by_diameter():
+    records = [(str(i), r) for i, r in enumerate([
+        row("Лента тканевая 20мм", "лента"), row("Тканевая лента T150PT", "лента"), row("Изолента ПВХ 15х0,13х20м", "лента"),
+        row("Трубка ТВ-40 ПВХ 6мм (кембрик)", "кембрик", **{"Размер до, мм": "6"}),
+        row("Трубка ТВ-40 ПВХ 4мм (кембрик)", "кембрик", **{"Размер до, мм": "4"}),
+    ])]
+    names = [(item["group"], item["name"]) for item in cv.build(records)["rows"]]
+    assert names == [("cambric", "Трубка ТВ-40 ПВХ 4мм (кембрик)"), ("cambric", "Трубка ТВ-40 ПВХ 6мм (кембрик)"),
+                     ("tape", "Изолента ПВХ 15х0,13х20м"), ("tape", "Лента тканевая 20мм"), ("tape", "Тканевая лента T150PT")]
 
 
 def test_series_family_drops_the_catalogue_number():
@@ -130,9 +155,11 @@ def test_series_family_drops_the_catalogue_number():
 
 def test_groups_come_in_the_owner_order_and_non_coverings_are_left_out():
     result = cv.build([("1", row("Стяжка", "стяжка")), ("2", row("Лента", "лента")), ("3", row("Гофра", "гофра")),
-                       ("4", row("Оплётка", "оплётка")), ("5", row("ТТК", "ТТК")), ("6", row("ТУТ", "ТУТ"))])
-    assert [item["group"] for item in result["rows"]] == ["tut", "ttk", "braid", "corrugated", "other"]
-    assert result["counts"] == {"tut": 1, "ttk": 1, "braid": 1, "corrugated": 1, "other": 1}
+                       ("4", row("Оплётка", "оплётка")), ("5", row("ТТК", "ТТК")), ("6", row("ТУТ", "ТУТ")),
+                       ("7", row("Кембрик", "кембрик")), ("8", row("Гофра", "гофра", **{cv.OVERRIDE_FIELD: "Прочее"}))])
+    # owner 15.10.2026: термоусадка, кембрик, гофра, оплётки, ленты
+    assert [item["group"] for item in result["rows"]] == ["tut", "ttk", "cambric", "corrugated", "braid", "tape", "other"]
+    assert result["counts"] == {"tut": 1, "ttk": 1, "cambric": 1, "corrugated": 1, "braid": 1, "tape": 1, "other": 1}
 
 
 def test_bundled_mirror_splits_into_the_four_groups_and_loses_nothing(uow, tmp_path):  # noqa: F811

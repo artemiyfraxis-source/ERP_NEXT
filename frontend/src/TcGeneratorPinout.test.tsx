@@ -125,8 +125,8 @@ it("confirmed pinout collapses to a summary, builds without asking, survives a r
   expect(screen.getAllByText("✓ Проверена: 4 провода, перекрёст 3→2, 5→3, 7→4")).toHaveLength(2);
   expect(screen.queryByLabelText("Контакты А1: НВ4 0,2 белый")).not.toBeInTheDocument();
   expect(within(screen.getByRole("region", { name: "Соединения по распиновке" })).getByText("Распиновка проверена")).toBeInTheDocument();
-  // Список соединений — под схемой, как раньше.
-  expect(screen.getByRole("region", { name: "Соединения по распиновке" })).toHaveTextContent("НВ4 0,2 белый · А1 → В1: 3→2");
+  // Текстовой сводки «провод · А1 → В1: 3→2» под схемой больше нет (14.10): соединения — в схеме связей.
+  expect(screen.getByRole("region", { name: "Соединения по распиновке" })).not.toHaveTextContent("А1 → В1: 3→2");
 
   fireEvent.click(screen.getByRole("button", { name: "Создать" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -150,6 +150,8 @@ it("confirmed pinout collapses to a summary, builds without asking, survives a r
 const chip = (wire: string) => within(screen.getByRole("group", { name: "Провода" })).getByRole("button", { name: new RegExp(wire) });
 const cell = (end: string, pin: number) => screen.getByRole("button", { name: new RegExp(`^${end}, контакт ${pin}:`) });
 const pins = (end: string, wire: string) => (screen.getByLabelText(`Контакты ${end}: ${wire}`) as HTMLInputElement).value;
+/** Провод с палитры на занятый контакт: «Поставить вместо» (второй вариант — двойной обжим, см. TcGeneratorDoubleCrimp). */
+const instead = () => { const offer = screen.queryByRole("group", { name: "Контакт занят" }); if (offer) fireEvent.click(within(offer).getByRole("button", { name: "Поставить вместо" })); };
 /** Ответы API теста + корпуса разъёмов из базы разъёмов. */
 function withHousings(extra: Record<string, unknown>) {
   const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
@@ -285,12 +287,14 @@ it("a rectangular face: click a wire chip, then a cavity assigns it; Enter assig
   expect(document.querySelector('[data-end="В1"] .pin-box')).toBeNull();
   fireEvent.click(chip("НВ4 0,2 красный"));
   fireEvent.click(cell("В1", 3));
+  instead();
   expect(pins("В1", "НВ4 0,2 красный")).toBe("3");
   expect(cell("В1", 3)).toHaveAccessibleName("В1, контакт 3: 3 · НВ4 0,2 красный");
   // Клавиатура: гнездо в порядке Tab, Enter ставит провод из руки.
   expect(cell("В1", 2)).toHaveAttribute("tabindex", "0");
   fireEvent.click(chip("НВ4 0,2 белый"));
   fireEvent.keyDown(cell("В1", 2), { key: "Enter" });
+  instead();
   expect(pins("В1", "НВ4 0,2 белый")).toBe("2");
   // Занятое гнездо, затем другое гнездо того же разъёма — провода меняются местами.
   fireEvent.click(cell("В1", 3));
@@ -311,6 +315,7 @@ it("a round connector draws its pin ring and the pins are clickable too", async 
   expect(hits.every((c) => Number(c.getAttribute("r")) * 2 >= 28)).toBe(true);
   fireEvent.click(chip("НВ4 0,2 зеленый"));
   fireEvent.click(cell("В1", 4));
+  instead();
   expect(pins("В1", "НВ4 0,2 зеленый")).toBe("4");
   expect(document.querySelector('[data-end="В1"] [data-pin="4"] title')).toHaveTextContent("контакт 4 · НВ4 0,2 зеленый");
 });
@@ -336,8 +341,8 @@ it("click a connected pin, then a cavity of the second B connector: «Добав
   expect(chip("НВ4 0,2 белый")).toHaveTextContent("А1·3 → В1·2 + В2·4");
   expect(cell("В2", 4)).toHaveAccessibleName("В2, контакт 4: 5 · НВ4 0,2 белый");
   const route = document.querySelector('.pin-route[data-wire="1"]') ?? document.querySelector('.pin-route[data-from="А1·3"]')!;
-  expect(route.querySelectorAll(".pin-route-to")).toHaveLength(2);
-  expect(route.querySelectorAll(".pin-glyph .pin-line")).toHaveLength(2);
+  // Список «провод → контакты» убран (14.10): в строке ответвления только переключатели режима.
+  expect(route.querySelectorAll(".pin-route-to, .pin-glyph")).toHaveLength(0);
   // Режим переключается на самом ответвлении: сросток.
   fireEvent.click(within(route as HTMLElement).getByRole("button", { name: "сросток" }));
   expect(chip("НВ4 0,2 белый")).toHaveTextContent("А1·3 → В1·2 + В2·4");

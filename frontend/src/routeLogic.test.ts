@@ -18,6 +18,11 @@ it("derives the chain of a wire harness and the side branch of TUT pieces like t
   expect(arrows(deriveRoute([op(1, "cutWire"), { ...op(2, "other"), code: "CUT_X" }, op(3, "sdr")]))).toEqual(["b1>b3", "b2>b3"]);
 });
 
+it("takes the coax tubes into «Монтаж ТУТ», not into the solder of the first pin (796К.2 КБ1)", () => {
+  const coax = deriveRoute([op(1, "coaxCut"), { ...op(2, "coaxCutTut"), code: "CUT_TUT_short" }, op(3, "coaxPin"), op(4, "coaxPin"), op(5, "coaxInsTut"), op(6, "coaxHousing")]);
+  expect(arrows(coax)).toEqual(["b1>b3", "b2>b5", "b3>b4", "b4>b5", "b5>b6"]);
+});
+
 it("computes block time, inputs and the rolled-up time per piece the way the backend does", () => {
   // build_etk: блок b1 — 10,54 мин на партию 5 → 2,108 мин/шт
   const route = deriveRoute([op(1, "cutWire", "Резка", 10.54), op(2, "prsTerm", "Опрессовка", 5)]);
@@ -124,6 +129,30 @@ it("sends the names only when they were typed and reads back what it sent", () =
   expect(parseRoute({ blocks: [] })).toBeNull();
 });
 
+it("carries the kit mark and the arrow items to the server and back, and merged arrows join their items", () => {
+  const route: Route = {
+    blocks: [{ ...block("cut", [1]), kit: true }, block("a", [2]), block("b", [3]), block("fin", [4], true)],
+    edges: [
+      { from: "cut", to: "a", per_unit: 1, item: " НВ4 0,12 белый ×2 " }, { from: "cut", to: "b", per_unit: 1, item: "ТТК 8/2 ×1" },
+      { from: "a", to: "fin", per_unit: 1, item: "" }, { from: "b", to: "fin", per_unit: 1 },
+    ],
+  };
+  const payload = routePayload(route);
+  expect(payload).toEqual({
+    blocks: [{ key: "cut", ops: [1], final: false, kit: true }, { key: "a", ops: [2], final: false },
+      { key: "b", ops: [3], final: false }, { key: "fin", ops: [4], final: true }],
+    edges: [{ from: "cut", to: "a", per_unit: 1, item: "НВ4 0,12 белый ×2" }, { from: "cut", to: "b", per_unit: 1, item: "ТТК 8/2 ×1" },
+      { from: "a", to: "fin", per_unit: 1 }, { from: "b", to: "fin", per_unit: 1 }],
+  });
+  const back = parseRoute(payload)!;
+  expect(back.blocks[0]).toEqual({ ...block("cut", [1]), kit: true });
+  expect(back.blocks[1]).not.toHaveProperty("kit");
+  expect(back.edges.map((edge) => edge.item)).toEqual(["НВ4 0,12 белый ×2", "ТТК 8/2 ×1", undefined, undefined]);
+  // «a» и «b» склеены: две стрелки из резки стали одной — одна стрелка на пару блоков, подписи через «; ».
+  const merged = mergeBlocks(back, "a", "b");
+  expect(merged.edges).toEqual([{ from: "cut", to: "b", per_unit: 2, item: "НВ4 0,12 белый ×2; ТТК 8/2 ×1" }, { from: "b", to: "fin", per_unit: 2 }]);
+});
+
 it("takes operation norms from the stored ETK only while it was built from the same operations", () => {
   const document = {
     kit: { part_quantity: "5" },
@@ -133,7 +162,8 @@ it("takes operation norms from the stored ETK only while it was built from the s
       { type: "prsTerm", times: { operation_seconds: "6", setup_seconds: "60" } },
     ],
   };
-  expect(documentMinutes(document, ["cutWire", "prsTerm"])).toEqual({ minutes: [11.54, 1.5], quantity: 5 });
+  // Без строк времени — секунды на штуку × партия, без подготовки (ETK 4): 6 с × 5 шт = 0,5 мин.
+  expect(documentMinutes(document, ["cutWire", "prsTerm"])).toEqual({ minutes: [11.54, 0.5], quantity: 5 });
   expect(documentMinutes(document, ["cutWire"])).toBeNull();
   expect(documentMinutes(document, ["cutWire", "insTerm"])).toBeNull();
   expect(documentMinutes(null, ["cutWire"])).toBeNull();

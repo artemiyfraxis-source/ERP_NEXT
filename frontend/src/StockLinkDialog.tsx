@@ -1,3 +1,4 @@
+import { fieldTitle } from "./referenceLabels";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { referencesApi, type TechOperationRecord, type TechOperationTab, type WarehouseLot } from "./api";
@@ -112,7 +113,7 @@ export function StockLinkDialog({ lot, onClose }: { lot: WarehouseLot; onClose: 
         </div>
         <span>База: {LINK_BASES.find((item) => item.tab === done.record.tab)?.label ?? "—"}{done.entry ? ` · ${STOCK_LINK_EVENT_LABELS[done.entry.event]}` : ""}</span>
         {done.entry && done.entry.changes.length > 0 && <ul className="stock-link-changes">
-          {done.entry.changes.map((change) => <li key={change.field}>{change.field}: {change.old || "—"} → {change.new}</li>)}
+          {done.entry.changes.map((change) => <li key={change.field}>{fieldTitle(change.field)}: {change.old || "—"} → {change.new}</li>)}
         </ul>}
         <div className="move-actions"><button type="button" className="primary" autoFocus onClick={onClose}>Закрыть</button></div>
       </div> : <form className="dialog-form" aria-label="В базу данных" onSubmit={submit}>
@@ -130,7 +131,7 @@ export function StockLinkDialog({ lot, onClose }: { lot: WarehouseLot; onClose: 
             : <div className="stock-link-results" role="group" aria-label="Найденные записи">
               {records.map((record) => <button key={record.id} type="button" aria-pressed={picked === record.id} onClick={() => setPicked(record.id)}>{record.display_text}</button>)}
             </div>}
-        </> : <div className="move-grid two">
+        </> : <div className={slots.length === 3 ? "move-grid three" : "move-grid two"}>
           {slots.map((slot) => <label key={slot}>{FIELD_LABELS[slot]}<input aria-label={FIELD_LABELS[slot]} value={fields[keyOf(slot)] ?? ""} onChange={(event) => setFields((current) => ({ ...current, [keyOf(slot)]: event.target.value }))} /></label>)}
         </div>}
         {error && <div className="error-banner" role="alert">{error}</div>}

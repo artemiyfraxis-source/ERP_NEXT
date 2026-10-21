@@ -44,7 +44,7 @@ def _build(marks: list[dict], *, references: bool = True) -> tuple[dict, list[st
     next(item for item in config["ops"] if item["type"] == "insMark")["marks"] = marks
     if references:
         config = enrich_marking(config, _mirror_equipment(), _mirror_operations())
-    document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    document = build_etk(config, CARDS)
     return next(item for item in document["operations"] if item["type"] == "insMark"), document["warnings"]
 
 
@@ -87,9 +87,9 @@ def test_flag_marking_prints_on_the_flag_machine_installs_fixes_and_checks():
     assert not any("термо" in step["text"].lower() or "трубк" in step["text"] for step in steps)
     assert op["card"]["defects"].splitlines() == ["Хлястик:", *(f"{name}: {cause}" for name, cause in TYPES[0]["defects"])]
     assert _equipment(op) == [("ZCUT-RT430 | Маркиратор проводов флашковый", "ОБ.101")]
-    # Монтаж 20 с × 1 × 38 + 120 с = 14,67 мин; печать INS_MARK_AUTO 4 с × 38 + 600 с = 12,53 мин.
-    assert [(row["name"], row["norm"]) for row in op["time"][1:]] == [("Печать хлястиков", "12,53")]
-    assert op["time"][0]["norm"] == "14,67"
+    # Монтаж 20 с × 1 × 38 = 12,67 мин; печать INS_MARK_AUTO 4 с × 38 = 2,53 мин (подготовка в норму не входит).
+    assert [(row["name"], row["norm"]) for row in op["time"][1:]] == [("Печать хлястиков", "2,53")]
+    assert op["time"][0]["norm"] == "12,67"
     assert warnings == []
 
 
@@ -110,9 +110,9 @@ def test_heat_shrink_tube_is_printed_cut_put_on_before_termination_and_shrunk():
         ("Автомат мерной резки гофрированных и термоусаживаемых трубок", "ОБ.018"),
         ("8620DX-Pro | Станция паяльная термовоздушная", "ОБ.070.1"),
     ]
-    # 3 трубки на изделие × 38: печать 2 с + 600, резка 1 с + 300, усадка 9 с + 120.
+    # 3 трубки на изделие × 38: печать 2 с, резка 1 с, усадка 9 с (без подготовки).
     assert [(row["name"], row["norm"]) for row in op["time"][1:]] == [
-        ("Печать на трубках", "13,8"), ("Нарезка трубок", "6,9"), ("Усадка трубок", "19,1"),
+        ("Печать на трубках", "3,8"), ("Нарезка трубок", "1,9"), ("Усадка трубок", "17,1"),
     ]
 
 
@@ -209,3 +209,20 @@ def test_mixed_heat_and_pvc_blocks_get_their_own_lengths():
     assert len(cuts) == 2
     assert cuts[0].startswith("Термоусадочная трубка — нарезать трубки в размер: X1 — 25 мм — ")
     assert cuts[1].startswith("ПВХ-трубка — нарезать трубки в размер: W1 — 40 мм — ")
+
+
+def test_product_number_token_stays_in_the_inscription_and_changes_nothing_else():
+    # «№ изделия» (`{№}`, `{№:3}`) разворачивает экран задания; ЭТК хранит надпись как есть, остальное — как у
+    # надписи без номера: ход операции, материалы, время.
+    numbered, _ = _build([_mark("Хлястик", "КБ1-{№:3}", target="Изделие КБ1"), _mark("Термотрубка", "X1-{№}")])
+    plain, _ = _build([_mark("Хлястик", "КБ1-001", target="Изделие КБ1"), _mark("Термотрубка", "X1-1")])
+    assert [mark["text"] for mark in numbered["fields"]["marks"]] == ["КБ1-{№:3}", "X1-{№}"]
+    for mark in (*numbered["fields"]["marks"], *plain["fields"]["marks"]):
+        mark.pop("text")
+    assert numbered == plain
+
+
+def test_tube_cut_step_names_a_numbered_inscription_by_its_template():
+    op, _warnings = _build([_tube("Термотрубка", "X1", 25), _tube("Термотрубка", "W1/{№:3}", 20)])
+    cut = next(step["text"] for step in op["card"]["steps"] if "арезать" in step["text"])
+    assert "X1 — 25 мм, W1/{№} — 20 мм" in cut

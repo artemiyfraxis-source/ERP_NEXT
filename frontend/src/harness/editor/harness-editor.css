@@ -403,9 +403,6 @@
 .harness-root .he-catalog-empty.error { color: var(--tone-danger); }
 .harness-root .he-catalog-empty.unpublished { color: var(--muted-foreground); }
 .harness-root .he-catalog-empty button { padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--card); color: var(--muted-foreground); font-size: 9px; cursor: pointer; }
-.harness-root .he-catalog-more { width: 105px; min-height: 60px; align-self: stretch; border: 1px dashed var(--muted-foreground); border-radius: 7px; background: var(--panel-soft); color: var(--primary); font-size: 10px; font-weight: 750; cursor: pointer; }
-.harness-root .he-catalog-more:hover:not(:disabled) { border-color: var(--muted-foreground); background: var(--sheet-selected); }
-.harness-root .he-catalog-more:disabled { opacity: .62; cursor: progress; }
 .harness-root .he-catalog.collapsed .he-catalog-header { grid-template-columns: auto; }
 
 @media (max-width: 1050px) {
@@ -1086,11 +1083,8 @@
 .harness-root .he-catalog-add { color: var(--muted-foreground); font-size: 15px; text-align: center; opacity: 0; }
 .harness-root .he-catalog-card:hover .he-catalog-add,
 .harness-root .he-catalog-card:focus-visible .he-catalog-add { color: var(--primary); opacity: 1; }
-.harness-root .he-catalog-more {
-  grid-column: 1 / -1; justify-self: start; width: auto; min-height: 30px; margin-top: 6px; padding: 0 12px;
-  border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--card); color: var(--foreground); font-size: 13px; font-weight: 500;
-}
-.harness-root .he-catalog-more:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
+/* Подгрузка в конце каталога (LoadMore): метка на всю строку, «Загружаем…» — пока идёт порция. */
+.harness-root .he-catalog-more { grid-column: 1 / -1; min-height: 1px; padding: 2px 0; color: var(--muted-foreground); font-size: 12px; }
 .harness-root .he-catalog-empty,
 .harness-root .he-catalog-empty button { font-size: 13px; }
 .harness-root .he-catalog-empty { grid-column: 1 / -1; }
@@ -1128,6 +1122,11 @@
 .harness-root .he-phone-view .harness-section-navigation button { padding: 0 10px; }
 .harness-root .he-phone-view .he-canvas-status span:last-child { display: none; }
 .harness-root .he-phone-view .he-table-window { max-width: calc(100% - 8px); }
+@media (max-width: 380px) {
+  .harness-root .he-phone-view .he-toolbar-phone .he-zoom-select { width: 64px; }
+  .harness-root .he-phone-view .he-toolbar-phone .he-fit-tool { width: 32px; }
+  .harness-root .he-phone-view .harness-section-navigation button { padding: 0 6px; }
+}
 
 /* ERP-вид форм редактора (13.10.2026): «Настройки чертежа», свойства справа, окна объектов и таблиц. Разметка и логика —
    из TECHMAP-GRAPHER, вид — как формы ERP: подпись 12 px серым над полем 30 px, текст 13 px, разделы — линией, а не
@@ -1318,3 +1317,8 @@
   .harness-root .he-controls-section .he-thickness-control input[type="range"] { height: 32px; }
   .harness-root .he-layer-row { min-height: 44px; }
 }
+
+/* Корпус из базы разъёмов: карточка в две строки с видом сверху вместо точки. */
+.harness-root .he-catalog-card.has-top { height: 64px; grid-row: span 2; grid-template-columns: 96px minmax(0, 1fr) 18px; }
+.harness-root .he-catalog-card.has-top .he-catalog-top { width: 96px; height: 56px; }
+.harness-root .he-catalog-card.has-top > span:nth-child(2) { display: grid; gap: 2px; align-content: center; }

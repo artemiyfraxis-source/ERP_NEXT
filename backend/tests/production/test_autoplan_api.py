@@ -122,7 +122,9 @@ def tasks_of(client: TestClient) -> dict[str, dict]:
     return {task["id"]: task for task in client.get("/api/production/tasks").json()["tasks"]}
 
 
-def test_preview_batches_one_terminal_on_one_fitter_and_skips_zhuk(client):
+def test_preview_plans_every_task_skips_zhuk_and_saves_no_changeover_while_the_plan_has_no_setup(client):
+    """Since 18.10 the plan counts no setup (the operator starts a task only once everything is ready), so one
+    terminal on one fitter saves nothing: there is no changeover to save, and the load is spread over the fitters."""
     http, _ = client
     tasks = [launch(http, index, height=height) for index, height in (("КБ1", "1,14 - 1,24"), ("КБ2", "1,14 - 1,24"), ("КБ3", "0,80 - 0,90"))]
     handed = launch(http, "КБ4")
@@ -133,17 +135,13 @@ def test_preview_batches_one_terminal_on_one_fitter_and_skips_zhuk(client):
     crimps = [item for item in planned["proposals"] if item["code"] == "PRS"]
     assert {item["task_id"] for item in planned["proposals"]} == {task["id"] for task in tasks}
     assert len(planned["proposals"]) == 6 and planned["unplaced"] == []
-    assert {item["operator_id"] for item in crimps} == {str(ANNA)}
-    assert sorted(item["changeover_seconds"] for item in crimps) == [0, 600, 1800]
+    assert {item["operator_id"] for item in crimps} <= {str(ANNA), str(BORIS)}
+    assert [item["setup_seconds"] for item in planned["proposals"]] == [0] * 6
+    assert [item["changeover_seconds"] for item in planned["proposals"]] == [0] * 6
     assert all(item["operator_id"] != str(ZHUK) for item in planned["proposals"])
     assert crimps[0]["machine"] == "ОБ.027 Пресс"
     assert crimps[0]["setup_label"].startswith("Опрессовка терминалов: терминал T-1, аппликатор A19")
-    anna = next(item for item in planned["batches"] if item["operator_id"] == str(ANNA))
-    assert anna["batches"][0]["operations"] == 3
-    assert anna["batches"][0]["tasks"] == [task["number"] for task in tasks]
-    assert planned["stats"]["changeovers"] < planned["stats"]["changeovers_naive"]
-    assert sum(item["setup_seconds"] - item["changeover_seconds"] for item in crimps) == 1800 + 1200
-    assert planned["stats"]["saved_seconds"] == sum(item["setup_seconds"] - item["changeover_seconds"] for item in planned["proposals"])
+    assert planned["stats"] == {"changeovers": 0, "changeovers_naive": 0, "saved_seconds": 0}
     assert all(item["task_version"] == tasks[0]["version"] for item in crimps)
 
 

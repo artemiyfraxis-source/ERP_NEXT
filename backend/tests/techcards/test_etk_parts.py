@@ -3,7 +3,7 @@ from app.modules.techcards.etk_parts import EtkLot, EtkLots, attach_parts, kit_a
 
 def _names(article: str) -> str:
     # Stand-in for the warehouse article rules (stock05ArtInfo_ with empty БД.ТЕР/БД.КОАКС).
-    return {"SHF-001T-0.8BS": "Контакт SM Female", "SMP-02V-BC": "SM вилка 2pin (однорядный)"}.get(article, "")
+    return {"SHF-001T-0.8BS": "Контакт SM Female", "SMP-02V-BC": "SM розетка 2pin (однорядный)"}.get(article, "")
 
 
 def test_kit_name_code_other_than_article_is_the_article_to_apply():
@@ -35,7 +35,7 @@ def test_component_row_is_article_kd_name_by_article_and_grn_only_from_a_lot():
         row(art="МК26-13 0,35 черный", name="Провод МК 26-13 (цветной МГТФ)"),
     ] == [
         ["SHF-001T-0.8BS", "BL2018TS", "Контакт SM Female", ""],
-        ["SMP-02V-BC", "", "SM вилка 2pin (однорядный)", ""],
+        ["SMP-02V-BC", "", "SM розетка 2pin (однорядный)", ""],
         ["UL1061 30AWG белый", "", "", ""],
         ["МК26-13 0,35 черный", "", "Провод МК 26-13 (цветной МГТФ)", ""],
     ]
@@ -159,3 +159,20 @@ def test_binding_matches_the_kd_article_and_the_article_to_apply_either_way_roun
     lots = EtkLots(kitset=(EtkLot(article="BL2018TS ", name="SHF-001T-0.8BS", grn="Г-55"),))
 
     assert _grn(attach_parts(etk, None, lots)) == ["Г-55", "Г-55"]
+
+
+def test_kit_request_numbers_of_issued_lots_are_unique_and_joined_none_for_kitset_only():
+    etk = _etk({"art": "43025-0400"}, {"art": "GHR-04V-S"}, {"name": "Термоусадка"})
+    lots = EtkLots(
+        issued=(
+            EtkLot(article="43025-0400", name="", grn="Г-7", request="REQ.26.0000001"),
+            EtkLot(article="43025-0400", name="", grn="Г-3", request="REQ.26.0000002"),
+            EtkLot(article="43025-0400", name="", grn="Г-4", request="REQ.26.0000001"),
+        ),
+        kitset=(EtkLot(article="GHR-04V-S", name="", grn="Г-103"),),
+    )
+
+    rows = attach_parts(etk, None, lots)["operations"][0]["components"]
+
+    assert [row.get("kit_request") for row in rows] == ["REQ.26.0000001, REQ.26.0000002", None, None]
+

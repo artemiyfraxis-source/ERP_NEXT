@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFECT_SCENES, defectArt, defectContext, defectGroupCode, defectSceneArt, defectSceneId } from "./etkDefectArt";
+import { DEFECT_SCENES, defectArt, defectContext, defectGroupCode, defectOperationCode, defectSceneArt, defectSceneId } from "./etkDefectArt";
 import markingCatalog from "../../backend/data/etk-marking.json";
 
 describe("defect picture library", () => {
@@ -137,5 +137,72 @@ describe("defect picture library", () => {
     expect(defectContext("PRS_НШВИ")).toBe("lug");
     expect(defectContext("SDR_XT60")).toBe("solder");
     expect(defectContext("HEAT_TTK_long")).toBe("shrink");
+  });
+
+  it("draws the coax ETK (796К.2 КБ1, owner 15.10) on the coax cable, the TUT and the connector — not on a bare wire", () => {
+    // Резка коаксиала идёт по карте провода CUT_WIRE_auto — рисунки берутся по виду операции генератора.
+    const cut = defectOperationCode("CUT_WIRE_auto", "coaxCut");
+    expect(defectContext(cut)).toBe("coax");
+    expect(defectOperationCode("CUT_WIRE_auto", "cutWire")).toBe("CUT_WIRE_auto");
+    expect(defectOperationCode("STRIP_COAX_auto", "coaxStrip")).toBe("STRIP_COAX_auto");
+    const scenes = (code: string, names: string[]) => names.map((name) => defectSceneId(name, "", code));
+    expect(scenes(cut, ["Надрезы, царапины, потертости", "Смятие (сплющивание) изоляции", "Задиры на торце", "Косой рез",
+      "Вытягивание жил", "Деформация скрутки", "Заусенцы", "Длина вне допуска"]))
+      .toEqual(["cxJacketNick", "cxJacketCrush", "cxFaceRagged", "cxSkew", "cxPulled", "cxFaceSplay", "cxBurr", "cxLength"]);
+    expect(scenes("STRIP_COAX_auto", ["Надрезы, царапины или обрывы", "Скручивание или распушение", "Порезы, надрывы, трещины",
+      "Смятие или вытягивание", "Остатки экрана", "Чрезмерное повреждение прядей", "Неровный срез оплетки (бахрома)",
+      "Распушение оплетки", "Смятие изоляции", "Нарушение размеров ступеней"]))
+      .toEqual(["cxCoreNick", "cxCoreSplay", "cxDielCut", "cxDielDeform", "cxBraidResidue", "cxBraidCut", "braidHairs",
+        "braidHairs", "cxJacketCrush", "coaxSteps"]);
+    expect(scenes("CUT_TUT_short", ["Рваный край / Заусенцы", "Продольные надрезы и микротрещины на торце", "Косой рез",
+      "Сплющивание (слипание) трубки", "Длина вне допуска"]))
+      .toEqual(["tubeRagged", "tubeSlit", "tubeSkew", "tubeFlat", "tubeLength"]);
+    expect(scenes("INS_TUT", ["Неверный порядок трубок"])).toEqual(["tubeOrder"]);
+    expect(scenes("HEAT_TYT_short", ["Термическое повреждение (расплавление) внешней оболочки самого кабеля"])).toEqual(["shrinkJacketMelt"]);
+    expect(defectContext("INS_housing_COAX")).toBe("coaxAsm");
+    expect(scenes("INS_housing_COAX", ["«Недосад» корпуса", "Деформация или изгиб пина при вводе в разъем",
+      "Заворачивание проволочек экрана внутрь корпуса"])).toEqual(["cxSeat", "cxBent", "shieldSpread"]);
+    // Монтаж корпуса с прижимом (INS_housing_COAX_clamp): свой рисунок на каждый дефект карты.
+    expect(defectContext("INS_housing_COAX_clamp")).toBe("coaxAsm");
+    expect(scenes("INS_housing_COAX_clamp", ["Пряди оплётки на изоляторе или контакте", "Оплётка не зажата", "Гайка перетянута",
+      "Пропущен уплотнитель или шайба", "Контакт не дошёл до упора"]))
+      .toEqual(["cxBraidStrands", "cxClampLoose", "cxNutOver", "cxGasketMissing", "cxSeat"]);
+    for (const id of ["cxBraidStrands", "cxClampLoose", "cxNutOver", "cxGasketMissing"]) {
+      const panels = [...defectSceneArt(id).matchAll(/<svg x="[^"]+" y="1" [^>]*>(.*?)<\/svg>/g)].map((match) => match[1]);
+      expect(panels).toHaveLength(2);
+      expect(panels[0]).not.toEqual(panels[1]);
+    }
+    expect(defectContext("PRS_SLEEVE_coax")).toBe("coaxCrimp");
+    expect(scenes("PRS_SLEEVE_coax", ["Торчащие волоски экрана из-под краев гильзы", "«недожим» гильзы",
+      "«пережим» или выдавливание облоя («ушей») металла между матрицами",
+      "Деформация самого корпуса разъема из-за неправильного позиционирования в прессе"]))
+      .toEqual(["cxSleeveHairs", "cxHexLoose", "cxHexFlash", "cxBodyDent"]);
+    // Норма и брак различаются в самом месте дефекта.
+    for (const id of ["cxJacketNick", "cxFaceSplay", "cxCoreNick", "tubeSlit", "cxHexLoose", "cxSeat"]) {
+      const panels = [...defectSceneArt(id).matchAll(/<svg x="[^"]+" y="1" [^>]*>(.*?)<\/svg>/g)].map((match) => match[1]);
+      expect(panels).toHaveLength(2);
+      expect(panels[0]).not.toEqual(panels[1]);
+    }
+  });
+  it("draws every defect of the marking-tube card (INS_MARK_TUBE_AUTO) with its own printed-tube scene, never «!»", () => {
+    const code = "INS_MARK_TUBE_AUTO";
+    expect(defectContext(code)).toBe("markAuto");
+    const cases: Array<[string, string]> = [
+      ["Текст не соответствует КД", "autoText"], ["Нечитаемый текст", "autoBlur"], ["Текст сдвинут", "autoShift"],
+      ["Длина вне допуска по КД", "autoLength"], ["Косой или рваный рез", "autoCut"], ["Загрязнение и деформация", "autoDirt"],
+      ["Не тот типоразмер или цвет", "autoSize"], ["Отрезки разных текстов смешаны в одной таре", "autoMix"],
+    ];
+    for (const [name, scene] of cases) {
+      expect([name, defectSceneId(name, "", code)]).toEqual([name, scene]);
+      expect(defectArt(name, "", code)).not.toContain('data-scene="generic"');
+      const panels = [...defectSceneArt(scene).matchAll(/<svg x="[^"]+" y="1" [^>]*>(.*?)<\/svg>/g)].map((m) => m[1]);
+      expect(panels).toHaveLength(2);
+      expect(panels[0]).not.toEqual(panels[1]); // норма и брак различаются
+    }
+    // Сцены только у этой карты: те же слова у других операций рисуются прежними картинками.
+    expect(defectSceneId("Нечитаемый текст", "", "INS_MARK")).toBe("markText");
+    expect(defectSceneId("Длина вне допуска", "", "CUT_TUT_auto")).toBe("tubeLength");
+    expect(defectSceneId("Косой рез", "", "CUT_TUT_auto")).toBe("tubeSkew");
+    expect(defectSceneId("Загрязнение и деформация", "", "CUT_WIRE_auto")).not.toBe("autoDirt");
   });
 });

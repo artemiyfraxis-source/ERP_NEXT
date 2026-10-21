@@ -66,7 +66,9 @@ it("gives the same config as opening the generator and pressing «Создать
 
   const [batch] = runBatch({ refs, items: [{ key: "1", bom: kit }] }).items;
   expect(batch.error).toBe("");
-  expect(batch.config).toEqual(onBuild.mock.calls[0][0]);
+  // Снимок формы (gen_state) есть только у сборки из формы; пакетная сборка его не пишет.
+  const { gen_state: _snapshot, ...built } = onBuild.mock.calls[0][0] as Record<string, unknown>;
+  expect(batch.config).toEqual(built);
   expect((batch.config?.ops as Array<{ templateId: string }>).map((op) => op.templateId)).toEqual(["cut", "prsA", "insA", "prsB", "insB"]);
 });
 

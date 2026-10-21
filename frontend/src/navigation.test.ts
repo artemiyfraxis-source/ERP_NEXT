@@ -24,7 +24,7 @@ const ALL_EDIT = Object.fromEntries(
 const EVERYTHING = {
   "Производство": ["Проекты", "Ресурсное планирование", "Задания", "ОТК"],
   "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
-  "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
+  "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
   "Менеджмент": ["Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
   "Справочники": ["База данных"],
 };
@@ -72,7 +72,7 @@ it("gives the foreman the shop, the stock and the storekeeper's shipping, no ref
   expect(layout(as("foreman", FOREMAN))).toEqual({
     "Производство": ["Ресурсное планирование", "Задания", "ОТК"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Лист закупки"],
-    "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
+    "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
   });
 });
@@ -81,7 +81,7 @@ it("gives the technical lead projects, planning, the whole supply block and the 
   expect(layout(as("tech_lead", TECH_LEAD))).toEqual({
     "Производство": ["Проекты", "Ресурсное планирование", "ОТК"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
-    "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
+    "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
     "Справочники": ["База данных"],
   });
@@ -91,7 +91,7 @@ it("gives the commercial lead projects, the supply sheets and shipping for readi
   expect(layout(as("commercial", COMMERCIAL))).toEqual({
     "Производство": ["Проекты", "Ресурсное планирование"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
-    "Склад": ["Склад", "Отгрузка"],
+    "Склад": ["Склад", "Приёмка с производства", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
   });
 });
@@ -213,9 +213,13 @@ it("tells a card open for reading only: all its keys are view grants, never for 
   expect(viewOnly(as("admin", { warehouse: "view" }), "stock")).toBe(false);
 });
 
-it("names the six access levels in Russian and shows an unknown key as it is", () => {
-  expect(Object.keys(ACCESS_LEVEL_LABELS)).toEqual(["superadmin", "admin", "commercial", "tech_lead", "foreman", "operator"]);
+it("names the seven access levels in Russian (and the admin-mode session) and shows an unknown key as it is", () => {
+  expect(Object.keys(ACCESS_LEVEL_LABELS)).toEqual([
+    "superadmin", "commercial", "tech_lead", "pm", "storekeeper", "foreman", "operator", "admin",
+  ]);
   expect(accessLevelLabel("superadmin")).toBe("Суперадминистратор");
+  expect(accessLevelLabel("pm")).toBe("Менеджер по проектам");
+  expect(accessLevelLabel("storekeeper")).toBe("Кладовщик");
   expect(accessLevelLabel("admin")).toBe("Администратор");
   expect(accessLevelLabel("commercial")).toBe("Коммерческое руководство");
   expect(accessLevelLabel("tech_lead")).toBe("Технический руководитель");

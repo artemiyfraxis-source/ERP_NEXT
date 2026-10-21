@@ -33,8 +33,8 @@ class IssuedKitLots:
         with self.fulfillment_uow_factory() as uow:
             rows = uow.fulfillment.issued_lots(list(asked))
         found: dict[tuple[str, str], list[EtkLot]] = {}
-        for project, kb, article, name, grn, package in rows:
-            found.setdefault((project, kb), []).append(EtkLot(article=article, name=name, grn=grn, package=package))
+        for project, kb, article, name, grn, package, request in rows:
+            found.setdefault((project, kb), []).append(EtkLot(article=article, name=name, grn=grn, package=package, request=request))
         return {
             kit: tuple(found.get(key, ()))
             for key, named in asked.items()

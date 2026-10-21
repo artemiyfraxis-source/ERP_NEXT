@@ -56,3 +56,33 @@ export function valueLabel(header: string, value: string): string {
   if (key === "расположение") return SITES[text.trim().toLocaleLowerCase("ru-RU")] ?? text;
   return text;
 }
+
+/** Подписи ключей схемы БД.ТЕР/ОБ/ОП/КОАКС (поля записи приходят под ключом схемы). */
+export const FIELD_TITLES: Record<string, string> = {
+  baseValue: "Для базы", obType: "Тип",
+  opNumber: "Номер", opName: "Название", tOp: "Время операции, с", tPrep: "Время подготовки, с", tMachine: "Время машины, с/оп; с/м",
+  opProfession: "Профессия", opGrade: "Разряд",
+  terManufacturer: "Производитель", terSeries: "Серия", terComponent: "Наименование", connType: "Тип разъёма",
+  terType: "Тип контакта", artISL: "Артикул ISL", artSAG: "Артикул SAG", terArticle: "Артикул контакта", terLPlus: "L+",
+  terLMinus: "L−", terStep: "Шаг", terApplicator: "Аппликатор", terStrip: "Длина зачистки, мм",
+  terCrimpHeight: "Высота обжима проводника, мм", terPullForceMin: "Усилие обрыва от, Н", terPullForceMax: "Усилие обрыва до, Н",
+  // Карточка контакта по протоколу v5.2 (TerminalCard): выгрузка «Скачать для правки» пишет их под этими подписями.
+  awgFrom: "От AWG", awgTo: "До AWG", mm2From: "Сечение от, мм²", mm2To: "Сечение до, мм²", terGender: "Пол",
+  terArticleBag: "Артикул BAG (россыпь)", terMaterial: "Материал / покрытие", terMaxCurrent: "Макс. ток, А",
+  terDatasheet: "Даташит", terInsCrimpHeight: "Высота обжима изоляции, мм", terInsOdFrom: "Диаметр изоляции от, мм",
+  terInsOdTo: "Диаметр изоляции до, мм",
+  coaxArticle: "Артикул", coaxType: "Тип/серия", coaxMfr: "Производитель", supplier: "Поставщик", coaxWire: "Провод", program: "Программа",
+};
+
+/* Смысл L+ / L− терминала БД.ТЕР (владелец 16.10.2026): генератор прибавляет L+ к длине между корпусами и вычитает L−
+   из длины от краёв разъёмов, поэтому L+ + L− = длина корпуса. Длина контакта — не L+. */
+export const TER_L_PLUS_HINT = "L+ — глубина конца жилы от торца корпуса со стороны провода";
+export const TER_L_MINUS_HINT = "L− — от конца жилы до стыковочного торца";
+const TER_HINTS: Record<string, string> = {
+  terLPlus: TER_L_PLUS_HINT, "L+": TER_L_PLUS_HINT, terLMinus: TER_L_MINUS_HINT, "L-": TER_L_MINUS_HINT, "L−": TER_L_MINUS_HINT,
+};
+/** Подсказка к полю БД.ТЕР (ключ схемы или колонка листа), если она есть. */
+export const terFieldHint = (field: string): string | undefined => TER_HINTS[cleanHeader(field)];
+
+/** Русский заголовок поля записи: ключ схемы → карта, иначе заголовок листа. */
+export const fieldTitle = (field: string) => FIELD_TITLES[field] ?? headerLabel(field);

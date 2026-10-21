@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EtkRoute, EtkRouteBlock, Principal, ProjectTechcard } from "./api";
 import { EtkSheet } from "./ProjectEtk";
+import { COLUMN_MAX, COLUMN_MIN, GAP, OPEN_MIN, ZOOM_MIN, etkDiagramFit, etkDiagramWidths } from "./EtkRouteDiagram";
 import { buildPrintDocumentHtml } from "./print";
 import { etkPrintPages } from "./etkPrint";
-import { etkRouteBranches, etkRouteChips, etkRouteLine, etkRouteOf, etkRouteSummary, pluralBlocks } from "./etkRoute";
+import { etkDiagramCrossings, etkOpRuns, etkPartSource, etkSourceLines, etkPfGroups, etkRouteBranches, etkRouteChips, etkRouteDiagram, etkRouteLevels, etkRouteOf, etkRouteSummary, etkSemiSource, pluralBlocks } from "./etkRoute";
 
 function block(key: string, name: string, ops: number[], extra: Partial<EtkRouteBlock> = {}): EtkRouteBlock {
   return { key, name, ops, final: false, components: [], outputs: 1, inputs: 0, minutes: 0, unit_minutes: 0, rolled_minutes: 0, rolled_ops: ops.length, ...extra };
@@ -45,6 +46,19 @@ describe("etkRouteOf", () => {
     expect(route).toMatchObject({ source: "manual", final: "a", edges: [] });
     expect(route?.blocks[0]).toMatchObject({ key: "a", ops: [1], unit_minutes: 0, rolled_ops: 0 });
   });
+
+  it("reads the level label, the kit mark and the arrow items, and leaves them out when not set", () => {
+    const route = etkRouteOf({ route: { source: "generated", final: "b", blocks: [
+      { key: "a", name: "Резка", ops: [1], final: false, kit: true, label: "1" },
+      { key: "c", name: "Трубки", ops: [2], final: false, kit: "yes", label: "" },
+      { key: "b", name: "Сборка", ops: [3], final: true, label: "2" },
+    ], edges: [{ from: "a", to: "b", per_unit: 1, item: " НВ4 0,12 белый ×2; ТТК 8/2 ×1 " }, { from: "c", to: "b", per_unit: 1, item: 3 }] } });
+
+    expect(route?.source).toBe("generated");
+    expect(route?.blocks.map((block) => [block.key, block.kit, block.label])).toEqual([["a", true, "1"], ["c", undefined, undefined], ["b", undefined, "2"]]);
+    expect(route?.blocks[1]).not.toHaveProperty("kit");
+    expect(route?.edges).toEqual([{ from: "a", to: "b", per_unit: 1, item: "НВ4 0,12 белый ×2; ТТК 8/2 ×1" }, { from: "c", to: "b", per_unit: 1 }]);
+  });
 });
 
 describe("etkRouteBranches", () => {
@@ -70,8 +84,8 @@ describe("etkRouteChips", () => {
     expect(chips.map((chip) => chip.first)).toEqual([1, 2, 3, 5]);
     expect(chips.map((chip) => chip.ops)).toEqual([1, 1, 2, 1]);
     expect(chips.map((chip) => chip.perUnit)).toEqual(["0,5 мин/шт", "0,2 мин/шт", "1,2 мин/шт", "2 мин/шт"]);
-    expect(chips[2].feeds).toEqual([{ number: 1, name: "Резка провода", times: "" }]);
-    expect(chips[3].feeds).toEqual([{ number: 2, name: "Резка ТУТ", times: "×2" }, { number: 3, name: "Опрессовка", times: "" }]);
+    expect(chips[2].feeds).toEqual([{ number: 1, label: "1.1", name: "Резка провода", times: "" }]);
+    expect(chips[3].feeds).toEqual([{ number: 2, label: "1.2", name: "Резка ТУТ", times: "×2" }, { number: 3, label: "2", name: "Опрессовка", times: "" }]);
     expect(chips.map((chip) => chip.final)).toEqual([false, false, false, true]);
   });
 
@@ -97,17 +111,6 @@ describe("etkRouteSummary", () => {
   });
 });
 
-describe("etkRouteLine (print)", () => {
-  it("is one text line for a branched scheme and empty for a linear one", () => {
-    expect(etkRouteLine(linear)).toBe("");
-    expect(etkRouteLine(null)).toBe("");
-    expect(etkRouteLine(branched)).toBe(
-      "Маршрут полуфабрикатов (4 блока · на изделие 4,1 мин · 5 оп.): 1 Резка провода (1 оп. · 0,5 мин/шт); 2 Резка ТУТ (1 оп. · 0,2 мин/шт); " +
-      "3 Опрессовка (2 оп. · 1,2 мин/шт · из 1); 4 Изделие (1 оп. · 2 мин/шт · из 2 (×2), 3 · итог)",
-    );
-  });
-});
-
 function techcard(route?: EtkRoute): ProjectTechcard {
   return { id: "t", project: "P-1", item_index: "КБ1", product_name: "Жгут", revision: 1, document: {
     operations: [1, 2, 3, 4, 5].map((position) => ({ position, code: "CUT_WIRE_auto", type: "cutWire", title: `Операция ${position}` })),
@@ -115,18 +118,26 @@ function techcard(route?: EtkRoute): ProjectTechcard {
   } } as unknown as ProjectTechcard;
 }
 
-describe("etkPrintPages with the block scheme", () => {
-  it("adds the scheme line under the header of the cover only when the route branches", () => {
+describe("etkPrintPages with the ПФ scheme", () => {
+  it("prints the ПФ as a compact table «ПФ · операции · вход · выход» under the header of the cover", () => {
     const html = buildPrintDocumentHtml("ТК", etkPrintPages(techcard(branched), []));
-    expect(html).toContain("Маршрут полуфабрикатов (4 блока");
-    expect(html.indexOf("Маршрут полуфабрикатов")).toBeGreaterThan(html.indexOf("НОМЕР ПРОЕКТА"));
-    expect(html.indexOf("Маршрут полуфабрикатов")).toBeLessThan(html.indexOf("<h2>Маршрут</h2>"));
-    expect(html.match(/Маршрут полуфабрикатов/g)).toHaveLength(1);
+    expect(html).toContain("<h2>Полуфабрикаты</h2>");
+    expect(html.indexOf("<h2>Полуфабрикаты</h2>")).toBeGreaterThan(html.indexOf("НОМЕР ПРОЕКТА"));
+    expect(html.indexOf("<h2>Полуфабрикаты</h2>")).toBeLessThan(html.indexOf("<h2>Маршрут</h2>"));
+    const pages = etkPrintPages(techcard(branched), []);
+    const table = pages[0].blocks.find((block) => "table" in block && block.table.columns[0] === "ПФ") as { table: { columns: string[]; rows: string[][] } };
+    expect(table.table.columns).toEqual(["ПФ", "Операции", "Вход", "Выход"]);
+    expect(table.table.rows.map((row) => row[0].split("\n")[0])).toEqual(["ПФ 1.1", "ПФ 1.2", "ПФ 2", "ПФ 3 · изделие"]);
+    expect(table.table.rows[2][1]).toBe("03 Операция 3\n04 Операция 4");
+    expect(table.table.rows[3][2]).toBe("ПФ 1.2: Резка ТУТ ×2\nПФ 2: Опрессовка");
+    expect(html).not.toContain("Маршрут полуфабрикатов");
   });
 
-  it("prints a linear ETK exactly as one without a scheme", () => {
-    expect(etkPrintPages(techcard(linear), [])).toEqual(etkPrintPages(techcard(), []));
-    expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard(linear), []))).not.toContain("Маршрут полуфабрикатов");
+  it("prints no ПФ table without a scheme or with a single ПФ; a linear scheme gets the table too", () => {
+    const single: EtkRoute = { ...linear, final: "b1", blocks: [block("b1", "Изделие", [1, 2, 3], { final: true })], edges: [] };
+    expect(etkPrintPages(techcard(single), [])).toEqual(etkPrintPages(techcard(), []));
+    expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard(), []))).not.toContain("Полуфабрикаты");
+    expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard(linear), []))).toContain("<h2>Полуфабрикаты</h2>");
   });
 });
 
@@ -136,52 +147,335 @@ async function renderSheet(route?: EtkRoute) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
   const view = render(<EtkSheet card={techcard(route)} principal={principal} onChange={() => undefined} />);
-  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2)); // журнал ревизий и эскизы
-  await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3)); // журнал ревизий, эскизы и выпуски комплекта ТД
+  if (route) await screen.findByRole("region", { name: "Схема полуфабрикатов" });
+  else await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
   return view;
 }
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("ETK strip «Маршрут»", () => {
-  it("is absent for a linear route and the ETK renders byte for byte as without a scheme", async () => {
+const diagramOf = () => screen.getByRole("region", { name: "Схема полуфабрикатов" });
+const boxOf = (name: RegExp) => within(diagramOf()).getByRole("region", { name });
+/** Операция по номеру в схеме: первый щелчок выбирает её ПФ, второй открывает (владелец 19.10). */
+const openOp = (name: RegExp) => {
+  fireEvent.click(within(diagramOf()).getByRole("button", { name }));
+  fireEvent.click(within(diagramOf()).getByRole("button", { name }));
+};
+
+describe("ETK scheme of ПФ in the fitter's task", () => {
+  async function renderTask(focus: { position: number; positions?: number[] }) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const view = render(<EtkSheet card={techcard(branched)} principal={principal} onChange={() => undefined} task focus={focus} />);
+    await screen.findByRole("region", { name: "Схема полуфабрикатов" });
+    return view;
+  }
+
+  it("shows the scheme open with the fitter's ПФ expanded and his operations lit; operations do not open from it", async () => {
+    const { container } = await renderTask({ position: 3, positions: [3, 4] });
+    const mine = boxOf(/ПФ 2 · Опрессовка/);
+    expect(mine).toHaveClass("on");
+    expect(within(mine).getByText("ваше задание")).toBeInTheDocument();
+    expect([...container.querySelectorAll(".etk-dag-opline.on")].map((line) => line.querySelector(".etk-no")?.textContent)).toEqual(["03", "04"]);
+    expect(within(diagramOf()).queryByRole("button", { name: /Операция/ })).toBeNull();
+    expect(container.querySelector(".etk-route")?.closest("details")).toBeNull();
+    // Щелчок по чужому ПФ только подсвечивает его связи.
+    fireEvent.click(boxOf(/ПФ 1.1 · Резка провода/));
+    expect(boxOf(/ПФ 1.1 · Резка провода/)).toHaveClass("picked");
+    expect(screen.getByLabelText("Операции задания")).toBeInTheDocument();
+  });
+
+  it("shows the fitter's path by default — his inputs, his ПФ and on to the product — with the whole scheme one click away", async () => {
+    await renderTask({ position: 3, positions: [3, 4] });
+    const shown = () => within(diagramOf()).getAllByRole("region").map((box) => box.getAttribute("aria-label"));
+    // «Резка ТУТ» идёт сразу в изделие, мимо опрессовки: её нет; номера ПФ — как во всей схеме.
+    expect(shown()).toEqual(["ПФ 1.1 · Резка провода", "ПФ 2 · Опрессовка", "ПФ 3 · Изделие"]);
+    fireEvent.click(screen.getByRole("button", { name: "Вся схема · ещё 1" }));
+    expect(shown()).toHaveLength(4);
+    expect(shown()).toContain("ПФ 1.2 · Резка ТУТ");
+    fireEvent.click(screen.getByRole("button", { name: "Только мой путь" }));
+    expect(shown()).toHaveLength(3);
+  });
+
+  it("folds the other ПФ to name, operation numbers and output so the scheme fits the tablet", async () => {
+    await renderTask({ position: 3, positions: [3, 4] });
+    const other = boxOf(/ПФ 1.1 · Резка провода/);
+    expect(within(other).queryByRole("list")).toBeNull();
+    expect(within(other).queryByRole("img")).toBeNull();
+    expect(within(other).getByText("оп. 01")).toBeInTheDocument();
+    expect(within(boxOf(/ПФ 2 · Опрессовка/)).getByRole("list", { name: "Операции ПФ 2" })).toBeInTheDocument();
+  });
+
+  it("scales the scheme with «− N % +», remembers it, and the percent goes back to fit", async () => {
+    window.localStorage.clear();
+    const { container } = await renderTask({ position: 3, positions: [3, 4] });
+    const frame = () => container.querySelector(".etk-dag") as HTMLElement;
+    expect(screen.getByRole("button", { name: /Масштаб 100 %/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Схема мельче" }));
+    fireEvent.click(screen.getByRole("button", { name: "Схема мельче" }));
+    expect(screen.getByRole("button", { name: /Масштаб 80 %/ })).toBeInTheDocument();
+    expect(frame().style.transform).toBe("scale(0.8)");
+    expect(window.localStorage.getItem("etk-dag-zoom:task")).toBe("0.8");
+    fireEvent.click(screen.getByRole("button", { name: /Масштаб 80 %/ }));
+    expect(frame().style.transform).toBe("");
+    expect(window.localStorage.getItem("etk-dag-zoom:task")).toBeNull();
+  });
+
+  it("fits the height in 5 % steps, never smaller than the readable minimum and never enlarges", () => {
+    expect(etkDiagramFit(1000, 660)).toBe(0.65);
+    expect(etkDiagramFit(5000, 600)).toBe(ZOOM_MIN);
+    expect(etkDiagramFit(300, 900)).toBe(1);
+    expect(etkDiagramFit(0, 900)).toBe(1);
+    expect(etkOpRuns([6, 7, 8, 9, 14, 15, 20], (n) => String(n).padStart(2, "0"))).toBe("06–09·14·15·20");
+  });
+
+  it("lights the one operation of a single-operation task", async () => {
+    const { container } = await renderTask({ position: 5 });
+    expect(boxOf(/ПФ 3 · Изделие/)).toHaveClass("on");
+    expect([...container.querySelectorAll(".etk-dag-opline.on")].map((line) => line.querySelector(".etk-no")?.textContent)).toEqual(["05"]);
+  });
+});
+
+describe("ETK scheme of ПФ — the navigation", () => {
+  it("shows a linear route as the same boxes in a chain; an ETK without a scheme keeps the flat list", async () => {
     const withLinear = await renderSheet(linear);
-    expect(withLinear.container.querySelector(".etk-route")).toBeNull();
-    expect(screen.queryByRole("region", { name: "Маршрут полуфабрикатов" })).toBeNull();
-    const html = withLinear.container.innerHTML;
+    expect(within(diagramOf()).getAllByRole("region").map((box) => box.getAttribute("aria-label"))).toEqual([
+      "ПФ 1 · Резка", "ПФ 2 · Опрессовка", "ПФ 3 · Изделие",
+    ]);
+    expect(withLinear.container.querySelectorAll(".etk-dag-line")).toHaveLength(2);
+    expect(withLinear.container.querySelector(".etk-pf, .etk-nav-route")).toBeNull();
     withLinear.unmount();
     vi.restoreAllMocks();
     const without = await renderSheet();
-    expect(without.container.innerHTML).toBe(html);
-    expect(html).toContain("etk-nav-route");
+    expect(without.container.querySelector(".etk-route")).toBeNull();
+    expect(without.container.innerHTML).toContain("etk-nav-route");
   });
 
-  it("shows chips with name, operations, time and what feeds each block, final marked, above the route list", async () => {
+  it("draws a column per level with a box per ПФ: name, input, numbered operations; the final box marked, above the operation", async () => {
     const { container } = await renderSheet(branched);
-    const strip = screen.getByRole("region", { name: "Маршрут полуфабрикатов" });
-    expect(strip).toHaveTextContent("Маршрут");
-    expect(strip).toHaveTextContent("4 блока · на изделие 4,1 мин · 5 оп.");
-    const chips = within(strip).getAllByRole("button");
-    expect(chips).toHaveLength(4);
-    expect(chips[0]).toHaveTextContent("1Резка провода · 1 оп. · 0,5 мин/шт");
-    expect(chips[0].querySelector(".etk-route-feed")).toBeNull();
-    expect(chips[2]).toHaveTextContent("3Опрессовка · 2 оп. · 1,2 мин/шт← 1 Резка провода");
-    expect(chips[3]).toHaveTextContent("4Изделие · 1 оп. · 2 мин/шт← 2 Резка ТУТ (×2) · 3 Опрессовкаитог");
-    expect(within(strip).getAllByText("итог")).toHaveLength(1);
-    expect(chips[3]).toContainElement(within(strip).getByText("итог"));
-    expect(strip.compareDocumentPosition(container.querySelector(".etk-wrap") as Element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const diagram = diagramOf();
+    expect(diagram).toHaveTextContent("Схема ПФ");
+    expect(diagram).toHaveTextContent("4 блока · на изделие 4,1 мин · 5 оп.");
+    const boxes = within(diagram).getAllByRole("region");
+    expect(boxes.map((box) => box.querySelector(".etk-dag-top b")?.textContent)).toEqual(["ПФ 1.1", "ПФ 1.2", "ПФ 2", "ПФ 3"]);
+    expect(boxes[2].querySelector(".etk-dag-name")).toHaveTextContent("Опрессовка");
+    expect(within(within(boxes[2]).getByRole("list", { name: "Операции ПФ 2" })).getAllByRole("button").map((button) => button.textContent)).toEqual(["03Операция 3", "04Операция 4"]);
+    // Что приходит в ПФ — списком внутри блока-потребителя.
+    expect(within(boxes[3]).getByLabelText("Вход")).toHaveTextContent("1.2 Резка ТУТ ×22 Опрессовка");
+    expect(within(diagram).getAllByText("изделие")).toHaveLength(1);
+    // Старая схема без подписей на стрелках: «×N» только там, где на штуку нужно больше одной.
+    expect([...container.querySelectorAll(".etk-dag-item")].map((item) => item.textContent)).toEqual(["×2"]);
+    expect(diagram.compareDocumentPosition(container.querySelector(".etk-wrap") as Element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("opens the block's first operation on click and highlights the block of the open operation", async () => {
-    await renderSheet(branched);
-    const strip = screen.getByRole("region", { name: "Маршрут полуфабрикатов" });
+  it("draws kit arrows thin and unlabelled and lists what comes in inside the consumer box (713К.4: ~28 labelled curves)", async () => {
+    const withItems: EtkRoute = { ...branched,
+      blocks: branched.blocks.map((item) => (item.key === "b2" || item.key === "b1" ? { ...item, kit: true } : item)),
+      edges: branched.edges.map((edge) => (edge.from === "b1" ? { ...edge, item: "НВ4 0,12 белый ×2; ТТК 8/2 ×1" } : edge)) };
+    const { container } = await renderSheet(withItems);
+    // На стрелках — ничего: ни подписи комплекта, ни «×2» от комплектного источника.
+    expect(container.querySelectorAll(".etk-dag-item")).toHaveLength(0);
+    expect(container.querySelectorAll(".etk-dag-line.kit")).toHaveLength(2);
+    expect(container.querySelectorAll(".etk-dag-line:not(.kit)")).toHaveLength(1);
+    expect(container.querySelectorAll(".etk-dag-box.kit")).toHaveLength(2);
+    const press = boxOf(/Опрессовка/);
+    expect(within(press).getByLabelText("Вход")).toHaveTextContent("1.1 НВ4 0,12 белый ×2, ТТК 8/2");
+    expect(press.querySelector(".etk-dag-title")).toHaveAttribute("title", expect.stringContaining("← ПФ 1.1: НВ4 0,12 белый ×2, ТТК 8/2"));
+  });
+
+  it("labels a non-kit arrow by count only, and highlights a hovered box's arrows while dimming the rest", async () => {
+    const { container } = await renderSheet(branched);
+    expect([...container.querySelectorAll(".etk-dag-item")].map((item) => item.textContent)).toEqual(["×2"]);
+    fireEvent.mouseEnter(boxOf(/Резка провода/));
+    // b1 → b3 горит; остальные стрелки и чужие блоки притушены.
+    expect(container.querySelectorAll(".etk-dag-line.on")).toHaveLength(1);
+    expect(container.querySelectorAll(".etk-dag-line.dim")).toHaveLength(2);
+    expect(boxOf(/Опрессовка/)).toHaveClass("near");
+    expect(boxOf(/Резка ТУТ/)).toHaveClass("dim");
+    fireEvent.mouseLeave(boxOf(/Резка провода/));
+    expect(container.querySelectorAll(".etk-dag-line.on, .etk-dag-line.dim")).toHaveLength(0);
+    fireEvent.focus(within(boxOf(/Изделие/)).getByRole("button", { name: /^05/ }));
+    expect(container.querySelectorAll(".etk-dag-line.on")).toHaveLength(2);
+  });
+
+  it("lists the input of an operation a row per incoming ПФ with its own source, names on one line with the full text in the title", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const card = techcard(branched);
+    const operations = (card.document as { operations: Array<Record<string, unknown>> }).operations;
+    operations[4] = { ...operations[4], semis: [
+      { name: "Резка ТУТ: ТТК 8/2мм, черная — 3 шт по 15 мм; ТТК 12/4мм — 2 шт по 25 мм", norm: "3", unit: "шт." },
+      { name: "Провод с терминалом", norm: "10", unit: "шт." },
+    ] };
+    render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+    await screen.findByRole("region", { name: "Схема полуфабрикатов" });
+    openOp(/^05/);
+    const table = await screen.findByRole("table", { name: "Что взять" });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].querySelector(".etk-pick-name")).toHaveAttribute("title", expect.stringContaining("ТТК 12/4мм — 2 шт по 25 мм"));
+    expect(rows[0].querySelector(".etk-pick-from")).toHaveTextContent("ПФ 1.2 · коробка оп. 02");
+    expect(rows[1].querySelector(".etk-pick-from")).toHaveTextContent("ПФ 2 · коробка оп. 04");
+    expect(table).not.toHaveTextContent(";  ");
+    // Сервер дал `source` строке — он главнее общей строки схемы.
+    cleanup();
+    operations[4] = { ...operations[4], semis: [
+      { name: "ТТК 8/2 — 1 шт", norm: "500", unit: "шт.", source: "ПФ 1.2" }, { name: "Провод с терминалом", norm: "10", unit: "шт.", source: "операция 09" },
+    ] };
+    render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+    await screen.findByRole("region", { name: "Схема полуфабрикатов" });
+    openOp(/^05/);
+    const given = within(await screen.findByRole("table", { name: "Что взять" })).getAllByRole("row").slice(1);
+    expect(given.map((row) => row.querySelector(".etk-pick-from")?.textContent)).toEqual(["ПФ 1.2", "операция 09"]);
+  });
+
+  it("draws the cut tubes in the result of the operation and in the sketch of the ПФ", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const card = techcard(branched);
+    const operations = (card.document as { operations: Array<Record<string, unknown>> }).operations;
+    operations[1] = { ...operations[1], type: "cutTut", code: "CUT_TUT_short",
+      result: [{ name: "Трубки нарезаны: ТТК 8/2мм, черная — 3 шт по 15 мм; ТТК 12/4мм — 2 шт по 25 мм", norm: "3", unit: "шт." }] };
+    render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+    await screen.findByRole("region", { name: "Схема полуфабрикатов" });
+    openOp(/^02/);
+    const result = await screen.findByRole("region", { name: "Результат" });
+    expect(result.querySelector(".etk-result-art svg")?.innerHTML).toContain("ТТК 8/2мм ×3 · 15 мм");
+    expect(within(diagramOf()).getByRole("img", { name: "Эскиз ПФ 1.2" }).innerHTML).toContain("ТТК 12/4мм ×2 · 25 мм");
+  });
+
+  it("selects a block on the first click (its links stay lit), opens an operation on the next; the open block's operations open at once; a click on the empty field drops the choice", async () => {
+    const { container } = await renderSheet(branched);
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 1");
-    expect(within(strip).getAllByRole("button")[0]).toHaveAttribute("aria-current", "step");
-    fireEvent.click(within(strip).getByRole("button", { name: /Опрессовка/ }));
+    expect(within(diagramOf()).getAllByRole("region")[0]).toHaveAttribute("aria-current", "step");
+    // Первый щелчок — где угодно по карточке: выбор, связи горят и без наведения; операция не меняется.
+    fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-name")!);
+    expect(boxOf(/Опрессовка/)).toHaveClass("picked");
+    expect(container.querySelectorAll(".etk-dag-line.on")).toHaveLength(2);
+    expect(boxOf(/Резка ТУТ/)).toHaveClass("dim");
+    fireEvent.mouseEnter(boxOf(/Резка ТУТ/));
+    expect(boxOf(/Опрессовка/)).toHaveClass("picked");
+    expect(container.querySelectorAll(".etk-dag-line.on")).toHaveLength(2);
+    expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 1");
+    // Щелчок по пустому месту схемы снимает выбор; снова выбор — и щелчок по заголовку открывает первую операцию.
+    fireEvent.click(container.querySelector(".etk-dag")!);
+    expect(container.querySelector(".etk-dag-box.picked")).toBeNull();
+    fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-title")!);
+    expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 1");
+    fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-title")!);
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 3");
-    expect(within(strip).getByRole("button", { name: /Опрессовка/ })).toHaveAttribute("aria-current", "step");
-    expect(within(strip).getByRole("button", { name: /Резка провода/ })).not.toHaveAttribute("aria-current");
-    fireEvent.click(within(strip).getByRole("button", { name: /Изделие/ }));
+    expect(boxOf(/Опрессовка/)).toHaveAttribute("aria-current", "step");
+    expect(boxOf(/Резка провода/)).not.toHaveAttribute("aria-current");
+    fireEvent.click(within(boxOf(/Опрессовка/)).getByRole("button", { name: /^04/ }));
+    expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 4");
+    fireEvent.click(boxOf(/Изделие/).querySelector(".etk-dag-title")!);
+    fireEvent.click(boxOf(/Изделие/).querySelector(".etk-dag-title")!);
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 5");
+  });
+
+  it("lays the levels out in one row over the whole frame and scrolls it sideways inside its own frame when it does not fit", async () => {
+    // 27": колонки делят ширину, раскрытая шире; не измерено — минимальные; узкая рамка — не уже минимума, ряд листается.
+    const wide = etkDiagramWidths([false, false, true, false, false], 3600);
+    expect(wide[2]).toBeGreaterThan(wide[0]);
+    expect(wide.reduce((sum, width) => sum + width, 0) + 4 * GAP + 24).toBeLessThanOrEqual(3600);
+    expect(wide[0]).toBeGreaterThan(COLUMN_MIN);
+    expect(etkDiagramWidths([false, true], 0)).toEqual([COLUMN_MIN, OPEN_MIN]);
+    const narrow = etkDiagramWidths([false, false, true, false, false], 1100);
+    expect(narrow).toEqual([COLUMN_MIN, COLUMN_MIN, OPEN_MIN, COLUMN_MIN, COLUMN_MIN]);
+    expect(Math.max(...etkDiagramWidths([false, false], 4000))).toBe(COLUMN_MAX);
+    const { container } = await renderSheet(branched);
+    // Один ряд колонок, без полос ниже; рамка листания своя.
+    expect(container.querySelector(".etk-dag-band")).toBeNull();
+    const frame = container.querySelector(".etk-dag-scroll") as HTMLElement;
+    expect(frame.parentElement).toHaveClass("etk-dag-view");
+    // В рамке — стрелки, подписи «×N» и колонки уровней (1.1 и 1.2 — одна колонка), ничего ниже ряда.
+    expect([...frame.querySelector(".etk-dag")!.children].every((child) => child.matches("svg, .etk-dag-item, .etk-dag-col"))).toBe(true);
+    expect(container.querySelectorAll(".etk-dag-col")).toHaveLength(3);
+  });
+
+  it("shows each operation in its box by its own generator label, the card code only under it in the open box", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const card = techcard(branched);
+    const labels = ["Резка проводов", "Резка ТУТ", "Надеть ТТК X4 «A6» — ТТК 12/4", "Усадка маркировки X4 «A6» — «A6»", ""];
+    card.document = { ...card.document, build_config: { ops: labels.map((label) => ({ type: "insTut", label })) } };
+    render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+    await screen.findByRole("region", { name: "Схема полуфабрикатов" });
+    const ops = (name: RegExp) => within(within(boxOf(name)).getByRole("list")).getAllByRole("button").map((button) => button.textContent);
+    expect(ops(/Опрессовка/)).toEqual(["03Надеть ТТК X4 «A6» — ТТК 12/4", "04Усадка маркировки X4 «A6» — «A6»"]);
+    // Пустая строка генератора — название карты.
+    expect(ops(/Изделие/)).toEqual(["05Операция 5"]);
+    fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-title")!);
+    fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-title")!);
+    expect(within(boxOf(/Опрессовка/)).getByRole("button", { name: /^03/ }).querySelector("small")).toHaveTextContent("CUT_WIRE_auto");
+    expect(within(boxOf(/Резка провода/)).getByRole("button", { name: /^01/ }).querySelector("small")).toBeNull();
+  });
+});
+
+describe("level labels (ПФ 1.1, ПФ 3)", () => {
+  it("are computed from an old route without labels: longest path from a source, «N.k» when a level holds several", () => {
+    const levels = etkRouteLevels(branched);
+    expect([...levels].map(([key, value]) => `${key}:${value.label}`)).toEqual(["b1:1.1", "b2:1.2", "b3:2", "b5:3"]);
+    // b2 → b5 напрямую, но b5 стоит ещё и после b3: уровень по самому длинному пути.
+    expect(levels.get("b5")?.level).toBe(3);
+    expect(etkRouteLevels(linear).get("b2")?.label).toBe("2");
+  });
+
+  it("number the ПФ list, the «из ПФ …» sources and the diagram the same way", () => {
+    const operations = [1, 2, 3, 4, 5].map((position) => ({ position, result: [{ name: `Рез ${position}` }] }));
+    expect(etkPfGroups(branched, operations).map((group) => group.label)).toEqual(["1.1", "1.2", "2", "3"]);
+    expect(etkSemiSource(branched, 5)).toBe("из ПФ 1.2, коробка с операции 02; ПФ 2, коробка с операции 04");
+    expect(etkSemiSource(branched, 3)).toBe("из ПФ 1.1, коробка с операции 01");
+    expect(etkSemiSource(branched, 4)).toBe("с операции 03");
+  });
+
+  it("lay out the diagram by level with the arrow text, falling back to ×N", () => {
+    const diagram = etkRouteDiagram(branched);
+    expect(diagram.columns.map((column) => column.boxes.map((box) => box.label))).toEqual([["1.1", "1.2"], ["2"], ["3"]]);
+    expect(diagram.edges.map((edge) => `${edge.from}>${edge.to}:${edge.text}`)).toEqual(["b1>b3:", "b3>b5:", "b2>b5:×2"]);
+  });
+
+  it("order the boxes of a column by their neighbours, not by label, so that arrows cross less", () => {
+    // Метки по первой операции: a1 (в x2), a2 (в x1) — по метке порядок пересекается, по барицентру — нет.
+    const crossed: EtkRoute = { source: "generated", final: "z", blocks: [
+      block("a1", "Резка 1", [1]), block("a2", "Резка 2", [2]), block("a3", "Резка 3", [3]),
+      block("x1", "Сборка 1", [4]), block("x2", "Сборка 2", [5]), block("z", "Изделие", [6], { final: true }),
+    ], edges: [
+      { from: "a1", to: "x2", per_unit: 1 }, { from: "a2", to: "x1", per_unit: 1 }, { from: "a3", to: "x2", per_unit: 1 },
+      { from: "x1", to: "z", per_unit: 1 }, { from: "x2", to: "z", per_unit: 1 },
+    ] };
+    const diagram = etkRouteDiagram(crossed);
+    expect(etkDiagramCrossings(diagram)).toBe(0);
+    expect(diagram.columns[0].boxes.map((box) => box.key)).toEqual(["a2", "a1", "a3"]);
+    // Уровень и метки остаются прежними: порядок колонки меняется, названия «ПФ 1.1…» — нет.
+    expect(diagram.columns[0].boxes.map((box) => box.label)).toEqual(["1.2", "1.1", "1.3"]);
+    const same = etkRouteDiagram(branched);
+    expect(etkDiagramCrossings(same)).toBe(0);
+  });
+
+  it("give a box its inputs: source label, the item text without «×1», the count when there is no item", () => {
+    const withItems: EtkRoute = { ...branched, blocks: branched.blocks.map((item) => (item.key === "b1" ? { ...item, kit: true } : item)),
+      edges: branched.edges.map((edge) => (edge.from === "b1" ? { ...edge, item: "НВ4 0,5 красный ×1; НВ4 0,5 черный ×1" } : edge)) };
+    const boxes = new Map(etkRouteDiagram(withItems).columns.flatMap((column) => column.boxes).map((box) => [box.key, box]));
+    expect(boxes.get("b3")?.inputs).toEqual([{ label: "1.1", text: "НВ4 0,5 красный, НВ4 0,5 черный", times: "", kit: true }]);
+    expect(boxes.get("b5")?.inputs).toEqual([{ label: "1.2", text: "Резка ТУТ", times: "×2", kit: false }, { label: "2", text: "Опрессовка", times: "", kit: false }]);
+    expect(boxes.get("b1")?.inputs).toEqual([]);
+  });
+
+  it("split a combined source string into a line per source", () => {
+    expect(etkSourceLines("из ПФ 1.2, коробка с операции 02; ПФ 1.6, коробка с операции 03; ПФ 1.7, коробка с операции 04"))
+      .toEqual(["ПФ 1.2 · коробка оп. 02", "ПФ 1.6 · коробка оп. 03", "ПФ 1.7 · коробка оп. 04"]);
+    expect(etkSourceLines("с операции 03")).toEqual(["с операции 03"]);
+    expect(etkSourceLines("")).toEqual([]);
+  });
+});
+
+describe("etkPartSource", () => {
+  it("names the kit request, joins several, and stays plain without one", () => {
+    expect(etkPartSource({ kit_request: "REQ.26.0000123" })).toBe("со склада по комплектации REQ.26.0000123");
+    expect(etkPartSource({ kit_request: "REQ.26.0000123, REQ.26.0000130" })).toBe("со склада по комплектации REQ.26.0000123, REQ.26.0000130");
+    expect(etkPartSource({})).toBe("со склада по комплектации");
+    expect(etkPartSource({ kit_request: " " })).toBe("со склада по комплектации");
   });
 });

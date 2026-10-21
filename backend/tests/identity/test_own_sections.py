@@ -30,7 +30,10 @@ def test_every_level_files_requests_and_sees_its_own_by_default():
 
 def test_handout_defaults_follow_who_hands_out_and_who_reads_fulfillment():
     handout = {level: row.get("handout") for level, row in LEVEL_SEED.items()}
-    assert handout == {"foreman": AccessMode.EDIT, "tech_lead": AccessMode.VIEW, "commercial": None, "operator": None}
+    assert handout == {
+        "foreman": AccessMode.EDIT, "storekeeper": AccessMode.EDIT, "tech_lead": AccessMode.VIEW, "commercial": None,
+        "pm": None, "operator": None,
+    }
 
 
 def test_access_screen_lists_the_three_keys_next_to_their_neighbours():

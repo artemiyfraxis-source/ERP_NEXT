@@ -9,7 +9,24 @@ export type ConnectorHousing = {
   art?: string; family?: string; title?: string; pitch?: number | null; rows: number; cols: number; n?: number;
   kind?: string; color: string; latch?: string; cavity?: string; labels?: string[] | null; male?: boolean | null;
   grid: number[][]; round?: Array<{ pin: number; x: number; y: number }> | null; conf?: string; note?: string;
-  body?: HousingBody | null; src?: string; model?: string;
+  body?: HousingBody | null; src?: string; model?: string; roof?: Roof | null; mate?: Mate | null;
+  /** Лист производителя показал голую крышу (без замка и окон): его название; пусто — листа нет. */
+  roof_plain?: string;
+};
+
+/** Признак на крыше корпуса, прочитанный с листа производителя (connector_housings.py `roof_of`): «latch» — замок
+ *  (по центру — «center», плечи на торцах — «ends»), «slots» — окна по контакту («contacts») или кнопки поляризации
+ *  («keys», место ориентировочное); `src` — лист, по которому это записано. Нет признака — нет и подтверждения: крыша
+ *  рисуется голой, без выдуманного. */
+export type Roof = { kind: "latch" | "slots"; at: "center" | "ends" | "pair" | "contacts" | "keys"; src: string };
+
+/** Сторона пары «вилка — розетка» по листу производителя (connector_housings.py `MATING`, владелец 17.10: «почему
+ *  розетка и вилка одинаково выглядят»): `gender` — как корпус называет производитель (receptacle, plug; по-русски имя даёт контакт:
+ *  штыри — вилка, гнёзда — розетка), `contacts` — штыри (pin) или гнёзда (socket), `shell` — outer: кожух принимает ответный корпус, inner: корпус
+ *  входит в ответный; `lock` — arm: гибкое плечо/рычаг замка, catch: жёсткий упор или зацеп под плечо, window: окно, в
+ *  которое входит замок ответной части. Нет поля — лист этого не показывает, и рисунок его не выдумывает. */
+export type Mate = {
+  gender?: "plug" | "receptacle"; contacts: "pin" | "socket"; shell?: "outer" | "inner"; lock?: "arm" | "catch" | "window"; src: string;
 };
 
 /** Корпус по чертежу производителя (connector_housings.py `body`), мм: ширина B = (колонок−1)·шаг + extra (+ выступы
@@ -18,7 +35,31 @@ export type ConnectorHousing = {
  *  B − 2·lock_inset. Есть у JST SH, GH, XH, PH, ZH и Molex Micro-Fit 43025. */
 export type HousingBody = {
   extra: number; h: number; rear_h?: number; len: number; front_len?: number; ears?: number; ear_len?: number;
-  win?: [number, number] | number[]; lock_w?: number; lock_inset?: number; lock_h?: number;
+  win?: [number, number] | number[];
+  /** Центр окон контактов от верхней грани торца, мм (по умолчанию — середина корпуса; JST SUH: окна в нижней части). */
+  win_y?: number;
+  /** Откуда геометрия торца проводов: «drawing» — размеры с чертежа производителя, «photo» — снято с фото детали (±0,3 мм);
+   *  geom_url — ссылка на лист или страницу с фото. Нет поля — размеры прежние, источник не подтверждён. */
+  geom?: "drawing" | "photo" | "equivalent"; geom_url?: string;
+  /** equivalent: семейство, по фото или чертежу которого нарисован торец (у самой детали вида сзади найти не удалось). */
+  geom_of?: string;
+  /** Вид полости на торце проводов по чертежу: funnel — квадратная воронка с внутренним отверстием со срезанными углами у стороны
+   *  «от защёлки» (Molex Mini-Fit Jr, SD-5557-003: w × h воронки, отверстие hole, срез chamfer, мм); bevel — двойной квадрат окна
+   *  с внутренним контуром (Connfly DS1070, DS1072). */
+  cav?: {
+    kind: "funnel" | "bevel"; w: number; h: number; hole?: [number, number]; chamfer?: number;
+  };
+  lock_w?: number; lock_inset?: number; lock_h?: number;
+  /** Длина замка вдоль корпуса от стыковочного торца, мм (JST SM: рычаг SMR 14,5, упор SMP 1,3). */
+  lock_len?: number;
+  /** Толщина «носа», входящего в кожух ответной части, за фланцем длиной front_len (JST SMP). */
+  nose_h?: number;
+  /** Кожух вилки SMR у стыковочного торца — шире и толще корпуса: ширина (колонок−1)·шаг + extra, толщина h, длина len,
+   *  стенка wall (JST SMR: 13 × 7,5 × 8 при корпусе 10,5 для 4 конт.). */
+  hood?: { extra: number; h: number; len: number; wall?: number };
+  /** Гибкие плечи на торцах ряда (JST SMP: крепление в панель): вылет out, ширина w по толщине, корень в root от
+   *  стыковочного торца, концы со ступенями в tip от торца проводов, мм. */
+  wings?: { out: number; w: number; root: number; tip: number };
 };
 
 export type Pt = [number, number];
@@ -37,6 +78,8 @@ const DARK_WIRE = /#(222|2463c7|7a4a24|7b4bb3|d7322d|2e9e4f|6b7c86)/;
 /** Цвет жилы по слову в наименовании, null — цвета в наименовании нет (схема соединений подписывает такой провод). */
 export function wireColorKnown(name: unknown): string | null {
   const text = name == null ? "" : String(name);
+  // Готовый цвет (#RRGGBB, #RGB) — как есть: чертёж жгута подкрашивает гнёзда точным цветом жилы.
+  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(text.trim())) return text.trim();
   for (const [pattern, color] of WIRE_COLORS) if (pattern.test(text)) return color;
   return null;
 }
@@ -76,22 +119,99 @@ export function poly(points: Pt[], fill: string, stroke = EDGE, width = 0.8, ext
 }
 
 /** Вид корпуса серии: форма, глубина корпуса вдоль провода, защёлка. Размеры — ориентировочные, по каталогам. */
-type Look = { shape: "rect" | "xt" | "dsub" | "round" | "rj45" | "barrel" | "lug" | "banana"; depth: number; wall: number; latch: string };
+type Look = { shape: "rect" | "xt" | "dsub" | "round" | "rj45" | "barrel" | "lug" | "banana"; depth: number; wall: number; latch: string; orig?: string };
 
 export function connectorLook(hs: ConnectorHousing): Look {
   const family = hs.family || "", pitch = hs.pitch || 2.5;
-  const latch = hs.latch || "none";
+  // Замок на крыше рисуется только с подтверждением листа (hs.roof): рычаг/рампа/плечи «ends»; без него рычаг из базы не
+  // рисуем. Метка ▽, ребро трения и окна остаются как есть — это не замок (orig).
+  const orig = hs.latch || "none", roof = hs.roof;
+  const latch = roof?.kind === "latch" ? (roof.at === "ends" || roof.at === "pair" ? roof.at : orig === "lever" ? "lever" : "ramp")
+    : orig === "lever" || orig === "ramp" ? "none" : orig;
   if (hs.kind === "lug") return { shape: "lug", depth: 0, wall: 0, latch: "none" };
   if (hs.kind === "banana") return { shape: "banana", depth: 0, wall: 0, latch: "none" };
   if (hs.kind === "barrel") return { shape: "barrel", depth: 14, wall: 0, latch: "none" };
   if (hs.kind === "round") return { shape: "round", depth: 16, wall: 0, latch: "none" };
   if (hs.kind === "dsub") return { shape: "dsub", depth: 12, wall: 1.6, latch: "none" };
   if (family === "amass-xt" || family === "amass-qs8") return { shape: "xt", depth: 16, wall: 1.6, latch: "none" };
-  if (family === "rj45") return { shape: "rj45", depth: 21, wall: 1.2, latch: "lever" };
+  if (family === "rj45") return { shape: "rj45", depth: 21, wall: 1.2, latch: roof?.kind === "latch" ? "lever" : "none" };
   const depth = /deutsch|superseal/.test(family) ? 26 : /minifit|microfit|jst-vh|jst-sm|multilock/.test(family) ? 12
     : family === "connfly-ds1071" ? 14 : Math.max(4.5, pitch * 3.2);
   const wall = /deutsch|superseal/.test(family) ? 2.2 : Math.max(0.55, Math.min(1.6, pitch * 0.38));
-  return { shape: "rect", depth, wall, latch };
+  return { shape: "rect", depth, wall, latch, orig };
+}
+
+/** Признак ориентации на крыше корпуса (владелец 17.10: «сверху замок или прорези — по детали»): «latch» — замок,
+ *  «slots» — прорези/окна/кнопки поляризации. Берётся из `hs.roof` (лист производителя); null — подтверждённого признака
+ *  нет (или у корпуса нет крыши: круглые, лепестки, D-Sub). Один выбор на все рисунки серии: 3D-грань каталога, вид сверху,
+ *  торец эскиза. */
+export type TopFeature = "latch" | "slots";
+
+export function topFeature(hs: ConnectorHousing): TopFeature | null {
+  const look = connectorLook(hs);
+  if (look.shape !== "rect" && look.shape !== "xt" && look.shape !== "rj45") return null;
+  return hs.roof?.kind ?? null;
+}
+
+/** Прорези на крыше в долях ширины корпуса: окно по каждому контакту («contacts», ширина — по окну чертежа или 0,56 шага)
+ *  или пара рёбер-кнопок поляризации («keys»). */
+export function slotSpans(hs: ConnectorHousing): Array<[number, number]> {
+  if (hs.roof?.at === "keys") return [[0.3, 0.37], [0.63, 0.7]];
+  const b = hs.body, pitch = hs.pitch || 1, cols = Math.max(1, hs.cols);
+  if (b) {
+    const core = (cols - 1) * pitch + b.extra, half = ((b.win && b.win.length === 2 ? b.win[0] : pitch * 0.6) * 0.4) / core;
+    return Array.from({ length: cols }, (_, c) => { const m = (b.extra / 2 + c * pitch) / core; return [m - half, m + half] as [number, number]; });
+  }
+  return Array.from({ length: cols }, (_, c) => { const m = (c + 0.5) / cols; return [m - 0.28 / cols, m + 0.28 / cols] as [number, number]; });
+}
+
+/** Замок на крыше: [начало, ширина] в мм — один посередине («center»), два плеча на торцах («ends») или пара
+ *  посередине («pair», PicoBlade 51047: от 4 контактов два окна). */
+function latchSpans(look: Look, lw: number, W: number): Array<[number, number]> {
+  if (look.latch === "ends") { const e = Math.max(W * 0.1, Math.min(W * 0.16, 2)); return [[0, e], [W - e, e]]; }
+  if (look.latch === "pair") { const w = Math.min(lw, W * 0.22); return [[W * 0.3 - w / 2, w], [W * 0.7 - w / 2, w]]; }
+  return [[(W - lw) / 2, lw]];
+}
+
+/** Метка признака ориентации в SVG: `data-top` — по ней тесты и сверка видят, что на крыше есть замок или прорези. */
+export const roofMark = (kind: TopFeature, svg: string) => `<g data-top="${kind}">${svg}</g>`;
+
+/** Как рисуется замок на крыше. Сторона пары с листа (hs.mate.lock): плечо — рычаг посередине («lever») или плечи с
+ *  зацепами на торцах / парой («hook»), упор под плечо — низкий клин («catch»), окно — проём в крыше («window»). Без
+ *  стороны пары — как было: рычаг из базы или клин. */
+type LatchStyle = "lever" | "hook" | "ramp" | "catch" | "window";
+
+function latchStyle(hs: ConnectorHousing, look: Look): LatchStyle {
+  const lock = hs.mate?.lock;
+  if (lock === "arm") return look.latch === "ends" || look.latch === "pair" ? "hook" : "lever";
+  if (lock === "catch" || lock === "window") return lock;
+  return look.latch === "lever" ? "lever" : "ramp";
+}
+
+const hasLatch = (look: Look) => look.latch === "lever" || look.latch === "ramp" || look.latch === "ends" || look.latch === "pair";
+
+/** Замок стороны пары в SVG: `data-lock` — плечо, упор или окно (по нему тесты видят, что вилка и розетка разные). */
+const lockMark = (hs: ConnectorHousing, svg: string) => hs.mate?.lock ? `<g data-lock="${hs.mate.lock}">${svg}</g>` : svg;
+
+/** Насколько кожух (shell «outer») шире торца проводов с каждой стороны, мм: в него входит ответный корпус. */
+const shroudGrow = (look: Look) => Math.max(look.wall * 0.7, 0.35);
+
+const PIN = "#d8b454", PIN_EDGE = "#8a6d1f";
+
+/** Контакт в гнезде по стороне пары (hs.mate.contacts): штырь — сплошной металл с бликом торца, гнездо — тёмное окно с
+ *  кольцом гнезда; без стороны пары — окно заливкой `hole`, как было. `hw`/`hh` — полуширина и полувысота окна, `sy` —
+ *  сжатие круга в ракурсе «top». `data-contact` — по нему тесты видят штыри и гнёзда. */
+function contactGlyph(kind: Mate["contacts"] | undefined, x: number, y: number, hw: number, hh: number, round: boolean,
+  hole: string, sy = 1, rx = 0): string {
+  if (!kind) return round ? dot(x, y, hw, sy, hole) : windowMark(x, y, hw * 2, hh * 2, hole, rx);
+  const ring = (r: number) => sy === 1
+    ? `<circle cx="${f(x)}" cy="${f(y)}" r="${f(r)}" fill="none" stroke="${PIN}" stroke-width="${f(Math.max(0.8, r * 0.28))}"/>`
+    : `<ellipse cx="${f(x)}" cy="${f(y)}" rx="${f(r)}" ry="${f(r * sy)}" fill="none" stroke="${PIN}" stroke-width="${f(Math.max(0.6, r * 0.22))}"/>`;
+  const inner = kind === "pin"
+    ? round ? dot(x, y, hw, sy, PIN, PIN_EDGE) + dot(x, y, hw * 0.42, sy, shade(PIN, 0.4))
+      : windowMark(x, y, hw * 2, hh * 2, PIN, rx) + windowMark(x, y, hw * 0.84, hh * 0.84, shade(PIN, 0.4))
+    : (round ? dot(x, y, hw, sy, hole) : windowMark(x, y, hw * 2, hh * 2, hole, rx)) + ring(Math.min(hw, hh / (sy || 1)) * 0.56);
+  return `<g data-contact="${kind}">${inner}</g>`;
 }
 
 /** Раскладка контактов в мм от левого верхнего угла торца: центр каждого контакта сетки. */
@@ -158,8 +278,29 @@ export function gradId(color: string): string {
   return `cgr${color.replace(/[^0-9a-f]/gi, "")}`;
 }
 
-/** Объёмный вид корпуса разъёма (схема жгута, «База данных → Разъёмы»). Вписывается в maxW × maxH. */
-export function connectorPicture(hs: ConnectorHousing, maxW: number, maxH: number, byPin: Record<number, string> | null = null): Box {
+/** Ракурс объёмного вида: «iso» — сбоку-сверху; «top» — та же модель, развёрнутая видом сверху (владелец, 16.10: «просто
+ *  развернуть»): крыша корпуса с защёлкой, торец проводов с контактами — снизу, в сжатой перспективе. */
+export type PictureView = "iso" | "top";
+const VIEWS: Record<PictureView, { dx: number; dz: number; sy: number }> = {
+  iso: { dx: 0.62, dz: 0.4, sy: 1 },
+  top: { dx: 0, dz: 0.87, sy: 0.5 },
+};
+
+/** Окно контакта на торце: прямоугольник, в ракурсе «top» сжатый по высоте. */
+function windowMark(x: number, y: number, w: number, h: number, fill: string, rx = 0): string {
+  return `<rect x="${f(x - w / 2)}" y="${f(y - h / 2)}" width="${f(w)}" height="${f(h)}"${rx ? ` rx="${f(rx)}"` : ""} fill="${fill}"/>`;
+}
+
+function dot(x: number, y: number, r: number, sy: number, fill: string, stroke = ""): string {
+  const edge = stroke ? ` stroke="${stroke}" stroke-width=".5"` : "";
+  return sy === 1 ? `<circle cx="${f(x)}" cy="${f(y)}" r="${f(r)}" fill="${fill}"${edge}/>`
+    : `<ellipse cx="${f(x)}" cy="${f(y)}" rx="${f(r)}" ry="${f(r * sy)}" fill="${fill}"${edge}/>`;
+}
+
+/** Объёмный вид корпуса разъёма (схема жгута, «База данных → Разъёмы»). Вписывается в maxW × maxH. Круглые разъёмы,
+ *  лепестки и «бананы» ракурса «top» не имеют — рисуются как обычно. */
+export function connectorPicture(hs: ConnectorHousing, maxW: number, maxH: number, byPin: Record<number, string> | null = null,
+  view: PictureView = "iso"): Box {
   const look = connectorLook(hs);
   if (look.shape === "lug" || look.shape === "banana") {
     const s = Math.min(maxW / 2.7, maxH / 1.3);
@@ -185,41 +326,66 @@ export function connectorPicture(hs: ConnectorHousing, maxW: number, maxH: numbe
     }
     return { w: 2 * r + ox + 2, h: 2 * r - oy + 2, body };
   }
-  if (hs.body && hs.rows === 1) return bodyPicture(hs, hs.body, maxW, maxH, byPin);
+  if (isPairBody(hs.body) && hs.rows === 1) return pairModel(hs, hs.body, maxW, maxH, view);
+  if (hs.body && hs.rows === 1) return bodyPicture(hs, hs.body, maxW, maxH, byPin, view);
+  const { dx, dz, sy } = VIEWS[view];
   const pitch = facePitch(hs, look);
   const [W, H] = faceSize(hs, look, pitch);
-  const D = look.depth, latchH = look.latch === "lever" ? H * 0.28 + 0.6 : look.latch === "ramp" ? H * 0.2 + 0.3 : 0;
-  const k = Math.min(maxW / (W + D * 0.62), maxH / (H + latchH + D * 0.4), 16);
-  const ox = D * k * 0.62, oy = -D * k * 0.4, top = -oy + latchH * k + 1;
-  const front = outline(look, W, H).map(([x, y]) => [x * k + 1, y * k + top] as Pt);
-  let body = prism(front, ox, oy, color);
-  // Защёлка на верхней грани: рычаг (Mini-Fit, SM, DT, RJ45) или выступ-клин (JST XH/PH/GH).
-  if (look.latch === "lever" || look.latch === "ramp") {
-    const lw = look.latch === "lever" ? Math.min(W * 0.42, 6) : Math.min(W * 0.34, 4), lh = latchH;
-    const lx = (look.shape === "rj45" ? W / 2 : W / 2) - lw / 2;
-    const base: Pt[] = [[lx * k + 1, top], [(lx + lw) * k + 1, top], [(lx + lw) * k + 1, top - lh * k], [lx * k + 1, top - lh * k]];
-    const s0 = 0.18, s1 = look.latch === "lever" ? 0.85 : 0.5;
+  const style = latchStyle(hs, look), latched = hasLatch(look);
+  const D = look.depth, latchH = !latched || style === "window" ? 0 : style === "lever" ? H * 0.28 + 0.6 : style === "catch" ? H * 0.12 + 0.2 : H * 0.2 + 0.3;
+  // Сторона пары: кожух (outer) у стыковочного конца шире торца проводов — в него входит ответный корпус; входящий
+  // корпус (inner) там уже — «нос». Граница — на `split` глубины.
+  const shell = look.shape === "rect" ? hs.mate?.shell : undefined, g = shell ? shroudGrow(look) : 0, grow = shell === "outer" ? g : 0, split = 0.45;
+  const k = Math.min(maxW / (W + 2 * grow + D * dx), maxH / ((H + 2 * grow + latchH) * sy + D * dz), 16);
+  const ox = D * k * dx, oy = -D * k * dz, top = -oy + (latchH + grow) * k * sy + 1, left = 1 + grow * k;
+  const front = outline(look, W, H).map(([x, y]) => [x * k + left, y * k * sy + top] as Pt);
+  let body = "";
+  if (shell) {
+    const e = shell === "outer" ? g : -g;
+    const mating = outline(look, W + 2 * e, H + 2 * e).map(([x, y]) => [(x - e) * k + left + ox * split, (y - e) * k * sy + top + oy * split] as Pt);
+    body += `<g data-shell="${shell}">${prism(mating, ox * (1 - split), oy * (1 - split), shade(color, -0.03))}${poly(mating, shade(color, -0.1))}</g>`;
+    body += prism(front, ox * split, oy * split, color);
+  } else body += prism(front, ox, oy, color);
+  // Замок на верхней грани: рычаг (Mini-Fit, DT, RJ45), выступ-клин (JST XH/PH/GH), плечи на торцах (SM), у пары — по
+  // листу: плечо, упор или окно; на кожухе (outer) — на стыковочной части.
+  if (latched) {
+    const lw = style === "lever" ? Math.min(W * 0.42, 6) : Math.min(W * 0.34, 4), lh = latchH;
+    const onShroud = shell === "outer", y0 = top - grow * k * sy, spanW = W + 2 * grow;
+    const s0 = onShroud ? (style === "catch" ? 0.72 : split + 0.08) : style === "window" ? 0.3 : 0.18;
+    // Упор — короткий выступ у края кожуха, плечо — длинное вдоль корпуса: на виде сверху их не спутать.
+    const s1 = style === "window" ? Math.min(0.92, s0 + 0.3) : style === "catch" ? Math.min(0.92, s0 + 0.2)
+      : onShroud ? 0.92 : style === "lever" ? 0.85 : look.latch === "ends" ? 0.7 : 0.5;
     const shift = (p: Pt, t: number): Pt => [p[0] + ox * t, p[1] + oy * t];
-    body += prism(base.map((p) => shift(p, s0)), ox * (s1 - s0), oy * (s1 - s0), shade(color, -0.04), 0.6) +
-      poly(base.map((p) => shift(p, s0)), shade(color, 0.05), EDGE, 0.6);
+    body += roofMark("latch", lockMark(hs, latchSpans(look, lw, spanW).map(([lx, w]) => {
+      const a = lx * k + 1, b = (lx + w) * k + 1;
+      if (style === "window") return poly([shift([a, y0], s0), shift([b, y0], s0), shift([b, y0], s1), shift([a, y0], s1)], shade(color, -0.6), EDGE, 0.5);
+      const base: Pt[] = [[a, y0], [b, y0], [b, y0 - lh * k * sy], [a, y0 - lh * k * sy]];
+      const side = style === "catch" ? shade(color, -0.14) : shade(color, -0.04), face = style === "catch" ? shade(color, -0.08) : shade(color, 0.05);
+      return prism(base.map((p) => shift(p, s0)), ox * (s1 - s0), oy * (s1 - s0), side, 0.6) + poly(base.map((p) => shift(p, s0)), face, EDGE, 0.6);
+    }).join("")));
   }
   const dark = isDark(color);
   body += gradient(gradId(color), color) + poly(front, `url(#${gradId(color)})`, EDGE, 0.9);
+  if (topFeature(hs) === "slots") {
+    // Крыша без замка: прорези ключа вдоль корпуса (у стороны контакта 1).
+    const groove = shade(color, -0.5);
+    body += roofMark("slots", slotSpans(hs).map(([a, b]) => poly([
+      [(a * W) * k + left + ox * 0.1, top + oy * 0.1], [(b * W) * k + left + ox * 0.1, top + oy * 0.1],
+      [(b * W) * k + left + ox * 0.9, top + oy * 0.9], [(a * W) * k + left + ox * 0.9, top + oy * 0.9]], groove, groove, 0.3)).join(""));
+  }
   if (look.shape === "dsub") {
-    const inset = outline(look, W - look.wall * 2, H - look.wall * 2).map(([x, y]) => [(x + look.wall) * k + 1, (y + look.wall) * k + top] as Pt);
+    const inset = outline(look, W - look.wall * 2, H - look.wall * 2).map(([x, y]) => [(x + look.wall) * k + left, (y + look.wall) * k * sy + top] as Pt);
     body += poly(inset, "#2f3b44", EDGE, 0.6);
   }
   const holes = cavities(hs, pitch, look.wall + (look.shape === "dsub" ? 0.3 : 0), look.shape === "dsub");
-  const hw = (look.shape === "xt" ? pitch * 0.34 : pitch * 0.34) * k;
+  const hw = pitch * 0.34 * k, kind = hs.mate?.contacts;
   holes.forEach((c) => {
-    const x = c.x * k + 1, y = c.y * k + top, wn = byPin && byPin[c.pin];
+    const x = c.x * k + left, y = c.y * k * sy + top, wn = byPin && byPin[c.pin];
     const round = hs.cavity === "round" || look.shape === "xt" || look.shape === "dsub";
-    body += round
-      ? `<circle cx="${f(x)}" cy="${f(y)}" r="${f(hw)}" fill="${look.shape === "xt" ? "#d8b454" : dark ? "#5d666b" : "#2f3336"}"/>`
-      : `<rect x="${f(x - hw)}" y="${f(y - hw)}" width="${f(hw * 2)}" height="${f(hw * 2)}" rx="${f(hw * 0.2)}" fill="${dark ? "#5d666b" : "#2f3336"}"/>`;
-    if (wn) body += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(hw * 0.8)}" fill="${wireColor(wn)}" stroke="#e9eef0" stroke-width=".5"/>`;
+    body += contactGlyph(kind, x, y, hw, hw * sy, round, look.shape === "xt" ? "#d8b454" : dark ? "#5d666b" : "#2f3336", sy, round ? 0 : hw * 0.2);
+    if (wn) body += dot(x, y, hw * 0.8, sy, wireColor(wn), "#e9eef0");
   });
-  return { w: W * k + ox + 2, h: top + H * k + 2, body };
+  return { w: (W + 2 * grow) * k + ox + 2, h: top + (H + grow) * k * sy + 2, body };
 }
 
 function flatSmall(hs: ConnectorHousing, look: Look, s: number, byPin: Record<number, string> | null): Box {
@@ -247,25 +413,54 @@ export function connectorFace(hs: ConnectorHousing, x: number, y: number, s: num
   }
   const color = hs.color || "#efe6cf", dark = isDark(color), fs = Math.max(6.5, s * 0.34);
   if (look.shape === "round" || look.shape === "barrel") return roundFace(hs, look, x, y, s, byPin, hits);
+  if (isPairBody(hs.body)) return pairFace(hs, hs.body, x, y, s, byPin, hits);
   if (hs.body) return bodyFace(hs, hs.body, x, y, s, byPin, hits);
   const pitch = facePitch(hs, look), k = s / pitch;
   const [W, H] = faceSize(hs, look, pitch);
-  const latchH = look.latch === "lever" || look.latch === "ramp" ? Math.max(4, s * 0.42) : 0, top = y + latchH;
+  const style = latchStyle(hs, look), latched = hasLatch(look);
+  // Кожух стороны пары (outer) виден со стороны проводов ободом вокруг торца — он шире корпуса за ним.
+  const grow = look.shape === "rect" && hs.mate?.shell === "outer" ? shroudGrow(look) * k : 0;
+  const latchH = latched && style !== "window" ? Math.max(4, s * (style === "catch" ? 0.26 : 0.42)) : 0;
+  const rimTop = y + latchH, top = rimTop + grow, x0 = x;
+  x += grow;
   let body = "";
   if (latchH) {
-    const lw = look.latch === "lever" ? Math.min(W * k * 0.55, s * 2.2) : Math.min(W * k * 0.45, s * 1.5), lx = x + (W * k - lw) / 2;
-    body += look.latch === "lever"
-      ? `<path d="M${f(lx)},${f(top + 1)} L${f(lx)},${f(y + 1)} L${f(lx + lw)},${f(y + 1)} L${f(lx + lw)},${f(top + 1)}" fill="${shade(color, 0.1)}" stroke="${EDGE}" stroke-width="1"/>` +
-        `<line x1="${f(lx + lw * 0.2)}" y1="${f(y + latchH * 0.55)}" x2="${f(lx + lw * 0.8)}" y2="${f(y + latchH * 0.55)}" stroke="${EDGE}" stroke-width=".7"/>`
-      : `<path d="M${f(lx)},${f(top + 1)} L${f(lx + lw * 0.2)},${f(y)} L${f(lx + lw * 0.8)},${f(y)} L${f(lx + lw)},${f(top + 1)} z" fill="${shade(color, 0.1)}" stroke="${EDGE}" stroke-width="1"/>`;
+    const lw = style === "lever" ? Math.min(W * k * 0.55, s * 2.2) : Math.min(W * k * 0.45, s * 1.5);
+    body += roofMark("latch", lockMark(hs, latchSpans(look, lw / k, W + 2 * grow / k).map(([sx, sw]) => {
+      const lx = x0 + sx * k, w = sw * k, base = rimTop + 1;
+      if (style === "lever") {
+        return `<path d="M${f(lx)},${f(base)} L${f(lx)},${f(y + 1)} L${f(lx + w)},${f(y + 1)} L${f(lx + w)},${f(base)}" fill="${shade(color, 0.1)}" stroke="${EDGE}" stroke-width="1"/>` +
+          `<line x1="${f(lx + w * 0.2)}" y1="${f(y + latchH * 0.55)}" x2="${f(lx + w * 0.8)}" y2="${f(y + latchH * 0.55)}" stroke="${EDGE}" stroke-width=".7"/>`;
+      }
+      if (style === "hook") {
+        // Плечо с зацепом: стойка от крыши и крючок наружу на её конце.
+        const out = lx + w / 2 < x0 + (W * k + 2 * grow) / 2 ? -1 : 1, bar = w * 0.55, bx = out < 0 ? lx + w - bar : lx;
+        const tip = out < 0 ? bx - w * 0.45 : bx + bar + w * 0.45, edge = out < 0 ? bx : bx + bar;
+        return `<path d="M${f(bx)},${f(base)} L${f(bx)},${f(y + 1)} L${f(bx + bar)},${f(y + 1)} L${f(bx + bar)},${f(base)} z" fill="${shade(color, 0.1)}" stroke="${EDGE}" stroke-width="1"/>` +
+          `<path d="M${f(edge)},${f(y + 1)} L${f(tip)},${f(y + 1 + latchH * 0.45)} L${f(edge)},${f(y + 1 + latchH * 0.6)} z" fill="${shade(color, 0.1)}" stroke="${EDGE}" stroke-width="1"/>`;
+      }
+      const fill = style === "catch" ? shade(color, -0.12) : shade(color, 0.1);
+      return `<path d="M${f(lx)},${f(base)} L${f(lx + w * 0.2)},${f(y)} L${f(lx + w * 0.8)},${f(y)} L${f(lx + w)},${f(base)} z" fill="${fill}" stroke="${EDGE}" stroke-width="1"/>`;
+    }).join("")));
+  }
+  if (grow) {
+    const rim = outline(look, W + 2 * grow / k, H + 2 * grow / k).map(([px, py]) => [x0 + px * k, rimTop + py * k] as Pt);
+    body += `<g data-shell="outer">${poly(rim, shade(color, -0.22), EDGE, 1)}</g>`;
   }
   const front = outline(look, W, H).map(([px, py]) => [x + px * k, top + py * k] as Pt);
   body += gradient(gradId(color), color) + poly(front, `url(#${gradId(color)})`, EDGE, 1.2);
-  if (look.latch === "friction") {
+  if (latched && style === "window") {
+    // Окно замка в стенке кожуха — проём у верхней кромки.
+    const lw = Math.min(W * k * 0.45, s * 1.5), h = Math.max(3, Math.min(6, s * 0.2));
+    body += roofMark("latch", lockMark(hs, latchSpans(look, lw / k, W + 2 * grow / k).map(([sx, sw]) =>
+      `<rect x="${f(x0 + sx * k)}" y="${f(rimTop)}" width="${f(sw * k)}" height="${f(h + grow)}" fill="${shade(color, -0.6)}" stroke="${EDGE}" stroke-width=".6"/>`).join("")));
+  }
+  if (topFeature(hs) === "slots") body += faceNotches(hs, x, top, W * k, s, shade(color, -0.5));
+  if (look.orig === "friction") {
     // PicoBlade / Milli-Grid: ключ-рёбрышко сбоку корпуса.
     body += `<rect x="${f(x - Math.max(2, s * 0.14))}" y="${f(top + H * k * 0.25)}" width="${f(Math.max(2, s * 0.14))}" height="${f(H * k * 0.5)}" fill="${shade(color, -0.08)}" stroke="${EDGE}" stroke-width=".7"/>`;
   }
-  if (look.latch === "mark") {
+  if (look.orig === "mark") {
     body += `<path d="M${f(x + W * k / 2 - 4)},${f(top + 2)} L${f(x + W * k / 2 + 4)},${f(top + 2)} L${f(x + W * k / 2)},${f(top + 7)} z" fill="${shade(color, -0.35)}"/>`;
   }
   if (look.shape === "dsub") {
@@ -274,13 +469,14 @@ export function connectorFace(hs: ConnectorHousing, x: number, y: number, s: num
   }
   const holes = cavities(hs, pitch, look.wall + (look.shape === "dsub" ? 0.3 : 0), look.shape === "dsub");
   const hw = s * (look.shape === "xt" ? 0.36 : 0.4) * (look.shape === "dsub" ? 0.62 : 1);
-  const round = hs.cavity === "round" || look.shape === "xt" || look.shape === "dsub";
+  const round = hs.cavity === "round" || look.shape === "xt" || look.shape === "dsub", kind = hs.mate?.contacts;
+  // Цифра на металле штыря (и на золотых гнёздах XT / D-Sub без стороны пары) — тёмная, в тёмном окне — светлая.
+  const lightCavity = kind ? kind === "pin" : look.shape === "xt" || look.shape === "dsub";
   holes.forEach((c) => {
     const cx = x + c.x * k, cy = top + c.y * k, wn = byPin && byPin[c.pin];
     hits?.push({ pin: c.pin, x: cx, y: cy, r: look.shape === "dsub" ? s * 0.24 : s * 0.5 });
-    body += round
-      ? `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(hw)}" fill="${look.shape === "xt" || look.shape === "dsub" ? "#d8b454" : dark ? "#5d666b" : "#2f3336"}"/>`
-      : `<rect x="${f(cx - hw)}" y="${f(cy - hw)}" width="${f(hw * 2)}" height="${f(hw * 2)}" rx="${f(s * 0.08)}" fill="${dark ? "#5d666b" : "#2f3336"}"/>`;
+    const hole = round && !kind && (look.shape === "xt" || look.shape === "dsub") ? "#d8b454" : dark ? "#5d666b" : "#2f3336";
+    body += contactGlyph(kind, cx, cy, hw, hw, round, hole, 1, round ? 0 : s * 0.08);
     const label = hs.labels ? (hs.labels[c.pin - 1] == null ? c.pin : hs.labels[c.pin - 1]) : c.pin;
     const lfs = look.shape === "dsub" ? fs * 0.8 : fs;
     if (wn) {
@@ -288,11 +484,18 @@ export function connectorFace(hs: ConnectorHousing, x: number, y: number, s: num
       body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(hw * 0.86)}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>` +
         (label !== "" ? `<text x="${f(cx)}" y="${f(cy + lfs * 0.36)}" text-anchor="middle" font-size="${f(lfs)}" font-weight="700" fill="${DARK_WIRE.test(wc) ? "#fff" : EDGE}">${esc(label)}</text>` : "");
     } else if (s >= 14 && label !== "") {
-      body += `<text x="${f(cx)}" y="${f(cy + lfs * 0.36)}" text-anchor="middle" font-size="${f(lfs)}" fill="${look.shape === "xt" || look.shape === "dsub" ? EDGE : "#e9eef0"}">${esc(label)}</text>`;
+      body += `<text x="${f(cx)}" y="${f(cy + lfs * 0.36)}" text-anchor="middle" font-size="${f(lfs)}" fill="${lightCavity ? EDGE : "#e9eef0"}">${esc(label)}</text>`;
     }
     if (c.pin === 1 && !hs.labels) body += pinOneMark(hs, look, c, x, top, W * k, H * k, k, s);
   });
-  return { w: W * k, h: H * k + latchH + 6, body };
+  return { w: W * k + 2 * grow, h: H * k + latchH + 2 * grow + 6, body };
+}
+
+/** Торец, крыша с прорезями: на верхней кромке две выемки ключа у стороны контакта 1. */
+function faceNotches(hs: ConnectorHousing, x: number, top: number, width: number, s: number, fill: string): string {
+  const h = Math.max(2, Math.min(5, s * 0.14));
+  return roofMark("slots", slotSpans(hs).map(([a, b]) =>
+    `<rect x="${f(x + a * width)}" y="${f(top)}" width="${f((b - a) * width)}" height="${f(h)}" fill="${fill}" stroke="${EDGE}" stroke-width=".5"/>`).join(""));
 }
 
 function pinOneMark(hs: ConnectorHousing, look: Look, c: { x: number; y: number }, x: number, top: number, W: number, H: number, k: number, s: number): string {
@@ -334,13 +537,23 @@ function roundFace(hs: ConnectorHousing, look: Look, x: number, y: number, s: nu
 /** Ширина торца в шагах контактов — по ней эскиз и база подбирают масштаб, чтобы корпус влез целиком. */
 export function connectorFaceUnits(hs: ConnectorHousing): number {
   const pitch = hs.pitch || 2.5;
-  if (hs.body) return bodyWidth(hs, hs.body, pitch) / pitch;
+  if (hs.body) return bodySpan(hs, hs.body, pitch).W / pitch;
   return Math.max(hs.cols + (hs.kind === "dsub" ? 1 : 0), 1) / (hs.kind === "dsub" ? 2 : 1);
 }
 
 export function bodyWidth(hs: ConnectorHousing, b: HousingBody, pitch: number): number {
   return (hs.cols - 1) * pitch + b.extra + 2 * (b.ears || 0);
 }
+
+/** Полная ширина корпуса с кожухом или плечами (W), ширина самого корпуса (core) и его сдвиг от левого края (off), мм. */
+export function bodySpan(hs: ConnectorHousing, b: HousingBody, pitch: number): { W: number; core: number; off: number } {
+  const core = bodyWidth(hs, b, pitch), hood = b.hood ? (hs.cols - 1) * pitch + b.hood.extra : 0;
+  const W = Math.max(core, hood, b.wings ? core + 2 * b.wings.out : 0);
+  return { W, core, off: (W - core) / 2 };
+}
+
+/** Корпус пары с кожухом (вилка JST SMR, штыри) или с плечами по торцам (розетка JST SMP, гнёзда) — рисуется своим контуром. */
+export const isPairBody = (b: HousingBody | null | undefined): b is HousingBody => Boolean(b && (b.hood || b.wings));
 
 /** Центры окон по x (мм от левого края корпуса) в порядке колонок сетки. */
 export function bodyColumns(hs: ConnectorHousing, b: HousingBody, pitch: number): number[] {
@@ -354,6 +567,26 @@ export function lockWidth(b: HousingBody, W: number): number {
   return b.lock_w ? Math.min(b.lock_w, W) : Math.max(1.5, W - 2 * (b.lock_inset || 0));
 }
 
+/** Полость на торце проводов по чертежу производителя (`body.cav`), мм → пиксели k. Центр (cx, cy); защёлка сверху. */
+function cavityShape(c: NonNullable<HousingBody["cav"]>, cx: number, cy: number, k: number, color: string, dark: boolean): string {
+  const w = c.w * k, h = c.h * k, x0 = cx - w / 2, y0 = cy - h / 2, rim = shade(color, dark ? 0.22 : -0.16), hole = dark ? "#0f1315" : "#2a2e30";
+  if (c.kind === "funnel") {
+    // Воронка: квадрат с фасками к отверстию (на чертеже виден и тёмный квадрат, и скошенные грани), отверстие со срезанными нижними углами.
+    const [hw, hh] = (c.hole || [c.w * 0.5, c.h * 0.55]).map((v) => v * k), cut = (c.chamfer ?? 0.7) * k;
+    const ix = cx - hw / 2, iy = cy - hh / 2 - h * 0.03;
+    const pts = [[ix, iy], [ix + hw, iy], [ix + hw, iy + hh - cut], [ix + hw - cut, iy + hh], [ix + cut, iy + hh], [ix, iy + hh - cut]];
+    const d = pts.map(([px, py]) => `${f(px)},${f(py)}`).join(" ");
+    return `<g data-cavity="funnel"><rect x="${f(x0)}" y="${f(y0)}" width="${f(w)}" height="${f(h)}" fill="${rim}" stroke="${EDGE}" stroke-width="1"/>` +
+      [[x0, y0, ix, iy], [x0 + w, y0, ix + hw, iy], [x0 + w, y0 + h, ix + hw - cut, iy + hh], [x0, y0 + h, ix + cut, iy + hh]].map(([ax, ay, bx, by]) =>
+        `<line x1="${f(ax)}" y1="${f(ay)}" x2="${f(bx)}" y2="${f(by)}" stroke="${EDGE}" stroke-width=".8"/>`).join("") +
+      `<polygon points="${d}" fill="${hole}" stroke="${EDGE}" stroke-width="1"/></g>`;
+  }
+  // Двойной квадрат: вход контакта с внутренним контуром (Connfly DS1070, DS1072).
+  const ix = w * 0.2, iy = h * 0.2;
+  return `<g data-cavity="bevel"><rect x="${f(x0)}" y="${f(y0)}" width="${f(w)}" height="${f(h)}" fill="${hole}" stroke="${EDGE}" stroke-width="1"/>` +
+    `<rect x="${f(x0 + ix)}" y="${f(y0 + iy)}" width="${f(w - 2 * ix)}" height="${f(h - 2 * iy)}" fill="${rim}" stroke="${EDGE}" stroke-width=".8"/></g>`;
+}
+
 /** Торец корпуса по чертежу (JST SH, GH, XH, PH, ZH, Micro-Fit): прямоугольник B × h, выступы по бокам, защёлка на
  *  верхней грани, прямоугольные окна контактов по сетке, у PH/ZH — окна фиксаторов на нижней грани, у SH — метка ▽
  *  над контактом 1; красная стрелка у контакта 1. */
@@ -361,16 +594,24 @@ function bodyFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
   const pitch = hs.pitch || 1, k = s / pitch, color = hs.color || "#efe6cf", dark = isDark(color);
   const W = bodyWidth(hs, b, pitch), H = b.h, ears = b.ears || 0, fs = Math.max(6.5, Math.min(s * 0.34, 15));
   const [winW, winH] = b.win && b.win.length === 2 ? b.win : [pitch * 0.6, H * 0.45];
-  const lw = lockWidth(b, W), lockH = lw ? b.lock_h || 0 : 0;
-  const markH = lockH ? lockH * k + 1 : hs.latch === "mark" ? Math.max(7, s * 0.2) : 2;
+  const centered = hs.roof?.kind === "latch" && hs.roof.at === "center", ends = hs.roof?.kind === "latch" && hs.roof.at === "ends";
+  const lw = centered ? lockWidth(b, W) : 0, lockH = lw ? b.lock_h || 0 : 0, endsH = ends ? Math.max(4, s * 0.3) : 0;
+  const markH = lockH ? lockH * k + 1 : endsH ? endsH + 1 : hs.latch === "mark" ? Math.max(7, s * 0.2) : 2;
+  const slotsBelow = hs.latch === "windows" && hs.model === "slots"; // PH/EH/ZH: фиксаторы на нижней грани — их и показывает рисунок
   const slotH = hs.latch === "windows" ? Math.max(3, Math.min(0.7, H * 0.2) * k) : 0;
   const top = y + markH, X = (mm: number) => x + mm * k, Y = (mm: number) => top + mm * k;
   let body = gradient(gradId(color), color);
   if (lockH) {
     // Защёлка по чертежу: рычаг/рамка на верхней грани, по центру корпуса.
     const lx = X((W - lw) / 2);
-    body += `<rect x="${f(lx)}" y="${f(y + 1)}" width="${f(lw * k)}" height="${f(lockH * k + 1)}" rx="${f(Math.min(2, k * 0.15))}" fill="${shade(color, 0.08)}" stroke="${EDGE}" stroke-width="1"/>` +
-      `<line x1="${f(lx + lw * k * 0.2)}" y1="${f(y + 1 + lockH * k * 0.5)}" x2="${f(lx + lw * k * 0.8)}" y2="${f(y + 1 + lockH * k * 0.5)}" stroke="${EDGE}" stroke-width=".7"/>`;
+    body += roofMark("latch", lockMark(hs, `<rect x="${f(lx)}" y="${f(y + 1)}" width="${f(lw * k)}" height="${f(lockH * k + 1)}" rx="${f(Math.min(2, k * 0.15))}" fill="${shade(color, 0.08)}" stroke="${EDGE}" stroke-width="1"/>` +
+      `<line x1="${f(lx + lw * k * 0.2)}" y1="${f(y + 1 + lockH * k * 0.5)}" x2="${f(lx + lw * k * 0.8)}" y2="${f(y + 1 + lockH * k * 0.5)}" stroke="${EDGE}" stroke-width=".7"/>`));
+  }
+  if (endsH) {
+    // Замок плечами на торцах корпуса: два выступа над верхней гранью по краям.
+    const ew = Math.max(3, Math.min(W * 0.14, 2) * k);
+    body += roofMark("latch", lockMark(hs, [X(0), X(W) - ew].map((ex) =>
+      `<rect x="${f(ex)}" y="${f(y + 1)}" width="${f(ew)}" height="${f(endsH + 1)}" rx="1" fill="${shade(color, 0.08)}" stroke="${EDGE}" stroke-width="1"/>`).join("")));
   }
   if (ears) {
     body += `<rect x="${f(X(0))}" y="${f(Y(0))}" width="${f(ears * k)}" height="${f(H * k)}" fill="${shade(color, -0.07)}" stroke="${EDGE}" stroke-width="1"/>` +
@@ -380,23 +621,25 @@ function bodyFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
   const columns = bodyColumns(hs, b, pitch), rows = Math.max(1, hs.grid.length);
   if (slotH) {
     // PH/ZH: грань с окнами фиксаторов контактов (на ZH там же отлиты номера) — снизу, по окну на контакт.
-    columns.forEach((cxMm) => {
-      body += `<rect x="${f(X(cxMm) - winW * k / 2)}" y="${f(Y(H) - slotH)}" width="${f(winW * k)}" height="${f(slotH)}" fill="${shade(color, -0.4)}"/>`;
-    });
+    const windows = columns.map((cxMm) =>
+      `<rect x="${f(X(cxMm) - winW * k / 2)}" y="${f(Y(H) - slotH)}" width="${f(winW * k)}" height="${f(slotH)}" fill="${shade(color, -0.4)}"/>`).join("");
+    body += topFeature(hs) === "slots" ? roofMark("slots", windows) : windows;
   }
+  if (topFeature(hs) === "slots" && !slotH) body += faceNotches(hs, X(ears), Y(0), (W - 2 * ears) * k, s, shade(color, -0.5));
   hs.grid.forEach((row, r) => columns.forEach((cxMm, c) => {
     const pin = row[c];
     if (!pin) return;
-    const cx = X(cxMm), cy = Y(H / 2 + (r - (rows - 1) / 2) * pitch), wn = byPin && byPin[pin];
+    const cx = X(cxMm), cy = Y((b.win_y ?? H / 2) + (r - (rows - 1) / 2) * pitch), wn = byPin && byPin[pin];
     hits?.push({ pin, x: cx, y: cy, r: s * 0.5 });
-    body += `<rect x="${f(cx - winW * k / 2)}" y="${f(cy - winH * k / 2)}" width="${f(winW * k)}" height="${f(winH * k)}" rx="${f(Math.min(2, k * 0.06))}" fill="${dark ? "#5d666b" : "#2f3336"}"/>`;
-    const rad = Math.min(winW, winH) * k * 0.46;
+    body += (b.cav && cavityShape(b.cav, cx, cy, k, color, dark)) ||
+      contactGlyph(hs.mate?.contacts, cx, cy, winW * k / 2, winH * k / 2, false, dark ? "#5d666b" : "#2f3336", 1, Math.min(2, k * 0.06));
+    const rad = (b.cav?.kind === "funnel" ? Math.min(b.cav.w, b.cav.h) * 0.34 : Math.min(winW, winH) * 0.46) * k;
     if (wn) {
       const wc = wireColor(wn);
       body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(rad)}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>` +
         `<text x="${f(cx)}" y="${f(cy + fs * 0.36)}" text-anchor="middle" font-size="${f(fs)}" font-weight="700" fill="${DARK_WIRE.test(wc) ? "#fff" : EDGE}">${pin}</text>`;
     } else if (s >= 14) {
-      body += `<text x="${f(cx)}" y="${f(cy + fs * 0.36)}" text-anchor="middle" font-size="${f(fs)}" fill="#e9eef0">${pin}</text>`;
+      body += `<text x="${f(cx)}" y="${f(cy + fs * 0.36)}" text-anchor="middle" font-size="${f(fs)}" fill="${hs.mate?.contacts === "pin" ? EDGE : "#e9eef0"}">${pin}</text>`;
     }
     if (pin === 1) {
       const t = Math.max(3.5, s * 0.14), tw = Math.max(3, s * 0.2);
@@ -411,14 +654,16 @@ function bodyFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
 
 /** Объёмный корпус по чертежу: торец проводов B × h (с выступами), за ним стыковочная часть потоньше (rear_h),
  *  утопленная с грани метки; на ней окна фиксаторов контактов; метка ▽ над контактом 1. */
-function bodyPicture(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: number, byPin: Record<number, string> | null): Box {
+function bodyPicture(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: number, byPin: Record<number, string> | null,
+  view: PictureView): Box {
+  const { dx, dz, sy } = VIEWS[view];
   const pitch = hs.pitch || 1, color = hs.color || "#efe6cf", dark = isDark(color);
   const W = bodyWidth(hs, b, pitch), H = b.h, L = b.len, ears = b.ears || 0;
   const rearH = Math.min(b.rear_h || H, H), fl = Math.min(b.front_len || L * 0.35, L), el = Math.min(b.ear_len || fl, fl);
-  const lw = lockWidth(b, W), lockH = lw ? b.lock_h || 0 : 0;
-  const k = Math.min(maxW / (W + L * 0.62), maxH / (H + lockH + L * 0.4), 16), ox = 0.62 * k, oy = -0.4 * k;
-  const top = -oy * L + lockH * k + 1;
-  const P = (mx: number, my: number, d: number): Pt => [mx * k + 1 + ox * d, my * k + top + oy * d];
+  const lw = hs.roof?.kind === "latch" && hs.roof.at === "center" ? lockWidth(b, W) : 0, lockH = lw ? b.lock_h || 0 : 0;
+  const k = Math.min(maxW / (W + L * dx), maxH / ((H + lockH) * sy + L * dz), 16), ox = dx * k, oy = -dz * k;
+  const top = -oy * L + lockH * k * sy + 1;
+  const P = (mx: number, my: number, d: number): Pt => [mx * k + 1 + ox * d, my * k * sy + top + oy * d];
   const rect = (x0: number, y0: number, x1: number, y1: number, d: number): Pt[] => [P(x0, y0, d), P(x1, y0, d), P(x1, y1, d), P(x0, y1, d)];
   const box = (x0: number, y0: number, x1: number, y1: number, d0: number, d1: number, fill: string) => {
     const front = rect(x0, y0, x1, y1, d0);
@@ -427,27 +672,192 @@ function bodyPicture(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: n
   const core0 = ears, core1 = W - ears, columns = bodyColumns(hs, b, pitch), row = hs.grid[0] || [];
   // Стыковочная часть: тоньше, прижата к нижней грани; у SH сверху — окна фиксаторов по контактам.
   let body = box(core0, H - rearH, core1, H, fl, L, shade(color, -0.04));
+  // Сторона пары: у этих корпусов стыковочная часть и есть «нос», входящий в ответный (PicoBlade 51021).
+  if (hs.mate?.shell) body = `<g data-shell="${hs.mate.shell}">${body}</g>`;
   const [winW, winH] = b.win && b.win.length === 2 ? b.win : [pitch * 0.6, H * 0.45];
   if (hs.latch === "mark") columns.forEach((cx) => {
     body += poly([P(cx - winW / 2, H - rearH, fl + 0.5), P(cx + winW / 2, H - rearH, fl + 0.5), P(cx + winW / 2, H - rearH, L - 0.4), P(cx - winW / 2, H - rearH, L - 0.4)],
       dark ? "#5d666b" : shade(color, -0.3), EDGE, 0.4);
   });
+  if (topFeature(hs) === "slots") {
+    // Крыша без замка (PicoBlade): прорези ключа на длинной грани за фланцем.
+    const groove = shade(color, -0.5), y = H - rearH, wd = core1 - core0;
+    body += roofMark("slots", slotSpans(hs).map(([a, b]) => poly([P(core0 + a * wd, y, fl + 0.3), P(core0 + b * wd, y, fl + 0.3),
+      P(core0 + b * wd, y, L - 0.4), P(core0 + a * wd, y, L - 0.4)], groove, groove, 0.3)).join(""));
+  }
   body += box(core0, 0, core1, H, 0, fl, color);
   if (ears) body += box(0, 0, ears, H, 0, el, shade(color, -0.05)) + box(W - ears, 0, W, H, 0, el, shade(color, -0.05));
   // Защёлка на верхней грани (GH, XH): по центру, от торца проводов вдоль корпуса.
-  if (lockH) body += box((W - lw) / 2, -lockH, (W + lw) / 2, 0, L * 0.1, L * 0.75, shade(color, 0.04));
+  if (lockH) body += roofMark("latch", lockMark(hs, box((W - lw) / 2, -lockH, (W + lw) / 2, 0, L * 0.1, L * 0.75, shade(color, 0.04))));
   body += gradient(gradId(color), color) + poly(rect(core0, 0, core1, H, 0), `url(#${gradId(color)})`, EDGE, 0.9);
   columns.forEach((cx, c) => {
     const pin = row[c], wn = pin && byPin && byPin[pin];
     const [px, py] = P(cx, H / 2, 0);
-    body += `<rect x="${f(px - winW * k / 2)}" y="${f(py - winH * k / 2)}" width="${f(winW * k)}" height="${f(winH * k)}" fill="${dark ? "#5d666b" : "#2f3336"}"/>`;
-    if (wn) body += `<circle cx="${f(px)}" cy="${f(py)}" r="${f(Math.min(winW, winH) * k * 0.42)}" fill="${wireColor(wn)}" stroke="#e9eef0" stroke-width=".5"/>`;
+    body += contactGlyph(hs.mate?.contacts, px, py, winW * k / 2, winH * k * sy / 2, false, dark ? "#5d666b" : "#2f3336", sy);
+    if (wn) body += dot(px, py, Math.min(winW, winH) * k * 0.42, sy, wireColor(wn), "#e9eef0");
     if (pin === 1 && hs.latch === "mark") {
       const t = pitch * 0.5;
       body += poly([P(cx - t / 2, 0, 0.3), P(cx + t / 2, 0, 0.3), P(cx, 0, 0.3 + t)], shade(color, -0.45), shade(color, -0.45), 0.3);
     }
   });
-  return { w: W * k + ox * L + 2, h: top + H * k + 2, body };
+  return { w: W * k + ox * L + 2, h: top + H * k * sy + 2, body };
+}
+
+/** Метка контакта 1 у крайнего окна: красный треугольник снаружи корпуса, остриём к окну. */
+function pinOneArrow(right: boolean, edgeX: number, cy: number, t: number): string {
+  const ex = right ? edgeX + 2 : edgeX - 2, d = right ? 1 : -1;
+  return `<path d="M${f(ex + d * t * 1.5)},${f(cy - t)} L${f(ex + d * t * 1.5)},${f(cy + t)} L${f(ex)},${f(cy)} z" fill="#d7322d"/>`;
+}
+
+/** Полость контакта на торце проводов пары JST SM, мм: вход обжимного контакта 0,8 × шаг по ширине и 1,04 × шаг по высоте
+ *  (2,0 × 2,6 при шаге 2,5). В чертеже eSM размер входа не проставлен, а окно штыря `win` (1,0) — размер штыря, не полости;
+ *  размер взят по обжимному контакту SHF-001T-0.8BS. */
+export function pairCavity(hs: ConnectorHousing): [number, number] {
+  const pitch = hs.pitch || 1;
+  return [pitch * 0.8, pitch * 1.04];
+}
+
+/** Высота упора замка розетки над корпусом на рисунке торца, мм: по чертежу 0,6 — в масштабе не видно, поэтому не меньше 1,2. */
+const CATCH_MIN = 1.2;
+
+/** Торец пары по чертежу (JST eSM, владелец 17.10: «так и не решена проблема, почему в базе одинаково выглядят SMP и SMR»).
+ *  Вилка SMR (штыри): вокруг корпуса — обод кожуха (кожух шире и толще корпуса), над ним рычаг замка с рифлением. Розетка SMP (гнёзда):
+ *  корпус без обода, по торцам ряда — плечи крепления в панель со ступенями; упор замка розетки SMP стоит на «носе» за фланцем,
+ *  со стороны проводов его не видно — показан штрихом. `data-part` — hood (кожух) или wings (плечи): по ним тесты видят,
+ *  что контуры половин разные. */
+function pairFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s: number, byPin: Record<number, string> | null, hits?: FaceHit[]): Box {
+  const pitch = hs.pitch || 1, k = s / pitch, color = hs.color || "#efe6cf", dark = isDark(color);
+  const fs = Math.max(6.5, Math.min(s * 0.4, 16));
+  const { W, core, off } = bodySpan(hs, b, pitch), hood = b.hood, wings = b.wings;
+  const outerH = hood ? hood.h : b.h, H = b.h, by = (outerH - H) / 2;
+  const lw = hs.roof?.kind === "latch" ? lockWidth(b, core) : 0, lift = lw ? (hood ? b.lock_h || 0 : Math.max(b.lock_h || 0, CATCH_MIN)) : 0;
+  const X = (mm: number) => x + mm * k, Y = (mm: number) => y + 1 + (mm + lift) * k;
+  const [winW, winH] = pairCavity(hs);
+  const rib = shade(color, dark ? 0.42 : -0.38);
+  let body = gradient(gradId(color), color);
+  if (hood) {
+    // Кожух: толстый обод с внутренней кромкой (на чертеже торца SMR — двойной контур).
+    const hw = (hs.cols - 1) * pitch + hood.extra, hx = (W - hw) / 2, wall = hood.wall || 0.8;
+    body += `<g data-shell="outer" data-part="hood"><rect x="${f(X(hx))}" y="${f(Y(0))}" width="${f(hw * k)}" height="${f(hood.h * k)}" rx="${f(Math.min(4, k * 0.6))}" fill="${shade(color, dark ? 0.1 : -0.2)}" stroke="${EDGE}" stroke-width="1.3"/>` +
+      `<rect x="${f(X(hx + wall / 2))}" y="${f(Y(wall / 2))}" width="${f((hw - wall) * k)}" height="${f((hood.h - wall) * k)}" rx="${f(Math.min(3, k * 0.4))}" fill="none" stroke="${rib}" stroke-width=".9"/></g>`;
+  }
+  if (wings) {
+    // Плечи по торцам ряда: с торца проводов видна их ширина и вылет, ступени — вертикальными рёбрами.
+    const wy = by + (H - wings.w) / 2, fill = shade(color, dark ? 0.16 : -0.08);
+    const side = (edge: number, dir: number) => {
+      const a = X(edge), b2 = X(edge + dir * wings.out), lx = Math.min(a, b2), wpx = Math.abs(b2 - a);
+      let g = `<rect x="${f(lx)}" y="${f(Y(wy))}" width="${f(wpx)}" height="${f(wings.w * k)}" rx="${f(Math.min(2, k * 0.2))}" fill="${fill}" stroke="${EDGE}" stroke-width="1.1"/>`;
+      // Ступени хвата — одна кромка у конца плеча, не полосы по всей длине (иначе плечо читается как замок).
+      const tx = b2 - dir * Math.min(wpx * 0.28, k * 0.8);
+      g += `<line x1="${f(tx)}" y1="${f(Y(wy) + 1)}" x2="${f(tx)}" y2="${f(Y(wy + wings.w) - 1)}" stroke="${rib}" stroke-width="1"/>`;
+      return g;
+    };
+    body += `<g data-part="wings">${side(off, -1)}${side(off + core, 1)}</g>`;
+  }
+  body += `<rect x="${f(X(off))}" y="${f(Y(by))}" width="${f(core * k)}" height="${f(H * k)}" rx="${f(Math.min(2, k * 0.15))}" fill="url(#${gradId(color)})" stroke="${EDGE}" stroke-width="1.2"/>`;
+  if (hood && lift) {
+    // Рычаг замка вилки SMR над кожухом: кнопка с продольным рифлением (фото SMR, eSM с. 1).
+    const lx = X(off + (core - lw) / 2), w = lw * k, top = Y(-lift), h = (lift + by) * k;
+    let g = `<rect x="${f(lx)}" y="${f(top)}" width="${f(w)}" height="${f(h)}" rx="${f(Math.min(2, k * 0.2))}" fill="${shade(color, dark ? 0.2 : 0.06)}" stroke="${EDGE}" stroke-width="1.1"/>`;
+    for (const t of [0.28, 0.5, 0.72]) g += `<line x1="${f(lx + w * t)}" y1="${f(top + 2)}" x2="${f(lx + w * t)}" y2="${f(top + h - 2)}" stroke="${rib}" stroke-width="1"/>`;
+    body += roofMark("latch", lockMark(hs, g));
+  } else if (lift) {
+    // Упор замка розетки SMP — сплошной скошенный выступ посередине верха корпуса (над ним в паре встаёт рычаг вилки SMR):
+    // верх читается так же, как у вилки — замок сверху, плечи по бокам.
+    const lx = X(off + (core - lw) / 2), w = lw * k, top = Y(by - lift), bot = Y(by), ramp = Math.min(w * 0.18, 5);
+    const g = `<path d="M${f(lx)},${f(bot + 1)} L${f(lx + ramp)},${f(top)} L${f(lx + w - ramp)},${f(top)} L${f(lx + w)},${f(bot + 1)} z" fill="${shade(color, dark ? 0.24 : -0.3)}" stroke="${EDGE}" stroke-width="1.2"/>`;
+    body += roofMark("latch", lockMark(hs, g));
+  }
+  const row = hs.grid[0] || [];
+  bodyColumns(hs, b, pitch).forEach((cxMm, c) => {
+    const pin = row[c];
+    if (!pin) return;
+    const cx = X(off + cxMm), cy = Y(by + H / 2), wn = byPin && byPin[pin];
+    hits?.push({ pin, x: cx, y: cy, r: s * 0.5 });
+    // Полость читается на тёмном корпусе: чёрное дно и светлая кромка (на чёрном SM «V-B» без неё полости не видно).
+    const hole = dark ? "#0f1315" : "#1b1f21", rx = Math.min(3, k * 0.1), cw = winW * k, ch = winH * k;
+    body += `<g data-cavity="${hs.mate?.contacts || "open"}">${windowMark(cx, cy, cw, ch, hole, rx)}` +
+      `<rect x="${f(cx - cw / 2)}" y="${f(cy - ch / 2)}" width="${f(cw)}" height="${f(ch)}" rx="${f(rx)}" fill="none" stroke="${dark ? "#aeb7bc" : "#7d878c"}" stroke-width="1.2"/></g>`;
+    body += hs.mate?.contacts === "pin" ? contactGlyph("pin", cx, cy, cw * 0.27, ch * 0.21, false, hole, 1, 1)
+      : contactGlyph(hs.mate?.contacts, cx, cy, cw * 0.4, ch * 0.4, false, hole, 1, rx);
+    if (wn) {
+      const wc = wireColor(wn);
+      body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(Math.min(winW, winH) * k * 0.46)}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>` +
+        `<text x="${f(cx)}" y="${f(cy + fs * 0.36)}" text-anchor="middle" font-size="${f(fs)}" font-weight="700" fill="${DARK_WIRE.test(wc) ? "#fff" : EDGE}">${pin}</text>`;
+    } else if (s >= 14) {
+      body += `<text x="${f(cx)}" y="${f(cy + fs * 0.36)}" text-anchor="middle" font-size="${f(fs)}" fill="${hs.mate?.contacts === "pin" ? EDGE : "#e9eef0"}">${pin}</text>`;
+    }
+    if (pin === 1) {
+      const right = c > (hs.cols - 1) / 2;
+      body += pinOneArrow(right, right ? X(W) : X(0), cy, Math.max(3, s * 0.2));
+    }
+  });
+  return { w: W * k, h: (outerH + lift) * k + 8, body };
+}
+
+/** Объёмная модель пары по чертежу (JST eSM), ракурс «iso» или «top» (вид сверху, провода снизу). Вилка SMR (штыри): узкий
+ *  корпус у торца проводов, за ним кожух шире и толще, по центру крыши — рычаг замка с рифлением от кожуха почти до
+ *  торца проводов. Розетка SMP (гнёзда): фланец у торца проводов, «нос» тоньше, на нём у стыковочного торца — упор замка, по торцам
+ *  ряда — плечи крепления в панель, расходятся от носа к торцу проводов, на концах ступени. */
+export function pairModel(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: number, view: PictureView = "iso"): Box {
+  const pitch = hs.pitch || 1, color = hs.color || "#efe6cf", dark = isDark(color);
+  const { W, core, off } = bodySpan(hs, b, pitch), hood = b.hood, wings = b.wings, L = b.len, H = b.h;
+  const outerH = hood ? hood.h : H, by = (outerH - H) / 2;
+  const lw = hs.roof?.kind === "latch" ? lockWidth(b, core) : 0, lift = hood && lw ? b.lock_h || 0 : 0;
+  const flat = view === "top", DX = flat ? 0 : 0.62, DY = flat ? -0.87 : -0.4, SY = flat ? 0.5 : 1;
+  const k = Math.min(maxW / (W + L * DX), maxH / ((outerH + lift) * SY + L * -DY), 18);
+  const top = 1 + L * -DY * k + lift * k * SY;
+  const P = (px: number, py: number, d: number): Pt => [px * k + 1 + DX * k * d, py * k * SY + top + DY * k * d];
+  const quad = (x0: number, x1: number, py: number, d0: number, d1: number): Pt[] => [P(x0, py, d0), P(x1, py, d0), P(x1, py, d1), P(x0, py, d1)];
+  const box = (x0: number, y0: number, x1: number, y1: number, d0: number, d1: number, fill: string, width = 0.8) => {
+    const front = [P(x0, y0, d0), P(x1, y0, d0), P(x1, y1, d0), P(x0, y1, d0)];
+    return prism(front, DX * k * (d1 - d0), DY * k * (d1 - d0), fill, width) + poly(front, fill, EDGE, width);
+  };
+  const line = (a: Pt, c: Pt, stroke: string) => `<line x1="${f(a[0])}" y1="${f(a[1])}" x2="${f(c[0])}" y2="${f(c[1])}" stroke="${stroke}" stroke-width="${f(Math.max(0.6, k * 0.12))}"/>`;
+  const rib = shade(color, dark ? 0.42 : -0.38), mid = off + core / 2;
+  let body = gradient(gradId(color), color), faceY = 0;
+  if (hood) {
+    const hw = (hs.cols - 1) * pitch + hood.extra, hx = (W - hw) / 2, d0 = L - hood.len;
+    let g = box(hx, 0, hx + hw, hood.h, d0, L, shade(color, dark ? 0.06 : -0.06));
+    if (lw) g += poly(quad(mid - lw / 2 - 0.35, mid + lw / 2 + 0.35, 0, d0, L), shade(color, dark ? -0.4 : -0.5), EDGE, 0.4);
+    body += `<g data-shell="outer" data-part="hood">${g}</g>` + box(off, by, off + core, by + H, 0, d0, color);
+    faceY = by;
+    if (lw) {
+      // Рычаг замка: от устья кожуха назад, кнопка у торца проводов; рифление вдоль рычага и поперёк на кнопке.
+      const d0l = L - Math.min(b.lock_len || L * 0.8, L - 0.5), x0 = mid - lw / 2, x1 = mid + lw / 2;
+      let lever = box(x0, -lift, x1, by, d0l, L, shade(color, dark ? 0.16 : 0.05), 0.6);
+      for (const t of [0.28, 0.5, 0.72]) lever += line(P(x0 + lw * t, -lift, d0l + 2), P(x0 + lw * t, -lift, L - 0.4), rib);
+      for (const dd of [0.4, 0.9, 1.4]) lever += line(P(x0 + 0.25, -lift, d0l + dd), P(x1 - 0.25, -lift, d0l + dd), rib);
+      body += roofMark("latch", lockMark(hs, lever));
+    }
+  } else if (wings) {
+    const fl = Math.min(b.front_len || 1.4, L), nh = Math.min(b.nose_h || H, H), ny = (H - nh) / 2;
+    body += `<g data-shell="inner">${box(off, ny, off + core, ny + nh, fl, L, shade(color, dark ? 0.04 : -0.04))}</g>`;
+    if (lw) body += roofMark("latch", lockMark(hs, box(mid - lw / 2, ny - (b.lock_h || 0.5), mid + lw / 2, ny, L - (b.lock_len || 1.3), L, shade(color, dark ? 0.18 : 0.06), 0.6)));
+    const wy0 = (H - wings.w) / 2, wy1 = wy0 + wings.w, o = wings.out, t = wings.tip, r = L - wings.root;
+    // Плечо: планка от носа (корень у стыковочного торца) наружу к торцу проводов, на конце — три ступени под панель.
+    const shape: Pt[] = [[0, r], [o - 0.7, t + 1.5], [o - 0.7, t + 1.0], [o - 0.35, t + 1.0], [o - 0.35, t + 0.5], [o, t + 0.5], [o, t], [o - 1.0, t], [0, r - 1.4]];
+    const wing = (edge: number, dir: number) => {
+      const pts = shape.map(([u, d]) => P(edge + dir * u, wy0, d));
+      return `<g data-part="wings">${prism(pts, 0, (wy1 - wy0) * k * SY, shade(color, dark ? 0.02 : -0.12), 0.6)}${poly(pts, shade(color, dark ? 0.2 : 0.04), EDGE, 0.7)}</g>`;
+    };
+    body += wing(off, -1) + box(off, 0, off + core, H, 0, fl, color) + wing(off + core, 1);
+  }
+  // Торец проводов: окна контактов (штыри или гнёзда по стороне пары), контакт 1 — красная метка.
+  body += poly([P(off, faceY, 0), P(off + core, faceY, 0), P(off + core, faceY + H, 0), P(off, faceY + H, 0)], `url(#${gradId(color)})`, EDGE, 0.9);
+  const [winW, winH] = b.win && b.win.length === 2 ? b.win : [pitch * 0.6, H * 0.45], row = hs.grid[0] || [];
+  bodyColumns(hs, b, pitch).forEach((cxMm, c) => {
+    const [px, py] = P(off + cxMm, faceY + H / 2, 0);
+    body += contactGlyph(hs.mate?.contacts, px, py, winW * k / 2, winH * k * SY / 2, false, dark ? "#5d666b" : "#2f3336", SY);
+    if (row[c] === 1) {
+      const right = c > (hs.cols - 1) / 2;
+      // У розетки SMP — за концами плеч, у вилки SMR — у торца корпуса (кожух за ним дальше по проводу).
+      const edge = wings ? (right ? W : 0) : right ? off + core : off;
+      body += pinOneArrow(right, P(edge, 0, 0)[0], py, Math.max(2.5, Math.min(winW, winH) * k * 0.45));
+    }
+  });
+  const pad = Math.max(6, Math.min(winW, winH) * k * 0.7);
+  return { w: W * k + DX * k * L + 2 + pad * 2, h: top + outerH * k * SY + 2, body: `<g transform="translate(${f(pad)},0)">${body}</g>` };
 }
 
 /** Подпись под рисунком: серия, шаг, число контактов — «JST GH · 1,25 мм · 4 конт.». */
@@ -455,6 +865,7 @@ export function connectorSummary(hs: ConnectorHousing): string {
   const parts = [String(hs.title || "")];
   if (hs.pitch && hs.kind !== "round") parts.push(`${String(hs.pitch).replace(".", ",")} мм`);
   if (hs.n && hs.kind !== "lug" && hs.kind !== "banana") parts.push(`${hs.n} конт.`);
-  if (hs.male != null && (hs.kind === "dsub" || hs.family === "deutsch-dt")) parts.push(hs.male ? "штыри" : "гнёзда");
+  const contacts = hs.mate?.contacts ?? (hs.male != null && (hs.kind === "dsub" || hs.family === "deutsch-dt") ? (hs.male ? "pin" : "socket") : null);
+  if (contacts) parts.push(contacts === "pin" ? "штыри" : "гнёзда");
   return parts.filter(Boolean).join(" · ");
 }

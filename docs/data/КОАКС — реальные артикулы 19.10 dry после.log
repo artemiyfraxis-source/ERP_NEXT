@@ -1,0 +1,57 @@
+строк БД.КОАКС: 592
+   уже так: «SMA-female RG-141» × «RG-141»
+   уже так: «N-female RG-142» × «RG-142»
+   уже так: «N-male RG-142» × «RG-142»
+   уже так: «Fakra Z-Female» × «RG-174»
+   отказ: «MCX-male RG-174» × «RG-174» — строк найдено 0
+   уже так: «MCX-male R/A RG-174» × «RG-174»
+   уже так: «MMCX-female RG-174» × «RG-174»
+   уже так: «MMCX-male R/A RG-174» × «RG-174»
+   уже так: «RP-SMA-female RG-316» × «RG-174»
+   уже так: «SMA-female RG-174» × «RG-174»
+   уже так: «SMA-male RG-174» × «RG-174»
+   уже так: «SMA-male R/A RG-174» × «RG-174»
+   уже так: «MHF1-plug RG-178» × «RG-178»
+   уже так: «MMCX-male RG-178» × «RG-178»
+   уже так: «MMCX-male R/A RG-178» × «RG-178»
+   уже так: «SMA-female RG-178» × «RG-178»
+   отказ: «SMA-11_SMA-50-1-4/111_N» × «RG-178» — строк найдено 0
+   уже так: «SMA-male RG-178» × «RG-178»
+   уже так: «U.FL» × «RG-178»
+   уже так: «UHF-Male U-112B» × «RG-213»
+   уже так: «N-female RG-223» × «RG-223»
+   уже так: «N-male RG-223» × «RG-223»
+   уже так: «SMA-female RG-223» × «RG-223»
+   уже так: «SMA-male R/A RG-223» × «RG-223»
+   уже так: «Fakra Z-Female» × «RG-316»
+   уже так: «MCX-male R/A RG-316» × «RG-316»
+   уже так: «MMCX-female RG-316» × «RG-316»
+   уже так: «MMCX-male R/A RG-316» × «RG-316»
+   уже так: «RP-SMA-female RG-316» × «RG-316»
+   уже так: «SMA-female RG-316» × «RG-316»
+   уже так: «SMA-male RG-316» × «RG-316»
+   уже так: «SMA-male R/A RG-316» × «RG-316»
+   уже так: «N-female RG-400» × «RG-400»
+   уже так: «N-male RG-400» × «RG-400»
+   уже так: «N-female RG-402» × «RG-402»
+   отказ: «SMA-Male RG402 18GHz» × «RG-402» — строк найдено 0
+   уже так: «SMA-male RG-402» × «RG-402»
+   уже так: «SMA-male R/A RG-402» × «RG-402»
+   уже так: «SMA-Male 141» × «RG-402»
+   уже так: «SMA-female RG-405» × «RG-405»
+   уже так: «SMA-FEMALE S-235-085» × «RG-405»
+   отказ: «SMA-Female RG405 18GHz» × «RG-405» — строк найдено 0
+   уже так: «SMA-male RG-405» × «RG-405»
+   отказ: «SMA-Male RG405 18GHz» × «RG-405» — строк найдено 0
+   отказ: «SMB-Female RG405» × «RG-405» — строк найдено 0
+   отказ: «TNC-Fermale приборно-кабельный» × «RG-405» — строк найдено 0
+   уже так: «N-female RG58» × «RG-58»
+   уже так: «N-male RG58» × «RG-58»
+   уже так: «SMA-female RG58» × «RG-58»
+   уже так: «SMA-male RG58» × «RG-58»
+   уже так: «SMA-male R/A RG58» × «RG-58»
+   уже так: «TNC-Female RG58» × «RG-58»
+   уже так: «TNC-Male RG58» × «RG-58»
+   уже так: «BNC-Male RG59» × «RG-59»
+   уже так: «SMB-Male» × «RG-316»
+ИТОГО {"уже так": 48, "отказ": 7} (проверка, ничего не записано)

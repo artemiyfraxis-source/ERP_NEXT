@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LoadMore } from "./LoadMore";
 import { SuggestInput } from "./SuggestInput";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
@@ -926,11 +927,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
             />
           )}
           {view === "mine" && mineRows.length < mineTotal && (
-            <div className="form-actions">
-              <button className="secondary" disabled={mineLoading} onClick={() => void loadMine(mineRows.length)}>
-                {mineLoading ? "Загружаю…" : "Показать ещё"}
-              </button>
-            </div>
+            <LoadMore busy={mineLoading} token={mineRows.length} onMore={() => void loadMine(mineRows.length)} />
           )}
         </div>}
       </div>

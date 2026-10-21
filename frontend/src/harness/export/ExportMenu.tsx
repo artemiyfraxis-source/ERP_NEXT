@@ -10,10 +10,14 @@ const DEFAULT_SHEET: SheetId = "A3";
 
 /** Меню «Выгрузить» в шапке страницы чертежа: PNG (растр) и PDF (печать листа браузером). Доступно и в режиме просмотра.
  *  `port` отдаёт порт отрисовки чертежа (null — редактор ещё грузится), `version` — номер сохранённой версии. */
-export function ExportMenu({ project, index, heading, port, version }: {
+export function ExportMenu({ project, index, heading, port, version, open: forcedOpen, onOpenChange, bare = false }: {
   project: string; index: string; heading: string; port: () => HarnessExportPort | null; version: () => number | null;
+  /** Телефон: кнопки «Выгрузить» в шапке нет — окно открывает пункт меню «Ещё» (`open` + `onOpenChange`, `bare`). */
+  open?: boolean; onOpenChange?: (open: boolean) => void; bare?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = forcedOpen ?? ownOpen;
+  const setOpen = (value: boolean) => { setOwnOpen(value); onOpenChange?.(value); };
   const [pngScale, setPngScale] = useState<PngScale>(DEFAULT_SCALE);
   const [sheet, setSheet] = useState<SheetId>(DEFAULT_SHEET);
   const [mode, setMode] = useState<"fit" | "true">("fit");
@@ -70,8 +74,8 @@ export function ExportMenu({ project, index, heading, port, version }: {
 
   const trueScaleOff = denominator === null;
   return <span className="harness-export" ref={root}>
-    <button type="button" className="secondary small" aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(!open); setMessage(null); }}
-      title="Скачать чертёж картинкой или напечатать листом">Выгрузить ▾</button>
+    {!bare && <button type="button" className="secondary small" aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(!open); setMessage(null); }}
+      title="Скачать чертёж картинкой или напечатать листом">Выгрузить ▾</button>}
     {open && <div className="harness-export-panel" role="dialog" aria-label="Выгрузка чертежа">
       <section>
         <h3>PNG</h3>

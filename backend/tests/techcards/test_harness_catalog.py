@@ -122,7 +122,7 @@ def test_coax_cables_from_spr_kab_with_d_layers(catalog, mirror_tables):
 def test_coax_terminations_keep_strip_layers_and_split_shared_articles(catalog, mirror_tables):
     records = _snapshot(catalog, COAX_TERMINATIONS)["records"]
     assert len(records) == len([row for row in mirror_tables["coax"] if row.get("coaxArticle")])
-    mcx = _record(catalog, COAX_TERMINATIONS, "MCX-male RG-174")["payload"]
+    mcx = _record(catalog, COAX_TERMINATIONS, "11-111L")["payload"]
     assert mcx["layers"] == [
         {"index": 1, "diameterMm": 0.48, "stripLengthMm": 2.0},
         {"index": 2, "diameterMm": 1.52, "stripLengthMm": 4.0},
@@ -136,14 +136,19 @@ def test_coax_terminations_keep_strip_layers_and_split_shared_articles(catalog, 
     assert bare[0] == {"index": 1, "diameterMm": 0.48, "stripLengthMm": None}
 
 
-def test_coax_termination_takes_missing_diameters_from_spr_kab():
+def test_coax_termination_takes_diameters_only_from_spr_kab():
+    # Владелец 16.10.2026: D1–D3 — у кабеля; D, оставшиеся в строке разъёма, не читаются.
     catalog = build_harness_catalog({
         "kab_coax": [{"Кабель": "RG-316", "D1": "0,51", "D2": "1,52", "D3": "2,5"}],
-        "coax": [{"coaxArticle": "SMA-X", "coaxWire": "RG 316", "D1": "Не найдено", "L1": "2", "L2": "4", "L3": "9"}],
+        "coax": [{"coaxArticle": "SMA-X", "coaxWire": "RG 316", "D1": "9", "D2": "Не найдено", "L1": "2", "L2": "4", "L3": "9"},
+                 {"coaxArticle": "SMA-Y", "coaxWire": "RG-213", "D1": "9", "D2": "9", "D3": "9", "L1": "3"}],
     }, captured_utc="")
     payload = _record(catalog, COAX_TERMINATIONS, "SMA-X")["payload"]
     assert [layer["diameterMm"] for layer in payload["layers"]] == [0.51, 1.52, 2.5]
     assert payload["diametersFrom"] == "СПР.КАБ"
+    no_cable = _record(catalog, COAX_TERMINATIONS, "SMA-Y")["payload"]
+    assert no_cable["layers"] == [{"index": 1, "diameterMm": None, "stripLengthMm": 3.0}]
+    assert not no_cable.get("diametersFrom")
     assert _snapshot(catalog, COAX_TERMINATIONS)["diagnostics"] == []
 
 
@@ -178,7 +183,7 @@ def test_reference_book_holds_what_the_pickers_offer(catalog, mirror_tables):
     """A drawing may reference what the editor's pickers offer: the save checks new references against this."""
     book = reference_book(mirror_tables)
     assert {"UL1061 28AWG", "ПВВС 4×0,35", "RF 1.13"} <= book.wires
-    assert "MCX-male RG-174" in book.strips
+    assert "11-111L" in book.strips
     terminal = _snapshot(catalog, TERMINALS)["records"][0]
     assert terminal["sourceKey"] in book.terminals
     assert {terminal["payload"].get("reelArticle"), terminal["payload"].get("bagArticle")} - {None} <= book.terminals

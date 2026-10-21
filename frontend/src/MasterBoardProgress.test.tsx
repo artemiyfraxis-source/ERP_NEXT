@@ -41,7 +41,7 @@ beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); forgetOpenProject(); });
 
 describe("opProgress", () => {
-  it("считает сдано, ждут подтверждения и процент из полей API", () => {
+  it("считает сдано, ждут ОТК и процент из полей API", () => {
     const progress = opProgress(tasks[0], tasks[0].operations[0], NOW);
     expect(progress).toMatchObject({ required: 500, good: 250, waiting: 50, percent: 50, flags: ["wait"] });
   });
@@ -66,17 +66,17 @@ describe("экран мастера: прогресс и «Сегодня»", ()
     mount();
     const strip = screen.getByRole("group", { name: "Сегодня" });
     expect(within(strip).getByRole("button", { name: /не начато, план истёк: 1/ })).toBeInTheDocument();
-    expect(within(strip).getByRole("button", { name: /ждёт подтверждения: 1/ })).toBeInTheDocument();
+    expect(within(strip).getByRole("button", { name: /ждёт ОТК: 1/ })).toBeInTheDocument();
     expect(within(strip).getByRole("button", { name: /позже срока задания: 1/ })).toBeInTheDocument();
   });
 
-  it("в строке операции: «сдано 250/500 · 50 ждут подтверждения», полоса и флаги", () => {
+  it("в строке операции: «сдано 250/500 · 50 ждут ОТК», полоса и флаги", () => {
     mount();
     openProject();
-    expect(screen.getByText("сдано 250/500 · 50 ждут подтверждения")).toBeInTheDocument();
+    expect(screen.getByText("сдано 250/500 · 50 ждут ОТК")).toBeInTheDocument();
     expect(screen.getAllByRole("progressbar")[0]).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getAllByText("не начато, план истёк").some((node) => node.className.includes("mb-flag danger"))).toBe(true);
-    expect(screen.getAllByText("ждёт подтверждения").some((node) => node.className.includes("mb-flag warn"))).toBe(true);
+    expect(screen.getAllByText("ждёт ОТК").some((node) => node.className.includes("mb-flag warn"))).toBe(true);
     expect(screen.getAllByText("позже срока задания").some((node) => node.className.includes("mb-flag danger"))).toBe(true);
   });
 
@@ -134,5 +134,48 @@ describe("экран мастера: сроки и доска монтажник
     expect(legend).toHaveAttribute("title", expect.stringContaining("Смена 8 ч"));
     expect(legend.textContent).toContain("8/8");
     expect(legend.textContent).not.toContain("/7");
+  });
+});
+
+describe("экран мастера: операция по ПФ", () => {
+  it("показывает ПФ и номера его операций, обычная операция как раньше", () => {
+    const pf = op({ id: "p1", position: 3, stage: "Опрессовка", code: "OP-5", etk_ops: [{ position: 5, code: "OP-5", stage: "Зачистка" }, { position: 6, code: "OP-6", stage: "Опрессовка" }] });
+    const plain = op({ id: "p2", position: 4, stage: "Пайка", code: "SOL-1" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [], statuses: [] }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    render(<MasterBoard tasks={[task("9", "PFP", [pf, plain])]} operators={[]} skills={[]} absences={[]} canEdit={false} busy="" mutate={async () => {}} openTask={() => {}} />);
+    fireEvent.click(screen.getByText("PFP"));
+    expect(screen.getByText("ПФ-3 · Опрессовка")).toBeInTheDocument();
+    expect(screen.getByText("оп. 05·06")).toBeInTheDocument();
+    expect(screen.getByText("Пайка")).toBeInTheDocument();
+    expect(screen.getByText("SOL-1")).toBeInTheDocument();
+  });
+});
+
+describe("«Уже сделано» — ввод готовых мастером (владелец 20.10)", () => {
+  it("штуки монтажника мимо терминала: по умолчанию остаток этапа, чьи — назначенный, входы отбить готовыми", async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && String(url).includes("/manual-output")) calls.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify({ items: [], statuses: [], box: {}, filled: [], warnings: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+    const assembly = op({
+      id: "m2", position: 2, stage: "Сборка", operator_ids: ["p1"], fact: { good: "300", defect: "0", processed: "300" },
+      inputs: [{ operation_id: "m1", position: 1, stage: "Резка", per_unit: "1", transfer_batch: null }],
+    });
+    const mutate = vi.fn(async (_key: string, run: () => Promise<unknown>) => { await run(); });
+    render(<MasterBoard tasks={[task("9", "CCC", [op({ id: "m1", position: 1, stage: "Резка" }), assembly])]}
+      operators={[{ id: "p1", name: "Рыбкина Ольга", site: "ЦАР" }]} skills={[]} absences={[]} canEdit busy="" mutate={mutate} openTask={() => {}} />);
+    fireEvent.click(screen.getByText("CCC"));
+    fireEvent.click(screen.getByRole("button", { name: "Сборка" }));
+
+    const made = screen.getByRole("group", { name: "Уже сделано без терминала" });
+    expect(within(made).getByText("осталось 200")).toBeInTheDocument();
+    expect(within(made).getByRole("combobox", { name: "Чьи штуки" })).toHaveValue("p1");
+    fireEvent.change(within(made).getByRole("spinbutton", { name: "Готовых штук" }), { target: { value: "150" } });
+    fireEvent.click(within(made).getByRole("button", { name: "Записать готовыми 150 шт" }));
+
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0].url).toBe("/api/production/tasks/9/operations/m2/manual-output");
+    expect(calls[0].body).toEqual({ good_quantity: 150, operator_id: "p1", fill_inputs: true });
   });
 });

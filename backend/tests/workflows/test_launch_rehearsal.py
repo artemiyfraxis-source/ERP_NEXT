@@ -42,7 +42,7 @@ from app.modules.identity.infrastructure import provision_user
 from app.modules.production.launchable import OPERATION_TYPE_NAMES
 from app.modules.requests import google_sheets
 from app.modules.requests.application import CalcSpreadsheet
-from app.modules.techcards.application import ReplaceOperationLibraryCommand, replace_operation_library
+from app.modules.techcards.application import LoadOperationLibraryCommand, load_operation_library
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.modules.warehouse.import_stock import format_report, reconcile, run_import
 from app.modules.warehouse.infrastructure import StockLotRow, WriteOffEntryRow
@@ -204,9 +204,8 @@ def shop(tmp_path, monkeypatch):
     with engine.begin() as connection:
         assert migration.transfer(connection, clock.now) > 0
     # «load-real-data.sh base» кладёт библиотеку операций (seed_library); без неё генератор ЭТК не собирает.
-    replace_operation_library(ReplaceOperationLibraryCommand(
-        source_commit=LIBRARY["sourceCommit"], templates=tuple(LIBRARY["templates"]),
-        actor=Actor(name="ERP migration", department="System"), now=clock.now,
+    load_operation_library(LoadOperationLibraryCommand(
+        templates=tuple(LIBRARY["templates"]), actor=Actor(name="ERP migration", department="System"), now=clock.now,
     ), SqlAlchemyTechcardsUnitOfWork(sessions))
 
     state = Shop(engine=engine, sessions=sessions, clock=clock)
@@ -561,9 +560,8 @@ def _rehearse(shop: Shop, export_dir: Path, *, synthetic: bool) -> None:
                                    json={"good_quantity": str(KITS)})
         box = submitted["box"]
         assert Decimal(box["quantity"]) == KITS and submitted["defect"] is None
-        shop.fitter.refused("POST", f"/api/production/boxes/{box['id']}/confirm", json={"version": box["version"]})
-        box = shop.master.ok("POST", f"/api/production/boxes/{box['id']}/confirm",
-                             json={"version": box["version"]})["box"]
+        # Подтверждения мастером нет (13.10): сданная коробка сразу идёт на вход следующей операции, последняя — в ОТК.
+        assert box["status"] == "Закрыта оператором"
         previous_box = box
     last_box = previous_box
 
@@ -573,6 +571,7 @@ def _rehearse(shop: Shop, export_dir: Path, *, synthetic: bool) -> None:
     shop.master.refused("POST", f"/api/production/boxes/{last_box['id']}/qc", json=inspect)
     inspected = shop.qc.ok("POST", f"/api/production/boxes/{last_box['id']}/qc", json=inspect)
     last_box = inspected["box"]
+    assert last_box["status"] == "Подтверждена"  # приёмка ОТК — единственное подтверждение коробки
     assert len(inspected["serials"]) in (0, KITS)
 
     # Кладовщик ГП: принятая ОТК коробка — на склад готовой продукции, в позицию проекта.

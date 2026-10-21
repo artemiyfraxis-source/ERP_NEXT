@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { formatMinutes } from "./etkRoute";
 import { PerUnit } from "./RouteDiagram";
 import { FacesThumb, FinalThumb, RouteCanvas, TubeThumbs, WireThumbs, type CanvasCard } from "./RouteCanvas";
-import { EMPTY_ART, GEN_CARD, GEN_SPACING, genArtHeight, genCardHeight, genCards, layoutByDepth, opsMinutes, widestRow, type GenArt, type GenCard } from "./routeCards";
+import { CRIMP_STAGES, EMPTY_ART, GEN_CARD, GEN_SPACING, blockCards, crimpWires, genArtHeight, genCardHeight, genCards, inputsHeight, layoutByDepth, opsMinutes, widestRow, type CardKind, type GenArt, type GenStage } from "./routeCards";
 import { pluralRu } from "./tcGenLogic";
 import {
   addEdge,
@@ -16,6 +16,7 @@ import {
   neighbours,
   removeEdge,
   renameBlock,
+  routeLevels,
   routeProblem,
   routeTotals,
   setPerUnit,
@@ -38,7 +39,7 @@ const coarsePointer = () => { try { return !!window.matchMedia?.("(pointer: coar
  * её ручной, «Сбросить к автоматической» возвращает null. «Изменить схему» добавляет в блок «Выше/Ниже» — порядок
  * операций в ЭТК (`onMove`).
  */
-export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange, error, notice, skipped, renderOp, derive = deriveRoute, defaultOpen = true, timeSource = "время из последней сборки ЭТК", onMove, orderChanged = false, onResetOrder, art = EMPTY_ART }: {
+export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange, error, notice, skipped, renderOp, derive = deriveRoute, defaultOpen = true, timeSource = "время из последней сборки ЭТК", onMove, orderChanged = false, onResetOrder, art = EMPTY_ART, blockView = false }: {
   /** Операции, которые попадут в сборку: номер, название, норма на партию (null — ЭТК ещё не собиралась). */
   ops: RouteOp[];
   /** Наименование изделия — второй строкой у «Готового кабеля». */
@@ -69,6 +70,9 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   onResetOrder?: () => void;
   /** Рисунки карточек: нарезанные провода, трубки, торцы разъёмов сторон. */
   art?: GenArt;
+  /** Карточка — блок схемы как есть (схема ПФ «Сложной сборки», владелец 16.10): уровень, название, что входит; иначе —
+      карточки полуфабрикатов генератора по стадиям (routeCards.genCards). */
+  blockView?: boolean;
 }) {
   const [selected, setSelected] = useState("");
   const [shown, setShown] = useState<boolean | null>(null);
@@ -124,21 +128,37 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
     return `Штук из «${from ? title(from) : edge.from}» на один «${to ? title(to) : edge.to}»`;
   };
 
-  const gen = useMemo(() => genCards(route, ops), [route, ops]);
+  // Карточки: стадии генератора или блоки схемы как есть (blockView) — дальше одним списком.
+  type ViewCard = { id: string; kind: CardKind; title: string; ops: RouteOp[]; final: boolean; level?: string; inputs?: string[] };
+  const gen = useMemo((): { cards: ViewCard[]; links: Array<{ id: string; from: string; to: string; qty: number | null }> } => (blockView
+    ? blockCards(route, ops, (item) => blockTitle(item, ops, finalName), routeLevels(route))
+    : genCards(route, ops)), [route, ops, blockView, finalName]);
   const blockOf = new Map(route.blocks.flatMap((item) => item.ops.map((position) => [position, item.key] as const)));
-  const subtitle = (card: GenCard) => (card.final && finalName.trim() ? finalName.trim() : "");
+  // Схема ПФ называет изделие в самой карточке — второй строкой его не повторяем.
+  const subtitle = (card: ViewCard) => (!blockView && card.final && finalName.trim() ? finalName.trim() : "");
   const opRow = coarsePointer() ? 40 : GEN_CARD.opRow;
   // Карточки делят ширину итога по самому широкому ряду (220…400 px); уже 220 — холст уменьшается по ширине.
   const columns = widestRow(gen.cards.map((card) => card.id), gen.links);
   const cardWidth = boxWidth ? Math.max(220, Math.min(400, Math.floor((boxWidth - 2 * GEN_SPACING.margin - GEN_SPACING.gapX * (columns - 1)) / columns))) : GEN_CARD.width;
+  const artHeight = (card: ViewCard) => (blockView ? inputsHeight(card.inputs?.length ?? 0) : genArtHeight(card.id as GenStage, art, card.final));
   const sizes = new Map(gen.cards.map((card) => [card.id, {
-    width: cardWidth, height: genCardHeight(card.ops.length, genArtHeight(card.id, art, card.final), opRow) + (subtitle(card) ? 16 : 0),
+    width: cardWidth, height: genCardHeight(card.ops.length, artHeight(card), opRow) + (subtitle(card) ? 16 : 0),
   }]));
-  const places = layoutByDepth(gen.cards.map((card) => card.id), gen.links, (id) => sizes.get(id as GenCard["id"])!, GEN_SPACING);
-  const cardArt = (card: GenCard): ReactNode => {
+  const places = layoutByDepth(gen.cards.map((card) => card.id), gen.links, (id) => sizes.get(id)!, GEN_SPACING);
+  const cardArt = (card: ViewCard): ReactNode => {
+    if (blockView) {
+      const inputs = card.inputs ?? [];
+      return inputs.length ? <ul className="rc-inputs" aria-label={`Входит: ${card.title}`}>
+        {inputs.slice(0, 4).map((item, index) => <li key={index} title={item}>{item}</li>)}
+        {inputs.length > 4 && <li className="rc-more" title={inputs.slice(4).join("; ")}>и ещё {inputs.length - 4}</li>}
+      </ul> : null;
+    }
     if (card.id === "wires") return art.wires.length ? <WireThumbs wires={art.wires} /> : null;
     if (card.id === "tubes") return art.tubes.length ? <TubeThumbs tubes={art.tubes} /> : null;
-    if (card.id === "crimped" && !card.final) return art.crimped.length ? <WireThumbs wires={art.crimped} /> : null;
+    if (CRIMP_STAGES.has(card.id as GenStage) && !card.final) {
+      const wires = crimpWires(card.id as GenStage, art);
+      return wires.length ? <WireThumbs wires={wires} /> : null;
+    }
     if (card.final) return art.faces.A.length || art.faces.B.length ? <FinalThumb a={art.faces.A} b={art.faces.B} color={art.wires[0]?.color} /> : null;
     const faces = art.faces[card.id === "B" ? "B" : "A"];
     return faces.length ? <FacesThumb faces={faces} /> : null;
@@ -146,8 +166,8 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   const canvasCards: CanvasCard[] = gen.cards.map((card) => {
     const minutes = opsMinutes(card.ops, quantity);
     return {
-      id: card.id, kind: card.kind, title: card.title, subtitle: subtitle(card) || undefined,
-      meta: `${card.ops.length} оп.${minutes != null ? ` · ${formatMinutes(minutes)} мин/шт` : ""}`,
+      id: card.id, kind: card.kind, title: card.level ? `${card.level} · ${card.title}` : card.title, subtitle: subtitle(card) || undefined,
+      meta: `${card.ops.length} оп.${minutes != null ? ` · ${formatMinutes(minutes)} мин/шт` : ""}${blockView && route.blocks.find((item) => item.key === card.id)?.kit ? " · комплект на изделие" : ""}`,
       ...places.get(card.id)!, ...sizes.get(card.id)!,
       art: cardArt(card),
       body: <ol className="rc-ops" aria-label={`Операции: ${card.title}`}>
@@ -203,7 +223,7 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
       <div className="route-actions">
         {before.length > 0 && <div className="route-inputs"><span className="field-label">Входы блока — сколько штук берёт</span>
           {route.edges.filter((edge) => edge.to === item.key).map((edge) => <div className="route-input-row" key={edge.from}>
-            <span>{title(byKey.get(edge.from)!)}</span>
+            <span>{title(byKey.get(edge.from)!)}{edge.item?.trim() && <small className="route-input-item"> — {edge.item.trim()}</small>}</span>
             <PerUnit value={edge.per_unit} label={edgeLabel(edge)} unit="шт" lead="берёт" onChange={(next) => edit(setPerUnit(route, edge.from, edge.to, next))} />
             <button type="button" className="btn-remove" title="Убрать вход" aria-label={`Убрать вход «${title(byKey.get(edge.from)!)}»`} onClick={() => edit(removeEdge(route, edge.from, edge.to))}>×</button>
           </div>)}</div>}
@@ -239,7 +259,7 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
       </span>
     </div>
     <div className="route-summary">
-      {gen.cards.length} {pluralRu(gen.cards.length, "карточка", "карточки", "карточек")} · {ops.length} {pluralRu(ops.length, "операция", "операции", "операций")}
+      {gen.cards.length} {blockView ? "ПФ" : pluralRu(gen.cards.length, "карточка", "карточки", "карточек")} · {ops.length} {pluralRu(ops.length, "операция", "операции", "операций")}
       {total?.rolled != null && <> · на изделие <strong>{formatMinutes(total.rolled)} мин</strong> ({timeSource})</>}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}

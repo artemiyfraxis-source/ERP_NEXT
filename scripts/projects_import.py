@@ -7,7 +7,7 @@
     ERP_DATABASE_URL=sqlite+pysqlite:///real.db .venv/bin/python ../scripts/projects_import.py load 708К.4 --key <sa.json>
     # на ПК владельца одной строкой: powershell -ExecutionPolicy Bypass -File scripts\\load-project.ps1 708К.4
 
-Google только читается: «ERP — Производство» (Проекты, Журнал проектов, Наборы, Техкарты), расчёт проекта по его
+Google только читается: «ERP — Производство» (Проекты, Журнал проектов, Наборы), расчёт проекта по его
 ссылке РАСЧЁТ (ЗКЗ, СПЯ и листы КБn) и лист цеха «ЗАГРУЗ» («Производственный план v.0.1»). Для каждого номера, как
 это лежит в SUPPLYMAP:
 1. Набор — «Создать проект из расчёта» (`load_kitset`): карточка, строка реестра, очередь отгрузки.
@@ -16,8 +16,8 @@ Google только читается: «ERP — Производство» (Пр
 4. Сверка с листом цеха — порт `planShopSync_` / `diagPlanSyncFromSheet` (ProdPlan.gs): этапы КБ только вперёд,
    блокер, снятие блокера, дедлайн, комментарии — записями журнала от «план цеха <дата>»; проекта нет в
    реестре — заводится строкой (№ + заказчик).
-5. Отгруженное по листу цеха (`sync_shipped`), затем ТК: выданные в SUPPLYMAP переносятся, остальным сборкам —
-   генератор, как кнопка «Создать» (`app.workflows.techcards_all` только для этого проекта).
+5. Отгруженное по листу цеха (`sync_shipped`), затем ТК сборкам — генератор, как кнопка «Создать»
+   (`app.workflows.techcards_all` только для этого проекта).
 Проект, который уже есть в ERP (карточка или строка реестра), не трогается. Полностью отгруженный по листу цеха не
 загружается.
 """
@@ -245,8 +245,6 @@ def shop_sync(sheet: list[dict], portal: list[dict]) -> dict:
 # ── Заведение в ERP ───────────────────────────────────────────────────────────────────────────
 
 
-TECHCARDS_SHEET = "Техкарты"
-
 
 def _retrying(read):
     """Квота Sheets API — 60 чтений в минуту: на 429 ждём и повторяем."""
@@ -297,7 +295,7 @@ def plan_rows(state, today: date) -> list[dict]:
 def load_projects(numbers: list[str], prod: dict[str, list[list[str]]], shop_grid: list[list[str]], reader, state, *,
                   now: datetime, generator=None) -> dict:
     """Номера — в ERP шагами 1–5 (см. модуль). reader — Google Sheets (`read_sheets`), им читаются расчёты;
-    generator — форма генератора ТК (`techcards_all.node_generator`), None — ТК только из SUPPLYMAP.
+    generator — форма генератора ТК (`techcards_all.node_generator`), None — ТК не собираются.
     → {"loaded", "skipped", "failed", "notes", "techcards": строки итога}."""
     from app.modules.production.plan import PLAN_KINDS, PlanEvent, PlanProjectSnapshot, normalize_project_number as key
     from app.modules.production.plan_application import (
@@ -306,7 +304,7 @@ def load_projects(numbers: list[str], prod: dict[str, list[list[str]]], shop_gri
     from app.modules.techcards.kitsets import project_key, project_number_valid
     from app.shared.identity import Actor
     from app.workflows.project_kitset import LoadKitsetCommand, load_kitset, read_calc_by_link
-    from app.workflows.techcards_all import GeneratorUnavailable, format_report, generate, import_supplymap
+    from app.workflows.techcards_all import GeneratorUnavailable, format_report, generate
 
     wanted: dict[str, str] = {}
     for number in numbers:
@@ -453,12 +451,6 @@ def load_projects(numbers: list[str], prod: dict[str, list[list[str]]], shop_gri
         report["notes"] += [f"не перенесено: {line}" for line in skipped]
     only = {project_key(cards[k]) for k in active if k in cards}
     if only:
-        tc_actor = Actor(id=uuid.uuid4(), name="перенос из SUPPLYMAP", department="")
-        if prod.get(TECHCARDS_SHEET):
-            moved = import_supplymap(prod[TECHCARDS_SHEET], techcards, actor=tc_actor, now=now, apply=True, only=only)
-            report["techcards"].append(format_report("Выданные ТК из SUPPLYMAP", moved, apply=True, done_title="Перенесено"))
-        else:
-            report["notes"].append(f"в «ERP — Производство» нет листа «{TECHCARDS_SHEET}» — выданные ТК не перенесены")
         try:
             built = generate(state, generator() if generator else _no_generator(), reader, actor=Actor(
                 id=uuid.uuid4(), name="генерация ТК при загрузке проекта", department=""), now=now, apply=True, only=only)
@@ -495,7 +487,7 @@ def load(args: argparse.Namespace) -> int:
     from app.workflows.techcards_all import node_generator
 
     reader = GoogleSheetsCalcReader(load_service_account(raw))
-    _title, prod = _retrying(lambda: reader.read_sheets(args.prod, PROD_SHEETS + (TECHCARDS_SHEET,)))
+    _title, prod = _retrying(lambda: reader.read_sheets(args.prod, PROD_SHEETS))
     _title, shop = _retrying(lambda: reader.read_sheets(args.shop, (SHOP_SHEET,)))
     holder = SimpleNamespace(state=SimpleNamespace())
     engine = configure_database(holder, url)

@@ -8,6 +8,7 @@ import { useInternalProjects } from "./internalProjects";
 import { buildSheetColumns } from "./ProcurementSheetColumns";
 import { StatusChip } from "./StatusChip";
 import { statusLabel } from "./statusTone";
+import { LoadMore } from "./LoadMore";
 
 /* Лист закупки целиком и обзор «По поставщикам» — то, что в SUPPLYMAP давали вид purchase
    (portalViewDefs_) и portalPurchaseBySupplier. Лист открыт на чтение; правятся только «Комментарий» и
@@ -103,11 +104,7 @@ export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } 
           </select>
         </>}
       />
-      {cursor && (
-        <button className="secondary" disabled={loading} onClick={() => void load(applied, cursor)}>
-          {loading ? "Загружаем…" : "Показать ещё"}
-        </button>
-      )}
+      {cursor && <LoadMore busy={loading} token={lines.length} onMore={() => void load(applied, cursor)} />}
     </section>
   );
 }

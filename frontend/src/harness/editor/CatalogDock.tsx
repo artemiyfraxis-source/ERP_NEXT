@@ -1,5 +1,8 @@
-import { useMemo, useState, type DragEvent } from "react";
+import { memo, useMemo, useState, type DragEvent } from "react";
 import type { EditorCatalogItem, EditorCatalogSource } from "./editor-types";
+import { connectorTopView } from "../../connectorTopView";
+import { LoadMore } from "../../LoadMore";
+import type { ConnectorHousing } from "../../connectorArt";
 
 export interface CatalogDockProps {
   readonly items: readonly EditorCatalogItem[];
@@ -17,6 +20,15 @@ export interface CatalogDockProps {
   readonly onLoadMore?: () => void;
   readonly onRetry?: () => void;
 }
+
+/** Вид сверху корпуса — та же картинка, что ложится на поле чертежа; считается один раз на корпус. */
+const topThumbs = new WeakMap<ConnectorHousing, ReturnType<typeof connectorTopView>>();
+const HousingTopThumb = memo(function HousingTopThumb({ housing }: { readonly housing: ConnectorHousing }) {
+  if (!topThumbs.has(housing)) topThumbs.set(housing, connectorTopView(housing, 150, 58));
+  const top = topThumbs.get(housing);
+  if (!top) return <span className="he-catalog-thumbnail" aria-hidden="true">▣</span>;
+  return <svg className="he-catalog-top" viewBox={`0 0 ${top.w} ${top.h}`} aria-hidden="true" dangerouslySetInnerHTML={{ __html: top.body }} />;
+});
 
 export function CatalogDock({
   items,
@@ -123,7 +135,7 @@ export function CatalogDock({
               {visibleItems.map((item) => (
               <button
                 type="button"
-                className="he-catalog-card"
+                className={item.housing ? "he-catalog-card has-top" : "he-catalog-card"}
                 role="listitem"
                 key={item.id}
                 draggable={item.placement === "connector"}
@@ -132,7 +144,9 @@ export function CatalogDock({
                 title={`${[item.title, item.subtitle].filter(Boolean).join(" — ")}
 ${item.placement === "reference-only" ? "Справочная позиция. Размещение будет подключено с соответствующим инструментом." : "Перетащить на поле"}`}
               >
-                <span className="he-catalog-thumbnail" style={{ "--catalog-accent": item.accent } as React.CSSProperties} aria-hidden="true">▣</span>
+                {item.housing
+                  ? <HousingTopThumb housing={item.housing} />
+                  : <span className="he-catalog-thumbnail" style={{ "--catalog-accent": item.accent } as React.CSSProperties} aria-hidden="true">▣</span>}
                 <span>
                   <strong>{item.title}</strong>
                   <small>{item.subtitle}</small>
@@ -140,11 +154,7 @@ ${item.placement === "reference-only" ? "Справочная позиция. Р
                 <span className="he-catalog-add" aria-hidden="true">＋</span>
               </button>
               ))}
-              {hasMore && (
-                <button className="he-catalog-more" type="button" disabled={loadState === "loading-more"} onClick={onLoadMore}>
-                  {loadState === "loading-more" ? "Загружаем…" : "Показать ещё"}
-                </button>
-              )}
+              {hasMore && <LoadMore className="he-catalog-more" busy={loadState === "loading-more"} token={items.length} onMore={() => onLoadMore?.()} />}
             </>}
           </div>
         </div>
