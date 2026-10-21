@@ -57,7 +57,8 @@ def seed(engine: Engine, rows: int = ROWS) -> dict[str, int]:
                 continue
             parents = _parent_values(connection, table)
             lots = _lot_ids(connection, metadata) if "lot_id" in table.c and not table.c.lot_id.foreign_keys else []
-            values = [_row(table, index, parents, lots, checks, engine.dialect.name) for index in range(rows)]
+            count = 1 if table.name in _SINGLE_ROW_TABLES else rows
+            values = [_row(table, index, parents, lots, checks, engine.dialect.name) for index in range(count)]
             connection.execute(table.insert(), values)
             inserted[table.name] = len(values)
     return inserted
@@ -164,8 +165,16 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("identity_documents", "scope_value"): "",
     ("fulfillment_lines", "absent_by"): None,
 }
-# Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0122_internal_projects), unique.
-_SHAPED_VALUES: dict[tuple[str, str], Any] = {("purchasing_internal_projects", "number"): lambda i: f"ВП-{i + 1:03d}"}
+# Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0122_internal_projects), unique; the
+# label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0125_warehouse_labels).
+_LABEL_SETTINGS = {"width_mm": 58, "height_mm": 30, "dpi": 300, "gap_mm": 2, "density": 12, "speed": 2,
+                   "offset_x_mm": 0, "offset_y_mm": 0}
+_SHAPED_VALUES: dict[tuple[str, str], Any] = {
+    ("purchasing_internal_projects", "number"): lambda i: f"ВП-{i + 1:03d}",
+    **{("warehouse_label_settings", name): (lambda value: lambda i: value)(value) for name, value in _LABEL_SETTINGS.items()},
+}
+# One row per installation (CHECK `id = 1`): seeded with a single row.
+_SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings"})
 
 
 def _value(table: str, column: Column, index: int) -> Any:
