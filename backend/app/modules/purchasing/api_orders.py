@@ -22,7 +22,7 @@ from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
 from app.workflows import purchasing_orders as port
-from app.workflows.procurement_rfq_followups import rfq_followups
+from app.workflows.procurement_today import order_followups as today_followups
 
 from . import orders as service
 from . import order_upds
@@ -87,13 +87,13 @@ def _qty(value: Decimal | None) -> str | None:
 
 @router.get("/followups")
 def order_followups(principal: Viewer, make_uow: Uow, now: Now) -> dict:
-    """«Дожать»: the buyer's own requests for quotes nobody answered, deliveries late or arriving, invoices not paid —
-    ERP's «Сегодня» rules (`procurement.today`), grouped per order and per request."""
+    """«Дожать»: the buyer's own requests for quotes nobody answered, deliveries late or due, invoices not paid,
+    suppliers chosen with no invoice yet — the rules of «Сегодня» (`procurement.today.followups`), grouped per order and
+    per request."""
     require_option(OPTION)
     uow = make_uow()
     with uow:
-        rfq = rfq_followups(uow.session, principal.actor.id, now.date()) if stage_options.enabled("procurement.rfq") else None
-        return port.followups(uow.session, principal.actor, now.date(), rfq)
+        return today_followups(uow.session, principal.actor.id, now.date())
 
 
 @router.get("/decisions")

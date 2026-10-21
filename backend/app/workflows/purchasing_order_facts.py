@@ -24,7 +24,7 @@ def order_facts(session: Session, order_numbers: Iterable[str]) -> dict[str, dic
     if not wanted:
         return {}
     promised: dict[str, object] = {}
-    for line in order_lines(session, order_numbers=wanted):
+    for line in order_lines(session, order_numbers=wanted, with_receipts=False, with_pay_missing=False):
         if line.is_backorder or line.promised is None:
             continue
         known = promised.get(line.order_number)

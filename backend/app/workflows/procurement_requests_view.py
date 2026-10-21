@@ -3,6 +3,7 @@
 Procurement builds the view (`procurement.requests_view`) and never imports purchasing or the warehouse; this workflow
 hands it, for a list of lines and on the caller's session (read-only, a few indexed reads per call):
 - the lines' places in the requests for quotes (purchasing `rfq_line_states`) as `RfqState`;
+- the order facts of «Счета и поставки» (`purchasing_order_facts`: handed over for payment, shipped) as `OrderState`;
 - the free stock of each line's item: warehouse lots with something available (balance − reserve), the same part
   number (else the same name) and unit — RB «На складе: свободно N»;
 - the last UPD purchase of the line's nomenclature item (matched as the request pool does; purchasing
@@ -21,12 +22,13 @@ from sqlalchemy.orm import Session
 
 from app.modules.procurement.domain import same_unit
 from app.modules.procurement.price_history import article_key, name_key
-from app.modules.procurement.requests_view import LastPurchase, RfqState, ViewLine
+from app.modules.procurement.requests_view import LastPurchase, OrderState, RfqState, ViewLine
 from app.modules.purchasing import line_purchases, rfq_line_states, rfq_split
 from app.modules.warehouse.infrastructure import StockLotRow
 from app.shared import stage_options
 # The request pool's attribution of a procurement line to a nomenclature item (link, part number, names).
 from app.workflows.purchasing_rfq_stats import _Nomenclature
+from app.workflows.purchasing_order_facts import order_facts
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
@@ -40,6 +42,15 @@ def rfq_states(session: Session, line_ids: Iterable[UUID]) -> dict[UUID, RfqStat
             decided=state.decided, requote=state.requote, requote_from=state.requote_from,
         )
         for line_id, state in rfq_line_states.states(session, line_ids).items()
+    }
+
+
+def order_states(session: Session, lines: Sequence[ViewLine]) -> dict[str, OrderState]:
+    """№ ЗАКАЗА → what the orders board knows of it: «В оплате» and «В доставке» show in «Заявки» too."""
+    facts = order_facts(session, [line.order_number for line in lines if line.order_number])
+    return {
+        number: OrderState(sent_to_pay=bool(entry["sent_to_pay_at"]), shipped=bool(entry["shipped_at"]))
+        for number, entry in facts.items()
     }
 
 
