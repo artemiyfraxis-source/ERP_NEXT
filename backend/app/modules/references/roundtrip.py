@@ -39,7 +39,7 @@ from .domain import (
 )
 from .equipment import EXTRA_KEYS, TARGETS_KEY
 from .importers import _MapTarget
-from .technology import schema_keys
+from .technology import OPERATION_TD_KEYS, schema_columns, schema_keys
 from .xlsx_file import Cell, ReadSheet, Sheet, XlsxError, read_xlsx, write_xlsx
 
 ID_TITLE = "ID записи"
@@ -171,6 +171,11 @@ class _TechTable:
         if self.tab == TechOperationTab.COAX:
             for name in COAX_DIAMETERS:
                 ordered.pop(name, None)
+        if self.tab == TechOperationTab.OPERATION:
+            # «Профессия» / «Разряд» комплекта ТД: not sheet columns — their schema keys are the cells, unless a row
+            # brought such a column (then the column is the cell and the key follows it).
+            mapped = {key for item in items for key in schema_columns(self.tab.value, item.values)}
+            ordered.update(dict.fromkeys(key for key in OPERATION_TD_KEYS if key not in mapped))
         ordered.update(dict.fromkeys(self.extras))
         return list(ordered)
 

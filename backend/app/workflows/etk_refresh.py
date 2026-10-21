@@ -48,6 +48,7 @@ from app.modules.techcards.project_cards import ProjectTechcard, TechcardRevisio
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
+from app.workflows import td_auto
 from app.workflows.techcard_build import Refs, load_refs, with_technology
 
 ENV_FLAG = "ETK_AUTO_REVISION"
@@ -351,6 +352,7 @@ def _refresh_one(sessions: sessionmaker[Session], card_id: UUID, ctx: Context, d
             uow.techcards.save(updated)
             if revision is not None:
                 uow.techcards.add_revision(revision)
+                td_auto.on_revision(uow, updated, revision.reason, ctx.now)
                 uow.audit.add(AuditEvent(
                     id=uuid4(), aggregate_id=card.id, event_type="techcards.project_auto_revised",
                     actor=Actor(id=uuid4(), name=ACTOR_NAME, department=""), occurred_at=ctx.now,
