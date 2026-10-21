@@ -16,7 +16,13 @@ from pydantic import BaseModel, Field
 from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
-from app.workflows.procurement_requests_view import PurchasingRfqSplitter, free_stock, last_purchases, rfq_states
+from app.workflows.procurement_requests_view import (
+    PurchasingRfqSplitter,
+    free_stock,
+    last_purchases,
+    order_states,
+    rfq_states,
+)
 
 from .api import (
     _command_errors,
@@ -83,10 +89,13 @@ def requests_view(
                 free_stock=free_stock(session, chosen),
                 last=last_purchases(session, chosen, last_paid_purchases(session, chosen)),
                 reasons=cancel_reasons(session, [item.id for item in chosen if item.status == "Отменено"]),
+                orders=order_states(session, chosen),
             )}
         states = rfq_states(session, [item.id for item in lines])
         chosen_project = (project or "").strip() or None
-        summary = build_summary(lines, purposes, states, actor_id, project=chosen_project, focus=line)
+        summary = build_summary(
+            lines, purposes, states, actor_id, project=chosen_project, focus=line, orders=order_states(session, lines),
+        )
     total = len(summary["batches"])
     if chosen_project is None and total > BATCH_LIMIT:
         # Without a project only the newest requests (the focused one kept): a project shows all of its own.

@@ -159,7 +159,8 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   // Stage options: «Сегодня» (first, and the default only when on; the buyer's own list, so not in view mode),
   // «Показатели», and the purchasing hybrid (Roller_Buyer): requests for quotes, supplier and item directories, settings.
   useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the project columns
-  const todayOn = useStageOption("procurement.today") && !readOnly;
+  const todayOption = useStageOption("procurement.today");
+  const todayOn = todayOption && !readOnly;
   const kpiOn = useStageOption("procurement.kpi");
   const requestsOn = useStageOption("procurement.requests_rb"); // «Заявки» закупщика (Roller_Buyer)
   const rfqOn = useStageOption("procurement.rfq");
@@ -169,7 +170,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   const updOn = useStageOption("documents.upd");
   const chainOn = useStageOption("documents.chain");
   const ordersOn = useStageOption("procurement.orders");
-  const settingsOn = rfqOn || directoryOn || itemsOn;
+  const settingsOn = rfqOn || directoryOn || itemsOn || todayOption; // «Сегодня»: delivery and lead-time windows
   const shown: Record<string, boolean> = {
     today: todayOn, requests: requestsOn, kpi: kpiOn, rfq: rfqOn, orders: ordersOn, directory: directoryOn, items: itemsOn, catalog: priceBookOn, settings: settingsOn,
     upd: updOn, invoices: chainOn, chain: chainOn, docsearch: chainOn,
@@ -220,7 +221,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
         ))}
       </div>
       {tab === "sheet" && autoOpened && <p className="page-sub procurement-auto-note">У вас нет позиций в работе и свободных позиций нет — показан весь лист. Свои позиции появятся во вкладке «Очереди».</p>}
-      {tab === "today" && <ProcurementToday onOpenQueues={() => pick("queues")} onOpenRfq={rfqOn ? (id) => openRfq(id) : undefined} />}
+      {tab === "today" && <ProcurementToday ordersOn={ordersOn} />}
       {tab === "requests" && <ProcurementRequests readOnly={readOnly} />}
       {tab === "kpi" && <ProcurementKpi />}
       {tab === "rfq" && <PurchasingRfq readOnly={readOnly} />}

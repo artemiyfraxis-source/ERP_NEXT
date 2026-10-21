@@ -1,90 +1,130 @@
-"""Port of the purchasing hybrid to «Сегодня» of procurement: what the buyer's open requests for quotes still need.
+"""«Сегодня» (option procurement.today) ↔ the requests for quotes of purchasing: what the buyer's requests still need.
 
-Procurement must not import purchasing, so the board gets two plain dicts from here (read-only, one session):
-- «Нет ответа на запрос КП»: a supplier was marked sent more than `quote_wait_days` ago, has no quote and did not decline
-  (on the lines asked of it);
-- «Выбрать поставщика»: a request line has priced quotes (the gate passes, or at least one) and no decision yet.
-Both are keyed by the procurement line id, so the board shows them as project cards like any other field."""
+Procurement must not import purchasing, so the page gets plain facts from here (read-only, one session, a fixed number of
+queries whatever the number of requests):
+- `silent_suppliers` — RB `awaitingQuotes` per (request, supplier): the supplier was marked sent, did not decline, has no
+  quote in that request, and a line asked of him is still undecided. The wait (`quote_wait_days`) is applied by
+  `procurement.today.followups`, like RB does (`days >= quoteWaitDays`);
+- `first_sent` — the day each request was first sent («Выбрать поставщика» waits since then);
+- `decisions` — the quote chosen for a procurement line in its live request (supplier, lead time, day)."""
 
 from __future__ import annotations
 
-from datetime import date
+from collections.abc import Iterable
+from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.modules.purchasing import settings as purchasing_settings
+from app.modules.procurement.today import Decision, SilentSupplier
 from app.modules.purchasing.infrastructure import (
     DecisionRow,
+    QuoteLineRow,
     QuoteRow,
     RfqLineRow,
     RfqRow,
+    RfqSupplierLineRow,
     RfqSupplierRow,
     SupplierRow,
 )
-from app.modules.purchasing.offers import current_offers, gate_status
-from app.modules.purchasing.rfq import asked_lines, line_offers
+from app.shared.clock import MOSCOW, as_utc
 
-NO_ANSWER = "rfq_no_answer"
-TO_DECIDE = "rfq_to_decide"
+_CHUNK = 500
 
 
 def _day(value) -> date:
-    return value.date() if hasattr(value, "date") else value
+    return as_utc(value).astimezone(MOSCOW).date() if isinstance(value, datetime) else value
 
 
-def rfq_followups(session: Session, buyer_id: UUID, today: date) -> dict[str, dict[UUID, dict]]:
-    """{field key: {procurement line id: {rfq_id, rfq_number, date, days, hint}}} for the buyer's open requests."""
-    result: dict[str, dict[UUID, dict]] = {NO_ANSWER: {}, TO_DECIDE: {}}
-    rfqs = list(session.scalars(select(RfqRow).where(RfqRow.buyer_id == buyer_id, RfqRow.closed_at.is_(None))))
-    if not rfqs:
-        return result
-    values = purchasing_settings.load(session)
-    wait_days = int(values["quote_wait_days"])
-    min_quotes, require_non_key = int(values["gate_min_quotes"]), bool(values["gate_require_non_key"])
-    valid_days = int(values["quote_valid_days"])
-    for rfq in rfqs:
-        rfq_lines = list(session.scalars(
-            select(RfqLineRow).where(RfqLineRow.rfq_id == rfq.id, RfqLineRow.removed_at.is_(None))
-        ))
-        if not rfq_lines:
-            continue
-        by_id = {line.id: line for line in rfq_lines}
-        decided = set(session.scalars(select(DecisionRow.rfq_line_id).where(DecisionRow.rfq_line_id.in_(list(by_id)))))
-        open_lines = [line for line in rfq_lines if line.id not in decided]
-        if not open_lines:
-            continue
-        answered = set(session.scalars(select(QuoteRow.supplier_id).where(QuoteRow.rfq_id == rfq.id)))
-        waiting: list[tuple[str, date, UUID]] = []
-        for rfq_supplier, supplier in session.execute(
-            select(RfqSupplierRow, SupplierRow).join(SupplierRow, SupplierRow.id == RfqSupplierRow.supplier_id)
-            .where(RfqSupplierRow.rfq_id == rfq.id, RfqSupplierRow.sent_at.is_not(None), RfqSupplierRow.declined_at.is_(None))
+def _chunks(values: list) -> Iterable[list]:
+    for start in range(0, len(values), _CHUNK):
+        yield values[start:start + _CHUNK]
+
+
+def silent_suppliers(session: Session, buyer_id: UUID) -> list[SilentSupplier]:
+    """Five queries: the buyer's open requests with their live lines, the decided ones, who quoted, who was sent, which
+    lines each supplier was asked for (none stored — every line)."""
+    live = session.execute(
+        select(RfqLineRow.id, RfqLineRow.rfq_id, RfqRow.number)
+        .join(RfqRow, RfqRow.id == RfqLineRow.rfq_id)
+        .where(RfqRow.buyer_id == buyer_id, RfqRow.closed_at.is_(None), RfqLineRow.removed_at.is_(None))
+    ).all()
+    if not live:
+        return []
+    numbers = {rfq_id: number for _, rfq_id, number in live}
+    lines_of: dict[UUID, set[UUID]] = {}
+    for line_id, rfq_id, _ in live:
+        lines_of.setdefault(rfq_id, set()).add(line_id)
+    decided: set[UUID] = set()
+    for chunk in _chunks([line_id for line_id, _, _ in live]):
+        decided |= set(session.scalars(select(DecisionRow.rfq_line_id).where(DecisionRow.rfq_line_id.in_(chunk))))
+    open_of = {rfq_id: ids - decided for rfq_id, ids in lines_of.items()}
+    rfq_ids = [rfq_id for rfq_id, ids in open_of.items() if ids]
+    if not rfq_ids:
+        return []
+    answered: set[tuple[UUID, UUID]] = set()
+    sent = []
+    for chunk in _chunks(rfq_ids):
+        answered |= {(rfq_id, supplier_id) for rfq_id, supplier_id in session.execute(
+            select(QuoteRow.rfq_id, QuoteRow.supplier_id).where(QuoteRow.rfq_id.in_(chunk)).distinct()
+        )}
+        sent.extend(session.execute(
+            select(RfqSupplierRow.id, RfqSupplierRow.rfq_id, RfqSupplierRow.supplier_id, RfqSupplierRow.sent_at,
+                   SupplierRow.name)
+            .join(SupplierRow, SupplierRow.id == RfqSupplierRow.supplier_id)
+            .where(RfqSupplierRow.rfq_id.in_(chunk), RfqSupplierRow.sent_at.is_not(None),
+                   RfqSupplierRow.declined_at.is_(None))
+        ).all())
+    waiting = [row for row in sent if (row.rfq_id, row.supplier_id) not in answered]
+    asked: dict[UUID, set[UUID]] = {}
+    for chunk in _chunks([row.id for row in waiting]):
+        for rfq_supplier_id, rfq_line_id in session.execute(
+            select(RfqSupplierLineRow.rfq_supplier_id, RfqSupplierLineRow.rfq_line_id)
+            .where(RfqSupplierLineRow.rfq_supplier_id.in_(chunk))
         ):
-            sent = _day(rfq_supplier.sent_at)
-            if rfq_supplier.supplier_id not in answered and (today - sent).days > wait_days:
-                waiting.append((supplier.name, sent, rfq_supplier.id))
-        asked = asked_lines(session, [rfq_supplier_id for _, _, rfq_supplier_id in waiting])
-        for line in open_lines:
-            silent = [(name, sent) for name, sent, rfq_supplier_id in waiting
-                      if rfq_supplier_id not in asked or line.id in asked[rfq_supplier_id]]
-            if silent:
-                oldest = min(sent for _, sent in silent)
-                names = ", ".join(sorted(name for name, _ in silent))
-                result[NO_ANSWER][line.procurement_line_id] = {
-                    "rfq_id": str(rfq.id), "rfq_number": rfq.number, "date": oldest, "days": (today - oldest).days,
-                    "hint": f"{rfq.number}: нет ответа на запрос — {names}. Напомните или отметьте отказ",
-                }
-        offers = line_offers(session, rfq.id, by_id, valid_days)
-        for line in open_lines:
-            current = current_offers(offers.get(line.id, []), today)
-            gate = gate_status(current, min_quotes, require_non_key)
-            if not (gate.passes or gate.priced >= 1):
-                continue
-            first = min(offer.received_on for offer in current if offer.priced)
-            note = "КП достаточно" if gate.passes else f"КП с ценой {gate.priced} из {gate.required}"
-            result[TO_DECIDE][line.procurement_line_id] = {
-                "rfq_id": str(rfq.id), "rfq_number": rfq.number, "date": first, "days": (today - first).days,
-                "hint": f"{rfq.number}: {note} — выберите поставщика в «Запросах КП»",
-            }
-    return result
+            asked.setdefault(rfq_supplier_id, set()).add(rfq_line_id)
+    out = []
+    for row in waiting:
+        still_open = open_of[row.rfq_id] & asked[row.id] if row.id in asked else open_of[row.rfq_id]
+        if still_open:
+            out.append(SilentSupplier(
+                rfq_id=row.rfq_id, rfq_number=numbers[row.rfq_id], supplier=row.name, sent_on=_day(row.sent_at),
+                lines=len(still_open),
+            ))
+    return out
+
+
+def first_sent(session: Session, rfq_ids: Iterable[UUID]) -> dict[UUID, date]:
+    wanted = sorted(set(rfq_ids), key=str)
+    out: dict[UUID, date] = {}
+    for chunk in _chunks(wanted):
+        for rfq_id, sent_at in session.execute(
+            select(RfqSupplierRow.rfq_id, func.min(RfqSupplierRow.sent_at))
+            .where(RfqSupplierRow.rfq_id.in_(chunk), RfqSupplierRow.sent_at.is_not(None))
+            .group_by(RfqSupplierRow.rfq_id)
+        ):
+            if sent_at is not None:
+                out[rfq_id] = _day(sent_at)
+    return out
+
+
+def decisions(session: Session, procurement_line_ids: Iterable[UUID]) -> dict[UUID, Decision]:
+    """Procurement line id → the quote chosen for it in its live request (one query per 500 lines)."""
+    wanted = list(dict.fromkeys(procurement_line_ids))
+    out: dict[UUID, Decision] = {}
+    for chunk in _chunks(wanted):
+        rows = session.execute(
+            select(RfqLineRow.procurement_line_id, RfqLineRow.rfq_id, RfqRow.number, DecisionRow.decided_at,
+                   QuoteLineRow.lead_days, SupplierRow.name)
+            .join(DecisionRow, DecisionRow.rfq_line_id == RfqLineRow.id)
+            .join(RfqRow, RfqRow.id == RfqLineRow.rfq_id)
+            .join(QuoteLineRow, QuoteLineRow.id == DecisionRow.quote_line_id)
+            .join(QuoteRow, QuoteRow.id == QuoteLineRow.quote_id)
+            .join(SupplierRow, SupplierRow.id == QuoteRow.supplier_id)
+            .where(RfqLineRow.procurement_line_id.in_(chunk), RfqLineRow.removed_at.is_(None))
+        )
+        for line_id, rfq_id, number, decided_at, lead_days, supplier in rows:
+            out[line_id] = Decision(rfq_id=rfq_id, rfq_number=number, decided_on=_day(decided_at),
+                                    lead_days=lead_days, supplier=supplier)
+    return out

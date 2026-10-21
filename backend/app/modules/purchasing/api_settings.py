@@ -1,4 +1,4 @@
-"""«Настройки закупки» — gate, VAT, waits (stage hybrid)."""
+"""«Настройки закупки» — gate, VAT, waits, «Сегодня» windows (stage hybrid)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from .deps import purchasing_uow_factory, require_option
 
 router = APIRouter(prefix="/api/purchasing/settings", tags=["purchasing"])
 
-OPTIONS = ("procurement.rfq", "references.suppliers", "references.items")
+OPTIONS = ("procurement.rfq", "references.suppliers", "references.items", "procurement.today")
 # One aggregate for every settings change in the audit log.
 SETTINGS_AGGREGATE_ID = UUID("00000000-0000-0000-0000-0000000000a1")
 

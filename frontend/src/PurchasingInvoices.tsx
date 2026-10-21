@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { failureText } from "./api";
 import { formatQty } from "./format";
+import { urlParam } from "./navigation";
 import { ChainDetail } from "./PurchasingDocChain";
 import {
   CHAIN_STATE_LABELS, CHAIN_STATE_TONE, INVOICE_STATUS_LABELS, INVOICE_STATUS_TONE, dayText, documentsApi, invoiceFileUrl, rub,
@@ -18,8 +19,15 @@ const STATUSES: { key: InvoiceStatus | ""; label: string }[] = [
 ];
 const FILE_KIND: Record<InvoiceFile["kind"], string> = { invoice: "счёт", payment: "платёжка", other: "файл" };
 
+/** `&tab=invoices&status=to_pay` (a link from «Сегодня»): the registry opens on that status. */
+function statusFromUrl(): InvoiceStatus | "" {
+  if (urlParam("tab") !== "invoices") return "";
+  const wanted = urlParam("status");
+  return STATUSES.find((status) => status.key && status.key === wanted)?.key ?? "";
+}
+
 export function PurchasingInvoices({ readOnly = false, onOpenUpd }: { readOnly?: boolean; onOpenUpd?: (id: string) => void } = {}) {
-  const [query, setQuery] = useState<InvoiceQuery>({ q: "", status: "", closing: "", from: "", to: "", page: 1 });
+  const [query, setQuery] = useState<InvoiceQuery>(() => ({ q: "", status: statusFromUrl(), closing: "", from: "", to: "", page: 1 }));
   const [list, setList] = useState<InvoiceList | null>(null);
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);

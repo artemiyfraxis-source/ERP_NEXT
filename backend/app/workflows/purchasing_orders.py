@@ -8,7 +8,7 @@ workflow hands it plain facts, read-only, in a fixed number of queries whatever 
   gate still misses (one query);
 * `receiving_rows` — the delivery rows of one order for its card;
 * `open_decisions` — the buyer's lines with an applied request-for-quotes decision that are not ordered yet;
-* `followups` — «Дожать»: ERP's own «Сегодня» rules (`procurement.today.build_today`) over the buyer's lines.
+* «Дожать» lives with «Сегодня» (`app/workflows/procurement_today.py`): one source of each rule.
 
 The promised date («обещано», Roller_Buyer's immutable `promised_date`) is not stored anywhere: ERP keeps only the
 current ОЖИД. ДАТА on the line, but every change of it after the invoice is audited with the previous value
@@ -30,7 +30,6 @@ from sqlalchemy.orm import Session
 
 from app.modules.procurement.domain import ProcurementStatus, is_backorder_id
 from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchemyProcurementRepository
-from app.modules.procurement.today import build_today
 from app.modules.purchasing.infrastructure import (
     DecisionRow,
     QuoteLineRow,
@@ -40,7 +39,6 @@ from app.modules.purchasing.infrastructure import (
     SupplierRow,
 )
 from app.modules.receiving.infrastructure import ReceivingLineRow
-from app.shared.identity import Actor
 from app.shared.persistence import AuditEventRow
 
 _MOSCOW = ZoneInfo("Europe/Moscow")
@@ -247,6 +245,28 @@ def order_lines(
     return out
 
 
+def promised_dates(session: Session, order_numbers: Sequence[str]) -> dict[str, date]:
+    """№ ЗАКАЗА → the latest promise among its invoiced lines (`backorders` repeat a paid line: not counted) — what
+    `order_lines` derives, read with four columns instead of the whole order (the order facts port)."""
+    R = ProcurementLineRow
+    wanted = sorted({number for number in order_numbers if number})
+    rows = []
+    for chunk in _chunks(wanted):
+        rows.extend(session.execute(
+            select(R.id, R.order_number, R.legacy_id, R.expected_arrival)
+            .where(R.order_number.in_(chunk), R.status.in_(sorted(_INVOICED)))
+        ).all())
+    rows = [row for row in rows if not is_backorder_id(row.legacy_id)]
+    promised = _promised(session, {row.id: row.expected_arrival for row in rows})
+    out: dict[str, date] = {}
+    for row in rows:
+        day = promised.get(row.id)
+        number = (row.order_number or "").strip()
+        if day is not None and number and (number not in out or day > out[number]):
+            out[number] = day
+    return out
+
+
 def order_numbers_of(session: Session, line_ids: Sequence[UUID]) -> dict[UUID, str]:
     """Procurement line id → its № ЗАКАЗА (lines without one are left out)."""
     R = ProcurementLineRow
@@ -392,50 +412,6 @@ def open_decisions(session: Session, buyer_id: UUID) -> list[OpenDecision]:
             ))
     out.sort(key=lambda item: (item.supplier.casefold(), item.legacy_id))
     return out
-
-
-# ---- «Дожать» ------------------------------------------------------------------------------------------------------
-
-def followups(session: Session, actor: Actor, today: date, rfq: dict | None) -> dict:
-    """«Дожать» from ERP's «Сегодня» rules over the buyer's own lines (`build_today`), grouped as Roller_Buyer showed
-    them: requests for quotes nobody answered, deliveries due or late (per order), invoices not paid (per order).
-    `rfq` — the request-for-quotes follow-ups (`procurement_rfq_followups`), None while that option is off."""
-    lines = SqlAlchemyProcurementRepository(session).by_buyer(actor, 10_000)
-    sections = {section["key"]: section["items"] for section in build_today(lines, today, 0, rfq)}
-
-    def per_order(items: list[dict]) -> list[dict]:
-        grouped: dict[str, dict] = {}
-        for item in items:
-            number = item.get("order_number") or ""
-            entry = grouped.setdefault(number, {
-                "order_number": number or None, "supplier": item.get("supplier"), "date": item.get("date"),
-                "days": item.get("days"), "count": 0, "names": [],
-            })
-            entry["count"] += 1
-            if len(entry["names"]) < 3:
-                entry["names"].append(item.get("name"))
-            if item.get("days") is not None and (entry["days"] is None or item["days"] > entry["days"]):
-                entry["days"], entry["date"] = item["days"], item.get("date")
-        return list(grouped.values())
-
-    quotes: dict[str, dict] = {}
-    for item in sections.get("rfq_no_answer", []):
-        entry = quotes.setdefault(item["rfq_id"], {
-            "rfq_id": item["rfq_id"], "rfq_number": item["rfq_number"], "hint": item["hint"], "date": item["date"],
-            "days": item["days"], "count": 0,
-        })
-        entry["count"] += 1
-    late = per_order(sections.get("overdue", []))
-    soon = per_order(sections.get("arriving", []))
-    unpaid = per_order(sections.get("to_pay", []))
-    awaiting = per_order(sections.get("awaiting_invoice", []))
-    return {
-        "awaiting_quotes": sorted(quotes.values(), key=lambda entry: -(entry["days"] or 0)),
-        "late": sorted(late, key=lambda entry: -(entry["days"] or 0)),
-        "arriving": sorted(soon, key=lambda entry: str(entry["date"] or "")),
-        "unpaid": sorted(unpaid, key=lambda entry: -(entry["days"] or 0)),
-        "awaiting_invoice": sorted(awaiting, key=lambda entry: -(entry["days"] or 0)),
-    }
 
 
 def by_order(lines: Iterable[OrderLineFacts]) -> dict[str, list[OrderLineFacts]]:

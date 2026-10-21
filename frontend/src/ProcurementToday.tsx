@@ -1,157 +1,158 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { api, failureText } from "./api";
-import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 import { projectLabel, useInternalProjects } from "./internalProjects";
-import { useLineHistory } from "./LineHistory";
+import { openPlace } from "./navigation";
 
-/** Option `procurement.today`: the buyer's board. Fields in priority order hold project cards (one project may sit
- *  in several fields); a card opens the project's open positions with their stage and field. */
+/** Option `procurement.today`: Roller_Buyer's «Сегодня» (TodayPage.tsx) — what needs the buyer's hand now, section by
+ *  section in the order of doing. Every row opens the place where the next step is taken (in-app, without a reload);
+ *  a card of a project or an order opens in place to show its positions. Refreshed every minute. */
+export type TodayTone = "danger" | "warning" | "accent" | "neutral" | "success";
+/** `?section=procurement` params of the place: `{tab: "orders", order: "PO-1"}` (CONTRACTS.md deep links). */
+export type TodayLink = Record<string, string>;
 export type TodayItem = {
-  id: string | null;
-  name: string;
-  article: string | null;
-  supplier: string | null;
-  order_number: string | null;
-  date: string | null;
+  title: string;
+  detail: string;
+  link: TodayLink | null;
+  /** Days late / waiting; null when not about time. */
   days: number | null;
-  hint: string;
-  project?: string;
-  status?: string;
+  /** A card: its positions (the first ones) and how many there are. */
+  lines?: TodayItem[];
+  lines_count?: number;
+  project?: { key: string; kind: string; value: string };
 };
-export type TodayCard = { project: string; count: number; days: number | null; date: string | null; suppliers: string[] };
-export type TodaySection = { key: string; title: string; count: number; items: TodayItem[]; projects?: TodayCard[]; projects_more?: number };
-export type TodayLine = {
-  id: string; name: string; article: string | null; supplier: string | null; order_number: string | null;
-  status: string; expected: string | null; quantity: string | null; unit: string | null; field: string | null;
-  /** Every board field the line sits in (`field` is the first); `rfq` — the request behind a «Нет ответа» / «Выбрать поставщика» card. */
-  fields?: string[]; rfq?: { id: string; number: string; hint: string } | null;
+export type TodaySection = {
+  key: string; title: string; action: string; tone: TodayTone; count: number; positions?: number; items: TodayItem[];
 };
-type Board = { sections: TodaySection[] };
+export type TodayDto = { today: string; sections: TodaySection[]; calm: boolean };
 
-const URGENT = new Set(["overdue", "arriving"]);
+const SHOWN = 8; // RB: eight items, then «и ещё N»
+const REFRESH_MS = 60_000;
 
-function lineColumns(onOpenRfq: ((rfqId: string) => void) | undefined, history: ReturnType<typeof useLineHistory>): DataColumn<TodayLine>[] {
-  return [
-  { key: "name", title: "Позиция", wrap: true, value: (row) => row.name, render: (row) => (
+function hrefOf(link: TodayLink): string {
+  const params = new URLSearchParams({ section: "procurement", ...link });
+  return `?${params.toString()}`;
+}
+
+function follow(event: MouseEvent, link: TodayLink) {
+  // A plain click stays in the app; Ctrl/middle click opens the address in a new tab as any link does.
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  openPlace("procurement", link);
+}
+
+function titleOf(item: TodayItem): string {
+  return item.project?.kind === "project" ? projectLabel(item.project.value) : item.title;
+}
+
+function Days({ days }: { days: number | null }) {
+  return days !== null ? <span className="today-days">{days} дн</span> : null;
+}
+
+function Row({ item }: { item: TodayItem }) {
+  const body = (
     <>
-      {row.name}{row.article && <small>{row.article}</small>}
-      {row.rfq && (
-        <small className="today-link">
-          {row.rfq.hint}
-          {onOpenRfq && <> · <button type="button" className="link-button" onClick={() => onOpenRfq(row.rfq!.id)}>Открыть запрос {row.rfq.number}</button></>}
-        </small>
+      <span className="today-title">{titleOf(item)}</span>
+      <span className="today-detail">{item.detail}</span>
+      <Days days={item.days} />
+    </>
+  );
+  if (!item.link) return <span className="today-row">{body}</span>;
+  const link = item.link;
+  return <a className="today-row" href={hrefOf(link)} onClick={(event) => follow(event, link)}>{body}</a>;
+}
+
+/** A project (order) card: opens in place to show the positions waiting in this section. */
+function GroupRow({ item }: { item: TodayItem }) {
+  const [open, setOpen] = useState(false);
+  const lines = item.lines ?? [];
+  const rest = (item.lines_count ?? lines.length) - lines.length;
+  return (
+    <>
+      <button type="button" className={open ? "today-row today-group open" : "today-row today-group"} aria-expanded={open}
+        onClick={() => setOpen(!open)}>
+        <span className="today-title"><span className="today-caret" aria-hidden="true">{open ? "▾" : "▸"}</span> {titleOf(item)}</span>
+        <span className="today-detail">{item.detail}</span>
+        <Days days={item.days} />
+      </button>
+      {open && (
+        <ul className="today-lines" aria-label={`Позиции: ${titleOf(item)}`}>
+          {lines.map((line, index) => <li key={index}><Row item={line} /></li>)}
+          {item.link && (
+            <li className="today-lines-all">
+              <a href={hrefOf(item.link)} onClick={(event) => follow(event, item.link!)}>
+                {rest > 0 ? `и ещё ${rest} — открыть все →` : "открыть все →"}
+              </a>
+            </li>
+          )}
+        </ul>
       )}
     </>
-  ) },
-  { key: "status", title: "Этап", value: (row) => row.status, render: (row) => <span className="today-stage">{row.status}</span> },
-  { key: "field", title: "На доске", value: (row) => row.field, render: (row) => row.field || "—" },
-  { key: "supplier", title: "Поставщик", value: (row) => row.supplier, render: (row) => row.supplier || "—" },
-  { key: "qty", title: "Кол-во", numeric: true, value: (row) => row.quantity, render: (row) => (row.quantity ? `${Number(row.quantity).toLocaleString("ru-RU")} ${row.unit ?? ""}` : "—") },
-  { key: "order", title: "Заказ №", value: (row) => row.order_number, render: (row) => row.order_number || "—" },
-  { key: "expected", title: "Ожидаем", value: (row) => row.expected, render: (row) => (row.expected ? formatDate(row.expected) : "—") },
-  ...(history.enabled ? [{ key: "history", title: "", value: () => "", render: (row: TodayLine) => (
-    <button type="button" className="link-button" aria-label={`История ${row.name}`} onClick={() => history.open(row.id, row.name)}>История</button>
-  ) }] : []),
-  ];
+  );
 }
 
-function daysText(section: string, days: number | null) {
-  if (days === null) return "";
-  if (section === "overdue") return `просрочка ${days} дн.`;
-  if (section === "arriving") return days === 0 ? "сегодня" : "завтра";
-  // A fresh card (0 days) carries no age: «0 дн.» reads like a deadline.
-  return days > 0 ? `ждёт ${days} дн.` : "";
+function SectionCard({ section }: { section: TodaySection }) {
+  return (
+    <section className={`today-card today-tone-${section.tone}`} aria-label={section.title}>
+      <header>
+        <h3>
+          {section.title} <span className="today-count">{section.count}</span>
+          {section.positions !== undefined && <span className="muted today-positions"> {section.positions} поз.</span>}
+        </h3>
+        <div className="muted">{section.action}</div>
+      </header>
+      <ul>
+        {section.items.slice(0, SHOWN).map((item, index) => (
+          <li key={`${section.key}-${item.title}-${index}`}>{item.lines ? <GroupRow item={item} /> : <Row item={item} />}</li>
+        ))}
+      </ul>
+      {section.count > SHOWN && <div className="muted today-more">и ещё {section.count - SHOWN}</div>}
+    </section>
+  );
 }
 
-export function ProcurementToday({ onOpenQueues, onOpenRfq }: { onOpenQueues?: () => void; onOpenRfq?: (rfqId: string) => void }) {
-  const history = useLineHistory(); // option procurement.history: «История» on the drill-down rows
-  useInternalProjects(); // option projects.internal: cards and the drill title say «ВП-001 · Название»
-  const [board, setBoard] = useState<Board | null>(null);
+export function ProcurementToday({ ordersOn = false }: { ordersOn?: boolean } = {}) {
+  useInternalProjects(); // option projects.internal: project cards say «ВП-001 · Название»
+  const [data, setData] = useState<TodayDto | null>(null);
   const [error, setError] = useState("");
-  const [open, setOpen] = useState<{ project: string; field: string } | null>(null);
-  const [onlyField, setOnlyField] = useState(true);
-  // Positions of the opened card, fetched on click (the board itself carries only the cards).
-  const [drill, setDrill] = useState<TodayLine[] | null>(null);
-  const [drillError, setDrillError] = useState("");
+  const live = useRef(true);
 
-  useEffect(() => {
-    let live = true;
-    api<Board>("/api/procurement/today")
-      .then((result) => { if (live) setBoard(result); })
-      .catch((reason) => { if (live) setError(failureText(reason, "«Сегодня» не загрузилось")); });
-    return () => { live = false; };
+  const load = useCallback(() => {
+    api<TodayDto>("/api/procurement/today")
+      .then((next) => { if (live.current) { setData(next); setError(""); } })
+      .catch((reason) => { if (live.current) setError(failureText(reason, "«Сегодня» не загрузилось")); });
   }, []);
 
-  const project = open?.project ?? null;
   useEffect(() => {
-    if (project === null) return;
-    let live = true;
-    setDrill(null);
-    setDrillError("");
-    api<{ lines: TodayLine[] }>(`/api/procurement/today/project?project=${encodeURIComponent(project)}`)
-      .then((result) => { if (live) setDrill(result.lines); })
-      .catch((reason) => { if (live) setDrillError(failureText(reason, "Позиции проекта не загрузились")); });
-    return () => { live = false; };
-  }, [project]);
+    live.current = true;
+    load();
+    const timer = window.setInterval(load, REFRESH_MS);
+    return () => { live.current = false; window.clearInterval(timer); };
+  }, [load]);
 
-  const sections = board?.sections ?? null;
-  const rowsOfProject = drill ?? [];
-  const shown = open && onlyField ? rowsOfProject.filter((row) => (row.fields ? row.fields.includes(open.field) : row.field === open.field)) : rowsOfProject;
-
+  const total = data?.sections.reduce((sum, section) => sum + section.count, 0) ?? 0;
   return (
-    <section className="page">
-      {history.node}
+    <section className="page today-page">
+      <div className="today-head">
+        <span className="muted">{data ? `${formatDate(data.today)} · ${total ? `дел: ${total}` : "дел нет"}` : ""}</span>
+        <span className="spacer" />
+        {ordersOn && (
+          <button type="button" className="secondary" onClick={() => openPlace("procurement", { tab: "orders" })}>Счета и поставки</button>
+        )}
+        <button type="button" className="primary" onClick={() => openPlace("newrequest")}>Новая заявка</button>
+      </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
-      {!error && sections === null && <div className="empty">Загружаю…</div>}
-      {sections !== null && !sections.length && <div className="empty">На сегодня всё сделано</div>}
-      {sections !== null && sections.length > 0 && (
-        <div className="today-board" role="list" aria-label="Доска «Сегодня»">
-          {sections.map((section) => (
-            <section className={`today-field${URGENT.has(section.key) ? " urgent" : ""}`} key={section.key} role="listitem" aria-label={section.title}>
-              <header><h2>{section.title}</h2><span className="today-count">{section.count}</span></header>
-              {section.key === "available" ? (
-                <button type="button" className="today-card" onClick={() => onOpenQueues?.()}>
-                  <strong>{section.items[0]?.name}</strong>
-                  <small>{section.items[0]?.hint}</small>
-                </button>
-              ) : (section.projects ?? []).map((card) => {
-                const active = open?.project === card.project && open.field === section.title;
-                return (
-                  <button
-                    type="button"
-                    key={card.project}
-                    className={`today-card${active ? " active" : ""}`}
-                    aria-pressed={active}
-                    onClick={() => { setOpen(active ? null : { project: card.project, field: section.title }); setOnlyField(true); }}
-                  >
-                    <span className="today-card-head"><strong>{projectLabel(card.project)}</strong><span>{card.count} поз.</span></span>
-                    {daysText(section.key, card.days) && <span className={`today-days${section.key === "overdue" ? " late" : ""}`}>{daysText(section.key, card.days)}</span>}
-                    {card.suppliers.length > 0 && <small>{card.suppliers.slice(0, 3).join(", ")}{card.suppliers.length > 3 ? ` +${card.suppliers.length - 3}` : ""}</small>}
-                  </button>
-                );
-              })}
-              {(section.projects_more ?? 0) > 0 && <small className="today-more">ещё проектов: {section.projects_more} — в «Очередях»</small>}
-            </section>
-          ))}
+      {!error && !data && <div className="empty">Загружаю…</div>}
+      {data?.calm && (
+        <div className="panel today-calm">
+          <h3>Всё спокойно</h3>
+          <p className="muted">Просрочек нет, КП запрошены, счета оплачены. Новые заявки появятся здесь сами.</p>
         </div>
       )}
-      {open && (
-        <section className="panel table-panel today-drill" aria-label={`Проект ${projectLabel(open.project)}`}>
-          <div className="panel-heading">
-            <h2>{projectLabel(open.project)}</h2>
-            <span>{open.field}</span>
-            <span className="today-drill-actions">
-              <button type="button" className={`secondary small${onlyField ? " active" : ""}`} aria-pressed={onlyField} onClick={() => setOnlyField(true)}>В этом поле</button>
-              <button type="button" className={`secondary small${!onlyField ? " active" : ""}`} aria-pressed={!onlyField} onClick={() => setOnlyField(false)}>Все позиции проекта{drill ? ` · ${drill.length}` : ""}</button>
-              {onOpenQueues && <button type="button" className="secondary small" onClick={() => onOpenQueues()}>В «Очереди»</button>}
-              <button type="button" className="link-button" onClick={() => setOpen(null)}>Закрыть</button>
-            </span>
-          </div>
-          {drillError && <div className="error-banner" role="alert">{drillError}</div>}
-          {!drillError && drill === null && <div className="empty">Загружаю…</div>}
-          {drill !== null && <DataTable label={`Позиции проекта ${projectLabel(open.project)}`} rows={shown} columns={lineColumns(onOpenRfq, history)} rowKey={(row) => row.id} compactBelow={1000} />}
-        </section>
+      {data && data.sections.length > 0 && (
+        <div className="today-grid">
+          {data.sections.map((section) => <SectionCard key={section.key} section={section} />)}
+        </div>
       )}
     </section>
   );

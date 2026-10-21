@@ -92,6 +92,14 @@ class ViewLine:
     invoiced: bool = False
     requested: bool = False
     order_number: str | None = None
+    # Dates «Сегодня» reads (option procurement.today); «Заявки» does not need them.
+    expected_arrival: date | None = None
+    actual_arrival: date | None = None
+    invoice_date: date | None = None
+    paid_on: date | None = None
+    order_date: date | None = None
+    invoice_number: str | None = None
+    invoice_name: str | None = None  # НАИМЕНОВАНИЕ (счёт): the supplier's name of the item once invoiced
 
     @property
     def to_buy(self) -> Decimal:

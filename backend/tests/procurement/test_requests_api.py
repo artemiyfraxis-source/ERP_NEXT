@@ -243,3 +243,31 @@ def test_without_a_project_only_the_newest_requests_are_listed(api, monkeypatch,
     assert len(_view(client, project="RND")["batches"]) == 2
     only_lines = _view(client, batch="RND|rnd.001")
     assert set(only_lines) == {"scope", "batch", "lines"} and len(only_lines["lines"]) == 1
+
+
+def test_order_facts_of_the_orders_board_show_in_the_statuses(api, monkeypatch, tmp_path):
+    """«В оплате» and «В доставке» come from «Счета и поставки» (order facts), as on Roller_Buyer's request page."""
+    from datetime import date, datetime
+
+    from app.modules.purchasing.infrastructure import OrderFactRow
+
+    client, lines, sessions = api
+    _options(monkeypatch, tmp_path)
+    with sessions() as session:
+        for line, status in zip(lines, ("В оплату", "В пути")):
+            row = session.get(ProcurementLineRow, line.id)
+            row.status, row.order_number, row.invoice_url = status, "PO-9", "https://files.test/i.pdf"
+            if status == "В пути":
+                row.paid_at = datetime(2026, 9, 12, 10, 0)
+        session.commit()
+    counts = lambda: {key: n for project in _view(client)["projects"] for key, n in project["counts"].items()}  # noqa: E731
+    assert counts() == {"ordered": 1, "paid": 1}
+    with sessions() as session:
+        session.add(OrderFactRow(
+            order_number="PO-9", sent_to_pay_on=date(2026, 9, 11), shipped_on=date(2026, 9, 13), shipment_note="",
+            note="", created_at=datetime(2026, 9, 13), updated_at=datetime(2026, 9, 13), version=1,
+        ))
+        session.commit()
+    assert counts() == {"to_pay": 1, "shipped": 1}
+    rows = _lines(client, _view(client)["batches"][0]["key"]) | _lines(client, _view(client)["batches"][1]["key"])
+    assert {row["rb_status"] for row in rows.values()} == {"to_pay", "shipped"}

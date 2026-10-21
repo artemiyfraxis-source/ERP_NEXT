@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
+from app.shared.clock import MOSCOW, as_utc
 from app.shared.persistence import AuditEventRow
 
 from .domain import ProcurementStatus
@@ -27,6 +28,12 @@ _VIEW_COLUMNS = (
     R.calculated_price_with_vat, R.link, R.supplier, R.paid_at, R.invoice_url, R.supplier_request_reference,
     R.order_number,
 )
+# «Сегодня» (option procurement.today) reads the dates of the stages on top.
+_TODAY_COLUMNS = (
+    *_VIEW_COLUMNS, R.expected_arrival, R.actual_arrival, R.invoice_date, R.order_date, R.invoice_number,
+    R.invoice_item_name,
+)
+_CLOSED = (ProcurementStatus.DONE.value, ProcurementStatus.CANCELLED.value)
 _PAID_COLUMNS = (
     R.id, R.design_article, R.calculated_name, R.invoice_item_name, R.supplier, R.paid_at, R.currency, R.actual_price,
     R.actual_vat_rate, R.actual_price_with_vat, R.source_price, R.source_price_with_vat, R.exchange_rate,
@@ -34,7 +41,7 @@ _PAID_COLUMNS = (
 )
 
 
-def _view(row) -> ViewLine:
+def _view(row, **more) -> ViewLine:
     return ViewLine(
         id=row.id, legacy_id=row.legacy_id, version=row.version, status=row.status, buyer_id=row.buyer_id,
         buyer_name=row.buyer_name, source_request_id=row.source_request_id, created_at=row.created_at,
@@ -44,8 +51,32 @@ def _view(row) -> ViewLine:
         quantity=row.calculated_quantity, unit=row.calculated_unit, stock_covered=row.stock_covered,
         price=row.calculated_price, price_with_vat=row.calculated_price_with_vat, link=row.link,
         supplier=row.supplier, paid=row.paid_at is not None, invoiced=bool(row.invoice_url),
-        requested=bool(row.supplier_request_reference), order_number=row.order_number,
+        requested=bool(row.supplier_request_reference), order_number=row.order_number, **more,
     )
+
+
+def _local_day(value) -> date | None:
+    """A stored moment as the Moscow day it happened on (a payment at 01:30 MSK belongs to that day)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return as_utc(value).astimezone(MOSCOW).date()
+    return value
+
+
+def _today_view(row) -> ViewLine:
+    return _view(
+        row, expected_arrival=row.expected_arrival, actual_arrival=row.actual_arrival,
+        invoice_date=row.invoice_date, paid_on=_local_day(row.paid_at), order_date=row.order_date,
+        invoice_number=row.invoice_number, invoice_name=row.invoice_item_name,
+    )
+
+
+def own_open_lines(session: Session, buyer_id: UUID) -> list[ViewLine]:
+    """«Сегодня» (option procurement.today): the buyer's own lines that are not closed («Готово», «Отменено»), with
+    the dates of their stages — one column select."""
+    statement = select(*_TODAY_COLUMNS).where(R.buyer_id == buyer_id, R.status.not_in(_CLOSED))
+    return [_today_view(row) for row in session.execute(statement.order_by(R.created_at, R.id))]
 
 
 def view_lines(session: Session, buyer_id: UUID | None) -> list[ViewLine]:

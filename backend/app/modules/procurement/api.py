@@ -141,9 +141,8 @@ from .stock_port import StockLotView
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from .exchange_rates import CbrExchangeRates
 from .kpi import build_kpi
-from .today import build_board, project_lines
 from app.workflows.procurement_history import line_history
-from app.workflows.procurement_rfq_followups import rfq_followups
+from app.workflows.procurement_today import today_page
 from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
 from .money import MoneyInput, parse_number_loose
@@ -810,40 +809,19 @@ def _require_option(key: str) -> None:
         raise HTTPException(status_code=404, detail="Опция выключена")
 
 
-def _rfq_followups(principal: Principal, uow_factory: Callable[[], UnitOfWork], now: datetime) -> dict | None:
-    """«Нет ответа на запрос КП» / «Выбрать поставщика»: only with option `procurement.rfq` on, else the board is as before."""
-    if not stage_options.enabled("procurement.rfq"):
-        return None
-    uow = uow_factory()
-    with uow:
-        return rfq_followups(uow.session, principal.actor.id, now.date())
-
-
 @router.get("/today")
 def today_lines(
     principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
     now: Annotated[datetime, Depends(moscow_now)],
+    purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
 ) -> dict:
-    """Stage option `procurement.today`: the buyer's prioritized to-do list, computed on read. A read, open on view
-    (ID-6): a viewer has no own lines, the board comes out empty."""
+    """Stage option `procurement.today`: Roller_Buyer's «Сегодня» over the buyer's own lines and requests, computed on
+    read (`app/workflows/procurement_today.py`). A read, open on view (ID-6): a viewer has no own lines."""
     _require_option("procurement.today")
-    lines = buyer_procurement(principal.actor, uow_factory(), limit=5000)
-    available = available_procurement(uow_factory(), limit=1000)
-    return build_board(lines, now.date(), len(available), _rfq_followups(principal, uow_factory, now))
-
-
-@router.get("/today/project")
-def today_project(
-    principal: Annotated[Principal, Depends(procurement_view_principal)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
-    now: Annotated[datetime, Depends(moscow_now)],
-    project: Annotated[str, Query(min_length=1, max_length=128)],
-) -> dict:
-    """A board card opened: the buyer's open lines of that project, with stage and field."""
-    _require_option("procurement.today")
-    lines = buyer_procurement(principal.actor, uow_factory(), limit=5000)
-    return {"lines": project_lines(lines, project, now.date(), _rfq_followups(principal, uow_factory, now))}
+    uow = uow_factory()
+    with uow:
+        return today_page(uow.session, principal.actor.id, now.date(), purposes_of)
 
 
 @router.get("/{line_id}/history")

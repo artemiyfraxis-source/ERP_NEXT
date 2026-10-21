@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.purchasing.infrastructure import OrderFactRow
 
-from .purchasing_orders import order_lines
+from .purchasing_orders import promised_dates
 
 _CHUNK = 500
 
@@ -23,13 +23,7 @@ def order_facts(session: Session, order_numbers: Iterable[str]) -> dict[str, dic
     wanted = sorted({str(number).strip() for number in order_numbers if str(number or "").strip()})
     if not wanted:
         return {}
-    promised: dict[str, object] = {}
-    for line in order_lines(session, order_numbers=wanted):
-        if line.is_backorder or line.promised is None:
-            continue
-        known = promised.get(line.order_number)
-        if known is None or line.promised > known:
-            promised[line.order_number] = line.promised
+    promised = promised_dates(session, wanted)
     facts: dict[str, OrderFactRow] = {}
     for start in range(0, len(wanted), _CHUNK):
         chunk = wanted[start:start + _CHUNK]
