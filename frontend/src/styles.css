@@ -4025,3 +4025,13 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .tcgen .spl-row { display: grid; grid-template-columns: 28px 76px minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .tcgen .spl-size { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .tcgen .spl-wires { display: flex; flex-wrap: wrap; gap: 2px 14px; min-width: 0; }
+
+/* «+ Комплектующее» под «Данными из листа»: поля в порядке колонок таблицы. */
+.tcgen .kit-add { display: grid; grid-template-columns: minmax(90px, 0.7fr) minmax(140px, 2fr) minmax(120px, 1.4fr) 80px; gap: 6px; margin-top: 8px; }
+.tcgen .kit-add input.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .kit-add-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.tcgen .kit-add .error-banner { grid-column: 1 / -1; }
+.tcgen .gsec > .warning-inline, .tcgen .gsec > .error-banner { margin-top: 8px; }
+.tcgen .gtable td.nowrap { white-space: nowrap; }
+.tcgen .gtable .num .btn-remove { margin-left: 4px; width: 22px; height: 22px; vertical-align: middle; }
+@media (max-width: 720px) { .tcgen .kit-add { grid-template-columns: 1fr 1fr; } }

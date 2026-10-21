@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import type { KitsetBom, ProjectTechcard } from "./api";
@@ -323,4 +324,38 @@ it("«Маркировать изделие»: одна метка «На изд
   expect(screen.getByLabelText("На изделие 2")).toHaveValue("1");
   expect(product).toBeDisabled();
   expect(screen.queryByLabelText("Надпись 3")).toBeNull();
+});
+
+it("adds a technologist's component to the kit without reseeding the form and removes it again", async () => {
+  mockApi();
+  const tube = { id: "kit-3", type: "ТТК", name: "Трубка ТТК 4,8/1,6", art: "ТТК 4,8/1,6мм", kd: "", qty: "0.04", manual: true };
+  const start = kitOf("Жгут XHP 150мм", XH);
+  const add = vi.fn(async () => ({ bom: { ...start, components: [...start.components, tube] }, note: "КБ1 уже отправлена на комплектацию — в её заявку строка не попадёт" }));
+  const remove = vi.fn(async () => start);
+  function Pane() {
+    const [kit, setKit] = useState(start);
+    return <TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kit} kitEdit={{ add, remove, apply: setKit }} />;
+  }
+  render(<Pane />);
+  const sheet = await screen.findByRole("region", { name: "Данные из листа" });
+  fireEvent.click(await screen.findByRole("tab", { name: "Сложная сборка" }));
+  fireEvent.click(within(sheet).getByRole("button", { name: "+ Комплектующее" }));
+  const form = within(sheet).getByRole("form", { name: "Добавить комплектующее" });
+  const submit = within(form).getByRole("button", { name: "Добавить в комплектацию" });
+  expect(submit).toBeDisabled();
+  fireEvent.change(within(form).getByLabelText("Тип"), { target: { value: "ТТК" } });
+  fireEvent.change(within(form).getByLabelText("Название"), { target: { value: "Трубка ТТК 4,8/1,6" } });
+  fireEvent.change(within(form).getByLabelText("Артикул"), { target: { value: "ТТК 4,8/1,6мм" } });
+  fireEvent.change(within(form).getByLabelText("Кол-во на изделие"), { target: { value: "0,04" } });
+  fireEvent.click(submit);
+
+  await waitFor(() => expect(add).toHaveBeenCalledWith({ type: "ТТК", name: "Трубка ТТК 4,8/1,6", art: "ТТК 4,8/1,6мм", per: "0,04" }));
+  expect(await within(sheet).findByText("добавил технолог")).toBeInTheDocument();
+  expect(within(sheet).getByRole("status")).toHaveTextContent("уже отправлена на комплектацию");
+  // Состав сменился, а форма не пересеяна: выбранная вкладка осталась.
+  expect(screen.getByRole("tab", { name: "Сложная сборка", selected: true })).toBeInTheDocument();
+
+  fireEvent.click(within(sheet).getByRole("button", { name: "Убрать ТТК 4,8/1,6мм из комплектации" }));
+  await waitFor(() => expect(remove).toHaveBeenCalledWith("ТТК 4,8/1,6мм"));
+  await waitFor(() => expect(within(sheet).queryByText("добавил технолог")).toBeNull());
 });

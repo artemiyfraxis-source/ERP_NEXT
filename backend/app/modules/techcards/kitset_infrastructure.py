@@ -78,6 +78,7 @@ def _component_json(component: KitComponent) -> dict[str, Any]:
             "lot_id": str(lot.lot_id) if lot.lot_id else None,
             "warehouse": lot.warehouse, "grn": lot.grn, "package": lot.package,
         },
+        **({"manual": True} if component.manual else {}),
     }
 
 
@@ -91,6 +92,7 @@ def _component(value: dict[str, Any]) -> KitComponent:
             lot_id=UUID(lot["lot_id"]) if lot.get("lot_id") else None,
             warehouse=lot.get("warehouse", ""), grn=lot.get("grn", ""), package=lot.get("package", ""),
         ),
+        manual=bool(value.get("manual")),
     )
 
 
