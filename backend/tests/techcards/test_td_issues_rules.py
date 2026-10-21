@@ -7,8 +7,10 @@ from uuid import uuid4
 
 import pytest
 
+from app.modules.techcards.td_grades import CONTROLLER, FITTER, default_grade, operation_grade, reference_grades
 from app.modules.techcards.td_issues import (
-    TdIssue, TdIssueBlocked, TdIssueConflict, TdIssueInvalid, designations, normcontrol, parse_input, sto_sections,
+    TdIssue, TdIssueBlocked, TdIssueConflict, TdIssueInvalid, designations, normcontrol, parse_input, print_card,
+    sto_sections, td_ops_of, with_td_ops,
 )
 from app.modules.techcards.td_sto import outside_sto, sto, sto_section
 
@@ -35,7 +37,7 @@ def _operation(**override) -> dict:
             {"number": "1", "kind": "Подготовка", "text": "Проверить аппликатор", "tolerance": ""},
             {"number": "2", "kind": "Контроль", "text": "Высота обжима", "tolerance": "1,20 мм"},
         ]},
-        "components": [{"art": "SHF-001T-0.8BS", "kd": "BL2018TS", "name": "Контакт"}],
+        "components": [{"art": "SHF-001T-0.8BS", "kd": "", "name": "Контакт"}],
         "result": [{"name": "Провод с контактом", "norm": "1", "unit": "Шт."}],
         "times": {"operation_seconds": "4", "setup_seconds": "", "machine_seconds": ""},
     }
@@ -43,10 +45,18 @@ def _operation(**override) -> dict:
     return operation
 
 
-def _issue(operations=None, **signatories) -> TdIssue:
+# БД.ОП задаёт разряд всем кодам примеров — чистый выпуск без «разряд по умолчанию».
+REFERENCE = {code: {"profession": "", "grade": "3"} for code in ("PRS_TERMINAL_auto", "CUT_WIRE+1strip", "Handjob", "ZZZ_new")}
+
+
+def _issue(operations=None, *, place=("Цех электромонтажа", "ЦАР"), reference=None, **signatories) -> TdIssue:
     snapshot = {"revision": 3, "document": {"operations": operations if operations is not None else [_operation()]}}
+    snapshot = with_td_ops(snapshot, REFERENCE if reference is None else reference)
     return TdIssue.open(
-        card_id=uuid4(), value=parse_input({"litera": "О1", "method_code": "85", "signatories": _people(**signatories)}),
+        card_id=uuid4(), value=parse_input({
+            "litera": "О1", "method_code": "85", "signatories": _people(**signatories),
+            "workshop": place[0], "site": place[1],
+        }),
         snapshot=snapshot, existing=[], next_sequence=1, actor="Инженер", now=NOW,
     )
 
@@ -114,10 +124,12 @@ def test_template_code_prefix_in_operation_name_is_not_a_finding():
     assert not [item for item in findings if item["code"] == "internal_code"]
 
 
-def test_warnings_for_missing_control_time_kd_and_sto_section():
+def test_warnings_for_missing_control_time_analog_and_sto_section():
     operation = _operation(
         code="Handjob", card={"name": "Сборка", "steps": [{"number": "1", "kind": "Работа", "text": "Собрать", "tolerance": ""}]},
-        components=[{"art": "39012080", "kd": "", "name": "Корпус"}, {"art": "39012080", "kd": "", "name": "Корпус"}],
+        components=[{"art": "39012080", "kd": "", "name": "Корпус"},  # артикул и есть КД — не замечание
+                    {"art": "SHF-001T-0.8BS", "kd": "BL2018TS", "name": "Контакт"},
+                    {"art": "SHF-001T-0.8BS", "kd": "BL2018TS", "name": "Контакт"}],
         times={"operation_seconds": "0"},
     )
     findings = normcontrol(_issue([operation, _operation(code="OTK_visual", connector="B")]))
@@ -125,8 +137,14 @@ def test_warnings_for_missing_control_time_kd_and_sto_section():
     for item in findings:
         by_key.setdefault(item["operation_key"], []).append(item["code"])
 
-    assert sorted(by_key["Handjob::A::A"]) == ["component_without_kd", "no_control_step", "no_sto_section", "no_time_norm"]
-    assert "OTK_visual::B::A" not in by_key  # ОТК — вне СТО, раздел не требуется
+    assert sorted(by_key["Handjob::A::A"]) == ["analog_used", "no_control_step", "no_sto_section", "no_time_norm"]
+    analog = next(item for item in findings if item["code"] == "analog_used")
+    assert analog["text"] == (
+        "Операция 1 «Опрессовка контактов»: вместо BL2018TS по КД применён аналог SHF-001T-0.8BS — для РВ нужно "
+        "разрешение на замену, согласованное с разработчиком КД и ВП"
+    )
+    assert "OTK_visual::B::A" not in by_key  # ОТК — вне СТО, раздел не требуется; разряд — по умолчанию
+    assert [item["code"] for item in findings if item["operation_key"] is None] == ["grade_default"]
     assert all(item["severity"] == "warning" for item in findings)
 
 
@@ -201,3 +219,63 @@ def test_unknown_code_has_no_section_and_a_warning():
 
 def test_sto_file_is_the_standard():
     assert sto()["designation"] == "СТО ФРАК-001-2026"
+
+
+def test_place_is_required_for_signing():
+    issue = _issue(place=("", ""))
+    blocking = [item for item in normcontrol(issue) if item["severity"] == "blocking"]
+
+    assert [(item["code"], item["text"]) for item in blocking] == [("place_missing", "Не указан цех и участок выпуска")]
+    only_site = [item["text"] for item in normcontrol(_issue(place=("Цех электромонтажа", ""))) if item["code"] == "place_missing"]
+    assert only_site == ["Не указан участок выпуска"]
+    with pytest.raises(TdIssueBlocked):
+        issue.moved("signing", NOW)
+    with pytest.raises(TdIssueInvalid, match="Участок"):
+        parse_input({"method_code": "85", "site": "МСК"})
+    assert issue.view(3)["workshop"] == "" and _issue().view(3)["site"] == "ЦАР"
+
+
+def test_grade_defaults_by_operation_family():
+    expected = {
+        "CUT_WIRE_auto": "2", "STRIP_F/FTP_ethernet": "2", "PREP_FOLD": "2", "INS_стяжки": "2", "INS_tape": "2",
+        "INS_TAPE_AUTO": "2", "INS_гофра_разрез": "2", "CUT_WIRE+1strip": "2", "CUT_WIRE+1crimp+tin": "3",
+        "PRS_TERMINAL_auto": "3", "INS_housing_GX": "3", "HEAT_TYT_short": "3", "TWIST": "3", "TWST_SHILED": "3",
+        "SEAL": "3", "PLASM": "3", "LASER_MARK": "3", "PRINT_MARK": "3", "SDR_tin": "3", "SDR_GX12": "3",
+        "SDR_COAX_pin_R/A": "4", "INS_housing_COAX": "4", "PRS_CAP_COAX": "4", "Str-Str long": "4", "US_WELD": "4",
+        "MOLD_auto": "4", "ZZZ_new": "",
+    }
+    assert {code: default_grade(code)[1] for code in expected} == expected
+    assert default_grade("OTK_visual") == (CONTROLLER, "4")
+    assert default_grade("PRS_TERMINAL_auto")[0] == FITTER == default_grade("ZZZ_new")[0]
+
+
+def test_reference_grade_overrides_the_default():
+    reference = reference_grades([
+        {"opNumber": "PRS_TERMINAL_auto", "opProfession": "Слесарь-сборщик", "opGrade": "5"},
+        {"opNumber": "PRS_TERMINAL_auto", "opGrade": "2"},  # первая строка кода выигрывает
+        {"Номер": "CUT_WIRE_auto", "opGrade": "семь"},  # не 1–6 — как не задан
+        {"opNumber": "SDR_tin", "opProfession": "Паяльщик"},
+    ])
+
+    assert operation_grade("PRS_TERMINAL_auto", reference) == {"profession": "Слесарь-сборщик", "grade": "5", "source": "БД.ОП"}
+    assert operation_grade("CUT_WIRE_auto", reference) == {"profession": FITTER, "grade": "2", "source": "по умолчанию"}
+    assert operation_grade("SDR_tin", reference) == {"profession": "Паяльщик", "grade": "3", "source": "по умолчанию"}
+    snapshot = with_td_ops({"document": {"operations": [_operation(), _operation(code="ZZZ_new", connector="B")]}}, reference)
+    assert snapshot["td_ops"]["PRS_TERMINAL_auto::A::A"]["grade"] == "5"
+    assert snapshot["td_ops"]["ZZZ_new::B::A"] == {"profession": FITTER, "grade": "", "source": "по умолчанию"}
+
+
+def test_grade_warnings_and_old_snapshots():
+    issue = _issue([_operation(), _operation(code="ZZZ_new", connector="B"), _operation(code="CUT_WIRE_auto", connector="C")],
+                   reference={})
+    codes = [(item["code"], item["operation_key"]) for item in normcontrol(issue) if item["code"].startswith("grade_")]
+
+    assert codes == [("grade_missing", "ZZZ_new::B::A"), ("grade_default", None)]
+    default = next(item for item in normcontrol(issue) if item["code"] == "grade_default")
+    assert default["text"] == "Разряд и профессия по умолчанию (ЕТКС) у 2 операций — задайте в БД.ОП, если иначе"
+    # Снимок до 0130 (без td_ops): нормоконтроль и печать берут разряд по умолчанию, снимок не меняется.
+    old = {"revision": 1, "document": {"operations": [_operation()]}}
+    assert td_ops_of(old)["PRS_TERMINAL_auto::A::A"]["grade"] == "3"
+    assert "td_ops" not in old and print_card(old)["td_ops"]["PRS_TERMINAL_auto::A::A"]["source"] == "по умолчанию"
+    fresh = with_td_ops(old, REFERENCE)
+    assert print_card(fresh) is fresh

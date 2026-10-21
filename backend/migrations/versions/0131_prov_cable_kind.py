@@ -30,8 +30,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0130_prov_cable_kind"
-down_revision: str | None = "0129_td_issues"
+revision: str = "0131_prov_cable_kind"
+down_revision: str | None = "0130_td_issue_place"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -145,7 +145,7 @@ def _split_custom_columns(bind, rows: dict, kinds: dict) -> dict:
         bind.execute(entries.delete().where(entries.c.id.in_([entry.id for entry in own])))
     if fresh:
         bind.execute(entries.insert(), fresh)
-    print(f"{revision}: свои столбцы БД.ПРОВ разделены по спискам: {len(own)} → {len(fresh)} "
+    print(f"{revision}: свои столбцы БД.ПРОВ разделены по спискам: было {len(own)}, стало {len(fresh)} "
           f"({', '.join(f'{kind}: {len(names[kind])}' for kind in KINDS)}).")
     return names
 

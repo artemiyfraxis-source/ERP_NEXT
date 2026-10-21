@@ -1,4 +1,4 @@
-"""0130_prov_cable_kind (owner 20.10.2026: «у каждого своя структура»): every БД.ПРОВ row stores its cable list and each
+"""0131_prov_cable_kind (owner 20.10.2026: «у каждого своя структура»): every БД.ПРОВ row stores its cable list and each
 list has its own columns. The migration keeps the rows, their ids, every filled value and the stock links; it drops only
 empty cells of another list's columns and splits the owner's columns by list. The database refuses a БД.ПРОВ row without
 a list and a row of another tab with one."""
@@ -20,7 +20,7 @@ from app.workflows import etk_refresh  # noqa: F401  (its before_flush hook is l
 from tests.references.test_cables import _mirror
 from tests.references.test_load_mirror import NOW, sessions, uow  # noqa: F401  (fixtures)
 
-BEFORE, AFTER = "0129_td_issues", "0130_prov_cable_kind"
+BEFORE, AFTER = "0130_td_issue_place", "0131_prov_cable_kind"
 SHEET = (
     "Марка", "Тип провода", "Стандарт", "Производители", "Сечение, мм2", "AWG", "Жила: проволок × диаметр, мм",
     "Число жил", "Цвета", "Наружный диаметр, мм", "Изоляция", "Экран", "Волновое сопротивление, Ом", "Темп. от, °C",

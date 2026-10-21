@@ -10,10 +10,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
+from app.modules.references.domain import TechOperationRecord, TechOperationTab
+from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.modules.techcards.td_issues_infrastructure import TdIssueRow
 from app.shared.clock import moscow_now
 from app.shared.persistence import create_schema
+from app.workflows import td_auto
 from fastapi.testclient import TestClient
 
 from .test_project_cards import NOW, _document
@@ -25,10 +28,13 @@ PEOPLE = {
     "approver": {"name": "Васильев А.А.", "position": "Главный инженер"},
     "agreed_vp": {"name": "", "position": ""},
 }
+PLACE = {"workshop": "Цех электромонтажа", "site": "ЦАР"}
 
 
 @pytest.fixture()
-def td():
+def td(monkeypatch):
+    # Ручной путь выпусков: автоматический выпуск при выдаче ЭТК проверяется в tests/workflows/test_td_auto.py.
+    monkeypatch.setattr(td_auto, "on_revision", lambda *args, **kwargs: None)
     engine = create_engine(
         "sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool,
     )
@@ -36,9 +42,11 @@ def td():
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     app.state.techcards_uow_factory = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)
     app.dependency_overrides[moscow_now] = lambda: NOW
+    app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
     yield TestClient(app), engine
     app.dependency_overrides.pop(moscow_now, None)
     del app.state.techcards_uow_factory
+    del app.state.references_uow_factory
     engine.dispose()
 
 
@@ -55,7 +63,8 @@ def _card(client, *, item: str = "01", issued: bool = True) -> dict:
 
 
 def _open(client, card: dict, **override):
-    body = {"litera": "О1", "method_code": "85", "signatories": PEOPLE, "notice_no": "", "reason": "", **override}
+    body = {"litera": "О1", "method_code": "85", "signatories": PEOPLE, "notice_no": "", "reason": "",
+            **PLACE, **override}
     return client.post(f"/api/techcards/projects/{card['id']}/td-issues", json=body)
 
 
@@ -87,8 +96,14 @@ def test_open_issue_freezes_the_card_and_names_the_documents(td):
     assert issue["has_changes"] is False
     assert issue["created_by"] == "Инженер" and issue["approved_at"] is None
     assert set(issue) >= {"org_code", "method_code", "litera", "signatories", "notice_no", "reason", "annulled_at"}
+    assert (issue["workshop"], issue["site"]) == ("Цех электромонтажа", "ЦАР")
     printed = client.get(f"/api/techcards/td-issues/{issue['id']}/print").json()
+    td_ops = printed["card"].pop("td_ops")
     assert printed["card"] == client.get(f"/api/techcards/projects/{card['id']}").json()
+    assert td_ops == {  # коды «10» / «20» — не из семейств ЕТКС и не из БД.ОП: разряд пуст
+        "10::A::": {"profession": "Монтажник радиоэлектронной аппаратуры и приборов", "grade": "", "source": "по умолчанию"},
+        "20::B::": {"profession": "Монтажник радиоэлектронной аппаратуры и приборов", "grade": "", "source": "по умолчанию"},
+    }
     assert printed["sto"] == {"designation": "СТО ФРАК-001-2026", "revision": "1"}
     assert set(printed["sto_sections"]) == {"10::A::", "20::B::"}
     assert printed["changes"] == []
@@ -114,7 +129,7 @@ def test_full_lifecycle_and_wrong_transitions(td):
     signing = _move(client, issue, "signing").json()
     assert signing["status_label"] == "на подписи"
     edit = client.put(f"/api/techcards/td-issues/{issue['id']}", json={
-        "version": signing["version"], "litera": "А", "method_code": "88", "signatories": PEOPLE,
+        "version": signing["version"], "litera": "А", "method_code": "88", "signatories": PEOPLE, **PLACE,
     })
     assert edit.status_code == 409  # правка только в проекте
     resnap = client.post(f"/api/techcards/td-issues/{issue['id']}/resnapshot", json={"version": signing["version"]})
@@ -122,11 +137,11 @@ def test_full_lifecycle_and_wrong_transitions(td):
     back = _move(client, signing, "draft").json()
     assert back["status"] == "draft"
     edited = client.put(f"/api/techcards/td-issues/{issue['id']}", json={
-        "version": back["version"], "litera": "А", "method_code": "88", "signatories": PEOPLE,
+        "version": back["version"], "litera": "А", "method_code": "88", "signatories": PEOPLE, **PLACE,
     })
     assert edited.status_code == 200 and edited.json()["designations"]["mk"] == "ФРАК.10188.00001"
     stale = client.put(f"/api/techcards/td-issues/{issue['id']}", json={
-        "version": back["version"], "litera": "А", "method_code": "88", "signatories": PEOPLE,
+        "version": back["version"], "litera": "А", "method_code": "88", "signatories": PEOPLE, **PLACE,
     })
     assert stale.status_code == 409  # устаревшая версия
     active = _activate(client, edited.json())
@@ -159,7 +174,7 @@ def test_signing_is_blocked_by_normcontrol(td):
 
     assert blocked.status_code == 422
     assert [item["code"] for item in blocked.json()["detail"]["findings"]] == ["signatory_missing"]
-    assert {item["code"] for item in findings} >= {"signatory_missing", "agreed_vp_missing", "no_control_step"}
+    assert {item["code"] for item in findings} >= {"signatory_missing", "agreed_vp_missing", "no_control_step", "grade_missing"}
     assert client.get(f"/api/techcards/td-issues/{issue['id']}").json()["status"] == "draft"
 
 
@@ -186,6 +201,48 @@ def test_change_needs_notice_and_activation_annuls_the_previous_issue(td):
     assert [(row["change_no"], row["notice_no"], row["designation"], row["developer"]) for row in changes] == [
         (0, "", "ФРАК.40185.00001", "Иванов И.И."), (1, "ИИ-7", "ФРАК.40185.00001", "Иванов И.И."),
     ]
+
+
+def test_place_is_kept_and_its_absence_blocks_signing(td):
+    client, _ = td
+    issue = _open(client, _card(client), workshop="", site="").json()
+
+    assert _open(client, _card(client, item="02"), site="Москва").status_code == 422
+    blocked = _move(client, issue, "signing")
+    assert blocked.status_code == 422
+    assert [item["code"] for item in blocked.json()["detail"]["findings"]] == ["place_missing"]
+    edited = client.put(f"/api/techcards/td-issues/{issue['id']}", json={
+        "version": issue["version"], "method_code": "85", "signatories": PEOPLE, "workshop": "Цех электромонтажа", "site": "ЖУК",
+    })
+    assert edited.status_code == 200 and (edited.json()["workshop"], edited.json()["site"]) == ("Цех электромонтажа", "ЖУК")
+    assert _move(client, edited.json(), "signing").status_code == 200
+
+
+def _op_row(engine, fields: dict) -> None:
+    with SqlAlchemyReferencesUnitOfWork(sessionmaker(bind=engine, expire_on_commit=False, class_=Session)) as uow:
+        uow.tech_operations.save(TechOperationRecord.create(
+            tab=TechOperationTab.OPERATION, display_text=fields["opNumber"], search_text="", source_sheet="БД.ОП",
+            sort_key=fields["opNumber"], fields=fields,
+        ))
+        uow.commit()
+
+
+def test_issue_freezes_profession_and_grade_from_the_operations_base(td):
+    client, engine = td
+    _op_row(engine, {"opNumber": "10", "opName": "Обработка", "opProfession": "Слесарь-сборщик", "opGrade": "5"})
+    card = _card(client)
+    issue = _open(client, card).json()
+
+    td_ops = client.get(f"/api/techcards/td-issues/{issue['id']}/print").json()["card"]["td_ops"]
+    assert td_ops["10::A::"] == {"profession": "Слесарь-сборщик", "grade": "5", "source": "БД.ОП"}
+    assert td_ops["20::B::"]["source"] == "по умолчанию"
+    # Правка БД.ОП после выпуска снимок не меняет — до «Обновить снимок ЭТК».
+    _op_row(engine, {"opNumber": "20", "opName": "Сборка", "opGrade": "4"})
+    again = client.get(f"/api/techcards/td-issues/{issue['id']}/print").json()["card"]["td_ops"]
+    assert again["20::B::"]["grade"] == ""
+    client.post(f"/api/techcards/td-issues/{issue['id']}/resnapshot", json={"version": issue["version"]})
+    fresh = client.get(f"/api/techcards/td-issues/{issue['id']}/print").json()["card"]["td_ops"]
+    assert fresh["20::B::"] == {"profession": "Монтажник радиоэлектронной аппаратуры и приборов", "grade": "4", "source": "БД.ОП"}
 
 
 def test_second_card_takes_the_next_sequence_number(td):
@@ -266,6 +323,7 @@ def test_second_active_issue_of_a_card_is_impossible(card_ids):
     {"change_no": 1},
     {"change_no": 1, "notice_no": "И-1"},
     {"change_no": 1, "reason": "причина"},
+    {"site": "МСК"},
 ])
 def test_checks_fire_on_sqlite(card_ids, override):
     engine, first, _ = card_ids

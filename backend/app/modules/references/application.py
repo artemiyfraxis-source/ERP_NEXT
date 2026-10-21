@@ -30,8 +30,8 @@ from .equipment import (
     prepare_equipment,
 )
 from .technology import (
-    COAX_CABLE_DIAMETERS_REASON, TECH_SNAPSHOT_SCHEMA_VERSION, is_coax_cable_column, schema_columns, schema_display_text, schema_keys, stored_schema_keys,
-    sync_schema_fields, terminal_card_problems,
+    COAX_CABLE_DIAMETERS_REASON, TECH_SNAPSHOT_SCHEMA_VERSION, is_coax_cable_column, operation_grade_problem, schema_columns,
+    schema_display_text, schema_keys, stored_schema_keys, sync_schema_fields, terminal_card_problems,
 )
 
 
@@ -337,6 +337,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     _check_terminal_card(record.tab, fields)
     if record.tab == TechOperationTab.OPERATION:
         _check_operation_code(record, fields, uow)
+        _check_operation_grade(fields)
     display = schema_display_text(record.tab.value, fields) or display
     updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
     updated = replace(updated, normalized_search=_search_text(updated))
@@ -611,6 +612,13 @@ def _operation_rows(uow: UnitOfWork) -> list[TechOperationRecord]:
     return list(uow.tech_operations.list(tab=TechOperationTab.OPERATION, query="", limit=100_000))
 
 
+def _check_operation_grade(fields: Mapping[str, str]) -> None:
+    """«Разряд» of a БД.ОП row (комплект ТД): empty or 1–6."""
+    problem = operation_grade_problem(fields.get("opGrade"))
+    if problem:
+        raise ReferenceValidationError(problem)
+
+
 def _check_operation_code(before: TechOperationRecord | None, fields: Mapping[str, str], uow: UnitOfWork) -> None:
     """«Номер» of a БД.ОП row is unique (letter case aside: «cut» next to «CUT» is a typo, not a second operation), and
     a row is not renamed away from a card template only it carries. Read under the transaction of the write."""
@@ -678,6 +686,7 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
     _check_terminal_card(tab, fields)
     if tab == TechOperationTab.OPERATION:
         _check_operation_code(None, fields, uow)
+        _check_operation_grade(fields)
     display = schema_display_text(tab.value, fields) or filled[0]
     record = TechOperationRecord.create(
         tab=tab, display_text=display, search_text="", source_sheet="",

@@ -29,8 +29,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0131_prov_wire_color_rows"
-down_revision: str | None = "0130_prov_cable_kind"
+revision: str = "0132_prov_wire_color_rows"
+down_revision: str | None = "0131_prov_cable_kind"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -40,7 +40,7 @@ TABLE = "tech_operation_records"
 LIST, ONE = "Цвета", "Цвет"
 MARK = "Марка"
 # The namespace of the ids of the rows this migration adds (uuid5(namespace, "<source id>:<colour number>")).
-NAMESPACE = uuid5(NAMESPACE_URL, "erp-next:0131_prov_wire_color_rows")
+NAMESPACE = uuid5(NAMESPACE_URL, "erp-next:0132_prov_wire_color_rows")
 
 
 def _records() -> sa.Table:

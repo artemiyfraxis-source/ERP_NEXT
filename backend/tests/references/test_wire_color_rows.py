@@ -40,8 +40,8 @@ from tests.references.test_cables import _mirror
 from tests.references.test_load_mirror import NOW, sessions, uow  # noqa: F401  (fixtures)
 from tests.references.test_roundtrip import _download, _edited, _rows, _upload
 
-BEFORE, AFTER = "0130_prov_cable_kind", "0131_prov_wire_color_rows"
-NAMESPACE = uuid5(NAMESPACE_URL, "erp-next:0131_prov_wire_color_rows")
+BEFORE, AFTER = "0131_prov_cable_kind", "0132_prov_wire_color_rows"
+NAMESPACE = uuid5(NAMESPACE_URL, "erp-next:0132_prov_wire_color_rows")
 
 
 # ── the migration ──────────────────────────────────────────────────────────────────────────────────────────────────

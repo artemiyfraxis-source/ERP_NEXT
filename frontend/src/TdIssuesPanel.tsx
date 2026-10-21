@@ -5,7 +5,7 @@ import {
 import { formatDay } from "./format";
 import { PageWindow } from "./PageWindow";
 import { openRouteSheetPrint, openStoPrint, openTdKitPrint } from "./tdPrint";
-import type { RouteSheetOptions, TdFinding, TdIssue } from "./tdTypes";
+import { TD_SYSTEM_ACTOR, type RouteSheetOptions, type TdFinding, type TdIssue } from "./tdTypes";
 import { TdIssueWindow } from "./TdIssueWindow";
 import "./TdIssues.css";
 
@@ -76,6 +76,9 @@ export function TdIssuesPanel({ cardId, canEdit }: { cardId: string; canEdit: bo
 
   const blocking = findings.some((item) => item.severity === "blocking");
   const activeIssue = issues?.find((item) => item.status === "active") ?? null;
+  // Извещение уже в работе (выпуск-проект или на подписи, в том числе открытый автоматически) — не звать оформлять второе.
+  const changeInWork = issues?.some((item) => (item.status === "draft" || item.status === "signing")
+    && item.etk_revision >= item.current_etk_revision) ?? false;
 
   async function act(work: () => Promise<TdIssue>) {
     if (busy) return;
@@ -112,7 +115,7 @@ export function TdIssuesPanel({ cardId, canEdit }: { cardId: string; canEdit: bo
       {canEdit && issues && issues.length === 0 && <button type="button" className="primary small" onClick={() => setForm({ issue: null })}>Новый выпуск</button>}
       <button type="button" className="secondary small td-sto" onClick={() => void printSto()}>Печать СТО</button>
     </div>
-    {activeIssue?.has_changes && <div className="warning-inline td-changes" role="status">
+    {activeIssue?.has_changes && !changeInWork && <div className="warning-inline td-changes" role="status">
       <span>ЭТК изменилась (ревизия {activeIssue.current_etk_revision}), действующий комплект — ревизия {activeIssue.etk_revision}. Оформите извещение об изменении.</span>
       {canEdit && <button type="button" className="primary small" onClick={() => setForm({ issue: null })}>Оформить извещение</button>}
     </div>}
@@ -123,7 +126,8 @@ export function TdIssuesPanel({ cardId, canEdit }: { cardId: string; canEdit: bo
       <thead><tr><th>Обозначение</th><th>Изм.</th><th>Литера</th><th>Статус</th><th>Ревизия ЭТК</th><th>Утверждён</th></tr></thead>
       <tbody>{issues.map((item) => <tr key={item.id} className={item.id === selectedId ? "td-selected" : ""}
         aria-selected={item.id === selectedId} onClick={() => { setSelectedId(item.id); setError(""); }}>
-        <td><strong>{item.designations.vtd}</strong></td>
+        <td><strong>{item.designations.vtd}</strong>{item.created_by === TD_SYSTEM_ACTOR
+          && <span className="td-auto" title="Выпуск открыт ERP при выдаче ЭТК или её новой ревизии">автоматически</span>}</td>
         <td>{item.change_no}</td>
         <td>{item.litera || "—"}</td>
         <td><span className={`td-status td-status-${item.status}`}>{item.status_label}</span></td>

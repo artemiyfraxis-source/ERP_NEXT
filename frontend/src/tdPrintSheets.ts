@@ -6,12 +6,11 @@ import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
 import { etkToleranceLines } from "./etkOperation";
 import { etkOperationTitle, operationKeyOf } from "./etkPrint";
 import { unitLabel } from "./format";
-import type { TdPrintModel, TdSignatory, TdStoRef } from "./tdTypes";
+import { tdOpGrade, type TdOpGrade, type TdPrintModel, type TdSignatory, type TdStoRef } from "./tdTypes";
 
 type Row = Record<string, unknown>;
 
 const ORGANISATION = "ООО «ЗЭП «ФРАКСИС»";
-const PROFESSION = "монтажник РЭА и приборов";
 const REFERENCE_DOCS = ["ГОСТ 23586-96", "ГОСТ 23587-96", "ГОСТ 23585-79", "ГОСТ Р 72182.2-2025"];
 
 export function esc(value: string): string {
@@ -86,6 +85,10 @@ function tableSheets(title: string, cols: Col[], body: TRow[], emptyNote = ""): 
 interface Op {
   raw: Row; key: string; number: string; name: string; steps: Row[]; tooling: Row[]; components: Row[];
   equipment: string[]; sto: TdStoRef | null;
+  /** Профессия и разряд из снимка выпуска (td_ops). */
+  grade: TdOpGrade;
+  /** РМ — инв. № оборудования операции (оснастка, раздел «Оборудование»). */
+  workplace: string;
 }
 
 const isControl = (step: Row): boolean => /^контрол/i.test(text(step.kind).trim());
@@ -101,6 +104,9 @@ function operationsOf(model: TdPrintModel): Op[] {
       steps: rows(card.steps), tooling, components: rows(raw.components),
       equipment: tooling.filter((tool) => text(tool.section) === "Оборудование").map((tool) => cleanCodes(text(tool.name))).filter(Boolean),
       sto: model.sto_sections?.[key] ?? null,
+      grade: tdOpGrade(model.card, key),
+      workplace: [...new Set(tooling.filter((tool) => text(tool.section) === "Оборудование")
+        .map((tool) => text(tool.inventory_number).trim()).filter(Boolean))].join(", "),
     };
   });
 }
@@ -123,15 +129,36 @@ function perItem(norm: unknown, batch: number): string {
 const isMaterial = (item: Row): boolean =>
   /материал/i.test(`${text(item.kind)} ${text(item.category)} ${text(item.section)}`) || /^м\.?$/i.test(text(item.unit).trim());
 
-/** У провода из БД.ПРОВ наименования нет — марка («ПВАМ 1,5 белый») лежит в «art»; печатаем её, раз нет КД. */
-function itemName(item: Row): string {
-  return text(item.name).trim() || text(item.kd).trim() || text(item.art).trim() || "—";
+// Комплектующее ЭТК: «art» — артикул по КД; «kd» заполнен, только когда вместо КД применён аналог (etk_parts.use_article):
+// тогда «kd» — артикул по КД, «art» — применённый аналог.
+const kdOf = (item: Row): string => text(item.kd).trim();
+const artOf = (item: Row): string => text(item.art).trim();
+const analogOf = (item: Row): string => (kdOf(item) && artOf(item) && artOf(item) !== kdOf(item) ? artOf(item) : "");
+
+/** Обозначение по КД: артикул по КД («kd» при аналоге, иначе «art»). */
+function designation(item: Row): string {
+  return kdOf(item) || artOf(item);
 }
 
-function componentName(item: Row): string {
-  const name = itemName(item);
-  return item.kd && text(item.kd).trim() && name !== text(item.kd).trim() ? `${name} (по КД: ${text(item.kd).trim()})` : name;
+/** У провода из БД.ПРОВ наименования нет — марка («ПВАМ 1,5 белый») лежит в «art»: она и есть наименование. */
+function itemName(item: Row): string {
+  return text(item.name).trim() || designation(item) || "—";
 }
+
+/** Наименование ВМ с аналогом: «Контакт», ниже «аналог: SHF-001T-0.8BS». */
+function nameWithAnalog(item: Row): string {
+  const analog = analogOf(item);
+  return analog ? `${itemName(item)}\nаналог: ${analog}` : itemName(item);
+}
+
+/** Строка К/М маршрутной карты: наименование, обозначение по КД (если не совпадает с наименованием), аналог. */
+function componentName(item: Row): string {
+  const name = itemName(item), code = designation(item), analog = analogOf(item);
+  return `${name}${code && code !== name ? `, ${code}` : ""}${analog ? `\nаналог: ${analog}` : ""}`;
+}
+
+/** Профессия в узкой графе МК: «радиоэлектронной аппаратуры» — «РЭА». */
+const shortProfession = (value: string): string => value.replace(/радиоэлектронной аппаратуры/gi, "РЭА");
 
 // ---- основная надпись ----
 
@@ -173,7 +200,7 @@ const KIT_CSS = `
   h2 { font-size: 11pt; margin: 0 0 2mm; }
   .note { margin: 1mm 0; }
   table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  table.grid th, table.grid td { border: 0.25mm solid #000; padding: 0.4mm 1mm; text-align: left; vertical-align: top; white-space: pre-line; overflow-wrap: anywhere; }
+  table.grid th, table.grid td { border: 0.25mm solid #000; padding: 0.4mm 1mm; text-align: left; vertical-align: top; white-space: pre-line; overflow-wrap: break-word; hyphens: auto; }
   table.grid th { background: #eee; font-weight: bold; }
   tr.sym-a td { font-weight: bold; background: #f4f4f4; }
   tr.empty td { height: 6mm; }
@@ -196,6 +223,7 @@ const KIT_CSS = `
   .title h1 { font-size: 15pt; margin: 14mm 0 6mm; }
   .title .product { font-size: 13pt; font-weight: bold; margin: 4mm 0; }
   .title .org { font-size: 11pt; margin-top: 12mm; }
+  .title .place { font-size: 11pt; margin-top: 2mm; }
   .approve { display: flex; justify-content: space-between; margin-bottom: 6mm; }
   .approve div { width: 95mm; line-height: 1.6; }
   .fig svg { max-width: 100%; max-height: 135mm; height: auto; }
@@ -216,7 +244,14 @@ function titleSheet(model: TdPrintModel): string {
     `<div class="product">${esc(cleanCodes(text(model.card.product_name)))}</div>` +
     `<div>${esc(text(model.card.project))} ${esc(text(model.card.item_index))}</div>` +
     `<div class="product">${esc(issue.designations.vtd)}</div>` +
-    `<div>Литера: ${esc(issue.litera || "—")}</div><div class="org">${esc(ORGANISATION)}</div></div>`;
+    `<div>Литера: ${esc(issue.litera || "—")}</div><div class="org">${esc(ORGANISATION)}</div>` +
+    `<div class="place">${esc(placeText(model))}</div></div>`;
+}
+
+/** «Цех электромонтажа, участок ЦАР» — ТЛ. */
+function placeText(model: TdPrintModel): string {
+  const workshop = text(model.issue.workshop).trim(), site = text(model.issue.site).trim();
+  return [workshop, site ? `участок ${site}` : ""].filter(Boolean).join(", ");
 }
 
 function vtdSheets(docs: Doc[], model: TdPrintModel, ownCount: number): string[] {
@@ -233,18 +268,20 @@ function vtdSheets(docs: Doc[], model: TdPrintModel, ownCount: number): string[]
 }
 
 function routeSheets(model: TdPrintModel, ops: Op[], docs: { ok: string }): string[] {
-  const cols: Col[] = [{ h: "Сл.", mm: 8 }, { h: "Цех", mm: 10 }, { h: "Уч.", mm: 10 }, { h: "РМ", mm: 10 }, { h: "Опер.", mm: 12 },
-    { h: "Наименование операции, оборудование, материалы и комплектующие", mm: 78 }, { h: "Документы", mm: 42 }, { h: "Проф.", mm: 24 }, { h: "Р", mm: 8 },
+  const cols: Col[] = [{ h: "Сл.", mm: 8 }, { h: "Цех", mm: 25 }, { h: "Уч.", mm: 10 }, { h: "РМ", mm: 14 }, { h: "Опер.", mm: 12 },
+    { h: "Наименование операции, оборудование, материалы и комплектующие", mm: 57 }, { h: "Документы", mm: 42 }, { h: "Проф.", mm: 24 }, { h: "Р", mm: 8 },
     { h: "КР", mm: 8 }, { h: "ЕН", mm: 10 }, { h: "Н. расх. на изд.", mm: 14 }, { h: "Тпз, мин", mm: 13 }, { h: "Тшт, мин", mm: 13 }];
   const batch = batchOf(model);
+  const workshop = text(model.issue.workshop).trim(), site = text(model.issue.site).trim();
   const body: TRow[] = ops.flatMap((op) => {
     const times = object(op.raw.times);
     const items = op.components.map((item): TRow => ({
       cells: [isMaterial(item) ? "М" : "К", "", "", "", "", componentName(item), "", "", "", "", unitLabel(text(item.unit)) || "—", perItem(item.norm, batch), "", ""],
     }));
     return [
-      { cells: ["А", "", "", "", op.number, op.name, `${docs.ok}\n${stoSectionText(model, op)}`, "", "", "", "", "", "", ""], cls: "sym-a" },
-      { cells: ["Б", "", "", "", "", op.equipment.join("; "), "", PROFESSION, "", "1", "шт.", "", minutes(times.setup_seconds), minutes(times.operation_seconds)] },
+      { cells: ["А", workshop, site, op.workplace, op.number, op.name, `${docs.ok}\n${stoSectionText(model, op)}`, "", "", "", "", "", "", ""], cls: "sym-a" },
+      { cells: ["Б", "", "", "", "", op.equipment.join("; "), "", shortProfession(op.grade.profession), op.grade.grade, "1", "шт.", "",
+        minutes(times.setup_seconds), minutes(times.operation_seconds)] },
       ...items,
     ];
   });
@@ -278,7 +315,8 @@ function operationCardSheets(model: TdPrintModel, ops: Op[], okTk: string): stri
     if (params) body.push({ cells: ["Р", "", params, "", ""] });
     if (controls) body.push({ cells: ["О", String(steps.length + 1), `Контролировать по ОК технического контроля ${okTk}, операция ${op.number}`, "", ""] });
     body.push({ cells: ["", "", `Дефекты и критерии приёмки — по ${stoSectionText(model, op)}${op.sto?.title ? ` «${text(op.sto.title)}»` : ""}`, "", ""] });
-    return chunk(cols, body, 8).map((part, index) => heading(`Операционная карта. Операция ${op.number}. ${op.name}${index ? " (продолжение)" : ""}`) + tableHtml(cols, part));
+    const performer = `<p class="note">Исполнитель: ${esc(op.grade.profession || "—")}, разряд ${esc(op.grade.grade || "—")}</p>`;
+    return chunk(cols, body, 13).map((part, index) => heading(`Операционная карта. Операция ${op.number}. ${op.name}${index ? " (продолжение)" : ""}`) + performer + tableHtml(cols, part));
   });
 }
 
@@ -328,16 +366,17 @@ function aggregate<T extends { count: number }>(map: Map<string, T>, key: string
 function materialSheets(model: TdPrintModel, ops: Op[]): string[] {
   const cols: Col[] = [{ h: "№", mm: 10 }, { h: "Наименование", mm: 110 }, { h: "Обозначение по КД", mm: 55 }, { h: "Ед.", mm: 16 }, { h: "Норма на изделие", mm: 30 }, { h: "Примечание", mm: 39 }];
   const batch = batchOf(model);
-  const sums = new Map<string, { name: string; kd: string; unit: string; total: number; ops: string[]; material: boolean; count: number }>();
+  const sums = new Map<string, { name: string; kd: string; analog: string; unit: string; total: number; ops: string[]; material: boolean; count: number }>();
   ops.forEach((op) => op.components.forEach((item) => {
-    const kd = text(item.kd).trim(), name = itemName(item), unit = unitLabel(text(item.unit)) || "—";
-    const entry = aggregate(sums, `${name}\u0000${kd}\u0000${text(item.art).trim()}\u0000${unit}`, () => ({ name, kd, unit, total: 0, ops: [], material: isMaterial(item), count: 0 }));
+    const kd = designation(item), analog = analogOf(item), name = nameWithAnalog(item), unit = unitLabel(text(item.unit)) || "—";
+    const entry = aggregate(sums, `${name}\u0000${kd}\u0000${analog}\u0000${unit}`, () => ({ name, kd, analog, unit, total: 0, ops: [], material: isMaterial(item), count: 0 }));
     entry.total += num(item.norm);
     entry.count += 1;
     if (!entry.ops.includes(op.number)) entry.ops.push(op.number);
   }));
   const body: TRow[] = [...sums.values()].map((entry, index) => ({
-    cells: [String(index + 1), entry.name, entry.kd || "—", entry.unit, entry.total ? perItem(entry.total, batch) : "", `${entry.material ? "Материал; " : ""}оп. ${entry.ops.join(", ")}`],
+    cells: [String(index + 1), entry.name, entry.kd || "—", entry.unit, entry.total ? perItem(entry.total, batch) : "",
+      `${entry.analog ? `аналог вместо ${entry.kd} — по разрешению; ` : ""}${entry.material ? "Материал; " : ""}оп. ${entry.ops.join(", ")}`],
   }));
   return tableSheets("Ведомость материалов", cols, body, "Комплектующих и материалов в ЭТК нет.");
 }
@@ -392,5 +431,5 @@ export function buildTdKitHtml(model: TdPrintModel): string {
   const html = listing.flatMap((doc) => doc.sheets.map((content, index) =>
     sheetHtml(model, { designation: doc.designation, docName: doc.name, sheet: index + 1, sheets: doc.sheets.length }, content))).join("");
   const name = cleanCodes(text(model.card.product_name));
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(`Комплект ТД ${d.vtd} ${name}`.trim())}</title><style>${KIT_CSS}</style></head><body>${html}</body></html>`;
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${esc(`Комплект ТД ${d.vtd} ${name}`.trim())}</title><style>${KIT_CSS}</style></head><body>${html}</body></html>`;
 }

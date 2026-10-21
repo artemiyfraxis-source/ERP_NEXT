@@ -1,4 +1,4 @@
-"""Выпуски комплекта ТД (migration 0129): строка таблицы `td_issues` и её репозиторий."""
+"""Выпуски комплекта ТД (migrations 0129, 0130): строка таблицы `td_issues` и её репозиторий."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ class TdIssueRow(Base):
         CheckConstraint("change_no >= 0", name="ck_td_issues_change_no"),
         CheckConstraint("sequence_no > 0", name="ck_td_issues_sequence_no"),
         CheckConstraint("change_no = 0 OR (notice_no <> '' AND reason <> '')", name="ck_td_issues_notice"),
+        CheckConstraint("site IN ('', 'ЦАР', 'ЖУК')", name="ck_td_issues_site"),
         UniqueConstraint("project_card_id", "change_no", name="uq_td_issues_card_change"),
         UniqueConstraint("sequence_no", "change_no", name="uq_td_issues_sequence_change"),
         Index(
@@ -55,6 +56,8 @@ class TdIssueRow(Base):
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     annulled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    workshop: Mapped[str] = mapped_column(Text(), nullable=False, server_default="")
+    site: Mapped[str] = mapped_column(Text(), nullable=False, server_default="")
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -62,6 +65,7 @@ class TdIssueRow(Base):
 _FIELDS = (
     "project_card_id", "change_no", "sequence_no", "org_code", "method_code", "litera", "status", "etk_revision",
     "snapshot", "signatories", "notice_no", "reason", "created_at", "created_by", "approved_at", "annulled_at",
+    "workshop", "site",
 )
 
 
@@ -87,6 +91,14 @@ class SqlAlchemyTdIssueRepository:
     def active_for_card(self, card_id: UUID) -> TdIssue | None:
         row = self.session.scalar(
             select(TdIssueRow).where(TdIssueRow.project_card_id == card_id, TdIssueRow.status == "active")
+        )
+        return _domain(row) if row is not None else None
+
+    def latest(self) -> TdIssue | None:
+        """Последний по времени неаннулированный выпуск любой карты — образец полей автоматического выпуска."""
+        row = self.session.scalar(
+            select(TdIssueRow).where(TdIssueRow.status != "annulled")
+            .order_by(TdIssueRow.created_at.desc(), TdIssueRow.sequence_no.desc(), TdIssueRow.change_no.desc()).limit(1)
         )
         return _domain(row) if row is not None else None
 
