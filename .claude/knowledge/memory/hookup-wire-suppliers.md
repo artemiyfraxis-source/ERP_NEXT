@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: ae752c28-5d3b-4207-a937-924c7d540ec8
-  modified: 2026-10-19T18:31:39.852Z
+  modified: 2026-10-21T15:28:54.617Z
 ---
 
 Owner 19.10.2026: «основа это снабкабель паритет» — the supply columns of «Монтажные провода» take the cheaper of
@@ -18,6 +18,7 @@ Owner 19.10.2026: «основа это снабкабель паритет» �
 - Not sold by either: UL-series, силиконовый, МНВ-4, НВМ ≥ 1,0 — those keep other suppliers.
 - Strands: Чувашкабель catalogue PDF (chuvashcable.ru, tables are images) covers МГТФ, МГШВ, МК 26-13; no maker gives
   strand counts for НВ-4, ПВАМ, ПГВА, ПуГВ, МС.
-- Owner 19.10: colours «каждый цвет новой строчкой и текстом» — done as a list inside the cell (rows stay one per
-  size because techcards/stock reference the mark); coax parameters are not columns of this list.
+- Owner 19.10: colours «каждый цвет новой строчкой и текстом». The 19.10 session (bff4771a, #597) built it as a list
+  inside one cell — WRONG: owner 20.10 «имелось ввиду каждый цвет своя строка». Each colour = its own TABLE ROW (key =
+  mark + colour); done 21.10 in #620, see [[prov-kind-split-plan]]. Coax parameters are not columns of this list.
 - 19.10 fill script + journal: «Монтажные провода — Снабкабель и Паритет 19.10» in `docs/data/` ([[prod-reference-write]]).
