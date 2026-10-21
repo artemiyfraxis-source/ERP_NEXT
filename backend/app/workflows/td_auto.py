@@ -161,7 +161,8 @@ def _approve(uow: Any, issue: TdIssue, now: datetime) -> tuple[TdIssue, tuple[st
     return active, ()
 
 
-def _auto(uow: Any, session: Session, card: ProjectTechcard, reason: str, now: datetime) -> AutoResult:
+def auto_issue(uow: Any, session: Session, card: ProjectTechcard, reason: str, now: datetime) -> AutoResult:
+    """Сам автоматический выпуск в открытой единице работы (без commit); ошибки не глотает — их ловит on_revision."""
     issues: list[TdIssue] = uow.td_issues.for_card(card.id)
     open_issue = next((item for item in issues if item.status in {"draft", "signing"}), None)
     if open_issue is not None:
@@ -203,7 +204,7 @@ def on_revision(uow: Any, card: ProjectTechcard, reason: str, now: datetime) -> 
         return None
     try:
         with session.begin_nested():
-            return _auto(uow, session, card, reason, now)
+            return auto_issue(uow, session, card, reason, now)
     except Exception:  # noqa: BLE001 — выпуск ТД не должен ломать выдачу ЭТК и запись ревизии
         logger.exception("Автоматический выпуск комплекта ТД: карта %s, ревизия %s", card.id, card.revision)
         return None
