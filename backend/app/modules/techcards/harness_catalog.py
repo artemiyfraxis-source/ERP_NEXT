@@ -184,10 +184,20 @@ def _cores(value: str) -> int | None:
 def _wires(rows: Iterable[Mapping[str, Any]], out: _Collector) -> None:
     sheet = SHEETS["prov"]
     seen: set[str] = set()
+    rows = list(rows)
+    # A монтажный wire has a row per colour (owner 20.10.2026: «каждый цвет своя строка», its own «Цвет»): the editor
+    # gets one wire per mark with the colours of all its rows, in their order, as it got the «Цвета» list before.
+    colors: dict[str, list[str]] = {}
+    for fields in rows:
+        color = _text(fields, "Цвет")
+        if _text(fields, "Марка") and color and color not in colors.setdefault(_text(fields, "Марка"), []):
+            colors[_text(fields, "Марка")].append(color)
     for fields in rows:
         mark = _text(fields, "Марка")
         if not mark:
             continue
+        if mark in seen and _text(fields, "Цвет"):
+            continue  # another colour of a wire already passed
         if mark in seen:
             out.warn("wire-duplicate", f"Марка «{mark}» повторяется в БД.ПРОВ — передана первая строка",
                      entity_type="wire", source_key=mark, sheet=sheet)
@@ -207,7 +217,7 @@ def _wires(rows: Iterable[Mapping[str, Any]], out: _Collector) -> None:
             Core=str(cores) if entity == "cable" else "",
             **{"Сечение C": size if entity == "cable" else ""},
             awg=awg, conductor=_text(fields, "Жила: проволок × диаметр, мм"),
-            colors=_text(fields, "Цвета"),
+            colors=", ".join(colors.get(mark, ())) or _text(fields, "Цвета"),
             outerDiameterMm=_measure(out, fields, "Наружный диаметр, мм", entity_type=entity, key=mark, sheet=sheet),
             insulation=_text(fields, "Материал оболочки"), shield=_text(fields, "Экран"),
             impedanceOhm=_measure(out, fields, "Волновое сопротивление, Ом", entity_type=entity, key=mark, sheet=sheet),

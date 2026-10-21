@@ -1,0 +1,24 @@
+GET /api/stock/article-info (то, по чему склад называет партию), 21.10.2026 после записи
+SMA-JW2CG → {"info":{"series":"SMA","name":"SMA-male R/A","item_type":"Коаксиальный соединитель","source":"БД.КОАКС"}}
+SMA-JWB2-F → {"info":{"series":"SMA","name":"SMA-male R/A RG-405","item_type":"Коаксиальный соединитель","source":"БД.КОАКС"}}
+SMA-JWB3-F-1 → {"info":{"series":"SMA","name":"SMA-male R/A RG-402","item_type":"Коаксиальный соединитель","source":"БД.КОАКС"}}
+ISMA-JB3 → {"info":{"series":"SMA","name":"SMA-male RG-402","item_type":"Коаксиальный соединитель","source":"БД.КОАКС"}}
+ISMA-KB2-F → {"info":{"series":"SMA","name":"SMA-female RG-405","item_type":"Коаксиальный соединитель","source":"БД.КОАКС"}}
+ISMA-KB3A → {"info":{"series":"SMA","name":"SMA-female RG-402","item_type":"Коаксиальный соединитель","source":"БД.КОАКС"}}
+ISMA-JB3 SMA-male RG402 → {"info":{"series":"SMA","name":"SMA-male RG-402","item_type":"Коаксиальный соединитель","source":"разбор кода"}}
+
+GET /api/references/stock-links:
+строк журнала: 13
+  OLD.26.0000062 SMA-JWB2-F → created · SMA-male R/A | RG-405 · 5a116fef-4941-4260-a3b6-a1737c545e55
+  OLD.26.0000063 SMA-JWB2-F → linked · SMA-male R/A | RG-405 · 5a116fef-4941-4260-a3b6-a1737c545e55
+  OLD.26.0000064 ISMA-KB3A → linked · SMA-female | RG-402 · 5e2edcf1-a38f-4e72-b1df-84218ba3ae58
+  OLD.26.0000065 ISMA-KB3A → linked · SMA-female | RG-402 · 5e2edcf1-a38f-4e72-b1df-84218ba3ae58
+  OLD.26.0000068 SMA-JWB3-F-1 → updated · SMA-male R/A | RG-402 · 13960c6d-2336-4f35-8202-d8bb8967c8d4
+  OLD.26.0000070 SMA-JW2CG → created · SMA-male R/A · 56a67cb2-0661-4f8c-a544-dad3ac97ac2f
+  OLD.26.0000071 ISMA-JB3 → linked · SMA-male | RG-402 · f656c84b-c62e-4a17-8f8a-ccecbf0693fa
+  OLD.26.0000073 ISMA-KB2-F → linked · SMA-female | RG-405 · f54af824-1f8d-46b7-98e4-9e3fa0619abf
+  OLD.26.0000074 ISMA-KB2-F → linked · SMA-female | RG-405 · f54af824-1f8d-46b7-98e4-9e3fa0619abf
+  OLD.26.0000075 ISMA-KB2-F → linked · SMA-female | RG-405 · f54af824-1f8d-46b7-98e4-9e3fa0619abf
+  OLD.26.0000076 ISMA-KB2-F → linked · SMA-female | RG-405 · f54af824-1f8d-46b7-98e4-9e3fa0619abf
+  OLD.26.0000077 ISMA-KB2-F → linked · SMA-female | RG-405 · f54af824-1f8d-46b7-98e4-9e3fa0619abf
+  OLD.26.0000078 ISMA-KB2-F → linked · SMA-female | RG-405 · f54af824-1f8d-46b7-98e4-9e3fa0619abf

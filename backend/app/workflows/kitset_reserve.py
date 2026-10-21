@@ -27,7 +27,7 @@ from app.modules.fulfillment.application import (
     kit_requested_kbs,
 )
 from app.modules.fulfillment.domain import KitReserve, item_index_key
-from app.modules.techcards.kitsets import Kitset, KitLot, KitsetNotFound
+from app.modules.techcards.kitsets import Kitset, KitComponent, KitLot, KitsetNotFound
 from app.shared.identity import Actor
 
 _log = logging.getLogger(__name__)
@@ -168,6 +168,60 @@ def save_rows(
         raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
     updated, count = current.with_edits(edits, who=actor.name, now=now)
     keys, versions = _picked_versions(current, edits)
+    _store(current, updated, keys, versions, actor, now, techcards_uow, fulfillment_uow)
+    return updated, count
+
+
+def add_row(
+    project: str,
+    index: str,
+    component: KitComponent,
+    actor: Actor,
+    now: datetime,
+    techcards_uow: Callable[[], Any],
+    fulfillment_uow: Callable[[], Any] | None,
+) -> tuple[Kitset, bool]:
+    """Технолог добавил комплектующее в КБ: строка набора без ГРН (резервировать нечего). Второе — КБ уже отправлена на
+    комплектацию: живая заявка новую строку не получит, недостающее выдаёт «Довыдать»."""
+    with techcards_uow() as uow:
+        current = uow.kitsets.get(project)
+    if current is None:
+        raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
+    updated = current.with_component(index, component, who=actor.name, now=now)
+    _store(current, updated, [], {}, actor, now, techcards_uow, None)
+    kitted = False
+    if fulfillment_uow is not None:
+        with fulfillment_uow() as uow:
+            kitted = item_index_key(index) in kit_requested_kbs(uow, project)
+    return updated, kitted
+
+
+def remove_row(
+    project: str,
+    index: str,
+    article: str,
+    actor: Actor,
+    now: datetime,
+    techcards_uow: Callable[[], Any],
+    fulfillment_uow: Callable[[], Any] | None,
+) -> Kitset:
+    """Убрать строку технолога; её резерв ГРН, если строку успели привязать, снимается."""
+    with techcards_uow() as uow:
+        current = uow.kitsets.get(project)
+    if current is None:
+        raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
+    updated = current.without_component(index, article, who=actor.name, now=now)
+    _store(current, updated, [row_key(index, article)], {}, actor, now, techcards_uow, fulfillment_uow)
+    return updated
+
+
+def _store(
+    current: Kitset, updated: Kitset, keys: list[RowKey], versions: dict[RowKey, int], actor: Actor, now: datetime,
+    techcards_uow: Callable[[], Any], fulfillment_uow: Callable[[], Any] | None,
+) -> None:
+    """The rows' reserves first, then the kitset under its version; on a failure the reserves go back to the stored
+    kitset and the failure is raised."""
+    project = current.project
     try:
         if fulfillment_uow is not None:
             sync_rows(updated.project, updated, keys, actor, now, fulfillment_uow, versions=versions)
@@ -183,7 +237,6 @@ def save_rows(
         if fulfillment_uow is not None:
             _restore(current.project, keys, actor, now, techcards_uow, fulfillment_uow)
         raise
-    return updated, count
 
 
 def _restore(

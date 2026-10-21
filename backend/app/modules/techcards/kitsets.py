@@ -110,6 +110,9 @@ class KitComponent:
     per_unit: Decimal = Decimal("1")
     scrap_pct: Decimal | None = None  # не задан → `default_scrap(type)`: штучным 0, метражным 5 %
     lot: KitLot | None = None
+    # Строку добавил технолог в генераторе (владелец 21.10.2026), а не расчёт: «Обновить из расчёта» её не стирает,
+    # убрать её можно тем же путём, каким добавили.
+    manual: bool = False
 
     def __post_init__(self) -> None:
         if self.scrap_pct is None:
@@ -266,6 +269,42 @@ class Kitset:
             self, assemblies=tuple(assemblies), updated_at=now, updated_by=who, version=self.version + 1,
         ), updated
 
+    def with_component(self, index: str, component: KitComponent, *, who: str, now: datetime) -> Kitset:
+        """Технолог добавил комплектующее в состав КБ: строка встаёт в конец (позиции строк расчёта не сдвигаются) и
+        дальше идёт как любая строка набора — в «Проекты», резерв ГРН и заявку на комплектацию."""
+        assembly = self._assembly_or_fail(index)
+        article = component.article.strip()
+        if not article:
+            raise KitsetValidationError("Укажите артикул комплектующего.")
+        if component.per_unit <= 0:
+            raise KitsetValidationError("Количество на изделие должно быть больше нуля.")
+        if any(item.article == article for item in assembly.components):
+            raise KitsetValidationError(f"В {assembly.index} уже есть «{article}» — его количество правится в «Спецификации» проекта.")
+        added = replace(component, article=article, name=component.name.strip(), type=component.type.strip(), manual=True)
+        return self._with_assembly(replace(assembly, components=(*assembly.components, added)), who=who, now=now)
+
+    def without_component(self, index: str, article: str, *, who: str, now: datetime) -> Kitset:
+        """Убрать строку, добавленную технологом; строка расчёта убирается только в самом расчёте."""
+        assembly = self._assembly_or_fail(index)
+        wanted = str(article or "").strip()
+        found = next((item for item in assembly.components if item.article == wanted), None)
+        if found is None:
+            raise KitsetValidationError(f"В {assembly.index} нет «{wanted}».")
+        if not found.manual:
+            raise KitsetValidationError(f"«{wanted}» пришёл из расчёта — уберите его в расчёте и обновите проект.")
+        rest = tuple(item for item in assembly.components if item is not found)
+        return self._with_assembly(replace(assembly, components=rest), who=who, now=now)
+
+    def _assembly_or_fail(self, index: str) -> KitAssembly:
+        assembly = self.assembly(index)
+        if assembly is None:
+            raise KitsetValidationError(f"В проекте «{self.project}» нет сборки «{index}».")
+        return assembly
+
+    def _with_assembly(self, changed: KitAssembly, *, who: str, now: datetime) -> Kitset:
+        assemblies = tuple(changed if item.index == changed.index else item for item in self.assemblies)
+        return replace(self, assemblies=assemblies, updated_at=now, updated_by=who, version=self.version + 1)
+
 
 def _lot(value: Any) -> KitLot | None:
     if not value:
@@ -290,7 +329,8 @@ def write_from_calc(
     """`tcKitsetWrite_(keepEdits=true)`: rows rebuilt from the calculation, a person's numbers kept.
 
     Kept per КБ + артикул: на 1 шт и % брака always; наименование and ссылка when the person filled them
-    (введённое сильнее расчёта); the lot binding (расчёт про склад ничего не знает).
+    (введённое сильнее расчёта); the lot binding (расчёт про склад ничего не знает). Rows the technologist added
+    (`manual`) stay at the end of their КБ; once the calculation lists the same article, its row takes over.
     """
     kept: dict[tuple[str, str], KitComponent] = {}
     if current is not None:
@@ -313,10 +353,12 @@ def write_from_calc(
                 link=keep.link or component.link,
                 lot=keep.lot,
             ))
+        previous = current.assembly(assembly.index) if current is not None else None
+        listed = {component.article for component in components}
+        components += [item for item in (previous.components if previous else ()) if item.manual and item.article not in listed]
         ops = assembly.calc_ops
-        if ops is None and current is not None:
-            previous = current.assembly(assembly.index)
-            ops = previous.calc_ops if previous is not None else None
+        if ops is None and previous is not None:
+            ops = previous.calc_ops
         assemblies.append(replace(assembly, components=tuple(components), calc_ops=ops))
     return Kitset(
         project=data.project,

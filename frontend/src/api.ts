@@ -1431,7 +1431,7 @@ export interface ReferenceBase {
 export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
-export type CableKind = "coax" | "wire" | "multi" | "other";
+export type CableKind = "coax" | "wire" | "multi";
 
 export interface BasesResult {
   bases: ReferenceBase[];
@@ -1543,6 +1543,10 @@ export interface CablesResult {
   columns: string[];
   /** Столбцы, добавленные владельцем («+ Столбец»), в конце `columns`. */
   custom_columns?: string[];
+  /** Столбцы каждого списка: свои у коаксиальных, монтажных и многожильных (общий `columns` — всех списков вместе). */
+  columns_by_kind?: Partial<Record<CableKind, string[]>>;
+  /** Столбцы владельца в каждом списке («+ Столбец»), в конце `columns_by_kind[список]`. */
+  custom_columns_by_kind?: Partial<Record<CableKind, string[]>>;
   counts: Record<CableKind, number>;
   rows: CableRow[];
   gauges?: WireGauge[];
@@ -3475,13 +3479,17 @@ export const referencesApi = {
   coaxDia: () => api<TechOperationResult>("/api/references/coax-dia"),
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
-  addColumn: (tab: TechOperationTab, name: string) =>
-    api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns", { method: "POST", body: JSON.stringify({ tab, name }) }),
+  /** БД.ПРОВ: столбец — одного списка кабелей, `cableKind` обязателен (сервер без него откажет). */
+  addColumn: (tab: TechOperationTab, name: string, cableKind?: CableKind) =>
+    api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns", {
+      method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}) }) }),
   /** Удалить свой столбец: сервер откажет, пока в нём есть данные. */
-  removeColumn: (tab: TechOperationTab, name: string) =>
-    api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns/remove", { method: "POST", body: JSON.stringify({ tab, name }) }),
-  createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
-    api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
+  removeColumn: (tab: TechOperationTab, name: string, cableKind?: CableKind) =>
+    api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns/remove", {
+      method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}) }) }),
+  /** БД.ПРОВ: `cableKind` — список, в котором создаётся строка (без него — по правилу). */
+  createRecord: (tab: TechOperationTab, fields: Record<string, string>, cableKind?: CableKind) =>
+    api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields, ...(cableKind ? { cable_kind: cableKind } : {}) }) }),
   equipmentNumber: (type: string) =>
     api<{ inventory: string; row: string }>(`/api/references/tech-operations/equipment-number?${new URLSearchParams({ type })}`),
   duplicateRecord: (id: string) =>
@@ -4251,9 +4259,13 @@ export type ProjectTrack = { project: string; entries: ProjectTrackEntry[] };
 /** `tcLoadBomFromKit`: состав сборки для генератора и строки листа КБn расчёта (`tcCalcOps_`). */
 export type KitsetBom = {
   project: string; index: string; name: string; run: string; part_qty: string; calc_source: string;
-  components: Array<{ id: string; type: string; name: string; art: string; kd: string; qty: number | string }>;
+  /** `manual` — строку добавил технолог в генераторе (не расчёт): её можно убрать, «Обновить из расчёта» её не стирает. */
+  components: Array<{ id: string; type: string; name: string; art: string; kd: string; qty: number | string; manual?: boolean }>;
   calc_ops: Array<{ code: string; comp: string; n: string; l: string; req: string }>;
 };
+
+/** Комплектующее, которое технолог добавляет в состав КБ: `per` — количество на одно изделие. */
+export type KitComponentInput = { type: string; art: string; name: string; per: string };
 
 export const kitsetsApi = {
   list: (sort = "upd") => api<{ items: KitsetTile[]; statuses: string[]; stages?: string[]; terminals?: string[]; blockers?: string[] }>(`/api/techcards/kitsets?sort=${encodeURIComponent(sort)}`),
@@ -4274,6 +4286,15 @@ export const kitsetsApi = {
     api<KitsetBom>(
       `${kitsetPath(project)}/bom/${encodeURIComponent(index)}`,
     ),
+  /** Добавить комплектующее в состав КБ — оно встаёт в набор проекта и уходит в комплектацию. `note` — КБ уже отправлена. */
+  addComponent: (project: string, index: string, row: KitComponentInput) =>
+    api<{ bom: KitsetBom; note: string }>(`${kitsetPath(project)}/bom/${encodeURIComponent(index)}/components`, {
+      method: "POST", body: JSON.stringify(row),
+    }),
+  removeComponent: (project: string, index: string, art: string) =>
+    api<{ bom: KitsetBom }>(`${kitsetPath(project)}/bom/${encodeURIComponent(index)}/components/remove`, {
+      method: "POST", body: JSON.stringify({ art }),
+    }),
   lots: (query: string, project: string) =>
     api<{ lots: KitsetStockLot[] }>(`/api/techcards/kitsets/lots?q=${encodeURIComponent(query)}&project=${encodeURIComponent(project)}`),
   /** Перед «Отправить на комплектацию»: по каждой КБ — её живая заявка (не «Отменена») или null. */
