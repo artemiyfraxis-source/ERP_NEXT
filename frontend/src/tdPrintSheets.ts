@@ -200,7 +200,7 @@ const KIT_CSS = `
   h2 { font-size: 11pt; margin: 0 0 2mm; }
   .note { margin: 1mm 0; }
   table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  table.grid th, table.grid td { border: 0.25mm solid #000; padding: 0.4mm 1mm; text-align: left; vertical-align: top; white-space: pre-line; overflow-wrap: anywhere; }
+  table.grid th, table.grid td { border: 0.25mm solid #000; padding: 0.4mm 1mm; text-align: left; vertical-align: top; white-space: pre-line; overflow-wrap: break-word; hyphens: auto; }
   table.grid th { background: #eee; font-weight: bold; }
   tr.sym-a td { font-weight: bold; background: #f4f4f4; }
   tr.empty td { height: 6mm; }
@@ -268,8 +268,8 @@ function vtdSheets(docs: Doc[], model: TdPrintModel, ownCount: number): string[]
 }
 
 function routeSheets(model: TdPrintModel, ops: Op[], docs: { ok: string }): string[] {
-  const cols: Col[] = [{ h: "Сл.", mm: 8 }, { h: "Цех", mm: 18 }, { h: "Уч.", mm: 10 }, { h: "РМ", mm: 14 }, { h: "Опер.", mm: 12 },
-    { h: "Наименование операции, оборудование, материалы и комплектующие", mm: 64 }, { h: "Документы", mm: 42 }, { h: "Проф.", mm: 24 }, { h: "Р", mm: 8 },
+  const cols: Col[] = [{ h: "Сл.", mm: 8 }, { h: "Цех", mm: 25 }, { h: "Уч.", mm: 10 }, { h: "РМ", mm: 14 }, { h: "Опер.", mm: 12 },
+    { h: "Наименование операции, оборудование, материалы и комплектующие", mm: 57 }, { h: "Документы", mm: 42 }, { h: "Проф.", mm: 24 }, { h: "Р", mm: 8 },
     { h: "КР", mm: 8 }, { h: "ЕН", mm: 10 }, { h: "Н. расх. на изд.", mm: 14 }, { h: "Тпз, мин", mm: 13 }, { h: "Тшт, мин", mm: 13 }];
   const batch = batchOf(model);
   const workshop = text(model.issue.workshop).trim(), site = text(model.issue.site).trim();
@@ -431,5 +431,5 @@ export function buildTdKitHtml(model: TdPrintModel): string {
   const html = listing.flatMap((doc) => doc.sheets.map((content, index) =>
     sheetHtml(model, { designation: doc.designation, docName: doc.name, sheet: index + 1, sheets: doc.sheets.length }, content))).join("");
   const name = cleanCodes(text(model.card.product_name));
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(`Комплект ТД ${d.vtd} ${name}`.trim())}</title><style>${KIT_CSS}</style></head><body>${html}</body></html>`;
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${esc(`Комплект ТД ${d.vtd} ${name}`.trim())}</title><style>${KIT_CSS}</style></head><body>${html}</body></html>`;
 }
