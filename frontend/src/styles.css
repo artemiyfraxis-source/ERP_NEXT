@@ -2417,6 +2417,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .filter-tag span { color: var(--muted-foreground); }
 .filter-tags .link-button { padding: 0 4px; font-size: 12.5px; }
 .stock-search { flex: 1 1 320px; max-width: 640px; }
+/* With warehouse.scan the search sits in a form (Enter = scan): the form takes the field's place in the toolbar. */
+.stock-search-form { display: flex; flex: 1 1 320px; max-width: 640px; }
+.stock-search-form .stock-search { flex: 1 1 auto; max-width: none; }
 .table-toolbar select { width: auto; }
 .panel .filters { background: var(--card); }
 .panel > .data-table { padding: 0 16px 16px; }
@@ -2506,9 +2509,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .lot-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 /* Stage option warehouse.scan: the scan field and its lot card / place list (Roller_Buyer /tsd). */
 .scan-zone { display: grid; gap: 8px; margin-bottom: 10px; }
-.scan-bar { display: flex; gap: 8px; }
-.scan-bar .scan-input { flex: 1 1 auto; max-width: 640px; height: 44px; padding: 0 14px; font-size: 18px; font-weight: 600; letter-spacing: .02em; }
-.scan-bar button { height: 44px; padding: 0 18px; }
 .scan-panel, .scan-card { display: grid; gap: 8px; padding: 12px 14px; }
 .scan-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .scan-panel-head h2 { margin: 0; font-size: 16px; }
