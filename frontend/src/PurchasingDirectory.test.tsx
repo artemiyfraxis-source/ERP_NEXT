@@ -63,6 +63,14 @@ it("opens a card with stats on a row click", async () => {
         rfq: { sent: 2, answered: 1, quotes: 3, answered_pct: 50 },
       });
     }
+    // «УПД и счета» of the card are always on now (the price book is no longer behind a stage option).
+    if (String(input) === "/api/purchasing/prices/supplier/s1") {
+      return json({
+        upd: { count: 0, total_gross: 0, last_date: null, share_pct: null, recent: [] },
+        invoices: { count: 0, total: 0, unpaid_count: 0, unpaid_total: 0, last_date: null, recent: [] },
+        top_positions: [], offers: [], offers_total: 0,
+      });
+    }
     return json([supplier]);
   });
   render(<PurchasingSuppliers />);
