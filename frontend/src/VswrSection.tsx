@@ -41,7 +41,7 @@ function readBase64(file: File): Promise<string> {
 
 const verdictChip = (measurement: VswrMeasurement | null) => measurement
   ? <StatusChip status={measurement.verdict_name} tone={measurement.verdict === "pass" ? "success" : "danger"} />
-  : <StatusChip status="" />;
+  : <>—</>;
 
 export interface VswrRejectRequest { taskId: string; serialNumber: string; description: string }
 

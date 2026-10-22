@@ -42,10 +42,13 @@ export function vswrChartSvg(props: VswrChartProps): string {
   const width = props.width ?? 720;
   const height = props.height ?? 300;
   const left = 52, right = 16, top = 16, bottom = 40;
-  const trace = props.trace.filter((point) => Number.isFinite(point.mhz) && Number.isFinite(point.vswr));
+  const finite = props.trace.filter((point) => Number.isFinite(point.mhz) && Number.isFinite(point.vswr));
   const band = props.band ?? [null, null];
   const bandFrom = band[0] ?? null;
   const bandTo = band[1] ?? null;
+  // Выгрузка ВАЦ часто шире полосы (1…3000 МГц при полосе 1700…1900): показываем полосу с полем в полполосы по бокам.
+  const pad = bandFrom !== null && bandTo !== null && bandTo > bandFrom ? (bandTo - bandFrom) / 2 : null;
+  const trace = pad === null ? finite : finite.filter((point) => point.mhz >= (bandFrom as number) - pad && point.mhz <= (bandTo as number) + pad);
   const norm = props.normMax;
   const label = `График КСВН по частоте${norm !== null ? `, норма не более ${text(norm)}` : ""}`;
   if (!trace.length) {
@@ -92,7 +95,7 @@ export function vswrChartSvg(props: VswrChartProps): string {
     const anchor = x > left + plotW * 0.7 ? "end" : "start";
     const dx = anchor === "end" ? -8 : 8;
     parts.push(`<circle cx="${esc(x)}" cy="${esc(y)}" r="5" fill="#fff" stroke="#000" stroke-width="2"/>`,
-      `<text x="${esc(x + dx)}" y="${esc(Math.max(y - 8, top + 12))}" text-anchor="${anchor}" font-size="12" font-weight="bold" fill="#000">Максимум ${text(props.maxVswr)} на ${text(props.maxMhz, 1)} МГц</text>`);
+      `<text x="${esc(x + dx)}" y="${esc(Math.max(y - 8, top + 12))}" text-anchor="${anchor}" font-size="12" font-weight="bold" fill="#000" stroke="#fff" stroke-width="4" paint-order="stroke">Максимум ${text(props.maxVswr)} на ${text(props.maxMhz, 1)} МГц</text>`);
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${label}" viewBox="0 0 ${width} ${height}" width="100%" ${FONT}>${parts.join("")}</svg>`;
 }

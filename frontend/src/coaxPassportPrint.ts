@@ -36,7 +36,7 @@ export const PASSPORT_CSS = `
   .chart { margin: 2mm 0; page-break-inside: avoid; }
   .chart svg { width: 100%; height: auto; }
   .sign { margin-top: 12mm; page-break-inside: avoid; }
-  .sign table td { height: 11mm; }
+  .sign table td { height: 11mm; vertical-align: bottom; }
   .sign .line { border: 0; border-bottom: 1px solid #000; width: 45mm; }
   .sign .plain { border: 0; }
 `;
