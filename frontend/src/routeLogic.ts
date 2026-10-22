@@ -465,6 +465,72 @@ export function removeEdge(route: Route, from: string, to: string): Route {
   return { ...route, edges: route.edges.filter((edge) => !(edge.from === from && edge.to === to)) };
 }
 
+/* ── Управление мышью (владелец 22.10): операции и блоки схемы перетаскиваются ──────────────────────────────────── */
+
+/** Куда бросили операцию: в блок `block` на место `at` (номер места среди операций блока без самой операции; без `at` —
+    в конец), либо `block` = null — на пустое место: операция выходит в новый блок, который питает прежний. Единственная
+    операция блока уносит блок с собой: он сливается с целевым. */
+export function dropOp(route: Route, position: number, block: string | null, at?: number): Route {
+  return placeOp(route, position, block, at ?? Number.MAX_SAFE_INTEGER);
+}
+
+/** Склеить перетащенный блок с тем, на который его бросили: остаются ключ и название целевого (перетащили итоговый блок —
+    его: изделие не теряется), операции идут по номерам ЭТК. */
+export function joinBlocks(route: Route, dragged: string, target: string): Route {
+  const from = route.blocks.find((block) => block.key === dragged);
+  const to = route.blocks.find((block) => block.key === target);
+  if (!from || !to || from === to) return route;
+  return from.final ? mergeBlocks(route, target, dragged) : mergeBlocks(route, dragged, target);
+}
+
+/** Блок `key` теперь питает блок `target`: его прежние выходы заменяются одной стрелкой (штуки и подпись — те же, если
+    такая стрелка уже была). Итоговый блок никого не питает — вернёт ту же схему. */
+export function feedBlock(route: Route, key: string, target: string): Route {
+  const from = route.blocks.find((block) => block.key === key);
+  if (!from || from.final || key === target || !route.blocks.some((block) => block.key === target)) return route;
+  const kept = route.edges.find((edge) => edge.from === key && edge.to === target);
+  return ordered({
+    blocks: route.blocks,
+    edges: route.edges.filter((edge) => edge.from !== key).concat(kept ?? { from: key, to: target, per_unit: 1 }),
+  });
+}
+
+/** Порядок операций ЭТК по порядку блоков: блок — подряд идущие операции, источник раньше блока, который он питает
+    (порядок Кана, при равенстве — как стояли). Ответ: `order[n − 1]` — старый номер операции, что встаёт на место n, и
+    схема с новыми номерами; `changed` — порядок отличается от текущего. Цикл — null. */
+export function settleOrder(route: Route, count: number): { order: number[]; route: Route; changed: boolean } | null {
+  const first = (block: RouteBlock) => (block.ops.length ? Math.min(...block.ops) : Infinity);
+  const incoming = new Map(route.blocks.map((block) => [block.key, 0]));
+  route.edges.forEach((edge) => incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1));
+  const done: RouteBlock[] = [];
+  let rest = [...route.blocks].sort((a, b) => first(a) - first(b) || a.key.localeCompare(b.key));
+  while (rest.length) {
+    const next = rest.find((block) => !incoming.get(block.key));
+    if (!next) return null;
+    done.push(next);
+    rest = rest.filter((block) => block !== next);
+    route.edges.filter((edge) => edge.from === next.key).forEach((edge) => incoming.set(edge.to, (incoming.get(edge.to) ?? 0) - 1));
+  }
+  const order: number[] = [];
+  const place = new Map<number, number>();
+  done.forEach((block) => block.ops.forEach((position) => { order.push(position); place.set(position, order.length); }));
+  const changed = order.some((old, at) => old !== at + 1) || order.length < count;
+  for (let at = 1; at <= count; at += 1) if (!place.has(at)) { order.push(at); place.set(at, order.length); }
+  return { order, changed, route: ordered({ ...route, blocks: route.blocks.map((block) => ({ ...block, ops: block.ops.map((position) => place.get(position) ?? position) })) }) };
+}
+
+/** Обратная перестановка к `order`: возвращает операции на прежние места. */
+export function inverseOrder(order: number[]): number[] {
+  const inverse = new Array<number>(order.length);
+  order.forEach((old, at) => { inverse[old - 1] = at + 1; });
+  return inverse;
+}
+
+/** Блоки по порядку ЭТК, операции блоков по возрастанию (без перенумерации операций). */
+export function sortedRoute(route: Route): Route {
+  return ordered(route);
+}
+
 /** Нормы операций ЭТК, минут на партию (как `_operation_minutes` на сервере); документ не от этих же операций — null. */
 export function documentMinutes(document: Record<string, unknown> | null | undefined, types: string[]): { minutes: number[]; quantity: number } | null {
   const list = document && Array.isArray(document.operations) ? document.operations as Array<Record<string, unknown>> : null;

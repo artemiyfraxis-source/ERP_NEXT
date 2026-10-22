@@ -4457,6 +4457,24 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
   .rc-op { height: 40px; }
 }
 
+/* Управление мышью схемы полуфабрикатов («Изменить схему»): операции и блоки тянутся, цели подсвечены, линия вставки между
+   операциями, у курсора — что произойдёт при броске. */
+.route-dnd.is-editing { user-select: none; -webkit-user-select: none; }
+.route-dnd.is-editing .rc-card, .route-dnd.is-editing .rc-op { cursor: grab; }
+.route-dnd.is-dragging, .route-dnd.is-dragging * { cursor: grabbing !important; }
+.route-dnd .rc-card.is-drag-src, .route-dnd .rc-ops li.is-drag-src { opacity: .4; }
+.route-dnd .rc-card.is-drop-into, .route-dnd .rc-card.is-drop-join, .route-dnd .rc-card.is-drop-feed { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent); }
+.route-dnd .rc-card.is-drop-join { background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
+.route-dnd .rc-card.is-drop-feed { box-shadow: inset 0 6px 0 var(--primary), 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent); }
+.route-dnd .rc-ops li.is-drop-before, .route-dnd .rc-ops li.is-drop-after { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.route-dnd .rc-ops li.is-drop-before { box-shadow: inset 0 3px 0 var(--primary); }
+.route-dnd .rc-ops li.is-drop-after { box-shadow: inset 0 -3px 0 var(--primary); }
+.route-dnd.is-drop-canvas .rc-view { outline: 2px dashed var(--primary); outline-offset: -2px; background: color-mix(in srgb, var(--primary) 6%, transparent); }
+.route-ghost { position: fixed; z-index: 60; display: grid; gap: 2px; max-width: 320px; padding: 6px 10px; border: 1px solid var(--primary); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .22); font-size: 13px; line-height: 18px; pointer-events: none; }
+.route-ghost strong { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.route-ghost span { color: var(--muted-foreground); font-size: 12px; }
+.route-ghost span.is-none { font-style: italic; }
+
 /* «Маршрут КБn» (HarnessRouteView): шапка с сохранением и действиями, холст слева, настройки карточки справа. */
 .hr { display: grid; gap: 8px; min-width: 0; }
 .hr-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }

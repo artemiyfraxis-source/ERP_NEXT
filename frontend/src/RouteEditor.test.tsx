@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { useState } from "react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
 import { RouteEditor } from "./RouteEditor";
 import { numberRange } from "./RouteDiagram";
 import { deriveRoute, type Route, type RouteOp } from "./routeLogic";
@@ -228,7 +229,7 @@ it("«Изменить схему» adds «Выше/Ниже» to the opened blo
   fireEvent.click(op(/Свивка/));
   expect(screen.queryByRole("button", { name: "↑ Выше" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Изменить схему" }));
-  expect(screen.getByRole("status")).toHaveTextContent("порядок в ЭТК");
+  expect(screen.getByRole("status")).toHaveTextContent("Тяните операцию");
   fireEvent.click(within(screen.getByRole("region", { name: "Блок «Свивка»" })).getByRole("button", { name: "↑ Выше" }));
   // Свивка встаёт перед монтажом А1; схема автоматическая — её выведут заново.
   expect(onMove).toHaveBeenCalledWith([1, 3, 2, 4], null);
@@ -299,4 +300,178 @@ it("draws the crimp of each side right before it with the wires crimped on that 
   expect(crimpA.querySelectorAll(".rc-wire svg")).toHaveLength(1);
   expect(crimpA).toHaveTextContent("А1:1 → В1:1");
   expect(crimpB.querySelectorAll(".rc-wire svg")).toHaveLength(2);
+});
+
+/* ── Управление мышью («Изменить схему») ─────────────────────────────────────────────────────────────────────── */
+
+afterEach(() => { delete (document as { elementFromPoint?: unknown }).elementFromPoint; });
+const edit = () => fireEvent.click(screen.getByRole("button", { name: "Изменить схему" }));
+const row = (name: RegExp) => op(name).closest("li") as HTMLElement;
+const card = (key: string) => canvas().querySelector(`[data-card="${key}"]`) as HTMLElement;
+const view = () => canvas().closest(".rc-view") as HTMLElement;
+const title = (key: string) => card(key).querySelector(".rc-title") as HTMLElement;
+/** Тянет `source` (операцию или карточку) и бросает на `target`; `at` — где по вертикали (прямоугольник цели 0…100). */
+function dragTo(source: Element, target: Element | null, at = 50) {
+  document.elementFromPoint = vi.fn(() => target);
+  if (target) target.getBoundingClientRect = () => ({ top: 0, height: 100, left: 0, width: 100, right: 100, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
+  fireEvent.pointerDown(source, { button: 0, clientX: 5, clientY: 5 });
+  fireEvent.pointerMove(window, { clientX: 40, clientY: at });
+  fireEvent.pointerUp(window, { clientX: 40, clientY: at });
+}
+const blocksOf = (route: Route) => route.blocks.map((item) => `${item.key}:${item.ops.join(",")}${item.final ? "!" : ""}`);
+const arrowsOf = (route: Route) => route.edges.map((edge) => `${edge.from}>${edge.to}`);
+
+it("mouse control is on only in «Изменить схему»: before it, dragging an operation does nothing", () => {
+  const onChange = mount({ value: manual });
+  dragTo(op(/Резка провода/), card("b4"));
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+it("editing draws a card per block (not per stage), shows the hint about the mouse and a disabled «Отменить»", () => {
+  mount();
+  edit();
+  expect(cards().map((item) => item.querySelector(".rc-title")?.textContent)).toEqual(["Резка провода", "Резка ТУТ", "Надеть ТУТ", "Пайка разъёма", "Усадка ТУТ"]);
+  expect(screen.getByRole("status")).toHaveTextContent("Тяните операцию");
+  expect(screen.getByRole("button", { name: "Отменить" })).toBeDisabled();
+});
+
+it("drops an operation onto another operation: it joins that block after it, and the scheme turns manual", () => {
+  const onChange = mount({ value: manual });
+  edit();
+  // Операция 2 была одна в блоке: блок b2 сливается с b3 («Надеть ТУТ»). Порядок ЭТК тот же — схема уходит без перенумерации.
+  dragTo(op(/Резка ТУТ/), row(/Надеть ТУТ/), 80);
+  expect(blocksOf(lastRoute(onChange))).toEqual(["b1:1", "b3:2,3", "b4:4,5!"]);
+  expect(arrowsOf(lastRoute(onChange))).toEqual(["b1>b3", "b3>b4"]);
+});
+
+it("reorders operations inside a block and hands the new ETK order over", () => {
+  const onMove = vi.fn();
+  mount({ value: manual, onMove });
+  edit();
+  dragTo(op(/Усадка ТУТ/), row(/Пайка разъёма/), 20);
+  // Усадка встала перед пайкой: порядок ЭТК 1, 2, 3, 5, 4; блок b4 по-прежнему из двух последних операций.
+  expect(onMove).toHaveBeenCalledTimes(1);
+  expect(onMove.mock.calls[0][0]).toEqual([1, 2, 3, 5, 4]);
+  expect(blocksOf(onMove.mock.calls[0][1])).toEqual(["b1:1", "b2:2", "b3:3", "b4:4,5!"]);
+});
+
+it("drops an operation onto empty canvas: a new block feeds the one it came from, the ETK is renumbered", () => {
+  const onMove = vi.fn();
+  mount({ value: manual, onMove });
+  edit();
+  dragTo(op(/Усадка ТУТ/), view());
+  expect(onMove.mock.calls[0][0]).toEqual([1, 2, 3, 5, 4]);
+  const route: Route = onMove.mock.calls[0][1];
+  expect(blocksOf(route)).toEqual(["b1:1", "b2:2", "b3:3", "b5:4", "b4:5!"]);
+  expect(arrowsOf(route)).toContain("b5>b4");
+});
+
+it("drops an operation on a block, not on one of its rows: the operation goes to the end of that block", () => {
+  const onMove = vi.fn();
+  mount({ value: manual, onMove });
+  edit();
+  // «Надеть ТУТ» была единственной в b3 — блок уходит вместе с ней в b4, в конец; порядок ЭТК: 4, 5 раньше неё.
+  dragTo(op(/Надеть ТУТ/), card("b4"));
+  expect(onMove.mock.calls[0][0]).toEqual([1, 2, 4, 5, 3]);
+  expect(blocksOf(onMove.mock.calls[0][1])).toEqual(["b1:1", "b2:2", "b4:3,4,5!"]);
+});
+
+it("drags a block onto another block by its card: the lower part merges, the upper part makes it feed that block", () => {
+  const onChange = mount({ value: manual });
+  edit();
+  dragTo(title("b2"), card("b3"), 80);
+  expect(blocksOf(lastRoute(onChange))).toEqual(["b1:1", "b3:2,3", "b4:4,5!"]);
+  dragTo(title("b1"), card("b4"), 10);
+  expect(arrowsOf(lastRoute(onChange))).toEqual(["b1>b4", "b2>b3", "b3>b4"]);
+});
+
+it("refuses a drop the server would refuse and says why: nothing is sent", () => {
+  const onChange = mount({ value: manual });
+  edit();
+  // b3 на верхнюю часть b1: b3 питал бы b1, а b1 уже питает b3 — цикл.
+  dragTo(title("b3"), card("b1"), 10);
+  expect(onChange).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent(/Так нельзя: схема зациклена/);
+});
+
+it("a click right after a drag does not open the block of the operation; a plain click still does", () => {
+  mount({ value: manual });
+  edit();
+  dragTo(op(/Резка провода/), null);
+  fireEvent.click(op(/Резка провода/));
+  expect(screen.queryByRole("region", { name: /Блок/ })).not.toBeInTheDocument();
+  fireEvent.click(op(/Резка провода/));
+  expect(screen.getByRole("region", { name: "Блок «Резка провода»" })).toBeInTheDocument();
+});
+
+it("Esc cancels a drag; a touch pointer does not drag at all (the block panel controls stay)", () => {
+  const onChange = mount({ value: manual });
+  edit();
+  document.elementFromPoint = vi.fn(() => card("b4"));
+  fireEvent.pointerDown(op(/Резка провода/), { button: 0, clientX: 5, clientY: 5 });
+  fireEvent.pointerMove(window, { clientX: 50, clientY: 50 });
+  expect(document.querySelector(".route-ghost")).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(document.querySelector(".route-ghost")).not.toBeInTheDocument();
+  fireEvent.pointerUp(window, { clientX: 50, clientY: 50 });
+  fireEvent.pointerDown(op(/Резка провода/), { button: 0, pointerType: "touch", clientX: 5, clientY: 5 });
+  fireEvent.pointerMove(window, { clientX: 50, clientY: 50 });
+  expect(document.querySelector(".route-ghost")).not.toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+it("shows where the drop lands while dragging: the target card is lit and the ghost says what happens", () => {
+  mount({ value: manual });
+  edit();
+  document.elementFromPoint = vi.fn(() => card("b4"));
+  fireEvent.pointerDown(op(/Резка ТУТ/), { button: 0, clientX: 5, clientY: 5 });
+  fireEvent.pointerMove(window, { clientX: 50, clientY: 50 });
+  expect(card("b4")).toHaveClass("is-drop-join");
+  expect(document.querySelector(".route-ghost")).toHaveTextContent("2. Резка ТУТ");
+  expect(document.querySelector(".route-ghost")).toHaveTextContent("В блок «Усадка ТУТ»");
+  fireEvent.pointerUp(window);
+});
+
+/** Редактор с настоящим состоянием: операции перенумеровываются по `onMove`, как это делает генератор. */
+function Live() {
+  const [ops, setOps] = useState(OPS);
+  const [route, setRoute] = useState<Route | null>(manual);
+  const onMove = (order: number[], next: Route | null) => {
+    setOps((current) => order.map((old, at) => ({ ...current[old - 1], position: at + 1 })));
+    setRoute(next);
+  };
+  return <><output aria-label="порядок">{ops.map((item) => item.key).join(",")}</output>
+    <RouteEditor ops={ops} finalName="Жгут XH" quantity={5} value={route} onChange={setRoute} onMove={onMove} /></>;
+}
+
+it("undoes the last move with «Отменить» and Ctrl+Z, including the ETK order it changed", () => {
+  render(<Live />);
+  edit();
+  const order = () => screen.getByLabelText("порядок").textContent;
+  dragTo(op(/Усадка ТУТ/), view());
+  expect(order()).toBe("cut,cutTut,insTut,heat,solder");
+  expect(screen.getByRole("button", { name: "Отменить" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
+  expect(order()).toBe("cut,cutTut,insTut,solder,heat");
+  expect(cards().map((item) => item.dataset.card)).toEqual(["b1", "b2", "b3", "b4"]);
+  expect(screen.getByRole("button", { name: "Отменить" })).toBeDisabled();
+  // Две правки подряд — Ctrl+Z снимает по одной, и на русской раскладке тоже.
+  dragTo(op(/Резка ТУТ/), row(/Надеть ТУТ/), 80);
+  expect(cards()).toHaveLength(3);
+  dragTo(op(/Усадка ТУТ/), view());
+  expect(cards()).toHaveLength(4);
+  act(() => { fireEvent.keyDown(window, { key: "z", code: "KeyZ", ctrlKey: true }); });
+  expect(cards()).toHaveLength(3);
+  act(() => { fireEvent.keyDown(window, { key: "я", code: "KeyZ", ctrlKey: true }); });
+  expect(cards().map((item) => item.dataset.card)).toEqual(["b1", "b2", "b3", "b4"]);
+  expect(order()).toBe("cut,cutTut,insTut,solder,heat");
+});
+
+it("a drag on the automatic scheme makes it manual; undo hands back null (automatic)", () => {
+  const onChange = mount();
+  edit();
+  // Автоматическая схема — блок на операцию: усадка (5, итог) бросается на пайку (4) — блоки сливаются, итог сохраняется.
+  dragTo(op(/Усадка ТУТ/), row(/Пайка разъёма/), 80);
+  expect(lastRoute(onChange)).not.toBeNull();
+  expect(lastRoute(onChange).blocks.filter((item) => item.final).map((item) => item.ops)).toEqual([[4, 5]]);
 });
