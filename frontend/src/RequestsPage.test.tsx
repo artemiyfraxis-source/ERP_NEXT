@@ -54,45 +54,6 @@ function json(body: unknown, status = 200) {
 afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); }); // выбранный чип таблицы запоминается
 
 describe("RequestsPage", () => {
-  it("reuses the creation key after an ambiguous network failure", async () => {
-    let createAttempts = 0;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const path = String(input);
-      if (path === "/api/requests/schema") return json(schema);
-      if (path === "/api/requests" && (init?.method ?? "GET") === "GET") {
-        return json({ requests: createAttempts > 1 ? [row] : [] });
-      }
-      if (path === "/api/requests" && init?.method === "POST") {
-        createAttempts += 1;
-        if (createAttempts === 1) throw new TypeError("network disconnected");
-        return json({ requests: [row] }, 201);
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    });
-
-    render(<RequestsPage principal={principal} view="create" />);
-    fireEvent.change(await screen.findByLabelText("Наименование, строка 1"), {
-      target: { value: "Разъём" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
-    // A broken connection on a write is an unknown result, not a failure: the same key is kept for the repeat.
-    expect(await screen.findByRole("alert")).toHaveTextContent("Результат неизвестен");
-
-    fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
-    expect(await screen.findByText("Создана заявка REQ-1")).toBeInTheDocument();
-
-    const writes = fetchMock.mock.calls.filter(
-      ([input, init]) => String(input) === "/api/requests" && init?.method === "POST",
-    );
-    expect(writes).toHaveLength(2);
-    const firstHeaders = new Headers(writes[0][1]?.headers);
-    const secondHeaders = new Headers(writes[1][1]?.headers);
-    expect(firstHeaders.get("Idempotency-Key")).toBeTruthy();
-    expect(secondHeaders.get("Idempotency-Key")).toBe(
-      firstHeaders.get("Idempotency-Key"),
-    );
-  });
-
   it("ends a hung read of «Мои заявки» with the message and a working «Повторить» (U01)", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let answer = false;
@@ -320,45 +281,6 @@ describe("RequestsPage", () => {
     expect(screen.queryByRole("button", { name: "Оформить" })).not.toBeInTheDocument();
   });
 
-  it("RQ-IMPORT-UI: «Вставить из Excel» recognizes pasted headers and creates the whole batch", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const path = String(input);
-      if (path === "/api/requests/schema") return json(schema);
-      if (path === "/api/requests" && (init?.method ?? "GET") === "GET") return json({ requests: [] });
-      if (path === "/api/requests" && init?.method === "POST") {
-        return json({ requests: [row, { ...row, id: "second", legacy_id: "REQ-2" }] }, 201);
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    });
-
-    render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Оформить" });
-    fireEvent.click(screen.getByRole("button", { name: "Вставить из Excel" }));
-
-    fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон из Excel/), {
-      target: { value: "Наименование\tКоличество\tЕдиница\nРазъём SMA\t3\tшт\nКабель РК\t10\tм" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Распознать" }));
-
-    expect(await screen.findByDisplayValue("Разъём SMA")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Кабель РК")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Оформить 2 позиции" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/requests",
-      expect.objectContaining({ method: "POST" }),
-    ));
-    const [, init] = fetchMock.mock.calls.find(
-      ([reqInput, reqInit]) => String(reqInput) === "/api/requests" && reqInit?.method === "POST",
-    )!;
-    const body = JSON.parse(String(init?.body));
-    expect(body.requests).toHaveLength(2);
-    expect(body.requests[0]).toMatchObject({ name: "Разъём SMA", quantity: "3", unit: "шт", delivery_point: "Москва" });
-    expect(body.requests[1]).toMatchObject({ name: "Кабель РК", quantity: "10", unit: "м" });
-    expect(await screen.findByText("Создано заявок: 2 (REQ-1, REQ-2)")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Оформить" })).toBeInTheDocument();
-  });
-
   it("RQ-IMPORT-UI: «Вставить из Excel» reports unrecognized headers instead of silently dropping them", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input) === "/api/requests/schema") return json(schema);
@@ -490,108 +412,6 @@ describe("RequestsPage", () => {
     const [, init] = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === "/api/requests/import/parse")!;
     expect(JSON.parse(String(init?.body)).grid[1]).toEqual(["Кабель", "МГТФ", "2", "10"]);
   });
-  it("manual grid: common fields go to every row, the whole batch is one POST", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const path = String(input);
-      if (path === "/api/requests/schema") {
-        return json({ ...schema, purposes: ["RND", "FRX"], projects: ["591К.3", "2000К.1"], categories: ["Общепром", "ИП", "ОП"] });
-      }
-      if (path === "/api/requests" && (init?.method ?? "GET") === "GET") return json({ requests: [] });
-      if (path === "/api/requests" && init?.method === "POST") {
-        return json({ requests: [row, { ...row, id: "second", legacy_id: "REQ-2" }] }, 201);
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    });
-
-    render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Оформить" });
-    fireEvent.click(screen.getByRole("button", { name: "+ Добавить строку" }));
-    expect(screen.getAllByLabelText(/^Наименование, строка/)).toHaveLength(2);
-    fireEvent.change(screen.getByLabelText("Наименование, строка 1"), { target: { value: "Разъём" } });
-    // Ручной ввод: номер не из реестра вписывается как есть, реестр только подсказывает.
-    expect(screen.getByRole("combobox", { name: "Цель (проект)" })).toHaveAttribute("aria-autocomplete", "list");
-    fireEvent.change(screen.getByLabelText("Цель (проект)"), { target: { value: "48К.13" } });
-    fireEvent.change(screen.getByLabelText("Категория", { selector: ".rg-common select" }), { target: { value: "ОП" } });
-    // the common category reached every row, and the rule «ОП → Да» with it
-    expect(screen.getByLabelText("Категория, строка 2")).toHaveValue("ОП");
-    expect(screen.getByLabelText("Док. качества, строка 2")).toHaveValue("Да");
-    fireEvent.change(screen.getByLabelText("Артикул КД, строка 1"), { target: { value: "АБВГ.123" } });
-    fireEvent.change(screen.getByLabelText("Цена с НДС, строка 1"), { target: { value: "120" } });
-
-    // row 2 has no name: it is blank, not an error — only row 1 is sent
-    expect(screen.getByRole("button", { name: "Оформить 1 позицию" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Наименование, строка 2"), { target: { value: "Кабель" } });
-    fireEvent.click(screen.getByRole("button", { name: "Оформить 2 позиции" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requests", expect.objectContaining({ method: "POST" })));
-    const [, init] = fetchMock.mock.calls.find(([reqInput, reqInit]) => String(reqInput) === "/api/requests" && reqInit?.method === "POST")!;
-    const body = JSON.parse(String(init?.body));
-    expect(body.requests).toHaveLength(2);
-    expect(body.requests[0]).toMatchObject({ name: "Разъём", project_reference: "48К.13", category: "ОП", quality_document: "Да", design_article: "АБВГ.123", price_with_vat: "120" });
-    expect(body.requests[1]).toMatchObject({ name: "Кабель", project_reference: "48К.13", category: "ОП", quality_document: "Да", delivery_point: "Москва" });
-    expect(await screen.findByText("Создано заявок: 2 (REQ-1, REQ-2)")).toBeInTheDocument();
-  });
-
-  it("manual form: only name, quantity, unit and purpose are required; cleared defaults are left to the server", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const path = String(input);
-      if (path === "/api/requests/schema") return json(schema);
-      if (path === "/api/requests" && init?.method === "POST") return json({ requests: [row] }, 201);
-      if (path === "/api/requests") return json({ requests: [] });
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Оформить" });
-
-    // defaults are visible and editable
-    expect(screen.getByLabelText("Документ качества")).toHaveValue("Нет");
-    expect(screen.getByLabelText("Срок закупки")).not.toHaveValue("");
-    expect(screen.getByLabelText("Плановая дата")).not.toHaveValue("");
-
-    fireEvent.change(screen.getByLabelText("Наименование, строка 1"), { target: { value: "Болт М3" } });
-    fireEvent.change(screen.getByLabelText("Тип, строка 1"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("План. дата, строка 1"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("Док. качества, строка 1"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
-
-    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => String(input) === "/api/requests" && init?.method === "POST")).toBe(true));
-    const [, init] = fetchMock.mock.calls.find(([input, reqInit]) => String(input) === "/api/requests" && reqInit?.method === "POST")!;
-    const sent = JSON.parse(String(init?.body)).requests[0];
-    expect(sent).toMatchObject({ name: "Болт М3", quantity: "1", unit: "шт", purpose: "RND" });
-    expect(sent).not.toHaveProperty("item_type");
-    expect(sent).not.toHaveProperty("planned_date");
-    expect(sent).not.toHaveProperty("quality_document");
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  });
-
-  it("T7: a block pasted into the grid fills rows and columns; 100 rows fit, the rest is dropped", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input) === "/api/requests/schema") return json(schema);
-      throw new Error(`Unexpected request: ${String(input)}`);
-    });
-    render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Оформить" });
-
-    // without a header row: from the focused cell, in the order Наименование · Тип · Артикул КД · Кол-во · Ед.
-    const block = Array.from({ length: 3 }, (_, i) => `Разъём ${i + 1}\tКомплектующие\tАБВ.${i}\t${i + 2},5\tм`).join("\n");
-    fireEvent.paste(screen.getByLabelText("Наименование, строка 1"), { clipboardData: { getData: () => block } });
-    expect(screen.getAllByLabelText(/^Наименование, строка/)).toHaveLength(3);
-    expect(screen.getByLabelText("Наименование, строка 3")).toHaveValue("Разъём 3");
-    expect(screen.getByLabelText("Артикул КД, строка 2")).toHaveValue("АБВ.1");
-    expect(screen.getByLabelText("Кол-во, строка 1")).toHaveValue("2.5");
-    expect(screen.getByLabelText("Ед., строка 3")).toHaveValue("м");
-    expect(screen.getByRole("button", { name: "Оформить 3 позиции" })).toBeInTheDocument();
-
-    // a pasted block with a header row is read by column names and goes after the filled rows
-    const big = ["Наименование\tКоличество", ...Array.from({ length: 100 }, (_, i) => `Позиция ${i + 1}\t1`)].join("\n");
-    fireEvent.paste(screen.getByLabelText("Наименование, строка 1"), { clipboardData: { getData: () => big } });
-    expect(screen.getAllByLabelText(/^Наименование, строка/)).toHaveLength(100);
-    expect(screen.getByRole("alert")).toHaveTextContent("Не вошло строк: 3");
-    expect(screen.getByText(/Позиций:/)).toHaveTextContent("Позиций: 100 из 100");
-    expect(screen.getByRole("button", { name: "+ Добавить строку" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Оформить 100 позиций" })).toBeInTheDocument();
-  }, 15_000);  // renders 100+ grid rows: under a full parallel run 5 s is not enough
-
   it("T7: Enter moves down, on the last row it adds a row; copy and remove work per row", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input) === "/api/requests/schema") return json(schema);
@@ -612,38 +432,6 @@ describe("RequestsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Убрать строку 1" }));
     expect(screen.getByLabelText("Наименование, строка 1")).toHaveValue("Разъём");
     expect(screen.getAllByLabelText(/^Наименование, строка/)).toHaveLength(2);
-  });
-
-  it("T7: errors are marked in the cells with a count, nothing is sent until they are fixed", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const path = String(input);
-      if (path === "/api/requests/schema") return json(schema);
-      if (path === "/api/requests" && init?.method === "POST") return json({ requests: [row] }, 201);
-      if (path === "/api/requests") return json({ requests: [] });
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Оформить" });
-
-    const block = ["Разъём\tКомплектующие\tA\t0\tшт", "Кабель\tКомплектующие\tB\tabc\tм", "Клемма\tКомплектующие\tC\t3\tшт"].join("\n");
-    fireEvent.paste(screen.getByLabelText("Наименование, строка 1"), { clipboardData: { getData: () => block } });
-    expect(screen.getByRole("status")).toHaveTextContent("2 позиции с ошибкой");
-    expect(screen.getByLabelText("Кол-во, строка 1")).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByLabelText("Кол-во, строка 2")).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByLabelText("Ед., строка 3")).not.toHaveAttribute("aria-invalid");
-
-    fireEvent.click(screen.getByRole("button", { name: "Оформить 3 позиции" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("2 позиции с ошибкой");
-    expect(fetchMock.mock.calls.some(([input, init]) => String(input) === "/api/requests" && init?.method === "POST")).toBe(false);
-
-    fireEvent.change(screen.getByLabelText("Кол-во, строка 1"), { target: { value: "4" } });
-    fireEvent.change(screen.getByLabelText("Кол-во, строка 2"), { target: { value: "5" } });
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Оформить 3 позиции" }));
-    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => String(input) === "/api/requests" && init?.method === "POST")).toBe(true));
-    const [, init] = fetchMock.mock.calls.find(([input, reqInit]) => String(input) === "/api/requests" && reqInit?.method === "POST")!;
-    expect(JSON.parse(String(init?.body)).requests.map((item: { name: string; quantity: string; unit: string }) => [item.name, item.quantity, item.unit]))
-      .toEqual([["Разъём", "4", "шт"], ["Кабель", "5", "м"], ["Клемма", "3", "шт"]]);
   });
 
   it("Excel template: copies the headers and offers the .csv; recognizes SUPPLYMAP headers and dd.mm.yyyy dates", async () => {

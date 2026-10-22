@@ -6,7 +6,6 @@ import {
 } from "./PurchasingOrderBoard";
 import { PurchasingOrders } from "./PurchasingOrders";
 import type { Order, OrderLine } from "./purchasingOrdersApi";
-import { resetStageOptions } from "./StageOptions";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -32,7 +31,6 @@ const order = (over: Partial<Order> = {}): Order => ({
 
 afterEach(() => {
   cleanup();
-  resetStageOptions();
   vi.restoreAllMocks();
   window.localStorage.clear();
   window.history.replaceState({}, "", "/");
@@ -80,7 +78,6 @@ function server(orders: Order[], calls: Call[]) {
     if (path.endsWith("/paid")) return json({ lines: [] });
     const card = orders.find((item) => path === `/api/purchasing/orders/${item.order_number}`);
     if (card) return json({ order: card, receiving: [], upds: null });
-    if (path === "/api/stage-options") return json({ available: true, options: [] });
     return json({});
   });
 }
@@ -168,32 +165,18 @@ it("the table view keeps Roller_Buyer's filters and a deep link opens the filter
   }
 });
 
-const option = (key: string, enabled: boolean) => ({ key, block: "b", title: "t", before: "", after: "", enabled });
-
-it("the procurement page has «Счета и поставки» only with the option on", async () => {
+it("the procurement page has «Счета и поставки»", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = decodeURIComponent(String(input));
-    if (path === "/api/stage-options") return json({ available: true, options: [option("procurement.orders", true)] });
     if (path.startsWith("/api/purchasing/orders?")) return json({ today: "2026-09-20", scope: "mine", orders: [order()] });
     if (path === "/api/purchasing/orders/followups") return json({ awaiting_quotes: [], late: [], arriving: [], unpaid: [], awaiting_invoice: [] });
+    if (path === "/api/procurement/today") return json({ today: "2026-10-21", sections: [], calm: true });
     return json({ lines: [], buyers: [], stages: [], statuses: [], units: [], next_cursor: null });
   });
   render(<ProcurementPage />);
   const tabs = await screen.findByRole("tablist", { name: "Разделы закупки" });
   fireEvent.click(await within(tabs).findByRole("tab", { name: "Счета и поставки" }));
   expect(await screen.findByRole("list", { name: "Доска заказов" })).toBeInTheDocument();
-  cleanup();
-  resetStageOptions();
-  vi.restoreAllMocks();
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const path = decodeURIComponent(String(input));
-    if (path === "/api/stage-options") return json({ available: true, options: [option("procurement.orders", false)] });
-    return json({ lines: [], buyers: [], stages: [], statuses: [], units: [], next_cursor: null });
-  });
-  render(<ProcurementPage />);
-  const off = await screen.findByRole("tablist", { name: "Разделы закупки" });
-  await screen.findAllByRole("tab");
-  expect(within(off).queryByRole("tab", { name: "Счета и поставки" })).toBeNull();
 });
 
 it("«Новый счёт» says why the decided quantity is above the need", async () => {

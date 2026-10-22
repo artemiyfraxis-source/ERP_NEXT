@@ -4,7 +4,6 @@ import { formatDay } from "./format";
 import { hasPrices, rfqApi, type RfqLine, type RfqMatrix } from "./purchasingRfqApi";
 import { pickable } from "./RfqMatrix";
 import { quantity } from "./rfqUi";
-import { useStageOption } from "./StageOptions";
 
 /** The request's lines in bulk (Roller_Buyer RfqPage selection bar): pick lines — one by one, all, or a whole type —
  *  then «В новые» (out of the request as if it never was), «Перезапрос» (out with a note of who had nothing),
@@ -64,7 +63,6 @@ export function RfqSelectionBar({ matrix, picked, onClear, onDone, onError }: {
 }) {
   const [busy, setBusy] = useState(false);
   // «Отменить» and «Разделить» are the requests slice's commands (option «Заявки» закупщика): without it, not offered.
-  const requestsOn = useStageOption("procurement.requests_rb");
   const lines = matrix.lines.filter((line) => picked.has(line.id));
 
   async function run(task: () => Promise<string>, fallback: string) {
@@ -110,8 +108,8 @@ export function RfqSelectionBar({ matrix, picked, onClear, onDone, onError }: {
       <button type="button" className="secondary small" onClick={onClear}>Снять выбор</button>
       <button type="button" className="secondary small" disabled={busy} title="Убрать из этого запроса и вернуть в свободные строки — как будто его и не было" onClick={() => void withdraw("new")}>В новые</button>
       <button type="button" className="secondary small" disabled={busy} title="Убрать из этого запроса как «Перезапрос»: в строке останется, кто из поставщиков не смог" onClick={() => void withdraw("requote")}>Перезапрос</button>
-      {requestsOn && <button type="button" className="secondary small" disabled={busy} title="Отменить строки заявки с причиной — закупать их не будем" onClick={cancel}>Отменить</button>}
-      {requestsOn && lines.length === 1 && (
+      <button type="button" className="secondary small" disabled={busy} title="Отменить строки заявки с причиной — закупать их не будем" onClick={cancel}>Отменить</button>
+      {lines.length === 1 && (
         <button
           type="button" className="secondary small" disabled={busy}
           title="Разделить количество, чтобы части взять у разных поставщиков — КП останутся у обеих частей"

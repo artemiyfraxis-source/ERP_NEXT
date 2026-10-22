@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProcurementPage, migrateHiddenBlocks } from "./ProcurementPage";
 import type { OrderDocumentRecognition, ProcurementLine, RecognizedOrderLine } from "./api";
 
@@ -67,9 +67,13 @@ function json(body: unknown) {
   });
 }
 
+// «Сегодня» is the default tab; these tests are about the queues.
+beforeEach(() => { window.history.replaceState(null, "", "/?tab=queues"); });
+
 afterEach(() => {
   vi.restoreAllMocks();
   window.localStorage.clear();
+  window.history.replaceState(null, "", "/");
 });
 
 it("takes a line and saves facts with its optimistic version", async () => {
@@ -575,7 +579,7 @@ it("hides the retired substitution and quality-document fields on every stage", 
     menus[id] = rowActionNames(id);
   }
   // «Готов к запросу» стоит в блоке «В работе» с тем же меню; ручного «На согласование» нет нигде.
-  expect(menus["REQ-B"]).toEqual(["Со склада", "Документы, прослеживаемость…", "Есть на складе, без ГРН", "Отменить строку"]);
+  expect(menus["REQ-B"]).toEqual(["Со склада", "Документы, прослеживаемость…", "Есть на складе, без ГРН", "Отменить строку", "История"]);
   for (const items of Object.values(menus)) {
     expect(items.filter((item) => /замен(а|у)(?! счёт)|качества|разрешен|согласован/i.test(item))).toEqual([]);
   }
@@ -983,7 +987,7 @@ it("takes away the manual approval stage: no «На согласование» a
 
   await pickRowAction("REQ-9", "Продолжить закупку");
   expect(await screen.findByText("REQ-9: строка вернулась в работу")).toBeInTheDocument();
-  expect(calls).toEqual(['/approval/resume {"version":3}']);
+  expect(calls.filter((call) => !call.includes("/price-history"))).toEqual(['/approval/resume {"version":3}']);
   await waitFor(() => expect(within(screen.getByRole("region", { name: "В работе" })).getByText("REQ-9")).toBeInTheDocument());
 });
 
@@ -2232,7 +2236,7 @@ describe("«Лист закупки» без своих и свободных п
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = String(input);
       if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-      if (path === "/api/procurement/mine?limit=500") return json({ lines: [], next_cursor: null });
+      if (path === "/api/procurement/mine?limit=500" || path === "/api/procurement/in-work?limit=500") return json({ lines: [], next_cursor: null });
       if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: ["Жду счет"] });
       if (path === "/api/procurement/lines") return json({ lines: [sheetLine], next_cursor: null, buyers: ["Петров"] });
       throw new Error(`Unexpected request: ${path}`);
@@ -2241,7 +2245,8 @@ describe("«Лист закупки» без своих и свободных п
 
   it("opens «Весь лист» with its rows instead of an empty queue and says why", async () => {
     mockEmptyQueues();
-    render(<ProcurementPage />);
+    window.history.replaceState(null, "", "/"); // no tab chosen; «Сегодня» is the buyer's default, the view mode starts at the queues
+    render(<ProcurementPage readOnly />);
     expect(await screen.findByText("REQ-99")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Весь лист" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("heading", { level: 1, name: "Лист закупки" })).toBeInTheDocument();

@@ -3,7 +3,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ProcurementPage } from "./ProcurementPage";
 import { PurchasingUpd } from "./PurchasingUpd";
 import { docIssues, inputToKop, lineIssues, rub } from "./purchasingUpdApi";
-import { resetStageOptions } from "./StageOptions";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -43,14 +42,11 @@ const detail = (over: Record<string, unknown> = {}) => ({
 
 type Call = { method: string; path: string; body?: string };
 
-function mockServer(calls: Call[] = [], options: { upd?: boolean } = {}) {
+function mockServer(calls: Call[] = []) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     calls.push({ method, path, body: init?.body as string | undefined });
-    if (path === "/api/stage-options") {
-      return json({ available: true, options: [{ key: "documents.upd", block: "Документы", title: "Реестр УПД", before: "", after: "", enabled: options.upd ?? true }] });
-    }
     if (path === "/api/purchasing/upd/import-edo") {
       const body = JSON.parse(String(init?.body));
       const status = body.files[0].file_name.endsWith(".png") ? "error" : "created";
@@ -70,6 +66,7 @@ function mockServer(calls: Call[] = [], options: { upd?: boolean } = {}) {
     if (path === "/api/purchasing/upd/file-dart-0001/project") return json(detail({ project_reference: "591К.3" }));
     if (path === "/api/purchasing/upd/file-dart-0001") return json(detail());
     if (path === "/api/purchasing/suppliers") return json([{ id: "s2", name: "ООО Маркет", inn: null }]);
+    if (path === "/api/procurement/today") return json({ today: "2026-10-21", sections: [], calm: true });
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     if (path.startsWith("/api/procurement")) return json({ lines: [], buyers: [], stages: [], next_cursor: null });
     if (path.startsWith("/api/purchasing/upd")) {
@@ -89,7 +86,6 @@ function mockServer(calls: Call[] = [], options: { upd?: boolean } = {}) {
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup(); // unmount before the reset: a live tree would refetch the options without the mock
-  resetStageOptions();
 });
 
 const query = (calls: Call[]) => calls.filter((call) => call.method === "GET" && call.path.startsWith("/api/purchasing/upd?"))
@@ -243,18 +239,11 @@ it("«Продавцы без поставщика» previews the names and crea
   expect(bodies).toEqual([{ dry_run: true, inns: null }, { dry_run: false, inns: ["7707083893"] }]);
 });
 
-it("the «УПД» tab of «Лист закупки» exists only with the option on", async () => {
-  mockServer([], { upd: true });
+it("the «УПД» tab of «Лист закупки» exists", async () => {
+  mockServer();
   render(<ProcurementPage />);
   fireEvent.click(await screen.findByRole("tab", { name: "УПД" }));
   expect(await screen.findByRole("table", { name: "Реестр УПД" })).toBeInTheDocument();
-  cleanup();
-  resetStageOptions();
-  vi.restoreAllMocks();
-  mockServer([], { upd: false });
-  render(<ProcurementPage />);
-  await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/stage-options", expect.anything()));
-  expect(screen.queryByRole("tab", { name: "УПД" })).not.toBeInTheDocument();
 });
 
 it("checks match the server's rules", () => {

@@ -13,7 +13,6 @@ import {
 } from "./procurementRequestsLogic";
 import { ProcurementStockPicker } from "./ProcurementStockPicker";
 import { SuggestPanel, type ChosenLine } from "./RfqPool";
-import { useStageOption } from "./StageOptions";
 import { StatusChip } from "./StatusChip";
 
 /* Stage option `procurement.requests_rb`: Roller_Buyer's «Заявки» (RequestsPage + RequestLinesTable) in «Лист закупки».
@@ -52,7 +51,6 @@ function syncAddress(project: string) {
 export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }) {
   useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the project names
   const history = useLineHistory();
-  const rfqOn = useStageOption("procurement.rfq");
   const [scope, setScope] = useState<RqScope>(readOnly ? "all" : "mine");
   const [project, setProject] = useState(() => urlParam("project"));
   const focusLine = useRef<string | null>(urlParam("line") || null);
@@ -281,7 +279,7 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
               onClick={() => setCancelling(true)}
             >Отменить выбранные</button>
           )}
-          {rfqOn && !cancelling && (
+          {!cancelling && (
             <button type="button" className="primary small" onClick={() => setAsking(true)}>Запросить КП ({selected.size})</button>
           )}
         </div>
