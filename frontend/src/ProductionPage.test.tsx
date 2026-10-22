@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProductionPage, clock, etkRevisionNotice, goodPrefill, workedSeconds } from "./ProductionPage";
-import { forgetOpenProject } from "./MasterBoard";
+import { forgetOpenProject, removalChanges } from "./MasterBoard";
 import type { Principal, ProductionOperation, ProductionTask } from "./api";
 
 const principal: Principal = {
@@ -454,7 +454,7 @@ it("lets the master hand out operations of issued projects in a project window a
   expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 7 ч")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя: 1")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя 1 из 2")).toBeInTheDocument();
-  expect(await screen.findByText("без задания 1")).toBeInTheDocument(); // счётчик запуска приходит отдельным запросом
+  expect(await screen.findByText("к запуску 1")).toBeInTheDocument(); // счётчик запуска приходит отдельным запросом
   expect(screen.getByText("ООО «Тест»")).toBeInTheDocument();
   expect(screen.getByText("ТК на все КБ")).toBeInTheDocument();
 
@@ -625,6 +625,60 @@ it("assigns a new task with the run from the project window", async () => {
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0]).toMatchObject({ operator_id: WHO, items: [{ techcard_id: TECHCARD, techcard_version: 3, position: 2, run: 4 }] });
   vi.useRealTimers();
+});
+
+it("offers the rest of a partly launched run as a new task and sends what the board saw launched (owner 22.10)", async () => {
+  const posts: unknown[] = [];
+  // Тираж КБ 5, запущено 2 (ПЗ-0001 на 2 шт): к запуску — новое задание на остаток 3.
+  const launchedTask: ProductionTask = { ...realTask, project: "708К.4", item: "708К.4КБ2", quantity: 2 };
+  const rest = { ...futureTask, quantity: 3, run: "5", launched: 2 };
+  vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T08:00:00"));
+  masterFetch((path, init) => {
+    if (path === "/api/production/board/assign" && init?.method === "POST") {
+      posts.push(JSON.parse(String(init.body)));
+      return json({ tasks: [], created: [], placed: [], refused: [], warnings: [] });
+    }
+    if (path.startsWith("/api/production/board?")) return json({ project: "708К.4", tasks: [launchedTask], future: [rest], skipped: [] });
+    if (path === "/api/production/launchable") return json({ items: [{
+      techcard_id: TECHCARD, project: "708К.4", index: "КБ2", item: "708К.4КБ2", name: "Кабель", customer: "", run: "5",
+      deadline: "2026-10-10", launched: 2, operations: 2,
+    }] });
+    return null;
+  }, [launchedTask]);
+  render(<ProductionPage principal={principal} />);
+  // Задание по КБ есть, но тираж запущен не весь — КБ всё ещё к запуску.
+  expect(await screen.findByText("к запуску 1")).toBeInTheDocument();
+  await openBoardProject("708К.4");
+  const project = await screen.findByRole("dialog", { name: "Проект 708К.4" });
+  const block = (await within(project).findByText("новое задание")).closest(".mb-task") as HTMLElement;
+  const run = within(block).getByRole("spinbutton", { name: "Тираж 708К.4 · КБ2" });
+  expect(run).toHaveValue(3);
+  expect(run).toHaveAttribute("max", "3");
+  expect(within(block).getByText("из 3")).toBeInTheDocument();
+  expect(within(block).getByText("остаток: тираж КБ 5, запущено 2")).toBeInTheDocument();
+  fireEvent.change(run, { target: { value: "4" } });
+  expect(within(block).getByText("от 1 до 3")).toBeInTheDocument();
+  fireEvent.change(run, { target: { value: "3" } });
+  fireEvent.click(within(block).getByRole("button", { name: "Резка" }));
+  const step = screen.getByRole("dialog", { name: "Операция 1. Резка" });
+  fireEvent.click(within(within(step).getByRole("group", { name: "Весь этап одному монтажнику" })).getByRole("button", { name: /^Назначить только Оператор на 22\.09 с / }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toMatchObject({ items: [{ techcard_id: TECHCARD, techcard_version: 3, position: 1, launched: 2 }] });
+  expect((posts[0] as { items: Array<Record<string, unknown>> }).items[0]).not.toHaveProperty("run");
+  vi.useRealTimers();
+});
+
+it("warns in the remove window that the last fitter of an untouched task cancels it", () => {
+  const operators = [{ id: WHO, name: "Оператор", site: "ЦАР", department: "" }];
+  const untouched: ProductionTask = { ...task, operations: [{ ...task.operations[0], operator_ids: [WHO], state: "не начата" }] };
+  const line = "Других исполнителей у задания нет и работы по нему не было — задание ПЗ-0001 отменится, 10 шт снова станут новым заданием КБ.";
+  expect(removalChanges(untouched.operations[0], WHO, operators, untouched)).toContain(line);
+  // Работа была (сдано по этапу) или остаётся другой исполнитель — задание остаётся.
+  const worked = { ...untouched, operations: [{ ...untouched.operations[0], fact: { good: "1", defect: "0", processed: "1" } }] };
+  expect(removalChanges(worked.operations[0], WHO, operators, worked)).not.toContain(line);
+  const crew = { ...untouched, operations: [{ ...untouched.operations[0], operator_ids: [WHO, "10000000-0000-0000-0000-000000000003"] }] };
+  expect(removalChanges(crew.operations[0], WHO, operators, crew)).not.toContain(line);
 });
 
 it("groups unassigned operations by equipment and assigns the whole group in one request", async () => {

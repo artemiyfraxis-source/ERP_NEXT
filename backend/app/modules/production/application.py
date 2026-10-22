@@ -9,7 +9,7 @@ from hashlib import sha256
 import json
 import logging
 from math import ceil
-from typing import Iterable, Protocol, Sequence
+from typing import Iterable, Mapping, Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
@@ -33,7 +33,7 @@ from .dispatch import (
     share_seconds,
     split_shares,
 )
-from .launchable import stage_name
+from .launchable import launched_quantity, stage_name
 from .domain import (
     BusyInterval,
     DEFAULT_SHIFT,
@@ -55,9 +55,13 @@ from .domain import (
     skill_of,
 )
 from .flow import FlowPlan, FlowStep, plan_flow
+from .plan import kit_stage_key
 from .scheduling import ScheduleVariant, schedule_task, schedule_variants, upstream_ids, waited_input
 
 logger = logging.getLogger(__name__)
+
+# Владелец 22.10: «запущенное — когда его поставили на кого-то; если поставили и убрали, то оно уже не запущено».
+UNSTARTED_CANCEL_REASON = "Снят последний исполнитель — задание не начато"
 
 
 class ConcurrentProductionUpdate(RuntimeError):
@@ -221,6 +225,9 @@ class SetProductionCancelledCommand:
     cancelled: bool
     actor: Actor
     now: datetime
+    # Тиражи КБ (kit_stage_key → штук) для «Вернуть в работу»: вернуть можно, пока запущенное по КБ не превысит тираж.
+    # None — тиражи не известны (база техкарт не настроена), не проверяется.
+    kb_runs: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -503,6 +510,8 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
         if command.dry:
             # prodAssign_ dry: the preview is computed exactly like the save and nothing is written.
             return task, plan
+        # След работы — до записи: снятая доля могла быть «взята».
+        unstarted = bool(operation.shares) and not command.operator_ids and not _has_work(task, uow)
         uow.production.add(updated)
         _audit(updated, "production.assigned", command.actor, command.now, {
             "operation_id": str(operation.id),
@@ -511,6 +520,8 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
             "planned_finish": plan.finish.isoformat() if plan.finish else None,
             "warnings": list(plan.warnings),
         }, uow)
+        if unstarted:
+            updated, _ = cancel_if_unassigned(updated, command.actor, command.now, uow)
         uow.commit()
         return updated, plan
 
@@ -734,6 +745,8 @@ def _remove_share(
         raise ProductionValidationError(f"{name} сейчас работает над этой операцией — снять можно после сдачи или «Отменить начало»")
     if current.finished_at is not None:
         raise ProductionValidationError(f"{name} уже закончил(а) свою часть — снимать нечего")
+    # След работы — до записи: снятая доля могла быть «взята» (started_at уходит вместе с ней).
+    unstarted = not _has_work(task, uow)
     rest = tuple(share for share in operation.shares if share.operator_id != command.operator_id)
     sources: dict[NodeKey, tuple[datetime, datetime] | None] = {}
     crew = [share for share in rest if share.quantity is None and share.planned_start is not None and share.planned_finish is not None]
@@ -756,8 +769,38 @@ def _remove_share(
     _audit(tasks[task.id], "production.share_removed", command.actor, now, {
         "operation_id": str(operation.id), "operator_id": str(command.operator_id),
     }, uow)
+    result = tasks[task.id]
+    if unstarted:
+        result, cancelled = cancel_if_unassigned(result, command.actor, now, uow)
+        if cancelled:
+            lines.insert(0, f"Задание {result.number} отменено: снят последний исполнитель, работы по нему не было — "
+                            f"{result.project} {result.item} снова к запуску на {result.quantity} шт")
     uow.commit()
-    return tasks[task.id], PlanResult(None, None, ()), tuple(lines)
+    return result, PlanResult(None, None, ()), tuple(lines)
+
+
+def _has_work(task: ProductionTask, uow) -> bool:
+    """След работы по заданию: «взял/закончил» в доле, короб, смена, выработка (и «Записать готовыми»), брак, «Сдано»
+    площадки, строки журнала времени; отданное площадке — тоже в работе (раскладывает площадка)."""
+    if task.handed_to or any(
+        share.started_at is not None or share.finished_at is not None
+        for operation in task.operations for share in operation.shares
+    ):
+        return True
+    if task.id in uow.production.worked([task.id]):
+        return True
+    work_log = getattr(uow, "work_log", None)
+    operation_ids = tuple(operation.id for operation in task.operations)
+    return bool(work_log is not None and work_log.entries(operation_ids=operation_ids, limit=1))
+
+
+def cancel_if_unassigned(task: ProductionTask, actor: Actor, now: datetime, uow) -> tuple[ProductionTask, bool]:
+    """Снят последний исполнитель (владелец 22.10: «если поставили и убрали, то оно уже не запущено»): задание «Запущено»,
+    где ни на одной операции никого нет, отменяется в транзакции вызывающего — его тираж снова к запуску по КБ
+    (launchable.launch_remainders). Что работы по заданию не было, вызывающий проверил до снятия доли (_has_work)."""
+    if task.status is not ProductionStatus.RUNNING or task.handed_to or any(operation.shares for operation in task.operations):
+        return task, False
+    return cancel_task_in(task, actor, now, uow, {"reason": UNSTARTED_CANCEL_REASON}), True
 
 
 def record_fact(
@@ -914,11 +957,31 @@ def hand_over_production(command: HandOverProductionCommand, uow: UnitOfWork) ->
 def set_production_cancelled(command: SetProductionCancelledCommand, uow: UnitOfWork) -> ProductionTask:
     with uow:
         task = _task(command.task_id, command.expected_version, uow)
+        if not command.cancelled and command.kb_runs is not None:
+            _check_run_on_restore(task, command.kb_runs, uow)
         updated = task.set_cancelled(command.cancelled)
         uow.production.add(updated)
         _audit(updated, "production.cancelled" if command.cancelled else "production.restored", command.actor, command.now, {}, uow)
         uow.commit()
         return updated
+
+
+def _check_run_on_restore(task: ProductionTask, kb_runs: Mapping[str, int], uow: UnitOfWork) -> None:
+    """«Вернуть в работу» отменённое задание — снова запуск по КБ: вместе с её не отменёнными заданиями не больше тиража
+    КБ (остаток могли уже запустить другим заданием)."""
+    if task.status is not ProductionStatus.CANCELLED:
+        return
+    key = kit_stage_key(task.project, task.item)
+    run = kb_runs.get(key)
+    if run is None:
+        return
+    live = (*uow.production.with_status(ProductionStatus.RUNNING), *uow.production.with_status(ProductionStatus.DONE))
+    launched = launched_quantity(live).get(key, 0)
+    if launched + task.quantity > run:
+        raise ProductionValidationError(
+            f"Задание {task.number} не вернуть в работу: по {task.project} {task.item} уже запущено {launched} "
+            f"из тиража {run} шт, а в задании {task.quantity} шт"
+        )
 
 
 def cancel_task_in(task: ProductionTask, actor: Actor, now: datetime, uow, details: dict | None = None) -> ProductionTask:
