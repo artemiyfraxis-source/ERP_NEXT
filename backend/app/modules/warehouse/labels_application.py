@@ -31,6 +31,8 @@ SAMPLE = GrnLabelData(
     unit="шт",
     manufacturer_batch="12/2026",
     received_on=date(2026, 9, 25),
+    place="1F4",
+    warehouse="ЦАР",
 )
 
 
@@ -114,6 +116,8 @@ def lot_label_data(uow, lot_id: UUID) -> GrnLabelData:
         unit=lot.unit,
         manufacturer_batch=lot.series,
         received_on=_day(received),
+        place=lot.storage_location,
+        warehouse=lot.warehouse,
     )
 
 

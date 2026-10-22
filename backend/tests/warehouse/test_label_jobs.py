@@ -67,7 +67,7 @@ def test_the_agent_takes_jobs_oldest_first_and_reports_them(queue):
     job = first.json()["job"]
     assert job["id"] == queued["job_id"] and job["copies"] == 2
     tspl = base64.b64decode(job["tspl_b64"])
-    assert tspl.startswith(b"SIZE 58 mm,30 mm\r\n") and tspl.endswith(b"\r\nPRINT 2,1\r\n")  # copies are in the job
+    assert tspl.startswith(b"SIZE 58 mm,40 mm\r\n") and tspl.endswith(b"\r\nPRINT 2,1\r\n")  # copies are in the job
 
     assert service.post(_result(job["id"]), json={"ok": True, "error": ""}, headers=agent).json() == {"ok": True}
     clock.now += timedelta(seconds=1)

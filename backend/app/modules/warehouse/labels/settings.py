@@ -32,11 +32,11 @@ class PrintSettings(BaseModel):
     speed: int = Field(default=2, ge=1, le=12)
     # Label size, mm. Not narrower than 45: a ГРН's Code128 with its light fields does not fit.
     width_mm: float = Field(default=58, ge=45, le=110)
-    height_mm: float = Field(default=30, ge=20, le=80)
+    height_mm: float = Field(default=40, ge=20, le=80)
     # Head resolution: 203 on cheap printers, 300 on the TSC MB341.
     dpi: int = 300
-    # QR is read by a ТСД with a camera or a 2D scanner, Code128 by any (a 1D laser too); both — model unknown.
-    code_type: CodeType = "both"
+    # The warehouse scans with ТСД (2D), so QR alone by default; Code128 stays for a 1D laser — «both» / «code128».
+    code_type: CodeType = "qr"
     # Print offset, mm: when the printer prints off the label's centre — corrected here, not in the layout.
     offset_x_mm: float = Field(default=0, ge=-5, le=5)
     offset_y_mm: float = Field(default=0, ge=-5, le=5)
