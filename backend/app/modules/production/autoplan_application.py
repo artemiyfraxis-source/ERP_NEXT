@@ -67,6 +67,7 @@ from .board import (
     card_key,
     future_task as _new_task,
     launch_command as _launch_command,
+    run_of as _run_of,
     unlaunched_cards as _ready_unlaunched,
 )
 from .dispatch import localize
@@ -105,6 +106,7 @@ class AutoplanCommand:
     people: tuple[UUID, ...] = ()  # «По проекту»: монтажники, выделенные на проект
     exclude: frozenset[UUID] = frozenset()  # «Весь цех»: исключённые задания (id) и КБ (id техкарты)
     date_to: date | None = None  # «до даты» вручную; None — горизонт по работе
+    runs: tuple[tuple[UUID, int], ...] = ()  # тиражи новых заданий по id техкарты КБ; нет — весь тираж КБ
 
 
 @dataclass(frozen=True)
@@ -223,16 +225,17 @@ def _scope(
     new_tasks: dict[UUID, NewTask] = {}
     skipped: list[Skipped] = []
     considered: list[ReadyCard] = []
+    runs = dict(command.runs)
     for card in _ready_unlaunched(uow, stored, ready, cards):
         if not _in_project(command, card.project):
             continue
         considered.append(card)
         if card.techcard_id in exclude:
             continue
-        quantity = card.quantity
-        if quantity is None:
+        if card.quantity is None:
             skipped.append(Skipped(card, NO_RUN_REASON))
             continue
+        quantity = _run_of(card, runs.get(card.techcard_id))
         try:
             task = _new_task(card, quantity, command.actor, now)
         except ProductionValidationError as error:
@@ -341,6 +344,7 @@ def _prepare(
         "people": sorted(str(value) for value in command.people) if command.mode is AutoplanMode.PROJECT else [],
         "exclude": sorted(str(value) for value in command.exclude) if command.mode is AutoplanMode.SHOP else [],
         "date_to": command.date_to, "actor_site": scope.assigner_site,
+        "runs": sorted([str(key), value] for key, value in command.runs),
         "tasks": sorted([str(task.id), task.version] for task in scope.stored),
         # КБ к запуску: список и версия выданной техкарты (новая ревизия, тираж или срок — другой план).
         "ready": sorted([str(card.techcard_id), card.version, card.revision, card.run, card.deadline] for card in scope.considered),
