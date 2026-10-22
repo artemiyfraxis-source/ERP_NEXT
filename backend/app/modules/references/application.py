@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import Counter
 from dataclasses import dataclass, field as dc_field, replace
 from datetime import datetime
@@ -531,17 +532,19 @@ def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
 
 
 def remove_column(command: ColumnCommand, uow: UnitOfWork) -> int:
-    """Removes the owner's own column (БД.ПРОВ: of one cable list — the other lists keep a column of the same name),
-    only when every value in it is empty. Returns the number of records written."""
+    """Removes the owner's own column (БД.ПРОВ: of one cable list — the other lists keep a column of the same name).
+    A column with data goes too (owner 22.10.2026: «снести»): its values are written to the journal event
+    `references.column_removed` (record id, title, value), so they can be put back by hand. The base columns are never
+    dropped — the generator and the warehouse read them; they are only hidden (`save_column_view`).
+    Returns the number of records written."""
     _check_column_tab(command.tab)
     with uow:
         kind, records = _column_records(command, uow)
         name = next((item for item in custom_columns(command.tab, uow, kind) if _folded(item) == _folded(command.name)), None)
         if name is None:
             raise ReferenceValidationError("Удалить можно только свой столбец")
-        filled = sum(1 for record in records if str(record.fields.get(name, "")).strip())
-        if filled:
-            raise ReferenceValidationError(f"В столбце «{name}» есть данные ({filled}) — очистите их, потом удаляйте")
+        values = [{"record_id": str(record.id), "title": record.display_text, "value": record.fields[name]}
+                  for record in records if str(record.fields.get(name, "")).strip()]
         written = 0
         for record in records:
             if name in record.fields:
@@ -551,10 +554,70 @@ def remove_column(command: ColumnCommand, uow: UnitOfWork) -> int:
         uow.references.replace(tuple(entry for entry in uow.references.list()
                                      if not (entry.kind == ReferenceKind.CUSTOM_COLUMN and entry.key == key)))
         _audit("references.column_removed", command.actor, command.now, {
-            "tab": command.tab.value, "column": name, "records": written,
+            "tab": command.tab.value, "column": name, "records": written, "filled": len(values), "values": values,
             **({"cable_kind": kind} if kind else {})}, uow)
         uow.commit()
     return written
+
+
+# --- The shared column set of a table (owner 22.10.2026: «показывать все, но выбрать только нужные») ---
+
+COLUMN_VIEW_NAME = re.compile(r"^[a-z0-9:_.\-]{1,64}$")
+MAX_VIEW_COLUMNS = 300
+
+
+@dataclass(frozen=True)
+class ViewColumn:
+    key: str
+    visible: bool
+
+
+def column_views(uow: UnitOfWork) -> dict[str, list[dict]]:
+    """{table view: [{key, visible}] in the saved order}. A table with no shared set is absent."""
+    views: dict[str, list[dict]] = {}
+    entries = (entry for entry in uow.references.list() if entry.kind == ReferenceKind.COLUMN_VIEW)
+    for entry in sorted(entries, key=lambda item: item.position):
+        view, _, column = entry.key.partition("|")
+        views.setdefault(view, []).append({"key": column, "visible": entry.value == "1"})
+    return views
+
+
+@dataclass(frozen=True)
+class SaveColumnViewCommand:
+    view: str
+    columns: tuple[ViewColumn, ...]
+    actor: Actor
+    now: datetime
+
+
+def save_column_view(command: SaveColumnViewCommand, uow: UnitOfWork) -> list[dict]:
+    """Sets the shared columns of one table: which are shown and in what order. An empty list drops the shared set (the
+    table goes back to its own defaults). Visibility only — no record is touched, so a hidden column still feeds the ETK
+    generator and the warehouse; a mirror reload leaves entries of this kind alone (it never replaces `reference_entries`)."""
+    if not COLUMN_VIEW_NAME.match(command.view):
+        raise ReferenceValidationError("Неизвестная таблица")
+    columns = [ViewColumn(" ".join(item.key.split()), item.visible) for item in command.columns]
+    if len(columns) > MAX_VIEW_COLUMNS:
+        raise ReferenceValidationError("Слишком много столбцов")
+    if any(not item.key for item in columns):
+        raise ReferenceValidationError("У столбца нет имени")
+    if len({item.key.casefold() for item in columns}) != len(columns):
+        raise ReferenceValidationError("Столбец указан дважды")
+    if columns and not any(item.visible for item in columns):
+        raise ReferenceValidationError("Оставьте в таблице хотя бы один столбец")
+    with uow:
+        kept = tuple(entry for entry in uow.references.list()
+                     if not (entry.kind == ReferenceKind.COLUMN_VIEW and entry.key.partition("|")[0] == command.view))
+        fresh = tuple(ReferenceEntry.create(ReferenceKind.COLUMN_VIEW, f"{command.view}|{item.key}", "1" if item.visible else "0", position)
+                      for position, item in enumerate(columns))
+        entries = kept + fresh
+        validate_entries(entries)
+        uow.references.replace(entries)
+        _audit("references.column_view_saved", command.actor, command.now, {
+            "view": command.view, "shown": [item.key for item in columns if item.visible],
+            "hidden": [item.key for item in columns if not item.visible]}, uow)
+        uow.commit()
+    return [{"key": item.key, "visible": item.visible} for item in columns]
 
 
 @dataclass(frozen=True)

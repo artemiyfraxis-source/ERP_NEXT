@@ -1580,6 +1580,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .column-list { max-height: min(50vh, 520px); overflow: auto; columns: 440px; column-gap: 24px; margin: 0; padding: 0; list-style: none; }
 .column-item { display: grid; grid-template-columns: minmax(0, 1fr) 132px auto; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 6px; break-inside: avoid; font-size: 13px; }
 .column-item:hover, .column-item:focus-within { background: var(--accent); }
+.column-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.column-grip { flex: none; width: 16px; color: var(--muted-foreground); text-align: center; cursor: grab; user-select: none; }
+.column-item.dragging { opacity: .5; }
 .column-item .check-inline { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Quiet until the row is pointed at: thirty rows of framed inputs and buttons read as noise. */
 .column-item .column-caption { height: 28px; padding: 2px 8px; border-color: transparent; background: transparent; font-size: 12px; }

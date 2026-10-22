@@ -387,6 +387,8 @@ TOKEN_REFUSED_IN_ENDPOINT = {
     # … and the columns of a table («+ Столбец», 14.10.2026): the owner shapes the table, a token fills it.
     ("POST", "/api/references/tech-operations/columns"),
     ("POST", "/api/references/tech-operations/columns/remove"),
+    # … and which columns everyone sees (22.10.2026).
+    ("PUT", "/api/references/column-views/{view}"),
 }
 
 
@@ -424,6 +426,7 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
     reads = [
         ("GET", "/api/references/bases"),
         ("GET", "/api/references/cables"),
+        ("GET", "/api/references/column-views"),
         ("GET", "/api/references/coax-dia"),
         ("GET", "/api/references/coverings"),
         ("GET", "/api/references/import/{table}/file/fields"),

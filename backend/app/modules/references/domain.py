@@ -31,6 +31,11 @@ class ReferenceKind(str, Enum):
     # БД.ПРОВ: «prov:<cable list>:<name>» — each cable list has its own columns (owner 20.10.2026). Fields are JSON, so
     # the column is real in every record of the tab (of the list); this entry says it is the owner's.
     CUSTOM_COLUMN = "custom_column"
+    # The shared column set of a table (owner 22.10.2026: «показывать все, но выбрать только нужные»): one entry per
+    # table column, key «<table view>|<column key>», value «1» shown / «0» hidden, position — the column's place. A
+    # table without entries has no shared set: it opens with its own defaults. Only visibility and order live here —
+    # the data of a hidden column stays in the records, so the generator and the warehouse read it as before.
+    COLUMN_VIEW = "column_view"
 
 
 # The three maps of «Соответствия» / ГОСТ→AWG; a maps save never touches the other kinds.
@@ -359,6 +364,7 @@ _KEY_NORMALIZERS = {
     ReferenceKind.GOST_AWG: normalized_section_key,
     ReferenceKind.CABLE_KIND: normalized_cable_key,
     ReferenceKind.CUSTOM_COLUMN: lambda key: " ".join(str(key).casefold().split()),
+    ReferenceKind.COLUMN_VIEW: lambda key: " ".join(str(key).casefold().split()),
 }
 
 

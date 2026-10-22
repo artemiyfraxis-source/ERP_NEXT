@@ -270,6 +270,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       // columns; 19.10 — the card's parameters as columns after the impedance) starts from a new key, so a layout saved
       // before it does not hide the new order.
       storageKey={kind === "coax" ? "db:cables:coax:5-2" : `db:cables:${kind}:3`}
+      sharedKey={`prov:${kind}`}
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={kind === "coax" ? undefined : detail}
       onRowClick={kind === "coax" ? (row) => setOpenId(row.id) : undefined}
