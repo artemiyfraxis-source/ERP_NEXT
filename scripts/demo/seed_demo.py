@@ -403,7 +403,11 @@ def techcards():
     S["card2"] = _card(eng, "614К.1", "КБ2", "Жгут питания блока Molex 12P", "kit-720К.-КБ1.json", 40, issue=True)
     S["card3"] = _card(eng, "621К.2", "КБ1", "Кабель интерфейсный КСПВГ / DB-9", "kit-345К.2-КБ1.json", 25, issue=False)
     _card(eng, "708К.2", "КБ1", "Кабель питания контроллера", "kit-708К.2-КБ1.json", 10, issue=True, tweak=_branch_708)
-    # kitsets need a Google Sheets URL (kitsets/load reads a live calculation) — skipped, see report.
+    # Комплектации создаются из Google-расчёта; демо-комплектацию для генератора кладёт seed_kitset.py прямо в базу.
+    r = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed_kitset.py")],
+                       cwd=BACKEND, env=dict(os.environ, ERP_DATABASE_URL=DB_URL, PYTHONUTF8="1"),
+                       capture_output=True, text=True, encoding="utf-8")
+    print("  kitset:", (r.stdout or r.stderr)[-300:].strip())
 
 
 # ── 7. Production ───────────────────────────────────────────────────────────────────────────────────
