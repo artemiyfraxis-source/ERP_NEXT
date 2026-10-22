@@ -258,3 +258,25 @@ it("«&letters=1» opens the supplier letters with the request; «Свернут
   await waitFor(() => expect(window.location.search).toBe("?section=procurement&tab=rfq&rfq=r1&letters=1"));
   window.history.replaceState({}, "", "/");
 });
+
+it("opens «Все» at once when the user has no requests of his own but another buyer does (owner 22.10)", async () => {
+  const asked: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    asked.push(path);
+    if (path === "/api/purchasing/rfqs?scope=mine") return json({ rfqs: [] });
+    if (path === "/api/purchasing/rfqs?scope=all") {
+      return json({ rfqs: [{ id: "r1", number: "КП-2610-001", title: "Roller_Buyer № 2", created_at: "2026-10-01T10:00:00", closed_at: null, mine: false, lines: 53, suppliers: 3, sent: 3, quotes: 2, decided: 0 }] });
+    }
+    if (path === "/api/purchasing/rfqs/directory") return json({ suppliers: [] });
+    if (path === "/api/purchasing/rfqs/r1") return json({ ...matrix, rfq: { ...matrix.rfq, mine: false } });
+    return json({}, 404);
+  });
+  render(<PurchasingRfq />);
+  expect(await screen.findByText("КП-2610-001")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Все" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByText("Все закупщики — менять можно только свои запросы.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Мои" }));
+  expect(await screen.findByText("Запросов нет — нажмите «+ Запрос» и отметьте строки «В работе».")).toBeInTheDocument();
+  expect(asked.filter((path) => path === "/api/purchasing/rfqs?scope=mine").length).toBeGreaterThanOrEqual(2);
+});
