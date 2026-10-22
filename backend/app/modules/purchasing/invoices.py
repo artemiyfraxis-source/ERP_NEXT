@@ -1,4 +1,4 @@
-"""«Счета» (stage option documents.chain): the invoice registry mirrored from Kaiten (space «Закупки»), read-only.
+"""«Счета»: the invoice registry mirrored from Kaiten (space «Закупки»), read-only.
 
 One card = one invoice with its PDF and our payment orders (ported from Roller_Buyer kaiten.ts / routes/invoices.ts,
 no network here — the importer fills the tables). The header was read from the PDF's text layer; the payments come

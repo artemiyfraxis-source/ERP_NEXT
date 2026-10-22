@@ -1,6 +1,5 @@
-"""Stage option `procurement.history`: the line's life rebuilt from stored facts, from the request to the warehouse."""
+"""«История строки»: the line's life rebuilt from stored facts, from the request to the warehouse."""
 
-import json
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -10,16 +9,9 @@ from app.modules.receiving.application import consume_receiving_expected
 from app.modules.receiving.infrastructure import ReceivingLineRow, SqlAlchemyReceivingUnitOfWork
 from app.modules.requests.infrastructure import RequestRow
 from app.modules.warehouse.infrastructure import StockLotRow, WriteOffEntryRow
-from app.shared import stage_options
 from app.shared.events import OutboxMessage
 from app.shared.persistence import AuditEventRow
 from tests.purchasing.test_rfq_api import BASE, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — fixture
-
-
-def _options(monkeypatch, tmp_path, **states):
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps(states), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
 
 
 def _audit(session, aggregate_id, kind, when, details=None, name="Петров", department="Закупки"):
@@ -75,9 +67,8 @@ def _seed_tail(sessions, line):
         session.commit()
 
 
-def test_history_follows_the_line_from_request_to_issue(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+def test_history_follows_the_line_from_request_to_issue(rfq_api):  # noqa: F811
     client, lines, sessions = rfq_api
-    _options(monkeypatch, tmp_path, **{"procurement.history": True, "procurement.rfq": True})
     line = lines[0]
     rfq = _rfq(client, lines)
     matrix = client.get(f"{BASE}/{rfq['id']}").json()
@@ -135,9 +126,8 @@ def test_history_follows_the_line_from_request_to_issue(rfq_api, monkeypatch, tm
     assert titles.index("Оплачено") < titles.index("Приёмка: Годен") < titles.index("Выдача: 1 шт")
 
 
-def test_unstored_dates_are_said_not_invented(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+def test_unstored_dates_are_said_not_invented(rfq_api):  # noqa: F811
     client, lines, sessions = rfq_api
-    _options(monkeypatch, tmp_path, **{"procurement.history": True})
     with sessions() as session:
         row = session.get(ProcurementLineRow, lines[1].id)
         row.expected_arrival = date(2026, 10, 3)
@@ -151,10 +141,7 @@ def test_unstored_dates_are_said_not_invented(rfq_api, monkeypatch, tmp_path):  
     assert events[-1] is undated[0]  # undated facts go last
 
 
-def test_option_off_is_404_after_auth(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+def test_unknown_line_is_404_and_a_known_one_answers(rfq_api):  # noqa: F811
     client, lines, _ = rfq_api
-    _options(monkeypatch, tmp_path, **{"procurement.history": False})
-    assert client.get(f"/api/procurement/{lines[0].id}/history").status_code == 404
-    _options(monkeypatch, tmp_path, **{"procurement.history": True})
     assert client.get(f"/api/procurement/{UUID(int=5)}/history").status_code == 404
     assert client.get(f"/api/procurement/{lines[0].id}/history").status_code == 200

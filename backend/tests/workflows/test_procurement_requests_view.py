@@ -1,7 +1,6 @@
 """«Заявки» закупщика ↔ other modules (app/workflows/procurement_requests_view.py): free stock of a line's item, the
 last purchase merged from paid lines and UPDs, the request-for-quotes states."""
 
-import json
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -16,7 +15,6 @@ from app.modules.procurement.requests_view import LastPurchase, ViewLine
 from app.modules.purchasing import line_purchases
 from app.modules.purchasing.infrastructure import RfqLineRow, RfqRow
 from app.modules.warehouse.infrastructure import StockLotRow
-from app.shared import stage_options
 from app.shared.persistence import create_schema
 from app.workflows import procurement_requests_view as workflow
 
@@ -64,13 +62,7 @@ def test_free_stock_sums_what_is_available_of_the_same_item_and_unit(sessions):
     assert found == {by_article.id: Decimal("9"), by_name.id: Decimal("30")}
 
 
-def _options(monkeypatch, tmp_path, **states):
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps(states), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
-
-
-def test_last_purchase_is_the_newest_of_paid_lines_and_upds(sessions, monkeypatch, tmp_path):
+def test_last_purchase_is_the_newest_of_paid_lines_and_upds(sessions, monkeypatch):
     older, newer = view(), view(name="Разъём BNC")
     paid = {
         older.id: LastPurchase(Decimal("90"), date(2026, 9, 1), "ООО Альфа", "шт", "procurement"),
@@ -91,9 +83,6 @@ def test_last_purchase_is_the_newest_of_paid_lines_and_upds(sessions, monkeypatc
         wanted[1].key: line_purchases.UpdPurchase(Decimal("40"), "2026-09-20", "ООО УПД", "18"),
     })
     with sessions() as session:
-        _options(monkeypatch, tmp_path, **{"references.price_book": False})
-        assert workflow.last_purchases(session, [older, newer], paid) == paid
-        _options(monkeypatch, tmp_path, **{"references.price_book": True})
         merged = workflow.last_purchases(session, [older, newer], paid)
     assert merged[older.id] == LastPurchase(Decimal("80.5"), date(2026, 9, 20), "ООО УПД", "шт", "upd")
     assert merged[newer.id] == paid[newer.id]

@@ -1,6 +1,6 @@
-"""«Счета», «Цепочка документов», «Поиск по документам» (stage option documents.chain).
+"""«Счета», «Цепочка документов», «Поиск по документам».
 
-Paths are spelled out under /api/purchasing: the UPD registry (option documents.upd) owns /api/purchasing/upd and its
+Paths are spelled out under /api/purchasing: the UPD registry owns /api/purchasing/upd and its
 card; the two UPD routes here hang the invoices block on that card. Links between invoices and UPDs are computed on
 read; the buyer's confirmed / rejected word is the only write. Receiving comes through app/workflows."""
 
@@ -21,11 +21,10 @@ from app.shared.stored_files import file_response
 from app.workflows import purchasing_documents_receiving as receiving_flow
 
 from . import doc_chain, doc_search, invoices
-from .deps import purchasing_uow_factory, receiving_uow_factory, require_option
+from .deps import purchasing_uow_factory, receiving_uow_factory
 
 router = APIRouter(prefix="/api/purchasing", tags=["purchasing"])
 
-OPTION = "documents.chain"
 CHAIN_PAGE_SIZE = 150
 Uow = Annotated[Callable, Depends(purchasing_uow_factory)]
 ReceivingUow = Annotated[Callable | None, Depends(receiving_uow_factory)]
@@ -75,7 +74,6 @@ def list_invoices(
     date_from: Annotated[date | None, Query(alias="from")] = None, date_to: Annotated[date | None, Query(alias="to")] = None,
     closing: Literal["none"] | None = None, page: Annotated[int, Query(ge=1)] = 1,
 ) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow:
         world, _facts = doc_chain.load_world(uow.session, now.date())
@@ -87,7 +85,6 @@ def list_invoices(
 
 @router.get("/invoices/{invoice_id}")
 def invoice_card(invoice_id: UUID, _: Viewer, make_uow: Uow, make_receiving: ReceivingUow, now: Now) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         world, _facts = doc_chain.load_world(uow.session, now.date())
@@ -101,7 +98,6 @@ def invoice_card(invoice_id: UUID, _: Viewer, make_uow: Uow, make_receiving: Rec
 
 @router.get("/invoices/{invoice_id}/files/{file_row_id}")
 def invoice_file(invoice_id: UUID, file_row_id: UUID, _: Viewer, make_uow: Uow):
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         content, name = invoices.invoice_file(uow.session, invoice_id, file_row_id)
@@ -116,7 +112,6 @@ def list_chains(
     closing: Literal["edo", "paper", "none"] | None = None, buyer: Buyer = None, page: Annotated[int, Query(ge=1)] = 1,
 ) -> dict:
     """Invoice → payments → closing documents → receiving, with what disagrees; problems first, then the newest."""
-    require_option(OPTION)
     uow = make_uow()
     with uow:
         world, _facts = doc_chain.load_world(uow.session, now.date())
@@ -135,7 +130,6 @@ def list_chains(
 @router.get("/upd/{upd_id}/invoices")
 def upd_invoices(upd_id: UpdId, _: Viewer, make_uow: Uow, make_receiving: ReceivingUow, now: Now) -> dict:
     """The invoices a UPD closes, the ones it might, and the pairs the buyer rejected."""
-    require_option(OPTION)
     return _upd_invoices(make_uow, make_receiving, now, upd_id)
 
 
@@ -159,7 +153,6 @@ def set_upd_invoice(
     now: Now,
 ) -> dict:
     """The buyer's word on a pair: confirmed, rejected, or null to let the data decide again."""
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         doc_chain.set_decision(uow, upd_id, invoice_id, payload.decision, principal.actor, now)
@@ -171,7 +164,6 @@ def set_upd_invoice(
 def search_documents(
     _: Viewer, make_uow: Uow, q: Annotated[str, Query(max_length=100)] = "", kind: Literal["all", "upd", "invoice"] = "all",
 ) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow:
         return doc_search.search_documents(uow.session, q.strip(), kind)

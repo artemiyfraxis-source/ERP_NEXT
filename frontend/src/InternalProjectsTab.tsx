@@ -4,7 +4,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { refreshInternalProjects } from "./internalProjects";
 import { purposeLabel } from "./purposeLabels";
 
-/* Stage option `projects.internal`: the «Внутренние» tab of «Проекты». A project of the company itself — number «ВП-001»,
+/* the «Внутренние» tab of «Проекты». A project of the company itself — number «ВП-001»,
    name, purpose (one of the request purposes), responsible, open / closed. Requests, procurement and stock go under it
    through the same `project_reference` as a customer project. */
 

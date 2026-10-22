@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LoadMore } from "./LoadMore";
-import { SuggestInput } from "./SuggestInput";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
   UnknownResultError,
@@ -19,24 +18,17 @@ import { RequestFormV2 } from "./RequestFormV2";
 import { projectLabel, useInternalProjects } from "./internalProjects";
 import { projectFromDesignation } from "./projectNumber";
 import { usePurposeLabel } from "./purposeLabels";
-import { useStageOption } from "./StageOptions";
 import { StatusChip } from "./StatusChip";
 import {
-  GRID_LIMIT,
   parseExcelTsv,
   TEMPLATE_HEADERS,
   applyCategoryRule,
   applyPaste,
-  emptyCommon,
   emptyDraft,
   isBlankRow,
-  payloadOf,
   positionsWord,
   validateRow,
-  COMMON_KEYS,
   dateAfter,
-  type Common,
-  type CommonKey,
   type Draft,
   type GridKey,
 } from "./requestGridLogic";
@@ -139,8 +131,6 @@ interface RequestsDraft {
   creationKey: string;
   batchKey: string;
   createMode: "manual" | "excel" | "calc";
-  common: Common;
-  positions: Draft[];
   excelText: string;
   calcUrl: string;
   calcText: string;
@@ -152,10 +142,9 @@ interface RequestsDraft {
   calcDeadline: string;
 }
 
-/** Сколько введено: непустые позиции ручной пачки плюс строки предпросмотра расчёта. */
-function draftCount(draft: Pick<RequestsDraft, "positions" | "calcRows" | "calcPreview">): number {
-  return draft.positions.filter((item) => !isBlankRow(item)).length
-    + (draft.calcPreview ? draft.calcRows.filter((item) => !isBlankRow(item)).length : 0);
+/** Сколько введено: строки предпросмотра расчёта. */
+function draftCount(draft: Pick<RequestsDraft, "calcRows" | "calcPreview">): number {
+  return draft.calcPreview ? draft.calcRows.filter((item) => !isBlankRow(item)).length : 0;
 }
 
 /** Ответ на запись не дошёл: ключ тот же, повтор безопасен (сервер вернёт уже созданное, дубля не будет). */
@@ -170,9 +159,6 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const listRead = useRef(latestRead()).current;
   const [schema, setSchema] = useState<RequestSchema | null>(null);
   const [rows, setRows] = useState<RequestRow[]>([]);
-  const [common, setCommon] = useState<Common>(() => restored?.common ?? emptyCommon());
-  const [positions, setPositions] = useState<Draft[]>(() => restored?.positions ?? [emptyDraft()]);
-  const [showErrors, setShowErrors] = useState(false);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [notice, setNotice] = useState(() => {
@@ -185,10 +171,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const canHandoff = canAct(principal, "procurement");
 
   const [createMode, setCreateMode] = useState<"manual" | "excel" | "calc">(restored?.createMode ?? "manual");
-  // Stage option «Новая форма заявки»: off = the form below as it was.
-  const formV2 = useStageOption("requests.form");
   const purposeText = usePurposeLabel();
-  useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the «Цель» / «Проект» column
+  useInternalProjects(); // «ВП-001 · Название» in the «Цель» / «Проект» column
   const [formSeed, setFormSeed] = useState<{ id: number; text: string } | null>(null);
 
   const [mineRows, setMineRows] = useState<RequestRow[]>([]);
@@ -214,17 +198,15 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   // The form is kept in the shell's memory while it holds anything; once empty (sent, or never filled) the draft goes.
   useEffect(() => {
     if (view === "mine" || !canEdit) return;
-    const blank = !draftCount({ positions, calcRows, calcPreview }) && !excelText.trim() && !calcText.trim();
+    const blank = !draftCount({ calcRows, calcPreview }) && !excelText.trim() && !calcText.trim();
     draft.save(blank ? null : {
-      creationKey: creationKey.current, batchKey: batchKey.current, createMode, common, positions, excelText,
+      creationKey: creationKey.current, batchKey: batchKey.current, createMode, excelText,
       calcUrl, calcText, calcWarnings, calcRows, calcPreview, calcPurpose, calcPoint, calcDeadline,
     });
-  }, [view, canEdit, draft, createMode, common, positions, excelText, calcUrl, calcText, calcWarnings, calcRows, calcPreview, calcPurpose, calcPoint, calcDeadline]);
+  }, [view, canEdit, draft, createMode, excelText, calcUrl, calcText, calcWarnings, calcRows, calcPreview, calcPurpose, calcPoint, calcDeadline]);
   // «Оформить заявку из расчёта» в карточке проекта: ссылка и № проекта приходят в адресе (?calc_url=&calc_project=).
   const calcPreset = useRef<ReturnType<typeof readCalcPreset> | undefined>(undefined);
   if (calcPreset.current === undefined) calcPreset.current = readCalcPreset();
-
-  const projects = schema?.projects ?? [];
 
   /** Resolves silently when a newer reload replaced this one. */
   async function reload(query = serverQuery) {
@@ -243,17 +225,6 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     setSchema(nextSchema);
     if (result) setRows(result.requests);
     const point = nextSchema.delivery_points[0] || "";
-    const purpose = nextSchema.purposes[0] || "";
-    setCommon((current) => ({
-      ...current,
-      purpose: current.purpose || purpose,
-      delivery_point: current.delivery_point || point,
-    }));
-    setPositions((current) => current.map((item) => ({
-      ...item,
-      purpose: item.purpose || purpose,
-      delivery_point: item.delivery_point || point,
-    })));
     setCalcPurpose((current) => current || nextSchema.purposes.find((item) => item === "Обеспечение производства") || nextSchema.purposes[0] || "");
     setCalcPoint((current) => current || point);
   }
@@ -298,96 +269,6 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     setError("");
     if (view === "mine") void loadMine(0, query);
     else reload(query).catch(loadFailed);
-  }
-
-  /* rcBulkApply_: a common value goes into every position; rcCategoryRule follows the category. */
-  function setCommonField(name: CommonKey, value: string) {
-    const next = name === "category" ? applyCategoryRule({ ...common, category: value }) : { ...common, [name]: value };
-    setCommon(next);
-    if (!value && name !== "project_reference") return; // пустой выбор ничего не стирает
-    setPositions((current) => current.map((item) => {
-      const patched = { ...item, [name]: value };
-      if (name === "category") patched.quality_document = next.quality_document;
-      return patched;
-    }));
-  }
-
-  function setPositionField(index: number, name: keyof Draft, value: string) {
-    setPositions((current) => current.map((item, i) => (i === index ? { ...item, [name]: value } : item)));
-  }
-
-  function addPosition(seed?: Draft) {
-    setPositions((current) => (current.length >= GRID_LIMIT ? current : [...current, seed ? { ...seed } : emptyDraft(common)]));
-  }
-
-  function removePosition(index: number) {
-    setPositions((current) => (current.length > 1 ? current.filter((_, i) => i !== index) : [emptyDraft(common)]));
-  }
-
-  function duplicatePosition(index: number) {
-    setPositions((current) => (current.length >= GRID_LIMIT ? current : [...current.slice(0, index + 1), { ...current[index] }, ...current.slice(index + 1)]));
-  }
-
-  /* A block pasted into any cell: with a header row by column names, otherwise from that cell down and right. */
-  function pasteIntoGrid(index: number, key: GridKey, text: string) {
-    const result = applyPaste(positions, index, key, text, emptyDraft(common));
-    if ("error" in result) {
-      setError(result.error);
-      return;
-    }
-    setPositions(result.positions);
-    setShowErrors(true);
-    setError(result.dropped ? `Не вошло строк: ${result.dropped} — в одной заявке не больше ${GRID_LIMIT} позиций` : "");
-    setNotice(
-      `Вставлено позиций: ${result.filled}` +
-        (result.unknown.length ? `. Не распознаны (пропущены): ${result.unknown.join(", ")}` : ""),
-    );
-  }
-
-  /* Whole-request fields are checked on every row (an Excel row may carry its own); blank rows are not sent. */
-  const gridErrors = useMemo(
-    () => positions.map((item) => (isBlankRow(item) ? {} : validateRow(item, schema?.categories ?? []))),
-    [positions, schema],
-  );
-  const sendRows = positions.filter((item) => !isBlankRow(item));
-
-  async function submit() {
-    setError("");
-    setNotice("");
-    setShowErrors(true);
-    const bad = gridErrors.filter((rowErrors) => Object.keys(rowErrors).length).length;
-    if (bad) {
-      setError(`${positionsWord(bad)} с ошибкой — исправьте отмеченные ячейки`);
-      return;
-    }
-    if (!sendRows.length) {
-      setError("Добавьте хотя бы одну позицию");
-      return;
-    }
-    setBusy(true);
-    try {
-      const result = await requestsApi.createMany(sendRows.map(payloadOf), creationKey.current);
-      creationKey.current = crypto.randomUUID();
-      const ids = result.requests.map((item) => item.legacy_id);
-      setNotice(ids.length === 1 ? `Создана заявка ${ids[0]}` : `Создано заявок: ${ids.length} (${ids.join(", ")})`);
-      setPositions([emptyDraft(common)]);
-      setShowErrors(false);
-      try {
-        await reload();
-      } catch (reason) {
-        setError(
-          reason instanceof Error
-            ? `Заявки созданы, но список не обновился: ${reason.message}`
-            : "Заявки созданы, но список не обновился",
-        );
-      }
-    } catch (reason) {
-      // The key stays: a repeat after an unknown result returns what the server already created.
-      setError(reason instanceof UnknownResultError ? UNKNOWN_CREATE
-        : reason instanceof Error ? reason.message : "Не удалось создать заявку");
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function handoff(ids: string[], retransfer = false) {
@@ -454,28 +335,10 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       setExcelError("Не нашёл строк с данными.");
       return;
     }
-    if (formV2) {
-      setFormSeed({ id: Date.now(), text: excelText });
-      setExcelText("");
-      setCreateMode("manual");
-      setNotice(`Из Excel распознано позиций: ${parsed.rows.length}. Колонки: ${parsed.recognized.join(", ")}. Проверьте таблицу и оформите.`);
-      return;
-    }
-    const result = applyPaste(positions, 0, "name", excelText, emptyDraft(common));
-    if ("error" in result) {
-      setExcelError(result.error);
-      return;
-    }
-    setPositions(result.positions);
-    setShowErrors(true);
+    setFormSeed({ id: Date.now(), text: excelText });
     setExcelText("");
     setCreateMode("manual");
-    setError(result.dropped ? `Не вошло строк: ${result.dropped} — в одной заявке не больше ${GRID_LIMIT} позиций` : "");
-    setNotice(
-      `Из Excel распознано позиций: ${parsed.rows.length}. Колонки: ${parsed.recognized.join(", ")}` +
-        (parsed.unknown.length ? `. Не распознаны (пропущены): ${parsed.unknown.join(", ")}` : "") +
-        ". Проверьте таблицу и оформите.",
-    );
+    setNotice(`Из Excel распознано позиций: ${parsed.rows.length}. Колонки: ${parsed.recognized.join(", ")}. Проверьте таблицу и оформите.`);
   }
 
   /* ── «Из расчёта» (RQ-5): recognize the pasted ЗКП range, fill the required-per-batch fields,
@@ -668,13 +531,11 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     { key: "item_type", title: "Тип", value: (row) => row.item_type, filter: true, hidden: true },
     { key: "design_article", title: "Артикул КД", value: (row) => row.design_article ?? "", hidden: view === "mine" },
     { key: "purpose", title: "Назначение (база)", value: (row) => row.purpose, hidden: true },
-    // Option «Новая форма заявки»: no «Цель» (owner, 16.10: «Убери „Цель закупки“») — the project, or the one the
+    // No «Цель» (owner, 16.10: «Убери „Цель закупки“») — the project, or the one the
     // designation starts with; the purpose stays in the hidden «Назначение (база)».
-    formV2
-      ? { key: "project_reference", title: "Проект", value: (row) => projectLabel(row.project_reference || projectFromDesignation(row.designation)), filter: true }
-      : { key: "project_reference", title: "Цель", value: (row) => (row.project_reference ? projectLabel(row.project_reference) : purposeText(row.purpose)), filter: true },
+    { key: "project_reference", title: "Проект", value: (row) => projectLabel(row.project_reference || projectFromDesignation(row.designation)), filter: true },
     { key: "quantity", title: "Кол-во", value: (row) => `${row.quantity} ${row.unit}`, numeric: true },
-    { key: "delivery_point", title: formV2 ? "Склад" : "Точка отгрузки", value: (row) => row.delivery_point, filter: true, hidden: true },
+    { key: "delivery_point", title: "Склад", value: (row) => row.delivery_point, filter: true, hidden: true },
     { key: "category", title: "Категория", value: (row) => row.category, filter: true, hidden: view === "mine" },
     { key: "quality_document", title: "Док. качества", value: (row) => row.quality_document ?? "", hidden: true },
     { key: "procurement_deadline", title: "Дедлайн", value: (row) => formatDate(row.procurement_deadline), hidden: view === "mine" },
@@ -737,14 +598,14 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       <div className={view === "create" ? "single-layout" : "list-layout"}>
         {view !== "create" ? null : canEdit ? (
           <div className="panel request-form">
-            <div className="panel-heading"><h2>Новая заявка</h2><span>{formV2 ? "* — обязательное поле; пустые поля сервер заполнит по умолчанию" : "* — обязательное поле"}</span></div>
+            <div className="panel-heading"><h2>Новая заявка</h2><span>* — обязательное поле; пустые поля сервер заполнит по умолчанию</span></div>
             <div className="seg-tabs mode-tabs" aria-label="Способ ввода">
               <button type="button" className={createMode === "manual" ? "on" : undefined} aria-pressed={createMode === "manual"} onClick={() => switchMode("manual")}>Вручную</button>
               <button type="button" className={createMode === "excel" ? "on" : undefined} aria-pressed={createMode === "excel"} onClick={() => switchMode("excel")}>Вставить из Excel</button>
               <button type="button" className={createMode === "calc" ? "on" : undefined} aria-pressed={createMode === "calc"} onClick={() => switchMode("calc")}>Из расчёта</button>
             </div>
 
-            {createMode === "manual" && formV2 && (
+            {createMode === "manual" && (
               <RequestFormV2
                 schema={schema}
                 seed={formSeed}
@@ -759,41 +620,6 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                   }
                 }}
               />
-            )}
-
-            {createMode === "manual" && !formV2 && (
-              <div className="rg-form">
-                <div className="rg-common">
-                  <div className="rg-common-title">Общее для всех позиций <span>— применяется ко всем строкам таблицы</span></div>
-                  <div className="rg-common-grid">
-                    <label>Назначение *<select value={common.purpose} onChange={(e) => setCommonField("purpose", e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
-                    <label>Цель (проект)
-                      {/* Ручная заявка: номер проекта вписывают руками, пусто — без проекта; реестр только подсказывает. */}
-                      <SuggestInput options={projects} value={common.project_reference} onChange={(value) => setCommonField("project_reference", value)} placeholder="пусто — без проекта, например 591К.3" />
-                    </label>
-                    <label className="rg-point">Точка отгрузки<select value={common.delivery_point} onChange={(e) => setCommonField("delivery_point", e.target.value)}><option value="">Выберите точку</option>{schema?.delivery_points.map((item) => <option key={item}>{item}</option>)}</select></label>
-                    <label>Категория<select value={common.category} onChange={(e) => setCommonField("category", e.target.value)}>{schema?.categories.map((item) => <option key={item}>{item}</option>)}</select></label>
-                    <label>Документ качества<select value={common.quality_document} disabled={common.category === "ОП"} onChange={(e) => setCommonField("quality_document", e.target.value)}><option>Нет</option><option>Да</option></select></label>
-                    <label>Срок закупки<input type="date" value={common.procurement_deadline} onChange={(e) => setCommonField("procurement_deadline", e.target.value)} /></label>
-                    <label>Плановая дата<input type="date" value={common.planned_date} onChange={(e) => setCommonField("planned_date", e.target.value)} /></label>
-                  </div>
-                </div>
-                <p className="rg-hint">Ctrl+V из Excel — в любую ячейку · Enter — вниз, Tab — вправо · до {GRID_LIMIT} позиций в заявке</p>
-                <RequestGrid
-                  positions={positions}
-                  schema={schema}
-                  errors={showErrors ? gridErrors : null}
-                  sendCount={sendRows.length}
-                  common={common}
-                  busy={busy}
-                  onField={(index, key, value) => setPositionField(index, key, value)}
-                  onPaste={pasteIntoGrid}
-                  onAdd={() => addPosition()}
-                  onRemove={removePosition}
-                  onDuplicate={duplicatePosition}
-                  onSubmit={() => void submit()}
-                />
-              </div>
             )}
 
             {createMode === "excel" && (

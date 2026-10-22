@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
 import type { WarehouseLot } from "./api";
-import { resetStageOptions } from "./StageOptions";
 import { capturePrintFrames } from "./testPrintFrames";
 
 const lot: WarehouseLot = {
@@ -37,7 +36,7 @@ function added(entered: WarehouseLot[], errors: Array<{ i: number; error: string
   return json({ added: entered.length, lots: entered, assigned: [], errors });
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); resetStageOptions(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); });
 
 /** The reference tools of the page sit behind «Ещё ▾». */
 async function openMore() {
@@ -540,7 +539,7 @@ it("shows the first server page at once and joins the next page on «Показ�
   const gate = new Promise<void>((resolve) => { release = resolve; });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && path !== "/api/stage-options") paths.push(path);
+    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && !path.startsWith("/api/purchasing")) paths.push(path);
     if (path.split("?")[0] === "/api/stock" && !path.includes("after=")) return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
     if (path === "/api/stock?after=cursor-1&sort=article&group=series") { await gate; return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null }); }
     throw new Error(`Unexpected request: ${path}`);
@@ -566,7 +565,7 @@ it("«Загрузить всё» reads every remaining page", async () => {
   const paths: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && path !== "/api/stage-options") paths.push(path);
+    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && !path.startsWith("/api/purchasing")) paths.push(path);
     if (path.split("?")[0] === "/api/stock" && !path.includes("after=")) return json({ lots: [lot], total: 3, truncated: 2, next_cursor: "c1" });
     if (path === "/api/stock?after=c1&sort=article&group=series") return json({ lots: [page2], total: 3, truncated: 1, next_cursor: "c2" });
     if (path === "/api/stock?after=c2&sort=article&group=series") return json({ lots: [third], total: 3, truncated: 0, next_cursor: null });
@@ -917,8 +916,8 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   expect(screen.queryByRole("button", { name: /^Ещё/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Обновить" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Таблица склада" })).toBeInTheDocument();
-  // The page only reads (the stage-options probe is a read too).
-  expect(requested.every((call) => call === "GET /api/stock?sort=article&group=series" || call === "GET /api/stage-options" || call.startsWith("GET /api/stock/totals"))).toBe(true);
+  // The page only reads.
+  expect(requested.every((call) => call === "GET /api/stock?sort=article&group=series" || call.startsWith("GET /api/stock/totals") || call.startsWith("GET /api/purchasing/items/for-lots"))).toBe(true);
 });
 
 it("«История» is on a lot for the storekeeper too, not for a view-only user (owner 12.10.2026)", async () => {
@@ -1389,28 +1388,6 @@ it("quick entry suggests already entered articles by article or name and copies 
   expect(screen.getByLabelText("Наименование")).toHaveValue(lot.name);
 });
 
-it("«Печать этикетки» on a lot prints its label with the arrival date from the journal", async () => {
-  const frames = capturePrintFrames();
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input).startsWith("/api/stock/journal")) {
-      return json({ rows: [
-        { occurred_at: "2026-10-05T10:00:00+00:00", kind: "Списание", lot: "FRX.26.0000001", name: "Разъём", event: "2 шт", warehouse: "ЦАР", who: "Иванов" },
-        { occurred_at: "2026-09-01T10:00:00+00:00", kind: "Приход", lot: "FRX.26.0000001", name: "Разъём", event: "10 шт", warehouse: "ЦАР", who: "Петров" },
-      ], total: 2, truncated: 0 });
-    }
-    return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(screen.getByRole("button", { name: "Печать этикетки" }));
-
-  await waitFor(() => expect(frames.print).toHaveBeenCalledTimes(1));
-  const html = frames.html[0];
-  for (const text of ["FRX.26.0000001", "GHR-04V-S", "Разъём", "10 шт", "1F4", "ЦАР", "Поступило 01.09.2026"]) expect(html).toContain(text);
-  expect(html).toContain("size: 58mm 40mm");
-});
-
 it("«Внести и печать этикетки» enters the row and prints the label of the created lot", async () => {
   const frames = capturePrintFrames();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -1468,23 +1445,19 @@ it("asks the server to sort the whole stock when a column is clicked, from the f
   await waitFor(() => expect(paths).toContain("/api/stock?sort=grn&desc=true"));
 });
 
-function stageFetch(enabledKeys: string[]) {
+function lotFetch() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stage-options") {
-      return json({ available: true, options: ["warehouse.word_search", "warehouse.strict_quantities"].map((key) => (
-        { key, block: "Склад", title: key, before: "", after: "", enabled: enabledKeys.includes(key) })) });
-    }
     if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 }
 
-it("makes the quantity inputs read-only and the search hint new when the stage options are on", async () => {
-  stageFetch(["warehouse.word_search", "warehouse.strict_quantities"]);
+it("makes the quantity inputs read-only and the search hint new", async () => {
+  lotFetch();
 
   render(<WarehousePage />);
-  expect(await screen.findByPlaceholderText("Слова в любом порядке: артикул, название, ГРН, место…")).toBeInTheDocument();
+  expect(await screen.findByPlaceholderText("Скан, ГРН, место или слова: артикул, название…")).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
   fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
   fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
@@ -1496,26 +1469,10 @@ it("makes the quantity inputs read-only and the search hint new when the stage o
   expect(form.getByText(/меняются только движениями/)).toBeInTheDocument();
 });
 
-it("keeps the quantity inputs editable and the old search hint when the stage options are off", async () => {
-  stageFetch([]);
-
-  render(<WarehousePage />);
-  expect(await screen.findByPlaceholderText("Поиск: резистор, 6-1, ГРН…")).toBeInTheDocument();
-  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
-  fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
-  const form = within(screen.getByRole("form", { name: "Правка строки" }));
-  expect(form.getByLabelText("Приход")).not.toHaveAttribute("readonly");
-  expect(form.queryByText(/меняются только движениями/)).toBeNull();
-});
-
-function itemsFetch(on: boolean, calls: string[], posted: string[] = []) {
+function itemsFetch(calls: string[], posted: string[] = []) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     calls.push(path);
-    if (path === "/api/stage-options") {
-      return json({ available: true, options: [{ key: "references.items", block: "Номенклатура", title: "t", before: "", after: "", enabled: on }] });
-    }
     if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     if (path.startsWith("/api/purchasing/items/for-lots")) {
       return json({ [lot.id]: { item_id: "i1", name: "Разъём SMA (номенклатура)", category: "connector", via: "chain" } });
@@ -1528,10 +1485,10 @@ function itemsFetch(on: boolean, calls: string[], posted: string[] = []) {
   });
 }
 
-it("shows the nomenclature item under the lot and links a lot by hand when references.items is on", async () => {
+it("shows the nomenclature item under the lot and links a lot by hand", async () => {
   const calls: string[] = [];
   const posted: string[] = [];
-  itemsFetch(true, calls, posted);
+  itemsFetch(calls, posted);
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
   expect(await screen.findByText(/Позиция: Разъём SMA \(номенклатура\)/)).toBeInTheDocument();
@@ -1540,15 +1497,4 @@ it("shows the nomenclature item under the lot and links a lot by hand when refer
   fireEvent.change(screen.getByLabelText("Найти позицию номенклатуры"), { target: { value: "друг" } });
   fireEvent.click(await screen.findByRole("button", { name: "Связать" }));
   await waitFor(() => expect(posted).toEqual([JSON.stringify({ lot_id: lot.id, item_id: "i2" })]));
-});
-
-it("shows no item chip, no action and sends no nomenclature request when references.items is off", async () => {
-  const calls: string[] = [];
-  itemsFetch(false, calls);
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  await screen.findByRole("button", { name: "✎ Правка" });
-  expect(screen.queryByText(/Позиция:/)).toBeNull();
-  expect(screen.queryByRole("button", { name: "Позиция номенклатуры…" })).toBeNull();
-  expect(calls.some((path) => path.startsWith("/api/purchasing"))).toBe(false);
 });

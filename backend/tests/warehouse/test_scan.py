@@ -1,6 +1,5 @@
-"""Stage option warehouse.scan: GET /api/stock/scan — a ГРН (package, case, look-alikes, Russian layout) or a place."""
+"""Скан: GET /api/stock/scan — a ГРН (package, case, look-alikes, Russian layout) or a place."""
 
-import json
 from decimal import Decimal
 
 import pytest
@@ -8,17 +7,9 @@ import pytest
 from app.main import app
 from app.modules.warehouse.domain import StockLot
 from app.modules.warehouse.scan import parse_scan, place_matches
-from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
 from tests.warehouse.test_api import warehouse_api  # noqa: F401 — fixture
-
-
-@pytest.fixture()
-def stage(monkeypatch, tmp_path):
-    path = tmp_path / "options.json"
-    monkeypatch.setenv(stage_options.ENV, str(path))
-    return lambda **options: path.write_text(json.dumps(options), encoding="utf-8")
 
 
 def _lot(grn, package="", warehouse="ЦАР", place="1F4", quantity="5") -> StockLot:
@@ -30,9 +21,8 @@ def _lot(grn, package="", warehouse="ЦАР", place="1F4", quantity="5") -> Stoc
 
 
 @pytest.fixture()
-def scan_api(warehouse_api, stage):  # noqa: F811
+def scan_api(warehouse_api):  # noqa: F811
     client, first = warehouse_api
-    stage(**{"warehouse.scan": True})
     emptied = _lot("OLD.26.0000009", place="1F4").write_off(Decimal("5"))
     with app.state.warehouse_uow_factory() as uow:
         for lot in (
@@ -105,10 +95,9 @@ def test_nothing_found_is_404_with_the_code(scan_api, code):
     assert response.json()["detail"] == f"Не найдено: {code or '—'}"
 
 
-def test_option_off_hides_the_route_after_the_gate(warehouse_api, stage):  # noqa: F811
+def test_scan_is_always_open_and_still_behind_the_warehouse_gate(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
-    stage(**{"warehouse.scan": False})
-    assert _scan(client, "FRX.26.0000001").status_code == 404
+    assert _keys(_scan(client, "FRX.26.0000001")) == [("FRX.26.0000001", "", "ЦАР")]
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Инженер", department="РНД"), email="engineer@example.test",
         roles=frozenset({"tech_lead"}), permissions={"fulfillment": "edit"},
@@ -116,9 +105,8 @@ def test_option_off_hides_the_route_after_the_gate(warehouse_api, stage):  # noq
     assert _scan(client, "FRX.26.0000001").status_code == 403
 
 
-def test_view_mode_may_scan(warehouse_api, stage):  # noqa: F811
+def test_view_mode_may_scan(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
-    stage(**{"warehouse.scan": True})
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Мастер", department="Цех"), email="master@example.test",
         roles=frozenset({"foreman"}), permissions={"warehouse": "view"},

@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { PurchasingSettings } from "./PurchasingSettings";
 import { PurchasingSuppliers } from "./PurchasingSuppliers";
-import { resetStageOptions } from "./StageOptions";
 import { innValid } from "./purchasingDirectoryApi";
 
 function json(body: unknown, status = 200) {
@@ -25,7 +24,6 @@ function principal(level: string) {
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup(); // unmount before the reset: a live tree would refetch the options without the mock
-  resetStageOptions();
 });
 
 it("lists suppliers with stars and totals", async () => {
@@ -63,6 +61,14 @@ it("opens a card with stats on a row click", async () => {
           last_purchases: [{ date: "2026-09-19", name: "Разъём XT60", article: null, quantity: "2", unit: "шт", unit_price_with_vat: "500", order_number: "З-2" }],
         },
         rfq: { sent: 2, answered: 1, quotes: 3, answered_pct: 50 },
+      });
+    }
+    // «УПД и счета» of the card are always on now (the price book is no longer behind a stage option).
+    if (String(input) === "/api/purchasing/prices/supplier/s1") {
+      return json({
+        upd: { count: 0, total_gross: 0, last_date: null, share_pct: null, recent: [] },
+        invoices: { count: 0, total: 0, unpaid_count: 0, unpaid_total: 0, last_date: null, recent: [] },
+        top_positions: [], offers: [], offers_total: 0,
       });
     }
     return json([supplier]);

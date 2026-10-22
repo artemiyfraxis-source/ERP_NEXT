@@ -2,7 +2,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
 // «Чертёж» в схеме связей грузит редактор жгута лениво: в холодном прогоне первая сборка дольше 5 с.
-vi.setConfig({ testTimeout: 45_000 });
+// Под нагрузкой полного прогона (22.10: дважды упал на 40 с) тест просто медленный — запас 120 с, не переписывание.
+vi.setConfig({ testTimeout: 120_000 });
 import { TcGenerator } from "./TcGenerator";
 import { resetPinoutHousings } from "./PinoutDiagram";
 import { resetPreviewTemplates } from "./GenDrawingPreview";
@@ -118,8 +119,8 @@ it("«Межплатная» I-DS1071 ↔ PHR-4: E4 tables for both connectors, 
 
   // «Чертёж» — тот же чертёж по форме, только просмотр: редактор открылся, на сервер ничего не записано.
   fireEvent.click(screen.getByRole("tab", { name: "Чертёж" }));
-  const view = await screen.findByRole("group", { name: "Чертёж по форме" }, { timeout: 30_000 });
-  await waitFor(() => expect(view.querySelector(".harness-root .he-host")).not.toBeNull(), { timeout: 30_000 });
+  const view = await screen.findByRole("group", { name: "Чертёж по форме" }, { timeout: 100_000 });
+  await waitFor(() => expect(view.querySelector(".harness-root .he-host")).not.toBeNull(), { timeout: 100_000 });
   expect(screen.getByText("По форме · в проект не сохранён")).toBeInTheDocument();
   expect(calls.filter((call) => call.method !== "GET" && call.path.includes("/harness"))).toEqual([]);
   // Обратно на схему — таблицы на месте.
@@ -150,8 +151,8 @@ it("a multicore cable with a shield: cores in their colours, the shield on its o
   expect(row("А1", 1).querySelector(".pin-links-swatch")!.getAttribute("fill")).not.toBe(before);
 
   fireEvent.click(screen.getByRole("tab", { name: "Чертёж" }));
-  const view = await screen.findByRole("group", { name: "Чертёж по форме" }, { timeout: 30_000 });
-  await waitFor(() => expect(view.querySelector(".harness-root .he-host")).not.toBeNull(), { timeout: 30_000 });
+  const view = await screen.findByRole("group", { name: "Чертёж по форме" }, { timeout: 100_000 });
+  await waitFor(() => expect(view.querySelector(".harness-root .he-host")).not.toBeNull(), { timeout: 100_000 });
   expect(calls.filter((call) => call.method !== "GET" && call.path.includes("/harness"))).toEqual([]);
 });
 

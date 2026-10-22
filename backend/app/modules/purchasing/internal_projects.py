@@ -1,4 +1,4 @@
-"""«Внутренние проекты» (stage option projects.internal): projects of the company itself, numbered «ВП-001».
+"""«Внутренние проекты»: projects of the company itself, numbered «ВП-001».
 
 A request or a procurement line refers to one through `project_reference`, like to a commercial «591К.3»; the project's
 purpose decides the GRN prefix. Counts of lines and requests come from the workflows port, never from here."""
@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from app.modules.requests.domain import PURPOSE_ALIASES, STATIC_PURPOSES
 
-from app.shared import stage_options
 
 from . import settings as purchasing_settings
 from .infrastructure import InternalProjectRow
@@ -38,9 +37,7 @@ def _clean(value: Any) -> str | None:
 
 
 def allowed_purposes(session: Session) -> tuple[str, ...]:
-    """With the option requests.form on the purposes directory decides; off, the fixed list as before."""
-    if not stage_options.enabled("requests.form"):
-        return STATIC_PURPOSES
+    """The purposes directory decides."""
     return tuple(purchasing_settings.load(session)["purposes"])
 
 

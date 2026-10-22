@@ -213,7 +213,7 @@ export function ProcurementInWorkTable({
   renderDetail: (line: ProcurementLine) => ReactNode;
 }) {
   const [collapsed, toggleCollapsed] = useCollapsed("inwork");
-  const history = useLineHistory(); // option procurement.history
+  const history = useLineHistory();
   // Правки — только тронутые ячейки поверх свежих данных строки: дозаполнение с сервера или перечитанная
   // очередь не стирают набранное, а нетронутые ячейки показывают то, что пришло.
   const [edits, setEdits] = useState<Record<string, Partial<InWorkDraft>>>({});

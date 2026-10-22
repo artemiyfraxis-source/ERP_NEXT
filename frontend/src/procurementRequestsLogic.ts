@@ -1,4 +1,4 @@
-/* «Заявки» закупщика (option procurement.requests_rb): the rules of Roller_Buyer's RequestLinesTable without React —
+/* «Заявки» закупщика: the rules of Roller_Buyer's RequestLinesTable without React —
    statuses and their chips, the three groupings (remembered), selection by group, Shift-range and drag. */
 import { projectLabel } from "./internalProjects";
 import type { RbStatus, RqCounts, RqLine, RqProject } from "./procurementRequestsApi";

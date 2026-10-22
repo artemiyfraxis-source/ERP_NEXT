@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReceivingPage } from "./ReceivingPage";
 import type { ReceivingLine } from "./api";
-import { resetStageOptions } from "./StageOptions";
 
 const line: ReceivingLine = {
   id: "20000000-0000-0000-0000-000000000001",
@@ -48,7 +47,7 @@ const isQueue = (path: string) => path === "/api/receiving" || path.startsWith("
 
 /** Столбцы «ID» и «Назначение» скрыты по умолчанию; остальные тесты ищут строки по ID. */
 beforeEach(() => { localStorage.setItem("erp-table:receiving-v3", JSON.stringify({ hidden: [], sort: null, preset: "" })); });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); resetStageOptions(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
 
 /** Очередь — таблица; форма строки открывается кликом по строке. */
 async function openRow(legacyId = "SM-20260921-01") {
@@ -736,31 +735,19 @@ it("names the document in the success banner", async () => {
   expect(updDoneText({ url: "/f.pdf", number: " ", date: "" }, 5)).toBe("Файл УПД внесён: 5 позиций");
 });
 
-it("shows the nomenclature item under the line name only when references.items is on", async () => {
+it("shows the nomenclature item under the line name", async () => {
   const calls: string[] = [];
-  const serve = (on: boolean) => vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const serve = () => vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     calls.push(path);
-    if (path === "/api/stage-options") {
-      return json({ available: true, options: [{ key: "references.items", block: "Номенклатура", title: "t", before: "", after: "", enabled: on }] });
-    }
     if (isQueue(path)) return json({ lines: [line], next_cursor: null, total: 1 });
     if (path.startsWith("/api/purchasing/items/for-receiving")) {
       return json({ [line.id]: { item_id: "i1", name: "Разъём SMA (номенклатура)", category: "connector", via: "chain" } });
     }
     return json({});
   });
-  serve(true);
-  const first = render(<ReceivingPage />);
+  serve();
+  render(<ReceivingPage />);
   expect(await screen.findByText("Разъём SMA (номенклатура)")).toBeInTheDocument();
   expect(calls).toContain(`/api/purchasing/items/for-receiving?ids=${line.id}`);
-  first.unmount();
-  resetStageOptions();
-  vi.restoreAllMocks();
-  calls.length = 0;
-  serve(false);
-  render(<ReceivingPage />);
-  await screen.findByText("SM-20260921-01");
-  expect(screen.queryByText("Разъём SMA (номенклатура)")).toBeNull();
-  expect(calls.some((path) => path.startsWith("/api/purchasing"))).toBe(false);
 });

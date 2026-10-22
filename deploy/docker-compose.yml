@@ -34,6 +34,7 @@ services:
       # only for a first install on an empty database.
       ERP_AUTO_MIGRATE: ${ERP_AUTO_MIGRATE:-0}
       SUPPLYMAP_SOURCE_REPOSITORY: /opt/supplymap
+      ERP_DEVICE_LOG_DIR: /app/data/import/devices
     volumes:
       - ${ERP_HOME:-/opt/erp}/config/secrets:/run/erp-secrets:ro
       - ${ERP_HOME:-/opt/erp}/supplymap:/opt/supplymap:ro

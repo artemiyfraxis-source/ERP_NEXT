@@ -12,7 +12,7 @@ import { OrderDocumentDialog, groupByOrder, type OrderGroup } from "./Procuremen
 import { ordersApi, type Order, type OrderColumn, type OrderFollowups, type OrderList } from "./purchasingOrdersApi";
 import { StatusChip } from "./StatusChip";
 
-/* «Счета и поставки» (stage option procurement.orders; Roller_Buyer OrdersPage): заказы поставщикам доской или таблицей
+/* «Счета и поставки» (Roller_Buyer OrdersPage): заказы поставщикам доской или таблицей
    (выбор помнится в этом браузере), «Мои / Все закупщики» (чужие — только просмотр), проект, «Дожать», «Новый счёт».
    Ссылки: `?section=procurement&tab=orders&order=<№ заказа>` — карточка заказа; `&filter=<unpaid|to_pay|waiting|shipped|
    late|stocked>` — таблица с этим отбором. */
@@ -177,7 +177,7 @@ const FILTER_LABEL = Object.fromEntries(ORDER_FILTERS.map((filter) => [filter.ke
 export function PurchasingOrders({ readOnly = false, onOpenUpd, onOpenRfq }: {
   readOnly?: boolean; onOpenUpd?: (id: string) => void; onOpenRfq?: (rfqId: string) => void;
 } = {}) {
-  useInternalProjects(); // option projects.internal: «ВП-001 · Название»
+  useInternalProjects(); // «ВП-001 · Название»
   const [scope, setScopeState] = useState<Scope>(() => (readOnly ? "all" : stored(SCOPE_KEY, ["mine", "all"] as const, "mine")));
   const [view, setViewState] = useState<View>(() => {
     const filter = urlParam("filter");

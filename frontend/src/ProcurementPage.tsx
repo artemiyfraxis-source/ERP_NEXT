@@ -23,7 +23,6 @@ import { ProcurementKpi } from "./ProcurementKpi";
 import { ProcurementRequests } from "./ProcurementRequests";
 import { ProcurementToday } from "./ProcurementToday";
 import { projectLabel, useInternalProjects } from "./internalProjects";
-import { useStageOption } from "./StageOptions";
 import { PurchasingCatalog } from "./PurchasingCatalog";
 import { PurchasingDocChain } from "./PurchasingDocChain";
 import { PurchasingDocSearch } from "./PurchasingDocSearch";
@@ -156,25 +155,10 @@ function initialTab(): ProcurementTab | null {
 /** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
  *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork). */
 export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly?: boolean; buyerName?: string } = {}) {
-  // Stage options: «Сегодня» (first, and the default only when on; the buyer's own list, so not in view mode),
-  // «Показатели», and the purchasing hybrid (Roller_Buyer): requests for quotes, supplier and item directories, settings.
-  useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the project columns
-  const todayOption = useStageOption("procurement.today");
-  const todayOn = todayOption && !readOnly;
-  const kpiOn = useStageOption("procurement.kpi");
-  const requestsOn = useStageOption("procurement.requests_rb"); // «Заявки» закупщика (Roller_Buyer)
-  const rfqOn = useStageOption("procurement.rfq");
-  const directoryOn = useStageOption("references.suppliers");
-  const itemsOn = useStageOption("references.items");
-  const priceBookOn = useStageOption("references.price_book");
-  const updOn = useStageOption("documents.upd");
-  const chainOn = useStageOption("documents.chain");
-  const ordersOn = useStageOption("procurement.orders");
-  const settingsOn = rfqOn || directoryOn || itemsOn || todayOption; // «Сегодня»: delivery and lead-time windows
-  const shown: Record<string, boolean> = {
-    today: todayOn, requests: requestsOn, kpi: kpiOn, rfq: rfqOn, orders: ordersOn, directory: directoryOn, items: itemsOn, catalog: priceBookOn, settings: settingsOn,
-    upd: updOn, invoices: chainOn, chain: chainOn, docsearch: chainOn,
-  };
+  // «Сегодня» — первая вкладка и вкладка по умолчанию (список самого закупщика, поэтому не в режиме просмотра).
+  useInternalProjects(); // «ВП-001 · Название» in the project columns
+  const todayOn = !readOnly;
+  const shown: Record<string, boolean> = { today: todayOn };
   const [picked, setPicked] = useState<ProcurementTab | null>(initialTab);
   // Своих и свободных позиций нет — очереди пусты: первым открывается «Весь лист», а не пустой экран (аудит 10.10, СН-1).
   const [autoOpened, setAutoOpened] = useState(false);
@@ -184,26 +168,25 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
     pickedByHand.current = true; setAutoOpened(false); setPicked(next);
     if (next === "upd") setUpdFocus(undefined); // the tab itself opens the list, not the last card
   };
-  const openUpd = updOn ? (id: string) => { pick("upd"); setUpdFocus(id); } : undefined;
+  const openUpd = (id: string) => { pick("upd"); setUpdFocus(id); };
   useEffect(() => {
-    if (!ordersOn) return;
     const follow = () => { if (urlParam("tab") === "orders") { pickedByHand.current = true; setAutoOpened(false); setPicked("orders"); } };
     window.addEventListener("popstate", follow);
     return () => window.removeEventListener("popstate", follow);
-  }, [ordersOn]);
+  }, []);
   const openSheetWhenIdle = () => {
     if (pickedByHand.current) return;
     setAutoOpened(true);
     setPicked("sheet");
   };
-  // The sheet opened by itself (empty queues while the options were still loading) gives way to «Сегодня».
+  // The sheet opened by itself (empty queues while the lists were still loading) gives way to «Сегодня».
   const tab: ProcurementTab = picked && shown[picked] === false ? "queues"
     : autoOpened && todayOn ? "today" : picked ?? (todayOn ? "today" : "queues");
   const groups: Array<Array<[ProcurementTab, string, boolean]>> = [
-    [["today", "Сегодня", todayOn], ["requests", "Заявки", requestsOn], ["rfq", "Запросы КП", rfqOn], ["orders", "Счета и поставки", ordersOn]],
-    [["queues", "Очереди", true], ["sheet", "Весь лист", true], ["suppliers", "По поставщикам", true], ["kpi", "Показатели", kpiOn]],
-    [["directory", "Поставщики", directoryOn], ["items", "Номенклатура", itemsOn], ["catalog", "Каталог закупок", priceBookOn], ["settings", "Настройки", settingsOn]],
-    [["upd", "УПД", updOn], ["invoices", "Счета Kaiten", chainOn], ["chain", "Цепочка документов", chainOn], ["docsearch", "Поиск по документам", chainOn]],
+    [["today", "Сегодня", todayOn], ["requests", "Заявки", true], ["rfq", "Запросы КП", true], ["orders", "Счета и поставки", true]],
+    [["queues", "Очереди", true], ["sheet", "Весь лист", true], ["suppliers", "По поставщикам", true], ["kpi", "Показатели", true]],
+    [["directory", "Поставщики", true], ["items", "Номенклатура", true], ["catalog", "Каталог закупок", true], ["settings", "Настройки", true]],
+    [["upd", "УПД", true], ["invoices", "Счета Kaiten", true], ["chain", "Цепочка документов", true], ["docsearch", "Поиск по документам", true]],
   ];
   const visibleGroups = groups.map((group) => group.filter(([, , on]) => on)).filter((group) => group.length);
   return (
@@ -221,17 +204,17 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
         ))}
       </div>
       {tab === "sheet" && autoOpened && <p className="page-sub procurement-auto-note">У вас нет позиций в работе и свободных позиций нет — показан весь лист. Свои позиции появятся во вкладке «Очереди».</p>}
-      {tab === "today" && <ProcurementToday ordersOn={ordersOn} />}
+      {tab === "today" && <ProcurementToday ordersOn />}
       {tab === "requests" && <ProcurementRequests readOnly={readOnly} />}
       {tab === "kpi" && <ProcurementKpi />}
       {tab === "rfq" && <PurchasingRfq readOnly={readOnly} />}
-      {tab === "orders" && <PurchasingOrders readOnly={readOnly} onOpenUpd={openUpd} onOpenRfq={rfqOn ? (id) => openRfq(id) : undefined} />}
+      {tab === "orders" && <PurchasingOrders readOnly={readOnly} onOpenUpd={openUpd} onOpenRfq={(id) => openRfq(id)} />}
       {tab === "directory" && <PurchasingSuppliers readOnly={readOnly} onOpenUpd={openUpd} />}
       {tab === "items" && <PurchasingItems readOnly={readOnly} onOpenUpd={openUpd} />}
       {tab === "catalog" && <PurchasingCatalog readOnly={readOnly} onOpenUpd={openUpd} />}
       {tab === "settings" && <PurchasingSettings readOnly={readOnly} />}
       {tab === "upd" && <PurchasingUpd readOnly={readOnly} focusId={updFocus}
-        extraBlocks={chainOn ? (documentId) => <UpdInvoicesBlock documentId={documentId} readOnly={readOnly} /> : undefined} />}
+        extraBlocks={(documentId) => <UpdInvoicesBlock documentId={documentId} readOnly={readOnly} />} />}
       {tab === "invoices" && <PurchasingInvoices readOnly={readOnly} onOpenUpd={openUpd} />}
       {tab === "chain" && <PurchasingDocChain readOnly={readOnly} onOpenUpd={openUpd} />}
       {tab === "docsearch" && <PurchasingDocSearch readOnly={readOnly} onOpenUpd={openUpd} />}
@@ -680,10 +663,9 @@ function ProcurementQueues({ readOnly, buyerName, onIdle, onOpenSheet }: { readO
   };
   const bulkOf = (block: BulkBlock) => ({ bulk: bulk?.block === block ? bulk : null, onCloseBulk: () => setBulk(null) });
   const stageProps = { disabled: interactionLocked, busyId, editing };
-  const dense = useStageOption("procurement.dense");
 
   return (
-    <section className={dense ? "page proc-dense" : "page"}>
+    <section className="page proc-dense">
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner">{notice}</div>}
       {warnings.length > 0 && (

@@ -1,10 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Principal, WarehouseLot } from "./api";
-import { EquipmentPage } from "./EquipmentPage";
-import { PrinterSettingsCard, ReceiptLabels, printResultText } from "./LabelPrint";
-import { visibleNav } from "./navigation";
-import { resetStageOptions } from "./StageOptions";
+import type { WarehouseLot } from "./api";
+import { PrinterSettingsCard, ReceiptLabels, minutesSince, printResultText } from "./LabelPrint";
 import { WarehousePage } from "./WarehousePage";
 
 const lot: WarehouseLot = {
@@ -38,136 +35,177 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-// Options must be forgotten after the components that read them are gone.
-afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); resetStageOptions(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 type Call = { method: string; path: string; body?: unknown };
 
-function stage(enabled: string[], routes: Record<string, (call: Call) => Response> = {}) {
+const AGENT_OK = { last_seen: new Date().toISOString(), host: "SKLAD-PC", printer: "TSC MB341", queue: 0, last_error: "", last_job: null };
+
+function stage(routes: Record<string, (call: Call) => Response> = {}) {
   const calls: Call[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const call = { method: init?.method ?? "GET", path: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined };
     calls.push(call);
-    if (call.path === "/api/stage-options") {
-      return json({ available: true, options: ["warehouse.scan", "warehouse.labels"].map((key) => (
-        { key, block: "Склад", title: "t", before: "", after: "", enabled: enabled.includes(key) })) });
-    }
     if (call.path.split("?")[0] === "/api/stock" && call.method === "GET") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
     const route = routes[`${call.method} ${call.path}`];
     if (route) return route(call);
+    if (call.path === "/api/stock/labels/agent/status") return json(AGENT_OK);
     return json({ detail: `Unexpected request: ${call.path}` }, 500);
   });
   return calls;
 }
 
-const saved = { status: "saved", reason: "Принтер не выбран в настройках — задание сохранено, напечатайте вручную", file: "C:\\stage\\print\\2026-10-19T10-00-00-000000-FRX.26.0000001.prn", copies: 2 };
+const queued = { status: "queued", reason: "В очереди принтера.", file: "job-1", copies: 2, job_id: "job-1" };
 
-it("words of the result are Roller_Buyer's", () => {
+it("words of the result: queued, printed", () => {
+  expect(printResultText(queued as never)).toBe("В очереди принтера.");
   expect(printResultText({ status: "printed", reason: null, file: "/x/a.prn", copies: 3 })).toBe("Отправлено на принтер: 3 шт.");
-  expect(printResultText(saved as never)).toBe("Принтер не выбран в настройках — задание сохранено, напечатайте вручную Задание: 2026-10-19T10-00-00-000000-FRX.26.0000001.prn");
 });
 
-it("the lot card has no «Этикетка…» while the option is off", async () => {
-  stage([]);
-  render(<WarehousePage />);
-  fireEvent.click((await screen.findAllByRole("button", { name: /Показать партии/ }))[0]);
-  const card = within(await screen.findByRole("article", { name: "Партия FRX.26.0000001" }));
-  expect(card.getByRole("button", { name: "− Списать" })).toBeInTheDocument();
-  expect(card.queryByRole("button", { name: "Этикетка…" })).not.toBeInTheDocument();
+it("minutesSince counts whole minutes and tolerates a missing moment", () => {
+  expect(minutesSince(null)).toBeNull();
+  expect(minutesSince("2026-10-22T10:00:00Z", Date.parse("2026-10-22T10:02:30Z"))).toBe(2);
 });
 
-it("«Этикетка…» on the lot card shows the preview and prints the copies", async () => {
-  const calls = stage(["warehouse.labels"], {
-    [`POST /api/stock/batches/${lot.id}/label`]: () => json(saved),
-  });
-  render(<WarehousePage />);
+async function openLotDialog() {
   fireEvent.click((await screen.findAllByRole("button", { name: /Показать партии/ }))[0]);
   const card = within(await screen.findByRole("article", { name: "Партия FRX.26.0000001" }));
   fireEvent.click(await card.findByRole("button", { name: "Этикетка…" }));
+  return within(await screen.findByRole("dialog", { name: "Этикетка" }));
+}
 
-  const dialog = within(await screen.findByRole("dialog", { name: "Этикетка" }));
+it("«Этикетка…» on the lot card prints the copies and shows «В очереди принтера» as a success line", async () => {
+  const calls = stage({ [`POST /api/stock/batches/${lot.id}/label`]: () => json(queued) });
+  render(<WarehousePage />);
+  const dialog = await openLotDialog();
   expect(dialog.getByRole("img", { name: "Этикетка партии" }).getAttribute("src")).toMatch(new RegExp(`^/api/stock/batches/${lot.id}/label\\.png\\?t=`));
   fireEvent.change(dialog.getByLabelText("Копий"), { target: { value: "2" } });
   fireEvent.click(dialog.getByRole("button", { name: "Печать" }));
 
-  expect(await dialog.findByRole("status")).toHaveTextContent("Принтер не выбран в настройках — задание сохранено, напечатайте вручную Задание: 2026-10-19T10-00-00-000000-FRX.26.0000001.prn");
+  const line = await dialog.findByText("В очереди принтера.");
+  expect(line).toHaveClass("success-banner");
+  expect(dialog.queryByRole("alert")).not.toBeInTheDocument();
   expect(calls.find((call) => call.method === "POST")).toEqual({ method: "POST", path: `/api/stock/batches/${lot.id}/label`, body: { copies: 2 } });
 });
 
-it("copies outside 1–50 are stopped before anything is sent", async () => {
-  const calls = stage(["warehouse.labels"]);
+it("a queued job turns into «Напечатано» or the error once the agent reports it finished", async () => {
+  const finished = (status: string, error: string) => () => json({ ...AGENT_OK, last_job: { status, finished_at: new Date(Date.now() + 60_000).toISOString(), error } });
+  stage({ [`POST /api/stock/batches/${lot.id}/label`]: () => json(queued), "GET /api/stock/labels/agent/status": finished("printed", "") });
   render(<WarehousePage />);
-  fireEvent.click((await screen.findAllByRole("button", { name: /Показать партии/ }))[0]);
-  fireEvent.click(await within(await screen.findByRole("article", { name: "Партия FRX.26.0000001" })).findByRole("button", { name: "Этикетка…" }));
-  const dialog = within(await screen.findByRole("dialog", { name: "Этикетка" }));
+  const dialog = await openLotDialog();
+  fireEvent.click(dialog.getByRole("button", { name: "Печать" }));
+  expect(await dialog.findByText("Напечатано")).toHaveClass("success-banner");
+  cleanup();
+  vi.restoreAllMocks();
+
+  stage({ [`POST /api/stock/batches/${lot.id}/label`]: () => json(queued), "GET /api/stock/labels/agent/status": finished("failed", "Принтер не отвечает") });
+  render(<WarehousePage />);
+  const again = await openLotDialog();
+  fireEvent.click(again.getByRole("button", { name: "Печать" }));
+  expect(await again.findByRole("alert")).toHaveTextContent("Принтер не отвечает");
+});
+
+it("copies outside 1–50 are stopped before anything is sent", async () => {
+  const calls = stage();
+  render(<WarehousePage />);
+  const dialog = await openLotDialog();
   fireEvent.change(dialog.getByLabelText("Копий"), { target: { value: "51" } });
   fireEvent.click(dialog.getByRole("button", { name: "Печать" }));
   expect(await dialog.findByRole("alert")).toHaveTextContent("Копий — от 1 до 50");
   expect(calls.some((call) => call.method === "POST")).toBe(false);
 });
 
-it("the settings card lists Windows printers, saves numbers and prints a test label", async () => {
-  const calls = stage(["warehouse.labels"], {
-    "GET /api/stock/labels/settings": () => json({ settings: SETTINGS, code_types: CODE_TYPES, print_dir: "C:\\stage\\print", copies_max: 50 }),
-    "GET /api/stock/labels/printers": () => json({ printers: ["Microsoft Print to PDF", "TSC MB341"], on_windows: true }),
+const settingsRoute = { "GET /api/stock/labels/settings": () => json({ settings: SETTINGS, code_types: CODE_TYPES, print_dir: "очередь печати ERP", copies_max: 50 }) };
+
+it("the settings card has no printer list or print_dir, saves numbers and queues a test label", async () => {
+  const calls = stage({
+    ...settingsRoute,
     "PUT /api/stock/labels/settings": (call) => json({ settings: call.body }),
-    "POST /api/stock/labels/test": () => json({ status: "printed", reason: null, file: "C:\\stage\\print\\x.prn", copies: 1 }),
+    "POST /api/stock/labels/test": () => json({ ...queued, copies: 1 }),
   });
   render(<PrinterSettingsCard />);
   const card = within(await screen.findByRole("region", { name: "Печать этикеток ГРН" }));
-  const printer = await card.findByLabelText("Принтер");
-  await waitFor(() => expect(within(printer).getByRole("option", { name: "TSC MB341" })).toBeInTheDocument());
-  expect(within(printer).getByRole("option", { name: "— не выбран (задание сохраняется файлом) —" })).toBeInTheDocument();
-  expect(card.getByLabelText("Нагрев 0–15")).toHaveValue("12");
-  expect(card.getByLabelText("Скорость")).toHaveValue("2");
-  const preview = card.getByRole("img", { name: "Пробная этикетка" });
-  const before = preview.getAttribute("src");
+  expect(await card.findByLabelText("Нагрев 0–15")).toHaveValue("12");
+  expect(card.queryByLabelText("Принтер")).not.toBeInTheDocument();
+  expect(card.queryByText(/не выбран|не на Windows|очередь печати ERP|\/app\/data/)).not.toBeInTheDocument();
+  const before = card.getByRole("img", { name: "Пробная этикетка" }).getAttribute("src");
 
-  fireEvent.change(printer, { target: { value: "TSC MB341" } });
+  const format = card.getByLabelText("Формат");
+  expect(within(format).getAllByRole("option").map((option) => option.textContent)).toEqual(["58 × 30 мм", "58 × 40 мм", "100 × 50 мм"]);
+  expect(format).toHaveValue("58x30");
+  expect(card.queryByLabelText("Ширина, мм")).not.toBeInTheDocument();
+  fireEvent.change(format, { target: { value: "100x50" } });
   fireEvent.change(card.getByLabelText("Зазор, мм"), { target: { value: "2,5" } });
   fireEvent.change(card.getByLabelText("Сдвиг X, мм"), { target: { value: "-0.5" } });
   fireEvent.click(card.getByRole("button", { name: "Сохранить" }));
-
   expect(await card.findByText("Настройки сохранены")).toBeInTheDocument();
-  expect(calls.find((call) => call.method === "PUT")?.body).toEqual({ ...SETTINGS, printer_name: "TSC MB341", gap_mm: 2.5, offset_x_mm: -0.5 });
+  expect(calls.find((call) => call.method === "PUT")?.body).toEqual({ ...SETTINGS, width_mm: 100, height_mm: 50, gap_mm: 2.5, offset_x_mm: -0.5 });
   expect(card.getByRole("img", { name: "Пробная этикетка" }).getAttribute("src")).not.toBe(before);
 
   fireEvent.click(card.getByRole("button", { name: "Пробная этикетка" }));
-  await waitFor(() => expect(card.getByText("Отправлено на принтер: 1 шт.")).toBeInTheDocument());
+  expect(await card.findByText("В очереди принтера.")).toHaveClass("success-banner");
+});
+
+it("the agent block: connected, silent for minutes, never connected", async () => {
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const agent = (body: object) => ({ ...settingsRoute, "GET /api/stock/labels/agent/status": () => json({ ...AGENT_OK, ...body }) });
+  const show = async (body: object) => {
+    stage(agent(body));
+    const view = render(<PrinterSettingsCard />);
+    const block = await screen.findByRole("status", { name: "Агент печати" });
+    return { block, done: () => { view.unmount(); vi.restoreAllMocks(); } };
+  };
+
+  let shown = await show({ last_seen: ago(0), queue: 3, last_error: "Нет бумаги" });
+  expect(shown.block).toHaveTextContent("на связи · ПК SKLAD-PC, принтер TSC MB341");
+  expect(shown.block).toHaveClass("tone-ok");
+  expect(shown.block).toHaveTextContent("В очереди: 3");
+  expect(shown.block).toHaveTextContent("Нет бумаги");
+  shown.done();
+
+  shown = await show({ last_seen: ago(3) });
+  expect(shown.block).toHaveTextContent("не на связи 3 мин");
+  expect(shown.block).toHaveClass("tone-warn");
+  shown.done();
+
+  shown = await show({ last_seen: ago(12) });
+  expect(shown.block).toHaveClass("tone-danger");
+  shown.done();
+
+  shown = await show({ last_seen: null, host: "", printer: "" });
+  expect(shown.block).toHaveTextContent("ещё не подключался — установите агент");
+  expect(within(shown.block).getByRole("link", { name: "инструкция" })).toHaveAttribute("href", expect.stringContaining("tools/print-agent"));
+  expect(shown.block).toHaveTextContent("install.ps1");
+});
+
+it("the agent status is polled every 10 s while the card is open", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const calls = stage(settingsRoute);
+  const { unmount } = render(<PrinterSettingsCard />);
+  await screen.findByRole("status", { name: "Агент печати" });
+  const count = () => calls.filter((call) => call.path === "/api/stock/labels/agent/status").length;
+  const first = count();
+  await vi.advanceTimersByTimeAsync(10_100);
+  expect(count()).toBe(first + 1);
+  unmount();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(count()).toBe(first + 1);
 });
 
 it("a viewer sees the settings but no «Сохранить» or «Пробная этикетка»", async () => {
-  stage(["warehouse.labels"], {
-    "GET /api/stock/labels/settings": () => json({ settings: SETTINGS, code_types: CODE_TYPES, print_dir: "/tmp/erp-label-print", copies_max: 50 }),
-    "GET /api/stock/labels/printers": () => json({ printers: [], on_windows: false }),
-  });
+  stage(settingsRoute);
   render(<PrinterSettingsCard readOnly />);
   const card = within(await screen.findByRole("region", { name: "Печать этикеток ГРН" }));
-  expect(await card.findByLabelText("Принтер")).toBeDisabled();
+  expect(await card.findByLabelText("Нагрев 0–15")).toBeDisabled();
   expect(card.queryByRole("button", { name: "Сохранить" })).not.toBeInTheDocument();
   expect(card.queryByRole("button", { name: "Пробная этикетка" })).not.toBeInTheDocument();
-  expect(await card.findByText(/не на Windows/)).toBeInTheDocument();
 });
 
-it("«Оборудование» has no label card while the option is off, and the menu hides the section", async () => {
-  stage([]);
-  render(<EquipmentPage />);
-  expect(await screen.findByRole("heading", { name: "Оборудование", level: 1 })).toBeInTheDocument();
-  await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/stage-options", expect.anything()));
-  expect(screen.queryByRole("region", { name: "Печать этикеток ГРН" })).not.toBeInTheDocument();
-
-  const principal = { permissions: { warehouse: "edit" }, roles: ["receiver"] } as unknown as Principal;
-  expect(visibleNav(principal).some((item) => item.id === "equipment")).toBe(false);
-  expect(visibleNav(principal, new Set(["warehouse.labels"])).some((item) => item.id === "equipment")).toBe(true);
-  expect(visibleNav(principal, new Set(["warehouse.tsd"])).some((item) => item.id === "equipment")).toBe(true);
-  expect(visibleNav({ ...principal, permissions: {} } as Principal, new Set(["warehouse.labels"])).some((item) => item.id === "equipment")).toBe(false);
-});
-
-it("after receiving, each new lot is found by its ГРН and printed with its own copies", async () => {
-  const calls = stage(["warehouse.labels"], {
+it("after receiving, each new lot is found by its ГРН and queued with its own copies", async () => {
+  const calls = stage({
     "GET /api/stock/labels/lot?warehouse=%D0%A6%D0%90%D0%A0&grn=PPM.26.0000002&package=2": () => json({ lot_id: lot.id }),
     "GET /api/stock/labels/lot?warehouse=%D0%A6%D0%90%D0%A0&grn=PPM.26.0000003&package=": () => json({ detail: "Партия ещё не на складе" }, 404),
-    [`POST /api/stock/batches/${lot.id}/label`]: () => json({ status: "printed", reason: null, file: "x.prn", copies: 3 }),
+    [`POST /api/stock/batches/${lot.id}/label`]: () => json({ ...queued, copies: 3 }),
   });
   render(<ReceiptLabels lots={[
     { key: "a", warehouse: "ЦАР", grn: "PPM.26.0000002", package: "2", title: "Клемма", quantity: "120 шт" },
@@ -176,7 +214,7 @@ it("after receiving, each new lot is found by its ГРН and printed with its ow
   fireEvent.change(screen.getByLabelText("Копий: PPM.26.0000002 / 2"), { target: { value: "3" } });
   fireEvent.click(screen.getByRole("button", { name: "Печать всех (2)" }));
 
-  expect(await screen.findByText("Отправлено на принтер: 3 шт.")).toBeInTheDocument();
+  expect(await screen.findByText("В очереди принтера.")).toHaveClass("success-banner");
   expect(await screen.findByText("Партия ещё не на складе")).toBeInTheDocument();
   expect(calls.filter((call) => call.method === "POST")).toEqual([{ method: "POST", path: `/api/stock/batches/${lot.id}/label`, body: { copies: 3 } }]);
 });

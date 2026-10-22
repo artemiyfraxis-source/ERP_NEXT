@@ -1,4 +1,4 @@
-"""Справочник поставщиков (stage option references.suppliers)."""
+"""Справочник поставщиков."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from app.shared.http_auth import Principal, procurement_edit_principal, procurem
 from app.workflows import purchasing_procurement as port
 
 from . import suppliers
-from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
+from .deps import procurement_uow_factory, purchasing_uow_factory
 from .infrastructure import SupplierRow
 
 router = APIRouter(prefix="/api/purchasing/suppliers", tags=["purchasing"])
@@ -87,7 +87,6 @@ def list_suppliers(
     key: bool = False,
     archived: bool = False,
 ) -> list[dict[str, Any]]:
-    require_option("references.suppliers", "procurement.rfq")
     with factory() as uow:
         rows = [
             row for row in uow.session.scalars(select(SupplierRow).order_by(SupplierRow.name_key))
@@ -111,7 +110,6 @@ def list_suppliers(
 def import_from_procurement(
     request: Request, body: ImportBody, principal: Editor, factory: Factory, procurement: ProcurementFactory,
 ) -> dict[str, Any]:
-    require_option("references.suppliers")
     lines = port.supplier_lines(procurement)
     domains = port.domain_map(getattr(request.app.state, "procurement_supplier_directory", None))
     now = _now()
@@ -130,7 +128,6 @@ def import_from_procurement(
 
 @router.post("/names")
 def map_name(body: NameBody, principal: Editor, factory: Factory) -> dict[str, str]:
-    require_option("references.suppliers")
     now = _now()
     with factory() as uow:
         try:
@@ -144,7 +141,6 @@ def map_name(body: NameBody, principal: Editor, factory: Factory) -> dict[str, s
 
 @router.post("", status_code=201)
 def create_supplier(body: SupplierBody, principal: Editor, factory: Factory) -> dict[str, Any]:
-    require_option("references.suppliers")
     now = _now()
     with factory() as uow:
         try:
@@ -158,7 +154,6 @@ def create_supplier(body: SupplierBody, principal: Editor, factory: Factory) -> 
 
 @router.get("/{supplier_id}")
 def supplier_card(supplier_id: UUID, request: Request, _principal: Viewer, factory: Factory) -> dict[str, Any]:
-    require_option("references.suppliers", "procurement.rfq")
     with factory() as uow:
         try:
             row = suppliers.get(uow.session, supplier_id)
@@ -177,7 +172,6 @@ def supplier_card(supplier_id: UUID, request: Request, _principal: Viewer, facto
 
 @router.patch("/{supplier_id}")
 def update_supplier(supplier_id: UUID, body: SupplierPatch, principal: Editor, factory: Factory) -> dict[str, Any]:
-    require_option("references.suppliers")
     now = _now()
     data = body.model_dump(exclude_unset=True, exclude={"version"})
     with factory() as uow:
@@ -191,7 +185,6 @@ def update_supplier(supplier_id: UUID, body: SupplierPatch, principal: Editor, f
 
 
 def _archive(supplier_id: UUID, principal: Principal, factory: Any, archived: bool) -> dict[str, Any]:
-    require_option("references.suppliers")
     now = _now()
     with factory() as uow:
         try:

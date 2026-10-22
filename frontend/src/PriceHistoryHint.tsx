@@ -2,25 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { formatDate } from "./format";
 import { formatMoney } from "./ProcurementSheetColumns";
-import { useStageOption } from "./StageOptions";
 
-/** «Покупали ранее» (опция стенда procurement.price_history): прошлые оплаченные закупки той же позиции. */
+/** «Покупали ранее» : прошлые оплаченные закупки той же позиции. */
 export type PastPurchase = {
   line_id: string; date: string; supplier: string | null; price_with_vat: string; unit: string | null;
   quantity: string | null; order_number: string | null;
 };
 export type PriceHistory = { purchases: PastPurchase[]; delta_pct: string | null };
 
-const OPTION = "procurement.price_history";
 const BATCH = 200;
 
-/** One batch request per rendered list; option OFF — no request, empty map. */
+/** One batch request per rendered list. */
 export function usePriceHistory(ids: string[]): Record<string, PriceHistory> {
-  const enabled = useStageOption(OPTION);
   const [history, setHistory] = useState<Record<string, PriceHistory>>({});
   const key = useMemo(() => [...ids].sort().join(","), [ids]);
   useEffect(() => {
-    if (!enabled || !key) return;
+    if (!key) return;
     let alive = true;
     const wanted = key.split(",");
     void (async () => {
@@ -35,8 +32,8 @@ export function usePriceHistory(ids: string[]): Record<string, PriceHistory> {
       if (alive) setHistory(merged);
     })();
     return () => { alive = false; };
-  }, [enabled, key]);
-  return enabled ? history : {};
+  }, [key]);
+  return history;
 }
 
 function purchaseText(purchase: PastPurchase): string {

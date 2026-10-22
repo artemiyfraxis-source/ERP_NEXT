@@ -1,4 +1,4 @@
-"""«Разделить» a procurement line by quantity (option procurement.requests_rb): the request-for-quotes side.
+"""«Разделить» a procurement line by quantity: the request-for-quotes side.
 
 Roller_Buyer `splitRequestLine` with `inRfq`: the new part joins the original's request and gets a copy of every quote
 line, so each part is decided on its own; decisions are not copied (the original keeps its own). Called inside the

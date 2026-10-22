@@ -1,4 +1,4 @@
-"""HTTP of «Заявки» закупщика (stage option procurement.requests_rb): the view and its two new commands.
+"""HTTP of «Заявки» закупщика: the view and its two new commands.
 
 Reads open for a viewer (ID-6), writes take `procurement_edit_principal` — so a viewer gets 403 before the option's 404."""
 
@@ -13,7 +13,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
 from app.workflows.procurement_requests_view import (
@@ -46,15 +45,9 @@ from .requests_application import (
 from .requests_infrastructure import cancel_reasons, last_paid_purchases, view_lines
 from .requests_view import batch_lines, build_summary, line_results
 
-OPTION = "procurement.requests_rb"
 BATCH_LIMIT = 300  # requests listed without a project filter
 router = APIRouter(prefix="/api/procurement", tags=["procurement"])
 Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
-
-
-def _require_option() -> None:
-    if not stage_options.enabled(OPTION):
-        raise HTTPException(status_code=404, detail="Опция выключена")
 
 
 @router.get("/requests-view")
@@ -72,7 +65,6 @@ def requests_view(
     `batches_total` says how many); with `batch` only that batch's lines instead (plan with VAT and link, last purchase,
     free stock, request for quotes, what the viewer may do). «Мои» — the buyer's lines and the unclaimed «Новый» ones;
     «Все» — every line, read only. `line` (a `&line=` link) names its batch and project."""
-    _require_option()
     actor_id = principal.actor.id if scope == "mine" else None
     uow = uow_factory()
     with uow:
@@ -122,7 +114,6 @@ def split_quantity(
 ) -> dict:
     """«Разделить» by quantity: `quantity` goes to a new line of the same request; in a request for quotes the new line
     joins it with a copy of every quote (decisions are not copied)."""
-    _require_option()
     result = _command_errors(lambda: split_procurement_line_by_quantity(
         SplitByQuantityCommand(
             line_id=line_id, expected_version=payload.version, quantity=payload.quantity, actor=principal.actor,
@@ -153,7 +144,6 @@ def cancel_many(
 ) -> dict:
     """«Отменить выбранные» with a reason: lines that cannot be cancelled (paid, another buyer's, changed since the list
     was read, already cancelled) are skipped with the reason — never a partial failure."""
-    _require_option()
     try:
         result = _retry_transaction(lambda: cancel_procurement_lines(
             CancelManyCommand(

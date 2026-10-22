@@ -1,4 +1,4 @@
-"""«Сегодня» (option procurement.today) ↔ the requests for quotes of purchasing: what the buyer's requests still need.
+"""«Сегодня» ↔ the requests for quotes of purchasing: what the buyer's requests still need.
 
 Procurement must not import purchasing, so the page gets plain facts from here (read-only, one session, a fixed number of
 queries whatever the number of requests):

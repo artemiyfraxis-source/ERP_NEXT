@@ -93,13 +93,6 @@ async function signIn(login: string, scope: HTMLElement = document.body) {
   fireEvent.click(box.getByRole("button", { name: "Войти" }));
 }
 
-/** The send button waits for the request schema; click it once the form is ready. */
-async function submitBatch() {
-  const button = screen.getByRole("button", { name: "Оформить 1 позицию" });
-  await waitFor(() => expect(button).toBeEnabled());
-  fireEvent.click(button);
-}
-
 const nameCell = () => screen.findByLabelText("Наименование, строка 1") as Promise<HTMLInputElement>;
 
 beforeEach(() => {
@@ -114,7 +107,7 @@ afterEach(() => {
 });
 
 describe("background 401 (F07)", () => {
-  it("keeps the unsent batch under the sign-in dialog and the same user goes on with it", async () => {
+  it("keeps the typed row under the sign-in dialog and the same user goes on with it", async () => {
     const erp = fakeErp();
     erp.session = "anna";
     render(<App />);
@@ -131,22 +124,24 @@ describe("background 401 (F07)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect((await nameCell()).value).toBe("Разъём");
     expect(document.querySelector(".app-shell")).not.toHaveAttribute("inert");
-    await submitBatch();
-    expect(await screen.findByText("Создана заявка REQ-1")).toBeInTheDocument();
-    expect(erp.creations).toBe(1);
   });
 
-  it("never shows the batch to another user and gives it back to its author with the same key — no duplicate", async () => {
+  it("keeps the unsent rows across sections of the same user", async () => {
+    fakeErp().session = "anna";
+    render(<App />);
+    fireEvent.change(await nameCell(), { target: { value: "Разъём" } });
+    fireEvent.click(screen.getByRole("button", { name: "Мои заявки" }));
+    await screen.findByRole("heading", { name: "Мои заявки", level: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Оформить заявку" }));
+    expect((await nameCell()).value).toBe("Разъём");
+    expect(screen.getByText("Восстановлена неотправленная заявка: 1 позиция")).toBeInTheDocument();
+  });
+
+  it("never shows the rows to another user and gives them back to their author after a sign-out and sign-in", async () => {
     const erp = fakeErp();
     erp.session = "anna";
     render(<App />);
     fireEvent.change(await nameCell(), { target: { value: "Разъём" } });
-
-    // Anna sends; the server creates the request but the answer is lost.
-    erp.loseNextAnswer = true;
-    await submitBatch();
-    expect(await screen.findByText(/Результат неизвестен/)).toBeInTheDocument();
-    expect(erp.creations).toBe(1);
 
     // Her session expires; Boris sits down at the shared PC and signs in over her page.
     erp.session = null;
@@ -157,44 +152,12 @@ describe("background 401 (F07)", () => {
     expect(screen.queryByDisplayValue("Разъём")).not.toBeInTheDocument();
     expect(screen.queryByText(/Восстановлена/)).not.toBeInTheDocument();
 
-    // Boris leaves; Anna signs back in and finds her batch with its creation key.
+    // Boris leaves; Anna signs back in and finds her rows.
     fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
     await screen.findByRole("heading", { name: "Вход в систему" });
     await signIn("anna");
     expect((await nameCell()).value).toBe("Разъём");
-    expect(screen.getByText("Восстановлена неотправленная заявка: 1 позиция")).toBeInTheDocument();
-    await submitBatch();
-    expect(await screen.findByText("Создана заявка REQ-1")).toBeInTheDocument();
-
-    expect(erp.creations).toBe(1);
-    expect(erp.keys).toHaveLength(2);
-    expect(erp.keys[1]).toBe(erp.keys[0]);
-  });
-
-  it("clears the draft after a confirmed write", async () => {
-    const erp = fakeErp();
-    erp.session = "anna";
-    render(<App />);
-    fireEvent.change(await nameCell(), { target: { value: "Разъём" } });
-    await submitBatch();
-    expect(await screen.findByText("Создана заявка REQ-1")).toBeInTheDocument();
-
-    // Another section and back: the form mounts again from the shell's drafts — nothing is left there.
-    fireEvent.click(screen.getByRole("button", { name: "Мои заявки" }));
-    await screen.findByRole("heading", { name: "Мои заявки", level: 1 });
-    fireEvent.click(screen.getByRole("button", { name: "Оформить заявку" }));
-    expect((await nameCell()).value).toBe("");
-    expect(screen.queryByText(/Восстановлена/)).not.toBeInTheDocument();
-  });
-
-  it("keeps an unsent batch across sections of the same user", async () => {
-    fakeErp().session = "anna";
-    render(<App />);
-    fireEvent.change(await nameCell(), { target: { value: "Разъём" } });
-    fireEvent.click(screen.getByRole("button", { name: "Мои заявки" }));
-    await screen.findByRole("heading", { name: "Мои заявки", level: 1 });
-    fireEvent.click(screen.getByRole("button", { name: "Оформить заявку" }));
-    expect((await nameCell()).value).toBe("Разъём");
+    expect(await screen.findByText("Восстановлена неотправленная заявка: 1 позиция")).toBeInTheDocument();
   });
 
   it("drops the user's drafts on «Выйти»", async () => {

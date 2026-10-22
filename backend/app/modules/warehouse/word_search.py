@@ -1,5 +1,6 @@
-"""Stock search by words (stage option warehouse.word_search): every word of the query must be found in at least one
-field of the lot, in any order. Pure: no database, no options — the caller decides when to use it."""
+"""Stock search by words: every word of the query must be found in at least one field of the lot, in any order.
+A word without digits matches from the start of a word («male» does not find «female», owner); a word with digits
+(article, size, ГРН) is a substring, and against the article also without separators. Pure: no database."""
 
 from __future__ import annotations
 
@@ -49,9 +50,20 @@ def _fields(lot) -> tuple[str, ...]:
     ))
 
 
+def _word(word: str) -> Callable[[str], bool]:
+    """Where a query word is found in a folded text: digits — anywhere, letters only — from the start of a word."""
+    if any(char.isdigit() for char in word):
+        return lambda text: word in text
+    starts_a_word = re.compile(rf"(?<![^\W_]){re.escape(word)}").search
+    return lambda text: word in text and starts_a_word(text) is not None
+
+
 def words_matcher(query: str) -> Callable[[object], bool]:
     """`matches_words` with the query folded once: the predicate the stock list runs over every lot."""
-    words = [(word, article_key(word)) for word in fold(query).split()]
+    words = [
+        (_word(word), article_key(word) if any(char.isdigit() for char in word) else "")
+        for word in fold(query).split()
+    ]
     if not words:
         return lambda lot: True
 
@@ -59,12 +71,12 @@ def words_matcher(query: str) -> Callable[[object], bool]:
         fields = None
         article = fold(lot.article)
         key = article_key(lot.article)
-        for word, word_key in words:
-            if word in article or (word_key and word_key in key):
+        for found, word_key in words:
+            if found(article) or (word_key and word_key in key):
                 continue
             if fields is None:
                 fields = _fields(lot)
-            if not any(word in field for field in fields):
+            if not any(found(field) for field in fields):
                 return False
         return True
 

@@ -1,4 +1,4 @@
-"""Prices from the UPD registry, Kaiten invoices and reference prices (stage option references.price_book).
+"""Prices from the UPD registry, Kaiten invoices and reference prices.
 
 Ported from Roller_Buyer: item-card.ts, supplier-card.ts, purchase-history.ts, upd-docs.ts (catalog), item-import.ts
 (planUpdItems / applyUpdItems), domain/upd.ts and shared units. What was really paid is read from UPD lines:
