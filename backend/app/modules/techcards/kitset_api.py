@@ -859,7 +859,7 @@ def _bom(request: Request, kitset: Kitset, index: str) -> dict:
         raise HTTPException(status_code=404, detail=f"В наборе «{kitset.project}» нет сборки {index}")
     return flow.generator_bom(kitset, assembly, flow.assembly_calc_ops(
         kitset, assembly, lambda: flow.calc_sheets_reader(request.app.state), techcards_factory(request),
-    ))
+    ), flow.bom_names(kitset, references_factory(request), fulfillment_factory(request)))
 
 
 @router.post("/{project}/bom/{index}/components")

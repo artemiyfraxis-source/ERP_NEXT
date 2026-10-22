@@ -836,6 +836,8 @@ export interface ProductionShare {
   planned_finish: string | null;
   started_at: string | null;
   finished_at: string | null;
+  /** Сдано по доле (годные + брак, штуки операции); есть в списке заданий. */
+  output?: string;
 }
 
 export interface ProductionLaunchable {
@@ -4260,7 +4262,11 @@ export type ProjectTrack = { project: string; entries: ProjectTrackEntry[] };
 export type KitsetBom = {
   project: string; index: string; name: string; run: string; part_qty: string; calc_source: string;
   /** `manual` — строку добавил технолог в генераторе (не расчёт): её можно убрать, «Обновить из расчёта» её не стирает. */
-  components: Array<{ id: string; type: string; name: string; art: string; kd: string; qty: number | string; manual?: boolean }>;
+  components: Array<{
+    id: string; type: string; name: string; art: string; kd: string; qty: number | string; manual?: boolean;
+    /** Название для показа «как в КД» (справочник ERP → спецификация → склад → сайт); `name` по-прежнему читает логика генератора. */
+    title?: string; title_source?: "ref" | "stock" | "spec" | "site" | ""; title_hint?: string;
+  }>;
   calc_ops: Array<{ code: string; comp: string; n: string; l: string; req: string }>;
 };
 

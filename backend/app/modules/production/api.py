@@ -320,6 +320,9 @@ def _facts(uow, tasks, boxes=None, outputs=None) -> dict:
         fact = facts.setdefault(output.operation_id, {"good": Decimal(0), "defect": Decimal(0), "ok": Decimal(0), "closed": Decimal(0)})
         fact["good"] += output.good_quantity
         fact["defect"] += output.defect_quantity
+        # Сдано каждым монтажником (годные + брак, в штуках операции) — для остатка его доли на доске мастера.
+        by = fact.setdefault("by", {})
+        by[output.operator_id] = by.get(output.operator_id, Decimal(0)) + output.good_quantity + output.defect_quantity
     for box in (boxes if boxes is not None else uow.boxes.list(limit=100_000)):
         if box.task_id not in task_ids or box.available <= 0:
             continue
@@ -401,6 +404,9 @@ def _result(task: ProductionTask, facts: dict | None = None, delivered: int | No
                 "planned_finish": share.planned_finish.isoformat() if share.planned_finish else None,
                 "started_at": share.started_at.isoformat() if share.started_at else None,
                 "finished_at": share.finished_at.isoformat() if share.finished_at else None,
+                # Сдано по доле (штуки операции): затянувшаяся доля держит монтажника на остаток (dispatch.overrun_window).
+                **({"output": _number((facts.get(operation.id) or {}).get("by", {}).get(share.operator_id, Decimal(0)))}
+                   if facts is not None else {}),
             } for share in operation.shares],
             **(_fact_result(facts.get(operation.id), required[operation.id]) if facts is not None else {}),
         } for operation in task.operations],

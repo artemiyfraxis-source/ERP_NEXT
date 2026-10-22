@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ProductionShift, ProductionTask } from "./api";
-import { appendStart, daySlots, defaultPieces, earliestStart, remainderOf, workFinish } from "./MasterBoard";
+import {
+  appendStart, dayHours, daySlots, defaultPieces, earliestStart, overrunsOn, remainderOf, workFinish, type LoadClock,
+} from "./MasterBoard";
 
 const shift: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "7" };
 const installer = "10000000-0000-0000-0000-000000000002";
@@ -93,5 +95,61 @@ describe("сетевой график: свои этапы монтажника,
   it("ответ без входов операций — как цепочка: ждёт все меньшие номера", () => {
     const chain = { ...network, operations: network.operations.map((item) => ({ ...item, inputs: undefined })) } as unknown as ProductionTask;
     expect(clockOf(earliestStart(installer, chain, chain.operations[2], new Date("2026-09-30T09:00:00")))).toBe("15:00");
+  });
+});
+
+// Владелец, 22.10: Рыбкина взяла ПФ-12 20.10 в 12:46 (план до 21.10 17:01, норма 10 ч на 500 шт) и не сдала —
+// 22.10 её ячейка была пустой, и «Назначить» ставил новую работу с начала смены.
+describe("затянувшаяся доля занимает монтажника от «сейчас» (loadWindow)", () => {
+  const now = at("2026-10-22T09:00:00");
+  const load: LoadClock = { now, holidays: [], absences: [] };
+  const overdue = ({ output = "0", started = true, finished = false } = {}) => ({
+    id: "task-12", number: "ПЗ-0012", version: 1, created_at: "2026-10-19T09:00:00", project: "713К.2.1", item: "КБ1",
+    name: "", quantity: 500, status: "Запущено", handed_to: "", deadline: null,
+    operations: [{
+      id: "pf-12", position: 12, code: "PF", stage: "Ветвь X4 «А6», сторона А", description: "", etk_ops: [{ position: 1, code: "CUT", stage: "Резка" }],
+      seconds_per_unit: "72", setup_seconds: "0", norm_seconds: 36000, operator_ids: [installer], required_quantity: "500",
+      planned_start: "2026-10-20T12:46:00", planned_finish: "2026-10-21T17:01:00", assigned_by: "Мастер", state: Number(output) ? "в работе" : "не начата",
+      fact: { good: output, defect: "0", processed: output },
+      shares: [{
+        operator_id: installer, quantity: 500, planned_start: "2026-10-20T12:46:00", planned_finish: "2026-10-21T17:01:00",
+        started_at: started ? "2026-10-20T12:46:00" : null, finished_at: finished ? "2026-10-21T16:00:00" : null, output,
+      }],
+    }],
+  }) as unknown as ProductionTask;
+
+  it("ничего не сдано — весь день занят, место только 23.10 после остатка 10 ч", () => {
+    expect(dayHours(installer, "2026-10-22", [overdue()], shift)).toBe(0);  // без «сейчас» — только истёкший план
+    expect(dayHours(installer, "2026-10-22", [overdue()], shift, load)).toBeCloseTo(7);
+    expect(appendStart(installer, "2026-10-22", [overdue()], shift, "", now, load)).toBeNull();
+    // 10 ч чистых = 11 ч 26 мин на часах: 22.10 целиком и 23.10 до 12:26.
+    expect(clockOf(appendStart(installer, "2026-10-23", [overdue()], shift, "", now, load)!)).toBe("12:26");
+  });
+
+  it("остаток — по несданным штукам, не меньше часа работы", () => {
+    // Сдано 450: 50 × 72 с = 1 ч чистых = 1 ч 09 мин на часах.
+    expect(clockOf(appendStart(installer, "2026-10-22", [overdue({ output: "450" })], shift, "", now, load)!)).toBe("10:09");
+    // Сдано 490: 12 мин нормы, но держит час.
+    expect(clockOf(appendStart(installer, "2026-10-22", [overdue({ output: "490" })], shift, "", now, load)!)).toBe("10:09");
+  });
+
+  it("сданная и не взятая доли не занимают день", () => {
+    expect(clockOf(appendStart(installer, "2026-10-22", [overdue({ finished: true })], shift, "", now, load)!)).toBe("09:00");
+    expect(clockOf(appendStart(installer, "2026-10-22", [overdue({ started: false })], shift, "", now, load)!)).toBe("09:00");
+    expect(dayHours(installer, "2026-10-22", [overdue({ started: false })], shift, load)).toBe(0);
+  });
+
+  it("часы дня и подпись ячейки — «затянулось: ПФ-12 …»", () => {
+    const slots = daySlots(installer, "2026-10-22", [overdue({ output: "450" })], shift, "", load);
+    expect(slots[0].busy).toEqual(["затянулось: ПФ-12 · Ветвь X4 «А6», сторона А · 713К.2.1 · КБ1"]);
+    expect(slots[1].busy).toHaveLength(1);
+    expect(slots[2].busy).toHaveLength(0);
+    expect(overrunsOn(installer, "2026-10-22", [overdue()], shift, load)).toEqual(["ПФ-12 · Ветвь X4 «А6», сторона А · 713К.2.1 · КБ1"]);
+  });
+
+  it("по календарю: в отгул затянувшаяся работа ждёт монтажника", () => {
+    const away: LoadClock = { ...load, absences: [{ operator_id: installer, from_date: "2026-10-22", to_date: "2026-10-22", kind: "Отгул" }] };
+    expect(dayHours(installer, "2026-10-22", [overdue({ output: "450" })], shift, away)).toBe(0);
+    expect(clockOf(appendStart(installer, "2026-10-23", [overdue({ output: "450" })], shift, "", now, away)!)).toBe("10:09");
   });
 });

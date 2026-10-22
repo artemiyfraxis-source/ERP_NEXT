@@ -1320,6 +1320,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .login-card .logo-row .div { width: 1px; height: 22px; background: var(--border); }
 .login-card h1 { margin: 0 0 -10px; font-size: 20px; font-weight: 500; }
 .login-card .sub { margin: 0 0 6px; color: var(--muted-foreground); font-size: 13px; }
+.password-field { position: relative; display: block; }
+.password-field input { width: 100%; padding-right: 92px; }
+.password-field .password-toggle { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); min-height: 30px; padding: 0 10px; border: 0; border-radius: 6px; color: var(--primary); background: transparent; font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.password-field .password-toggle:hover { background: var(--accent); }
+.password-field .password-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+@media (pointer: coarse) { .password-field .password-toggle { min-height: 40px; } }
 .login-card label { text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
 .login-card form { display: grid; gap: 15px; }
 .login-card select { width: 100%; }

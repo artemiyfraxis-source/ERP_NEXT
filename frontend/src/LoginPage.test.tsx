@@ -48,3 +48,15 @@ it("shows the server's refusal as is", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Войти" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Неверный логин или пароль");
 });
+
+it("«Показать» reveals the typed password and «Скрыть» hides it again (owner 22.10.2026)", () => {
+  render(<LoginPage onLogin={vi.fn()} />);
+  const password = screen.getByLabelText("Пароль");
+  fireEvent.change(password, { target: { value: "secret-password" } });
+  expect(password).toHaveAttribute("type", "password");
+  fireEvent.click(screen.getByRole("button", { name: "Показать пароль" }));
+  expect(password).toHaveAttribute("type", "text");
+  expect(password).toHaveValue("secret-password");
+  fireEvent.click(screen.getByRole("button", { name: "Скрыть пароль" }));
+  expect(password).toHaveAttribute("type", "password");
+});
