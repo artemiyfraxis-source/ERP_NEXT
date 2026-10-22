@@ -18,7 +18,7 @@ from app.modules.warehouse.labels.layout import (
     qr_symbol,
     render_label,
 )
-from app.modules.warehouse.labels.settings import DEFAULT_PRINT_SETTINGS, PrintSettings
+from app.modules.warehouse.labels.settings import DEFAULT_PRINT_SETTINGS, LABEL_SIZES, PrintSettings
 from app.modules.warehouse.labels.tspl import TsplOptions, build_tspl_job, pack_for_tspl
 
 SAMPLE = GrnLabelData(
@@ -218,3 +218,58 @@ def test_settings_defaults_are_the_ones_proven_on_the_real_printer():
 def test_settings_out_of_bounds_are_refused(bad):
     with pytest.raises(ValueError):
         PrintSettings(**bad)
+
+
+# --- Label size presets (owner, 22.10.2026: «58x30, 100x50, 58x40») ---------------------------------------------------
+
+@pytest.mark.parametrize("width, height", LABEL_SIZES)
+def test_the_three_presets_are_accepted(width, height):
+    settings = PrintSettings(width_mm=width, height_mm=height)
+    assert (settings.width_mm, settings.height_mm) == (width, height)
+    assert LABEL_SIZES == ((58, 30), (58, 40), (100, 50))
+
+
+@pytest.mark.parametrize("width, height", [(58, 35), (60, 40), (100, 30), (50, 50), (100, 40), (58, 50)])
+def test_any_other_size_is_refused_in_russian(width, height):
+    with pytest.raises(ValueError, match="Формат этикетки — 58 × 30, 58 × 40 или 100 × 50 мм"):
+        PrintSettings(width_mm=width, height_mm=height)
+
+
+WIDE = GrnLabelData(
+    "FRX.26.0000041-12", "510210200", "Соединитель PicoBlade 2pin вилка на плату угловая шаг 1,25 мм (MOLEX)", "338", "шт",
+    "12/2026", date(2026, 9, 25), "1F4", "ЦАР",
+)
+
+
+@pytest.mark.parametrize("code_type", ["qr", "both", "code128"])
+def test_wide_label_is_100_by_50_with_every_field(code_type):
+    label = render_label(WIDE, PrintSettings(width_mm=100, height_mm=50, code_type=code_type))
+    assert (label.width, label.height) == (1181, 591) and label.image.mode == "1"
+    texts = label.texts
+    assert texts[:3] == ("ГРН", "FRX.26.0000041-12", "338 шт")
+    # The name in full, over up to three lines.
+    assert " ".join(texts[3:-3]) == WIDE.item_name and 1 <= len(texts) - 6 <= 3
+    assert texts[-3:] == ("510210200", "1F4 · ЦАР", "поступило 25.09.2026 · серия 12/2026")
+    assert label.qr_module_dots == (None if code_type == "code128" else 12)
+    assert label.bar_module_dots == (None if code_type == "qr" else 3)
+
+
+def test_wide_label_stays_inside_its_margins_and_the_qr_does_not_meet_the_bars():
+    label = render_label(WIDE, PrintSettings(width_mm=100, height_mm=50, code_type="both"))
+    left, top, right, bottom = Image.eval(label.image.convert("L"), lambda v: 255 - v).getbbox()
+    assert left >= 11 and top >= 11 and right <= label.width - 11 and bottom <= label.height - 11
+
+
+def test_wide_label_cuts_a_very_long_name_at_three_lines_and_skips_empty_fields():
+    data = GrnLabelData("FRX.26.0000041", "X1", "Очень длинное наименование " * 20, "1", "шт", "", None)
+    texts = render_label(data, PrintSettings(width_mm=100, height_mm=50, code_type="both")).texts
+    name_lines = [text for text in texts[3:] if text != "X1"]
+    assert len(name_lines) == 3 and name_lines[-1].endswith("…")
+    assert not any(text.startswith("поступило") for text in texts)
+
+
+def test_narrow_labels_keep_their_layouts():
+    for height, expected in ((30, 354), (40, 472)):
+        label = render_label(SAMPLE, PrintSettings(width_mm=58, height_mm=height))
+        assert (label.width, label.height) == (685, expected)
+        assert label.texts[0] == "ГРН" and label.qr_module_dots is not None

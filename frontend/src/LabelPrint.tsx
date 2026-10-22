@@ -27,6 +27,11 @@ export type AgentStatus = {
 };
 type SettingsAnswer = { settings: PrintSettings; code_types: Record<LabelCodeType, string>; copies_max: number };
 
+/** The label formats (owner, 22.10.2026), width × height in mm; the backend refuses any other pair. */
+export const LABEL_SIZES: [number, number][] = [[58, 30], [58, 40], [100, 50]];
+const sizeKey = (width: number, height: number) => `${width}x${height}`;
+const sizeText = (width: number, height: number) => `${width} × ${height} мм`;
+
 const CODE_TYPES: [LabelCodeType, string][] = [["both", "QR и Code128"], ["qr", "QR-код"], ["code128", "Штрихкод Code128"]];
 export const COPIES_MAX = 50;
 
@@ -212,12 +217,13 @@ export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }
             {CODE_TYPES.map(([key, label]) => <option key={key} value={key}>{answer.code_types[key] ?? label}</option>)}
           </select>
         </label>
-        <label>Ширина × высота, мм
-          <span className="printer-pair">
-            <input aria-label="Ширина, мм" inputMode="decimal" value={form.width_mm} onChange={set("width_mm")} />
-            <span>×</span>
-            <input aria-label="Высота, мм" inputMode="decimal" value={form.height_mm} onChange={set("height_mm")} />
-          </span>
+        <label>Формат
+          <select value={sizeKey(Number(form.width_mm), Number(form.height_mm))}
+            onChange={(event) => { const [width, height] = event.target.value.split("x"); setForm({ ...form, width_mm: width, height_mm: height }); }}>
+            {!LABEL_SIZES.some(([width, height]) => width === Number(form.width_mm) && height === Number(form.height_mm))
+              && <option value={sizeKey(Number(form.width_mm), Number(form.height_mm))}>{sizeText(Number(form.width_mm), Number(form.height_mm))}</option>}
+            {LABEL_SIZES.map(([width, height]) => <option key={sizeKey(width, height)} value={sizeKey(width, height)}>{sizeText(width, height)}</option>)}
+          </select>
         </label>
         <label>dpi
           <select value={form.dpi} onChange={set("dpi")}>

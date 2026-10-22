@@ -130,11 +130,16 @@ it("the settings card has no printer list or print_dir, saves numbers and queues
   expect(card.queryByText(/не выбран|не на Windows|очередь печати ERP|\/app\/data/)).not.toBeInTheDocument();
   const before = card.getByRole("img", { name: "Пробная этикетка" }).getAttribute("src");
 
+  const format = card.getByLabelText("Формат");
+  expect(within(format).getAllByRole("option").map((option) => option.textContent)).toEqual(["58 × 30 мм", "58 × 40 мм", "100 × 50 мм"]);
+  expect(format).toHaveValue("58x30");
+  expect(card.queryByLabelText("Ширина, мм")).not.toBeInTheDocument();
+  fireEvent.change(format, { target: { value: "100x50" } });
   fireEvent.change(card.getByLabelText("Зазор, мм"), { target: { value: "2,5" } });
   fireEvent.change(card.getByLabelText("Сдвиг X, мм"), { target: { value: "-0.5" } });
   fireEvent.click(card.getByRole("button", { name: "Сохранить" }));
   expect(await card.findByText("Настройки сохранены")).toBeInTheDocument();
-  expect(calls.find((call) => call.method === "PUT")?.body).toEqual({ ...SETTINGS, gap_mm: 2.5, offset_x_mm: -0.5 });
+  expect(calls.find((call) => call.method === "PUT")?.body).toEqual({ ...SETTINGS, width_mm: 100, height_mm: 50, gap_mm: 2.5, offset_x_mm: -0.5 });
   expect(card.getByRole("img", { name: "Пробная этикетка" }).getAttribute("src")).not.toBe(before);
 
   fireEvent.click(card.getByRole("button", { name: "Пробная этикетка" }));
