@@ -1,7 +1,6 @@
 """«Заявки» закупщика over HTTP (option procurement.requests_rb): the view with RB statuses, «Разделить» by quantity
 with the request for quotes copied, «Отменить выбранные» with a reason and skips."""
 
-import json
 from decimal import Decimal
 from uuid import uuid4
 
@@ -12,7 +11,6 @@ from app.main import app
 from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
 from app.modules.purchasing.infrastructure import QuoteLineRow, RfqLineRow, RfqSupplierLineRow
-from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow
 from tests.factories import Actor
@@ -27,12 +25,6 @@ def api(rfq_api):  # noqa: F811
     app.state.procurement_stock_uow_factory = lambda: SqlAlchemyProcurementStockUnitOfWork(sessions)
     yield client, lines, sessions
     del app.state.procurement_stock_uow_factory
-
-
-def _options(monkeypatch, tmp_path, on: bool = True) -> None:
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"procurement.rfq": True, "procurement.history": True, "procurement.requests_rb": on}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
 
 
 def _view(client, **params) -> dict:
@@ -59,18 +51,8 @@ def _version(sessions, line_id) -> int:
         return session.get(ProcurementLineRow, line_id).version
 
 
-def test_option_off_answers_404(api, monkeypatch, tmp_path):
-    client, lines, _ = api
-    _options(monkeypatch, tmp_path, on=False)
-    assert client.get(VIEW).status_code == 404
-    assert client.post(f"/api/procurement/{lines[0].id}/split-qty", json={"version": 1, "quantity": "1"}).status_code == 404
-    body = {"lines": [{"id": str(lines[0].id), "version": 1}], "reason": "не закупаем"}
-    assert client.post("/api/procurement/cancel-many", json=body).status_code == 404
-
-
-def test_view_groups_by_project_and_batch_with_rb_statuses(api, monkeypatch, tmp_path):
+def test_view_groups_by_project_and_batch_with_rb_statuses(api):
     client, lines, sessions = api
-    _options(monkeypatch, tmp_path)
     summary = _view(client)
     # No project number and no purpose lookup wired in the test app: the purpose is НАЗНАЧЕНИЕ without «.NNN».
     assert [(p["key"], p["kind"], p["lines"], p["counts"]) for p in summary["projects"]] == [
@@ -103,18 +85,16 @@ def test_view_groups_by_project_and_batch_with_rb_statuses(api, monkeypatch, tmp
     assert focus == {"project": "RND", "batch": "RND|rnd.002"}
 
 
-def test_another_buyer_sees_only_his_lines_and_unclaimed_new_ones(api, monkeypatch, tmp_path):
+def test_another_buyer_sees_only_his_lines_and_unclaimed_new_ones(api):
     client, lines, sessions = api
-    _options(monkeypatch, tmp_path)
     _as("Сидоров")
     assert _view(client)["batches"] == []
     assert len(_view(client, scope="all")["batches"]) == 2
     _as("Петров")
 
 
-def test_split_by_quantity_copies_the_request_line_and_its_quotes(api, monkeypatch, tmp_path):
+def test_split_by_quantity_copies_the_request_line_and_its_quotes(api):
     client, lines, sessions = api
-    _options(monkeypatch, tmp_path)
     _quantities(sessions, lines[:1], "10")
     rfq = _rfq(client, lines)
     rfq_line = next(item for item in client.get(f"{BASE}/{rfq['id']}").json()["lines"]
@@ -161,9 +141,8 @@ def test_split_by_quantity_copies_the_request_line_and_its_quotes(api, monkeypat
     assert any(event["title"] == "Отделена от строки" for event in created_history)
 
 
-def test_split_outside_a_request_keeps_the_supplier_and_only_the_owner_splits(api, monkeypatch, tmp_path):
+def test_split_outside_a_request_keeps_the_supplier_and_only_the_owner_splits(api):
     client, lines, sessions = api
-    _options(monkeypatch, tmp_path)
     _quantities(sessions, lines[1:], "4")
     with sessions() as session:
         session.get(ProcurementLineRow, lines[1].id).supplier = "ООО Своё"
@@ -179,9 +158,8 @@ def test_split_outside_a_request_keeps_the_supplier_and_only_the_owner_splits(ap
     assert done.json()["created"]["status"] == "Готов к запросу"
 
 
-def test_cancel_many_keeps_the_reason_and_skips_what_cannot_go(api, monkeypatch, tmp_path):
+def test_cancel_many_keeps_the_reason_and_skips_what_cannot_go(api):
     client, lines, sessions = api
-    _options(monkeypatch, tmp_path)
     first, second = (_version(sessions, line.id) for line in lines)
     with sessions() as session:
         session.get(ProcurementLineRow, lines[1].id).status = "В пути"
@@ -217,9 +195,8 @@ def test_cancel_many_keeps_the_reason_and_skips_what_cannot_go(api, monkeypatch,
     assert any(event["title"] == "Отменена" and "причина: не закупаем" in event["details"] for event in history)
 
 
-def test_cancel_many_skips_another_buyers_line(api, monkeypatch, tmp_path):
+def test_cancel_many_skips_another_buyers_line(api):
     client, lines, sessions = api
-    _options(monkeypatch, tmp_path)
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Сидоров", department="Закупки"), email="s@example.test", roles=frozenset({"buyer"}),
         permissions={"procurement": "edit"},
@@ -230,11 +207,10 @@ def test_cancel_many_skips_another_buyers_line(api, monkeypatch, tmp_path):
     _as("Петров")
 
 
-def test_without_a_project_only_the_newest_requests_are_listed(api, monkeypatch, tmp_path):
+def test_without_a_project_only_the_newest_requests_are_listed(api, monkeypatch):
     from app.modules.procurement import requests_api
 
     client, lines, _ = api
-    _options(monkeypatch, tmp_path)
     monkeypatch.setattr(requests_api, "BATCH_LIMIT", 1)
     listed = _view(client)
     assert (len(listed["batches"]), listed["batches_total"]) == (1, 2)
@@ -245,14 +221,13 @@ def test_without_a_project_only_the_newest_requests_are_listed(api, monkeypatch,
     assert set(only_lines) == {"scope", "batch", "lines"} and len(only_lines["lines"]) == 1
 
 
-def test_order_facts_of_the_orders_board_show_in_the_statuses(api, monkeypatch, tmp_path):
+def test_order_facts_of_the_orders_board_show_in_the_statuses(api):
     """«В оплате» and «В доставке» come from «Счета и поставки» (order facts), as on Roller_Buyer's request page."""
     from datetime import date, datetime
 
     from app.modules.purchasing.infrastructure import OrderFactRow
 
     client, lines, sessions = api
-    _options(monkeypatch, tmp_path)
     with sessions() as session:
         for line, status in zip(lines, ("В оплату", "В пути")):
             row = session.get(ProcurementLineRow, line.id)

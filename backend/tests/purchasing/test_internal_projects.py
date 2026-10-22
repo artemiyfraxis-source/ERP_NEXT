@@ -1,7 +1,6 @@
 """«Внутренние проекты» (stage option projects.internal) over HTTP: numbering, edit, close/reopen, the option gate,
 requests accepting only open projects, the schema group and the GRN prefix by the project's purpose."""
 
-import json
 from datetime import datetime
 from uuid import uuid4
 
@@ -14,8 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.modules.purchasing.infrastructure import SqlAlchemyPurchasingUnitOfWork
 from app.modules.requests.api import moscow_now
-from app.modules.requests.infrastructure import RequestRow, SqlAlchemyUnitOfWork
-from app.shared import stage_options
+from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork
 from app.shared.persistence import AuditEventRow, create_schema
 from app.shared.http_auth import Principal, authenticated_principal
 from app.workflows.project_registry import InternalAwareProjectRegistry
@@ -33,19 +31,13 @@ def _as(permissions: dict) -> None:
     )
 
 
-def _option(monkeypatch, tmp_path, on: bool) -> None:
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"projects.internal": on}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
-
-
 class PlanRegistry:
     def open_projects(self):
         return ["591К.3"]
 
 
 @pytest.fixture()
-def internal_api(monkeypatch, tmp_path):
+def internal_api():
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
@@ -54,7 +46,6 @@ def internal_api(monkeypatch, tmp_path):
     app.state.project_registry = InternalAwareProjectRegistry(PlanRegistry(), app.state.purchasing_uow_factory)
     _as({"procurement": "edit", "newrequest": "edit", "requests": "view"})
     app.dependency_overrides[moscow_now] = lambda: NOW
-    _option(monkeypatch, tmp_path, True)
     yield TestClient(app), sessions
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
@@ -119,16 +110,11 @@ def test_list_puts_open_first_with_counts(internal_api):
     assert listed[1]["closed"] is True and two["number"] == "ВП-002"
 
 
-def test_option_off_is_404_but_only_after_the_gate(internal_api, monkeypatch, tmp_path):
+def test_the_gate_refuses_strangers_and_viewers_cannot_write(internal_api):
     client, _ = internal_api
-    _option(monkeypatch, tmp_path, False)
-    assert client.get(BASE).status_code == 404
-    assert client.post(BASE, json={"name": "x", "purpose": "RND"}).status_code == 404
     _as({})
     assert client.get(BASE).status_code == 403
     _as({"requests": "view"})
-    assert client.get(BASE).status_code == 404
-    _option(monkeypatch, tmp_path, True)
     assert client.get(BASE).status_code == 200
     assert client.post(BASE, json={"name": "x", "purpose": "RND"}).status_code == 403  # viewing is not editing
 
@@ -163,16 +149,3 @@ def test_the_request_schema_lists_internal_projects_in_both_places(internal_api)
     assert open_project["number"] == "ВП-001"
 
 
-def test_with_the_option_off_the_old_behaviour_stays(internal_api, monkeypatch, tmp_path):
-    client, _ = internal_api
-    _create(client)
-    _option(monkeypatch, tmp_path, False)
-    schema = client.get("/api/requests/schema").json()
-    assert schema["projects"] == ["591К.3"] and schema["internal_projects"] == []
-    refused = client.post(
-        "/api/requests", headers={"Idempotency-Key": "off"},
-        json={"requests": [{**request_payload(), "project_reference": "ВП-001"}]},
-    )
-    assert refused.status_code == 422 and "№ ПРОЕКТА" in refused.json()["detail"]
-    with internal_api[1]() as session:
-        assert session.scalars(select(RequestRow)).first() is None

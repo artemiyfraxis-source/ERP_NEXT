@@ -13,14 +13,12 @@ from pydantic import BaseModel
 from app.shared.events import AuditEvent
 from app.shared.http_auth import Principal, procurement_view_principal
 from app.workflows.purchasing_internal_projects import purposes_in_use
-from app.workflows.stage_options_api import admin_principal
 
 from . import settings
-from .deps import purchasing_uow_factory, require_option
+from .deps import admin_principal, purchasing_uow_factory
 
 router = APIRouter(prefix="/api/purchasing/settings", tags=["purchasing"])
 
-OPTIONS = ("procurement.rfq", "references.suppliers", "references.items", "procurement.today")
 # One aggregate for every settings change in the audit log.
 SETTINGS_AGGREGATE_ID = UUID("00000000-0000-0000-0000-0000000000a1")
 
@@ -50,7 +48,6 @@ def list_settings(
     _principal: Annotated[Principal, Depends(procurement_view_principal)],
     factory: Annotated[Any, Depends(purchasing_uow_factory)],
 ) -> list[dict[str, Any]]:
-    require_option(*OPTIONS)
     with factory() as uow:
         return _rows(settings.load(uow.session))
 
@@ -61,7 +58,6 @@ def save_settings(
     principal: Annotated[Principal, Depends(admin_principal)],
     factory: Annotated[Any, Depends(purchasing_uow_factory)],
 ) -> list[dict[str, Any]]:
-    require_option(*OPTIONS)
     now = datetime.now(timezone.utc)
     with factory() as uow:
         before = settings.load(uow.session)

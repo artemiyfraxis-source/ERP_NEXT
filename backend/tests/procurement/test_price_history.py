@@ -1,9 +1,7 @@
-import json
 from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from app.main import app
 from app.modules.procurement.application import consume_procurement_requested
 from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchemyProcurementUnitOfWork
 from app.modules.procurement.price_history import (
@@ -13,7 +11,6 @@ from app.modules.procurement.price_history import (
     past_purchases,
     unit_price_with_vat,
 )
-from app.shared import stage_options
 
 from .test_api import message, procurement_api  # noqa: F401
 
@@ -71,15 +68,9 @@ def test_gross_from_net_and_vat_and_foreign_conversion():
     assert foreign == Decimal("106.50")
 
 
-def _options(monkeypatch, tmp_path, on):
-    path = tmp_path / "o.json"
-    path.write_text(json.dumps({"procurement.price_history": on}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
 
 
-
-
-def test_api_404_when_off_and_history_when_on(procurement_api, monkeypatch, tmp_path):
+def test_api_answers_price_history(procurement_api):
     client, line, sessions = procurement_api
     second = consume_procurement_requested(message(2), SqlAlchemyProcurementUnitOfWork(sessions))
     taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id), str(second.id)]})
@@ -97,11 +88,6 @@ def test_api_404_when_off_and_history_when_on(procurement_api, monkeypatch, tmp_
         cur.actual_unit = "шт"
         s.commit()
 
-    _options(monkeypatch, tmp_path, False)
-    assert client.get(f"/api/procurement/{second.id}/price-history").status_code == 404
-    assert client.post("/api/procurement/price-history", json={"line_ids": []}).status_code == 404
-
-    _options(monkeypatch, tmp_path, True)
     one = client.get(f"/api/procurement/{second.id}/price-history")
     assert one.status_code == 200, one.text
     assert one.json()["delta_pct"] == "8.0"

@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
 from app.workflows import purchasing_orders as port
@@ -26,10 +25,9 @@ from app.workflows.procurement_today import order_followups as today_followups
 
 from . import orders as service
 from . import order_upds
-from .deps import purchasing_uow_factory, require_option
+from .deps import purchasing_uow_factory
 from .infrastructure import ORDER_NOTE_MAX, SHIPMENT_NOTE_MAX
 
-OPTION = "procurement.orders"
 
 router = APIRouter(prefix="/api/purchasing/orders", tags=["purchasing"])
 
@@ -58,7 +56,6 @@ def list_orders(
 ) -> dict:
     """Every order of the buyer (`mine`) or of every buyer (`all`), lines grouped, column computed, facts attached.
     A fixed number of queries whatever the number of orders (see app/workflows/purchasing_orders.py)."""
-    require_option(OPTION)
     uow = make_uow()
     with uow:  # the facts rows are read inside: the unit of work expires them on exit
         lines = port.order_lines(uow.session, buyer_id=principal.actor.id if scope == "mine" else None)
@@ -90,7 +87,6 @@ def order_followups(principal: Viewer, make_uow: Uow, now: Now) -> dict:
     """«Дожать»: the buyer's own requests for quotes nobody answered, deliveries late or due, invoices not paid,
     suppliers chosen with no invoice yet — the rules of «Сегодня» (`procurement.today.followups`), grouped per order and
     per request."""
-    require_option(OPTION)
     uow = make_uow()
     with uow:
         return today_followups(uow.session, principal.actor.id, now.date())
@@ -100,7 +96,6 @@ def order_followups(principal: Viewer, make_uow: Uow, now: Now) -> dict:
 def open_decisions(principal: Viewer, make_uow: Uow) -> dict:
     """«Новый счёт»: the buyer's lines with an applied request-for-quotes decision that are not ordered yet, by
     supplier — the decision's quantity, price with VAT, MOQ / pack, the supplier's minimum order and delivery."""
-    require_option(OPTION)
     uow = make_uow()
     with uow:
         found = port.open_decisions(uow.session, principal.actor.id)
@@ -132,12 +127,11 @@ def open_decisions(principal: Viewer, make_uow: Uow) -> dict:
 def order_card(order_number: OrderNumber, principal: Viewer, make_uow: Uow, now: Now) -> dict:
     """The order card: the order as on the board, every delivery row of its lines (receiving's own words, read-only),
     the UPDs that name its invoice (option documents.upd)."""
-    require_option(OPTION)
     uow = make_uow()
     with uow:
         order, lines = _one(uow.session, order_number, now.date(), principal.actor.id)
         rows = port.receiving_rows(uow.session, [line.id for line in lines])
-        upds = order_upds.for_order(uow.session, order, rows) if stage_options.enabled("documents.upd") else None
+        upds = order_upds.for_order(uow.session, order, rows)
     legacy = {line.id: line.legacy_id for line in lines}
     return {
         "order": order,
@@ -172,7 +166,6 @@ class FactsInput(BaseModel):
 def save_facts(order_number: OrderNumber, payload: FactsInput, principal: Editor, make_uow: Uow, now: Now) -> dict:
     """Передан в оплату / отгружен / трек / доставка / заметка of one order — only the fields sent; null clears.
     Its buyer only; `version` is the order's facts version (0 — none yet), a stale one is 409."""
-    require_option(OPTION)
     fields = {name: getattr(payload, name) for name in payload.model_fields_set if name != "version"}
     change = service.FactsChange(version=payload.version, **fields)
 

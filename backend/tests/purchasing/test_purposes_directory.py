@@ -1,7 +1,6 @@
 """Purposes directory («Настройки закупки», key `purposes`) and the project-owned purpose of a request
 (stage option requests.form): commercial project → «Коммерческий проект», internal ВП → its own purpose."""
 
-import json
 from datetime import datetime, timezone
 
 import pytest
@@ -15,7 +14,6 @@ from app.modules.purchasing import settings
 from app.modules.purchasing.infrastructure import PurchasingSettingRow, SqlAlchemyPurchasingUnitOfWork
 from app.modules.requests.api import moscow_now
 from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork
-from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import Base, create_schema
 from app.workflows.project_registry import InternalAwareProjectRegistry
@@ -64,12 +62,6 @@ def _as(roles: set[str], permissions: dict) -> None:
     )
 
 
-def _options(monkeypatch, tmp_path, form: bool) -> None:
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"projects.internal": True, "requests.form": form, "procurement.rfq": True}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
-
-
 class PlanRegistry:
     def open_projects(self):
         return ["591К.3"]
@@ -85,7 +77,6 @@ def api(monkeypatch, tmp_path):
     app.state.project_registry = InternalAwareProjectRegistry(PlanRegistry(), app.state.purchasing_uow_factory)
     _as({"admin"}, {})
     app.dependency_overrides[moscow_now] = lambda: NOW
-    _options(monkeypatch, tmp_path, True)
     yield TestClient(app), monkeypatch, tmp_path
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
@@ -133,8 +124,3 @@ def test_used_purpose_cannot_be_removed_over_http(api):
     assert client.put("/api/purchasing/settings", json={"changes": {"purposes": free}}).status_code == 200
 
 
-def test_option_off_keeps_the_old_validation(api):
-    client, monkeypatch, tmp_path = api
-    _options(monkeypatch, tmp_path, False)
-    assert _post(client, "g", purpose="Склад").status_code == 201
-    assert _post(client, "h", purpose=COMMERCIAL).status_code == 422

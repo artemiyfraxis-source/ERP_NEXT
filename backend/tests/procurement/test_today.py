@@ -1,7 +1,6 @@
 """Stage option `procurement.today`: Roller_Buyer's «Сегодня» — pure section rules (ported from RB today.test.ts,
 orders.test.ts follow-ups, domain/board.test.ts) and the endpoint behind the option."""
 
-import json
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -30,7 +29,6 @@ from app.modules.procurement.today import (
     pricebook_wanted,
     rub,
 )
-from app.shared import stage_options
 from tests.factories import Actor
 from tests.procurement.test_api import procurement_api  # noqa: F401 — fixture
 
@@ -331,21 +329,8 @@ def test_order_followups_group_the_same_facts_per_order_and_per_request():
 
 # ---- the endpoint --------------------------------------------------------------------------------------------------
 
-def _options(monkeypatch, tmp_path, **states):
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps(states), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
-
-
-def test_today_endpoint_is_404_when_option_is_off(procurement_api, monkeypatch, tmp_path):  # noqa: F811
-    client, _, _ = procurement_api
-    _options(monkeypatch, tmp_path)
-    assert client.get("/api/procurement/today").status_code == 404
-
-
-def test_today_endpoint_lists_the_buyers_lines_when_on(procurement_api, monkeypatch, tmp_path):  # noqa: F811
+def test_today_endpoint_lists_the_buyers_lines(procurement_api):  # noqa: F811
     client, free_line, sessions = procurement_api
-    _options(monkeypatch, tmp_path, **{"procurement.today": True})
     assert client.get("/api/procurement/today").json()["sections"][0]["key"] == "available"
     assert client.post("/api/procurement/take", json={"line_ids": [str(free_line.id)]}).status_code == 200
     with sessions.begin() as session:

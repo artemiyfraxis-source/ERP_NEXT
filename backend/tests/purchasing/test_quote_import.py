@@ -1,7 +1,6 @@
 """«КП из PDF и текста»: pack rules (port of Roller_Buyer quote-import.test.ts), text lines, and the import endpoint."""
 
 import base64
-import json
 from decimal import Decimal
 from uuid import uuid4
 
@@ -9,7 +8,6 @@ from sqlalchemy import select
 
 from app.modules.purchasing import quote_import as qi
 from app.modules.purchasing.infrastructure import ItemAliasRow
-from app.shared import stage_options
 from tests.pdf_samples import identity_pdf
 from tests.purchasing.test_rfq_api import BASE, _rfq, _supplier, rfq_api  # noqa: F401 — the fixture
 
@@ -136,15 +134,8 @@ def test_a_pdf_protected_with_an_empty_password_is_read_laid_out():
     assert (read.source_article, read.qty, read.price) == ("0029110063", 25, Decimal("111.55"))
 
 
-def _enable(monkeypatch, tmp_path, quote_import=True):
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"procurement.rfq": True, "procurement.quote_import": quote_import}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
-
-
-def test_import_text_matches_lines_and_converts_packs(rfq_api, monkeypatch, tmp_path):
+def test_import_text_matches_lines_and_converts_packs(rfq_api):
     client, lines, _ = rfq_api
-    _enable(monkeypatch, tmp_path)
     rfq = _rfq(client, lines)
     supplier = _supplier(client, rfq["id"], "ООО Упаковка")
     url = f"{BASE}/{rfq['id']}/quotes/import"
@@ -168,9 +159,8 @@ def test_import_text_matches_lines_and_converts_packs(rfq_api, monkeypatch, tmp_
     assert client.post(url, json={"text": "x", "content_base64": "AAAA"}).status_code == 422
 
 
-def test_import_pdf_text_layer_and_refusals(rfq_api, monkeypatch, tmp_path):
+def test_import_pdf_text_layer_and_refusals(rfq_api):
     client, lines, _ = rfq_api
-    _enable(monkeypatch, tmp_path)
     rfq = _rfq(client, lines)
     url = f"{BASE}/{rfq['id']}/quotes/import"
 
@@ -186,20 +176,14 @@ def test_import_pdf_text_layer_and_refusals(rfq_api, monkeypatch, tmp_path):
     assert client.post(url, json={"content_base64": "***"}).status_code == 422
 
 
-def test_option_off_is_404_and_aliases_are_remembered_only_when_on(rfq_api, monkeypatch, tmp_path):
+def test_aliases_are_remembered(rfq_api):
     client, lines, sessions = rfq_api
     rfq = _rfq(client, lines)
     supplier = _supplier(client, rfq["id"], "ООО Слово")
     url = f"{BASE}/{rfq['id']}/quotes/import"
-    _enable(monkeypatch, tmp_path, quote_import=False)
-    assert client.post(url, json={"text": "Разъём 2 шт 10,00"}).status_code == 404
     line_id = client.get(f"{BASE}/{rfq['id']}").json()["lines"][0]["id"]
     save = {"supplier_id": supplier, "source": "file", "lines": [{"rfq_line_id": line_id, "unit_price": "10"}],
             "aliases": [{"rfq_line_id": line_id, "text": "Хитрое название"}]}
-    assert client.post(f"{BASE}/{rfq['id']}/quotes", json=save).status_code == 201
-    with sessions() as session:
-        assert session.scalars(select(ItemAliasRow)).first() is None
-    _enable(monkeypatch, tmp_path)
     assert client.post(f"{BASE}/{rfq['id']}/quotes", json=save).status_code == 201
     with sessions() as session:
         stored = session.scalars(select(ItemAliasRow)).all()

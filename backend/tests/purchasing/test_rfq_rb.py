@@ -2,7 +2,6 @@
 «Подбор», invoice-request letters, quote import header, decision reason codes."""
 
 import base64
-import json
 import hashlib
 from datetime import date, datetime
 from decimal import Decimal
@@ -25,7 +24,6 @@ from app.modules.purchasing.rfq_kaiten import invoice_vat, pack_in_name, quantit
 from tests.pdf_samples import identity_pdf
 from app.workflows.procurement_history import line_history
 from app.modules.purchasing.rfq_line_states import states as rfq_line_states
-from app.shared import stage_options
 from tests.purchasing.test_rfq_api import BASE, NOW, _as, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — the fixture
 
 
@@ -587,11 +585,8 @@ def test_a_request_created_as_sent_and_with_a_declined_rotation_suggestion(rfq_a
 # ── «Отменить» / «Разделить» from the request: the requests slice's real commands (CONTRACTS.md) ─────────────────
 
 
-def test_cancel_and_split_from_the_request_go_through_the_requests_commands(rfq_api, monkeypatch, tmp_path):
+def test_cancel_and_split_from_the_request_go_through_the_requests_commands(rfq_api, monkeypatch):
     client, lines, sessions = rfq_api
-    options = tmp_path / "both.json"
-    options.write_text(json.dumps({"procurement.rfq": True, "procurement.requests_rb": True}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(options))
     monkeypatch.setattr(app.state, "procurement_stock_uow_factory", lambda: SqlAlchemyProcurementStockUnitOfWork(sessions), raising=False)
     with sessions() as session:
         row = session.get(ProcurementLineRow, lines[0].id)

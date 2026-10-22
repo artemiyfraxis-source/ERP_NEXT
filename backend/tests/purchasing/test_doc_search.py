@@ -73,7 +73,7 @@ def search(client, q, kind="all"):
 
 
 def test_a_position_is_found_in_upds_and_invoices_however_its_article_is_typed(env):  # noqa: F811
-    client, sessions, _ = env
+    client, sessions = env
     upd(sessions, "g-1", number="g-1")
     _line(sessions, "g-1", 1, "Разъём SMA-J RG-316 пайка")
     _line(sessions, "g-1", 2, "Доставка", is_service=True)
@@ -114,7 +114,7 @@ def test_a_position_is_found_in_upds_and_invoices_however_its_article_is_typed(e
 
 
 def test_invoices_whose_positions_were_not_read_are_found_by_their_text_then_the_card_title(env):  # noqa: F811
-    client, sessions, _ = env
+    client, sessions = env
     _invoice(
         sessions, title="Счёт Мицар", status="to_pay",
         text="Счет на оплату № 5 от 02.09.2026 1 095-329-110 Устр-во для зачистки коаксиал. кабеля 2 шт 773,00 1 546,00 Итого",
@@ -128,7 +128,7 @@ def test_invoices_whose_positions_were_not_read_are_found_by_their_text_then_the
 
 
 def test_documents_are_found_by_their_number_seller_and_total(env):  # noqa: F811
-    client, sessions, _ = env
+    client, sessions = env
     upd(sessions, "g-head-0001", number="УТ-1714", total_gross=1546000)
     upd(sessions, "g-head-0002", number="88", seller_name='ООО "Лютик"', seller_inn="7707083893", total_gross=5000)
     _invoice(sessions, number="АНС/2337", seller_name='ООО "Лютик"', total=1546000, doc_date=date(2026, 9, 2))

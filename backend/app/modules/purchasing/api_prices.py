@@ -16,12 +16,11 @@ from app.shared.http_auth import Principal, procurement_edit_principal, procurem
 
 from . import items as items_repo
 from . import upd_prices
-from .deps import purchasing_uow_factory, require_option
+from .deps import purchasing_uow_factory
 from .infrastructure import SupplierRow
 
 router = APIRouter(prefix="/api/purchasing/prices", tags=["purchasing"])
 
-OPTION = "references.price_book"
 Uow = Annotated[Callable, Depends(purchasing_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
 Viewer = Annotated[Principal, Depends(procurement_view_principal)]
@@ -34,8 +33,6 @@ class ApplyIn(BaseModel):
 
 @router.get("/item/{item_id}")
 def item_prices(item_id: UUID, _: Viewer, make_uow: Uow) -> dict:
-    require_option(OPTION)
-    require_option("references.items")
     uow = make_uow()
     with uow:
         try:
@@ -47,8 +44,6 @@ def item_prices(item_id: UUID, _: Viewer, make_uow: Uow) -> dict:
 
 @router.get("/supplier/{supplier_id}")
 def supplier_prices(supplier_id: UUID, _: Viewer, make_uow: Uow) -> dict:
-    require_option(OPTION)
-    require_option("references.suppliers")
     uow = make_uow()
     with uow:
         supplier = uow.session.get(SupplierRow, supplier_id)
@@ -59,7 +54,6 @@ def supplier_prices(supplier_id: UUID, _: Viewer, make_uow: Uow) -> dict:
 
 @router.get("/catalog")
 def catalog(_: Viewer, make_uow: Uow, q: str = "", page: Annotated[int, Query(ge=1)] = 1) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow:
         return upd_prices.catalog(uow.session, q, page)
@@ -67,7 +61,6 @@ def catalog(_: Viewer, make_uow: Uow, q: str = "", page: Annotated[int, Query(ge
 
 @router.get("/catalog/points")
 def catalog_points(_: Viewer, make_uow: Uow, key: str = Query(min_length=3, max_length=600)) -> list[dict]:
-    require_option(OPTION)
     uow = make_uow()
     with uow:
         return upd_prices.catalog_points(uow.session, key)
@@ -76,8 +69,6 @@ def catalog_points(_: Viewer, make_uow: Uow, key: str = Query(min_length=3, max_
 @router.get("/upd-items/plan")
 def plan_upd_items(_: Viewer, make_uow: Uow) -> dict:
     """«Завести позиции из УПД», шаг 1: what would be created (nothing is written)."""
-    require_option(OPTION)
-    require_option("references.items")
     uow = make_uow()
     with uow:
         return upd_prices.plan_upd_items(uow.session)
@@ -85,8 +76,6 @@ def plan_upd_items(_: Viewer, make_uow: Uow) -> dict:
 
 @router.post("/upd-items/apply")
 def apply_upd_items(payload: ApplyIn, principal: Editor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
-    require_option("references.items")
     uow = make_uow()
     with uow:
         result = upd_prices.apply_upd_items(uow, payload.keys, principal.actor, now)

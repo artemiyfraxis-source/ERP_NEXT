@@ -1,7 +1,6 @@
-"""Global search (stage option ui.search): groups, look-alike folding, section rights, options, the speed on a few
+"""Global search : groups, look-alike folding, section rights, options, the speed on a few
 hundred rows."""
 
-import json
 import time
 from datetime import date, datetime
 from decimal import Decimal
@@ -19,7 +18,6 @@ from app.modules.purchasing.infrastructure import (
     InternalProjectRow, ItemAliasRow, ItemRow, RfqRow, SqlAlchemyPurchasingUnitOfWork, SupplierRow,
 )
 from app.modules.warehouse.infrastructure import StockLotRow
-from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
 from tests.factories import Actor
@@ -63,28 +61,19 @@ def _as(permissions):
     )
 
 
-def _options(monkeypatch, tmp_path, **on):
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"ui.search": True, **{key.replace("__", "."): value for key, value in on.items()}}),
-                    encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
-
-
 class Registry:
     def open_projects(self):
         return ["591К.3", "ВП-001", "412.1"]
 
 
 @pytest.fixture()
-def env(monkeypatch, tmp_path):
+def env():
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     app.state.purchasing_uow_factory = lambda: SqlAlchemyPurchasingUnitOfWork(sessions)
     app.state.project_registry = Registry()
     _as(ALL)
-    _options(monkeypatch, tmp_path, references__items=True, references__suppliers=True, procurement__rfq=True,
-             projects__internal=True)
 
     def seed(*rows):
         with sessions() as session:
@@ -207,24 +196,10 @@ def test_a_group_needs_the_users_section(env):
     assert client.get(URL, params={"q": "резистор"}).status_code == 401
 
 
-def test_purchasing_groups_follow_their_options(env, monkeypatch, tmp_path):
-    client, seed = env
-    seed_all(seed)
-    _options(monkeypatch, tmp_path)
-    found = groups(client.get(URL, params={"q": "резистор"}))
-    assert found == {"Строки закупки", "Склад"}
-
-
-def test_option_off_is_404_after_auth(env, monkeypatch, tmp_path):
+def test_a_stranger_is_refused(env):
     client, _ = env
-    path = tmp_path / "off.json"
-    path.write_text(json.dumps({"ui.search": False}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
-    assert client.get(URL, params={"q": "x"}).status_code == 404
-    monkeypatch.delenv(stage_options.ENV)
-    assert client.get(URL, params={"q": "x"}).status_code == 404
     app.dependency_overrides.pop(authenticated_principal)
-    assert client.get(URL, params={"q": "x"}).status_code == 401  # auth first
+    assert client.get(URL, params={"q": "x"}).status_code == 401
 
 
 def test_a_few_hundred_rows_answer_fast(env):

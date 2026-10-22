@@ -1,6 +1,5 @@
 """Stage option `procurement.kpi`: pure metric logic and the endpoint behind the option."""
 
-import json
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -9,7 +8,6 @@ from app.modules.procurement.domain import create_line_from_requested
 from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.modules.procurement.kpi import build_kpi
 from app.modules.procurement.money import FactMoney
-from app.shared import stage_options
 from tests.factories import Actor
 from tests.procurement.test_api import message, procurement_api  # noqa: F401 — fixture
 
@@ -54,21 +52,8 @@ def test_no_data_gives_none_instead_of_zero():
     assert row["on_time"]["percent"] is None and row["invoice_to_paid"] == {"days": None, "n": 0}
 
 
-def _options(monkeypatch, tmp_path, **states):
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps(states), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
-
-
-def test_kpi_endpoint_is_404_when_option_is_off(procurement_api, monkeypatch, tmp_path):  # noqa: F811
-    client, _, _ = procurement_api
-    _options(monkeypatch, tmp_path)
-    assert client.get("/api/procurement/kpi?from=2026-09-01&to=2026-09-30").status_code == 404
-
-
-def test_kpi_endpoint_answers_when_on(procurement_api, monkeypatch, tmp_path):  # noqa: F811
+def test_kpi_endpoint_answers(procurement_api):  # noqa: F811
     client, free_line, sessions = procurement_api
-    _options(monkeypatch, tmp_path, **{"procurement.kpi": True})
     assert client.post("/api/procurement/take", json={"line_ids": [str(free_line.id)]}).status_code == 200
     with sessions.begin() as session:
         row = session.get(ProcurementLineRow, free_line.id)
