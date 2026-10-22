@@ -2,7 +2,7 @@
 
 Норму КСВН сервер берёт из ЭТК, на ревизии которой запущено задание (ключ `coaxVswrNorm`), — клиент норму не передаёт.
 ЭТК, выпущенная до нормы (ключа нет), даёт «норма не задана»: вердикт ставит контролёр с причиной.
-Замер пишет раздел «ОТК» (правка), читает «Производство» или «ОТК» (просмотр) — как остальной ОТК в production/api.py.
+Замер пишет раздел «ОТК» (правка), читает «Производство» (просмотр) — как остальной ОТК в production/api.py.
 Паспорт изделия — JSON из разделов: сведения об изделии и ЭТК, норма с основанием и список проверок ОТК (`checks`);
 КСВН — первая проверка (`kind: "vswr"`), другие виды проверок добавляются в тот же список.
 """
@@ -35,12 +35,10 @@ from app.modules.production.vswr import (
 )
 from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, production_quality_principal, require_section
+from app.shared.http_auth import Principal, production_overview_principal, production_quality_principal
 from app.shared.stored_files import file_response
 
 router = APIRouter(prefix="/api/production/vswr", tags=["production"])
-
-vswr_view_principal = require_section(("production", "quality"), "view", detail="Раздел «ОТК» вам не открыт.")
 
 NORM_KEY = "coaxVswrNorm"
 OLD_ETK_REASON = "ЭТК выпущена до нормы КСВН"
@@ -222,7 +220,7 @@ def upload_measurement(
 @router.get("/tasks/{task_id}")
 def task_measurements(
     task_id: UUID,
-    _principal: Annotated[Principal, Depends(vswr_view_principal)],
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], Any], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
 ) -> dict:
@@ -256,7 +254,7 @@ def task_measurements(
 @router.get("/tasks/{task_id}/serials/{position}")
 def serial_measurements(
     task_id: UUID, position: int,
-    _principal: Annotated[Principal, Depends(vswr_view_principal)],
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], Any], Depends(production_uow_factory)],
 ) -> dict:
     """Все попытки замера одного изделия, первая первой (без трассы — она в паспорте)."""
@@ -272,7 +270,7 @@ def serial_measurements(
 @router.get("/measurements/{measurement_id}/file")
 def measurement_file(
     measurement_id: UUID,
-    _principal: Annotated[Principal, Depends(vswr_view_principal)],
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], Any], Depends(production_uow_factory)],
 ) -> Response:
     """Выгрузка ВАЦ как приложена, с исходным именем."""
@@ -283,7 +281,7 @@ def measurement_file(
 @router.get("/tasks/{task_id}/serials/{position}/passport")
 def serial_passport(
     task_id: UUID, position: int,
-    _principal: Annotated[Principal, Depends(vswr_view_principal)],
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], Any], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
 ) -> dict:

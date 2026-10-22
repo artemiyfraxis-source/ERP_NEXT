@@ -234,7 +234,7 @@ def test_rights_follow_the_existing_qc_endpoints(production_api):  # noqa: F811
     nobody = client.get(f"/api/production/vswr/tasks/{task['id']}")
     nobody_file = client.get(f"/api/production/vswr/measurements/{recorded['id']}/file")
     nobody_post = client.post("/api/production/vswr", json=body)
-    _as({"quality": "view"}, name="Наблюдатель ОТК")
+    _as({"production": "view"}, name="Наблюдатель")
     viewer = client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1/passport")
     viewer_post = client.post("/api/production/vswr", json=body)
 
