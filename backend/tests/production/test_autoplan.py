@@ -6,6 +6,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from app.modules.production.application import _busy
+from app.modules.production.dispatch import DispatchCalendar, LoadClock, Progress
 from app.modules.production.autoplan import (
     ADJUSTMENT_SECONDS,
     AutoplanInput,
@@ -297,6 +298,25 @@ def test_existing_assignments_are_locked_and_occupy_the_fitter():
     assert assigned.operations[0].id not in placed
     assert placed[assigned.operations[1].id].start >= MONDAY + timedelta(hours=3)
     assert all(not (item.start < MONDAY + timedelta(hours=3)) for item in result.placements)
+
+
+def test_overrunning_started_share_occupies_the_fitter_from_now():
+    # Владелец, 22.10: Анна взяла работу в пятницу, план истёк, не сдала — в понедельник автоплан не ставит ей
+    # новое с начала смены: доля держит её от «сейчас» на остаток нормы (100 × 36 с = 1 ч чистых → 1 ч 09 мин).
+    first = operation(1, "PRS", setup="0")
+    friday = MONDAY - timedelta(days=3)
+    current = task(1, [first])
+    share = OperationShare(ANNA, 100, friday, friday + timedelta(hours=2), started_at=friday)
+    started = current.with_operations((first.with_shares((share,), "Мастер"),))
+    other = task(2, [operation(1, "ASM")])
+    keys = {item.id: setup_key(code=item.code, stage=item.code, built={}, config_op={}, config={})
+            for item in (*started.operations, *other.operations)}
+    clock = LoadClock(MONDAY, DispatchCalendar(frozenset(), DEFAULT_SHIFT, {}), {}, Progress.empty())
+
+    busy = _busy([started, other], UUID(int=0), UUID(int=0), MONDAY, clock)
+    placed = by_operation(plan(data([started, other], keys, team=(ANNA,), busy=busy)))
+
+    assert placed[other.operations[0].id].start >= MONDAY + timedelta(hours=1, minutes=9)
 
 
 def test_the_same_input_gives_the_same_plan():

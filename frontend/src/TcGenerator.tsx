@@ -262,6 +262,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   }, [refs]);
 
   const manualIds = useMemo(() => new Set((kit?.components || []).filter((item) => item.manual).map((item) => item.id)), [kit]);
+  const kitTitles = useMemo(() => new Map((kit?.components || []).map((item) => [item.id, { title: item.title || "", hint: item.title_hint || "" }])), [kit]);
   const components = useMemo<Comp[]>(() => (kit?.components || []).map((item) => ({
     id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", kd: item.kd || "", qty: item.qty,
   })), [kit]);
@@ -1130,7 +1131,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       <span className="gsec-meta">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="kv" key={key}>{key} <b>{value}</b></span>)}</span>
       {kitEdit && !kitAdding && <button type="button" className="btn-link" onClick={() => { setKitAdding(true); setKitNote({ text: "", error: false }); }}>+ Комплектующее</button>}</div>
     <div className="gtable-wrap is-full"><table className="gtable"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th className="num">Кол-во</th></tr></thead><tbody>
-      {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td>{c.name}{manualIds.has(c.id) && <small>добавил технолог</small>}</td><td className="muted">{c.art}{c.kd && <small>по КД: {c.kd}</small>}</td>
+      {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td title={kitTitles.get(c.id)?.hint || undefined}>{kitTitles.get(c.id)?.title || c.name}{manualIds.has(c.id) && <small>добавил технолог</small>}</td><td className="muted">{c.art}{c.kd && <small>по КД: {c.kd}</small>}</td>
         <td className="num nowrap">{String(c.qty)}{kitEdit && manualIds.has(c.id) && <button type="button" className="btn-remove" title="Убрать из комплектации" aria-label={`Убрать ${c.art} из комплектации`} onClick={() => void removeKitComponent(c.art)}>×</button>}</td></tr>)}
       {!components.length && <tr><td colSpan={4} className="gtable-empty">СПЯ не найдена</td></tr>}
     </tbody></table></div>

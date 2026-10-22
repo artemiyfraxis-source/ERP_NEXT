@@ -32,6 +32,7 @@ from app.modules.references.domain import TechOperationTab
 from app.workflows.etk_lots import IssuedKitLots
 from app.workflows.new_operation import NewOperationUnitOfWork, create_operation
 from app.workflows.techcard_build import with_technology
+from app.workflows.item_names import ReferenceNames, reference_records
 from app.workflows.warehouse_article import infer_article_identity
 
 from .application import (
@@ -263,15 +264,18 @@ def etk_part_identifier(
         Depends(optional_references_uow_factory),
     ],
 ) -> Callable[[str], str] | None:
-    """Name of an ETK component by the warehouse article rules (`stock05ArtInfo_` over БД.ТЕР and БД.КОАКС).
+    """Name of an ETK component by the warehouse article rules (`stock05ArtInfo_` over БД.ТЕР and БД.КОАКС), then by
+    the reference names «Снабжения» (`ReferenceNames`: провод, ТУТ/ТТК, клеммы, корпуса) — so a wire or a tube reads like
+    the КД, not like the supplier's page title. Display only: read when the ETK is shown, not stored in the document.
     The records are read once per request and only when a document has a component row."""
     if references_factory is None:
         return None
     records: tuple = ()
     loaded = False
+    names: ReferenceNames | None = None
 
     def identify(article: str) -> str:
-        nonlocal records, loaded
+        nonlocal records, loaded, names
         if not loaded:
             with references_factory() as uow:
                 records = tuple(
@@ -279,9 +283,12 @@ def etk_part_identifier(
                     for tab in (TechOperationTab.TERMINAL, TechOperationTab.COAX)
                     for record in uow.tech_operations.list(tab=tab, query="", limit=10_000)
                 )
+            names = ReferenceNames(reference_records(references_factory))
             loaded = True
         info = infer_article_identity(article, records)
-        return info.name if info else ""
+        if info:
+            return info.name
+        return (names.name(article) if names else "") or ""
 
     return identify
 

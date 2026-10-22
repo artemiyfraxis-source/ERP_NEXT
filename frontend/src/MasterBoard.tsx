@@ -215,37 +215,89 @@ function workRate(shift: ProductionShift) {
   return available > 0 ? Math.min(1, Number(shift.effective_hours || 7) / available) : 1;
 }
 
-type Window = { task: ProductionTask; operation: ProductionOperation; share: ProductionShare; start: number; finish: number };
+/** «Сейчас» для загрузки: по нему затянувшаяся доля занимает монтажника после своего плана (loadWindow). */
+export type LoadClock = { now: number; holidays: string[]; absences: ProductionAbsence[]; skills?: ProductionSkill[] };
+/** Затянувшаяся работа держит монтажника не меньше часа его работы (сервер: dispatch.OVERRUN_FLOOR_SECONDS). */
+const OVERRUN_FLOOR_SECONDS = 3600;
 
-// Плановые окна невыполненных долей монтажника (skip — выбранная операция: её можно переставить).
-function windowsOf(operatorId: string, tasks: ProductionTask[], skip = ""): Window[] {
+export type LoadWindow = { start: number; finish: number; overrun: boolean };
+
+// Окно, которое доля занимает у монтажника (то же правило, что dispatch.overrun_window на сервере). Взятая и не сданная
+// доля, чей план истёк («затянулось», владелец 22.10), идёт от «сейчас» на норму несданных штук (у бригады — всей
+// операции), не меньше часа, по смене, праздникам и отсутствиям; пауза не освобождает. Иначе — свой план.
+// Без load — только план. План в задании не меняется.
+export function loadWindow(task: ProductionTask, operation: ProductionOperation, share: ProductionShare,
+  shift: ProductionShift, load?: LoadClock): LoadWindow | null {
+  if (!share.planned_start || !share.planned_finish) return null;
+  const planned = { start: new Date(share.planned_start).getTime(), finish: new Date(share.planned_finish).getTime(), overrun: false };
+  if (!load || task.status === "Отменено" || task.handed_to || done(operation)) return planned;
+  const group = share.quantity == null
+    ? (operation.shares ?? [share]).filter((item) => item.quantity == null && item.planned_start && item.planned_finish)
+    : [share];
+  if (!group.some((item) => item.started_at && !item.finished_at)) return planned;
+  if (Math.max(...group.map((item) => new Date(item.planned_finish!).getTime())) >= load.now) return planned;
+  const required = Number(operation.required_quantity ?? task.quantity) || 0;
+  const processed = Number(operation.fact?.processed ?? 0) || 0;
+  if (processed >= required) return planned;
+  // Штуки операции: доля в изделиях × штук на изделие минус сданное ею; бригада — всё, что не сдано по операции.
+  const pieces = share.quantity == null ? required - processed
+    : share.quantity * (task.quantity > 0 ? required / task.quantity : 1) - (Number(share.output ?? 0) || 0);
+  if (!(pieces > 0)) return planned;
+  const rate = group.reduce((sum, item) => sum + rateOf(load.skills ?? [], operation.code, item.operator_id), 0) || 1;
+  const seconds = Math.max(OVERRUN_FLOOR_SECONDS, Math.ceil((Number(operation.seconds_per_unit) || 0) * pieces / rate));
+  const people = new Set(group.map((item) => item.operator_id));
+  const dayAfter = (day: string) => new Date(`${addDays(day, 1)}T00:00:00`).getTime();
+  let start = workFinish(load.now, 0, shift, load.holidays);
+  for (let guard = 0; guard < 200; guard += 1) {
+    const finish = workFinish(start, seconds, shift, load.holidays);
+    const away = load.absences.filter((item) => people.has(item.operator_id)
+      && new Date(`${item.from_date}T00:00:00`).getTime() < finish && start < dayAfter(item.to_date));
+    if (!away.length) return { start, finish, overrun: true };
+    start = workFinish(Math.max(...away.map((item) => dayAfter(item.to_date))), 0, shift, load.holidays);
+  }
+  return planned;
+}
+
+type Window = { task: ProductionTask; operation: ProductionOperation; share: ProductionShare; start: number; finish: number; overrun: boolean };
+
+// Окна невыполненных долей монтажника (loadWindow; skip — выбранная операция: её можно переставить).
+function windowsOf(operatorId: string, tasks: ProductionTask[], shift: ProductionShift, skip = "", load?: LoadClock): Window[] {
   const result: Window[] = [];
   for (const task of tasks) {
     if (task.status === "Отменено" || task.handed_to) continue;
     for (const operation of task.operations) {
       if (operation.id === skip) continue;
       for (const share of sharesOf(operation, operatorId)) {
-        if (shareDone(operation, share) || !share.planned_start || !share.planned_finish) continue;
-        result.push({ task, operation, share, start: new Date(share.planned_start).getTime(), finish: new Date(share.planned_finish).getTime() });
+        if (shareDone(operation, share)) continue;
+        const window = loadWindow(task, operation, share, shift, load);
+        if (window) result.push({ task, operation, share, ...window });
       }
     }
   }
   return result;
 }
 
-// Часы монтажника в день: пересечение плановых окон его невыполненных долей с рабочими отрезками смены,
-// приведённое к чистому времени (как считает сервер при планировании).
-export function dayHours(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift) {
-  const spans = workSpans(shift).map(([from, to]) => [new Date(`${day}T${clock(from)}:00`).getTime(), new Date(`${day}T${clock(to)}:00`).getTime()]);
+// Часы окна в день: пересечение с рабочими отрезками смены, приведённое к чистому времени (как считает сервер).
+export function windowDayHours(start: number, finish: number, day: string, shift: ProductionShift) {
   let total = 0;
-  for (const window of windowsOf(operatorId, tasks)) {
-    for (const [from, to] of spans) {
-      const start = Math.max(from, window.start);
-      const finish = Math.min(to, window.finish);
-      if (finish > start) total += (finish - start) / 3_600_000;
-    }
+  for (const [from, to] of workSpans(shift)) {
+    const a = Math.max(dayMoment(day, from), start);
+    const b = Math.min(dayMoment(day, to), finish);
+    if (b > a) total += (b - a) / 3_600_000;
   }
   return total * workRate(shift);
+}
+
+// Часы монтажника в день: окна его невыполненных долей (затянувшаяся — от «сейчас») в рабочих отрезках смены.
+export function dayHours(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift, load?: LoadClock) {
+  return windowsOf(operatorId, tasks, shift, "", load).reduce((sum, window) => sum + windowDayHours(window.start, window.finish, day, shift), 0);
+}
+
+// Затянувшиеся доли монтажника в этот день — подписью ячейки: «затянулось: ПФ-12 · Ветвь … · 708К.4 · КБ1».
+export function overrunsOn(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift, load?: LoadClock) {
+  return windowsOf(operatorId, tasks, shift, "", load)
+    .filter((window) => window.overrun && windowDayHours(window.start, window.finish, day, shift) > 0)
+    .map((window) => `${operationName(window.operation)} · ${taskItemLabel(window.task)}`);
 }
 
 // Самое раннее начало доли монтажника: не раньше «сейчас» (с округлением вверх до 15 минут — по сетке, а не 09:47)
@@ -279,11 +331,11 @@ function workingMoment(day: string, time: number, shift: ProductionShift) {
 
 // «Назначить на день»: после уже запланированной на этот день работы монтажника — ничего из неё не двигается,
 // хвост уходит на следующие дни. null — после работы в этот день места нет.
-export function appendStart(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift, skip: string, earliest: number) {
+export function appendStart(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift, skip: string, earliest: number, load?: LoadClock) {
   const dayStart = dayMoment(day, minutes(shift.start));
   const dayEnd = dayMoment(day, minutes(shift.finish));
   let time = Math.max(dayStart, earliest);
-  for (const window of windowsOf(operatorId, tasks, skip)) {
+  for (const window of windowsOf(operatorId, tasks, shift, skip, load)) {
     if (window.start < dayEnd && window.finish > dayStart) time = Math.max(time, window.finish);
   }
   time = Math.ceil(time / 60_000) * 60_000;  // план — в минутах, как на сервере
@@ -315,13 +367,15 @@ export function workFinish(start: number, seconds: number, shift: ProductionShif
 // «Назначить только …»: ближайший с дня from рабочий день монтажника (не отпуск), где после его работы есть место, и
 // момент начала — как «Назначить на день» (appendStart). null — за 60 дней места нет.
 export function firstFreeStart(operatorId: string, from: string, task: ProductionTask, operation: ProductionOperation,
-  tasks: ProductionTask[], shift: ProductionShift, holidays: string[], absences: ProductionAbsence[], now: Date = new Date()) {
+  tasks: ProductionTask[], shift: ProductionShift, holidays: string[], absences: ProductionAbsence[], now: Date = new Date(),
+  skills: ProductionSkill[] = []) {
   const earliest = earliestStart(operatorId, task, operation, now);
+  const load: LoadClock = { now: now.getTime(), holidays, absences, skills };
   for (let index = 0; index < 60; index += 1) {
     const day = addDays(from, index);
     if (!workingDay(day, shift, holidays)) continue;
     if (absences.some((item) => item.operator_id === operatorId && item.from_date <= day && day <= item.to_date)) continue;
-    const start = appendStart(operatorId, day, tasks, shift, operation.id, earliest);
+    const start = appendStart(operatorId, day, tasks, shift, operation.id, earliest, load);
     if (start != null) return { day, start };
   }
   return null;
@@ -363,18 +417,18 @@ function clock(value: number) {
 export interface DaySlot { start: string; finish: string; rest: boolean; busy: string[]; own: boolean; pause?: string }
 
 // Раскладка дня монтажника по часам смены: что занято (операция · сборка) и где перерыв.
-export function daySlots(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift, skip = ""): DaySlot[] {
+export function daySlots(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift, skip = "", load?: LoadClock): DaySlot[] {
   const slots: DaySlot[] = [];
   const end = minutes(shift.finish);
-  const windows = windowsOf(operatorId, tasks, skip);
+  const windows = windowsOf(operatorId, tasks, shift, skip, load);
   // Выбранная операция у этого монтажника не занятость (её можно передвинуть), но видна в своих часах.
-  const mine = skip ? windowsOf(operatorId, tasks).filter((window) => window.operation.id === skip) : [];
+  const mine = skip ? windowsOf(operatorId, tasks, shift, "", load).filter((window) => window.operation.id === skip) : [];
   for (let from = minutes(shift.start); from < end; from += 60) {
     const to = Math.min(end, from + 60);
     const a = new Date(`${day}T${clock(from)}:00`).getTime();
     const b = new Date(`${day}T${clock(to)}:00`).getTime();
     const busy = windows.filter((window) => window.start < b && a < window.finish)
-      .map((window) => `${operationName(window.operation)} · ${taskItemLabel(window.task)}${pieceLabel(window.task, window.operation, window.share)}`);
+      .map((window) => `${window.overrun ? "затянулось: " : ""}${operationName(window.operation)} · ${taskItemLabel(window.task)}${pieceLabel(window.task, window.operation, window.share)}`);
     const rest = (shift.breaks ?? []).some(([x, y]) => minutes(x) <= from && to <= minutes(y));
     // Перерыв внутри часа (обед 13:00–13:30) — подписью в ячейке: работы в этом часу меньше.
     const inside = (shift.breaks ?? []).find(([x, y]) => minutes(x) < to && from < minutes(y));
@@ -588,6 +642,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     void mutate(operation.id, () => productionApi.share(task.id, operation.id, task.version, personId, quantity, `${isoDay(date)}T${clock(date.getHours() * 60 + date.getMinutes())}`));
   }
   const capacity = shiftCapacity(workShift);
+  // «Сейчас» для загрузки: затянувшаяся взятая работа занимает монтажника и после своего плана (loadWindow).
+  const loadClock: LoadClock = { now: Date.now(), holidays, absences, skills };
 
   function unassign(item: ProductionTask, op: ProductionOperation, operatorId: string) {
     setRemoving(null);
@@ -599,7 +655,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     ? people.find((person) => person.id === onlyWho) ?? people.find((person) => operation.operator_ids.includes(person.id)) ?? people[0]
     : undefined;
   const onlySlot = task && operation && onlyPerson
-    ? firstFreeStart(onlyPerson.id, onlyDay || today, task, operation, tasks, workShift, holidays, absences)
+    ? firstFreeStart(onlyPerson.id, onlyDay || today, task, operation, tasks, workShift, holidays, absences, new Date(), skills)
     : null;
   const onlyBlock = task && operation && onlyPerson ? onlyBlocker(operation, onlyPerson.id, operators) : "";
   // Окно «Назначить только …» — для предупреждения о занятом станке.
@@ -667,7 +723,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       const choice = groupSel[group.label] ?? {};
       const person = people.find((item) => item.id === choice.who) ?? people[0];
       const first = group.items[0];
-      const slot = person ? firstFreeStart(person.id, choice.day || today, first.task, first.op, tasks, workShift, holidays, absences) : null;
+      const slot = person ? firstFreeStart(person.id, choice.day || today, first.task, first.op, tasks, workShift, holidays, absences, new Date(), skills) : null;
       const day = choice.day || slot?.day || today;
       const start = slot ? new Date(slot.start) : null;
       const requested = start ? `${isoDay(start)}T${clock(start.getHours() * 60 + start.getMinutes())}` : `${day}T${workShift.start}`;
@@ -870,8 +926,9 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
             {days.map((day) => {
               const absent = absences.find((item) => item.operator_id === person.id && item.from_date <= day && day <= item.to_date);
               const working = workingDay(day, workShift, holidays);
-              const load = working && !absent ? dayHours(person.id, day, tasks, workShift) : 0;
-              const title = `${person.name}, ${formatDay(day)}: ${absent ? absent.kind : !working ? "нерабочий день" : `${oneDecimal(load)} из ${oneDecimal(capacity)} ч`}`;
+              const load = working && !absent ? dayHours(person.id, day, tasks, workShift, loadClock) : 0;
+              const late = working && !absent ? overrunsOn(person.id, day, tasks, workShift, loadClock) : [];
+              const title = `${person.name}, ${formatDay(day)}: ${absent ? absent.kind : !working ? "нерабочий день" : `${oneDecimal(load)} из ${oneDecimal(capacity)} ч`}${late.length ? ` · затянулось: ${late.join("; ")}` : ""}`;
               // Та же ячейка, что в «Загрузке по людям» производственного плана (РП-4): свободный — пусто, выходной — штриховка.
               return <LoadCell key={day} hours={load} capacity={capacity} working={working} absence={absent?.kind}
                 today={day === today} picked={expanded === day} title={title} label={`День ${person.name} ${formatDay(day)}`}
@@ -881,11 +938,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           {expanded && <tr className="mb-day-row"><td colSpan={days.length + 1}>
             <div className="mb-day">
               <div className="mb-day-head"><b>{person.name} · {new Date(`${expanded}T00:00:00`).toLocaleDateString("ru-RU", { weekday: "short" })} {formatDay(expanded)}</b>
-                <span>занято {oneDecimal(dayHours(person.id, expanded, tasks, workShift))} из {oneDecimal(capacity)} ч</span>
+                <span>занято {oneDecimal(dayHours(person.id, expanded, tasks, workShift, loadClock))} из {oneDecimal(capacity)} ч</span>
                 <button className="mb-day-close" aria-label="Закрыть день" onClick={() => setOpenDay(null)}>×</button></div>
               {(() => {
                 // Своя операция не считается занятостью: её можно передвинуть на другой час.
-                const slots = daySlots(person.id, expanded, tasks, workShift, operation?.id ?? "");
+                const slots = daySlots(person.id, expanded, tasks, workShift, operation?.id ?? "", loadClock);
                 const earliest = task && operation ? earliestStart(person.id, task, operation, new Date()) : Date.now();
                 const past = (slot: DaySlot) => dayMoment(expanded, minutes(slot.finish)) <= earliest;
                 const startOf = (slot: DaySlot) => { const time = Math.max(dayMoment(expanded, minutes(slot.start)), earliest); return workingMoment(expanded, time, workShift) ?? time; };
@@ -893,7 +950,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                 const pick = (start: number) => { assign(person.id, start); setOpenDay(null); };
                 const rate = operation ? rateOf(skills, operation.code, person.id) : 1;
                 const seconds = operation ? Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * quantity / rate : 0;
-                const append = operation && canEdit && quantity ? appendStart(person.id, expanded, tasks, workShift, operation.id, earliest) : null;
+                const append = operation && canEdit && quantity ? appendStart(person.id, expanded, tasks, workShift, operation.id, earliest, loadClock) : null;
                 const until = append != null ? workFinish(append, seconds, workShift, holidays) : null;
                 const hasFree = slots.some((slot) => !past(slot) && !slot.rest && !slot.busy.length);
                 // Уже назначено этому монтажнику: показываем окно; начатую долю мастер не переставляет.

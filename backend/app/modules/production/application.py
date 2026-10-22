@@ -9,7 +9,7 @@ from hashlib import sha256
 import json
 import logging
 from math import ceil
-from typing import Protocol, Sequence
+from typing import Iterable, Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
@@ -17,15 +17,19 @@ from app.shared.identity import Actor
 
 from .dispatch import (
     DispatchCalendar,
+    LoadClock,
     Move,
     NodeKey,
     Progress,
     apply_moves,
     local,
     localize,
+    overrun_window,
     place,
     reflow,
     remainder,
+    remaining_seconds,
+    share_group,
     share_seconds,
     split_shares,
 )
@@ -350,24 +354,46 @@ def _shift(calendar: CalendarRepository) -> WorkShift:
     return loader() if loader is not None else DEFAULT_SHIFT
 
 
-def _busy(tasks: Sequence[ProductionTask], task_id: UUID, operation_id: UUID, reference: datetime) -> dict[UUID, tuple[BusyInterval, ...]]:
+def _busy(
+    tasks: Sequence[ProductionTask],
+    task_id: UUID,
+    operation_id: UUID,
+    reference: datetime,
+    clock: LoadClock | None = None,
+) -> dict[UUID, tuple[BusyInterval, ...]]:
+    """Занятость монтажников по назначенной работе. С clock затянувшаяся доля занимает монтажника от «сейчас»
+    (dispatch.overrun_window), а не своим истёкшим планом."""
     result: dict[UUID, list[BusyInterval]] = {}
     for task in tasks:
         if task.status is ProductionStatus.CANCELLED:
             continue
-        for operation in task.operations:
+        here = localize(task, reference) if clock is not None else task
+        for operation in here.operations:
             if task.id == task_id and operation.id == operation_id:
                 continue
             # Занятость — по долям: у раздробленной операции у каждого своё окно.
             for share in operation.shares:
                 if share.planned_start is None or share.planned_finish is None:
                     continue
+                overrun = overrun_window(here, operation, share_group(operation, share), clock)
+                start, finish = overrun or (share.planned_start, share.planned_finish)
                 result.setdefault(share.operator_id, []).append(BusyInterval(
-                    f"{task.number} · этап {operation.position}",
-                    _same_timezone(share.planned_start, reference),
-                    _same_timezone(share.planned_finish, reference),
+                    f"{task.number} · этап {operation.position}{' · затянулось' if overrun else ''}",
+                    _same_timezone(start, reference),
+                    _same_timezone(finish, reference),
                 ))
     return {key: tuple(value) for key, value in result.items()}
+
+
+def _load_clock(uow: UnitOfWork, now: datetime, tasks: Iterable[ProductionTask]) -> LoadClock:
+    """«Сейчас» для загрузки монтажников (_busy): сданное читается только по заданиям со взятой и не сданной долей —
+    только у них может быть затянувшаяся работа."""
+    started = [
+        task.id for task in tasks
+        if any(share.started_at is not None and share.finished_at is None
+               for operation in task.operations for share in operation.shares)
+    ]
+    return LoadClock(now, _dispatch_calendar(uow, now), _skills(uow), _progress(uow, started))
 
 
 def _with_absences(
@@ -437,7 +463,7 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
         skills = _skills(uow)
         tasks = uow.production.list(limit=10_000)
         busy = _with_absences(
-            _busy(tasks, task.id, operation.id, command.now),
+            _busy(tasks, task.id, operation.id, command.now, _load_clock(uow, command.now, tasks)),
             uow.calendar.absences(),
             command.operator_ids,
             command.now.tzinfo,
@@ -645,7 +671,7 @@ def place_share(
     start, finish = place(
         tasks=[interim if item.id == task.id else item for item in tasks.values()],
         task=interim, operation=interim.operation(operation.id), operator_id=operator_id,
-        quantity=quantity, requested_start=requested, calendar=calendar, skills=skills, progress=progress,
+        quantity=quantity, requested_start=requested, calendar=calendar, skills=skills, progress=progress, now=now,
     )
     target = OperationShare(operator_id, quantity, start, finish)
     ordered = [
@@ -847,9 +873,7 @@ def _record_fact(
             if finished:
                 window = (min(before[0], now), now)
             else:
-                rate = sum((skill_of(skills, operation.skill_codes, value).coefficient for value in people), Decimal(0))
-                units = task.operation_units(operation.id, Decimal(target) - done)
-                rest = ceil(operation.seconds_per_unit * units / (rate if rate > 0 else Decimal(1)))
+                rest = remaining_seconds(operation, task.operation_units(operation.id, Decimal(target) - done), people, skills)
                 begin = next_working_moment(now, calendar.holidays, calendar.shift)
                 window = (min(before[0], now), add_work_seconds(begin, rest, calendar.holidays, calendar.shift))
         for item in moving:
@@ -1028,7 +1052,7 @@ def _auto_schedule(
         raise ProductionValidationError("Для авторасчёта нужно заполнить матрицу компетенций")
     other_tasks = [item for item in uow.production.list(limit=10_000) if item.id != task.id]
     busy = _with_absences(
-        _busy(other_tasks, task.id, UUID(int=0), command.now),
+        _busy(other_tasks, task.id, UUID(int=0), command.now, _load_clock(uow, command.now, other_tasks)),
         uow.calendar.absences(), team, command.now.tzinfo,
     )
     parameters = dict(

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ProductionAbsence, ProductionOperator, ProductionShift, ProductionTask } from "./api";
-import { LoadLegend, PeopleLoadGrid, absenceLabel, dayPart, loadLevel, loadThresholdsText, shiftCapacity } from "./PeopleLoad";
+import { LoadLegend, PeopleLoadGrid, absenceLabel, dayPart, loadLevel, loadThresholdsText, peopleLoad, shiftCapacity } from "./PeopleLoad";
 
 const shift: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:00", breaks: [], effective_hours: "7" };
 const busy = { id: "o1", name: "Иванов Иван", site: "ЦАР" } as unknown as ProductionOperator;
@@ -67,6 +67,27 @@ it("легенда — примеры из реальной смены и пор
   expect(cells.slice(1, 4)).toEqual(["4/8", "8/8", "10/8"]);
   expect(container.firstElementChild?.getAttribute("title")).toBe(loadThresholdsText(8));
   expect(loadThresholdsText(8)).toBe("Смена 8 ч. Частично — меньше 6,8 ч (85 % смены); смена занята — 6,8–8,4 ч (85–105 %); перегруз — больше 8,4 ч");
+});
+
+it("затянувшаяся взятая доля — загрузка от «сейчас» на остаток, план истёк (владелец, 22.10)", () => {
+  vi.setSystemTime(new Date("2026-10-07T09:00:00"));
+  // Взял 05.10, план кончился 06.10 15:57, не сдал: 10 × 360 с = 1 ч чистых → 07.10 9:00–10:09 (1 ч из 7).
+  const taken = { ...share, started_at: "2026-10-05T16:08:00", output: "0" };
+  const late = {
+    ...task, quantity: 10,
+    operations: [{ ...task.operations[0], seconds_per_unit: "360", required_quantity: "10", fact: { good: "0", defect: "0", processed: "0" }, shares: [taken] }],
+  } as unknown as ProductionTask;
+  const [row] = peopleLoad([busy], [late], ["2026-10-07"], shift, { now: Date.now(), holidays: [], absences: [] });
+  expect(row.items[0].overrun).toBe(true);
+  expect(row.hoursByDay["2026-10-07"]).toBeCloseTo(1, 1);
+  // Без «сейчас» — только истёкший план: день пуст.
+  expect(peopleLoad([busy], [late], ["2026-10-07"], shift)[0].hoursByDay["2026-10-07"]).toBeUndefined();
+
+  render(<PeopleLoadGrid operators={[busy]} tasks={[late]} absences={[]} holidays={[]} shift={shift} week={0} onWeekChange={() => {}} />);
+  expect(screen.getByTitle("Иванов Иван, 07.10: 1 из 7 ч")).toBeTruthy();
+  fireEvent.click(screen.getByLabelText("Загрузка Иванов Иван 07.10"));
+  expect(screen.getByRole("group").textContent).toContain("09:00–10:09");
+  expect(screen.getByRole("group").textContent).toContain("затянулось");
 });
 
 it("5,6 ч из 8-часовой смены — «частично», а не «смена занята»", () => {

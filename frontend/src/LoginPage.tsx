@@ -52,6 +52,7 @@ type FormProps = {
 function PasswordForm({ busy, setBusy, error, setError, onLogin }: FormProps) {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -69,7 +70,11 @@ function PasswordForm({ busy, setBusy, error, setError, onLogin }: FormProps) {
   return (
     <form onSubmit={submit}>
       <label>Логин<input autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} required /></label>
-      <label>Пароль<input autoComplete="current-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+      {/* «Показать пароль» (владелец 22.10): видно, что набрано, прежде чем нажать «Войти». */}
+      <label>Пароль<span className="password-field">
+        <input aria-label="Пароль" autoComplete="current-password" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <button type="button" className="password-toggle" aria-pressed={showPassword} aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"} onClick={() => setShowPassword((value) => !value)}>{showPassword ? "Скрыть" : "Показать"}</button>
+      </span></label>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <button className="primary" disabled={busy}>{busy ? "Входим…" : "Войти"}</button>
     </form>
