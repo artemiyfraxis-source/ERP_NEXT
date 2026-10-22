@@ -642,7 +642,7 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   if (key === "project") {
     // «Комментарий» скрыт — он виден отметкой у номера, текст — в подсказке.
     const note = layout.hidden.has("comment") ? row.sheet?.comment?.value ?? "" : "";
-    const action = hasCard(row) ? "Открыть карточку проекта" : "Карточки проекта нет — открыть журнал проекта";
+    const action = "Открыть проект в ресурсном планировании";
     return td(<button className="zg-project" title={note ? `${action}\nКомментарий: ${note}` : action} onClick={() => onOpenProject(row)}>
       {row.project}{note && <i className="zg-note-mark" aria-hidden />}
     </button>, note ? "zg-has-note" : "");

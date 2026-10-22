@@ -19,7 +19,7 @@ import {
   type ProductionTask,
   type ProductionWorkSession,
 } from "./api";
-import { canAct, canSee, hasFullAccess } from "./navigation";
+import { canAct, canSee, hasFullAccess, openPlace } from "./navigation";
 import { EtkSheet } from "./ProjectEtk";
 import { etkCardsChangedNote, etkCardsNote } from "./etkCardSource";
 import type { MarkSerialRange } from "./markSerial";
@@ -194,6 +194,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       tasks={tasks} operators={operators} site={viewerSite} skills={skills} absences={absences}
       shift={shift} holidays={holidays} projectDeadlines={projectDeadlines}
       canEdit={canEdit} busy={busy} mutate={mutate} error={error} notice={notice}
+      openProjectCard={canSee(principal, "projects") ? (project) => openPlace("projects", { project }) : undefined}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
     {mine && loaded && !tasks.length && <div className="empty">{viewAs ? "Операции сотруднику не назначены." : canPick ? "Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}

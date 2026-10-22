@@ -53,19 +53,13 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-afterEach(() => { vi.restoreAllMocks(); window.localStorage.removeItem("erp-zg-columns"); });
-
-/** Журнал проекта — по клику на организацию (№ проекта открывает карточку). */
-async function openProject(project: string) {
-  const row = (await screen.findByRole("button", { name: project })).closest("tr")!;
-  fireEvent.click(row.querySelector(".zg-link")!);
-}
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.removeItem("erp-zg-columns"); window.history.replaceState({}, "", "/"); });
 
 function sheetRow(project: string) {
   return document.querySelector(`tr[data-project="${project}"]`) as HTMLTableRowElement;
 }
 
-it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the project journal", async () => {
+it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input) === "/api/production/calendar" ? json({ holidays: [], absences: [], shift: {} }) : json(plan));
   render(<ProductionPlanPage principal={principal} />);
 
@@ -96,11 +90,8 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the pro
   expect(row.querySelector(".zg-col-deadline")?.getAttribute("title")).toBe("Дедлайн 30.09.2026 · рабочих дней до дедлайна: 6");
   expect(row.querySelector(".zg-col-test_sb")?.className).toContain("zg-manual");
   expect(screen.getByText("В работе · 1")).toBeInTheDocument();
-  await openProject("708К.4");
-  expect(screen.getAllByText("Ждём разъёмы").length).toBeGreaterThan(0);
-  expect(screen.getByText("Всего 5: склад 2, в пути 1, в закупке 1, в заявках 1.")).toBeInTheDocument();
-  expect(screen.getByText("1 заданий · назначено 2 из 3 этапов.")).toBeInTheDocument();
-  expect(screen.getByText("ТК выдана · не набрано")).toBeInTheDocument();
+  // Боковой панели нет: проект открывается в «Ресурсном планировании».
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it("writes the sheet header in full words (no abbreviations) and keeps the meaning in tooltips", async () => {
@@ -193,80 +184,6 @@ it("lets the viewer choose the sheet columns, keeps the sheet order and returns 
   fireEvent.click(screen.getByRole("button", { name: "По ширине экрана" }));
   expect(labels()).toHaveLength(16);
   expect(window.localStorage.getItem("erp-zg-columns")).toBeNull();
-});
-
-it("sets the stage of a project without KBs through a journal mark with an empty KB", async () => {
-  const bare = { ...plan.rows[0], project: "70К.26.13", stage: "Новый", kits: [], blocker: null, events: [] };
-  let payload: Record<string, unknown> | undefined;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (String(input).startsWith("/api/production/plan/stage-preview")) return json(stagePreview());
-    if (String(input) === "/api/production/plan/events") {
-      payload = JSON.parse(String(init?.body));
-      return json({ event: plan.rows[0].events[0] }, 201);
-    }
-    return json({ ...plan, rows: [bare] });
-  });
-  render(<ProductionPlanPage principal={principal} />);
-  await openProject("70К.26.13");
-
-  expect(screen.queryByText(/набрано/)).not.toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Этап проекта"), { target: { value: "Отгружено" } });
-  fireEvent.click(await screen.findByRole("button", { name: "Сменить этап" }));
-  await waitFor(() => expect(payload).toMatchObject({
-    project: "70К.26.13", kind: "stage", item_index: "", value: "Отгружено", reason: "", preview_token: "tok-plan",
-  }));
-});
-
-it("adds a deadline through the native project journal", async () => {
-  let payload: Record<string, unknown> | undefined;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (String(input) === "/api/production/plan/events") {
-      payload = JSON.parse(String(init?.body));
-      return json({ event: plan.rows[0].events[0] }, 201);
-    }
-    return json(plan);
-  });
-  render(<ProductionPlanPage principal={principal} />);
-  await openProject("708К.4");
-  fireEvent.change(screen.getByLabelText("Запись"), { target: { value: "deadline" } });
-  fireEvent.change(screen.getByLabelText("Дата"), { target: { value: "2026-10-03" } });
-  fireEvent.click(screen.getByRole("button", { name: "Записать" }));
-
-  await waitFor(() => expect(payload).toEqual({
-    project: "708К.4", kind: "deadline", blocker: "ХОЛД", text: "", deadline: "2026-10-03",
-  }));
-});
-
-it("records manual kit stage and techcard review", async () => {
-  const payloads: Record<string, unknown>[] = [];
-  const previews: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (String(input).startsWith("/api/production/plan/stage-preview")) {
-      previews.push(decodeURIComponent(String(input)));
-      return json(stagePreview({ direction: "back", reason_required: true }));
-    }
-    if (String(input) === "/api/production/plan/events") {
-      payloads.push(JSON.parse(String(init?.body)));
-      return json({ event: plan.rows[0].events[0] }, 201);
-    }
-    return json(plan);
-  });
-  render(<ProductionPlanPage principal={principal} />);
-  await openProject("708К.4");
-
-  fireEvent.change(screen.getByLabelText("Этап КБ1"), { target: { value: "Отгружено" } });
-  const confirm = await screen.findByRole("button", { name: "Сменить этап" });
-  expect(previews[0]).toBe("/api/production/plan/stage-preview?project=708К.4&value=Отгружено&kb=КБ1");
-  expect(confirm).toBeDisabled(); // назад — без причины не отправить
-  fireEvent.change(screen.getByLabelText("Причина смены этапа"), { target: { value: "ошиблись кнопкой" } });
-  fireEvent.click(confirm);
-  await waitFor(() => expect(payloads[0]).toMatchObject({
-    project: "708К.4", kind: "stage", item_index: "КБ1", value: "Отгружено", reason: "ошиблись кнопкой",
-  }));
-  fireEvent.change(screen.getByLabelText("Проверка ТК КБ1"), { target: { value: "проверена" } });
-  await waitFor(() => expect(payloads[1]).toMatchObject({
-    project: "708К.4", kind: "tcReview", item_index: "КБ1", value: "проверена",
-  }));
 });
 
 function row(overrides: Partial<ProductionPlanResult["rows"][number]>) {
@@ -543,15 +460,6 @@ it("«Только занятые» hides free people", async () => {
   }
 });
 
-it("opens the project card from the project number, not a panel under the list", async () => {
-  const opened: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
-  render(<ProductionPlanPage principal={principal} openProjectCard={(project) => opened.push(project)} />);
-  fireEvent.click(await screen.findByRole("button", { name: "708К.4" }));
-  expect(opened).toEqual(["708К.4"]);
-  expect(screen.queryByRole("dialog")).toBeNull();
-});
-
 it("shows the project stage in the shared chip with the blocker beside it and sizes the column to the longest pair", async () => {
   const mixed: ProductionPlanResult = { ...plan, rows: [
     row({ project: "621К.2", group: "active", stage: "КБ на складе", blocker: { type: "ОЖИД КОМПЛ", text: "Ждём", since: "2026-09-22T09:00:00+03:00", who: "Мастер" } }),
@@ -617,41 +525,35 @@ it("changes the stage, blocks and closes a project without a card from the statu
   await waitFor(() => expect(payloads[2]).toMatchObject({ project: "709К.1", kind: "stage", item_index: "", value: "В работе" }));
 });
 
-it("opens the project journal with an honest «no card» line when the project has no card in «Проекты» (ПП-5)", async () => {
-  const opened: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).startsWith("/api/techcards/kitsets")
-    ? json({ items: [{ project: "614К.1" }], statuses: [] }) : json(plan));
-  window.history.replaceState({}, "", "/?section=prodplan");
-  render(<ProductionPlanPage principal={principal} openProjectCard={(project) => opened.push(project)} />);
-  const number = await screen.findByRole("button", { name: "708К.4" });
-  await waitFor(() => expect(number.getAttribute("title")).toBe("Карточки проекта нет — открыть журнал проекта"));
-  fireEvent.click(number);
-
-  expect(opened).toEqual([]);
-  const drawer = screen.getByRole("dialog", { name: "Проект 708К.4" });
-  expect(drawer.textContent).toContain("Карточки проекта 708К.4 в «Проектах» нет — создайте её из расчёта.");
-  expect(drawer.textContent).not.toContain("удалена");
-  expect(screen.queryByRole("button", { name: "Открыть карточку проекта" })).toBeNull();
-  const moved: string[] = [];
-  const listener = () => moved.push(window.location.search);
+it("opens the project in «Ресурсное планирование» from the number and from the customer, with no side drawer", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
+  const places: string[] = [];
+  const listener = () => places.push(window.location.search);
   window.addEventListener("popstate", listener);
-  const link = screen.getByRole("link", { name: "Открыть «Проекты»" });
-  expect(link.getAttribute("href")).toBe("?section=projects");
-  fireEvent.click(link);
+  window.history.replaceState({}, "", "/?section=prodplan");
+  render(<ProductionPlanPage principal={principal} />);
+  const number = await screen.findByRole("button", { name: "708К.4" });
+  fireEvent.click(number);
+  expect(places).toEqual(["?section=production&project=708%D0%9A.4"]);
+  fireEvent.click(sheetRow("708К.4").querySelector(".zg-link")!);
   window.removeEventListener("popstate", listener);
-  expect(moved).toEqual(["?section=projects"]);
-  window.history.replaceState({}, "", "/");
+  expect(places).toHaveLength(2);
+  expect(places[1]).toBe(places[0]);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(document.querySelector(".plan-drawer")).toBeNull();
 });
 
-it("opens the card from the project number when «Проекты» has it", async () => {
+it("falls back to the project card when the master board is closed to the viewer", async () => {
   const opened: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).startsWith("/api/techcards/kitsets")
-    ? json({ items: [{ project: "708к.4" }], statuses: [] }) : json(plan));
-  render(<ProductionPlanPage principal={principal} openProjectCard={(project) => opened.push(project)} />);
+    ? json({ items: [{ project: "708К.4" }], statuses: [] }) : json(plan));
+  const limited: Principal = { ...principal, roles: ["viewer"], access_level: "viewer", permissions: { prodplan: "view" } };
+  render(<ProductionPlanPage principal={limited} openProjectCard={(project) => opened.push(project)} />);
   const number = await screen.findByRole("button", { name: "708К.4" });
-  await waitFor(() => expect(number.getAttribute("title")).toBe("Открыть карточку проекта"));
+  await waitFor(() => expect(window.location.search).toBe(""));
   fireEvent.click(number);
   expect(opened).toEqual(["708К.4"]);
+  expect(window.location.search).toBe("");
 });
 
 it("hides the comment column first and shows a comment as a mark at the project number", async () => {

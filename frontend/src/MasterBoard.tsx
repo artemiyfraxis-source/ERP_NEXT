@@ -19,6 +19,8 @@ import { formatDayMonth, kbLabel } from "./format";
 import { MachineLoadGrid, MachineWarning } from "./MachineLoad";
 import { LoadCell, LoadLegend, shiftCapacity } from "./PeopleLoad";
 import { periodWords } from "./PlanLoadSheet";
+import { ProjectPlanBlock } from "./ProjectPlanBlock";
+import { urlParam } from "./navigation";
 import { KitTile } from "./ProjectCard";
 import { deadlineChips, feedsText, operationPlanText, taskItemLabel, upstreamIds, windowText } from "./productionGraph";
 import { StatusChip } from "./StatusChip";
@@ -480,7 +482,7 @@ export function withRun<T extends ProductionTask>(task: T, run: number): T {
 
 type Selected = { taskId: string; operationId: string };
 
-export function MasterBoard({ tasks, operators, site = "", skills, absences, shift, holidays = [], projectDeadlines = {}, canEdit, busy, mutate, openTask, error = "", notice = "" }: {
+export function MasterBoard({ tasks, operators, site = "", skills, absences, shift, holidays = [], projectDeadlines = {}, canEdit, busy, mutate, openTask, openProjectCard, error = "", notice = "" }: {
   tasks: ProductionTask[];
   operators: ProductionOperator[];
   site?: string;
@@ -493,6 +495,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   busy: string;
   mutate: Mutate;
   openTask: (taskId: string, operationId?: string) => void;
+  /** Карточка проекта в «Проектах» (кнопка в блоке «Проект»); без доступа к разделу не передаётся. */
+  openProjectCard?: (project: string) => void;
   /** Ошибка и итог последнего действия страницы — повторяются в открытом окне, иначе их не видно под ним. */
   error?: string;
   notice?: string;
@@ -503,7 +507,9 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const [onlyFree, setOnlyFree] = useState(false);
   const [flagFilter, setFlagFilter] = useState<OpFlag | null>(null);
   const [tiles, setTiles] = useState<{ items: KitsetTile[]; statuses: string[] }>({ items: [], statuses: [] });
-  const [openProject, setOpenProjectState] = useState(lastProject);
+  // `?project=` — переход из «Производственного плана» (владелец 22.10): окно проекта открывается сразу.
+  const urlProject = useRef(urlParam("project")).current;
+  const [openProject, setOpenProjectState] = useState(urlProject || lastProject);
   const [openDay, setOpenDay] = useState<{ personId: string; day: string } | null>(null);
   // Штук монтажнику (владелец, 30.09: «дробить операцию между людьми»): по умолчанию — нераспределённое.
   const [pieces, setPieces] = useState("");
@@ -537,6 +543,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
 
   function setOpenProject(project: string) {
     lastProject = project;
+    if (!project && urlParam("project")) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("project");
+      window.history.replaceState({}, "", url);
+    }
     setOpenProjectState(project);
     setSelected(null);
     setNote(null);
@@ -566,7 +577,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const deadlineTags = (project: string) => deadlineChips(planOf(project), taskDeadlineOf(project))
     .map((chip) => <StatusChip key={chip.kind} className="mb-deadline" tone={chip.tone} title={chip.title}>{chip.text}</StatusChip>);
 
-  const shown = projects.find((project) => project === openProject) ?? "";
+  const shown = projects.find((project) => project.toLowerCase() === openProject.toLowerCase())
+    ?? (openProject && openProject === urlProject ? openProject : "");
   // Полоса «Сегодня»: операции живых заданий (не отданных на площадку) с каждым флагом; клик фильтрует список.
   const nowMs = Date.now();
   const progressOf = (item: ProductionTask, op: ProductionOperation) => opProgress(item, op, nowMs);
@@ -850,6 +862,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         {canEdit && site !== HANDOVER_SITE && <button className="primary small" onClick={() => setAutoplanFor(project)}>Автопланирование</button>}
         <button className="secondary small" onClick={() => setOpenProject("")}>Закрыть</button>
       </div>
+      <ProjectPlanBlock project={project} canEdit={canEdit} openProjectCard={openProjectCard} />
       {banners}
       {view === "equipment" && renderGroups(project)}
       {view === "stages" && boardNow === undefined && !projectTasks.length && <div className="empty">Загрузка…</div>}
