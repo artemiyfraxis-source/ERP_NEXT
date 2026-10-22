@@ -38,7 +38,6 @@ from app.modules.purchasing.infrastructure import (
 from app.modules.purchasing.rb_import import Importer, open_snapshot
 from app.modules.requests.api import moscow_now
 from app.modules.requests.infrastructure import RequestRow
-from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.identity import Actor
 from app.shared.persistence import AuditEventRow, Base, OutboxMessageRow, create_schema
@@ -377,11 +376,7 @@ def test_erp_change_wins_and_untouched_lines_follow_rb(erp, snapshot, tmp_path):
 
 
 @pytest.fixture()
-def api(erp, monkeypatch, tmp_path):
-    options = tmp_path / "options.json"
-    options.write_text(json.dumps({"procurement.requests_rb": True, "procurement.orders": True, "procurement.rfq": True}),
-                       encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(options))
+def api(erp):
     app.state.procurement_uow_factory = lambda: SqlAlchemyProcurementUnitOfWork(erp)
     app.state.purchasing_uow_factory = lambda: SqlAlchemyPurchasingUnitOfWork(erp)
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
