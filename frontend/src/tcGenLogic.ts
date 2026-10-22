@@ -1053,24 +1053,24 @@ export function makeGen(D: GenData, S: GenState) {
   }
   /** Сростки схемы по строкам для формы: «С1», сколько проводов и откуда каждый (разъём и контакт противоположного конца
    *  провода; конец, ушедший в другой сросток или хвост, — «к С2» / «к хвосту»). Пусто — на схеме сростков нет. */
-  function spliceRows_(): Array<{ id: string; label: string; size: number; wires: Array<{ art: string; from: string }> }> {
+  function spliceRows_(withLone = false): Array<{ id: string; label: string; size: number; wires: Array<{ art: string; from: string; end: WireEnd }> }> {
     const all = S.splices || [];
-    return all.filter((sp) => sp.ends.length >= 2).map((sp) => ({
+    return all.filter((sp) => withLone || sp.ends.length >= 2).map((sp) => ({
       id: sp.id, label: `С${all.indexOf(sp) + 1}`, size: sp.ends.length,
       wires: sp.ends.map((e) => {
         const w = activeWires_().find((x) => x.idx === e.idx);
         const c = w ? getCompById(w.compId) : null;
         const art = c ? c.art || c.name || "" : "";
         const other: Side = e.side === "A" ? "B" : "A";
-        if (!w) return { art, from: "" };
+        if (!w) return { art, from: "", end: e };
         const ep = unitEndpoint_(w, e.unit, other);
         if (ep) {
           const pin = corePinsOf_(ep, e.idx)[e.unit];
-          return { art, from: `${(ep.label || "").trim() || endKey_(ep)}${pin != null ? ` конт. ${pin}` : ""}` };
+          return { art, from: `${(ep.label || "").trim() || endKey_(ep)}${pin != null ? ` конт. ${pin}` : ""}`, end: e };
         }
         const next = all.find((x) => x !== sp && x.ends.some((y) => y.idx === e.idx && y.unit === e.unit && y.side === other));
-        if (next) return { art, from: `к С${all.indexOf(next) + 1}` };
-        return { art, from: endJoined(S, e.idx, e.unit, other) === "tail" ? "к хвосту" : "" };
+        if (next) return { art, from: `к С${all.indexOf(next) + 1}`, end: e };
+        return { art, from: endJoined(S, e.idx, e.unit, other) === "tail" ? "к хвосту" : "", end: e };
       }),
     }));
   }

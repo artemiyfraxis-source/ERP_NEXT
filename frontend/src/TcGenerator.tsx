@@ -75,7 +75,7 @@ import {
   type GenData,
   type GenState,
   type OpSpec,
-  type Side,
+  type Side, type WireEnd,
   type SpliceMethod,
   type Tab,
   type TailMode,
@@ -124,7 +124,7 @@ type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "
 const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, markMats: [], cableRecords: [], library: [] };
 const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"], ["manual", "Ручная сборка"]];
 const WRAP_KINDS: Array<[WrapKind, string]> = [
-  ["tape", "Лента — последней операцией"], ["braid", "Оплётка — до термоусадки"], ["under", "Лента под оплётку — перед ней"],
+  ["tape", "Лента поверх жгута — в конце маршрута"], ["braid", "Оплётка — надевается до обжима"], ["under", "Лента под оплётку — слой перед ней"],
 ];
 const MEASURE_MODES = [
   ["inner", "Между разъёмами", "+L+"], ["outer", "От краёв разъёмов", "−L−"], ["cut", "Длина реза по КД", "без припуска"],
@@ -1106,7 +1106,23 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const splMethod = gen.splMethod_();
   const sleeveComps = gen.spliceSleeveComps_();
   const spliceSlots = gen.spliceSlots_();
-  const spliceRows = complex ? gen.spliceRows_() : [];
+  // Порядок надевания по слоям — как его строит генератор: лента под оплётку и оплётка идут до обжима, лента поверх — последней операцией.
+  const wrapName = (slot: { mat: string }) => { const c = gen.getCompById(slot.mat); return c ? c.art || c.name : ""; };
+  const wrapUsed = S.wrap.enabled ? S.wrap.slots.slice(0, complex ? 4 : 1).filter((slot) => slot.mat && wrapName(slot)) : [];
+  const hasBraid = wrapUsed.some((slot) => slot.kind === "braid");
+  const wrapPlan = [
+    ...wrapUsed.filter((slot) => slot.kind === "under" && hasBraid).map((slot) => `Лента ${wrapName(slot)} — первым слоем, до оплётки`),
+    ...wrapUsed.filter((slot) => slot.kind === "braid").map((slot) => `Оплётка ${wrapName(slot)} — до обжима контактов и термоусадки`),
+    ...wrapUsed.filter((slot) => slot.kind === "tape" || (slot.kind === "under" && !hasBraid)).map((slot) => `Лента ${wrapName(slot)} — последней операцией, после монтажа`),
+  ];
+  const spliceRows = complex ? gen.spliceRows_(true) : [];
+  const spliceEndKey = (end: WireEnd) => `${end.idx}:${end.unit}:${end.side}`;
+  const parseSpliceEnd = (value: string): WireEnd | null => { const [idx, unit, side] = value.split(":"); return side === "A" || side === "B" ? { idx: Number(idx), unit: Number(unit), side } : null; };
+  const spliceUnitOf = (end: WireEnd) => pinUnitList.find((u) => u.idx === end.idx && u.unit === end.unit);
+  /** «№ 1.2 CCCU-4G · красный — конец А»: номер провода как на схеме соединений («кабель.жила»). */
+  const spliceEndText = (end: WireEnd) => { const u = spliceUnitOf(end); return `${u ? `№ ${u.num} ${u.name || "провод"}${u.colorName ? ` · ${u.colorName}` : ""}` : "провод"} — конец ${sideRu_(end.side)}`; };
+  const freeSpliceEnds = complex ? pinUnitList.filter((u) => !u.shield).flatMap((u) => (["A", "B"] as const).map((side) => ({ idx: u.idx, unit: u.unit, side })))
+    .filter((end) => !(S.splices || []).some((sp) => sp.ends.some((e) => e.idx === end.idx && e.unit === end.unit && e.side === end.side))) : [];
   const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.hsComp_(row.compId), skip: gen.hsRowSkip_(row) }));
   const hsOptions = gen.hsTubeOptions_();
   const marks = gen.markComps_();
@@ -1252,16 +1268,32 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <Field label="Материал обжима из состава" hint="необязательно" className="span2">{selectComps(sleeveComps, S.spl.band || "",
           (id) => update((current) => ({ ...current, spl: { ...current.spl, band: id } })), "Материал ленточного обжима")}</Field>
       </div>}
-      {spliceRows.length ? <div className="spl-rows" role="list" aria-label="Сростки схемы">
-        {spliceRows.map((row) => <div className="spl-row" role="listitem" key={row.id}>
-          <b>{row.label}</b><span className="spl-size">{row.size} {plural(row.size, "провод", "провода", "проводов")}</span>
-          <span className="spl-wires">{row.wires.map((w, i) => <span key={i}>{w.art || "провод"}{w.from ? ` ${w.from.startsWith("к ") ? "" : "от "}${w.from}` : ""}</span>)}</span>
+      <p className="opt-note">Сросток — узел, где концы нескольких проводов соединяются в один (С1, С2…). Выберите, какие концы входят в каждый; контакты разъёма у этих концов снимаются.</p>
+      <div className="spl-edit" role="list" aria-label="Сростки">
+        {spliceRows.map((row) => <div className="spl-edit-row" role="listitem" key={row.id}>
+          <b>{row.label}</b><span className="spl-size">{row.size} {plural(row.size, "конец", "конца", "концов")}</span>
+          <span className="spl-ends">{row.wires.map((w) => <span className="spl-end" key={`${w.end.idx}.${w.end.unit}${w.end.side}`}>
+            {spliceEndText(w.end)}{w.from ? <small>{`другой конец: ${w.from}`}</small> : null}
+            <button type="button" className="btn-remove" title={`Убрать из ${row.label}`} aria-label={`Убрать ${spliceEndText(w.end)} из ${row.label}`}
+              onClick={() => update((current) => leaveJoin(D, current, w.end))}>×</button></span>)}</span>
+          <select className="hs-add" aria-label={`Добавить конец в ${row.label}`} value="" onChange={(event) => { const end = parseSpliceEnd(event.target.value); if (end) update((current) => joinSplice(D, current, end, row.id)); }}>
+            <option value="">+ Добавить конец</option>
+            {freeSpliceEnds.map((end) => <option key={spliceEndKey(end)} value={spliceEndKey(end)}>{spliceEndText(end)}</option>)}
+          </select>
         </div>)}
-        <p className="opt-note">Сростки задаются на схеме</p>
-      </div> : <div className="opt-grid">
-        <Field label="Сростков на изделие"><input type="number" min={1} value={S.spl.count} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, count: event.target.value } }))} /></Field>
-        <Field label="Проводов в сростке" hint="разные — через запятую" className="span2"><input value={S.spl.wires} placeholder="3 или 4, 2, 2" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, wires: event.target.value } }))} /></Field>
-      </div>}
+        <select className="hs-add" aria-label="Новый сросток" value="" disabled={!freeSpliceEnds.length}
+          onChange={(event) => { const end = parseSpliceEnd(event.target.value); if (end) update((current) => joinSplice(D, current, end, "new")); }}>
+          <option value="">{freeSpliceEnds.length ? "+ Новый сросток — первый конец" : "Нет проводов для сростка — добавьте кабели"}</option>
+          {freeSpliceEnds.map((end) => <option key={spliceEndKey(end)} value={spliceEndKey(end)}>{spliceEndText(end)}</option>)}
+        </select>
+      </div>
+      {!spliceRows.length && <details className="spl-count" open={S.spl.count !== "1" || S.spl.wires !== "3"}>
+        <summary>Задать числом, без привязки к проводам</summary>
+        <div className="opt-grid">
+          <Field label="Сростков на изделие"><input type="number" min={1} value={S.spl.count} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, count: event.target.value } }))} /></Field>
+          <Field label="Проводов в каждом сростке" hint="разные — через запятую: 4, 2, 2" className="span2"><input value={S.spl.wires} placeholder="3 или 4, 2, 2" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, wires: event.target.value } }))} /></Field>
+        </div>
+      </details>}
       <div className="opt-grid">
         <Field label="Трубка сростка, длина"><UnitInput unit="мм" value={S.spl.tut} placeholder="40" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, tut: event.target.value } }))} /></Field>
         <Field label="Зачистка под сросток"><UnitInput unit="мм" aria-label="Зачистка под сросток" value={S.spl.strip} placeholder={SPLICE_STRIP_MM_} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, strip: event.target.value } }))} /></Field>
@@ -1292,18 +1324,18 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {hsOptions.ref.length > 0 && <optgroup label="Из БД.МАТ">{hsOptions.ref.map((m) => <option key={m.name} value={REF_TUBE_ + m.name}>{m.name}</option>)}</optgroup>}
       </select> : hsComps.length === 0 && <span className="opt-note">В составе проекта нет термоусадки (ТТК/ТУТ) — добавьте её в состав, и здесь появятся отрезки.</span>}
     </Toggle>,
-    <Toggle key="wrap" checked={S.wrap.enabled} title="Лента / оплётка на жгут"
+    <Toggle key="wrap" checked={S.wrap.enabled} title="Лента / оплётка на жгут" hint="что надеть на жгут и в каком порядке"
       onChange={(on) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, enabled: on } }))}>
       {/* Второй–четвёртый материал — по одному, следующий появляется, когда выбран предыдущий (владелец 18.10). */}
       {S.wrap.slots.map((slot, i) => (i === 0 || (complex && !!(slot.mat || S.wrap.slots[i - 1].mat))) && <div className="opt-grid" key={WRAP_SLOTS_[i] || "1"}>
-        <Field label={["Материал из состава", "Второй материал", "Третий материал", "Четвёртый материал"][i]} hint={i ? "необязательно" : undefined} className="span2">
+        <Field label={["Слой 1 — материал из состава", "Слой 2 — ещё материал", "Слой 3 — ещё материал", "Слой 4 — ещё материал"][i]} hint={i ? "необязательно: например лента под оплётку" : undefined} className="span2">
           {selectComps(wrapOpts, slot.mat, (id) => update((current) => {
             const c = makeGen(D, current).getCompById(id);
             const g = makeGen(D, current);
             const slots = current.wrap.slots.map((s, j) => (j === i ? { mat: id, kind: c ? g.guessWrapKind_(c) : s.kind, len: g.prefillWrapLen_(c) } : s));
             return syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots } });
           }), `Материал ${i + 1}`)}</Field>
-        {(i === 0 || slot.mat) && <Field label="Вид" className="span2"><select value={slot.kind} onChange={(event) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, kind: event.target.value as WrapKind } : s)) } }))}>
+        {(i === 0 || slot.mat) && <Field label="Как надеть" className="span2"><select value={slot.kind} onChange={(event) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, kind: event.target.value as WrapKind } : s)) } }))}>
           {WRAP_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>}
         {(() => {
           const lenField = (hint?: string) => <Field label="Длина на изделие" hint={hint}><UnitInput unit="мм" value={slot.len} placeholder="по КД"
@@ -1322,6 +1354,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           </>;
         })()}
       </div>)}
+      {wrapPlan.length > 0 && <ol className="wrap-plan" aria-label="Порядок в маршруте">
+        {wrapPlan.map((line) => <li key={line}>{line}</li>)}
+      </ol>}
+      <p className="opt-note">{complex && braidCuts.length ? "Оплётка режется отрезками на ветви разъёмов стороны А, лента идёт по всему стволу." : "Материал надевается на весь жгут; длина — на одно изделие."}</p>
     </Toggle>,
   ].filter(Boolean);
   const machine = [
