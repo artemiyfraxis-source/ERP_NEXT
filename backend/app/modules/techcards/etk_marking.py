@@ -160,7 +160,7 @@ def _sizes(marks: Sequence[Mapping[str, Any]]) -> tuple[str, str]:
         else f"{_format(length)} мм — {_format(sum((_qty(item) for item in items), Decimal(0)))} шт. на изделие"
         for length, items in groups.items()
     ]
-    tolerance = f"длина не задана: {', '.join(unset)}" if unset else "Согласно КД"
+    tolerance = f"длина не задана: {', '.join(unset)}" if unset else "по КД"
     return ": " + ", ".join(parts), tolerance
 
 

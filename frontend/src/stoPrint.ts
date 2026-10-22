@@ -1,9 +1,9 @@
-// СТО типовых дефектов (ФРАК-001-2026) для печати: A4 книжная, шапка таблиц повторяется на каждой странице.
+// СТО типовых дефектов (ФРАК-001-2026) для печати: A4 альбомная, шапка таблиц повторяется на каждой странице.
 import { cleanCodes, esc } from "./tdPrintSheets";
 import type { Sto, StoSection } from "./tdTypes";
 
 const CSS = `
-  @page { size: A4 portrait; margin: 12mm; }
+  @page { size: A4 landscape; margin: 10mm; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 9pt; color: #000; margin: 0; }
   h1 { font-size: 15pt; text-align: center; margin: 0 0 3mm; }
   h2 { font-size: 12pt; margin: 6mm 0 2mm; }
@@ -17,16 +17,19 @@ const CSS = `
   th, td { border: 0.25mm solid #000; padding: 0.6mm 1.2mm; text-align: left; vertical-align: top; font-size: 8pt; }
   th { background: #eee; }
   td.code { white-space: nowrap; }
+  p.norms { text-align: left; font-size: 8pt; }
   ol { margin: 1.5mm 0 1.5mm 6mm; padding: 0; }
 `;
 
 function stoSectionHtml(section: StoSection, level: number): string {
   const tag = level === 0 ? "h2" : "h3";
-  const head = `<${tag}>${esc(section.code)} ${esc(cleanCodes(section.title))}</${tag}>` + (section.scope ? `<p>${esc(section.scope)}</p>` : "");
+  const norms = (section.norms ?? []).map((norm) => `${norm.doc}, ${norm.clauses}`).join("; ");
+  const head = `<${tag}>${esc(section.code)} ${esc(cleanCodes(section.title))}</${tag}>` +
+    (norms ? `<p class="norms"><b>Нормативные требования:</b> ${esc(norms)}</p>` : "") + (section.scope ? `<p>${esc(section.scope)}</p>` : "");
   const table = section.rows.length ?
-    `<table><colgroup><col width="9%"><col width="22%"><col width="27%"><col width="10%"><col width="15%"><col width="17%"></colgroup>` +
-    `<thead><tr><th>Код</th><th>Дефект</th><th>Признак / критерий отбраковки</th><th>Класс</th><th>Метод контроля</th><th>Действие</th></tr></thead><tbody>` +
-    section.rows.map((row) => `<tr><td class="code">${esc(row.code)}</td><td>${esc(row.defect)}</td><td>${esc(row.criterion)}</td><td>${esc(row.class)}</td><td>${esc(row.method)}</td><td>${esc(row.action)}</td></tr>`).join("") +
+    `<table><colgroup><col width="6%"><col width="14%"><col width="25%"><col width="8%"><col width="13%"><col width="15%"><col width="19%"></colgroup>` +
+    `<thead><tr><th>Код</th><th>Дефект</th><th>Признак / критерий отбраковки</th><th>Класс</th><th>Метод контроля</th><th>Действие</th><th>Основание</th></tr></thead><tbody>` +
+    section.rows.map((row) => `<tr><td class="code">${esc(row.code)}</td><td>${esc(row.defect)}</td><td>${esc(row.criterion)}</td><td>${esc(row.class)}</td><td>${esc(row.method)}</td><td>${esc(row.action)}</td><td>${esc(row.basis ?? "")}</td></tr>`).join("") +
     `</tbody></table>` : "";
   return head + table + (section.subsections ?? []).map((sub) => stoSectionHtml(sub, level + 1)).join("");
 }

@@ -6,12 +6,11 @@ import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
 import { etkToleranceLines } from "./etkOperation";
 import { etkOperationTitle, operationKeyOf } from "./etkPrint";
 import { unitLabel } from "./format";
-import { tdOpGrade, type TdOpGrade, type TdPrintModel, type TdSignatory, type TdStoRef } from "./tdTypes";
+import { tdOpGrade, type StoNorm, type TdOpGrade, type TdPrintModel, type TdSignatory, type TdStoRef } from "./tdTypes";
 
 type Row = Record<string, unknown>;
 
 const ORGANISATION = "ООО «ЗЭП «ФРАКСИС»";
-const REFERENCE_DOCS = ["ГОСТ 23586-96", "ГОСТ 23587-96", "ГОСТ 23585-79", "ГОСТ Р 72182.2-2025"];
 
 export function esc(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
@@ -91,6 +90,8 @@ function tableSheets(title: string, cols: Col[], body: TRow[], emptyNote = ""): 
 interface Op {
   raw: Row; key: string; number: string; name: string; steps: Row[]; tooling: Row[]; components: Row[];
   equipment: string[]; sto: TdStoRef | null;
+  /** Нормы раздела(ов) СТО операции: стандарт + пункты (td_sto.sto_norms). */
+  norms: StoNorm[];
   /** Профессия и разряд из снимка выпуска (td_ops). */
   grade: TdOpGrade;
   /** РМ — инв. № оборудования операции (оснастка, раздел «Оборудование»). */
@@ -110,6 +111,7 @@ function operationsOf(model: TdPrintModel): Op[] {
       steps: rows(card.steps), tooling, components: rows(raw.components),
       equipment: tooling.filter((tool) => text(tool.section) === "Оборудование").map((tool) => cleanCodes(text(tool.name))).filter(Boolean),
       sto: model.sto_sections?.[key] ?? null,
+      norms: model.sto_sections?.[key]?.norms ?? [],
       grade: tdOpGrade(model.card, key),
       workplace: [...new Set(tooling.filter((tool) => text(tool.section) === "Оборудование")
         .map((tool) => text(tool.inventory_number).trim()).filter(Boolean))].join(", "),
@@ -118,6 +120,47 @@ function operationsOf(model: TdPrintModel): Op[] {
 }
 
 const stoName = (model: TdPrintModel): string => text(model.sto?.designation) || "СТО ФРАК-001-2026";
+
+// ---- нормативные ссылки: стандарт всегда с пунктом ----
+
+/** «п. 5.5, 5.6 (прил. А, табл. 1)» → ["5.5", "5.6 (прил. А, табл. 1)"]: запятые внутри скобок пункты не делят. */
+export function clauseItems(clauses: string): string[] {
+  const items: string[] = [];
+  let depth = 0, current = "";
+  for (const char of clauses.replace(/^\s*п\.\s*/, "")) {
+    depth += (char === "(" ? 1 : 0) - (char === ")" ? 1 : 0);
+    if (char === "," && depth === 0) { items.push(current.trim()); current = ""; } else current += char;
+  }
+  if (current.trim()) items.push(current.trim());
+  return items;
+}
+
+/** Ссылки по документам (первое вхождение задаёт порядок), пункты одного документа сливаются без повторов. */
+function mergeNorms(lists: StoNorm[][]): { doc: string; subject: string; items: string[] }[] {
+  const merged = new Map<string, { doc: string; subject: string; items: string[] }>();
+  lists.flat().forEach((norm) => {
+    const entry = merged.get(norm.doc) ?? { doc: norm.doc, subject: norm.subject, items: [] };
+    clauseItems(norm.clauses).forEach((item) => { if (!entry.items.includes(item)) entry.items.push(item); });
+    merged.set(norm.doc, entry);
+  });
+  // В ведомости пункты идут по возрастанию номеров («5.5, 5.10»), а не в порядке операций.
+  merged.forEach((entry) => entry.items.sort((x, y) => bySection(x.replace(/\s.*$/, ""), y.replace(/\s.*$/, ""))));
+  return [...merged.values()];
+}
+
+/** «ГОСТ 23587-96, п. 5.5, 5.10; ГОСТ 23592-96, п. 4.2.2» — для строки «Технические требования» ОК. */
+const normsText = (norms: StoNorm[]): string => norms.map((norm) => `${norm.doc}, ${norm.clauses}`).join("; ");
+
+/** Компактно для графы «Документы» МК: «ГОСТ 23587-96 п. 5.5, 5.10», по документу в строке; пояснения в скобках опущены. */
+const normsCompact = (norms: StoNorm[]): string =>
+  norms.map((norm) => `${norm.doc} п. ${clauseItems(norm.clauses).map((item) => item.replace(/\s*\(.*\)/, "")).join(", ")}`).join("\n");
+
+/** Разделы СТО в естественном порядке номеров: «4.4.1» после «4.4», перед «4.5». */
+const bySection = (a: string, b: string): number => {
+  const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) if ((pa[i] ?? -1) !== (pb[i] ?? -1)) return (pa[i] ?? -1) - (pb[i] ?? -1);
+  return 0;
+};
 
 function stoSectionText(model: TdPrintModel, op: Op): string {
   return `${stoName(model)}, разд. ${op.sto?.section ? text(op.sto.section) : "4"}`;
@@ -260,16 +303,29 @@ function placeText(model: TdPrintModel): string {
   return [workshop, site ? `участок ${site}` : ""].filter(Boolean).join(", ");
 }
 
-function vtdSheets(docs: Doc[], model: TdPrintModel, ownCount: number): string[] {
+function vtdSheets(docs: Doc[], model: TdPrintModel, ownCount: number, ops: Op[]): string[] {
   const cols: Col[] = [{ h: "№", mm: 12 }, { h: "Обозначение", mm: 55 }, { h: "Наименование документа", mm: 140 }, { h: "Листов", mm: 25 }, { h: "Примечание", mm: 28 }];
   const body: TRow[] = docs.map((doc, index) => ({ cells: [String(index + 1), doc.designation, doc.name, String(doc.code === "ВТД" ? ownCount : doc.sheets.length), ""] }));
-  const refs: TRow[] = [`${stoName(model)}, ред. ${text(model.sto?.revision)}`.replace(/, ред\. $/, ""), ...REFERENCE_DOCS]
-    .map((name, index) => ({ cells: [String(index + 1), name, "Документ, на который даны ссылки в ТД", "", ""] }));
-  const refCols: Col[] = [{ h: "№", mm: 12 }, { h: "Обозначение", mm: 55 }, { h: "Наименование документа", mm: 140 }, { h: "", mm: 25 }, { h: "", mm: 28 }];
   const parts = chunk(cols, body, 8);
   const sheets = parts.map((part, index) => heading(index ? "Ведомость технологических документов (продолжение)" : "Ведомость технологических документов") + tableHtml(cols, part));
-  const last = sheets.length - 1;
-  sheets[last] += `<h2>Документы, на которые даны ссылки</h2>` + tableHtml(refCols, refs);
+  // Документы, на которые даны ссылки: СТО с ревизией и каждый стандарт, названный в операциях комплекта, — с использованными пунктами.
+  const refCols: Col[] = [{ h: "№", mm: 12 }, { h: "Обозначение", mm: 55 }, { h: "Наименование документа", mm: 105 }, { h: "Пункты, на которые даны ссылки", mm: 88 }];
+  const stoSections = [...new Set(ops.flatMap((op) => (op.sto?.section ? text(op.sto.section).split(/,\s*/) : [])))].sort(bySection);
+  const revision = text(model.sto?.revision);
+  const refs: TRow[] = [
+    { cells: ["1", `${stoName(model)}${revision ? `, ред. ${revision}` : ""}`, text(model.sto?.title) || "Типовые дефекты и критерии приёмки", stoSections.length ? `разд. ${stoSections.join(", ")}` : "—"] },
+    ...mergeNorms(ops.map((op) => op.norms)).map((entry, index): TRow => ({
+      cells: [String(index + 2), entry.doc, entry.subject || "Документ, на который даны ссылки в ТД", `п. ${entry.items.join(", ")}`],
+    })),
+  ];
+  // Таблица ссылок идёт под ведомостью, если помещается на последнем листе, иначе — на следующих.
+  const headMm = (columns: Col[]): number => Math.max(...columns.map((col) => lines(col.h, col.mm))) * LINE_MM + 1.4;
+  const used = headMm(cols) + 8 + parts[parts.length - 1].reduce((sum, row) => sum + rowMm(row, cols), 0);
+  const fitsBelow = used + 8 + headMm(refCols) + rowMm(refs[0], refCols) <= BUDGET_MM;
+  chunk(refCols, refs, fitsBelow ? used + 8 : 8).forEach((part, index) => {
+    const html = heading(index ? "Документы, на которые даны ссылки (продолжение)" : "Документы, на которые даны ссылки") + tableHtml(refCols, part);
+    if (index === 0 && fitsBelow) sheets[sheets.length - 1] += html; else sheets.push(html);
+  });
   return sheets;
 }
 
@@ -285,7 +341,7 @@ function routeSheets(model: TdPrintModel, ops: Op[], docs: { ok: string }): stri
       cells: [isMaterial(item) ? "М" : "К", "", "", "", "", componentName(item), "", "", "", "", unitLabel(text(item.unit)) || "—", perItem(item.norm, batch), "", ""],
     }));
     return [
-      { cells: ["А", workshop, site, op.workplace, op.number, op.name, `${docs.ok}\n${stoSectionText(model, op)}`, "", "", "", "", "", "", ""], cls: "sym-a" },
+      { cells: ["А", workshop, site, op.workplace, op.number, op.name, [docs.ok, stoSectionText(model, op), normsCompact(op.norms)].filter(Boolean).join("\n"), "", "", "", "", "", "", ""], cls: "sym-a" },
       { cells: ["Б", "", "", "", "", op.equipment.join("; "), "", shortProfession(op.grade.profession), op.grade.grade, "1", "шт.", "",
         minutes(times.setup_seconds), minutes(times.operation_seconds)] },
       ...items,
@@ -320,6 +376,7 @@ function operationCardSheets(model: TdPrintModel, ops: Op[], okTk: string): stri
     const params = operationParams(op);
     if (params) body.push({ cells: ["Р", "", params, "", ""] });
     if (controls) body.push({ cells: ["О", String(steps.length + 1), `Контролировать по ОК технического контроля ${okTk}, операция ${op.number}`, "", ""] });
+    if (op.norms.length) body.push({ cells: ["", "", `Технические требования — по ${normsText(op.norms)}`, "", ""] });
     body.push({ cells: ["", "", `Дефекты и критерии приёмки — по ${stoSectionText(model, op)}${op.sto?.title ? ` «${text(op.sto.title)}»` : ""}`, "", ""] });
     const performer = `<p class="note">Исполнитель: ${esc(op.grade.profession || "—")}, разряд ${esc(op.grade.grade || "—")}</p>`;
     return chunk(cols, body, 13).map((part, index) => heading(`Операционная карта. Операция ${op.number}. ${op.name}${index ? " (продолжение)" : ""}`) + performer + tableHtml(cols, part));
@@ -429,7 +486,7 @@ export function buildTdKitHtml(model: TdPrintModel): string {
   // Число листов самой ВТД зависит только от числа строк таблицы, не от значений в них.
   let own = 1;
   for (let pass = 0; pass < 3; pass += 1) {
-    const sheets = vtdSheets(listing, model, own);
+    const sheets = vtdSheets(listing, model, own, ops);
     if (sheets.length === own) { vtd.sheets = sheets; break; }
     own = sheets.length;
     vtd.sheets = sheets;
