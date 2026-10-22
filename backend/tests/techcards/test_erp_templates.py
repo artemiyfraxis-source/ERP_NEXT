@@ -17,6 +17,7 @@ TIN_ID = "cut-wire-1crimp-tin-автомат-резка-опрессовка-л�
 COAX_CUT_ID = "cut-coax-auto-резка"
 MARK_TUBE_ID = "ins-mark-tube-auto-печать-и-резка-маркировочной-трубки"
 CUT_2STRIP_TIN_ID = "cut-wire-2strip-tin-резка-с-зачисткой-двух-концов-и-лужением"
+VSWR_ID = "ctrl-vswr-coax-контроль-ксвн"
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
 
 
@@ -76,15 +77,26 @@ def test_bundled_cut_2strip_tin_card_cuts_strips_both_ends_and_tins_without_crim
     assert "Контроль" in {step.kind for step in card.steps}
 
 
+def test_bundled_vswr_card_measures_s11_with_a_matched_load_and_leaves_the_norm_to_the_builder():
+    """Контроль КСВН коаксиальной сборки (владелец 22.10): анализатор цепей, нагрузка 50 Ом, шаг контроля про КСВН —
+    норму в него пишет сборка ЭТК по комплектующим, в шаблоне её нет."""
+    card = _card("CTRL_VSWR_coax")
+    assert (card.source_id, card.name, card.category) == (VSWR_ID, "Контроль КСВН", "Контроль")
+    assert [tool.name for tool in card.tooling if tool.section == "Оборудование"] == ["Векторный анализатор цепей (VNA)"]
+    [control] = [step for step in card.steps if step.kind == "Контроль"]
+    assert "КСВН (S11)" in control.text and not any(char.isdigit() for char in control.text.replace("S11", ""))
+    assert "50 Ом" in " ".join(step.text for step in card.steps)
+
+
 def test_seed_creates_the_template_once_beside_the_base_library(operation_library_api):
     load_library(app.state.techcards_uow_factory, [_template("cut-wire", "CUT_WIRE")])
     assert "добавлены" in seed_erp(app.state.techcards_uow_factory, NOW)
-    assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (6)"
+    assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (7)"
 
     ids = {item["id"] for item in operation_library_api.get("/api/techcards/templates").json()["items"]}
     assert ids == {"cut-wire", TIN_ID, COAX_CUT_ID, MARK_TUBE_ID, CUT_2STRIP_TIN_ID,
                    "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом-a",
-                   "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом-b"}
+                   "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом-b", VSWR_ID}
     detail = operation_library_api.get(f"/api/techcards/templates/{TIN_ID}").json()
     assert detail["code"] == "CUT_WIRE+1crimp+tin"
 
