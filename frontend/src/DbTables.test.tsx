@@ -127,7 +127,7 @@ it("Терминалы: grouped by connector series (catalogue, else the row's �
   expect(screen.getByText("39000038")).toBeInTheDocument();
 });
 
-it("Терминалы: «+ Столбец» is offered; an own column shows at once, is editable and removable only when empty, after a confirm window", async () => {
+it("Терминалы: «+ Столбец» is offered; an own column shows at once, is editable and removable after a confirm window that counts the filled cells", async () => {
   const calls = mockDb({ terOwn: ["Полка"], ter: TER.map((item) => ({ ...item, fields: { ...item.fields, Полка: item.id === "t1" ? "А-1" : "" } })) });
   render(<ReferencesPage principal={admin} initialTab="ter" />);
   await screen.findByText("39000038");
@@ -139,7 +139,8 @@ it("Терминалы: «+ Столбец» is offered; an own column shows at 
   fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
   const dialog = screen.getByRole("dialog", { name: "Удалить столбец" });
   expect(within(dialog).getByText(/записей — 1/)).toBeInTheDocument();
-  expect(within(dialog).getByRole("button", { name: "Удалить столбец" })).toBeDisabled();
+  expect(dialog.textContent).toContain("в журнале");
+  expect(within(dialog).getByRole("button", { name: "Удалить столбец и 1 знач." })).toBeEnabled();
   fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(calls.some((call) => call.path.endsWith("/columns/remove"))).toBe(false);

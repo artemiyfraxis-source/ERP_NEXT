@@ -399,7 +399,7 @@ export function DataTable<T>({
   const sharedView = sharedKey ? columnViews?.views[sharedKey] : undefined;
   const sharedSig = sharedView ? sharedView.map((item) => `${item.key}:${item.visible ? 1 : 0}`).join("|") : "";
   const [seenSig, setSeenSig] = useState(saved.sharedSig ?? "");
-  const lockedKey = sharedKey ? columns[0]?.key : undefined;
+  const lockedKey = sharedKey ? (columns.find((column) => !column.hidden) ?? columns[0])?.key : undefined;
   const [sharing, setSharing] = useState<{ tone: "ok" | "danger"; text: string } | null>(null);
   const [listDrag, setListDrag] = useState<string | null>(null);
   function applyShared() {

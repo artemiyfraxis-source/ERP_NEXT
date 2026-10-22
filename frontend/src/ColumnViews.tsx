@@ -22,8 +22,8 @@ export function ColumnViewsProvider({ children, enabled = true }: { children: Re
     let alive = true;
     referencesApi.columnViews().then((result) => {
       if (!alive) return;
-      setViews(result.views);
-      setCanEdit(result.can_edit);
+      setViews(result.views && typeof result.views === "object" ? result.views : {});
+      setCanEdit(result.can_edit === true);
     }).catch(() => undefined);
     return () => { alive = false; };
   }, [enabled]);
