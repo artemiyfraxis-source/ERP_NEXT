@@ -3134,6 +3134,8 @@ export interface AutoplanRequest {
   exclude?: string[];
   /** «До даты» вручную; без неё — план до горизонта работы. */
   date_to?: string | null;
+  /** Тиражи новых заданий по id техкарты КБ (окно проекта на доске); нет — весь тираж КБ. */
+  runs?: Record<string, number>;
 }
 
 export interface AutoplanContext {
@@ -3169,7 +3171,7 @@ export interface BoardSkipped { techcard_id: string; techcard_version: number; p
 export interface BoardData { project: string; tasks: BoardTask[]; future: BoardTask[]; skipped: BoardSkipped[] }
 export type BoardAssignItem =
   | { task_id: string; task_version: number; operation_id: string }
-  | { techcard_id: string; techcard_version: number; position: number; quantity?: number };
+  | { techcard_id: string; techcard_version: number; position: number; quantity?: number; run?: number };
 export interface BoardAssignResult {
   tasks: ProductionTask[];
   created: Array<{ id: string; number: string }>;
@@ -3183,6 +3185,11 @@ export const productionApi = {
   board: (project = "") => api<BoardData>(`/api/production/board${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   boardAssign: (payload: { operator_id: string; requested_start: string | null; items: BoardAssignItem[] }) =>
     api<BoardAssignResult>("/api/production/board/assign", { method: "POST", body: JSON.stringify(payload) }),
+  /** «Уже сделано» по КБ без задания: задание (тираж run, по умолчанию весь тираж КБ) и готовые штуки этапа — одной транзакцией. */
+  boardOutput: (payload: { techcard_id: string; techcard_version: number; position: number; good_quantity: number; fill_inputs: boolean; run?: number }) =>
+    api<{ task: ProductionTask; operation_id: string; box: ProductionBox; filled: ProductionBox[]; warnings: string[] }>("/api/production/board/manual-output", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
   autoplanContext: (payload: AutoplanRequest) => api<AutoplanContext>("/api/production/autoplan/context", {
     method: "POST",
     body: JSON.stringify(payload),

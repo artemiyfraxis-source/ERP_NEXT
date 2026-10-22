@@ -12,6 +12,7 @@ Set-Location $backend
 Remove-Item -ErrorAction SilentlyContinue demo.db
 $env:ERP_DATABASE_URL = 'sqlite+pysqlite:///demo.db'
 $env:ERP_COOKIE_SECURE = '0'
+$env:PYTHONUTF8 = '1'  # миграции печатают «→»: в cp1252 печать падает после DDL, повторный запуск ловит duplicate column
 & $py -m alembic upgrade head
 $env:ERP_NEW_USER_PASSWORD = 'Preview-2026!'; & $py -m app.identity_admin create-user --login preview --email preview@example.com --name 'Артемий' --department 'Руководящий состав' --role admin
 & $py -m app.modules.references.load_mirror  # справочники из снимка backend\data\reference-mirror

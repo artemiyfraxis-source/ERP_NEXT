@@ -755,24 +755,31 @@ def record_manual_output(command: ManualOutputCommand, uow: ExecutionUnitOfWork)
     коробку возвращают и исправляют, как любую сдачу. Открытая работа, которую закрыли эти штуки, отменяется.
     Возвращает коробку, запись, коробки отбитых входов и чья открытая работа снята."""
     with uow:
-        task = uow.production.get(command.task_id)
-        if task is None:
-            raise KeyError(f"Production task not found: {command.task_id}")
-        if task.status is not ProductionStatus.RUNNING:
-            raise ProductionValidationError(f"Задание {task.number} не в работе — готовые не вводятся")
-        if task.handed_to:
-            raise ProductionValidationError(f"Задание {task.number} отдано в {task.handed_to} — там «Сдано N шт»")
-        operation = task.operation(command.operation_id)
-        if command.performer is not None and command.performer.id not in operation.operator_ids:
-            raise ProductionValidationError(f"{command.performer.name} не назначен(а) на этот этап")
-        good = Decimal(command.good_quantity)
-        if not good.is_finite() or good <= 0 or good != good.to_integral_value():
-            raise ProductionValidationError("Готовых — целое число штук больше нуля")
-        filled: list[ProductionBox] = []
-        closed: list[str] = []
-        box, output = _enter_output(task, operation, _worker(command), good, command, uow, filled, closed)
+        result = enter_manual_output(command, uow)
         uow.commit()
-        return box, output, tuple(filled), tuple(closed)
+        return result
+
+
+def enter_manual_output(command: ManualOutputCommand, uow: ExecutionUnitOfWork) -> tuple[ProductionBox, ProductionOutput, tuple[ProductionBox, ...], tuple[str, ...]]:
+    """Ввод готовых внутри открытой единицы работы, без коммита: тот же путь для «Уже сделано» по заданию и по КБ
+    без задания на доске мастера (задание создаётся там же, одной транзакцией — board.record_board_output)."""
+    task = uow.production.get(command.task_id)
+    if task is None:
+        raise KeyError(f"Production task not found: {command.task_id}")
+    if task.status is not ProductionStatus.RUNNING:
+        raise ProductionValidationError(f"Задание {task.number} не в работе — готовые не вводятся")
+    if task.handed_to:
+        raise ProductionValidationError(f"Задание {task.number} отдано в {task.handed_to} — там «Сдано N шт»")
+    operation = task.operation(command.operation_id)
+    if command.performer is not None and command.performer.id not in operation.operator_ids:
+        raise ProductionValidationError(f"{command.performer.name} не назначен(а) на этот этап")
+    good = Decimal(command.good_quantity)
+    if not good.is_finite() or good <= 0 or good != good.to_integral_value():
+        raise ProductionValidationError("Готовых — целое число штук больше нуля")
+    filled: list[ProductionBox] = []
+    closed: list[str] = []
+    box, output = _enter_output(task, operation, _worker(command), good, command, uow, filled, closed)
+    return box, output, tuple(filled), tuple(closed)
 
 
 def confirm_box(command: BoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:

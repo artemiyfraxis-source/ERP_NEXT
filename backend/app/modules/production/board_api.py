@@ -16,18 +16,20 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal
 from app.shared.project_number import normalize_project_number
 
-from .api import _result, production_uow_factory, techcards_uow_factory
+from .api import _box_result, _number, _result, production_uow_factory, techcards_uow_factory
 from .application import UnitOfWork
 from .autoplan_api import _handle, _techcards, references_uow_factory
 from .board import (
     BoardAssignCommand,
     BoardItem,
+    BoardOutputCommand,
     Equipment,
     assign_board,
     card_key,
     equipment_of,
     future_tasks,
     operation_machines,
+    record_board_output,
     unlaunched_cards,
 )
 from .domain import ProductionStatus, ProductionTask
@@ -49,6 +51,8 @@ class BoardItemPayload(BaseModel):
     position: int | None = Field(default=None, ge=1)
     # Штук изделий; null — вся операция.
     quantity: int | None = Field(default=None, ge=1, le=1_000_000)
+    # Тираж нового задания (только у КБ без задания); null — весь тираж КБ.
+    run: int | None = Field(default=None, ge=1, le=1_000_000)
 
     @model_validator(mode="after")
     def _reference(self) -> "BoardItemPayload":
@@ -60,6 +64,17 @@ class BoardItemPayload(BaseModel):
         if self.operation_id is None and self.position is None:
             raise ValueError("Укажите операцию: operation_id или position")
         return self
+
+
+class BoardOutputPayload(BaseModel):
+    # КБ без задания, которую видел мастер, и этап маршрута.
+    techcard_id: UUID
+    techcard_version: int = Field(ge=1)
+    position: int = Field(ge=1)
+    good_quantity: int = Field(gt=0, le=1_000_000)
+    # Тираж нового задания; null — весь тираж КБ.
+    run: int | None = Field(default=None, ge=1, le=1_000_000)
+    fill_inputs: bool = False
 
 
 class AssignPayload(BaseModel):
@@ -185,7 +200,7 @@ def assign(
         items=tuple(BoardItem(
             task_id=item.task_id, task_version=item.task_version, techcard_id=item.techcard_id,
             techcard_version=item.techcard_version, operation_id=item.operation_id, position=item.position,
-            quantity=item.quantity,
+            quantity=item.quantity, run=item.run,
         ) for item in payload.items),
         actor=principal.actor, now=now,
     )
@@ -210,6 +225,38 @@ def assign(
             "position": item.item.position, "reason": item.reason,
         } for item in done.refused],
         "warnings": list(dict.fromkeys(warnings)),
+    }
+
+
+@router.post("/manual-output")
+def manual_output(
+    payload: BoardOutputPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    """«Уже сделано» по КБ без задания: задание создаётся из выданной сейчас ревизии (как первым назначением) и в нём
+    же записываются готовые штуки этапа — одной транзакцией. Устаревшая доска — 409."""
+    if techcards_factory is None:
+        raise HTTPException(status_code=503, detail="База техкарт не настроена")
+    cards, ready = _techcards(techcards_factory)
+    done = _handle(lambda: record_board_output(BoardOutputCommand(
+        techcard_id=payload.techcard_id, techcard_version=payload.techcard_version, position=payload.position,
+        good_quantity=payload.good_quantity, actor=principal.actor, now=now, run=payload.run,
+        fill_inputs=payload.fill_inputs,
+    ), uow_factory(), cards, ready))
+    box = done.box
+    warnings = [f"Создано задание {done.task.number}. Записано {_number(box.quantity)} шт на этап {box.operation_position}, коробка {box.code or box.number}."]
+    if done.filled:
+        warnings.append("Отбиты готовыми: " + ", ".join(
+            f"этап {item.operation_position} — {_number(item.quantity)} шт"
+            for item in sorted(done.filled, key=lambda item: item.operation_position)
+        ) + ".")
+    operation = next(item for item in done.task.operations if item.position == payload.position)
+    return {
+        "task": _result(done.task), "operation_id": str(operation.id), "box": _box_result(box),
+        "output_id": str(done.output.id), "filled": [_box_result(item) for item in done.filled], "warnings": warnings,
     }
 
 

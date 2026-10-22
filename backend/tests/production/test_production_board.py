@@ -18,7 +18,7 @@ from tests.production.test_autoplan_api import (  # noqa: F401 — фиксту�
 )
 from tests.production.test_launch_race import by_hand, interleave, race, stored  # noqa: F401 — фикстура race
 
-NO_RUN = "Нет тиража — запустите через «+ Запустить задание»"
+NO_RUN = "Нет тиража КБ — задайте тираж в наборе проекта"
 
 
 def issue_route(index: str, *, project: str = "708К", part_quantity: str = "10", deadline: date | None = None,
@@ -352,3 +352,94 @@ def test_board_assign_after_a_manual_launch_read_is_stale(race, monkeypatch):
 
     assert response.status_code == 409, response.text
     assert [(key, seq) for _, key, _, seq in stored(sessions)] == [("by-hand", 1)]
+
+
+# --- Тираж нового задания и «Уже сделано» по КБ без задания (владелец 22.10) ------------------------------------------
+
+
+def board_output(http, future: dict, position: int, good: int, **extra):
+    return http.post("/api/production/board/manual-output", json={
+        "techcard_id": future["techcard_id"], "techcard_version": future["techcard_version"],
+        "position": position, "good_quantity": good, **extra,
+    })
+
+
+def test_assignment_launches_the_task_with_the_run_the_master_typed(library):
+    http, _ = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+
+    response = assign(http, ANNA, [{**item, "run": 4} for item in future_items(future, 1, 2)])
+
+    assert response.status_code == 200, response.text
+    [created] = response.json()["created"]
+    assert tasks_of(http)[created["id"]]["quantity"] == 4
+
+
+def test_run_above_the_kb_run_or_two_runs_for_one_kb_are_refused(library):
+    http, _ = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+
+    above = assign(http, ANNA, [{**item, "run": 11} for item in future_items(future, 1)])
+    mixed = assign(http, ANNA, [{**future_items(future, 1)[0], "run": 4}, {**future_items(future, 2)[0], "run": 5}])
+
+    assert above.status_code == 422 and "от 1 до 10" in above.json()["detail"]
+    assert mixed.status_code == 422 and "разные тиражи" in mixed.json()["detail"]
+    assert tasks_of(http) == {}
+
+
+def test_ready_pieces_on_a_kb_without_task_create_the_task_and_record_them_in_one_go(library):
+    http, sessions = library
+    card = issue_route("КБ2")
+    [future] = board(http)["future"]
+
+    response = board_output(http, future, 1, 4, run=6)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    task = tasks_of(http)[body["task"]["id"]]
+    assert task["quantity"] == 6 and task["techcard_id"] == str(card.id)
+    # Никто не назначен: штуки — запись мастера, без исполнителя.
+    assert all(not operation["operator_ids"] for operation in task["operations"])
+    assert body["operation_id"] == task["operations"][0]["id"]
+    assert body["warnings"][0].startswith(f"Создано задание {task['number']}. Записано 4 шт на этап 1")
+    assert board(http)["future"] == []
+    with sessions() as session:
+        assert session.scalar(select(ProductionTaskRow)).source_idempotency_key == f"board:{card.id}:1"
+    # Доска устарела: по КБ задание уже есть — 409, второго задания нет.
+    again = board_output(http, future, 1, 1)
+    assert again.status_code == 409, again.text
+    assert len(tasks_of(http)) == 1
+
+
+def test_refused_ready_pieces_leave_no_task_behind(library):
+    http, _ = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+
+    too_many = board_output(http, future, 1, 7, run=6)
+    no_inputs = board_output(http, future, 2, 3)
+
+    assert too_many.status_code == 422, too_many.text
+    assert no_inputs.status_code == 422, no_inputs.text
+    assert tasks_of(http) == {} and len(board(http)["future"]) == 1
+    filled = board_output(http, future, 2, 3, fill_inputs=True)
+    assert filled.status_code == 200, filled.text
+    assert [item["operation_position"] for item in filled.json()["filled"]] == [1]
+
+
+def test_autoplan_of_a_project_launches_new_tasks_with_the_run_from_the_project_window(library):
+    http, _ = library
+    card = issue_route("КБ2")
+    plan = {"mode": "project", "project": "708К", "people": [str(ANNA)], "runs": {str(card.id): 3}}
+
+    planned = preview(http, **plan)
+
+    assert [item["quantity"] for item in planned["new_tasks"]] == [3]
+    # Тираж больше тиража КБ — 422.
+    assert http.post("/api/production/autoplan/preview", json={**plan, "runs": {str(card.id): 99}}).status_code == 422
+    applied = apply(http, planned, **plan)
+    assert applied.status_code == 200, applied.text
+    [task] = tasks_of(http).values()
+    assert task["quantity"] == 3

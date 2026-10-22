@@ -15,7 +15,7 @@ export interface TdSignatories {
   agreed_vp: TdSignatory;
 }
 
-/** Обозначения документов комплекта по ГОСТ 3.1201, например «ФРАК.60185.00001». ТЛ и ЛР несут обозначение ВТД. */
+/** Обозначения документов комплекта по ГОСТ 3.1201, например «ЮТНВ.60185.00001» (до 22.10.2026 — «ФРАК…»). ТЛ и ЛР несут обозначение ВТД. */
 export interface TdDesignations { vtd: string; mk: string; ke: string; ok: string; ok_tk: string; vm: string; vo: string }
 
 export interface TdIssue {
