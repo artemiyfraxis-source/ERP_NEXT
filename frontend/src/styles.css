@@ -1317,6 +1317,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .login-card .logo-row .div { width: 1px; height: 22px; background: var(--border); }
 .login-card h1 { margin: 0 0 -10px; font-size: 20px; font-weight: 500; }
 .login-card .sub { margin: 0 0 6px; color: var(--muted-foreground); font-size: 13px; }
+.password-field { position: relative; display: block; }
+.password-field input { width: 100%; padding-right: 92px; }
+.password-field .password-toggle { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); min-height: 30px; padding: 0 10px; border: 0; border-radius: 6px; color: var(--primary); background: transparent; font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.password-field .password-toggle:hover { background: var(--accent); }
+.password-field .password-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+@media (pointer: coarse) { .password-field .password-toggle { min-height: 40px; } }
 .login-card label { text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
 .login-card form { display: grid; gap: 15px; }
 .login-card select { width: 100%; }
@@ -3762,6 +3768,8 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .mo-own { color: var(--foreground); }
 .mo-tf { font-weight: 600; font-variant-numeric: tabular-nums; }
 .mo-submit { padding: 10px; border-radius: 8px; background: var(--accent); }
+.mo-submit-window .mo-submit { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; align-items: end; margin-top: 12px; background: none; padding: 0; }
+.mo-submit-window .mo-submit .defect-text { grid-column: 1 / -1; }
 .view-strip.acting { border-color: var(--primary); background: var(--chip-ok-bg); }
 @media (pointer: coarse) { .mo-side button, .mo-submit button, .mo-submit input { min-height: 44px; } }
 @media (max-width: 700px) { .mo-h { flex-wrap: wrap; } .mo-side { justify-content: flex-start; margin-left: 0; } }

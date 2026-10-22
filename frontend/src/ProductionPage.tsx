@@ -688,7 +688,7 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
               {paused
                 ? <button className="primary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "resume", { ...work, key: stepKey(running, "resume") }))}>Продолжить</button>
                 : <button className="secondary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "pause", { ...work, key: stepKey(running, "pause") }))}>Пауза</button>}
-              <button className={paused ? "secondary" : "primary"} aria-expanded={submitting} onClick={() => setSubmitting((value) => !value)}>Сдать…</button>
+              <button className={paused ? "secondary" : "primary"} aria-haspopup="dialog" onClick={() => setSubmitting(true)}>Сдать…</button>
             </>}
             {!readOnly && !running && !done && <button className="primary" aria-expanded={starting === key} aria-describedby={blocked && state ? stateId : undefined}
               disabled={Boolean(session) || Boolean(busy) || blocked} title={session ? "Сначала сдайте начатую работу" : blocked ? state?.text : undefined}
@@ -704,7 +704,14 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
         {(handed || factParts.length > 0 || fact) && <div className="mo-fact">{handed}{handed && factParts.length ? " · " : ""}{factParts.join(" · ")}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>}
         {pf && <PfCardBlocks taskId={task.id} operation={operation} onBehalfOf={onBehalfOf} showInputs={!done && !operation.first} />}
         {!done && <DowntimeControl taskId={task.id} operationId={operation.id} primary={firstOfTask.has(key)} performerId={onBehalfOf || principal.user.id} master={canAct(principal, "production")} readOnly={readOnly} onBehalfOf={onBehalfOf} />}
-        {!readOnly && running && submitting && <SubmitWorkForm session={running} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => { setSubmitting(false); onSubmitted(number, box); }} />}
+        {/* «Сдать…» — одно нажатие и окно подтверждения (владелец 22.10), не форма, раскрывающаяся в карточке. */}
+        {!readOnly && running && submitting && <PageWindow label="Сдать работу" width={560} close={() => setSubmitting(false)}>
+          <div className="panel mo-submit-window">
+            <div className="manual-stock-head"><div><h2>Сдать работу</h2><small>{task.number} · {pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · {stage}</small></div></div>
+            <SubmitWorkForm session={running} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} onCancel={() => setSubmitting(false)}
+              onSubmitted={(number, box) => { setSubmitting(false); onSubmitted(number, box); }} />
+          </div>
+        </PageWindow>}
         {!readOnly && !running && !done && !session && !blocked && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} />}
         {etkOpen === key && <PageWindow label={`${pf ? "Инструкция" : "ЭТК"}: ${stage}`} width={1280} dismissable close={() => setEtkOpen("")}>
           <OperationEtk principal={principal} task={task} operation={operation} title={`${task.number} · ${pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · ${stage}`} close={() => setEtkOpen("")} />
@@ -881,8 +888,9 @@ export function goodPrefill(remaining: string | undefined, inputLimit: string | 
 }
 
 // Сдача начатой работы: годные (остаток доли, не больше, чем во взятых входных коробках) и брак с характером.
-function SubmitWorkForm({ session, operation, busy, mutate, onBehalfOf = "", onSubmitted }: {
+function SubmitWorkForm({ session, operation, busy, mutate, onBehalfOf = "", onSubmitted, onCancel }: {
   session: ProductionWorkSession;
+  onCancel?: () => void;
   operation: ProductionOperation | undefined;
   busy: boolean;
   onBehalfOf?: string;
@@ -909,6 +917,7 @@ function SubmitWorkForm({ session, operation, busy, mutate, onBehalfOf = "", onS
       setGood(""); setDefect("0"); setDefectCharacter(""); setDefectDescription("");
       return result;
     })}>Сдать</button>
+    {onCancel && <button type="button" className="secondary" disabled={busy} onClick={onCancel}>Отмена</button>}
     <button className="link-button danger-link" disabled={busy} onClick={() => { if (window.confirm("Отменить начало? Время не запишется.")) void mutate(session.id, () => productionApi.workAction(session.id, "cancel", { ...work, key: `${session.id}:cancel` })); }}>Отменить начало</button>
   </div>;
 }
