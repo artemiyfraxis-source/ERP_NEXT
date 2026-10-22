@@ -12,7 +12,7 @@ PY="$BACKEND/.venv/bin/python"
 (cd "$ROOT/frontend" && { [ -d node_modules ] || npm ci; } && npx vite build >/dev/null)
 cd "$BACKEND"
 rm -f demo.db
-export ERP_DATABASE_URL="sqlite+pysqlite:///demo.db" ERP_COOKIE_SECURE=0 DEMO_BASE="http://127.0.0.1:$PORT"
+export PYTHONUTF8=1 ERP_DATABASE_URL="sqlite+pysqlite:///demo.db" ERP_COOKIE_SECURE=0 DEMO_BASE="http://127.0.0.1:$PORT"
 "$PY" -m alembic upgrade head
 printf 'Preview-2026!\nPreview-2026!\n' | "$PY" -m app.identity_admin create-user --login preview \
   --email preview@example.com --name 'Артемий' --department 'Руководящий состав' --role admin
