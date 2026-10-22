@@ -1,59 +1,47 @@
-"""Stage option warehouse.labels over HTTP: settings, preview, test print and a lot's label (Roller_Buyer «этикетка партии
-через API»). Tests never print: the printer name stays empty, so every job is only saved as a file."""
+"""«Печать этикеток ГРН» over HTTP, always on: settings, preview, test print and a lot's label (Roller_Buyer «этикетка
+партии через API»). A print only queues a TSPL job for the agent of the warehouse PC (test_label_jobs.py)."""
 
 import io
-import json
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 from PIL import Image
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.main import app
 from app.modules.warehouse.domain import StockLot
 from app.modules.warehouse.infrastructure import WarehouseLabelSettingsRow
+from app.modules.warehouse.label_jobs import LabelJobRow
 from app.modules.warehouse.labels_application import lot_label_data
-from app.shared import stage_options
 from app.shared.events import AuditEvent
 from tests.factories import Actor
 from tests.view_access import as_viewer
 from tests.warehouse.test_api import warehouse_api  # noqa: F401 — fixture
 
-OPTION = "warehouse.labels"
-
-
 @pytest.fixture()
-def stage(monkeypatch, tmp_path):
-    path = tmp_path / "data" / "options.json"
-    path.parent.mkdir()
-    monkeypatch.setenv(stage_options.ENV, str(path))
-    monkeypatch.delenv("ERP_LABEL_PRINT_DIR", raising=False)
-    return lambda **options: path.write_text(json.dumps(options), encoding="utf-8")
+def labels(warehouse_api):  # noqa: F811
+    return warehouse_api
 
 
-@pytest.fixture()
-def labels(warehouse_api, stage):  # noqa: F811
-    client, lot = warehouse_api
-    stage(**{OPTION: True})
-    return client, lot
+def _jobs() -> list[LabelJobRow]:
+    with app.state.warehouse_uow_factory() as uow:
+        rows = list(uow.session.scalars(select(LabelJobRow).order_by(LabelJobRow.created_at)))
+        uow.session.expunge_all()  # kept loaded past the unit of work's rollback
+    return rows
 
 
-def test_option_off_hides_every_label_route(warehouse_api, stage):  # noqa: F811
-    client, lot = warehouse_api
-    stage(**{OPTION: False})
-    for method, path in (
-        ("GET", "/api/stock/labels/settings"), ("PUT", "/api/stock/labels/settings"),
-        ("GET", "/api/stock/labels/printers"), ("GET", "/api/stock/labels/sample.png"),
-        ("POST", "/api/stock/labels/test"), ("GET", f"/api/stock/labels/lot?grn={lot.grn}"),
-        ("GET", f"/api/stock/batches/{lot.id}/label.png"), ("POST", f"/api/stock/batches/{lot.id}/label"),
-    ):
-        assert client.request(method, path, json={} if method != "GET" else None).status_code == 404, (method, path)
+def test_labels_need_no_stage_option(labels, monkeypatch):
+    client, lot = labels
+    monkeypatch.delenv("ERP_STAGE_OPTIONS", raising=False)
+    for path in ("/api/stock/labels/settings", "/api/stock/labels/printers", "/api/stock/labels/sample.png",
+                 f"/api/stock/batches/{lot.id}/label.png", "/api/stock/labels/agent/status"):
+        assert client.get(path).status_code == 200, path
 
 
-def test_lot_preview_is_the_label_png_and_a_print_without_printer_saves_the_job(labels, tmp_path):
+def test_lot_preview_is_the_label_png_and_a_print_queues_the_job(labels):
     client, lot = labels
     png = client.get(f"/api/stock/batches/{lot.id}/label.png")
     assert png.status_code == 200, png.text
@@ -63,13 +51,12 @@ def test_lot_preview_is_the_label_png_and_a_print_without_printer_saves_the_job(
     printed = client.post(f"/api/stock/batches/{lot.id}/label", json={"copies": 2})
     assert printed.status_code == 200, printed.text
     body = printed.json()
-    assert body["status"] == "saved", "no printer chosen — the job waits as a file"
-    assert body["copies"] == 2
-    assert "Принтер не выбран" in body["reason"]
-    job = Path(body["file"])
-    # On the stage the jobs sit in a `print` folder next to the options file.
-    assert job.parent == tmp_path / "data" / "print" and job.name.endswith("-FRX.26.0000001.prn")
-    content = job.read_bytes()
+    assert set(body) == {"status", "reason", "file", "copies", "job_id"}, "the old keys stay for the screens"
+    assert (body["status"], body["reason"], body["copies"]) == ("queued", "В очереди принтера.", 2)
+    [job] = _jobs()
+    assert (str(job.id), job.status, job.kind, job.lot_id, job.copies) == (body["job_id"], "pending", "lot", lot.id, 2)
+    assert job.created_by == "Кладовщик" and body["file"] == body["job_id"]
+    content = job.tspl
     assert content.startswith(b"SIZE 58 mm,30 mm\r\nGAP 2 mm,0 mm\r\n")
     assert b"DENSITY 12\r\nSPEED 2\r\n" in content and content.endswith(b"\r\nPRINT 2,1\r\n")
 
@@ -127,16 +114,19 @@ def test_the_database_refuses_a_setting_out_of_bounds_too(labels):
             uow.session.flush()
 
 
-def test_test_print_without_printer_is_saved(labels):
+def test_test_print_queues_a_sample_job(labels):
     client, _ = labels
     body = client.post("/api/stock/labels/test").json()
-    assert body["status"] == "saved" and body["copies"] == 1 and body["file"].endswith("FRX.26.0000041.prn")
+    assert body["status"] == "queued" and body["copies"] == 1
+    [job] = _jobs()
+    assert (job.kind, job.lot_id, job.status) == ("sample", None, "pending")
+    assert job.tspl.endswith(b"\r\nPRINT 1,1\r\n")
 
 
-def test_printers_list_answers_on_any_machine(labels):
+def test_printers_list_is_empty_until_the_agent_calls(labels):
     client, _ = labels
-    body = client.get("/api/stock/labels/printers").json()
-    assert isinstance(body["printers"], list) and isinstance(body["on_windows"], bool)
+    assert client.get("/api/stock/labels/printers").json() == {"printers": [], "on_windows": False}
+    assert client.get("/api/stock/labels/settings").json()["print_dir"] == "очередь печати ERP"
 
 
 def test_a_viewer_reads_the_preview_but_cannot_print_or_configure(labels):
@@ -144,18 +134,22 @@ def test_a_viewer_reads_the_preview_but_cannot_print_or_configure(labels):
     as_viewer("management", "warehouse")
     assert client.get(f"/api/stock/batches/{lot.id}/label.png").status_code == 200
     assert client.get("/api/stock/labels/settings").status_code == 200
+    assert client.get("/api/stock/labels/agent/status").status_code == 200
     for method, path in (
         ("PUT", "/api/stock/labels/settings"), ("POST", "/api/stock/labels/test"),
         ("POST", f"/api/stock/batches/{lot.id}/label"),
     ):
         assert client.request(method, path, json={}).status_code == 403, (method, path)
+    assert _jobs() == []
 
 
-def test_a_viewer_is_refused_before_the_option_says_404(warehouse_api, stage):  # noqa: F811
-    client, lot = warehouse_api
-    stage(**{OPTION: False})
-    as_viewer("management", "warehouse")
-    assert client.post(f"/api/stock/batches/{lot.id}/label", json={"copies": 1}).status_code == 403
+def test_a_storekeepers_session_cannot_take_jobs_off_the_queue(labels):
+    client, lot = labels
+    queued = client.post(f"/api/stock/batches/{lot.id}/label", json={"copies": 1}).json()
+    assert client.post("/api/stock/labels/agent/claim", json={"printer": "", "host": ""}).status_code == 403
+    result = client.post(f"/api/stock/labels/agent/jobs/{queued['job_id']}/result", json={"ok": True})
+    assert result.status_code == 403
+    assert [job.status for job in _jobs()] == ["pending"]
 
 
 def test_the_receiving_screen_finds_the_lot_by_its_key(labels):
