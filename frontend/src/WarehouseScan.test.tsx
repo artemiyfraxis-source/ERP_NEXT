@@ -53,7 +53,7 @@ function stage(on: boolean | string[], routes: Record<string, (call: Call) => Re
 }
 
 async function scan(code: string) {
-  const input = await screen.findByRole("textbox", { name: "Скан / ГРН / место" });
+  const input = await screen.findByRole("textbox", { name: "Поиск по складу" });
   // The page must have loaded the stock: actions are refused while it is loading.
   await screen.findAllByRole("button", { name: /Показать партии/ });
   fireEvent.change(input, { target: { value: code } });
@@ -61,11 +61,13 @@ async function scan(code: string) {
   return input;
 }
 
-it("has no scan field while the option is off", async () => {
-  stage(false);
+it("has one search field: no separate scan field, and Enter scans nothing while the option is off", async () => {
+  const calls = stage(false);
   render(<WarehousePage />);
   await screen.findAllByRole("button", { name: /Показать партии/ });
-  expect(screen.queryByRole("textbox", { name: "Скан / ГРН / место" })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("textbox", { name: /Поиск по складу|Скан/ })).toHaveLength(1);
+  expect(screen.queryByRole("search")).not.toBeInTheDocument();
+  expect(calls.some((call) => call.path.startsWith("/api/stock/scan"))).toBe(false);
 });
 
 it("a scanned ГРН opens its card; Enter in the quantity writes off through the existing endpoint", async () => {
@@ -127,11 +129,22 @@ it("a place lists its lots, a lot opens, «Переместить» moves it, Es
   await waitFor(() => expect(input).toHaveFocus());
 });
 
-it("an unknown code shows the server's «Не найдено»", async () => {
-  stage(true, { "GET /api/stock/scan?code=zzz": () => json({ detail: "Не найдено: zzz" }, 404) });
+it("words that are no ГРН or place stay a filter of the table: the scan's «Не найдено» is not shown", async () => {
+  const calls = stage(true, { "GET /api/stock/scan?code=%D1%80%D0%B5%D0%B7%D0%B8%D1%81%D1%82%D0%BE%D1%80": () => json({ detail: "Не найдено: резистор" }, 404) });
   render(<WarehousePage />);
-  await scan("zzz");
-  expect(await screen.findByRole("alert")).toHaveTextContent("Не найдено: zzz");
+  const input = await scan("резистор");
+  await waitFor(() => expect(calls.some((call) => call.path.startsWith("/api/stock/scan"))).toBe(true));
+  await waitFor(() => expect(calls.some((call) => call.path.includes("q=%D1%80%D0%B5%D0%B7%D0%B8%D1%81%D1%82%D0%BE%D1%80"))).toBe(true));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Скан" })).not.toBeInTheDocument();
+  expect(input).toHaveValue("резистор");
+});
+
+it("a failed scan other than «not found» says so", async () => {
+  stage(true, { "GET /api/stock/scan?code=FRX.26.0000001": () => json({ detail: "Склад недоступен" }, 503) });
+  render(<WarehousePage />);
+  await scan("FRX.26.0000001");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Склад недоступен");
 });
 
 it("«Отменить последнее» in the scan card shows what it takes back and undoes it (option warehouse.undo)", async () => {

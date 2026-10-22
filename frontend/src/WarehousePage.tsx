@@ -27,7 +27,7 @@ import { openPrintSheet } from "./print";
 import { lotReceivedAt, printLotLabels } from "./lotLabel";
 import { countLabel } from "./format";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
-import { UndoLast, WarehouseScanBar } from "./WarehouseScan";
+import { UndoLast, WarehouseScanResults, type ScanRequest } from "./WarehouseScan";
 import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
 import { StockLinkDialog } from "./StockLinkDialog";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
@@ -105,6 +105,8 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   const wordSearch = useStageOption("warehouse.word_search");
   const itemsOn = useStageOption("references.items");
   const scanOn = useStageOption("warehouse.scan");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [scanRequest, setScanRequest] = useState<ScanRequest | null>(null);
   const [lotItems, setLotItems] = useState<Record<string, ItemBrief>>({});
   const [itemsTick, setItemsTick] = useState(0);
   const [warehouse, setWarehouse] = useState("");
@@ -306,11 +308,18 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       {views}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {putawayError && <div className="error-banner" role="alert">{putawayError}</div>}
-      {scanOn && <WarehouseScanBar readOnly={readOnly} disabled={Boolean(busy) || loading} mutate={mutate} />}
       {/* Wording from SUPPLYMAP «Склад 0.5» (PortalApp.html wh-hint). */}
       {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="filters table-toolbar stock-toolbar">
-        <input className="search stock-search" aria-label="Поиск по складу" placeholder={wordSearch ? "Слова в любом порядке: артикул, название, ГРН, место…" : "Поиск: резистор, 6-1, ГРН…"} value={query} onChange={(event) => setQuery(event.target.value)} />
+        {/* One field for both (owner 22.10): typing filters the table; with warehouse.scan Enter opens the ГРН / place. */}
+        <form className="stock-search-form" role={scanOn ? "search" : undefined}
+          onSubmit={(event) => { event.preventDefault(); if (scanOn) setScanRequest({ code: query, at: Date.now() }); }}>
+          <input ref={searchRef} className="search stock-search" aria-label="Поиск по складу" autoComplete="off" spellCheck={false}
+            placeholder={scanOn ? "Скан, ГРН, место или слова: артикул, название…" : wordSearch ? "Слова в любом порядке: артикул, название, ГРН, место…" : "Поиск: резистор, 6-1, ГРН…"}
+            title={scanOn ? "Enter по ГРН или месту открывает карточку" : undefined}
+            value={query} onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Escape" && scanOn) { setQuery(""); setScanRequest(null); } }} />
+        </form>
         <label className="check-inline"><input type="checkbox" checked={includeZero} onChange={(event) => setIncludeZero(event.target.checked)} />показывать нулевые</label>
         <label className="inline-select">группировать<select aria-label="Группировка склада" value={groupBy} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}>
           <option value="">нет</option><option value="type">по типу</option><option value="place">по месту (полка)</option><option value="name">по наименованию</option><option value="series">по серии</option><option value="grn">по ГРН</option>
@@ -330,6 +339,8 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
           />
         </div>
       </div>
+      {scanOn && <WarehouseScanResults request={scanRequest} inputRef={searchRef} readOnly={readOnly}
+        disabled={Boolean(busy) || loading} mutate={mutate} onClose={() => setScanRequest(null)} />}
       {panel === "types" && <ItemTypesPanel
         onClose={() => setPanel("")}
         onChanged={async (types, renamed) => {

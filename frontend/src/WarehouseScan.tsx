@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { warehouseApi, type WarehouseLot, type WarehouseScan as ScanAnswer, type WarehouseUndoPreview } from "./api";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { ApiError, warehouseApi, type WarehouseLot, type WarehouseScan as ScanAnswer, type WarehouseUndoPreview } from "./api";
 import { useStageOption } from "./StageOptions";
 import { LABELS_OPTION, LotLabel } from "./LabelPrint";
 
@@ -13,16 +13,24 @@ function lotLabel(lot: WarehouseLot) {
   return `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}`;
 }
 
-/** Stage option warehouse.scan (Roller_Buyer /stock and /tsd): one big field at the top of «Склад». A hardware scanner
- *  types the code and Enter; a ГРН opens the lot card, a place code lists what lies there. After every action the
+/** A scan request from the stock search field: the code and when Enter was pressed (the same code twice opens twice). */
+export type ScanRequest = { code: string; at: number };
+
+/** Stage option warehouse.scan (Roller_Buyer /stock and /tsd), owner 22.10: one field for everything — the stock search.
+ *  Typing filters the table; Enter (a hardware scanner sends it) asks the scan route: a ГРН opens the lot card, a place
+ *  code lists what lies there, anything else («резистор») is no code and just stays a filter. After every action the
  *  field takes the focus back, so the next scan goes straight in. */
-export function WarehouseScanBar({ readOnly, disabled, mutate }: { readOnly: boolean; disabled: boolean; mutate: Mutate }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [code, setCode] = useState("");
+export function WarehouseScanResults({ request, inputRef, readOnly, disabled, mutate, onClose }: {
+  request: ScanRequest | null;
+  inputRef: RefObject<HTMLInputElement | null>;
+  readOnly: boolean;
+  disabled: boolean;
+  mutate: Mutate;
+  onClose: () => void;
+}) {
   const [answer, setAnswer] = useState<ScanAnswer | null>(null);
   const [lot, setLot] = useState<WarehouseLot | null>(null);
   const [error, setError] = useState("");
-  const [searching, setSearching] = useState(false);
   // «Назначение / откуда» is the same for a run of scans (one project, one person): kept between cards.
   const [who, setWho] = useState("");
 
@@ -30,36 +38,32 @@ export function WarehouseScanBar({ readOnly, disabled, mutate }: { readOnly: boo
     window.setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select(); }, 0);
   }
 
+  useEffect(() => {
+    setAnswer(null);
+    setLot(null);
+    setError("");
+    const text = request?.code.trim();
+    if (!text) return;
+    let live = true;
+    warehouseApi.scan(text).then((found) => {
+      if (!live) return;
+      if (found.kind === "lot" && found.lots.length === 1) setLot(found.lots[0]);
+      else setAnswer(found);
+    }, (reason) => {
+      if (!live) return;
+      // 404 — not a ГРН or a place: the words stay a filter of the table, nothing to say.
+      if (!(reason instanceof ApiError && reason.status === 404)) setError(failure(reason, "Скан не выполнен"));
+      refocus();
+    });
+    return () => { live = false; };
+  }, [request]);
+
   function closeAll() {
     setAnswer(null);
     setLot(null);
     setError("");
+    onClose();
     refocus();
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    const text = code.trim();
-    if (!text || searching) return;
-    setSearching(true);
-    setError("");
-    try {
-      const found = await warehouseApi.scan(text);
-      if (found.kind === "lot" && found.lots.length === 1) {
-        setAnswer(null);
-        setLot(found.lots[0]);
-      } else {
-        setAnswer(found);
-        setLot(null);
-      }
-    } catch (reason) {
-      setAnswer(null);
-      setLot(null);
-      setError(failure(reason, "Скан не выполнен"));
-      refocus();
-    } finally {
-      setSearching(false);
-    }
   }
 
   function changed(updated: WarehouseLot) {
@@ -68,22 +72,8 @@ export function WarehouseScanBar({ readOnly, disabled, mutate }: { readOnly: boo
     refocus();
   }
 
+  if (!error && !answer && !lot) return null;
   return <section className="scan-zone" aria-label="Скан">
-    <form className="scan-bar" role="search" onSubmit={(event) => void submit(event)}>
-      <input
-        ref={inputRef}
-        className="scan-input"
-        aria-label="Скан / ГРН / место"
-        placeholder="Скан / ГРН / место — Enter"
-        autoFocus
-        autoComplete="off"
-        spellCheck={false}
-        value={code}
-        onChange={(event) => setCode(event.target.value)}
-        onKeyDown={(event) => { if (event.key === "Escape") { setCode(""); closeAll(); } }}
-      />
-      <button className="secondary" disabled={searching || !code.trim()}>{searching ? "Ищем…" : "Найти"}</button>
-    </form>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {answer && !lot && <ScanList answer={answer} onOpen={setLot} onClose={closeAll} />}
     {lot && <ScanLotCard
