@@ -4911,3 +4911,19 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 }
 
 .mb-block-summary { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 400; color: var(--muted-foreground); }
+
+/* ОТК → «Замеры КСВН»: выбор задания в шапке панели, строка нормы, действия в строке таблицы, график. */
+.vswr-section, .vswr-upload { margin: 16px 0; }
+.vswr-section .manual-stock-head { gap: 12px; flex-wrap: wrap; }
+.vswr-task-pick { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 13px; color: var(--muted-foreground); }
+.vswr-task-pick select { min-width: 320px; max-width: 520px; }
+.vswr-norm { margin: 0 0 10px; padding: 7px 12px; border-left: 3px solid var(--tone-ok); border-radius: 4px; background: var(--accent); font-size: 13.5px; font-weight: 600; }
+.vswr-norm.is-undefined { border-left-color: var(--warn-border); background: var(--warn-soft); }
+.vswr-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.vswr-actions .link-button { padding: 0; }
+a.button-link { display: inline-block; text-decoration: none; text-align: center; }
+.vswr-chart { margin: 8px 0 4px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.vswr-chart svg { display: block; width: 100%; height: auto; max-height: 340px; }
+.vswr-problems { display: block; padding: 0 20px; }
+.vswr-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 14px; }
+.vswr-upload .form-grid { padding: 0 0 8px; }
