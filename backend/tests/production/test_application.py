@@ -39,6 +39,9 @@ class ProductionRepo:
         if task.id not in self.items and launch_seq is not None:
             self.seqs[task.techcard_id] = max(self.seqs.get(task.techcard_id, 0), launch_seq)
         self.items[task.id] = task
+    def for_project(self, project): return [item for item in self.items.values() if item.project == project]
+    def worked(self, task_ids): return set()
+    def marks_issued(self, task_ids): return set()
 
 
 class Operators:

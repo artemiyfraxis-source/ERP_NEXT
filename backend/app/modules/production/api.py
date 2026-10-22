@@ -40,6 +40,7 @@ from .application import (
     replace_operator_skills,
     set_production_cancelled,
     hand_over_production,
+    issue_mark_serials,
     HandOverProductionCommand,
     CancelDeliveryCommand,
     FlowView,
@@ -56,7 +57,7 @@ from .application import (
 )
 from .domain import (
     FLOW_MODE_NAMES, FlowMode, OperatorSkill, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift, delivered_total,
-    mark_serial_range,
+    has_numbered_marks,
 )
 from .flow import EARLY_LIMIT, EARLY_NOTICE
 from .launchable import (
@@ -905,6 +906,7 @@ def operation_etk(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
     issued_lots: Annotated[IssuedLots | None, Depends(etk_issued_lots)],
+    now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
     """ЭТК операции для монтажника без доступа к разделу техкарт: только выданная карта проекта и КБ этого ПЗ
     и операция, на которой её открыть. Монтажнику — своя операция, планировщику — любая."""
@@ -924,12 +926,12 @@ def operation_etk(
     # position — операция ЭТК, на которой открыть карту (у ПФ — его первая); positions — все операции ЭТК этой
     # операции задания по порядку ПФ (без ПФ — одна).
     positions = list(operation.etk_positions)
-    # serial — номера изделий задания для «№ изделия» в надписях меток (сквозь задания позиции, mark_serial_range).
-    with uow_factory() as uow:
-        first, last = mark_serial_range(task, uow.production.for_project(task.project))
+    # serial — номера изделий задания для «№ изделия» в надписях меток (сквозь задания позиции, mark_serial_range);
+    # null — задание отменено без работы, его номера освобождены. Выданные с надписями «№ изделия» — след работы.
+    serial = issue_mark_serials(task, has_numbered_marks(result.get("document")), principal.actor, now, uow_factory())
     return {"card": result, "revision": revision, "focus": {
         "position": positions[0], "positions": positions, "code": operation_code(operation.code),
-    }, "serial": {"first": first, "last": last, "task": task.number}}
+    }, "serial": {"first": serial[0], "last": serial[1], "task": task.number} if serial else None}
 
 
 @router.get("/my/tasks/{task_id}/harness")

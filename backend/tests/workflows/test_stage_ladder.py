@@ -27,6 +27,7 @@ from app.modules.production.plan import (
     KitStageNow,
     PlanEvent,
     PlanProjectSnapshot,
+    kit_stage_key,
     plan_stage_change,
     project_stage,
     summarize_kit_marks,
@@ -38,7 +39,7 @@ from app.modules.techcards.kitsets import KitAssembly, Kitset
 from app.modules.techcards.project_cards import ProjectTechcard
 from app.workflows import project_kitset as flow
 from app.workflows import stage_cascade
-from app.workflows.production_plan import build_production_plan, kit_stage_facts
+from app.workflows.production_plan import build_production_plan, issued_runs, kit_stage_facts
 
 PROJECT = "708К.4"
 FINAL = uuid4()
@@ -57,16 +58,20 @@ def test_the_ladder_is_eight_steps_in_shop_order():
 # ── Факты этапов ────────────────────────────────────────────────────────
 
 
-def _task(status=ProductionStatus.RUNNING, item="КБ1", planned=False, started=False):
+def _task(status=ProductionStatus.RUNNING, item="КБ1", planned=False, started=False, quantity=10):
     """``planned`` — every operation has a window in the resource plan; ``started`` — someone took a share."""
     share = SimpleNamespace(started_at=NOW if started else None)
     operation = SimpleNamespace(planned_start=NOW if planned else None, shares=(share,))
-    return SimpleNamespace(id=uuid4(), status=status, project=PROJECT, item=item, handed_to="",
+    return SimpleNamespace(id=uuid4(), status=status, project=PROJECT, item=item, handed_to="", quantity=quantity,
                            operations=(operation,), final_operation=SimpleNamespace(id=FINAL))
 
 
-def _box(task, status=BoxStatus.CONFIRMED, operation=FINAL):
-    return SimpleNamespace(id=uuid4(), task_id=task.id, operation_id=operation, status=status)
+def _box(task, status=BoxStatus.CONFIRMED, operation=FINAL, quantity=None):
+    """``quantity`` None — box facts without pieces (the whole task counts)."""
+    box = SimpleNamespace(id=uuid4(), task_id=task.id, operation_id=operation, status=status)
+    if quantity is not None:
+        box.quantity = Decimal(quantity)
+    return box
 
 
 def _good(accepted="0"):
@@ -75,9 +80,10 @@ def _good(accepted="0"):
     return good.accept(Decimal(accepted), date(2026, 10, 12), "ГП.26.0000001") if Decimal(accepted) else good
 
 
-def _stage(tasks=(), boxes=(), inspected=(), goods=(), worked=()) -> str:
+def _stage(tasks=(), boxes=(), inspected=(), goods=(), worked=(), run=None) -> str:
     facts, _marks = kit_stage_facts(
         cards=(), tasks=tasks, fulfillment=(), goods=goods, marks={}, boxes=boxes, inspected=inspected, worked=worked,
+        runs={kit_stage_key(PROJECT, "КБ1"): run} if run else None,
     )
     return project_stage(PROJECT, ("КБ1",), facts).status
 
@@ -116,6 +122,30 @@ def test_a_box_not_yet_at_qc_keeps_the_kb_at_work():
     assert _stage((task,), (_box(task, operation=EARLIER),)) == "В работе"  # не последняя операция
     cancelled = _task(ProductionStatus.CANCELLED)
     assert _stage((cancelled,), (_box(cancelled),)) == "Новый"
+
+
+def test_qc_only_once_the_whole_kb_run_is_made():
+    """Владелец 22.10: «ОТК» — весь тираж КБ сделан, а не одно его задание; отменённые не считаются."""
+    first = _task(ProductionStatus.DONE, started=True, quantity=4)
+    # Тираж 10, выполнено 4, остальное не запущено — не «ОТК».
+    assert _stage((first,), run=10) == "В работе"
+    # Запущено ещё 6 и они в работе — тоже не «ОТК».
+    second = _task(started=True, quantity=6)
+    assert _stage((first, second), run=10) == "В работе"
+    # Сдано с последней операции 5 из 6 — 9 из 10, ещё не «ОТК»; 6 из 6 — весь тираж: «ОТК».
+    assert _stage((first, second), (_box(second, quantity="5"),), run=10) == "В работе"
+    assert _stage((first, second), (_box(second, quantity="5"), _box(second, quantity="1")), run=10) == "ОТК"
+    # Выполнено всё запущенное — 10 из 10.
+    assert _stage((first, _task(ProductionStatus.DONE, quantity=6)), run=10) == "ОТК"
+    # Отменённое задание тираж не закрывает.
+    cancelled = _task(ProductionStatus.CANCELLED, started=True, quantity=6)
+    assert _stage((first, cancelled), run=10) == "В работе"
+
+
+def test_a_kb_without_a_known_run_is_at_qc_when_everything_launched_is_made():
+    done = _task(ProductionStatus.DONE, started=True, quantity=4)
+    assert _stage((done,)) == "ОТК"
+    assert _stage((done, _task(started=True, quantity=6))) == "В работе"
 
 
 def test_accepted_and_sent_goods_climb_the_ladder():
@@ -218,6 +248,26 @@ def test_a_techcard_kb_outside_the_kitset_gives_the_same_stage_on_the_plan_and_t
     assert [(kit.item_index, kit.status) for kit in screen.kits] == [("КБ1", "Принято складом"), ("КБ2", "Новый")]
     assert screen.status == row.stage.status == "Новый"
     assert [(kit.item_index, kit.status) for kit in row.stage.kits] == [(kit.item_index, kit.status) for kit in screen.kits]
+
+
+def test_the_plan_takes_the_kb_run_from_the_kitset_and_the_etk_batch_for_qc():
+    """«ОТК» на плане — по тиражу КБ из карточки набора (нет набора — партия выданной ЭТК), как остаток к запуску."""
+    kitset = Kitset(
+        project=PROJECT, customer="ООО", calc_source="", updated_at=NOW, updated_by="Технолог", created_at=NOW,
+        assemblies=(KitAssembly(index="КБ1", name="Жгут", run=Decimal("10")),),
+    )
+    etk = ProjectTechcard.create(
+        project=PROJECT, item_index="КБ2", product_name="Корпус", source_calculation="", deadline=None, now=NOW,
+    ).rebuild({"operations": [{"code": "OP-1", "connector": "1", "side": ""}], "kit": {"part_quantity": "8"}}, NOW).issue(NOW)
+    assert issued_runs((etk,), (kitset,)) == {kit_stage_key(PROJECT, "КБ1"): 10, kit_stage_key(PROJECT, "КБ2"): 8}
+    tasks = (_task(ProductionStatus.DONE, started=True, quantity=4), _task(ProductionStatus.DONE, item="КБ2", quantity=8))
+
+    [row] = build_production_plan(
+        cards=(etk,), tasks=tasks, fulfillment=(), goods=(), requests=(), procurement=(),
+        projects=(PlanProjectSnapshot(PROJECT, customer="ООО"),), events=(), today=NOW.date(), kitsets=(kitset,),
+    )
+
+    assert [(kit.item_index, kit.status) for kit in row.stage.kits] == [("КБ1", "В работе"), ("КБ2", "ОТК")]
 
 
 # ── Миграция 0107 ───────────────────────────────────────────────────────
