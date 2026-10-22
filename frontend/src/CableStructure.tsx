@@ -145,6 +145,7 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
       columns={columns}
       rowKey={(gauge) => gauge.id}
       storageKey="db:gauges"
+      sharedKey="gauges"
       exportName="Сечения AWG - мм2"
       renderDetail={canEdit ? (gauge) => <GaugeEditor key={`${gauge.id}:${gaugeOption(gauge)}`} gauge={gauge} onSaved={onSaved} onError={onError} /> : undefined}
       rowLabel={(gauge) => gauge.label}
@@ -392,6 +393,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       rowKey={(row) => row.id}
       rowLabel={(row) => row.cable}
       storageKey="db:cables:wire-structured:5"
+      sharedKey="prov:wire-structured"
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
       groupSort

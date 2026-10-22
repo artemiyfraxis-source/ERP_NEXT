@@ -20,6 +20,7 @@ from app.shared.http_auth import (
 from .application import (
     ColumnCommand, CreateRecordCommand, EditRecordCommand, FieldEdit, ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
     SetCableKindCommand, SetCoaxDiametersCommand, SetCoveringGroupCommand, StaleRecordError, UnitOfWork, create_record, edit_record, list_cables,
+    SaveColumnViewCommand, ViewColumn, column_views, save_column_view,
     replace_maps, replace_snapshot, set_cable_kind, add_column, custom_columns, remove_column, set_coax_diameters, set_covering_group, coverings_catalog,
 )
 from .crimps import change_target, change_terminal, crimp_codes, crimp_overview
@@ -715,11 +716,46 @@ def remove_tech_column(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    """Removes the owner's own column, only when it is empty everywhere."""
+    """Removes the owner's own column; its values go to the journal."""
     records = _run_edit(lambda: remove_column(ColumnCommand(
         tab=payload.tab, name=payload.name, actor=principal.actor, now=now, cable_kind=payload.cable_kind), uow_factory()))
     return {"tab": payload.tab.value, "name": payload.name, "records": records,
             "cable_kind": payload.cable_kind.value if payload.cable_kind else None}
+
+
+class ViewColumnPayload(BaseModel):
+    key: str = Field(min_length=1, max_length=200)
+    visible: bool
+
+
+class ColumnViewPayload(BaseModel):
+    columns: list[ViewColumnPayload] = Field(max_length=300)  # empty — drop the shared set
+
+
+@router.get("/column-views")
+def get_column_views(
+    principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """The shared column set of every table that has one (owner 22.10.2026) and whether the caller may change it."""
+    with uow_factory() as uow:
+        views = column_views(uow)
+    return {"views": views, "can_edit": principal.permissions.get("erpref") == "edit"}
+
+
+@router.put("/column-views/{view}", dependencies=[Depends(refuse_api_tokens("Токен API не меняет столбцы таблиц."))])
+def put_column_view(
+    view: str,
+    payload: ColumnViewPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """«Сохранить для всех»: which columns of a table are shown to everyone, and in what order."""
+    columns = _run(lambda: save_column_view(SaveColumnViewCommand(
+        view=view, columns=tuple(ViewColumn(item.key, item.visible) for item in payload.columns),
+        actor=principal.actor, now=now), uow_factory()))
+    return {"view": view, "columns": columns}
 
 
 @router.post("/tech-operations", status_code=201)

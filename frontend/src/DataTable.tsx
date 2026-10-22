@@ -3,6 +3,7 @@ import { selectRange } from "./bulk";
 import { EMPTY, displayCell, formatNumber } from "./format";
 import { matchesSearch, searchRows } from "./searchText";
 import { LoadMore } from "./LoadMore";
+import { useColumnViews } from "./ColumnViews";
 
 /* Общая таблица разделов — то, что в SUPPLYMAP давал лист Google и портальные таблицы (portalGetView,
    portalSaveUserCols): поиск по всем словам, фильтр по значениям колонки, сортировка по заголовку,
@@ -90,6 +91,9 @@ export interface DataTableProps<T> {
   rowKey: (row: T) => string;
   /** Ключ для запоминания колонок, отбора и сортировки у пользователя (localStorage). */
   storageKey?: string;
+  /** Ключ общего набора столбцов (сервер, один на всех): «Сохранить для всех» в «Колонках» пишет его, «Только нужные»
+      возвращает к нему. Первая колонка — опознаватель записи (Марка, Артикул) — всегда видна. Без `ColumnViewsProvider` — нет. */
+  sharedKey?: string;
   label?: string;
   presets?: DataPreset<T>[];
   /** Чип, открытый по умолчанию (пока пользователь не выбрал другой чип; «Все» не запоминается). */
@@ -154,6 +158,8 @@ export interface Saved {
   widths?: Record<string, number>;
   /** Свои подписи колонок. */
   titles?: Record<string, string>;
+  /** Какой общий набор столбцов уже применён к этому виду: новый общий набор заменяет личные скрытие и порядок один раз. */
+  sharedSig?: string;
 }
 
 const MIN_WIDTH = 40;
@@ -204,6 +210,7 @@ function cleanSaved(raw: unknown): Saved {
   if (widths.length) saved.widths = Object.fromEntries(widths.map(([key, width]) => [key, clampWidth(width)]));
   if (titles.length) saved.titles = Object.fromEntries(titles);
   if (saved.hidden !== undefined && !Array.isArray(saved.hidden)) delete saved.hidden;
+  if (saved.sharedSig !== undefined && typeof saved.sharedSig !== "string") delete saved.sharedSig;
   if (saved.known !== undefined && !(Array.isArray(saved.known) && saved.known.every((item) => typeof item === "string"))) delete saved.known;
   return saved;
 }
@@ -339,6 +346,7 @@ export function DataTable<T>({
   columns,
   rowKey,
   storageKey,
+  sharedKey,
   label = "Таблица",
   presets = [],
   defaultPreset = "",
@@ -385,6 +393,26 @@ export function DataTable<T>({
       ...fresh.filter((column) => column.hidden).map((column) => column.key)];
   });
   const [order, setOrder] = useState<string[] | undefined>(saved.order);
+  // Общий набор столбцов: пока сервер его не отдал или его нет — всё как раньше. Новый набор (другая подпись) один раз
+  // заменяет личные скрытие и порядок у каждого; дальше пользователь может подстроить под себя.
+  const columnViews = useColumnViews();
+  const sharedView = sharedKey ? columnViews?.views[sharedKey] : undefined;
+  const sharedSig = sharedView ? sharedView.map((item) => `${item.key}:${item.visible ? 1 : 0}`).join("|") : "";
+  const [seenSig, setSeenSig] = useState(saved.sharedSig ?? "");
+  const lockedKey = sharedKey ? columns[0]?.key : undefined;
+  const [sharing, setSharing] = useState<{ tone: "ok" | "danger"; text: string } | null>(null);
+  const [listDrag, setListDrag] = useState<string | null>(null);
+  function applyShared() {
+    if (!sharedView) return;
+    const shown = new Map(sharedView.map((item) => [item.key, item.visible]));
+    setHidden(columns.filter((column) => shown.has(column.key) ? !shown.get(column.key) : column.hidden).map((column) => column.key));
+    setOrder(sharedView.map((item) => item.key));
+    setSeenSig(sharedSig);
+  }
+  useEffect(() => {
+    if (sharedView && sharedSig !== seenSig) applyShared();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sharedSig]);
   const [widths, setWidths] = useState<Record<string, number>>(saved.widths ?? {});
   const [titles, setTitles] = useState<Record<string, string>>(saved.titles ?? {});
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -428,12 +456,12 @@ export function DataTable<T>({
   useEffect(() => {
     const { order: _order, widths: _widths, titles: _titles, ...kept } = readSaved(storageKey);
     writeSaved(storageKey, {
-    ...kept, hidden, known: [...new Set([...(kept.known ?? []), ...columns.map((column) => column.key)])], sort, preset,
+    ...kept, hidden, ...(seenSig ? { sharedSig: seenSig } : {}), known: [...new Set([...(kept.known ?? []), ...columns.map((column) => column.key)])], sort, preset,
     ...(order ? { order } : {}),
     ...(Object.keys(widths).length ? { widths } : {}),
     ...(Object.keys(titles).length ? { titles } : {}),
     });
-  }, [storageKey, hidden, sort, preset, order, widths, titles, columns]);
+  }, [storageKey, hidden, sort, preset, order, widths, titles, columns, seenSig]);
 
   // The user's order and captions: everything below (headers, search hint, filters, Excel) reads these columns.
   const ordered = useMemo(() => orderColumns(columns, order), [columns, order]);
@@ -441,7 +469,7 @@ export function DataTable<T>({
     const title = titles[column.key]?.trim();
     return title && title !== column.title ? { ...column, title, hint: column.hint ?? column.title } : column;
   }), [ordered, titles]);
-  const visible = arranged.filter((column) => !hidden.includes(column.key));
+  const visible = arranged.filter((column) => column.key === lockedKey || !hidden.includes(column.key));
   const activePreset = presets.find((item) => item.label === preset);
 
   const searched = useMemo(() => searchRows(rows.filter((row) => {
@@ -576,6 +604,22 @@ export function DataTable<T>({
     setWidths({});
     setTitles({});
     setHidden(defaultHidden());
+  }
+  /** «Только нужные»: общий набор, а пока его нет — умолчание таблицы. */
+  function onlyNeeded() {
+    if (sharedView) { applyShared(); return; }
+    setOrder(undefined);
+    setHidden(defaultHidden());
+  }
+  async function publishView() {
+    if (!sharedKey || !columnViews) return;
+    setSharing(null);
+    try {
+      await columnViews.save(sharedKey, ordered.map((column) => ({ key: column.key, visible: column.key === lockedKey || !hidden.includes(column.key) })));
+      setSharing({ tone: "ok", text: "Сохранено для всех" });
+    } catch (reason) {
+      setSharing({ tone: "danger", text: failure(reason) });
+    }
   }
   const customized = Boolean(order || Object.keys(widths).length || Object.keys(titles).length);
 
@@ -1007,17 +1051,28 @@ export function DataTable<T>({
         <fieldset className="column-chooser">
           <legend>Показывать колонки</legend>
           <div className="column-chooser-head">
-            <span>Порядок и ширину можно менять и в заголовке: перетащите его или его правый край.</span>
-            <button type="button" className="secondary small" disabled={!customized && hidden.join() === defaultHidden().join()} onClick={resetView}>Сбросить вид</button>
+            <span>Показано <b>{visible.length}</b> из {columns.length}. Порядок — перетаскиванием строки; ширину можно менять и в заголовке.</span>
+            <span className="column-actions">
+              {sharing && <span className={sharing.tone === "ok" ? "tone-ok" : "tone-danger"} role="status">{sharing.text}</span>}
+              <button type="button" className="secondary small" disabled={hidden.length === 0} onClick={() => setHidden([])}>Показать все</button>
+              <button type="button" className="secondary small" onClick={onlyNeeded}>Только нужные</button>
+              {sharedKey && columnViews?.canEdit && <button type="button" className="primary small" onClick={() => void publishView()}>Сохранить для всех</button>}
+              <button type="button" className="secondary small" disabled={!customized && hidden.join() === defaultHidden().join()} onClick={resetView}>Сбросить вид</button>
+            </span>
           </div>
           <ol className="column-list">
             {ordered.map((column, index) => {
               const width = widths[column.key];
               return (
-                <li key={column.key} className="column-item">
+                <li key={column.key} className={`column-item${listDrag === column.key ? " dragging" : ""}`}
+                  onDragOver={(event) => { if (listDrag) event.preventDefault(); }}
+                  onDrop={(event) => { event.preventDefault(); if (listDrag && listDrag !== column.key) moveColumn(listDrag, column.key); setListDrag(null); }}>
                   <span className="column-name">
+                    <span className="column-grip" draggable aria-hidden="true" title="Перетащите, чтобы переставить"
+                      onDragStart={(event) => { setListDrag(column.key); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", column.key); }}
+                      onDragEnd={() => setListDrag(null)}>⠿</span>
                     <label className="check-inline">
-                      <input type="checkbox" checked={!hidden.includes(column.key)} onChange={(event) => setHidden((current) => event.target.checked ? current.filter((key) => key !== column.key) : [...current, column.key])} />
+                      <input type="checkbox" checked={column.key === lockedKey || !hidden.includes(column.key)} disabled={column.key === lockedKey} title={column.key === lockedKey ? "Опознаватель записи — всегда в таблице" : undefined} onChange={(event) => setHidden((current) => event.target.checked ? current.filter((key) => key !== column.key) : [...current, column.key])} />
                       {column.title}
                     </label>
                     {column.remove && <button type="button" className="link-button danger-link column-remove" aria-label={`Удалить столбец: ${column.title}`} title="Удалить свой столбец" onClick={column.remove}>Удалить</button>}

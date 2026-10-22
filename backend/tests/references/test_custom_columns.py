@@ -140,26 +140,23 @@ def test_the_download_for_editing_carries_the_column_and_reads_it_back(reference
     assert "Полка" in rows[0] and "А-1" in {row[rows[0].index("Полка")] for row in rows[1:]}
 
 
-def test_a_column_is_removed_only_when_every_value_is_empty(references_api):
+def test_a_column_with_data_is_removed_and_its_values_go_to_the_journal(references_api):
     records = _seed(references_api)
     references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "Полка"})
     references_api.patch(f"/api/references/tech-operations/{records[0]['id']}",
                          json={"edits": [{"field": "Полка", "old": "", "value": "А-1"}]})
 
-    refused = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "cable_kind": "wire", "name": "Полка"})
-    still = "Полка" in _columns(references_api)
-    references_api.patch(f"/api/references/tech-operations/{records[0]['id']}",
-                         json={"edits": [{"field": "Полка", "old": "А-1", "value": ""}]})
     removed = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "cable_kind": "wire", "name": "полка"})
     base = references_api.post(f"{COLUMNS}/remove", json={"tab": "prov", "cable_kind": "wire", "name": "Цвета"})
 
-    assert refused.status_code == 422 and "есть данные" in refused.json()["detail"] and still
     assert removed.status_code == 200 and removed.json()["records"] == 2
     assert "Полка" not in _columns(references_api)
     assert all("Полка" not in record["fields"] for record in
                references_api.get("/api/references/tech-operations", params={"tab": "prov"}).json()["records"])
     assert base.status_code == 422 and "только свой" in base.json()["detail"]
-    assert len(_events("references.column_removed")) == 1
+    [event] = _events("references.column_removed")
+    assert event.details["filled"] == 1
+    assert event.details["values"] == [{"record_id": records[0]["id"], "title": records[0]["display_text"], "value": "А-1"}]
     assert references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "Полка"}).status_code == 201
 
 
@@ -202,8 +199,6 @@ def test_terminals_and_operations_take_an_own_column_edit_it_and_drop_it_when_em
         listed = {tab: client.get("/api/references/tech-operations", params={"tab": tab}).json() for tab in ("ter", "op")}
         ter = listed["ter"]["records"][0]
         edit = client.patch(f"/api/references/tech-operations/{ter['id']}", json={"edits": [{"field": "Полка", "old": "", "value": "Б-7"}]})
-        refused = client.post(f"{COLUMNS}/remove", json={"tab": "ter", "name": "Полка"})
-        client.patch(f"/api/references/tech-operations/{ter['id']}", json={"edits": [{"field": "Полка", "old": "Б-7", "value": ""}]})
         removed = client.post(f"{COLUMNS}/remove", json={"tab": "ter", "name": "Полка"})
         resolved = client.post("/api/references/technology/resolve-terminal", json={"article": "Molex 430310001", "wires": ["UL1007 22 AWG"]})
         after = client.get("/api/references/tech-operations", params={"tab": "ter"}).json()
@@ -214,7 +209,6 @@ def test_terminals_and_operations_take_an_own_column_edit_it_and_drop_it_when_em
     assert all(listed[tab]["columns"][-1] == "Полка" and listed[tab]["custom_columns"] == ["Полка"] for tab in ("ter", "op"))
     assert all(record["fields"]["Полка"] == "" for tab in ("ter", "op") for record in listed[tab]["records"])
     assert edit.status_code == 200 and edit.json()["fields"]["Полка"] == "Б-7"
-    assert refused.status_code == 422 and "есть данные (1)" in refused.json()["detail"]
     assert removed.status_code == 200 and "Полка" not in after["columns"] and after["custom_columns"] == []
     assert resolved.status_code == 200 and resolved.json()["applicator"] == "S8/M8"  # the generator reads the row as before
 

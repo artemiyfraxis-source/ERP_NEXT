@@ -8,6 +8,7 @@ import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
 import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { CableTable, kindSelect } from "./CableTables";
+import { ColumnViewsProvider } from "./ColumnViews";
 import { AddColumnButton, fieldCellEdit, filledIn, ownCellEdit, useColumnRemoval } from "./CustomColumn";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
@@ -184,7 +185,11 @@ function savedTab(): string {
   try { return window.localStorage.getItem(TAB_STORAGE) ?? ""; } catch { return ""; }
 }
 
-export function ReferencesPage({ principal, initialTab }: { principal: Principal; initialTab?: DbTab }) {
+export function ReferencesPage(props: { principal: Principal; initialTab?: DbTab }) {
+  return <ColumnViewsProvider enabled={hasAccess(props.principal.permissions, "erpref")}><ReferencesPageBody {...props} /></ColumnViewsProvider>;
+}
+
+function ReferencesPageBody({ principal, initialTab }: { principal: Principal; initialTab?: DbTab }) {
   // Tabs by their own keys (ID-3): templates — erptctpl, the rest — erpref, as the two sections were.
   const canTemplates = hasAccess(principal.permissions, "erptctpl");
   const canRefs = hasAccess(principal.permissions, "erpref");
@@ -604,6 +609,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         onEdited={() => loadTech(techTab)}
         rowKey={(record) => record.id}
         storageKey={`db:${tab}`}
+        sharedKey={tab}
         exportName={current?.label}
         emptyText={viewOnly ? "Таблица не загружена из зеркала SUPPLYMAP." : "Записей нет."}
         // Правка — по строке целиком (столбец одинаковых «Править» делал строки выше и шумел); «Терминалы» — строка

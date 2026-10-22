@@ -1524,6 +1524,8 @@ export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
 export type CableKind = "coax" | "wire" | "multi";
+/** Столбец общего набора таблицы: ключ и виден ли он всем. */
+export interface SharedColumn { key: string; visible: boolean }
 
 export interface BasesResult {
   bases: ReferenceBase[];
@@ -3591,7 +3593,13 @@ export const referencesApi = {
   addColumn: (tab: TechOperationTab, name: string, cableKind?: CableKind) =>
     api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns", {
       method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}) }) }),
-  /** Удалить свой столбец: сервер откажет, пока в нём есть данные. */
+  /** Общий набор столбцов таблиц: что видно всем и в каком порядке. */
+  columnViews: () => api<{ views: Record<string, SharedColumn[]>; can_edit: boolean }>("/api/references/column-views"),
+  /** Пустой список снимает общий набор. */
+  saveColumnView: (view: string, columns: SharedColumn[]) =>
+    api<{ view: string; columns: SharedColumn[] }>(`/api/references/column-views/${encodeURIComponent(view)}`, {
+      method: "PUT", body: JSON.stringify({ columns }) }),
+  /** Удалить свой столбец вместе со значениями: они остаются в журнале. */
   removeColumn: (tab: TechOperationTab, name: string, cableKind?: CableKind) =>
     api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns/remove", {
       method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}) }) }),

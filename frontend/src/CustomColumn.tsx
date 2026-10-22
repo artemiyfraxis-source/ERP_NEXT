@@ -5,7 +5,7 @@ import type { DataCellEdit } from "./DataTable";
 
 /* «+ Столбец» (владелец 14.10.2026: «добавить свои столбцы»): свой столбец таблицы базы. Имя спрашивает маленькое окно,
    сервер пишет пустой столбец во все записи таблицы разом; дальше он правится в ячейках, как остальные. Удалить —
-   в «Колонках», с подтверждением окном; сервер удаляет только пустой столбец. */
+   в «Колонках», с подтверждением окном: сколько записей с данными в столбце; значения уходят в журнал. */
 
 export const MAX_COLUMN_NAME = 60;
 
@@ -76,8 +76,8 @@ export function AddColumnButton({ tab, onAdded, cableKind }: { tab: TechOperatio
 }
 
 /** «Удалить столбец» своих столбцов таблицы: `removeOf(name)` — для `DataColumn.remove` (без права правки — undefined),
-    `dialog` — окно подтверждения, его экран ставит рядом с таблицей. `filled(name)` — сколько записей с данными в столбце:
-    непустой столбец окно не удаляет, а говорит, что сначала очистить. */
+    `dialog` — окно подтверждения, его экран ставит рядом с таблицей. `filled(name)` — сколько записей с данными в столбце
+    (окно называет число, сервер пишет значения в журнал). */
 export function useColumnRemoval(tab: TechOperationTab, canEdit: boolean, filled: (name: string) => number,
   onRemoved: (name: string) => Promise<void> | void, cableKind?: CableKind): { removeOf: (name: string) => (() => void) | undefined; dialog: ReactNode } {
   const [name, setName] = useState("");
@@ -101,10 +101,10 @@ export function useColumnRemoval(tab: TechOperationTab, canEdit: boolean, filled
       <div className="manual-stock-head"><h2>Удалить столбец «{name}»?</h2></div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {count > 0
-        ? <p className="warning-inline">В столбце есть данные: записей — {count}. Очистите эти ячейки, потом удаляйте.</p>
+        ? <p className="warning-inline">В столбце есть данные: записей — {count}. Он уйдёт из таблицы и из Excel, значения останутся в журнале.</p>
         : <p>Столбец пустой во всех записях — он уйдёт из таблицы и из выгрузки в Excel.</p>}
       <div className="form-actions">
-        <button type="button" className="primary danger" disabled={busy || count > 0} onClick={() => void remove()}>Удалить столбец</button>
+        <button type="button" className="primary danger" disabled={busy} onClick={() => void remove()}>{count > 0 ? `Удалить столбец и ${count} знач.` : "Удалить столбец"}</button>
         <button type="button" className="secondary" disabled={busy} onClick={close}>Отмена</button>
       </div>
     </div>
