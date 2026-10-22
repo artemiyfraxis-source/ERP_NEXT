@@ -1,13 +1,11 @@
-"""Stage option warehouse.word_search: pure matcher + the stock list over HTTP, option off and on."""
+"""Stock search by words: the pure matcher and the stock list over HTTP."""
 
-import json
 from decimal import Decimal
 
 import pytest
 
 from app.modules.warehouse.domain import StockLot
 from app.modules.warehouse.word_search import matches_words
-from app.shared import stage_options
 from tests.warehouse.test_api import warehouse_api  # noqa: F401 — fixture
 
 
@@ -40,15 +38,16 @@ def test_a_missing_word_means_no_match(query):
     assert not matches_words(lot(), query)
 
 
-@pytest.fixture()
-def stage(monkeypatch, tmp_path):
-    path = tmp_path / "options.json"
-    monkeypatch.setenv(stage_options.ENV, str(path))
-
-    def switch(**options):
-        path.write_text(json.dumps(options), encoding="utf-8")
-
-    return switch
+def test_a_word_without_digits_matches_from_a_word_start():
+    # Owner: «Male» found «Female» (substring). Letters match from a word start, codes with digits stay substrings.
+    female = lot(name="Разъём SMA-Female RG-316", article="S-211L")
+    male = lot(name="Разъём SMA-Male RG-316", article="S-111L")
+    assert matches_words(male, "male") and not matches_words(female, "male")
+    assert matches_words(female, "female") and matches_words(female, "sma fem")
+    assert matches_words(female, "211") and matches_words(male, "rg-316") and matches_words(male, "разъ")
+    assert not matches_words(lot(name="Резистор С2-33Н"), "истор")  # not from a word start
+    assert matches_words(lot(article="GHR-04V-S"), "ghr") and not matches_words(lot(article="GHR-04V-S"), "hr")
+    assert matches_words(lot(article="GHR-04V-S"), "hr-04")  # with digits: a substring, in the article too
 
 
 def _add(client):
@@ -65,18 +64,11 @@ def _found(client, query):
     return result.json()["lots"]
 
 
-def test_off_keeps_the_old_substring_search(warehouse_api, stage):  # noqa: F811
+def test_the_stock_list_searches_by_words_with_article_normalization(warehouse_api, monkeypatch):  # noqa: F811
     client, _ = warehouse_api
+    monkeypatch.delenv("ERP_STAGE_OPTIONS", raising=False)  # production: no stage options file
     _add(client)
-    stage(**{"warehouse.word_search": False})
     assert len(_found(client, "molex")) == 1
-    assert _found(client, "43-0250-600") == []  # no article normalization in the old search
-
-
-def test_on_searches_by_words_with_article_normalization(warehouse_api, stage):  # noqa: F811
-    client, _ = warehouse_api
-    _add(client)
-    stage(**{"warehouse.word_search": True})
     assert len(_found(client, "molex разъем")) == 1
     assert len(_found(client, "43-0250-600 2a1")) == 1
     assert _found(client, "430250600 1f4") == []

@@ -132,23 +132,37 @@ def test_edit_journals_was_and_became_per_changed_field():
 
     updated, changes = edit_lot_row(EditLotRowCommand(
         lot_id=initial.id, expected_version=initial.version, actor=ACTOR, now=NOW,
-        changes={"article": "CON-002", "manufacturer": "Molex", "written_off": Decimal("3"), "series": ""},
+        changes={"article": "CON-002", "manufacturer": "Molex", "written_off": Decimal("0"), "series": ""},
     ), uow)
 
     assert uow.warehouse.get(initial.id) == updated
-    assert [column for _, column, _, _ in changes] == ["АРТИКУЛ", "ПРОИЗВОДИТЕЛЬ", "СПИСАНО", "БАЛАНС"]
+    assert [column for _, column, _, _ in changes] == ["АРТИКУЛ", "ПРОИЗВОДИТЕЛЬ"]
     [event] = uow.audit.items
     assert event.event_type == "warehouse.row_edited"
     assert event.actor == ACTOR
-    assert event.details["changes"] == (
-        "АРТИКУЛ: «CON-001» → «CON-002»; ПРОИЗВОДИТЕЛЬ: «—» → «Molex»; СПИСАНО: «0» → «3»; БАЛАНС: «10» → «7»"
-    )
+    assert event.details["changes"] == "АРТИКУЛ: «CON-001» → «CON-002»; ПРОИЗВОДИТЕЛЬ: «—» → «Molex»"
     assert event.details | {
         "grn": "FRX.26.0000001", "package": "P1", "warehouse": "ЦАР",
-        "article_from": "CON-001", "article_to": "CON-002", "balance_from": "10", "balance_to": "7",
+        "article_from": "CON-001", "article_to": "CON-002", "manufacturer_from": "", "manufacturer_to": "Molex",
     } == event.details
-    assert "series_from" not in event.details
+    assert "series_from" not in event.details and "written_off_from" not in event.details
     assert uow.commits == 1
+
+
+@pytest.mark.parametrize("changes", [
+    {"inbound": Decimal("12")}, {"written_off": Decimal("3")}, {"reserved": Decimal("1")},
+    {"name": "Разъём питания", "written_off": Decimal("3")},
+])
+def test_edit_of_a_quantity_is_refused_and_writes_nothing(changes):
+    # Quantities change only by movements (write-off, return, transfer), never by the row edit.
+    initial = lot()
+    uow = _uow_with(initial)
+
+    with pytest.raises(WarehouseValidationError, match="Количества меняются только движениями"):
+        edit_lot_row(EditLotRowCommand(
+            lot_id=initial.id, expected_version=initial.version, actor=ACTOR, now=NOW, changes=changes,
+        ), uow)
+    assert (uow.warehouse.get(initial.id), uow.audit.items, uow.commits) == (initial, [], 0)
 
 
 def test_edit_without_changes_writes_nothing():
