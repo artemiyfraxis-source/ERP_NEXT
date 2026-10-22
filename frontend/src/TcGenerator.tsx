@@ -200,7 +200,7 @@ export type KitEdit = {
  * Данные — `portalTcGenData` → `tcLoadBomFromKit`: состав сборки из набора проекта и строки листа КБn расчёта
  * (`kit`, GET /api/techcards/kitsets/{project}/bom/{index}); нет набора — ошибка вместо формы (`kitError`).
  */
-export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange, userId, onOpenDrawing, kitEdit, buildPreview }: {
+export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, builtId: builtProp, onBuiltChange, userId, onOpenDrawing, kitEdit, buildPreview }: {
   card: ProjectTechcard;
   kit?: KitsetBom | null;
   kitError?: string;
@@ -209,8 +209,6 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       из которой «Поправить вручную» сделало эту ручную (сервер сверяет с ней правки технолога). */
   onBuild: (config: Record<string, unknown>, draftId?: string, generatorOrigin?: Record<string, unknown>) => Promise<boolean | void> | boolean | void;
   onDiscard: () => Promise<void> | void;
-  /** Экспертное (JSON-конфигурация) — под «Ещё», рядом со сводом материалов. */
-  more?: ReactNode;
   onConfig?: (config: Record<string, unknown>) => void;
   /** Собранный по черновику, но ещё без урока: живёт у владельца вкладок, чтобы переживать переход на «ТК КБn». */
   builtId?: string;
@@ -381,7 +379,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const config = useMemo(() => gen.buildConfig(), [gen]);
   const manualTab = S.tab === "manual";
   const partQty = Number((config as Record<string, unknown>).partQty) || 1;
-  const manualCfg = useMemo(() => ({ ...manualConfig(manual, config), materialsSheet: S.materialsSheet }), [manual, config, S.materialsSheet]);
+  const manualCfg = useMemo(() => manualConfig(manual, config), [manual, config]);
 
   useEffect(() => {
     if (!manualTab || drawing?.key === harnessKey) return;
@@ -1098,9 +1096,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </div>;
   }
 
-  const moreOnly = more ? <details className="gen-more"><summary>Ещё</summary>{more}</details> : null;
-  if (kitError) return <div className="tcgen"><div className="error-banner" role="alert">{kitError}</div>{moreOnly}</div>;
-  if (!refs || !kit) return <div className="tcgen"><div className="empty">Читаю состав {card.item_index}…</div>{moreOnly}</div>;
+  if (kitError) return <div className="tcgen"><div className="error-banner" role="alert">{kitError}</div></div>;
+  if (!refs || !kit) return <div className="tcgen"><div className="empty">Читаю состав {card.item_index}…</div></div>;
 
   const wrapOpts = gen.wrapCandidates().list;
   const capTubes = gen.capTubes();
@@ -1545,18 +1542,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
                 onMove={reorder} orderChanged={orderChanged} onResetOrder={resetOrder} art={routeArt}
                 preview={pfScheme} {...(S.tab === "complex" ? { blockView: true, derive: deriveGenerated } : {})} />
             </>}
-          {/* Служебное (владелец 29.09) — свод материалов, удаление черновика, JSON — свёрнуто в «Ещё». */}
-          <details className="gen-more"><summary>Ещё</summary>
-            <Toggle checked={S.materialsSheet} title="Свод материалов отдельным листом в ЭТК" onChange={(on) => update({ materialsSheet: on })} />
-            {card.document && card.status !== "Выдана" && <button className="secondary small" disabled={busy} onClick={() => void deleteGenerated()}>Удалить черновик ЭТК</button>}
-            {more}
-          </details>
         </div>
         <GeneratorDraftNote draft={draft} />
         {/* Одна кнопка (владелец 29.09): нет ТК — «Создать», ТК уже выдана — «Пересобрать». */}
         <div className="gen-foot">
           {status.text && !status.error ? <div className="gen-status">{status.text}</div>
             : <span className="gen-foot-sum">{summary}</span>}
+          {card.document && card.status !== "Выдана" && <button className="secondary danger" disabled={busy} onClick={() => void deleteGenerated()}>Удалить черновик ЭТК</button>}
           {!manualTab && <button className="secondary" disabled={busy || !ops.length} onClick={() => void editByHand()}>Поправить вручную</button>}
           <button className="primary" disabled={busy} onClick={() => void generate()}>{busy ? "Собираю…" : card.status === "Выдана" ? "Пересобрать" : "Создать"}</button>
         </div>

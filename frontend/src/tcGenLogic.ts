@@ -225,7 +225,6 @@ export type GenState = {
   selectedTemplates: Record<string, string>;
   manualTemplates: string[];
   times: Record<string, OpTimes>;
-  materialsSheet: boolean;
   /** Свой порядок операций (ключи opKey) — «Выше/Ниже» в схеме полуфабрикатов; пусто — порядок генератора. Уходит в
       build_config.opOrder и возвращается из него при открытии карты. */
   opOrder: string[];
@@ -629,7 +628,7 @@ export function emptyState(): GenState {
       len: "", tutEnabled: true, tutLen: "", pinA: "пайка", pinB: "пайка", coverA: "", coverB: "",
       stripB: false, shield: "обжим", sideA: null, sideB: null, stripMode: "machine", machine: "",
     },
-    selectedTemplates: {}, manualTemplates: [], times: {}, materialsSheet: false, opOrder: [],
+    selectedTemplates: {}, manualTemplates: [], times: {}, opOrder: [],
   };
 }
 
@@ -3238,7 +3237,7 @@ export function makeGen(D: GenData, S: GenState) {
       if (!S.advancedLength && !sharedLength()) return { cfg, error: 'Укажите длину кабелей (поле "Длина, мм" вверху секции).', warnings: [] };
       if (S.advancedLength && (cfg.wires as Array<{ length: number }>).some((w) => !w.length)) return { cfg, error: "Укажите длину для каждого кабеля.", warnings: [] };
     }
-    return { cfg: { ...cfg, ops, materialsSheet: S.materialsSheet }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings, twistDiaWarnings_(), twistCheck.warnings) };
+    return { cfg: { ...cfg, ops }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings, twistDiaWarnings_(), twistCheck.warnings) };
   }
 
   return {
