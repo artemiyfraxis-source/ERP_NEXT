@@ -4,11 +4,26 @@ import { productionPlanApi, type ProductionPlanResult, type ProductionPlanRow } 
 import { StageChangeDialog } from "./StageChangeDialog";
 import { EMPTY, formatDate, formatMoment } from "./format";
 import { markText } from "./PlanLoadSheet";
-import { StatusChip } from "./StatusChip";
 import { statusTone } from "./statusTone";
 
 const shortDate = (value: string | null) => formatDate(value) || EMPTY;
 const moment = (value: string | null) => formatMoment(value) || EMPTY;
+
+const OPEN_KEY = "erp-mb-project-block";
+// По умолчанию свёрнут: окно проекта — про операции, блок раскрывают, когда нужен.
+function readOpen() {
+  try { return localStorage.getItem(OPEN_KEY) === "1"; } catch { return false; }
+}
+
+/** Одна строка свёрнутого блока: этап, КБ с проверкой ТК, снабжение, последняя запись журнала. */
+function summaryText(row: ProductionPlanRow) {
+  const parts = [row.stage];
+  for (const item of row.kits) parts.push(`${item.item_index}: ${item.status}, ТК ${item.review?.value ?? "не проверена"}`);
+  if (row.supply) parts.push(`Снабжение: склад ${row.supply.stock}, в пути ${row.supply.transit}, в закупке ${row.supply.buying}`);
+  const last = row.events.reduce<ProductionPlanRow["events"][number] | null>((best, event) => !best || event.occurred_at > best.occurred_at ? event : best, null);
+  if (last) parts.push(`последняя запись: ${moment(last.occurred_at)} ${last.kind}`);
+  return parts.join(" · ");
+}
 
 /** Блок «Проект» окна проекта в «Ресурсном планировании» (владелец 22.10: боковая панель плана убрана, всё из неё — сюда):
  *  заказчик, КБ с этапом и проверкой ТК, снабжение, журнал и история. Данные и записи — те же, что у плана (`productionPlanApi`). */
@@ -21,7 +36,11 @@ export function ProjectPlanBlock({ project, canEdit, openProjectCard }: {
   const [plan, setPlan] = useState<ProductionPlanResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(true);
+  const [open, setOpenState] = useState(readOpen);
+  function setOpen(next: boolean) {
+    setOpenState(next);
+    try { localStorage.setItem(OPEN_KEY, next ? "1" : "0"); } catch { /* без хранилища выбор просто не запомнится */ }
+  }
 
   async function reload() {
     try {
@@ -57,7 +76,8 @@ export function ProjectPlanBlock({ project, canEdit, openProjectCard }: {
 
   return <section className="mb-project-block" aria-label="Проект">
     <button type="button" className="mb-block-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
-      <span aria-hidden>{open ? "▾" : "▸"}</span> Проект{row && <StatusChip status={row.stage} />}
+      <span aria-hidden>{open ? "▾" : "▸"}</span> <b>Проект</b>
+      {row && <span className="mb-block-summary" title={summaryText(row)}>{summaryText(row)}</span>}
     </button>
     {open && <>
       {error && <div className="error-banner" role="alert">{error}</div>}

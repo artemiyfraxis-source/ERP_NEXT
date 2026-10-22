@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { forgetOpenProject, MasterBoard } from "./MasterBoard";
 import { ProjectPlanBlock } from "./ProjectPlanBlock";
 import type { ProductionPlanResult, ProductionTask } from "./api";
@@ -43,7 +43,26 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState({}, "", "/"); forgetOpenProject(); });
+beforeEach(() => { window.localStorage.setItem("erp-mb-project-block", "1"); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState({}, "", "/"); forgetOpenProject(); window.localStorage.removeItem("erp-mb-project-block"); });
+
+it("is collapsed by default with one summary line, remembers the choice and opens to the full block", async () => {
+  window.localStorage.removeItem("erp-mb-project-block");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
+  const first = render(<ProjectPlanBlock project="708К.4" canEdit />);
+  const toggle = await screen.findByRole("button", { name: /Проект/ });
+  await waitFor(() => expect(toggle.textContent).toContain("КБ1: В работе, ТК не проверена"));
+  expect(toggle.textContent).toContain("Снабжение: склад 2, в пути 1, в закупке 1");
+  expect(toggle.textContent).toContain("последняя запись: 22.09 09:00 Блокер");
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText(/Заказчик: Заказчик/)).toBeNull();
+  fireEvent.click(toggle);
+  expect(await screen.findByText(/Заказчик: Заказчик/)).toBeInTheDocument();
+  expect(window.localStorage.getItem("erp-mb-project-block")).toBe("1");
+  first.unmount();
+  render(<ProjectPlanBlock project="708К.4" canEdit />);
+  expect(await screen.findByText(/Заказчик: Заказчик/)).toBeInTheDocument();
+});
 
 it("shows the project block with customer, KB, supply and history, and a link to the project card", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
@@ -58,6 +77,7 @@ it("shows the project block with customer, KB, supply and history, and a link to
   // Блок сворачивается.
   fireEvent.click(screen.getByRole("button", { name: /Проект/ }));
   expect(screen.queryByText(/Заказчик: Заказчик/)).toBeNull();
+  expect(window.localStorage.getItem("erp-mb-project-block")).toBe("0");
 });
 
 it("has no edit controls without edit access and no card link without access to «Проекты»", async () => {

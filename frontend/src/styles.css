@@ -1300,7 +1300,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mb-project-block .production-plan-details section { padding-top: 8px; gap: 3px; }
 .mb-project-block .production-plan-details h3 { font-size: 13px; }
 .mb-project-block { border-bottom: 1px solid var(--border); margin-bottom: 10px; padding-bottom: 8px; }
-.mb-block-toggle { display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 4px 0; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; color: var(--foreground); }
+.mb-block-toggle { width: 100%; text-align: left; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 4px 0; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; color: var(--foreground); }
 .production-plan-details h2, .production-plan-details h3, .production-plan-details p { margin: 0; }
 .production-plan-details section { display: grid; gap: 7px; padding-top: 14px; border-top: 1px solid var(--border); }
 .plan-kit-stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
@@ -1309,9 +1309,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-kit-mark label { display: grid; gap: 3px; font-size: 11px; color: var(--muted-foreground); }
 .plan-kit-mark select, .plan-kit-mark textarea { min-width: 0; font-size: 12px; }
 .plan-kit-mark textarea.auto-textarea { min-height: 0; }
-.plan-note-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
+.plan-note-grid { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: end; }
 .plan-note-grid label { display: grid; gap: 5px; font-size: 12px; color: var(--muted-foreground); }
-.plan-note-text { grid-column: 1 / -1; }
+.plan-note-text { flex: 1 1 320px; }
+.plan-note-grid > button { flex: 0 0 auto; }
 .plan-note-text textarea.auto-textarea { min-height: 0; }
 .plan-journal article { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .plan-journal article > div { display: flex; justify-content: space-between; gap: 12px; }
@@ -1414,7 +1415,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .etk-flow { grid-template-columns: 1fr; }
   .etk-wrap, .tr-head { grid-template-columns: 1fr; }
   .plan-row-metrics, .plan-note-grid { grid-template-columns: 1fr; }
-  .plan-note-text { grid-column: auto; }
 }
 
 /* NAV-ACCESS «Доступы»: role × section matrix on the shared DataTable. Dense for the 16" laptop (owner, 04.10): rows
@@ -4908,3 +4908,5 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 @media (pointer: coarse) {
   .mb-run input, .autoplan-count-input input { min-height: 40px; }
 }
+
+.mb-block-summary { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 400; color: var(--muted-foreground); }
