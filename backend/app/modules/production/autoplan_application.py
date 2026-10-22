@@ -39,6 +39,7 @@ from .application import (
     DuplicateLaunch,
     UnitOfWork,
     _busy,
+    _load_clock,
     _progress,
     _shift,
     _skills,
@@ -306,7 +307,9 @@ def _prepare(
     ) + tuple(item.task for item in sorted(scope.new_tasks.values(), key=lambda value: (value.card.project, value.card.index)))
     team = tuple(item.id for item in scope.team_rows)
     absences = tuple(uow.calendar.absences())
-    busy = _with_absences(_busy(planned_tasks, UUID(int=0), UUID(int=0), now), absences, team, now.tzinfo)
+    busy = _with_absences(
+        _busy(planned_tasks, UUID(int=0), UUID(int=0), now, _load_clock(uow, now, planned_tasks)), absences, team, now.tzinfo,
+    )
     skills = _skills(uow)
     holidays = uow.calendar.holidays()
     shift = _shift(uow.calendar)
@@ -532,7 +535,8 @@ def autoplan_context(
         team = tuple(item.id for item in whole.team_rows)
         holidays = uow.calendar.holidays()
         shift = _shift(uow.calendar)
-        busy = _with_absences(_busy(tuple(whole.tasks.values()), UUID(int=0), UUID(int=0), command.now),
+        planned = tuple(whole.tasks.values())
+        busy = _with_absences(_busy(planned, UUID(int=0), UUID(int=0), command.now, _load_clock(uow, command.now, planned)),
                               tuple(uow.calendar.absences()), team, command.now.tzinfo)
         total = work_seconds_between(start, finish, holidays, shift) if finish > start else 0
 

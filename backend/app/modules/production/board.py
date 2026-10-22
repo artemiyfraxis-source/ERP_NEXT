@@ -46,7 +46,7 @@ from .application import (
     place_share,
 )
 from .autoplan import NEW_TASK_PREFIX
-from .dispatch import DispatchCalendar, Progress, _whole_minute, local, localize, nodes_of, share_seconds
+from .dispatch import DispatchCalendar, LoadClock, Progress, _whole_minute, local, localize, nodes_of, share_seconds
 from .execution import ManualOutputCommand, enter_manual_output
 from .domain import (
     EtkOperation,
@@ -430,7 +430,7 @@ def assign_board(
             # его отсутствиями: группа не сдвигает назначенное раньше (одиночная доля сдвигала бы — dispatch.place).
             begin = _free_start(
                 tasks, task, operation, command.operator_id, entry.item.quantity or task.quantity, cursor,
-                calendar, skills, progress,
+                calendar, skills, progress, now,
             )
             updated, plan, lines = place_share(
                 uow, tasks, task, operation, command.operator_id, entry.item.quantity, begin, command.actor, now,
@@ -543,11 +543,13 @@ def _free_start(
     calendar: DispatchCalendar,
     skills: Mapping[str, Any],
     progress: Progress,
+    now: datetime,
 ) -> datetime:
     """Первый момент не раньше cursor и конца прежних этапов этой сборки, с которого операция монтажника целиком
-    встаёт в рабочее время, не задевая его стоящую работу (любую, не только начатую) и отсутствия."""
+    встаёт в рабочее время, не задевая его стоящую работу (любую, не только начатую; затянувшуюся — от «сейчас»)
+    и отсутствия."""
     seconds = share_seconds(task, operation, quantity, (operator_id,), skills)
-    nodes = nodes_of(tasks.values(), progress).values()
+    nodes = nodes_of(tasks.values(), progress, LoadClock(now, calendar, dict(skills), progress)).values()
     upstream = upstream_ids(task.operations, operation.id)
     earlier = [node.finish for node in nodes if node.task.id == task.id and node.operation.id in upstream]
     others = [node for node in nodes if operator_id in node.operator_ids and node.operation.id != operation.id]
