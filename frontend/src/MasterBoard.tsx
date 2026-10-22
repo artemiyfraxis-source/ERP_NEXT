@@ -792,7 +792,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           <button type="button" role="radio" aria-checked={view === "equipment"} className={view === "equipment" ? "on" : ""} onClick={() => setView("equipment")}>По оборудованию</button>
         </div>
         {canEdit && site !== HANDOVER_SITE && <button className="primary small" onClick={() => setAutoplanFor(project)}>Автопланирование</button>}
-        <button className="link-button" onClick={() => setOpenProject("")}>Закрыть</button>
+        <button className="secondary small" onClick={() => setOpenProject("")}>Закрыть</button>
       </div>
       {banners}
       {view === "equipment" && renderGroups(project)}
@@ -970,7 +970,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
             {" · "}{crew.length ? `исполнители: ${crew.join(", ")}` : "не назначено"}{operationPlanText(operation) ? ` · ${operationPlanText(operation)}` : ""}</small>
         </div>
         {!task.pending && <button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button>}
-        <button className="link-button" onClick={() => select(task, null)}>Закрыть</button>
+        <button className="secondary small" onClick={() => select(task, null)}>Закрыть</button>
       </div>
       {banners}
       {site !== HANDOVER_SITE && canEdit && <div className="mb-target">
@@ -1052,7 +1052,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       </div>
       {site === HANDOVER_SITE
         ? <div className="mb-target muted">{HANDOVER_SITE} работает без раскладки по людям и часам: сюда падают задания с пометкой «Отдано в {HANDOVER_SITE}».</div>
-        : <div className="mb-target muted">{canEdit ? "Назначение — в окне операции: откройте проект и нажмите операцию. День у монтажника — раскладка по часам." : "Нажмите на день — раскладка по часам."}</div>}
+        : <div className="mb-target muted">{canEdit ? "Назначить — в проекте: нажмите операцию. День у монтажника — раскладка по часам." : "Нажмите на день — раскладка по часам."}</div>}
       {site !== HANDOVER_SITE && renderWeek(false)}
       {site !== HANDOVER_SITE && <LoadLegend capacity={capacity} late={false} />}
       {site !== HANDOVER_SITE && <section className="mb-machines" aria-label="Загрузка станков" style={{ marginTop: 18 }}>

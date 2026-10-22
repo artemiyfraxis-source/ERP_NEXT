@@ -4884,7 +4884,7 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 /* Доска мастера окнами (владелец 22.10): окно проекта — его операции и действия, окно операции — назначение. */
 .page-window .mb-window-head { justify-content: flex-start; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
 .mb-window-head h2 { margin: 0; }
-.mb-window-head .link-button:last-child { margin-left: 4px; }
+.mb-window-head > .secondary:last-child { margin-left: 4px; }
 .mb-window-head .mb-view + .primary { margin-left: 4px; }
 .mb-op-title { display: grid; gap: 2px; margin-right: auto; min-width: 0; }
 .mb-op-title small { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
