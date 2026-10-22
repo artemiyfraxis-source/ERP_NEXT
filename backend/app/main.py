@@ -52,7 +52,6 @@ from .modules.techcards import td_issues_api
 from .shared.bulk_import import MAX_IMPORT_BODY_BYTES
 from .shared.http_auth import techcards_router_principal
 from .workflows import devices_api, employee_card_api, leave_api, search_api, stage_options_api
-from .shared import device_gate
 from .workflows import documents_api
 from .modules.purchasing import api_documents as purchasing_documents_api
 from .modules.purchasing import api_internal_projects as purchasing_internal_projects_api
@@ -150,7 +149,6 @@ app.include_router(production_intake_api.router)
 if database_url := os.getenv("ERP_DATABASE_URL"):
     configure_database(app, database_url)
 watch_stop_file()  # локальная ERP на ПК: обновление останавливает API файлом-стопом (scripts/update-local.ps1)
-device_gate.SUPERVISOR.start()  # стенд, опция warehouse.tsd: ворота для ТСД; без ERP_STAGE_OPTIONS ничего не делает
 
 
 def signed_in_principal(request: Request) -> Principal | None:
