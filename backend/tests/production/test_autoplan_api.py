@@ -348,7 +348,7 @@ def test_kb_without_run_goes_to_unplaced(client):
     assert planned["unplaced"] == [{
         "operation_id": None, "task_id": None, "techcard_id": planned["unplaced"][0]["techcard_id"],
         "task_number": "708К КБ3", "position": None,
-        "reason": "Нет тиража — запустите через «+ Запустить задание»",
+        "reason": "Нет тиража КБ — задайте тираж в наборе проекта",
     }]
 
 
@@ -401,7 +401,7 @@ def test_context_lists_work_projects_and_free_hours(client):
     assert body["projects"][0]["deadline"] == "2026-09-24" and body["projects"][0]["new"] == 1
     assert body["projects"][1]["new"] == 0  # КБ3 без тиража ставить нечего
     assert {item["index"]: item["skipped"] for item in body["new"]} == {
-        "КБ2": "", "КБ3": "Нет тиража — запустите через «+ Запустить задание»",
+        "КБ2": "", "КБ3": "Нет тиража КБ — задайте тираж в наборе проекта",
     }
     assert body["period"] == {"start": "2026-09-22T09:00:00", "last_day": "2026-09-25", "auto": True}
     fitters = {item["name"]: item for item in body["fitters"]}
