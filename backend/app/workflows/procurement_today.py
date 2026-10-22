@@ -1,4 +1,4 @@
-"""«Сегодня» закупщика (option procurement.today) and «Дожать» of «Счета и поставки»: the one place their facts are read.
+"""«Сегодня» закупщика and «Дожать» of «Счета и поставки»: the one place their facts are read.
 
 Procurement builds the page (`procurement.today`, pure) and never imports purchasing; this workflow hands it, on the
 caller's session (read-only), in a fixed number of queries whatever the number of lines:
@@ -9,7 +9,7 @@ caller's session (read-only), in a fixed number of queries whatever the number o
 * the order facts of «Счета и поставки» (`purchasing_order_facts.order_facts`: sent to pay, shipped, promised date);
 * for «Не успевает к сроку»: every supplier's average payment → arrival and the buyer's request → invoice (one column
   select over the paid lines), and the price-book lead of the items of only those lines nothing nearer is known for;
-* Kaiten invoices «В оплату» (option documents.chain) and the UPDs to check (option documents.upd) — shared, not per
+* Kaiten invoices «В оплату» and the UPDs to check — shared, not per
   buyer; the count of free lines («Новые доступные»)."""
 
 from __future__ import annotations
@@ -182,7 +182,6 @@ def today_facts(
         decisions=decisions(session, ids),
         rfq_sent=first_sent(session, {state.rfq_id for state in states.values() if state.rfq_id}) if full else {},
         silent=silent_suppliers(session, buyer_id),
-        rfq_on=True,
     )
     if not full:
         return facts

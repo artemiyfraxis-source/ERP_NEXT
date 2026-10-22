@@ -1656,10 +1656,10 @@ def split_line(
     return [copy.take_in_work(buyer) for copy in result]
 
 
-# --- «Заявки» закупщика (stage option procurement.requests_rb; Roller_Buyer RequestsPage) ------------------------
+# --- «Заявки» закупщика (Roller_Buyer RequestsPage) ------------------------
 
 NO_PROJECT_KEY = "none"
-# A project number starts so (`requests.domain._PROJECT_NUMBER`) or is an internal «ВП-001» (option projects.internal).
+# A project number starts so (`requests.domain._PROJECT_NUMBER`) or is an internal «ВП-001».
 _PROJECT_START = re.compile(r"^[1-9]\d*(?:К[А-Я]?|МФ)")
 _INTERNAL_PROJECT_NUMBER = re.compile(r"^ВП-\d{3,}$")
 # НАЗНАЧЕНИЕ is «<purpose or calc project>.NNN» (`requests.domain.next_designation`): the counter is the batch.

@@ -1,6 +1,6 @@
-"""«Счета», «Цепочка документов», «Поиск по документам» (stage option documents.chain).
+"""«Счета», «Цепочка документов», «Поиск по документам».
 
-Paths are spelled out under /api/purchasing: the UPD registry (option documents.upd) owns /api/purchasing/upd and its
+Paths are spelled out under /api/purchasing: the UPD registry owns /api/purchasing/upd and its
 card; the two UPD routes here hang the invoices block on that card. Links between invoices and UPDs are computed on
 read; the buyer's confirmed / rejected word is the only write. Receiving comes through app/workflows."""
 

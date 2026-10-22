@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useStageOption } from "./StageOptions";
 
 export type ThemeChoice = "light" | "dark" | "system";
 export const THEME_KEY = "erp-theme";
@@ -27,18 +26,12 @@ function systemQuery(): MediaQueryList | null {
   return typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 }
 
-/** Переключатель «Светлая · Тёмная · Как в системе» (опция ui.dark_theme). Без опции ничего не рисует и держит светлую тему.
- *  Always mounted in the sidebar: its effect also strips data-theme when the option is off. */
+/** Переключатель «Светлая · Тёмная · Как в системе». Always mounted in the sidebar. */
 export function ThemeSwitch() {
-  const enabled = useStageOption("ui.dark_theme");
   const [choice, setChoice] = useState<ThemeChoice>(readChoice);
 
   useEffect(() => {
     const root = document.documentElement;
-    if (!enabled) {
-      delete root.dataset.theme;
-      return;
-    }
     if (choice !== "system") {
       root.dataset.theme = choice;
       return;
@@ -48,9 +41,7 @@ export function ThemeSwitch() {
     apply();
     query?.addEventListener?.("change", apply);
     return () => { query?.removeEventListener?.("change", apply); };
-  }, [enabled, choice]);
-
-  if (!enabled) return null;
+  }, [choice]);
 
   function pick(next: ThemeChoice) {
     writeChoice(next);

@@ -126,6 +126,40 @@ describe("background 401 (F07)", () => {
     expect(document.querySelector(".app-shell")).not.toHaveAttribute("inert");
   });
 
+  it("keeps the unsent rows across sections of the same user", async () => {
+    fakeErp().session = "anna";
+    render(<App />);
+    fireEvent.change(await nameCell(), { target: { value: "Разъём" } });
+    fireEvent.click(screen.getByRole("button", { name: "Мои заявки" }));
+    await screen.findByRole("heading", { name: "Мои заявки", level: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Оформить заявку" }));
+    expect((await nameCell()).value).toBe("Разъём");
+    expect(screen.getByText("Восстановлена неотправленная заявка: 1 позиция")).toBeInTheDocument();
+  });
+
+  it("never shows the rows to another user and gives them back to their author after a sign-out and sign-in", async () => {
+    const erp = fakeErp();
+    erp.session = "anna";
+    render(<App />);
+    fireEvent.change(await nameCell(), { target: { value: "Разъём" } });
+
+    // Her session expires; Boris sits down at the shared PC and signs in over her page.
+    erp.session = null;
+    pollBell();
+    await signIn("boris", await screen.findByRole("dialog", { name: "Сессия истекла" }));
+    expect(await screen.findByText("Борис")).toBeInTheDocument();
+    expect((await nameCell()).value).toBe("");
+    expect(screen.queryByDisplayValue("Разъём")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Восстановлена/)).not.toBeInTheDocument();
+
+    // Boris leaves; Anna signs back in and finds her rows.
+    fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
+    await screen.findByRole("heading", { name: "Вход в систему" });
+    await signIn("anna");
+    expect((await nameCell()).value).toBe("Разъём");
+    expect(await screen.findByText("Восстановлена неотправленная заявка: 1 позиция")).toBeInTheDocument();
+  });
+
   it("drops the user's drafts on «Выйти»", async () => {
     const erp = fakeErp();
     erp.session = "anna";

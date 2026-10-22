@@ -7,7 +7,7 @@ import {
   VIA_LABELS, type ImportResult, type StockImportResult, type ItemCard, type ItemCategory, type ItemInput, type ItemList, type ItemRow,
 } from "./purchasingItemsApi";
 
-/** «Номенклатура» (option references.items): the item master — search, card with aliases and price history, merge,
+/** «Номенклатура»: the item master — search, card with aliases and price history, merge,
  *  and «Собрать из закупок» (preview first, then apply). */
 const money = (value: string | null) => (value === null ? "—" : `${Number(value).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`);
 const demandText = (demand: { unit: string; quantity: string }[]) => (demand.length ? demand.map((d) => `${d.quantity.replace(".", ",")} ${d.unit}`).join(", ") : "—");

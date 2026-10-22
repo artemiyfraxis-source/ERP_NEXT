@@ -1,4 +1,4 @@
-"""«Счета и поставки» (stage option procurement.orders): the board / table of supplier orders, the order card, the
+"""«Счета и поставки»: the board / table of supplier orders, the order card, the
 order's own facts, «Дожать» and «Новый счёт» from open decisions.
 
 Reads open on view («Лист закупки» on view sees every buyer's orders); writes take edit and answer 403 to a viewer before
@@ -126,7 +126,7 @@ def open_decisions(principal: Viewer, make_uow: Uow) -> dict:
 @router.get("/{order_number}")
 def order_card(order_number: OrderNumber, principal: Viewer, make_uow: Uow, now: Now) -> dict:
     """The order card: the order as on the board, every delivery row of its lines (receiving's own words, read-only),
-    the UPDs that name its invoice (option documents.upd)."""
+    the UPDs that name its invoice."""
     uow = make_uow()
     with uow:
         order, lines = _one(uow.session, order_number, now.date(), principal.actor.id)

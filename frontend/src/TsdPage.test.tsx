@@ -2,7 +2,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, expect, it, vi } from "vitest";
 import type { Principal, WarehouseLot } from "./api";
 import { App } from "./App";
-import { resetStageOptions } from "./StageOptions";
 import { TsdEntry, TsdPage, TsdScreen } from "./TsdPage";
 
 const lot: WarehouseLot = {
@@ -37,31 +36,24 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-// Options must be forgotten after the components that read them are gone.
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.useRealTimers();
   window.localStorage.clear();
-  resetStageOptions();
   window.history.replaceState({}, "", "/");
 });
 
 type Call = { method: string; path: string; body?: unknown };
 type Route = (call: Call) => Response | Promise<Response>;
 
-const OPTIONS = ["warehouse.tsd", "warehouse.undo", "warehouse.labels"];
-
-function stage(enabled: string[], routes: Record<string, Route> = {}) {
+function stage(routes: Record<string, Route> = {}) {
   const calls: Call[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const call = { method: init?.method ?? "GET", path: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined };
     calls.push(call);
     const route = routes[`${call.method} ${call.path}`];
     if (route) return route(call);
-    if (call.path === "/api/stage-options") {
-      return json({ available: true, options: OPTIONS.map((key) => ({ key, block: "Склад", title: "t", before: "", after: "", enabled: enabled.includes(key) })) });
-    }
     return json({ detail: `Unexpected request: ${call.method} ${call.path}` }, 500);
   });
   return calls;
@@ -76,7 +68,7 @@ function scan(code: string) {
 }
 
 it("a scanned ГРН opens the lot, «Списать» sends the lot's version and the field waits for the next scan", async () => {
-  const calls = stage(["warehouse.tsd"], {
+  const calls = stage({
     [scanOf("FRX.26.0000001")]: () => json({ kind: "lot", code: "FRX.26.0000001", place: "", lots: [lot] }),
     [`POST /api/stock/batches/${lot.id}/writeoff`]: () => json({ lot: { ...lot, version: 5, written_off: "5", balance: "5", available: "5" } }),
   });
@@ -89,7 +81,7 @@ it("a scanned ГРН opens the lot, «Списать» sends the lot's version a
   expect(within(card).getByText("Разъём")).toBeInTheDocument();
   expect(card).toHaveTextContent("8 шт");
   expect(card).toHaveTextContent("GHR-04V-S · ЦАР · место 1F4 · серия S-12");
-  expect(within(card).queryByRole("button", { name: "Этикетка" })).not.toBeInTheDocument(); // labels option off
+  expect(within(card).getByRole("button", { name: "Этикетка" })).toBeInTheDocument();
 
   fireEvent.click(within(card).getByRole("button", { name: "Списать" }));
   const ready = within(card).getByRole("button", { name: "Готово" });
@@ -102,11 +94,11 @@ it("a scanned ГРН opens the lot, «Списать» sends the lot's version a
   expect(calls.find((call) => call.path.endsWith("/writeoff"))?.body).toEqual({ version: 4, quantity: "3", purpose: "FRX.001", reason: "" });
   expect(card).toHaveTextContent("5 шт");
   await waitFor(() => expect(field).toHaveFocus());
-  expect(within(card).queryByRole("button", { name: "Отменить" })).not.toBeInTheDocument(); // undo option off
+  expect(within(card).getByRole("button", { name: "Отменить" })).toBeInTheDocument();
 });
 
 it("a place code lists what lies there; an empty place says so; an unknown code says it is neither", async () => {
-  stage(["warehouse.tsd"], {
+  stage({
     [scanOf("1F4")]: () => json({ kind: "place", code: "1F4", place: "1F4", lots: [lot, { ...lot, id: "40000000-0000-0000-0000-000000000002", package: "П2", balance: "1" }] }),
     [scanOf("9Z9")]: () => json({ kind: "place", code: "9Z9", place: "9Z9", lots: [] }),
     [scanOf("ЧТО-ТО")]: () => json({ detail: "Не найдено: ЧТО-ТО" }, 404),
@@ -128,7 +120,7 @@ it("a place code lists what lies there; an empty place says so; an unknown code 
 });
 
 it("a complete ГРН with no Enter opens by itself after the scanner's pause", async () => {
-  const calls = stage(["warehouse.tsd"], {
+  const calls = stage({
     [scanOf("FRX.26.0000001-П2")]: () => json({ kind: "lot", code: "FRX.26.0000001-П2", place: "", lots: [{ ...lot, package: "П2" }] }),
   });
   render(<TsdPage readOnly={false} />);
@@ -138,7 +130,7 @@ it("a complete ГРН with no Enter opens by itself after the scanner's pause", 
 });
 
 it("keys typed outside any field go into the scan field (a scan after a tap on the screen)", async () => {
-  stage(["warehouse.tsd"]);
+  stage();
   render(<TsdPage readOnly={false} />);
   const field = screen.getByLabelText("ГРН или место");
   (document.activeElement as HTMLElement | null)?.blur();
@@ -146,8 +138,8 @@ it("keys typed outside any field go into the scan field (a scan after a tap on t
   expect(field).toHaveValue("1F4");
 });
 
-it("«Вернуть» offers where the lot went; with the undo option «Отменить» takes the action back", async () => {
-  const calls = stage(["warehouse.tsd", "warehouse.undo"], {
+it("«Вернуть» offers where the lot went; «Отменить» takes the action back", async () => {
+  const calls = stage({
     [scanOf("FRX.26.0000001")]: () => json({ kind: "lot", code: "FRX.26.0000001", place: "", lots: [lot] }),
     [`GET /api/stock/batches/${lot.id}/issued-to`]: () => json({ destinations: [
       { name: "FRX.001", written_off: "2", returned: "0", outstanding: "2", unit: "шт", last_date: "2026-10-19" },
@@ -172,8 +164,8 @@ it("«Вернуть» offers where the lot went; with the undo option «Отм�
   expect(calls.find((call) => call.path.endsWith("/undo"))?.body).toEqual({ version: 5 });
 });
 
-it("«Переместить» takes the new place; «Этикетка» shows the label when the labels option is on", async () => {
-  const calls = stage(["warehouse.tsd", "warehouse.labels"], {
+it("«Переместить» takes the new place; «Этикетка» shows the label", async () => {
+  const calls = stage({
     [scanOf("FRX.26.0000001")]: () => json({ kind: "lot", code: "FRX.26.0000001", place: "", lots: [lot] }),
     [`POST /api/stock/batches/${lot.id}/move`]: () => json({ lot: { ...lot, version: 5, storage_location: "12C7" } }),
     [`POST /api/stock/batches/${lot.id}/label`]: () => json({ status: "printed", reason: null, file: "x.prn", copies: 1 }),
@@ -194,7 +186,7 @@ it("«Переместить» takes the new place; «Этикетка» shows t
 });
 
 it("view only: the lot is shown, no actions", async () => {
-  stage(["warehouse.tsd", "warehouse.undo"], {
+  stage({
     [scanOf("FRX.26.0000001")]: () => json({ kind: "lot", code: "FRX.26.0000001", place: "", lots: [lot] }),
   });
   render(<TsdPage readOnly />);
@@ -205,14 +197,13 @@ it("view only: the lot is shown, no actions", async () => {
 });
 
 it("the screen hands over to the ordinary shell without the warehouse section", async () => {
-  stage([]);
+  stage();
   const leave = vi.fn();
   render(<TsdScreen principal={{ ...storekeeper, permissions: {} }} onSignOut={() => undefined} onLeave={leave} />);
   await waitFor(() => expect(leave).toHaveBeenCalled());
   cleanup();
-  resetStageOptions();
   vi.restoreAllMocks();
-  stage(["warehouse.tsd"]);
+  stage();
   const stay = vi.fn();
   render(<TsdScreen principal={storekeeper} onSignOut={() => undefined} onLeave={stay} />);
   expect(await screen.findByText("FRAXIS · склад")).toBeInTheDocument();
@@ -220,15 +211,15 @@ it("the screen hands over to the ordinary shell without the warehouse section", 
   expect(stay).not.toHaveBeenCalled();
 });
 
-it("off the stage (no ТСД) the ТСД address keeps the ordinary sign-in", async () => {
-  stage([], { "GET /api/devices/entry": () => json({ detail: "Вход с устройств есть только на стенде." }, 404) });
+it("where the server has no ТСД entry the ТСД address keeps the ordinary sign-in", async () => {
+  stage({ "GET /api/devices/entry": () => json({ detail: "Вход с устройств есть только на стенде." }, 404) });
   render(<TsdEntry onLogin={() => undefined} />);
   expect(await screen.findByRole("heading", { name: "Вход в систему" })).toBeInTheDocument();
   expect(screen.getByLabelText("Логин")).toBeInTheDocument();
 });
 
 it("on the ТСД: the employee is found by surname, signs in by PIN and is remembered on the device", async () => {
-  const calls = stage(["warehouse.tsd"], {
+  const calls = stage({
     "GET /api/devices/entry": () => json({ tsd: true }),
     "GET /api/auth/login-staff": () => json({ staff: [
       { id: "u-1", name: "Иванов Пётр", department: "КБ" },
@@ -263,14 +254,11 @@ it("on the ТСД: the employee is found by surname, signs in by PIN and is reme
   expect(screen.getByRole("button", { name: "Другой сотрудник" })).toBeInTheDocument();
 });
 
-it("the ТСД address of the whole app: PIN sign-in, then the ТСД screen — the options asked before sign-in are asked again", async () => {
+it("the ТСД address of the whole app: PIN sign-in, then the ТСД screen", async () => {
   window.history.replaceState({}, "", "/?section=tsd");
   let signedIn = false;
-  stage(["warehouse.tsd"], {
+  stage({
     "GET /api/auth/me": () => (signedIn ? json(storekeeper) : json({ detail: "Требуется вход в ERP" }, 401)),
-    "GET /api/stage-options": () => (signedIn
-      ? json({ available: true, options: OPTIONS.map((key) => ({ key, block: "Склад", title: "t", before: "", after: "", enabled: key === "warehouse.tsd" })) })
-      : json({ detail: "Требуется вход в ERP" }, 401)),
     "GET /api/devices/entry": () => json({ tsd: true }),
     "GET /api/auth/login-staff": () => json({ staff: [{ id: storekeeper.user.id, name: "Петров Иван", department: "Склад" }] }),
     "POST /api/auth/pin-login": () => { signedIn = true; return json(storekeeper); },

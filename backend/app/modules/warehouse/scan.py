@@ -1,4 +1,4 @@
-"""Stage option warehouse.scan: what a scanned or typed code means — a ГРН (with or without its package) or a
+"""what a scanned or typed code means — a ГРН (with or without its package) or a
 storage place. Pure: no database, the caller looks the result up."""
 
 from __future__ import annotations

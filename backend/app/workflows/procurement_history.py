@@ -1,4 +1,4 @@
-"""«История строки» (option procurement.history): the life of one procurement line, rebuilt on read from stored facts.
+"""«История строки» : the life of one procurement line, rebuilt on read from stored facts.
 
 Nothing is written for it. Sources: the request, the line's own columns and audit events, the request for quotes
 (lines, suppliers marked sent, quotes, decision), receiving (deliveries of the line and their audit), the warehouse lot

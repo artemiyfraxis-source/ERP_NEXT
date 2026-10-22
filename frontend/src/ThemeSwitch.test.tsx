@@ -1,32 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { resetStageOptions } from "./StageOptions";
 import { ThemeSwitch } from "./ThemeSwitch";
 
-function json(body: unknown) {
-  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
-}
-const OPTION = { key: "ui.dark_theme", block: "Интерфейс", title: "Тёмная тема", before: "Светлая", after: "Переключатель", enabled: false };
-
-function serve(enabled: boolean) {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ available: true, options: [{ ...OPTION, enabled }] }));
-}
-
 beforeEach(() => { window.localStorage.clear(); delete document.documentElement.dataset.theme; });
-afterEach(() => { cleanup(); resetStageOptions(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-
-it("renders nothing and keeps the light theme while the option is off", async () => {
-  window.localStorage.setItem("erp-theme", "dark");
-  document.documentElement.dataset.theme = "dark";
-  serve(false);
-  const { container } = render(<ThemeSwitch />);
-  await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
-  expect(container).toBeEmptyDOMElement();
-  expect(document.documentElement.dataset.theme).toBeUndefined();
-});
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it("«Тёмная» sets data-theme and remembers the choice", async () => {
-  serve(true);
   render(<ThemeSwitch />);
   fireEvent.click(await screen.findByRole("button", { name: "Тёмная" }));
   expect(document.documentElement.dataset.theme).toBe("dark");
@@ -44,7 +23,6 @@ it("«Как в системе» follows prefers-color-scheme live", async () =>
     removeEventListener: () => { listener = null; },
   };
   vi.stubGlobal("matchMedia", () => query);
-  serve(true);
   render(<ThemeSwitch />);
   fireEvent.click(await screen.findByRole("button", { name: "Как в системе" }));
   expect(document.documentElement.dataset.theme).toBe("dark");

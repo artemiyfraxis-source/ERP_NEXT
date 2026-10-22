@@ -1,4 +1,4 @@
-"""Справочник поставщиков (stage option references.suppliers)."""
+"""Справочник поставщиков."""
 
 from __future__ import annotations
 

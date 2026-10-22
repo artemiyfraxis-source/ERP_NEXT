@@ -1,4 +1,4 @@
-"""Запросы КП, КП, сравнение и решение (stage option procurement.rfq)."""
+"""Запросы КП, КП, сравнение и решение."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from .deps import procurement_uow_factory, purchasing_uow_factory
 
 
 def rfq_option(request: Request, principal: Annotated[Principal, Depends(procurement_view_principal)]) -> None:
-    """After the section gate: a token or a stranger is refused (401/403) before the option says 404, and a write by
+    """After the section gate: a token or a stranger is refused (401/403), and a write by
     someone who holds «Лист закупки» on view only is refused (403) before it too (view-mode contract, ID-6)."""
     if request.method not in {"GET", "HEAD", "OPTIONS"} and not section_allowed(principal, ("procurement",), "edit"):
         raise HTTPException(status_code=403, detail="Раздел «Лист закупки» открыт вам только на просмотр.")
@@ -161,7 +161,7 @@ class QuoteModel(BaseModel):
     file_name: str | None = Field(default=None, max_length=300)
     file_base64: str | None = Field(default=None, max_length=28_000_000)
     lines: list[QuoteLineModel] = Field(min_length=1, max_length=500)
-    # Supplier wordings the buyer confirmed in «КП из PDF и текста»; stored only while that option is on.
+    # Supplier wordings the buyer confirmed in «КП из PDF и текста».
     aliases: list[AliasModel] = Field(default_factory=list, max_length=500)
 
     def to_input(self) -> service.QuoteInput:

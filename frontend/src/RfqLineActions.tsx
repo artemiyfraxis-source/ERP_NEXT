@@ -62,7 +62,7 @@ export function RfqSelectionBar({ matrix, picked, onClear, onDone, onError }: {
   matrix: RfqMatrix; picked: Set<string>; onClear: () => void; onDone: (message: string) => void; onError: (message: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  // «Отменить» and «Разделить» are the requests slice's commands (option «Заявки» закупщика): without it, not offered.
+  // «Отменить» and «Разделить» are the requests slice's commands.
   const lines = matrix.lines.filter((line) => picked.has(line.id));
 
   async function run(task: () => Promise<string>, fallback: string) {

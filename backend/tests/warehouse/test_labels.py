@@ -1,4 +1,4 @@
-"""GRN label layout, Code128 and the TSPL job (stage option warehouse.labels), ported from Roller_Buyer
+"""GRN label layout, Code128 and the TSPL job, ported from Roller_Buyer
 `apps/api/src/test/labels.test.ts` with its vectors; the byte vectors of the TSPL job and Code128 were produced by
 Roller_Buyer's own builder for the same input."""
 

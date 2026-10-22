@@ -1,4 +1,4 @@
-"""Цены и карточки позиции и поставщика (stage option references.price_book): справочные цены, цены из УПД, счета
+"""Цены и карточки позиции и поставщика: справочные цены, цены из УПД, счета
 Kaiten, каталог закупок и «Завести позиции из УПД». Money in kopecks (price refs keep unit_price4)."""
 
 from __future__ import annotations

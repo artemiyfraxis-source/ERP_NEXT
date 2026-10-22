@@ -1,4 +1,4 @@
-"""«Заявки» закупщика over HTTP (option procurement.requests_rb): the view with RB statuses, «Разделить» by quantity
+"""«Заявки» закупщика over HTTP: the view with RB statuses, «Разделить» by quantity
 with the request for quotes copied, «Отменить выбранные» with a reason and skips."""
 
 from decimal import Decimal

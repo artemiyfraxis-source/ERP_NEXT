@@ -3,7 +3,7 @@ import { formatNumber, NBSP } from "./format";
 import { innValid } from "./purchasingDirectoryApi";
 import type { Tone } from "./statusTone";
 
-/** «Реестр УПД» (stage option documents.upd): /api/purchasing/upd. Money in kopecks (integers), quantities and unit
+/** «Реестр УПД»: /api/purchasing/upd. Money in kopecks (integers), quantities and unit
  *  prices as decimal strings — as the server keeps them. The line and document checks below are the server's
  *  (backend upd_checks.py), so the edit form highlights exactly what the card will report after saving. */
 

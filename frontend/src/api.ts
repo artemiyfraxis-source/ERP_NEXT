@@ -70,7 +70,7 @@ export interface RequestSchema {
   projects?: string[];
   /** ТИП combobox options (REQUEST_FORM_FIELDS «ТИП»). */
   item_types?: string[];
-  /** Stage option projects.internal: open internal projects «ВП-001» (empty while the option is off). */
+  /** open internal projects «ВП-001» (empty when there are none). */
   internal_projects?: InternalProjectBrief[];
 }
 
@@ -80,7 +80,7 @@ export interface InternalProjectBrief {
   purpose: string;
 }
 
-/** Stage option projects.internal: a project of the company itself; requests refer to it by `number`. */
+/** a project of the company itself; requests refer to it by `number`. */
 export interface InternalProject extends InternalProjectBrief {
   id: string;
   responsible_id: string | null;
@@ -523,7 +523,7 @@ export interface WarehouseShelfPlaces {
   next_number: number | null;
 }
 
-/** Stage option warehouse.scan: «lot» — the scanned ГРН's lots, «place» — what lies on the scanned place. */
+/** «lot» — the scanned ГРН's lots, «place» — what lies on the scanned place. */
 export interface WarehouseScan {
   kind: "lot" | "place";
   code: string;
@@ -531,7 +531,7 @@ export interface WarehouseScan {
   lots: WarehouseLot[];
 }
 
-/** Stage option warehouse.undo: what «Отменить последнее» would take back (null — and why not). */
+/** what «Отменить последнее» would take back (null — and why not). */
 export interface WarehouseUndoPreview {
   undo: { label: string; occurred_at: string } | null;
   reason: string;

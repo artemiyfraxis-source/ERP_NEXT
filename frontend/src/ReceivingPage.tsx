@@ -42,7 +42,7 @@ function itemTitle(line: ReceivingLine) {
   return [...new Set([line.article, line.name].map((value) => (value ?? "").trim()).filter(Boolean))].join(" · ");
 }
 
-/** The GRN lots a receipt has put on stock — for «Печать этикеток» (stage option warehouse.labels). */
+/** The GRN lots a receipt has put on stock — for «Печать этикеток». */
 function receiptLots(lines: (ReceivingLine | undefined)[]): ReceiptLot[] {
   return lines.filter((line): line is ReceivingLine => Boolean(line?.grn && line.warehouse_event_emitted)).map((line) => ({
     key: line.id, warehouse: line.warehouse, grn: line.grn!, package: line.package, title: itemTitle(line),
@@ -433,7 +433,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
     return () => { live = false; };
   }, [lines]);
   const purposeText = usePurposeLabel();
-  useInternalProjects(); // option projects.internal: the «Проект» column shows «ВП-001 · Название»
+  useInternalProjects(); // the «Проект» column shows «ВП-001 · Название»
   const columns = useMemo(() => COLUMNS.map((column) => column.key === "purpose" ? { ...column, value: (line: ReceivingLine) => purposeText(line.purpose) } : column).map((column) => column.key !== "name" ? column : {
     ...column,
     render: (line: ReceivingLine) => {

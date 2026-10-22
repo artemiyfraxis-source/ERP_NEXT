@@ -1,6 +1,6 @@
 import { api } from "./api";
 
-/** «Счета и поставки» (stage option procurement.orders): backend `purchasing/api_orders.py`. Numbers come as strings. */
+/** «Счета и поставки»: backend `purchasing/api_orders.py`. Numbers come as strings. */
 const BASE = "/api/purchasing/orders";
 
 /** Колонки доски слева направо. */

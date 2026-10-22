@@ -1,4 +1,4 @@
-"""Stage option `procurement.kpi`: pure metric logic and the endpoint behind the option."""
+"""pure metric logic and the endpoint behind the option."""
 
 from dataclasses import replace
 from datetime import date, datetime, timezone

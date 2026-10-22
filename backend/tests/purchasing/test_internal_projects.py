@@ -1,4 +1,4 @@
-"""«Внутренние проекты» (stage option projects.internal) over HTTP: numbering, edit, close/reopen, the option gate,
+"""«Внутренние проекты» over HTTP: numbering, edit, close/reopen, the option gate,
 requests accepting only open projects, the schema group and the GRN prefix by the project's purpose."""
 
 from datetime import datetime

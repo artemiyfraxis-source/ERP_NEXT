@@ -1,4 +1,4 @@
-"""HTTP of «Заявки» закупщика (stage option procurement.requests_rb): the view and its two new commands.
+"""HTTP of «Заявки» закупщика: the view and its two new commands.
 
 Reads open for a viewer (ID-6), writes take `procurement_edit_principal` — so a viewer gets 403 before the option's 404."""
 

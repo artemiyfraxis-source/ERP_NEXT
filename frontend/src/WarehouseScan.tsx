@@ -15,7 +15,7 @@ function lotLabel(lot: WarehouseLot) {
 /** A scan request from the stock search field: the code and when Enter was pressed (the same code twice opens twice). */
 export type ScanRequest = { code: string; at: number };
 
-/** Stage option warehouse.scan (Roller_Buyer /stock and /tsd), owner 22.10: one field for everything — the stock search.
+/** Scan field (Roller_Buyer /stock and /tsd), owner 22.10: one field for everything — the stock search.
  *  Typing filters the table; Enter (a hardware scanner sends it) asks the scan route: a ГРН opens the lot card, a place
  *  code lists what lies there, anything else («резистор») is no code and just stays a filter. After every action the
  *  field takes the focus back, so the next scan goes straight in. */
@@ -216,7 +216,7 @@ function shortTime(iso: string) {
   return Number.isNaN(at.getTime()) ? "" : at.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Stage option warehouse.undo: «Отменить последнее» with what it will take back (own write-off, return or move of
+/** «Отменить последнее» with what it will take back (own write-off, return or move of
  *  the last 10 minutes; the server appends a compensating entry). `eager` — the line is read at once and after every
  *  change of the lot (scan card); otherwise the first click reads it and the second one undoes (lot cards in the table). */
 export function UndoLast({ lot, disabled, mutate, eager = false, onUndone }: {

@@ -18,7 +18,7 @@ function filtersFromUrl(): UpdFilters {
   return status ? { ...EMPTY_FILTERS, status } : EMPTY_FILTERS;
 }
 
-/** «Реестр УПД» (option documents.upd): every closing document — PDFs read by the Google parser and EDO XML from Diadoc —
+/** «Реестр УПД»: every closing document — PDFs read by the Google parser and EDO XML from Diadoc —
  *  with filters, the card (PurchasingUpdCard), «Загрузить из ЭДО» (dry run first, then apply) and «Продавцы без
  *  поставщика». `extraBlocks` is mounted at the bottom of the card: the slot for «Счета по этому УПД» from the
  *  documents.chain branch. */

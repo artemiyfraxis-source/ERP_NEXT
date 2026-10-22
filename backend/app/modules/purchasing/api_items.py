@@ -1,4 +1,4 @@
-"""Номенклатура (stage option references.items)."""
+"""Номенклатура."""
 
 from __future__ import annotations
 

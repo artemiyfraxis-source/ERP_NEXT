@@ -12,12 +12,11 @@ import {
   type WarehouseUndoPreview,
 } from "./api";
 import { devicesApi } from "./devicesApi";
-import { LABELS_OPTION, LotLabel } from "./LabelPrint";
+import { LotLabel } from "./LabelPrint";
 import { LoginPage } from "./LoginPage";
 import { canAct, canSee } from "./navigation";
 import { ScannerCheck } from "./ScannerCheck";
 import "./tsd.css";
-import { useStageOption } from "./StageOptions";
 
 /* Экран ТСД (Roller_Buyer TsdPage): терминал сбора данных склада (AUTOID / SEUIC, Android
    8.1, Chrome 70, сканер-клавиатура) и телефон. Одно большое поле всегда в фокусе: ГРН открывает партию, код места —
@@ -245,8 +244,6 @@ function TsdLot({ lot, readOnly, who, setWho, onChanged, onBack, onDone }: {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [preview, setPreview] = useState<WarehouseUndoPreview | null>(null);
   const [destinations, setDestinations] = useState<WarehouseDestination[]>([]);
-  const undoOn = useStageOption("warehouse.undo");
-  const labelsOn = useStageOption(LABELS_OPTION);
   const unit = lot.unit || "шт";
 
   useEffect(() => {
@@ -266,7 +263,7 @@ function TsdLot({ lot, readOnly, who, setWho, onChanged, onBack, onDone }: {
     try {
       const updated = (await operation()).lot;
       onChanged(updated);
-      setNotice({ text: message(updated), undo: undoable && undoOn });
+      setNotice({ text: message(updated), undo: undoable });
       setAction(null);
       setQuantity("");
       setPlace("");
@@ -328,7 +325,7 @@ function TsdLot({ lot, readOnly, who, setWho, onChanged, onBack, onDone }: {
     { key: "writeoff", label: "Списать" },
     { key: "return", label: "Вернуть" },
     { key: "move", label: "Переместить" },
-    ...(labelsOn ? [{ key: "label" as const, label: "Этикетка" }] : []),
+    { key: "label", label: "Этикетка" },
   ];
 
   return <div className="tsd-card" role="region" aria-label={`Партия ${lotTitle(lot)}`}>
@@ -358,7 +355,7 @@ function TsdLot({ lot, readOnly, who, setWho, onChanged, onBack, onDone }: {
         aria-pressed={action === item.key}
         onClick={() => { setAction(action === item.key ? null : item.key); setError(""); setNotice(null); setPreview(null); }}
       >{item.label}</button>)}
-      {undoOn && <button type="button" className="tsd-btn" onClick={() => void askUndo()}>Отменить последнее</button>}
+      <button type="button" className="tsd-btn" onClick={() => void askUndo()}>Отменить последнее</button>
     </div>}
 
     {preview && <div className="tsd-undo" role="group" aria-label="Отмена последнего движения">
@@ -428,8 +425,8 @@ function remember(person: LoginStaff | null) {
   }
 }
 
-/** Before sign-in on the ТСД address: the stage with the ТСД screen asks for an employee's PIN; anywhere else (the
- *  option off, production) the ordinary sign-in, exactly as without this screen. */
+/** Before sign-in on the ТСД address: the stage with the ТСД screen asks for an employee's PIN; anywhere else (the server
+ *  without the ТСД entry) the ordinary sign-in. */
 export function TsdEntry({ onLogin }: { onLogin: (principal: Principal) => void }) {
   const [mode, setMode] = useState<"checking" | "pin" | "password">("checking");
   useEffect(() => {

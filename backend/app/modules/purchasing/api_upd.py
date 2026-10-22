@@ -1,4 +1,4 @@
-"""«Реестр УПД» (stage option documents.upd): /api/purchasing/upd."""
+"""«Реестр УПД»: /api/purchasing/upd."""
 
 from __future__ import annotations
 

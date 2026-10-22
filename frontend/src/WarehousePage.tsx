@@ -35,7 +35,7 @@ import {
   type ColumnKey, type ColumnLayout, type TableKind,
 } from "./WarehouseColumns";
 
-/** Номенклатура на партиях (option references.items): off = no request, no chip, no action. */
+/** Номенклатура на партиях (a failing read = no chip, no action). */
 const LotItems = createContext<{ items: Record<string, ItemBrief>; reload: () => void }>({ items: {}, reload: () => undefined });
 
 const EMPTY_PASSPORT: WarehouseLotPassport = {
@@ -668,7 +668,7 @@ function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, togg
   switch (key) {
     case "name": {
       const name = distinct(item.lots, "name") || item.article || "Без наименования";
-      // Nomenclature item(s) of the article's lots (option «Номенклатура»): one name, or «N позиций» when they differ.
+      // Nomenclature item(s) of the article's lots («Номенклатура»): one name, or «N позиций» when they differ.
       const items = [...new Set(item.lots.map((lot) => briefs[lot.id]?.name).filter(Boolean))];
       const chip = items.length === 1 ? items[0] : items.length > 1 ? `${items.length} позиции номенклатуры` : "";
       return <td key={key} className={classes("stock-name", pinned && "stock-pin")}><button className="link-button table-link" title={name} aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(); }}>{name}</button>{chip && itemMark(name, chip, "Позиция номенклатуры")}</td>;

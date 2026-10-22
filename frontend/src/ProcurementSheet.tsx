@@ -24,7 +24,7 @@ function message(reason: unknown, fallback: string) {
 
 /** `buyerName` — имя вошедшего: правка комментария и даты открыта только в строках, где он закупщик. */
 export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } = {}) {
-  useInternalProjects(); // option projects.internal: the «Проект» column shows «ВП-001 · Название»
+  useInternalProjects(); // the «Проект» column shows «ВП-001 · Название»
   const [lines, setLines] = useState<ProcurementLine[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [buyers, setBuyers] = useState<string[]>([]);

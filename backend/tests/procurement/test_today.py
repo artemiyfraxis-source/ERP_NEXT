@@ -1,4 +1,4 @@
-"""Stage option `procurement.today`: Roller_Buyer's «Сегодня» — pure section rules (ported from RB today.test.ts,
+"""Roller_Buyer's «Сегодня» — pure section rules (ported from RB today.test.ts,
 orders.test.ts follow-ups, domain/board.test.ts) and the endpoint behind the option."""
 
 from dataclasses import replace
@@ -181,23 +181,22 @@ def test_unpaid_invoices_are_one_item_per_order_the_oldest_first():
 
 # ---- requests for quotes -------------------------------------------------------------------------------------------
 
-def test_silent_suppliers_wait_quote_wait_days_and_need_the_rfq_option():
+def test_silent_suppliers_wait_quote_wait_days():
     rfq_id = uuid4()
     silent = SilentSupplier(rfq_id=rfq_id, rfq_number="КП-2609-001", supplier="ООО Молчит", sent_on=date(2026, 9, 17), lines=2)
-    assert keys(page(silent=[silent], rfq_on=False)) == []
-    quotes = section(page(silent=[silent], rfq_on=True), "quotes")
+    quotes = section(page(silent=[silent]), "quotes")
     item = quotes["items"][0]
     assert (item["title"], item["detail"], item["days"], item["link"]) == (
         "ООО Молчит", "запрос КП-2609-001 от 17.09 · 2 позиции", 3, {"tab": "rfq", "rfq": str(rfq_id)})
     # RB: «days >= quoteWaitDays» — on the third day, not after it.
-    assert keys(page(silent=[silent], rfq_on=True, settings=TodaySettings(quote_wait_days=4))) == []
+    assert keys(page(silent=[silent], settings=TodaySettings(quote_wait_days=4))) == []
 
 
 def test_choose_supplier_is_a_card_per_project_waiting_since_the_request_was_sent():
     rfq_id = uuid4()
     quoted = [view(status="Готов к запросу", name=f"Позиция {n}") for n in (1, 2)]
     states = {line.id: RfqState(live=True, rfq_id=rfq_id, rfq_number="КП-2609-004", quoted=True) for line in quoted}
-    result = page(*quoted, rfq=states, rfq_sent={rfq_id: date(2026, 9, 14)}, rfq_on=True)
+    result = page(*quoted, rfq=states, rfq_sent={rfq_id: date(2026, 9, 14)})
     card = section(result, "choose")["items"][0]
     assert (card["title"], card["detail"], card["days"], card["link"]) == (
         "П-100", "2 позиции · запрос КП-2609-004", 6, {"tab": "rfq", "rfq": str(rfq_id)})
@@ -317,7 +316,7 @@ def test_order_followups_group_the_same_facts_per_order_and_per_request():
     unpaid = view(status="В оплату", invoiced=True, supplier="ООО Г", order_number="PO-3", invoice_date=date(2026, 9, 10))
     rfq_id = uuid4()
     silent = [SilentSupplier(rfq_id, "КП-1", name, date(2026, 9, 15), 2) for name in ("ООО Я", "ООО Ж")]
-    result = order_followups(TodayFacts(lines=(late, soon, unpaid), silent=silent, rfq_on=True), TODAY, SETTINGS)
+    result = order_followups(TodayFacts(lines=(late, soon, unpaid), silent=silent), TODAY, SETTINGS)
     assert [(item["order_number"], item["days"]) for item in result["late"]] == [("PO-1", 2)]
     assert [(item["order_number"], item["days"]) for item in result["arriving"]] == [("PO-2", 1)]  # days left
     assert [(item["order_number"], item["days"], item["count"]) for item in result["unpaid"]] == [("PO-3", 10, 1)]
