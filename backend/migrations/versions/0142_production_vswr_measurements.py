@@ -25,7 +25,7 @@ import sqlalchemy as sa
 
 
 revision: str = "0142_production_vswr_measurements"
-down_revision: str | None = "0140_purchasing_rfq_rb"
+down_revision: str | None = "0141_warehouse_label_jobs"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
