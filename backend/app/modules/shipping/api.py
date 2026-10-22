@@ -18,6 +18,8 @@ from app.shared.http_auth import (
 )
 from app.shared.stored_files import decode_upload, file_response
 
+from app.workflows.shipping_storekeeper import storekeeper_ids
+
 from .application import (
     AttachCardUpdCommand, AttachUpdCommand, attach_upd_file, store_card_upd_file, UPD_FILE_URL_PREFIX, upd_file_url,
     ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand,
@@ -28,7 +30,7 @@ from .application import (
     pack_shipment, pick_shipment, queue_project, register_good, rollback_shipped, set_project_addressee, set_requested,
     ship_project, unpick_line, update_documents,
 )
-from .documents import build_box_labels, build_delivery_note, build_packing_lists, packer_short
+from .documents import build_box_labels, build_delivery_note, build_packing_lists, storekeeper_signature
 from .domain import (
     ADDRESSEE_REQUISITE_FIELDS, DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment,
     ShippingValidationError, UpdType, total_gross,
@@ -524,7 +526,9 @@ def pack(shipment_id: UUID, payload: VersionPayload, principal: Annotated[Princi
 
 
 @router.put("/shipments/{shipment_id}/documents")
-def documents(shipment_id: UUID, payload: DocumentsPayload, principal: Annotated[Principal, Depends(shipping_manager_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
+# Редактор — менеджер ИЛИ склад (как блок «ship-docs» на экране): кладовщик вписывает трек и печатает/прикладывает УПД
+# (Shipment.gs:840-850), менеджер ждёт трек — уведомление уходит ему.
+def documents(shipment_id: UUID, payload: DocumentsPayload, principal: Annotated[Principal, Depends(shipping_editor_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
     shipment = _run(lambda: update_documents(UpdateDocumentsCommand(
         shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now,
         upd_type=payload.upd_type, upd_number=payload.upd_number, upd_date=payload.upd_date,
@@ -595,8 +599,10 @@ def print_documents(
         # Заказчик DN — как в реестре отгрузок: из заявки, иначе из позиции ГП, иначе получатель.
         goods = (uow.goods.get(line.finished_good_id) for line in shipment.lines)
         customer = shipment.customer or next((good.customer for good in goods if good and good.customer), "") or shipment.receiver
-        # «Штамп / подпись кладовщика» — кто упаковал (владелец 13.10.2026), не менеджер отправки.
-        packer = packer_short(uow.shipments.packer(shipment_id))
+        # «Штамп / подпись кладовщика» — кладовщик, который упаковал (владелец 13.10 и 22.10.2026): не менеджер
+        # отправки и не любой, кто нажал «упаковать»; кладовщика среди упаковавших нет — клетка для руки.
+        packers = uow.shipments.packers(shipment_id)
+        packer = storekeeper_signature(packers, storekeeper_ids(uow.session, [actor for actor, _ in packers]))
         # Реквизиты формы 04.1 (заказ, договор, счёт, кто платит, адрес заказчика, время работы) — карточка проекта.
         project = next((line.project for line in shipment.lines if line.project), "")
         card = uow.addressees.get(project) if project else None
