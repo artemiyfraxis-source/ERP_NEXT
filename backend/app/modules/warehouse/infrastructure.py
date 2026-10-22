@@ -24,7 +24,7 @@ from app.shared.warehouse_location import RackLayout, forget_rack_layout, rack_l
 
 from .domain import WAREHOUSES, StockLot, WriteOffEntry
 from .journal import MIRRORED_BY_WRITEOFFS, JournalEvent
-from .labels.settings import PrintSettings
+from .labels.settings import DEFAULT_PRINT_SETTINGS, LABEL_SIZES, PrintSettings
 from .word_search import words_matcher
 
 
@@ -592,10 +592,14 @@ class SqlAlchemyLabelSettings:
         row = self.session.get(WarehouseLabelSettingsRow, 1)
         if row is None:
             return None
-        return PrintSettings(
+        values = {
             **{name: getattr(row, name) for name in _LABEL_WHOLE},
             **{name: float(getattr(row, name)) for name in _LABEL_MM},
-        )
+        }
+        if (values["width_mm"], values["height_mm"]) not in LABEL_SIZES:
+            # A size saved when it was a free field: printed in the default format until it is chosen again.
+            values["width_mm"], values["height_mm"] = DEFAULT_PRINT_SETTINGS.width_mm, DEFAULT_PRINT_SETTINGS.height_mm
+        return PrintSettings(**values)
 
     def save(self, settings: PrintSettings, updated_at: datetime, updated_by: str) -> None:
         row = self.session.get(WarehouseLabelSettingsRow, 1)

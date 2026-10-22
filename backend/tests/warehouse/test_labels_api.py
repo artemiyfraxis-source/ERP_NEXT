@@ -97,7 +97,7 @@ def test_settings_are_read_saved_and_journalled(labels):
     assert any(row["event"].startswith("Печать этикеток: настройки — принтер TSC MB341") for row in journal)
 
 
-@pytest.mark.parametrize("bad", [{"density": 16}, {"speed": 0}, {"dpi": 600}, {"width_mm": 30}, {"code_type": "x"}])
+@pytest.mark.parametrize("bad", [{"density": 16}, {"speed": 0}, {"dpi": 600}, {"width_mm": 30}, {"width_mm": 60}, {"height_mm": 35}, {"code_type": "x"}])
 def test_settings_out_of_bounds_are_refused(labels, bad):
     client, _ = labels
     assert client.put("/api/stock/labels/settings", json=bad).status_code == 422
@@ -184,3 +184,20 @@ def test_a_lot_without_an_arrival_event_has_no_date(labels):
     _, lot = labels
     data = lot_label_data(app.state.warehouse_uow_factory(), lot.id)
     assert data.received_on is None and data.sku == "" and data.item_name == "Разъём" and data.quantity == "10"
+
+
+def test_a_legacy_row_with_a_free_size_loads_as_58x40_and_the_presets_save(labels):
+    client, _ = labels
+    with app.state.warehouse_uow_factory() as uow:
+        uow.session.add(WarehouseLabelSettingsRow(
+            id=1, printer_name="", code_type="both", width_mm=60, height_mm=35, dpi=300, gap_mm=2, density=12, speed=2,
+            offset_x_mm=0, offset_y_mm=0, updated_at=datetime(2026, 10, 19), updated_by="",
+        ))
+        uow.session.commit()
+    settings = client.get("/api/stock/labels/settings").json()["settings"]
+    assert (settings["width_mm"], settings["height_mm"]) == (58, 40)
+    # The existing prod size 58 x 30 is a preset: saved and read back as it is.
+    assert client.put("/api/stock/labels/settings", json={**settings, "height_mm": 30}).status_code == 200
+    assert client.get("/api/stock/labels/settings").json()["settings"]["height_mm"] == 30
+    wide = client.put("/api/stock/labels/settings", json={**settings, "width_mm": 100, "height_mm": 50})
+    assert wide.status_code == 200 and client.get("/api/stock/labels/sample.png").status_code == 200

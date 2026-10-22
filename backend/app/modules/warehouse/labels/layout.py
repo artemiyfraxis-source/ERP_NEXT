@@ -4,7 +4,8 @@ Sizes are in dots, one to one: at 300 dpi (11.81 dots per mm) the default 58 × 
 the preview shows is exactly the 1-bit raster the printer gets (luma < 128 → a dot). Upper block: the QR of the ГРН on
 the left, «ГРН», its number and the quantity on the right. Lower block, full width: the name (up to two lines), the
 article, «место · склад» and the received date, the series when it fits. A low label (58 × 30) drops the series,
-then the article, then the name's second line, and only then shrinks the type."""
+then the article, then the name's second line, and only then shrinks the type. The wide 100 × 50 label (owner,
+22.10.2026) is `_wide_plan`: a large QR on the left, the text stacked on the right."""
 
 from __future__ import annotations
 
@@ -288,16 +289,111 @@ def _attempt(data: GrnLabelData, options: LabelOptions, width: int, height: int,
     return None
 
 
+# The wide label (100 × 50) starts here: from this width the QR goes large on the left and the text stacks on the right.
+WIDE_FROM_MM = 90
+# Text sizes of the wide label, dots at 300 dpi.
+WIDE_CAPTION, WIDE_GRN, WIDE_QUANTITY, WIDE_NAME, WIDE_SMALL = 30, 76, 64, 36, 30
+WIDE_STEPS = (1.0, 0.9, 0.8, 0.7, 0.6, 0.5)
+
+
+def _wide_plan(data: GrnLabelData, options: LabelOptions, width: int, height: int, dots_per_mm: float):
+    """100 × 50: a large QR on the left (the ТСД scanners are 2D); on the right «ГРН», the number, the quantity, the name
+    in full (up to three lines), the article, «место · склад» and the received date with the series. Code128, when
+    asked, is a strip along the bottom. The text is set from the top; the type shrinks until the stack fits."""
+    margin = js_round(dots_per_mm)
+    shapes: list[tuple[int, int, int, int]] = []
+    bar_module_dots: int | None = None
+    limit = height - margin
+    if options.code_type != "qr":
+        bars = encode_code128(data.grn)
+        modules = sum(bars) + 2 * CODE128_QUIET_MODULES
+        bar_module_dots = min(js_round(0.25 * dots_per_mm), (width - 2 * margin) // modules)
+        if bar_module_dots < 2:
+            raise ValueError("Этикетка слишком узкая для штрихкода: увеличьте ширину или выберите QR")
+        bar_height = js_round(5 * dots_per_mm)
+        code_top = height - margin - bar_height
+        x = js_round((width - modules * bar_module_dots) / 2) + CODE128_QUIET_MODULES * bar_module_dots
+        for index, bar in enumerate(bars):
+            if index % 2 == 0:
+                shapes.append((x, code_top, x + bar * bar_module_dots - 1, code_top + bar_height - 1))
+            x += bar * bar_module_dots
+        limit = code_top - margin
+
+    qr_module_dots: int | None = None
+    qr_modules: int | None = None
+    text_x = margin
+    if options.code_type != "code128":
+        matrix = qr_matrix(data.grn)
+        size = len(matrix)
+        # Up to 1 mm a module, no more than 45 % of the width, whole dots.
+        by_height = (limit - margin) // (size + 2 * QR_QUIET_MODULES)
+        by_width = (js_round(width * 0.45) - margin) // (size + 2 * QR_QUIET_MODULES)
+        qr_module_dots = min(js_round(dots_per_mm), by_height, by_width)
+        if qr_module_dots < 2:
+            raise ValueError("Этикетка слишком низкая для QR-кода: увеличьте высоту или выберите Code128")
+        quiet = QR_QUIET_MODULES * qr_module_dots
+        side = size * qr_module_dots
+        y0 = margin + max(0, js_round((limit - margin - side - 2 * quiet) / 2)) + quiet
+        x0 = margin + quiet
+        for row, cells in enumerate(matrix):
+            for column, dark in enumerate(cells):
+                if dark:
+                    left, upper = x0 + column * qr_module_dots, y0 + row * qr_module_dots
+                    shapes.append((left, upper, left + qr_module_dots - 1, upper + qr_module_dots - 1))
+        qr_modules = size
+        text_x = margin + quiet + side + quiet
+    column = width - text_x - margin
+
+    quantity = f"{data.quantity}{f' {data.unit}' if data.unit else ''}"
+    article = data.sku if data.sku and data.sku not in data.item_name else ""
+    place = " · ".join(part for part in (data.place, data.warehouse) if part)
+    footer = " · ".join(part for part in (
+        f"поступило {data.received_on.strftime('%d.%m.%Y')}" if data.received_on else "",
+        f"серия {data.manufacturer_batch}" if data.manufacturer_batch else "") if part)
+
+    available = limit - margin
+    for step in WIDE_STEPS:
+        scale = dots_per_mm / DOTS_PER_MM * step
+        grn_font, grn = _fit_font(data.grn, MONO_BOLD, WIDE_GRN, column, scale)
+        quantity_font, qty = _fit_font(quantity, SANS_SEMIBOLD, WIDE_QUANTITY, column, scale)
+        name_font = _sized(SANS_SEMIBOLD, WIDE_NAME, scale)
+        small_font = _sized(SANS, WIDE_SMALL, scale)
+        rows: list[tuple[str, ImageFont.FreeTypeFont]] = [
+            ("ГРН", _sized(SANS, WIDE_CAPTION, scale)), (grn, grn_font), (qty, quantity_font)]
+        rows += [(line, name_font) for line in wrap_text(data.item_name, column, name_font, 3)]
+        name_end = len(rows)
+        rows += [(fit_text(text, column, small_font), small_font) for text in (article, place, footer) if text]
+        heights = [_line_height(font) for _t, font in rows]
+        air = js_round(10 * scale)
+        used = sum(line for _a, line in heights) + 3 * air
+        if used > available and step != WIDE_STEPS[-1]:
+            continue
+        y = margin + max(0, (available - used) // 2)
+        texts: list[tuple[str, ImageFont.FreeTypeFont, int, int]] = []
+        for index, ((text, font), (ascent, line)) in enumerate(zip(rows, heights)):
+            if text:
+                texts.append((text, font, text_x, y + ascent))
+            y += line
+            # A little air after the number, after the quantity and after the last name line.
+            if index in (1, 2, name_end - 1):
+                y += air
+        return shapes, texts, qr_module_dots, qr_modules, bar_module_dots
+    return None
+
+
 def build_grn_label(data: GrnLabelData, options: LabelOptions = LabelOptions()) -> LabelLayout:
     """The label in printer dots. ValueError — the code does not fit (or Code128 cannot carry the ГРН)."""
     dots_per_mm = options.dpi / 25.4
     width = js_round(options.width_mm * dots_per_mm)
     height = js_round(options.height_mm * dots_per_mm)
     plan = None
-    for step in SHRINK_STEPS:
-        plan = _attempt(data, options, width, height, dots_per_mm, step)
-        if plan:
-            break
+    if options.width_mm >= WIDE_FROM_MM:
+        plan = _wide_plan(data, options, width, height, dots_per_mm)
+    else:
+        for step in SHRINK_STEPS:
+            plan = _attempt(data, options, width, height, dots_per_mm, step)
+            if plan:
+                break
     if plan is None:
         raise ValueError("Этикетка слишком низкая: увеличьте высоту или выберите QR")
     shapes, texts, qr_module_dots, qr_modules, bar_module_dots = plan
