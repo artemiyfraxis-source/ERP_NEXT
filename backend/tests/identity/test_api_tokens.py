@@ -380,6 +380,8 @@ PATH_PARAM = re.compile(r"{([^}:]+)(:[^}]+)?}")
 # … and the delete of a «Справочник» row: `refs:write` loads and edits, a token never deletes (owner 12.10.2026).
 TOKEN_REFUSED_IN_ENDPOINT = {
     ("POST", "/api/techcards/projects/{card_id}/build"),
+    # … and its preview — the generator's «Схема полуфабрикатов» (22.10.2026), the same gate as the build.
+    ("POST", "/api/techcards/projects/{card_id}/build/preview"),
     ("DELETE", "/api/references/wire-gauges/{gauge_id}"),
     ("DELETE", "/api/references/tech-operations/{record_id}/crimps/terminals/{terminal_id}"),
     # … and the columns of a table («+ Столбец», 14.10.2026): the owner shapes the table, a token fills it.

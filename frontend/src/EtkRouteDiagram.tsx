@@ -92,7 +92,7 @@ export function etkDiagramWidths(open: boolean[], room: number, gap = GAP, pad =
   return open.map((on) => (on ? Math.floor(wide) : narrow));
 }
 
-export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }>({ route, list, batch, current, marked, onPick, title, sub, art, actions }: {
+export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }>({ route, list, batch, current, marked, onPick, title, sub, art, actions, heading = true }: {
   route: EtkRoute;
   list: T[];
   batch: number;
@@ -110,6 +110,8 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
   art: (group: EtkPfGroup, inputs: string[]) => PfArt | null;
   /** Кнопки в шапке схемы («Править ПФ»). */
   actions?: ReactNode;
+  /** «Схема ПФ» и итог в шапке; нет — их пишет тот, кто встроил схему (генератор: «Схема полуфабрикатов»). */
+  heading?: boolean;
 }) {
   const active = route.blocks.find((block) => block.ops.includes(current))?.key;
   // Задание: только путь монтажника, пока не попросили «Вся схема».
@@ -222,7 +224,7 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
 
   return <section className="etk-route" aria-label="Схема полуфабрикатов">
     <div className="etk-route-head">
-      <strong>Схема ПФ</strong><small>{etkRouteSummary(etkRouteChips(route))}</small>
+      {heading && <><strong>Схема ПФ</strong><small>{etkRouteSummary(etkRouteChips(route))}</small></>}
       {!onPick && (hidden > 0 || whole) && <button type="button" className="secondary small" aria-pressed={whole} onClick={() => setWhole(!whole)}>
         {whole ? "Только мой путь" : `Вся схема · ещё ${hidden}`}</button>}
       <span className="etk-dag-zoomer" role="group" aria-label="Масштаб схемы">
