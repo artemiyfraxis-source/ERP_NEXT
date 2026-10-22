@@ -1,13 +1,11 @@
-"""«Печать этикеток ГРН» (stage option warehouse.labels, Roller_Buyer `routes/labels.ts`): the printer settings, what a
-lot's label says and one print — the job is saved as a file first, then handed to the Windows print queue."""
+"""«Печать этикеток ГРН» (Roller_Buyer `routes/labels.ts`): the printer settings, what a lot's label says and one
+print — the TSPL job is queued for the print agent of the warehouse PC (label_jobs.py), the server never prints."""
 
 from __future__ import annotations
 
-import re
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -15,13 +13,14 @@ from app.shared.clock import MOSCOW
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
+from .label_jobs import COPIES_MAX, QUEUED, enqueue
 from .labels.layout import GrnLabelData, label_png, render_label
-from .labels.printer import print_dir, send_raw
 from .labels.settings import CODE_TYPE_LABELS, DEFAULT_PRINT_SETTINGS, PrintSettings
 from .labels.tspl import TsplOptions, build_tspl_job
 
-PrintStatus = Literal["printed", "saved", "failed"]
-COPIES_MAX = 50
+# «queued» — in the print queue; the agent of the warehouse PC prints it (the old keys stay for the screens).
+PrintStatus = Literal["queued"]
+LabelKind = Literal["lot", "sample"]
 
 # A sample with the same fields as a real label — to see that everything fits (Roller_Buyer SAMPLE).
 SAMPLE = GrnLabelData(
@@ -37,12 +36,14 @@ SAMPLE = GrnLabelData(
 
 @dataclass(frozen=True)
 class PrintResult:
-    """What happened to one print: the job file is always saved, the printer may or may not take it."""
+    """One print handed to the queue. The keys are the old ones so the screens still render: `reason` says it is
+    queued, `file` names the queued job (there is no job file any more)."""
 
     status: PrintStatus
-    reason: str | None  # why it was not printed, in words
-    file: str  # the saved TSPL job, to pour into the printer by hand if the queue refused
+    reason: str | None
+    file: str
     copies: int
+    job_id: str
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -146,26 +147,11 @@ def tspl_job(data: GrnLabelData, settings: PrintSettings, copies: int) -> bytes:
     ))
 
 
-def _job_file(directory: Path, grn: str, now: datetime) -> Path:
-    stamp = now.strftime("%Y-%m-%dT%H-%M-%S-%f")
-    safe = re.sub(r"[^\w.-]", "_", grn, flags=re.ASCII)
-    candidate = directory / f"{stamp}-{safe}.prn"
-    number = 1
-    while candidate.exists():
-        number += 1
-        candidate = directory / f"{stamp}-{safe}-{number}.prn"
-    return candidate
-
-
-def print_label(data: GrnLabelData, settings: PrintSettings, copies: int, now: datetime) -> PrintResult:
-    """The job is saved as a file first — if the queue refuses, it can be poured into the printer by hand."""
+def print_label(uow, data: GrnLabelData, settings: PrintSettings, copies: int, now: datetime, *, kind: LabelKind,
+                lot_id: UUID | None, created_by: str) -> PrintResult:
+    """The TSPL job (copies inside it) goes to the print queue; the agent of the warehouse PC prints it."""
     if not 1 <= copies <= COPIES_MAX:
         raise ValueError(f"Копий — от 1 до {COPIES_MAX}")
-    job = tspl_job(data, settings, copies)
-    directory = print_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    path = _job_file(directory, data.grn, now)
-    path.write_bytes(job)
-    sent = send_raw(settings.printer_name, path)
-    status: PrintStatus = "printed" if sent.sent else "failed" if sent.attempted else "saved"
-    return PrintResult(status=status, reason=sent.reason, file=str(path), copies=copies)
+    job_id = enqueue(uow, tspl=tspl_job(data, settings, copies), copies=copies, kind=kind, lot_id=lot_id,
+                     created_by=created_by, now=now)
+    return PrintResult(status="queued", reason=QUEUED, file=str(job_id), copies=copies, job_id=str(job_id))

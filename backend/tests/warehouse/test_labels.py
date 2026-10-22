@@ -3,12 +3,10 @@
 Roller_Buyer's own builder for the same input."""
 
 from datetime import date
-from pathlib import Path
 
 import pytest
 from PIL import Image
 
-from app.modules.warehouse.labels import printer
 from app.modules.warehouse.labels.code128 import code128_modules, encode_code128
 from app.modules.warehouse.labels.layout import (
     QR_DOTS_PER_MODULE,
@@ -176,32 +174,3 @@ def test_settings_defaults_are_the_ones_proven_on_the_real_printer():
 def test_settings_out_of_bounds_are_refused(bad):
     with pytest.raises(ValueError):
         PrintSettings(**bad)
-
-
-def test_without_a_printer_nothing_is_sent_and_the_reason_is_said(tmp_path: Path):
-    job = tmp_path / "a.prn"
-    job.write_bytes(b"x")
-    result = printer.send_raw("", job)
-    assert result.sent is False and "Принтер не выбран" in result.reason
-
-
-def test_off_windows_nothing_is_sent(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(printer, "on_windows", lambda: False)
-    result = printer.send_raw("TSC MB341", tmp_path / "a.prn")
-    assert result.sent is False and "не на Windows" in result.reason
-    assert printer.list_printers() == []
-
-
-def test_print_dir_sits_next_to_the_stage_options_file(monkeypatch, tmp_path: Path):
-    monkeypatch.delenv(printer.PRINT_DIR_ENV, raising=False)
-    monkeypatch.setenv("ERP_STAGE_OPTIONS", str(tmp_path / "data" / "options.json"))
-    assert printer.print_dir() == tmp_path / "data" / "print"
-    monkeypatch.setenv(printer.PRINT_DIR_ENV, str(tmp_path / "jobs"))
-    assert printer.print_dir() == tmp_path / "jobs"
-
-
-def test_powershell_arguments_are_literal(monkeypatch):
-    import base64
-
-    script = base64.b64decode(printer._encode("Write-Output $PrinterName", {"PrinterName": "O'Brien $env:X"})).decode("utf-16-le")
-    assert "$PrinterName = 'O''Brien $env:X'" in script
