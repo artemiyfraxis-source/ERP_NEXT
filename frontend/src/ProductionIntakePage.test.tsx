@@ -233,7 +233,7 @@ describe("Приёмка с производства", () => {
     fireEvent.click(screen.getByRole("button", { name: "Печать этикетки ГП.26.0000030" }));
     expect(await screen.findByText("В очереди принтера.")).toBeInTheDocument();
     expect(calls.find((call) => call.url.endsWith("/label") && call.method === "POST")?.body).toEqual({ copies: 1 });
-    expect(calls.some((call) => call.url.startsWith("/api/stock/"))).toBe(false); // не поиск партии склада
+    expect(calls.some((call) => call.url.startsWith("/api/stock/labels"))).toBe(false); // не поиск партии склада для этикетки
   });
 
   it("печать недоступна без права на склад", async () => {

@@ -24,6 +24,7 @@ const group = (over: Record<string, unknown> = {}) => ({
 
 function mockServer(calls: { method: string; path: string; body?: string }[] = [], readOnlyList = false) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).includes("/prices/item/")) return noPrices();
     const path = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     calls.push({ method, path, body: init?.body as string | undefined });
@@ -47,6 +48,9 @@ afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
 });
+
+// Справочные цены карточки здесь не проверяются: ответ-ошибка, чтобы блок цен не получил чужой ответ списка.
+const noPrices = () => new Response(JSON.stringify({ detail: "нет" }), { status: 404, headers: { "Content-Type": "application/json" } });
 
 it("lists items with last price, purchases and demand, and filters by category chip", async () => {
   const calls: { method: string; path: string }[] = [];
@@ -114,6 +118,7 @@ it("read-only has no editing buttons", async () => {
 
 it("shows the stock column, the «Склад» and «Приёмка» sections of the card", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).includes("/prices/item/")) return noPrices();
     const path = String(input);
     if (path === "/api/purchasing/items/i1") {
       return json({
@@ -146,6 +151,7 @@ it("previews «Собрать со склада» (linked, to create, ambiguous)
   const calls: { path: string; body?: string }[] = [];
   const lot = { lot_id: "L1", warehouse: "ЦАР", grn: "FRX.26.1", package: "", name: "Разъём SMA", article: "" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).includes("/prices/item/")) return noPrices();
     const path = String(input);
     calls.push({ path, body: init?.body as string | undefined });
     if (path === "/api/purchasing/items/import-from-stock") {
