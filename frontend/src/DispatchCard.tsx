@@ -41,10 +41,12 @@ const FIELDS: Array<[Exclude<DispatchKey, "upd_type">, string, string]> = [
 
 /** Получатель, адрес, телефон, вариант УПД и — у бумажной — её файл. Файл прикладывается сразу (загрузка + правка
  *  карточки), поля сохраняет тот, кто встроил форму. `suffix` — к подписям для чтения с экрана, когда форм несколько. */
-export function DispatchFields({ project, draft, onChange, editable, card, onCardSaved, suffix = "" }: {
+export function DispatchFields({ project, draft, onChange, editable, card, onCardSaved, suffix = "", hideAddress = false }: {
   project: string; draft: DispatchDraft; onChange: (draft: DispatchDraft) => void; editable: boolean;
   card: Partial<ProjectAddressee> | Partial<DispatchData> | null | undefined;
   onCardSaved: (card: ProjectAddressee, message: string) => void; suffix?: string;
+  /** Самовывоз (22.10): адреса доставки нет — поле не показывается, в карточке остаётся как было. */
+  hideAddress?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
@@ -76,8 +78,8 @@ export function DispatchFields({ project, draft, onChange, editable, card, onCar
     aria-label={`Приложить УПД${suffix}`} disabled={busy} onChange={pick} />;
 
   return <>
-    <div className="form-grid dispatch-grid">
-      {FIELDS.map(([key, label, placeholder]) => <label key={key}>{label}
+    <div className={hideAddress ? "form-grid dispatch-grid dispatch-grid-3" : "form-grid dispatch-grid"}>
+      {FIELDS.filter(([key]) => !(hideAddress && key === "shipping_point")).map(([key, label, placeholder]) => <label key={key}>{label}
         <input aria-label={`${label}${suffix}`} value={draft[key]} disabled={!editable} placeholder={editable ? placeholder : ""}
           inputMode={key === "phone" ? "tel" : undefined} onChange={(event) => onChange({ ...draft, [key]: event.target.value })} /></label>)}
       <label>УПД<select aria-label={`УПД${suffix}`} value={draft.upd_type} disabled={!editable} onChange={(event) => onChange({ ...draft, upd_type: event.target.value })}>
