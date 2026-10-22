@@ -1,11 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ProcurementLine } from "./api";
 import { ProcurementPage } from "./ProcurementPage";
 
 /* «Мои позиции»: действия на виду, без меню «⋯» (владелец, 05.10). */
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+beforeEach(() => { window.history.replaceState(null, "", "/?tab=queues"); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); window.history.replaceState(null, "", "/"); });
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
@@ -25,6 +26,7 @@ function mockQueue(lines: ProcurementLine[], posts: string[] = []) {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
     if (path === "/api/procurement/mine?limit=500") return json({ lines });
+    if (path.includes("price-history")) return json({});
     if (init?.method === "PATCH" || init?.method === "POST") {
       posts.push(`${path} ${init.body}`);
       const body = JSON.parse(String(init.body));

@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RequestsPage } from "./RequestsPage";
 import type { Principal, RequestSchema } from "./api";
 import { purposeLabel } from "./purposeLabels";
-import { resetStageOptions } from "./StageOptions";
 import {
   applyHeaderToAll, chooseProject, emptyHeader, emptyLine, payloadV2, resolveLine, validateForm,
 } from "./requestFormV2Logic";
@@ -22,6 +21,7 @@ const schema: RequestSchema = {
   units: ["шт", "кг"],
   categories: ["Общепром", "ИП", "ОП"],
   projects: ["591К.3"],
+  internal_projects: [{ number: "ВП-001", name: "Стенд испытаний", purpose: "RND" }],
   item_types: ["Комплектующие", "Расходники"],
 };
 const item = {
@@ -34,22 +34,12 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-function stub(options: { form: boolean; items?: boolean }) {
+function stub() {
   const posts: Array<Record<string, string>[]> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stage-options") {
-      return json({
-        available: true,
-        options: [
-          { key: "requests.form", block: "Заявки", title: "t", before: "", after: "", enabled: options.form },
-          { key: "references.items", block: "Справочники", title: "t", before: "", after: "", enabled: Boolean(options.items) },
-        ],
-      });
-    }
     if (path === "/api/requests/schema") return json(schema);
     if (path.startsWith("/api/purchasing/items")) {
-      if (!options.items) return json({ detail: "not found" }, 404);
       return json({ items: [item], counts: {}, total: 1, page: 1, page_size: 50 });
     }
     if (path === "/api/requests" && init?.method === "POST") {
@@ -65,15 +55,13 @@ function stub(options: { form: boolean; items?: boolean }) {
 afterEach(() => {
   vi.restoreAllMocks();
   window.localStorage.clear();
-  cleanup(); // unmount before the reset: a live tree would refetch the options without the mock
-  resetStageOptions();
+  cleanup();
 });
 
-async function openForm(options: { form: boolean; items?: boolean }) {
-  const posts = stub(options);
+async function openForm() {
+  const posts = stub();
   render(<RequestsPage principal={principal} view="create" />);
-  if (options.form) await screen.findByLabelText("Проект");
-  else await screen.findByLabelText("Наименование, строка 1");
+  await screen.findByLabelText("Проект");
   return posts;
 }
 
@@ -88,18 +76,9 @@ async function fillLine(unit = "шт") {
   await chooseOption(screen.getByLabelText("Ед., строка 1"), unit);
 }
 
-describe("requests.form off", () => {
-  it("renders the old form", async () => {
-    await openForm({ form: false });
-    expect(screen.getByText("Точка отгрузки")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Проект")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Применить ко всем строкам" })).not.toBeInTheDocument();
-  });
-});
-
-describe("requests.form on", () => {
+describe("request form", () => {
   it("requires a project and a warehouse and sends nothing until they are chosen", async () => {
-    const posts = await openForm({ form: true });
+    const posts = await openForm();
     await fillLine();
     fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
     const alerts = (await screen.findAllByRole("alert")).map((node) => node.textContent);
@@ -109,7 +88,7 @@ describe("requests.form on", () => {
   });
 
   it("has no Назначение control and no Категория; shows the project's purpose read-only", async () => {
-    await openForm({ form: true });
+    await openForm();
     expect(screen.queryByLabelText("Назначение")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Категория")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Категория, строка 1")).not.toBeInTheDocument();
@@ -118,13 +97,13 @@ describe("requests.form on", () => {
 
     await chooseOption(screen.getByLabelText("Проект"), "591К.3");
     expect(screen.getByText("Назначение: Коммерческий проект (заказ клиента)")).toBeInTheDocument();
-    await chooseOption(screen.getByLabelText("Проект"), "НИОКР (опытный образец)");
+    await chooseOption(screen.getByLabelText("Проект"), "ВП-001 · Стенд испытаний");
     expect(screen.getByText("Назначение: НИОКР (опытный образец)")).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "RND" })).not.toBeInTheDocument();
   });
 
   it("док. качества: header Нет / Да (default Нет), a line как в шапке / Да / Нет", async () => {
-    await openForm({ form: true });
+    await openForm();
     const header = screen.getByLabelText("Док. качества") as HTMLSelectElement;
     expect(header.value).toBe("Нет");
     expect(within(header).getAllByRole("option").map((o) => o.textContent)).toEqual(["Нет", "Да"]);
@@ -133,7 +112,7 @@ describe("requests.form on", () => {
   });
 
   it("shows warehouses with codes, no preselected value, and sends the address", async () => {
-    const posts = await openForm({ form: true });
+    const posts = await openForm();
     const point = screen.getByLabelText("Склад (куда доставить)") as HTMLSelectElement;
     expect(point.value).toBe("");
     expect(within(point).getByRole("option", { name: `ЦАР — ${MOSCOW}` })).toBeInTheDocument();
@@ -153,7 +132,7 @@ describe("requests.form on", () => {
   });
 
   it("header «Применить ко всем строкам» overwrites the lines' own док. качества and план. дата", async () => {
-    await openForm({ form: true });
+    await openForm();
     fireEvent.click(screen.getByRole("button", { name: "+ Добавить строку" }));
     fireEvent.change(screen.getByLabelText("Док. качества, строка 1"), { target: { value: "Да" } });
     fireEvent.change(screen.getByLabelText("План. дата, строка 2"), { target: { value: "2026-12-01" } });
@@ -168,7 +147,7 @@ describe("requests.form on", () => {
   });
 
   it("nomenclature autocomplete fills name, article, unit and type", async () => {
-    await openForm({ form: true, items: true });
+    await openForm();
     const name = screen.getByLabelText("Наименование, строка 1");
     fireEvent.focus(name);
     fireEvent.change(name, { target: { value: "Fakra" } });
@@ -179,18 +158,8 @@ describe("requests.form on", () => {
     expect(screen.getByLabelText("Тип, строка 1")).toHaveValue("Комплектующие");
   });
 
-  it("the name stays a plain input when the nomenclature is off", async () => {
-    await openForm({ form: true, items: false });
-    const name = screen.getByLabelText("Наименование, строка 1");
-    fireEvent.focus(name);
-    fireEvent.change(name, { target: { value: "Fakra" } });
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-    expect(name).toHaveValue("Fakra");
-  });
-
   it("the unit select rejects free text", async () => {
-    await openForm({ form: true });
+    await openForm();
     const unit = screen.getByLabelText("Ед., строка 1");
     fireEvent.focus(unit);
     fireEvent.change(unit, { target: { value: "штучек" } });
@@ -201,7 +170,7 @@ describe("requests.form on", () => {
   });
 
   it("pastes a block from Excel into the grid", async () => {
-    await openForm({ form: true });
+    await openForm();
     fireEvent.paste(screen.getByLabelText("Наименование, строка 1"), {
       clipboardData: { getData: () => "Наименование\tКоличество\tЕдиница\nВинт\t5\tшт\nГайка\t7\tшт" },
     });

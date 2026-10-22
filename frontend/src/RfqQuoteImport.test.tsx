@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { applyChoices } from "./RfqQuoteImport";
 import { QuoteDialog } from "./RfqQuoteDialog";
-import { resetStageOptions } from "./StageOptions";
 import type { ImportedQuoteLine, RfqLine, RfqMatrix, RfqSupplier } from "./purchasingRfqApi";
 
 const row = (over: Partial<ImportedQuoteLine>): ImportedQuoteLine => ({
@@ -31,7 +30,6 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
-  resetStageOptions();
 });
 
 it("a kept row goes to its line; a wording from memory is not remembered twice", () => {
@@ -92,7 +90,7 @@ it("a PDF: the header fills «Номер КП» and «Действует до»,
       }
       return json({ id: "q1" }, 201);
     }
-    return json({ available: true, options: [{ key: "procurement.quote_import", block: "b", title: "t", before: "", after: "", enabled: true }] });
+    return json({});
   });
   const onSaved = vi.fn();
   render(<QuoteDialog matrix={matrix} supplier={supplier} onClose={() => undefined} onSaved={onSaved} />);

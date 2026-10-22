@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { PurchasingSettings } from "./PurchasingSettings";
 import { PurchasingSuppliers } from "./PurchasingSuppliers";
-import { resetStageOptions } from "./StageOptions";
 import { innValid } from "./purchasingDirectoryApi";
 
 function json(body: unknown, status = 200) {
@@ -25,7 +24,6 @@ function principal(level: string) {
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup(); // unmount before the reset: a live tree would refetch the options without the mock
-  resetStageOptions();
 });
 
 it("lists suppliers with stars and totals", async () => {

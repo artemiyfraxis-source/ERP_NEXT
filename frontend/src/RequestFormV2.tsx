@@ -5,13 +5,12 @@ import { purposeLabel } from "./purposeLabels";
 import type { ItemRow } from "./purchasingItemsApi";
 import { RequestGridV2 } from "./RequestGridV2";
 import { openSection, urlParam } from "./navigation";
-import { useStageOption } from "./StageOptions";
 import {
   GRID_LIMIT, applyPaste, isBlankRow, positionsWord, type Draft, type GridKey,
 } from "./requestGridLogic";
 import {
   CREATE_INTERNAL_KEY, applyHeaderToAll, chooseProject, customerKey, emptyHeader, emptyLine,
-  hasErrors, internalKey, internalProjectKey, payloadV2, pointLabel, projectKeyFor, validateForm, type Header,
+  hasErrors, internalProjectKey, payloadV2, pointLabel, projectKeyFor, validateForm, type Header,
 } from "./requestFormV2Logic";
 
 type Props = {
@@ -26,7 +25,6 @@ type Props = {
 /** «Оформить заявку» under the stage option `requests.form`: nothing pre-filled, project required, header values are
  *  defaults and a line value overrides them. */
 export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Props) {
-  const itemsOn = useStageOption("references.items");
   const creationKey = useRef(crypto.randomUUID());
   const [header, setHeader] = useState<Header>(emptyHeader);
   const [lines, setLines] = useState<Draft[]>(() => [emptyLine()]);
@@ -37,26 +35,23 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
   const purposes = schema?.purposes ?? [];
   const units = schema?.units ?? [];
 
-  const internalOn = useStageOption("projects.internal");
   const internal = schema?.internal_projects ?? [];
 
   const projectOptions: ComboOption[] = useMemo(() => [
     // The registry also lists the open «ВП-…» numbers: they belong to the group below, not to the customers'.
-    ...(schema?.projects ?? []).filter((number) => !(internalOn && /^ВП-\d+$/.test(number)))
+    ...(schema?.projects ?? []).filter((number) => !/^ВП-\d+$/.test(number))
       .map((number) => ({ value: customerKey(number), label: number, group: "Проекты заказчиков" })),
-    ...(internalOn
-      ? (internal.length
-        ? internal.map((item) => ({ value: internalProjectKey(item.number), label: `${item.number} · ${item.name}`, group: "Внутренние проекты" }))
-        : [{ value: CREATE_INTERNAL_KEY, label: "Создать внутренний проект…", group: "Внутренние проекты" }])
-      : purposes.map((purpose) => ({ value: internalKey(purpose), label: purposeLabel(purpose), group: "Внутренние проекты" }))),
-  ], [schema, purposes, internal, internalOn]);
+    ...(internal.length
+      ? internal.map((item) => ({ value: internalProjectKey(item.number), label: `${item.number} · ${item.name}`, group: "Внутренние проекты" }))
+      : [{ value: CREATE_INTERNAL_KEY, label: "Создать внутренний проект…", group: "Внутренние проекты" }]),
+  ], [schema, internal]);
 
   // «Новая заявка» from «Заявки» закупщика comes with `?project=`: the project is chosen once the lists are in.
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current || !schema) return;
     prefilled.current = true;
-    const key = projectKeyFor(urlParam("project"), schema.projects ?? [], purposes, internal, internalOn);
+    const key = projectKeyFor(urlParam("project"), schema.projects ?? [], purposes, internal, true);
     if (key) setHeader((current) => (current.project ? current : chooseProject(current, key, internal)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schema]);
@@ -189,7 +184,7 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
         errors={showErrors ? errors.rows : null}
         sendCount={sendRows.length}
         busy={busy}
-        itemsOn={itemsOn}
+        itemsOn
         onField={setLineField}
         onPickItem={pickItem}
         onPaste={paste}

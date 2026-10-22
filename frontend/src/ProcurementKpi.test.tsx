@@ -1,7 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProcurementPage } from "./ProcurementPage";
-import { resetStageOptions } from "./StageOptions";
 
 function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -15,16 +14,14 @@ const row = (buyer: string, lines: number) => ({
   savings: { sum: "40.00", n: 1, excluded: 1 },
 });
 
-function mockServer(enabled: boolean, requests: string[] = []) {
+function mockServer(requests: string[] = []) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/stage-options") {
-      return json({ available: true, options: [{ key: "procurement.kpi", block: "Закупки", title: "Показатели", before: "", after: "", enabled }] });
-    }
     if (path.startsWith("/api/procurement/kpi")) {
       requests.push(path);
       return json({ rows: [row("Петров", 2)], total: row("Итого", 2), buyers: ["Петров"] });
     }
+    if (path === "/api/procurement/today") return json({ today: "2026-10-21", sections: [], calm: true });
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     return json({ lines: [], buyers: [], stages: [], next_cursor: null });
   });
@@ -33,20 +30,12 @@ function mockServer(enabled: boolean, requests: string[] = []) {
 afterEach(() => {
   vi.restoreAllMocks();
   window.localStorage.clear();
-  cleanup(); // unmount before the reset: a live tree would refetch the options without the mock
-  resetStageOptions();
-});
-
-it("has no «Показатели» tab while the option is off", async () => {
-  mockServer(false);
-  render(<ProcurementPage />);
-  await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/stage-options", expect.anything()));
-  expect(screen.queryByRole("tab", { name: "Показатели" })).not.toBeInTheDocument();
+  cleanup();
 });
 
 it("shows the table with buyer rows and a total, and refetches on a buyer filter", async () => {
   const requests: string[] = [];
-  mockServer(true, requests);
+  mockServer(requests);
   render(<ProcurementPage />);
   fireEvent.click(await screen.findByRole("tab", { name: "Показатели" }));
   expect(await screen.findByRole("cell", { name: "Петров" })).toBeInTheDocument();

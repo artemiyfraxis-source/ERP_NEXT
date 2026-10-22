@@ -1,7 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { parseTiers, QuoteDialog } from "./RfqQuoteDialog";
-import { resetStageOptions } from "./StageOptions";
 import type { RfqLine, RfqMatrix, RfqSupplier } from "./purchasingRfqApi";
 
 const line = (id: string, name: string): RfqLine => ({
@@ -37,7 +36,6 @@ function server(posts: { path: string; body: any }[]) {
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
-  resetStageOptions();
 });
 
 it("reads price breaks as Roller does", () => {

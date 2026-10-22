@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { PurchasingCatalog } from "./PurchasingCatalog";
 import { PurchasingItems } from "./PurchasingItems";
-import { resetStageOptions } from "./StageOptions";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -24,13 +23,10 @@ const itemPrices = {
   summary: { count: 1, min: 10000, last: 10000, last_date: "2026-09-15", last_supplier: "ООО Альфа" },
 };
 
-function mockServer(options: boolean, calls: { method: string; path: string; body?: string }[] = []) {
+function mockServer(calls: { method: string; path: string; body?: string }[] = []) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     calls.push({ method: (init?.method ?? "GET").toUpperCase(), path, body: init?.body as string | undefined });
-    if (path === "/api/stage-options") {
-      return json({ available: true, options: [{ key: "references.price_book", block: "", title: "", before: "", after: "", enabled: options }] });
-    }
     if (path.startsWith("/api/purchasing/prices/catalog/points")) {
       return json([{ upd_id: "u2", number: "55", date: "2026-10-01", supplier_name: "ООО Бета", quantity: "10", unit: "шт", unit_price_with_vat: 8000 }]);
     }
@@ -50,11 +46,10 @@ function mockServer(options: boolean, calls: { method: string; path: string; bod
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
-  resetStageOptions();
 });
 
 it("shows the catalog and opens the price points with a UPD button", async () => {
-  mockServer(true);
+  mockServer();
   const opened = vi.fn();
   render(<PurchasingCatalog onOpenUpd={opened} />);
   const table = await screen.findByRole("table", { name: "Каталог закупок" });
@@ -69,7 +64,7 @@ it("shows the catalog and opens the price points with a UPD button", async () =>
 
 it("previews the items from UPD, then creates the chosen ones", async () => {
   const calls: { method: string; path: string; body?: string }[] = [];
-  mockServer(true, calls);
+  mockServer(calls);
   render(<PurchasingCatalog />);
   fireEvent.click(await screen.findByRole("button", { name: "Завести позиции из УПД" }));
   const box = await screen.findByRole("checkbox", { name: "Завести Лента изоляционная" });
@@ -80,14 +75,14 @@ it("previews the items from UPD, then creates the chosen ones", async () => {
 });
 
 it("hides the read-only user's creation button", async () => {
-  mockServer(true);
+  mockServer();
   render(<PurchasingCatalog readOnly />);
   await screen.findByRole("table", { name: "Каталог закупок" });
   expect(screen.queryByRole("button", { name: "Завести позиции из УПД" })).toBeNull();
 });
 
-it("adds the price sections to the item card only with the option on", async () => {
-  mockServer(true);
+it("adds the price sections to the item card", async () => {
+  mockServer();
   render(<PurchasingItems onOpenUpd={() => undefined} />);
   fireEvent.click(await screen.findByRole("button", { name: "Разъём SMA" }));
   const refs = await screen.findByRole("table", { name: "Справочные цены" });
@@ -95,14 +90,4 @@ it("adds the price sections to the item card only with the option on", async () 
   expect(refs.textContent).toContain("0,0177");
   expect(screen.getByRole("table", { name: "Покупки по УПД" }).textContent).toContain("100,00");
   expect(screen.getByRole("button", { name: "Открыть УПД 77" })).toBeInTheDocument();
-});
-
-it("leaves the item card as it was with the option off", async () => {
-  const calls: { method: string; path: string }[] = [];
-  mockServer(false, calls);
-  render(<PurchasingItems />);
-  fireEvent.click(await screen.findByRole("button", { name: "Разъём SMA" }));
-  await screen.findByText("Названия");
-  expect(screen.queryByRole("table", { name: "Справочные цены" })).toBeNull();
-  expect(calls.some((c) => c.path.startsWith("/api/purchasing/prices"))).toBe(false);
 });

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { urlParam } from "./navigation";
 import { api, failureText } from "./api";
 import { ItemPricesSections } from "./PricesSections";
-import { useStageOption } from "./StageOptions";
 import {
   ITEM_CATEGORIES, categoryLabel, purchasingItemsApi as itemsApi,
   VIA_LABELS, type ImportResult, type StockImportResult, type ItemCard, type ItemCategory, type ItemInput, type ItemList, type ItemRow,
@@ -328,7 +327,6 @@ function suppliersFrom(payload: unknown): Supplier[] {
 }
 
 function ItemCardDialog({ id, readOnly, onOpenUpd, onClose, onChanged }: { id: string; readOnly: boolean; onOpenUpd?: (id: string) => void; onClose: () => void; onChanged: () => void }) {
-  const priceBookOn = useStageOption("references.price_book");
   const [card, setCard] = useState<ItemCard | null>(null);
   const [form, setForm] = useState<ItemInput>(emptyForm);
   const [error, setError] = useState("");
@@ -463,7 +461,7 @@ function ItemCardDialog({ id, readOnly, onOpenUpd, onClose, onChanged }: { id: s
               </>
             )}
 
-            {priceBookOn && <ItemPricesSections itemId={card.id} onOpenUpd={onOpenUpd} />}
+            <ItemPricesSections itemId={card.id} onOpenUpd={onOpenUpd} />
 
             {card.stock && (
               <>

@@ -10,7 +10,6 @@ import {
 } from "./purchasingRfqApi";
 import { decimalInput, Dialog, localToday, quantity } from "./rfqUi";
 import { RfqQuoteImport, type ImportResult } from "./RfqQuoteImport";
-import { useStageOption } from "./StageOptions";
 
 /** «КП от поставщика» (Roller_Buyer QuoteEntryPanel): the header — supplier, received, «Номер КП», valid until,
  *  delivery, minimum order, note — and a row per request line asked of him: price, VAT, MOQ, pack, price breaks
@@ -62,7 +61,6 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
   const [delivery, setDelivery] = useState("");
   const [minOrder, setMinOrder] = useState("");
   const [note, setNote] = useState("");
-  const importEnabled = useStageOption("procurement.quote_import");
   const [importNotes, setImportNotes] = useState<string[]>([]);
   const [importFile, setImportFile] = useState<{ name: string; base64: string } | null>(null);
   // The supplier's wording per request line, remembered as an alias when the quote is saved.
@@ -158,7 +156,7 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
         delivery_cost: decimalInput(delivery) || null, min_order_sum: decimalInput(minOrder) || null, source, lines,
         number: quoteNumber.trim() || null, note: note.trim() || null,
         ...(importFile && source === "file" ? { file_name: importFile.name, file_base64: importFile.base64 } : {}),
-        ...(importEnabled ? { aliases: lines.filter((line) => wording[line.rfq_line_id]).map((line) => ({ rfq_line_id: line.rfq_line_id, text: wording[line.rfq_line_id] })) } : {}),
+        aliases: lines.filter((line) => wording[line.rfq_line_id]).map((line) => ({ rfq_line_id: line.rfq_line_id, text: wording[line.rfq_line_id] })),
       });
       onSaved(who.name);
     } catch (reason) {
@@ -189,7 +187,7 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
         <label>Мин. заказ, ₽<input inputMode="decimal" value={minOrder} onChange={(event) => setMinOrder(event.target.value)} style={{ width: 110 }} /></label>
         <label className="rfq-quote-note">Примечание<input aria-label="Примечание к КП" value={note} maxLength={2000} onChange={(event) => setNote(event.target.value)} /></label>
       </div>
-      <RfqQuoteImport rfqId={matrix.rfq.id} supplierId={knownSupplierId} lines={asked} importEnabled={importEnabled} onApply={applyImport} />
+      <RfqQuoteImport rfqId={matrix.rfq.id} supplierId={knownSupplierId} lines={asked} importEnabled onApply={applyImport} />
       {importNotes.length > 0 && (
         <ul className="quote-import-notes" aria-label="Что сделано при разборе">
           {importNotes.map((text) => <li key={text}>{text}</li>)}
