@@ -1065,9 +1065,6 @@ table.ship-lines td:first-child { width: 1%; }
 .topology-nodes > article { min-width: 180px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
 .topology-edges { display: grid; gap: 6px; font-size: 12px; }
 .warning-inline { border-radius: 8px; padding: 9px 11px; color: var(--fg-orange-8); background: var(--bg-orange-4); white-space: pre-line; font-size: 12px; }
-.build-config { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
-.build-config summary { cursor: pointer; color: var(--muted-foreground); font-size: 12px; font-weight: 700; }
-.build-config label { display: grid; gap: 6px; margin-top: 10px; }
 .grapher-import, .grapher-harnesses { display: grid; gap: 10px; margin: 12px 0; }
 .grapher-harnesses > div { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
 .grapher-harnesses button { justify-self: start; }
@@ -1985,9 +1982,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen > .gen-error { margin: 0 0 10px; }
 .tcgen .gen-status { flex: 1; color: var(--muted-foreground); font-size: 12.5px; }
 .tcgen .gen-foot-sum { display: none; margin-right: auto; color: var(--muted-foreground); font-size: 12.5px; }
-.tcgen .gen-more { margin: 0; display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
-.tcgen .gen-more > .secondary { justify-self: start; }
-.tcgen .gen-more .build-config { min-width: 0; }
 
 /* Операции — таблица: № · операция (код серым) · карточка · три времени. Узкий итог — карточка второй строкой. */
 .tcgen .op-list { display: grid; }
@@ -2587,7 +2581,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-right: auto; font-size: 14px; }
 .etk-title .muted { font-size: 12.5px; }
 .etk-schema { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 8px 12px; }
-.etk-schema summary, .etk-revs summary, .etk-warnings summary, .gen-more summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.etk-schema summary, .etk-revs summary, .etk-warnings summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 .etk-harness { display: flex; justify-content: center; overflow-x: auto; }
 .etk-harness svg { max-width: 900px; width: 100%; height: auto; }
 .etk-link-scheme { margin-top: 8px; }
@@ -2750,10 +2744,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
 .seg-tabs.sub { margin-bottom: 8px; }
 .gen-pane { display: grid; gap: 10px; container-type: inline-size; }
-.gen-more { margin-right: auto; display: grid; gap: 8px; color: var(--muted-foreground); }
-.gen-more[open] { color: var(--foreground); }
-.gen-more > .secondary { justify-self: start; }
-.gen-more .build-config { margin: 0; padding: 0; border: 0; min-width: min(640px, 70vw); }
 /* Kitting and handout as tiles (SUPPLYMAP issRender): a project is one tile, a manual request its own. */
 .iss-tiles { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .iss-tiles .iss-tile { min-height: 0; padding: 14px 16px; cursor: pointer; }
