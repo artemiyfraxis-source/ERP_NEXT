@@ -35,7 +35,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from .td_grades import BY_DEFAULT, operation_grade
-from .td_sto import outside_sto, sto_section
+from .td_sto import outside_sto, sto_norms, sto_section
 
 STATUS_LABELS = {"draft": "проект", "signing": "на подписи", "active": "действует", "annulled": "аннулирован"}
 LITERAS = ("", "П", "О", "О1", "О2", "О3", "О4", "О5", "А", "Б", "И")
@@ -434,8 +434,14 @@ def print_card(snapshot: dict[str, Any]) -> dict[str, Any]:
     return snapshot if isinstance(snapshot.get("td_ops"), dict) else with_td_ops(snapshot, {})
 
 
-def sto_sections(snapshot: dict[str, Any]) -> dict[str, dict[str, str] | None]:
-    return {operation_key_of(item): sto_section(_text(item.get("code"))) for item in snapshot_operations(snapshot)}
+def sto_sections(snapshot: dict[str, Any]) -> dict[str, dict[str, Any] | None]:
+    """operation_key → {section, title, norms}: раздел СТО и его нормативные требования (ГОСТ + пункты) для ОК и МК."""
+    out: dict[str, dict[str, Any] | None] = {}
+    for item in snapshot_operations(snapshot):
+        code = _text(item.get("code"))
+        found = sto_section(code)
+        out[operation_key_of(item)] = {**found, "norms": sto_norms(code)} if found else None
+    return out
 
 
 def change_rows(issues: list[TdIssue]) -> list[dict[str, Any]]:

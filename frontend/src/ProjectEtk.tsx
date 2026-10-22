@@ -134,19 +134,6 @@ function HarnessView({ value, list, connections, raw, task, scheme }: {
 
 export { harnessPins };
 
-function defaultConfig(card: ProjectTechcard): Record<string, unknown> {
-  const saved = record(card.document?.build_config);
-  if (Object.keys(saved).length) return saved;
-  return {
-    projectNo: card.project,
-    assemblyIndex: card.item_index,
-    assemblyName: card.product_name,
-    partQty: 1,
-    wires: [],
-    ops: [],
-  };
-}
-
 /** «2000 шт», «184,8 м» — число по-русски, единица строчными (аудит 10.10, ЭТК-2); без нормы — пусто, а не «— шт». */
 export function quantity(row: EtkRow): string {
   return row.norm ? formatQty(row.norm, row.unit) : "";
@@ -800,8 +787,7 @@ function RevisionChangesWindow({ revision, close }: { revision: TechcardRevision
 }
 
 /** «Генератор» сборки: форма и ОДНА кнопка. Нет ТК — «Создать» (сборка ЭТК и выдача сразу, как файл техкарты в
-    SUPPLYMAP: отдельного шага утверждения там нет). ТК уже выдана — «Пересобрать» с подтверждением, новой ревизией.
-    Служебное — свод материалов, удаление черновика, JSON-конфигурация — свёрнуто в «Ещё». */
+    SUPPLYMAP: отдельного шага утверждения там нет). ТК уже выдана — «Пересобрать» с подтверждением, новой ревизией. */
 export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBuiltChange, onOpenDrawing }: {
   card: ProjectTechcard; principal: Principal; onChange: (card: ProjectTechcard) => void; onDone?: (card: ProjectTechcard) => void;
   /** Черновик, по которому собрали и чей урок ещё не записан (хранит владелец вкладок). */
@@ -809,8 +795,6 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
   /** «Открыть чертёж» после «Построить чертёж» в генераторе. */
   onOpenDrawing?: () => void;
 }) {
-  const [configText, setConfigText] = useState("{}");
-  const generatedConfig = useRef<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -818,7 +802,6 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
   const canIssue = principal.permissions.techcards === "edit";
   // Дописать комплектующее в состав — правка набора проекта, как строки спецификации в «Проектах».
   const canKit = hasFullAccess(principal) || principal.permissions.projects === "edit";
-  useEffect(() => { setConfigText(JSON.stringify(defaultConfig(card), null, 2)); }, [card.id, card.version]);
   useEffect(() => {
     // SUPPLYMAP portalTcGenData → tcLoadBomFromKit: состав из набора проекта + строки листа КБn расчёта;
     // набора или сборки нет — генератор показывает ошибку.
@@ -859,17 +842,6 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
     } finally { setBusy(false); }
   }
 
-  async function fromJson() {
-    let config: Record<string, unknown>;
-    try {
-      config = JSON.parse(configText) as Record<string, unknown>;
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Конфигурация содержит неверный JSON");
-      return;
-    }
-    await build(config);
-  }
-
   async function discardDraft() {
     if (busy) return;
     setBusy(true); setError(""); setNotice("");
@@ -888,15 +860,7 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
         remove: async (art) => (await kitsetsApi.removeComponent(card.project, card.item_index, art)).bom,
         apply: (bom) => setKit({ data: bom, error: "" }),
       } : undefined}
-      userId={principal.user.id} onConfig={(config) => { generatedConfig.current = config; }} buildPreview={buildPreview}
-      /* JSON-конфигурация — служебная, только админу (владелец 29.09: «что это такое и зачем»). */
-      more={!hasFullAccess(principal) ? undefined : <div className="build-config">
-        <label>JSON-конфигурация генератора (для эксперта)<textarea aria-label="Конфигурация автоматической сборки" rows={12} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>
-        <div className="form-actions">
-          <button className="secondary small" onClick={() => { if (generatedConfig.current) setConfigText(JSON.stringify(generatedConfig.current, null, 2)); }}>Взять из формы</button>
-          <button className="secondary small" disabled={busy} onClick={() => void fromJson()}>Собрать по JSON</button>
-        </div>
-      </div>} />
+      userId={principal.user.id} buildPreview={buildPreview} />
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
   </div>;

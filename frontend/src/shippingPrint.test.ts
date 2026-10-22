@@ -9,7 +9,7 @@ const pl: PackingListForm = {
 };
 const dn: DeliveryNoteForm = {
   kind: "dn", title: "DN533К.10-1", number: ["DN", "533К.10", "-", "1"], date: "18.09.26", customer: "ООО «Мегатрон»",
-  po: "PO-7", contract: "", spec: "", invoice: "533К.10", terms: "САМОВЫВОЗ", pays: "", customer_address: "", shipping_address: "Москва",
+  po: "PO-7", po_from_card: true, contract: "", spec: "", invoice: "533К.10", terms: "САМОВЫВОЗ", pays: "", customer_address: "", shipping_address: "Москва",
   hours: "9-18", contact: "", phone: "", carrier: "", track: "", tk_note: "", rows: [row], upd_edo: true, upd_paper: false,
   paper_box: "BXN 1", note: "", places: "1", gross: "9,6", upd: "385 от 18.09.26", shipped_at: "18.09.26", packer: "Гусев А.А.",
 };
@@ -48,6 +48,21 @@ describe("buildShippingFormsHtml", () => {
     expect(cells(doc, ".check")).toEqual(["☒", "☐"]);
     expect([".places", ".gross", ".upd", ".packer"].map((css) => doc.querySelector(css)?.textContent)).toEqual(["1", "9,6", "385 от 18.09.26", "Гусев А.А."]);
     expect(doc.querySelector(".foot")?.textContent).toContain("Форма/Form 04.1 Rev.4");
+  });
+
+  it("prints «PO #» only for a customer order; otherwise the project number fills the whole cell", () => {
+    const withPo = parse(buildShippingFormsHtml([dn]));
+    const fallback = parse(buildShippingFormsHtml([{ ...dn, po: "533К.10", po_from_card: false }]));
+
+    expect(cells(withPo, ".refs td").slice(1, 4)).toEqual(["PO", "#", "PO-7"]);
+    expect(cells(fallback, ".refs td").slice(0, 3)).toEqual(["ООО «Мегатрон»", "533К.10", ""]);
+    expect(fallback.querySelector(".po")?.getAttribute("colspan")).toBe("4");
+  });
+
+  it("labels the footer date of the PL as the shipping date, not a second packing date", () => {
+    const doc = parse(buildShippingFormsHtml([pl]));
+
+    expect(doc.querySelector(".shipped")?.previousElementSibling?.textContent).toContain("Дата отгрузки:");
   });
 
   it("puts every form on its own A4 sheet, prints the grey cells and escapes values", () => {

@@ -454,11 +454,11 @@ describe("ProjectsPage", () => {
     fireEvent.click(await screen.findByText("Жгут питания"));
     expect(await screen.findByRole("tab", { name: "Генератор", selected: true })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "КБ1", selected: true })).toBeTruthy();
-    // Одна кнопка: ТК ещё нет — «Создать»; служебное свёрнуто в «Ещё».
+    // Одна кнопка: ТК ещё нет — «Создать»; блока «Ещё» в генераторе нет.
     expect(await screen.findByRole("button", { name: "Создать" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Создать техкарты" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).toBeNull();
-    expect(screen.getByText("Ещё")).toBeTruthy();
+    expect(screen.queryByText("Ещё")).toBeNull();
     expect(window.location.search).toBe("?section=projects");
   });
 

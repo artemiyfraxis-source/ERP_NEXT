@@ -148,7 +148,40 @@ describe("ShippingPage", () => {
     expect(sent("/api/shipping/project-ship")).toEqual({ project: "591К.3", addressee_version: 3, lines: [{ good_id: "g1", version: 1, quantity: "6" }], ship: false });
   });
 
-  it("shows the four dispatch fields of the project, the rest under «Ещё», and the paper УПД file", async () => {
+  it("ТК is a select: the terms follow it, a pickup hides the address and is packed with «Самовывоз» as the point", async () => {
+    stub([], [good], [{ ...card, shipping_point: "", terms: null, carrier: "" }]);
+    render(<ShippingPage principal={principal} />);
+    await loaded();
+    tab(/^На складе/);
+    fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
+    const select = screen.getByLabelText("ТК проекта 591К.3") as HTMLSelectElement;
+    expect([...select.options].map((option) => option.textContent)).toEqual(
+      ["не выбрано", "Самовывоз", "СДЭК", "Деловые линии", "Почта России", "Курьер (наш)", "Яндекс Доставка"]);
+    fireEvent.change(select, { target: { value: "СДЭК" } });
+    expect(screen.getByLabelText("Условия доставки проекта 591К.3")).toHaveTextContent("Доставка ТК");
+    expect(screen.getByLabelText("Адрес доставки проекта 591К.3")).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "Самовывоз" } });
+    expect(screen.getByLabelText("Условия доставки проекта 591К.3")).toHaveTextContent("Самовывоз");
+    expect(screen.queryByLabelText("Адрес доставки проекта 591К.3")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Упаковать · 6 шт" }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(sent("/api/shipping/project-ship").addressee).toEqual({ shipping_point: "Самовывоз", terms: "САМОВЫВОЗ", carrier: "Самовывоз" });
+  });
+
+  it("keeps an old free-text carrier of the project as the selected «прежнее» value", async () => {
+    stub([], [good], [{ ...card, terms: "ДОСТАВКА ТК", carrier: "major-express 2071163030" }]);
+    render(<ShippingPage principal={principal} />);
+    await loaded();
+    tab(/^На складе/);
+    fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
+    const select = screen.getByLabelText("ТК проекта 591К.3") as HTMLSelectElement;
+    expect(select).toHaveValue("major-express 2071163030");
+    expect(select.selectedOptions[0]).toHaveTextContent("major-express 2071163030 (прежнее)");
+    expect(screen.getByLabelText("Условия доставки проекта 591К.3")).toHaveTextContent("Доставка ТК");
+    expect(screen.getByLabelText("Адрес доставки проекта 591К.3")).toBeInTheDocument();
+  });
+
+  it("shows the dispatch fields and the carrier row up front, the requisites under «Реквизиты», and the paper УПД file", async () => {
     stub([], [good], [{ ...card, upd_type: "БУМАГА", upd_url: "/api/shipping/files/f1", upd_file_name: "УПД 591К.3.pdf", contact: "Иван" }]);
     render(<ShippingPage principal={principal} />);
     await loaded();
@@ -156,18 +189,20 @@ describe("ShippingPage", () => {
     fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
     const dispatch = screen.getByRole("heading", { name: "Данные отправки" }).parentElement!;
     expect(within(dispatch).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(
-      ["Получатель проекта 591К.3", "Адрес доставки проекта 591К.3", "Телефон проекта 591К.3"]);
+      ["Получатель проекта 591К.3", "Адрес доставки проекта 591К.3", "Телефон проекта 591К.3", "Контактное лицо проекта 591К.3"]);
     expect(within(dispatch).getByLabelText("УПД проекта 591К.3")).toHaveValue("БУМАГА");
     expect(within(dispatch).getByRole("link", { name: "УПД 591К.3.pdf" })).toHaveAttribute("href", "/api/shipping/files/f1");
-    expect(within(dispatch).queryByLabelText("Контактное лицо проекта 591К.3")).not.toBeInTheDocument();
-    const more = screen.getByText(/^Ещё: УПД, контакт, доставка, план/).closest("details")!;
+    expect(within(dispatch).getByLabelText("Контактное лицо проекта 591К.3")).toHaveValue("Иван");
+    expect(within(dispatch).getByLabelText("Отгрузить до: проект 591К.3")).toBeInTheDocument();
+    expect(within(dispatch).getByLabelText("ТК проекта 591К.3")).toHaveValue("");
+    expect(within(dispatch).getByLabelText("Условия доставки проекта 591К.3")).toHaveTextContent("Самовывоз");
+    const more = screen.getByText(/^Реквизиты: УПД, план, документы/).closest("details")!;
     expect(more).not.toHaveAttribute("open");
     expect(within(more).getByLabelText("№ УПД проекта 591К.3")).toBeInTheDocument();
     expect(within(more).getByLabelText("Дата УПД проекта 591К.3")).toBeInTheDocument();
-    expect(within(more).getByLabelText("Отгрузить до: проект 591К.3")).toBeInTheDocument();
+    expect(within(more).getByLabelText("№ договора проекта 591К.3")).toBeInTheDocument();
+    expect(within(more).getByLabelText("Плановая дата проекта 591К.3")).toBeInTheDocument();
     expect(within(dispatch).queryByLabelText("№ УПД проекта 591К.3")).not.toBeInTheDocument();
-    expect(within(more).getByLabelText("Контактное лицо проекта 591К.3")).toHaveValue("Иван");
-    expect(within(more).getByLabelText("Условия доставки проекта 591К.3")).toHaveValue("САМОВЫВОЗ");
   });
 
   it("«Отправки» groups shipments by status and ships a packed one", async () => {
@@ -285,10 +320,9 @@ describe("ShippingPage", () => {
     fireEvent.change(point, { target: { value: "Тула, ворота 3" } });
     fireEvent.blur(point);
     await waitFor(() => expect(sent("/api/shipping/shipments/s1/head", "PUT")).toEqual({ version: 3, shipping_point: "Тула, ворота 3" }));
-    const terms = screen.getByLabelText("Условия доставки ОТГ-20260922-01");
-    fireEvent.change(terms, { target: { value: "" } });
-    fireEvent.blur(terms);
-    await waitFor(() => expect(lastSent("/api/shipping/shipments/s1/head", "PUT")).toEqual({ version: 3, terms: null }));
+    // ТК выбирают из списка: условия выводятся из него и уходят той же правкой.
+    fireEvent.change(screen.getByLabelText("ТК ОТГ-20260922-01"), { target: { value: "СДЭК" } });
+    await waitFor(() => expect(lastSent("/api/shipping/shipments/s1/head", "PUT")).toEqual({ version: 3, carrier: "СДЭК", terms: "ДОСТАВКА ТК" }));
 
     expect(screen.getByText("файла УПД нет")).toBeInTheDocument();
     const file = new File(["%PDF"], "upd.pdf", { type: "application/pdf" });

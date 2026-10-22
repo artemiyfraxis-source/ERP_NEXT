@@ -225,7 +225,6 @@ export type GenState = {
   selectedTemplates: Record<string, string>;
   manualTemplates: string[];
   times: Record<string, OpTimes>;
-  materialsSheet: boolean;
   /** Свой порядок операций (ключи opKey) — «Выше/Ниже» в схеме полуфабрикатов; пусто — порядок генератора. Уходит в
       build_config.opOrder и возвращается из него при открытии карты. */
   opOrder: string[];
@@ -629,7 +628,7 @@ export function emptyState(): GenState {
       len: "", tutEnabled: true, tutLen: "", pinA: "пайка", pinB: "пайка", coverA: "", coverB: "",
       stripB: false, shield: "обжим", sideA: null, sideB: null, stripMode: "machine", machine: "",
     },
-    selectedTemplates: {}, manualTemplates: [], times: {}, materialsSheet: false, opOrder: [],
+    selectedTemplates: {}, manualTemplates: [], times: {}, opOrder: [],
   };
 }
 
@@ -1054,24 +1053,24 @@ export function makeGen(D: GenData, S: GenState) {
   }
   /** Сростки схемы по строкам для формы: «С1», сколько проводов и откуда каждый (разъём и контакт противоположного конца
    *  провода; конец, ушедший в другой сросток или хвост, — «к С2» / «к хвосту»). Пусто — на схеме сростков нет. */
-  function spliceRows_(): Array<{ id: string; label: string; size: number; wires: Array<{ art: string; from: string }> }> {
+  function spliceRows_(withLone = false): Array<{ id: string; label: string; size: number; wires: Array<{ art: string; from: string; end: WireEnd }> }> {
     const all = S.splices || [];
-    return all.filter((sp) => sp.ends.length >= 2).map((sp) => ({
+    return all.filter((sp) => withLone || sp.ends.length >= 2).map((sp) => ({
       id: sp.id, label: `С${all.indexOf(sp) + 1}`, size: sp.ends.length,
       wires: sp.ends.map((e) => {
         const w = activeWires_().find((x) => x.idx === e.idx);
         const c = w ? getCompById(w.compId) : null;
         const art = c ? c.art || c.name || "" : "";
         const other: Side = e.side === "A" ? "B" : "A";
-        if (!w) return { art, from: "" };
+        if (!w) return { art, from: "", end: e };
         const ep = unitEndpoint_(w, e.unit, other);
         if (ep) {
           const pin = corePinsOf_(ep, e.idx)[e.unit];
-          return { art, from: `${(ep.label || "").trim() || endKey_(ep)}${pin != null ? ` конт. ${pin}` : ""}` };
+          return { art, from: `${(ep.label || "").trim() || endKey_(ep)}${pin != null ? ` конт. ${pin}` : ""}`, end: e };
         }
         const next = all.find((x) => x !== sp && x.ends.some((y) => y.idx === e.idx && y.unit === e.unit && y.side === other));
-        if (next) return { art, from: `к С${all.indexOf(next) + 1}` };
-        return { art, from: endJoined(S, e.idx, e.unit, other) === "tail" ? "к хвосту" : "" };
+        if (next) return { art, from: `к С${all.indexOf(next) + 1}`, end: e };
+        return { art, from: endJoined(S, e.idx, e.unit, other) === "tail" ? "к хвосту" : "", end: e };
       }),
     }));
   }
@@ -3238,7 +3237,7 @@ export function makeGen(D: GenData, S: GenState) {
       if (!S.advancedLength && !sharedLength()) return { cfg, error: 'Укажите длину кабелей (поле "Длина, мм" вверху секции).', warnings: [] };
       if (S.advancedLength && (cfg.wires as Array<{ length: number }>).some((w) => !w.length)) return { cfg, error: "Укажите длину для каждого кабеля.", warnings: [] };
     }
-    return { cfg: { ...cfg, ops, materialsSheet: S.materialsSheet }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings, twistDiaWarnings_(), twistCheck.warnings) };
+    return { cfg: { ...cfg, ops }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings, twistDiaWarnings_(), twistCheck.warnings) };
   }
 
   return {

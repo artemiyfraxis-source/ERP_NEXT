@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.techcards.etk_builder import _result_name, _suffix, _term_count, _topology, build_etk
-from app.modules.techcards.operation_cards import parse_operation_library
+from app.modules.techcards.etk_builder import _resolve_card, _result_name, _suffix, _term_count, _topology, build_etk
+from app.modules.techcards.operation_cards import OperationCardStep, OperationCardTemplate, parse_operation_library
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardValidationError
 from app.modules.references.technology import TerminalRecord
 from app.workflows.techcard_build import enrich_terminal_norms
@@ -947,3 +947,18 @@ def test_linear_timing_is_dropped_when_the_record_lost_its_node_speeds():
     timed = enrich_linear_timing(config, [_linear_record()])["ops"]
     assert timed[0]["linearTiming"] == {"rollSpeed": "3", "toolSeconds": "0,2", "toolOps": "5", "takeSeconds": "7"}
     assert "linearTiming" not in timed[1]
+
+
+@pytest.mark.parametrize("stored", ["", "-", "—"])
+def test_test_cut_step_gets_the_cut_tolerance_when_saved_template_stores_dash(stored):
+    # Сохранённый шаблон хранит пустой допуск как «-» (normalize_record_edit) — допуск реза всё равно подставляется.
+    card = OperationCardTemplate(
+        source_id="t", code="CUT_WIRE_auto", side="", title="", name="Резка", category="", designation="", revision="",
+        safety="", defects="", steps=(OperationCardStep("1", "Контроль", "Выполнить тестовый рез и измерить длину", stored),),
+        tooling=(), raw_rows=(),
+    )
+    resolved = _resolve_card(card, {}, {"cutTolerance": "±3 мм"})
+    assert resolved["steps"][0]["tolerance"] == "±3 мм"
+    explicit = OperationCardTemplate(**{**card.__dict__, "steps": (OperationCardStep("1", "Контроль", "тестовый рез", "±1 мм"),)})
+    assert _resolve_card(explicit, {}, {"cutTolerance": "±3 мм"})["steps"][0]["tolerance"] == "±1 мм"
+    assert _resolve_card(card, {}, {})["steps"][0]["tolerance"] == ""

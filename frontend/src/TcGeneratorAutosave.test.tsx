@@ -61,7 +61,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
 
-const sheetSwitch = () => screen.getByRole("switch", { name: "Свод материалов отдельным листом в ЭТК" });
+const sheetSwitch = () => screen.getByRole("switch", { name: /^Термоусадка на жгут/ });
 
 it("keeps the typed form through a tab switch, restores it with a note and clears it after «Создать»", async () => {
   const first = render(<TcGenerator card={card} kit={kit} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} userId="user-1" />);
@@ -80,7 +80,6 @@ it("keeps the typed form through a tab switch, restores it with a note and clear
   vi.spyOn(window, "confirm").mockReturnValue(true);
   pressBuild();
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
-  expect(onBuild.mock.calls[0][0]).toMatchObject({ materialsSheet: true });
   await waitFor(() => expect(screen.queryByText(/Восстановлен несохранённый черновик/)).not.toBeInTheDocument());
   expect(window.localStorage.getItem(KEY)).toBeNull();
   await waitFor(() => expect(serverDraft).toBeNull());
@@ -91,7 +90,7 @@ it("opens on another computer what was typed here (the draft on the server)", as
   await screen.findByRole("tab", { name: "Межплатная", selected: true });
   fireEvent.click(sheetSwitch());
   first.unmount();
-  await waitFor(() => expect(serverDraft).toMatchObject({ version: 1, payload: { S: { materialsSheet: true } } }));
+  await waitFor(() => expect(serverDraft).toMatchObject({ version: 1, payload: { S: { hs: { enabled: true } } } }));
 
   window.localStorage.clear(); // другой компьютер: в браузере ничего нет
   render(<TcGenerator card={card} kit={kit} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} userId="user-1" />);

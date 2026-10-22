@@ -87,7 +87,11 @@ export interface TdFinding {
   text: string;
 }
 
-export interface TdStoRef { section: string; title: string }
+/** Нормативное требование раздела СТО: стандарт и пункты («ГОСТ 23587-96» · «п. 5.5, 5.10») — ссылка всегда с пунктом. */
+export interface StoNorm { doc: string; clauses: string; subject: string }
+
+/** Раздел(ы) СТО операции; `norms` — нормы этих разделов (у совмещённых кодов слиты по стандартам). */
+export interface TdStoRef { section: string; title: string; norms?: StoNorm[] }
 
 export interface TdChange {
   change_no: number;
@@ -107,11 +111,11 @@ export interface TdPrintModel {
   /** operation_key → раздел СТО типовых дефектов (null — раздел не найден). */
   sto_sections: Record<string, TdStoRef | null>;
   changes: TdChange[];
-  sto: { designation: string; revision: string };
+  sto: { designation: string; revision: string; title?: string };
 }
 
-export interface StoRow { code: string; defect: string; criterion: string; class: string; method: string; action: string }
-export interface StoSection { code: string; title: string; scope: string; rows: StoRow[]; subsections?: StoSection[] }
+export interface StoRow { code: string; defect: string; criterion: string; class: string; method: string; action: string; basis?: string }
+export interface StoSection { code: string; title: string; scope: string; norms?: StoNorm[]; rows: StoRow[]; subsections?: StoSection[] }
 export interface StoClass { class: string; meaning: string; rv: string }
 
 /** GET /techcards/sto — backend/data/sto-frak-001-2026.json как есть. */

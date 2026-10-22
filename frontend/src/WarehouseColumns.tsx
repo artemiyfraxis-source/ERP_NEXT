@@ -8,19 +8,23 @@ export type ColumnLayouts = Record<TableKind, ColumnLayout>;
 
 // The order of the SUPPLYMAP portal stock view (owner, 24.09.2026): the storekeeper looks for ГРН, quantity and shelf
 // first; the name is flexible and takes what is left, the warehouse closes the row. «Таблица склада» (ERP only) keeps
-// the same order with «Доступно» instead of «Партий».
+// the same order with «Партий» left out. Since 22.10 the quantity read first is «Свободно» (balance minus reserve): the
+// raw «Остаток» is optional (it stays in the tooltip of «Свободно» and in the group header).
 const DEFAULT_ORDER: Record<TableKind, ColumnKey[]> = {
-  grouped: ["type", "grn", "balance", "reserved", "available", "lots", "place", "series", "article", "name", "warehouse"],
-  flat: ["type", "grn", "balance", "reserved", "available", "place", "series", "article", "name", "purpose", "warehouse"],
+  grouped: ["type", "grn", "available", "reserved", "balance", "lots", "place", "series", "article", "name", "warehouse"],
+  flat: ["type", "grn", "available", "reserved", "balance", "place", "series", "article", "name", "purpose", "warehouse"],
 };
-// «Назначение» (the project a lot is kept for) is the least needed column of the lot table, «Доступно» of the article
-// table (the reserve beside the balance is enough there): off until asked for.
-const DEFAULT_HIDDEN: Record<TableKind, ColumnKey[]> = { grouped: ["available"], flat: ["purpose"] };
+// «Назначение» (the project a lot is kept for) is the least needed column of the lot table; «Остаток» is off in both
+// tables: «Свободно» + «Резерв» already say it, and reading the raw balance misleads (owner, 22.10).
+const DEFAULT_HIDDEN: Record<TableKind, ColumnKey[]> = { grouped: ["balance"], flat: ["balance", "purpose"] };
 
 export const COLUMN_TITLES: Record<ColumnKey, string> = {
-  name: "Наименование", article: "Артикул", grn: "ГРН", balance: "Остаток", lots: "Партий", available: "Доступно", reserved: "Резерв",
+  name: "Наименование", article: "Артикул", grn: "ГРН", balance: "Остаток", lots: "Партий", available: "Свободно", reserved: "Резерв",
   place: "Места", warehouse: "Склад", purpose: "Назначение", series: "Серия", type: "Тип",
 };
+
+/** Header tooltips of the columns that need one. */
+export const COLUMN_HINTS: Partial<Record<ColumnKey, string>> = { available: "остаток минус резерв", reserved: "под какие заявки — в подсказке ячейки" };
 
 /** «Таблица склада» lists lots one by one, so «Места» is one «Место» there. */
 export function columnTitle(key: ColumnKey, flat: boolean) {
@@ -54,7 +58,7 @@ export function moveColumn(order: ColumnKey[], key: ColumnKey, step: -1 | 1, amo
 }
 
 // A new key: the old saved sets (`erp-table:stock-columns`, hidden columns only, name first) do not fit the new order.
-const STORAGE_KEY = "erp-table:stock-columns:v2";
+const STORAGE_KEY = "erp-table:stock-columns:v3";
 
 function readLayout(kind: TableKind, saved: unknown): ColumnLayout {
   const fallback = defaultLayout(kind);

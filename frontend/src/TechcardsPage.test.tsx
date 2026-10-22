@@ -61,57 +61,6 @@ it("opens only the linked techcard from the project card, without a creation for
   window.history.replaceState({}, "", "/");
 });
 
-it("automatically builds and issues an electronic techcard", async () => {
-  let current = card;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path === "/api/techcards/projects") return json({ items: [current] });
-    if (path === "/api/techcards/templates") return json({ metadata: null, items: [] });
-    if (path.endsWith("/revisions")) return json({ items: [] });
-    if (path.endsWith("/build") && init?.method === "POST") {
-      current = { ...current, version: 2, document: { operations: [{ code: "10", connector: "A", result: [{ name: "Жгут", norm: "1", unit: "Шт." }], time: [{ name: "Жгут", norm: "1" }], card: { name: "Сборка", steps: [{ number: "1", kind: "Операция", text: "Собрать" }] } }], warnings: [], build_config: { ops: [{ templateId: "one" }] } } };
-      return json(current);
-    }
-    if (path.endsWith("/issue") && init?.method === "POST") {
-      current = { ...current, version: 3, status: "Выдана", revision: 1 };
-      return json(current);
-    }
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<TechcardsPage principal={{ ...engineer, roles: ["admin"], access_level: "admin" }} />);
-  const editor = await screen.findByLabelText("Конфигурация автоматической сборки");
-  fireEvent.change(editor, { target: { value: JSON.stringify({ ops: [{ templateId: "one" }] }) } });
-  // Одна кнопка: сборка ЭТК и выдача сразу, отдельного шага «Выдать» нет (как файл техкарты в SUPPLYMAP).
-  fireEvent.click(screen.getByRole("button", { name: "Собрать по JSON" }));
-  expect(await screen.findByText("Техкарта создана")).toBeInTheDocument();
-  expect(screen.getByText("Собрать")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).toBeNull();
-  expect(screen.getByText(/ревизия 1/)).toBeInTheDocument();
-});
-
-it("keeps the generator's JSON configuration to superadmin and admin, whatever the matrix grants", async () => {
-  const open = async (principal: Parameters<typeof TechcardsPage>[0]["principal"]) => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const path = String(input);
-      if (path === "/api/techcards/projects") return json({ items: [card] });
-      if (path === "/api/techcards/templates") return json({ metadata: null, items: [] });
-      if (path.endsWith("/revisions")) return json({ items: [] });
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    return render(<TechcardsPage principal={principal} />);
-  };
-
-  const lead = await open(engineer);
-  expect((await screen.findAllByText("P-100")).length).toBeGreaterThan(0);
-  expect(screen.queryByLabelText("Конфигурация автоматической сборки")).not.toBeInTheDocument();
-  lead.unmount();
-  vi.restoreAllMocks();
-
-  await open({ ...engineer, roles: ["superadmin"], access_level: "superadmin" });
-  expect(await screen.findByLabelText("Конфигурация автоматической сборки")).toBeInTheDocument();
-});
-
 it("shows the operation library and opens a structured template", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);

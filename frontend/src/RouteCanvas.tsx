@@ -21,6 +21,8 @@ export type CanvasCard = Rect & {
   body?: ReactNode;
   /** Пометка карточки (например, «части нет в чертеже») — жёлтым под мета-строкой. */
   warning?: string;
+  /** Свой класс карточки (подсветка цели при перетаскивании операции). */
+  className?: string;
 };
 export type CanvasLink = {
   id: string; from: string; to: string;
@@ -217,7 +219,7 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
             </div>;
           })}
           {shown.map((card) => <article key={card.id} data-card={card.id}
-            className={["rc-card", `is-${card.kind}`, selected === card.id ? "is-selected" : "", interactive ? "is-interactive" : "", preview?.id === card.id ? "is-dragging" : ""].filter(Boolean).join(" ")}
+            className={["rc-card", `is-${card.kind}`, selected === card.id ? "is-selected" : "", interactive ? "is-interactive" : "", preview?.id === card.id ? "is-dragging" : "", card.className ?? ""].filter(Boolean).join(" ")}
             style={{ left: card.x, top: card.y, width: card.width, height: card.height }}
             tabIndex={interactive ? 0 : undefined} aria-current={selected === card.id ? "true" : undefined}
             aria-label={`${CARD_KIND_LABEL[card.kind]}: ${card.title}. ${card.meta}`}

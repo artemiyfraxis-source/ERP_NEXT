@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { PALETTE } from "./wireColors";
 import { PaletteGroups } from "./ColorPalette";
@@ -143,7 +143,7 @@ type Cell = { pin: number; units: PinUnit[]; dup: boolean };
  *  защёлкой, у круглых — кольцо контактов). Гнёзда — кнопки: щелчок, Enter или пробел ставит провод из руки; занятое
  *  гнездо залито цветом жилы, на нём номер провода. Разъёма нет в базе — пронумерованные квадраты по порядку.
  *  Разъём с одной стороны — под торцем список свободных концов с обработкой (лужение, зачистка или без неё). */
-export function PinoutDiagram({ ends, links, units, housings, free = null, hand = null, branches = [], joins = {}, scheme, drawing, onCell, onGrab, onBranchMode, onRemoveBranch, onCoreNet, onColorCell }: {
+export function PinoutDiagram({ ends, links, units, housings, free = null, hand = null, branches = [], joins = {}, scheme, drawing, onCell, onGrab, onRemove, onBranchMode, onRemoveBranch, onCoreNet, onColorCell }: {
   ends: PinoutEnd[];
   links: Connection[];
   units: PinUnit[];
@@ -158,6 +158,8 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
   drawing?: () => ReactNode;
   onCell?: (epId: string, pin: number) => void;
   onGrab?: (epId: string, pin: number, event: ReactPointerEvent) => void;
+  /** Правый щелчок по занятому контакту (в торце и в таблице схемы связей) — снять провод. */
+  onRemove?: (epId: string, pin: number) => void;
   onBranchMode?: (extra: number, mode: Branch["mode"]) => void;
   onRemoveBranch?: (extra: number) => void;
   /** Цепь жилы правится в ячейке таблицы схемы связей. */
@@ -188,6 +190,7 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
         onClick: () => onCell?.(end.id, c.pin),
         onKeyDown: (event: ReactKeyboardEvent) => keyFor(event, end.id, c.pin),
         onPointerDown: used && onGrab ? (event: ReactPointerEvent) => onGrab(end.id, c.pin, event) : undefined,
+        onContextMenu: used && onRemove ? (event: ReactMouseEvent) => { event.preventDefault(); onRemove(end.id, c.pin); } : undefined,
       },
     };
   };
@@ -200,7 +203,10 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
     const cellOf = (pin: number): Cell => ({ pin, units: byPin[pin] || [], dup: end.dups.includes(pin) });
     const face = end.conn ? housingFace(hs, Object.fromEntries(Object.entries(byPin).map(([p, list]) => [p, list[0].baseName ?? list[0].name]))) : null;
     const target = !!handUnit && (end.id in handUnit.at || end.multi);
-    const head = <div className="pin-end-head"><span className="pin-end-key">{end.key}</span><span className="pin-end-conn">{end.conn || "разъём не выбран"}</span></div>;
+    const designation = scheme?.designations?.[end.id];
+    const head = <div className="pin-end-head" title={`${end.key} — позиция разъёма: сторона ${end.side === "A" ? "А" : "В"}, по порядку${designation ? `; ${designation} — обозначение на схеме` : ""}`}>
+      <span className="pin-end-key">{end.key}</span>{designation ? <span className="pin-end-des">{designation}</span> : null}
+      <span className="pin-end-conn">{end.conn || "разъём не выбран"}</span></div>;
     if (face) {
       return <section key={end.id} className={target ? "pin-end is-target" : "pin-end"} data-end={end.key} aria-label={`Схема разъёма ${end.key}`}>
         {head}
@@ -260,6 +266,7 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
       {(["A", "B"] as const).map((side) => sideOf(side).length > 0 && <div className="pin-side" key={side} data-side={side}>{sideOf(side).map(endView)}</div>)}
     </div>
     {!free && <PinoutLinks ends={ends} units={units} housings={housings} joins={joins} info={scheme} drawing={drawing}
+      interact={onCell && onGrab && onRemove ? { onCell, onGrab, onRemove, held: hand } : undefined}
       onNet={onCoreNet ? (key, net) => { const u = units.find((x) => x.key === key); if (u) onCoreNet(u.idx, u.unit, net); } : undefined}
       onColor={onColorCell} />}
     {free && <div className="pin-free-block">
@@ -394,6 +401,8 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
   const [hand, setHand] = useState<PinHand | null>(null);
   const [fill, setFill] = useState<{ notes: string[]; warnings: string[] } | null>(null);
   const [dragging, setDragging] = useState(false);
+  /** Провод под указателем при перетаскивании: ключ и координаты экрана — подпись у курсора. */
+  const [ghost, setGhost] = useState<{ key: string; x: number; y: number } | null>(null);
   const [palette, setPalette] = useState<PaletteAt | null>(null);
   const toggleColor = (key: string, place: PaletteAt["place"], at?: ColorAnchor) =>
     setPalette((current) => (current && current.key === key && current.place === place ? null : { key, place, at }));
@@ -477,18 +486,20 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
     const move = (event: PointerEvent) => {
       const d = drag.current;
       if (d && !d.moved && Math.hypot(event.clientX - d.x, event.clientY - d.y) > 6) { d.moved = true; setDragging(true); }
+      if (d?.moved) setGhost({ key: d.from.key, x: event.clientX, y: event.clientY });
     };
     const up = (event: PointerEvent) => {
       const d = drag.current;
       drag.current = null;
       if (!d?.moved) return;
       setDragging(false);
+      setGhost(null);
       suppress.current = true;
       window.setTimeout(() => { suppress.current = false; }, 0);
       const cell = document.elementFromPoint?.(event.clientX, event.clientY)?.closest("[data-ep][data-pin]");
       if (cell) placeRef.current(d.from, cell.getAttribute("data-ep") || "", Number(cell.getAttribute("data-pin")));
     };
-    const cancel = () => { drag.current = null; setDragging(false); };
+    const cancel = () => { drag.current = null; setDragging(false); setGhost(null); };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", cancel);
@@ -585,7 +596,12 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
       {hand?.epId && hand.pin != null && <button type="button" className="secondary small"
         onClick={() => { onUnassign(hand.epId!, handUnit.idx, handUnit.unit); setHand(null); }}>Снять с контакта</button>}
       <button type="button" className="btn-link" onClick={() => setHand(null)}>Отпустить</button>
-    </div> : <small className="muted pin-hint">Щёлкните провод, затем контакт (или перетащите). Щелчок по занятому контакту — перенести, поменять местами или добавить ответвление. Тёмный значок у контакта — номер провода. Цвет жилы — кружок у провода или ячейка «Цвет» в таблице.</small>}
+    </div> : <small className="muted pin-hint">Перетащите провод на контакт — в торце разъёма или в таблице схемы связей. Занятый контакт переносится так же; правый щелчок или × в таблице снимает провод. Без мыши: щёлкните провод, затем контакт.</small>}
+    <dl className="pin-legend" aria-label="Как читать номера">
+      <div><dt>№ 1.2</dt><dd>провод: кабель 1, жила 2 (у одножильного — просто № 1, экран — 1.Э)</dd></div>
+      <div><dt>А1·3</dt><dd>разъём А1, контакт 3</dd></div>
+      <div><dt>А1, В2</dt><dd>позиция разъёма: сторона и порядок; рядом — обозначение на схеме (XS1)</dd></div>
+    </dl>
     {busy && (() => {
       const unit = units.find((u) => u.key === busy.key);
       const other = units.find((u) => u.key !== busy.key && u.at[busy.epId] === busy.pin);
@@ -609,13 +625,18 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
       }}>Добавить ответвление</button>
       <button type="button" className="btn-link" onClick={() => setBranch(null)}>Отмена</button>
     </div>}
-    <PinoutDiagram ends={ends} links={links} units={units} housings={housings} free={free} hand={hand} branches={branches} joins={joins} scheme={scheme} drawing={drawing} onCoreNet={onCoreNet}
+    <PinoutDiagram ends={ends} links={links} units={units} housings={housings} free={free} hand={hand ?? (ghost ? { key: ghost.key } : null)} branches={branches} joins={joins} scheme={scheme} drawing={drawing} onCoreNet={onCoreNet}
       onBranchMode={onBranchMode} onRemoveBranch={onRemoveBranch}
       onColorCell={onCoreColor ? (key, at) => toggleColor(key, "scheme", at) : undefined}
-      onCell={clickCell} onGrab={(epId, pin, event) => {
+      onCell={clickCell} onRemove={(epId, pin) => {
+        const occupant = units.find((u) => u.at[epId] === pin);
+        if (occupant) { onUnassign(epId, occupant.idx, occupant.unit); setHand(null); }
+      }} onGrab={(epId, pin, event) => {
         const occupant = units.find((u) => u.at[epId] === pin);
         if (occupant) grab({ key: occupant.key, epId, pin }, event);
       }} />
+    {ghost && (() => { const u = units.find((x) => x.key === ghost.key); return u ? <div className="pin-ghost" style={{ left: ghost.x + 14, top: ghost.y + 14 }} aria-hidden="true">
+      <Swatch color={u.color} stripe={u.stripe} /><span className="pin-num">{u.num}</span> {u.name || "провод"}</div> : null; })()}
     {palette?.place === "scheme" && (() => { const u = units.find((x) => x.key === palette.key); return u ? colorPop(u, "scheme") : null; })()}
     <div className="pin-board-notes" aria-live="polite">
       {fill?.notes.map((item) => <small className="muted pin-note" key={item}>{item}</small>)}

@@ -1566,7 +1566,7 @@ def _resolve_card(
                 tolerance = f"{fields.get('crimpHeight')} мм".strip()
             elif fields.get("pullForce") is not None and re.search(r"pull[\s-]?test|разрыв|усилие обрыва", lowered):
                 tolerance = f"{fields.get('pullForce')} Н".strip()
-        if re.search(r"тестовый\s*рез", text.casefold()) and not tolerance:
+        if re.search(r"тестовый\s*рез", text.casefold()) and tolerance.strip() in {"", "-", "—"}:
             tolerance = str(fields.get("cutTolerance") or "")
         if tolerance.strip() == "мм":
             # «[L КД] мм» без длины в генераторе — единица без числа не допуск.
