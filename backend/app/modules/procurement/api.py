@@ -14,7 +14,6 @@ from pydantic import BaseModel, BeforeValidator, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
 from app.shared.stored_files import decode_upload, file_response
@@ -756,17 +755,11 @@ def my_lines(
     return _page_result(lines, limit, purposes_of, **_list_lookups(uow_factory))
 
 
-PRICE_HISTORY_OPTION = "procurement.price_history"
 PRICE_HISTORY_BATCH = 200
 
 
 class PriceHistoryRequest(BaseModel):
     line_ids: list[UUID] = Field(max_length=PRICE_HISTORY_BATCH)
-
-
-def _require_price_history() -> None:
-    if not stage_options.enabled(PRICE_HISTORY_OPTION):
-        raise HTTPException(status_code=404, detail="Опция выключена")
 
 
 @router.post("/price-history")
@@ -776,7 +769,6 @@ def price_history_batch(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
     """«Покупали ранее» for the buyer's own lines, one request per list; foreign or unknown ids are skipped."""
-    _require_price_history()
     uow = uow_factory()
     with uow:
         rows = uow.session.scalars(
@@ -795,18 +787,12 @@ def price_history_one(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
     """A read: open on «Лист закупки» view like the sheet itself (view-mode contract, ID-6)."""
-    _require_price_history()
     uow = uow_factory()
     with uow:
         row = uow.session.get(ProcurementLineRow, line_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Строка не найдена")
         return history_for_row(uow.session, row)
-
-
-def _require_option(key: str) -> None:
-    if not stage_options.enabled(key):
-        raise HTTPException(status_code=404, detail="Опция выключена")
 
 
 @router.get("/today")
@@ -818,7 +804,6 @@ def today_lines(
 ) -> dict:
     """Stage option `procurement.today`: Roller_Buyer's «Сегодня» over the buyer's own lines and requests, computed on
     read (`app/workflows/procurement_today.py`). A read, open on view (ID-6): a viewer has no own lines."""
-    _require_option("procurement.today")
     uow = uow_factory()
     with uow:
         return today_page(uow.session, principal.actor.id, now.date(), purposes_of)
@@ -831,7 +816,6 @@ def line_history_route(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
     """Stage option `procurement.history`: the line's life from the request to the warehouse, rebuilt on read."""
-    _require_option("procurement.history")
     uow = uow_factory()
     with uow:
         result = line_history(uow.session, line_id)
@@ -849,7 +833,6 @@ def buyer_kpi(
     buyer: Annotated[str | None, Query(max_length=255)] = None,
 ) -> dict:
     """Stage option `procurement.kpi`: indicators of the lines paid in the period, per buyer and in total."""
-    _require_option("procurement.kpi")
     if date_to < date_from:
         raise HTTPException(status_code=422, detail="Конец периода раньше начала")
     uow = uow_factory()
@@ -1395,7 +1378,6 @@ def order_expected_arrival(
 ) -> dict:
     """Stage option `procurement.orders` («Счета и поставки»): ОЖИД. ДАТА of every line of the order whose date can
     still move, all or none (409 when the rows sent are not that set or a row is stale)."""
-    _require_option("procurement.orders")
     lines = _command_errors(
         lambda: set_order_expected_arrival(
             SetOrderExpectedArrivalCommand(

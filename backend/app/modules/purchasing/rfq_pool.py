@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session
 
 from app.shared.identity import Actor
 
-from app.shared import stage_options
 
 from . import settings as purchasing_settings
 from . import upd_prices
@@ -151,9 +150,7 @@ def cheaper_before_pct(budget: Decimal | None, cheapest_same_unit: Decimal | Non
 
 
 def _extra_prices(session: Session, views: Sequence[LineView], analysis: Analysis) -> dict | None:
-    """With references.price_book on: the lowest known UPD / reference price of each line's item in the line's unit."""
-    if not stage_options.enabled("references.price_book"):
-        return None
+    """The lowest known UPD / reference price of each line's item in the line's unit."""
     wanted = []
     for view in views:
         item = analysis.lines[view.id].item if view.id in analysis.lines else None

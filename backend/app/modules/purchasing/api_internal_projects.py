@@ -22,7 +22,7 @@ from app.shared.http_auth import (
 from app.workflows import purchasing_internal_projects as port
 
 from . import internal_projects as service
-from .deps import purchasing_uow_factory, require_option
+from .deps import purchasing_uow_factory
 
 
 def internal_view(principal: Annotated[Principal, Depends(authenticated_principal)]) -> Principal:
@@ -38,7 +38,6 @@ def internal_option(request: Request, principal: Annotated[Principal, Depends(in
     someone who holds «Лист закупки» on view only (view-mode contract, ID-6)."""
     if request.method not in {"GET", "HEAD", "OPTIONS"} and not section_allowed(principal, ("procurement",), "edit"):
         raise HTTPException(status_code=403, detail="Раздел «Лист закупки» открыт вам только на просмотр.")
-    require_option("projects.internal")
 
 
 router = APIRouter(

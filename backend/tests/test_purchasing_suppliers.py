@@ -1,6 +1,5 @@
 """«Справочник поставщиков» и «Настройки закупки»: pure helpers, HTTP API, import from procurement, card stats."""
 
-import json
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -15,7 +14,6 @@ from app.modules.procurement.application import consume_procurement_requested
 from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchemyProcurementUnitOfWork
 from app.modules.purchasing.infrastructure import SqlAlchemyPurchasingUnitOfWork, SupplierNameRow
 from app.modules.purchasing.suppliers import inn_valid, normalize_domain, supplier_key
-from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, Base, create_schema
 from tests.factories import Actor
@@ -46,7 +44,7 @@ def test_domain_normalization():
 
 
 @pytest.fixture()
-def api(monkeypatch, tmp_path):
+def api():
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     create_schema(engine)
     Base.metadata.create_all(engine)
@@ -55,9 +53,6 @@ def api(monkeypatch, tmp_path):
     procurement_factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
     app.state.procurement_uow_factory = procurement_factory
     app.state.procurement_supplier_directory = None
-    options = tmp_path / "options.json"
-    options.write_text(json.dumps({"references.suppliers": True, "procurement.rfq": True}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(options))
 
     def as_role(roles, permissions):
         app.dependency_overrides[authenticated_principal] = lambda: Principal(
@@ -66,7 +61,7 @@ def api(monkeypatch, tmp_path):
         )
 
     as_role({"buyer"}, {"procurement": "edit"})
-    yield TestClient(app), sessions, procurement_factory, as_role, options
+    yield TestClient(app), sessions, procurement_factory, as_role
     app.dependency_overrides.pop(authenticated_principal, None)
     for name in ("purchasing_uow_factory", "procurement_uow_factory", "procurement_supplier_directory"):
         delattr(app.state, name)
@@ -122,17 +117,6 @@ def test_patch_version_conflict_archive_and_filters(api):
     assert [s["name"] for s in client.get("/api/purchasing/suppliers?archived=true").json()] == ["Альфа"]
     assert client.post(f"/api/purchasing/suppliers/{sid}/unarchive").json()["archived"] is False
     assert client.get("/api/purchasing/suppliers/00000000-0000-0000-0000-000000000099").status_code == 404
-
-
-def test_option_off_is_404_and_rfq_option_allows_only_the_list(api):
-    client, _, _, _, options = api
-    options.write_text(json.dumps({"procurement.rfq": True}), encoding="utf-8")
-    assert client.get("/api/purchasing/suppliers").status_code == 200
-    assert client.post("/api/purchasing/suppliers", json={"name": "X"}).status_code == 404
-    options.write_text(json.dumps({}), encoding="utf-8")
-    assert client.get("/api/purchasing/suppliers").status_code == 404
-    assert client.get("/api/purchasing/settings").status_code == 404
-    assert client.post("/api/purchasing/suppliers/import-from-procurement", json={}).status_code == 404
 
 
 def test_import_dry_run_then_apply_groups_variants(api):
@@ -204,7 +188,7 @@ def test_card_stats_from_procurement_lines(api):
 
 
 def test_settings_read_for_buyer_write_for_admin_only(api):
-    client, sessions, _, as_role, _ = api
+    client, sessions, _, as_role = api
     rows = client.get("/api/purchasing/settings").json()
     assert {r["key"] for r in rows} >= {"gate_min_quotes", "default_vat_rate"}
     vat = next(r for r in rows if r["key"] == "default_vat_rate")

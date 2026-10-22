@@ -1,6 +1,5 @@
 """«Номенклатура»: keys, create / merge, «Собрать из закупок», card statistics, option gate."""
 
-import json
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -28,7 +27,6 @@ from app.modules.purchasing.infrastructure import (
     SupplierNameRow,
     SupplierRow,
 )
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, create_schema
@@ -69,10 +67,7 @@ def test_unit_normalization():
 # ---- API fixture ---------------------------------------------------------------------------------------------------
 
 @pytest.fixture()
-def env(monkeypatch, tmp_path):
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"references.items": True}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
+def env():
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
@@ -83,7 +78,7 @@ def env(monkeypatch, tmp_path):
         roles=frozenset({"buyer"}), permissions={"procurement": "edit"},
     )
     app.dependency_overrides[moscow_now] = lambda: NOW
-    yield TestClient(app), sessions, path
+    yield TestClient(app), sessions
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
     del app.state.purchasing_uow_factory
@@ -123,7 +118,7 @@ def create(client, name="Разъём SMA", **extra):
 # ---- create / update / merge ---------------------------------------------------------------------------------------
 
 def test_create_guesses_category_normalizes_and_conflicts_on_part_key(env):
-    client, sessions, _ = env
+    client, sessions = env
     made = create(client, "Разъём SMA", part_number="SMA-F 01", unit="штук")
     assert made.status_code == 201, made.text
     body = made.json()
@@ -139,7 +134,7 @@ def test_create_guesses_category_normalizes_and_conflicts_on_part_key(env):
 
 
 def test_patch_checks_version_and_rekeys(env):
-    client, _, _ = env
+    client, _ = env
     item = create(client, "Разъём", part_number="A-1").json()
     other = create(client, "Другой", part_number="B-2").json()
     ok = client.patch(f"/api/purchasing/items/{item['id']}", json={"version": 1, "part_number": "A-9", "unit": "м"})
@@ -151,7 +146,7 @@ def test_patch_checks_version_and_rekeys(env):
 
 
 def test_aliases_are_unique_and_removable(env):
-    client, sessions, _ = env
+    client, sessions = env
     first = create(client, "Первый").json()
     second = create(client, "Второй").json()
     with sessions() as s:
@@ -172,7 +167,7 @@ def test_aliases_are_unique_and_removable(env):
 
 
 def test_search_words_any_order_over_aliases_and_look_alikes_with_category_counts(env):
-    client, _, _ = env
+    client, _ = env
     a = create(client, "Разъём SMA штекер", part_number="SMA-123", manufacturer="Amphenol").json()
     create(client, "Кабель МГТФ")
     create(client, "Болт")
@@ -190,7 +185,7 @@ def test_search_words_any_order_over_aliases_and_look_alikes_with_category_count
 
 
 def test_merge_moves_aliases_links_and_archives_the_dropped(env):
-    client, sessions, _ = env
+    client, sessions = env
     keep = create(client, "Разъём SMA").json()
     drop = create(client, "SMA разъем штекер", part_number="SMA-9").json()
     client.post(f"/api/purchasing/items/{drop['id']}/aliases", json={"text": "Штекер SMA"})
@@ -211,7 +206,7 @@ def test_merge_moves_aliases_links_and_archives_the_dropped(env):
 
 
 def test_link_and_for_lines_batch(env):
-    client, sessions, _ = env
+    client, sessions = env
     item = create(client, "Разъём", part_number="X-1").json()
     line, other = add_line(sessions, "Разъём"), add_line(sessions, "Болт")
     assert client.post("/api/purchasing/items/link", json={"procurement_line_id": str(uuid4()), "item_id": item["id"]}).status_code == 404
@@ -227,7 +222,7 @@ def test_link_and_for_lines_batch(env):
 # ---- «Собрать из закупок» ------------------------------------------------------------------------------------------
 
 def test_import_dry_run_groups_by_article_then_by_name(env):
-    client, sessions, _ = env
+    client, sessions = env
     add_line(sessions, "Разъём SMA-F", article="SMA-F 01", unit="шт")
     add_line(sessions, "Разъём SMA-F", article="sma f01", unit="Штук")
     add_line(sessions, "Разъем SMA-F гнездо", article="SMAF01", unit="шт")
@@ -250,7 +245,7 @@ def test_import_dry_run_groups_by_article_then_by_name(env):
 
 
 def test_import_apply_is_idempotent_and_links_collisions(env):
-    client, sessions, _ = env
+    client, sessions = env
     existing = create(client, "Разъём SMA-F", part_number="SMA-F 01").json()
     named = create(client, "Кабель МГТФ 0.35").json()
     supplier_id = uuid4()
@@ -291,7 +286,7 @@ def test_import_apply_is_idempotent_and_links_collisions(env):
 # ---- card ----------------------------------------------------------------------------------------------------------
 
 def test_card_demand_price_history_and_quotes(env):
-    client, sessions, _ = env
+    client, sessions = env
     item = create(client, "Разъём", part_number="C-1").json()
     paid_old = add_line(sessions, "Разъём", article="C-1", status="Готово", price="10", paid=datetime(2026, 9, 1, 10), supplier="ООО А", qty="5")
     paid_new = add_line(sessions, "Разъём", article="C-1", status="Готово", price="14", paid=datetime(2026, 9, 20, 10), supplier="ООО Б", qty="3")
@@ -330,28 +325,10 @@ def test_card_demand_price_history_and_quotes(env):
     assert client.get(f"/api/purchasing/items/{uuid4()}").status_code == 404
 
 
-# ---- option gate ---------------------------------------------------------------------------------------------------
-
-def test_option_off_means_404_everywhere_and_rfq_option_opens_only_the_search(env):
-    client, _, path = env
-    item = create(client, "Разъём").json()
-    path.write_text(json.dumps({"references.items": False}), encoding="utf-8")
-    for call in (
-        lambda: client.get("/api/purchasing/items"),
-        lambda: client.get(f"/api/purchasing/items/{item['id']}"),
-        lambda: create(client, "Другое"),
-        lambda: client.post("/api/purchasing/items/import-from-procurement", json={"dry_run": True}),
-        lambda: client.get("/api/purchasing/items/for-lines", params={"ids": ""}),
-        lambda: client.post("/api/purchasing/items/merge", json={"keep_id": item["id"], "drop_id": str(uuid4())}),
-    ):
-        assert call().status_code == 404
-    path.write_text(json.dumps({"procurement.rfq": True}), encoding="utf-8")
-    assert client.get("/api/purchasing/items").status_code == 200
-    assert client.get(f"/api/purchasing/items/{item['id']}").status_code == 404
-
+# ---- rights --------------------------------------------------------------------------------------------------------
 
 def test_a_reader_cannot_write(env):
-    client, _, _ = env
+    client, _ = env
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Иванов", department="РНД"), email="i@example.test",
         roles=frozenset({"operator"}), permissions={"procurement": "view"},

@@ -1,12 +1,14 @@
-"""Shared HTTP plumbing of the purchasing hybrid: unit-of-work factories and the option gate."""
+"""Shared HTTP plumbing of the purchasing hybrid: unit-of-work factories and the admin gate."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from fastapi import HTTPException, Request
+from typing import Annotated
 
-from app.shared import stage_options
+from fastapi import Depends, HTTPException, Request
+
+from app.shared.http_auth import Principal, authenticated_principal
 
 
 def purchasing_uow_factory(request: Request) -> Callable:
@@ -37,7 +39,8 @@ def receiving_uow_factory(request: Request) -> Callable | None:
     return optional_factory(request, "receiving_uow_factory")
 
 
-def require_option(*keys: str) -> None:
-    """404 unless at least one of the stage options is on — off means the feature does not exist."""
-    if not any(stage_options.enabled(key) for key in keys):
-        raise HTTPException(status_code=404, detail="Опция выключена")
+def admin_principal(principal: Annotated[Principal, Depends(authenticated_principal)]) -> Principal:
+    """Purchasing settings change: superadmin / admin only, no tokens."""
+    if principal.service or not principal.full_access:
+        raise HTTPException(status_code=403, detail="Настройки закупки меняет администратор.")
+    return principal

@@ -23,14 +23,14 @@ BASE = "/api/purchasing/items"
 
 @pytest.fixture()
 def stock(env):  # noqa: F811
-    client, sessions, path = env
+    client, sessions = env
     app.state.warehouse_uow_factory = lambda: SqlAlchemyWarehouseUnitOfWork(sessions)
     app.state.receiving_uow_factory = lambda: SqlAlchemyReceivingUnitOfWork(sessions)
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Петров", department="Закупки"), email="p@example.test", roles=frozenset({"buyer"}),
         permissions={"procurement": "edit", "warehouse": "edit", "receiving": "view"},
     )
-    yield client, sessions, path
+    yield client, sessions
     del app.state.warehouse_uow_factory
     del app.state.receiving_uow_factory
 
@@ -83,7 +83,7 @@ def for_lots(client, *lots):
 
 
 def test_chain_lot_receiving_procurement_item(stock):
-    client, sessions, _ = stock
+    client, sessions = stock
     [item] = make_items(client, "Разъём SMA")
     line = add_line(sessions, "SMA штекер")
     client.post(f"{BASE}/link", json={"procurement_line_id": str(line), "item_id": item})
@@ -95,7 +95,7 @@ def test_chain_lot_receiving_procurement_item(stock):
 
 
 def test_explicit_link_overrides_chain_and_can_be_removed(stock):
-    client, sessions, _ = stock
+    client, sessions = stock
     a, b = make_items(client, "Первый", "Второй")
     line = add_line(sessions, "X")
     client.post(f"{BASE}/link", json={"procurement_line_id": str(line), "item_id": a})
@@ -113,7 +113,7 @@ def test_explicit_link_overrides_chain_and_can_be_removed(stock):
 
 
 def test_import_matches_by_article_alias_and_name_and_reports_ambiguous(stock):
-    client, sessions, _ = stock
+    client, sessions = stock
     sma, cable, one, two = make_items(client, "Разъём SMA", "Кабель МГТФ", "Реле А", "Реле общее")
     client.patch(f"{BASE}/{sma}", json={"version": 1, "part_number": "SMA-F 01"})
     client.post(f"{BASE}/{cable}/aliases", json={"text": "Провод МГТФ 0.35"})
@@ -133,7 +133,7 @@ def test_import_matches_by_article_alias_and_name_and_reports_ambiguous(stock):
 
 
 def test_import_dry_run_equals_apply_creates_groups_and_is_idempotent(stock):
-    client, sessions, _ = stock
+    client, sessions = stock
     add_lot(sessions, name="Разъём DB-9", article="DB9-M", unit="штук")
     add_lot(sessions, name="Разъём DB-9 вилка", article="db9 m", unit="шт")
     add_lot(sessions, name="Кабель МГТФ", unit="м", qty="50")
@@ -162,7 +162,7 @@ def test_import_dry_run_equals_apply_creates_groups_and_is_idempotent(stock):
 
 
 def test_card_stock_receipts_and_list_available(stock):
-    client, sessions, _ = stock
+    client, sessions = stock
     item, other = make_items(client, "Кабель МГТФ", "Болт")
     line = add_line(sessions, "Кабель")
     client.post(f"{BASE}/link", json={"procurement_line_id": str(line), "item_id": item})
@@ -185,8 +185,8 @@ def test_card_stock_receipts_and_list_available(stock):
     assert rows[other]["available"] is None and rows[other]["stock_lots"] == 2
 
 
-def test_option_off_is_404_and_gates(stock):
-    client, sessions, path = stock
+def test_gates_by_section_rights(stock):
+    client, sessions = stock
     lot = add_lot(sessions)
     [item] = make_items(client, "Позиция")
 
@@ -204,12 +204,3 @@ def test_option_off_is_404_and_gates(stock):
     assert client.get(f"{BASE}/for-lots", params={"ids": str(lot)}).status_code == 403
     as_user(warehouse="edit", receiving="view")
     assert client.post(f"{BASE}/import-from-stock", json={"dry_run": True}).status_code == 200
-    path.write_text("{}", encoding="utf-8")
-    for call in (
-        lambda: client.get(f"{BASE}/for-lots", params={"ids": str(lot)}),
-        lambda: client.get(f"{BASE}/for-receiving", params={"ids": str(lot)}),
-        lambda: client.post(f"{BASE}/link-lot", json={"lot_id": str(lot), "item_id": item}),
-        lambda: client.delete(f"{BASE}/link-lot/{lot}"),
-        lambda: client.post(f"{BASE}/import-from-stock", json={"dry_run": True}),
-    ):
-        assert call().status_code == 404

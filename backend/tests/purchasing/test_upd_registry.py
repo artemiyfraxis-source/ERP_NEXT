@@ -31,7 +31,6 @@ from app.modules.purchasing.infrastructure import (
     UpdDocumentRow,
     UpdLineRow,
 )
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, create_schema
@@ -48,10 +47,7 @@ EDO_ID = edo_document_id(UPD_DOC.id_file)
 
 
 @pytest.fixture()
-def env(monkeypatch, tmp_path):
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"documents.upd": True}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
+def env():
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
@@ -61,7 +57,7 @@ def env(monkeypatch, tmp_path):
         roles=frozenset({"buyer"}), permissions={"procurement": "edit"},
     )
     app.dependency_overrides[moscow_now] = lambda: NOW
-    yield TestClient(app), sessions, path
+    yield TestClient(app), sessions
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
     del app.state.purchasing_uow_factory
@@ -133,15 +129,8 @@ DART_LINES = [
 
 # ---- gate ----------------------------------------------------------------------------------------------------------
 
-def test_option_off_means_the_registry_does_not_exist(env):
-    client, _, path = env
-    path.write_text(json.dumps({"documents.upd": False}), encoding="utf-8")
-    assert client.get(BASE).status_code == 404
-    assert client.post(f"{BASE}/import-edo", json={"files": [{"file_name": "a.xml", "content_base64": "eA=="}]}).status_code == 404
-
-
 def test_a_viewer_reads_but_does_not_write(env):
-    client, sessions, _ = env
+    client, sessions = env
     upd(sessions, "file-dart-0001")
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Смотрит", department="Склад"), email="v@example.test",
@@ -154,7 +143,7 @@ def test_a_viewer_reads_but_does_not_write(env):
 # ---- list ----------------------------------------------------------------------------------------------------------
 
 def test_list_filters_counts_and_order(env):
-    client, sessions, _ = env
+    client, sessions = env
     upd(sessions, "file-dart-0001", DART_LINES, seller_name="ООО «Дарт»", seller_inn="7707083893", total_gross=50_000,
         doc_date=date(2026, 4, 21), number="2937")
     upd(sessions, "file-krox-0002", status="Требует проверки", doc_date=date(2026, 5, 2), number="77",
@@ -192,7 +181,7 @@ def test_list_filters_counts_and_order(env):
 
 def test_a_misread_seller_inn_keeps_the_supplier_the_seller_and_the_twin(env):
     """Крокс from the live registry: three readings of one INN, № 1320 scanned twice."""
-    client, sessions, _ = env
+    client, sessions = env
     kroks = supplier(sessions, 'ООО "КРОКС ПЛЮС"', KROKS)
     upd(sessions, "kroks-0001", number="1320")
     upd(sessions, "kroks-0002", number="650", doc_date=date(2026, 2, 12), seller_inn="3662152701", status="Требует проверки")
@@ -218,7 +207,7 @@ def test_a_misread_seller_inn_keeps_the_supplier_the_seller_and_the_twin(env):
 
 
 def test_a_supplier_carrying_our_own_inn_is_never_linked(env):
-    client, sessions, _ = env
+    client, sessions = env
     bogus = supplier(sessions, 'ООО "ЭЗП "ФРАКСИС"', OWN)
     dart = supplier(sessions, "ООО «Дарт»", "7707083893")
     # A scan with the parties swapped: our company read as the seller.
@@ -232,7 +221,7 @@ def test_a_supplier_carrying_our_own_inn_is_never_linked(env):
 
 
 def test_the_supplier_chosen_by_hand_stays_through_relinks_and_null_hands_it_back(env):
-    client, sessions, _ = env
+    client, sessions = env
     dart = supplier(sessions, "ООО «Дарт»", "7707083893")
     other = supplier(sessions, "ООО Маркетплейс", None)
     upd(sessions, "file-dart-0001", seller_name="ООО «Дарт»", seller_inn="7707083893")
@@ -253,7 +242,7 @@ def test_the_supplier_chosen_by_hand_stays_through_relinks_and_null_hands_it_bac
 # ---- the card and the buyer's word ---------------------------------------------------------------------------------
 
 def test_the_buyers_version_wins_on_read_keeps_the_parsers_and_is_refused_when_stale(env):
-    client, sessions, _ = env
+    client, sessions = env
     upd(sessions, "file-krox-0002", [{"seq": 1, "name": "Кабель РК 50-2-11", "unit": "м", "quantity": Decimal(100),
                                        "price": Decimal("120.74"), "net": 1_207_400, "vat_rate": "22", "vat": 265_600,
                                        "gross": 1_473_000}],
@@ -295,7 +284,7 @@ def test_the_buyers_version_wins_on_read_keeps_the_parsers_and_is_refused_when_s
 
 
 def test_manual_header_and_lines_are_validated_in_words(env):
-    client, sessions, _ = env
+    client, sessions = env
     upd(sessions, "file-dart-0001")
     base = {"number": "1", "date": "2026-05-02", "seller_name": "Дарт", "seller_inn": "7707083893"}
     line = {"seq": 1, "name": "Разъём"}
@@ -316,7 +305,7 @@ def test_manual_header_and_lines_are_validated_in_words(env):
 
 
 def test_verified_needs_a_parsed_document_and_a_new_parse_is_flagged(env):
-    client, sessions, _ = env
+    client, sessions = env
     upd(sessions, "file-new-00003", status="В очереди")
     upd(sessions, "file-dart-0001")
     early = client.put(f"{BASE}/file-new-00003/verified", json={"verified": True})
@@ -333,7 +322,7 @@ def test_verified_needs_a_parsed_document_and_a_new_parse_is_flagged(env):
 
 
 def test_project_reference_is_set_and_cleared(env):
-    client, sessions, _ = env
+    client, sessions = env
     upd(sessions, "file-dart-0001")
     assert client.put(f"{BASE}/file-dart-0001/project", json={"project_reference": "  591К.3 "}).json()["project_reference"] == "591К.3"
     assert client.put(f"{BASE}/file-dart-0001/project", json={"project_reference": ""}).json()["project_reference"] is None
@@ -341,7 +330,7 @@ def test_project_reference_is_set_and_cleared(env):
 
 
 def test_the_file_opens_a_pdf_in_the_tab(env):
-    client, sessions, _ = env
+    client, sessions = env
     with sessions() as session:
         stored = DocumentFileRow(id=directory.uuid4(), sha256="a" * 64, file_name="Дарт 500.pdf", size=9,
                                  content=b"%PDF-1.4\n", created_at=NOW)
@@ -360,7 +349,7 @@ def test_the_file_opens_a_pdf_in_the_tab(env):
 # ---- EDO upload ----------------------------------------------------------------------------------------------------
 
 def test_edo_xml_dry_run_writes_nothing_apply_imports_once_exact_and_keeps_the_original(env):
-    client, sessions, _ = env
+    client, sessions = env
     dry = upload(client, [("upd.xml", UPD_XML)], dry_run=True)
     assert dry.status_code == 200, dry.text
     assert [(f["status"], f["document_id"], f["number"]) for f in dry.json()["files"]] == [("created", EDO_ID, "РЭ-0915")]
@@ -391,7 +380,7 @@ def test_edo_xml_dry_run_writes_nothing_apply_imports_once_exact_and_keeps_the_o
 
 
 def test_edo_zip_takes_only_documents_and_junk_is_refused_politely(env):
-    client, _, _ = env
+    client, _ = env
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr("docs/ON_NSCHFDOPPR_test.xml", UPD_XML)
@@ -409,7 +398,7 @@ def test_edo_zip_takes_only_documents_and_junk_is_refused_politely(env):
 
 
 def test_twins_the_google_pdf_gives_way_to_the_edo_xml_whichever_came_first(env):
-    client, sessions, _ = env
+    client, sessions = env
     h = UPD_DOC.header
     upd(sessions, "g-twin-00001", number=h.number, doc_date=date.fromisoformat(h.date), seller_inn=h.seller_inn,
         seller_name=h.seller_name, total_gross=h.total_gross)
@@ -439,7 +428,7 @@ def test_twins_the_google_pdf_gives_way_to_the_edo_xml_whichever_came_first(env)
 
 
 def test_a_changed_xml_under_the_same_id_file_updates_the_document_and_keeps_the_buyers_word(env):
-    client, sessions, _ = env
+    client, sessions = env
     upload(client, [("upd.xml", UPD_XML)])
     detail = client.get(f"{BASE}/{EDO_ID}").json()
     client.put(f"{BASE}/{EDO_ID}/verified", json={"verified": True})
@@ -458,7 +447,7 @@ def test_a_changed_xml_under_the_same_id_file_updates_the_document_and_keeps_the
 # ---- sellers without a supplier ------------------------------------------------------------------------------------
 
 def test_sellers_without_a_supplier_are_listed_and_imported_then_linked(env):
-    client, sessions, _ = env
+    client, sessions = env
     supplier(sessions, 'ООО "КРОКС ПЛЮС"', KROKS)
     upd(sessions, "kroks-0001")
     upd(sessions, "dart-0001", seller_name="ООО «Дарт»", seller_inn="7707083893", total_gross=50_000, doc_date=date(2026, 4, 21))
