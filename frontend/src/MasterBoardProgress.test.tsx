@@ -114,7 +114,7 @@ describe("экран мастера: сроки и доска монтажник
     expect(within(other).queryByText(/ДЛ проекта/)).toBeNull();
     expect(within(other).getByText("задание до 10.10")).toHaveAttribute("data-tone", "neutral");
     fireEvent.click(screen.getByText("AAA"));
-    expect(screen.getByText("ДЛ проекта 04.11")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog", { name: "Проект AAA" })).getByText("ДЛ проекта 04.11")).toBeInTheDocument();
   });
 
   it("доска монтажников: период словами, навигация как в плане, ячейка и легенда — общие с «Загрузкой по людям» (РП-3, РП-4)", () => {
@@ -166,9 +166,9 @@ describe("«Уже сделано» — ввод готовых мастером
     render(<MasterBoard tasks={[task("9", "CCC", [op({ id: "m1", position: 1, stage: "Резка" }), assembly])]}
       operators={[{ id: "p1", name: "Рыбкина Ольга", site: "ЦАР" }]} skills={[]} absences={[]} canEdit busy="" mutate={mutate} openTask={() => {}} />);
     fireEvent.click(screen.getByText("CCC"));
-    fireEvent.click(screen.getByRole("button", { name: "Сборка" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Проект CCC" })).getByRole("button", { name: "Сборка" }));
 
-    const made = screen.getByRole("group", { name: "Уже сделано без терминала" });
+    const made = within(screen.getByRole("dialog", { name: "Операция 2. Сборка" })).getByRole("group", { name: "Уже сделано без терминала" });
     expect(within(made).getByText("осталось 200")).toBeInTheDocument();
     expect(within(made).getByRole("combobox", { name: "Чьи штуки" })).toHaveValue("p1");
     fireEvent.change(within(made).getByRole("spinbutton", { name: "Готовых штук" }), { target: { value: "150" } });

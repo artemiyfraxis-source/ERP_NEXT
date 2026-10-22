@@ -52,6 +52,8 @@ class PreviewPayload(BaseModel):
     exclude: list[UUID] = Field(default_factory=list, max_length=2000)
     # «До даты» вручную; не задано — план до горизонта работы (самый поздний срок или сколько нужно, до 8 недель).
     date_to: date | None = None
+    # Тиражи новых заданий по id техкарты КБ (окно проекта на доске); нет КБ — весь её тираж.
+    runs: dict[UUID, Annotated[int, Field(ge=1, le=1_000_000)]] = Field(default_factory=dict, max_length=2000)
 
 
 class ApplyItem(BaseModel):
@@ -70,6 +72,7 @@ def _command(payload: PreviewPayload, principal: Principal, now: datetime) -> Au
     return AutoplanCommand(
         actor=principal.actor, now=now, mode=AutoplanMode(payload.mode), project=payload.project.strip(),
         people=tuple(dict.fromkeys(payload.people)), exclude=frozenset(payload.exclude), date_to=payload.date_to,
+        runs=tuple(sorted(payload.runs.items(), key=lambda item: str(item[0]))),
     )
 
 
