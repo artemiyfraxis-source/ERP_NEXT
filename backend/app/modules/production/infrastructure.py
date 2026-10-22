@@ -9,7 +9,7 @@ import json
 from typing import Sequence
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text, update
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker, validates
 
@@ -63,6 +63,7 @@ from .traceability import (
     next_box_code,
     operator_short_code,
 )
+from .vswr import VswrMeasurement, VswrVerdict
 from .worklog import SUMMARY_KEYS, WorkEvent, WorkTimeEntry
 
 
@@ -596,6 +597,52 @@ class ProductionQcInstrumentRow(Base):
     __tablename__ = "production_qc_instruments"
     inspection_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_qc_inspections.id", ondelete="CASCADE"), primary_key=True)
     instrument_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_instruments.id", ondelete="RESTRICT"), primary_key=True)
+
+
+class ProductionVswrMeasurementRow(Base):
+    """Замер КСВН изделия (0142): каждый замер хранится, действует последняя попытка по серийному номеру."""
+    __tablename__ = "production_vswr_measurements"
+    __table_args__ = (
+        UniqueConstraint("serial_id", "attempt", name="uq_production_vswr_serial_attempt"),
+        CheckConstraint("attempt >= 1", name="ck_production_vswr_attempt"),
+        CheckConstraint("band_from_mhz > 0 AND band_from_mhz < band_to_mhz", name="ck_production_vswr_band"),
+        CheckConstraint("max_vswr >= 1", name="ck_production_vswr_max"),
+        CheckConstraint(
+            "max_vswr_mhz >= band_from_mhz AND max_vswr_mhz <= band_to_mhz", name="ck_production_vswr_peak_in_band",
+        ),
+        CheckConstraint("norm_vswr_max IS NULL OR norm_vswr_max >= 1", name="ck_production_vswr_norm"),
+        CheckConstraint("verdict IN ('pass', 'fail')", name="ck_production_vswr_verdict"),
+        CheckConstraint(
+            "verdict_manual OR (norm_vswr_max IS NOT NULL AND ((verdict = 'pass' AND max_vswr <= norm_vswr_max)"
+            " OR (verdict = 'fail' AND max_vswr > norm_vswr_max)))",
+            name="ck_production_vswr_auto_verdict",
+        ),
+        CheckConstraint("NOT verdict_manual OR length(trim(verdict_reason)) > 0", name="ck_production_vswr_manual_reason"),
+        CheckConstraint("length(trim(file_name)) > 0", name="ck_production_vswr_file_name"),
+        CheckConstraint("length(content) BETWEEN 1 AND 2097152", name="ck_production_vswr_file_size"),
+        CheckConstraint("points >= 1", name="ck_production_vswr_points"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    serial_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_serials.id", ondelete="RESTRICT"), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer(), nullable=False)
+    instrument_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_instruments.id", ondelete="RESTRICT"), nullable=False, index=True)
+    band_from_mhz: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    band_to_mhz: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    max_vswr: Mapped[Decimal] = mapped_column(Numeric(9, 4), nullable=False)
+    max_vswr_mhz: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    norm: Mapped[dict] = mapped_column(JSON, nullable=False)
+    norm_vswr_max: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
+    verdict: Mapped[str] = mapped_column(String(8), nullable=False)
+    verdict_manual: Mapped[bool] = mapped_column(Boolean(), nullable=False)
+    verdict_reason: Mapped[str] = mapped_column(Text(), nullable=False, default="")
+    inspector_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    inspector_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary(), nullable=False, deferred=True)
+    points: Mapped[int] = mapped_column(Integer(), nullable=False)
+    file_meta: Mapped[dict] = mapped_column(JSON, nullable=False)
+    trace: Mapped[list] = mapped_column(JSON, nullable=False)
 
 
 class ProductionQcDecisionRow(Base):
@@ -1740,18 +1787,45 @@ class SqlAlchemySerialRepository:
         ).order_by(ProductionSerialRow.position))
         return [self._domain(row) for row in rows]
 
+    def by_position(self, task_id: UUID, position: int) -> SerialUnit | None:
+        row = self.session.scalar(select(ProductionSerialRow).where(
+            ProductionSerialRow.task_id == task_id, ProductionSerialRow.position == position,
+        ))
+        return self._domain(row) if row is not None else None
+
     def assign_qc(self, task_id: UUID, box_id: UUID, accepted: int, rejected: int) -> list[SerialUnit]:
+        """Свободные серийные номера в коробку ОТК. Брак берёт сначала изделия, чей последний замер КСВН «не годно»;
+        годные — сначала прошедшие замер, затем не мерянные; не прошедшие замер годными не принимаются.
+        Без замеров — как раньше: годные — первые по порядку номера, брак — следующие."""
         rows = list(self.session.scalars(select(ProductionSerialRow).where(
             ProductionSerialRow.task_id == task_id,
             ProductionSerialRow.current_box_id.is_(None),
             ProductionSerialRow.status == SerialStatus.IN_PROGRESS.value,
-        ).order_by(ProductionSerialRow.position).limit(accepted + rejected).with_for_update()))
-        if len(rows) != accepted + rejected:
+        ).order_by(ProductionSerialRow.position).with_for_update()))
+        if len(rows) < accepted + rejected:
             raise ProductionValidationError("Недостаточно свободных серийных номеров задания")
-        for index, row in enumerate(rows):
+        verdicts = SqlAlchemyVswrRepository(self.session).latest_verdicts([row.id for row in rows])
+        failed = [row for row in rows if verdicts.get(row.id) is VswrVerdict.FAIL]
+        passed = [row for row in rows if verdicts.get(row.id) is VswrVerdict.PASS]
+        unmeasured = [row for row in rows if row.id not in verdicts]
+        candidates = passed + unmeasured
+        if len(candidates) < accepted:
+            raise ProductionValidationError(
+                f"Годными принимаются {accepted} шт, а свободных изделий без брака по КСВН {len(candidates)}: "
+                "не прошедшие замер КСВН принимаются только в брак",
+            )
+        accepted_rows = candidates[:accepted]
+        rejected_rows = failed[:rejected]
+        rest = sorted(candidates[accepted:], key=lambda row: row.position)
+        rejected_rows += rest[:rejected - len(rejected_rows)]
+        for row in accepted_rows:
             row.current_box_id = box_id
-            row.status = SerialStatus.QC_ACCEPTED.value if index < accepted else SerialStatus.DEFECT.value
-        return [self._domain(row) for row in rows]
+            row.status = SerialStatus.QC_ACCEPTED.value
+        for row in rejected_rows:
+            row.current_box_id = box_id
+            row.status = SerialStatus.DEFECT.value
+        chosen = sorted(accepted_rows + rejected_rows, key=lambda row: row.position)
+        return [self._domain(row) for row in chosen]
 
     def mark_handed(self, box_id: UUID, grn: str) -> None:
         rows = self.session.scalars(select(ProductionSerialRow).where(
@@ -1761,6 +1835,90 @@ class SqlAlchemySerialRepository:
         for row in rows:
             row.status = SerialStatus.FINISHED_GOODS.value
             row.finished_goods_grn = grn
+
+
+class SqlAlchemyVswrRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    @staticmethod
+    def _domain(row: ProductionVswrMeasurementRow, serial_number: str) -> VswrMeasurement:
+        return VswrMeasurement(
+            id=row.id, serial_id=row.serial_id, attempt=row.attempt, instrument_id=row.instrument_id,
+            band_from_mhz=row.band_from_mhz, band_to_mhz=row.band_to_mhz,
+            max_vswr=row.max_vswr, max_vswr_mhz=row.max_vswr_mhz,
+            norm=dict(row.norm or {}), norm_vswr_max=row.norm_vswr_max,
+            verdict=VswrVerdict(row.verdict), verdict_manual=row.verdict_manual,
+            verdict_reason=row.verdict_reason, inspector_id=row.inspector_id,
+            inspector_name=row.inspector_name, measured_at=row.measured_at,
+            file_name=row.file_name, points=row.points, file_meta=dict(row.file_meta or {}),
+            trace=tuple((float(point[0]), float(point[1])) for point in row.trace or ()),
+            serial_number=serial_number,
+        )
+
+    def _select(self):
+        return select(ProductionVswrMeasurementRow, ProductionSerialRow.serial_number).join(
+            ProductionSerialRow, ProductionSerialRow.id == ProductionVswrMeasurementRow.serial_id,
+        )
+
+    def next_attempt(self, serial_id: UUID) -> int:
+        current = self.session.scalar(select(func.max(ProductionVswrMeasurementRow.attempt)).where(
+            ProductionVswrMeasurementRow.serial_id == serial_id,
+        ))
+        return int(current or 0) + 1
+
+    def add(self, measurement: VswrMeasurement, content: bytes) -> None:
+        self.session.add(ProductionVswrMeasurementRow(
+            id=measurement.id, serial_id=measurement.serial_id, attempt=measurement.attempt,
+            instrument_id=measurement.instrument_id,
+            band_from_mhz=measurement.band_from_mhz, band_to_mhz=measurement.band_to_mhz,
+            max_vswr=measurement.max_vswr, max_vswr_mhz=measurement.max_vswr_mhz,
+            norm=measurement.norm, norm_vswr_max=measurement.norm_vswr_max,
+            verdict=measurement.verdict.value, verdict_manual=measurement.verdict_manual,
+            verdict_reason=measurement.verdict_reason, inspector_id=measurement.inspector_id,
+            inspector_name=measurement.inspector_name, measured_at=measurement.measured_at,
+            file_name=measurement.file_name, content=content, points=measurement.points,
+            file_meta=measurement.file_meta,
+            trace=[list(point) for point in measurement.trace],
+        ))
+
+    def list_for_task(self, task_id: UUID) -> list[VswrMeasurement]:
+        rows = self.session.execute(self._select().where(ProductionSerialRow.task_id == task_id).order_by(
+            ProductionSerialRow.position, ProductionVswrMeasurementRow.attempt,
+        ))
+        return [self._domain(row, number) for row, number in rows]
+
+    def list_for_serial(self, serial_id: UUID) -> list[VswrMeasurement]:
+        rows = self.session.execute(self._select().where(
+            ProductionVswrMeasurementRow.serial_id == serial_id,
+        ).order_by(ProductionVswrMeasurementRow.attempt))
+        return [self._domain(row, number) for row, number in rows]
+
+    def latest_for_serial(self, serial_id: UUID) -> VswrMeasurement | None:
+        found = self.session.execute(self._select().where(
+            ProductionVswrMeasurementRow.serial_id == serial_id,
+        ).order_by(ProductionVswrMeasurementRow.attempt.desc()).limit(1)).first()
+        return self._domain(found[0], found[1]) if found is not None else None
+
+    def latest_verdicts(self, serial_ids: Sequence[UUID]) -> dict[UUID, VswrVerdict]:
+        """serial_id → вердикт последнего замера; не мерянных изделий в ответе нет."""
+        if not serial_ids:
+            return {}
+        rows = self.session.execute(select(
+            ProductionVswrMeasurementRow.serial_id, ProductionVswrMeasurementRow.attempt,
+            ProductionVswrMeasurementRow.verdict,
+        ).where(ProductionVswrMeasurementRow.serial_id.in_(list(serial_ids))))
+        latest: dict[UUID, tuple[int, str]] = {}
+        for serial_id, attempt, verdict in rows:
+            if serial_id not in latest or attempt > latest[serial_id][0]:
+                latest[serial_id] = (attempt, verdict)
+        return {serial_id: VswrVerdict(verdict) for serial_id, (_attempt, verdict) in latest.items()}
+
+    def file(self, measurement_id: UUID) -> tuple[str, bytes] | None:
+        found = self.session.execute(select(
+            ProductionVswrMeasurementRow.file_name, ProductionVswrMeasurementRow.content,
+        ).where(ProductionVswrMeasurementRow.id == measurement_id)).first()
+        return (found[0], bytes(found[1])) if found is not None else None
 
 
 class SqlAlchemyQcRepository:
@@ -1894,6 +2052,7 @@ class SqlAlchemyProductionUnitOfWork:
         self.serials = SqlAlchemySerialRepository(self.session)
         self.deliveries = SqlAlchemyDeliveryRepository(self.session)
         self.qc = SqlAlchemyQcRepository(self.session)
+        self.vswr = SqlAlchemyVswrRepository(self.session)
         self.genealogy = SqlAlchemyGenealogyRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         return self

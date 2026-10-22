@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   productionApi,
@@ -16,6 +16,7 @@ import { canAct } from "./navigation";
 import { isFinal } from "./productionGraph";
 import { StatusChip } from "./StatusChip";
 import { BoxName, boxMatches } from "./BoxLabel";
+import { VswrSection, type VswrRejectRequest } from "./VswrSection";
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<void>;
 
@@ -35,6 +36,8 @@ export function QualityPage({ principal }: { principal: Principal }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
+  // «Не годно» по КСВН → очередь ОТК: описание брака подставляется в черновик первой коробки этого задания.
+  const [prefill, setPrefill] = useState<(VswrRejectRequest & { boxId: string; stamp: number }) | null>(null);
 
   async function reload() {
     setError("");
@@ -62,6 +65,12 @@ export function QualityPage({ principal }: { principal: Principal }) {
 
   useEffect(() => { void reload(); }, []);
 
+  const queueBox = (taskId: string) => boxes.find((box) => box.task_id === taskId && inQcQueue(box, tasks));
+  const rejectFromVswr = (request: VswrRejectRequest) => {
+    const box = queueBox(request.taskId);
+    if (box) setPrefill({ ...request, boxId: box.id, stamp: Date.now() });
+  };
+
   async function mutate(key: string, operation: () => Promise<unknown>) {
     if (busy) return;
     setBusy(key);
@@ -87,7 +96,8 @@ export function QualityPage({ principal }: { principal: Principal }) {
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {!loaded && <div className="empty">Загрузка…</div>}
-    {loaded && canQuality && <QualityPanel boxes={boxes} tasks={tasks} instruments={instruments} busy={Boolean(busy)} mutate={mutate} />}
+    {loaded && canQuality && <QualityPanel boxes={boxes} tasks={tasks} instruments={instruments} busy={Boolean(busy)} mutate={mutate} prefill={prefill} />}
+    {loaded && canQuality && <VswrSection tasks={tasks} instruments={instruments} canUpload={canQuality} canReject={(taskId) => Boolean(queueBox(taskId))} onReject={rejectFromVswr} />}
     {loaded && canEdit && <div className="review-row">
       <QcRejectionReview rejections={qcRejections} busy={Boolean(busy)} mutate={mutate} />
       <DefectReview defects={defects} operators={operators} busy={Boolean(busy)} mutate={mutate} />
@@ -143,26 +153,45 @@ function QcRejectionReview({ rejections, busy, mutate }: {
   </div>;
 }
 
-function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
+/** Коробка в очереди ОТК: сдана с финальной операции схемы и ещё не проверена. */
+function inQcQueue(box: ProductionBox, tasks: ProductionTask[]): boolean {
+  const task = tasks.find((item) => item.id === box.task_id);
+  const operation = task?.operations.find((item) => item.id === box.operation_id);
+  // В ОТК идёт коробка финальной операции схемы; операция не нашлась в задании — по старому: последний номер.
+  const final = task && operation ? isFinal(task, operation) : task ? box.operation_position === Math.max(...task.operations.map((item) => item.position)) : false;
+  // Подтверждает только ОТК (владелец, 13.10.2026): в очередь — сданная коробка; «Подтверждена» и не проверена — старые,
+  // подтверждённые мастером до 13.10.
+  return (box.status === "Закрыта оператором" || box.status === "Подтверждена") && !box.qc_inspected && final;
+}
+
+function QualityPanel({ boxes, tasks, instruments, busy, mutate, prefill }: {
   boxes: ProductionBox[];
   tasks: ProductionTask[];
   instruments: ProductionInstrument[];
   busy: boolean;
   mutate: Mutate;
+  prefill: { boxId: string; description: string; stamp: number } | null;
 }) {
   const [drafts, setDrafts] = useState<Record<string, { accepted: string; rejected: string; character: string; description: string; instrumentIds: string[] }>>({});
   const [query, setQuery] = useState("");
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [returning, setReturning] = useState<Record<string, boolean>>({});
-  const ready = boxes.filter((box) => {
-    const task = tasks.find((item) => item.id === box.task_id);
-    const operation = task?.operations.find((item) => item.id === box.operation_id);
-    // В ОТК идёт коробка финальной операции схемы; операция не нашлась в задании — по старому: последний номер.
-    const final = task && operation ? isFinal(task, operation) : task ? box.operation_position === Math.max(...task.operations.map((item) => item.position)) : false;
-    // Подтверждает только ОТК (владелец, 13.10.2026): в очередь — сданная коробка; «Подтверждена» и не проверена — старые,
-    // подтверждённые мастером до 13.10.
-    return (box.status === "Закрыта оператором" || box.status === "Подтверждена") && !box.qc_inspected && final;
-  });
+  const ready = boxes.filter((box) => inQcQueue(box, tasks));
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!prefill) return;
+    const box = boxes.find((item) => item.id === prefill.boxId);
+    if (!box) return;
+    const available = Number(box.available);
+    setDrafts((current) => ({
+      ...current,
+      [box.id]: {
+        ...(current[box.id] ?? { accepted: box.available, rejected: "0", character: "", description: "", instrumentIds: [] }),
+        accepted: String(Math.max(available - 1, 0)), rejected: "1", character: "КСВН выше нормы", description: prefill.description,
+      },
+    }));
+    panel.current?.scrollIntoView?.({ block: "start" });
+  }, [prefill?.stamp]);
   if (!ready.length) return <div className="panel box-review qc-review"><div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">0</span></div><div className="empty">Коробок на проверку нет — они появятся, когда монтажник сдаст коробку с последней операции.</div></div>;
   // Первая правка не должна сбрасывать «Годные ОТК» с показанного количества коробки.
   const update = (box: ProductionBox, patch: Partial<{ accepted: string; rejected: string; character: string; description: string; instrumentIds: string[] }>) => setDrafts((current) => {
@@ -170,7 +199,7 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
     return { ...current, [box.id]: { ...previous, ...patch } };
   });
   const shown = ready.filter((box) => boxMatches(box, query));
-  return <div className="panel box-review qc-review"><div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">{ready.length}</span>
+  return <div ref={panel} className="panel box-review qc-review"><div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">{ready.length}</span>
     {ready.length > 3 && <input className="search box-search" type="search" aria-label="Найти коробку по коду" placeholder="Код с коробки или номер" value={query} onChange={(event) => setQuery(event.target.value)} />}</div>
     {!shown.length && <div className="empty">Нет коробки с кодом «{query}» — проверьте код на коробке.</div>}
     <div className="box-grid">{shown.map((box) => {

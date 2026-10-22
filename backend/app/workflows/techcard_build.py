@@ -6,7 +6,8 @@ background job re-derives many cards in one run). Every enricher is idempotent a
 value the references no longer give disappears instead of lingering from the previous run.
 Ownership of keys:
   * reference-owned, always overwritten: `terminalNorm` / `terminalNormB`, `markKit`, `linearTiming`, the coax ends'
-    `crimpHex` / `contactDepth` / `d1`–`d3` (no screen types them; the references are their only source);
+    `crimpHex` / `contactDepth` / `d1`–`d3`, the assembly's `coax.vswrNorm` (no screen types them; the references are
+    their only source);
   * wire `outerDiameter` / `conductorDiameter` — the one place where a person may also have typed a value. The
     reference answer wins when there is one (as before); where the references are silent, a value this enricher set
     earlier is dropped and a value it did not set (typed by hand, or from the generator) stays. Which values are its own
@@ -29,8 +30,11 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork, coax_dia_rows
-from app.modules.references.cable_structure import HookupWire, WireGauge, decimal_or_none, gauge_gost_awg, section_key
+from app.modules.references.cable_structure import (
+    CoaxCard, HookupWire, WireGauge, decimal_or_none, gauge_gost_awg, section_key,
+)
 from app.modules.references.cables import hookup_series_rest
+from app.modules.references.coax_vswr import cable_card, vswr_norm
 from app.modules.references.domain import TechOperationTab, cable_key, gost_awg_map, pick_wire_row
 from app.modules.references.wire_dia import outer_by_series
 from app.modules.references.technology import (
@@ -61,6 +65,7 @@ class Refs:
     wire_rows: tuple[Mapping[str, Any], ...] = ()
     coax_rows: tuple[Mapping[str, Any], ...] = ()
     dia_rows: tuple[Mapping[str, Any], ...] = ()
+    coax_cards: tuple[CoaxCard, ...] = ()  # «Коаксиальные кабели»: затухание и рабочая частота для нормы КСВН
 
     @cached_property
     def terminal_records(self) -> tuple[TerminalRecord, ...]:
@@ -74,11 +79,21 @@ class Refs:
             "equipment": self.equipment, "operations": self.operations,
             "gauges": [asdict(item) for item in self.gauges], "hookups": [asdict(item) for item in self.hookups],
             "wire": self.wire_rows, "coax": self.coax_rows, "dia": self.dia_rows,
+            "coax_cards": [_card_stamp(card) for card in self.coax_cards],
         }
         for name, part in parts.items():
             digest.update(name.encode())
             digest.update(json.dumps(part, ensure_ascii=False, sort_keys=True, default=_plain).encode())
         return digest.hexdigest()
+
+
+def _card_stamp(card: CoaxCard) -> dict[str, Any]:
+    """What the VSWR norm reads of a cable card: its names, rated frequency and dB/m points."""
+    return {
+        "name": card.name_key, "aliases": sorted(alias.alias_key for alias in card.aliases),
+        "max_ghz": str(card.max_operating_ghz or ""),
+        "loss": sorted((str(point.freq_mhz), point.kind, point.source, str(point.loss_db_m)) for point in card.attenuation),
+    }
 
 
 def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: bool = True) -> Refs:
@@ -103,6 +118,7 @@ def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: b
         operations = _rows(uow.tech_operations.list(tab=TechOperationTab.OPERATION, query="", limit=100_000))
         coax_rows = _rows(uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000)) if coax else ()
         dia_rows = tuple(MappingProxyType(dict(row)) for row in coax_dia_rows(uow)) if coax else ()
+        coax_cards = tuple(uow.cable_structure.cards()) if coax else ()
     return Refs(
         snapshot=MappingProxyType({
             "schema_version": metadata["schema_version"],
@@ -111,6 +127,7 @@ def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: b
         }),
         terminal_rows=terminal, gost_awg=MappingProxyType(dict(gost_awg)), equipment=equipment, operations=operations,
         gauges=gauges, hookups=hookups, wire_rows=wire_rows, coax_rows=coax_rows, dia_rows=dia_rows,
+        coax_cards=coax_cards,
     )
 
 
@@ -140,6 +157,7 @@ def with_technology(
     enriched = enrich_coax_hex(enriched, refs.coax_rows)
     enriched = enrich_coax_depth(enriched, refs.coax_rows)
     enriched = enrich_coax_diameters(enriched, refs.dia_rows)
+    enriched = enrich_coax_vswr_norm(enriched, refs.coax_rows, refs.coax_cards)
     return enriched, dict(refs.snapshot)
 
 
@@ -457,6 +475,28 @@ def enrich_coax_diameters(config: Mapping[str, Any], dia_rows: Iterable[Mapping[
                 end[name] = value
             else:
                 end.pop(name, None)
+    return enriched
+
+
+def enrich_coax_vswr_norm(
+    config: Mapping[str, Any], coax_rows: Iterable[Mapping[str, Any]], cards: Iterable[CoaxCard],
+) -> dict[str, Any]:
+    """Copy of the config whose coax assembly carries `coax.vswrNorm` — the VSWR acceptance norm from its components
+    (owner 22.10.2026, `coax_vswr.vswr_norm`): «КСВ» / «Частота до, ГГц» of both connectors (БД.КОАКС), the loss and
+    rated frequency of the cable card (`cableArt`, else `cableName`), `cableLength`. Only an assembly with a connector
+    on both ends has one; the key is dropped first and rebuilt, so a norm the references no longer give disappears."""
+    enriched = deepcopy(dict(config))
+    coax = enriched.get("coax")
+    if not isinstance(coax, dict):
+        return enriched
+    coax.pop("vswrNorm", None)
+    ends = [(side, str(end.get("article") or "").strip()) for side, end in
+            (("A", coax.get("sideA")), ("B", coax.get("sideB"))) if isinstance(end, Mapping)]
+    if len(ends) != 2 or not all(article for _side, article in ends):
+        return enriched
+    cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
+    coax["vswrNorm"] = vswr_norm(ends, coax_rows, cable_card(cards, cable) if cable else None, cable,
+                                 coax.get("cableLength"))
     return enriched
 
 

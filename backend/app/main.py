@@ -63,6 +63,7 @@ from .modules.purchasing import api_settings as purchasing_settings_api
 from .modules.purchasing import api_suppliers as purchasing_suppliers_api
 from .workflows import finished_goods_api
 from .workflows import production_intake_api
+from .workflows import coax_vswr_api
 from .modules.purchasing import api_upd as purchasing_upd_api
 
 app = FastAPI(
@@ -91,7 +92,7 @@ app.state.tls_exception_hosts = tls_exception_hosts()
 app.add_middleware(
     RequestBodyLimitMiddleware,
     max_bytes=1_048_576,
-    path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576,
+    path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/production/vswr": 4 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576,
                  "/api/procurement/invoice-files": 30 * 1_048_576, "/api/receiving/files": 30 * 1_048_576,
                  "/api/techcards/assembly/drawings": 30 * 1_048_576, "/api/purchasing/upd/import-edo": 30 * 1_048_576,
                  "/api/references/import": MAX_IMPORT_BODY_BYTES},
@@ -144,6 +145,7 @@ for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasin
     app.include_router(_purchasing.router)
 app.include_router(finished_goods_api.router)
 app.include_router(production_intake_api.router)
+app.include_router(coax_vswr_api.router)
 
 if database_url := os.getenv("ERP_DATABASE_URL"):
     configure_database(app, database_url)

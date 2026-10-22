@@ -1177,6 +1177,94 @@ export interface CorrectBoxInput {
   defect_description: string;
 }
 
+export interface VswrTracePoint { mhz: number; vswr: number }
+export interface VswrMeasurement {
+  id: string;
+  serial_number: string;
+  attempt: number;
+  band_mhz: [number | null, number | null];
+  max_vswr: number | null;
+  max_vswr_mhz: number | null;
+  norm: unknown;
+  norm_vswr_max: number | null;
+  verdict: "pass" | "fail";
+  verdict_name: string;
+  verdict_manual: boolean;
+  verdict_reason: string;
+  inspector: { id: string; name: string };
+  measured_at: string;
+  file_name: string;
+  points: number;
+  file_meta: unknown;
+  trace?: VswrTracePoint[];
+}
+export interface VswrNorm {
+  status: "ok" | "undefined";
+  reason: string;
+  vswr_max: number | null;
+  band_mhz: [number | null, number | null] | null;
+  s21_db?: number | null;
+  length_m?: number | null;
+  source?: string | null;
+  basis?: string;
+}
+export interface VswrSerialRow {
+  position: number;
+  serial_id: string;
+  serial_number: string;
+  status: string;
+  attempts: number;
+  latest: VswrMeasurement | null;
+}
+export interface VswrTaskOverview {
+  task: { id: string; number: string; name: string; quantity: number };
+  norm: VswrNorm;
+  serials: VswrSerialRow[];
+}
+export interface VswrUploadPayload {
+  task_id: string;
+  position: number;
+  instrument_id: string;
+  file_name: string;
+  file_base64: string;
+  band_from_mhz?: number | null;
+  band_to_mhz?: number | null;
+  verdict?: "pass" | "fail";
+  reason?: string;
+}
+export interface PassportInstrument {
+  name: string;
+  instrument_type: string;
+  inventory_number: string;
+  verification_number: string;
+  verified_at: string;
+  verification_due: string;
+}
+export interface PassportCheck {
+  kind: string;
+  title: string;
+  verdict: string;
+  verdict_name: string;
+  measurement?: VswrMeasurement;
+  instrument: PassportInstrument | null;
+  attempts: number;
+  inspector: { id: string; name: string };
+  inspected_at: string;
+}
+export interface PassportEnd { side: string | null; article: string | null; vswr_text: string | null; vswr: number | null; max_ghz: number | null }
+export interface CableAssemblyPassport {
+  product: {
+    task_number: string; project: string; item: string; name: string; serial_number: string | null; position: number;
+    cable: { name: string | null; loss_db_m: number | null }; length_m: number | null; ends: PassportEnd[];
+  };
+  etk: { techcard_id: string | null; item_index: string; product_name: string; revision: number | null };
+  norm: VswrNorm & { basis: string };
+  checks: PassportCheck[];
+  verdict: string | null;
+  inspector: { id: string; name: string } | null;
+  inspected_at: string | null;
+}
+
 export interface ProductionInstrument {
   id: string;
   version: number;
@@ -3343,6 +3431,12 @@ export const productionApi = {
       method: "POST", body: JSON.stringify({ version, disposition, act_reference: actReference }),
     }),
   instruments: () => api<{ instruments: ProductionInstrument[] }>("/api/production/instruments"),
+  vswrTask: (taskId: string) => api<VswrTaskOverview>(`/api/production/vswr/tasks/${taskId}`),
+  uploadVswr: (payload: VswrUploadPayload) =>
+    api<{ measurement: VswrMeasurement; position: number }>("/api/production/vswr", { method: "POST", body: JSON.stringify(payload) }),
+  vswrPassport: (taskId: string, position: number) =>
+    api<CableAssemblyPassport>(`/api/production/vswr/tasks/${taskId}/serials/${position}/passport`),
+  vswrFileUrl: (measurementId: string) => `/api/production/vswr/measurements/${measurementId}/file`,
   qcRejections: () => api<{ rejections: ProductionQcRejection[] }>("/api/production/qc/rejections"),
   decideQcRejection: (inspectionId: string, disposition: "Доработка" | "Списание" | "Использовать как есть", actReference: string) =>
     api(`/api/production/qc/rejections/${inspectionId}/decide`, {

@@ -23,6 +23,7 @@ from .traceability import (
     QcInspection,
     SerialUnit,
 )
+from .vswr import VswrRepository
 
 
 class InstrumentRepository(Protocol):
@@ -35,6 +36,8 @@ class InstrumentRepository(Protocol):
 class SerialRepository(Protocol):
     def ensure_task(self, task_id: UUID, task_number: str, quantity: int) -> bool: ...
     def list_for_task(self, task_id: UUID) -> Sequence[SerialUnit]: ...
+    def by_position(self, task_id: UUID, position: int) -> SerialUnit | None: ...
+    # Изделия с последним замером КСВН «не годно» идут в брак первыми (vswr.py).
     def assign_qc(self, task_id: UUID, box_id: UUID, accepted: int, rejected: int) -> Sequence[SerialUnit]: ...
 
 
@@ -55,6 +58,7 @@ class QualityUnitOfWork(Protocol):
     instruments: InstrumentRepository
     serials: SerialRepository
     qc: QcRepository
+    vswr: VswrRepository
     audit: AppendOnlyRepository
     def __enter__(self): ...
     def __exit__(self, exc_type, exc, traceback): ...
