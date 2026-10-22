@@ -33,7 +33,7 @@ export function ProjectPlanBlock({ project, canEdit, openProjectCard }: {
   }
   useEffect(() => { void reload(); }, [project]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const row = plan?.rows.find((item) => item.project.trim().toUpperCase() === project.trim().toUpperCase()) ?? null;
+  const row = plan?.rows?.find((item) => item.project.trim().toUpperCase() === project.trim().toUpperCase()) ?? null;
 
   async function addEvent(payload: Parameters<typeof productionPlanApi.addEvent>[0]) {
     if (busy) return;
