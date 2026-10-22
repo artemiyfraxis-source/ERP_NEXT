@@ -8,8 +8,15 @@ import pytest
 
 from app.main import app
 from app.modules.identity.infrastructure import IdentityUserRow
-from app.modules.production.dispatch import split_shares
-from app.modules.production.domain import OperationShare, ProductionOperation, ProductionValidationError
+from app.modules.production.application import _busy
+from app.modules.production.dispatch import DispatchCalendar, LoadClock, Progress, overrun_window, place, split_shares
+from app.modules.production.domain import (
+    DEFAULT_SHIFT,
+    OperationShare,
+    ProductionOperation,
+    ProductionTask,
+    ProductionValidationError,
+)
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
@@ -155,6 +162,8 @@ def test_partial_output_moves_the_expected_finish(production_api):
 
     item = fresh(client, task["id"])["operations"][0]["shares"][0]
     assert (item["planned_start"][:16], item["planned_finish"][:16], item["finished_at"]) == ("2026-09-22T09:00", "2026-09-22T10:26", None)
+    # Сдано по доле — для остатка затянувшейся работы на доске мастера.
+    assert item["output"] == "4"
 
 
 def test_started_share_is_not_moved_by_the_master(production_api):
@@ -413,3 +422,95 @@ def test_failed_replan_is_rolled_back_but_the_start_stays(production_api, monkey
     assert kept["version"] == first["version"]
     assert kept["operations"][0]["shares"][0]["started_at"] is None
     assert window(fresh(client, second["id"]), 1, operator_id) == ("2026-09-22T10:00", "2026-09-22T11:00")
+
+
+# --- Затянувшаяся доля (владелец, 22.10: «нет заданий которые идут долго») -------------------------------------------
+# Рыбкина взяла ПФ-12 20.10 в 12:46 (план до 21.10 17:01, норма 10 ч на 500 шт) и не сдала. 22.10 её день не пуст:
+# доля занимает её от «сейчас» на остаток нормы, не меньше часа работы.
+
+OLGA = UUID("10000000-0000-0000-0000-0000000000a1")
+NOW_1022 = datetime(2026, 10, 22, 9, 0)  # четверг, начало смены
+NO_CALENDAR = DispatchCalendar(frozenset(), DEFAULT_SHIFT, {})
+
+
+def _pure_task(number: str, quantity: int, unit: str) -> ProductionTask:
+    operation = ProductionOperation.create(
+        position=1, code="ПФ", stage="Ветвь X4", description="", seconds_per_unit=Decimal(unit),
+        setup_seconds=Decimal(0), quantity=quantity,
+    )
+    return ProductionTask.create(
+        number=number, source_idempotency_key=number, source_fingerprint="fp", project="ПФ-12", item="КБ1",
+        name="Жгут", quantity=quantity, fulfillment_request_id=None, deadline=None, launched_by="Мастер",
+        operations=(operation,), created_at=datetime(2026, 10, 19, 9, 0),
+    )
+
+
+def _overdue(started: bool = True, finished: bool = False) -> ProductionTask:
+    """500 шт × 72 с = 10 ч чистых; план истёк 21.10 17:01."""
+    task = _pure_task("ПЗ-0012", 500, "72")
+    share = OperationShare(
+        OLGA, 500, datetime(2026, 10, 20, 12, 46), datetime(2026, 10, 21, 17, 1),
+        started_at=datetime(2026, 10, 20, 12, 46) if started else None,
+        finished_at=datetime(2026, 10, 21, 16, 0) if finished else None,
+    )
+    return task.with_operations((task.operations[0].with_shares((share,), "Мастер"),))
+
+
+def _place_new(overdue: ProductionTask, progress: Progress = Progress.empty(), calendar=NO_CALENDAR):
+    new = _pure_task("ПЗ-0013", 10, "315")  # 52,5 мин чистых = 1 ч на часах
+    return place(
+        tasks=[overdue, new], task=new, operation=new.operations[0], operator_id=OLGA, quantity=None,
+        requested_start=NOW_1022, calendar=calendar, skills={}, progress=progress, now=NOW_1022,
+    )
+
+
+def _made(overdue: ProductionTask, pieces: int) -> Progress:
+    operation_id = overdue.operations[0].id
+    return Progress({operation_id: Decimal(pieces)}, {(operation_id, OLGA): Decimal(pieces)})
+
+
+def test_overrunning_started_share_blocks_new_work_today():
+    # Ничего не сдано: остаток — вся норма 10 ч чистых = 11 ч 26 мин на часах: весь день 22.10 и 23.10 до 12:26.
+    start, _ = _place_new(_overdue())
+    assert start == datetime(2026, 10, 23, 12, 26)
+
+
+def test_overrun_lasts_for_the_pieces_not_handed_in():
+    # Сдано 450 из 500: остаток 50 × 72 с = 1 ч чистых = 1 ч 09 мин на часах — новая работа с 10:09.
+    overdue = _overdue()
+    assert _place_new(overdue, _made(overdue, 450))[0] == datetime(2026, 10, 22, 10, 9)
+    # Сдано 490: остаток 12 мин, но затянувшаяся работа держит не меньше часа работы.
+    assert _place_new(overdue, _made(overdue, 490))[0] == datetime(2026, 10, 22, 10, 9)
+
+
+def test_finished_or_handed_in_share_frees_the_fitter():
+    assert _place_new(_overdue(finished=True))[0] == NOW_1022
+    overdue = _overdue()
+    assert _place_new(overdue, _made(overdue, 500))[0] == NOW_1022
+
+
+def test_overdue_share_not_taken_keeps_its_planned_window():
+    # Не взята — занятость только по своему (прошедшему) плану, как раньше: день свободен.
+    assert _place_new(_overdue(started=False))[0] == NOW_1022
+
+
+def test_overrun_follows_the_calendar_and_absences():
+    overdue = _overdue()
+    away = DispatchCalendar(frozenset(), DEFAULT_SHIFT, {OLGA: ((datetime(2026, 10, 22), datetime(2026, 10, 23)),)})
+    clock = LoadClock(NOW_1022, away, {}, _made(overdue, 450))
+    # Отгул 22.10: затянувшаяся работа ждёт её — 23.10 с 9:00 на остаток.
+    assert overrun_window(overdue, overdue.operations[0], overdue.operations[0].shares, clock) == (
+        datetime(2026, 10, 23, 9, 0), datetime(2026, 10, 23, 10, 9),
+    )
+    # План в задании не переписан.
+    assert overdue.operations[0].shares[0].planned_finish == datetime(2026, 10, 21, 17, 1)
+
+
+def test_busy_counts_the_overrun_from_now():
+    overdue = _overdue()
+    clock = LoadClock(NOW_1022, NO_CALENDAR, {}, _made(overdue, 450))
+    busy = _busy([overdue], UUID(int=0), UUID(int=0), NOW_1022, clock)[OLGA]
+    assert [(item.start, item.finish) for item in busy] == [(NOW_1022, datetime(2026, 10, 22, 10, 9))]
+    assert busy[0].label.endswith("затянулось")
+    # Без «сейчас» — прежнее плановое окно.
+    assert _busy([overdue], UUID(int=0), UUID(int=0), NOW_1022)[OLGA][0].finish == datetime(2026, 10, 21, 17, 1)

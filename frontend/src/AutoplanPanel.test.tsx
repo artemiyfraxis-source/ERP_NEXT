@@ -31,7 +31,7 @@ const preview: AutoplanPreview = {
   batches: [],
   unplaced: [
     { operation_id: "x", task_id: "y", task_number: "ПЗ-0009", position: 2, reason: "Нет допуска у монтажников" },
-    { operation_id: null, task_id: null, techcard_id: NO_RUN, task_number: "708К КБ3", position: null, reason: "Нет тиража — запустите через «+ Запустить задание»" },
+    { operation_id: null, task_id: null, techcard_id: NO_RUN, task_number: "708К КБ3", position: null, reason: "Нет тиража КБ — задайте тираж в наборе проекта" },
   ],
   warnings: ["Станок занят"],
   stats: { changeovers: 2, changeovers_naive: 5, saved_seconds: 5400 },
@@ -44,7 +44,7 @@ const context: AutoplanContext = {
   tasks: [{ id: TASK, number: "ПЗ-0001", project: "591K.3", item: "КБ1", name: "Жгут", deadline: "2026-10-09" }],
   new: [
     { techcard_id: CARD, project: "708К", index: "КБ2", name: "Кабель", run: "10", deadline: "2026-10-10", operations: 3, skipped: "" },
-    { techcard_id: NO_RUN, project: "708К", index: "КБ3", name: "Кабель", run: "", deadline: null, operations: 3, skipped: "Нет тиража — запустите через «+ Запустить задание»" },
+    { techcard_id: NO_RUN, project: "708К", index: "КБ3", name: "Кабель", run: "", deadline: null, operations: 3, skipped: "Нет тиража КБ — задайте тираж в наборе проекта" },
   ],
   projects: [
     { project: "591K.3", deadline: "2026-10-09", tasks: 1, new: 0 },
@@ -142,7 +142,7 @@ it("excludes tasks and new КБ from the whole-shop plan in a collapsed list", a
   render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} />);
   fireEvent.click(await screen.findByText("Исключить задания"));
   expect(screen.getByText("в плане 2 из 2")).toBeInTheDocument();
-  expect(screen.getByText("Нет тиража — запустите через «+ Запустить задание»")).toBeInTheDocument();
+  expect(screen.getByText("Нет тиража КБ — задайте тираж в наборе проекта")).toBeInTheDocument();
   fireEvent.click(screen.getByLabelText("ПЗ-0001 · 591K.3 · КБ1"));
   fireEvent.click(screen.getByLabelText("708К · КБ2 · новое задание"));
   expect(screen.getByText("в плане 0 из 2")).toBeInTheDocument();
@@ -251,4 +251,45 @@ it("says there are no leftovers and hints nothing", async () => {
   expect(await screen.findByText("Остатков полуфабрикатов нет.")).toBeInTheDocument();
   await openPreview();
   expect(screen.queryByText(/из остатков/)).toBeNull();
+});
+
+// Владелец 22.10: «при заходе в проект хочу кнопку «Автопланирование», после нажатия — выбрать тип планирования и
+// кол-во выделенных людей».
+it("from the project window: this project, the least loaded fitter ticked, «Людей» picks N, the runs go with the plan", async () => {
+  const calls = mockApi(() => json({ applied: 3, tasks: [], created: [] }));
+  render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} preset={{ project: "708К", runs: { [CARD]: 4 } }} />);
+  expect(screen.getByRole("heading", { name: "Автопланирование · 708К" })).toBeInTheDocument();
+  expect(screen.queryByRole("radio", { name: "Весь цех" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Проект")).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByLabelText("Иванов И.")).toBeChecked());
+  expect(screen.getByLabelText("Петров П.")).not.toBeChecked();
+  const count = screen.getByRole("spinbutton", { name: "Людей на проект" });
+  expect(count).toHaveValue(1);
+  fireEvent.change(count, { target: { value: "2" } });
+  expect(screen.getByLabelText("Петров П.")).toBeChecked();
+  // Список людей под числом остаётся для правки.
+  fireEvent.click(screen.getByLabelText("Иванов И."));
+  expect(count).toHaveValue(1);
+  fireEvent.change(count, { target: { value: "2" } });
+  expect(screen.getByRole("radio", { name: "Как можно раньше" })).toHaveAttribute("aria-checked", "true");
+  await openPreview();
+  expect(bodies(calls, "/context")[0]).toEqual({ mode: "project", project: "708К", date_to: null });
+  expect(bodies(calls, "/preview")[0]).toEqual({ mode: "project", project: "708К", people: [A, B], runs: { [CARD]: 4 } });
+  fireEvent.click(screen.getByRole("button", { name: "Применить выбранное (3)" }));
+  await waitFor(() => expect(bodies(calls, "/apply")).toHaveLength(1));
+  expect(bodies(calls, "/apply")[0]).toMatchObject({ project: "708К", people: [A, B], runs: { [CARD]: 4 } });
+});
+
+it("«К сроку отгрузки» is the ship-date calculation: no proposal and nothing to apply", async () => {
+  mockApi(() => json({ applied: 0, tasks: [], created: [] }));
+  render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} preset={{ project: "708К" }} />);
+  await waitFor(() => expect(screen.getByLabelText("Иванов И.")).toBeChecked());
+  expect(screen.queryByRole("region", { name: "От даты отгрузки" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("radio", { name: "К сроку отгрузки" }));
+  expect(screen.getByRole("region", { name: "От даты отгрузки" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Дата отгрузки")).toHaveValue("2026-10-10");
+  expect(screen.queryByRole("button", { name: /Предложить план/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Применить/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("radio", { name: "Как можно раньше" }));
+  expect(screen.getByRole("button", { name: /Предложить план/ })).toBeEnabled();
 });

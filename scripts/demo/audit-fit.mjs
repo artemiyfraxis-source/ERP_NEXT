@@ -127,7 +127,7 @@ for (const s of sections) {
 const DIALOGS = [
   ["stock", "Внести позиции", "stock-add"], ["stock", "Переместить", "stock-move"], ["stock", "Лист перемещения", "stock-sheet"],
   ["receiving", "Принять поставку", "receiving-accept"], ["receiving", "Возврат поставщику", "receiving-return"],
-  ["production", "Запустить задание", "production-launch"], ["production", "Автоплан", "production-autoplan"],
+  ["production", "Автоплан", "production-autoplan"],
   ["production", "Календарь цеха", "production-calendar"], ["production", "Компетенции", "production-skills"],
   ["access", "Исключения по сотрудникам", "access-exceptions"], ["access", "Токены API", "access-tokens"],
   ["staff", "Добавить", "staff-add"], ["newrequest", "Из Excel", "newrequest-excel"], ["shipping", "Создать", "shipping-create"],

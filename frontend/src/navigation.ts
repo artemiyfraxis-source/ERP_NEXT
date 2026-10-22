@@ -62,7 +62,7 @@ export const NAV: NavItem[] = [
   // its access key, so the card opens on either; ?section=tctemplates still lands on the templates tab.
   { id: "references", label: "База данных", sub: "операции · оборудование · терминалы · коаксиал · провода · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"], block: "refs" },
   { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "refs", within: "references" },
-  { id: "production", label: "Ресурсное планирование", sub: "запуск · назначение операторов · график", permission: "production", block: "prod" },
+  { id: "production", label: "Ресурсное планирование", sub: "назначение операторов · автоплан · график", permission: "production", block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
   // «ОТК»: очередь на проверку, брак цеха и ОТК, средства измерения; приёмку и реестр ведёт правка `quality`, решение по
   // браку — правка `production` (экран сам прячет то, что не открыто).

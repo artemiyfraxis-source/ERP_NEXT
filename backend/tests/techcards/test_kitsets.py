@@ -430,3 +430,36 @@ def test_supply_lines_count_the_issued_part_of_the_kits_apart_from_the_reserve()
     line = {item.article: item for item in supply_lines(kitset, [], kitted=[
         SupplyStock("GHR-04V-S", "Колодка 4pin 1.25мм", Decimal("9"), issued=Decimal("5"))])}["GHR-04V-S"]
     assert (line.kitted, line.issued) == (Decimal("9"), Decimal("5"))
+
+
+def test_generator_bom_title_reads_like_the_kd_not_the_supplier_page():
+    """Owner 22.10: «Данные из листа» showed supplier-page titles; `title` is the reference name, `name` stays as is."""
+    from app.modules.references.load_mirror import BUNDLED_MIRROR, read_mirror
+    from app.workflows.item_names import REF, ReferenceNames, StockNames
+
+    snapshot = read_mirror(BUNDLED_MIRROR)
+    book = ReferenceNames(record for records in snapshot.tables.values() for record in records)
+    site = "Автомобильный провод ПВАМ (медный). Продажа от 5 м!"
+    kitset = manual_kitset(project="720К.2", customer="З", who="Т", now=NOW, assemblies=[{
+        "index": "КБ1", "name": "Жгут", "run": "10", "components": [
+            {"art": "ПВАМ 0,35 красный", "type": "Провод", "name": site, "per": "0,5"},
+            {"art": "ТУТ 3,0/1,5мм, чёрная", "type": "Трубка", "name": "Трубка термоусадочная ТУТ нг 3,0/1,5 черная, Rexant купить оптом", "per": "1"},
+            {"art": "ТТК 6/2мм, чёрная", "type": "Трубка", "name": 'Трубка 85205 ТТК "Flex" 6/2 (КВТ)', "per": "1"},
+            {"art": "SXH-001T-P0.6", "type": "Терминал", "name": "", "per": "2"},
+            {"art": "XHP-4", "type": "Разъём", "name": "", "per": "1"},
+            {"art": "ZZ-9", "type": "Разъём", "name": "", "per": "1"},
+        ],
+    }])
+    rows = generator_bom(kitset, kitset.assembly("КБ1"), [], (book, StockNames()))["components"]
+    assert [c["title"] for c in rows] == [
+        "Провод ПВАМ 0,35 мм² красный",
+        "Трубка термоусадочная ТУТ 3/1,5 мм, чёрная (Rexant)",
+        "Трубка термоусадочная клеевая ТТК 6/2 мм, чёрная (КВТ Калуга)",
+        "Контакт обжимной JST XH гнездо",
+        "Корпус JST XH 4 конт.",
+        "ZZ-9",  # the references do not know it: today's value
+    ]
+    assert rows[0]["title_source"] == REF and "справочника" in rows[0]["title_hint"]
+    assert rows[0]["name"] == site  # the generator keeps recognising parts by `name`
+    # Without resolvers the answer is what it was.
+    assert "title" not in generator_bom(kitset, kitset.assembly("КБ1"), [])["components"][0]

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -16,12 +17,13 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, techcards_edit_principal, techcards_view_principal
+from app.workflows.td_auto import default_signers
 
 from .api import EtkCards, etk_cards, operation_grade_reference, techcards_uow_factory
 from .application import UnitOfWork
 from .td_issues import (
     TdIssue, TdIssueError, TdIssueNotFound, change_rows, create_issue, edit_issue, move_issue, normcontrol,
-    parse_input, print_card, resnapshot_issue, sto_sections, with_td_ops,
+    parse_input, print_card, resnapshot_issue, sto_sections, with_signers, with_td_ops,
 )
 from .td_sto import sto, sto_reference
 
@@ -130,6 +132,9 @@ def open_td_issue(
     grades: Annotated[dict[str, dict[str, str]], Depends(operation_grade_reference)],
 ) -> dict[str, Any]:
     value = _run(lambda: parse_input(payload.model_dump()))
+    with uow_factory() as uow:  # пустые Разраб., Н. контр., Утв. — подписанты по умолчанию (td_issues.DEFAULT_SIGNERS)
+        signers = default_signers(getattr(uow, "session", None))
+    value = replace(value, signatories=with_signers(value.signatories, signers, only_blank=True))
     snapshot = _run(lambda: _snapshot_of(uow_factory, etk, grades)(card_id))
     issue = _run(lambda: create_issue(uow_factory(), card_id, value, snapshot, principal.actor.name, now))
     return _view(issue, uow_factory)

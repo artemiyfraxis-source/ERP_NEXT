@@ -176,3 +176,33 @@ def test_kit_request_numbers_of_issued_lots_are_unique_and_joined_none_for_kitse
 
     assert [row.get("kit_request") for row in rows] == ["REQ.26.0000001, REQ.26.0000002", None, None]
 
+
+
+def test_etk_input_names_wires_and_tubes_by_the_references_not_by_the_supplier_title():
+    """Owner 22.10: ETK «Вход» showed site titles under the article; the live display path now names by the references."""
+    from datetime import datetime
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
+    from app.modules.references.load_mirror import BUNDLED_MIRROR, load_mirror
+    from app.modules.techcards.api import etk_part_identifier
+    from app.shared.persistence import create_schema
+
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    create_schema(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+
+    def factory():
+        return SqlAlchemyReferencesUnitOfWork(sessions)
+
+    load_mirror(BUNDLED_MIRROR, factory(), dry_run=False, now=datetime(2026, 10, 6, 12, 0))
+    identify = etk_part_identifier(factory)
+    assert identify("ПВАМ 0,35 красный") == "Провод ПВАМ 0,35 мм² красный"
+    assert identify("ТУТ 3,0/1,5мм, чёрная") == "Трубка термоусадочная ТУТ 3/1,5 мм, чёрная (Rexant)"
+    assert identify("ZZ-9") == ""
+    row = part_row({"art": "ПВАМ 0,35 красный", "name": "Автомобильный провод ПВАМ (медный). Продажа от 5 м!"}, identify)
+    assert (row["art"], row["name"]) == ("ПВАМ 0,35 красный", "Провод ПВАМ 0,35 мм² красный")
+    engine.dispose()

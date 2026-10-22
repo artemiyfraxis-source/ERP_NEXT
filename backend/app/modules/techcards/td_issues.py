@@ -5,8 +5,12 @@
 
 Обозначение документа: `{org}.{вид документа}{вид организации}{метод}.{порядковый:05d}`, вид организации «1»
 (единичный ТП): МК «10», КЭ «20», ОК «60», ВМ «43», ВО «42», ВТД «40» — с методом выпуска (`method_code`); ОК на ТК
-контроля — «60» + «1» + «02». Пример: ФРАК.60185.00001. Порядковый номер один на карту: первый выпуск карты берёт
-следующий свободный (max + 1 по таблице), следующие выпуски той же карты его повторяют.
+контроля — «60» + «1» + «02». Пример: ЮТНВ.60185.00001. Код организации — ORG_CODE (владелец 22.10.2026: «ЮТНВ»;
+выпуски до этого — «ФРАК», их перевыпускает app/workflows/td_org_reissue.py). Порядковый номер один на карту: первый
+выпуск карты берёт следующий свободный (max + 1 по таблице), следующие выпуски той же карты его повторяют.
+
+Подписанты по умолчанию — DEFAULT_SIGNERS (Разраб., Н.контр., Утв. по логину сотрудника, td_auto.default_signers):
+автоматический выпуск ставит их всегда, ручной — в пустые графы. Пров. — по прежним правилам (td_auto.py).
 
 Статусы: draft → signing (без блокирующих замечаний нормоконтроля, иначе 422 {findings}), signing → draft,
 signing → active (approved_at; прежний действующий выпуск карты аннулируется в той же транзакции), active → annulled,
@@ -44,7 +48,14 @@ ROLE_LABELS = {
     "developer": "Разраб.", "checker": "Пров.", "normcontrol": "Н.контр.", "approver": "Утв.",
     "agreed_vp": "Согласовано ВП",
 }
-ORG_CODE = "ФРАК"
+ORG_CODE = "ЮТНВ"  # код организации-разработчика в обозначении (владелец 22.10.2026)
+# Подписанты по умолчанию (владелец 22.10.2026: «разраб Васильев везде, Н. контроль Зингер, а утверждает Костромин»):
+# графа → (логин сотрудника, ФИО — если сотрудника с этим логином нет). Пров. здесь нет — он по прежним правилам.
+DEFAULT_SIGNERS = {
+    "developer": ("vasilev", "Васильев Артемий"),
+    "normcontrol": ("zingera", "Зингер Артем"),
+    "approver": ("kostromin", "Костромин Василий"),
+}
 ORG_KIND = "1"  # единичный технологический процесс (ГОСТ 3.1201)
 DOCUMENT_CODES = {"mk": "10", "ke": "20", "ok": "60", "vm": "43", "vo": "42", "vtd": "40"}
 CONTROL_METHOD = "02"
@@ -146,6 +157,23 @@ def parse_input(raw: dict[str, Any]) -> TdIssueInput:
         litera=litera, method_code=method, signatories=signatories, notice_no=notice, reason=reason,
         workshop=workshop, site=site,
     )
+
+
+def with_signers(
+    signatories: dict[str, dict[str, str]], signers: dict[str, dict[str, str]], *, only_blank: bool = False,
+) -> dict[str, dict[str, str]]:
+    """Подписанты всех граф с подставленными `signers` (графа → ФИО и должность): во все их графы или, с `only_blank`,
+    только туда, где ФИО пусто (вписанное вручную не трогается, вписанная при пустом ФИО должность остаётся).
+    Совпадение Н.контр. с Разраб./Пров. здесь не исправляется — его ловит нормоконтроль (normcontrol_same_person)."""
+    result = {role: {"name": _text((signatories.get(role) or {}).get("name")),
+                     "position": _text((signatories.get(role) or {}).get("position"))} for role in ROLES}
+    for role, person in signers.items():
+        current = result[role]
+        if only_blank and current["name"]:
+            continue
+        position = _text(person.get("position")) or (current["position"] if only_blank else "")
+        result[role] = {"name": _text(person.get("name")), "position": position}
+    return result
 
 
 def _require_notice(change_no: int, value: TdIssueInput) -> None:

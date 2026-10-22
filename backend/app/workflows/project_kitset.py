@@ -274,19 +274,39 @@ def calc_ops_from_grid(grid: list[list[str]]) -> list[dict[str, str]]:
     return [row for row in rows if row["code"]]
 
 
-def generator_bom(kitset: Kitset, assembly: KitAssembly, calc_ops: list[dict[str, str]]) -> dict[str, Any]:
+def bom_names(
+    kitset: Kitset,
+    references_uow: Callable[[], Any] | None,
+    fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None,
+) -> tuple[ReferenceNames, StockNames]:
+    """The resolvers behind `title` of a generator row — the same ones «Снабжение» names its positions with."""
+    lots, _held = _stock_lots(kitset.project, fulfillment_uow)
+    return ReferenceNames(reference_records(references_uow)), StockNames(lots)
+
+
+def generator_bom(
+    kitset: Kitset, assembly: KitAssembly, calc_ops: list[dict[str, str]],
+    names: tuple[ReferenceNames, StockNames] | None = None,
+) -> dict[str, Any]:
     """`tcLoadBomFromKit`: состав сборки для генератора — из сохранённой карточки, с правками оператора.
     Аналог по КД → оригинал к применению (kitUseArt_), заменённый в расчёте провод → провод из «Наименования»
     (`kit_article`): генератор подбирает контакт и сечение по тому, что применяется; артикул КД — в `kd`.
     Состав читается из карточки при каждом открытии, так что правка расчёта доходит до генератора без пересборки.
-    `calc_ops` — строки листа КБn расчёта (`calc_ops_by_link`). Тот же ответ читает пакетная генерация."""
+    `calc_ops` — строки листа КБn расчёта (`calc_ops_by_link`). Тот же ответ читает пакетная генерация.
+    `names` (`bom_names`) — `title`: название строки «как в КД» (справочник ERP → спецификация → склад → очищенный
+    заголовок сайта) для показа; `name` остаётся прежним — по нему генератор узнаёт деталь (провод, ТУТ, колодка…)."""
     components = []
     for position, component in enumerate(assembly.components):
         # Строку технолога вводят артикулом к применению: её название — не замена провода сметчиком.
         use = {"art": component.article, "kd": ""} if component.manual else kit_article(component.article, component.name)
+        name = use["art"] if use["kd"] else (component.name or component.article)
+        shown = resolve_name(
+            component.article, component.name, "" if component.manual else component.link,
+            names[0] if names else None, names[1] if names else None,
+        ) if names else None
         components.append({
-            "id": f"kit-{position}", "type": component.type,
-            "name": use["art"] if use["kd"] else (component.name or component.article),
+            "id": f"kit-{position}", "type": component.type, "name": name,
+            **({"title": shown.name or name, "title_source": shown.source, "title_hint": shown.hint} if shown else {}),
             "art": use["art"], "kd": use["kd"], "qty": kit_number_payload(component.per_unit or Decimal("1")),
             "scrap": kit_number_payload(component.scrap_pct / 100),
             **({"manual": True} if component.manual else {}),
@@ -1725,6 +1745,6 @@ __all__ = [
     "ChangeProjectStageCommand", "ProjectStageChange", "ProjectStageState", "change_project_stage",
     "load_project_stage_state", "preview_project_stage", "project_stage_state", "stage_change_payload",
     "TC_REVIEW_VALUES", "attach_document", "calc_ops_from_grid", "cards_state", "delete_kitset", "detach_document",
-    "assembly_calc_ops", "generator_bom", "issue_from_kitset", "kitset_issue_state", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
+    "assembly_calc_ops", "bom_names", "generator_bom", "issue_from_kitset", "kitset_issue_state", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
     "supply_rows", "ProjectTails", "TailEntry", "TAIL_JOURNAL", "TAIL_SECTIONS", "purge_project_tails", "request_matches_project", "KitsetRequestsCommand", "KitsetRequestsResult", "create_kitset_requests", "requests_calc_reader",
 ]
