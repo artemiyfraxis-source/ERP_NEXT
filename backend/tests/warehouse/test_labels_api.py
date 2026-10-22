@@ -33,9 +33,8 @@ def _jobs() -> list[LabelJobRow]:
     return rows
 
 
-def test_labels_need_no_stage_option(labels, monkeypatch):
+def test_label_endpoints_answer(labels):
     client, lot = labels
-    monkeypatch.delenv("ERP_STAGE_OPTIONS", raising=False)
     for path in ("/api/stock/labels/settings", "/api/stock/labels/printers", "/api/stock/labels/sample.png",
                  f"/api/stock/batches/{lot.id}/label.png", "/api/stock/labels/agent/status"):
         assert client.get(path).status_code == 200, path

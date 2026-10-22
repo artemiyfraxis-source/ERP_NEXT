@@ -1,9 +1,9 @@
-"""Global search (stage option ui.search, Ctrl+K in the portal): one request, a few groups of at most 8 results.
+"""Global search (Ctrl+K in the portal): one request, a few groups of at most 8 results.
 
 Words in any order, case / ё / Latin-Cyrillic look-alikes folded (the warehouse word search's `fold`). Every group is
 narrowed in SQL first — LIKE on the most selective word, only the columns shown — and then checked by words in Python,
 so a few thousand rows cost a few milliseconds. A group is searched only when the principal may view its section
-(the same keys the routes check) and, for the purchasing hybrid, only while its option is on.
+(the same keys the routes check).
 
 A result tells the frontend where to go: `section` (a portal section id) and `params` (URL query the page reads)."""
 

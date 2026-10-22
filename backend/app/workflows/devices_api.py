@@ -59,7 +59,7 @@ CLIENT_ERROR_LIMIT = _Limiter(CLIENT_ERRORS_PER_HOUR)
 
 @router.get("/api/devices/entry")
 def entry() -> dict:
-    """Open before sign-in: the ТСД login screen asks whether the stage has the ТСД screen (option on)."""
+    """Open before sign-in: the ТСД login screen asks whether the server has the ТСД screen."""
     return {"tsd": True}
 
 

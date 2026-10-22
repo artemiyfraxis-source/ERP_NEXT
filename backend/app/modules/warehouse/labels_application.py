@@ -96,7 +96,7 @@ def _day(moment: datetime | None) -> date | None:
 
 def lot_code(grn: str, package: str) -> str:
     """What the label's codes carry: the ГРН, with «-<пакет>» for a package — the scan field reads it back as that
-    lot (stage option warehouse.scan)."""
+    lot."""
     return f"{grn}-{package}" if package else grn
 
 

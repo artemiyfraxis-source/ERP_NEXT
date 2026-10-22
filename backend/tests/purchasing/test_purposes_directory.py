@@ -1,5 +1,5 @@
 """Purposes directory («Настройки закупки», key `purposes`) and the project-owned purpose of a request
-(stage option requests.form): commercial project → «Коммерческий проект», internal ВП → its own purpose."""
+: commercial project → «Коммерческий проект», internal ВП → its own purpose."""
 
 from datetime import datetime, timezone
 

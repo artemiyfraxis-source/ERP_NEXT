@@ -1,4 +1,4 @@
-"""«Покупали» of «Заявки» закупщика from the UPD registry (options procurement.requests_rb + references.price_book).
+"""«Покупали» of «Заявки» закупщика from the UPD registry .
 
 What was really bought, as the item card reads it (`upd_prices.match_items`): UPD lines of documents in force matched to
 the nomenclature item by part number or any of its names, reliable documents only, gross per unit in the wanted unit.

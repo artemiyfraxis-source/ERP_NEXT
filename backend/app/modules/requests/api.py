@@ -196,7 +196,7 @@ def ensure_internal_projects_open(drafts: Iterable[RequestDraft], registry: obje
 
 
 def internal_projects(registry: object) -> list[dict[str, str]]:
-    """Open internal projects (number, name, purpose) for the form's own group; empty while the option is off."""
+    """Open internal projects (number, name, purpose) for the form's own group."""
     getter = getattr(registry, "internal_projects", None)
     return list(getter()) if callable(getter) else []
 

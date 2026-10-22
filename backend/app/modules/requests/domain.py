@@ -27,7 +27,7 @@ STATIC_PURPOSES = (
     "Склад",
     "Расходники",
 )
-# Stage option requests.form: the purpose belongs to the project. A commercial project (registry «591К.3») always
+# the purpose belongs to the project. A commercial project (registry «591К.3») always
 # carries this purpose; it is implicit and never part of the editable purposes directory.
 COMMERCIAL_PURPOSE = "Коммерческий проект"
 DELIVERY_POINTS = (
@@ -280,7 +280,7 @@ def _commercial_reference(value: str | None) -> bool:
 def validate_draft(
     draft: RequestDraft, today: date | None = None, directory_purposes: Sequence[str] | None = None,
 ) -> RequestDraft:
-    """``directory_purposes`` (not None only with the option requests.form on) replaces the fixed purpose list by the
+    """``directory_purposes`` (None — the fixed list) replaces the fixed purpose list by the
     editable directory plus «Коммерческий проект», and ties that purpose to commercial project numbers."""
     draft = apply_draft_defaults(draft, today)
     allowed = STATIC_PURPOSES if directory_purposes is None else (*directory_purposes, COMMERCIAL_PURPOSE)

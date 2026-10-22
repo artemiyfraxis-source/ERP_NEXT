@@ -17,7 +17,7 @@ type Props = {
   errors: RowErrors[] | null;
   sendCount: number;
   busy: boolean;
-  /** nomenclature search (stage option references.items); off or failing = the name is a plain input */
+  /** nomenclature search; off or failing = the name is a plain input */
   itemsOn: boolean;
   onField: (index: number, key: GridKey, value: string) => void;
   onPickItem: (index: number, item: ItemRow) => void;
@@ -51,7 +51,7 @@ function NameCell({ value, enabled, onText, onPick, ...rest }: {
     const timer = window.setTimeout(() => {
       purchasingItemsApi.list({ q: query, category: "", hasPrice: false, page: 1 })
         .then((result) => { if (live) setItems(result.items.slice(0, SUGGEST_LIMIT)); })
-        .catch(() => { if (live) setItems([]); }); // 404 / option off on the server: a plain input
+        .catch(() => { if (live) setItems([]); }); // 404 on the server: a plain input
     }, DEBOUNCE_MS);
     return () => { live = false; window.clearTimeout(timer); };
   }, [search, query]);

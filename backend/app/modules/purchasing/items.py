@@ -1,4 +1,4 @@
-"""Номенклатура (stage option references.items): the item master of the purchasing hybrid, as Roller_Buyer's /items.
+"""Номенклатура: the item master of the purchasing hybrid, as Roller_Buyer's /items.
 
 Keys: `part_key` (normalized part number, reuses procurement's `code_key`) identifies an item; `alias_key` folds a name
 (case, spaces, Latin/Cyrillic look-alikes) so the same words typed in either alphabet meet. Writes take the unit of

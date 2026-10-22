@@ -1,4 +1,4 @@
-"""«КП из PDF и текста» (stage option procurement.quote_import): the text of a supplier's quote — pasted, or the text
+"""«КП из PDF и текста»: the text of a supplier's quote — pasted, or the text
 layer of a PDF — becomes proposed quote lines mapped to the request's lines. Nothing is saved here: the buyer reviews
 the form and saves it through `rfq.add_quote`.
 

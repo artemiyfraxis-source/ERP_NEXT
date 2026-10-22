@@ -6,8 +6,6 @@ import { api, failureText } from "./api";
    (preview exactly as the printer gets it, copies, «Печать») and the labels of what receiving has just put on stock.
    Printing goes only through the server queue: the print agent on the warehouse PC takes a job and prints it. */
 
-/** Kept only until EquipmentPage and TsdPage stop importing it (stage options are being removed); gates nothing here. */
-export const LABELS_OPTION = "warehouse.labels";
 
 export type LabelCodeType = "qr" | "code128" | "both";
 export type PrintSettings = {

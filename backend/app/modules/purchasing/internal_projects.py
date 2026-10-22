@@ -1,4 +1,4 @@
-"""«Внутренние проекты» (stage option projects.internal): projects of the company itself, numbered «ВП-001».
+"""«Внутренние проекты»: projects of the company itself, numbered «ВП-001».
 
 A request or a procurement line refers to one through `project_reference`, like to a commercial «591К.3»; the project's
 purpose decides the GRN prefix. Counts of lines and requests come from the workflows port, never from here."""

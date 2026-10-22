@@ -1,4 +1,4 @@
-"""«Счета и поставки» (option procurement.orders): what purchasing reads of procurement, receiving and the audit log.
+"""«Счета и поставки»: what purchasing reads of procurement, receiving and the audit log.
 
 An ERP supplier order is the procurement lines sharing one № ЗАКАЗА. Purchasing never imports those modules; this
 workflow hands it plain facts, read-only, in a fixed number of queries whatever the number of orders:

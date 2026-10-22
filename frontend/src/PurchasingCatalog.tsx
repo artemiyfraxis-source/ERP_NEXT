@@ -4,7 +4,7 @@ import { NBSP, formatDay } from "./format";
 import { UpdNumber, kopecks } from "./PricesSections";
 import { purchasingPricesApi, type CatalogPage, type CatalogPoint, type UpdItemsPlan } from "./purchasingPricesApi";
 
-/** «Каталог закупок» (option references.price_book): positions bought by UPD, grouped by part number (else by name),
+/** «Каталог закупок»: positions bought by UPD, grouped by part number (else by name),
  *  with price points and suppliers; and «Завести позиции из УПД» (preview first, then the chosen ones). */
 export function PurchasingCatalog({ readOnly = false, onOpenUpd }: { readOnly?: boolean; onOpenUpd?: (id: string) => void } = {}) {
   const [q, setQ] = useState("");

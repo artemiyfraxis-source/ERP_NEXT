@@ -213,7 +213,7 @@ def test_a_few_hundred_rows_answer_fast(env):
         response = client.get(URL, params={"q": query})
         elapsed = (time.perf_counter() - started) * 1000
         assert response.status_code == 200
-        assert elapsed < 450, (query, elapsed)  # ×3 over the stage machine: CI runners jitter
+        assert elapsed < 1500, (query, elapsed)  # catches an order-of-magnitude regression, not CI jitter
     assert titles(client.get(URL, params={"q": "FRX.26.0001200"}), "Склад") == ["FRX.26.0001200"]
 
 

@@ -1,4 +1,4 @@
-"""«Счета и поставки» (option procurement.orders) over HTTP: the board's columns, the order's facts, the order-wide
+"""«Счета и поставки» over HTTP: the board's columns, the order's facts, the order-wide
 expected date, the promised date from the audit, «Дожать», the port for «Сегодня»."""
 
 from datetime import date, datetime

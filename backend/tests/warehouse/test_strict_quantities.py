@@ -12,9 +12,8 @@ def _lot(client):
 
 
 @pytest.mark.parametrize("field,value", [("inbound", "12"), ("written_off", "1"), ("reserved", "1")])
-def test_a_quantity_edit_is_refused(warehouse_api, monkeypatch, field, value):  # noqa: F811
+def test_a_quantity_edit_is_refused(warehouse_api, field, value):  # noqa: F811
     client, lot = warehouse_api
-    monkeypatch.delenv("ERP_STAGE_OPTIONS", raising=False)  # production: no stage options file
     response = client.put(f"/api/stock/batches/{lot.id}/row", json={"version": lot.version, field: value})
     assert response.status_code == 422
     assert response.json()["detail"] == "Количества меняются только движениями: списание, возврат, перемещение"

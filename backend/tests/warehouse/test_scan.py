@@ -95,9 +95,8 @@ def test_nothing_found_is_404_with_the_code(scan_api, code):
     assert response.json()["detail"] == f"Не найдено: {code or '—'}"
 
 
-def test_scan_is_always_open_and_still_behind_the_warehouse_gate(warehouse_api, monkeypatch):  # noqa: F811
+def test_scan_is_always_open_and_still_behind_the_warehouse_gate(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
-    monkeypatch.delenv("ERP_STAGE_OPTIONS", raising=False)  # production: no stage options file
     assert _keys(_scan(client, "FRX.26.0000001")) == [("FRX.26.0000001", "", "ЦАР")]
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Инженер", department="РНД"), email="engineer@example.test",

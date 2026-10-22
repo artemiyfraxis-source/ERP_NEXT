@@ -178,9 +178,8 @@ def test_a_stale_version_is_409(undo_api):
     assert _undo(client, lot.id, lot.version).status_code == 409
 
 
-def test_undo_is_always_open_preview_on_view_undo_on_edit(undo_api, monkeypatch):
+def test_undo_is_always_open_preview_on_view_undo_on_edit(undo_api):
     client, lot, at = undo_api
-    monkeypatch.delenv("ERP_STAGE_OPTIONS", raising=False)  # production: no stage options file
     assert _preview(client, lot.id)["undo"] is None
     _as("Мастер", {"warehouse": "view"})
     # The preview is a read: open on view (ID-6 view-mode contract); the undo itself needs edit.

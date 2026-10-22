@@ -1,7 +1,5 @@
 import { api } from "./api";
 
-/** Вход с устройств (backend app/workflows/devices_api.py). */
-export const TSD_OPTION = "warehouse.tsd";
 
 export type ClientError = { at: string; ip: string; url: string; message: string; browser: string };
 

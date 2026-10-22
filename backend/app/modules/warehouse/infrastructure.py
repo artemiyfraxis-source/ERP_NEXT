@@ -509,7 +509,7 @@ class SqlAlchemyWarehouseRepository:
 
     def received_at(self, lot_id: UUID) -> datetime | None:
         """When the lot came on stock: its first arrival event — from receiving, entered by hand or carried over from
-        SUPPLYMAP (stage option warehouse.labels prints it as the date on the GRN label). None — no such event."""
+        SUPPLYMAP (the GRN label prints it as the date). None — no such event."""
         self.session.flush()
         return self.session.scalar(
             select(func.min(AuditEventRow.occurred_at)).where(
@@ -546,7 +546,7 @@ LOT_ARRIVAL_EVENTS = ("warehouse.received", "warehouse.manually_received", "ware
 
 
 class WarehouseLabelSettingsRow(Base):
-    """«Печать этикеток ГРН» (stage option warehouse.labels): the label printer's settings, one row per installation.
+    """«Печать этикеток ГРН»: the label printer's settings, one row per installation.
     The CHECK constraints repeat `PrintSettings`' bounds (migration 0125)."""
 
     __tablename__ = "warehouse_label_settings"

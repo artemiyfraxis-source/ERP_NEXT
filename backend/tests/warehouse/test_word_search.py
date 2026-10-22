@@ -64,9 +64,8 @@ def _found(client, query):
     return result.json()["lots"]
 
 
-def test_the_stock_list_searches_by_words_with_article_normalization(warehouse_api, monkeypatch):  # noqa: F811
+def test_the_stock_list_searches_by_words_with_article_normalization(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
-    monkeypatch.delenv("ERP_STAGE_OPTIONS", raising=False)  # production: no stage options file
     _add(client)
     assert len(_found(client, "molex")) == 1
     assert len(_found(client, "molex разъем")) == 1

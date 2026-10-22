@@ -9,7 +9,7 @@ import {
 } from "./purchasingDocumentsApi";
 import { StatusChip } from "./StatusChip";
 
-/** «Счета» (option documents.chain): the invoice registry mirrored from Kaiten — every card with its PDF and our
+/** «Счета»: the invoice registry mirrored from Kaiten — every card with its PDF and our
  *  payment orders, seller and total read from the PDF, the payment from the order's file name, and the closing
  *  documents from the same computation as «Цепочка документов». Read-only towards Kaiten: the importer fills it. */
 

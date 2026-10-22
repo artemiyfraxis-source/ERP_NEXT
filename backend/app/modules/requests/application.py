@@ -87,8 +87,7 @@ class ProjectRegistry(Protocol):
 
     def open_projects(self) -> Sequence[str] | None: ...
 
-    # Optional (read with getattr): ``purposes() -> list[str] | None`` — the purposes directory while the option
-    # requests.form is on, None otherwise.
+    # Optional (read with getattr): ``purposes() -> list[str] | None`` — the editable purposes directory, None when there is none.
 
 
 class CalcSheetError(RuntimeError):

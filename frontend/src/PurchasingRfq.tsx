@@ -22,7 +22,7 @@ import { decidedPicks, RfqBasket } from "./RfqBasket";
 import { invoiceAskable, RfqInvoiceRequests } from "./RfqInvoiceRequests";
 import { RfqKaitenInvoices } from "./RfqKaitenInvoices";
 
-/** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
+/** «Запросы КП» (as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
  *  reasons the gate asks for → supplier and quantity go into the procurement line. */
 

@@ -802,7 +802,7 @@ def today_lines(
     now: Annotated[datetime, Depends(moscow_now)],
     purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
 ) -> dict:
-    """Stage option `procurement.today`: Roller_Buyer's «Сегодня» over the buyer's own lines and requests, computed on
+    """Roller_Buyer's «Сегодня» over the buyer's own lines and requests, computed on
     read (`app/workflows/procurement_today.py`). A read, open on view (ID-6): a viewer has no own lines."""
     uow = uow_factory()
     with uow:
@@ -815,7 +815,7 @@ def line_history_route(
     _principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
-    """Stage option `procurement.history`: the line's life from the request to the warehouse, rebuilt on read."""
+    """the line's life from the request to the warehouse, rebuilt on read."""
     uow = uow_factory()
     with uow:
         result = line_history(uow.session, line_id)
@@ -832,7 +832,7 @@ def buyer_kpi(
     date_to: Annotated[date, Query(alias="to")],
     buyer: Annotated[str | None, Query(max_length=255)] = None,
 ) -> dict:
-    """Stage option `procurement.kpi`: indicators of the lines paid in the period, per buyer and in total."""
+    """indicators of the lines paid in the period, per buyer and in total."""
     if date_to < date_from:
         raise HTTPException(status_code=422, detail="Конец периода раньше начала")
     uow = uow_factory()
@@ -1376,7 +1376,7 @@ def order_expected_arrival(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
     receiving: Annotated[ExpectedArrivalCopier | None, Depends(procurement_receiving)],
 ) -> dict:
-    """Stage option `procurement.orders` («Счета и поставки»): ОЖИД. ДАТА of every line of the order whose date can
+    """«Счета и поставки»: ОЖИД. ДАТА of every line of the order whose date can
     still move, all or none (409 when the rows sent are not that set or a row is stale)."""
     lines = _command_errors(
         lambda: set_order_expected_arrival(

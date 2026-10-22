@@ -179,7 +179,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
     setAutoOpened(true);
     setPicked("sheet");
   };
-  // The sheet opened by itself (empty queues while the options were still loading) gives way to «Сегодня».
+  // The sheet opened by itself (empty queues while the lists were still loading) gives way to «Сегодня».
   const tab: ProcurementTab = picked && shown[picked] === false ? "queues"
     : autoOpened && todayOn ? "today" : picked ?? (todayOn ? "today" : "queues");
   const groups: Array<Array<[ProcurementTab, string, boolean]>> = [

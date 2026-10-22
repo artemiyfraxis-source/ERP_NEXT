@@ -1,4 +1,4 @@
-"""Commands of «Заявки» закупщика (option procurement.requests_rb): «Разделить» by quantity and «Отменить выбранные».
+"""Commands of «Заявки» закупщика: «Разделить» by quantity and «Отменить выбранные».
 
 Both are ordinary procurement commands — the line's own buyer, the version the screen read, audit in the same
 transaction. The request-for-quotes half of a split goes through the `RfqLineSplitter` port (`app/workflows`), on the

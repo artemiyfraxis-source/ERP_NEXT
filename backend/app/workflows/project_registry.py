@@ -43,7 +43,7 @@ class PlanSnapshotProjectRegistry:
 
 
 class InternalAwareProjectRegistry:
-    """The plan registry plus the open internal projects «ВП-…» while the option projects.internal is on.
+    """The plan registry plus the open internal projects «ВП-…» .
 
     Off, or the plan registry unavailable (None = «skip the check»), the answer is the plan registry's own."""
 

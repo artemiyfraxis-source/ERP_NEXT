@@ -1,6 +1,6 @@
 import { api } from "./api";
 
-/* Stage option `procurement.requests_rb`: «Заявки» закупщика (Roller_Buyer RequestsPage) over procurement lines. */
+/* «Заявки» закупщика (Roller_Buyer RequestsPage) over procurement lines. */
 
 export type RbStatus =
   | "new" | "requote" | "from_stock" | "in_rfq" | "quoted" | "decided" | "ordered" | "to_pay" | "paid" | "shipped"

@@ -1,4 +1,4 @@
-"""«Покупали ранее»: past paid purchases of the same item (stage option procurement.price_history).
+"""«Покупали ранее»: past paid purchases of the same item.
 
 The ERP has no item master, so an item is identified by text: the part number when the target line has
 one (`code_key` of design_article), else the whole name compared exact after normalization.

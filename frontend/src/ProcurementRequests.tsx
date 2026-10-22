@@ -15,7 +15,7 @@ import { ProcurementStockPicker } from "./ProcurementStockPicker";
 import { SuggestPanel, type ChosenLine } from "./RfqPool";
 import { StatusChip } from "./StatusChip";
 
-/* Stage option `procurement.requests_rb`: Roller_Buyer's «Заявки» (RequestsPage + RequestLinesTable) in «Лист закупки».
+/* Roller_Buyer's «Заявки» (RequestsPage + RequestLinesTable) in «Лист закупки».
    Project → request (the lines of one batch, НАЗНАЧЕНИЕ) → lines; «Ход закупки» chips per project and per request;
    lines grouped by type / plan from the calculation / last purchase; selection by group, Shift-range and drag (own new
    and requote lines only); «Запросить КП» and «Отменить выбранные». Several buyers: «Мои» is one's own lines and the
@@ -49,7 +49,7 @@ function syncAddress(project: string) {
 }
 
 export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }) {
-  useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the project names
+  useInternalProjects(); // «ВП-001 · Название» in the project names
   const history = useLineHistory();
   const [scope, setScope] = useState<RqScope>(readOnly ? "all" : "mine");
   const [project, setProject] = useState(() => urlParam("project"));
