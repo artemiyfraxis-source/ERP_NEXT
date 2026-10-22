@@ -135,7 +135,7 @@ it("shows the stock column, the «Склад» and «Приёмка» sections o
   const stock = await screen.findByRole("table", { name: "Склад по позиции" });
   expect(stock.textContent).toContain("FRX.26.0000001");
   expect(stock.textContent).toContain("по приёмке");
-  expect(screen.getByText(/доступно 8/)).toBeInTheDocument();
+  expect(screen.getByText(/свободно 8/)).toBeInTheDocument();
   const receipts = screen.getByRole("table", { name: "Приёмка по позиции" });
   expect(receipts.textContent).toContain("УПД-7");
   expect(receipts.textContent).toContain("02.10.2026");
