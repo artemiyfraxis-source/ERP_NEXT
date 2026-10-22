@@ -242,3 +242,49 @@ def test_rights_follow_the_existing_qc_endpoints(production_api):  # noqa: F811
     assert read.status_code == 200 and download.status_code == 200
     assert nobody.status_code == 403 and nobody_file.status_code == 403 and nobody_post.status_code == 403
     assert viewer.status_code == 200 and viewer_post.status_code == 403
+
+
+def test_sample_control_marks_the_required_positions_and_counts_them(production_api):  # noqa: F811
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    card = _card({"coaxVswrNorm": {**NORM, "control": {"mode": "sample", "every": 2}}})
+    task, instrument = _launch(client, card, key="vswr-sample", quantity=3), _instrument(client)
+    client.post("/api/production/vswr", json=_body(task, instrument, GOOD))
+    outside = client.post("/api/production/vswr", json=_body(task, instrument, BAD, position=2, name="sn2.csv"))
+
+    listed = client.get(f"/api/production/vswr/tasks/{task['id']}").json()
+
+    assert outside.status_code == 200, outside.text  # вне выборки мерить можно
+    assert listed["control"] == {"mode": "sample", "every": 2}
+    assert [(row["position"], row["in_sample"]) for row in listed["serials"]] == [(1, True), (2, False), (3, True)]
+    assert listed["required"] == {"total": 2, "measured": 1}  # №1 и №3 в выборке, замерено №1 (№2 — вне выборки)
+
+
+def test_without_the_setting_every_unit_is_required(production_api):  # noqa: F811
+    client, _ = production_api
+    _card_, task, _instrument_ = _setup(client)
+    listed = client.get(f"/api/production/vswr/tasks/{task['id']}").json()
+    assert listed["control"] == {"mode": "all", "every": None}
+    assert listed["required"] == {"total": 3, "measured": 0} and all(row["in_sample"] for row in listed["serials"])
+
+
+def test_passport_of_a_unit_outside_the_sample_refers_to_the_batch_sample(production_api):  # noqa: F811
+    client, _ = production_api
+    _as({"quality": "edit", "production": "edit"})
+    card = _card({"build_config": {"ops": [], "coax": {"vswrControl": {"mode": "sample", "every": 2}}},
+                  "coaxVswrNorm": NORM})
+    task, instrument = _launch(client, card, key="vswr-passport", quantity=3), _instrument(client)
+    client.post("/api/production/vswr", json=_body(task, instrument, BAD))
+    client.post("/api/production/vswr", json=_body(task, instrument, GOOD, name="повтор.csv"))
+
+    outside = client.get(f"/api/production/vswr/tasks/{task['id']}/serials/2/passport").json()
+    sampled = client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1/passport").json()
+    waiting = client.get(f"/api/production/vswr/tasks/{task['id']}/serials/3/passport").json()
+
+    assert outside["control"] == {"mode": "sample", "every": 2} and outside["checks"] == []
+    sample = outside["vswr_sample"]
+    assert sample["every"] == 2 and [unit["position"] for unit in sample["units"]] == [1, 3]
+    assert sample["units"][0]["verdict"] == "pass" and sample["units"][0]["serial_number"] == f"{task['number']}-0001"
+    assert sample["units"][1]["verdict"] is None
+    assert sampled["vswr_sample"] is None and sampled["checks"][0]["verdict"] == "pass"  # замерено — как раньше
+    assert waiting["vswr_sample"] is None  # в выборке, но ещё не замерено — ссылки на выборку нет

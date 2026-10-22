@@ -41,6 +41,7 @@ from app.modules.references.technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, matching_terminal_records, resolve_terminal,
     terminal_record_for_section, wire_section,
 )
+from app.modules.techcards.etk_builder import vswr_control
 
 
 def _rows(records: Iterable[Any]) -> tuple[Mapping[str, Any], ...]:
@@ -484,7 +485,9 @@ def enrich_coax_vswr_norm(
     """Copy of the config whose coax assembly carries `coax.vswrNorm` — the VSWR acceptance norm from its components
     (owner 22.10.2026, `coax_vswr.vswr_norm`): «КСВ» / «Частота до, ГГц» of both connectors (БД.КОАКС), the loss and
     rated frequency of the cable card (`cableArt`, else `cableName`), `cableLength`. Only an assembly with a connector
-    on both ends has one; the key is dropped first and rebuilt, so a norm the references no longer give disappears."""
+    on both ends has one; the key is dropped first and rebuilt, so a norm the references no longer give disappears.
+    The generator's «Контроль КСВН» (`coax.vswrControl`) rides in the norm as `control: {mode, every}`; an assembly
+    built before the setting has no `control` and its norm is as it was."""
     enriched = deepcopy(dict(config))
     coax = enriched.get("coax")
     if not isinstance(coax, dict):
@@ -497,6 +500,9 @@ def enrich_coax_vswr_norm(
     cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
     coax["vswrNorm"] = vswr_norm(ends, coax_rows, cable_card(cards, cable) if cable else None, cable,
                                  coax.get("cableLength"))
+    control = vswr_control(coax.get("vswrControl"))
+    if control:
+        coax["vswrNorm"]["control"] = control
     return enriched
 
 

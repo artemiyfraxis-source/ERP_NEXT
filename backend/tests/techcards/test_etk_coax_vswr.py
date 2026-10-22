@@ -89,3 +89,76 @@ def test_with_technology_adds_the_norm_and_the_stamp_follows_the_cable_loss():
     assert Refs(refs.snapshot, coax_rows=refs.coax_rows, coax_cards=(lossier,)).stamp != refs.stamp
     assert Refs(refs.snapshot, coax_rows=refs.coax_rows, coax_cards=(CABLE,)).stamp == refs.stamp
     assert Refs(refs.snapshot, coax_rows=refs.coax_rows, coax_cards=(replace(CABLE, max_operating_ghz=None),)).stamp != refs.stamp
+
+
+# --- «Контроль КСВН» генератора (владелец 22.10: «1 из 50, всю партию или вообще не проверять») ------------------------
+
+
+def _with_control(control: dict | None, t_op: str = "") -> dict:
+    config = _config()
+    if control is not None:
+        config["coax"]["vswrControl"] = control
+    if t_op:
+        config["ops"][-1]["tOp"] = t_op
+    return config
+
+
+def _vswr_minutes(document: dict) -> str:
+    [operation] = [item for item in document["operations"] if item["type"] == "coaxVswr"]
+    [row] = operation["time"]
+    return row["norm"]
+
+
+def test_the_norm_contract_carries_the_control():
+    sample = enrich_coax_vswr_norm(_with_control({"mode": "sample", "every": 50}), ROWS, (CABLE,))
+    every = enrich_coax_vswr_norm(_with_control({"mode": "all", "every": 7}), ROWS, (CABLE,))
+    broken = enrich_coax_vswr_norm(_with_control({"mode": "sample", "every": 1}), ROWS, (CABLE,))
+    assert sample["coax"]["vswrNorm"]["control"] == {"mode": "sample", "every": 50}
+    assert every["coax"]["vswrNorm"]["control"] == {"mode": "all", "every": None}
+    assert broken["coax"]["vswrNorm"]["control"] == {"mode": "sample", "every": 50}  # N < 2 не бывает — 1 из 50
+    document = build_etk(sample, list(CARDS.values()))
+    assert document["coaxVswrNorm"]["control"] == {"mode": "sample", "every": 50}
+
+
+def test_the_step_says_which_units_of_the_batch_are_measured():
+    every = _control(build_etk(enrich_coax_vswr_norm(_with_control({"mode": "all"}), ROWS, (CABLE,)), list(CARDS.values())))
+    sample = _control(build_etk(enrich_coax_vswr_norm(_with_control({"mode": "sample", "every": 50}), ROWS, (CABLE,)),
+                                list(CARDS.values())))
+    load = "сторона Б нагружена согласованной нагрузкой 50 Ом"
+    assert every["text"].startswith(f"Измерить КСВН (S11) в полосе 1…3000 МГц, {load}; "
+                                    "контроль сплошной — каждое изделие партии. Норма ≤ 2,06")
+    assert sample["text"].startswith(f"Измерить КСВН (S11) в полосе 1…3000 МГц, {load}; контроль выборочный: "
+                                     "первое изделие партии и далее каждое 50-е (1 из 50). Норма ≤ 2,06")
+    assert every["tolerance"] == sample["tolerance"] == "≤ 2,06"
+    # Без справочников норма не рассчитана, но выборка всё равно в шаге.
+    bare = _control(build_etk(_with_control({"mode": "sample", "every": 20}), list(CARDS.values())))
+    assert "каждое 20-е (1 из 20); норма не рассчитана" in bare["text"]
+
+
+def test_mode_none_leaves_no_vswr_operation():
+    document = build_etk(enrich_coax_vswr_norm(_with_control({"mode": "none"}), ROWS, (CABLE,)), list(CARDS.values()))
+    assert [item["type"] for item in document["operations"]] == ["coaxPin"]
+    assert all(item.get("type") != "coaxVswr" for item in document["build_config"]["ops"])
+    assert document["coaxVswrNorm"]["control"] == {"mode": "none", "every": None}
+
+
+def test_an_old_config_without_the_setting_reads_as_before():
+    config = enrich_coax_vswr_norm(_with_control(None, t_op="60"), ROWS, (CABLE,))
+    document = build_etk(config, list(CARDS.values()))
+    assert "control" not in config["coax"]["vswrNorm"]
+    step = _control(document)
+    assert step["text"].startswith("Измерить КСВН (S11) в полосе 1…3000 МГц, сторона Б нагружена согласованной нагрузкой "
+                                   "50 Ом. Норма ≤ 2,06") and "контроль" not in step["text"]
+    assert _vswr_minutes(document) == "10"  # 1 мин × партия 10
+
+
+def test_sample_time_counts_only_the_sampled_units():
+    sample = build_etk(_with_control({"mode": "sample", "every": 4}, t_op="60"), list(CARDS.values()))
+    every = build_etk(_with_control({"mode": "all"}, t_op="60"), list(CARDS.values()))
+    assert _vswr_minutes(sample) == "3"  # ceil(10 / 4) изделия по 1 мин
+    assert _vswr_minutes(every) == "10"
+    # Контроль не последним (свой порядок технолога) — результат говорит, что КСВН проверен выборочно.
+    moved = _with_control({"mode": "sample", "every": 4})
+    moved["ops"].append({"type": "coaxPin", "side": "B", "units": 1, "templateId": CARDS["SDR_COAX_pin"].source_id})
+    [operation] = [item for item in build_etk(moved, list(CARDS.values()))["operations"] if item["type"] == "coaxVswr"]
+    assert "КСВН проверен выборочно (1 из 4)" in operation["result"][0]["name"]

@@ -1208,17 +1208,24 @@ export interface VswrNorm {
   source?: string | null;
   basis?: string;
 }
+/** «Контроль КСВН» ЭТК задания: каждое изделие, выборочно 1 из `every` (первое и каждое N-е) или без проверки. */
+export interface VswrControl { mode: "all" | "sample" | "none"; every: number | null }
 export interface VswrSerialRow {
   position: number;
   serial_id: string;
   serial_number: string;
   status: string;
   attempts: number;
+  /** Изделие входит в требуемые замеры (выборка 1 из N — первое и каждое N-е). */
+  in_sample: boolean;
   latest: VswrMeasurement | null;
 }
 export interface VswrTaskOverview {
   task: { id: string; number: string; name: string; quantity: number };
   norm: VswrNorm;
+  control: VswrControl;
+  /** Требуемые замеры по всей партии задания и сколько из них замерено. */
+  required: { total: number; measured: number };
   serials: VswrSerialRow[];
 }
 export interface VswrUploadPayload {
@@ -1260,6 +1267,9 @@ export interface CableAssemblyPassport {
   etk: { techcard_id: string | null; item_index: string; product_name: string; revision: number | null };
   norm: VswrNorm & { basis: string };
   checks: PassportCheck[];
+  control?: VswrControl;
+  /** Изделие вне выборки «1 из N» без своего замера: выборка партии с последними вердиктами. */
+  vswr_sample?: { every: number; units: Array<{ position: number; serial_number: string | null; verdict: string | null; verdict_name: string | null; max_vswr: number | null }> } | null;
   verdict: string | null;
   inspector: { id: string; name: string } | null;
   inspected_at: string | null;

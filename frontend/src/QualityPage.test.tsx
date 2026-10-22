@@ -305,11 +305,12 @@ const measurement = (verdict: "pass" | "fail", extra: object = {}) => ({
   norm: {}, norm_vswr_max: 2.06, verdict, verdict_name: verdict === "pass" ? "Годно" : "Не годно", verdict_manual: false, verdict_reason: "",
   inspector: { id: "u", name: "Контролёр Иванов" }, measured_at: "2026-10-22T10:00:00+03:00", file_name: "a.s1p", points: 3, file_meta: {}, trace, ...extra,
 });
-const overview = (norm: object, latest: unknown = null) => ({
-  task: { id: branched.id, number: "ПЗ-0001", name: "Жгут", quantity: 10 }, norm,
+const overview = (norm: object, latest: unknown = null, control: { mode: string; every: number | null } = { mode: "all", every: null }) => ({
+  task: { id: branched.id, number: "ПЗ-0001", name: "Жгут", quantity: 10 }, norm, control,
+  required: control.mode === "sample" ? { total: 1, measured: latest ? 1 : 0 } : { total: 10, measured: latest ? 1 : 0 },
   serials: [
-    { position: 1, serial_id: "s1", serial_number: "ПЗ-0001-01", status: "В работе", attempts: latest ? 1 : 0, latest },
-    { position: 2, serial_id: "s2", serial_number: "ПЗ-0001-02", status: "В работе", attempts: 0, latest: null },
+    { position: 1, serial_id: "s1", serial_number: "ПЗ-0001-01", status: "В работе", attempts: latest ? 1 : 0, in_sample: true, latest },
+    { position: 2, serial_id: "s2", serial_number: "ПЗ-0001-02", status: "В работе", attempts: 0, in_sample: control.mode !== "sample", latest: null },
   ],
 });
 const okNorm = { status: "ok", reason: "", vswr_max: 2.06, band_mhz: [1700, 1900], source: "SMA-J 1,25, SMA-J 1,3" };
@@ -345,6 +346,27 @@ it("shows the vswr section: the norm line and a dense table of units with their 
   expect(within(table).getByText("Контролёр Иванов")).toBeInTheDocument();
   expect(within(table).getAllByRole("button", { name: "Загрузить замер" })).toHaveLength(2);
   expect(within(table).getByRole("link", { name: "Файл" })).toHaveAttribute("href", "/api/production/vswr/measurements/78000000-0000-0000-0000-000000000001/file");
+});
+
+it("sample 1 of N: marks the units in and out of the sample, counts the required ones, still lets measure the rest", async () => {
+  qualityFetch({ instruments: [vna], get: (path) => (path === vswrBase ? json(overview(okNorm, measurement("pass"), { mode: "sample", every: 50 })) : null) });
+  render(<QualityPage principal={qc} />);
+  fireEvent.change(await screen.findByLabelText("Задание"), { target: { value: branched.id } });
+  expect(await screen.findByText("· выборочно 1 из 50")).toBeInTheDocument();
+  expect(screen.getByText("замерено 1 из 1 требуемых")).toBeInTheDocument();
+  const table = screen.getByRole("heading", { name: "Замеры КСВН" }).closest(".panel") as HTMLElement;
+  const [first, second] = ["ПЗ-0001-01", "ПЗ-0001-02"].map((serial) => within(table).getByText(serial).closest("tr") as HTMLElement);
+  expect(within(first).getByText("в выборке")).toBeInTheDocument();
+  expect(within(second).getByText("вне выборки")).toBeInTheDocument();
+  expect(within(second).getByRole("button", { name: "Загрузить замер" })).toBeEnabled();
+  expect(within(second).getByRole("button", { name: "Паспорт" })).toBeEnabled(); // паспорт ссылается на выборку партии
+});
+
+it("every unit: the norm line says so and every unit is required", async () => {
+  await openVswr(okNorm);
+  expect(await screen.findByText("· контроль: каждое изделие")).toBeInTheDocument();
+  expect(screen.getByText("замерено 0 из 10 требуемых")).toBeInTheDocument();
+  expect(screen.queryByText("вне выборки")).not.toBeInTheDocument();
 });
 
 it("says why the norm is undefined", async () => {

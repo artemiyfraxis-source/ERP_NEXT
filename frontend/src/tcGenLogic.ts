@@ -221,6 +221,9 @@ export type GenState = {
     /** Разделка (владелец 14.10): «machine» — резка с разделкой на роторном станке одной операцией, «separate» — резка,
      *  затем разделка А и В. Станок: "" — по Ø кабеля (coaxMachineAuto_), иначе выбор технолога. */
     stripMode: CoaxStripMode; machine: "" | CoaxMachineKey;
+    /** «Контроль КСВН» (владелец 22.10: «1 из 50, всю партию или вообще не проверять»): каждое изделие, выборочно 1 из
+     *  `vswrEvery` или без проверки. Нет поля — карта собрана до настройки: операция есть, ЭТК пишет её как раньше. */
+    vswrMode?: CoaxVswrMode; vswrEvery?: string;
   };
   selectedTemplates: Record<string, string>;
   manualTemplates: string[];
@@ -229,6 +232,29 @@ export type GenState = {
       build_config.opOrder и возвращается из него при открытии карты. */
   opOrder: string[];
 };
+
+export type CoaxVswrMode = "all" | "sample" | "none";
+export type CoaxVswrControl = { mode: CoaxVswrMode; every: number | null };
+export const COAX_VSWR_EVERY = 50;
+
+/** «Контроль КСВН» формы для build_config.coax.vswrControl; нет режима (карта до настройки) — null. N < 2 — 1 из 50. */
+export function coaxVswrControl_(coax: Pick<GenState["coax"], "vswrMode" | "vswrEvery">): CoaxVswrControl | null {
+  if (!coax.vswrMode) return null;
+  if (coax.vswrMode !== "sample") return { mode: coax.vswrMode, every: null };
+  const every = parseInt(String(coax.vswrEvery ?? ""), 10);
+  return { mode: "sample", every: every >= 2 ? every : COAX_VSWR_EVERY };
+}
+
+/** Режим контроля КСВН собранной карты возвращается в форму из build_config.coax.vswrControl; у коакс-карты без него
+ *  (собрана до настройки) режима нет — ЭТК пересобирается как раньше. Карта не коакс — форма как есть. */
+export function withCoaxVswrFromConfig(S: GenState, config: unknown): GenState {
+  const coax = config && typeof config === "object" ? (config as { coax?: unknown }).coax : null;
+  if (!coax || typeof coax !== "object") return S;
+  const raw = (coax as { vswrControl?: { mode?: unknown; every?: unknown } }).vswrControl;
+  const mode = raw && ["all", "sample", "none"].includes(String(raw.mode)) ? raw.mode as CoaxVswrMode : undefined;
+  const every = mode === "sample" && Number(raw?.every) >= 2 ? String(raw?.every) : String(COAX_VSWR_EVERY);
+  return { ...S, coax: { ...S.coax, vswrMode: mode, vswrEvery: every } };
+}
 
 export type OpSpec = {
   type: string; opKey: string; label: string; side?: Side; ord?: number; epId?: string; crimpEpId?: string; crimpEpIdB?: string;
@@ -253,6 +279,8 @@ export type OpSpec = {
   markTube?: boolean; tutParts?: Array<{ art: string; name: string; count: number; len: string }>;
   /** «Сложная сборка» (владелец 16.10): ПФ схемы генератора, в который входит операция (ключ блока `build_config.route`). */
   pf?: string;
+  /** Контроль КСВН коакса: сплошной или выборочный 1 из N (нет — карта до настройки). */
+  vswrControl?: CoaxVswrControl;
   /** Резка проводов «Сложной сборки»: жилы партии — [строка «Кабели», жила], по ним стрелки к ПФ, что их берут. */
   cutUnits?: Array<[number, number]>;
   /** Монтаж оплётки ветви: оплётку отрезала «Резка оплётки» — материал у резки, здесь его нет. */
@@ -627,6 +655,7 @@ export function emptyState(): GenState {
     coax: {
       len: "", tutEnabled: true, tutLen: "", pinA: "пайка", pinB: "пайка", coverA: "", coverB: "",
       stripB: false, shield: "обжим", sideA: null, sideB: null, stripMode: "machine", machine: "",
+      vswrMode: "all", vswrEvery: String(COAX_VSWR_EVERY),
     },
     selectedTemplates: {}, manualTemplates: [], times: {}, opOrder: [],
   };
@@ -1823,7 +1852,10 @@ export function makeGen(D: GenData, S: GenState) {
     if (caps["обжим"]) ops.push({ type: "coaxCapCrimp", opKey: "coaxCapCrimp", units: caps["обжим"], label: `Монтаж крышки (обжим)${x(caps["обжим"])}`, cat: "Опрессовка крышки коакс" });
     if (caps["винт"]) ops.push({ type: "coaxCapScrew", opKey: "coaxCapScrew", units: caps["винт"], label: `Монтаж крышки (винт)${x(caps["винт"])}`, tmplHint: "INS_CAP" });
     // Контроль КСВН (владелец 22.10) — последней, только с разъёмами на обоих концах; норма — по комплектующим, на сервере.
-    if (sideB) ops.push({ type: "coaxVswr", opKey: "coaxVswr", label: "Контроль КСВН", tmplHint: "CTRL_VSWR_coax" });
+    // Режим контроля (владелец 22.10): «Не проверять» — операции нет; выборочный — «1 из N» в подписи и в ЭТК.
+    const vswr = coaxVswrControl_(S.coax);
+    if (sideB && vswr?.mode !== "none") ops.push({ type: "coaxVswr", opKey: "coaxVswr", tmplHint: "CTRL_VSWR_coax",
+      label: vswr?.mode === "sample" ? `Контроль КСВН — выборочно 1 из ${vswr.every}` : "Контроль КСВН", ...(vswr ? { vswrControl: vswr } : {}) });
     return ops;
   }
 
@@ -2949,9 +2981,11 @@ export function makeGen(D: GenData, S: GenState) {
         opNum: row.matched ? (row.matched.opNumber || "") : "", tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine,
         ...(machine ? { machine: { model: machine.model, inventory: machine.inventory, name: machine.name } } : {}),
         ...(spec.stripSides ? { stripSides: spec.stripSides } : {}),
-        ...(spec.clampSides ? { clampSides: spec.clampSides } : {}) };
+        ...(spec.clampSides ? { clampSides: spec.clampSides } : {}),
+        ...(spec.vswrControl ? { vswrControl: spec.vswrControl } : {}) };
     });
     const tut = coaxBomTut_(), cable = coaxBomCableComp_(), sleeve = coaxBomSleeve_();
+    const vswrControl = coaxVswrControl_(S.coax);
     return {
       mode: "coax", tab: "coax",
       assemblyIndex: findKey(/индекс/i),
@@ -2966,6 +3000,7 @@ export function makeGen(D: GenData, S: GenState) {
         shieldType: S.coax.shield,
         sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : "", coaxShieldOf_("A")),
         sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : "", coaxShieldOf_("B")),
+        ...(vswrControl ? { vswrControl } : {}),
       },
       ops, ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
     };
