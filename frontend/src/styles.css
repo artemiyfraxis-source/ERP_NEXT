@@ -1294,7 +1294,13 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-blocker { padding: 8px 10px; border-radius: 8px; background: var(--chip-danger-bg); color: var(--chip-danger-fg); font-size: 13px; font-weight: 600; }
 .plan-blocker[data-tone="warning"] { background: var(--chip-warning-bg); color: var(--chip-warning-fg); }
 .plan-blocker[data-tone="neutral"], .plan-blocker[data-tone="info"] { background: var(--chip-neutral-bg); color: var(--chip-neutral-fg); }
-.production-plan-details { padding: 20px; display: grid; gap: 18px; }
+.production-plan-details { padding: 6px 0 2px; display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 8px 16px; align-items: start; }
+.production-plan-details > .plan-acts, .production-plan-details > .plan-blocker, .production-plan-details > p, .production-plan-details > .plan-kit-stages, .production-plan-details > .plan-note-form, .production-plan-details > .plan-journal { grid-column: 1 / -1; }
+.production-plan-details > .plan-journal { max-height: 240px; overflow: auto; }
+.mb-project-block .production-plan-details section { padding-top: 8px; gap: 3px; }
+.mb-project-block .production-plan-details h3 { font-size: 13px; }
+.mb-project-block { border-bottom: 1px solid var(--border); margin-bottom: 10px; padding-bottom: 8px; }
+.mb-block-toggle { width: 100%; text-align: left; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 4px 0; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; color: var(--foreground); }
 .production-plan-details h2, .production-plan-details h3, .production-plan-details p { margin: 0; }
 .production-plan-details section { display: grid; gap: 7px; padding-top: 14px; border-top: 1px solid var(--border); }
 .plan-kit-stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
@@ -1303,9 +1309,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-kit-mark label { display: grid; gap: 3px; font-size: 11px; color: var(--muted-foreground); }
 .plan-kit-mark select, .plan-kit-mark textarea { min-width: 0; font-size: 12px; }
 .plan-kit-mark textarea.auto-textarea { min-height: 0; }
-.plan-note-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
+.plan-note-grid { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: end; }
 .plan-note-grid label { display: grid; gap: 5px; font-size: 12px; color: var(--muted-foreground); }
-.plan-note-text { grid-column: 1 / -1; }
+.plan-note-text { flex: 1 1 320px; }
+.plan-note-grid > button { flex: 0 0 auto; }
 .plan-note-text textarea.auto-textarea { min-height: 0; }
 .plan-journal article { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .plan-journal article > div { display: flex; justify-content: space-between; gap: 12px; }
@@ -1408,7 +1415,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .etk-flow { grid-template-columns: 1fr; }
   .etk-wrap, .tr-head { grid-template-columns: 1fr; }
   .plan-row-metrics, .plan-note-grid { grid-template-columns: 1fr; }
-  .plan-note-text { grid-column: auto; }
 }
 
 /* NAV-ACCESS «Доступы»: role × section matrix on the shared DataTable. Dense for the 16" laptop (owner, 04.10): rows
@@ -2799,7 +2805,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-drawer { position: fixed; inset: 0; z-index: 45; }
 .plan-drawer-scrim { position: absolute; inset: 0; background: rgba(0, 26, 24, .25); }
 .plan-drawer-body { position: absolute; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); overflow: auto; overscroll-behavior: contain; background: var(--background, var(--bg-gray-1)); box-shadow: -8px 0 30px rgba(0,0,0,.15); padding: 12px; }
-.plan-details-close { position: absolute; right: 18px; top: 18px; z-index: 1; }
 .plan-drawer-body .plan-detail-head { padding-right: 96px; }
 .psm-note { font-size: 12px; color: var(--muted-foreground); }
 
@@ -4904,3 +4909,5 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 @media (pointer: coarse) {
   .mb-run input, .autoplan-count-input input { min-height: 40px; }
 }
+
+.mb-block-summary { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 400; color: var(--muted-foreground); }
