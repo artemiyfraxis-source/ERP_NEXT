@@ -22,6 +22,7 @@ import os
 import re
 import sqlite3
 import sys
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -249,7 +250,7 @@ class Importer:
     def stored_file(self, relative: str, name: str) -> UUID | None:
         path = (self.data_dir / relative.replace("\\", "/")).resolve()
         if self.data_dir.resolve() not in path.parents or not path.is_file():
-            self.report.add("файлы: нет на диске")
+            self.report.add("без файла: УПД/ЭДО")
             return None
         content = path.read_bytes()
         sha = hashlib.sha256(content).hexdigest()
@@ -307,6 +308,8 @@ class Importer:
                 self.report.add("УПД: добавлены")
             else:
                 for key, value in parsed.items():
+                    if key == "file_id" and value is None:
+                        continue  # a run without the data folder must not detach a file attached earlier
                     setattr(row, key, value)
                 # The buyer's word given in ERP stays; Roller_Buyer's fills only what ERP does not have.
                 if row.manual_header is None and own["manual_header"] is not None:
@@ -486,7 +489,8 @@ def open_snapshot(path: Path) -> sqlite3.Connection:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Roller_Buyer → ERP: поставщики, номенклатура, цены, УПД, счета")
     parser.add_argument("--snapshot", required=True, type=Path, help="копия buyer.db")
-    parser.add_argument("--data-dir", required=True, type=Path, help="DATA_DIR Roller_Buyer (только чтение)")
+    parser.add_argument("--data-dir", type=Path, default=None,
+                        help="DATA_DIR Roller_Buyer (только чтение); без него файлы пропускаются и считаются «без файла»")
     parser.add_argument("--apply", action="store_true", help="записать (без флага — пробный прогон с откатом)")
     args = parser.parse_args(argv)
     from app.database import build_engine, build_purchasing_uow_factory
@@ -499,7 +503,8 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.now(timezone.utc)
     uow = build_purchasing_uow_factory(build_engine(database_url))()
     with uow:
-        report = Importer(uow.session, snapshot, args.data_dir, now).run()
+        data_dir = args.data_dir or Path(tempfile.mkdtemp(prefix="rb-no-files-"))
+        report = Importer(uow.session, snapshot, data_dir, now).run()
         uow.audit.add(AuditEvent(
             id=_id("audit", now.isoformat()), aggregate_id=ACTOR.id, event_type="purchasing.roller_buyer_imported",
             actor=ACTOR, occurred_at=now, details={key: str(value) for key, value in report.counts.items()},

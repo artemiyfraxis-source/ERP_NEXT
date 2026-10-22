@@ -32,7 +32,11 @@ ERP's word wins. Each line run here gets an audit event `procurement.rb_imported
 at. On a re-run a line whose version moved since (the buyer or ERP changed it) is left alone and reported; an untouched
 line is carried forward to RB's newer state (a line RB took out of its request since is removed here too). Existing
 request-for-quotes rows are never rewritten (a quote is never edited in RB either); only an empty «отправлен» is filled.
-A line with no «нужно к» in RB gets ERP's default ПЛАНОВАЯ ДАТА: the request day + 14."""
+A line with no «нужно к» in RB gets the project's ДЛ from the production plan as its ПЛАНОВАЯ ДАТА; no such deadline —
+the request day + 14.
+
+Without `--data-dir` (or with an empty one) everything but the files is imported: a missing quote / invoice file is
+counted as «без файла», and a re-run with the folder attaches the files to what is already there."""
 
 from __future__ import annotations
 
@@ -43,6 +47,7 @@ import os
 import re
 import sqlite3
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -88,6 +93,7 @@ from app.modules.procurement.domain import (
 from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchemyProcurementUnitOfWork
 from app.modules.procurement.money import MoneyInput
 from app.modules.procurement.requests_application import CancelManyCommand, CancelManyItem, cancel_procurement_lines
+from app.modules.production.infrastructure import ProductionPlanProjectRow
 from app.modules.purchasing import items as purchasing_items
 from app.modules.purchasing import orders as purchasing_orders
 from app.modules.purchasing import settings as purchasing_settings
@@ -132,6 +138,7 @@ from app.modules.requests.domain import (
 from app.modules.requests.infrastructure import RequestRow, SqlAlchemyUnitOfWork as SqlAlchemyRequestsUnitOfWork
 from app.shared.events import OutboxMessage
 from app.shared.identity import Actor
+from app.shared.project_number import normalize_project_number
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyOutboxRepository
 from app.workflows.purchasing_orders import order_lines as order_line_facts
 
@@ -420,6 +427,7 @@ class ProcurementFlowImporter:
         self.touched: set[UUID] = set()
         self.stamps: dict[UUID, dict] = {}  # the last `procurement.rb_imported` of each line
         self.files: dict[str, UUID] = {}
+        self._plan_deadlines: dict[str, date] | None = None
 
     # units of work on the one session
     def procurement(self) -> _ProcurementUow:
@@ -560,6 +568,17 @@ class ProcurementFlowImporter:
                 f"проект RB «{number}» ({project['name']}) не в формате ERP — назначение «Обеспечение производства»")
         return None, purpose or "Обеспечение производства", None
 
+    def plan_deadline(self, reference: str | None) -> date | None:
+        """ДЛ проекта from the production plan (what the master board shows as «ДЛ проекта»)."""
+        if not reference:
+            return None
+        if self._plan_deadlines is None:
+            self._plan_deadlines = {
+                normalize_project_number(row.project): row.deadline
+                for row in self.session.scalars(select(ProductionPlanProjectRow)) if row.deadline is not None
+            }
+        return self._plan_deadlines.get(normalize_project_number(reference))
+
     def request(self, request_id: int) -> None:
         request = self.rb.requests[request_id]
         rb_lines = sorted((line for line in self.rb.lines.values() if line.request_id == request_id), key=lambda x: x.id)
@@ -571,9 +590,10 @@ class ProcurementFlowImporter:
         created = _utc(request["created_at"], self.now).astimezone(MSK)  # ERP keeps Moscow moments (moscow_now)
         received = _day(request["received_at"]) or created.date()
         drafts = []
+        project_deadline = self.plan_deadline(reference)
         for line in missing:
             item = self.rb.items[line.item_id]
-            planned = line.need_by or received + timedelta(days=14)
+            planned = line.need_by or project_deadline or received + timedelta(days=14)
             deadline = min(received + timedelta(days=3 if request["urgent"] else 7), planned)
             drafts.append(RequestDraft(
                 purpose=purpose, delivery_point=None, name=_clean(item["name"])[:1024],
@@ -821,7 +841,12 @@ class ProcurementFlowImporter:
             return
         received = _day(rb["received_at"]) or rfq.created_at.date()
         entered = self.quote_moment(quote_id)
-        new = self.session.get(QuoteRow, erp_id) is None
+        existing_quote = self.session.get(QuoteRow, erp_id)
+        new = existing_quote is None
+        if existing_quote is not None and existing_quote.file_id is None and rb["file_name"]:
+            existing_quote.file_id = self.quote_file(rb["file_name"])  # a re-run with the data folder attaches the file
+            if existing_quote.file_id is not None:
+                self.report.add("КП: файл добавлен к ранее перенесённому")
         if new:
             self.asked(rfq, supplier_id, entered, f"quote:{quote_id}")
             file_id = self.quote_file(rb["file_name"]) if rb["file_name"] else None
@@ -875,7 +900,7 @@ class ProcurementFlowImporter:
         path = (self.data_dir / "files" / "quotes" / str(name)).resolve()
         root = (self.data_dir / "files" / "quotes").resolve()
         if root not in path.parents or not path.is_file():
-            self.report.add("КП: файла нет на диске")
+            self.report.add("без файла: КП")
             return None
         return self.stored_file(path.read_bytes(), str(name))
 
@@ -1101,9 +1126,11 @@ class ProcurementFlowImporter:
         self.report.notes.append(f"заказ RB № {order['number']}: счёт Kaiten {found['external_id']} ({how})"
                                  + ("" if chosen else " — без файла счёта"))
         if chosen is None:
+            self.report.add("без файла: счета заказов")
             return found, None, ""
         path = (self.data_dir / str(chosen["path"]).replace("\\", "/")).resolve()
         if self.data_dir.resolve() not in path.parents or not path.is_file():
+            self.report.add("без файла: счета заказов")
             self.report.notes.append(f"заказ RB № {order['number']}: файла {chosen['path']} нет на диске")
             return found, None, ""
         return found, path.read_bytes(), str(chosen["name"])
@@ -1213,7 +1240,8 @@ def buyer_actor(session: Session, login: str) -> Actor:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Roller_Buyer → ERP: заявки, запросы КП, КП, решения, заказы, настройки")
     parser.add_argument("--snapshot", required=True, type=Path, help="копия buyer.db")
-    parser.add_argument("--data-dir", required=True, type=Path, help="DATA_DIR Roller_Buyer (только чтение)")
+    parser.add_argument("--data-dir", type=Path, default=None,
+                        help="DATA_DIR Roller_Buyer (только чтение); без него файлы пропускаются и считаются «без файла»")
     parser.add_argument("--buyer", required=True, help="логин закупщика ERP, чьи это строки")
     parser.add_argument("--apply", action="store_true", help="записать (без флага — пробный прогон с откатом)")
     args = parser.parse_args(argv)
@@ -1228,7 +1256,8 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.now(MSK)
     with Session(bind=engine, expire_on_commit=False) as session:
         buyer = buyer_actor(session, args.buyer)
-        report = ProcurementFlowImporter(session, rb, args.data_dir, buyer, now).run()
+        data_dir = args.data_dir or Path(tempfile.mkdtemp(prefix="rb-no-files-"))
+        report = ProcurementFlowImporter(session, rb, data_dir, buyer, now).run()
         if args.apply:
             session.commit()
         else:

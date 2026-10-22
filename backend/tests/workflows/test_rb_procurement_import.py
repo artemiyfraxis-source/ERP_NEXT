@@ -405,3 +405,59 @@ def test_the_screens_read_the_rb_statuses_back(api, erp, snapshot):
     board = {order["order_number"]: order["column"] for order in api.get(
         "/api/purchasing/orders", params={"scope": "mine"}).json()["orders"]}
     assert board == {numbers[6]: "transit", numbers[7]: "awaiting", numbers[11]: "to_pay"}
+
+
+def test_planned_date_is_the_project_deadline_from_the_plan_else_request_day_plus_14(erp, snapshot):
+    from app.modules.production.infrastructure import ProductionPlanProjectRow
+
+    with erp() as session:
+        session.add(ProductionPlanProjectRow(
+            project="713К.4", customer="ООО ТСР", opened_on=date(2026, 9, 1), deadline=date(2026, 11, 20),
+            status="В работе", terminal=False, imported_at=NOW,
+        ))
+        session.commit()
+    _reference(erp, snapshot)
+    _flow(erp, snapshot)
+    with erp() as session:
+        assert _line(session, 1).planned_date == date(2026, 11, 20)  # RB has no «нужно к»: the project's ДЛ
+        assert _line(session, 11).planned_date == date(2026, 10, 26)  # 776К.1 is not in the plan: 12.10 + 14
+
+
+def test_without_data_dir_everything_but_files_imports_and_a_rerun_with_files_attaches_them(erp, snapshot, tmp_path):
+    path, data = snapshot
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    _reference(erp, (path, empty))
+    report = _flow(erp, (path, empty))
+    assert not report.skipped, report.skipped
+    assert report.counts["без файла: КП"] == 1 and report.counts["без файла: счета заказов"] >= 1
+    with erp() as session:
+        assert session.get(QuoteRow, _id("quote", 1)).file_id is None
+        assert _line(session, 6).status == "Жду счет"  # no invoice file: ERP keeps «Жду счет»
+    before = _counts(erp)
+    # The same run again changes nothing.
+    _flow(erp, (path, empty), now=datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc))
+    assert _counts(erp) == before
+    # With the folder: the files are attached, the orders move on; no line or request is made twice.
+    _reference(erp, snapshot)
+    again = _flow(erp, snapshot, now=datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc))
+    assert not again.skipped, again.skipped
+    after = _counts(erp)
+    for table in ("procurement_lines", "requests", "purchasing_rfqs", "purchasing_quotes", "purchasing_quote_lines"):
+        assert after[table] == before[table], table
+    with erp() as session:
+        quote = session.get(QuoteRow, _id("quote", 1))
+        assert session.get(DocumentFileRow, quote.file_id).content == b"%PDF-1.4 quote one"
+        assert _line(session, 6).status == "В пути" and _line(session, 6).invoice_url
+
+
+def test_buyer_is_found_by_login_without_regard_to_case(erp):
+    from app.workflows.rb_procurement_import import buyer_actor
+
+    with erp() as session:
+        session.add(IdentityUserRow(
+            id=UUID("00000000-0000-4000-8000-0000000000d0"), login="domrachev", email="domrachev@example.test",
+            name="Домрачев Виктор", department="Закупки", role="buyer", active=True, access_level="edit",
+        ))
+        session.commit()
+        assert buyer_actor(session, " Domrachev ").name == "Домрачев Виктор"
