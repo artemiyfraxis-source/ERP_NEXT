@@ -6,13 +6,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from app.modules.shipping.api import _number
-from app.shared.http_auth import Principal, shipping_view_principal
+from app.modules.warehouse.labels_application import COPIES_MAX
+from app.shared.clock import moscow_now
+from app.shared.http_auth import Principal, shipping_view_principal, warehouse_edit_principal
 
+from .finished_goods_label import print_act_label
 from .production_intake import intake_uow_factory, production_intake
 
 router = APIRouter(prefix="/api/shipping", tags=["shipping"])
@@ -48,3 +53,32 @@ def list_intake(
             "delivered": _number(task.delivered),
         } for task in row.tasks],
     } for row in production_intake(intake)]}
+
+
+class LabelPayload(BaseModel):
+    copies: int = Field(default=1, ge=1, le=COPIES_MAX)
+
+
+@router.post("/intake/{grn}/label")
+def print_intake_label(
+    grn: str,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    request: Request,
+    payload: LabelPayload | None = None,
+) -> dict:
+    """Этикетка ГРН акта приёмки «ГП.YY.NNNNNNN» → та же очередь печати склада, что у партий (`{copies}`, по умолчанию 1):
+    `{status: "queued", reason, file, copies, job_id}`. Права — как у печати этикеток склада («Склад» на правку)."""
+    shipping = getattr(request.app.state, "shipping_uow_factory", None)
+    warehouse = getattr(request.app.state, "warehouse_uow_factory", None)
+    sessions = getattr(shipping() if callable(shipping) else None, "session_factory", None)
+    if not callable(sessions) or not callable(warehouse):
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    try:
+        return print_act_label(
+            sessions, warehouse, grn, (payload or LabelPayload()).copies, now, created_by=principal.actor.name,
+        ).as_dict()
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=error.args[0]) from error
+    except ValueError as error:  # код не лезет на этикетку
+        raise HTTPException(status_code=422, detail=str(error)) from error

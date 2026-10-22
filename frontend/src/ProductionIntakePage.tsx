@@ -9,7 +9,7 @@ import { daysUntil } from "./productionGraph";
 import { canAct } from "./navigation";
 import { intakeApi, type IntakeAct, type IntakeRow } from "./productionIntakeApi";
 import { IntakeWindow, leftOf } from "./IntakeWindow";
-import { labelsApi, PrintOutcome, type PrintResult } from "./LabelPrint";
+import { PrintOutcome, type PrintResult } from "./LabelPrint";
 import "./productionIntake.css";
 
 /* «Приёмка с производства» (владелец 14.10): всё, что у нас в работе, по проектам. Склад принимает кусками —
@@ -115,8 +115,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const grn = row.grn;
     setLabel({ grn, result: null, error: "", busy: true });
     try {
-      const { lot_id } = await labelsApi.findLot("ЦАР", grn, "");
-      const result = await labelsApi.printLot(lot_id, 1);
+      const result = await intakeApi.printLabel(grn);
       setLabel({ grn, result, error: "", busy: false });
     } catch (reason) {
       setLabel({ grn, result: null, error: failureText(reason, "Этикетка не напечатана"), busy: false });

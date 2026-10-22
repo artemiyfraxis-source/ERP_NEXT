@@ -225,15 +225,15 @@ describe("Приёмка с производства", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : undefined });
-      if (url.startsWith("/api/stock/labels/lot?")) return json({ lot_id: "lot-1" });
-      if (url === "/api/stock/batches/lot-1/label") return json({ status: "queued", reason: "В очереди принтера.", file: "j1", copies: 1, job_id: "j1" });
+      if (url === "/api/shipping/intake/%D0%93%D0%9F.26.0000030/label") return json({ status: "queued", reason: "В очереди принтера.", file: "j1", copies: 1, job_id: "j1" });
       return base(input, init);
     }));
     render(<ProductionIntakePage principal={principal} />);
     await screen.findAllByText("Жгут печать");
     fireEvent.click(screen.getByRole("button", { name: "Печать этикетки ГП.26.0000030" }));
     expect(await screen.findByText("В очереди принтера.")).toBeInTheDocument();
-    expect(calls.some((call) => call.url === "/api/stock/batches/lot-1/label" && call.method === "POST")).toBe(true);
+    expect(calls.find((call) => call.url.endsWith("/label") && call.method === "POST")?.body).toEqual({ copies: 1 });
+    expect(calls.some((call) => call.url.startsWith("/api/stock/"))).toBe(false); // не поиск партии склада
   });
 
   it("печать недоступна без права на склад", async () => {

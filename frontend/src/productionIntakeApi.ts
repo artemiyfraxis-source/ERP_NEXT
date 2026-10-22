@@ -1,4 +1,5 @@
 import { api, type ProjectAddressee } from "./api";
+import type { PrintResult } from "./LabelPrint";
 
 /* «Приёмка с производства»: список всего, что в работе (GET /api/shipping/intake), приёмка кусками и данные отправки. */
 
@@ -47,6 +48,9 @@ export const intakeApi = {
       method: "POST", headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ lines, ...(receivedAt ? { received_at: receivedAt } : {}), ...(location.trim() ? { location: location.trim() } : {}) }),
     }),
+  /** Этикетка ГРН акта приёмки — в ту же очередь печати склада, что у партий (права «Склад» на правку). */
+  printLabel: (grn: string, copies = 1) =>
+    api<PrintResult>(`/api/shipping/intake/${encodeURIComponent(grn)}/label`, { method: "POST", body: JSON.stringify({ copies }) }),
   dispatch: (project: string) => api<{ addressee: DispatchData | null }>(`/api/shipping/project-addressee?project=${encodeURIComponent(project)}`),
   saveDispatch: (payload: Record<string, unknown>) => api<{ addressee: DispatchData }>("/api/shipping/project-addressee", {
     method: "PUT", body: JSON.stringify(payload),
