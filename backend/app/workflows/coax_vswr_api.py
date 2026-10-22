@@ -33,6 +33,7 @@ from app.modules.production.vswr import (
     record_vswr,
     vswr_file,
 )
+from app.modules.techcards.etk_builder import vswr_control, vswr_in_sample
 from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_overview_principal, production_quality_principal
@@ -73,6 +74,15 @@ def etk_norm(document: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(norm, Mapping):
         return undefined_norm(OLD_ETK_REASON)
     return dict(norm)
+
+
+def etk_control(document: Mapping[str, Any] | None, norm: Mapping[str, Any]) -> dict[str, Any]:
+    """«Контроль КСВН» задания (генератор, владелец 22.10): из нормы ЭТК (`control`), иначе из её build_config; ЭТК до
+    настройки — каждое изделие, как было."""
+    config = document.get("build_config") if isinstance(document, Mapping) else None
+    coax = config.get("coax") if isinstance(config, Mapping) else None
+    return (vswr_control(norm.get("control")) or vswr_control(coax.get("vswrControl") if isinstance(coax, Mapping) else None)
+            or {"mode": "all", "every": None})
 
 
 def _task_etk(techcards_factory: Callable[[], Any] | None, task) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -195,6 +205,27 @@ def _serial_measurements(uow_factory, task, position: int) -> tuple[Any, list[Vs
     return serial, list(list_vswr_for_serial(serial.id, uow_factory()))
 
 
+def _sample_result(uow_factory, task, control: Mapping[str, Any]) -> dict[str, Any]:
+    """Выборка партии задания (позиции 1, 1+N, …) с последним вердиктом каждого изделия; без замера — verdict None."""
+    latest: dict[UUID, VswrMeasurement] = {}
+    for item in list_vswr_for_task(task.id, uow_factory()):
+        latest[item.serial_id] = item
+    units = []
+    with uow_factory() as uow:
+        for position in range(1, task.quantity + 1):
+            if not vswr_in_sample(control, position):
+                continue
+            serial = uow.serials.by_position(task.id, position)
+            item = latest.get(serial.id) if serial is not None else None
+            units.append({
+                "position": position, "serial_number": serial.serial_number if serial else None,
+                "verdict": item.verdict.value if item else None,
+                "verdict_name": VERDICT_NAMES[item.verdict] if item else None,
+                "max_vswr": _num(item.max_vswr) if item else None,
+            })
+    return {"every": control["every"], "units": units}
+
+
 @router.post("")
 def upload_measurement(
     payload: RecordVswrPayload,
@@ -240,12 +271,19 @@ def task_measurements(
                 serials.append((position, serial))
     document, etk = _task_etk(techcards_factory, task)
     norm = etk_norm(document) if etk["techcard_id"] else undefined_norm(NO_ETK_REASON)
+    control = etk_control(document, norm)
+    # Требуемые замеры — по всей партии задания (выборка 1 из N: первое и каждое N-е), замерено — у кого есть замер.
+    measured = {position for position, serial in serials if serial.id in latest}
+    required = [position for position in range(1, task.quantity + 1) if vswr_in_sample(control, position)]
     return {
         "task": {"id": str(task.id), "number": task.number, "name": task.name, "quantity": task.quantity},
         "norm": _norm_result(norm),
+        "control": control,
+        "required": {"total": len(required), "measured": len(measured.intersection(required))},
         "serials": [{
             "position": position, "serial_id": str(serial.id), "serial_number": serial.serial_number,
             "status": serial.status.value, "attempts": attempts.get(serial.id, 0),
+            "in_sample": vswr_in_sample(control, position),
             "latest": _measurement_result(latest[serial.id]) if serial.id in latest else None,
         } for position, serial in serials],
     }
@@ -306,6 +344,10 @@ def serial_passport(
             "inspector": {"id": str(latest.inspector_id), "name": latest.inspector_name},
             "inspected_at": latest.measured_at.isoformat(),
         })
+    control = etk_control(document, etk_side)
+    sample = None
+    if latest is None and control["mode"] == "sample" and not vswr_in_sample(control, position):
+        sample = _sample_result(uow_factory, task, control)
     return {
         "product": {
             "task_id": str(task.id), "task_number": task.number, "project": task.project, "item": task.item,
@@ -322,6 +364,9 @@ def serial_passport(
             "from_snapshot": latest is not None,
         },
         "checks": checks,
+        "control": control,
+        # Изделие вне выборки «1 из N» без своего замера: паспорт ссылается на результаты выборки партии.
+        "vswr_sample": sample,
         "verdict": latest.verdict.value if latest else None,
         "inspector": checks[0]["inspector"] if checks else None,
         "inspected_at": checks[0]["inspected_at"] if checks else None,

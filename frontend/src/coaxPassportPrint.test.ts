@@ -69,3 +69,20 @@ it("prints a passport with no checks yet", () => {
   expect(html).toContain("Проверки ОТК по изделию ещё не проводились.");
   expect(html).not.toContain("<svg");
 });
+
+it("a unit outside the 1-of-N sample refers to the batch sample and its verdicts", () => {
+  const sample = { every: 50, units: [
+    { position: 1, serial_number: "ПЗ-1-01", verdict: "pass", verdict_name: "Годно", max_vswr: 1.42 },
+    { position: 51, serial_number: null, verdict: null, verdict_name: null, max_vswr: null },
+  ] };
+  const html = flat(buildCoaxPassportHtml(passport([], { control: { mode: "sample", every: 50 }, vswr_sample: sample })));
+  expect(html).toContain("КСВН: контроль выборочный 1 из 50 — изделие в выборку не входило.");
+  expect(html).toContain("<td>1</td><td>ПЗ-1-01</td><td>Годно</td><td>1,42</td>");
+  expect(html).toContain("<td>51</td><td>—</td><td>не измерено</td><td>—</td>");
+  expect(html).toContain("выборочный, 1 из 50");
+  expect(html).not.toContain("Проверки ОТК по изделию ещё не проводились");
+  // Замеренное изделие печатается как раньше — своим замером, без раздела выборки.
+  const measured = buildCoaxPassportHtml(passport([check], { control: { mode: "sample", every: 50 }, vswr_sample: null }));
+  expect(measured).not.toContain("в выборку не входило");
+  expect(measured).toContain("cable.s1p");
+});

@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it } from "vitest";
-import { COAX_SHIELD_OPTIONS, coaxFromFields, coaxShieldKind_, coaxRecordFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { COAX_SHIELD_OPTIONS, coaxFromFields, withCoaxVswrFromConfig, coaxShieldKind_, coaxRecordFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 import { genCards } from "./routeCards";
 import { deriveRoute, type RouteOp } from "./routeLogic";
 
@@ -147,6 +147,55 @@ it("coax kit opens the КОАКС tab and orders angled side B before the second
   expect((makeGen(D, separate).buildConfig() as Record<string, any>).ops.map((op: any) => op.type)).toEqual([
     "coaxCut", "coaxStrip", "coaxStrip", "coaxPin", "coaxInsSleeve", "coaxPin", "coaxHousing", "coaxShield", "coaxVswr",
   ]);
+});
+
+describe("коакс: контроль КСВН — каждое изделие, выборочно 1 из N или не проверять (владелец 22.10)", () => {
+  const D = data([
+    { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
+    { id: "a", type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
+    { id: "b", type: "Соед", name: "SMA", art: "SMA-K", qty: 1 },
+  ], "Сборка RG316 150mm");
+  const cfgOf = (S: GenState) => makeGen(D, S).buildConfig() as Record<string, any>;
+  const vswrOp = (S: GenState) => makeGen(D, S).getActiveOps().find((op) => op.type === "coaxVswr");
+  const withMode = (patch: Partial<GenState["coax"]>) => { const S = initState(D); return { ...S, coax: { ...S.coax, ...patch } }; };
+
+  it("a new assembly checks every unit and says so in the config", () => {
+    const S = initState(D);
+    expect(S.coax).toMatchObject({ vswrMode: "all", vswrEvery: "50" });
+    expect(vswrOp(S)).toMatchObject({ label: "Контроль КСВН", vswrControl: { mode: "all", every: null } });
+    expect(cfgOf(S).coax.vswrControl).toEqual({ mode: "all", every: null });
+    expect(cfgOf(S).ops.at(-1)).toMatchObject({ type: "coaxVswr", vswrControl: { mode: "all", every: null } });
+  });
+
+  it("sample carries N into the op and the config; N below 2 falls back to 1 of 50", () => {
+    const S = withMode({ vswrMode: "sample", vswrEvery: "20" });
+    expect(vswrOp(S)).toMatchObject({ label: "Контроль КСВН — выборочно 1 из 20", vswrControl: { mode: "sample", every: 20 } });
+    expect(cfgOf(S).coax.vswrControl).toEqual({ mode: "sample", every: 20 });
+    expect(vswrOp(withMode({ vswrMode: "sample", vswrEvery: "1" }))?.vswrControl).toEqual({ mode: "sample", every: 50 });
+  });
+
+  it("«Не проверять» leaves no VSWR op", () => {
+    const S = withMode({ vswrMode: "none" });
+    expect(vswrOp(S)).toBeUndefined();
+    expect(cfgOf(S).ops.map((op: any) => op.type)).not.toContain("coaxVswr");
+    expect(cfgOf(S).coax.vswrControl).toEqual({ mode: "none", every: null });
+  });
+
+  it("a card built before the setting keeps the op as it was: no mode, no control in the config", () => {
+    const S = withCoaxVswrFromConfig(initState(D), { mode: "coax", coax: { sideA: {}, sideB: {} } });
+    expect(S.coax.vswrMode).toBeUndefined();
+    expect(vswrOp(S)).toEqual({ type: "coaxVswr", opKey: "coaxVswr", tmplHint: "CTRL_VSWR_coax", label: "Контроль КСВН" });
+    expect(cfgOf(S).coax).not.toHaveProperty("vswrControl");
+    expect(cfgOf(S).ops.at(-1)).not.toHaveProperty("vswrControl");
+  });
+
+  it("a saved card reopens with its mode; a non-coax config leaves the form alone", () => {
+    const S = withCoaxVswrFromConfig(initState(D), { coax: { vswrControl: { mode: "sample", every: 30 } } });
+    expect(S.coax).toMatchObject({ vswrMode: "sample", vswrEvery: "30" });
+    expect(withCoaxVswrFromConfig(initState(D), { coax: { vswrControl: { mode: "none", every: null } } }).coax.vswrMode).toBe("none");
+    const plain = initState(D);
+    expect(withCoaxVswrFromConfig(plain, { mode: "inter", ops: [] })).toBe(plain);
+  });
 });
 
 describe("коакс: резка с разделкой на роторном станке или резка, затем разделка А и В (владелец 14.10)", () => {

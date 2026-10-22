@@ -4937,6 +4937,10 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 .vswr-task-pick select { min-width: 320px; max-width: 520px; }
 .vswr-norm { margin: 0 0 10px; padding: 7px 12px; border-left: 3px solid var(--tone-ok); border-radius: 4px; background: var(--accent); font-size: 13.5px; font-weight: 600; }
 .vswr-norm.is-undefined { border-left-color: var(--warn-border); background: var(--warn-soft); }
+.vswr-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 10px; }
+.vswr-head .vswr-norm { flex: 1 1 420px; margin: 0; }
+.vswr-count { color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vswr-control { color: var(--muted-foreground); font-weight: 500; }
 .vswr-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .vswr-actions .link-button { padding: 0; }
 a.button-link { display: inline-block; text-decoration: none; text-align: center; }
@@ -4945,3 +4949,8 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .vswr-problems { display: block; padding: 0 20px; }
 .vswr-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 14px; }
 .vswr-upload .form-grid { padding: 0 0 8px; }
+/* Контроль КСВН коакса: сегменты режима и «1 из N» в одну строку (владелец 22.10). */
+.tcgen .gvswr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.tcgen .gvswr-every { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); font-size: 12.5px; font-weight: 600; }
+.tcgen .gvswr-every .gunit { width: 92px; }
+.tcgen .gvswr-every input { font-variant-numeric: tabular-nums; text-align: right; }

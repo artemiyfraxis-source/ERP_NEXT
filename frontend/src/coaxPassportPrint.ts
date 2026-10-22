@@ -90,6 +90,15 @@ function genericCheck(check: PassportCheck): string {
   return `<table class="facts"><tbody><tr><th>Результат</th><td>${verdictHtml(check)}</td></tr>${instrumentRows(check)}${inspectorRows(check)}</tbody></table>`;
 }
 
+/** Изделие вне выборки «1 из N» без своего замера: КСВН подтверждает выборка партии — её изделия и последние вердикты. */
+function vswrSampleSection(sample: NonNullable<CableAssemblyPassport["vswr_sample"]>): string {
+  const lead = `КСВН: контроль выборочный 1 из ${sample.every} — изделие в выборку не входило.`;
+  const rows = sample.units.map((unit) => `<tr><td>${unit.position}</td><td>${escapeHtml(unit.serial_number ?? DASH)}</td>` +
+    `<td>${escapeHtml(unit.verdict_name ?? "не измерено")}</td><td>${unit.max_vswr !== null ? num(unit.max_vswr) : DASH}</td></tr>`).join("");
+  return `<section class="check"><h2>КСВН по ВАЦ</h2><p>${escapeHtml(lead)} Выборка партии:</p>` +
+    `<table><thead><tr><th>№ в партии</th><th>Серийный номер</th><th>Результат</th><th>Макс. КСВН</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+}
+
 /** Раздел паспорта по виду проверки; новый вид проверки ОТК — новая запись здесь. */
 const CHECK_RENDERERS: Record<string, (check: PassportCheck, passport: CableAssemblyPassport) => string> = { vswr: vswrCheck };
 
@@ -112,9 +121,10 @@ export function buildCoaxPassportHtml(passport: CableAssemblyPassport): string {
     ["Основание нормы", norm.basis],
   ];
   if (norm.band_mhz && norm.band_mhz[0] !== null) normRows.push(["Полоса нормы, МГц", `${num(norm.band_mhz[0], 1)} … ${num(norm.band_mhz[1], 1)}`]);
+  if (passport.control?.mode === "sample") normRows.push(["Контроль КСВН", `выборочный, 1 из ${passport.control.every} (первое изделие партии и каждое ${passport.control.every}-е)`]);
   const checks = passport.checks.length
     ? passport.checks.map((check) => `<section class="check"><h2>${escapeHtml(check.title)}</h2>${(CHECK_RENDERERS[check.kind] ?? genericCheck)(check, passport)}</section>`).join("")
-    : `<p>Проверки ОТК по изделию ещё не проводились.</p>`;
+    : passport.vswr_sample ? vswrSampleSection(passport.vswr_sample) : `<p>Проверки ОТК по изделию ещё не проводились.</p>`;
   const overall = passport.verdict === null ? DASH : passport.verdict === "pass" ? "Годно" : "Не годно";
   const inspector = passport.inspector?.name ?? "";
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${PASSPORT_CSS}</style></head><body>` +

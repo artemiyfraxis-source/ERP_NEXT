@@ -480,6 +480,42 @@ def _coax_units(op: Mapping[str, Any]) -> Decimal:
     return max(Decimal(1), _number(op.get("units"), Decimal(1)))
 
 
+VSWR_SAMPLE_EVERY = 50
+
+
+def vswr_control(raw: object) -> dict[str, Any] | None:
+    """«Контроль КСВН» of the coax generator (owner 22.10: «1 из 50, всю партию или вообще не проверять»), from
+    `build_config.coax.vswrControl`: {mode: "all" | "sample" | "none", every: N ≥ 2 for "sample", else None}. Not set
+    or not readable — None: the assembly was built before the setting, its ETK reads as it did."""
+    if not isinstance(raw, Mapping) or raw.get("mode") not in {"all", "sample", "none"}:
+        return None
+    if raw["mode"] != "sample":
+        return {"mode": raw["mode"], "every": None}
+    try:
+        every = int(raw.get("every"))
+    except (TypeError, ValueError):
+        every = VSWR_SAMPLE_EVERY
+    return {"mode": "sample", "every": every if every >= 2 else VSWR_SAMPLE_EVERY}
+
+
+def vswr_in_sample(control: Mapping[str, Any] | None, position: int) -> bool:
+    """Must unit `position` (1-based in the batch) be measured: sample 1 of N — the first and then every N-th
+    ((position − 1) % N == 0); all or no setting — every unit; «none» — none."""
+    mode = control.get("mode") if isinstance(control, Mapping) else None
+    if mode == "none":
+        return False
+    if mode == "sample":
+        return (position - 1) % int(control.get("every") or VSWR_SAMPLE_EVERY) == 0
+    return True
+
+
+def vswr_sample_count(control: Mapping[str, Any] | None, quantity: Decimal) -> Decimal:
+    """Units of a batch of `quantity` the VSWR check measures: ceil(quantity / N) in sample mode, else the batch."""
+    if isinstance(control, Mapping) and control.get("mode") == "sample":
+        return (quantity / int(control.get("every") or VSWR_SAMPLE_EVERY)).to_integral_value(rounding="ROUND_CEILING")
+    return quantity
+
+
 def _coax_connector(config: Mapping[str, Any], side: str) -> str:
     end = _coax(config).get("sideB" if side == "B" else "sideA")
     end = end if isinstance(end, Mapping) else {}
@@ -596,7 +632,9 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
             facts.append(("ТУТ усажены" if many else "ТУТ усажена") if shrunk else
                          ("ТУТ надеты, не усажены" if many else "ТУТ надета, не усажена"))
     if "coaxVswr" in flags:
-        facts.append("КСВН проверен")
+        control = vswr_control(coax.get("vswrControl"))
+        facts.append(f"КСВН проверен выборочно (1 из {control['every']})" if control and control["mode"] == "sample"
+                     else "КСВН проверен")
     return f"{head}; {', '.join(facts)}" if facts else head
 
 
@@ -908,6 +946,9 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
         length = {"coaxCut": coax.get("cableLength"), "coaxCutTut": coax.get("tutLength")}.get(operation_type)
         linear = linear_seconds(op.get("linearTiming"), _decimal(length) / 1000) if length is not None else None
         piece = linear / 60 if linear is not None else operation_minutes
+        if operation_type == "coaxVswr":
+            # Выборочный контроль КСВН (1 из N) меряет ceil(партия / N) изделий, не всю партию.
+            quantity = vswr_sample_count(vswr_control(coax.get("vswrControl")), quantity)
         return [{"name": result_name, "norm": _format(piece * _coax_units(op) * quantity, 2)}]
     twist =config.get("twist") if isinstance(config.get("twist"), Mapping) else {}
     config_wires = config.get("wires") if isinstance(config.get("wires"), list) else []
@@ -1220,12 +1261,25 @@ def _depth_phrase(value: Any) -> str:
     return f"{nominal.group(1)} мм (номинал)" if nominal else f"{text} мм"
 
 
-def vswr_step(norm: Mapping[str, Any]) -> tuple[str, str]:
+def _vswr_scope(control: Mapping[str, Any] | None) -> str:
+    """How many units of the batch the check measures, as the step says it; no setting — nothing (text as before)."""
+    mode = control.get("mode") if isinstance(control, Mapping) else None
+    if mode == "all":
+        return "контроль сплошной — каждое изделие партии"
+    if mode == "sample":
+        every = control.get("every")
+        return f"контроль выборочный: первое изделие партии и далее каждое {every}-е (1 из {every})"
+    return ""
+
+
+def vswr_step(norm: Mapping[str, Any], control: Mapping[str, Any] | None = None) -> tuple[str, str]:
     """(text, tolerance) of the «Контроль КСВН» step from the assembly's `coaxVswrNorm`: «Измерить КСВН (S11) в полосе
     1…6000 МГц, сторона Б нагружена согласованной нагрузкой 50 Ом. Норма ≤ 2,06 (по комплектующим: SMA-C174P ≤1,43;
     SMA-C316F ≤1,41).» Norm not defined (no КСВ of a connector) or not computed ({} — no references) — the reason, and
-    the decision is ОТК's; never a default norm."""
-    load = "сторона Б нагружена согласованной нагрузкой 50 Ом"
+    the decision is ОТК's; never a default norm. `control` (generator «Контроль КСВН») adds which units of the batch
+    are measured: «…; контроль выборочный: первое изделие партии и далее каждое 50-е (1 из 50)»."""
+    scope = _vswr_scope(control)
+    load = "сторона Б нагружена согласованной нагрузкой 50 Ом" + (f"; {scope}" if scope else "")
     if not norm:
         return f"Измерить КСВН (S11), {load}; норма не рассчитана — нет данных справочников, решение принимает ОТК.", "решение ОТК"
     band = _list(norm.get("bandMhz")) + [None, None]
@@ -1362,6 +1416,9 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
         # Норма КСВН по комплектующим (владелец 22.10, справочники дописывают `coax.vswrNorm`); {} — не рассчитана.
         norm = _coax(config).get("vswrNorm")
         fields["coaxVswrNorm"] = deepcopy(dict(norm)) if isinstance(norm, Mapping) else {}
+        control = vswr_control(_coax(config).get("vswrControl"))
+        if control:
+            fields["coaxVswrControl"] = control  # сплошной или выборочный контроль (генератор, владелец 22.10)
     if operation_type == "coaxHousing" and "цанг" in str(_coax_end(op, config).get("pinType") or "").casefold():
         # Цанговый центральный контакт (владелец 16.10): пайки пина не было — карта корпуса не говорит «припаянный».
         fields["collet"] = True
@@ -1618,7 +1675,7 @@ def _resolve_card(
         if isinstance(fields.get("coaxVswrNorm"), Mapping) and step.kind == "Контроль" and not vswr_checked \
                 and "ксвн" in text.casefold():
             # Контроль КСВН: полоса и норма по комплектующим, не общая «≤1,3» (владелец 22.10).
-            text, tolerance = vswr_step(fields["coaxVswrNorm"])
+            text, tolerance = vswr_step(fields["coaxVswrNorm"], fields.get("coaxVswrControl"))
             vswr_checked = True
         steps.append({"number": step.number, "kind": step.kind, "text": text, "tolerance": "" if tolerance in {"-", "—"} else tolerance})
     tooling = []
@@ -2662,6 +2719,10 @@ def build_etk(
     raw_operations = config.get("ops")
     if not isinstance(raw_operations, list):
         raise ValueError("Нет операций для сборки")
+    if (vswr_control(_coax(config).get("vswrControl")) or {}).get("mode") == "none":
+        # «Контроль КСВН: не проверять» (генератор, владелец 22.10) — операции контроля в ЭТК нет.
+        raw_operations = [item for item in raw_operations if not (isinstance(item, Mapping) and item.get("type") == "coaxVswr")]
+        config = {**config, "ops": raw_operations}
     cards_by_id = {card.source_id: card for card in cards}
     cards_by_code: dict[str, OperationCardTemplate] = {}
     for item in cards:

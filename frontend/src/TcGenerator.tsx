@@ -41,6 +41,10 @@ import {
   parseDecimal_,
   sideRu_,
   switchGenTab,
+  withCoaxVswrFromConfig,
+  coaxVswrControl_,
+  COAX_VSWR_EVERY,
+  type CoaxVswrMode,
   syncCoverRow_,
   syncHsWithBraid_,
   terFromFields,
@@ -122,6 +126,7 @@ import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsF
 type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats" | "cableRecords"> & { library: LibraryCard[] };
 
 const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, markMats: [], cableRecords: [], library: [] };
+const COAX_VSWR_OPTIONS = [["all", "Каждое изделие"], ["sample", "Выборочно"], ["none", "Не проверять"]] as const;
 const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"], ["manual", "Ручная сборка"]];
 const WRAP_KINDS: Array<[WrapKind, string]> = [
   ["tape", "Лента поверх — последней операцией"], ["braid", "Оплётка — до обжима контактов"], ["under", "Лента под оплётку — слоем ниже"],
@@ -361,7 +366,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // Карта без снимка: способ сростков — по её операции «Сростки» (без `method` — пайка, как собиралась до 16.10).
     const oldSplMethod = splMethodFromConfig(card.document?.build_config);
     const fromPinout = (S0: GenState) => (oldSplMethod ? { ...S0, spl: { ...S0.spl, method: oldSplMethod } } : S0);
-    const fromBuild = restored ? switchGenTab(seeded, "manual") : back ? back.S : fromPinout(restorePinout(D, seeded, card.document?.build_config));
+    // Контроль КСВН коакса — из build_config.coax.vswrControl; коакс-карта до настройки остаётся без режима.
+    const fromBuild = withCoaxVswrFromConfig(restored ? switchGenTab(seeded, "manual") : back ? back.S : fromPinout(restorePinout(D, seeded, card.document?.build_config)),
+      card.document?.build_config);
     // Несохранённый черновик поверх текущей сборки возвращается вместо засева.
     const form = draft.open({ S: fromBuild, manual: restored ?? emptyManual(), terEdits: back?.terEdits ?? {}, coaxAdd: back?.coaxAdd ?? {} });
     setManual(form.manual); setS(ensureSeparateLengths(form.S)); setTerEdits(form.terEdits); setCoaxAdd(form.coaxAdd);
@@ -1519,6 +1526,16 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {S.coax.stripMode !== "separate" && <div className="gfield span-all"><span className="gfield-label">Станок</span>
           <Seg label="Станок" value={gen.coaxMachine_()} options={(["small", "big"] as const).map((key) => [key, COAX_MACHINES[key].label, COAX_MACHINES[key].hint] as const)}
             onChange={(machine) => update((current) => ({ ...current, coax: { ...current.coax, machine } }))} /></div>}
+        {S.coax.sideB && <div className="gfield span-all"><span className="gfield-label">Контроль КСВН
+          {S.coax.vswrMode === "sample" && <small>первое изделие партии и далее каждое {coaxVswrControl_(S.coax)?.every}-е</small>}</span>
+          <div className="gvswr">
+            <Seg<CoaxVswrMode> label="Контроль КСВН" value={S.coax.vswrMode || "all"} options={COAX_VSWR_OPTIONS}
+              onChange={(vswrMode) => update((current) => ({ ...current, coax: { ...current.coax, vswrMode } }))} />
+            {S.coax.vswrMode === "sample" && <label className="gvswr-every">1 из
+              <UnitInput unit="шт" aria-label="Выборка: одно изделие из" type="number" min={2} step={1} inputMode="numeric"
+                value={S.coax.vswrEvery ?? String(COAX_VSWR_EVERY)}
+                onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, vswrEvery: event.target.value } }))} /></label>}
+          </div></div>}
       </div>
       <Toggle checked={S.coax.tutEnabled} title="ТУТ на концах" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: on } }))}>
         <Field label="Длина ТУТ" className="short"><UnitInput unit="мм" type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></Field>

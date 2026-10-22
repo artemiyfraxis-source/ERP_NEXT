@@ -4,6 +4,7 @@ import {
   type ProductionInstrument,
   type ProductionTask,
   type VswrMeasurement,
+  type VswrControl,
   type VswrNorm,
   type VswrSerialRow,
   type VswrTaskOverview,
@@ -28,6 +29,13 @@ export function normLine(norm: VswrNorm): string {
     return `Норма ≤ ${num(norm.vswr_max)} по комплектующим${norm.source ? `: ${norm.source}` : ""}${band}`;
   }
   return `Норма не определена — ${norm.reason || "причина не указана"}`;
+}
+
+/** Режим контроля для строки нормы: «контроль: каждое изделие» / «выборочно 1 из 50» / «контроль не проводится». */
+export function controlText(control: VswrControl | undefined): string {
+  if (control?.mode === "sample") return `выборочно 1 из ${control.every}`;
+  if (control?.mode === "none") return "контроль не проводится";
+  return "контроль: каждое изделие";
 }
 
 function readBase64(file: File): Promise<string> {
@@ -85,9 +93,12 @@ export function VswrSection({ tasks, instruments, canUpload, canReject, onReject
     }
   }
 
+  const sample = overview?.control.mode === "sample";
   const columns: DataColumn<VswrSerialRow>[] = [
     { key: "position", title: "№", value: (row) => row.position, numeric: true, width: 48 },
     { key: "serial", title: "Серийный номер", value: (row) => row.serial_number },
+    ...(sample ? [{ key: "sample", title: "Выборка", filter: true, value: (row: VswrSerialRow) => (row.in_sample ? "в выборке" : "вне выборки"),
+      render: (row: VswrSerialRow) => (row.in_sample ? <StatusChip status="в выборке" tone="info" /> : <span className="muted">вне выборки</span>) }] : []),
     { key: "attempts", title: "Попыток", value: (row) => row.attempts, numeric: true, render: (row) => row.attempts || "—" },
     { key: "max", title: "Макс. КСВН", value: (row) => row.latest?.max_vswr ?? "", numeric: true, render: (row) => num(row.latest?.max_vswr) || "—" },
     { key: "mhz", title: "На частоте, МГц", value: (row) => row.latest?.max_vswr_mhz ?? "", numeric: true, render: (row) => num(row.latest?.max_vswr_mhz, 1) || "—" },
@@ -97,7 +108,7 @@ export function VswrSection({ tasks, instruments, canUpload, canReject, onReject
     {
       key: "actions", title: "", value: () => "", width: 330, render: (row) => <span className="vswr-actions">
         {canUpload && <button className="secondary small" onClick={() => setUploading(row)}>Загрузить замер</button>}
-        <button className="secondary small" disabled={!row.latest} onClick={() => void openPassport(row)}>Паспорт</button>
+        <button className="secondary small" disabled={!row.latest && !(sample && !row.in_sample)} onClick={() => void openPassport(row)}>Паспорт</button>
         {row.latest && <a className="secondary small button-link" href={productionApi.vswrFileUrl(row.latest.id)} download>Файл</a>}
         {row.latest?.verdict === "fail" && canReject(taskId) && <button className="link-button" onClick={() => onReject({
           taskId, serialNumber: row.serial_number,
@@ -120,7 +131,10 @@ export function VswrSection({ tasks, instruments, canUpload, canReject, onReject
     {!taskId && <div className="empty">Выберите задание коаксиальной сборки — здесь появятся её изделия и замеры.</div>}
     {taskId && loading && !overview && <div className="empty">Загрузка…</div>}
     {overview && <>
-      <p className={`vswr-norm${overview.norm.status === "ok" ? "" : " is-undefined"}`}>{normLine(overview.norm)}</p>
+      <div className="vswr-head">
+        <p className={`vswr-norm${overview.norm.status === "ok" ? "" : " is-undefined"}`}><span>{normLine(overview.norm)}</span> <span className="vswr-control">· {controlText(overview.control)}</span></p>
+        {overview.control.mode !== "none" && <span className="page-count vswr-count">замерено {overview.required.measured} из {overview.required.total} требуемых</span>}
+      </div>
       <DataTable label="Изделия задания" storageKey="quality-vswr" rows={overview.serials} columns={columns} rowKey={(row) => row.serial_id}
         exportName={`Замеры КСВН ${overview.task.number}`} emptyText="У задания нет изделий с серийными номерами." />
     </>}
