@@ -46,7 +46,7 @@ def test_lot_preview_is_the_label_png_and_a_print_queues_the_job(labels):
     png = client.get(f"/api/stock/batches/{lot.id}/label.png")
     assert png.status_code == 200, png.text
     assert png.headers["content-type"] == "image/png"
-    assert Image.open(io.BytesIO(png.content)).size == (685, 354)
+    assert Image.open(io.BytesIO(png.content)).size == (685, 472)
 
     printed = client.post(f"/api/stock/batches/{lot.id}/label", json={"copies": 2})
     assert printed.status_code == 200, printed.text
@@ -57,7 +57,7 @@ def test_lot_preview_is_the_label_png_and_a_print_queues_the_job(labels):
     assert (str(job.id), job.status, job.kind, job.lot_id, job.copies) == (body["job_id"], "pending", "lot", lot.id, 2)
     assert job.created_by == "Кладовщик" and body["file"] == body["job_id"]
     content = job.tspl
-    assert content.startswith(b"SIZE 58 mm,30 mm\r\nGAP 2 mm,0 mm\r\n")
+    assert content.startswith(b"SIZE 58 mm,40 mm\r\nGAP 2 mm,0 mm\r\n")
     assert b"DENSITY 12\r\nSPEED 2\r\n" in content and content.endswith(b"\r\nPRINT 2,1\r\n")
 
 
@@ -81,8 +81,8 @@ def test_settings_are_read_saved_and_journalled(labels):
     first = client.get("/api/stock/labels/settings")
     assert first.status_code == 200, first.text
     assert first.json()["settings"] == {
-        "printer_name": "", "gap_mm": 2, "density": 12, "speed": 2, "width_mm": 58, "height_mm": 30, "dpi": 300,
-        "code_type": "both", "offset_x_mm": 0, "offset_y_mm": 0,
+        "printer_name": "", "gap_mm": 2, "density": 12, "speed": 2, "width_mm": 58, "height_mm": 40, "dpi": 300,
+        "code_type": "qr", "offset_x_mm": 0, "offset_y_mm": 0,
     }
     assert first.json()["code_types"]["both"] == "QR и Code128"
 
