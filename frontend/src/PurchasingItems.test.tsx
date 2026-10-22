@@ -2,6 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { PurchasingItems } from "./PurchasingItems";
 
+// The card's price history is always on now (the price book is no longer behind a stage option).
+const NO_PRICES = { unit: "шт", refs: [], upd: [], invoices: [], summary: { count: 0, min: null, last: null, last_date: null, last_supplier: null } };
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -31,6 +34,7 @@ function mockServer(calls: { method: string; path: string; body?: string }[] = [
       const dry = JSON.parse(String(init?.body)).dry_run;
       return json({ groups: [group(), group({ kind: "name", key: "k", name: "Кабель МГТФ", part_number: null, category: "cable", lines: 2, action: "link", reason: "alias", existing_name: "Кабель" })], created: 1, linked_groups: 1, aliases: 2, lines: 5, dry_run: dry });
     }
+    if (path === "/api/purchasing/prices/item/i1") return json(NO_PRICES);
     if (path === "/api/purchasing/items/i1") return json(card);
     if (path === "/api/purchasing/suppliers") return json([{ id: "s1", name: "ООО Ромашка" }]);
     if (path.startsWith("/api/purchasing/items")) {
@@ -115,6 +119,7 @@ it("read-only has no editing buttons", async () => {
 it("shows the stock column, the «Склад» and «Приёмка» sections of the card", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
+    if (path === "/api/purchasing/prices/item/i1") return json(NO_PRICES);
     if (path === "/api/purchasing/items/i1") {
       return json({
         ...card,
