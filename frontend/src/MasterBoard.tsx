@@ -393,8 +393,17 @@ export function onlyBlocker(operation: ProductionOperation, operatorId: string, 
   return locked ? `${nameOf(locked.operator_id)} уже ${locked.finished_at ? "сделал(а) свою часть" : "взял(а) этап"} — его штуки не забрать` : "";
 }
 
+// Снимают последнего исполнителя задания, по которому работы не было (никто не брал, ничего не сдано): сервер отменит
+// задание, его тираж снова станет новым заданием КБ (владелец 22.10: «если поставили и убрали, то оно уже не запущено»).
+export function cancelsTask(task: ProductionTask, operation: ProductionOperation, operatorId: string) {
+  const others = task.operations.some((op) => op.operator_ids.some((id) => op.id !== operation.id || id !== operatorId));
+  const worked = task.operations.some((op) => (op.state && op.state !== "не начата") || Number(op.fact?.processed ?? 0) > 0
+    || (op.shares ?? []).some((share) => share.started_at || share.finished_at));
+  return !others && !worked && !task.handed_to && task.status === "Запущено";
+}
+
 // Что изменится, если снять монтажника с этапа (окно подтверждения у «×»): то же, что делает сервер (_remove_share).
-export function removalChanges(operation: ProductionOperation, operatorId: string, operators: ProductionOperator[]): string[] {
+export function removalChanges(operation: ProductionOperation, operatorId: string, operators: ProductionOperator[], task?: ProductionTask): string[] {
   const nameOf = (id: string) => operators.find((item) => item.id === id)?.name ?? "Монтажник";
   const own = sharesOf(operation, operatorId)[0];
   const rest = operation.operator_ids.filter((id) => id !== operatorId);
@@ -404,6 +413,9 @@ export function removalChanges(operation: ProductionOperation, operatorId: strin
   else if (own?.quantity != null) lines.push(`${own.quantity} шт станут нераспределёнными — отдайте их другому монтажнику (${rest.map(nameOf).join(", ")} остаются со своими штуками).`);
   else lines.push(`Этап сделают ${rest.map(nameOf).join(", ")}: окно пересчитается на меньший состав, их работа после этапа сдвинется.`);
   if (own?.started_at) lines.push(`${nameOf(operatorId)} уже брал(а) этап в работу ${formatDay(own.started_at.slice(0, 10))}.`);
+  if (task && cancelsTask(task, operation, operatorId)) {
+    lines.push(`Других исполнителей у задания нет и работы по нему не было — задание ${task.number} отменится, ${task.quantity} шт снова станут новым заданием КБ.`);
+  }
   return lines;
 }
 
@@ -564,8 +576,18 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   }, [canEdit, tasks.length]);
 
   const live = tasks.filter((task) => task.status !== "Отменено");
-  const launchedKeys = new Set(live.map((task) => `${task.project.toLowerCase()}|${itemId(task).toUpperCase()}`));
-  const waiting = ready.filter((item) => !item.launched && !launchedKeys.has(`${item.project.toLowerCase()}|${itemId({ project: item.project, item: item.index }).toUpperCase()}`));
+  // КБ к запуску: остаток тиража больше нуля (тираж − запущенное не отменёнными заданиями), без тиража — пока заданий нет.
+  // Запущенное — большее из счётчика сервера и живых заданий (список заданий бывает свежее счётчика).
+  const launchedQty = new Map<string, number>();
+  for (const task of live) {
+    const key = `${task.project.toLowerCase()}|${itemId(task).toUpperCase()}`;
+    launchedQty.set(key, (launchedQty.get(key) ?? 0) + task.quantity);
+  }
+  const waiting = ready.filter((item) => {
+    const launched = Math.max(item.launched, launchedQty.get(`${item.project.toLowerCase()}|${itemId({ project: item.project, item: item.index }).toUpperCase()}`) ?? 0);
+    const run = Number(item.run);
+    return Number.isInteger(run) && run > 0 ? launched < run : !launched;
+  });
   const projects = Array.from(new Set([...live.map((task) => task.project), ...waiting.map((item) => item.project)]));
   // Два срока (РП-1): дедлайн проекта — из плана; срок задания — самый ранний у незавершённых заданий проекта.
   const planOf = (project: string) => projectDeadlines[project.toLowerCase()];
@@ -599,7 +621,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     return <>
       {deadlineTags(project)}
       {total > 0 && <span className={free ? "mb-free" : "mb-done"}>{free ? `без исполнителя ${free} из ${total}` : `распределено ${total}`}</span>}
-      {toLaunch > 0 && <span className="mb-launch" title="КБ с выданной техкартой, задания ещё нет">без задания {toLaunch}</span>}
+      {toLaunch > 0 && <span className="mb-launch" title="КБ с выданной техкартой: задания нет или запущен не весь тираж">к запуску {toLaunch}</span>}
       {handed > 0 && <span className="mb-handed">в {HANDOVER_SITE}: {handed}</span>}
     </>;
   }
@@ -637,6 +659,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   }
   const futureTasks: BoardTask[] = futureRaw.map((item) => withRun(item, typedRun(item).value));
   const runParam = (item: ProductionTask) => item.pending && item.quantity !== fullRun.get(item.id) ? { run: item.quantity } : {};
+  // Сколько по КБ было запущено, когда доску читали: сервер отвечает 409, если с тех пор запустили ещё.
+  const launchedParam = (item: ProductionTask) => {
+    const launched = (item as BoardTask).launched;
+    return item.pending && launched != null ? { launched } : {};
+  };
   const pool: ProductionTask[] = [...live, ...futureTasks];
   const equipmentOf = new Map<string, string>();
   for (const item of [...(boardNow?.tasks ?? []), ...futureTasks]) for (const op of item.operations) equipmentOf.set(op.id, op.equipment.label);
@@ -661,7 +688,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   // его работа после неё сдвигается (сервер, dispatch.place).
   function boardItem(item: ProductionTask, op: ProductionOperation, pieces?: number): BoardAssignItem {
     return item.pending
-      ? { techcard_id: item.techcard_id ?? "", techcard_version: item.techcard_version ?? 0, position: op.position, ...(pieces ? { quantity: pieces } : {}), ...runParam(item) }
+      ? { techcard_id: item.techcard_id ?? "", techcard_version: item.techcard_version ?? 0, position: op.position, ...(pieces ? { quantity: pieces } : {}), ...runParam(item), ...launchedParam(item) }
       : { task_id: item.id, task_version: item.version, operation_id: op.id };
   }
 
@@ -746,7 +773,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       if (task.pending) {
         const result = await productionApi.boardOutput({
           techcard_id: task.techcard_id ?? "", techcard_version: task.techcard_version ?? 0, position: operation.position,
-          good_quantity: madeCount, fill_inputs: fill, ...runParam(task),
+          good_quantity: madeCount, fill_inputs: fill, ...runParam(task), ...launchedParam(task),
         });
         out.next = { taskId: result.task.id, operationId: result.operation_id };
         setMadePieces("");
@@ -834,14 +861,16 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     </div>}
   </>;
 
-  // Тираж нового задания в окне проекта: по умолчанию весь тираж КБ, можно меньше.
+  // Тираж нового задания в окне проекта: по умолчанию весь остаток тиража КБ (запущенное раньше вычтено), можно меньше.
   function runField(item: ProductionTask) {
     const run = typedRun(item);
-    if (!canEdit) return <small>тираж {item.quantity}</small>;
+    const launched = (item as BoardTask).launched ?? 0;
+    const rest = launched > 0 ? <small>остаток: тираж КБ {(item as BoardTask).run}, запущено {launched}</small> : null;
+    if (!canEdit) return <><small>тираж {item.quantity}</small>{rest}</>;
     return <label className="mb-run">Тираж
       <input type="number" min={1} max={run.full} step={1} inputMode="numeric" aria-label={`Тираж ${taskItemLabel(item)}`} value={run.text}
         onChange={(event) => setRuns({ ...runs, [item.techcard_id ?? ""]: event.target.value })} />
-      <span>из {run.full}</span>
+      <span>из {run.full}</span>{rest}
       {!run.valid && <span className="danger-text">от 1 до {run.full}</span>}
     </label>;
   }
@@ -1150,7 +1179,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         <div className="panel mb-remove">
           <div className="manual-stock-head"><h2>Снять {name} с этапа {op.position}?</h2></div>
           <p><b>{item.number} · {taskItemLabel(item)}</b> · этап {op.position} «{operationName(op)}»</p>
-          <ul>{removalChanges(op, removing.personId, operators).map((line) => <li key={line}>{line}</li>)}</ul>
+          <ul>{removalChanges(op, removing.personId, operators, item).map((line) => <li key={line}>{line}</li>)}</ul>
           <div className="form-actions">
             <button className="secondary" onClick={() => setRemoving(null)}>Отмена</button>
             <button className="danger" disabled={Boolean(busy)} onClick={() => unassign(item, op, removing.personId)}>Снять {name}</button>

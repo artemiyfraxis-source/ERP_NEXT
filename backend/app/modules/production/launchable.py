@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
 from datetime import date
 from typing import Any, Iterable, Mapping, Sequence
@@ -516,6 +516,8 @@ class ReadyCard:
     deadline: date | None
     route: LaunchRoute
     document: Mapping[str, Any] | None
+    # Сколько штук КБ уже запущено: сумма тиражей её не отменённых заданий (launch_remainders).
+    launched: int = 0
 
     @property
     def key(self) -> str:
@@ -526,6 +528,26 @@ class ReadyCard:
         """Тираж целым числом больше нуля; иначе None — запускать на автомате нечего."""
         text = str(self.run or "").strip()
         return int(text) if text.isdigit() and int(text) > 0 else None
+
+    @property
+    def remainder(self) -> int | None:
+        """Остаток тиража к запуску: тираж КБ − уже запущено (не меньше нуля); тиража нет — None."""
+        return None if self.quantity is None else max(self.quantity - self.launched, 0)
+
+
+def launch_remainders(ready: Iterable[ReadyCard], tasks: Iterable[ProductionTask]) -> list[ReadyCard]:
+    """КБ «к запуску» — единое правило доски («новое задание»), «Записать готовыми» по КБ без задания, автоплана
+    проекта и всего цеха (владелец 22.10: «запущенное — когда его поставили на кого-то; если поставили и убрали, то оно
+    уже не запущено»). tasks — задания (отменённые не считаются). Каждая КБ — с `launched` (сумма тиражей её
+    не отменённых заданий); в ответе те, у кого остаток тиража больше нуля, даже если задания по ней уже есть
+    (запущено 200 из 500 — к запуску 300), и КБ без тиража, пока по ней нет ни одного задания (её покажут с причиной)."""
+    launched = launched_quantity(tasks)
+    result: list[ReadyCard] = []
+    for card in ready:
+        card = replace(card, launched=launched.get(card.key, 0))
+        if (card.remainder or 0) > 0 or (card.quantity is None and not card.launched):
+            result.append(card)
+    return result
 
 
 def ready_cards(cards: Iterable[Any], kitsets: Iterable[Any]) -> list[ReadyCard]:
