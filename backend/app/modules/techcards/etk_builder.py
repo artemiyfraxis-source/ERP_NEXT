@@ -535,6 +535,8 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
             sides["cap_crimp"].add(end)
         elif kind == "coaxCapScrew":
             sides["cap_screw"].add(end)
+        elif kind == "coaxVswr":
+            flags.add(kind)
         elif kind in {"coaxInsTut", "coaxInsSleeve", "coaxShield", "coaxHeat"}:
             clamp = len(_list(step.get("clampSides"))) if kind == "coaxInsSleeve" else 0
             clamp_put_on += clamp
@@ -593,6 +595,8 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
         if tube_on or shrunk:
             facts.append(("ТУТ усажены" if many else "ТУТ усажена") if shrunk else
                          ("ТУТ надеты, не усажены" if many else "ТУТ надета, не усажена"))
+    if "coaxVswr" in flags:
+        facts.append("КСВН проверен")
     return f"{head}; {', '.join(facts)}" if facts else head
 
 
@@ -1216,6 +1220,31 @@ def _depth_phrase(value: Any) -> str:
     return f"{nominal.group(1)} мм (номинал)" if nominal else f"{text} мм"
 
 
+def vswr_step(norm: Mapping[str, Any]) -> tuple[str, str]:
+    """(text, tolerance) of the «Контроль КСВН» step from the assembly's `coaxVswrNorm`: «Измерить КСВН (S11) в полосе
+    1…6000 МГц, сторона Б нагружена согласованной нагрузкой 50 Ом. Норма ≤ 2,06 (по комплектующим: SMA-C174P ≤1,43;
+    SMA-C316F ≤1,41).» Norm not defined (no КСВ of a connector) or not computed ({} — no references) — the reason, and
+    the decision is ОТК's; never a default norm."""
+    load = "сторона Б нагружена согласованной нагрузкой 50 Ом"
+    if not norm:
+        return f"Измерить КСВН (S11), {load}; норма не рассчитана — нет данных справочников, решение принимает ОТК.", "решение ОТК"
+    band = _list(norm.get("bandMhz")) + [None, None]
+    start = _format(band[0] if band[0] is not None else 1, 2)
+    band_text = (f"в полосе {start}…{_format(band[1], 2)} МГц" if band[1]
+                 else f"в полосе от {start} МГц (верхняя граница не определена — нет «Частота до» у разъёмов и кабеля)")
+    head = f"Измерить КСВН (S11) {band_text}, {load}"
+    if norm.get("status") != "ok" or norm.get("vswrMax") is None:
+        reason = str(norm.get("reason") or "нет данных разъёмов")
+        return f"{head}; норма не определена — {reason}, решение принимает ОТК.", "решение ОТК"
+    maximum = _format(norm["vswrMax"], 2)
+    parts = "; ".join(f"{end.get('article')} ≤{_format(end.get('vswr'), 2)}"
+                      for end in _list(norm.get("ends")) if isinstance(end, Mapping))
+    text = f"{head}. Норма ≤ {maximum}" + (f" (по комплектующим: {parts})" if parts else "") + "."
+    if norm.get("s21Db") is not None and band[1]:
+        text += f" Справочно: затухание S21 на {_format(band[1], 2)} МГц ≈ {_format(norm['s21Db'], 2)} дБ."
+    return text, f"≤ {maximum}"
+
+
 def _hex_phrase(items: list[Mapping[str, str]]) -> str:
     """«HEX 5,41 мм» — один размер на все концы; иначе по концам: «А (S-111F) — HEX 5,41 мм; В (N-111F) — HEX не
     задан — по чертежу разъёма»."""
@@ -1329,6 +1358,10 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
             fields["crimpHex"] = hexes
     if operation_type == "coaxHousing" and (depth := str(_coax_end(op, config).get("contactDepth") or "").strip()):
         fields["contactDepth"] = depth  # заглубление контакта от торца корпуса (БД.КОАКС) — в шаг «Контроль» карты
+    if operation_type == "coaxVswr":
+        # Норма КСВН по комплектующим (владелец 22.10, справочники дописывают `coax.vswrNorm`); {} — не рассчитана.
+        norm = _coax(config).get("vswrNorm")
+        fields["coaxVswrNorm"] = deepcopy(dict(norm)) if isinstance(norm, Mapping) else {}
     if operation_type == "coaxHousing" and "цанг" in str(_coax_end(op, config).get("pinType") or "").casefold():
         # Цанговый центральный контакт (владелец 16.10): пайки пина не было — карта корпуса не говорит «припаянный».
         fields["collet"] = True
@@ -1553,7 +1586,7 @@ def _resolve_card(
         return text
 
     steps = []
-    depth_checked = False
+    depth_checked = vswr_checked = False
     parts_fields = fields.get("coaxParts") if isinstance(fields.get("coaxParts"), Mapping) else {}
     for step in card.steps:
         text = substitute(step.text)
@@ -1582,6 +1615,11 @@ def _resolve_card(
             # Монтаж корпуса: заглубление контакта от торца корпуса из БД.КОАКС (владелец 19.10) — в первый шаг контроля.
             text = f"{text.rstrip()} Проверить заглубление контакта от торца корпуса: {_depth_phrase(fields['contactDepth'])}."
             depth_checked = True
+        if isinstance(fields.get("coaxVswrNorm"), Mapping) and step.kind == "Контроль" and not vswr_checked \
+                and "ксвн" in text.casefold():
+            # Контроль КСВН: полоса и норма по комплектующим, не общая «≤1,3» (владелец 22.10).
+            text, tolerance = vswr_step(fields["coaxVswrNorm"])
+            vswr_checked = True
         steps.append({"number": step.number, "kind": step.kind, "text": text, "tolerance": "" if tolerance in {"-", "—"} else tolerance})
     tooling = []
     applicator_set = False
@@ -1995,7 +2033,7 @@ GENERATOR_TYPES = frozenset({
     "cutWire", "cutWireStrip", "cutWireCrimp", "cutTut", "insTut", "heatTut", "endCap", "foldCore", "stripCable",
     "twist", "tin", "insMark", "seal", "insWrap", "prsTerm", "insTerm", "solderConn", "splice", "insHousing",
     "coaxCut", "coaxCutTut", "coaxStrip", "coaxPin", "coaxPinCrimp", "coaxShield", "coaxSolderShield", "coaxInsSleeve", "coaxInsTut",
-    "coaxHeat", "coaxHousing", "coaxCapCrimp", "coaxCapScrew",
+    "coaxHeat", "coaxHousing", "coaxCapCrimp", "coaxCapScrew", "coaxVswr",
 })
 
 
@@ -2661,6 +2699,9 @@ def build_etk(
             **({"technology_snapshot": deepcopy(dict(technology_source))} if technology_source else {}),
         },
     }
+    vswr_norm = _coax(config).get("vswrNorm")
+    if isinstance(vswr_norm, Mapping):
+        document["coaxVswrNorm"] = deepcopy(dict(vswr_norm))  # норма КСВН сборки по комплектующим (владелец 22.10)
     document["route"] = _route(document, strict=True, warnings=warnings)
     return document
 

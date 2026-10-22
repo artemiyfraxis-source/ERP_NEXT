@@ -1823,6 +1823,8 @@ export function makeGen(D: GenData, S: GenState) {
     });
     if (caps["обжим"]) ops.push({ type: "coaxCapCrimp", opKey: "coaxCapCrimp", units: caps["обжим"], label: `Монтаж крышки (обжим)${x(caps["обжим"])}`, cat: "Опрессовка крышки коакс" });
     if (caps["винт"]) ops.push({ type: "coaxCapScrew", opKey: "coaxCapScrew", units: caps["винт"], label: `Монтаж крышки (винт)${x(caps["винт"])}`, tmplHint: "INS_CAP" });
+    // Контроль КСВН (владелец 22.10) — последней, только с разъёмами на обоих концах; норма — по комплектующим, на сервере.
+    if (sideB) ops.push({ type: "coaxVswr", opKey: "coaxVswr", label: "Контроль КСВН", tmplHint: "CTRL_VSWR_coax" });
     return ops;
   }
 
