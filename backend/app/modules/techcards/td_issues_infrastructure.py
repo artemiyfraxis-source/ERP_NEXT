@@ -94,6 +94,14 @@ class SqlAlchemyTdIssueRepository:
         )
         return _domain(row) if row is not None else None
 
+    def active_of_org(self, org_code: str) -> list[TdIssue]:
+        """Действующие выпуски с этим кодом организации, по порядковому номеру (перевыпуск td_org_reissue)."""
+        rows = self.session.scalars(
+            select(TdIssueRow).where(TdIssueRow.status == "active", TdIssueRow.org_code == org_code)
+            .order_by(TdIssueRow.sequence_no, TdIssueRow.change_no)
+        )
+        return [_domain(row) for row in rows]
+
     def latest(self) -> TdIssue | None:
         """Последний по времени неаннулированный выпуск любой карты — образец полей автоматического выпуска."""
         row = self.session.scalar(

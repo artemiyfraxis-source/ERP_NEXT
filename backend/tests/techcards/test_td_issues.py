@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
+from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
@@ -90,8 +91,8 @@ def test_open_issue_freezes_the_card_and_names_the_documents(td):
     assert created.status_code == 201, created.text
     assert issue["status"] == "draft" and issue["status_label"] == "проект"
     assert (issue["change_no"], issue["sequence_no"], issue["version"]) == (0, 1, 1)
-    assert issue["designations"]["ok"] == "ФРАК.60185.00001"
-    assert issue["designations"]["ok_tk"] == "ФРАК.60102.00001"
+    assert issue["designations"]["ok"] == "ЮТНВ.60185.00001"
+    assert issue["designations"]["ok_tk"] == "ЮТНВ.60102.00001"
     assert issue["etk_revision"] == card["revision"] == issue["current_etk_revision"]
     assert issue["has_changes"] is False
     assert issue["created_by"] == "Инженер" and issue["approved_at"] is None
@@ -139,7 +140,7 @@ def test_full_lifecycle_and_wrong_transitions(td):
     edited = client.put(f"/api/techcards/td-issues/{issue['id']}", json={
         "version": back["version"], "litera": "А", "method_code": "88", "signatories": PEOPLE, **PLACE,
     })
-    assert edited.status_code == 200 and edited.json()["designations"]["mk"] == "ФРАК.10188.00001"
+    assert edited.status_code == 200 and edited.json()["designations"]["mk"] == "ЮТНВ.10188.00001"
     stale = client.put(f"/api/techcards/td-issues/{issue['id']}", json={
         "version": back["version"], "litera": "А", "method_code": "88", "signatories": PEOPLE, **PLACE,
     })
@@ -167,7 +168,8 @@ def test_draft_can_be_annulled_and_bad_input_is_refused(td):
 
 def test_signing_is_blocked_by_normcontrol(td):
     client, _ = td
-    issue = _open(client, _card(client), signatories={**PEOPLE, "approver": {"name": "", "position": ""}}).json()
+    # Пров. по умолчанию не подставляется: пустой — нормоконтроль блокирует.
+    issue = _open(client, _card(client), signatories={**PEOPLE, "checker": {"name": "", "position": ""}}).json()
 
     blocked = _move(client, issue, "signing")
     findings = client.get(f"/api/techcards/td-issues/{issue['id']}/normcontrol").json()["findings"]
@@ -176,6 +178,43 @@ def test_signing_is_blocked_by_normcontrol(td):
     assert [item["code"] for item in blocked.json()["detail"]["findings"]] == ["signatory_missing"]
     assert {item["code"] for item in findings} >= {"signatory_missing", "agreed_vp_missing", "no_control_step", "grade_missing"}
     assert client.get(f"/api/techcards/td-issues/{issue['id']}").json()["status"] == "draft"
+
+
+def _users(engine, *people) -> None:
+    """Сотрудники (логин, ФИО, должность, действует)."""
+    with Session(engine) as session:
+        for login, name, title, active in people:
+            session.add(IdentityUserRow(
+                id=uuid4(), login=login, email=f"{login}@example.test", name=name, department="Офис", role="staff",
+                site=None, active=active, job_title=title,
+            ))
+        session.commit()
+
+
+def test_blank_developer_normcontrol_and_approver_get_the_default_signers(td):
+    client, engine = td
+    _users(
+        engine, ("vasilev", "Васильев Артемий", "Технолог", True), ("zinger", "Зингер Антон", "Монтажник", True),
+        ("zingera", "Зингер Артем", "Инженер по качеству", True), ("kostromin-old", "Костромин Василий", "", False),
+    )
+    blank = {"name": "", "position": ""}
+    created = _open(client, _card(client), signatories={
+        **PEOPLE, "developer": blank, "normcontrol": blank, "approver": {"name": "", "position": "Генеральный директор"},
+    })
+
+    assert created.status_code == 201, created.text
+    issue = created.json()
+    assert issue["org_code"] == "ЮТНВ" and issue["designations"]["vtd"] == "ЮТНВ.40185.00001"
+    assert issue["signatories"] == {
+        "developer": {"name": "Васильев Артемий", "position": "Технолог"},  # по логину vasilev
+        "checker": PEOPLE["checker"],
+        "normcontrol": {"name": "Зингер Артем", "position": "Инженер по качеству"},  # zingera, не однофамилец zinger
+        # kostromin нет среди действующих: ФИО из настройки, вписанная должность остаётся
+        "approver": {"name": "Костромин Василий", "position": "Генеральный директор"},
+        "agreed_vp": PEOPLE["agreed_vp"],
+    }
+    explicit = _open(client, _card(client, item="02")).json()
+    assert explicit["signatories"] == PEOPLE  # вписанное вручную не меняется
 
 
 def test_change_needs_notice_and_activation_annuls_the_previous_issue(td):
@@ -199,7 +238,7 @@ def test_change_needs_notice_and_activation_annuls_the_previous_issue(td):
     assert issues[1]["status"] == "active"
     changes = client.get(f"/api/techcards/td-issues/{second['id']}/print").json()["changes"]
     assert [(row["change_no"], row["notice_no"], row["designation"], row["developer"]) for row in changes] == [
-        (0, "", "ФРАК.40185.00001", "Иванов И.И."), (1, "ИИ-7", "ФРАК.40185.00001", "Иванов И.И."),
+        (0, "", "ЮТНВ.40185.00001", "Иванов И.И."), (1, "ИИ-7", "ЮТНВ.40185.00001", "Иванов И.И."),
     ]
 
 
@@ -251,7 +290,7 @@ def test_second_card_takes_the_next_sequence_number(td):
     second = _open(client, _card(client, item="02")).json()
 
     assert (first["sequence_no"], second["sequence_no"]) == (1, 2)
-    assert second["designations"]["vtd"] == "ФРАК.40185.00002"
+    assert second["designations"]["vtd"] == "ЮТНВ.40185.00002"
 
 
 def test_etk_revision_bump_shows_changes_while_print_keeps_the_snapshot(td):

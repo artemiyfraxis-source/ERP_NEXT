@@ -86,13 +86,15 @@ def test_issuing_the_etk_opens_an_active_kit_signed_by_staff_roles(env):
     assert (issue["change_no"], issue["status"], issue["created_by"]) == (0, "active", "система")
     assert issue["approved_at"] and issue["etk_revision"] == 1 and issue["has_changes"] is False
     assert (issue["litera"], issue["method_code"], issue["workshop"], issue["site"]) == ("", "85", "Цех электромонтажа", "ЦАР")
+    # Пров. — по должности; Разраб., Н.контр., Утв. — подписанты по умолчанию (таких логинов нет — ФИО из настройки).
     assert issue["signatories"] == {
-        "developer": {"name": "Иванов И.И.", "position": "Технолог"},
+        "developer": {"name": "Васильев Артемий", "position": ""},
         "checker": {"name": "Петров П.П.", "position": "Директор производства"},
-        "normcontrol": {"name": "Сидоров С.С.", "position": "Генеральный директор"},
-        "approver": {"name": "Сидоров С.С.", "position": "Генеральный директор"},
+        "normcontrol": {"name": "Зингер Артем", "position": ""},
+        "approver": {"name": "Костромин Василий", "position": ""},
         "agreed_vp": {"name": "", "position": ""},
     }
+    assert issue["org_code"] == "ЮТНВ" and issue["designations"]["ok"] == "ЮТНВ.60185.00001"
     printed = client.get(f"/api/techcards/td-issues/{issue['id']}/print").json()
     assert set(printed["card"]["td_ops"]) == {"10::A::", "20::B::"}
 
@@ -116,11 +118,11 @@ def test_a_new_revision_opens_a_change_with_an_automatic_notice(env):
 
 
 def test_blocking_findings_leave_a_draft_that_later_revisions_refresh(env):
-    client, _sessions = env  # сотрудников нет: подписанты пусты — нормоконтроль блокирует
+    client, _sessions = env  # сотрудников нет: Пров. пуст — нормоконтроль блокирует
     issued = _issue_etk(client, _card(client))
 
     draft, = _issues(client, issued)
-    assert (draft["status"], draft["change_no"], draft["signatories"]["developer"]["name"]) == ("draft", 0, "")
+    assert (draft["status"], draft["change_no"], draft["signatories"]["checker"]["name"]) == ("draft", 0, "")
     findings = client.get(f"/api/techcards/td-issues/{draft['id']}/normcontrol").json()["findings"]
     assert "signatory_missing" in {item["code"] for item in findings}
     rebuilt = client.put(f"/api/techcards/projects/{issued['id']}/etk",
@@ -150,8 +152,32 @@ def test_fields_are_copied_from_the_latest_issue_of_any_card(env):
 
     issue, = _issues(client, issued)
     assert (issue["litera"], issue["method_code"], issue["workshop"], issue["site"]) == ("О1", "88", "Цех сборки", "ЖУК")
-    assert issue["signatories"]["developer"] == {"name": "Д", "position": "Инженер"}
+    # Пров. — из последнего выпуска; Разраб., Н.контр., Утв. — всегда по умолчанию (владелец 22.10.2026).
+    assert issue["signatories"]["checker"] == {"name": "П", "position": "П"}
+    assert issue["signatories"]["developer"] == {"name": "Васильев Артемий", "position": ""}
+    assert issue["signatories"]["normcontrol"]["name"] == "Зингер Артем"
     assert issue["sequence_no"] == 2 and issue["status"] == "active"
+
+
+def test_default_signers_resolve_by_login_then_by_name(env):
+    _client, sessions = env
+    with sessions() as session:
+        for login, name, title in (
+            ("vasilev", "Васильев Артемий", "Технолог"), ("zinger", "Зингер Антон", "Монтажник"),
+            ("zingera", "Зингер Артём", "Нормоконтролёр"), ("vk", "Василий Костромин", "Генеральный директор"),
+        ):
+            session.add(IdentityUserRow(
+                id=uuid4(), login=login, email=f"{login}@example.test", name=name, department="Офис", role="staff",
+                site=None, active=True, job_title=title,
+            ))
+        session.commit()
+        found = td_auto.default_signers(session)
+    assert found == {
+        "developer": {"name": "Васильев Артемий", "position": "Технолог"},
+        "normcontrol": {"name": "Зингер Артём", "position": "Нормоконтролёр"},  # по логину zingera
+        "approver": {"name": "Василий Костромин", "position": "Генеральный директор"},  # логина нет — по ФИО
+    }
+    assert td_auto.default_signers(None)["developer"] == {"name": "Васильев Артемий", "position": ""}
 
 
 def test_a_failing_kit_never_breaks_issuing_the_etk(env, monkeypatch):
