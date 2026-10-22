@@ -11,6 +11,8 @@ etk_refresh), до её commit:
 Поля (литера, вид ТП, подписанты, цех, участок) — из последнего неаннулированного выпуска любой карты; если выпусков
 нет — по умолчанию: подписанты из сотрудников по должности (Разраб. — технолог, Пров. — директор производства,
 Н. контр. и Утв. — генеральный директор), литера пустая, вид ТП 85, «Цех электромонтажа», участок ЦАР. Автор — «система».
+Разраб., Н. контр. и Утв. в обоих случаях — подписанты по умолчанию (td_issues.DEFAULT_SIGNERS, владелец 22.10.2026),
+Пров. и «Согласовано ВП» — как выше.
 
 Затем нормоконтроль: без блокирующих замечаний выпуск сразу проходит «на подписи» → «действует» (прежний действующий
 аннулируется в той же транзакции); с блокирующими остаётся проектом — замечания видны в блоке «Комплект ТД».
@@ -42,7 +44,8 @@ from app.modules.techcards.etk_read import card_views
 from app.modules.techcards.project_cards import ProjectTechcard
 from app.modules.techcards.td_grades import reference_grades
 from app.modules.techcards.td_issues import (
-    DEFAULT_WORKSHOP, ROLES, SYSTEM_ACTOR, TdIssue, TdIssueBlocked, TdIssueInput, normcontrol, with_td_ops,
+    DEFAULT_SIGNERS, DEFAULT_WORKSHOP, ROLES, SYSTEM_ACTOR, TdIssue, TdIssueBlocked, TdIssueInput, normcontrol,
+    with_signers, with_td_ops,
 )
 from app.workflows.etk_lots import IssuedKitLots
 from app.workflows.warehouse_article import infer_article_identity
@@ -103,17 +106,40 @@ def staff_signatories(session: Session) -> dict[str, dict[str, str]]:
     return signatories
 
 
+def _same_words(left: object, right: object) -> bool:
+    return sorted(_fold(left).split()) == sorted(_fold(right).split())
+
+
+def default_signers(session: Session | None) -> dict[str, dict[str, str]]:
+    """Подписанты по умолчанию (td_issues.DEFAULT_SIGNERS) по сотрудникам: действующий сотрудник с этим логином, иначе
+    с этим ФИО (порядок слов любой); в графе его ФИО и «Должность» из карточки. Не нашёлся — ФИО из настройки."""
+    users = [] if session is None else list(
+        session.scalars(select(IdentityUserRow).where(IdentityUserRow.active.is_(True)).order_by(IdentityUserRow.login))
+    )
+    found: dict[str, dict[str, str]] = {}
+    for role, (login, name) in DEFAULT_SIGNERS.items():
+        user = (next((item for item in users if _fold(item.login) == _fold(login)), None)
+                or next((item for item in users if _same_words(item.name, name)), None))
+        found[role] = (
+            {"name": str(user.name or "").strip() or name, "position": str(user.job_title or "").strip()}
+            if user is not None else {"name": name, "position": ""}
+        )
+    return found
+
+
 def issue_template(uow: Any, session: Session) -> TdIssueInput:
-    """Поля нового автоматического выпуска: из последнего неаннулированного выпуска, иначе по умолчанию."""
+    """Поля нового автоматического выпуска: из последнего неаннулированного выпуска, иначе по умолчанию; Разраб.,
+    Н. контр. и Утв. — всегда подписанты по умолчанию."""
+    signers = default_signers(session)
     latest: TdIssue | None = uow.td_issues.latest()
     if latest is not None:
         return TdIssueInput(
-            litera=latest.litera, method_code=latest.method_code, signatories=latest.signatories, notice_no="",
-            reason="", workshop=latest.workshop or DEFAULT_WORKSHOP, site=latest.site or DEFAULT_SITE,
+            litera=latest.litera, method_code=latest.method_code, signatories=with_signers(latest.signatories, signers),
+            notice_no="", reason="", workshop=latest.workshop or DEFAULT_WORKSHOP, site=latest.site or DEFAULT_SITE,
         )
     return TdIssueInput(
-        litera="", method_code=DEFAULT_METHOD, signatories=staff_signatories(session), notice_no="", reason="",
-        workshop=DEFAULT_WORKSHOP, site=DEFAULT_SITE,
+        litera="", method_code=DEFAULT_METHOD, signatories=with_signers(staff_signatories(session), signers),
+        notice_no="", reason="", workshop=DEFAULT_WORKSHOP, site=DEFAULT_SITE,
     )
 
 
@@ -145,8 +171,9 @@ def snapshot(uow: Any, session: Session, card: ProjectTechcard) -> dict[str, Any
     return with_td_ops(jsonable_encoder(view), grades)
 
 
-def _approve(uow: Any, issue: TdIssue, now: datetime) -> tuple[TdIssue, tuple[str, ...]]:
-    """Нормоконтроль и, если блокирующих нет, «на подписи» → «действует» с аннулированием прежнего действующего."""
+def approve_issue(uow: Any, issue: TdIssue, now: datetime) -> tuple[TdIssue, tuple[str, ...]]:
+    """Нормоконтроль и, если блокирующих нет, «на подписи» → «действует» с аннулированием прежнего действующего;
+    иначе выпуск как был и коды блокирующих замечаний. Выпуск уже записан (add/save), commit — у вызывающего."""
     try:
         signing = issue.moved("signing", now)
     except TdIssueBlocked:
@@ -174,7 +201,7 @@ def auto_issue(uow: Any, session: Session, card: ProjectTechcard, reason: str, n
         uow.td_issues.save(updated, current.version)
         blocking: tuple[str, ...] = ()
         if updated.created_by == SYSTEM_ACTOR:
-            updated, blocking = _approve(uow, updated, now)
+            updated, blocking = approve_issue(uow, updated, now)
         return AutoResult("resnapshot", updated.status, updated.change_no, blocking)
     template = issue_template(uow, session)
     if issues:
@@ -192,7 +219,7 @@ def auto_issue(uow: Any, session: Session, card: ProjectTechcard, reason: str, n
     )
     uow.td_issues.add(issue)
     uow.td_issues.flush()
-    issue, blocking = _approve(uow, issue, now)
+    issue, blocking = approve_issue(uow, issue, now)
     return AutoResult("created", issue.status, issue.change_no, blocking)
 
 
