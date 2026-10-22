@@ -3606,6 +3606,12 @@ export const techcardsApi = {
       method: "POST",
       body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}), ...(generatorOrigin ? { generator_origin: generatorOrigin } : {}) }),
     }),
+  /** Схема ПФ генератора: та же сборка, что «Создать», без записи — техкарта, какой она станет (ревизии нет). */
+  buildPreview: (cardId: string, version: number, config: Record<string, unknown>) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/build/preview`, {
+      method: "POST",
+      body: JSON.stringify({ version, config }),
+    }),
   issue: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/issue`, {
       method: "POST",

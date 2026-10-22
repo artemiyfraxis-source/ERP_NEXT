@@ -1,4 +1,4 @@
-import { createContext, Fragment, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { TcGenerator } from "./TcGenerator";
 import {
   kitsetsApi,
@@ -17,9 +17,10 @@ import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
 import { etkConfigOp, etkPfArt } from "./etkPfArt";
+import { etkDocOperations, etkTitle, harnessPins, navSub, opCode } from "./etkDocOps";
 import { EtkRouteDiagram } from "./EtkRouteDiagram";
 import { defectArt, defectGroupCode, defectOperationCode } from "./etkDefectArt";
-import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, etkToleranceParts, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm";
@@ -30,7 +31,6 @@ import { etkLinkScheme } from "./etkLinkScheme";
 import { changesByOperation, changeValue, revisionActor, revisionChanges } from "./etkRevisions";
 import { PageWindow } from "./PageWindow";
 import { TdIssuesPanel } from "./TdIssuesPanel";
-import { pinCoreColor, withCoreColors } from "./etkCoreColors";
 import { LinkSchemeView, type LinkScheme } from "./PinoutLinks";
 import { EtkPfList } from "./EtkPfList";
 import { ETK_TO_TEMPLATE_CONFIRM, etkCardSourceNote } from "./etkCardSource";
@@ -79,17 +79,9 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-const WITH_COLORS = new WeakMap<object, EtkOperation[]>();
-
-/** Операции документа; провода монтажа несут цвета жил из `build_config` (как в «Схеме связей»), без пересборки карты. */
+/** Операции документа с цветами жил (etkDocOps). */
 function operations(document: ProjectTechcard["document"]): EtkOperation[] {
-  const value = document?.operations;
-  if (!Array.isArray(value)) return [];
-  const known = WITH_COLORS.get(document as object);
-  if (known) return known;
-  const list = withCoreColors(value as EtkOperation[], document);
-  WITH_COLORS.set(document as object, list);
-  return list;
+  return etkDocOperations<EtkOperation>(document);
 }
 
 function warnings(document: ProjectTechcard["document"]): string[] {
@@ -140,18 +132,7 @@ function HarnessView({ value, list, connections, raw, task, scheme }: {
   </EtkFold>;
 }
 
-/** Распиновка из операций монтажа — по узлу схемы «артикул разъёма::сторона»: провода видны в своих гнёздах. */
-export function harnessPins(list: EtkOperation[]): Record<string, Record<number, string>> {
-  const out: Record<string, Record<number, string>> = {};
-  list.forEach((operation) => {
-    const article = String(operation.connector_article || "").trim();
-    if (!article) return;
-    (operation.fields?.wires ?? []).forEach((wire) => (wire.pins ?? []).forEach((pin) => {
-      (out[`${article}::${operation.side || ""}`] ||= {})[pin] = pinCoreColor(wire as Record<string, unknown>, pin) || wire.art || wire.name || "";
-    }));
-  });
-  return out;
-}
+export { harnessPins };
 
 function defaultConfig(card: ProjectTechcard): Record<string, unknown> {
   const saved = record(card.document?.build_config);
@@ -448,26 +429,6 @@ export function DefectsView({ text, code, number, alwaysOpen = false }: { text: 
 /** Same key as backend project_cards.operation_key: code::connector::side. */
 function etkOperationKey(operation: EtkOperation): string {
   return `${String(operation.code ?? "").trim()}::${String(operation.connector ?? "").trim()}::${String(operation.side ?? "").trim()}`;
-}
-
-/** Вторая строка пункта маршрута: код карты операции и сторона/разъём; номер разъёма без букв не показываем. */
-function navSub(operation: EtkOperation): string {
-  const connector = String(operation.connector || "").trim();
-  return [opCode(operation), /^\d+$/.test(connector) ? "" : connector].filter(Boolean).join(" · ");
-}
-
-/** Код карты операции; «БЕЗ КОДА» из старых ТК — это пустой код. */
-function opCode(operation: EtkOperation): string {
-  const code = String(operation.code || "").trim();
-  return /^без кода$/i.test(code) ? "" : code;
-}
-
-/** Русское название операции: имя карты → название шаблона без кода («CUT_WIRE+1crimp | Автомат резка…») →
- *  категория по коду карты. Код и тип операции (cutWireCrimp) названием не бывают. */
-function etkTitle(operation: EtkOperation): string {
-  const title = String(operation.title || "").split("|").map((part) => part.trim()).filter(Boolean).at(-1) || "";
-  const category = opCode(operation) ? recordCategory(opCode(operation)) : "";
-  return etkOperationName(operation.card?.name || "", operation.type) || title || (category && category !== "Прочее" ? category : "") || "Операция";
 }
 
 function toolSub(tool: EtkTool): string {
@@ -869,6 +830,9 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
     return () => { live = false; };
   }, [card.project, card.item_index]);
 
+  // Схема ПФ генератора — сборка ЭТК без записи; версия карты — та, что открыта (сервер её не сверяет).
+  const buildPreview = useCallback((config: Record<string, unknown>) => techcardsApi.buildPreview(card.id, card.version, config), [card.id, card.version]);
+
   /** true — техкарта собрана (в том числе черновиком), false — нет; от этого зависит, завершён ли черновик с чертежа. */
   async function build(config: Record<string, unknown>, draftId?: string, generatorOrigin?: Record<string, unknown>): Promise<boolean> {
     if (busy) return false;
@@ -924,7 +888,7 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
         remove: async (art) => (await kitsetsApi.removeComponent(card.project, card.item_index, art)).bom,
         apply: (bom) => setKit({ data: bom, error: "" }),
       } : undefined}
-      userId={principal.user.id} onConfig={(config) => { generatedConfig.current = config; }}
+      userId={principal.user.id} onConfig={(config) => { generatedConfig.current = config; }} buildPreview={buildPreview}
       /* JSON-конфигурация — служебная, только админу (владелец 29.09: «что это такое и зачем»). */
       more={!hasFullAccess(principal) ? undefined : <div className="build-config">
         <label>JSON-конфигурация генератора (для эксперта)<textarea aria-label="Конфигурация автоматической сборки" rows={12} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>

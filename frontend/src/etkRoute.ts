@@ -2,6 +2,7 @@
 // линейной схемы) — и таблица «Полуфабрикаты» в печати. Чистая логика без React: экран и etkPrint.ts берут одни и те же
 // блоки, номера и подписи.
 import type { EtkRoute, EtkRouteBlock } from "./api";
+import { formatQty } from "./format";
 
 export interface EtkRouteFeed {
   /** Номер блока-источника в полосе (по топологическому порядку). */
@@ -430,6 +431,40 @@ export function etkPfGroups(route: PfRoute | null, operations: EtkPfOperation[],
         .sort((a, b) => a.number - b.number),
       output: last ? rows(last.result) : [],
       minutes: own.reduce((sum, operation) => sum + operationMinutes(operation, batch), 0),
+    };
+  });
+}
+
+/** Сколько штук каждый ПФ отдаёт на партию `batch` изделий: изделие — партия, источник — сумма по его стрелкам
+ *  «штук на одну» потребителя. Нужна выходу ПФ, у результата которого нет нормы (типовая сборка пишет её только
+ *  изделию), — как у 713К: «→ … 500 шт» у каждого ПФ. */
+export function etkPfNeed(route: Pick<EtkRoute, "blocks" | "edges">, batch: number): Map<string, number> {
+  const need = new Map<string, number>();
+  const visit = (key: string, seen: Set<string>): number => {
+    const known = need.get(key);
+    if (known != null) return known;
+    const block = route.blocks.find((item) => item.key === key);
+    if (!block || seen.has(key)) return 0;
+    const out = route.edges.filter((edge) => edge.from === key);
+    const value = block.final && !out.length ? batch
+      : out.reduce((sum, edge) => sum + visit(edge.to, new Set([...seen, key])) * (edge.per_unit > 0 ? edge.per_unit : 1), 0);
+    need.set(key, value);
+    return value;
+  };
+  route.blocks.forEach((block) => visit(block.key, new Set()));
+  return need;
+}
+
+/** Комплектующие ПФ строками входа (схема без блоков комплекта — типовая сборка; у «Сложной» они приходят своими
+ *  блоками): название и сколько на одно изделие («Колодка XH 4 — 1 шт», «НВ4 0,5 красный — 0,6 м»). */
+export function etkPfComponentInputs(group: Pick<EtkPfGroup, "components">, batch: number): Array<{ text: string; qty: string; title: string }> {
+  return group.components.filter((row) => (row.name || row.art || "").trim()).map((row) => {
+    const value = num(row.norm) / (batch > 0 ? batch : 1);
+    const name = (row.name || row.art || "").trim();
+    return {
+      text: name,
+      qty: value > 0 ? formatQty(Math.round(value * 1000) / 1000, row.unit || "шт") : "",
+      title: [name, row.art && row.art.trim() !== name ? row.art.trim() : ""].filter(Boolean).join(" · "),
     };
   });
 }

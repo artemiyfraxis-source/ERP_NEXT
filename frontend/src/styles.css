@@ -2025,6 +2025,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .route-summary { color: var(--muted-foreground); font-size: 12px; }
 .tcgen .route-summary strong { color: var(--foreground); }
 .tcgen .route-canvas { position: relative; width: 100%; padding-bottom: 2px; }
+/* Схема ПФ из собранной без записи ЭТК (GenPfScheme): та же, что в техкарте, без своей рамки внутри «Итога». */
+.tcgen .gen-pf-scheme { display: grid; gap: 6px; min-width: 0; }
+.tcgen .gen-pf-scheme > .etk-route { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.tcgen .gen-pf-status { color: var(--muted-foreground); font-size: 12px; }
+.gen-pf-window .etk-route { margin: 0; }
+.gen-pf-window-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.gen-pf-window-head > button { margin-left: auto; }
+.gen-pf-window-sum { color: var(--muted-foreground); font-size: 13px; }
 .tcgen .route-canvas svg { position: absolute; inset: 0; width: 100%; pointer-events: none; }
 .tcgen .route-edge-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.5; }
 .tcgen .route-arrowhead { fill: var(--muted-foreground); }
