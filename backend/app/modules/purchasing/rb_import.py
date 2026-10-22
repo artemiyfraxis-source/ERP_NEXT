@@ -474,6 +474,12 @@ def resolve_items(session: Session, snapshot: sqlite3.Connection) -> dict[int, U
     return found
 
 
+def _without_nul(raw: bytes) -> str:
+    """Every text read from the snapshot: SQLite keeps NUL (0x00) in text, PostgreSQL refuses it. Covers plain values
+    and JSON columns alike (a JSON-escaped backslash-u0000 would come back as NUL after json.loads)."""
+    return raw.decode("utf-8", errors="replace").replace("\x00", "").replace("\\u0000", "")
+
+
 def open_snapshot(path: Path) -> sqlite3.Connection:
     if _LIVE_DB.search(str(path)):
         raise SystemExit("Это живая база Roller_Buyer — нужна копия (npm run backup или SQLite backup API)")
@@ -481,6 +487,7 @@ def open_snapshot(path: Path) -> sqlite3.Connection:
         raise SystemExit(f"Нет файла {path}")
     connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
+    connection.text_factory = _without_nul
     if connection.execute("pragma integrity_check").fetchone()[0] != "ok":
         raise SystemExit("Копия Roller_Buyer не проходит integrity_check")
     return connection

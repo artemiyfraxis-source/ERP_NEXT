@@ -209,3 +209,24 @@ def test_the_live_database_is_refused(tmp_path):
     sqlite3.connect(live).close()
     with pytest.raises(SystemExit, match="живая база"):
         open_snapshot(live)
+
+
+def test_nul_bytes_in_the_snapshot_never_reach_the_database(sessions, snapshot):
+    """PostgreSQL refuses NUL in text; SQLite (Roller_Buyer's own) keeps it — every snapshot text is cleaned at the read."""
+    path, _ = snapshot
+    nul = chr(0)
+    lines = json.dumps([{"seq": 1, "name": "Разъём@", "qty": 1}], ensure_ascii=False).replace("@", "\\u0000")
+    db = sqlite3.connect(path)
+    db.execute("update invoices set text = ?, parse_issues = ?, lines = ?",
+               (f"Счёт{nul} № 1{nul}", f"нет{nul}ИНН", lines))
+    db.execute("update upd_documents set issues = ? where file_id = 'g2'", (f"ошибка{nul}разбора",))
+    db.execute("update items set name = ? where id = 2", (f"Провод{nul} МГТФ 0,35",))
+    db.commit()
+    db.close()
+    _run(sessions, snapshot)
+    with sessions() as session:
+        invoice = session.scalars(select(InvoiceRow)).one()
+        assert invoice.text == "Счёт № 1" and invoice.parse_issues == "нетИНН"
+        assert nul not in json.dumps(invoice.lines, ensure_ascii=False) and "u0000" not in json.dumps(invoice.lines)
+        assert session.get(UpdDocumentRow, "g2").issues == "ошибкаразбора"
+        assert "Провод МГТФ 0,35" in {item.name for item in session.scalars(select(ItemRow))}
