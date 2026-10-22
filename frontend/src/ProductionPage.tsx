@@ -1,16 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
-  fulfillmentApi,
   productionApi,
   productionPlanApi,
-  type FulfillmentRequest,
   type Principal,
   type ProductionAbsence,
   type ProductionBox,
   type ProjectTechcard,
   type ProductionMaterialSource,
-  type ProductionLaunchable,
   type ProductionAssignPlan,
   type EtkRevisionNotice,
   type ProductionOperation,
@@ -28,7 +25,7 @@ import { etkCardsChangedNote, etkCardsNote } from "./etkCardSource";
 import type { MarkSerialRange } from "./markSerial";
 import { PfCardBlocks, isPfOperation, operationName, pfOpsText } from "./PfTaskBlocks";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
-import { formatDay, formatDayMonth, formatMoment } from "./format";
+import { formatDay, formatMoment } from "./format";
 import { MasterBoard, type ProjectDeadlines } from "./MasterBoard";
 import { AutoplanPanel } from "./AutoplanPanel";
 import { PageWindow } from "./PageWindow";
@@ -49,7 +46,6 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
-  const [showLaunch, setShowLaunch] = useState(false);
   const [showAutoplan, setShowAutoplan] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
@@ -161,7 +157,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
           {viewable.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
       </label>}
-      {canOverview && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowDowntime(true)}>Простои</button>{canEdit && <><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar(true)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills(true)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch(true)}>+ Запустить задание</button></>}</div>}
+      {canOverview && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowDowntime(true)}>Простои</button>{canEdit && <><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar(true)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills(true)}>Компетенции</button></>}</div>}
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
@@ -170,7 +166,6 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {showCalendar && canEdit && <PageWindow label="Календарь цеха" close={() => setShowCalendar(false)}><CalendarForm operators={operators} close={() => setShowCalendar(false)} /></PageWindow>}
     {showSkills && canEdit && <PageWindow label="Компетенции" width={1280} close={() => { setShowSkills(false); void reload(); }}><SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} /></PageWindow>}
     {showAutoplan && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} close={() => setShowAutoplan(false)} onApplied={(count, created) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций${created ? `, создано заданий: ${created}` : ""}`); void reload(); }} />}
-    {showLaunch && canEdit && <PageWindow label="Запустить задание" close={() => setShowLaunch(false)}><LaunchForm tasks={tasks} projectDeadlines={projectDeadlines} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} /></PageWindow>}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт
         на вход следующей операции, коробку последней операции принимает или возвращает «Очередь ОТК». */}
@@ -198,7 +193,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {!mine && !selectedTask && loaded && canOverview && <MasterBoard
       tasks={tasks} operators={operators} site={viewerSite} skills={skills} absences={absences}
       shift={shift} holidays={holidays} projectDeadlines={projectDeadlines}
-      canEdit={canEdit} busy={busy} mutate={mutate}
+      canEdit={canEdit} busy={busy} mutate={mutate} error={error} notice={notice}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
     {mine && loaded && !tasks.length && <div className="empty">{viewAs ? "Операции сотруднику не назначены." : canPick ? "Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}
@@ -360,96 +355,6 @@ function SkillsForm({ operators, close }: {
     </div>
     {!codes.length && !busy && <div className="empty">Нет выданных техкарт — операций для матрицы пока нет.</div>}
     <div className="form-actions">{saved && <span>{saved}</span>}<button className="primary" disabled={busy || !operatorId || !codes.length} onClick={() => void save()}>Сохранить</button></div>
-  </div>;
-}
-
-// Запуск задания (prodLaunchModal_): сборки с выданной техкартой по проектам, поиск, «тираж», «уже запущено».
-function LaunchForm({ tasks, projectDeadlines, busy, mutate, close }: {
-  tasks: ProductionTask[];
-  projectDeadlines: ProjectDeadlines;
-  busy: boolean;
-  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-  close: () => void;
-}) {
-  const [items, setItems] = useState<ProductionLaunchable[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
-  const [picked, setPicked] = useState<ProductionLaunchable | null>(null);
-  const [quantity, setQuantity] = useState("");
-  const [deadline, setDeadline] = useState("");
-  const [fulfillmentRequestId, setFulfillmentRequestId] = useState("");
-  const [issuedRequests, setIssuedRequests] = useState<FulfillmentRequest[]>([]);
-  const key = useRef(crypto.randomUUID());
-
-  useEffect(() => {
-    productionApi.launchable()
-      .then((result) => setItems(result.items))
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Сборки не загружены"))
-      .finally(() => setLoading(false));
-    fulfillmentApi.list()
-      .then((result) => setIssuedRequests(result.requests.filter((request) => request.status === "КБ Выдана")))
-      .catch(() => setIssuedRequests([]));
-  }, []);
-
-  const doneOf = (item: ProductionLaunchable) => tasks.filter((task) => task.status !== "Отменено"
-    && task.project.toLowerCase() === item.project.toLowerCase() && task.item.toUpperCase() === item.index.toUpperCase());
-  const needle = query.trim().toLowerCase();
-  const visible = items.filter((item) => !needle || `${item.project} ${item.index} ${item.customer} ${item.name}`.toLowerCase().includes(needle));
-  const projects = Array.from(new Set(visible.map((item) => item.project)));
-
-  function pick(item: ProductionLaunchable) {
-    setPicked(item);
-    setQuantity(item.run);
-    setDeadline(item.deadline ?? "");
-  }
-
-  async function submit() {
-    if (!picked) return;
-    await mutate("launch", async () => {
-      const result = await productionApi.launch(key.current, {
-        techcard_id: picked.techcard_id, quantity: Number(quantity), deadline: deadline || null,
-        fulfillment_request_id: fulfillmentRequestId || null,
-      });
-      key.current = crypto.randomUUID();
-      close();
-      return result;
-    });
-  }
-
-  // Задание встаёт в работу в момент запуска (API не принимает дату начала): дата запуска — сегодня, она на кнопке (РП-5).
-  const today = formatDayMonth(toLocalInput(new Date().toISOString()));
-  const projectDeadline = picked ? projectDeadlines[picked.project.toLowerCase()]?.deadline ?? null : null;
-  return <div className="panel production-launch">
-    <div className="manual-stock-head"><div><h2>Запустить задание</h2><small>{picked ? `Запуск сегодня, ${today}` : "Выберите сборку с выданной техкартой"}</small></div><button className="link-button" onClick={close}>Отмена</button></div>
-    {error && <div className="error-banner" role="alert">{error}</div>}
-    {!picked && <>
-      {items.length > 0 && <input className="pl-search" aria-label="Поиск сборки" placeholder="Поиск: проект, КБ, заказчик, наименование" value={query} onChange={(event) => setQuery(event.target.value)} autoFocus />}
-      {projects.map((project) => <div className="pl-proj" key={project}>
-        <div className="pl-ph"><b>{project}</b>{visible.find((item) => item.project === project)?.customer ? ` · ${visible.find((item) => item.project === project)?.customer}` : ""}</div>
-        <div className="pl-grid">{visible.filter((item) => item.project === project).map((item) => {
-          const launched = doneOf(item).reduce((sum, task) => sum + task.quantity, 0) || item.launched;
-          return <button key={item.techcard_id} className="pl-card" onClick={() => pick(item)}>
-            <span className="pl-kb">{item.index}</span>
-            <span className="pl-name">{item.name || "—"}</span>
-            <span className="pl-meta">тираж {item.run || "—"}{launched ? <> · <b>запущено {launched}</b></> : null}</span>
-          </button>;
-        })}</div>
-      </div>)}
-      {!loading && !items.length && <div className="empty">Нет сборок с выданной техкартой — сначала выдайте техкарту в карточке проекта.</div>}
-      {items.length > 0 && !visible.length && <div className="empty">Ничего не найдено.</div>}
-    </>}
-    {picked && <>
-      <button className="secondary small" onClick={() => setPicked(null)}>← все сборки</button>
-      <div className="pl-sel"><span className="pl-kb">{picked.index}</span><div><b>{picked.project}</b>{picked.customer ? ` · ${picked.customer}` : ""}<div>{picked.name}</div><small>тираж {picked.run || "—"} · этапов {picked.operations}</small></div></div>
-      {doneOf(picked).length > 0 && <div className="pl-warn">Уже запущено: {doneOf(picked).map((task) => `${task.number} × ${task.quantity}`).join(", ")}</div>}
-      <div className="production-launch-grid">
-        <label>Кол-во<input aria-label="Кол-во" inputMode="numeric" value={quantity} onChange={(event) => setQuantity(event.target.value)} autoFocus /></label>
-        <label>Срок задания<input aria-label="Срок задания" type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} />{projectDeadline && <small className="launch-hint">дедлайн проекта {formatDay(projectDeadline)}</small>}</label>
-        <label>Выданный комплект<select aria-label="Выданный комплект" value={fulfillmentRequestId} onChange={(event) => setFulfillmentRequestId(event.target.value)}><option value="">Не связан</option>{issuedRequests.map((request) => <option key={request.id} value={request.id}>{request.number} · {request.purpose}</option>)}</select></label>
-      </div>
-      <div className="form-actions"><button className="primary" disabled={busy || !/^\d+$/.test(quantity.trim()) || Number(quantity) <= 0} onClick={() => void submit()}>Запустить сегодня, {today}</button></div>
-    </>}
   </div>;
 }
 

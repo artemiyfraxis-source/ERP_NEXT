@@ -82,46 +82,6 @@ function masterFetch(extra: (path: string, init?: RequestInit) => Response | nul
   });
 }
 
-it("launches a task only from an issued techcard picked in the launchable list", async () => {
-  let payload: unknown;
-  let key = "";
-  masterFetch((path, init) => {
-    if (path === "/api/production/launchable") return json({ items: [{
-      techcard_id: "80000000-0000-0000-0000-000000000001", project: "591K.3", index: "КБ1", item: "591K.3КБ1",
-      name: "Жгут", customer: "", run: "25", deadline: null, launched: 10, operations: 3,
-    }, {
-      techcard_id: "80000000-0000-0000-0000-000000000002", project: "708К.4", index: "КБ2", item: "708К.4КБ2",
-      name: "Кабель", customer: "", run: "5", deadline: null, launched: 0, operations: 1,
-    }] });
-    if (path === "/api/production/tasks" && init?.method === "POST") {
-      payload = JSON.parse(String(init.body));
-      key = new Headers(init.headers).get("Idempotency-Key") ?? "";
-      return json({ task });
-    }
-    return null;
-  });
-
-  render(<ProductionPage principal={principal} />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Запустить задание" }));
-  expect(await screen.findByText("запущено 10")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Поиск сборки"), { target: { value: "кабель" } });
-  expect(screen.queryByText("Жгут")).not.toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Поиск сборки"), { target: { value: "591" } });
-  fireEvent.click(screen.getByRole("button", { name: /КБ1/ }));
-  expect(screen.getByLabelText("Кол-во")).toHaveValue("25");
-  fireEvent.change(screen.getByLabelText("Кол-во"), { target: { value: "12" } });
-  // Задание встаёт в работу сегодня — дата на кнопке (РП-5).
-  fireEvent.click(screen.getByRole("button", { name: /^Запустить сегодня, \d\d\.\d\d$/ }));
-
-  await waitFor(() => expect(payload).toEqual({
-    techcard_id: "80000000-0000-0000-0000-000000000001",
-    quantity: 12,
-    deadline: null,
-    fulfillment_request_id: null,
-  }));
-  expect(key).not.toBe("");
-});
-
 it("shows tasks on a Gantt, operation fact, and assigns with a server preview and admission tags", async () => {
   const bodies: unknown[] = [];
   const withFact: ProductionTask = { ...task, operations: [{
@@ -456,7 +416,7 @@ it("groups the operator queue by plan day and hides start for a completed operat
   expect(screen.getByText(/^Завтра · /).closest("details")).toBeNull();
 });
 
-it("lets the master hand out operations of issued projects to installers and launch a ready card", async () => {
+it("lets the master hand out operations of issued projects in a project window and an operation window", async () => {
   const bodies: Array<{ path: string; body: unknown }> = [];
   const open: ProductionTask = { ...task, assigned: 0, operations: [
     { ...task.operations[0], operator_ids: [] },
@@ -499,48 +459,55 @@ it("lets the master hand out operations of issued projects to installers and lau
   expect(screen.getByText("ТК на все КБ")).toBeInTheDocument();
 
   await openBoardProject("591K.3");
-  fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
-  expect(screen.getByText("Обжим")).toBeInTheDocument();
-  expect(screen.getByText("22.09 10:00–14:00")).toBeInTheDocument();
+  // Проект открывается окном (владелец 22.10): операции, исполнители, план; операция — своим окном поверх.
+  const project = await screen.findByRole("dialog", { name: "Проект 591K.3" });
+  fireEvent.click(within(project).getByRole("button", { name: /Разделка/ }));
+  expect(within(project).getByText("Обжим")).toBeInTheDocument();
+  expect(within(project).getByText("22.09 10:00–14:00")).toBeInTheDocument();
+  const step = screen.getByRole("dialog", { name: "Операция 1. Разделка" });
   // Свободный день — пустая ячейка, как в «Загрузке по людям» плана (РП-4).
-  expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 7 ч").textContent).toBe("");
+  expect(within(step).getByTitle("Попов Игнат, 22.09: 0 из 7 ч").textContent).toBe("");
   // Клик по дню — раскладка по часам: у Рыбкиной 10:00–14:00 занято, выбор часа ставит операцию ровно с него.
-  fireEvent.click(screen.getByRole("button", { name: "День Рыбкина Ольга 22.09" }));
-  expect(screen.getByTitle("11:00–12:00: Обжим · 591K.3 · КБ1")).toBeInTheDocument();
+  fireEvent.click(within(step).getByRole("button", { name: "День Рыбкина Ольга 22.09" }));
+  expect(within(step).getByTitle("11:00–12:00: Обжим · 591K.3 · КБ1")).toBeInTheDocument();
   // Занятый час не принимает вторую операцию: на нём нет кнопки, свободные — есть. «Назначить на день» ставит после
   // работы этого дня (ничего не сдвигая) и показывает, до скольких: 10 шт × 60 с / 1,2 + 120 с на 8/7 → 12 мин.
-  expect(screen.queryByRole("button", { name: "Назначить Рыбкина Ольга на 22.09 с 11:00" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Назначить на 22.09 с 14:00" })).toBeInTheDocument();
-  expect(screen.getByText("до 14:12")).toBeInTheDocument();
+  expect(within(step).queryByRole("button", { name: "Назначить Рыбкина Ольга на 22.09 с 11:00" })).not.toBeInTheDocument();
+  expect(within(step).getByRole("button", { name: "Назначить на 22.09 с 14:00" })).toBeInTheDocument();
+  expect(within(step).getByText("до 14:12")).toBeInTheDocument();
   // Дробление: штук монтажнику — по умолчанию все 10; Попову ставим 4 с обеда — начало сдвигается на конец обеда.
-  expect(screen.getByLabelText("Штук монтажнику")).toHaveValue(10);
-  fireEvent.change(screen.getByLabelText("Штук монтажнику"), { target: { value: "4" } });
-  fireEvent.click(screen.getByRole("button", { name: "День Попов Игнат 23.09" }));
-  fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат на 23.09 с 13:30" }));
+  expect(within(step).getByLabelText("Штук монтажнику")).toHaveValue(10);
+  fireEvent.change(within(step).getByLabelText("Штук монтажнику"), { target: { value: "4" } });
+  fireEvent.click(within(step).getByRole("button", { name: "День Попов Игнат 23.09" }));
+  fireEvent.click(within(step).getByRole("button", { name: "Назначить Попов Игнат на 23.09 с 13:30" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: `/api/production/tasks/${open.id}/operations/${open.operations[0].id}/share`,
     body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000003", quantity: 4, requested_start: "2026-09-23T13:30" },
   }));
+  // Окно операции остаётся (можно дробить дальше); Esc — назад к окну проекта.
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Операция 1. Разделка" }), { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: /^Операция/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Проект 591K.3" })).toBeInTheDocument();
   // Снять — крестиком на исполнителе, без отдельной кнопки у каждого; сначала окно с тем, что изменится (16.10).
   const posted = bodies.length;
-  fireEvent.click(screen.getByRole("button", { name: "Снять Рыбкина Ольга" }));
+  fireEvent.click(within(project).getByRole("button", { name: "Снять Рыбкина Ольга" }));
   const confirm = await screen.findByRole("dialog", { name: "Снять Рыбкина Ольга с этапа" });
   expect(bodies).toHaveLength(posted);
   expect(within(confirm).getByText("План Рыбкина Ольга 22.09 10:00–14:00 освободится.")).toBeInTheDocument();
   expect(within(confirm).getByText("Этап останется без исполнителя — его нужно будет назначить заново.")).toBeInTheDocument();
   fireEvent.click(within(confirm).getByRole("button", { name: "Отмена" }));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Снять Рыбкина Ольга с этапа" })).not.toBeInTheDocument();
   expect(bodies).toHaveLength(posted);
-  fireEvent.click(screen.getByRole("button", { name: "Снять Рыбкина Ольга" }));
-  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Снять Рыбкина Ольга" }));
+  fireEvent.click(within(project).getByRole("button", { name: "Снять Рыбкина Ольга" }));
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Снять Рыбкина Ольга с этапа" })).getByRole("button", { name: "Снять Рыбкина Ольга" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: `/api/production/tasks/${open.id}/operations/${open.operations[1].id}/share`,
     body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000002", remove: true },
   }));
 
   // «Назначить только …» (16.10): весь этап одному монтажнику одним нажатием, ближайший рабочий день и час — на кнопке.
-  fireEvent.click(screen.getByRole("button", { name: "Обжим" }));
-  const only = screen.getByRole("group", { name: "Весь этап одному монтажнику" });
+  fireEvent.click(within(project).getByRole("button", { name: "Обжим" }));
+  const only = within(screen.getByRole("dialog", { name: "Операция 2. Обжим" })).getByRole("group", { name: "Весь этап одному монтажнику" });
   expect(within(only).getByLabelText("Монтажник на весь этап")).toHaveValue("10000000-0000-0000-0000-000000000002");
   fireEvent.change(within(only).getByLabelText("Монтажник на весь этап"), { target: { value: "10000000-0000-0000-0000-000000000003" } });
   expect(within(only).getByLabelText("День начала")).toHaveValue("2026-09-22");
@@ -554,9 +521,11 @@ it("lets the master hand out operations of issued projects to installers and lau
   fireEvent.change(within(only).getByLabelText("День начала"), { target: { value: "2026-09-24" } });
   expect(within(only).getByRole("button", { name: "Назначить только Попов Игнат на 24.09 с 09:00" })).toBeInTheDocument();
 
-  fireEvent.click(await screen.findByRole("button", { name: "← Все проекты" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Операция 2. Обжим" })).getByRole("button", { name: "Закрыть" }));
+  fireEvent.click(within(project).getByRole("button", { name: "Закрыть" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   await openBoardProject("708К.4");
-  // КБ без задания — справкой, без кнопки «Создать задание» (владелец 19.10): задания создаёт автоплан.
+  // КБ без задания — справкой, без кнопки «Создать задание» (владелец 19.10): задание создаёт первое действие.
   expect(await screen.findByText(/техкарта выдана, задания ещё нет/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Создать задание" })).toBeNull();
   vi.useRealTimers();
@@ -581,6 +550,10 @@ function boardFetch(posts: unknown[], answer: unknown = { tasks: [], created: []
   vi.setSystemTime(new Date("2026-09-22T08:00:00"));
   masterFetch((path, init) => {
     if (path === "/api/production/board/assign" && init?.method === "POST") { posts.push(JSON.parse(String(init.body))); return json(answer); }
+    if (path === "/api/production/board/manual-output" && init?.method === "POST") {
+      posts.push({ output: JSON.parse(String(init.body)) });
+      return json({ task: realTask, operation_id: realTask.operations[0].id, box: {}, filled: [], warnings: ["Создано задание ПЗ-0001. Записано 2 шт на этап 1."] });
+    }
     if (path.startsWith("/api/production/board?")) return json({ project: "708К.4", tasks: [realTask], future: [futureTask], skipped: [
       { techcard_id: "x", techcard_version: 1, project: "708К.4", index: "КБ3", name: "", reason: "не задан тираж" }] });
     return null;
@@ -602,6 +575,55 @@ it("shows a future operation as a new task and assigns it by the techcard refere
     operator_id: WHO, requested_start: "2026-09-22T09:00",
     items: [{ techcard_id: TECHCARD, techcard_version: 3, position: 1 }],
   }]));
+  vi.useRealTimers();
+});
+
+it("records ready pieces on a new task: the task is created with the run typed in the project window (owner 22.10)", async () => {
+  const posts: unknown[] = [];
+  boardFetch(posts);
+  render(<ProductionPage principal={principal} />);
+  await openBoardProject("708К.4");
+  const project = await screen.findByRole("dialog", { name: "Проект 708К.4" });
+  const block = (await within(project).findByText("новое задание")).closest(".mb-task") as HTMLElement;
+  // Тираж — по умолчанию весь тираж КБ, можно меньше; больше — подсказка, и в расчёт идёт весь тираж.
+  const run = within(block).getByRole("spinbutton", { name: "Тираж 708К.4 · КБ2" });
+  expect(run).toHaveValue(5);
+  fireEvent.change(run, { target: { value: "9" } });
+  expect(within(block).getByText("от 1 до 5")).toBeInTheDocument();
+  fireEvent.change(run, { target: { value: "3" } });
+  expect(within(block).getByText(/× 3/)).toBeInTheDocument();
+  fireEvent.click(within(block).getByRole("button", { name: "Резка" }));
+  const step = screen.getByRole("dialog", { name: "Операция 1. Резка" });
+  const made = within(step).getByRole("group", { name: "Уже сделано без терминала" });
+  // Исполнителей у нового задания нет — только «без исполнителя»; задание создастся вместе с записью.
+  expect(within(made).getAllByRole("option").map((item) => item.textContent)).toEqual(["без исполнителя"]);
+  expect(within(made).getByText("осталось 3")).toBeInTheDocument();
+  fireEvent.change(within(made).getByRole("spinbutton", { name: "Готовых штук" }), { target: { value: "2" } });
+  fireEvent.click(within(made).getByRole("button", { name: "Записать готовыми 2 шт" }));
+  await waitFor(() => expect(posts).toEqual([{ output: {
+    techcard_id: TECHCARD, techcard_version: 3, position: 1, good_quantity: 2, fill_inputs: false, run: 3,
+  } }]));
+  // Окно переходит на ту же операцию созданного задания; итог виден в окне.
+  const after = await screen.findByRole("dialog", { name: "Операция 1. Резка" });
+  expect(await within(after).findByText("Создано задание ПЗ-0001. Записано 2 шт на этап 1.")).toHaveClass("success-banner");
+  expect(within(after).getByText(/^ПЗ-0001 · 708К\.4 · КБ1/)).toBeInTheDocument();
+  vi.useRealTimers();
+});
+
+it("assigns a new task with the run from the project window", async () => {
+  const posts: unknown[] = [];
+  boardFetch(posts);
+  render(<ProductionPage principal={principal} />);
+  await openBoardProject("708К.4");
+  const project = await screen.findByRole("dialog", { name: "Проект 708К.4" });
+  fireEvent.change(await within(project).findByRole("spinbutton", { name: "Тираж 708К.4 · КБ2" }), { target: { value: "4" } });
+  const block = within(project).getByText("новое задание").closest(".mb-task") as HTMLElement;
+  fireEvent.click(within(block).getByRole("button", { name: "Опрессовка" }));
+  const step = screen.getByRole("dialog", { name: "Операция 2. Опрессовка" });
+  expect(within(step).queryByRole("button", { name: "Точное время — на Ганте" })).not.toBeInTheDocument();
+  fireEvent.click(within(within(step).getByRole("group", { name: "Весь этап одному монтажнику" })).getByRole("button", { name: /^Назначить только Оператор на 22\.09 с / }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toMatchObject({ operator_id: WHO, items: [{ techcard_id: TECHCARD, techcard_version: 3, position: 2, run: 4 }] });
   vi.useRealTimers();
 });
 
@@ -793,7 +815,9 @@ it("keeps only planning on the resource planning screen: no box confirmation, no
   expect(screen.queryByRole("heading", { name: "Коробки на подтверждение" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Подтвердить" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Вернуть…" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "+ Запустить задание" })).toBeInTheDocument();
+  // Отдельного шага «Запустить задание» нет (владелец 22.10): задание создаёт первое действие из окна проекта.
+  expect(screen.getByRole("button", { name: "Автоплан" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "+ Запустить задание" })).not.toBeInTheDocument();
   for (const title of ["Очередь ОТК", "Средства измерения", "Брак ОТК", "Брак цеха"]) {
     expect(screen.queryByRole("heading", { name: title })).not.toBeInTheDocument();
   }
@@ -812,7 +836,7 @@ it("gives the planning actions by edit on production alone, whatever the level i
   for (const level of ["tech_lead", "foreman", "operator", "commercial"]) {
     masterFetch(() => null, [task]);
     const view = render(<ProductionPage principal={{ ...principal, roles: [level], access_level: level, permissions: { production: "edit" } }} />);
-    expect(await screen.findByRole("button", { name: "+ Запустить задание" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Автоплан" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Календарь цеха" })).toBeInTheDocument();
     view.unmount();
     vi.restoreAllMocks();
@@ -826,7 +850,7 @@ it("keeps the planning actions away from a view grant on production", async () =
 
   await waitFor(() => expect(requested).toContain("/api/production/operators"));
   expect(screen.getByRole("heading", { name: "Ресурсное планирование", level: 1 })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "+ Запустить задание" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Автоплан" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Календарь цеха" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Коробки на подтверждение" })).not.toBeInTheDocument();
 });
@@ -839,7 +863,7 @@ it("asks for nothing of the planning board without a view on production", async 
   await waitFor(() => expect(requested).toContain("/api/production/tasks"));
   expect(requested).not.toContain("/api/production/operators");
   expect(requested).not.toContain("/api/production/boxes");
-  expect(screen.queryByRole("button", { name: "+ Запустить задание" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Автоплан" })).not.toBeInTheDocument();
 });
 
 // Вид сотрудника: планировщик выбирает монтажника и видит его очередь без кнопок действий; сотрудник выбора не видит.
