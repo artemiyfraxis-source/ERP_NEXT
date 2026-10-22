@@ -1,11 +1,13 @@
-/* «Печать этикеток ГРН» (stage option warehouse.labels) and the «Оборудование» section. */
+/* «Печать этикеток ГРН» and the «Оборудование» section. */
 .equipment-cards { display: grid; gap: 16px; margin-top: 12px; }
 .equipment-card { display: grid; gap: 12px; max-width: 1100px; padding: 16px 20px; }
 .panel.equipment-card > h2:first-child { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
 .equipment-card .page-sub { margin: 0; }
 .equipment-card .error-banner, .equipment-card .success-banner { margin: 0; }
+.agent-block { display: grid; gap: 4px; margin: 0; font-size: 13px; }
+.agent-block p { margin: 0; }
+.agent-howto { margin: 0; padding-left: 20px; color: var(--foreground); }
 .printer-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 16px; margin: 0; border: 0; padding: 0; min-width: 0; }
-.printer-fields .printer-name { grid-column: span 2; }
 .printer-pair { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); }
 .printer-pair input { width: 100%; min-width: 0; }
 /* The label as the printer gets it (685 × 354 dots at 300 dpi) shown at 70 %, smoothed by the browser so the small text
@@ -28,6 +30,5 @@
 }
 @media (max-width: 520px) {
   .printer-fields { grid-template-columns: minmax(0, 1fr); }
-  .printer-fields .printer-name { grid-column: auto; }
 }
 .scan-label { display: grid; justify-items: start; gap: 8px; margin-top: 10px; }

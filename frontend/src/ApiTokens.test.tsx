@@ -62,6 +62,7 @@ it("shows the secret once after issuing and forgets it on close", async () => {
   fireEvent.click(screen.getByLabelText("Генератор техкарт"));
   fireEvent.click(screen.getByLabelText("Загрузка в базу данных"));
   expect(screen.getByLabelText("Чтение базы данных")).not.toBeChecked();
+  expect(screen.getByLabelText("Печать этикеток (агент склада)")).not.toBeChecked();
   expect(screen.getByLabelText("Срок, дней")).toHaveValue(90);
   fireEvent.click(issue);
 
