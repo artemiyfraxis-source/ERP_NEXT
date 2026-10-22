@@ -96,7 +96,7 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
             style={{ display: "grid", gap: 2, opacity: rfq.closed_at ? 0.7 : 1 }}
             onClick={() => setSelected(rfq.id)}
           >
-            <strong>{rfq.number}{rfq.closed_at ? " · закрыт" : ""}</strong>
+            <strong className="rfq-seq" title={rfq.number}>№ {rfq.seq ?? rfq.number}{rfq.closed_at ? <span className="rfq-closed"> · закрыт</span> : null}</strong>
             {rfq.title && <span>{rfq.title}</span>}
             <small className="muted">
               {formatDay(rfq.created_at)} · строк {rfq.lines} · поставщиков {rfq.suppliers} · КП {rfq.quotes} · решено {rfq.decided}
