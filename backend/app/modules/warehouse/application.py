@@ -11,7 +11,6 @@ from decimal import Decimal, DecimalException
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
-from app.shared import stage_options
 from app.shared.clock import MOSCOW
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
@@ -1142,8 +1141,8 @@ def edit_lot_row(command: EditLotRowCommand, uow: UnitOfWork) -> tuple[StockLot,
         changes = lot_row_changes(current, updated)
         if not changes:
             return current, []
-        # Stage option: quantities move only through write-off, return and transfer, never by hand.
-        if stage_options.enabled("warehouse.strict_quantities") and any(
+        # Quantities move only through write-off, return and transfer, never by hand (the journal stays complete).
+        if any(
             getattr(current, name) != getattr(updated, name) for name in ("inbound", "written_off", "reserved")
         ):
             raise WarehouseValidationError(
@@ -1429,7 +1428,7 @@ class ScanResult:
 
 
 def scan_stock(uow: UnitOfWork, code: str) -> ScanResult:
-    """Stage option warehouse.scan (Roller_Buyer /api/stock/scan): a ГРН → its lot(s), a place → the lots there.
+    """Скан (Roller_Buyer /api/stock/scan): a ГРН → its lot(s), a place → the lots there.
     Nothing found → KeyError with the text for the storekeeper."""
     scanned = parse_scan(code)
     with uow:
@@ -1447,7 +1446,7 @@ def scan_stock(uow: UnitOfWork, code: str) -> ScanResult:
     raise KeyError(f"Не найдено: {scanned.text or '—'}")
 
 
-# ── Stage option warehouse.undo: the last movement of a lot, taken back by a compensating entry ──────────────────
+# ── «Отменить последнее»: the last movement of a lot, taken back by a compensating entry ──────────────────
 UNDO_WINDOW = timedelta(minutes=10)
 UNDOABLE_EVENTS = frozenset({
     "warehouse.written_off", "warehouse.writeoff_returned", "warehouse.moved", "warehouse.transferred",

@@ -240,8 +240,8 @@ def test_the_scan_opens_with_the_tsd_option_alone(warehouse_api, stage, client):
     stage(**{"warehouse.tsd": True})
     response = client.get("/api/stock/scan", params={"code": "FRX.26.0000001"})
     assert response.status_code == 200 and response.json()["kind"] == "lot"
-    stage(**{})
-    assert client.get("/api/stock/scan", params={"code": "FRX.26.0000001"}).status_code == 404
+    stage(**{})  # the scan is no longer behind a stage option (owner, 22.10.2026)
+    assert client.get("/api/stock/scan", params={"code": "FRX.26.0000001"}).status_code == 200
 
 
 def test_api_port_comes_from_the_environment_or_the_uvicorn_command_line(monkeypatch):

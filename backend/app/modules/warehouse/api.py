@@ -11,7 +11,6 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
@@ -406,13 +405,6 @@ def totals(
     }
 
 
-def _require_option(*keys: str) -> None:
-    """A stage option that is off hides its route: 404, checked after the gate (an unknown caller still gets 401/403).
-    Several keys — any one of them opens the route."""
-    if not any(stage_options.enabled(key) for key in keys):
-        raise HTTPException(status_code=404, detail="Not Found")
-
-
 @router.get("/scan")
 def scan(
     request: Request,
@@ -420,10 +412,9 @@ def scan(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
     code: Annotated[str, Query(max_length=255)] = "",
 ) -> dict:
-    """Stage option warehouse.scan: ГРН (with or without «-П2», any case, look-alikes, Russian layout) → its lot(s);
+    """Скан: ГРН (with or without «-П2», any case, look-alikes, Russian layout) → its lot(s);
     a place code → the lots with a balance lying there (both warehouses); else 404 «Не найдено: …».
-    The ТСД screen (option warehouse.tsd) scans through the same route."""
-    _require_option("warehouse.scan", "warehouse.tsd")
+    The ТСД screen scans through the same route."""
     try:
         result = scan_stock(uow_factory(), code)
     except KeyError as error:
@@ -712,8 +703,7 @@ def undo_last_preview(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
 ) -> dict:
-    """Stage option warehouse.undo: what «Отменить последнее» would take back, or why nothing can be."""
-    _require_option("warehouse.undo")
+    """What «Отменить последнее» would take back, or why nothing can be."""
     try:
         preview = undo_preview(lot_id, principal.actor, now, uow_factory())
     except WarehouseValidationError as error:
@@ -731,9 +721,8 @@ def undo_last(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
 ) -> dict:
-    """Stage option warehouse.undo: own write-off / return / move of the last 10 minutes, taken back by a
+    """«Отменить последнее»: own write-off / return / move of the last 10 minutes, taken back by a
     compensating entry (the journal keeps both)."""
-    _require_option("warehouse.undo")
     lot, label = _guarded(lambda: undo_last_movement(
         UndoLastCommand(lot_id=lot_id, expected_version=payload.version, actor=principal.actor, now=now),
         uow_factory(),

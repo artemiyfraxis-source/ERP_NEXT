@@ -1,7 +1,7 @@
 """The fast stock list (SQL page + narrow search scan, memoized folding), the fast journal and the export read give
-exactly what the old code gave: the old algorithms are kept here as the reference and run over the same fixtures."""
+exactly what the old code gave: the old algorithms are kept here as the reference and run over the same fixtures. The search reference is the word
+search with the owner's word-start rule for words without digits."""
 
-import json
 import random
 import re
 import unicodedata
@@ -18,7 +18,6 @@ from app.modules.warehouse.application import warehouse_lots
 from app.modules.warehouse.domain import StockLot, WriteOffEntry
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork, StockLotRow, _domain
 from app.modules.warehouse.journal import journal_page, warehouse_journal
-from app.shared import stage_options
 from app.shared.events import AuditEvent
 from app.shared.persistence import create_schema
 from tests.factories import Actor
@@ -41,6 +40,12 @@ def _old_article_key(value) -> str:
     return key.lstrip("0") if re.fullmatch(r"0\d{9}", key) else key
 
 
+def _old_found(word, text) -> bool:
+    if any(char.isdigit() for char in word):
+        return word in text
+    return re.search(rf"(?<![^\W_]){re.escape(word)}", text) is not None
+
+
 def _old_matches_words(lot, query) -> bool:
     words = _old_fold(query).split()
     if not words:
@@ -50,24 +55,15 @@ def _old_matches_words(lot, query) -> bool:
     fields = tuple(_old_fold(t) for t in (*forms, lot.name, lot.storage_location, lot.series, lot.purpose, lot.item_type))
     article, key = _old_fold(lot.article), _old_article_key(lot.article)
     for word in words:
-        word_key = _old_article_key(word)
-        if word in article or (word_key and word_key in key):
+        word_key = _old_article_key(word) if any(char.isdigit() for char in word) else ""
+        if _old_found(word, article) or (word_key and word_key in key):
             continue
-        if not any(word in field for field in fields):
+        if not any(_old_found(word, field) for field in fields):
             return False
     return True
 
 
-def _old_matches(lot, query, word_search) -> bool:
-    if word_search:
-        return _old_matches_words(lot, query)
-    words = _old_fold(query).split()
-    haystack = _old_fold(" ".join((lot.grn, lot.package, lot.article, lot.series, lot.name, lot.item_type, lot.purpose,
-                                   lot.storage_location)))
-    return all(word in haystack for word in words)
-
-
-def _old_page(session, limit, after_id, query, warehouse, include_zero, word_search):
+def _old_page(session, limit, after_id, query, warehouse, include_zero):
     filters = []
     if warehouse:
         filters.append(StockLotRow.warehouse == warehouse)
@@ -81,9 +77,9 @@ def _old_page(session, limit, after_id, query, warehouse, include_zero, word_sea
         statement = statement.limit(limit)
     lots = [_domain(row) for row in session.scalars(statement)]
     if query:
-        lots = [lot for lot in lots if _old_matches(lot, query, word_search)]
+        lots = [lot for lot in lots if _old_matches_words(lot, query)]
     everything = [_domain(row) for row in session.scalars(select(StockLotRow).where(*filters))]
-    total = (sum(_old_matches(lot, query, word_search) for lot in everything) if str(query or "").strip()
+    total = (sum(_old_matches_words(lot, query) for lot in everything) if str(query or "").strip()
              else len(everything))
     return lots[:limit], total
 
@@ -119,25 +115,17 @@ def uow_factory():
     engine.dispose()
 
 
-@pytest.fixture()
-def stage(monkeypatch, tmp_path):
-    path = tmp_path / "options.json"
-    monkeypatch.setenv(stage_options.ENV, str(path))
-    return lambda word: path.write_text(json.dumps({"warehouse.word_search": word}), encoding="utf-8")
-
-
 QUERIES = ["", "   ", "разъем", "РАЗЪЁМ molex", "0,35", "0.35", "43-0250-600", "430250600", "frx.26.00001", "П1", "p3",
-           "crok", "срок еаэс", "a1b2", "м3х10", "lot-77 провод", "zzz", "1a", "склад 2", "ст резистор", "fts"]
+           "crok", "срок еаэс", "a1b2", "м3х10", "lot-77 провод", "zzz", "1a", "склад 2", "ст резистор", "fts", "ъем",
+           "olex", "ghr", "hr", "j-rg", "мгтф бел"]
 
 
 def _ids(lots):
     return [str(lot.id) for lot in lots]
 
 
-@pytest.mark.parametrize("word_search", [False, True])
-def test_every_page_and_total_match_the_old_list(uow_factory, stage, word_search):
+def test_every_page_and_total_match_the_old_list(uow_factory):
     factory, sessions = uow_factory
-    stage(word_search)
     for query in QUERIES:
         for warehouse in (None, "ЦАР", "ЖУК"):
             for include_zero in (False, True):
@@ -146,7 +134,7 @@ def test_every_page_and_total_match_the_old_list(uow_factory, stage, word_search
                     new, new_total = warehouse_lots(factory(), limit=37, after_id=after, query=query,
                                                     warehouse=warehouse, include_zero=include_zero)
                     with sessions() as session:
-                        old, old_total = _old_page(session, 37, after, query, warehouse, include_zero, word_search)
+                        old, old_total = _old_page(session, 37, after, query, warehouse, include_zero)
                     assert new == old, (query, warehouse, include_zero, after)
                     assert new_total == old_total, (query, warehouse, include_zero)
                     seen += len(new)
@@ -157,7 +145,7 @@ def test_every_page_and_total_match_the_old_list(uow_factory, stage, word_search
                 with factory() as uow:
                     assert uow.warehouse.count(query, warehouse, include_zero) == old_total
                     assert _ids(uow.warehouse.list(500, None, query, warehouse, include_zero)) == _ids(
-                        _old_page(uow.session, 500, None, query, warehouse, include_zero, word_search)[0])
+                        _old_page(uow.session, 500, None, query, warehouse, include_zero)[0])
 
 
 def test_the_journal_without_a_search_matches_the_full_merge(uow_factory):
