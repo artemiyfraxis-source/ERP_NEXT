@@ -21,7 +21,6 @@ from app.shared.http_auth import (
     requests_form_principal,
     requests_view_principal,
 )
-from app.shared import stage_options
 from app.shared.clock import moscow_now, moscow_today
 
 from .application import (
@@ -184,11 +183,11 @@ _INTERNAL = re.compile(r"ВП-\d{3,}")
 
 
 def ensure_internal_projects_open(drafts: Iterable[RequestDraft], registry: object) -> None:
-    """With the option on, a «ВП-…» reference must be an OPEN internal project and the purpose the project's own."""
+    """A «ВП-…» reference must be an OPEN internal project and the purpose the project's own."""
     internal = {item["number"]: item["purpose"] for item in internal_projects(registry)}
     for index, draft in enumerate(drafts, start=1):
         number = normalize_project_reference(draft.project_reference)
-        if not stage_options.enabled("projects.internal") or not _INTERNAL.fullmatch(number):
+        if not _INTERNAL.fullmatch(number):
             continue
         if number not in internal:
             raise ValidationError(f"Позиция {index}: внутренний проект «{number}» закрыт или не заведён")
@@ -197,7 +196,7 @@ def ensure_internal_projects_open(drafts: Iterable[RequestDraft], registry: obje
 
 
 def internal_projects(registry: object) -> list[dict[str, str]]:
-    """Open internal projects (number, name, purpose) for the form's own group; empty while the option is off."""
+    """Open internal projects (number, name, purpose) for the form's own group."""
     getter = getattr(registry, "internal_projects", None)
     return list(getter()) if callable(getter) else []
 

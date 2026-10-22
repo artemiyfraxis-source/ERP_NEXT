@@ -1,9 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, failureText } from "./api";
 import { formatDate } from "./format";
-import { useStageOption } from "./StageOptions";
 
-/** Option `procurement.history`: the life of one procurement line as a vertical timeline in a side panel. The server
+/** The life of one procurement line as a vertical timeline in a side panel. The server
  *  rebuilds it from stored facts; an event without a stored date comes last and says so. */
 export type HistoryEvent = { at: string | null; time: boolean; title: string; details: string; who: string | null; source: string };
 type History = { line: { id: string; legacy_id: string; name: string; status: string }; events: HistoryEvent[] };
@@ -52,8 +51,7 @@ export function LineHistoryPanel({ lineId, title, onClose }: { lineId: string; t
 
 /** «История» of a row: `open(id, title)` from the row's action, `node` rendered anywhere (the panel is fixed). */
 export function useLineHistory(): { enabled: boolean; open: (lineId: string, title: string) => void; node: ReactNode } {
-  const enabled = useStageOption("procurement.history");
   const [shown, setShown] = useState<{ lineId: string; title: string } | null>(null);
-  const node = enabled && shown ? <LineHistoryPanel lineId={shown.lineId} title={shown.title} onClose={() => setShown(null)} /> : null;
-  return { enabled, open: (lineId, title) => setShown({ lineId, title }), node };
+  const node = shown ? <LineHistoryPanel lineId={shown.lineId} title={shown.title} onClose={() => setShown(null)} /> : null;
+  return { enabled: true, open: (lineId, title) => setShown({ lineId, title }), node };
 }

@@ -1,76 +1,62 @@
-"""Stage option warehouse.labels over HTTP: settings, preview, test print and a lot's label (Roller_Buyer «этикетка партии
-через API»). Tests never print: the printer name stays empty, so every job is only saved as a file."""
+"""«Печать этикеток ГРН» over HTTP, always on: settings, preview, test print and a lot's label (Roller_Buyer «этикетка
+партии через API»). A print only queues a TSPL job for the agent of the warehouse PC (test_label_jobs.py)."""
 
 import io
-import json
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 from PIL import Image
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.main import app
 from app.modules.warehouse.domain import StockLot
 from app.modules.warehouse.infrastructure import WarehouseLabelSettingsRow
+from app.modules.warehouse.label_jobs import LabelJobRow
 from app.modules.warehouse.labels_application import lot_label_data
-from app.shared import stage_options
 from app.shared.events import AuditEvent
 from tests.factories import Actor
 from tests.view_access import as_viewer
 from tests.warehouse.test_api import warehouse_api  # noqa: F401 — fixture
 
-OPTION = "warehouse.labels"
-
-
 @pytest.fixture()
-def stage(monkeypatch, tmp_path):
-    path = tmp_path / "data" / "options.json"
-    path.parent.mkdir()
-    monkeypatch.setenv(stage_options.ENV, str(path))
-    monkeypatch.delenv("ERP_LABEL_PRINT_DIR", raising=False)
-    return lambda **options: path.write_text(json.dumps(options), encoding="utf-8")
+def labels(warehouse_api):  # noqa: F811
+    return warehouse_api
 
 
-@pytest.fixture()
-def labels(warehouse_api, stage):  # noqa: F811
-    client, lot = warehouse_api
-    stage(**{OPTION: True})
-    return client, lot
+def _jobs() -> list[LabelJobRow]:
+    with app.state.warehouse_uow_factory() as uow:
+        rows = list(uow.session.scalars(select(LabelJobRow).order_by(LabelJobRow.created_at)))
+        uow.session.expunge_all()  # kept loaded past the unit of work's rollback
+    return rows
 
 
-def test_option_off_hides_every_label_route(warehouse_api, stage):  # noqa: F811
-    client, lot = warehouse_api
-    stage(**{OPTION: False})
-    for method, path in (
-        ("GET", "/api/stock/labels/settings"), ("PUT", "/api/stock/labels/settings"),
-        ("GET", "/api/stock/labels/printers"), ("GET", "/api/stock/labels/sample.png"),
-        ("POST", "/api/stock/labels/test"), ("GET", f"/api/stock/labels/lot?grn={lot.grn}"),
-        ("GET", f"/api/stock/batches/{lot.id}/label.png"), ("POST", f"/api/stock/batches/{lot.id}/label"),
-    ):
-        assert client.request(method, path, json={} if method != "GET" else None).status_code == 404, (method, path)
+def test_label_endpoints_answer(labels):
+    client, lot = labels
+    for path in ("/api/stock/labels/settings", "/api/stock/labels/printers", "/api/stock/labels/sample.png",
+                 f"/api/stock/batches/{lot.id}/label.png", "/api/stock/labels/agent/status"):
+        assert client.get(path).status_code == 200, path
 
 
-def test_lot_preview_is_the_label_png_and_a_print_without_printer_saves_the_job(labels, tmp_path):
+def test_lot_preview_is_the_label_png_and_a_print_queues_the_job(labels):
     client, lot = labels
     png = client.get(f"/api/stock/batches/{lot.id}/label.png")
     assert png.status_code == 200, png.text
     assert png.headers["content-type"] == "image/png"
-    assert Image.open(io.BytesIO(png.content)).size == (685, 354)
+    assert Image.open(io.BytesIO(png.content)).size == (685, 472)
 
     printed = client.post(f"/api/stock/batches/{lot.id}/label", json={"copies": 2})
     assert printed.status_code == 200, printed.text
     body = printed.json()
-    assert body["status"] == "saved", "no printer chosen — the job waits as a file"
-    assert body["copies"] == 2
-    assert "Принтер не выбран" in body["reason"]
-    job = Path(body["file"])
-    # On the stage the jobs sit in a `print` folder next to the options file.
-    assert job.parent == tmp_path / "data" / "print" and job.name.endswith("-FRX.26.0000001.prn")
-    content = job.read_bytes()
-    assert content.startswith(b"SIZE 58 mm,30 mm\r\nGAP 2 mm,0 mm\r\n")
+    assert set(body) == {"status", "reason", "file", "copies", "job_id"}, "the old keys stay for the screens"
+    assert (body["status"], body["reason"], body["copies"]) == ("queued", "В очереди принтера.", 2)
+    [job] = _jobs()
+    assert (str(job.id), job.status, job.kind, job.lot_id, job.copies) == (body["job_id"], "pending", "lot", lot.id, 2)
+    assert job.created_by == "Кладовщик" and body["file"] == body["job_id"]
+    content = job.tspl
+    assert content.startswith(b"SIZE 58 mm,40 mm\r\nGAP 2 mm,0 mm\r\n")
     assert b"DENSITY 12\r\nSPEED 2\r\n" in content and content.endswith(b"\r\nPRINT 2,1\r\n")
 
 
@@ -94,8 +80,8 @@ def test_settings_are_read_saved_and_journalled(labels):
     first = client.get("/api/stock/labels/settings")
     assert first.status_code == 200, first.text
     assert first.json()["settings"] == {
-        "printer_name": "", "gap_mm": 2, "density": 12, "speed": 2, "width_mm": 58, "height_mm": 30, "dpi": 300,
-        "code_type": "both", "offset_x_mm": 0, "offset_y_mm": 0,
+        "printer_name": "", "gap_mm": 2, "density": 12, "speed": 2, "width_mm": 58, "height_mm": 40, "dpi": 300,
+        "code_type": "qr", "offset_x_mm": 0, "offset_y_mm": 0,
     }
     assert first.json()["code_types"]["both"] == "QR и Code128"
 
@@ -111,7 +97,7 @@ def test_settings_are_read_saved_and_journalled(labels):
     assert any(row["event"].startswith("Печать этикеток: настройки — принтер TSC MB341") for row in journal)
 
 
-@pytest.mark.parametrize("bad", [{"density": 16}, {"speed": 0}, {"dpi": 600}, {"width_mm": 30}, {"code_type": "x"}])
+@pytest.mark.parametrize("bad", [{"density": 16}, {"speed": 0}, {"dpi": 600}, {"width_mm": 30}, {"width_mm": 60}, {"height_mm": 35}, {"code_type": "x"}])
 def test_settings_out_of_bounds_are_refused(labels, bad):
     client, _ = labels
     assert client.put("/api/stock/labels/settings", json=bad).status_code == 422
@@ -127,16 +113,19 @@ def test_the_database_refuses_a_setting_out_of_bounds_too(labels):
             uow.session.flush()
 
 
-def test_test_print_without_printer_is_saved(labels):
+def test_test_print_queues_a_sample_job(labels):
     client, _ = labels
     body = client.post("/api/stock/labels/test").json()
-    assert body["status"] == "saved" and body["copies"] == 1 and body["file"].endswith("FRX.26.0000041.prn")
+    assert body["status"] == "queued" and body["copies"] == 1
+    [job] = _jobs()
+    assert (job.kind, job.lot_id, job.status) == ("sample", None, "pending")
+    assert job.tspl.endswith(b"\r\nPRINT 1,1\r\n")
 
 
-def test_printers_list_answers_on_any_machine(labels):
+def test_printers_list_is_empty_until_the_agent_calls(labels):
     client, _ = labels
-    body = client.get("/api/stock/labels/printers").json()
-    assert isinstance(body["printers"], list) and isinstance(body["on_windows"], bool)
+    assert client.get("/api/stock/labels/printers").json() == {"printers": [], "on_windows": False}
+    assert client.get("/api/stock/labels/settings").json()["print_dir"] == "очередь печати ERP"
 
 
 def test_a_viewer_reads_the_preview_but_cannot_print_or_configure(labels):
@@ -144,18 +133,22 @@ def test_a_viewer_reads_the_preview_but_cannot_print_or_configure(labels):
     as_viewer("management", "warehouse")
     assert client.get(f"/api/stock/batches/{lot.id}/label.png").status_code == 200
     assert client.get("/api/stock/labels/settings").status_code == 200
+    assert client.get("/api/stock/labels/agent/status").status_code == 200
     for method, path in (
         ("PUT", "/api/stock/labels/settings"), ("POST", "/api/stock/labels/test"),
         ("POST", f"/api/stock/batches/{lot.id}/label"),
     ):
         assert client.request(method, path, json={}).status_code == 403, (method, path)
+    assert _jobs() == []
 
 
-def test_a_viewer_is_refused_before_the_option_says_404(warehouse_api, stage):  # noqa: F811
-    client, lot = warehouse_api
-    stage(**{OPTION: False})
-    as_viewer("management", "warehouse")
-    assert client.post(f"/api/stock/batches/{lot.id}/label", json={"copies": 1}).status_code == 403
+def test_a_storekeepers_session_cannot_take_jobs_off_the_queue(labels):
+    client, lot = labels
+    queued = client.post(f"/api/stock/batches/{lot.id}/label", json={"copies": 1}).json()
+    assert client.post("/api/stock/labels/agent/claim", json={"printer": "", "host": ""}).status_code == 403
+    result = client.post(f"/api/stock/labels/agent/jobs/{queued['job_id']}/result", json={"ok": True})
+    assert result.status_code == 403
+    assert [job.status for job in _jobs()] == ["pending"]
 
 
 def test_the_receiving_screen_finds_the_lot_by_its_key(labels):
@@ -191,3 +184,20 @@ def test_a_lot_without_an_arrival_event_has_no_date(labels):
     _, lot = labels
     data = lot_label_data(app.state.warehouse_uow_factory(), lot.id)
     assert data.received_on is None and data.sku == "" and data.item_name == "Разъём" and data.quantity == "10"
+
+
+def test_a_legacy_row_with_a_free_size_loads_as_58x40_and_the_presets_save(labels):
+    client, _ = labels
+    with app.state.warehouse_uow_factory() as uow:
+        uow.session.add(WarehouseLabelSettingsRow(
+            id=1, printer_name="", code_type="both", width_mm=60, height_mm=35, dpi=300, gap_mm=2, density=12, speed=2,
+            offset_x_mm=0, offset_y_mm=0, updated_at=datetime(2026, 10, 19), updated_by="",
+        ))
+        uow.session.commit()
+    settings = client.get("/api/stock/labels/settings").json()["settings"]
+    assert (settings["width_mm"], settings["height_mm"]) == (58, 40)
+    # The existing prod size 58 x 30 is a preset: saved and read back as it is.
+    assert client.put("/api/stock/labels/settings", json={**settings, "height_mm": 30}).status_code == 200
+    assert client.get("/api/stock/labels/settings").json()["settings"]["height_mm"] == 30
+    wide = client.put("/api/stock/labels/settings", json={**settings, "width_mm": 100, "height_mm": 50})
+    assert wide.status_code == 200 and client.get("/api/stock/labels/sample.png").status_code == 200

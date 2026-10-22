@@ -20,25 +20,25 @@ def _audit(event_type):
         return [tuple(row) for row in rows]
 
 
-def test_row_edit_sets_fields_recounts_balance_and_journals_the_diff(warehouse_api):  # noqa: F811
+def test_row_edit_sets_fields_and_journals_the_diff(warehouse_api):  # noqa: F811
     client, lot = warehouse_api
 
     response = client.put(f"/api/stock/batches/{lot.id}/row", json={
         "version": lot.version, "item_type": "Разъёмы", "storage_location": "Стеллаж у окна",
         "unit_mass_g": "0,5", "expiry_date": "2027-03-01", "manufacturer": "Molex",
-        "inbound": "12", "written_off": "2", "reserved": "",
+        "inbound": "10", "written_off": "0", "reserved": "",
     })
 
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["lot"] | {
         "item_type": "Разъёмы", "storage_location": "Стеллаж у окна", "unit_mass_g": "0.5",
-        "expiry_date": "2027-03-01", "manufacturer": "Molex", "inbound": "12", "written_off": "2",
+        "expiry_date": "2027-03-01", "manufacturer": "Molex", "inbound": "10", "written_off": "0",
         "reserved": "0", "balance": "10", "version": lot.version + 1, "grn": lot.grn,
     } == body["lot"]
-    assert body["message"] == "Строка FRX.26.0000001 обновлена: 7 поле(й)."
+    assert body["message"] == "Строка FRX.26.0000001 обновлена: 5 поле(й)."
     assert [change["column"] for change in body["changes"]] == [
-        "ТИП", "МЕСТО ХРАНЕНИЯ", "МАССА 1 ШТ, Г", "СРОК ГОДНОСТИ", "ПРОИЗВОДИТЕЛЬ", "ПРИХОД", "СПИСАНО",
+        "ТИП", "МЕСТО ХРАНЕНИЯ", "МАССА 1 ШТ, Г", "СРОК ГОДНОСТИ", "ПРОИЗВОДИТЕЛЬ",
     ]
     [(actor_name, details)] = _audit("warehouse.row_edited")
     assert details["changes"].startswith("ТИП: «Комплектующие» → «Разъёмы»; МЕСТО ХРАНЕНИЯ: «1F4» → «Стеллаж у окна»")
@@ -92,7 +92,7 @@ def test_row_edit_of_a_stale_form_is_a_conflict(warehouse_api):  # noqa: F811
     assert stale.status_code == 409
 
 
-def test_reserve_cannot_go_under_what_kitting_holds(warehouse_api):  # noqa: F811
+def test_reserve_cannot_go_under_what_kitting_holds_nor_move_by_hand(warehouse_api):  # noqa: F811
     client, lot = warehouse_api
     with app.state.warehouse_uow_factory() as uow:
         uow.warehouse.add(uow.warehouse.get(lot.id).reserve(Decimal("4")))
@@ -121,8 +121,10 @@ def test_reserve_cannot_go_under_what_kitting_holds(warehouse_api):  # noqa: F81
 
     assert refused.status_code == 422
     assert "Комплектация держит на партии FRX.26.0000001 резерв 4 шт" in refused.json()["detail"]
-    assert raised.status_code == 200, raised.text
-    assert (raised.json()["lot"]["reserved"], raised.json()["lot"]["available"]) == ("5", "5")
+    # Above what kitting holds the reserve still moves only by movements, never by the row edit.
+    assert raised.status_code == 422
+    assert raised.json()["detail"] == "Количества меняются только движениями: списание, возврат, перемещение"
+    assert client.get("/api/stock").json()["lots"][0]["reserved"] == "4"
 
 
 def test_row_edit_needs_warehouse_edit(warehouse_api):  # noqa: F811

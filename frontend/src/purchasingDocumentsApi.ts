@@ -1,7 +1,7 @@
 import { api } from "./api";
 import type { Tone } from "./statusTone";
 
-/** «Счета», «Цепочка документов», «Поиск по документам» (stage option documents.chain): /api/purchasing/invoices,
+/** «Счета», «Цепочка документов», «Поиск по документам»: /api/purchasing/invoices,
  *  /doc-chain, /upd/{id}/invoices, /doc-search. Money arrives in kopecks; the UI shows roubles. */
 
 export type InvoiceStatus = "to_pay" | "paid" | "return" | "other";

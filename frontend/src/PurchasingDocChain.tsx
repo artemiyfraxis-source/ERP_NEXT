@@ -8,7 +8,7 @@ import {
 } from "./purchasingDocumentsApi";
 import { StatusChip } from "./StatusChip";
 
-/** «Цепочка документов» (option documents.chain): every Kaiten invoice with our payment orders, the closing documents
+/** «Цепочка документов»: every Kaiten invoice with our payment orders, the closing documents
  *  found for it (from the UPD's basis and payment references, or the buyer's word), and the ERP receiving behind each
  *  UPD — what disagrees comes first. `onOpenUpd` opens the UPD card of the registry when the stand has it. */
 

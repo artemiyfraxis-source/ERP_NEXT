@@ -1,7 +1,6 @@
 """«Цены и карточки» (references.price_book): price book rules, UPD prices of an item, supplier card, catalog of
 purchases, items from UPD lines, the option gate and «раньше дешевле» in the request pool."""
 
-import json
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -28,7 +27,6 @@ from app.modules.purchasing.infrastructure import (
 )
 from app.modules.purchasing.items import alias_key, part_key
 from app.modules.purchasing.suppliers import supplier_key
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
@@ -36,7 +34,6 @@ from tests.factories import Actor
 from tests.purchasing.test_rfq_pool import stand  # noqa: F401 - the request pool stand
 
 NOW = datetime(2026, 10, 12, 12, 0)
-OPTIONS = {"references.items": True, "references.suppliers": True, "references.price_book": True}
 
 
 # ---- pure rules -----------------------------------------------------------------------------------------------------
@@ -102,10 +99,7 @@ def test_price_book_groups_original_and_analog_into_one_item():
 # ---- the API stand --------------------------------------------------------------------------------------------------
 
 @pytest.fixture()
-def env(monkeypatch, tmp_path):
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps(OPTIONS), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
+def env():
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
@@ -116,7 +110,7 @@ def env(monkeypatch, tmp_path):
         roles=frozenset({"buyer"}), permissions={"procurement": "edit"},
     )
     app.dependency_overrides[moscow_now] = lambda: NOW
-    yield TestClient(app), sessions, path
+    yield TestClient(app), sessions
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
     del app.state.purchasing_uow_factory
@@ -180,7 +174,7 @@ def data(env):
 
 
 def test_item_prices_match_by_article_name_and_supplier_alias_only_in_force(env, data):
-    client, sessions, _ = env
+    client, sessions = env
     alpha, beta = data.supplier("ООО Альфа"), data.supplier("ООО Бета")
     item = data.item("Разъём SMA-F", "SMA-F 01", aliases=[("Гнездо ЭС", alpha)])
     other = data.item("Другое", "XH-2P")
@@ -211,14 +205,14 @@ def test_item_prices_match_by_article_name_and_supplier_alias_only_in_force(env,
 
 
 def test_a_numeric_article_never_matches_a_part_number(env, data):
-    client, _, _ = env
+    client, _ = env
     item = data.item("Плата", "8534001900")
     data.upd("n1", None, "2026-09-01", [{"name": "Другая плата", "article": "8534001900", "gross": 100}])
     assert client.get(f"/api/purchasing/prices/item/{item}").json()["upd"] == []
 
 
 def test_unit_conversion_and_incomparable_units(env, data):
-    client, _, _ = env
+    client, _ = env
     cable = data.item("Кабель РК-50", unit="м")
     data.upd("c1", None, "2026-09-01", [{"name": "Кабель РК-50", "unit": "км", "code": "008", "qty": "0.5", "gross": 50_000_000}])
     data.upd("c2", None, "2026-09-02", [{"name": "Кабель РК-50", "unit": "бухта", "qty": "1", "gross": 9_000_000}])
@@ -230,7 +224,7 @@ def test_unit_conversion_and_incomparable_units(env, data):
 
 
 def test_item_card_lists_kaiten_invoice_positions(env, data):
-    client, sessions, _ = env
+    client, sessions = env
     supplier = data.supplier("ООО Альфа")
     item = data.item("Разъём XH-2P", "XH-2P")
     with sessions() as s:
@@ -245,7 +239,7 @@ def test_item_card_lists_kaiten_invoice_positions(env, data):
 
 
 def test_supplier_card_totals_share_invoices_and_top_positions(env, data):
-    client, sessions, _ = env
+    client, sessions = env
     alpha, beta = data.supplier("ООО Альфа"), data.supplier("ООО Бета")
     data.upd("a1", alpha, "2026-09-01", [{"name": "Кабель", "qty": "2", "gross": 20_000}, {"name": "Вилка", "gross": 5_000}], total=25_000)
     data.upd("a2", alpha, "2026-10-01", [{"name": "Кабель", "qty": "1", "gross": 12_000}], total=12_000)
@@ -269,7 +263,7 @@ def test_supplier_card_totals_share_invoices_and_top_positions(env, data):
 
 
 def test_catalog_groups_by_article_then_name_and_searches_in_pages(env, data):
-    client, _, _ = env
+    client, _ = env
     alpha, beta = data.supplier("ООО Альфа"), data.supplier("ООО Бета")
     data.upd("k1", alpha, "2026-09-01", [{"name": "Колодка XH", "article": "XH-2P", "qty": "10", "gross": 100_000},
                                          {"name": "Лента", "gross": 500}])
@@ -290,7 +284,7 @@ def test_catalog_groups_by_article_then_name_and_searches_in_pages(env, data):
 
 
 def test_items_from_upd_plan_then_apply_creates_items_and_supplier_aliases(env, data):
-    client, sessions, _ = env
+    client, sessions = env
     alpha = data.supplier("ООО Альфа")
     data.item("Известный разъём", "KNOWN-1")
     data.upd("i1", alpha, "2026-09-01", [
@@ -314,15 +308,8 @@ def test_items_from_upd_plan_then_apply_creates_items_and_supplier_aliases(env, 
     assert again["candidates"] == [] and again["known"] == 3
 
 
-def test_everything_is_gated_by_the_option_and_by_rights(env, data):
-    client, _, path = env
-    item = data.item("Разъём")
-    urls = [f"/api/purchasing/prices/item/{item}", f"/api/purchasing/prices/supplier/{uuid4()}", "/api/purchasing/prices/catalog",
-            "/api/purchasing/prices/upd-items/plan"]
-    path.write_text(json.dumps({**OPTIONS, "references.price_book": False}), encoding="utf-8")
-    assert [client.get(url).status_code for url in urls] == [404] * 4
-    assert client.post("/api/purchasing/prices/upd-items/apply", json={"keys": []}).status_code == 404
-    path.write_text(json.dumps(OPTIONS), encoding="utf-8")
+def test_writes_are_gated_by_rights(env):
+    client, _ = env
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Читатель", department="Закупки"), email="r@example.test",
         roles=frozenset({"buyer"}), permissions={"procurement": "view"})
@@ -332,7 +319,7 @@ def test_everything_is_gated_by_the_option_and_by_rights(env, data):
 
 # ---- the request pool -----------------------------------------------------------------------------------------------
 
-def test_pool_cheaper_before_counts_upd_and_price_refs_when_the_option_is_on(stand, monkeypatch, tmp_path):  # noqa: F811
+def test_pool_cheaper_before_counts_upd_and_price_refs(stand):  # noqa: F811
     data = Data(stand.sessions)
     item = data.item("Разъём XH-2P", "XH-2P")
     cheap = stand.active("Разъём XH-2P", design_article="XH-2P", calculated_price_with_vat=Decimal("12.00"))
@@ -349,13 +336,7 @@ def test_pool_cheaper_before_counts_upd_and_price_refs_when_the_option_is_on(sta
         body = stand.client.get("/api/purchasing/rfqs/pool").json()
         return {line["id"]: line for group in body["groups"] for line in group["lines"]}
 
-    assert all("cheaper_source" not in line for line in lines().values())  # option off: nothing changes
-    off = lines()
-    path = tmp_path / "on.json"
-    path.write_text(json.dumps({"procurement.rfq": True, **OPTIONS}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
     on = lines()
-    assert off[str(cheap)]["cheaper_before_pct"] is None
     assert (on[str(cheap)]["cheaper_before_pct"], on[str(cheap)]["cheaper_source"], on[str(cheap)]["cheaper_source_label"]) == ("33.3", "upd", "по УПД")
     assert (on[str(refd)]["cheaper_before_pct"], on[str(refd)]["cheaper_source"], on[str(refd)]["cheaper_source_label"]) == ("8.5", "ref", "прайс")
     assert on[str(km)]["cheaper_before_pct"] is None or on[str(km)]["cheaper_source"] == "upd"

@@ -1,4 +1,4 @@
-"""«Реестр УПД» (stage option documents.upd): /api/purchasing/upd."""
+"""«Реестр УПД»: /api/purchasing/upd."""
 
 from __future__ import annotations
 
@@ -17,12 +17,11 @@ from app.shared.http_auth import Principal, procurement_edit_principal, procurem
 from app.shared.stored_files import decode_upload, file_response
 
 from . import upd_registry as repo
-from .deps import purchasing_uow_factory, require_option
+from .deps import purchasing_uow_factory
 from .upd_checks import STATUSES
 
 router = APIRouter(prefix="/api/purchasing/upd", tags=["purchasing"])
 
-OPTION = "documents.upd"
 Uow = Annotated[Callable, Depends(purchasing_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
 Viewer = Annotated[Principal, Depends(procurement_view_principal)]
@@ -112,7 +111,6 @@ def list_documents(
     date_from: date | None = None, date_to: date | None = None, buyer: str | None = None, review: bool = False,
     duplicates: bool = False, page: Annotated[int, Query(ge=1)] = 1,
 ) -> dict:
-    require_option(OPTION)
     if status is not None and status not in STATUSES:
         raise HTTPException(status_code=422, detail="Неизвестный статус документа")
     if origin is not None and origin not in ("edo", "google"):
@@ -131,7 +129,6 @@ def list_documents(
 @router.get("/sellers")
 def sellers(_: Viewer, make_uow: Uow) -> dict:
     """«Продавцы без поставщика»: sellers of documents in force with a valid INN that the directory does not have."""
-    require_option(OPTION)
     uow = make_uow()
     with uow:
         return repo.sellers_without_supplier(uow.session)
@@ -140,7 +137,6 @@ def sellers(_: Viewer, make_uow: Uow) -> dict:
 @router.post("/sellers/import")
 def import_sellers(payload: SellersImportIn, principal: Editor, make_uow: Uow, now: Now) -> dict:
     """«Завести поставщиков»: the dry run reports what apply would do and writes nothing."""
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         result = repo.import_sellers(uow, payload.inns, principal.actor, now)
@@ -154,7 +150,6 @@ def import_sellers(payload: SellersImportIn, principal: Editor, make_uow: Uow, n
 @router.post("/import-edo")
 def import_edo(payload: EdoImportIn, principal: Editor, make_uow: Uow, now: Now) -> dict:
     """«Загрузить из ЭДО»: XML files or Diadoc ZIPs; the dry run reports what apply would do and writes nothing."""
-    require_option(OPTION)
     uploads: list[tuple[str, bytes]] = []
     for item in payload.files:
         content = decode_upload(item.content_base64, f"Файл «{item.file_name}» повреждён")
@@ -173,7 +168,6 @@ def import_edo(payload: EdoImportIn, principal: Editor, make_uow: Uow, now: Now)
 
 @router.get("/{document_id}")
 def document(document_id: DocumentId, _: Viewer, make_uow: Uow) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         return repo.document_detail(uow.session, document_id)
@@ -182,7 +176,6 @@ def document(document_id: DocumentId, _: Viewer, make_uow: Uow) -> dict:
 @router.get("/{document_id}/file")
 def document_file(document_id: DocumentId, _: Viewer, make_uow: Uow) -> Response:
     """The original: a PDF opens in the tab, an EDO XML downloads (stored_files serving policy)."""
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         content, name = repo.document_file(uow.session, document_id)
@@ -199,7 +192,6 @@ def _write(make_uow: Callable, document_id: str, change: Callable[[Any], Any]) -
 
 @router.put("/{document_id}/manual")
 def save_manual(document_id: DocumentId, payload: ManualIn, principal: Editor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
     return _write(make_uow, document_id, lambda uow: repo.save_manual(
         uow, document_id, payload.header.model_dump(), [line.model_dump() for line in payload.lines],
         payload.parser_updated, payload.manual_saved_at, principal.actor, now,
@@ -209,13 +201,11 @@ def save_manual(document_id: DocumentId, payload: ManualIn, principal: Editor, m
 @router.delete("/{document_id}/manual")
 def drop_manual(document_id: DocumentId, principal: Editor, make_uow: Uow, now: Now) -> dict:
     """«Вернуть версию разборщика»: the buyer's header and lines are dropped."""
-    require_option(OPTION)
     return _write(make_uow, document_id, lambda uow: repo.drop_manual(uow, document_id, principal.actor, now))
 
 
 @router.put("/{document_id}/verified")
 def set_verified(document_id: DocumentId, payload: VerifiedIn, principal: Editor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
     return _write(make_uow, document_id, lambda uow: repo.set_verified(
         uow, document_id, payload.verified, principal.actor, now,
     ))
@@ -224,7 +214,6 @@ def set_verified(document_id: DocumentId, payload: VerifiedIn, principal: Editor
 @router.put("/{document_id}/supplier")
 def set_supplier(document_id: DocumentId, payload: SupplierIn, principal: Editor, make_uow: Uow, now: Now) -> dict:
     """The supplier chosen by hand; null hands the document back to the link by the seller's INN."""
-    require_option(OPTION)
     return _write(make_uow, document_id, lambda uow: repo.set_supplier(
         uow, document_id, payload.supplier_id, principal.actor, now,
     ))
@@ -232,7 +221,6 @@ def set_supplier(document_id: DocumentId, payload: SupplierIn, principal: Editor
 
 @router.put("/{document_id}/project")
 def set_project(document_id: DocumentId, payload: ProjectIn, principal: Editor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
     return _write(make_uow, document_id, lambda uow: repo.set_project(
         uow, document_id, payload.project_reference, principal.actor, now,
     ))

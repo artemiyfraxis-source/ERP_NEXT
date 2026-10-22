@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { ApiError, warehouseApi, type WarehouseLot, type WarehouseScan as ScanAnswer, type WarehouseUndoPreview } from "./api";
-import { useStageOption } from "./StageOptions";
-import { LABELS_OPTION, LotLabel } from "./LabelPrint";
+import { LotLabel } from "./LabelPrint";
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<void>;
 
@@ -16,7 +15,7 @@ function lotLabel(lot: WarehouseLot) {
 /** A scan request from the stock search field: the code and when Enter was pressed (the same code twice opens twice). */
 export type ScanRequest = { code: string; at: number };
 
-/** Stage option warehouse.scan (Roller_Buyer /stock and /tsd), owner 22.10: one field for everything — the stock search.
+/** Scan field (Roller_Buyer /stock and /tsd), owner 22.10: one field for everything — the stock search.
  *  Typing filters the table; Enter (a hardware scanner sends it) asks the scan route: a ГРН opens the lot card, a place
  *  code lists what lies there, anything else («резистор») is no code and just stays a filter. After every action the
  *  field takes the focus back, so the next scan goes straight in. */
@@ -126,8 +125,6 @@ function ScanLotCard({ lot, readOnly, disabled, mutate, who, setWho, onChanged, 
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
   const quantityRef = useRef<HTMLInputElement>(null);
-  const undoOn = useStageOption("warehouse.undo");
-  const labelsOn = useStageOption(LABELS_OPTION);
   const [label, setLabel] = useState(false);
   useEffect(() => { setError(""); setDone(""); setLabel(false); }, [lot.id]);
 
@@ -198,15 +195,15 @@ function ScanLotCard({ lot, readOnly, disabled, mutate, who, setWho, onChanged, 
         <label>Новое место<input aria-label="Новое место" autoComplete="off" placeholder="12C7" value={place} onChange={(event) => setPlace(event.target.value)} /></label>
         <button className="secondary" disabled={disabled}>Переместить</button>
       </form>
-      {undoOn && <UndoLast lot={lot} disabled={disabled} mutate={mutate} eager onUndone={(updated, label) => {
+      <UndoLast lot={lot} disabled={disabled} mutate={mutate} eager onUndone={(updated, label) => {
         setError("");
         setDone(`Отменено: ${label}`);
         onChanged(updated);
-      }} />}
-      {labelsOn && <div className="scan-label">
+      }} />
+      <div className="scan-label">
         <button type="button" className="secondary small" aria-expanded={label} onClick={() => setLabel((open) => !open)}>{label ? "Скрыть этикетку" : "Этикетка…"}</button>
         {label && <LotLabel key={lot.version} lotId={lot.id} />}
-      </div>}
+      </div>
       <p className="page-sub">Enter в количестве — списать · Enter в месте — переместить · Esc — закрыть</p>
     </>}
     {error && <div className="error-banner" role="alert">{error}</div>}
@@ -219,7 +216,7 @@ function shortTime(iso: string) {
   return Number.isNaN(at.getTime()) ? "" : at.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Stage option warehouse.undo: «Отменить последнее» with what it will take back (own write-off, return or move of
+/** «Отменить последнее» with what it will take back (own write-off, return or move of
  *  the last 10 minutes; the server appends a compensating entry). `eager` — the line is read at once and after every
  *  change of the lot (scan card); otherwise the first click reads it and the second one undoes (lot cards in the table). */
 export function UndoLast({ lot, disabled, mutate, eager = false, onUndone }: {

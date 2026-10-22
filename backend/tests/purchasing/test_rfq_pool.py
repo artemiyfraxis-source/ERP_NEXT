@@ -1,7 +1,6 @@
 """«Пул запроса КП»: the buyer's lines by nomenclature category with item match and price history, the supplier
 suggestion by purchase statistics, and a request created with its suppliers in one go."""
 
-import json
 import time
 from datetime import datetime
 from decimal import Decimal
@@ -29,7 +28,6 @@ from app.modules.purchasing.infrastructure import (
 from app.modules.purchasing.items import alias_key, part_key
 from app.modules.purchasing.suppliers import supplier_key
 from app.modules.requests.api import moscow_now
-from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
 from tests.factories import Actor
@@ -45,12 +43,6 @@ def _as(name: str, level: str = "edit") -> None:
         actor=Actor(name=name, department="Закупки"), email=f"{name}@example.test", roles=frozenset({"buyer"}),
         permissions={"procurement": level},
     )
-
-
-def _options(monkeypatch, tmp_path, on: bool) -> None:
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"procurement.rfq": on}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
 
 
 class Stand:
@@ -109,7 +101,7 @@ class Stand:
 
 
 @pytest.fixture()
-def stand(monkeypatch, tmp_path):
+def stand():
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
@@ -117,7 +109,6 @@ def stand(monkeypatch, tmp_path):
     app.state.purchasing_uow_factory = lambda: SqlAlchemyPurchasingUnitOfWork(sessions)
     _as("Петров")
     app.dependency_overrides[moscow_now] = lambda: NOW
-    _options(monkeypatch, tmp_path, True)
     client = TestClient(app)
     line = consume_procurement_requested(message(1), app.state.procurement_uow_factory())
     assert client.post("/api/procurement/take", json={"line_ids": [str(line.id)]}).status_code == 200
@@ -317,16 +308,11 @@ def test_create_with_suppliers_in_one_go(stand):
     assert bad.status_code == 422
 
 
-def test_option_off_is_404_after_auth_and_a_viewer_write_is_403(stand, monkeypatch, tmp_path):
-    _options(monkeypatch, tmp_path, False)
-    assert stand.client.get(f"{BASE}/pool").status_code == 404
-    assert stand.client.get(f"{BASE}/suggest", params={"line_ids": str(uuid4())}).status_code == 404
+def test_a_viewer_write_is_403_and_a_stranger_is_401(stand):
     _as("Зритель", "view")
     assert stand.client.post(BASE, json={"line_ids": [str(uuid4())], "suppliers": []}).status_code == 403
-    _options(monkeypatch, tmp_path, True)
     assert stand.client.get(f"{BASE}/pool").status_code == 403  # the buyer's desk: edit only, as /candidates
     app.dependency_overrides.pop(authenticated_principal, None)
-    _options(monkeypatch, tmp_path, False)
     assert stand.client.get(f"{BASE}/pool").status_code == 401
 
 

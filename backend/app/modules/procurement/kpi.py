@@ -1,4 +1,4 @@
-"""Stage option `procurement.kpi`: the buyer's indicators over a period, computed on read.
+"""the buyer's indicators over a period, computed on read.
 
 Pure functions over line objects; money stays Decimal and is rounded only in the output.
 Population: lines paid in the period (`paid_at` in Moscow time). Dropped metric: «взято → счёт» — a line stores no

@@ -11,15 +11,14 @@ import {
   type WarehouseScan,
   type WarehouseUndoPreview,
 } from "./api";
-import { devicesApi, TSD_OPTION } from "./devicesApi";
-import { LABELS_OPTION, LotLabel } from "./LabelPrint";
+import { devicesApi } from "./devicesApi";
+import { LotLabel } from "./LabelPrint";
 import { LoginPage } from "./LoginPage";
 import { canAct, canSee } from "./navigation";
 import { ScannerCheck } from "./ScannerCheck";
 import "./tsd.css";
-import { useStageOption, useStageOptionState } from "./StageOptions";
 
-/* Стенд, опция warehouse.tsd — экран ТСД (Roller_Buyer TsdPage): терминал сбора данных склада (AUTOID / SEUIC, Android
+/* Экран ТСД (Roller_Buyer TsdPage): терминал сбора данных склада (AUTOID / SEUIC, Android
    8.1, Chrome 70, сканер-клавиатура) и телефон. Одно большое поле всегда в фокусе: ГРН открывает партию, код места —
    что на нём лежит. Крупные действия, цифры с клавиатуры терминала, после действия поле снова ждёт скан.
    Chrome 70: no flex `gap`, `inset`, `aspect-ratio`, `:is/:where`, `color-mix` on these screens (tsd.css). */
@@ -40,15 +39,14 @@ const lotTitle = (lot: WarehouseLot) => `${lot.grn}${lot.package ? ` / ${lot.pac
 
 // ── Signed in: the screen ───────────────────────────────────────────────────────────────────────────────────────────
 
-/** The ТСД screen in its own frame (no sidebar): the bar with who and «Выйти», the scan under it. Without the option or
- *  the warehouse section the shell takes over (`onLeave`), as if the address were unknown. */
+/** The ТСД screen in its own frame (no sidebar): the bar with who and «Выйти», the scan under it. Without the warehouse
+ *  section the shell takes over (`onLeave`), as if the address were unknown. */
 export function TsdScreen({ principal, onSignOut, onLeave }: { principal: Principal; onSignOut: () => void; onLeave: () => void }) {
-  const on = useStageOptionState(TSD_OPTION);
   const allowed = canSee(principal, "warehouse");
   useEffect(() => {
-    if (on === false || !allowed) onLeave();
-  }, [on, allowed]);
-  if (!on || !allowed) return <div className="screen-center muted">Загружаем…</div>;
+    if (!allowed) onLeave();
+  }, [allowed]);
+  if (!allowed) return <div className="screen-center muted">Загружаем…</div>;
   return <div className="tsd-shell">
     <header className="tsd-bar">
       <div className="tsd-bar-who">
@@ -246,8 +244,6 @@ function TsdLot({ lot, readOnly, who, setWho, onChanged, onBack, onDone }: {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [preview, setPreview] = useState<WarehouseUndoPreview | null>(null);
   const [destinations, setDestinations] = useState<WarehouseDestination[]>([]);
-  const undoOn = useStageOption("warehouse.undo");
-  const labelsOn = useStageOption(LABELS_OPTION);
   const unit = lot.unit || "шт";
 
   useEffect(() => {
@@ -267,7 +263,7 @@ function TsdLot({ lot, readOnly, who, setWho, onChanged, onBack, onDone }: {
     try {
       const updated = (await operation()).lot;
       onChanged(updated);
-      setNotice({ text: message(updated), undo: undoable && undoOn });
+      setNotice({ text: message(updated), undo: undoable });
       setAction(null);
       setQuantity("");
       setPlace("");
@@ -329,7 +325,7 @@ function TsdLot({ lot, readOnly, who, setWho, onChanged, onBack, onDone }: {
     { key: "writeoff", label: "Списать" },
     { key: "return", label: "Вернуть" },
     { key: "move", label: "Переместить" },
-    ...(labelsOn ? [{ key: "label" as const, label: "Этикетка" }] : []),
+    { key: "label", label: "Этикетка" },
   ];
 
   return <div className="tsd-card" role="region" aria-label={`Партия ${lotTitle(lot)}`}>
@@ -359,7 +355,7 @@ function TsdLot({ lot, readOnly, who, setWho, onChanged, onBack, onDone }: {
         aria-pressed={action === item.key}
         onClick={() => { setAction(action === item.key ? null : item.key); setError(""); setNotice(null); setPreview(null); }}
       >{item.label}</button>)}
-      {undoOn && <button type="button" className="tsd-btn" onClick={() => void askUndo()}>Отменить последнее</button>}
+      <button type="button" className="tsd-btn" onClick={() => void askUndo()}>Отменить последнее</button>
     </div>}
 
     {preview && <div className="tsd-undo" role="group" aria-label="Отмена последнего движения">
@@ -429,8 +425,8 @@ function remember(person: LoginStaff | null) {
   }
 }
 
-/** Before sign-in on the ТСД address: the stage with the ТСД screen asks for an employee's PIN; anywhere else (the
- *  option off, production) the ordinary sign-in, exactly as without this screen. */
+/** Before sign-in on the ТСД address: the stage with the ТСД screen asks for an employee's PIN; anywhere else (the server
+ *  without the ТСД entry) the ordinary sign-in. */
 export function TsdEntry({ onLogin }: { onLogin: (principal: Principal) => void }) {
   const [mode, setMode] = useState<"checking" | "pin" | "password">("checking");
   useEffect(() => {

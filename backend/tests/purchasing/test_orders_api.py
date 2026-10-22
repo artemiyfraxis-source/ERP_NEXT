@@ -1,7 +1,6 @@
-"""«Счета и поставки» (option procurement.orders) over HTTP: the board's columns, the order's facts, the order-wide
+"""«Счета и поставки» over HTTP: the board's columns, the order's facts, the order-wide
 expected date, the promised date from the audit, «Дожать», the port for «Сегодня»."""
 
-import json
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -17,7 +16,6 @@ from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchem
 from app.modules.purchasing.infrastructure import OrderFactRow, SqlAlchemyPurchasingUnitOfWork
 from app.modules.purchasing.orders import column_of
 from app.modules.requests.api import moscow_now
-from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, create_schema
 from app.workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
@@ -39,14 +37,8 @@ def _as(name: str, mode: str = "edit") -> None:
     )
 
 
-def _options(monkeypatch, tmp_path, **flags) -> None:
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"procurement.orders": True, **flags}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
-
-
 @pytest.fixture()
-def orders_api(monkeypatch, tmp_path):
+def orders_api():
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
@@ -55,7 +47,6 @@ def orders_api(monkeypatch, tmp_path):
     app.state.purchasing_uow_factory = lambda: SqlAlchemyPurchasingUnitOfWork(sessions)
     _as("Петров")
     app.dependency_overrides[moscow_now] = lambda: NOW
-    _options(monkeypatch, tmp_path)
     yield TestClient(app), sessions
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
@@ -111,17 +102,9 @@ def _facts(client, number: str, version: int, **fields):
     return client.patch(f"{BASE}/{number}/facts", json={"version": version, **fields})
 
 
-def test_option_off_answers_404_and_a_viewer_cannot_write(orders_api, monkeypatch, tmp_path):
+def test_a_viewer_cannot_write(orders_api):
     client, sessions = orders_api
     number, _ = formed_order(client, sessions)
-    _options(monkeypatch, tmp_path, **{"procurement.orders": False})
-    for path in (BASE, f"{BASE}/followups", f"{BASE}/decisions", f"{BASE}/{number}"):
-        assert client.get(path).status_code == 404, path
-    assert _facts(client, number, 0, note="x").status_code == 404
-    assert client.post(f"/api/procurement/orders/{number}/expected-arrival", json={
-        "expected_arrival": "2026-09-30", "lines": [{"line_id": str(uuid4()), "version": 1}],
-    }).status_code == 404
-    _options(monkeypatch, tmp_path)
     _as("Петров", "view")
     assert client.get(BASE, params={"scope": "all"}).status_code == 200
     assert _facts(client, number, 0, note="x").status_code == 403
@@ -256,7 +239,7 @@ def test_the_card_lists_lines_and_deliveries_and_followups_reuse_today(orders_ap
     card = client.get(f"{BASE}/{number}")
     assert card.status_code == 200, card.text
     body = card.json()
-    assert body["order"]["order_number"] == number and body["receiving"] == [] and body["upds"] is None
+    assert body["order"]["order_number"] == number and body["receiving"] == [] and body["upds"] == []
     assert client.get(f"{BASE}/PO-404").status_code == 404
 
     followups = client.get(f"{BASE}/followups").json()
@@ -293,9 +276,8 @@ def test_column_rules():
     assert column_of([_facts_line("Согласование", is_backorder=True)], None) is None
 
 
-def test_open_decisions_list_the_decided_lines_until_the_supplier_request(orders_api, monkeypatch, tmp_path):
+def test_open_decisions_list_the_decided_lines_until_the_supplier_request(orders_api):
     client, sessions = orders_api
-    _options(monkeypatch, tmp_path, **{"procurement.rfq": True})
     start = _NEXT["n"]
     _NEXT["n"] += 1
     line = consume_procurement_requested(message(start), SqlAlchemyProcurementUnitOfWork(sessions))

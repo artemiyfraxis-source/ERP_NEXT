@@ -41,7 +41,6 @@ import { StageChangeDialog, STAGE_AUTO } from "./StageChangeDialog";
 import { ProjectTrack } from "./ProjectTrack";
 import { InternalProjectsTab } from "./InternalProjectsTab";
 import { canAct } from "./navigation";
-import { useStageOption } from "./StageOptions";
 import { supplyApi, type SupplyLine } from "./supplyApi";
 
 /* «Проекты» — SUPPLYMAP erptechmap (PortalApp.html openKitsetHub / openKitsetCard). Проект заводится из расчёта:
@@ -215,14 +214,12 @@ export function ProjectsPage({ principal }: { principal: Principal }) {
   const [open, setOpen] = useState(() => new URLSearchParams(window.location.search).get("project") || "");
   const [flash, setFlash] = useState<Flash | null>(null);
   const canRequest = principal.permissions.newrequest === "edit";
-  const internalOn = useStageOption("projects.internal");
   const [tab, setTab] = useState<"commercial" | "internal">(() => new URLSearchParams(window.location.search).get("tab") === "internal" ? "internal" : "commercial");
   if (open) return <KitsetCardView project={open} principal={principal} canEdit={canEdit} canRequest={canRequest}
     back={(result) => { setFlash(result ?? null); setOpen(""); }} />;
   const hub = <KitsetHub canEdit={canEdit} canRequest={canRequest} user={principal.user.id} flash={flash}
     openProject={(project) => { setFlash(null); setOpen(project); }} />;
-  if (!internalOn) return hub;
-  // Stage option projects.internal: «Коммерческие» is the page as it was; «Внутренние» are the company's own projects.
+  // «Коммерческие» is the page as it was; «Внутренние» are the company's own projects.
   return <>
     <div className="seg-tabs" role="tablist" aria-label="Виды проектов">
       {([["commercial", "Коммерческие"], ["internal", "Внутренние"]] as const).map(([key, label]) =>

@@ -1,4 +1,4 @@
-"""Внутренние проекты «ВП-001» (stage option projects.internal)."""
+"""Внутренние проекты «ВП-001»."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from app.shared.http_auth import (
 from app.workflows import purchasing_internal_projects as port
 
 from . import internal_projects as service
-from .deps import purchasing_uow_factory, require_option
+from .deps import purchasing_uow_factory
 
 
 def internal_view(principal: Annotated[Principal, Depends(authenticated_principal)]) -> Principal:
@@ -34,11 +34,10 @@ def internal_view(principal: Annotated[Principal, Depends(authenticated_principa
 
 
 def internal_option(request: Request, principal: Annotated[Principal, Depends(internal_view)]) -> None:
-    """After the gate: a token or a stranger is refused (401/403) before the option says 404, and so is a write by
+    """After the gate: a token or a stranger is refused (401/403), and so is a write by
     someone who holds «Лист закупки» on view only (view-mode contract, ID-6)."""
     if request.method not in {"GET", "HEAD", "OPTIONS"} and not section_allowed(principal, ("procurement",), "edit"):
         raise HTTPException(status_code=403, detail="Раздел «Лист закупки» открыт вам только на просмотр.")
-    require_option("projects.internal")
 
 
 router = APIRouter(

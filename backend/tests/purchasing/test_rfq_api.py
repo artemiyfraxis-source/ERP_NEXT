@@ -1,6 +1,5 @@
 """«Запросы КП» over HTTP: candidates → request → suppliers → quotes → matrix → decision → the procurement line."""
 
-import json
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -22,7 +21,6 @@ from app.modules.purchasing.infrastructure import (
     SupplierRow,
 )
 from app.modules.requests.api import moscow_now
-from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
 from tests.factories import Actor
@@ -39,14 +37,8 @@ def _as(name: str) -> None:
     )
 
 
-def _options(monkeypatch, tmp_path, on: bool) -> None:
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"procurement.rfq": on}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
-
-
 @pytest.fixture()
-def rfq_api(monkeypatch, tmp_path):
+def rfq_api():
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
@@ -54,7 +46,6 @@ def rfq_api(monkeypatch, tmp_path):
     app.state.purchasing_uow_factory = lambda: SqlAlchemyPurchasingUnitOfWork(sessions)
     _as("Петров")
     app.dependency_overrides[moscow_now] = lambda: NOW
-    _options(monkeypatch, tmp_path, True)
     client = TestClient(app)
     lines = [consume_procurement_requested(message(n), app.state.procurement_uow_factory()) for n in (1, 2)]
     taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id) for line in lines]})
@@ -94,14 +85,6 @@ def _quote(client, rfq_id, supplier_id, rfq_line_id, **line) -> str:
     response = client.post(f"{BASE}/{rfq_id}/quotes", json=body)
     assert response.status_code == 201, response.text
     return response.json()["id"]
-
-
-def test_option_off_means_404(rfq_api, monkeypatch, tmp_path):
-    client, _, _ = rfq_api
-    _options(monkeypatch, tmp_path, False)
-    assert client.get(BASE).status_code == 404
-    assert client.get(f"{BASE}/candidates").status_code == 404
-    assert client.post(BASE, json={"line_ids": [str(uuid4())]}).status_code == 404
 
 
 def test_full_flow_from_candidates_to_the_procurement_line(rfq_api):

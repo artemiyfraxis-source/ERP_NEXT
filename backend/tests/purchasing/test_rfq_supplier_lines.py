@@ -6,7 +6,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 
 from app.modules.purchasing.infrastructure import RfqRow, RfqSupplierLineRow, SupplierRow
-from tests.purchasing.test_rfq_pool import BASE, _as, _options, _suggest, stand  # noqa: F401 — fixture
+from tests.purchasing.test_rfq_pool import BASE, _as, _suggest, stand  # noqa: F401 — fixture
 
 
 def _rows(stand) -> int:
@@ -130,13 +130,9 @@ def test_edit_lines_later_and_a_quoted_line_stays(stand):
     assert stand.client.put(url, json={"line_ids": [rfq_line[str(a)]]}).status_code == 403
 
 
-def test_lines_edit_gate_viewer_403_before_the_option_404(stand, monkeypatch, tmp_path):
+def test_lines_edit_gate_viewer_403(stand):
     url = f"{BASE}/{uuid4()}/suppliers/{uuid4()}/lines"
-    _options(monkeypatch, tmp_path, False)
-    assert stand.client.put(url, json={"line_ids": []}).status_code == 404
     _as("Зритель", "view")
-    assert stand.client.put(url, json={"line_ids": []}).status_code == 403
-    _options(monkeypatch, tmp_path, True)
     assert stand.client.put(url, json={"line_ids": []}).status_code == 403
 
 

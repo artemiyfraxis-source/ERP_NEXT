@@ -41,4 +41,5 @@
 - [Connector gender names](connector-gender-names.md) — вилка = штыри, розетка = гнёзда во всех сериях; слово берётся из contacts (owner 17.10)
 - [БД.ПРОВ split](prov-kind-split-plan.md) — DONE 21.10 #620: cable_kind per row, own columns per kind; монтажные = row per colour (Марка+Цвет)
 - [RV tech-doc base](rv-td-base.md) — ГОСТ РВ ТД base rev 1 + СТО (Claude Doc), built in ERP by PR #614/#622/#624 (td_issues auto-issued in background, print kit); 3.1102→ГОСТ Р 3.102-2024, no «КТК» in ЕСТД
+- [Витя's hybrid on prod](vitya-hybrid-stage-options.md) — #627 21.10; all 24 stage options ON in prod since 22.10 (owner: test it) via ERP_STAGE_OPTIONS file in /opt/erp/import/stage
 - [Hook-up wire suppliers](hookup-wire-suppliers.md) — Снабкабель + Паритет base for монтажные провода; what each sells, price quirks; монтажные = row per colour

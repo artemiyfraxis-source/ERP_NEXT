@@ -5,7 +5,7 @@ import { InvoiceCardDialog, PositionsTable } from "./PurchasingInvoices";
 import { ORIGIN_LABELS, dayText, documentsApi, invoiceFileUrl, rub, type SearchHit, type SearchKind, type SearchResult } from "./purchasingDocumentsApi";
 import { StatusChip } from "./StatusChip";
 
-/** «Поиск по документам» (option documents.chain): an article, a piece of a name, a number, a seller or an amount →
+/** «Поиск по документам»: an article, a piece of a name, a number, a seller or an amount →
  *  every UPD and Kaiten invoice that has it. Separators, case, «ё» and Latin look-alikes do not matter. */
 
 const KINDS: { key: SearchKind; label: string }[] = [

@@ -1,4 +1,4 @@
-"""«Заявки» закупщика (option procurement.requests_rb) ↔ the other modules: the one place the view meets them.
+"""«Заявки» закупщика ↔ the other modules: the one place the view meets them.
 
 Procurement builds the view (`procurement.requests_view`) and never imports purchasing or the warehouse; this workflow
 hands it, for a list of lines and on the caller's session (read-only, a few indexed reads per call):
@@ -7,7 +7,7 @@ hands it, for a list of lines and on the caller's session (read-only, a few inde
 - the free stock of each line's item: warehouse lots with something available (balance − reserve), the same part
   number (else the same name) and unit — RB «На складе: свободно N»;
 - the last UPD purchase of the line's nomenclature item (matched as the request pool does; purchasing
-  `line_purchases`, with option references.price_book on).
+  `line_purchases`).
 And the request-for-quotes half of «Разделить» (`PurchasingRfqSplitter`), inside the procurement command's transaction."""
 
 from __future__ import annotations
@@ -25,14 +25,12 @@ from app.modules.procurement.price_history import article_key, name_key
 from app.modules.procurement.requests_view import LastPurchase, OrderState, RfqState, ViewLine
 from app.modules.purchasing import line_purchases, rfq_line_states, rfq_split
 from app.modules.warehouse.infrastructure import StockLotRow
-from app.shared import stage_options
 # The request pool's attribution of a procurement line to a nomenclature item (link, part number, names).
 from app.workflows.purchasing_rfq_stats import _Nomenclature
 from app.workflows.purchasing_order_facts import order_facts
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
-PRICE_BOOK_OPTION = "references.price_book"
 
 
 def rfq_states(session: Session, line_ids: Iterable[UUID]) -> dict[UUID, RfqState]:
@@ -93,9 +91,9 @@ def _day(value: str) -> date:
 def last_purchases(
     session: Session, lines: Sequence[ViewLine], paid: Mapping[UUID, LastPurchase],
 ) -> dict[UUID, LastPurchase]:
-    """The newest of the procurement's own paid lines (`paid`) and, with option references.price_book, the UPDs."""
+    """The newest of the procurement's own paid lines (`paid`) and, the UPDs."""
     result = dict(paid)
-    if not stage_options.enabled(PRICE_BOOK_OPTION) or not lines:
+    if not lines:
         return result
     nomenclature = _Nomenclature(session)
     wanted = []

@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useFormDraft } from "./formDrafts";
 import { requestsApi, type RequestSchema } from "./api";
 import { ComboBox, type ComboOption } from "./ComboBox";
 import { purposeLabel } from "./purposeLabels";
 import type { ItemRow } from "./purchasingItemsApi";
 import { RequestGridV2 } from "./RequestGridV2";
 import { openSection, urlParam } from "./navigation";
-import { useStageOption } from "./StageOptions";
 import {
   GRID_LIMIT, applyPaste, isBlankRow, positionsWord, type Draft, type GridKey,
 } from "./requestGridLogic";
 import {
   CREATE_INTERNAL_KEY, applyHeaderToAll, chooseProject, customerKey, emptyHeader, emptyLine,
-  hasErrors, internalKey, internalProjectKey, payloadV2, pointLabel, projectKeyFor, validateForm, type Header,
+  hasErrors, internalProjectKey, payloadV2, pointLabel, projectKeyFor, validateForm, type Header,
 } from "./requestFormV2Logic";
 
 type Props = {
@@ -23,13 +23,16 @@ type Props = {
   onNotice: (message: string) => void;
 };
 
-/** «Оформить заявку» under the stage option `requests.form`: nothing pre-filled, project required, header values are
- *  defaults and a line value overrides them. */
+/** Unsent form kept in the shell's memory (F07): survives a session expiry, another section and a sign-out/sign-in of the same user. */
+interface FormV2Draft { creationKey: string; header: Header; lines: Draft[] }
+
+/** «Оформить заявку»: nothing pre-filled, project required, header values are defaults and a line value overrides them. */
 export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Props) {
-  const itemsOn = useStageOption("references.items");
-  const creationKey = useRef(crypto.randomUUID());
-  const [header, setHeader] = useState<Header>(emptyHeader);
-  const [lines, setLines] = useState<Draft[]>(() => [emptyLine()]);
+  const draft = useFormDraft<FormV2Draft>("requests:form-v2");
+  const restored = draft.initial;
+  const creationKey = useRef(restored?.creationKey ?? crypto.randomUUID());
+  const [header, setHeader] = useState<Header>(() => restored?.header ?? emptyHeader());
+  const [lines, setLines] = useState<Draft[]>(() => (restored?.lines.length ? restored.lines : [emptyLine()]));
   const [showErrors, setShowErrors] = useState(false);
   const [busy, setBusy] = useState(false);
   const lastSeed = useRef(0);
@@ -37,26 +40,23 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
   const purposes = schema?.purposes ?? [];
   const units = schema?.units ?? [];
 
-  const internalOn = useStageOption("projects.internal");
   const internal = schema?.internal_projects ?? [];
 
   const projectOptions: ComboOption[] = useMemo(() => [
     // The registry also lists the open «ВП-…» numbers: they belong to the group below, not to the customers'.
-    ...(schema?.projects ?? []).filter((number) => !(internalOn && /^ВП-\d+$/.test(number)))
+    ...(schema?.projects ?? []).filter((number) => !/^ВП-\d+$/.test(number))
       .map((number) => ({ value: customerKey(number), label: number, group: "Проекты заказчиков" })),
-    ...(internalOn
-      ? (internal.length
-        ? internal.map((item) => ({ value: internalProjectKey(item.number), label: `${item.number} · ${item.name}`, group: "Внутренние проекты" }))
-        : [{ value: CREATE_INTERNAL_KEY, label: "Создать внутренний проект…", group: "Внутренние проекты" }])
-      : purposes.map((purpose) => ({ value: internalKey(purpose), label: purposeLabel(purpose), group: "Внутренние проекты" }))),
-  ], [schema, purposes, internal, internalOn]);
+    ...(internal.length
+      ? internal.map((item) => ({ value: internalProjectKey(item.number), label: `${item.number} · ${item.name}`, group: "Внутренние проекты" }))
+      : [{ value: CREATE_INTERNAL_KEY, label: "Создать внутренний проект…", group: "Внутренние проекты" }]),
+  ], [schema, internal]);
 
   // «Новая заявка» from «Заявки» закупщика comes with `?project=`: the project is chosen once the lists are in.
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current || !schema) return;
     prefilled.current = true;
-    const key = projectKeyFor(urlParam("project"), schema.projects ?? [], purposes, internal, internalOn);
+    const key = projectKeyFor(urlParam("project"), schema.projects ?? [], purposes, internal, true);
     if (key) setHeader((current) => (current.project ? current : chooseProject(current, key, internal)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schema]);
@@ -68,6 +68,18 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
 
   const errors = useMemo(() => validateForm(lines, header, units), [lines, header, units]);
   const sendRows = lines.filter((line) => !isBlankRow(line));
+
+  // The key stays with the draft: a repeat after a lost answer is the same creation, never a duplicate.
+  useEffect(() => {
+    const untouched = !sendRows.length && JSON.stringify(header) === JSON.stringify(emptyHeader());
+    draft.save(untouched ? null : { creationKey: creationKey.current, header, lines });
+  }, [draft, header, lines, sendRows.length]);
+
+  useEffect(() => {
+    const count = restored ? restored.lines.filter((line) => !isBlankRow(line)).length : 0;
+    if (count) onNotice(`Восстановлена неотправленная заявка: ${positionsWord(count)}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function paste(index: number, key: GridKey, text: string) {
     const result = applyPaste(lines, index, key, text, emptyLine());
@@ -189,7 +201,7 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
         errors={showErrors ? errors.rows : null}
         sendCount={sendRows.length}
         busy={busy}
-        itemsOn={itemsOn}
+        itemsOn
         onField={setLineField}
         onPickItem={pickItem}
         onPaste={paste}

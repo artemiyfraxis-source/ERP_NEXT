@@ -10,7 +10,6 @@ from enum import Enum
 from typing import Iterable, Sequence
 from uuid import UUID, uuid4
 
-from app.shared import stage_options
 from app.shared.identity import Actor
 
 
@@ -28,7 +27,7 @@ STATIC_PURPOSES = (
     "Склад",
     "Расходники",
 )
-# Stage option requests.form: the purpose belongs to the project. A commercial project (registry «591К.3») always
+# the purpose belongs to the project. A commercial project (registry «591К.3») always
 # carries this purpose; it is implicit and never part of the editable purposes directory.
 COMMERCIAL_PURPOSE = "Коммерческий проект"
 DELIVERY_POINTS = (
@@ -60,7 +59,7 @@ _PROJECT_HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
 _PROJECT_NUMBER = re.compile(
     r"(?:[1-9]\d*(?:К[А-Я]?|МФ)(?:\.(?:[А-Я]{1,3}|[1-9]\d*))*\.?|П\d{4}-[1-9]\d*(?:\.[1-9]\d*)?)"
 )
-# «Внутренний проект» (stage option projects.internal): ВП-001, number grows past 999 without padding.
+# «Внутренний проект»: ВП-001, number grows past 999 without padding.
 _INTERNAL_PROJECT = re.compile(r"ВП-\d{3,}")
 _PROJECT_WITHOUT_VERSION = re.compile(r"([1-9]\d*(?:К[А-Я]?|МФ)(?:\.[А-Я]{1,3})?)\.?")
 
@@ -69,7 +68,7 @@ def project_reference_valid(value: str | None) -> bool:
     text = re.sub(r"\s+", "", _text(value).upper())
     if _PROJECT_NUMBER.fullmatch(text):
         return True
-    return bool(_INTERNAL_PROJECT.fullmatch(text)) and stage_options.enabled("projects.internal")
+    return bool(_INTERNAL_PROJECT.fullmatch(text))
 
 
 def normalize_project_reference(value: str | None) -> str:
@@ -281,7 +280,7 @@ def _commercial_reference(value: str | None) -> bool:
 def validate_draft(
     draft: RequestDraft, today: date | None = None, directory_purposes: Sequence[str] | None = None,
 ) -> RequestDraft:
-    """``directory_purposes`` (not None only with the option requests.form on) replaces the fixed purpose list by the
+    """``directory_purposes`` (None — the fixed list) replaces the fixed purpose list by the
     editable directory plus «Коммерческий проект», and ties that purpose to commercial project numbers."""
     draft = apply_draft_defaults(draft, today)
     allowed = STATIC_PURPOSES if directory_purposes is None else (*directory_purposes, COMMERCIAL_PURPOSE)

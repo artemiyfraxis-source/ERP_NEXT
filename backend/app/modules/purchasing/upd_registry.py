@@ -1,4 +1,4 @@
-"""«Реестр УПД» (stage option documents.upd): the closing documents of the purchasing hybrid, ported from Roller_Buyer
+"""«Реестр УПД»: the closing documents of the purchasing hybrid, ported from Roller_Buyer
 upd-docs.ts, upd-sync.ts (linkUpdSuppliers), upd-twins.ts (markTwins) and edo-import.ts.
 
 A document is the parser's reading (Google for a PDF, the exact XML for EDO) plus the buyer's word: a corrected header

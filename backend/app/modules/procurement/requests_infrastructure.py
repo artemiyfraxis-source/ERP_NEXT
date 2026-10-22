@@ -1,4 +1,4 @@
-"""Reads of «Заявки» закупщика (option procurement.requests_rb) over procurement's own tables, as column projections.
+"""Reads of «Заявки» закупщика over procurement's own tables, as column projections.
 
 A whole-row hydration of procurement lines costs ~0.45 s on 5 000 lines (see `app/workflows/purchasing_procurement.py`);
 this view needs a few columns of every line of the scope, so it selects only those, once."""
@@ -28,7 +28,7 @@ _VIEW_COLUMNS = (
     R.calculated_price_with_vat, R.link, R.supplier, R.paid_at, R.invoice_url, R.supplier_request_reference,
     R.order_number,
 )
-# «Сегодня» (option procurement.today) reads the dates of the stages on top.
+# «Сегодня» reads the dates of the stages on top.
 _TODAY_COLUMNS = (
     *_VIEW_COLUMNS, R.expected_arrival, R.actual_arrival, R.invoice_date, R.order_date, R.invoice_number,
     R.invoice_item_name,
@@ -73,7 +73,7 @@ def _today_view(row) -> ViewLine:
 
 
 def own_open_lines(session: Session, buyer_id: UUID) -> list[ViewLine]:
-    """«Сегодня» (option procurement.today): the buyer's own lines that are not closed («Готово», «Отменено»), with
+    """«Сегодня»: the buyer's own lines that are not closed («Готово», «Отменено»), with
     the dates of their stages — one column select."""
     statement = select(*_TODAY_COLUMNS).where(R.buyer_id == buyer_id, R.status.not_in(_CLOSED))
     return [_today_view(row) for row in session.execute(statement.order_by(R.created_at, R.id))]

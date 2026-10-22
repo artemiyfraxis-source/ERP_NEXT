@@ -8,7 +8,7 @@ import {
 } from "./purchasingDocumentsApi";
 import { StatusChip } from "./StatusChip";
 
-/** «Счета по этому УПД» — mounted into the UPD card of the registry (option documents.upd) when documents.chain is on:
+/** «Счета по этому УПД» — mounted into the UPD card of the registry:
  *  the Kaiten invoices the document closes and how they were found, the seller's invoices near its date to link by
  *  hand, the pairs the buyer rejected (to undo), and the receiving lines that came with it. */
 

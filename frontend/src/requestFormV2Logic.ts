@@ -1,4 +1,4 @@
-/* Stage option `requests.form`: logic of the reworked «Оформить заявку» form. No React here.
+/* logic of the reworked «Оформить заявку» form. No React here.
    Idea: nothing is pre-filled except док. качества «Нет». The header («Общее для всех позиций») is the default, a line
    value is the override; an empty line value means «as in the header». The server fills what is omitted
    (apply_draft_defaults). The purpose is a property of the PROJECT, never chosen here; there is no категория. */
@@ -24,7 +24,7 @@ export function pointLabel(address: string): string {
 }
 
 /** Header = the common fields plus the chosen project: «c:<номер>» (customer), «i:<назначение>» (internal by purpose,
- *  option projects.internal off) or «p:<ВП-номер>» (an internal project, option on). */
+ *  no open ВП) or «p:<ВП-номер>» (an internal project). */
 export type Header = Common & { project: string };
 
 export function emptyHeader(): Header {
@@ -51,7 +51,7 @@ export const projectKind = (header: Header): "customer" | "internal" | "" =>
   header.project.startsWith("c:") ? "customer" : header.project.startsWith("i:") || header.project.startsWith("p:") ? "internal" : "";
 
 /** A customer project sets the number and the purpose «Коммерческий проект»; an internal purpose clears the number and
- *  sets the purpose (option projects.internal off); an internal project «ВП-001» sets its number and its own purpose.
+ *  sets the purpose (no open ВП); an internal project «ВП-001» sets its number and its own purpose.
  *  The purpose is shown read-only. */
 export function chooseProject(header: Header, key: string, internal: InternalProjectBrief[] = []): Header {
   if (key.startsWith("p:")) {
@@ -64,8 +64,8 @@ export function chooseProject(header: Header, key: string, internal: InternalPro
 }
 
 /** `?project=` of «Новая заявка» in «Заявки» закупщика: the project option it names — a customer project by its number, an
- *  internal «ВП-…» (option projects.internal on; an internal purpose → its only internal project), or an internal purpose
- *  (option off). "" — nothing matches, the field stays empty. */
+ *  internal «ВП-…» (an internal purpose → its only internal project), or an internal purpose
+ *  (no open ВП). "" — nothing matches, the field stays empty. */
 export function projectKeyFor(
   param: string, projects: string[], purposes: string[], internal: InternalProjectBrief[], internalOn: boolean,
 ): string {

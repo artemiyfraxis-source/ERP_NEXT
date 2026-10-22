@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
 import type { WarehouseLot } from "./api";
-import { resetStageOptions } from "./StageOptions";
 
 const lot: WarehouseLot = {
   id: "40000000-0000-0000-0000-000000000001",
@@ -30,20 +29,15 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); resetStageOptions(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); });
 
 type Call = { method: string; path: string; body?: unknown };
 
-function stage(on: boolean | string[], routes: Record<string, (call: Call) => Response> = {}) {
-  const enabled = Array.isArray(on) ? on : on ? ["warehouse.scan"] : [];
+function stage(routes: Record<string, (call: Call) => Response> = {}) {
   const calls: Call[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const call = { method: init?.method ?? "GET", path: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined };
     calls.push(call);
-    if (call.path === "/api/stage-options") {
-      return json({ available: true, options: ["warehouse.scan", "warehouse.undo"].map((key) => (
-        { key, block: "Склад", title: "t", before: "", after: "", enabled: enabled.includes(key) })) });
-    }
     if (call.path.split("?")[0] === "/api/stock" && call.method === "GET") return json({ lots: [lot, other], total: 2, truncated: 0, next_cursor: null });
     const route = routes[`${call.method} ${call.path}`];
     if (route) return route(call);
@@ -61,17 +55,8 @@ async function scan(code: string) {
   return input;
 }
 
-it("has one search field: no separate scan field, and Enter scans nothing while the option is off", async () => {
-  const calls = stage(false);
-  render(<WarehousePage />);
-  await screen.findAllByRole("button", { name: /Показать партии/ });
-  expect(screen.getAllByRole("textbox", { name: /Поиск по складу|Скан/ })).toHaveLength(1);
-  expect(screen.queryByRole("search")).not.toBeInTheDocument();
-  expect(calls.some((call) => call.path.startsWith("/api/stock/scan"))).toBe(false);
-});
-
 it("a scanned ГРН opens its card; Enter in the quantity writes off through the existing endpoint", async () => {
-  const calls = stage(true, {
+  const calls = stage({
     "GET /api/stock/scan?code=frx.26.0000001": () => json({ kind: "lot", code: "frx.26.0000001", place: "", lots: [lot] }),
     [`POST /api/stock/batches/${lot.id}/writeoff`]: () => json({ lot: { ...lot, version: 5, written_off: "2", balance: "8", available: "8" } }),
   });
@@ -94,7 +79,7 @@ it("a scanned ГРН opens its card; Enter in the quantity writes off through th
 });
 
 it("a write-off without a purpose is stopped in the card, nothing is sent", async () => {
-  const calls = stage(true, {
+  const calls = stage({
     "GET /api/stock/scan?code=FRX.26.0000001": () => json({ kind: "lot", code: "FRX.26.0000001", place: "", lots: [lot] }),
   });
   render(<WarehousePage />);
@@ -107,7 +92,7 @@ it("a write-off without a purpose is stopped in the card, nothing is sent", asyn
 });
 
 it("a place lists its lots, a lot opens, «Переместить» moves it, Esc closes and gives the focus back", async () => {
-  const calls = stage(true, {
+  const calls = stage({
     "GET /api/stock/scan?code=1F4": () => json({ kind: "place", code: "1F4", place: "1F4", lots: [lot, other] }),
     [`POST /api/stock/batches/${other.id}/move`]: () => json({ lot: { ...other, version: 5, storage_location: "2A1" } }),
   });
@@ -130,7 +115,7 @@ it("a place lists its lots, a lot opens, «Переместить» moves it, Es
 });
 
 it("words that are no ГРН or place stay a filter of the table: the scan's «Не найдено» is not shown", async () => {
-  const calls = stage(true, { "GET /api/stock/scan?code=%D1%80%D0%B5%D0%B7%D0%B8%D1%81%D1%82%D0%BE%D1%80": () => json({ detail: "Не найдено: резистор" }, 404) });
+  const calls = stage({ "GET /api/stock/scan?code=%D1%80%D0%B5%D0%B7%D0%B8%D1%81%D1%82%D0%BE%D1%80": () => json({ detail: "Не найдено: резистор" }, 404) });
   render(<WarehousePage />);
   const input = await scan("резистор");
   await waitFor(() => expect(calls.some((call) => call.path.startsWith("/api/stock/scan"))).toBe(true));
@@ -141,15 +126,15 @@ it("words that are no ГРН or place stay a filter of the table: the scan's «�
 });
 
 it("a failed scan other than «not found» says so", async () => {
-  stage(true, { "GET /api/stock/scan?code=FRX.26.0000001": () => json({ detail: "Склад недоступен" }, 503) });
+  stage({ "GET /api/stock/scan?code=FRX.26.0000001": () => json({ detail: "Склад недоступен" }, 503) });
   render(<WarehousePage />);
   await scan("FRX.26.0000001");
   expect(await screen.findByRole("alert")).toHaveTextContent("Склад недоступен");
 });
 
-it("«Отменить последнее» in the scan card shows what it takes back and undoes it (option warehouse.undo)", async () => {
+it("«Отменить последнее» in the scan card shows what it takes back and undoes it", async () => {
   let undone = false;
-  const calls = stage(["warehouse.scan", "warehouse.undo"], {
+  const calls = stage({
     "GET /api/stock/scan?code=FRX.26.0000001": () => json({ kind: "lot", code: "FRX.26.0000001", place: "", lots: [lot] }),
     [`GET /api/stock/batches/${lot.id}/undo`]: () => json(undone
       ? { undo: null, reason: "Последнее движение — уже отмена. Если нужно, сделай действие заново." }
@@ -174,7 +159,7 @@ it("«Отменить последнее» in the scan card shows what it takes
 });
 
 it("a lot card in the table reads the undo line only on the first click", async () => {
-  const calls = stage(["warehouse.undo"], {
+  const calls = stage({
     [`GET /api/stock/batches/${lot.id}/undo`]: () => json({ undo: null, reason: "По этой партии нечего отменять." }),
   });
   render(<WarehousePage />);

@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { PurchasingRfq } from "./PurchasingRfq";
 import { RfqPool } from "./RfqPool";
-import { resetStageOptions } from "./StageOptions";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -81,7 +80,6 @@ function mockServer(posts: { path: string; body: unknown }[] = [], gets: string[
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
-  resetStageOptions();
 });
 
 it("renders the pool by category with the original suppliers in the group header", async () => {

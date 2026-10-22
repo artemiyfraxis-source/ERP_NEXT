@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { AutoTextarea } from "./AutoTextarea";
 import {
   kitsetsApi,
   productionApi,
@@ -12,39 +11,19 @@ import {
   type ProductionPlanRow,
   type ProductionTask,
 } from "./api";
-import { StageChangeDialog } from "./StageChangeDialog";
-import { canAct } from "./navigation";
+import { canAct, canSee, openPlace } from "./navigation";
 import { MachineLoadGrid } from "./MachineLoad";
 import { PeopleLoadGrid } from "./PeopleLoad";
 import { PlanBaseline } from "./PlanBaseline";
-import { EMPTY, formatDate, formatDayMonth, formatMoment } from "./format";
-import { PlanLoadSheet, markText, periodWords, type SheetMark } from "./PlanLoadSheet";
-import { StatusChip } from "./StatusChip";
-import { deadlineTone, statusTone } from "./statusTone";
+import { EMPTY, formatDate, formatDayMonth } from "./format";
+import { PlanLoadSheet, periodWords, type SheetMark } from "./PlanLoadSheet";
 
 const emptyPlan: ProductionPlanResult = { blockers: [], stages: [], review_values: [], rows: [] };
 const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 
 const shortDate = (value: string | null) => formatDate(value) || EMPTY;
-const moment = (value: string | null) => formatMoment(value) || EMPTY;
-
-// planDaysTag_
-function daysTag(row: ProductionPlanRow) {
-  if (row.days_left === null || !row.deadline) return <StatusChip tone="neutral">без дедлайна</StatusChip>;
-  const days = row.days_left;
-  const text = days < 0 ? `просрочен ${-days} дн` : days === 0 ? "дедлайн сегодня" : `${days} дн до ${formatDayMonth(row.deadline)}`;
-  return <StatusChip tone={deadlineTone(days)} title={`Дедлайн ${shortDate(row.deadline)}`}>{text}</StatusChip>;
-}
 
 const projectKey = (project: string) => project.trim().toUpperCase();
-
-/** «Проекты» без открытой карточки: тот же адрес раздела, что у ссылок меню (App слушает popstate). */
-function openProjectsList() {
-  const url = new URL(window.location.href);
-  url.search = "?section=projects";
-  window.history.pushState({}, "", url);
-  window.dispatchEvent(new PopStateEvent("popstate"));
-}
 
 export function ProductionPlanPage({ principal, openProjectCard }: {
   principal: Principal;
@@ -59,8 +38,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   const [operators, setOperators] = useState<ProductionOperator[]>([]);
   const [loadError, setLoadError] = useState("");
   const [week, setWeek] = useState(0);
-  const [selectedProject, setSelectedProject] = useState("");
-  const [loaded, setLoaded] = useState(false);
+    const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // Проекты с карточкой в «Проектах»: № открывает карточку только у них (ПП-5); список не пришёл — по наличию КБ.
@@ -73,7 +51,6 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     try {
       const result = await productionPlanApi.load();
       setData(result);
-      setSelectedProject((current) => current && result.rows.some((row) => row.project === current) ? current : "");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Производственный план не загружен");
     } finally {
@@ -104,7 +81,6 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     return { today: data.today ?? shift(0), from: data.calendar_from ?? shift(-7), to: data.calendar_to ?? shift(60) };
   }, [data.today, data.calendar_from, data.calendar_to]);
   const activeCount = data.rows.filter((row) => (row.group ?? (row.terminal ? "closed" : "active")) !== "closed" && !row.terminal && row.stage !== "Отгружено").length;
-  const selected = data.rows.find((row) => row.project === selectedProject) ?? null;
 
   // Сетка станков перечитывает занятость, когда пришли новые задания (назначили, сдвинули).
   const planVersion = useMemo(() => tasks.map((task) => `${task.id}:${task.version}`).join(","), [tasks]);
@@ -129,21 +105,16 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     }
   }
 
-  /** Ручной этап — после подтверждения в окне смены этапа; ошибка уходит в само окно (409, причина назад). */
-  async function applyStage(project: string, kb: string, value: string, reason: string, previewToken: string) {
-    await productionPlanApi.addEvent({ project, kind: "stage", blocker: "", text: "", deadline: null, item_index: kb, value, reason, preview_token: previewToken });
-    await reload();
-  }
-
   async function addMark(mark: SheetMark) {
     await addEvent({ project: mark.project, kind: "mark", blocker: "", text: mark.text ?? "", deadline: null, field: mark.field, value: mark.value ?? "" });
   }
 
   function openRow(row: ProductionPlanRow) {
-    // № проекта открывает его карточку (владелец 29.09: панель снизу неудобна); проект без карточки — журнал сбоку
-    // со строкой «карточки нет» вместо ложного «Карточка уже удалена».
-    if (openProjectCard && hasCard(row)) openProjectCard(row.project);
-    else setSelectedProject(row.project);
+    // Проект открывается окном в «Ресурсном планировании» (владелец 22.10: «из плана — в проект в производстве»,
+    // боковой панели нет): адрес `?section=production&project=…`, кнопка «Назад» возвращает в план.
+    // Без доступа к ресурсному планированию — карточка проекта в «Проектах», если она есть.
+    if (canSee(principal, "production")) openPlace("production", { project: row.project });
+    else if (openProjectCard && hasCard(row)) openProjectCard(row.project);
   }
 
   return <section className="page production-plan-page">
@@ -163,16 +134,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
           arrivalValues={data.arrival_values ?? ["Склад", "Ждем", "???"]} canEdit={canEdit} busy={busy}
           onStatusChanged={() => void reload()} onMark={addMark}
           onDeadline={(project, deadline) => addEvent({ project, kind: "deadline", blocker: "", text: "", deadline })}
-          onOpenProject={openRow} onOpenJournal={(row) => setSelectedProject(row.project)} hasCard={hasCard} />}
-      {selected && <div className="plan-drawer" role="dialog" aria-label={`Проект ${selected.project}`}>
-        <div className="plan-drawer-scrim" onClick={() => setSelectedProject("")} />
-        <div className="plan-drawer-body">
-        <button className="link-button plan-details-close" onClick={() => setSelectedProject("")}>✕ Закрыть</button>
-        <PlanDetails row={selected} blockers={data.blockers} stages={data.stages} reviewValues={data.review_values} canEdit={canEdit} busy={busy} addEvent={addEvent} applyStage={applyStage}
-          openProjectCard={openProjectCard && hasCard(selected) ? () => openProjectCard(selected.project) : undefined}
-          noCard={Boolean(openProjectCard) && !hasCard(selected)} />
-        </div>
-      </div>}
+          onOpenProject={openRow} onOpenJournal={openRow} hasCard={hasCard} />}
     </section>
 
     <PlanBaseline canEdit={canEdit} />
@@ -193,127 +155,4 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
         : <MachineLoadGrid holidays={holidays} shift={shift} week={week} onWeekChange={setWeek} refreshKey={planVersion} />}
     </section>
   </section>;
-}
-
-function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEvent, applyStage, openProjectCard, noCard = false }: {
-  row: ProductionPlanRow;
-  openProjectCard?: () => void;
-  /** У проекта нет карточки в «Проектах» — честная строка и переход к ним. */
-  noCard?: boolean;
-  blockers: string[];
-  stages: string[];
-  reviewValues: string[];
-  canEdit: boolean;
-  busy: boolean;
-  addEvent: (payload: Parameters<typeof productionPlanApi.addEvent>[0]) => Promise<void>;
-  applyStage: (project: string, kb: string, value: string, reason: string, previewToken: string) => Promise<void>;
-}) {
-  const [stagePick, setStagePick] = useState<{ kb: string; current: string; value: string } | null>(null);
-  const [kind, setKind] = useState<"note" | "block" | "unblock" | "deadline">("note");
-  const [blocker, setBlocker] = useState(blockers[0] ?? "");
-  const [text, setText] = useState("");
-  const [deadline, setDeadline] = useState(row.deadline ?? "");
-
-  useEffect(() => { setDeadline(row.deadline ?? ""); setText(""); }, [row.project, row.deadline]);
-
-  async function submit() {
-    await addEvent({ project: row.project, kind, blocker, text, deadline: deadline || null });
-    setText("");
-    if (kind === "unblock") setKind("note");
-  }
-
-  const valid = kind === "unblock" || (kind === "deadline" ? Boolean(deadline) : Boolean(text.trim()) && (kind !== "block" || Boolean(blocker)));
-  return <aside className="panel production-plan-details">
-    <div className="plan-detail-head"><div><span className="eyebrow">Проект</span><h2>{row.project}</h2></div><StatusChip status={row.stage} /></div>
-    <div className="plan-tags">{row.blocker && <StatusChip status={row.blocker.type} />}{daysTag(row)}</div>
-    {openProjectCard && <div className="plan-acts"><button className="secondary" onClick={openProjectCard}>Открыть карточку проекта</button></div>}
-    {noCard && <div className="warning-inline plan-no-card" role="note">
-      <span>Карточки проекта {row.project} в «Проектах» нет — создайте её из расчёта.</span>
-      <a className="secondary small plan-link-button" href="?section=projects" onClick={(event) => {
-        if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
-        event.preventDefault();
-        openProjectsList();
-      }}>Открыть «Проекты»</a>
-    </div>}
-    {row.blocker && <p className="plan-blocker" data-tone={statusTone(row.blocker.type)}><b>{row.blocker.type}</b> с {moment(row.blocker.since)} · {row.blocker.text} — {row.blocker.who}</p>}
-    <section><h3>Проект</h3><p>Заказчик: {row.customer || "—"} · дедлайн {shortDate(row.deadline)} · заведён {shortDate(row.opened_on)}</p></section>
-    <div className="plan-kit-stages">{row.kits.map((item) => <KitMarkEditor
-      key={item.item_index} project={row.project} item={item} stages={stages}
-      reviewValues={reviewValues} canEdit={canEdit} busy={busy} addEvent={addEvent}
-      pickStage={(value) => setStagePick({ kb: item.item_index, current: item.status, value })}
-    />)}
-      {/* A project without KBs takes its stage from a journal stage mark with an empty KB. */}
-      {!row.kits.length && canEdit && stages.includes(row.stage) && <div className="plan-kit-mark">
-        <strong>Без КБ</strong>
-        <label>Этап проекта<select aria-label="Этап проекта" value={row.stage_manual ? row.stage : "авто"} disabled={busy}
-          onChange={(event) => setStagePick({ kb: "", current: row.stage, value: event.target.value })}>
-          <option value="авто">Авто · {row.stage}</option>{stages.map((stage) => <option key={stage}>{stage}</option>)}
-        </select></label>
-      </div>}
-    </div>
-    {stagePick && <StageChangeDialog project={row.project} kb={stagePick.kb} current={stagePick.current} value={stagePick.value}
-      loadPreview={() => productionPlanApi.stagePreview(row.project, stagePick.value, stagePick.kb)}
-      apply={async (reason, token) => { await applyStage(row.project, stagePick.kb, stagePick.value, reason, token); setStagePick(null); }}
-      onClose={() => setStagePick(null)} />}
-    {row.supply ? <section><h3>Снабжение</h3><p>Всего {row.supply.total}: склад {row.supply.stock}, в пути {row.supply.transit}, в закупке {row.supply.buying}, в заявках {row.supply.request}.</p>
-      <p>Давальческое: {row.supply.customer_supplied ? `${row.supply.customer_supplied_stock} из ${row.supply.customer_supplied} пришло` : "нет"}</p>
-      {row.supply.eta && row.supply.stock < row.supply.total && <small>Всё будет к {row.supply.eta}</small>}</section>
-      : <section><h3>Снабжение</h3><p>Заявок с этим проектом в НАЗНАЧЕНИИ нет.</p></section>}
-    {row.plan && <section><h3>Загрузка цеха</h3><p>{row.plan.tasks} заданий · назначено {row.plan.assigned} из {row.plan.total} этапов.</p>{row.plan.start && <small>{moment(row.plan.start)} — {moment(row.plan.finish)}</small>}</section>}
-    {canEdit && <section className="plan-note-form"><h3>Журнал проекта</h3><div className="plan-note-grid">
-      <label>Запись<select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}><option value="note">Комментарий</option><option value="block">Блокер</option>{row.blocker && <option value="unblock">Снять блокер</option>}<option value="deadline">Дедлайн</option></select></label>
-      {kind === "block" && <label>Вид<select value={blocker} onChange={(event) => setBlocker(event.target.value)}>{blockers.map((item) => <option key={item}>{item}</option>)}</select></label>}
-      {kind === "deadline" && <label>Дата<input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>}
-      {kind !== "unblock" && <label className="plan-note-text">Комментарий<AutoTextarea value={text} multiline maxRows={8} onChange={setText} /></label>}
-      <button className="primary" disabled={busy || !valid} onClick={() => void submit()}>Записать</button>
-    </div></section>}
-    <section className="plan-journal"><h3>История</h3>{row.events.map((event) => <article key={event.id}><div><strong>{event.kind}{event.blocker ? ` · ${event.blocker}` : ""}</strong><time>{moment(event.occurred_at)}</time></div><p>{event.field ? markText(event) : event.text || "Без комментария"}</p><small>{event.who}</small></article>)}{!row.events.length && <div className="empty">Записей пока нет.</div>}</section>
-  </aside>;
-}
-
-function KitMarkEditor({ project, item, stages, reviewValues, canEdit, busy, addEvent, pickStage }: {
-  project: string;
-  item: ProductionPlanRow["kits"][number];
-  stages: string[];
-  reviewValues: string[];
-  canEdit: boolean;
-  busy: boolean;
-  addEvent: (payload: Parameters<typeof productionPlanApi.addEvent>[0]) => Promise<void>;
-  pickStage: (value: string) => void;
-}) {
-  const currentReview = item.review?.value ?? "не проверена";
-  const [review, setReview] = useState(currentReview);
-  const [reviewText, setReviewText] = useState(item.review?.text ?? "");
-  useEffect(() => {
-    setReview(currentReview);
-    setReviewText(item.review?.text ?? "");
-  }, [project, item.item_index, currentReview, item.review?.text]);
-
-  function payload(kind: "tcReview", value: string, text = "") {
-    return { project, kind, blocker: "", text, deadline: null, item_index: item.item_index, value } as const;
-  }
-
-  return <div className="plan-kit-mark">
-    <strong>{item.item_index}</strong>
-    <span>{item.tc ? "ТК выдана" : "ТК нет"} · {item.kit ? "набрано" : "не набрано"}</span>
-    {canEdit ? <>
-      <label>Этап<select aria-label={`Этап ${item.item_index}`} value={item.manual ? item.status : "авто"} disabled={busy}
-        onChange={(event) => pickStage(event.target.value)}>
-        <option value="авто">Авто · {item.status}</option>{stages.map((stage) => <option key={stage}>{stage}</option>)}
-      </select></label>
-      <label>Проверка ТК<select aria-label={`Проверка ТК ${item.item_index}`} value={review} disabled={busy}
-        onChange={(event) => {
-          const value = event.target.value;
-          setReview(value);
-          if (value !== "с погрешностями") void addEvent(payload("tcReview", value));
-        }}>
-        {reviewValues.map((value) => <option key={value}>{value}</option>)}
-      </select></label>
-      {review === "с погрешностями" && <label>Погрешности<AutoTextarea aria-label={`Погрешности ${item.item_index}`} value={reviewText} multiline onChange={setReviewText} /></label>}
-      {review === "с погрешностями" && <button className="secondary small" disabled={busy || !reviewText.trim()} onClick={() => void addEvent(payload("tcReview", review, reviewText))}>Сохранить проверку</button>}
-    </> : <>
-      <span>{item.status}{item.manual ? " · вручную" : ""}</span>
-      <span>{currentReview}{item.review?.text ? ` · ${item.review.text}` : ""}</span>
-    </>}
-  </div>;
 }

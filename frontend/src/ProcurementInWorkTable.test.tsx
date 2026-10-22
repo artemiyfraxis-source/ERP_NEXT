@@ -66,6 +66,7 @@ it("keeps free text in the link cell as amber text with the hint, without a clic
 it("saves every edited row in one call and refuses a row without quantity", async () => {
   const sent: Record<string, unknown>[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    if (String(_input).includes("price-history")) return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
     sent.push(JSON.parse(String(init?.body)));
     return new Response(JSON.stringify({ lines: [], saved: 2, ready: 2, skipped: [], failed: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
@@ -144,6 +145,7 @@ it("spreads a block pasted from Excel in the column order, skips the read-only p
 it("keeps typed cells over a fresh copy of the row and fills only the untouched ones", async () => {
   const sent: Record<string, unknown>[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    if (String(_input).includes("price-history")) return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
     sent.push(JSON.parse(String(init?.body)));
     return new Response(JSON.stringify({ lines: [], saved: 1, ready: 0, skipped: [], failed: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
@@ -261,6 +263,7 @@ it("keeps the group button off when the group has no ready lines", () => {
 it("does not send an empty supplier that was not touched", async () => {
   const sent: Record<string, unknown>[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    if (String(_input).includes("price-history")) return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
     sent.push(JSON.parse(String(init?.body)));
     return new Response(JSON.stringify({ lines: [], saved: 1, ready: 0, skipped: [], failed: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
@@ -280,7 +283,7 @@ it("keeps every row action visible on the row (no «⋯» menu), without approva
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   const actions = within(screen.getByRole("group", { name: "Действия SM-1" }));
   expect(actions.getAllByRole("button").map((item) => item.textContent)).toEqual([
-    "Со склада", "Документы…", "Есть на складе, без ГРН", "Отменить строку",
+    "Со склада", "Документы…", "Есть на складе, без ГРН", "Отменить строку", "История",
   ]);
   // Полное название — в имени и подсказке кнопки: колонка действий узкая.
   expect(actions.getByRole("button", { name: "Документы, прослеживаемость…" })).toHaveAttribute("title", "Документы, прослеживаемость…");
@@ -391,6 +394,7 @@ it("shows the server's refusal text when the reserve is rejected", async () => {
 it("shows the covered quantity on the row and releases it from the menu", async () => {
   const posted: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).includes("price-history")) return jsonResponse({});
     posted.push(`${init?.method} ${String(input)}`);
     return jsonResponse({ line: line(1), released: [cover] });
   });
@@ -512,6 +516,7 @@ it("still saves an edit made in a group that was folded afterwards", async () =>
   window.localStorage.clear();
   const sent: { rows: Record<string, unknown>[] }[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    if (String(_input).includes("price-history")) return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
     sent.push(JSON.parse(String(init?.body)));
     return new Response(JSON.stringify({ lines: [], saved: 1, ready: 1, skipped: [], failed: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
