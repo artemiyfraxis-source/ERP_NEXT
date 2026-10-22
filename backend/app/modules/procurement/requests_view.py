@@ -1,4 +1,4 @@
-"""Stage option `procurement.requests_rb`: Roller_Buyer's «Заявки» over procurement lines, computed on read.
+"""Roller_Buyer's «Заявки» over procurement lines, computed on read.
 
 The procurement line stays the one entity; RB's «заявка» is a view of it: project (`domain.line_project`) → request batch
 (`domain.batch_key`: the lines sharing НАЗНАЧЕНИЕ) → lines. Each line gets RB's status (`domain/status.ts`
@@ -92,7 +92,7 @@ class ViewLine:
     invoiced: bool = False
     requested: bool = False
     order_number: str | None = None
-    # Dates «Сегодня» reads (option procurement.today); «Заявки» does not need them.
+    # Dates «Сегодня» reads; «Заявки» does not need them.
     expected_arrival: date | None = None
     actual_arrival: date | None = None
     invoice_date: date | None = None

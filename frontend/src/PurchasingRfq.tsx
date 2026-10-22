@@ -12,7 +12,6 @@ import {
 } from "./purchasingRfqApi";
 import { picksOf, RfqPool, suggestionKey, SuggestionList } from "./RfqPool";
 import { rfqLinkState, syncRfqUrl } from "./rfqLinks";
-import { useStageOption } from "./StageOptions";
 import { QuoteDialog } from "./RfqQuoteDialog";
 import { Dialog, money, number, quantity } from "./rfqUi";
 import { RfqLetters } from "./RfqLetters";
@@ -23,7 +22,7 @@ import { decidedPicks, RfqBasket } from "./RfqBasket";
 import { invoiceAskable, RfqInvoiceRequests } from "./RfqInvoiceRequests";
 import { RfqKaitenInvoices } from "./RfqKaitenInvoices";
 
-/** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
+/** «Запросы КП» (as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
  *  reasons the gate asks for → supplier and quantity go into the procurement line. */
 
@@ -121,7 +120,6 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
   // Lines ticked for the selection bar (request line ids) and «показать отменённые и убранные».
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [showRemoved, setShowRemoved] = useState(false);
-  const requestsOn = useStageOption("procurement.requests_rb"); // «Разделить» is the requests slice's command
   // «Подбор»: request line → the offer taken for it while the buyer assembles a set; null — the mode is off.
   const [basket, setBasket] = useState<Map<string, string> | null>(null);
   const pick = (ids: string[], on: boolean) => setPicked((current) => {
@@ -271,10 +269,10 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       <MatrixTable
         matrix={matrix} lines={showRemoved ? lines : lines.filter((line) => !line.cancelled)} editable={editable}
         picked={picked} onPick={pick} basket={basket} actions={{
-          onSplit: requestsOn ? (line) => {
+          onSplit: (line) => {
             const task = askSplit(line);
             if (task) void task().then((message) => linesChanged(message)).catch((reason) => setError(failureText(reason, "Строка не разделена")));
-          } : undefined,
+          },
           onOpen: (lineId, supplierId) => setDecisionFor({ lineId, supplierId }),
           onBasket: (lineId, quoteLineId) => setBasket((current) => {
             if (!current) return current;

@@ -85,6 +85,7 @@ import {
   type WireEntry,
 } from "./tcGenLogic";
 import { RouteEditor } from "./RouteEditor";
+import { GenPfScheme, previewSummary, useBuildPreview, type BuildPreview } from "./GenPfScheme";
 import { schemeArt } from "./routeCards";
 import { deriveRoute, documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
 import { ManualAssembly, ManualSummary, type KdOffer } from "./ManualAssembly";
@@ -199,7 +200,7 @@ export type KitEdit = {
  * Данные — `portalTcGenData` → `tcLoadBomFromKit`: состав сборки из набора проекта и строки листа КБn расчёта
  * (`kit`, GET /api/techcards/kitsets/{project}/bom/{index}); нет набора — ошибка вместо формы (`kitError`).
  */
-export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange, userId, onOpenDrawing, kitEdit }: {
+export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange, userId, onOpenDrawing, kitEdit, buildPreview }: {
   card: ProjectTechcard;
   kit?: KitsetBom | null;
   kitError?: string;
@@ -220,6 +221,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   onOpenDrawing?: () => void;
   /** Право дописать комплектующее в состав КБ (правка «Проектов»): `apply` отдаёт новый состав владельцу `kit`. */
   kitEdit?: KitEdit;
+  /** Схема ПФ как в собранной ЭТК: сервер собирает ЭТК из формы без записи (…/build/preview); нет — карточки генератора. */
+  buildPreview?: BuildPreview;
 }) {
   const [refs, setRefs] = useState<Refs | null>(null);
   const [S, setS] = useState<GenState>(emptyState);
@@ -781,6 +784,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     return manualCfg;
   }
 
+  /** Конфигурация «Создать» из проверенной формы: распиновка, снимок формы, ручная схема. */
+  function typicalConfig(cfg: Record<string, unknown>): Record<string, unknown> {
+    const pinout = pinoutRecord(gen, S);
+    // Снимок формы: пересборка открывает карту с прошлыми настройками (genBuildState.ts); движок ЭТК его не читает.
+    const withPinout = { ...(pinout ? { ...cfg, pinout } : cfg), [GEN_STATE_KEY]: genSnapshot(components, S, terEdits, coaxAdd) };
+    return routeOverride ? { ...withPinout, route: routePayload(routeOverride) } : withPinout;
+  }
+
   function typicalPayload(): Record<string, unknown> | null {
     const { cfg, error, warnings } = gen.validate();
     if (error) { setStatus({ text: error, error: true }); return null; }
@@ -797,11 +808,20 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       setStatus({ text: "Сборка отменена — техкарта осталась ручной сборкой.", error: true });
       return null;
     }
-    const pinout = pinoutRecord(gen, S);
-    // Снимок формы: пересборка открывает карту с прошлыми настройками (genBuildState.ts); движок ЭТК его не читает.
-    const withPinout = { ...(pinout ? { ...cfg, pinout } : cfg), [GEN_STATE_KEY]: genSnapshot(components, S, terEdits, coaxAdd) };
-    return routeOverride ? { ...withPinout, route: routePayload(routeOverride) } : withPinout;
+    return typicalConfig(cfg);
   }
+
+  // Схема ПФ (владелец 22.10: «как на 713К»): то, что соберёт «Создать», без вопросов и записи. Форма ещё не
+  // собирается (нет шаблона, длины) или ручная схема не подходит — запроса нет.
+  const previewConfig = useMemo(() => {
+    if (!buildPreview || manualTab) return null;
+    const { cfg, error } = gen.validate();
+    if (error || (routeOverride && routeProblem(routeOverride, routeOps, finalName))) return null;
+    return typicalConfig(cfg);
+  }, [buildPreview, manualTab, gen, routeOverride, routeOps, finalName, components, terEdits, coaxAdd]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pf = useBuildPreview(previewConfig, buildPreview);
+  const pfScheme = !manualTab && (pf.card || pf.loading || pf.error)
+    ? { node: <GenPfScheme preview={pf} />, summary: pf.card ? previewSummary(pf.card) : null } : null;
 
   /** «Поправить вручную»: текущая типовая сборка уходит на сервер как есть и возвращается блоками с операциями. */
   async function editByHand() {
@@ -1523,7 +1543,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
                 skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
                 renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }}
                 onMove={reorder} orderChanged={orderChanged} onResetOrder={resetOrder} art={routeArt}
-                {...(S.tab === "complex" ? { blockView: true, derive: deriveGenerated } : {})} />
+                preview={pfScheme} {...(S.tab === "complex" ? { blockView: true, derive: deriveGenerated } : {})} />
             </>}
           {/* Служебное (владелец 29.09) — свод материалов, удаление черновика, JSON — свёрнуто в «Ещё». */}
           <details className="gen-more"><summary>Ещё</summary>

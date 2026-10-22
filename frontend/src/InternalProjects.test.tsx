@@ -7,7 +7,6 @@ import type { InternalProject, Principal, RequestRow, RequestSchema } from "./ap
 import { projectFromDesignation } from "./projectNumber";
 import { projectLabel, resetInternalProjects } from "./internalProjects";
 import { chooseProject, emptyHeader, internalProjectKey, projectKind } from "./requestFormV2Logic";
-import { resetStageOptions } from "./StageOptions";
 
 const principal: Principal = {
   user: { id: "u1", email: "b@example.test", name: "Закупщик", department: "Закупки" },
@@ -35,18 +34,13 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const option = (key: string, enabled: boolean) => ({ key, block: "b", title: "t", before: "", after: "", enabled });
-
-function stub(internalOn: boolean, extra: (path: string, init?: RequestInit) => Response | undefined = () => undefined, state = { rows: [project()] }) {
+function stub(extra: (path: string, init?: RequestInit) => Response | undefined = () => undefined, state = { rows: [project()] }) {
   const calls: Array<{ path: string; init?: RequestInit }> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = decodeURIComponent(String(input));
     calls.push({ path, init });
     const custom = extra(path, init);
     if (custom) return custom;
-    if (path === "/api/stage-options") {
-      return json({ available: true, options: [option("projects.internal", internalOn), option("requests.form", true)] });
-    }
     if (path === "/api/purchasing/internal-projects" && init?.method === "POST") {
       const created = project({ id: "p2", number: "ВП-002", name: JSON.parse(String(init.body)).name, lines: {}, open_requests: 0 });
       state.rows = [...state.rows, created];
@@ -74,20 +68,12 @@ afterEach(() => {
   vi.restoreAllMocks();
   window.localStorage.clear();
   cleanup(); // unmount before the reset: a live tree would refetch without the mock
-  resetStageOptions();
   resetInternalProjects();
 });
 
 describe("«Проекты»: Коммерческие · Внутренние", () => {
-  it("has no tabs while the option is off", async () => {
-    stub(false);
-    render(<ProjectsPage principal={principal} />);
-    await screen.findByRole("heading", { name: "Проекты" });
-    expect(screen.queryByRole("tab", { name: "Внутренние" })).not.toBeInTheDocument();
-  });
-
   it("shows the internal projects as a table with full-word purpose, stages and the status", async () => {
-    stub(true);
+    stub();
     render(<ProjectsPage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: "Внутренние" }));
     const table = await screen.findByRole("table");
@@ -101,7 +87,7 @@ describe("«Проекты»: Коммерческие · Внутренние",
   });
 
   it("creates a project from the form and closes one", async () => {
-    const calls = stub(true);
+    const calls = stub();
     render(<ProjectsPage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: "Внутренние" }));
     fireEvent.click(await screen.findByRole("button", { name: "+ Внутренний проект" }));
@@ -125,18 +111,18 @@ describe("«Проекты»: Коммерческие · Внутренние",
 });
 
 describe("request form: internal projects group", () => {
-  async function openForm(internalOn: boolean, withProjects = true) {
-    stub(internalOn, (path) => (path === "/api/requests/schema"
+  async function openForm(withProjects = true) {
+    stub((path) => (path === "/api/requests/schema"
       ? json({
-        ...schema, projects: internalOn ? schema.projects : ["591К.3"],
-        internal_projects: internalOn && withProjects ? schema.internal_projects : [],
+        ...schema, projects: schema.projects,
+        internal_projects: withProjects ? schema.internal_projects : [],
       }) : undefined));
     render(<RequestsPage principal={principal} view="create" />);
     return screen.findByLabelText("Проект");
   }
 
   it("lists open internal projects and locks the purpose to the chosen one", async () => {
-    const field = await openForm(true);
+    const field = await openForm();
     fireEvent.focus(field);
     const list = await screen.findByRole("listbox");
     expect(within(list).getByText("Внутренние проекты")).toBeInTheDocument();
@@ -148,19 +134,11 @@ describe("request form: internal projects group", () => {
   });
 
   it("offers «Создать внутренний проект…» when there is none and opens the Projects section", async () => {
-    const field = await openForm(true, false);
+    const field = await openForm(false);
     fireEvent.focus(field);
     fireEvent.mouseDown(within(await screen.findByRole("listbox")).getByRole("option", { name: "Создать внутренний проект…" }));
     expect(new URL(window.location.href).searchParams.get("section")).toBe("projects");
     expect(new URL(window.location.href).searchParams.get("tab")).toBe("internal");
-  });
-
-  it("keeps the purposes as the internal choice while the option is off", async () => {
-    const field = await openForm(false);
-    fireEvent.focus(field);
-    const list = await screen.findByRole("listbox");
-    expect(within(list).getByRole("option", { name: "НИОКР (опытный образец)" })).toBeInTheDocument();
-    expect(within(list).queryByRole("option", { name: /ВП-001/ })).not.toBeInTheDocument();
   });
 
   it("chooseProject takes the number and the purpose of an internal project", () => {
@@ -172,10 +150,7 @@ describe("request form: internal projects group", () => {
 
 describe("«ВП-001 · Название» wherever a reference is shown", () => {
   it("labels the cards of the «Сегодня» board", async () => {
-    stub(true, (path) => {
-      if (path === "/api/stage-options") {
-        return json({ available: true, options: [option("projects.internal", true), option("procurement.today", true)] });
-      }
+    stub((path) => {
       if (path === "/api/procurement/today") {
         const card = (value: string, days: number) => ({
           title: value, detail: "1 позиция", link: { tab: "requests", project: value }, days,
@@ -194,7 +169,7 @@ describe("«ВП-001 · Название» wherever a reference is shown", () =>
   });
 
   it("projectLabel leaves anything else as written", async () => {
-    stub(true);
+    stub();
     const { useProjectLabel } = await import("./internalProjects");
     let label: (value: string | null | undefined) => string = projectLabel;
     function Probe() { label = useProjectLabel(); return null; }
@@ -215,10 +190,9 @@ describe("«Заявки» без «Цели» (owner, 16.10: «Убери „Ц
     priority: "", planned_date: "2026-10-30", ...patch,
   });
 
-  function stubRows(formOn: boolean, rows: RequestRow[]) {
+  function stubRows(rows: RequestRow[]) {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = decodeURIComponent(String(input));
-      if (path === "/api/stage-options") return json({ available: true, options: [option("projects.internal", true), option("requests.form", formOn)] });
       if (path === "/api/purchasing/internal-projects") return json({ projects: [project()] });
       if (path === "/api/requests/schema") return json(schema);
       if (path === "/api/requests") return json({ requests: rows });
@@ -227,7 +201,7 @@ describe("«Заявки» без «Цели» (owner, 16.10: «Убери „Ц
   }
 
   it("shows «Проект» — the reference, the project the designation starts with, never the purpose", async () => {
-    stubRows(true, [
+    stubRows([
       row({ id: "a", legacy_id: "SM-A", project_reference: "ВП-001", designation: "RND.001" }),
       row({ id: "b", legacy_id: "SM-B", designation: "708К.4.012" }),
       row({ id: "c", legacy_id: "SM-C", designation: "RND.002", purpose: "RND" }),
@@ -241,14 +215,6 @@ describe("«Заявки» без «Цели» (owner, 16.10: «Убери „Ц
     await waitFor(() => expect(cell("ВП-001 · Стенд испытаний")).toBe(true));
     expect(cell("708К.4")).toBe(true);
     expect(screen.queryAllByText("НИОКР (опытный образец)")).toHaveLength(0);
-  });
-
-  it("keeps «Цель» while the new request form is off", async () => {
-    stubRows(false, [row({ id: "c", legacy_id: "SM-C", designation: "RND.002", purpose: "RND" })]);
-    window.history.replaceState({}, "", "/?section=requests");
-    render(<RequestsPage principal={principal} />);
-    await screen.findByText("SM-C");
-    expect(screen.getAllByRole("columnheader", { name: /Цель/ }).length).toBeGreaterThan(0);
   });
 
   it("projectFromDesignation reads only real project numbers", () => {

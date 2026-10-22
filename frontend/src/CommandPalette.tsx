@@ -1,26 +1,25 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { api, type Principal } from "./api";
 import { hasNavAccess, NAV, openPlace, type Section } from "./navigation";
-import { useStageOption } from "./StageOptions";
 
-/** Глобальный поиск (опция ui.search): Ctrl+K или «/» вне поля ввода. Результаты приходят из /api/search уже
+/** Глобальный поиск: Ctrl+K или «/» вне поля ввода. Результаты приходят из /api/search уже
  *  отфильтрованными по правам; «Команды» — переходы по разделам, открытым этому человеку. */
 export type SearchResult = { group: string; title: string; subtitle: string; section: string; params: Record<string, string> };
 type SearchPayload = { query: string; results: SearchResult[]; ms: number };
 
-type Command = { label: string; section: Section; params?: Record<string, string>; option?: string; words?: string };
+type Command = { label: string; section: Section; params?: Record<string, string>; words?: string };
 
-// Order = order in the list. `option`: the command exists only while that stage option is on.
+// Order = order in the list.
 const COMMANDS: Command[] = [
   { label: "Оформить заявку", section: "newrequest" },
-  { label: "Сегодня", section: "procurement", params: { tab: "today" }, option: "procurement.today", words: "закупка" },
-  { label: "Запросы КП", section: "procurement", params: { tab: "rfq" }, option: "procurement.rfq", words: "коммерческое предложение" },
-  { label: "Счета и поставки", section: "procurement", params: { tab: "orders" }, option: "procurement.orders", words: "заказы поставщикам оплата доставка" },
+  { label: "Сегодня", section: "procurement", params: { tab: "today" }, words: "закупка" },
+  { label: "Запросы КП", section: "procurement", params: { tab: "rfq" }, words: "коммерческое предложение" },
+  { label: "Счета и поставки", section: "procurement", params: { tab: "orders" }, words: "заказы поставщикам оплата доставка" },
   { label: "Склад", section: "stock", words: "остатки ГРН" },
   { label: "Приёмка", section: "receiving", words: "входной контроль" },
-  { label: "Поставщики", section: "procurement", params: { tab: "directory" }, option: "references.suppliers" },
-  { label: "Номенклатура", section: "procurement", params: { tab: "items" }, option: "references.items", words: "справочник" },
-  { label: "Внутренние проекты", section: "projects", params: { tab: "internal" }, option: "projects.internal", words: "ВП" },
+  { label: "Поставщики", section: "procurement", params: { tab: "directory" } },
+  { label: "Номенклатура", section: "procurement", params: { tab: "items" }, words: "справочник" },
+  { label: "Внутренние проекты", section: "projects", params: { tab: "internal" }, words: "ВП" },
 ];
 
 // A GRN as the label prints it: «PPM.26.0000001», with a package «FRX.26.0000003-П2».
@@ -39,11 +38,6 @@ function typing(target: EventTarget | null): boolean {
 
 type Entry = { key: string; group: string; title: string; subtitle: string; go: () => void };
 
-/** Mounted by the shell once signed in: it reads the option itself (a read before sign-in would cache «off»). */
-export function GlobalSearch({ principal }: { principal: Principal }) {
-  return useStageOption("ui.search") ? <CommandPalette principal={principal} /> : null;
-}
-
 export function CommandPalette({ principal }: { principal: Principal }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -52,13 +46,6 @@ export function CommandPalette({ principal }: { principal: Principal }) {
   const [error, setError] = useState("");
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
-  const options: Record<string, boolean> = {
-    "procurement.today": useStageOption("procurement.today"),
-    "procurement.rfq": useStageOption("procurement.rfq"),
-    "references.suppliers": useStageOption("references.suppliers"),
-    "references.items": useStageOption("references.items"),
-    "projects.internal": useStageOption("projects.internal"),
-  };
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -123,7 +110,6 @@ export function CommandPalette({ principal }: { principal: Principal }) {
     }
     const words = fold(text).split(/\s+/).filter(Boolean);
     for (const command of COMMANDS) {
-      if (command.option && !options[command.option]) continue;
       if (!sees(command.section)) continue;
       const haystack = fold(`${command.label} ${command.words ?? ""}`);
       if (words.every((word) => haystack.includes(word))) {
@@ -131,8 +117,7 @@ export function CommandPalette({ principal }: { principal: Principal }) {
       }
     }
     return list;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results, query, principal, options["procurement.today"], options["procurement.rfq"], options["references.suppliers"], options["references.items"], options["projects.internal"]]);
+  }, [results, query, principal]);
 
   useEffect(() => { setActive(0); }, [results, query]);
 

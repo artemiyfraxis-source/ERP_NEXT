@@ -1,6 +1,6 @@
 import { api } from "./api";
 
-/** «Цены и карточки» (stage option references.price_book): /api/purchasing/prices. Money is integer kopecks;
+/** «Цены и карточки»: /api/purchasing/prices. Money is integer kopecks;
  *  reference prices keep unit_price4 = unit price × 10 000 in their own currency. */
 export type PriceCurrency = "RUB" | "CNY" | "USD";
 export const CURRENCY_SIGNS: Record<PriceCurrency, string> = { RUB: "₽", CNY: "¥", USD: "$" };

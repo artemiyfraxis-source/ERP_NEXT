@@ -349,8 +349,8 @@ def _prepare(
         "date_to": command.date_to, "actor_site": scope.assigner_site,
         "runs": sorted([str(key), value] for key, value in command.runs),
         "tasks": sorted([str(task.id), task.version] for task in scope.stored),
-        # КБ к запуску: список и версия выданной техкарты (новая ревизия, тираж или срок — другой план).
-        "ready": sorted([str(card.techcard_id), card.version, card.revision, card.run, card.deadline] for card in scope.considered),
+        # КБ к запуску: список и версия выданной техкарты (новая ревизия, тираж, уже запущенное или срок — другой план).
+        "ready": sorted([str(card.techcard_id), card.version, card.revision, card.run, card.launched, card.deadline] for card in scope.considered),
         "team": [[str(item.id), item.name, item.site] for item in scope.team_rows],
         "skills": sorted(
             [code, str(operator_id), skill.allowed, str(skill.coefficient)]
@@ -568,7 +568,8 @@ def autoplan_context(
             } for task in tasks],
             "new": [{
                 "techcard_id": str(card.techcard_id), "project": card.project, "index": card.index, "name": card.name,
-                "run": card.run, "deadline": card.deadline.isoformat() if card.deadline else None,
+                "run": card.run, "launched": card.launched, "quantity": card.remainder,
+                "deadline": card.deadline.isoformat() if card.deadline else None,
                 "operations": len(card.route.steps), "skipped": skipped.get(card.techcard_id, ""),
             } for card in new],
             "projects": [{**row, "deadline": row["deadline"].isoformat() if row["deadline"] else None} for row in sorted(

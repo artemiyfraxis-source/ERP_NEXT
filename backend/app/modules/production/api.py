@@ -1430,9 +1430,6 @@ def launchable(
     """prodLaunchable_: kit positions with an issued techcard, with the run and what is already launched."""
     if techcards_factory is None:
         return {"items": []}
-    with techcards_factory() as techcards:
-        cards = [card for card in techcards.techcards.list() if card.status is TechcardStatus.ISSUED]
-        kitsets = tuple(techcards.kitsets.list()) if hasattr(techcards, "kitsets") else ()
     with uow_factory() as uow:
         launched = launched_quantity(uow.production.list(limit=10_000))
     items = [{
@@ -1441,9 +1438,17 @@ def launchable(
         "deadline": card.deadline.isoformat() if card.deadline else None,
         "launched": launched.get(card.key, 0), "operations": len(card.route.steps),
         "warnings": list(card.route.warnings),
-    } for card in ready_cards(cards, kitsets)]
+    } for card in _ready(techcards_factory)]
     items.sort(key=lambda value: (value["project"], value["index"]))
     return {"items": items}
+
+
+def _ready(techcards_factory: Callable[[], TechcardsUnitOfWork]):
+    """КБ с выданной техкартой, тиражом из набора и маршрутом (ready_cards)."""
+    with techcards_factory() as techcards:
+        cards = [card for card in techcards.techcards.list() if card.status is TechcardStatus.ISSUED]
+        kitsets = tuple(techcards.kitsets.list()) if hasattr(techcards, "kitsets") else ()
+    return ready_cards(cards, kitsets)
 
 
 @router.get("/operators")
@@ -1564,10 +1569,15 @@ def cancel(
     principal: Annotated[Principal, Depends(production_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
 ) -> dict:
+    # «Вернуть в работу» — снова запуск по КБ: не больше её тиража вместе с другими заданиями (тиражи — из наборов).
+    runs = None
+    if not payload.cancelled and techcards_factory is not None:
+        runs = {card.key: card.quantity for card in _ready(techcards_factory) if card.quantity is not None}
     return _run(lambda: set_production_cancelled(SetProductionCancelledCommand(
         task_id=task_id, expected_version=payload.version, cancelled=payload.cancelled,
-        actor=principal.actor, now=now,
+        actor=principal.actor, now=now, kb_runs=runs,
     ), uow_factory()))
 
 

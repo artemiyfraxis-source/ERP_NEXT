@@ -311,7 +311,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
               </label>)}
               {ready.map((item) => <label key={item.techcard_id} className="autoplan-check autoplan-task-line" title="Задание создастся при применении плана">
                 <input type="checkbox" checked={!excluded.has(item.techcard_id)} onChange={() => toggleExcluded(item.techcard_id)} aria-label={`${kbLabel(item.project, item.index)} · новое задание`} />
-                <em className="autoplan-new">новое задание</em><span className="autoplan-task-item">{kbLabel(item.project, item.index)}</span><span className="autoplan-task-name">{item.name} · тираж {item.run}{item.deadline ? ` · срок ${formatDayMonth(item.deadline)}` : ""}</span>
+                <em className="autoplan-new">новое задание</em><span className="autoplan-task-item">{kbLabel(item.project, item.index)}</span><span className="autoplan-task-name">{item.name} · {item.launched ? `остаток ${item.quantity ?? 0} из ${item.run} (запущено ${item.launched})` : `тираж ${item.run}`}{item.deadline ? ` · срок ${formatDayMonth(item.deadline)}` : ""}</span>
               </label>)}
               {skipped.map((item) => <div key={item.techcard_id} className="autoplan-task-line autoplan-skipped">
                 <span /><span className="autoplan-new off">без задания</span><span className="autoplan-task-item">{kbLabel(item.project, item.index)}</span><span className="autoplan-task-name">{item.skipped}</span>

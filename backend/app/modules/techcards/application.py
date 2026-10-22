@@ -272,19 +272,39 @@ def rebuild_project_techcard(command: RebuildProjectTechcardCommand, uow: UnitOf
         return updated
 
 
+def _auto_built(
+    command: AutoBuildProjectTechcardCommand, uow: UnitOfWork, current: ProjectTechcard,
+) -> tuple[ProjectTechcard, dict[str, Any]]:
+    """The card as «Создать» leaves it (config → ETK by the operation library, the hand-cut ПФ kept), not saved."""
+    library = uow.operation_cards.list()
+    if not library:
+        raise TechcardValidationError("Библиотека операционных карт не загружена")
+    try:
+        document = stamp_templates(build_etk(
+            command.config, library, technology_source=command.technology_source,
+        ), library)
+    except ValueError as error:
+        raise TechcardValidationError(str(error)) from error
+    updated = _with_inputs(current.rebuild(_keep_hand_route(current.document, document), command.now), command.inputs)
+    return updated, document
+
+
+def preview_project_techcard(command: AutoBuildProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
+    """«Схема полуфабрикатов» of the generator: the card «Создать» would build from this config, computed in a unit of
+    work that is never committed — no save, no revision, no ТД kit, no audit event. The form may hold an older version
+    of the card than the server (another tab rebuilt it): the preview is still shown, «Создать» checks the version."""
+    with uow:
+        current = uow.techcards.get(command.card_id)
+        if current is None:
+            raise KeyError(f"Project techcard not found: {command.card_id}")
+        updated, _ = _auto_built(command, uow, current)
+        return updated
+
+
 def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
     with uow:
         current = _current(command, uow)
-        library = uow.operation_cards.list()
-        if not library:
-            raise TechcardValidationError("Библиотека операционных карт не загружена")
-        try:
-            document = stamp_templates(build_etk(
-                command.config, library, technology_source=command.technology_source,
-            ), library)
-        except ValueError as error:
-            raise TechcardValidationError(str(error)) from error
-        updated = _with_inputs(current.rebuild(_keep_hand_route(current.document, document), command.now), command.inputs)
+        updated, document = _auto_built(command, uow, current)
         uow.techcards.save(updated)
         if updated.revision > current.revision:
             _record_revision(uow, updated, _revision(updated, command.reason, command.actor, command.now))

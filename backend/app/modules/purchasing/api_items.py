@@ -1,4 +1,4 @@
-"""Номенклатура (stage option references.items)."""
+"""Номенклатура."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
@@ -26,12 +25,11 @@ from app.workflows import purchasing_items_lines as lines_flow
 from app.workflows import purchasing_items_stock as stock_flow
 
 from . import items as repo
-from .deps import procurement_uow_factory, purchasing_uow_factory, receiving_uow_factory, require_option, warehouse_uow_factory
+from .deps import procurement_uow_factory, purchasing_uow_factory, receiving_uow_factory, warehouse_uow_factory
 from .infrastructure import ItemRow, LineItemRow
 
 router = APIRouter(prefix="/api/purchasing/items", tags=["purchasing"])
 
-OPTION = "references.items"
 Uow = Annotated[Callable, Depends(purchasing_uow_factory)]
 ProcurementUow = Annotated[Callable, Depends(procurement_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
@@ -124,7 +122,6 @@ def search_items(
     _: Viewer, make_uow: Uow, make_procurement: ProcurementUow, make_warehouse: WarehouseUow, make_receiving: ReceivingUow,
     q: str = "", category: str | None = None, has_price: bool = False, page: Annotated[int, Query(ge=1)] = 1,
 ) -> dict:
-    require_option(OPTION, "procurement.rfq")
     uow = make_uow()
     with uow:
         session = uow.session
@@ -142,7 +139,7 @@ def search_items(
             stats = lines_flow.stats_by_item(session, make_procurement, [row.id for row in chunk])
         stock = (
             stock_flow.available_by_item(session, make_warehouse, make_receiving, [row.id for row in chunk])
-            if chunk and stage_options.enabled(OPTION) else {}
+            if chunk else {}
         )
         return {
             "items": [_list_row(row, stats[row.id], stock.get(row.id)) for row in chunk],
@@ -153,7 +150,6 @@ def search_items(
 @router.get("/for-lines")
 def items_for_lines(_: Viewer, make_uow: Uow, ids: str = "") -> dict:
     """Batch for other screens: procurement line id → its item (lines without an item are absent)."""
-    require_option(OPTION)
     try:
         wanted = list(dict.fromkeys(UUID(part) for part in ids.split(",") if part.strip()))
     except ValueError:
@@ -176,7 +172,6 @@ def items_for_lines(_: Viewer, make_uow: Uow, ids: str = "") -> dict:
 @router.get("/for-lots")
 def items_for_lots(_: WarehouseViewer, make_uow: Uow, make_warehouse: WarehouseUow, make_receiving: ReceivingUow, ids: str = "") -> dict:
     """Batch for «Склад»: lot id → its item and how it is known (manual / match / chain); lots without one are absent."""
-    require_option(OPTION)
     wanted = _ids(ids, "партии")
     uow = make_uow()
     with uow:
@@ -186,7 +181,6 @@ def items_for_lots(_: WarehouseViewer, make_uow: Uow, make_warehouse: WarehouseU
 @router.get("/for-receiving")
 def items_for_receiving(_: ReceivingViewer, make_uow: Uow, make_receiving: ReceivingUow, ids: str = "") -> dict:
     """Batch for «Приёмка»: receiving line id → the item of its procurement line."""
-    require_option(OPTION)
     wanted = _ids(ids, "строки приёмки")
     uow = make_uow()
     with uow:
@@ -195,7 +189,6 @@ def items_for_receiving(_: ReceivingViewer, make_uow: Uow, make_receiving: Recei
 
 @router.post("/link-lot")
 def link_lot(payload: LotLinkIn, principal: WarehouseEditor, make_uow: Uow, make_warehouse: WarehouseUow, now: Now) -> dict:
-    require_option(OPTION)
     if not stock_flow.lot_exists(make_warehouse, payload.lot_id):
         raise HTTPException(status_code=404, detail="Партия не найдена")
     uow = make_uow()
@@ -207,7 +200,6 @@ def link_lot(payload: LotLinkIn, principal: WarehouseEditor, make_uow: Uow, make
 
 @router.delete("/link-lot/{lot_id}")
 def unlink_lot(lot_id: UUID, principal: WarehouseEditor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         repo.unlink_lot(uow, lot_id, principal.actor, now)
@@ -221,7 +213,6 @@ def import_from_stock(
     make_receiving: ReceivingUow, now: Now,
 ) -> dict:
     """«Собрать со склада»: the dry run reports what apply would do and writes nothing."""
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         result = stock_flow.run_import(uow, make_warehouse, make_receiving, principal.actor, now)
@@ -237,7 +228,6 @@ def import_from_procurement(
     payload: ImportIn, principal: Editor, make_uow: Uow, make_procurement: ProcurementUow, now: Now,
 ) -> dict:
     """«Собрать из закупок»: the dry run reports what apply would do and writes nothing."""
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         result = lines_flow.run_import(uow, make_procurement, principal.actor, now)
@@ -250,7 +240,6 @@ def import_from_procurement(
 
 @router.post("/link")
 def link_line(payload: LinkIn, principal: Editor, make_uow: Uow, make_procurement: ProcurementUow, now: Now) -> dict:
-    require_option(OPTION)
     if not lines_flow.line_exists(make_procurement, payload.procurement_line_id):
         raise HTTPException(status_code=404, detail="Строка закупки не найдена")
     uow = make_uow()
@@ -262,7 +251,6 @@ def link_line(payload: LinkIn, principal: Editor, make_uow: Uow, make_procuremen
 
 @router.post("/merge")
 def merge_items(payload: MergeIn, principal: Editor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         keep = repo.merge_items(uow, payload.keep_id, payload.drop_id, principal.actor, now)
@@ -272,7 +260,6 @@ def merge_items(payload: MergeIn, principal: Editor, make_uow: Uow, now: Now) ->
 
 @router.post("", status_code=201)
 def create_item(payload: ItemFields, principal: Editor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         row = repo.create_item(uow, actor=principal.actor, now=now, **payload.model_dump())
@@ -285,7 +272,6 @@ def item_card(
     item_id: UUID, _: Viewer, make_uow: Uow, make_procurement: ProcurementUow, make_warehouse: WarehouseUow,
     make_receiving: ReceivingUow,
 ) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         row = repo.get_item(uow.session, item_id)
@@ -301,7 +287,6 @@ def item_card(
 
 @router.patch("/{item_id}")
 def update_item(item_id: UUID, payload: ItemPatch, principal: Editor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
     changes = {key: getattr(payload, key) for key in payload.model_fields_set if key != "version"}
     if "name" in changes and changes["name"] is None:
         raise HTTPException(status_code=422, detail="Наименование обязательно")
@@ -316,7 +301,6 @@ def update_item(item_id: UUID, payload: ItemPatch, principal: Editor, make_uow: 
 
 @router.post("/{item_id}/archive")
 def archive_item(item_id: UUID, principal: Editor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         row = repo.archive_item(uow, item_id, principal.actor, now)
@@ -326,7 +310,6 @@ def archive_item(item_id: UUID, principal: Editor, make_uow: Uow, now: Now) -> d
 
 @router.post("/{item_id}/aliases", status_code=201)
 def add_alias(item_id: UUID, payload: AliasIn, principal: Editor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         repo.add_alias(uow, item_id, payload.text, payload.supplier_id, principal.actor, now)
@@ -336,7 +319,6 @@ def add_alias(item_id: UUID, payload: AliasIn, principal: Editor, make_uow: Uow,
 
 @router.delete("/{item_id}/aliases/{alias_id}")
 def delete_alias(item_id: UUID, alias_id: UUID, principal: Editor, make_uow: Uow, now: Now) -> dict:
-    require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
         repo.delete_alias(uow, item_id, alias_id, principal.actor, now)

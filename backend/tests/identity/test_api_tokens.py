@@ -119,7 +119,7 @@ def test_admin_issues_lists_and_revokes_a_token_and_only_the_hash_is_stored(toke
     [row] = listed["tokens"]
     assert row["id"] == issued["id"] and row["name"] == "Claude Code"
     assert "token" not in row and secret not in str(listed)
-    assert set(listed["scopes"]) == {"tcgen", "assembly", "refs:read", "refs:write"}
+    assert set(listed["scopes"]) == {"tcgen", "assembly", "refs:read", "refs:write", "labels:print"}
 
     with sessions() as session:
         stored = session.scalar(select(IdentityApiTokenRow))
@@ -380,6 +380,8 @@ PATH_PARAM = re.compile(r"{([^}:]+)(:[^}]+)?}")
 # … and the delete of a «Справочник» row: `refs:write` loads and edits, a token never deletes (owner 12.10.2026).
 TOKEN_REFUSED_IN_ENDPOINT = {
     ("POST", "/api/techcards/projects/{card_id}/build"),
+    # … and its preview — the generator's «Схема полуфабрикатов» (22.10.2026), the same gate as the build.
+    ("POST", "/api/techcards/projects/{card_id}/build/preview"),
     ("DELETE", "/api/references/wire-gauges/{gauge_id}"),
     ("DELETE", "/api/references/tech-operations/{record_id}/crimps/terminals/{terminal_id}"),
     # … and the columns of a table («+ Столбец», 14.10.2026): the owner shapes the table, a token fills it.

@@ -1294,7 +1294,13 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-blocker { padding: 8px 10px; border-radius: 8px; background: var(--chip-danger-bg); color: var(--chip-danger-fg); font-size: 13px; font-weight: 600; }
 .plan-blocker[data-tone="warning"] { background: var(--chip-warning-bg); color: var(--chip-warning-fg); }
 .plan-blocker[data-tone="neutral"], .plan-blocker[data-tone="info"] { background: var(--chip-neutral-bg); color: var(--chip-neutral-fg); }
-.production-plan-details { padding: 20px; display: grid; gap: 18px; }
+.production-plan-details { padding: 6px 0 2px; display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 8px 16px; align-items: start; }
+.production-plan-details > .plan-acts, .production-plan-details > .plan-blocker, .production-plan-details > p, .production-plan-details > .plan-kit-stages, .production-plan-details > .plan-note-form, .production-plan-details > .plan-journal { grid-column: 1 / -1; }
+.production-plan-details > .plan-journal { max-height: 240px; overflow: auto; }
+.mb-project-block .production-plan-details section { padding-top: 8px; gap: 3px; }
+.mb-project-block .production-plan-details h3 { font-size: 13px; }
+.mb-project-block { border-bottom: 1px solid var(--border); margin-bottom: 10px; padding-bottom: 8px; }
+.mb-block-toggle { width: 100%; text-align: left; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 4px 0; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; color: var(--foreground); }
 .production-plan-details h2, .production-plan-details h3, .production-plan-details p { margin: 0; }
 .production-plan-details section { display: grid; gap: 7px; padding-top: 14px; border-top: 1px solid var(--border); }
 .plan-kit-stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
@@ -1303,9 +1309,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-kit-mark label { display: grid; gap: 3px; font-size: 11px; color: var(--muted-foreground); }
 .plan-kit-mark select, .plan-kit-mark textarea { min-width: 0; font-size: 12px; }
 .plan-kit-mark textarea.auto-textarea { min-height: 0; }
-.plan-note-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
+.plan-note-grid { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: end; }
 .plan-note-grid label { display: grid; gap: 5px; font-size: 12px; color: var(--muted-foreground); }
-.plan-note-text { grid-column: 1 / -1; }
+.plan-note-text { flex: 1 1 320px; }
+.plan-note-grid > button { flex: 0 0 auto; }
 .plan-note-text textarea.auto-textarea { min-height: 0; }
 .plan-journal article { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .plan-journal article > div { display: flex; justify-content: space-between; gap: 12px; }
@@ -1408,7 +1415,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .etk-flow { grid-template-columns: 1fr; }
   .etk-wrap, .tr-head { grid-template-columns: 1fr; }
   .plan-row-metrics, .plan-note-grid { grid-template-columns: 1fr; }
-  .plan-note-text { grid-column: auto; }
 }
 
 /* NAV-ACCESS «Доступы»: role × section matrix on the shared DataTable. Dense for the 16" laptop (owner, 04.10): rows
@@ -2025,6 +2031,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .route-summary { color: var(--muted-foreground); font-size: 12px; }
 .tcgen .route-summary strong { color: var(--foreground); }
 .tcgen .route-canvas { position: relative; width: 100%; padding-bottom: 2px; }
+/* Схема ПФ из собранной без записи ЭТК (GenPfScheme): та же, что в техкарте, без своей рамки внутри «Итога». */
+.tcgen .gen-pf-scheme { display: grid; gap: 6px; min-width: 0; }
+.tcgen .gen-pf-scheme > .etk-route { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.tcgen .gen-pf-status { color: var(--muted-foreground); font-size: 12px; }
+.gen-pf-window .etk-route { margin: 0; }
+.gen-pf-window-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.gen-pf-window-head > button { margin-left: auto; }
+.gen-pf-window-sum { color: var(--muted-foreground); font-size: 13px; }
 .tcgen .route-canvas svg { position: absolute; inset: 0; width: 100%; pointer-events: none; }
 .tcgen .route-edge-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.5; }
 .tcgen .route-arrowhead { fill: var(--muted-foreground); }
@@ -2500,7 +2514,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .lot-card-main small, .lot-card-meta { color: var(--muted-foreground); font-size: 12px; }
 .lot-card-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; }
 .lot-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-/* Stage option warehouse.scan: the scan field and its lot card / place list (Roller_Buyer /tsd). */
+/* the scan field and its lot card / place list (Roller_Buyer /tsd). */
 .scan-zone { display: grid; gap: 8px; margin-bottom: 10px; }
 .scan-panel, .scan-card { display: grid; gap: 8px; padding: 12px 14px; }
 .scan-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -2791,7 +2805,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-drawer { position: fixed; inset: 0; z-index: 45; }
 .plan-drawer-scrim { position: absolute; inset: 0; background: rgba(0, 26, 24, .25); }
 .plan-drawer-body { position: absolute; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); overflow: auto; overscroll-behavior: contain; background: var(--background, var(--bg-gray-1)); box-shadow: -8px 0 30px rgba(0,0,0,.15); padding: 12px; }
-.plan-details-close { position: absolute; right: 18px; top: 18px; z-index: 1; }
 .plan-drawer-body .plan-detail-head { padding-right: 96px; }
 .psm-note { font-size: 12px; color: var(--muted-foreground); }
 
@@ -4073,13 +4086,6 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .crimp-none { color: var(--muted-foreground); }
 .crimp-unit { font-style: normal; color: var(--muted-foreground); }
 @media (pointer: coarse) { .crimp-row { font-size: 13px; line-height: 20px; } }
-/* Опции стенда (Витя): «Было / Новое» по блокам; на проде не показывается. */
-.stage-options-card { display: grid; gap: 10px; margin: 6px 0; padding: 10px; border: 1px dashed var(--border); border-radius: 10px; background: var(--card); font-size: 12px; }
-.stage-options-card section { display: grid; gap: 6px; }
-.stage-option { display: grid; gap: 2px; }
-.stage-option-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.stage-option-switch { display: inline-flex; gap: 2px; }
-.stage-option small { color: var(--muted-foreground); }
 
 /* Переключатель темы (ThemeSwitch) в подвале меню. */
 .theme-switch { display: grid; gap: 4px; margin: 8px 0 0; }
@@ -4160,7 +4166,7 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .purchasing-setting-default { font-size: 12px; color: var(--muted-foreground); white-space: nowrap; }
 .table-panel > .purchasing-toolbar, .purchasing-toolbar + .calendar-chips { padding-left: 20px; padding-right: 20px; }
 
-/* Номенклатура под наименованием партии / строки приёмки (option references.items). */
+/* Номенклатура под наименованием партии / строки приёмки. */
 .lot-item-chip { display: block; font-size: 12px; white-space: normal; }
 .lot-item-mark { margin-left: 6px; font-size: 10px; color: var(--primary); cursor: help; vertical-align: 1px; }
 /* New request form header (Витя): two even rows — who/where, then the per-line defaults with «Применить ко всем строкам». */
@@ -4170,7 +4176,7 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .rg-common-v2 .rg-apply { grid-column: span 2; align-self: start; padding-top: 19px; }
 .rg-table-v2 .rg-col-category { width: 124px; } .rg-table-v2 .rg-col-quality_document { width: 124px; }
 
-/* Option procurement.dense (Витя): readable headers and row buttons; stage chips come from main's StatusChip. */
+/* Procurement tables (Витя): readable headers and row buttons; stage chips come from main's StatusChip. */
 .proc-dense-head { margin-bottom: 6px; align-items: center; }
 .proc-dense-head .eyebrow, .proc-dense-head p { display: none; }
 .proc-dense-head h1 { font-size: 18px; margin: 0; }
@@ -4193,7 +4199,7 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .palette-note { padding: 10px 14px; color: var(--muted-foreground); font-size: 13px; }
 .palette-note.error { color: var(--tone-danger); }
 .palette-foot { padding: 4px 14px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted-foreground); }
-/* «История строки» (option procurement.history): боковая панель с вертикальной лентой событий. */
+/* «История строки»: боковая панель с вертикальной лентой событий. */
 .history-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: 40; width: min(400px, 100vw); display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; overflow-y: auto; color: var(--foreground); background: var(--card); border-left: 1px solid var(--border); box-shadow: -6px 0 18px rgba(0, 0, 0, .12); }
 .history-panel header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .history-panel h2 { margin: 0; font-size: 14px; }
@@ -4641,7 +4647,7 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .prices-points { width: 100%; background: var(--panel-soft); }
 .prices-plan { max-height: 340px; overflow: auto; }
 /* ---- Реестр УПД ---- */
-/* «Реестр УПД» (option documents.upd): filters in one wrapping row, the card with the header beside the parser's,
+/* «Реестр УПД»: filters in one wrapping row, the card with the header beside the parser's,
    the lines table and the edit form. Colours only through the theme variables. */
 .upd-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 20px 0; }
 .upd-filters label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); white-space: nowrap; }
@@ -4800,7 +4806,7 @@ tr.upd-row-bad td { background: var(--chip-danger-bg); }
 .rq-bulk .rq-reason { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 .rq-bulk .rq-reason input { width: 240px; }
 
-/* «Счета и поставки» (option procurement.orders): доска заказов, карточка, «Дожать», «Новый счёт». Только токены темы. */
+/* «Счета и поставки»: доска заказов, карточка, «Дожать», «Новый счёт». Только токены темы. */
 .purchasing-orders { display: grid; gap: 12px; }
 .orders-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .orders-toolbar .seg-tabs { margin: 0; }
@@ -4903,3 +4909,5 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 @media (pointer: coarse) {
   .mb-run input, .autoplan-count-input input { min-height: 40px; }
 }
+
+.mb-block-summary { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 400; color: var(--muted-foreground); }

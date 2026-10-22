@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, it, vi } from "vitest";
 import { linesByType, quantityInput, RfqLineToolbar, RfqSelectionBar } from "./RfqLineActions";
 import type { RfqLine, RfqMatrix } from "./purchasingRfqApi";
-import { resetStageOptions } from "./StageOptions";
 
 const line = (id: string, name: string, over: Partial<RfqLine> = {}): RfqLine => ({
   id, procurement_line_id: `p-${id}`, legacy_id: `SM-${id}`, status: "В работе", version: 4, editable: true, name,
@@ -21,9 +20,6 @@ function server(handler: (path: string, body: any) => Response) {
   const posts: { path: string; body: any }[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stage-options") {
-      return json({ available: true, options: [{ key: "procurement.requests_rb", block: "b", title: "t", before: "", after: "", enabled: true }] });
-    }
     const body = JSON.parse(String(init?.body ?? "{}"));
     posts.push({ path, body });
     return handler(path, body);
@@ -35,7 +31,6 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
-  resetStageOptions();
 });
 
 it("lines go by type, a chosen one never; quantities are read the Russian way", () => {

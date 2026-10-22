@@ -307,7 +307,7 @@ class StockLot:
         return replace(self, warehouse=target, storage_location=place, version=self.version + 1)
 
     def restore_place(self, warehouse: str, storage_location: str) -> StockLot:
-        """Undo of a move (stage option warehouse.undo): back to the warehouse and place it came from, the place as
+        """Undo of a move: back to the warehouse and place it came from, the place as
         it was (an old address or no place too). Leaving for the other warehouse needs no reserve, as `transfer`."""
         target = str(warehouse or "").strip()
         if target not in WAREHOUSES:

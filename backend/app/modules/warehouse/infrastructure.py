@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from collections.abc import Callable
 from decimal import Decimal
-from functools import lru_cache
 from uuid import UUID
 
 from datetime import date, datetime
@@ -21,14 +18,13 @@ from app.shared.persistence import (
     AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository, check_read_version,
     note_written_version, track_read_versions,
 )
-from app.shared import stage_options
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.shared.warehouse_location import RackLayout, forget_rack_layout, rack_layout_from_config, storage_location_has_slot
 
 from .domain import WAREHOUSES, StockLot, WriteOffEntry
 from .journal import MIRRORED_BY_WRITEOFFS, JournalEvent
-from .labels.settings import PrintSettings
+from .labels.settings import DEFAULT_PRINT_SETTINGS, LABEL_SIZES, PrintSettings
 from .word_search import words_matcher
 
 
@@ -257,28 +253,7 @@ def _row(lot: StockLot) -> StockLotRow:
     )
 
 
-# Names come from Google as typed: «Разъём» with ё, Latin look-alikes inside Cyrillic words («Cрок», «EAЭC»),
-# non-breaking spaces, «0,35» next to «0.35», «200х3.6» with a Cyrillic х. The stock search folds both the query
-# and the lot text the same way, so «разъем мгтф 0.35» finds what the storekeeper sees on screen.
-_LOOKALIKES = str.maketrans({
-    "ё": "е", "a": "а", "b": "в", "c": "с", "e": "е", "h": "н", "k": "к", "m": "м", "o": "о", "p": "р", "t": "т",
-    "x": "х", "y": "у", "×": "х",
-})
-_DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d)")
-
-
-def search_text(value: str) -> str:
-    """Text for the substring search: NFKC, case-folded, ё = е, Latin look-alikes as Cyrillic, comma = dot."""
-    return _folded(str(value or ""))
-
-
-@lru_cache(maxsize=1 << 16)
-def _folded(text: str) -> str:
-    # Pure, so memoized: the stock list re-folds the same lot texts on every page and keystroke.
-    return _DECIMAL_COMMA.sub(".", unicodedata.normalize("NFKC", text).casefold().translate(_LOOKALIKES))
-
-
-# The columns a search looks at (both modes); a search reads these and the id, never the whole row.
+# The columns a search looks at; a search reads these and the id, never the whole row.
 _SEARCH_COLUMNS = (
     StockLotRow.grn, StockLotRow.package, StockLotRow.article, StockLotRow.series, StockLotRow.name,
     StockLotRow.item_type, StockLotRow.purpose, StockLotRow.storage_location,
@@ -286,36 +261,9 @@ _SEARCH_COLUMNS = (
 
 
 def lot_matcher(query: str) -> Callable[[object], bool]:
-    """The stock search as a predicate over anything with the searched attributes (a lot or a row of
-    `_SEARCH_COLUMNS`). The query is folded and the stage option read once, not once per lot."""
-    if stage_options.enabled("warehouse.word_search"):
-        return words_matcher(query)
-    words = search_text(query).split()
-    if not words:
-        return lambda lot: True
-
-    def matches(lot) -> bool:
-        haystack = search_text(" ".join((
-            lot.grn,
-            lot.package,
-            lot.article,
-            lot.series,
-            lot.name,
-            lot.item_type,
-            lot.purpose,
-            lot.storage_location,
-        )))
-        return all(_word_found(word, haystack) for word in words)
-
-    return matches
-
-
-def _word_found(word: str, haystack: str) -> bool:
-    """A query word without digits matches from the start of a word («male» no longer finds «female»); a word with
-    digits (article, size, ГРН) stays a substring — «0.35», «33н», «000001» are found inside longer codes."""
-    if any(char.isdigit() for char in word):
-        return word in haystack
-    return re.search(rf"(?<![^\W_]){re.escape(word)}", haystack) is not None
+    """The stock search (`word_search`) as a predicate over anything with the searched attributes (a lot or a row of
+    `_SEARCH_COLUMNS`); the query is folded once, not once per lot."""
+    return words_matcher(query)
 
 
 def _domain(row: StockLotRow) -> StockLot:
@@ -423,7 +371,7 @@ class SqlAlchemyWarehouseRepository:
     ) -> list[StockLot]:
         """Every lot under the same filters as `list`, no paging, in the same id order (the source of the group
         totals and of the whole-stock reads that must not lose lots past a page). A search first picks the matching ids
-        from the searched columns only (`_matching_ids`, the option read once), then loads those rows."""
+        from the searched columns only (`_matching_ids`, the query folded once), then loads those rows."""
         if not str(query or "").strip():
             rows = self.session.scalars(
                 select(StockLotRow).where(*self._filters(warehouse, include_zero)).order_by(StockLotRow.id)
@@ -450,7 +398,7 @@ class SqlAlchemyWarehouseRepository:
         """One page in id order after the cursor and the count of every match (the cursor ignored).
 
         A search reads only the id and the searched columns of the filtered lots, matches them in Python (the folding
-        of `search_text` / `word_search` has no SQL twin, so no SQL text prefilter that could drop a match) and then
+        of `word_search` has no SQL twin, so no SQL text prefilter that could drop a match) and then
         loads the full rows of the page alone. Without a search everything is SQL: filter, order, limit, count."""
         if not str(query or "").strip():
             statement = select(StockLotRow).where(*self._filters(warehouse, include_zero))
@@ -471,7 +419,7 @@ class SqlAlchemyWarehouseRepository:
         return lots, len(matched)
 
     def _matching_ids(self, query: str, warehouse: str | None, include_zero: bool) -> list[UUID]:
-        """Ids (ascending) of the filtered lots the search matches; the stage option is read once per call."""
+        """Ids (ascending) of the filtered lots the search matches; the query is folded once per call."""
         matches = lot_matcher(query)
         rows = self.session.execute(
             select(StockLotRow.id, *_SEARCH_COLUMNS)
@@ -543,7 +491,7 @@ class SqlAlchemyWarehouseRepository:
         return lot_matcher(query)(lot)
 
     def recent_events(self, lot_id: UUID, limit: int = 20) -> list[AuditEvent]:
-        """The lot's newest warehouse audit events, newest first (stage option warehouse.undo)."""
+        """The lot's newest warehouse audit events, newest first («Отменить последнее»)."""
         self.session.flush()
         rows = self.session.scalars(
             select(AuditEventRow).where(
@@ -561,7 +509,7 @@ class SqlAlchemyWarehouseRepository:
 
     def received_at(self, lot_id: UUID) -> datetime | None:
         """When the lot came on stock: its first arrival event — from receiving, entered by hand or carried over from
-        SUPPLYMAP (stage option warehouse.labels prints it as the date on the GRN label). None — no such event."""
+        SUPPLYMAP (the GRN label prints it as the date). None — no such event."""
         self.session.flush()
         return self.session.scalar(
             select(func.min(AuditEventRow.occurred_at)).where(
@@ -598,7 +546,7 @@ LOT_ARRIVAL_EVENTS = ("warehouse.received", "warehouse.manually_received", "ware
 
 
 class WarehouseLabelSettingsRow(Base):
-    """«Печать этикеток ГРН» (stage option warehouse.labels): the label printer's settings, one row per installation.
+    """«Печать этикеток ГРН»: the label printer's settings, one row per installation.
     The CHECK constraints repeat `PrintSettings`' bounds (migration 0125)."""
 
     __tablename__ = "warehouse_label_settings"
@@ -644,10 +592,14 @@ class SqlAlchemyLabelSettings:
         row = self.session.get(WarehouseLabelSettingsRow, 1)
         if row is None:
             return None
-        return PrintSettings(
+        values = {
             **{name: getattr(row, name) for name in _LABEL_WHOLE},
             **{name: float(getattr(row, name)) for name in _LABEL_MM},
-        )
+        }
+        if (values["width_mm"], values["height_mm"]) not in LABEL_SIZES:
+            # A size saved when it was a free field: printed in the default format until it is chosen again.
+            values["width_mm"], values["height_mm"] = DEFAULT_PRINT_SETTINGS.width_mm, DEFAULT_PRINT_SETTINGS.height_mm
+        return PrintSettings(**values)
 
     def save(self, settings: PrintSettings, updated_at: datetime, updated_by: str) -> None:
         row = self.session.get(WarehouseLabelSettingsRow, 1)

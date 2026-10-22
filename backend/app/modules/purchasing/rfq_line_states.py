@@ -1,4 +1,4 @@
-"""Where procurement lines stand in the requests for quotes — read for «Заявки» закупщика (option procurement.requests_rb).
+"""Where procurement lines stand in the requests for quotes — read for «Заявки» закупщика.
 
 Purchasing never imports procurement: the caller hands procurement line ids and gets plain states back through
 `app/workflows/procurement_requests_view.py`. Three indexed reads per 500 lines, whatever the number of requests."""

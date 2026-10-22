@@ -46,6 +46,7 @@ from .application import (
     UnitOfWork,
     create_project_techcard,
     auto_build_project_techcard,
+    preview_project_techcard,
     edit_operation_record,
     new_operation,
     discard_project_techcard_draft,
@@ -709,6 +710,37 @@ def auto_build_project_etk(
         _draft_run(lambda: finalise_draft(
             payload.draft_id, payload.config, card.revision, principal.actor, now, uow_factory,
         ))
+    return etk.one(card)
+
+
+# «Схема полуфабрикатов» of the generator (owner 22.10: «как на 713К»): the same body, gate and build as «Создать»,
+# computed and returned as the card view without writing anything (preview_project_techcard never commits).
+@router.post(
+    "/techcards/projects/{card_id}/build/preview",
+    dependencies=[Depends(refuse_api_tokens("Токен API не собирает техкарты проектов."))],
+)
+def preview_project_etk(
+    card_id: UUID,
+    payload: AutoBuildTechcardPayload,
+    principal: Annotated[Principal, Depends(tcgen_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
+    references_factory: Annotated[
+        Callable[[], ReferencesUnitOfWork] | None,
+        Depends(optional_references_uow_factory),
+    ],
+) -> dict:
+    config, technology_source = with_technology(payload.config, references_factory)
+    card = _run(lambda: preview_project_techcard(AutoBuildProjectTechcardCommand(
+        card_id=card_id,
+        expected_version=payload.version,
+        config=config,
+        inputs=payload.config,
+        actor=principal.actor,
+        now=now,
+        technology_source=technology_source,
+    ), uow_factory()))
     return etk.one(card)
 
 

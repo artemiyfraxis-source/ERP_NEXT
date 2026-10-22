@@ -1,4 +1,4 @@
-"""«Счета и поставки» (stage option procurement.orders, ported from Roller_Buyer OrdersPage / OrderBoard / orders.ts).
+"""«Счета и поставки» (ported from Roller_Buyer OrdersPage / OrderBoard / orders.ts).
 
 A card is an ERP supplier order: the procurement lines sharing one № ЗАКАЗА (they arrive here as plain facts from
 app/workflows/purchasing_orders.py). Its column is computed on read from the stage of its EARLIEST line and the order's

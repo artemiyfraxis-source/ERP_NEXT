@@ -53,15 +53,14 @@ import { StaffPage } from "./StaffPage";
 import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
-import { reloadRefusedStageOptions, StageOptionsPanel, useEnabledStageOptions } from "./StageOptions";
 import { isTsdAddress } from "./devicesApi";
 import { TsdEntry, TsdLogin, TsdScreen } from "./TsdPage";
 import { ThemeSwitch } from "./ThemeSwitch";
-import { GlobalSearch } from "./CommandPalette";
+import { CommandPalette } from "./CommandPalette";
 import { ViewAsBanner } from "./ViewAs";
 
 /** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once.
- *  `tsd`: the ТСД screen (stage option warehouse.tsd, `?section=tsd`) — full screen, its own PIN sign-in. */
+ *  `tsd`: the ТСД screen (`?section=tsd`) — full screen, its own PIN sign-in. */
 type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string; library?: boolean }; tsd?: boolean };
 
 function placeFromUrl(): Place {
@@ -95,18 +94,12 @@ export function App() {
   // Unsent forms per user (F07); lives as long as the tab, never in browser storage.
   const drafts = useRef(new DraftStore()).current;
 
-  // Signed in: the stage options asked before it (answered 401) are asked again, before any screen reads them.
-  function signedIn(next: Principal) {
-    reloadRefusedStageOptions();
-    setPrincipal(next);
-  }
-
   function loadPrincipal() {
     setLoading(true);
     setBootError("");
     identityApi
       .me()
-      .then(signedIn)
+      .then(setPrincipal)
       .catch((error) => {
         if (error instanceof ApiError && error.status === 401) return;
         setBootError(failureText(error, "ERP не ответила"));
@@ -130,10 +123,8 @@ export function App() {
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, requireLogin);
   }, []);
 
-  // Sections behind stage options («Оборудование») appear while one of their options is «Новое».
-  const enabledOptions = useEnabledStageOptions();
-  const visibleNav = useMemo(() => (principal ? visibleNavFor(principal, enabledOptions) : []), [principal, enabledOptions]);
-  const blocks = useMemo(() => (principal ? visibleBlocks(principal, enabledOptions) : []), [principal, enabledOptions]);
+  const visibleNav = useMemo(() => (principal ? visibleNavFor(principal) : []), [principal]);
+  const blocks = useMemo(() => (principal ? visibleBlocks(principal) : []), [principal]);
 
   function go(next: Place) {
     const url = new URL(window.location.href);
@@ -230,7 +221,7 @@ export function App() {
   // (the `key` below), and the first user's unsent forms stay keyed to them, out of the newcomer's sight.
   function signInAgain(next: Principal) {
     setExpired(false);
-    signedIn(next);
+    setPrincipal(next);
   }
 
   if (loading) return <div className="screen-center muted">Загружаем ERP…</div>;
@@ -240,8 +231,8 @@ export function App() {
       <button className="primary" onClick={loadPrincipal}>Повторить</button>
     </div>;
   }
-  if (!principal) return place.tsd ? <TsdEntry onLogin={signedIn} /> : <LoginPage onLogin={signedIn} />;
-  // ТСД склада (stage option warehouse.tsd): its own full-screen frame and PIN sign-in; without the option or the
+  if (!principal) return place.tsd ? <TsdEntry onLogin={setPrincipal} /> : <LoginPage onLogin={setPrincipal} />;
+  // ТСД склада: its own full-screen frame and PIN sign-in; without the
   // warehouse section the screen hands over to the ordinary shell.
   if (place.tsd) {
     return <>
@@ -310,7 +301,6 @@ export function App() {
             </button>
           )}
           <ProfilePanel openCard={() => openCard()} />
-          <StageOptionsPanel canSwitch={hasFullAccess(principal)} />
           <ThemeSwitch />
           <button
             className="link-button"
@@ -320,7 +310,7 @@ export function App() {
           </button>
         </div>
       </aside>
-      <GlobalSearch principal={principal} />
+      <CommandPalette principal={principal} />
       <main className="workspace main">
         <ViewAsBanner principal={principal} onExit={exitViewAs} />
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}

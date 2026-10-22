@@ -1,4 +1,4 @@
-"""«Заявки» закупщика (option procurement.requests_rb): RB statuses on ERP facts, the project chain, request batches,
+"""«Заявки» закупщика : RB statuses on ERP facts, the project chain, request batches,
 «Разделить» by quantity and the cancel reason — pure rules."""
 
 from dataclasses import replace

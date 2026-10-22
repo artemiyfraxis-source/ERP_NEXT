@@ -2,8 +2,11 @@
 (владелец, 19.10.2026: «после того как техкарта готова я хочу тут видеть операции и желательно сгруппированные по
 оборудованию, чтобы можно было раскидать сразу резку на одно и т. д.»).
 
-Будущее задание — КБ с выданной техкартой и тиражом, по которой нет ни одного задания (кроме отменённых): то же задание,
-что строит автоплан, со стабильными id (от техкарты, её версии и номера этапа). Задание (ПЗ) при выдаче ЭТК не
+Будущее задание — КБ с выданной техкартой, у которой остаток тиража к запуску больше нуля: тираж КБ минус тиражи её
+не отменённых заданий (владелец 22.10: «запущенное — когда его поставили на кого-то; если поставили и убрали, то оно
+уже не запущено»; правило — launchable.launch_remainders). Запустили 200 из 500 — остальные 300 снова «новое задание»,
+его запуск — следующее задание КБ (следующий номер запуска). То же задание строит автоплан, со стабильными id (от
+техкарты, её версии, уже запущенного по КБ и номера этапа): запуск по КБ меняет id — доска, прочитанная до него, устарела. Задание (ПЗ) при выдаче ЭТК не
 создаётся — авторевизии ЭТК сразу сделали бы его устаревшим. ПЗ создаётся при первом назначении из выданной в этот момент
 ревизии и закрепляет её (techcard_revision), дальше задание по новым ревизиям не перестраивается.
 
@@ -18,7 +21,7 @@
 срок → КБ → этап, каждая — не раньше конца предыдущей: группа идёт одному монтажнику подряд, без нахлёста.
 
 Тираж нового задания (владелец 22.10: отдельный шаг «Запустить задание» убран — задание создаёт первое действие из окна
-проекта на доске): по умолчанию весь тираж КБ, мастер может запустить меньше, но не больше тиража КБ. Тот же тираж
+проекта на доске): по умолчанию весь остаток тиража КБ, мастер может запустить меньше, но не больше остатка. Тот же тираж
 принимают назначение, «Уже сделано» по КБ без задания (record_board_output: задание и ввод готовых одной транзакцией)
 и автоплан."""
 
@@ -56,9 +59,8 @@ from .domain import (
     ProductionValidationError,
     add_work_seconds,
 )
-from .launchable import ReadyCard, launch_operations, operation_code, route_from_document, stage_name
+from .launchable import ReadyCard, launch_operations, launch_remainders, operation_code, route_from_document, stage_name
 from .machine_load import _machine
-from .plan import kit_stage_key
 from .scheduling import upstream_ids
 
 NO_RUN_REASON = "Нет тиража КБ — задайте тираж в наборе проекта"
@@ -85,21 +87,22 @@ def card_key(project: str, index: str) -> tuple[str, str]:
 
 @dataclass(frozen=True)
 class NewTask:
-    """Будущее задание КБ: выданная техкарта и задание, каким его создаст первое назначение (или автоплан)."""
+    """Будущее задание КБ: выданная техкарта и задание на остаток тиража, каким его создаст назначение (или автоплан)."""
     card: ReadyCard
     task: ProductionTask
 
 
 @dataclass(frozen=True)
 class Skipped:
-    """КБ с выданной техкартой без задания, из которой будущее задание не строится (нет тиража, маршрут не собрался)."""
+    """КБ к запуску, из которой будущее задание не строится (нет тиража, маршрут не собрался)."""
     card: ReadyCard
     reason: str
 
 
 def future_task(card: ReadyCard, quantity: int, actor: Actor, now: datetime) -> ProductionTask:
-    """Задание, каким его создаст запуск по техкарте, со стабильными id (от техкарты, её версии и номера этапа)."""
-    task_id = uuid5(_NEW_TASK_NAMESPACE, f"{card.techcard_id}:{card.version}")
+    """Задание, каким его создаст запуск по техкарте, со стабильными id (от техкарты, её версии, уже запущенного по КБ
+    и номера этапа): новый запуск по КБ даёт другие id — назначение по прочитанной до него доске устарело (409)."""
+    task_id = uuid5(_NEW_TASK_NAMESPACE, f"{card.techcard_id}:{card.version}:{card.launched}")
     operations = launch_operations(card.route.steps, quantity)
     ids = {operation.id: uuid5(task_id, str(operation.position)) for operation in operations}
     operations = tuple(replace(
@@ -129,14 +132,18 @@ def launch_command(
 
 
 def run_of(card: ReadyCard, run: int | None) -> int:
-    """Тираж нового задания: не задан — весь тираж КБ; меньше можно, больше тиража КБ — нет."""
-    if card.quantity is None:
+    """Тираж нового задания: не задан — весь остаток тиража КБ; меньше можно, больше остатка — нет (запущенное по КБ
+    вместе с новым заданием не превышает тираж КБ)."""
+    left = card.remainder
+    if left is None:
         raise ProductionValidationError(f"{card.project} {card.index}: {NO_RUN_REASON}")
+    if left < 1:
+        raise StaleBoard(f"{card.project} {card.index}: весь тираж КБ ({card.quantity}) уже запущен — обновите доску")
     if run is None:
-        return card.quantity
-    if run < 1 or run > card.quantity:
-        raise ProductionValidationError(
-            f"{card.project} {card.index}: тираж задания — от 1 до {card.quantity} (тираж КБ)")
+        return left
+    if run < 1 or run > left:
+        limit = "тираж КБ" if not card.launched else f"остаток: тираж КБ {card.quantity}, уже запущено {card.launched}"
+        raise ProductionValidationError(f"{card.project} {card.index}: тираж задания — от 1 до {left} ({limit})")
     return run
 
 
@@ -144,14 +151,12 @@ def unlaunched_cards(
     uow: UnitOfWork, stored: Sequence[ProductionTask], ready: Sequence[ReadyCard],
     cards: Mapping[tuple[str, str], CardSnapshot],
 ) -> list[ReadyCard]:
-    """КБ с выданной техкартой, по которым нет ни одного задания (кроме отменённых): как «к запуску» на доске.
-    stored — запущенные задания; выполненные читаются здесь."""
+    """КБ с выданной техкартой и остатком тиража к запуску (launchable.launch_remainders) — «новое задание» на доске,
+    в «Записать готовыми» и в автоплане. stored — задания «Запущено»; выполненные читаются здесь (тоже запущены)."""
     done = uow.production.with_status(ProductionStatus.DONE)
-    launched = {kit_stage_key(task.project, task.item) for task in (*stored, *done)}
     groups: dict[str, list[ReadyCard]] = {}
-    for card in ready:
-        if card.key not in launched:
-            groups.setdefault(card.key, []).append(card)
+    for card in launch_remainders(ready, (*stored, *done)):
+        groups.setdefault(card.key, []).append(card)
     result: list[ReadyCard] = []
     for group in groups.values():
         # Две выданные техкарты одной КБ — берём текущую (последнюю выданную), как ключи наладки.
@@ -163,11 +168,11 @@ def unlaunched_cards(
 def future_tasks(
     cards: Sequence[ReadyCard], actor: Actor, now: datetime,
 ) -> tuple[dict[UUID, NewTask], tuple[Skipped, ...]]:
-    """Будущие задания КБ без задания (по id задания) и КБ, из которых его не построить, с причиной."""
+    """Будущие задания КБ на остаток тиража (по id задания) и КБ, из которых его не построить, с причиной."""
     result: dict[UUID, NewTask] = {}
     skipped: list[Skipped] = []
     for card in cards:
-        quantity = card.quantity
+        quantity = card.remainder
         if quantity is None:
             skipped.append(Skipped(card, NO_RUN_REASON))
             continue
@@ -258,7 +263,8 @@ def _group(
 @dataclass(frozen=True)
 class BoardItem:
     """Операция группы: настоящего задания (task_id + его версия) или будущего (techcard_id + версия техкарты);
-    операция — по id или номеру этапа; штуки — None: вся операция; run — тираж нового задания (None — весь тираж КБ)."""
+    операция — по id или номеру этапа; штуки — None: вся операция; run — тираж нового задания (None — весь остаток
+    тиража КБ); launched — сколько по КБ было запущено, когда мастер читал доску (None — не проверять)."""
     task_id: UUID | None = None
     task_version: int | None = None
     techcard_id: UUID | None = None
@@ -267,6 +273,7 @@ class BoardItem:
     position: int | None = None
     quantity: int | None = None
     run: int | None = None
+    launched: int | None = None
 
 
 @dataclass(frozen=True)
@@ -376,7 +383,7 @@ def assign_board(
                 raise ProductionValidationError("У одной КБ указаны разные тиражи")
             new = news.get(item.techcard_id)
             if new is None:
-                card = _open_card(open_cards, item.techcard_id, item.techcard_version)
+                card = _open_card(open_cards, item.techcard_id, item.techcard_version, item.launched)
                 new = NewTask(card, future_task(card, run_of(card, item.run), command.actor, now))
                 news[card.techcard_id] = new
             resolved.append(_Resolved(item, new.task, _operation(new.task, item), new))
@@ -460,13 +467,18 @@ def assign_board(
         )
 
 
-def _open_card(open_cards: Mapping[UUID, ReadyCard], techcard_id: UUID, version: int | None) -> ReadyCard:
-    """КБ без задания, которую видел мастер: задание уже есть или техкарта перевыпущена — доска устарела."""
+def _open_card(
+    open_cards: Mapping[UUID, ReadyCard], techcard_id: UUID, version: int | None, launched: int | None = None,
+) -> ReadyCard:
+    """КБ к запуску, которую видел мастер: весь тираж уже запущен, по КБ запустили ещё (launched — что видел мастер)
+    или техкарта перевыпущена — доска устарела."""
     card = open_cards.get(techcard_id)
     if card is None:
-        raise StaleBoard("По этой КБ уже есть задание или техкарта больше не выдана — обновите доску")
+        raise StaleBoard("По этой КБ уже запущен весь тираж или техкарта больше не выдана — обновите доску")
     if card.version != version:
         raise StaleBoard(f"Техкарта {card.project} {card.index} перевыпущена — обновите доску")
+    if launched is not None and launched != card.launched:
+        raise StaleBoard(f"По {card.project} {card.index} уже запущено {card.launched} шт из {card.quantity} — обновите доску")
     return card
 
 
@@ -496,6 +508,7 @@ class BoardOutputCommand:
     now: datetime
     run: int | None = None
     fill_inputs: bool = False
+    launched: int | None = None
 
 
 @dataclass(frozen=True)
@@ -519,7 +532,7 @@ def record_board_output(
         seen = uow.production.last_launch_seqs([command.techcard_id])
         stored = tuple(uow.production.with_status(ProductionStatus.RUNNING))
         open_cards = {card.techcard_id: card for card in unlaunched_cards(uow, stored, ready, cards)}
-        card = _open_card(open_cards, command.techcard_id, command.techcard_version)
+        card = _open_card(open_cards, command.techcard_id, command.techcard_version, command.launched)
         quantity = run_of(card, command.run)
         task = _launch_new(card, quantity, seen.get(card.techcard_id, 0), command.actor, command.now, uow)
         operation = next((item for item in task.operations if item.position == command.position), None)

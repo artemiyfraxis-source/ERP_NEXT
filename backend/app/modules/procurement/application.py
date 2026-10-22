@@ -2927,7 +2927,7 @@ def set_order_expected_arrival(
     uow: UnitOfWork,
     receiving: ExpectedArrivalCopier | None = None,
 ) -> list[ProcurementLine]:
-    """ОЖИД. ДАТА for the whole supplier order at once («Счета и поставки», option procurement.orders): every own line
+    """ОЖИД. ДАТА for the whole supplier order at once («Счета и поставки»): every own line
     of the order whose date can still move («Жду счет» … «Карантин»; `-Д` backorders keep their own date), all or
     none, each audited like the single-line change (`procurement.expected_arrival_set` with the previous date). The rows
     sent must be exactly those lines with their versions; open deliveries in Receiving follow, as for one line."""

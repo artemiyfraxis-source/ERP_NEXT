@@ -5,8 +5,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 import { StatusChip } from "./StatusChip";
 import { openPrintSheet } from "./print";
-import { useStageOption } from "./StageOptions";
-import { LABELS_OPTION, ReceiptLabels, type ReceiptLot } from "./LabelPrint";
+import { ReceiptLabels, type ReceiptLot } from "./LabelPrint";
 import { projectLabel, useInternalProjects } from "./internalProjects";
 import { usePurposeLabel } from "./purposeLabels";
 import { VIA_LABELS, purchasingItemsApi, type ItemBrief } from "./purchasingItemsApi";
@@ -43,7 +42,7 @@ function itemTitle(line: ReceivingLine) {
   return [...new Set([line.article, line.name].map((value) => (value ?? "").trim()).filter(Boolean))].join(" · ");
 }
 
-/** The GRN lots a receipt has put on stock — for «Печать этикеток» (stage option warehouse.labels). */
+/** The GRN lots a receipt has put on stock — for «Печать этикеток». */
 function receiptLots(lines: (ReceivingLine | undefined)[]): ReceiptLot[] {
   return lines.filter((line): line is ReceivingLine => Boolean(line?.grn && line.warehouse_event_emitted)).map((line) => ({
     key: line.id, warehouse: line.warehouse, grn: line.grn!, package: line.package, title: itemTitle(line),
@@ -290,7 +289,6 @@ function DeliveryPanel({ group, onClose, onDone }: {
   const placeHint = usePlaceHint(group.warehouse, commonPlace, rows.map((row) => row.place).filter(Boolean));
   const chosen = rows.filter((row) => row.ticked);
   const done = results !== null;
-  const labelsOn = useStageOption(LABELS_OPTION);
 
   function edit(id: string, patch: Partial<DeliveryRow>) {
     setRows((current) => current.map((row) => row.line.id === id ? { ...row, ...patch } : row));
@@ -379,7 +377,7 @@ function DeliveryPanel({ group, onClose, onDone }: {
           </tbody>
         </table>
       </div>
-      {labelsOn && done && <ReceiptLabels lots={receiptLots(chosen.map((row) => results.get(row.line.id)))} />}
+      {done && <ReceiptLabels lots={receiptLots(chosen.map((row) => results.get(row.line.id)))} />}
       <div className="header-actions">
         {!done && <button type="submit" className="primary small" disabled={busy || !chosen.length}>{busy ? "Проводим…" : `Провести поставку (${chosen.length} поз.)`}</button>}
         <button type="button" className="secondary small" disabled={busy} onClick={onClose}>{done ? "Закрыть" : "Отмена"}</button>
@@ -412,7 +410,6 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
   const [error, setError] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [returning, setReturning] = useState(false);
-  const itemsOn = useStageOption("references.items");
   const [lineItems, setLineItems] = useState<Record<string, ItemBrief>>({});
   const [group, setGroup] = useState("order");
   const [updRows, setUpdRows] = useState<ReceivingLine[] | null>(null);
@@ -424,8 +421,8 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
   chipRef.current = chip;
 
   useEffect(() => {
-    // Option off: no request. A failed read just leaves the lines without the item name.
-    if (!itemsOn || lines.length === 0) { setLineItems({}); return; }
+    // A failed read just leaves the lines without the item name.
+    if (lines.length === 0) { setLineItems({}); return; }
     let live = true;
     const ids = lines.map((line) => line.id);
     const parts: string[][] = [];
@@ -434,16 +431,16 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       .then((answers) => { if (live) setLineItems(Object.assign({}, ...answers)); })
       .catch(() => { if (live) setLineItems({}); });
     return () => { live = false; };
-  }, [itemsOn, lines]);
+  }, [lines]);
   const purposeText = usePurposeLabel();
-  useInternalProjects(); // option projects.internal: the «Проект» column shows «ВП-001 · Название»
-  const columns = useMemo(() => COLUMNS.map((column) => column.key === "purpose" ? { ...column, value: (line: ReceivingLine) => purposeText(line.purpose) } : column).map((column) => !itemsOn || column.key !== "name" ? column : {
+  useInternalProjects(); // the «Проект» column shows «ВП-001 · Название»
+  const columns = useMemo(() => COLUMNS.map((column) => column.key === "purpose" ? { ...column, value: (line: ReceivingLine) => purposeText(line.purpose) } : column).map((column) => column.key !== "name" ? column : {
     ...column,
     render: (line: ReceivingLine) => {
       const brief = lineItems[line.id];
       return <>{itemTitle(line)}{brief && <small className="muted lot-item-chip" title={`Позиция номенклатуры, связь: ${VIA_LABELS[brief.via]}`}>{brief.name}</small>}</>;
     },
-  }), [itemsOn, lineItems, purposeText]);
+  }), [lineItems, purposeText]);
   const requestSeq = useRef(0);
 
   function queueQuery(after?: string): ReceivingQuery {
@@ -707,7 +704,6 @@ function ReceivingCard({
   const [mass, setMass] = useState(line.mass_fields ?? { mass_1: "", mass_10: "", mass_100: "" });
   const [location, setLocation] = useState(line.storage_location ?? "");
   const placeHint = usePlaceHint(line.warehouse, location);
-  const labelsOn = useStageOption(LABELS_OPTION);
   const [labels, setLabels] = useState(false);
 
   function submitInspection(event: FormEvent) {
@@ -862,7 +858,7 @@ function ReceivingCard({
       )}
       {line.status === "Архив ВК" && <p className="hint">Архив ВК: акты этой строки — история, приёмка идёт по ревизии.</p>}
       {line.warehouse_event_emitted && <div className="success-banner">Передано на склад: {line.grn} · {line.storage_location}</div>}
-      {!readOnly && labelsOn && line.warehouse_event_emitted && line.grn && (labels
+      {!readOnly && line.warehouse_event_emitted && line.grn && (labels
         ? <ReceiptLabels lots={receiptLots([line])} onClose={() => setLabels(false)} />
         : <button type="button" className="secondary small" onClick={() => setLabels(true)}>Печать этикетки…</button>)}
     </article>

@@ -1,7 +1,6 @@
-"""Stage option warehouse.undo: GET/POST /api/stock/batches/{id}/undo — own write-off, return or move of the last
+"""«Отменить последнее»: GET/POST /api/stock/batches/{id}/undo — own write-off, return or move of the last
 10 minutes is taken back by a compensating entry; everything else is refused with the reason."""
 
-import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -11,7 +10,6 @@ from sqlalchemy import select
 from app.main import app
 from app.modules.warehouse.domain import WriteOffEntry
 from app.modules.warehouse.infrastructure import WriteOffEntryRow
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow
@@ -22,18 +20,15 @@ T0 = datetime(2026, 9, 21, 12, 0)
 
 
 @pytest.fixture()
-def undo_api(warehouse_api, monkeypatch, tmp_path):  # noqa: F811
+def undo_api(warehouse_api):  # noqa: F811
     client, lot = warehouse_api
-    path = tmp_path / "options.json"
-    monkeypatch.setenv(stage_options.ENV, str(path))
-    path.write_text(json.dumps({"warehouse.undo": True}), encoding="utf-8")
     clock = {"now": T0}
     app.dependency_overrides[moscow_now] = lambda: clock["now"]
 
     def at(minutes: float):
         clock["now"] = T0 + timedelta(minutes=minutes)
 
-    return client, lot, at, path
+    return client, lot, at
 
 
 def _as(name: str, permissions=None):
@@ -74,7 +69,7 @@ def _journal(lot_id):
 
 
 def test_own_writeoff_is_taken_back_by_a_return_and_both_rows_stay(undo_api):
-    client, lot, at, _ = undo_api
+    client, lot, at = undo_api
     written = _writeoff(client, lot.id, lot.version)
     at(3)
     assert _preview(client, lot.id) == {
@@ -96,7 +91,7 @@ def test_own_writeoff_is_taken_back_by_a_return_and_both_rows_stay(undo_api):
 
 
 def test_own_return_is_taken_back_by_a_writeoff(undo_api):
-    client, lot, at, _ = undo_api
+    client, lot, at = undo_api
     written = _writeoff(client, lot.id, lot.version, quantity="4")
     at(1)
     returned = _ok(client.post(f"/api/stock/batches/{lot.id}/return",
@@ -111,7 +106,7 @@ def test_own_return_is_taken_back_by_a_writeoff(undo_api):
 
 
 def test_a_move_and_a_transfer_go_back_where_they_came_from(undo_api):
-    client, lot, at, _ = undo_api
+    client, lot, at = undo_api
     moved = _ok(client.post(f"/api/stock/batches/{lot.id}/move", json={"version": lot.version, "storage_location": "2A1"}))["lot"]
     at(1)
     assert _preview(client, lot.id)["undo"]["label"] == "Перемещение 1F4 → 2A1"
@@ -132,7 +127,7 @@ def test_a_move_and_a_transfer_go_back_where_they_came_from(undo_api):
 
 
 def test_older_than_ten_minutes_is_refused(undo_api):
-    client, lot, at, _ = undo_api
+    client, lot, at = undo_api
     written = _writeoff(client, lot.id, lot.version)
     at(11)
     message = "Отменить можно в течение 10 минут — прошло 11 мин. Дальше — обычным списанием, возвратом или перемещением."
@@ -142,7 +137,7 @@ def test_older_than_ten_minutes_is_refused(undo_api):
 
 
 def test_another_user_may_not_undo(undo_api):
-    client, lot, at, _ = undo_api
+    client, lot, at = undo_api
     written = _writeoff(client, lot.id, lot.version)
     _as("Сменщик")
     response = _undo(client, lot.id, written["version"])
@@ -151,7 +146,7 @@ def test_another_user_may_not_undo(undo_api):
 
 
 def test_nothing_or_a_wrong_kind_is_refused(undo_api):
-    client, lot, at, _ = undo_api
+    client, lot, at = undo_api
     assert _preview(client, lot.id)["reason"] == "По этой партии нечего отменять."
     edited = _ok(client.put(f"/api/stock/batches/{lot.id}/row", json={"version": lot.version, "manufacturer": "Molex"}))["lot"]
     reason = _preview(client, lot.id)["reason"]
@@ -161,7 +156,7 @@ def test_nothing_or_a_wrong_kind_is_refused(undo_api):
 
 
 def test_a_later_issue_without_an_event_blocks_the_undo(undo_api):
-    client, lot, at, _ = undo_api
+    client, lot, at = undo_api
     written = _writeoff(client, lot.id, lot.version)
     with app.state.warehouse_uow_factory() as uow:
         current = uow.warehouse.get(lot.id)
@@ -178,17 +173,15 @@ def test_a_later_issue_without_an_event_blocks_the_undo(undo_api):
 
 
 def test_a_stale_version_is_409(undo_api):
-    client, lot, at, _ = undo_api
+    client, lot, at = undo_api
     _writeoff(client, lot.id, lot.version)
     assert _undo(client, lot.id, lot.version).status_code == 409
 
 
-def test_option_off_hides_the_routes_after_the_gate(undo_api):
-    client, lot, at, path = undo_api
-    path.write_text(json.dumps({"warehouse.undo": False}), encoding="utf-8")
-    assert client.get(f"/api/stock/batches/{lot.id}/undo").status_code == 404
-    assert _undo(client, lot.id, lot.version).status_code == 404
+def test_undo_is_always_open_preview_on_view_undo_on_edit(undo_api):
+    client, lot, at = undo_api
+    assert _preview(client, lot.id)["undo"] is None
     _as("Мастер", {"warehouse": "view"})
-    # The preview is a read: open on view (ID-6 view-mode contract), so a viewer passes the gate and meets the option.
-    assert client.get(f"/api/stock/batches/{lot.id}/undo").status_code == 404
+    # The preview is a read: open on view (ID-6 view-mode contract); the undo itself needs edit.
+    assert _preview(client, lot.id)["undo"] is None
     assert _undo(client, lot.id, lot.version).status_code == 403

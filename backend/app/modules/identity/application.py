@@ -845,6 +845,8 @@ API_TOKEN_SCOPES: dict[str, str] = {
     # Справочник (owner 12.10.2026): reading the reference tables, and loading rows into them (references gates).
     "refs:read": "Чтение базы данных",
     "refs:write": "Загрузка в базу данных",
+    # Агент печати этикеток на ПК склада (owner 22.10.2026): only the print queue's claim / result routes.
+    "labels:print": "Печать этикеток (агент склада)",
 }
 API_TOKEN_MAX_DAYS = 365
 API_TOKEN_NAME_MAX = 128

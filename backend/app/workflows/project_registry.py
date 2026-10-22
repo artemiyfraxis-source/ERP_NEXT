@@ -6,7 +6,6 @@ from collections.abc import Callable
 
 from app.modules.production.plan import normalize_project_number, project_terminal, summarize_journal
 from app.modules.production.plan_application import PlanUnitOfWork
-from app.shared import stage_options
 
 
 CLOSED_PROJECT_STATUS = "Закрыт"
@@ -44,7 +43,7 @@ class PlanSnapshotProjectRegistry:
 
 
 class InternalAwareProjectRegistry:
-    """The plan registry plus the open internal projects «ВП-…» while the option projects.internal is on.
+    """The plan registry plus the open internal projects «ВП-…» .
 
     Off, or the plan registry unavailable (None = «skip the check»), the answer is the plan registry's own."""
 
@@ -54,21 +53,17 @@ class InternalAwareProjectRegistry:
 
     def open_projects(self) -> list[str] | None:
         projects = self.base.open_projects()
-        if projects is None or not stage_options.enabled("projects.internal"):
+        if projects is None:
             return projects
         return [*projects, *(item["number"] for item in self.internal_projects())]
 
     def purposes(self) -> list[str] | None:
-        """The purposes directory («Настройки закупки») while the option requests.form is on; None = old behaviour."""
-        if not stage_options.enabled("requests.form"):
-            return None
+        """The purposes directory («Настройки закупки»)."""
         from app.workflows.purchasing_internal_projects import directory_purposes
 
         return directory_purposes(self.purchasing_uow_factory)
 
     def internal_projects(self) -> list[dict[str, str]]:
-        if not stage_options.enabled("projects.internal"):
-            return []
         from app.workflows.purchasing_internal_projects import open_summaries
 
         return open_summaries(self.purchasing_uow_factory)

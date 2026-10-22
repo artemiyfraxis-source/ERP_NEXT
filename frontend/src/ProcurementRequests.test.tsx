@@ -7,7 +7,6 @@ import {
   writeGroupBy,
 } from "./procurementRequestsLogic";
 import { projectKeyFor } from "./requestFormV2Logic";
-import { resetStageOptions } from "./StageOptions";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -106,9 +105,6 @@ describe("the «Заявки» screen", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const path = String(input);
       calls.push({ path, init });
-      if (path === "/api/stage-options") {
-        return json({ available: true, options: ["procurement.requests_rb", "procurement.rfq"].map((key) => ({ key, enabled: true, block: "", title: "", before: "", after: "" })) });
-      }
       if (path.startsWith("/api/procurement/requests-view")) {
         return json(path.includes("batch=") ? { scope: "mine", batch: BATCH, lines } : summary);
       }
@@ -121,7 +117,7 @@ describe("the «Заявки» screen", () => {
 
   afterEach(() => {
     cleanup();
-    resetStageOptions();
+   
     vi.restoreAllMocks();
     window.history.replaceState(null, "", "/");
   });

@@ -1,9 +1,9 @@
-"""Global search (stage option ui.search, Ctrl+K in the portal): one request, a few groups of at most 8 results.
+"""Global search (Ctrl+K in the portal): one request, a few groups of at most 8 results.
 
 Words in any order, case / ё / Latin-Cyrillic look-alikes folded (the warehouse word search's `fold`). Every group is
 narrowed in SQL first — LIKE on the most selective word, only the columns shown — and then checked by words in Python,
 so a few thousand rows cost a few milliseconds. A group is searched only when the principal may view its section
-(the same keys the routes check) and, for the purchasing hybrid, only while its option is on.
+(the same keys the routes check).
 
 A result tells the frontend where to go: `section` (a portal section id) and `params` (URL query the page reads)."""
 
@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -26,7 +26,6 @@ from app.modules.purchasing.infrastructure import (
 from app.modules.warehouse.infrastructure import StockLotRow
 from app.modules.warehouse.word_search import _FOLD, fold, matches_words
 from app.shared import sqlite_casefold  # noqa: F401 — erp_casefold() on SQLite connections
-from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal, section_allowed
 
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -130,18 +129,17 @@ def _projects(session: Session, request: Request, words: list[str], patterns: li
             found.append(_result(G_PROJECTS, number, "Проект", "projects", project=number))
             if len(found) >= PER_GROUP:
                 return found
-    if stage_options.enabled("projects.internal"):
-        row = InternalProjectRow
-        columns = [row.number, row.name, row.purpose, row.closed_at]
-        for number, name, purpose, closed in _scan(session, columns, patterns, [row.number, row.name],
-                                                    order=row.number):
-            if _hit(words, _text(number, name)):
-                found.append(_result(
-                    G_PROJECTS, _dot(number, name), _dot("Внутренний проект", purpose, "закрыт" if closed else ""),
-                    "projects", tab="internal",
-                ))
-                if len(found) >= PER_GROUP:
-                    break
+    row = InternalProjectRow
+    columns = [row.number, row.name, row.purpose, row.closed_at]
+    for number, name, purpose, closed in _scan(session, columns, patterns, [row.number, row.name],
+                                               order=row.number):
+        if _hit(words, _text(number, name)):
+            found.append(_result(
+                G_PROJECTS, _dot(number, name), _dot("Внутренний проект", purpose, "закрыт" if closed else ""),
+                "projects", tab="internal",
+            ))
+            if len(found) >= PER_GROUP:
+                break
     return found[:PER_GROUP]
 
 
@@ -228,9 +226,6 @@ def search(
     factory: Annotated[Callable, Depends(purchasing_uow_factory)],
     q: Annotated[str, Query(max_length=MAX_QUERY)] = "",
 ) -> dict:
-    # After the gate: a token or a stranger is refused (401/403) before the option says 404.
-    if not stage_options.enabled("ui.search"):
-        raise HTTPException(status_code=404, detail="Опция выключена")
     started = time.perf_counter()
     words = fold(q).split()
     if not words:
@@ -242,13 +237,13 @@ def search(
         groups.append((G_LINES, lambda s: _lines(s, words, patterns)))
     if _may(principal, "projects"):
         groups.append((G_PROJECTS, lambda s: _projects(s, request, words, patterns)))
-    if procurement and stage_options.enabled("references.items"):
+    if procurement:
         groups.append((G_ITEMS, lambda s: _items(s, words, patterns)))
-    if procurement and stage_options.enabled("references.suppliers"):
+    if procurement:
         groups.append((G_SUPPLIERS, lambda s: _suppliers(s, words, patterns)))
     if _may(principal, "warehouse"):
         groups.append((G_STOCK, lambda s: _stock(s, q, patterns)))
-    if procurement and stage_options.enabled("procurement.rfq"):
+    if procurement:
         groups.append((G_RFQ, lambda s: _rfqs(s, words, patterns)))
     # A scanned / typed GRN: the lot first.
     if GRN_LIKE.match(q.strip()):

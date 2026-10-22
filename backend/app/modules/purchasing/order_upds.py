@@ -1,4 +1,4 @@
-"""The UPDs of an ERP supplier order, for its card (options procurement.orders + documents.upd). Computed on read.
+"""The UPDs of an ERP supplier order, for its card . Computed on read.
 
 A UPD belongs to the order when
 * its basis («Основание: Счёт № 77639 от 26.10.2025») names one of the order's invoice numbers, or

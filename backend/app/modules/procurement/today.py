@@ -1,4 +1,4 @@
-"""Stage option `procurement.today`: Roller_Buyer's «Сегодня» over ERP facts, computed on read.
+"""Roller_Buyer's «Сегодня» over ERP facts, computed on read.
 
 Port of RB `apps/api/src/today.ts` (sections), `followups.ts` («Дожать»: silent suppliers, deliveries due, invoices not
 paid) and `domain/board.ts` (`lineEta`: when a line is expected on the shelf). Pure: the facts arrive from
@@ -251,10 +251,9 @@ class TodayFacts:
     supplier_leads: Mapping[str, int] = field(default_factory=dict)  # `supplier_key` → average payment → arrival
     pricebook_leads: Mapping[UUID, int] = field(default_factory=dict)  # procurement line id → price-book lead
     order_days: int | None = None
-    kaiten: Sequence[KaitenInvoice] | None = None  # None — option documents.chain is off
-    upd_to_check: int | None = None  # None — option documents.upd is off
+    kaiten: Sequence[KaitenInvoice] | None = None  # None — the Kaiten invoices are not loaded
+    upd_to_check: int | None = None  # None — the UPD registry is not loaded
     available: int = 0
-    rfq_on: bool = False
     received_orders: frozenset[str] = frozenset()  # orders with a line already received (Карантин, Готово)
 
 
@@ -337,12 +336,11 @@ def followups(facts: TodayFacts, today: date, settings: TodaySettings, lines: Se
     delivery_warn_days, invoices not paid (one per order), and — for «Ждём счёт» — the lines with a supplier chosen."""
     lines = _lines(facts) if lines is None else lines
     awaiting = []
-    if facts.rfq_on:
-        for silent in facts.silent:
-            waited = (today - silent.sent_on).days
-            if waited >= settings.quote_wait_days and silent.lines > 0:
-                awaiting.append((silent, waited))
-        awaiting.sort(key=lambda entry: -entry[1])
+    for silent in facts.silent:
+        waited = (today - silent.sent_on).days
+        if waited >= settings.quote_wait_days and silent.lines > 0:
+            awaiting.append((silent, waited))
+    awaiting.sort(key=lambda entry: -entry[1])
     deliveries = []
     for line in lines:
         due = line.due
@@ -693,7 +691,7 @@ def build_today(facts: TodayFacts, today: date, settings: TodaySettings) -> dict
         "risk": _risk(lines, facts, today, settings, late_ids),
         "rfq": _to_quote(lines, today),
         "quotes": _quotes(follow),
-        "choose": _choose(lines, facts, today) if facts.rfq_on else [],
+        "choose": _choose(lines, facts, today),
         "invoice": _invoice(follow, facts, today),
         "pay": _pay(follow),
         "kaiten": _kaiten(facts.kaiten, today) if facts.kaiten is not None else [],

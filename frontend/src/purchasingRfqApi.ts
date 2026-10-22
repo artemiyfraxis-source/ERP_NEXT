@@ -1,7 +1,7 @@
 import { api, ApiError } from "./api";
 import type { GateCode, PricierCode, ReasonFields } from "./rfqReasons";
 
-/** «Запросы КП» (stage option procurement.rfq): backend `purchasing/api_rfq.py`. Numbers come as strings. */
+/** «Запросы КП»: backend `purchasing/api_rfq.py`. Numbers come as strings. */
 const BASE = "/api/purchasing/rfqs";
 
 export type RfqSummary = {

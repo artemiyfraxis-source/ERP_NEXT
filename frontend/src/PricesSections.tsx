@@ -5,8 +5,7 @@ import {
   CURRENCY_SIGNS, purchasingPricesApi, type ItemPrices, type SupplierPrices, type UpdPurchase,
 } from "./purchasingPricesApi";
 
-/** Sections of the item and supplier cards added by the option references.price_book. The caller shows them only with
- *  the option on. A UPD number is a button when the host passes `onOpenUpd` (the UPD card lives in another screen). */
+/** Sections of the item and supplier cards of the price book. A UPD number is a button when the host passes `onOpenUpd` (the UPD card lives in another screen). */
 export const kopecks = (value: number | null | undefined) =>
   value === null || value === undefined ? "—" : `${formatNumber(value / 100, { digits: 2, minDigits: 2 })}${NBSP}₽`;
 const price4 = (value: number) => formatNumber(value / 10_000, { digits: 4, minDigits: 2 });

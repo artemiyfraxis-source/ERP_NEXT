@@ -41,7 +41,7 @@ function useLinePanel(
   busyId: string,
 ) {
   const [open, setOpen] = useState<{ id: string; label: string } | null>(null);
-  const history = useLineHistory(); // option procurement.history: «История» is the last action of the row
+  const history = useLineHistory(); // «История» is the last action of the row
   const line = open ? lines.find((item) => item.id === open.id) : undefined;
   const action = open && line ? actionsOf(line).find((item) => item.label === open.label && item.panel) : undefined;
   // Строка ушла на другую стадию — форма закрывается и не всплывёт, если строка вернётся.

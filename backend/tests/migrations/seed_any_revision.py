@@ -187,8 +187,8 @@ _SHAPED_VALUES: dict[tuple[str, str], Any] = {
     ("production_vswr_measurements", "band_to_mhz"): lambda i: Decimal(8800),
     ("production_vswr_measurements", "max_vswr_mhz"): lambda i: Decimal(1000),
 }
-# One row per installation (CHECK `id = 1`): seeded with a single row.
-_SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings"})
+# One row per installation (CHECK `id = 1`): seeded with a single row (the label print agent's heartbeat, 0141, too).
+_SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings", "warehouse_label_agent"})
 
 
 def _value(table: str, column: Column, index: int) -> Any:

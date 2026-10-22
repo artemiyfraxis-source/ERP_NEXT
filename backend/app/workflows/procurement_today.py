@@ -1,4 +1,4 @@
-"""«Сегодня» закупщика (option procurement.today) and «Дожать» of «Счета и поставки»: the one place their facts are read.
+"""«Сегодня» закупщика and «Дожать» of «Счета и поставки»: the one place their facts are read.
 
 Procurement builds the page (`procurement.today`, pure) and never imports purchasing; this workflow hands it, on the
 caller's session (read-only), in a fixed number of queries whatever the number of lines:
@@ -9,7 +9,7 @@ caller's session (read-only), in a fixed number of queries whatever the number o
 * the order facts of «Счета и поставки» (`purchasing_order_facts.order_facts`: sent to pay, shipped, promised date);
 * for «Не успевает к сроку»: every supplier's average payment → arrival and the buyer's request → invoice (one column
   select over the paid lines), and the price-book lead of the items of only those lines nothing nearer is known for;
-* Kaiten invoices «В оплату» (option documents.chain) and the UPDs to check (option documents.upd) — shared, not per
+* Kaiten invoices «В оплату» and the UPDs to check — shared, not per
   buyer; the count of free lines («Новые доступные»)."""
 
 from __future__ import annotations
@@ -40,16 +40,12 @@ from app.modules.procurement.today import (
 )
 from app.modules.purchasing import settings as purchasing_settings
 from app.modules.purchasing.infrastructure import InvoiceRow, PriceRefRow, UpdDocumentRow
-from app.shared import stage_options
 from app.shared.clock import MOSCOW, as_utc
 
 from .procurement_requests_view import rfq_states
 from .procurement_rfq_followups import decisions, first_sent, silent_suppliers
 from .purchasing_order_facts import order_facts
 
-RFQ_OPTION = "procurement.rfq"
-INVOICES_OPTION = "documents.chain"
-UPD_OPTION = "documents.upd"
 UPD_TO_CHECK = "Требует проверки"
 _CHUNK = 500
 _TO_PAY = ProcurementStatus.TO_PAY.value
@@ -138,8 +134,6 @@ def _pricebook(session: Session, lines: Sequence[ViewLine]) -> dict[UUID, int]:
 
 
 def _kaiten(session: Session) -> list[KaitenInvoice] | None:
-    if not stage_options.enabled(INVOICES_OPTION):
-        return None
     rows = session.execute(
         select(InvoiceRow.title, InvoiceRow.seller_name, InvoiceRow.total, InvoiceRow.card_created)
         .where(InvoiceRow.status == "to_pay")
@@ -149,8 +143,6 @@ def _kaiten(session: Session) -> list[KaitenInvoice] | None:
 
 
 def _upd_to_check(session: Session) -> int | None:
-    if not stage_options.enabled(UPD_OPTION):
-        return None
     # A twin (the PDF of a document that came as EDO XML) needs no review: the XML is in force.
     return int(session.scalar(select(func.count()).select_from(UpdDocumentRow).where(
         UpdDocumentRow.status == UPD_TO_CHECK, UpdDocumentRow.verified_at.is_(None), UpdDocumentRow.twin_of.is_(None),
@@ -182,7 +174,6 @@ def today_facts(
     lines = own_open_lines(session, buyer_id)
     ids = [line.id for line in lines]
     states = rfq_states(session, ids)
-    rfq_on = stage_options.enabled(RFQ_OPTION)
     facts = TodayFacts(
         lines=lines,
         purposes=purposes_of(lines) if purposes_of is not None and full else {},
@@ -190,8 +181,7 @@ def today_facts(
         orders=_orders(session, lines),
         decisions=decisions(session, ids),
         rfq_sent=first_sent(session, {state.rfq_id for state in states.values() if state.rfq_id}) if full else {},
-        silent=silent_suppliers(session, buyer_id) if rfq_on else (),
-        rfq_on=rfq_on,
+        silent=silent_suppliers(session, buyer_id),
     )
     if not full:
         return facts

@@ -1,6 +1,6 @@
 import { api } from "./api";
 
-/** «Номенклатура» (stage option references.items): /api/purchasing/items. Money and quantities arrive as strings. */
+/** «Номенклатура»: /api/purchasing/items. Money and quantities arrive as strings. */
 export type ItemCategory = "cable" | "connector" | "ekb" | "other";
 export const ITEM_CATEGORIES: { key: ItemCategory; label: string }[] = [
   { key: "cable", label: "Кабель" },

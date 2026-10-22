@@ -70,7 +70,7 @@ export interface RequestSchema {
   projects?: string[];
   /** ТИП combobox options (REQUEST_FORM_FIELDS «ТИП»). */
   item_types?: string[];
-  /** Stage option projects.internal: open internal projects «ВП-001» (empty while the option is off). */
+  /** open internal projects «ВП-001» (empty when there are none). */
   internal_projects?: InternalProjectBrief[];
 }
 
@@ -80,7 +80,7 @@ export interface InternalProjectBrief {
   purpose: string;
 }
 
-/** Stage option projects.internal: a project of the company itself; requests refer to it by `number`. */
+/** a project of the company itself; requests refer to it by `number`. */
 export interface InternalProject extends InternalProjectBrief {
   id: string;
   responsible_id: string | null;
@@ -523,7 +523,7 @@ export interface WarehouseShelfPlaces {
   next_number: number | null;
 }
 
-/** Stage option warehouse.scan: «lot» — the scanned ГРН's lots, «place» — what lies on the scanned place. */
+/** «lot» — the scanned ГРН's lots, «place» — what lies on the scanned place. */
 export interface WarehouseScan {
   kind: "lot" | "place";
   code: string;
@@ -531,7 +531,7 @@ export interface WarehouseScan {
   lots: WarehouseLot[];
 }
 
-/** Stage option warehouse.undo: what «Отменить последнее» would take back (null — and why not). */
+/** what «Отменить последнее» would take back (null — and why not). */
 export interface WarehouseUndoPreview {
   undo: { label: string; occurred_at: string } | null;
   reason: string;
@@ -3142,7 +3142,8 @@ export interface AutoplanContext {
   period: { start: string; last_day: string; auto: boolean };
   max_days: number;
   tasks: Array<{ id: string; number: string; project: string; item: string; name: string; deadline: string | null }>;
-  new: Array<{ techcard_id: string; project: string; index: string; name: string; run: string; deadline: string | null; operations: number; skipped: string }>;
+  /** launched — уже запущено по КБ, quantity — остаток тиража к запуску (новое задание). */
+  new: Array<{ techcard_id: string; project: string; index: string; name: string; run: string; launched?: number; quantity?: number | null; deadline: string | null; operations: number; skipped: string }>;
   projects: Array<{ project: string; deadline: string | null; tasks: number; new: number }>;
   fitters: Array<{ id: string; name: string; site: string; free_seconds: number }>;
 }
@@ -3165,13 +3166,15 @@ export interface BoardEquipment { key: string; label: string; limited: boolean }
 export interface BoardTask extends ProductionTask {
   operations: Array<ProductionOperation & { equipment: BoardEquipment }>;
   run?: string;
+  /** Новое задание: уже запущено по КБ (quantity — остаток тиража к запуску). */
+  launched?: number;
   warnings?: string[];
 }
 export interface BoardSkipped { techcard_id: string; techcard_version: number; project: string; index: string; name: string; reason: string }
 export interface BoardData { project: string; tasks: BoardTask[]; future: BoardTask[]; skipped: BoardSkipped[] }
 export type BoardAssignItem =
   | { task_id: string; task_version: number; operation_id: string }
-  | { techcard_id: string; techcard_version: number; position: number; quantity?: number; run?: number };
+  | { techcard_id: string; techcard_version: number; position: number; quantity?: number; run?: number; launched?: number };
 export interface BoardAssignResult {
   tasks: ProductionTask[];
   created: Array<{ id: string; number: string }>;
@@ -3185,8 +3188,8 @@ export const productionApi = {
   board: (project = "") => api<BoardData>(`/api/production/board${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   boardAssign: (payload: { operator_id: string; requested_start: string | null; items: BoardAssignItem[] }) =>
     api<BoardAssignResult>("/api/production/board/assign", { method: "POST", body: JSON.stringify(payload) }),
-  /** «Уже сделано» по КБ без задания: задание (тираж run, по умолчанию весь тираж КБ) и готовые штуки этапа — одной транзакцией. */
-  boardOutput: (payload: { techcard_id: string; techcard_version: number; position: number; good_quantity: number; fill_inputs: boolean; run?: number }) =>
+  /** «Уже сделано» по новому заданию КБ: задание (тираж run, по умолчанию весь остаток тиража КБ) и готовые штуки этапа — одной транзакцией. */
+  boardOutput: (payload: { techcard_id: string; techcard_version: number; position: number; good_quantity: number; fill_inputs: boolean; run?: number; launched?: number }) =>
     api<{ task: ProductionTask; operation_id: string; box: ProductionBox; filled: ProductionBox[]; warnings: string[] }>("/api/production/board/manual-output", {
       method: "POST", body: JSON.stringify(payload),
     }),
@@ -3605,6 +3608,12 @@ export const techcardsApi = {
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/build`, {
       method: "POST",
       body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}), ...(generatorOrigin ? { generator_origin: generatorOrigin } : {}) }),
+    }),
+  /** Схема ПФ генератора: та же сборка, что «Создать», без записи — техкарта, какой она станет (ревизии нет). */
+  buildPreview: (cardId: string, version: number, config: Record<string, unknown>) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/build/preview`, {
+      method: "POST",
+      body: JSON.stringify({ version, config }),
     }),
   issue: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/issue`, {

@@ -39,7 +39,7 @@ const coarsePointer = () => { try { return !!window.matchMedia?.("(pointer: coar
  * её ручной, «Сбросить к автоматической» возвращает null. «Изменить схему» добавляет в блок «Выше/Ниже» — порядок
  * операций в ЭТК (`onMove`).
  */
-export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange, error, notice, skipped, renderOp, derive = deriveRoute, defaultOpen = true, timeSource = "время из последней сборки ЭТК", onMove, orderChanged = false, onResetOrder, art = EMPTY_ART, blockView = false }: {
+export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange, error, notice, skipped, renderOp, derive = deriveRoute, defaultOpen = true, timeSource = "время из последней сборки ЭТК", onMove, orderChanged = false, onResetOrder, art = EMPTY_ART, blockView = false, preview }: {
   /** Операции, которые попадут в сборку: номер, название, норма на партию (null — ЭТК ещё не собиралась). */
   ops: RouteOp[];
   /** Наименование изделия — второй строкой у «Готового кабеля». */
@@ -73,6 +73,9 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   /** Карточка — блок схемы как есть (схема ПФ «Сложной сборки», владелец 16.10): уровень, название, что входит; иначе —
       карточки полуфабрикатов генератора по стадиям (routeCards.genCards). */
   blockView?: boolean;
+  /** Схема ПФ собранной из формы ЭТК (GenPfScheme) — показывается вместо карточек, пока схему не правят; `summary` —
+      её итог («4 ПФ · 9 операций»). null — схемы с сервера ещё нет, видны карточки. */
+  preview?: { node: ReactNode; summary: ReactNode | null } | null;
 }) {
   const [selected, setSelected] = useState("");
   const [shown, setShown] = useState<boolean | null>(null);
@@ -254,23 +257,23 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
       {orderChanged && onResetOrder && <button type="button" className="btn-link" onClick={() => { setProblem(""); onResetOrder(); }}>Вернуть порядок генератора</button>}
       <span className="route-head-actions">
         <button type="button" className={editing ? "primary small" : "secondary small"} aria-pressed={editing}
-          onClick={() => { setEditing(!editing); setProblem(""); if (editing) setShown(true); }}>{editing ? "Готово" : "Изменить схему"}</button>
+          onClick={() => { setEditing(!editing); setProblem(""); if (editing) { setShown(true); if (preview) setSelected(""); } }}>{editing ? "Готово" : "Изменить схему"}</button>
         {!editing && <button type="button" className="btn-link route-toggle" aria-expanded={open} onClick={() => setShown(!open)}>{open ? "Свернуть схему" : "Показать схему"}</button>}
       </span>
     </div>
     <div className="route-summary">
-      {gen.cards.length} {blockView ? "ПФ" : pluralRu(gen.cards.length, "карточка", "карточки", "карточек")} · {ops.length} {pluralRu(ops.length, "операция", "операции", "операций")}
-      {total?.rolled != null && <> · на изделие <strong>{formatMinutes(total.rolled)} мин</strong> ({timeSource})</>}
+      {!editing && preview?.summary ? preview.summary : <>{gen.cards.length} {blockView ? "ПФ" : pluralRu(gen.cards.length, "карточка", "карточки", "карточек")} · {ops.length} {pluralRu(ops.length, "операция", "операции", "операций")}
+      {total?.rolled != null && <> · на изделие <strong>{formatMinutes(total.rolled)} мин</strong> ({timeSource})</>}</>}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="warning-inline">{notice}</div>}
     {open && <>
       {editing && <p className="route-link-hint" role="status">Нажмите операцию — откроется её блок ЭТК: {onMove ? "порядок в ЭТК (↑ Выше, ↓ Ниже), " : ""}объединить, разделить, входы и сколько штук берёт вход.</p>}
-      <div ref={boxRef}><RouteCanvas cards={canvasCards} label="Карточки схемы" controls={false} fit="width" margin={GEN_SPACING.margin}
-        links={gen.links.map((link) => ({ id: link.id, from: link.from, to: link.to, qty: link.qty, label: `«${cardTitle.get(link.from)}» → «${cardTitle.get(link.to)}»` }))} /></div>
+      {!editing && preview?.node ? preview.node : <div ref={boxRef}><RouteCanvas cards={canvasCards} label="Карточки схемы" controls={false} fit="width" margin={GEN_SPACING.margin}
+        links={gen.links.map((link) => ({ id: link.id, from: link.from, to: link.to, qty: link.qty, label: `«${cardTitle.get(link.from)}» → «${cardTitle.get(link.to)}»` }))} /></div>}
       {!!skipped?.length && <div className="route-summary">Без шаблона, в схему не входят: {skipped.join(", ")}</div>}
       {problem && <div className="warning-inline" role="alert">{problem}</div>}
-      {block && panel(block)}
+      {block && (editing || !preview?.node) && panel(block)}
     </>}
   </section>;
 }

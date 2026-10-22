@@ -1,4 +1,4 @@
-"""Запросы КП, КП, сравнение и решение (stage option procurement.rfq)."""
+"""Запросы КП, КП, сравнение и решение."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal, section_allowed
@@ -28,15 +27,14 @@ from . import rfq_batch
 from . import rfq_invoice_requests
 from . import rfq_kaiten
 from . import rfq_withdraw
-from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
+from .deps import procurement_uow_factory, purchasing_uow_factory
 
 
 def rfq_option(request: Request, principal: Annotated[Principal, Depends(procurement_view_principal)]) -> None:
-    """After the section gate: a token or a stranger is refused (401/403) before the option says 404, and a write by
+    """After the section gate: a token or a stranger is refused (401/403), and a write by
     someone who holds «Лист закупки» on view only is refused (403) before it too (view-mode contract, ID-6)."""
     if request.method not in {"GET", "HEAD", "OPTIONS"} and not section_allowed(principal, ("procurement",), "edit"):
         raise HTTPException(status_code=403, detail="Раздел «Лист закупки» открыт вам только на просмотр.")
-    require_option("procurement.rfq")
 
 
 router = APIRouter(prefix="/api/purchasing/rfqs", tags=["purchasing"], dependencies=[Depends(rfq_option)])
@@ -163,7 +161,7 @@ class QuoteModel(BaseModel):
     file_name: str | None = Field(default=None, max_length=300)
     file_base64: str | None = Field(default=None, max_length=28_000_000)
     lines: list[QuoteLineModel] = Field(min_length=1, max_length=500)
-    # Supplier wordings the buyer confirmed in «КП из PDF и текста»; stored only while that option is on.
+    # Supplier wordings the buyer confirmed in «КП из PDF и текста».
     aliases: list[AliasModel] = Field(default_factory=list, max_length=500)
 
     def to_input(self) -> service.QuoteInput:
@@ -405,7 +403,7 @@ def rfq_mark_declined(
 @router.post("/{rfq_id}/quotes", status_code=201)
 def rfq_add_quote(rfq_id: UUID, payload: QuoteModel, principal: Edit, now: Now, uow: Uow) -> dict:
     saved = _run(lambda: service.add_quote(uow(), principal.actor, now, rfq_id, payload.to_input()))
-    if payload.aliases and stage_options.enabled("procurement.quote_import"):
+    if payload.aliases:
         quote_import.remember_aliases(
             uow, principal.actor, now, rfq_id, payload.supplier_id, [(item.rfq_line_id, item.text) for item in payload.aliases])
     return saved
@@ -421,8 +419,6 @@ def rfq_paste_quote(rfq_id: UUID, payload: PasteInput, principal: Edit, uow: Uow
 @router.post("/{rfq_id}/quotes/import")
 def rfq_import_quote(rfq_id: UUID, payload: ImportInput, principal: Edit, now: Now, uow: Uow) -> dict:
     """«КП из PDF и текста»: proposed quote lines for the form; nothing is saved."""
-    require_option("procurement.quote_import")
-    require_option("procurement.rfq")
     if bool(payload.text) == bool(payload.content_base64):
         raise HTTPException(status_code=422, detail="Вставьте текст КП или приложите PDF")
     if payload.content_base64:

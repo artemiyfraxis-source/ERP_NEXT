@@ -112,7 +112,7 @@ function SectionCard({ section }: { section: TodaySection }) {
 }
 
 export function ProcurementToday({ ordersOn = false }: { ordersOn?: boolean } = {}) {
-  useInternalProjects(); // option projects.internal: project cards say «ВП-001 · Название»
+  useInternalProjects(); // project cards say «ВП-001 · Название»
   const [data, setData] = useState<TodayDto | null>(null);
   const [error, setError] = useState("");
   const live = useRef(true);

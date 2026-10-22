@@ -2,7 +2,6 @@
 «Выбрать поставщика» per project, «Ждём счёт» after the decision, Kaiten invoices on their Moscow day, UPDs to check,
 and «Дожать» of «Счета и поставки» reading the same rules."""
 
-import json
 from datetime import date, datetime
 from uuid import uuid4
 
@@ -10,17 +9,10 @@ from app.main import app
 from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.modules.purchasing import settings as purchasing_settings
 from app.modules.purchasing.infrastructure import InvoiceRow, OrderFactRow, UpdDocumentRow
-from app.shared import stage_options
 from app.shared.clock import moscow_now
 from tests.purchasing.test_rfq_api import BASE, _as, _quote, _rfq, _supplier, rfq_api  # noqa: F401 — fixture
 
 TODAY = "/api/procurement/today"
-
-
-def _options(monkeypatch, tmp_path, **states):
-    path = tmp_path / "options.json"
-    path.write_text(json.dumps({"procurement.today": True, **states}), encoding="utf-8")
-    monkeypatch.setenv(stage_options.ENV, str(path))
 
 
 def _clock(day: int, hour: int = 11) -> None:
@@ -50,9 +42,8 @@ def _flow(client, lines):
     return rfq, first, silent, answered
 
 
-def test_rfq_sections_need_the_rfq_option(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+def test_rfq_sections_follow_the_requests(rfq_api):  # noqa: F811
     client, lines, sessions = rfq_api
-    _options(monkeypatch, tmp_path, **{"procurement.rfq": True})
     rfq, *_ = _flow(client, lines)
     _clock(20)
     sections = _sections(client)
@@ -65,13 +56,10 @@ def test_rfq_sections_need_the_rfq_option(rfq_api, monkeypatch, tmp_path):  # no
     assert choose["detail"] == f"1 позиция · запрос {rfq['number']}" and choose["days"] == 5
     assert choose["link"] == {"tab": "rfq", "rfq": rfq["id"]}
     assert "rfq" not in sections  # both lines are in a live request: nothing more to ask
-    _options(monkeypatch, tmp_path, **{"procurement.rfq": False})
-    assert not {"quotes", "choose"} & set(_sections(client))
 
 
-def test_no_answer_counts_from_quote_wait_days_on_and_skips_a_decline(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+def test_no_answer_counts_from_quote_wait_days_on_and_skips_a_decline(rfq_api):  # noqa: F811
     client, lines, sessions = rfq_api
-    _options(monkeypatch, tmp_path, **{"procurement.rfq": True})
     rfq, first, silent, answered = _flow(client, lines)
 
     _clock(17)  # two days after sending
@@ -92,9 +80,8 @@ def test_no_answer_counts_from_quote_wait_days_on_and_skips_a_decline(rfq_api, m
     assert "quotes" not in _sections(client)
 
 
-def test_no_answer_counts_only_the_lines_asked_of_the_silent_supplier(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+def test_no_answer_counts_only_the_lines_asked_of_the_silent_supplier(rfq_api):  # noqa: F811
     client, lines, sessions = rfq_api
-    _options(monkeypatch, tmp_path, **{"procurement.rfq": True})
     rfq = _rfq(client, lines)
     rfq_lines = client.get(f"{BASE}/{rfq['id']}").json()["lines"]
     first = next(item for item in rfq_lines if item["procurement_line_id"] == str(lines[0].id))
@@ -106,9 +93,8 @@ def test_no_answer_counts_only_the_lines_asked_of_the_silent_supplier(rfq_api, m
     assert _sections(client)["quotes"]["items"][0]["detail"].endswith("· 1 позиция")
 
 
-def test_a_decision_moves_the_line_from_choose_to_waiting_for_the_invoice(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+def test_a_decision_moves_the_line_from_choose_to_waiting_for_the_invoice(rfq_api):  # noqa: F811
     client, lines, sessions = rfq_api
-    _options(monkeypatch, tmp_path, **{"procurement.rfq": True})
     rfq, first, silent, answered = _flow(client, lines)
     matrix = client.get(f"{BASE}/{rfq['id']}").json()
     cell = next(item for item in matrix["lines"] if item["id"] == first["id"])["cells"][answered]
@@ -126,18 +112,16 @@ def test_a_decision_moves_the_line_from_choose_to_waiting_for_the_invoice(rfq_ap
     assert _sections(client)["quotes"]["items"][0]["detail"].endswith("· 1 позиция")
 
 
-def test_another_buyers_requests_and_lines_are_not_on_my_page(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+def test_another_buyers_requests_and_lines_are_not_on_my_page(rfq_api):  # noqa: F811
     client, lines, sessions = rfq_api
-    _options(monkeypatch, tmp_path, **{"procurement.rfq": True})
     _flow(client, lines)
     _clock(20)
     _as("Сидоров")
     assert _page(client)["calm"] is True
 
 
-def test_kaiten_invoices_count_their_moscow_day_and_twins_need_no_review(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+def test_kaiten_invoices_count_their_moscow_day_and_twins_need_no_review(rfq_api):  # noqa: F811
     client, lines, sessions = rfq_api
-    _options(monkeypatch, tmp_path, **{"documents.chain": True, "documents.upd": True})
     now = datetime(2026, 9, 10, 9, 0)
     with sessions() as session:
         # 21:30 UTC on the 13th is 00:30 MSK on the 14th: that is the card's day.
@@ -163,13 +147,10 @@ def test_kaiten_invoices_count_their_moscow_day_and_twins_need_no_review(rfq_api
     kaiten = sections["kaiten"]["items"][0]
     assert (kaiten["title"], kaiten["detail"], kaiten["days"]) == ("Счёт № 12", "ООО Касса · 12 345 ₽", 1)
     assert sections["upd"]["items"][0]["title"] == "2 документа"
-    _options(monkeypatch, tmp_path)
-    assert not {"kaiten", "upd"} & set(_sections(client))
 
 
-def test_order_followups_on_the_orders_board_read_the_same_rules(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+def test_order_followups_on_the_orders_board_read_the_same_rules(rfq_api):  # noqa: F811
     client, lines, sessions = rfq_api
-    _options(monkeypatch, tmp_path, **{"procurement.orders": True})
     with sessions() as session:
         for line in lines:
             row = session.get(ProcurementLineRow, line.id)
@@ -185,7 +166,6 @@ def test_order_followups_on_the_orders_board_read_the_same_rules(rfq_api, monkey
     followups = client.get("/api/purchasing/orders/followups").json()
     assert [(item["order_number"], item["count"], item["days"]) for item in followups["unpaid"]] == [("PO-5", 2, 5)]
     # «Заявки» show the same fact: the order was handed over for payment.
-    _options(monkeypatch, tmp_path, **{"procurement.requests_rb": True})
     view = client.get("/api/procurement/requests-view").json()
     assert view["projects"][0]["counts"] == {"to_pay": 2}
 
