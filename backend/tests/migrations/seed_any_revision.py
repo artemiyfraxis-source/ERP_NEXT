@@ -172,6 +172,8 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("identity_documents", "scope_value"): "",
     ("fulfillment_lines", "absent_by"): None,
     ("finished_goods", "before_erp"): Decimal(0),
+    # A VSWR verdict without a norm (the seeder leaves norm_vswr_max empty) is a manual one (0142_production_vswr).
+    ("production_vswr_measurements", "verdict_manual"): True,
 }
 # Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
 # label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).
@@ -180,6 +182,10 @@ _LABEL_SETTINGS = {"width_mm": 58, "height_mm": 30, "dpi": 300, "gap_mm": 2, "de
 _SHAPED_VALUES: dict[tuple[str, str], Any] = {
     ("purchasing_internal_projects", "number"): lambda i: f"ВП-{i + 1:03d}",
     **{("warehouse_label_settings", name): (lambda value: lambda i: value)(value) for name, value in _LABEL_SETTINGS.items()},
+    # A VSWR band is from < to and its peak lies inside (0142_production_vswr_measurements).
+    ("production_vswr_measurements", "band_from_mhz"): lambda i: Decimal(1),
+    ("production_vswr_measurements", "band_to_mhz"): lambda i: Decimal(8800),
+    ("production_vswr_measurements", "max_vswr_mhz"): lambda i: Decimal(1000),
 }
 # One row per installation (CHECK `id = 1`): seeded with a single row.
 _SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings"})
