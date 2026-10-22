@@ -204,10 +204,10 @@ it("view only: the lot is shown, no actions", async () => {
   expect(within(card).queryByRole("button", { name: "Отменить последнее" })).not.toBeInTheDocument();
 });
 
-it("the screen hands over to the ordinary shell while the option is off", async () => {
+it("the screen hands over to the ordinary shell without the warehouse section", async () => {
   stage([]);
   const leave = vi.fn();
-  render(<TsdScreen principal={storekeeper} onSignOut={() => undefined} onLeave={leave} />);
+  render(<TsdScreen principal={{ ...storekeeper, permissions: {} }} onSignOut={() => undefined} onLeave={leave} />);
   await waitFor(() => expect(leave).toHaveBeenCalled());
   cleanup();
   resetStageOptions();
