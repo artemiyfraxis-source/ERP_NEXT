@@ -526,8 +526,7 @@ class ReadyCard:
     @property
     def quantity(self) -> int | None:
         """Тираж целым числом больше нуля; иначе None — запускать на автомате нечего."""
-        text = str(self.run or "").strip()
-        return int(text) if text.isdigit() and int(text) > 0 else None
+        return run_quantity(self.run)
 
     @property
     def remainder(self) -> int | None:
@@ -550,6 +549,33 @@ def launch_remainders(ready: Iterable[ReadyCard], tasks: Iterable[ProductionTask
     return result
 
 
+def run_quantity(run: Any) -> int | None:
+    """Тираж КБ целым числом больше нуля; иначе None."""
+    text = str(run or "").strip()
+    return int(text) if text.isdigit() and int(text) > 0 else None
+
+
+def _run_text(kitset_run: Any, document: Any) -> str:
+    """Тираж КБ как текст: из карточки набора; нет — партия ЭТК (kit.part_quantity документа)."""
+    if kitset_run:
+        return format(Decimal(kitset_run).normalize(), "f")
+    kit = document.get("kit") if isinstance(document, Mapping) else None
+    return str((kit if isinstance(kit, Mapping) else {}).get("part_quantity") or "")
+
+
+def kb_runs(issued_cards: Iterable[Any], kitsets: Iterable[Any]) -> dict[str, int]:
+    """Тиражи КБ (kit_stage_key → шт) тем же правилом, что тираж ReadyCard для launch_remainders: из карточки набора,
+    нет — партия выданной ЭТК (последней выданной, если их несколько); карточка без документа (колонки лестницы) —
+    только набор. КБ без тиража в ответе нет."""
+    kit_runs = {kit_stage_key(kitset.project, assembly.index): assembly.run for kitset in kitsets for assembly in kitset.assemblies}
+    texts = {key: _run_text(run, None) for key, run in kit_runs.items() if run}
+    for card in sorted(issued_cards, key=lambda item: str(getattr(item, "updated_at", "") or "")):
+        key = kit_stage_key(card.project, card.item_index)
+        if not kit_runs.get(key):
+            texts[key] = _run_text(None, getattr(card, "document", None))
+    return {key: quantity for key, text in texts.items() if (quantity := run_quantity(text)) is not None}
+
+
 def ready_cards(cards: Iterable[Any], kitsets: Iterable[Any]) -> list[ReadyCard]:
     """Выданные техкарты с маршрутом, по (проект, индекс). Тираж и заказчик — из карточки набора (prodLaunchable_ читает
     «Наборы»); нет набора — партия ЭТК. Один список и для «Создать задание» на доске мастера, и для автоплана."""
@@ -562,12 +588,10 @@ def ready_cards(cards: Iterable[Any], kitsets: Iterable[Any]) -> list[ReadyCard]
         route = launch_route(card.document)
         if not route.steps:
             continue
-        kit = (card.document or {}).get("kit") if isinstance(card.document, Mapping) else None
         customer, run = kit_rows.get(kit_stage_key(card.project, card.item_index), ("", None))
         result.append(ReadyCard(
             techcard_id=card.id, version=card.version, revision=card.revision, project=card.project,
-            index=card.item_index, name=card.product_name, customer=customer,
-            run=format(Decimal(run).normalize(), "f") if run else str((kit if isinstance(kit, Mapping) else {}).get("part_quantity") or ""),
+            index=card.item_index, name=card.product_name, customer=customer, run=_run_text(run, card.document),
             deadline=card.deadline, route=route, document=card.document,
         ))
     result.sort(key=lambda item: (item.project, item.index))

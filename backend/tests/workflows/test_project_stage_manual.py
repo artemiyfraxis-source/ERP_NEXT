@@ -299,12 +299,13 @@ def test_preview_lists_from_to_skipped_what_closes_and_what_stays():
                                register=GoodsRegister(needed=Decimal("10"), accepted_total=Decimal("4"),
                                                       packed_total=Decimal("1"), shipped_total=Decimal("1"))),),
         events=(PlanEvent("708К.4", NOW, "РП", PLAN_KINDS["block"], blocker="ХОЛД", text="ждём оплату"),),
+        runs={kit_stage_key("708К.4", "КБ1"): 10},
     )
     state = flow.project_stage_state("708К.4", ("КБ1", "КБ2"), facts, sequence=1)
 
     preview = flow.preview_project_stage(state, "Отгружено")
 
-    # Выполненное задание цеха — производство закончено: КБ1 «ОТК».
+    # Выполненное задание цеха сделало весь тираж КБ (10 шт) — производство закончено: КБ1 «ОТК».
     assert preview["direction"] == "forward" and preview["reason_required"] is False and preview["error"] == ""
     kb1, kb2 = preview["kbs"]
     assert {key: kb1[key] for key in ("kb", "from", "to", "skipped", "change", "note")} == {

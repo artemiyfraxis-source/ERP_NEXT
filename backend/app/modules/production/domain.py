@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
 from functools import cached_property
 from math import ceil
+import re
 from uuid import UUID, uuid4
 
 
@@ -967,19 +968,96 @@ def plan_operation(
     return PlanResult(start, finish, tuple(warnings))
 
 
-def mark_serial_range(task: ProductionTask, project_tasks: Iterable[ProductionTask]) -> tuple[int, int]:
-    """Номера изделий задания для «№ изделия» в надписях меток по КД (ЭТК, «Печать надписей»): первый и последний.
+# Номера меток задания (mark_serial_range) в журнале аудита: «выданы» — ЭТК задания с надписями «№ изделия» открыли
+# с его диапазоном (надписи могли напечатать — след работы, application._has_work); «освобождены» — задание отменено,
+# а работы по нему не было (номера снова свободны); «возвращено» — отмену сняли, номера заняты заново.
+MARKS_ISSUED_EVENT = "production.marks_issued"
+MARKS_RELEASED_EVENT = "production.marks_released"
+RESTORED_EVENT = "production.restored"
 
-    Нумерация сквозная по позиции проекта (решено агентом — проверить): задания той же позиции (`item`), запущенные
-    раньше этого (по времени запуска, при равном — по номеру ПЗ), занимают номера подряд, следующее задание
-    продолжает — два изделия одной КБ не получат одну надпись. Отменённое задание свои номера не отдаёт: отмену
-    можно снять, а напечатанная надпись не должна сдвинуться."""
-    def order(item: ProductionTask) -> tuple[datetime, int, str]:
-        digits = "".join(char for char in item.number if char.isdigit())
-        return item.created_at, int(digits) if digits else 0, item.number
+_MARK_SERIAL = re.compile(r"\{№(?::[1-6])?\}")
 
+
+@dataclass(frozen=True)
+class MarkEvent:
+    """Номера меток задания освобождены (released) или задание вернули в работу (не released) в момент ``at``;
+    ``after`` — номер ПЗ последнего к этому моменту задания той же позиции (`latest_of_item`): событие стоит сразу за
+    его запуском, даже если часы у запусков и событий совпали; не известен — по времени ``at``."""
+    task_id: UUID
+    at: datetime
+    released: bool
+    after: str = ""
+
+
+def has_numbered_marks(document: object) -> bool:
+    """В ЭТК есть надпись метки с «№ изделия» (`{№}`, `{№:3}`; frontend markSerial.ts) — её печатают по номерам задания."""
+    if not isinstance(document, dict):
+        return False
+    for operation in document.get("operations") or ():
+        fields = operation.get("fields") if isinstance(operation, dict) else None
+        for mark in (fields.get("marks") if isinstance(fields, dict) else None) or ():
+            if isinstance(mark, dict) and _MARK_SERIAL.search(str(mark.get("text") or "")):
+                return True
+    return False
+
+
+def _instant(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None or value.utcoffset() is None else value.astimezone(UTC)
+
+
+def _launch_order(task: ProductionTask) -> tuple[datetime, int, str]:
+    """Порядок запусков позиции: по времени запуска, при равном — по номеру ПЗ."""
+    digits = "".join(char for char in task.number if char.isdigit())
+    return _instant(task.created_at), int(digits) if digits else 0, task.number
+
+
+def _same_item(task: ProductionTask, tasks: Iterable[ProductionTask]) -> dict[UUID, ProductionTask]:
     key = task.item.strip().casefold()
-    mine = order(task)
-    before = sum(max(other.quantity, 0) for other in project_tasks
-                 if other.id != task.id and other.item.strip().casefold() == key and order(other) < mine)
-    return before + 1, before + max(task.quantity, 0)
+    return {other.id: other for other in tasks if other.item.strip().casefold() == key}
+
+
+def latest_of_item(task: ProductionTask, project_tasks: Iterable[ProductionTask]) -> str:
+    """Номер ПЗ последнего запущенного задания позиции ``task`` (вместе с ним самим) — ``MarkEvent.after``."""
+    return max((*_same_item(task, project_tasks).values(), task), key=_launch_order).number
+
+
+def _first_free(blocks: Iterable[tuple[int, int]], quantity: int) -> tuple[int, int]:
+    """Первый свободный подряд диапазон из ``quantity`` номеров, начиная с 1, мимо занятых ``blocks``."""
+    start = 1
+    for first, last in sorted(blocks):
+        if start + quantity - 1 < first:
+            break
+        start = max(start, last + 1)
+    return start, start + quantity - 1
+
+
+def mark_serial_range(
+    task: ProductionTask, project_tasks: Iterable[ProductionTask], events: Iterable[MarkEvent] = (),
+) -> tuple[int, int] | None:
+    """Номера изделий задания для «№ изделия» в надписях меток по КД (ЭТК, «Печать надписей»): первый и последний;
+    None — задание отменено без работы и свои номера освободило.
+
+    Нумерация сквозная по позиции проекта (решено агентом — проверить), по ходу событий заданий той же позиции
+    (`item`): запуск (по времени запуска, при равном — по номеру ПЗ) занимает первый свободный подряд диапазон;
+    освобождение (``events``: отменено без работы, владелец 22.10 «освобождать») его отдаёт; «Вернуть в работу»
+    освобождённого — снова первый свободный. Занятый диапазон ничто позже него не сдвигает: два живых задания позиции
+    не получат одного номера, напечатанная надпись не меняется, а перезапуск освобождённых 10 шт снова получает 1–10.
+    Отменённое после работы задание (события освобождения нет) свои номера держит: надписи могли напечатать."""
+    tasks = _same_item(task, project_tasks)
+    tasks[task.id] = task
+    numbers = {item.number: item for item in tasks.values()}
+    # Шаг: (место в череде запусков, 0 — запуск / 1 — событие, время события, освобождение раньше возврата).
+    steps = [((_launch_order(item), 0, _instant(item.created_at), 0), item.id, None) for item in tasks.values()]
+    for event in events:
+        if event.task_id not in tasks:
+            continue
+        anchor = numbers.get(event.after)
+        place = _launch_order(anchor) if anchor is not None else (_instant(event.at), 1 << 62, "")
+        steps.append(((place, 1, _instant(event.at), 0 if event.released else 1), event.task_id, event.released))
+    held: dict[UUID, tuple[int, int]] = {}
+    for _key, task_id, released in sorted(steps, key=lambda step: step[0]):
+        if released:
+            held.pop(task_id, None)
+        elif task_id not in held:
+            held[task_id] = _first_free(held.values(), max(tasks[task_id].quantity, 1))
+    return held.get(task.id)

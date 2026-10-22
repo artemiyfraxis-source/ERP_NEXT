@@ -13,6 +13,7 @@ from uuid import UUID
 from app.modules.fulfillment.domain import FulfillmentRequest, FulfillmentStatus
 from app.modules.procurement.domain import ProcurementLine
 from app.modules.production.domain import ProductionStatus, ProductionTask, ProductionValidationError
+from app.modules.production.launchable import kb_runs
 from app.modules.production.plan import (
     PlanEvent,
     KitMark,
@@ -168,6 +169,7 @@ def kit_stage_facts(
     boxes: Iterable[ProductionBox] = (),
     inspected: Collection[UUID] = (),
     worked: Collection[UUID] = (),
+    runs: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, set[str]], dict[str, KitMark]]:
     """`kitStageFacts_`: which КБ has an issued techcard, a picked kit, tasks placed in the resource plan, work begun,
     finished production (ОТК), finished goods accepted and packed, gone.
@@ -178,8 +180,12 @@ def kit_stage_facts(
     live task of the КБ — a launched task alone, or an issued kit, is no longer work (owner 12.10).
 
     ``boxes`` — production boxes, ``inspected`` — ids of the boxes ОТК inspected: a final-operation box handed in (the
-    ОТК queue — no master confirmation since 13.10) or inspected means production of the КБ is over. Shared by the production plan and
-    the project kitset list (SUPPLYMAP portalKitsetList).
+    ОТК queue — no master confirmation since 13.10) or inspected counts its pieces as made. «ОТК» — the whole КБ run is
+    made (owner 22.10): Σ over the КБ's non-cancelled tasks of the made pieces (a done task — its quantity, a running
+    one — its final-operation boxes, at most its quantity) reaches the КБ run (``runs``: kit_stage_key → pieces,
+    `launchable.kb_runs`, the run `launch_remainders` launches); a КБ without a known run — every launched piece made.
+    A done task of a partly launched run is not «ОТК». Shared by the production plan and the project kitset list
+    (SUPPLYMAP portalKitsetList).
     """
     marks = dict(marks)
     facts: dict[str, set[str]] = {
@@ -220,22 +226,7 @@ def kit_stage_facts(
         if task.status is ProductionStatus.RUNNING:
             is_placed = bool(task.handed_to) or all(op.planned_start is not None for op in task.operations)
             placed[key] = placed.get(key, True) and is_placed
-        # Выполненное задание — производство закончено, изделие у ОТК (владелец 12.10: лестница с «ОТК»).
-        elif task.status is ProductionStatus.DONE:
-            facts["qc"].add(kit_stage_key(task.project, task.item))
-    inspected = frozenset(inspected)
-    by_id = {task.id: task for task in tasks if task.status is not ProductionStatus.CANCELLED}
-    for box in boxes:
-        task = by_id.get(box.task_id)
-        if task is None or not (box.status in TAKEABLE_BOX or box.id in inspected):
-            continue
-        try:
-            final = task.final_operation.id
-        except ProductionValidationError:
-            continue
-        # Коробка последней операции в очереди ОТК (сдана монтажником) или уже проверена ОТК.
-        if box.operation_id == final:
-            facts["qc"].add(kit_stage_key(task.project, task.item))
+    facts["qc"].update(_made_runs(tasks, boxes, frozenset(inspected), runs or {}))
     # Регистр ГП (0111): принято / упаковано / отгружено всего по КБ — счётчики, которые двигает только ход журнала ГП.
     for good in goods:
         key = kit_stage_key(good.project, good.item_index)
@@ -252,6 +243,48 @@ def kit_stage_facts(
 
     facts["planned"].update(key for key, value in placed.items() if value)
     return facts, marks
+
+
+def _made_runs(
+    tasks: tuple[ProductionTask, ...], boxes: Iterable[ProductionBox], inspected: frozenset[UUID], runs: Mapping[str, int],
+) -> set[str]:
+    """КБ, весь тираж которых сделан — этап «ОТК» (владелец 12.10: лестница с «ОТК»; 22.10: только когда сделан весь
+    тираж КБ, а не одно его задание). Сделано заданием: «Выполнено» — его тираж; «Запущено» — штуки коробок последней
+    операции в очереди ОТК (сдана монтажником) или проверенных ОТК, не больше тиража задания (коробка без штук в
+    фактах — всё задание). Отменённые не считаются."""
+    live = {task.id: task for task in tasks if task.status is not ProductionStatus.CANCELLED}
+    boxed: dict[UUID, Decimal | None] = {}
+    for box in boxes:
+        task = live.get(box.task_id)
+        if task is None or task.status is not ProductionStatus.RUNNING or not (box.status in TAKEABLE_BOX or box.id in inspected):
+            continue
+        try:
+            final = task.final_operation.id
+        except ProductionValidationError:
+            continue
+        if box.operation_id != final:
+            continue
+        quantity = getattr(box, "quantity", None)
+        current = boxed.get(task.id, Decimal(0))
+        boxed[task.id] = None if quantity is None or current is None else current + Decimal(quantity)
+    launched: dict[str, int] = {}
+    made: dict[str, Decimal] = {}
+    for task in live.values():
+        key = kit_stage_key(task.project, task.item)
+        launched[key] = launched.get(key, 0) + task.quantity
+        if task.status is ProductionStatus.DONE:
+            piece = Decimal(task.quantity)
+        elif task.id in boxed:
+            piece = min(Decimal(task.quantity), boxed[task.id] if boxed[task.id] is not None else Decimal(task.quantity))
+        else:
+            continue
+        made[key] = made.get(key, Decimal(0)) + piece
+    return {key for key, value in made.items() if value > 0 and value >= (runs.get(key) or launched[key])}
+
+
+def issued_runs(cards: Iterable, kitsets: Iterable[Kitset]) -> dict[str, int]:
+    """Тиражи КБ для этапа «ОТК» (`kit_stage_facts`): `launchable.kb_runs` по выданным техкартам и наборам."""
+    return kb_runs((card for card in cards if card.status is TechcardStatus.ISSUED), kitsets)
 
 
 def build_production_plan(
@@ -276,6 +309,7 @@ def build_production_plan(
     fulfillment = tuple(fulfillment)
     goods = tuple(goods)
     events = tuple(events)
+    kitsets = tuple(kitsets)
     project_snapshots = {normalize_project_number(item.project): item for item in projects}
     journal = summarize_journal(events)
     marks = summarize_kit_marks(events)
@@ -294,7 +328,7 @@ def build_production_plan(
 
     facts, marks = kit_stage_facts(
         cards=cards, tasks=tasks, fulfillment=fulfillment, goods=goods, marks=marks,
-        boxes=boxes, inspected=inspected, worked=worked,
+        boxes=boxes, inspected=inspected, worked=worked, runs=issued_runs(cards, kitsets),
     )
 
     # КБ проекта — из карточки набора (tcKitsetSyncErp_ → «Позиции проектов») и из карточек техкарт (`project_kits`).

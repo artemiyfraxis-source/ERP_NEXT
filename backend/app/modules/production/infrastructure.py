@@ -17,10 +17,10 @@ from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.fulfillment.domain import FulfillmentStatus
 from app.modules.fulfillment.infrastructure import FulfillmentLineRow, FulfillmentRequestRow
 from app.modules.shipping.infrastructure import FinishedGoodRow, SqlAlchemyFinishedGoodsRepository
-from app.shared.persistence import Base, SqlAlchemyAuditRepository
+from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository
 
 from .application import Absence, DuplicateLaunch, Operator
-from .domain import DEFAULT_SHIFT, EtkOperation, FlowMode, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
+from .domain import DEFAULT_SHIFT, MARKS_ISSUED_EVENT, MARKS_RELEASED_EVENT, RESTORED_EVENT, EtkOperation, FlowMode, MarkEvent, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
     KIT_STAGES, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot, normalize_project_number,
     stage_alias,
@@ -880,6 +880,32 @@ class SqlAlchemyProductionRepository:
             .distinct()
         ))
         return found
+
+    def marks_issued(self, task_ids) -> set[UUID]:
+        """Задания, номера меток которых выданы на экран ЭТК (MARKS_ISSUED_EVENT): надписи могли напечатать."""
+        ids = list(task_ids)
+        if not ids:
+            return set()
+        return set(self.session.scalars(
+            select(AuditEventRow.aggregate_id)
+            .where(AuditEventRow.aggregate_id.in_(ids), AuditEventRow.event_type == MARKS_ISSUED_EVENT)
+            .distinct()
+        ))
+
+    def mark_events(self, task_ids) -> list[MarkEvent]:
+        """Освобождения номеров меток (отменено без работы) и возвраты в работу заданий — для mark_serial_range."""
+        ids = list(task_ids)
+        if not ids:
+            return []
+        rows = self.session.execute(
+            select(AuditEventRow.aggregate_id, AuditEventRow.event_type, AuditEventRow.occurred_at, AuditEventRow.details)
+            .where(AuditEventRow.aggregate_id.in_(ids),
+                   AuditEventRow.event_type.in_((MARKS_RELEASED_EVENT, RESTORED_EVENT)))
+        )
+        return [
+            MarkEvent(task_id, at, kind == MARKS_RELEASED_EVENT, str((details or {}).get("after") or ""))
+            for task_id, kind, at, details in rows
+        ]
 
     def delete(self, task_id: UUID) -> None:
         """Задание без следа работы (см. `worked`) уходит с долями, операциями и своими серийными номерами."""
