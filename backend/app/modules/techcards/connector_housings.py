@@ -220,8 +220,24 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # mating face) and fig. 6-7 (receptacle: tongue on top, 1-2-3-4); table 6-1 assigns VBUS, D−, D+, GND. From the solder
     # side with the plastic part down, contact 1 is on the LEFT for the plug and the receptacle alike (as before); the
     # sketch has no face cue, so the title says it (the warehouse name drops the bracket).
-    {"id": "usb-a", "title": "USB-A 2.0 (пластик снизу)", "pattern": r"^USB-?A", "fixed": 4, "rows": 1, "order": "row", "start": "TL", "latch": "none", "color": "#c9ccd0", "labels": ("+5В", "D−", "D+", "GND"), "conf": "high",
+    {"id": "usb-a", "title": "USB-A 2.0 (пластик снизу)", "pattern": r"^USB-?A|^USB-?FA|^DS1107", "fixed": 4, "rows": 1, "order": "row", "start": "TL", "latch": "none", "color": "#c9ccd0", "labels": ("+5В", "D−", "D+", "GND"), "conf": "high",
      "src": "USB 2.0 Specification, рис. 6-7, 6-9, табл. 6-1", "note": "по чертежам USB 2.0: со стороны пайки, пластиком вниз — контакт 1 (+5В) слева, у вилки и у розетки"},
+    # USB-A also covers the «USB-FA» receptacle (F = female) and Connfly DS1107 (USB A plug, straight, solder: ozdisan /
+    # warehouse name «USB-A вилка под пайку»): the 4 contacts and their order are the same for plug and receptacle.
+    # micro-USB B plug, 5 contacts — Micro-USB Cables and Connectors Specification 1.01: 1 VBUS, 2 D−, 3 D+, 4 ID, 5 GND
+    # (5 contacts even when the cable carries 4 wires). The assignment is confirmed by several secondary sources; which
+    # side the face is read from is NOT confirmed (the spec text was not reachable), so conf stays "low".
+    {"id": "usb-micro-b", "title": "micro-USB B (5 контактов)", "pattern": r"^MICRO-?USB", "fixed": 5, "rows": 1, "order": "row", "start": "TL", "latch": "none", "color": "#c9ccd0", "labels": ("+5В", "D−", "D+", "ID", "GND"), "conf": "low",
+     "src": "USB Micro-USB Cables and Connectors Specification 1.01 (назначение 1…5); вторичные источники pinouts.ru, Monoprice", "note": "назначение контактов 1…5 по спецификации Micro-B; с какой стороны смотреть на грань — не подтверждено, сверить с деталью (контакт 1 нарисован слева)"},
+    # USB Type-C plug, 24 contacts — USB Type-C Specification R2.x: row A1…A12 and row B1…B12. Contact n = A_n for 1…12,
+    # n−12 = B_(n−12) for 13…24; the second row is drawn reversed (snake) because the plug is symmetric: B12 sits under A1.
+    # A: GND, TX1+, TX1−, VBUS, CC1, D+, D−, SBU1, VBUS, RX2−, RX2+, GND. B: GND, TX2+, TX2−, VBUS, CC2, D+, D−, SBU2, VBUS,
+    # RX1−, RX1+, GND. Signal names match Cambrionix / pinouts.ru / Elektroda; the viewing side (plug vs receptacle view)
+    # is not confirmed from the spec itself, so conf stays "low".
+    {"id": "usb-c", "title": "USB Type-C (24 контакта)", "pattern": r"^USB[\d.]*TYPE-?C.*24|^TYPE-?C.*24", "fixed": 24, "rows": 2, "order": "row", "start": "TL", "snake": True, "latch": "none", "color": "#c9ccd0",
+     "labels": tuple(f"A{i}" for i in range(1, 13)) + tuple(f"B{i}" for i in range(1, 13)), "conf": "low",
+     "src": "USB Type-C Specification R2.x, таблицы назначения контактов вилки; вторичные источники Cambrionix, pinouts.ru, Elektroda",
+     "note": "A: 1 GND, 2 TX1+, 3 TX1−, 4 +5В, 5 CC1, 6 D+, 7 D−, 8 SBU1, 9 +5В, 10 RX2−, 11 RX2+, 12 GND; B: 1 GND, 2 TX2+, 3 TX2−, 4 +5В, 5 CC2, 6 D+, 7 D−, 8 SBU2, 9 +5В, 10 RX1−, 11 RX1+, 12 GND; номера контактов 1…12 = A1…A12, 13…24 = B1…B12; сторону вида сверить с деталью"},
     # Series bought for real projects (SUPPLYMAP purchase summary, 30.09.2026) that had no drawing. Numbering of these
     # is by the family's general rule, not checked against each drawing — conf "low" keeps the warning on the sketch.
     # `erp_only`: drawn in the ERP but not in SUPPLYMAP TcHousing.gs, so the warehouse name autofill (Stock05 parity) skips them.
@@ -835,7 +851,7 @@ CATALOG_SAMPLES: dict[str, str] = {
     "te-multilock-040": "174047-2", "connfly-ds1071": "I-DS1071-SCB02X5", "connfly-ds1069": "I-DS1069-SCW004",
     "connfly-ds1066": "I-DS1066-SCW02",
     "amass-xt": "XT60H-M", "amass-qs8": "QS8-S-M", "rj45": "RJ45 8P8C", "weipu-sa8": "SA812/S4",
-    "cnlinko-lp12": "LP-12-C04PE", "usb-a": "USB-A", "jst-phd": "PHDR-14VS", "molex-microfit-plug": "43020-0400",
+    "cnlinko-lp12": "LP-12-C04PE", "usb-a": "USB-A", "usb-micro-b": "microUSB 5BM", "usb-c": "USB3.1 TYPE-C 24PM-035", "jst-phd": "PHDR-14VS", "molex-microfit-plug": "43020-0400",
     "molex-microfit-plug-1r": "43640-0400", "molex-clikmate": "5025780600", "molex-picoclasp": "5011892010",
     "molex-picoclasp-1r": "501330-0600", "molex-milligrid": "51110-1051", "hirose-df13": "DF13-4S-1.25C",
     "hirose-df14": "DF14-4S-1.25C", "hirose-df11": "DF11-8DS-2C", "jae-fix": "FI-X30HL", "dsub": "DS1033-09F",
