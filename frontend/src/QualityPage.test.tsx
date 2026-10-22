@@ -71,6 +71,7 @@ interface Data {
   instruments?: ProductionInstrument[];
   rejections?: unknown[];
   defects?: unknown[];
+  get?: (path: string) => Response | null;
 }
 
 function qualityFetch(data: Data = {}, post: (path: string, body: unknown) => Response | null = () => null) {
@@ -89,6 +90,8 @@ function qualityFetch(data: Data = {}, post: (path: string, body: unknown) => Re
     if (path === "/api/production/instruments") return json({ instruments: data.instruments ?? [] });
     if (path === "/api/production/qc/rejections") return json({ rejections: data.rejections ?? [] });
     if (path === "/api/production/defects") return json({ defects: data.defects ?? [] });
+    const handled = data.get?.(path);
+    if (handled) return handled;
     throw new Error(`Unexpected request: ${path}`);
   });
   return requested;
@@ -104,7 +107,7 @@ it("shows the QC inspector the queue and the instruments, not the master's rejec
 
   expect(await screen.findByRole("heading", { name: "Очередь ОТК" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "ОТК", level: 1 })).toBeInTheDocument();
-  expect(headings()).toEqual(["Очередь ОТК", "Средства измерения"]);
+  expect(headings()).toEqual(["Очередь ОТК", "Замеры КСВН", "Средства измерения"]);
   expect(requested).not.toContain("/api/production/defects");
   expect(requested).not.toContain("/api/production/qc/rejections");
 });
@@ -117,6 +120,7 @@ it("gives the QC actions only with edit on «ОТК»: a view grant on it shows 
   expect(screen.queryByRole("button", { name: "Принять ОТК" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Очередь ОТК" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Средства измерения" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Замеры КСВН" })).not.toBeInTheDocument();
   expect(requested).not.toContain("/api/production/boxes");
   expect(requested).not.toContain("/api/production/instruments");
 });
@@ -205,7 +209,7 @@ it("keeps the instrument form closed until «+ Добавить СИ» and lists
   qualityFetch({ instruments: [micrometer] });
   render(<QualityPage principal={qc} />);
 
-  const table = await screen.findByRole("table");
+  const table = (await screen.findByRole("heading", { name: "Средства измерения" })).closest(".panel") as HTMLElement;
   expect(within(table).getByRole("columnheader", { name: /Поверка до/ })).toBeInTheDocument();
   expect(within(table).getByText("СИ-014")).toBeInTheDocument();
   expect(within(table).getByText("Микрометр МК-25")).toBeInTheDocument();
@@ -283,11 +287,131 @@ it("shows the administrator all four blocks of the section", async () => {
   qualityFetch({ instruments: [micrometer], rejections: [rejection], defects: [defect] });
   render(<QualityPage principal={admin} />);
   expect(await screen.findByRole("heading", { name: "Средства измерения" })).toBeInTheDocument();
-  expect(headings()).toEqual(["Очередь ОТК", "Брак ОТК", "Брак цеха", "Средства измерения"]);
+  expect(headings()).toEqual(["Очередь ОТК", "Замеры КСВН", "Брак ОТК", "Брак цеха", "Средства измерения"]);
 });
 
 it("shows the load failure instead of a blank section", async () => {
   vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Нет связи с ERP"));
   render(<QualityPage principal={qc} />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи с ERP");
+});
+
+// --- Замеры КСВН ------------------------------------------------------------------------------------------------------
+
+const vswrBase = `/api/production/vswr/tasks/${branched.id}`;
+const trace = [{ mhz: 1700, vswr: 1.3 }, { mhz: 1800, vswr: 1.6 }, { mhz: 1900, vswr: 1.45 }];
+const measurement = (verdict: "pass" | "fail", extra: object = {}) => ({
+  id: "78000000-0000-0000-0000-000000000001", serial_number: "ПЗ-0001-01", attempt: 1, band_mhz: [1700, 1900], max_vswr: 1.6, max_vswr_mhz: 1800,
+  norm: {}, norm_vswr_max: 2.06, verdict, verdict_name: verdict === "pass" ? "Годно" : "Не годно", verdict_manual: false, verdict_reason: "",
+  inspector: { id: "u", name: "Контролёр Иванов" }, measured_at: "2026-10-22T10:00:00+03:00", file_name: "a.s1p", points: 3, file_meta: {}, trace, ...extra,
+});
+const overview = (norm: object, latest: unknown = null) => ({
+  task: { id: branched.id, number: "ПЗ-0001", name: "Жгут", quantity: 10 }, norm,
+  serials: [
+    { position: 1, serial_id: "s1", serial_number: "ПЗ-0001-01", status: "В работе", attempts: latest ? 1 : 0, latest },
+    { position: 2, serial_id: "s2", serial_number: "ПЗ-0001-02", status: "В работе", attempts: 0, latest: null },
+  ],
+});
+const okNorm = { status: "ok", reason: "", vswr_max: 2.06, band_mhz: [1700, 1900], source: "SMA-J 1,25, SMA-J 1,3" };
+const noNorm = { status: "undefined", reason: "у разъёма нет КСВ в справочнике", vswr_max: null, band_mhz: null };
+const vna = { ...micrometer, name: "Анализатор цепей", instrument_type: "ВАЦ" };
+
+async function openVswr(norm: object, latest: unknown = null, extra: Partial<Data> = {}) {
+  qualityFetch({ instruments: [vna], get: (path) => (path === vswrBase ? json(overview(norm, latest)) : null), ...extra });
+  render(<QualityPage principal={qc} />);
+  fireEvent.change(await screen.findByLabelText("Задание"), { target: { value: branched.id } });
+}
+
+// После выбора задания подменяем ответы: POST замера и тот же обзор.
+function postVswr(posted: Record<string, unknown>[], norm: object, answer: unknown) {
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") { posted.push(JSON.parse(String(init.body))); return json({ measurement: answer, position: 1 }); }
+    if (path === vswrBase) return json(overview(norm));
+    if (path === "/api/production/instruments") return json({ instruments: [vna] });
+    if (path === "/api/production/tasks") return json({ tasks: [branched], next_cursor: null });
+    return json({ boxes: [], operators: [], rejections: [], defects: [] });
+  });
+}
+
+it("shows the vswr section: the norm line and a dense table of units with their latest measurement", async () => {
+  await openVswr(okNorm, measurement("pass"));
+  expect(await screen.findByText(/Норма ≤ 2,06 по комплектующим: SMA-J 1,25, SMA-J 1,3/)).toBeInTheDocument();
+  const table = (await screen.findByRole("heading", { name: "Замеры КСВН" })).closest(".panel") as HTMLElement;
+  for (const title of ["Серийный номер", "Попыток", "Макс. КСВН", "На частоте, МГц", "Вердикт", "Контролёр", "Дата"]) {
+    expect(within(table).getAllByText(title).length).toBeGreaterThan(0);
+  }
+  expect(within(table).getAllByText("Годно").length).toBeGreaterThan(0);
+  expect(within(table).getByText("Контролёр Иванов")).toBeInTheDocument();
+  expect(within(table).getAllByRole("button", { name: "Загрузить замер" })).toHaveLength(2);
+  expect(within(table).getByRole("link", { name: "Файл" })).toHaveAttribute("href", "/api/production/vswr/measurements/78000000-0000-0000-0000-000000000001/file");
+});
+
+it("says why the norm is undefined", async () => {
+  await openVswr(noNorm);
+  expect(await screen.findByText("Норма не определена — у разъёма нет КСВ в справочнике")).toBeInTheDocument();
+});
+
+it("validates the upload form: needs a file and the band must be ordered", async () => {
+  await openVswr(okNorm);
+  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
+  const dialog = await screen.findByRole("dialog");
+  const submit = within(dialog).getByRole("button", { name: "Загрузить замер" });
+  expect(submit).toBeDisabled();
+  expect(within(dialog).getByText(/Приложите файл замера/)).toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Полоса от, МГц")).toHaveValue("1700");
+  fireEvent.change(within(dialog).getByLabelText("Файл замера"), { target: { files: [new File(["x"], "a.s1p")] } });
+  expect(submit).toBeEnabled();
+  fireEvent.change(within(dialog).getByLabelText("Полоса от, МГц"), { target: { value: "2000" } });
+  expect(submit).toBeDisabled();
+  expect(within(dialog).getByText(/Полоса «от» должна быть меньше «до»/)).toBeInTheDocument();
+});
+
+it("requires a verdict and a reason when the norm is undefined, and sends them", async () => {
+  const posted: Record<string, unknown>[] = [];
+  await openVswr(noNorm);
+  postVswr(posted, noNorm, measurement("fail", { verdict_manual: true, verdict_reason: "Нет КСВ", norm_vswr_max: null }));
+  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
+  const dialog = await screen.findByRole("dialog");
+  const submit = within(dialog).getByRole("button", { name: "Загрузить замер" });
+  fireEvent.change(within(dialog).getByLabelText("Файл замера"), { target: { files: [new File(["x"], "a.s1p")] } });
+  expect(submit).toBeDisabled();
+  expect(within(dialog).getByText(/Норма не определена — выберите вердикт/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/укажите причину вердикта/)).toBeInTheDocument();
+  fireEvent.change(within(dialog).getByLabelText("Вердикт"), { target: { value: "fail" } });
+  expect(submit).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("Причина вердикта"), { target: { value: "Нет КСВ" } });
+  expect(submit).toBeEnabled();
+  fireEvent.click(submit);
+  expect(await within(dialog).findByRole("img", { name: /График КСВН/ })).toBeInTheDocument();
+  expect(posted).toMatchObject([{ task_id: branched.id, position: 1, instrument_id: vna.id, file_name: "a.s1p", verdict: "fail", reason: "Нет КСВ" }]);
+  expect(within(dialog).getByText("Не годно")).toBeInTheDocument();
+});
+
+it("sends no verdict when the norm is defined: the server judges", async () => {
+  const posted: Record<string, unknown>[] = [];
+  await openVswr(okNorm);
+  postVswr(posted, okNorm, measurement("pass"));
+  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Файл замера"), { target: { files: [new File(["x"], "a.s1p")] } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Загрузить замер" }));
+  await within(dialog).findByRole("img", { name: /норма не более 2,06/ });
+  expect(posted[0]).not.toHaveProperty("verdict");
+  expect(posted[0]).toMatchObject({ band_from_mhz: 1700, band_to_mhz: 1900 });
+});
+
+it("leads a failed unit into the QC queue with the reject prefilled", async () => {
+  await openVswr(okNorm, measurement("fail", { max_vswr: 2.4 }), { boxes: [box("000003-4", 3, assembly)] });
+  fireEvent.click(await screen.findByRole("button", { name: "В брак ОТК" }));
+  await waitFor(() => expect(screen.getByLabelText("Брак ОТК 000003-4")).toHaveValue(1));
+  expect(screen.getByLabelText("Годные ОТК 000003-4")).toHaveValue(4);
+  expect(screen.getByDisplayValue("КСВН выше нормы")).toBeInTheDocument();
+  expect(screen.getByDisplayValue(/Изделие ПЗ-0001-01: макс\. КСВН 2,4 на/)).toBeInTheDocument();
+});
+
+it("offers no way into rejects for a failed unit when no box of the task waits in the queue", async () => {
+  await openVswr(okNorm, measurement("fail"));
+  await screen.findAllByText("Не годно");
+  expect(screen.queryByRole("button", { name: "В брак ОТК" })).not.toBeInTheDocument();
 });
