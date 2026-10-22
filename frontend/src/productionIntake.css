@@ -30,3 +30,20 @@
 .intake-take .ship-row-error { flex-basis: auto; max-width: 150px; white-space: normal; }
 /* Принятое (владелец 19.10): акт приёмки — своя зелёная строка с ГРН, без ввода; остаток — обычная строка ниже. */
 .intake-page .data-table .grid tbody tr.intake-act-row:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-ok) 12%, var(--card)); }
+/* Окно приёмки и кнопка «Можно принять» (владелец 22.10): число — подсвеченная кнопка, клик открывает окно. */
+.intake-take-btn { min-width: 44px; padding: 2px 10px; border: 1px solid var(--tone-ok); border-radius: 6px; background: color-mix(in srgb, var(--tone-ok) 16%, var(--card));
+  color: var(--tone-ok); font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer; }
+.intake-take-btn:hover { background: var(--tone-ok); color: var(--card); }
+.intake-grn { display: inline-flex; align-items: center; gap: 6px; }
+.intake-print { padding: 1px 8px; line-height: 1.4; }
+.intake-window .intake-window-table td { vertical-align: top; }
+.intake-window .ship-row-error { display: block; white-space: normal; }
+.intake-window-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 12px; }
+@media (pointer: coarse) {
+  .intake-take-btn, .intake-print { min-height: 40px; }
+  .intake-window input { min-height: 40px; }
+}
+.intake-window .intake-name { max-width: 240px; }
+.intake-window .intake-place { width: 150px; }
+.intake-window .ship-inline input[type="date"] { min-width: 150px; }
+.intake-print-status { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }

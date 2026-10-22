@@ -154,7 +154,8 @@ it("draws the diagram first: adds a block, puts library operations into it by a 
   fireEvent.click(screen.getByRole("button", { name: "Создать" }));
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   const config = onBuild.mock.calls[0][0];
-  expect(config).toMatchObject({ mode: "manual", assemblyIndex: "КБ7", assemblyName: "Провод нетиповой 300мм", partQty: 10, materialsSheet: false });
+  expect(config).toMatchObject({ mode: "manual", assemblyIndex: "КБ7", assemblyName: "Провод нетиповой 300мм", partQty: 10 });
+  expect(config).not.toHaveProperty("materialsSheet");
   expect(config.ops.map((op: Record<string, unknown>) => [op.type, op.seq, op.label, op.qty, op.tPrep, op.tOp])).toEqual([
     ["libraryOp", 1, "Резка", "1", "120", "6"],
     ["libraryOp", 2, "Опрессовка терминалов (А)", "2", "300", "20"],

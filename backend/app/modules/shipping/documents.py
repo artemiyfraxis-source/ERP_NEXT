@@ -6,9 +6,15 @@
 просто печать заново: номера PL/DN остаются, содержимое следует за отправкой (короба, УПД).
 
 Реквизиты DN «Заказ №», «Номер договора», «Номер спецификации», «Номер счета», «Оплачивает», «Адрес заказчика»,
-«Время работы» — из карточки проекта (`ProjectAddressee`). Пустое поле — клетка для руки, ERP не пишет туда заглушек.
-«Штамп / подпись кладовщика» — фамилия того, кто упаковал, «Фамилия И.О.» как «Гусев А.А.» в образце (владелец
-13.10.2026); упаковщика нет — пустая строка под подпись. Этикетки коробов — по одной на место: образца у владельца
+«Время работы» — из карточки проекта (`ProjectAddressee`); «Заказ №» и «Номер спецификации» без значения в карточке —
+номер проекта (подсказка карточки «пусто — № проекта»). Пустое поле — клетка для руки, ERP не пишет туда заглушек.
+«Условия поставки», контакт, телефон и перевозчик — из отправки, иначе из карточки; ТТН — номер перевозки отправки,
+а если его вписали в название ТК («major-express 2071163030») — длинная цифровая группа в конце переносится в ТТН
+при печати (данные не переписываются).
+«Штамп / подпись кладовщика» — фамилия кладовщика, который упаковал, «Фамилия И.О.» как «Гусев А.А.» в образце
+(владелец 13.10.2026, 22.10.2026: «ФИО может быть только кладовщика»): из тех, кто раскладывал по коробам и формировал
+PL/DN (новые первыми), берётся самый свежий, кто сейчас кладовщик (`storekeeper_signature`); таких нет — пустая строка
+под подпись. Этикетки коробов — по одной на место: образца у владельца
 нет, поэтому раскладка своя — отправитель, получатель, проект и PL, «Упаковка N/M», КБ с количеством, вес нетто, габариты.
 """
 
@@ -20,7 +26,7 @@ from datetime import date
 from uuid import UUID
 
 from .domain import (
-    PackedItem, ProjectAddressee, Shipment, ShipmentBox, ShippingValidationError, UpdType, default_boxes, packed_by_index,
+    DeliveryTerms, PackedItem, ProjectAddressee, Shipment, ShipmentBox, ShippingValidationError, UpdType, default_boxes, packed_by_index,
     total_gross,
 )
 
@@ -30,6 +36,14 @@ _NOBODY = UUID(int=0)
 _NOT_A_PERSON = ("API:",)
 # «PL533К.10-1» → «PL | 533К.10 | - | 1»: номер документа в образце — четыре клетки.
 _NUMBER = re.compile(r"^(PL|DN)(.+)-(\d+)$")
+# «major-express 2071163030»: номер перевозки вписан в конец названия ТК — от шести цифр подряд.
+_CARRIER_TRACK = re.compile(r"^(.*?\S)[\s:№#]+(\d{6,})$")
+# Заметка, в которой только время работы: «(пн-пт 10:00-17:00)» — ей место в «Время работы», не в «Примечаниях».
+_HOURS_ONLY = re.compile(
+    r"^\(?\s*(?:[а-яё]{2}\s*[-–—]\s*[а-яё]{2}\.?\s*)?(?:с\s*)?\d{1,2}[:.]\d{2}\s*[-–—]\s*\d{1,2}[:.]\d{2}\s*\)?$",
+    re.IGNORECASE,
+)
+_TERMS_LABELS = {DeliveryTerms.PICKUP: "Самовывоз", DeliveryTerms.CARRIER: "Доставка ТК"}
 
 
 def person_short(name: str) -> str:
@@ -46,10 +60,19 @@ def person_short(name: str) -> str:
 
 
 def packer_short(packer: tuple[UUID, str] | None) -> str:
-    """Подпись кладовщика: кто упаковал (`ShipmentRepository.packer`), «Фамилия И.О.»; никого — пусто."""
+    """«Фамилия И.О.» упаковщика; нет упаковщика, системное действие или токен API — пусто."""
     if packer is None or packer[0] == _NOBODY:
         return ""
     return person_short(packer[1])
+
+
+def storekeeper_signature(packers: list[tuple[UUID, str]], storekeepers: set[UUID]) -> str:
+    """Подпись кладовщика: самый свежий из `packers` (новые первыми, `ShipmentRepository.packers`), кто сейчас
+    кладовщик (`storekeepers`); менеджер, полный доступ, токен API, уволенный — не подписывают; никого — пусто."""
+    for packer in packers:
+        if packer[0] in storekeepers and packer_short(packer):
+            return packer_short(packer)
+    return ""
 
 
 @dataclass(frozen=True)
@@ -95,6 +118,7 @@ class DeliveryNote:
     date: str
     customer: str
     po: str
+    po_from_card: bool
     contract: str
     spec: str
     invoice: str
@@ -188,6 +212,24 @@ def _upd(shipment: Shipment) -> str:
     return "без УПД" if shipment.upd_type == UpdType.NONE else ""
 
 
+def split_carrier(carrier: str, track: str) -> tuple[str, str]:
+    """(ТК, ТТН): номер перевозки отправки; пуст, а название ТК кончается длинным числом — оно уходит в ТТН."""
+    carrier, track = carrier.strip(), track.strip()
+    if track:
+        return carrier, track
+    match = _CARRIER_TRACK.match(carrier)
+    return (match.group(1), match.group(2)) if match else (carrier, "")
+
+
+def split_hours(hours: str, note: str) -> tuple[str, str]:
+    """(время работы, примечание): время работы заметкой без другого текста переезжает в свою клетку."""
+    hours, note = hours.strip(), note.strip()
+    if note and _HOURS_ONLY.match(note):
+        stripped = note.strip("() ").strip()
+        return (hours or stripped), ""
+    return hours, note
+
+
 def _places(numbers: list[int]) -> str:
     return f"BXN {', '.join(str(number) for number in numbers)}" if numbers else ""
 
@@ -204,20 +246,27 @@ def build_delivery_note(
     ) for item in packed)
     # Получатель, отличный от заказчика, — в адресе доставки: ТК везёт ему.
     receiver = shipment.receiver if shipment.receiver and shipment.receiver != customer else ""
+    project = (_projects(shipment) or (card.project if card else "",))[0]
+    card = card or ProjectAddressee(project=project)
+    carrier, track = split_carrier(shipment.carrier or card.carrier, shipment.track_number)
+    terms = shipment.terms or card.terms
+    hours, note = split_hours(card.hours, shipment.note)
     return DeliveryNote(
         number=_number(shipment.dn_number),
         # До отгрузки DN печатают вместе с PL — в образце стоит дата упаковки.
         date=_day(shipment.shipped_at or shipment.packed_at),
-        customer=customer, po=card.po if card else "", contract=card.contract if card else "",
-        spec=card.spec if card else "", invoice=card.invoice if card else "",
-        terms=shipment.terms.value if shipment.terms else "", pays=card.pays if card else "",
-        customer_address=card.customer_address if card else "",
-        shipping_address=", ".join(part for part in (receiver, shipment.shipping_point) if part),
-        hours=card.hours if card else "", contact=shipment.contact, phone=shipment.phone, carrier=shipment.carrier,
-        track=shipment.track_number, tk_note=shipment.tk_note, rows=rows,
+        # «Заказ №» и «Номер спецификации» без значения — номер проекта; «PO #» печатается только при заказе заказчика.
+        customer=customer, po=card.po.strip() or project, po_from_card=bool(card.po.strip()), contract=card.contract,
+        spec=card.spec.strip() or project, invoice=card.invoice,
+        # Условий нет, но едет ТК — «Доставка ТК».
+        terms=_TERMS_LABELS[terms] if terms else ("Доставка ТК" if carrier else ""), pays=card.pays,
+        customer_address=card.customer_address,
+        shipping_address=", ".join(part for part in (receiver, shipment.shipping_point or card.shipping_point) if part),
+        hours=hours, contact=shipment.contact or card.contact, phone=shipment.phone or card.phone, carrier=carrier,
+        track=track, tk_note=shipment.tk_note, rows=rows,
         upd_edo=shipment.upd_type == UpdType.EDO, upd_paper=shipment.upd_type == UpdType.PAPER,
         # Бумажная УПД едет в первом коробе.
-        paper_box=_places([boxes[0].place]), note=shipment.note, places=str(len(boxes)), gross=total_gross(boxes),
+        paper_box=_places([boxes[0].place]), note=note, places=str(len(boxes)), gross=total_gross(boxes),
         upd=_upd(shipment), shipped_at=_day(shipment.shipped_at or shipment.packed_at), packer=packer,
     )
 

@@ -139,7 +139,7 @@ from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus
 from app.shared.events import AuditEvent
 from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
-from app.workflows.production_plan import kit_stage_facts, project_kits
+from app.workflows.production_plan import issued_runs, kit_stage_facts, project_kits
 
 
 # Терминальные статусы реестра перекрывают вычисленный этап — решение человека (ERP_PROJ_TERMINALS_).
@@ -530,6 +530,8 @@ class KitsetFacts:
     inspected: frozenset[UUID] = frozenset()
     # Ids of the tasks with a work session: the ladder's «В работе».
     worked: frozenset[UUID] = frozenset()
+    # КБ runs (kit_stage_key → pieces, `issued_runs`): «ОТК» only once the whole run is made.
+    runs: dict[str, int] = field(default_factory=dict)
 
 
 def _qc_facts(uow, tasks=()) -> tuple[tuple[ProductionBox, ...], frozenset[UUID], frozenset[UUID]]:
@@ -556,8 +558,11 @@ def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) ->
         return listed, tuple(uow.plan_events.list()), tuple(uow.plan_projects.list()), _qc_facts(uow, listed)
 
     tasks, events, projects, (boxes, inspected, worked) = read(production, read_production, ((), (), (), ((), frozenset(), frozenset())))
+    cards, kitsets = read(techcards, lambda uow: (
+        tuple(uow.techcards.list()), tuple(uow.kitsets.list()) if hasattr(uow, "kitsets") else (),
+    ), ((), ()))
     return KitsetFacts(
-        cards=read(techcards, lambda uow: tuple(uow.techcards.list())),
+        cards=cards,
         tasks=tasks,
         fulfillment=read(fulfillment, lambda uow: tuple(uow.fulfillment.list(limit=10_000))),
         goods=read(shipping, lambda uow: tuple(uow.goods.list(limit=10_000))),
@@ -566,6 +571,7 @@ def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) ->
         boxes=boxes,
         inspected=inspected,
         worked=worked,
+        runs=issued_runs(cards, kitsets),
     )
 
 
@@ -575,7 +581,7 @@ def _stage_marks(facts: KitsetFacts, events: Iterable[PlanEvent]):
     raw = summarize_kit_marks(events)
     stage_facts, marks = kit_stage_facts(
         cards=facts.cards, tasks=facts.tasks, fulfillment=facts.fulfillment, goods=facts.goods, marks=raw,
-        boxes=facts.boxes, inspected=facts.inspected, worked=facts.worked,
+        boxes=facts.boxes, inspected=facts.inspected, worked=facts.worked, runs=facts.runs,
     )
     marks = {key: replace(mark, skipped=raw[key].skipped) if key in raw else mark for key, mark in marks.items()}
     return stage_facts, marks

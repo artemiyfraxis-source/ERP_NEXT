@@ -1065,9 +1065,6 @@ table.ship-lines td:first-child { width: 1%; }
 .topology-nodes > article { min-width: 180px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
 .topology-edges { display: grid; gap: 6px; font-size: 12px; }
 .warning-inline { border-radius: 8px; padding: 9px 11px; color: var(--fg-orange-8); background: var(--bg-orange-4); white-space: pre-line; font-size: 12px; }
-.build-config { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
-.build-config summary { cursor: pointer; color: var(--muted-foreground); font-size: 12px; font-weight: 700; }
-.build-config label { display: grid; gap: 6px; margin-top: 10px; }
 .grapher-import, .grapher-harnesses { display: grid; gap: 10px; margin: 12px 0; }
 .grapher-harnesses > div { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
 .grapher-harnesses button { justify-self: start; }
@@ -1706,6 +1703,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 @container (min-width: 1000px) {
   .tcgen .gen-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tcgen .gen-grid > .full { grid-column: 1 / -1; }
+  /* «Данные из листа» не растягивает ряд: высоту задаёт соседняя карточка («Кабели»), список состава прокручивается внутри —
+     под короткой карточкой кабелей не остаётся пустого места (владелец 22.10). */
+  .tcgen .gen-grid > .gen-sheet { contain: size; align-self: stretch; min-height: 300px; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+  .tcgen .gen-grid > .gen-sheet .gtable-wrap { overflow: auto; min-height: 0; }
 }
 .project-etk .etk-empty { color: var(--muted-foreground); font-size: 13px; padding: 4px 0; }
 
@@ -1985,9 +1986,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen > .gen-error { margin: 0 0 10px; }
 .tcgen .gen-status { flex: 1; color: var(--muted-foreground); font-size: 12.5px; }
 .tcgen .gen-foot-sum { display: none; margin-right: auto; color: var(--muted-foreground); font-size: 12.5px; }
-.tcgen .gen-more { margin: 0; display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
-.tcgen .gen-more > .secondary { justify-self: start; }
-.tcgen .gen-more .build-config { min-width: 0; }
 
 /* Операции — таблица: № · операция (код серым) · карточка · три времени. Узкий итог — карточка второй строкой. */
 .tcgen .op-list { display: grid; }
@@ -2587,7 +2585,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-right: auto; font-size: 14px; }
 .etk-title .muted { font-size: 12.5px; }
 .etk-schema { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 8px 12px; }
-.etk-schema summary, .etk-revs summary, .etk-warnings summary, .gen-more summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.etk-schema summary, .etk-revs summary, .etk-warnings summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 .etk-harness { display: flex; justify-content: center; overflow-x: auto; }
 .etk-harness svg { max-width: 900px; width: 100%; height: auto; }
 .etk-link-scheme { margin-top: 8px; }
@@ -2750,10 +2748,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
 .seg-tabs.sub { margin-bottom: 8px; }
 .gen-pane { display: grid; gap: 10px; container-type: inline-size; }
-.gen-more { margin-right: auto; display: grid; gap: 8px; color: var(--muted-foreground); }
-.gen-more[open] { color: var(--foreground); }
-.gen-more > .secondary { justify-self: start; }
-.gen-more .build-config { margin: 0; padding: 0; border: 0; min-width: min(640px, 70vw); }
 /* Kitting and handout as tiles (SUPPLYMAP issRender): a project is one tile, a manual request its own. */
 .iss-tiles { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .iss-tiles .iss-tile { min-height: 0; padding: 14px 16px; cursor: pointer; }
@@ -4457,6 +4451,24 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
   .rc-op { height: 40px; }
 }
 
+/* Управление мышью схемы полуфабрикатов («Изменить схему»): операции и блоки тянутся, цели подсвечены, линия вставки между
+   операциями, у курсора — что произойдёт при броске. */
+.route-dnd.is-editing { user-select: none; -webkit-user-select: none; }
+.route-dnd.is-editing .rc-card, .route-dnd.is-editing .rc-op { cursor: grab; }
+.route-dnd.is-dragging, .route-dnd.is-dragging * { cursor: grabbing !important; }
+.route-dnd .rc-card.is-drag-src, .route-dnd .rc-ops li.is-drag-src { opacity: .4; }
+.route-dnd .rc-card.is-drop-into, .route-dnd .rc-card.is-drop-join, .route-dnd .rc-card.is-drop-feed { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent); }
+.route-dnd .rc-card.is-drop-join { background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
+.route-dnd .rc-card.is-drop-feed { box-shadow: inset 0 6px 0 var(--primary), 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent); }
+.route-dnd .rc-ops li.is-drop-before, .route-dnd .rc-ops li.is-drop-after { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.route-dnd .rc-ops li.is-drop-before { box-shadow: inset 0 3px 0 var(--primary); }
+.route-dnd .rc-ops li.is-drop-after { box-shadow: inset 0 -3px 0 var(--primary); }
+.route-dnd.is-drop-canvas .rc-view { outline: 2px dashed var(--primary); outline-offset: -2px; background: color-mix(in srgb, var(--primary) 6%, transparent); }
+.route-ghost { position: fixed; z-index: 60; display: grid; gap: 2px; max-width: 320px; padding: 6px 10px; border: 1px solid var(--primary); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .22); font-size: 13px; line-height: 18px; pointer-events: none; }
+.route-ghost strong { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.route-ghost span { color: var(--muted-foreground); font-size: 12px; }
+.route-ghost span.is-none { font-style: italic; }
+
 /* «Маршрут КБn» (HarnessRouteView): шапка с сохранением и действиями, холст слева, настройки карточки справа. */
 .hr { display: grid; gap: 8px; min-width: 0; }
 .hr-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
@@ -4624,10 +4636,15 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .load-more { position: sticky; left: 0; min-height: 1px; padding: 4px 0; text-align: center; font-size: 12px; color: var(--muted-foreground); }
 
 /* Сростки «Сложной сборки»: список со схемы, только чтение */
-.tcgen .spl-rows { display: flex; flex-direction: column; gap: 2px; }
-.tcgen .spl-row { display: grid; grid-template-columns: 28px 76px minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.tcgen .spl-edit { display: flex; flex-direction: column; gap: 4px; }
+.tcgen .spl-edit-row { display: grid; grid-template-columns: 28px 64px minmax(0, 1fr); gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .tcgen .spl-size { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
-.tcgen .spl-wires { display: flex; flex-wrap: wrap; gap: 2px 14px; min-width: 0; }
+.tcgen .spl-ends { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.tcgen .spl-end { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: 6px; padding: 0 0 0 8px; background: var(--card); }
+.tcgen .spl-end small { color: var(--muted-foreground); font-size: 12px; }
+.tcgen .spl-end .btn-remove { width: 24px; height: 24px; }
+.tcgen .spl-edit select.hs-add { margin: 0; }
+.tcgen .spl-count summary { cursor: pointer; font-size: 12px; color: var(--muted-foreground); }
 /* ---- КП из PDF и текста ---- */
 .quote-import-panel { display: grid; gap: 6px; }
 .quote-import { display: grid; gap: 6px; }
@@ -4911,6 +4928,7 @@ tr.order-row-late > td:first-child { box-shadow: inset 3px 0 0 var(--tone-danger
 }
 
 .mb-block-summary { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 400; color: var(--muted-foreground); }
+.tcgen .wrap-plan { margin: 0; padding: 4px 8px 4px 28px; border-left: 2px solid var(--primary); font-size: 13px; display: grid; gap: 2px; }
 
 /* ОТК → «Замеры КСВН»: выбор задания в шапке панели, строка нормы, действия в строке таблицы, график. */
 .vswr-section, .vswr-upload { margin: 16px 0; }

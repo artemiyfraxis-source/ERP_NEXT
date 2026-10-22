@@ -2,6 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { PurchasingItems } from "./PurchasingItems";
 
+// The card's price history is always on now (the price book is no longer behind a stage option).
+const NO_PRICES = { unit: "шт", refs: [], upd: [], invoices: [], summary: { count: 0, min: null, last: null, last_date: null, last_supplier: null } };
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -24,6 +27,7 @@ const group = (over: Record<string, unknown> = {}) => ({
 
 function mockServer(calls: { method: string; path: string; body?: string }[] = [], readOnlyList = false) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).includes("/prices/item/")) return noPrices();
     const path = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     calls.push({ method, path, body: init?.body as string | undefined });
@@ -31,6 +35,7 @@ function mockServer(calls: { method: string; path: string; body?: string }[] = [
       const dry = JSON.parse(String(init?.body)).dry_run;
       return json({ groups: [group(), group({ kind: "name", key: "k", name: "Кабель МГТФ", part_number: null, category: "cable", lines: 2, action: "link", reason: "alias", existing_name: "Кабель" })], created: 1, linked_groups: 1, aliases: 2, lines: 5, dry_run: dry });
     }
+    if (path === "/api/purchasing/prices/item/i1") return json(NO_PRICES);
     if (path === "/api/purchasing/items/i1") return json(card);
     if (path === "/api/purchasing/suppliers") return json([{ id: "s1", name: "ООО Ромашка" }]);
     if (path.startsWith("/api/purchasing/items")) {
@@ -47,6 +52,9 @@ afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
 });
+
+// Справочные цены карточки здесь не проверяются: ответ-ошибка, чтобы блок цен не получил чужой ответ списка.
+const noPrices = () => new Response(JSON.stringify({ detail: "нет" }), { status: 404, headers: { "Content-Type": "application/json" } });
 
 it("lists items with last price, purchases and demand, and filters by category chip", async () => {
   const calls: { method: string; path: string }[] = [];
@@ -114,7 +122,9 @@ it("read-only has no editing buttons", async () => {
 
 it("shows the stock column, the «Склад» and «Приёмка» sections of the card", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).includes("/prices/item/")) return noPrices();
     const path = String(input);
+    if (path === "/api/purchasing/prices/item/i1") return json(NO_PRICES);
     if (path === "/api/purchasing/items/i1") {
       return json({
         ...card,
@@ -135,7 +145,7 @@ it("shows the stock column, the «Склад» and «Приёмка» sections o
   const stock = await screen.findByRole("table", { name: "Склад по позиции" });
   expect(stock.textContent).toContain("FRX.26.0000001");
   expect(stock.textContent).toContain("по приёмке");
-  expect(screen.getByText(/доступно 8/)).toBeInTheDocument();
+  expect(screen.getByText(/свободно 8/)).toBeInTheDocument();
   const receipts = screen.getByRole("table", { name: "Приёмка по позиции" });
   expect(receipts.textContent).toContain("УПД-7");
   expect(receipts.textContent).toContain("02.10.2026");
@@ -146,6 +156,7 @@ it("previews «Собрать со склада» (linked, to create, ambiguous)
   const calls: { path: string; body?: string }[] = [];
   const lot = { lot_id: "L1", warehouse: "ЦАР", grn: "FRX.26.1", package: "", name: "Разъём SMA", article: "" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).includes("/prices/item/")) return noPrices();
     const path = String(input);
     calls.push({ path, body: init?.body as string | undefined });
     if (path === "/api/purchasing/items/import-from-stock") {

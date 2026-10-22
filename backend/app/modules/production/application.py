@@ -39,6 +39,10 @@ from .domain import (
     DEFAULT_SHIFT,
     UNPLANNED_SITES,
     FlowMode,
+    MARKS_ISSUED_EVENT,
+    MARKS_RELEASED_EVENT,
+    MarkEvent,
+    RESTORED_EVENT,
     OperationShare,
     OperatorSkill,
     PlanResult,
@@ -50,6 +54,8 @@ from .domain import (
     WorkShift,
     add_work_seconds,
     delivered_total,
+    latest_of_item,
+    mark_serial_range,
     next_working_moment,
     plan_operation,
     skill_of,
@@ -121,6 +127,8 @@ class ProductionRepository(Protocol):
     def last_launch_seqs(self, techcard_ids: Sequence[UUID]) -> dict[UUID, int]: ...
     def add(self, task: ProductionTask, launch_seq: int | None = None) -> None: ...
     def worked(self, task_ids: Sequence[UUID]) -> set[UUID]: ...
+    def marks_issued(self, task_ids: Sequence[UUID]) -> set[UUID]: ...
+    def mark_events(self, task_ids: Sequence[UUID]) -> Sequence[MarkEvent]: ...
     def delete(self, task_id: UUID) -> None: ...
 
 
@@ -781,13 +789,15 @@ def _remove_share(
 
 def _has_work(task: ProductionTask, uow) -> bool:
     """След работы по заданию: «взял/закончил» в доле, короб, смена, выработка (и «Записать готовыми»), брак, «Сдано»
-    площадки, строки журнала времени; отданное площадке — тоже в работе (раскладывает площадка)."""
+    площадки, строки журнала времени, выданные номера меток (ЭТК с надписями «№ изделия» открыта с диапазоном задания —
+    надписи могли напечатать); отданное площадке — тоже в работе (раскладывает площадка). Одно правило и для отмены
+    при снятии последнего исполнителя, и для освобождения номеров меток при отмене (`release_marks_if_unworked`)."""
     if task.handed_to or any(
         share.started_at is not None or share.finished_at is not None
         for operation in task.operations for share in operation.shares
     ):
         return True
-    if task.id in uow.production.worked([task.id]):
+    if task.id in uow.production.worked([task.id]) or task.id in uow.production.marks_issued([task.id]):
         return True
     work_log = getattr(uow, "work_log", None)
     operation_ids = tuple(operation.id for operation in task.operations)
@@ -961,7 +971,12 @@ def set_production_cancelled(command: SetProductionCancelledCommand, uow: UnitOf
             _check_run_on_restore(task, command.kb_runs, uow)
         updated = task.set_cancelled(command.cancelled)
         uow.production.add(updated)
-        _audit(updated, "production.cancelled" if command.cancelled else "production.restored", command.actor, command.now, {}, uow)
+        if command.cancelled:
+            _audit(updated, "production.cancelled", command.actor, command.now, {}, uow)
+            release_marks_if_unworked(updated, command.actor, command.now, uow)
+        else:
+            # Отмену сняли: освобождённые номера меток задание займёт заново — за последним запуском позиции.
+            _audit(updated, RESTORED_EVENT, command.actor, command.now, {"after": _latest_of_item(updated, uow)}, uow)
         uow.commit()
         return updated
 
@@ -990,7 +1005,38 @@ def cancel_task_in(task: ProductionTask, actor: Actor, now: datetime, uow, detai
     updated = task.set_cancelled(True)
     uow.production.add(updated)
     _audit(updated, "production.cancelled", actor, now, dict(details or {}), uow)
+    release_marks_if_unworked(updated, actor, now, uow)
     return updated
+
+
+def release_marks_if_unworked(task: ProductionTask, actor: Actor, now: datetime, uow) -> bool:
+    """Отменено без работы (`_has_work`) — номера меток задания свободны (владелец 22.10 «освобождать»): перезапуск
+    получит те же номера (mark_serial_range). Отменённое после работы держит номера — надписи могли напечатать."""
+    if _has_work(task, uow):
+        return False
+    _audit(task, MARKS_RELEASED_EVENT, actor, now, {"after": _latest_of_item(task, uow)}, uow)
+    return True
+
+
+def _latest_of_item(task: ProductionTask, uow) -> str:
+    """Номер последнего запуска позиции задания к этому моменту: место события номеров в череде запусков (MarkEvent)."""
+    return latest_of_item(task, uow.production.for_project(task.project))
+
+
+def issue_mark_serials(
+    task: ProductionTask, numbered: bool, actor: Actor, now: datetime, uow: UnitOfWork,
+) -> tuple[int, int] | None:
+    """Номера изделий задания для экрана ЭТК (mark_serial_range; None — задание отменено без работы, номера
+    освобождены). ``numbered`` — в ЭТК есть надписи «№ изделия»: тогда номера выданы — их могут напечатать
+    («Печать надписей», «Печать / PDF») или переписать с экрана, и это след работы (`_has_work`): ни отмена при снятии
+    последнего исполнителя, ни освобождение номеров при отмене такого задания уже не сработают."""
+    with uow:
+        tasks = uow.production.for_project(task.project)
+        found = mark_serial_range(task, tasks, uow.production.mark_events([item.id for item in tasks]))
+        if found is not None and numbered and task.id not in uow.production.marks_issued([task.id]):
+            _audit(task, MARKS_ISSUED_EVENT, actor, now, {"first": found[0], "last": found[1]}, uow)
+            uow.commit()
+        return found
 
 
 def replace_production_calendar(command: ReplaceProductionCalendarCommand, uow: UnitOfWork) -> None:

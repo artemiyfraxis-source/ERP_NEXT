@@ -54,7 +54,7 @@ from app.modules.techcards.kitsets import Kitset
 from app.modules.techcards.project_cards import TechcardStatus
 
 from .finished_goods import KbProduction, TaskShare, read_delivered
-from .production_plan import kit_stage_facts, project_kits
+from .production_plan import issued_runs, kit_stage_facts, project_kits
 from .project_registry import CLOSED_PROJECT_STATUS
 
 ZERO = Decimal("0")
@@ -129,6 +129,7 @@ class BoxFact:
     task_id: UUID
     operation_id: UUID
     status: BoxStatus
+    quantity: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -182,6 +183,7 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
     stage_facts, marks = kit_stage_facts(
         cards=facts.cards, tasks=facts.tasks, fulfillment=facts.kit_requests, goods=facts.goods,
         marks=summarize_kit_marks(events), boxes=facts.boxes, inspected=facts.inspected, worked=facts.worked,
+        runs=issued_runs(facts.cards, facts.kitsets),
     )
     kitsets = {normalize_project_number(kitset.project): kitset for kitset in facts.kitsets}
     cards_by_project: dict[str, list[CardFact]] = {}
@@ -309,9 +311,12 @@ class SqlAlchemyIntakeUnitOfWork:
             return []
         row = ProductionBoxRow
         found = self._session().execute(
-            select(row.id, row.task_id, row.operation_id, row.status).where(row.task_id.in_(list(task_ids)))
+            select(row.id, row.task_id, row.operation_id, row.status, row.quantity).where(row.task_id.in_(list(task_ids)))
         )
-        return [BoxFact(box_id, task_id, operation_id, BoxStatus(status)) for box_id, task_id, operation_id, status in found]
+        return [
+            BoxFact(box_id, task_id, operation_id, BoxStatus(status), quantity)
+            for box_id, task_id, operation_id, status, quantity in found
+        ]
 
 
 def intake_uow_factory(shipping_uow_factory) -> Callable[[], SqlAlchemyIntakeUnitOfWork] | None:

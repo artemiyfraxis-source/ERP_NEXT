@@ -115,6 +115,8 @@ def _work_reason(session: Session, repository: SqlAlchemyProductionRepository, r
     """Почему задание удалять нельзя ("" — следа работы нет)."""
     if row.id in repository.worked([row.id]):
         return "по нему отмечена работа (коробка, смена, выработка, брак, «Сдано» или «взял/закончил»)"
+    if row.id in repository.marks_issued([row.id]):
+        return "по нему выданы номера меток — надписи «№ изделия» могли напечатать"
     if session.scalar(select(ProductionWorkTimeLogRow.id).where(ProductionWorkTimeLogRow.task_id == row.id).limit(1)):
         return "в журнале времени есть строки"
     if session.scalar(select(ProductionDowntimeRow.id).where(ProductionDowntimeRow.task_id == row.id).limit(1)):

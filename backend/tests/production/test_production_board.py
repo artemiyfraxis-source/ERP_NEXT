@@ -13,9 +13,11 @@ from app.modules.production.infrastructure import ProductionOperationOperatorRow
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.techcards.operation_cards import parse_operation_template
 from app.modules.techcards.project_cards import ProjectTechcard
+from app.shared.http_auth import Principal, authenticated_principal
+from app.shared.identity import Actor
 from app.shared.persistence import AuditEventRow
 from tests.production.test_autoplan_api import (  # noqa: F401 — фикстура client
-    ANNA, BORIS, NOW, apply, client, issue, launch, preview, tasks_of,
+    ANNA, BORIS, MASTER, NOW, apply, client, issue, launch, preview, tasks_of,
 )
 from tests.production.test_launch_race import by_hand, interleave, race, stored  # noqa: F401 — фикстура race
 
@@ -23,9 +25,9 @@ NO_RUN = "Нет тиража КБ — задайте тираж в наборе
 
 
 def issue_route(index: str, *, project: str = "708К", part_quantity: str = "10", deadline: date | None = None,
-                press: str = "ОБ.027.X") -> ProjectTechcard:
+                press: str = "ОБ.027.X", mark: str = "") -> ProjectTechcard:
     """Выданная техкарта на четыре операции: резка (станок только в БД.ОП), опрессовка (пресс ОБ.027 в оснастке ЭТК),
-    монтаж (категория карточки) и герметизация (ничего — название этапа)."""
+    монтаж (категория карточки) и герметизация (ничего — название этапа); ``mark`` — надпись метки на резке."""
     config = {"ops": [
         {"type": "insMark", "stage": "Резка", "opNumber": "CUT_WIRE_auto", "tOp": 30, "tPrep": 0},
         {"type": "prsTerm", "stage": "Опрессовка терминалов", "opNumber": "PRS", "tOp": 30, "tPrep": 0},
@@ -37,7 +39,8 @@ def issue_route(index: str, *, project: str = "708К", part_quantity: str = "10"
     ).rebuild({
         "operations": [
             {"code": "CUT_WIRE_auto", "type": "insMark", "card": {"tooling": [
-                {"section": "Инструмент", "inventory_number": "ИН.001", "name": "Нож"}]}},
+                {"section": "Инструмент", "inventory_number": "ИН.001", "name": "Нож"}]},
+             **({"fields": {"marks": [{"target": "Разъём X1", "text": mark}]}} if mark else {})},
             {"code": "PRS", "type": "prsTerm", "card": {"tooling": [
                 {"section": "Оборудование", "inventory_number": press, "name": "Пресс"}]}},
             {"code": "ASM", "type": "insHousing"},
@@ -640,3 +643,133 @@ def test_autoplan_launches_the_rest_of_a_partly_launched_run(library):
     assert board(http)["future"] == []
     # Весь цех видит то же правило: остатка нет — нового задания нет.
     assert preview(http)["new_tasks"] == []
+
+
+# --- Номера меток задания (владелец 22.10: отменённое без работы — «освобождать») -----------------------------------
+
+
+def etk_serial(http, task: dict, position: int = 1) -> tuple[int, int] | None:
+    """Номера изделий задания с экрана ЭТК операции; None — номера освобождены."""
+    operation = next(item for item in task["operations"] if item["position"] == position)
+    master = app.dependency_overrides[authenticated_principal]
+    # Мастер открывает ЭТК задания из «Моих заданий» (раздел «Задания»).
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=MASTER, name="Мастер", department="Производство"), email="master@example.test",
+        roles=frozenset({"foreman"}), permissions={"production": "edit", "myops": "view"},
+    )
+    try:
+        response = http.get(f"/api/production/my/tasks/{task['id']}/operations/{operation['id']}/etk")
+    finally:
+        app.dependency_overrides[authenticated_principal] = master
+    assert response.status_code == 200, response.text
+    serial = response.json()["serial"]
+    return (serial["first"], serial["last"]) if serial else None
+
+
+def audit_ids(sessions, event_type: str) -> list[UUID]:
+    with sessions() as session:
+        return list(session.scalars(select(AuditEventRow.aggregate_id).where(AuditEventRow.event_type == event_type)))
+
+
+def cancel(http, task: dict) -> dict:
+    response = http.post(f"/api/production/tasks/{task['id']}/cancel", json={"version": task["version"], "cancelled": True})
+    assert response.status_code == 200, response.text
+    return response.json()["task"]
+
+
+def relaunch(http, operator: UUID) -> dict:
+    """Остаток тиража КБ — новым заданием; возвращает его."""
+    before = {item["id"] for item in board(http)["tasks"]}
+    [again] = board(http)["future"]
+    assert assign(http, operator, future_items(again, 1)).status_code == 200
+    return next(item for item in board(http)["tasks"] if item["id"] not in before)
+
+
+def test_an_auto_cancelled_run_gives_its_mark_numbers_to_the_relaunch(library):
+    http, sessions = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+    assert assign(http, ANNA, future_items(future, 1)).status_code == 200
+    [task] = board(http)["tasks"]
+    assert etk_serial(http, task) == (1, 10)
+
+    cancelled = remove_share(http, task, 1, ANNA).json()["task"]
+    assert cancelled["status"] == "Отменено"
+    relaunched = relaunch(http, BORIS)
+
+    # Запуск на 10 → снят последний исполнитель, работы не было → перезапуск снова получает 1–10, а не 11–20.
+    assert etk_serial(http, relaunched) == (1, 10)
+    assert etk_serial(http, cancelled) is None
+    assert audit_ids(sessions, "production.marks_released") == [UUID(task["id"])]
+
+
+def test_a_task_cancelled_after_work_keeps_its_numbers_and_the_next_launch_continues(library):
+    http, sessions = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+    assert assign(http, ANNA, future_items(future, 1)).status_code == 200
+    [task] = board(http)["tasks"]
+    made = http.post(f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/manual-output", json={
+        "good_quantity": 2, "operator_id": None, "fill_inputs": False,
+    })
+    assert made.status_code == 200, made.text
+    [task] = board(http)["tasks"]
+    cancelled = cancel(http, task)
+    relaunched = relaunch(http, BORIS)
+
+    assert relaunched["quantity"] == 10
+    assert etk_serial(http, cancelled) == (1, 10)  # надписи могли напечатать — номера остаются за ним
+    assert etk_serial(http, relaunched) == (11, 20)
+    assert audit_ids(sessions, "production.marks_released") == []
+
+
+def test_a_manual_cancel_without_work_releases_the_numbers_too(library):
+    http, sessions = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+    assert assign(http, ANNA, future_items(future, 1)).status_code == 200
+    [task] = board(http)["tasks"]
+    cancel(http, task)
+
+    assert etk_serial(http, relaunch(http, BORIS)) == (1, 10)
+    assert audit_ids(sessions, "production.marks_released") == [UUID(task["id"])]
+
+
+def test_numbers_shown_with_numbered_marks_are_work_so_the_task_keeps_them(library):
+    http, sessions = library
+    issue_route("КБ2", mark="КБ2-{№:3}")
+    [future] = board(http)["future"]
+    assert assign(http, ANNA, future_items(future, 1)).status_code == 200
+    [task] = board(http)["tasks"]
+    # ЭТК с надписью «№ изделия» открыта — номера выданы (могли напечатать «Печать надписей»); отметка одна.
+    assert etk_serial(http, task) == (1, 10)
+    assert etk_serial(http, task) == (1, 10)
+    assert audit_ids(sessions, "production.marks_issued") == [UUID(task["id"])]
+
+    response = remove_share(http, task, 1, ANNA)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["task"]["status"] == "Запущено"
+    assert cancel_reasons(sessions) == []
+    kept = cancel(http, response.json()["task"])
+    assert audit_ids(sessions, "production.marks_released") == []
+    relaunched = relaunch(http, BORIS)
+    assert etk_serial(http, kept) == (1, 10) and etk_serial(http, relaunched) == (11, 20)
+
+
+def test_a_released_range_goes_to_the_next_launch_and_issued_ranges_never_move(library):
+    http, _ = library
+    issue_route("КБ2", part_quantity="20", mark="КБ2-{№}")
+    [future] = board(http)["future"]
+    assert assign(http, ANNA, [{**item, "run": 10} for item in future_items(future, 1)]).status_code == 200
+    [first] = board(http)["tasks"]
+    second = relaunch(http, BORIS)
+    # Второе задание открыли с надписями — его 11–20 выданы; первое не открывали.
+    assert etk_serial(http, second) == (11, 20)
+
+    assert remove_share(http, first, 1, ANNA).json()["task"]["status"] == "Отменено"
+    third = relaunch(http, ANNA)
+
+    # Перезапуск занимает освобождённые 1–10, выданные 11–20 второго не сдвигаются и не пересекаются.
+    assert etk_serial(http, third) == (1, 10)
+    assert etk_serial(http, second) == (11, 20)

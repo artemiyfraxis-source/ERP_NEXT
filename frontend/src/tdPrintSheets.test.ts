@@ -68,9 +68,19 @@ function model(over: Partial<TdPrintModel["issue"]> = {}): TdPrintModel {
         "CUT_WIRE_auto::::": { profession: "Монтажник радиоэлектронной аппаратуры и приборов", grade: "2", source: "по умолчанию" },
         "SDR_TIN::XS1::A": { profession: "Паяльщик", grade: "4", source: "БД.ОП" },
       } } as unknown as ProjectTechcard,
-    sto_sections: { "CUT_WIRE_auto::::": { section: "4.1", title: "Резка" }, "SDR_TIN::XS1::A": { section: "4.4", title: "Лужение и пайка" }, "INS_HSG::::": null },
+    sto_sections: {
+      "CUT_WIRE_auto::::": { section: "4.1", title: "Резка", norms: [
+        { doc: "ГОСТ 23587-96", clauses: "п. 5.10", subject: "Монтаж электрический" },
+        { doc: "ГОСТ 23592-96", clauses: "п. 4.2.2, 4.2.12", subject: "Монтаж электрический" },
+      ] },
+      "SDR_TIN::XS1::A": { section: "4.4", title: "Лужение и пайка", norms: [
+        { doc: "ГОСТ 23587-96", clauses: "п. 5.5, 5.10", subject: "Монтаж электрический" },
+        { doc: "ГОСТ 23585-79", clauses: "п. 11 (табл. 3), 12, 13, 16", subject: "Проводники" },
+      ] },
+      "INS_HSG::::": null,
+    },
     changes: [{ change_no: 1, notice_no: "ИЗВ-1", reason: "Смена провода", designation: "ФРАК.10185.00007", approved_at: "2026-10-21T00:00:00", developer: "Иванов И.И." }],
-    sto: { designation: "СТО ФРАК-001-2026", revision: "1" },
+    sto: { designation: "СТО ФРАК-001-2026", revision: "2", title: "Типовые дефекты и критерии приёмки" },
   };
 }
 
@@ -105,10 +115,17 @@ it("титульный лист: утверждаю, согласовано с �
   expect(buildTdKitHtml(model({ method_code: "80" }))).toContain("технологический процесс пайки");
 });
 
-it("ВТД перечисляет документы комплекта и справочные ГОСТ и СТО", () => {
+it("ВТД перечисляет документы комплекта, СТО с ревизией и только те стандарты, что названы в операциях, — с пунктами", () => {
   const vtd = textOf(byHeading("Ведомость технологических документов"));
   for (const part of ["Маршрутная карта", "Операционные карты", "Операционная карта технического контроля", "Ведомость материалов", "Ведомость оснастки",
-    "Лист регистрации изменений", "СТО ФРАК-001-2026", "ГОСТ 23586-96", "ГОСТ 23587-96", "ГОСТ 23585-79", "ГОСТ Р 72182.2-2025"]) expect(vtd).toContain(part);
+    "Лист регистрации изменений", "СТО ФРАК-001-2026, ред. 2", "разд. 4.1, 4.4"]) expect(vtd).toContain(part);
+  // пункты одного стандарта из разных операций слиты без повторов; стандарт без пунктов не печатается
+  expect(vtd).toContain("ГОСТ 23587-96 Монтаж электрический п. 5.5, 5.10");
+  expect(vtd).toContain("ГОСТ 23592-96 Монтаж электрический п. 4.2.2, 4.2.12");
+  expect(vtd).toContain("ГОСТ 23585-79 Проводники п. 11 (табл. 3), 12, 13, 16");
+  expect(vtd).not.toContain("ГОСТ 23586-96");
+  expect(vtd).not.toContain("72182.2");
+  expect(html).not.toContain("REFERENCE");
 });
 
 it("МК: строки А/Б/К/М, номера 005, 010…, время в минутах, ссылка на СТО", () => {
@@ -123,6 +140,9 @@ it("МК: строки А/Б/К/М, номера 005, 010…, время в ми
   expect(mk).toContain("<td>0,20</td>"); // 12 с на штуку
   expect(mk).toContain("Тпз, мин");
   expect(mk).toContain("СТО ФРАК-001-2026, разд. 4.1");
+  // графа «Документы» — компактно: стандарт и пункты, по документу в строке, без пояснений в скобках
+  expect(mk).toContain("ГОСТ 23587-96 п. 5.10\nГОСТ 23592-96 п. 4.2.2, 4.2.12");
+  expect(mk).toContain("ГОСТ 23585-79 п. 11, 12, 13, 16");
   // Обозначение по КД — «kd» при аналоге, иначе «art»; аналог — ниже.
   expect(mk).toContain("<td>Провод ПВАМ 1,5, ПВАМ-1,5 ТУ\nаналог: ANALOG-777</td>");
   expect(mk).toContain("<td>Контакт Mini-Fit Jr., 39000038</td>");
@@ -151,6 +171,9 @@ it("ОК: переходы нумеруются 1, 2, 3; ссылка на ОК 
   expect(first).toContain("<td>Р</td>");
   expect(first).toContain("Высота обжима");
   expect(first).toContain("по СТО ФРАК-001-2026, разд. 4.1 «Резка»");
+  expect(first).toContain("Технические требования — по ГОСТ 23587-96, п. 5.10; ГОСТ 23592-96, п. 4.2.2, 4.2.12");
+  expect(ok[1]).toContain("ГОСТ 23585-79, п. 11 (табл. 3), 12, 13, 16");
+  expect(ok[2]).not.toContain("Технические требования"); // раздела СТО нет — нормы не придумываются
   expect(first).toContain("Исполнитель: Монтажник радиоэлектронной аппаратуры и приборов, разряд 2");
   expect(ok[1]).toContain("Исполнитель: Паяльщик, разряд 4");
   expect(ok[2]).toContain("Исполнитель: —, разряд —");
@@ -207,15 +230,18 @@ it("в комплекте нет латинских кодов видов опе
   expect(html).not.toContain("CUT_WIRE");
 });
 
-it("СТО печатается целиком: все 236 кодов дефектов, повтор шапки таблиц, действия и лист изменений", () => {
+it("СТО печатается целиком: все 320 кодов дефектов, повтор шапки таблиц, действия и лист изменений", () => {
   const out = buildStoHtml(sto);
   const codes: string[] = [];
   const walk = (section: Sto["sections"][number]): void => { section.rows.forEach((row) => codes.push(row.code)); (section.subsections ?? []).forEach(walk); };
   sto.sections.forEach(walk);
-  expect(codes).toHaveLength(236);
+  expect(codes).toHaveLength(320);
   for (const code of codes) expect(out).toContain(`<td class="code">${code}</td>`);
   expect(out).toContain("thead { display: table-header-group; }");
-  expect(out).toContain("A4 portrait");
+  expect(out).toContain("A4 landscape");
+  expect(out).toContain("<th>Основание</th>");
+  expect(out).toContain("Нормативные требования:</b> ГОСТ 23587-96, п. 5.10; ГОСТ 23592-96, п. 4.2.2, 4.2.12");
+  expect(out).toContain("ГОСТ 3.1129-93, п. 6.3)");
   expect(out).toContain("Признак / критерий отбраковки");
   expect(out).toContain("<ol>");
   expect(out).toContain("Лист регистрации изменений");

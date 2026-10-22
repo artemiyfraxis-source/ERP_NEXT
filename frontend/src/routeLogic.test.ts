@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import {
-  blockCodes, blockTitle, deriveRoute, documentMinutes, mergeBlocks, moveBlock, moveOp, parseRoute, routeChain, routeLayout, routePayload, routeProblem, routeTotals,
-  splitBlock, type Route, type RouteOp,
+  blockCodes, blockTitle, deriveRoute, documentMinutes, dropOp, feedBlock, inverseOrder, joinBlocks, mergeBlocks, moveBlock, moveOp, parseRoute, routeChain, routeLayout,
+  routePayload, routeProblem, routeTotals, settleOrder, splitBlock, type Route, type RouteOp,
 } from "./routeLogic";
 
 const op = (position: number, type: string, label = `Операция ${position}`, minutes: number | null = null): RouteOp =>
@@ -196,4 +196,93 @@ it("moves a block up or down in the ETK order: the two blocks swap their places,
   expect(moveBlock(route, "b1", 1, 5)!.order).toEqual([2, 3, 1, 4, 5]);
   expect(moveBlock(route, "b1", -1, 5)).toBeNull();
   expect(moveBlock(route, "b5", 1, 5)).toBeNull();
+});
+
+/* Управление мышью: бросок операции / блока и порядок ЭТК после него. Схема: b1 → b2 → b3{3,4,5, итог}; b1 {1}, b2 {2}. */
+const chain = (): Route => ({
+  blocks: [block("b1", [1]), block("b2", [2]), block("b3", [3, 4, 5], true)],
+  edges: [{ from: "b1", to: "b2", per_unit: 1 }, { from: "b2", to: "b3", per_unit: 1 }],
+});
+const dragOps = [1, 2, 3, 4, 5].map((position) => op(position, "x"));
+const opsOf = (route: Route, key: string) => route.blocks.find((item) => item.key === key)?.ops;
+
+it("drops an operation out of a block onto empty canvas: a new block with it feeds the block it came from", () => {
+  const next = dropOp(chain(), 5, null);
+  expect(next.blocks.map((item) => [item.key, item.ops, item.final])).toEqual([
+    ["b1", [1], false], ["b2", [2], false], ["b3", [3, 4], true], ["b4", [5], false]]);
+  expect(arrows(next)).toEqual(["b1>b2", "b2>b3", "b4>b3"]);
+  expect(routeProblem(next, dragOps)).toBeNull();
+  // Единственная операция блока выносить некуда — схема та же.
+  const same = chain();
+  expect(dropOp(same, 1, null)).toBe(same);
+});
+
+it("drops an operation into another block at a place; inside its own block it only reorders", () => {
+  expect(opsOf(dropOp(chain(), 4, "b3", 0), "b3")).toEqual([4, 3, 5]);
+  expect(opsOf(dropOp(chain(), 3, "b3"), "b3")).toEqual([4, 5, 3]);
+  const moved = dropOp(chain(), 4, "b2", 1);
+  expect(opsOf(moved, "b2")).toEqual([2, 4]);
+  expect(opsOf(moved, "b3")).toEqual([3, 5]);
+  expect(arrows(moved)).toEqual(["b1>b2", "b2>b3"]);
+});
+
+it("an operation that was alone in its block takes the block along: it joins the target and the emptied block disappears", () => {
+  const next = dropOp(chain(), 2, "b3", 1);
+  expect(next.blocks.map((item) => item.key).sort()).toEqual(["b1", "b3"]);
+  expect(opsOf(next, "b3")).toEqual([3, 2, 4, 5]);
+  expect(arrows(next)).toEqual(["b1>b3"]);
+  // Через блок между ними — стрелка вспять, редактор такую схему не примет.
+  expect(routeProblem(dropOp(chain(), 1, "b3"), dragOps)).toBeTruthy();
+  // Итоговый блок, опустев, оставляет итог тому, куда ушла его операция.
+  const last = dropOp({ blocks: [block("a", [1, 2]), block("f", [3], true)], edges: [{ from: "a", to: "f", per_unit: 1 }] }, 3, "a", 2);
+  expect(last.blocks.map((item) => [item.key, item.ops, item.final])).toEqual([["a", [1, 2, 3], true]]);
+  expect(last.edges).toEqual([]);
+});
+
+it("joins a dragged block with the one it is dropped on: operations by ETK number, the target's key and name stay, the product is kept", () => {
+  const named: Route = { ...chain(), blocks: chain().blocks.map((item) => (item.key === "b2" ? { ...item, name: "Сборка" } : item)) };
+  const next = joinBlocks(named, "b1", "b2");
+  expect(next.blocks.map((item) => [item.key, item.name, item.ops])).toEqual([["b2", "Сборка", [1, 2]], ["b3", "", [3, 4, 5]]]);
+  expect(arrows(next)).toEqual(["b2>b3"]);
+  const final = joinBlocks(chain(), "b3", "b1");
+  expect(final.blocks.map((item) => [item.key, item.ops, item.final])).toEqual([["b3", [1, 3, 4, 5], true], ["b2", [2], false]]);
+  // Итог остался итогом, но теперь он питает b2 — схема такого не принимает, редактор скажет почему.
+  expect(routeProblem(final, dragOps)).toMatch(/не может выходить стрелка/);
+});
+
+it("feeds a dragged block into another: its old outputs are replaced by one arrow, a cycle is caught by the scheme check", () => {
+  const next = feedBlock(chain(), "b1", "b3");
+  expect(arrows(next)).toEqual(["b1>b3", "b2>b3"]);
+  expect(routeProblem(next, dragOps)).toBeNull();
+  const kept = chain();
+  kept.edges[1] = { from: "b2", to: "b3", per_unit: 3, item: "ТУТ" };
+  expect(feedBlock(kept, "b2", "b3")).toEqual(expect.objectContaining({ edges: expect.arrayContaining([{ from: "b2", to: "b3", per_unit: 3, item: "ТУТ" }]) }));
+  expect(routeProblem(feedBlock(chain(), "b2", "b1"), dragOps)).toMatch(/зациклена/);
+  // Итоговый блок никого не питает.
+  const same = chain();
+  expect(feedBlock(same, "b3", "b1")).toBe(same);
+});
+
+it("settles the ETK order by the blocks: a block is a run of operations, a source goes before what it feeds, nothing moves when already so", () => {
+  const settled = settleOrder(chain(), 5)!;
+  expect(settled.changed).toBe(false);
+  expect(settled.order).toEqual([1, 2, 3, 4, 5]);
+  // Операция 5 вынесена в новый блок, питающий итог: он встаёт перед итоговым блоком, остальные операции — следом.
+  const split = settleOrder(dropOp(chain(), 5, null), 5)!;
+  expect(split.changed).toBe(true);
+  expect(split.order).toEqual([1, 2, 5, 3, 4]);
+  expect(split.route.blocks.map((item) => [item.key, item.ops])).toEqual([["b1", [1]], ["b2", [2]], ["b4", [3]], ["b3", [4, 5]]]);
+  expect(split.route.edges.map((edge) => `${edge.from}>${edge.to}`)).toEqual(["b1>b2", "b2>b3", "b4>b3"]);
+  // Ручной порядок внутри блока становится порядком ЭТК.
+  const reordered = settleOrder(dropOp(chain(), 5, "b3", 0), 5)!;
+  expect(reordered.order).toEqual([1, 2, 5, 3, 4]);
+  expect(reordered.route.blocks.find((item) => item.key === "b3")!.ops).toEqual([3, 4, 5]);
+  expect(settleOrder({ blocks: [block("a", [1]), block("b", [2], true)], edges: [{ from: "a", to: "b", per_unit: 1 }, { from: "b", to: "a", per_unit: 1 }] }, 2)).toBeNull();
+});
+
+it("inverts an order permutation: applying it after the order restores the operations", () => {
+  const order = [1, 2, 5, 3, 4];
+  const inverse = inverseOrder(order);
+  expect(inverse).toEqual([1, 2, 4, 5, 3]);
+  expect(inverse.map((old) => order[old - 1])).toEqual([1, 2, 3, 4, 5]);
 });

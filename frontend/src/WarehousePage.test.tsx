@@ -556,7 +556,7 @@ it("shows the first server page at once and joins the next page on «Показ�
   expect(await screen.findByRole("button", { name: "Загружаем…" })).toBeDisabled();
   release();
   expect(await screen.findByRole("button", { name: "Показать партии (2)" })).toBeInTheDocument();
-  expect(screen.getByText(/^15\b/)).toBeInTheDocument();
+  expect(screen.getByText(/^14\b/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Показать ещё" })).toBeNull();
 });
 
@@ -599,10 +599,10 @@ it("shows the same group and article totals on page 1 as after «Загрузи�
   expect(screen.getByText(/^LOT-2409 · 1\sартикул$/)).toBeInTheDocument();
   const row = screen.getByRole("button", { name: "Показать партии (1)" }).closest("tr")!;
   const cells = () => within(row).getAllByRole("cell").map((cell) => cell.textContent);
-  expect(cells()).toContain("15 шт");           // 10 loaded, 15 on the shelf: the server number, not the loaded sum
+  expect(cells()).toContain("14 шт");           // 10 loaded, 14 free on the shelf: the server number, not the loaded sum
   expect(cells()).toContain("2");
   expect(screen.getByRole("status")).not.toHaveTextContent("по показанным");
-  const sums = (texts: Array<string | null>) => texts.filter((text) => text === "15 шт" || text === "2");
+  const sums = (texts: Array<string | null>) => texts.filter((text) => text === "14 шт" || text === "2");
   const onPageOne = [header.textContent, sums(cells())];
 
   fireEvent.click(screen.getByRole("button", { name: "Загрузить всё" }));
@@ -1078,10 +1078,10 @@ it("the default order is the one of the SUPPLYMAP stock view: тип, ГРН, о
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
   // Grouped by series (the default): «Серия» is the group header, not a column.
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
 
   fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "" } });
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Серия", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Серия", "Артикул", "Наименование", "Склад"]);
 });
 
 it("«Колонки» switches the optional columns off and remembers the choice; the name stays", async () => {
@@ -1094,13 +1094,13 @@ it("«Колонки» switches the optional columns off and remembers the choic
   expect(chooser.queryByLabelText("Серия")).not.toBeInTheDocument();
   fireEvent.click(chooser.getByLabelText("Места"));
   fireEvent.click(chooser.getByLabelText("Тип"));
-  expect(headerNames()).toEqual(["ГРН", "Остаток", "Резерв", "Партий", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Свободно", "Резерв", "Партий", "Артикул", "Наименование", "Склад"]);
   expect(screen.getByText("GHR-04V-S")).toBeInTheDocument();
   unmount();
 
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(headerNames()).toEqual(["ГРН", "Остаток", "Резерв", "Партий", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Свободно", "Резерв", "Партий", "Артикул", "Наименование", "Склад"]);
 });
 
 it("↑/↓ in «Колонки» move a column one step; the order is remembered in this browser", async () => {
@@ -1114,17 +1114,17 @@ it("↑/↓ in «Колонки» move a column one step; the order is remembere
   expect(chooser.getByRole("button", { name: "Ниже: Склад" })).toBeDisabled();
 
   fireEvent.click(chooser.getByRole("button", { name: "Ниже: Тип" }));
-  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
-  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Резерв", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
+  expect(headerNames()).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
   // The list of the chooser follows the table, with the name in its place.
-  expect(chooser.getAllByRole("listitem").map((item) => item.textContent?.replace(/[↑↓]/g, ""))).toEqual(["ГРН", "Тип", "Остаток", "Резерв", "Доступно", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
+  expect(chooser.getAllByRole("listitem").map((item) => item.textContent?.replace(/[↑↓]/g, ""))).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Остаток", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
   unmount();
 
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Резерв", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
+  expect(headerNames()).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
 });
 
 it("a column moves past the one that is switched off, and the group column keeps its place meanwhile", async () => {
@@ -1136,11 +1136,11 @@ it("a column moves past the one that is switched off, and the group column keeps
   fireEvent.click(chooser.getByLabelText("Партий"));
   // «Партий» is off, but still in the list: «Места» steps over it and over «Доступно», «Резерв», «Остаток» and «ГРН» to the front.
   for (let step = 0; step < 6; step += 1) fireEvent.click(chooser.getByRole("button", { name: "Выше: Места" }));
-  expect(headerNames()).toEqual(["Места", "Тип", "ГРН", "Остаток", "Резерв", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Места", "Тип", "ГРН", "Свободно", "Резерв", "Артикул", "Наименование", "Склад"]);
 
   // «Серия» is the group header now: grouping by type frees it, and it stands where the default order put it.
   fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "type" } });
-  expect(headerNames()).toEqual(["Места", "ГРН", "Остаток", "Резерв", "Серия", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Места", "ГРН", "Свободно", "Резерв", "Серия", "Артикул", "Наименование", "Склад"]);
 });
 
 it("the chooser of «Колонки» keeps the focus on the arrow that was pressed; Escape and a tap outside close it", async () => {
@@ -1175,33 +1175,33 @@ it("«По умолчанию» puts the order and the shown columns back", asyn
   const chooser = openChooser();
   fireEvent.click(chooser.getByLabelText("Тип"));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
-  expect(headerNames()).toEqual(["ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Склад", "Наименование"]);
+  expect(headerNames()).toEqual(["ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул", "Склад", "Наименование"]);
 
   fireEvent.click(chooser.getByRole("button", { name: "По умолчанию" }));
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
   unmount();
 
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
 });
 
 it("a damaged or old saved set gives the default order; a column the saved order does not know is added", async () => {
   mockStock([lot]);
   // The key of the previous version (hidden columns only) is not read at all.
   window.localStorage.setItem("erp-table:stock-columns", JSON.stringify(["type", "grn"]));
-  window.localStorage.setItem("erp-table:stock-columns:v2", "{not json");
+  window.localStorage.setItem("erp-table:stock-columns:v3", "{not json");
 
   const { unmount } = render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
   unmount();
 
-  window.localStorage.setItem("erp-table:stock-columns:v2", JSON.stringify({ grouped: { order: ["warehouse", "name", "bogus", "grn", "grn"], hidden: ["name", "type", "bogus"] } }));
+  window.localStorage.setItem("erp-table:stock-columns:v3", JSON.stringify({ grouped: { order: ["warehouse", "name", "bogus", "grn", "grn"], hidden: ["name", "type", "bogus"] } }));
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
   // The name cannot be hidden by a saved set; the unknown ones are dropped, the missing ones follow in the default order.
-  expect(headerNames()).toEqual(["Склад", "Наименование", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул"]);
+  expect(headerNames()).toEqual(["Склад", "Наименование", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул"]);
 });
 
 it("the first column stays in view when the table is scrolled sideways: Тип, or ГРН when the rows are grouped by type", async () => {
@@ -1219,9 +1219,9 @@ it("the first column stays in view when the table is scrolled sideways: Тип, 
 
   // The viewer's order decides: the pin follows the first column on screen.
   const chooser = openChooser();
-  fireEvent.click(chooser.getByRole("button", { name: "Выше: Остаток" }));
-  expect(pinned()).toEqual(["Остаток", "10 шт", "40 шт"]);
-  fireEvent.click(chooser.getByLabelText("Остаток"));
+  fireEvent.click(chooser.getByRole("button", { name: "Выше: Свободно" }));
+  expect(pinned()).toEqual(["Свободно", "10 шт", "40 шт"]);
+  fireEvent.click(chooser.getByLabelText("Свободно"));
   expect(pinned()).toEqual(["ГРН", "FRX.26.0000001", "FRX.26.0000002"]);
 });
 
@@ -1239,14 +1239,14 @@ it("a click on a header still sorts the rows; the sort column keeps its sort aft
   expect(screen.getByRole("columnheader", { name: /^Артикул/ })).toHaveAttribute("aria-sort", "descending");
   expect(articles()).toEqual(["GHR-04V-S", "AAA-01"]);
 
-  fireEvent.click(screen.getByRole("button", { name: /^Остаток/ }));
-  expect(screen.getByRole("columnheader", { name: /^Остаток/ })).toHaveAttribute("aria-sort", "ascending");
+  fireEvent.click(screen.getByRole("button", { name: /^Свободно/ }));
+  expect(screen.getByRole("columnheader", { name: /^Свободно/ })).toHaveAttribute("aria-sort", "ascending");
   expect(articles()).toEqual(["GHR-04V-S", "AAA-01"]);
 
   // Moving the sorted column does not drop the sort.
-  fireEvent.click(openChooser().getByRole("button", { name: "Ниже: Остаток" }));
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Резерв", "Остаток", "Партий", "Места", "Серия", "Артикул", "Наименование", "Склад"]);
-  expect(screen.getByRole("columnheader", { name: /^Остаток/ })).toHaveAttribute("aria-sort", "ascending");
+  fireEvent.click(openChooser().getByRole("button", { name: "Ниже: Свободно" }));
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Резерв", "Свободно", "Партий", "Места", "Серия", "Артикул", "Наименование", "Склад"]);
+  expect(screen.getByRole("columnheader", { name: /^Свободно/ })).toHaveAttribute("aria-sort", "ascending");
 });
 
 it("the lot table has its own order and set of columns; «Назначение» is off until asked for", async () => {
@@ -1258,24 +1258,24 @@ it("the lot table has its own order and set of columns; «Назначение»
   fireEvent.click(openChooser().getByRole("button", { name: "Ниже: Тип" }));
   fireEvent.click(screen.getByRole("button", { name: "Таблица склада" }));
   const table = screen.getByRole("table", { name: "Таблица склада" });
-  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Доступно", "Место", "Серия", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Место", "Серия", "Артикул", "Наименование", "Склад"]);
 
   const chooser = openChooser();
   fireEvent.click(chooser.getByLabelText("Назначение"));
-  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Доступно", "Место", "Серия", "Артикул", "Наименование", "Назначение", "Склад"]);
+  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Место", "Серия", "Артикул", "Наименование", "Назначение", "Склад"]);
   expect(within(table).getByText("FRX.001")).toBeInTheDocument();
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Назначение" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Назначение" }));
-  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Доступно", "Место", "Серия", "Назначение", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Место", "Серия", "Назначение", "Артикул", "Наименование", "Склад"]);
 
   // Back to the article table: its own order is as the viewer left it.
   fireEvent.click(screen.getByRole("button", { name: "Остатки по позициям" }));
-  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
 });
 
 const kitHolder = { kind: "kit", label: "REQ.26.0000012 · 719К.2 КБ12", quantity: "100", unit: "шт" };
 const reservedLot: WarehouseLot = { ...lot, reserved: "100", available: "0", balance: "100", reserve_holders: [kitHolder] };
-const reservedSecond: WarehouseLot = { ...reservedLot, id: "40000000-0000-0000-0000-000000000003", grn: "FRX.26.0000003", reserved: "50", available: "0", balance: "60", reserve_holders: [{ ...kitHolder, label: "REQ.26.0000013 · 720К.1", quantity: "50" }] };
+const reservedSecond: WarehouseLot = { ...reservedLot, id: "40000000-0000-0000-0000-000000000003", grn: "FRX.26.0000003", reserved: "50", available: "10", balance: "60", reserve_holders: [{ ...kitHolder, label: "REQ.26.0000013 · 720К.1", quantity: "50" }] };
 
 it("«Резерв» stands after «Остаток» in both tables: the sum per article, the holders in the tooltip, a dim dash when nothing is held", async () => {
   mockStock([reservedLot, reservedSecond, { ...second, reserved: "0" }]);
@@ -1284,7 +1284,7 @@ it("«Резерв» stands after «Остаток» in both tables: the sum per
   await screen.findByText("GHR-04V-S");
   const rows = () => [...document.querySelectorAll(".stock-article-row")] as HTMLElement[];
   const cell = (row: HTMLElement) => row.querySelectorAll("td")[3];
-  // Article table: ГРН · Остаток · Резерв, the two lots of GHR-04V-S add up.
+  // Article table: ГРН · Свободно · Резерв, the two lots of GHR-04V-S add up.
   const held = rows().find((row) => within(row).queryByText("GHR-04V-S"))!;
   expect(cell(held)).toHaveTextContent("150 шт");
   expect(cell(held)).toHaveAttribute("title", "REQ.26.0000012 · 719К.2 КБ12 — 100 шт\nREQ.26.0000013 · 720К.1 — 50 шт");
@@ -1293,14 +1293,29 @@ it("«Резерв» stands after «Остаток» in both tables: the sum per
   expect(cell(free)).toHaveClass("stock-dim");
 
   // The group header says it, too.
-  expect(screen.getByText(/остаток 160 шт · резерв 150 шт/)).toBeInTheDocument();
+  expect(screen.getByText(/свободно 10 шт \(остаток 160, резерв 150\)/)).toBeInTheDocument();
+  // The free stock leads: «Свободно» is the first quantity, the raw balance is in its tooltip.
+  expect(cell(held).previousElementSibling).toHaveTextContent("10 шт");
+  expect(cell(held).previousElementSibling).toHaveAttribute("title", "остаток 160 шт · резерв 150 шт");
 
   // Lot table: the reserve of one lot, right after «Остаток».
   fireEvent.click(screen.getByRole("button", { name: "Таблица склада" }));
   const table = within(screen.getByRole("table", { name: "Таблица склада" }));
-  expect(headerNames(table).slice(2, 5)).toEqual(["Остаток", "Резерв", "Доступно"]);
+  expect(headerNames(table).slice(2, 4)).toEqual(["Свободно", "Резерв"]);
+  expect(screen.getByRole("columnheader", { name: "Свободно" })).toHaveAttribute("title", "остаток минус резерв");
   const lotRow = table.getByText("FRX.26.0000003").closest("tr")!;
   expect(within(lotRow).getByText("50 шт")).toHaveAttribute("title", "REQ.26.0000013 · 720К.1 — 50 шт");
+  expect(within(lotRow).getByText("10 шт").closest("td")!).toHaveAttribute("title", "остаток 60 шт · резерв 50 шт");
+});
+
+it("a lot card leads with the free quantity; the balance and the reserve are the small line", async () => {
+  mockStock([reservedSecond]);
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  const card = within(screen.getByRole("article", { name: "Партия FRX.26.0000003" }));
+  expect(card.getAllByText("10 шт")[0]).toHaveClass("lot-card-big");
+  expect(card.getByText("свободно · остаток 60 · резерв 50")).toBeInTheDocument();
 });
 
 it("the reserve of an article, of a group and of the page head come from the server sums, not from the loaded lots", async () => {
@@ -1316,17 +1331,17 @@ it("the reserve of an article, of a group and of the page head come from the ser
   });
 
   render(<WarehousePage />);
-  expect(await screen.findByText("в резерве 180 шт")).toBeInTheDocument();
-  expect(await screen.findByText(/остаток 300 шт · резерв 180 шт/)).toBeInTheDocument();
+  expect(await screen.findByText("в резерве 180 шт · свободно 120 шт")).toBeInTheDocument();
+  expect(await screen.findByText(/свободно 120 шт \(остаток 300, резерв 180\)/)).toBeInTheDocument();
   expect(document.querySelectorAll(".stock-article-row td")[3]).toHaveTextContent("180 шт");
 });
 
-it("the article table sorts by «Резерв»; «Доступно» is an optional column there", async () => {
+it("the article table sorts by «Резерв» and «Свободно»; «Остаток» is an optional column there", async () => {
   mockStock([reservedLot, { ...second, reserved: "0" }]);
 
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(screen.queryByRole("columnheader", { name: "Доступно" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Остаток" })).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "" } });
   const articles = () => [...document.querySelectorAll(".stock-article-row")].map((row) => within(row as HTMLElement).queryByText(/^(GHR-04V-S|AAA-01)$/)?.textContent);
   fireEvent.click(screen.getByRole("button", { name: /^Резерв/ }));
@@ -1334,22 +1349,27 @@ it("the article table sorts by «Резерв»; «Доступно» is an opti
   fireEvent.click(screen.getByRole("button", { name: /^Резерв/ }));
   expect(articles()).toEqual(["GHR-04V-S", "AAA-01"]);
 
-  fireEvent.click(openChooser().getByLabelText("Доступно"));
-  expect(headerNames()).toContain("Доступно");
+  fireEvent.click(screen.getByRole("button", { name: /^Свободно/ }));
+  expect(articles()).toEqual(["GHR-04V-S", "AAA-01"]);
+  fireEvent.click(screen.getByRole("button", { name: /^Свободно/ }));
+  expect(articles()).toEqual(["AAA-01", "GHR-04V-S"]);
+
+  fireEvent.click(openChooser().getByLabelText("Остаток"));
+  expect(headerNames()).toContain("Остаток");
 });
 
-it("a saved set that does not know «Резерв» gets it after «Остаток», «Доступно» of the article table stays off", async () => {
+it("a saved set that does not know «Резерв» or «Свободно» gets them next to their neighbours of the default order", async () => {
   mockStock([lot]);
-  window.localStorage.setItem("erp-table:stock-columns:v2", JSON.stringify({
+  window.localStorage.setItem("erp-table:stock-columns:v3", JSON.stringify({
     grouped: { order: ["grn", "balance", "lots", "place", "series", "article", "name", "warehouse", "type"], hidden: ["type"] },
     flat: { order: ["warehouse", "balance", "available", "name", "grn"], hidden: ["purpose"] },
   }));
 
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(headerNames()).toEqual(["ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Свободно", "Резерв", "Остаток", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
   fireEvent.click(screen.getByRole("button", { name: "Таблица склада" }));
-  expect(headerNames(within(screen.getByRole("table", { name: "Таблица склада" })))).toEqual(["Склад", "Остаток", "Резерв", "Доступно", "Место", "Серия", "Артикул", "Наименование", "ГРН", "Тип"]);
+  expect(headerNames(within(screen.getByRole("table", { name: "Таблица склада" })))).toEqual(["Склад", "Остаток", "Место", "Серия", "Артикул", "Свободно", "Резерв", "Наименование", "ГРН", "Тип"]);
 });
 
 it("a long name is cut to its column and carries the full text as a tooltip", async () => {

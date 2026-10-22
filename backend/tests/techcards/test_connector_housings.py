@@ -345,3 +345,22 @@ def test_roof_by_part_number_and_sourced_plain_tops():
         assert layout["roof"] is None and len(layout["roof_plain"]) > 10, article
     for article in ("GHR-04V-S", "QS8-S-M", "JR-H-Female", "RA-1011"):
         assert housing_of(article)["roof_plain"] == "", article
+
+
+def test_usb_families_cover_the_owner_screenshot_articles():
+    # USB-FA (receptacle) and Connfly DS1107-W (USB A plug, solder) are the usb-a layout; the plug/receptacle layout is the same.
+    for article in ("USB-FA", "USB-AF", "USB A F", "DS1107-W", "DS1107-WN0"):
+        layout = housing_of(article)
+        assert layout and layout["family"] == "usb-a" and layout["grid"] == [[1, 2, 3, 4]], article
+        assert layout["labels"] == ["+5В", "D−", "D+", "GND"] and layout["conf"] == "high"
+
+    micro = housing_of("microUSB 5BM")
+    assert (micro["family"], micro["n"], micro["grid"], micro["labels"]) == ("usb-micro-b", 5, [[1, 2, 3, 4, 5]], ["+5В", "D−", "D+", "ID", "GND"])
+    assert micro["conf"] == "low" and micro["src"] and "не подтверждено" in micro["note"]
+
+    typec = housing_of("USB3.1 TYPE-C 24PM-035")
+    assert (typec["family"], typec["n"], typec["rows"], typec["cols"]) == ("usb-c", 24, 2, 12)
+    assert typec["grid"][0] == list(range(1, 13)) and typec["grid"][1] == list(range(24, 12, -1))
+    assert typec["labels"][:2] == ["A1", "A2"] and typec["labels"][-1] == "B12" and len(typec["labels"]) == 24
+    assert typec["conf"] == "low" and typec["src"]
+    assert housing_of("USB-A")["family"] == "usb-a" and housing_of("USB-C 16P") is None

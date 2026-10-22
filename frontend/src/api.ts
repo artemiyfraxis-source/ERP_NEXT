@@ -642,6 +642,8 @@ export interface DeliveryNoteForm {
   date: string;
   customer: string;
   po: string;
+  /** «PO #» перед номером — только заказ заказчика из карточки; иначе в клетке номер проекта. */
+  po_from_card: boolean;
   contract: string;
   spec: string;
   invoice: string;

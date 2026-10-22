@@ -91,11 +91,12 @@ it("713К.4 КБ1: the owner sets the processing through the form and gets the s
   // Сростки пайкой, трубка ТТК 3/1 по 20 мм.
   switchOn("Сростки");
   // Сростки нарисованы на схеме — список «С1…С4» вместо набранных чисел; складывание жилы — только при опрессовке гильзой.
-  const rows = [...document.querySelectorAll(".spl-row")].map((el) => el.textContent || "");
+  const rows = [...document.querySelectorAll(".spl-edit-row")].map((el) => el.textContent || "");
   expect(rows).toHaveLength(4);
-  expect(rows.map((t) => t.match(/^С(\d)(\d) пров/)?.slice(1, 3).join(":"))).toEqual(["1:4", "2:4", "3:3", "4:3"]);
-  expect(rows[0]).toMatch(/от .*конт\. \d/);
-  expect(document.querySelector(".spl-rows")).toHaveTextContent("Сростки задаются на схеме");
+  expect(rows.map((t) => t.match(/^С(\d)(\d) конц/)?.slice(1, 3).join(":"))).toEqual(["1:4", "2:4", "3:3", "4:3"]);
+  expect(rows[0]).toMatch(/→ .*конт\. \d/);
+  expect(screen.getByLabelText("Сростки")).toHaveTextContent("№ 1");
+  expect(screen.getByRole("combobox", { name: "Новый сросток" })).toBeTruthy();
   expect(screen.queryByLabelText("Проводов в сростке")).toBeNull();
   expect(screen.queryByLabelText("Сростков на изделие")).toBeNull();
   expect(screen.getByText("Складывание жилы перед гильзой")).toBeTruthy();
@@ -106,7 +107,7 @@ it("713К.4 КБ1: the owner sets the processing through the form and gets the s
   // Оплётка XP-3 до термоусадки, по ветвям 120/110/110/120 мм.
   switchOn("Лента / оплётка на жгут");
   type((screen.getAllByLabelText("Материал 1") as HTMLSelectElement[]).find((el) => [...el.options].some((o) => o.value === "xp3"))!, "xp3");
-  type(screen.getAllByLabelText("Вид")[0], "braid");
+  type(screen.getAllByLabelText("Как надеть")[0], "braid");
   type(screen.getAllByLabelText(/^Длина на изделие/)[0], "460");
   const braid: Record<string, string> = { "А1": "120", "А2": "110", "А3": "110", "А4": "120" };
   Object.entries(braid).forEach(([end, len]) => type(`Оплётка ветви ${end}, отрезок`, len));
@@ -159,4 +160,21 @@ it("713К.4 КБ1: the owner sets the processing through the form and gets the s
   ]));
   expect(config.route.blocks).toHaveLength(16);
   expect(config.route.blocks.map((b) => [b.key, b.name])).toEqual(expected.route.blocks.map((b) => [b.key, b.name]));
+});
+
+it("splices are edited as «which wire ends join» rows: remove an end from С3 and put it back", async () => {
+  render(<TcGenerator card={card} kit={kit} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} />);
+  await screen.findByText("Обработка", { selector: "h3" });
+  switchOn("Сростки");
+  const rowText = (n: number) => [...document.querySelectorAll(".spl-edit-row")][n - 1].textContent || "";
+  expect(rowText(3)).toMatch(/^С33 конца/);
+  const removeButton = document.querySelectorAll(".spl-edit-row")[2].querySelector("button") as HTMLButtonElement;
+  const endLabel = removeButton.getAttribute("aria-label")!.replace(/^Убрать /, "").replace(/ из С3$/, "");
+  fireEvent.click(removeButton);
+  await waitFor(() => expect(rowText(3)).toMatch(/^С32 конца/));
+  const add = screen.getByLabelText("Добавить конец в С3") as HTMLSelectElement;
+  const option = [...add.options].find((o) => o.textContent === endLabel)!;
+  expect(option).toBeTruthy();
+  fireEvent.change(add, { target: { value: option.value } });
+  await waitFor(() => expect(rowText(3)).toMatch(/^С33 конца/));
 });

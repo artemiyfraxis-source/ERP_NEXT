@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductionIntakePage } from "./ProductionIntakePage";
 import { isoDay } from "./Gantt";
@@ -48,49 +48,41 @@ beforeEach(() => { intakeRows = ROWS; stub(); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Приёмка с производства", () => {
-  it("принимает кусками: количество строки меняется, уходит дата, место и только отмеченное", async () => {
+  it("число «Можно принять» — кнопка: окно с КБ, заказано/принято/остаток, количество по умолчанию — всё; уходит дата, место и строка", async () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findByText("Жгут");
     expect(screen.getByRole("heading", { name: "Приёмка с производства" })).toBeInTheDocument();
     expect(screen.queryByText("Шлейф")).not.toBeInTheDocument(); // в «Можно принять» только то, что сдано
-    fireEvent.change(screen.getByLabelText("Сколько принять 591К.3 КБ1"), { target: { value: "8" } });
-    fireEvent.change(screen.getByLabelText("Дата приёмки"), { target: { value: "2026-10-12" } });
-    fireEvent.change(screen.getByLabelText("Место хранения"), { target: { value: "Стеллаж 3" } });
-    fireEvent.click(screen.getByRole("button", { name: "Принять на склад · 8 шт" }));
+    const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent ?? "");
+    for (const gone of ["Принять, шт", "Этап", "Сдано цехом", "Место хранения"]) expect(headers.some((text) => text.includes(gone))).toBe(false);
+    expect(headers.findIndex((text) => text.includes("Остаток"))).toBe(headers.findIndex((text) => text.includes("Заказано")) + 1);
+    expect(screen.queryByLabelText("Сколько принять 591К.3 КБ1")).not.toBeInTheDocument(); // поля в строке нет
+    fireEvent.click(screen.getByRole("button", { name: "Принять 591К.3 КБ1: можно 20" }));
+    const dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
+    expect(within(dialog).getByLabelText("Сколько принять 591К.3 КБ1")).toHaveValue(20);
+    fireEvent.change(within(dialog).getByLabelText("Сколько принять 591К.3 КБ1"), { target: { value: "8" } });
+    fireEvent.change(within(dialog).getByLabelText("Дата приёмки"), { target: { value: "2026-10-12" } });
+    fireEvent.change(within(dialog).getByLabelText("Место хранения 591К.3 КБ1"), { target: { value: "Стеллаж 3" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 8 шт" }));
     await screen.findByText("Принято на склад: 8 шт");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     const post = calls.find((call) => call.method === "POST")!;
-    expect(post.body).toEqual({ lines: [{ project: "591К.3", item_index: "КБ1", quantity: "8" }], received_at: "2026-10-12", location: "Стеллаж 3" });
+    expect(post.body).toEqual({ lines: [{ project: "591К.3", item_index: "КБ1", quantity: "8", location: "Стеллаж 3" }], received_at: "2026-10-12" });
     expect(calls.filter((call) => call.url === "/api/shipping/intake")).toHaveLength(2); // перезагрузка после успеха
   });
 
-  it("одно намерение — одно поле: неотмеченная строка без количества, флажок ставит всё сданное, пустое поле снимает отметку", async () => {
+  it("«Принять всё» проекта открывает то же окно со всеми КБ; место — у каждой своё", async () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findByText("Жгут");
-    const amount = screen.getByLabelText("Сколько принять 591К.3 КБ1");
-    expect(amount).toHaveValue(null);
-    expect(amount).toHaveAttribute("placeholder", "до 20");
-    fireEvent.click(screen.getByLabelText("Принять 591К.3 КБ1"));
-    expect(amount).toHaveValue(20);
-    expect(screen.getByRole("button", { name: "Принять на склад · 20 шт" })).toBeEnabled();
-    fireEvent.change(amount, { target: { value: "" } });
-    expect(screen.getByLabelText("Принять 591К.3 КБ1")).not.toBeChecked();
-    expect(screen.getByRole("button", { name: "Принять на склад · 0 шт" })).toBeDisabled();
-  });
-
-  it("«все к приёмке» отмечает все КБ проекта разом; своё место строки уходит в строке, общее — в пакете", async () => {
-    render(<ProductionIntakePage principal={principal} />);
-    await screen.findByText("Жгут");
-    expect(screen.getByText(/все к приёмке: 2 КБ · 30 шт/)).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Отметить все КБ проекта 591К.3"));
-    expect(screen.getByLabelText("Принять 591К.3 КБ1")).toBeChecked();
-    expect(screen.getByLabelText("Принять 591К.3 КБ2")).toBeChecked();
-    fireEvent.change(screen.getByLabelText("Место хранения"), { target: { value: "Стеллаж 3" } });
-    fireEvent.change(screen.getByLabelText("Место хранения 591К.3 КБ2"), { target: { value: "Полка 1" } });
-    fireEvent.click(screen.getByRole("button", { name: "Принять на склад · 30 шт" }));
+    fireEvent.click(screen.getByRole("button", { name: /Принять всё: 2 КБ · 30 шт/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Принять всё 591К.3" });
+    expect(within(dialog).getByLabelText("Сколько принять 591К.3 КБ1")).toHaveValue(20);
+    expect(within(dialog).getByLabelText("Сколько принять 591К.3 КБ2")).toHaveValue(10);
+    fireEvent.change(within(dialog).getByLabelText("Место хранения 591К.3 КБ2"), { target: { value: "Полка 1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 30 шт" }));
     await screen.findByText("Принято на склад: 30 шт");
     expect(calls.find((call) => call.method === "POST")!.body).toMatchObject({
       lines: [{ project: "591К.3", item_index: "КБ1", quantity: "20" }, { project: "591К.3", item_index: "КБ2", quantity: "10", location: "Полка 1" }],
-      location: "Стеллаж 3",
     });
   });
 
@@ -106,20 +98,25 @@ describe("Приёмка с производства", () => {
     expect(screen.getByText(/просрочен на 8 дн\./)).toHaveClass("tone-danger");
   });
 
-  it("строка сверх лимита: ошибка у строки и запрос не уходит", async () => {
+  it("количество сверх лимита или нулевое: ошибка у строки в окне и запрос не уходит", async () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findByText("Жгут");
-    fireEvent.change(screen.getByLabelText("Сколько принять 591К.3 КБ1"), { target: { value: "21" } });
-    fireEvent.click(screen.getByRole("button", { name: "Принять на склад · 21 шт" }));
-    expect(await screen.findByText("больше сданного: можно 20")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Принять 591К.3 КБ1: можно 20" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Сколько принять 591К.3 КБ1"), { target: { value: "21" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 21 шт" }));
+    expect(await within(dialog).findByText("больше сданного: можно 20")).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Сколько принять 591К.3 КБ1"), { target: { value: "0" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 0 шт" }));
+    expect(await within(dialog).findByText("укажите количество больше 0")).toBeInTheDocument();
     expect(calls.some((call) => call.method === "POST")).toBe(false);
   });
 
   it("без правки «Отгрузка — склад» управления приёмкой нет, а список виден", async () => {
     render(<ProductionIntakePage principal={viewer} />);
     await screen.findByText("Жгут");
-    expect(screen.queryByLabelText("Дата приёмки")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Принять 591К.3 КБ1")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Принять 591К\.3 КБ1/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Принять всё/ })).not.toBeInTheDocument();
   });
 
   it("«Все» показывает и КБ, которые цех ещё не сдал; заголовок проекта с заказчиком и сроком", async () => {
@@ -179,7 +176,7 @@ describe("Приёмка с производства", () => {
     expect(await screen.findByText(/откройте его заново/)).toBeInTheDocument();
   });
 
-  it("принятое остаётся зелёными строками актов, а остаток — отдельной строкой с флажком", async () => {
+  it("принятое — зелёные строки актов с «Заказано»; «Остаток» один на КБ: заказано − принято по всем ГРН", async () => {
     const day = isoDay(new Date());
     intakeRows = [
       row({ item_index: "КБ1", name: "Жгут акты", needed: "1000", launched: "1000", delivered: "1000", accepted: "800", remaining: "200", grn: "ГП.26.0000010",
@@ -192,13 +189,57 @@ describe("Приёмка с производства", () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findAllByText("Жгут акты");
     expect(document.querySelectorAll("tr.intake-act-row")).toHaveLength(3); // два акта КБ1 и акт КБ2; КБ3 принята давно — только во «Все»
-    expect(screen.getByText("ГП.26.0000010")).toBeInTheDocument();
-    expect(screen.getByText("ГП.26.0000011")).toBeInTheDocument();
     expect(screen.queryByText("Жгут старый")).not.toBeInTheDocument();
-    // Остаток КБ1 — одна строка с флажком, «до 200»; у актов и у КБ2 (принята целиком) полей ввода нет.
-    expect(screen.getAllByLabelText(/Принять 591К.3/)).toHaveLength(1);
-    expect(screen.getByLabelText("Сколько принять 591К.3 КБ1")).toHaveAttribute("placeholder", "до 200");
+    const cells = (tr: Element) => [...tr.querySelectorAll("td")].map((td) => td.textContent);
+    const ordered = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Жгут акты")).map(cells);
+    expect(ordered).toHaveLength(3); // акт, акт, остаток
+    for (const line of ordered) expect(line).toContain("1000"); // «Заказано» на каждой строке, и на зелёных тоже
+    expect(ordered.filter((line) => line.includes("200")).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /^Принять 591К.3/ })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Принять 591К.3 КБ1: можно 200" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Сколько принять 591К.3 КБ1")).toHaveValue(200);
+    expect(within(dialog).getByText("800")).toBeInTheDocument(); // принято по КБ, не по строке остатка
+    fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
     fireEvent.click(screen.getByRole("tab", { name: /Все/ }));
     expect((await screen.findAllByText("Жгут старый")).length).toBeGreaterThan(0);
+  });
+
+  it("остаток по КБ при приёмке в несколько ГРН: 100+350+350+173 принято из 1000 — остаток 27 одной строкой", async () => {
+    const day = isoDay(new Date());
+    intakeRows = [row({ project: "533К.12", item_index: "КБ1", name: "CCW-0,2", needed: "1000", launched: "1000", delivered: "1000", accepted: "973", remaining: "27", grn: "ГП.26.0000020",
+      acts: [["ГП.26.0000020", "100"], ["ГП.26.0000021", "350"], ["ГП.26.0000022", "350"], ["ГП.26.0000023", "173"]].map(([grn, quantity]) => ({ grn, quantity, received_at: day, location: "" })) })];
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findAllByText("CCW-0,2");
+    const lines = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("CCW-0,2"));
+    expect(lines).toHaveLength(5);
+    const left = lines.map((tr) => [...tr.querySelectorAll("td")][3]?.textContent);
+    expect(left).toEqual(["—", "—", "—", "—", "27"]);
+  });
+
+  it("«Печать этикетки» у ГРН ставит этикетку в очередь печати и показывает статус", async () => {
+    const day = isoDay(new Date());
+    intakeRows = [row({ item_index: "КБ2", name: "Жгут печать", needed: "10", launched: "10", delivered: "10", accepted: "10", remaining: "0", grn: "ГП.26.0000030",
+      acts: [{ grn: "ГП.26.0000030", quantity: "10", received_at: day, location: "А-1" }] })];
+    const base = globalThis.fetch as unknown as (i: RequestInfo | URL, n?: RequestInit) => Promise<Response>;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === "/api/shipping/intake/%D0%93%D0%9F.26.0000030/label") return json({ status: "queued", reason: "В очереди принтера.", file: "j1", copies: 1, job_id: "j1" });
+      return base(input, init);
+    }));
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findAllByText("Жгут печать");
+    fireEvent.click(screen.getByRole("button", { name: "Печать этикетки ГП.26.0000030" }));
+    expect(await screen.findByText("В очереди принтера.")).toBeInTheDocument();
+    expect(calls.find((call) => call.url.endsWith("/label") && call.method === "POST")?.body).toEqual({ copies: 1 });
+    expect(calls.some((call) => call.url.startsWith("/api/stock/labels/lot") || (call.url.startsWith("/api/stock/labels") && call.method === "POST"))).toBe(false); // не поиск партии склада и не печать партии
+  });
+
+  it("печать недоступна без права на склад", async () => {
+    intakeRows = [row({ accepted: "10", acts: [{ grn: "ГП.26.0000031", quantity: "10", received_at: isoDay(new Date()), location: "" }] })];
+    render(<ProductionIntakePage principal={viewer} />);
+    await screen.findAllByText("Жгут");
+    expect(screen.queryByRole("button", { name: /Печать этикетки/ })).not.toBeInTheDocument();
   });
 });

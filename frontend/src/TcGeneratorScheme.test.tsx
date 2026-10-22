@@ -89,7 +89,7 @@ it("«Межплатная» I-DS1071 ↔ PHR-4: E4 tables for both connectors, 
   expect(lines()).toEqual(["А1·1→В1·1", "А1·2→В1·2", "А1·3→В1·3", "А1·4→В1·4"]);
   const a1 = table("А1");
   expect(a1).toHaveTextContent("XS1");
-  for (const head of ["Цвет", "Сечение", "Марка", "Терминал", "№"]) expect(a1).toHaveTextContent(head);
+  for (const head of ["Цвет", "Сечение", "Марка", "Терминал", "Конт."]) expect(a1).toHaveTextContent(head);
   expect(a1).toHaveTextContent("Connfly DS1071 I-DS1071-SCB01X4");
   expect(table("В1")).toHaveTextContent("JST PH PHR-4");
   expect(row("А1", 1)).toHaveTextContent("0,2 мм²НВ4 0,2 красныйSPH-002T-P0.5S1");
@@ -252,4 +252,30 @@ it("«Цепь» in the scheme tables is edited in place (generator only): click
   fireEvent.change(screen.getByRole("combobox", { name: "Цепь 2" }), { target: { value: "VCC" } });
   fireEvent.blur(screen.getByRole("combobox", { name: "Цепь 2" }));
   expect(row("В1", 2)).toHaveTextContent("VCC");
+});
+
+it("the link scheme is driven by the mouse: click, drag and right-click on the table rows; a legend explains the numbers", async () => {
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={USB} />);
+  await form("Межплатная", ["НВ4 0,2 красный", "НВ4 0,2 черный", "НВ4 0,2 белый", "НВ4 0,2 зеленый"]);
+  await waitFor(() => expect(lines()).toHaveLength(4));
+  const legend = screen.getByLabelText("Как читать номера");
+  expect(legend).toHaveTextContent("кабель 1, жила 2");
+  expect(legend).toHaveTextContent("разъём А1, контакт 3");
+  // Щелчок по строкам таблицы работает как по гнёздам торца: В1·4 → В1·3 меняет провода местами.
+  fireEvent.click(row("В1", 4));
+  fireEvent.click(row("В1", 3));
+  expect(lines()).toEqual(["А1·1→В1·1", "А1·2→В1·2", "А1·3→В1·4", "А1·4→В1·3"]);
+  // Перетаскивание занятой строки на другую строку той же таблицы — то же самое, обратно.
+  const target = row("В1", 4);
+  (document as unknown as { elementFromPoint: () => Element }).elementFromPoint = () => target;
+  fireEvent.pointerDown(row("В1", 3), { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
+  fireEvent.pointerMove(window, { clientX: 40, clientY: 40, pointerId: 1 });
+  fireEvent.pointerUp(window, { clientX: 40, clientY: 40, pointerId: 1 });
+  await waitFor(() => expect(lines()).toEqual(["А1·1→В1·1", "А1·2→В1·2", "А1·3→В1·3", "А1·4→В1·4"]));
+  // Правый щелчок по занятой строке снимает провод; × в строке делает то же.
+  fireEvent.contextMenu(row("В1", 1));
+  expect(row("В1", 1)).not.toHaveAttribute("data-wires");
+  fireEvent.click(within(row("В1", 2) as HTMLElement).getByRole("button", { name: /Снять провод с контакта/ }));
+  expect(row("В1", 2)).not.toHaveAttribute("data-wires");
+  delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
 });

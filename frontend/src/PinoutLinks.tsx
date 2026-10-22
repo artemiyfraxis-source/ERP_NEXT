@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { isDark, type ConnectorHousing } from "./connectorArt";
 import { wireSectionOf, type PinoutEnd, type PinUnit } from "./pinoutCheck";
 import { pinCountFromArt } from "./terminalPick";
@@ -29,15 +29,18 @@ const CHAR = 5.6;
 
 type ColKey = "color" | "section" | "mark" | "terminal" | "net" | "num";
 type Column = { key: ColKey; title: string; width: number };
+/** Подсказки к заголовкам колонок: «Конт.» — номер контакта на разъёме, не номер провода (он — у линии). */
+const COL_HINT: Record<ColKey, string> = { color: "Цвет жилы", section: "Сечение провода", mark: "Марка провода", terminal: "Терминал на конце провода",
+  net: "Цепь (сигнал) провода", num: "Номер контакта на разъёме. Номер провода — у линии" };
 /** Колонки на просторном поле (27") и на узком (16": колонка формы ~680 px) — без пустой «Цепи», чтобы обе таблицы и
  *  провода между ними встали без уменьшения. */
 const WIDE: Column[] = [
   { key: "color", title: "Цвет", width: 36 }, { key: "section", title: "Сечение", width: 60 }, { key: "mark", title: "Марка", width: 140 },
-  { key: "terminal", title: "Терминал", width: 118 }, { key: "net", title: "Цепь", width: 64 }, { key: "num", title: "№", width: 30 },
+  { key: "terminal", title: "Терминал", width: 118 }, { key: "net", title: "Цепь", width: 64 }, { key: "num", title: "Конт.", width: 36 },
 ];
 const NARROW: Column[] = [
   { key: "color", title: "Цвет", width: 30 }, { key: "section", title: "Сечение", width: 54 }, { key: "mark", title: "Марка", width: 98 },
-  { key: "terminal", title: "Терминал", width: 90 }, { key: "net", title: "Цепь", width: 44 }, { key: "num", title: "№", width: 24 },
+  { key: "terminal", title: "Терминал", width: 90 }, { key: "net", title: "Цепь", width: 44 }, { key: "num", title: "Конт.", width: 32 },
 ];
 /** Поле уже этого — узкие колонки. */
 const WIDE_FROM = 1080;
@@ -282,8 +285,8 @@ function NetEditor({ x, y, width, wire, options, onDone }: { x: number; y: numbe
 
 /** Рисунок схемы связей — SVG по раскладке (экран и печать ЭТК). `onNet` — только в генераторе: ячейка «Цепь» правится по щелчку
  *  (цепь принадлежит проводу, поэтому видна на обоих разъёмах); в ЭТК схема только для чтения. */
-export function LinkSchemeSvg({ scheme: M, layout: L, onNet, onColor }: { scheme: LinkScheme; layout: SchemeLayout; onNet?: (wireKey: string, net: string) => void;
-  onColor?: ColorOpen }) {
+export function LinkSchemeSvg({ scheme: M, layout: L, onNet, onColor, interact }: { scheme: LinkScheme; layout: SchemeLayout; onNet?: (wireKey: string, net: string) => void;
+  onColor?: ColorOpen; interact?: SchemeInteract }) {
   const TABLE_W = L.tableW;
   const [editing, setEditing] = useState<string | null>(null);
   const nets = [...new Set(M.wires.map((w) => (w.net || "").trim()).filter(Boolean))];
@@ -302,13 +305,23 @@ export function LinkSchemeSvg({ scheme: M, layout: L, onNet, onColor }: { scheme
         <rect x={b.x} y={b.y} width={TABLE_W} height={TITLE} className="pin-links-band" />
         <text x={b.x + 8} y={b.y + 15} className="pin-links-name"><tspan className="pin-links-key">{b.end.key}</tspan>
           {designation ? <tspan dx={8}>{designation}</tspan> : null}</text>
-        {cols.map((c) => <text key={c.key} x={b.x + c.x + c.width / 2} y={b.y + TITLE + 13} textAnchor="middle" className="pin-links-colhead">{c.title}</text>)}
+        {cols.map((c) => <text key={c.key} x={b.x + c.x + c.width / 2} y={b.y + TITLE + 13} textAnchor="middle" className="pin-links-colhead"><title>{COL_HINT[c.key]}</title>{c.title}</text>)}
         <line x1={b.x} x2={b.x + TABLE_W} y1={b.y + TITLE + COLS_H} y2={b.y + TITLE + COLS_H} className="pin-links-rule is-strong" />
         {cols.slice(1).map((c) => <line key={c.key} x1={b.x + c.x} x2={b.x + c.x} y1={b.y + TITLE} y2={top + b.rows * ROW} className="pin-links-rule" />)}
         {Array.from({ length: b.rows }, (_, i) => {
           const pin = i + 1, here = byPin(b.end.id, pin), y = top + i * ROW;
           const cells = rowCells(here, terminal);
-          return <g key={pin} className={here.length ? "pin-links-row is-used" : "pin-links-row"} data-pin={pin} data-wires={here.map((u) => u.num).join(" ") || undefined}>
+          const held = !!interact?.held && interact.held.epId === b.end.id && interact.held.pin === pin;
+          const rowClass = ["pin-links-row", here.length && "is-used", interact && "is-live", held && "is-held"].filter(Boolean).join(" ");
+          // Только в генераторе: строка — цель и источник мыши (щелчок, перетаскивание, правый щелчок снимает провод).
+          const live = interact ? {
+            "data-ep": b.end.id,
+            onClick: (event: ReactMouseEvent) => { if (!(event.target as Element).closest("[data-color-opener],[data-net-cell],[data-row-x]")) interact.onCell(b.end.id, pin); },
+            onPointerDown: here.length ? (event: ReactPointerEvent) => { if (!(event.target as Element).closest("input,[data-color-opener],[data-net-cell],[data-row-x]")) interact.onGrab(b.end.id, pin, event); } : undefined,
+            onContextMenu: here.length ? (event: ReactMouseEvent) => { event.preventDefault(); interact.onRemove(b.end.id, pin); } : undefined,
+          } : {};
+          return <g key={pin} className={rowClass} data-pin={pin} data-wires={here.map((u) => u.num).join(" ") || undefined} {...live}>
+            {interact && <rect x={b.x} y={y} width={TABLE_W} height={ROW} className="pin-links-row-hit" />}
             {i > 0 && <line x1={b.x} x2={b.x + TABLE_W} y1={y} y2={y} className="pin-links-rule" />}
             {cols.map((c) => {
               const cx = b.x + c.x;
@@ -328,7 +341,13 @@ export function LinkSchemeSvg({ scheme: M, layout: L, onNet, onColor }: { scheme
                     <title>{core.colorName ? `${core.colorName} — изменить цвет жилы` : "выбрать цвет жилы"}</title></rect>
                 </g>;
               }
-              if (c.key === "num") return <text key={c.key} x={cx + c.width / 2} y={y + 14} textAnchor="middle" className="pin-links-num">{pin}</text>;
+              if (c.key === "num") return <g key={c.key}>
+                <text x={cx + c.width / 2} y={y + 14} textAnchor="middle" className="pin-links-num">{pin}</text>
+                {interact && here.length > 0 && <g className="pin-links-x" data-row-x role="button" aria-label={`Снять провод с контакта ${b.end.key}·${pin}`} onClick={() => interact.onRemove(b.end.id, pin)}>
+                  <title>Снять провод с контакта</title>
+                  <rect x={cx + 2} y={y + 2} width={c.width - 4} height={ROW - 4} rx={3} />
+                  <text x={cx + c.width / 2} y={y + 14} textAnchor="middle">×</text></g>}
+              </g>;
               const value = cells[c.key];
               const target = c.key === "net" && onNet && here.length ? here[0] : null;
               if (target) {
@@ -403,6 +422,14 @@ export function schemeCounts(L: SchemeLayout) {
 
 export type SchemeView = "scheme" | "drawing";
 
+/** Мышь на схеме связей генератора: щелчок по строке, перетаскивание занятой строки, правый щелчок/× снимает провод. */
+export type SchemeInteract = {
+  onCell: (epId: string, pin: number) => void;
+  onGrab: (epId: string, pin: number, event: ReactPointerEvent) => void;
+  onRemove: (epId: string, pin: number) => void;
+  held?: { epId?: string; pin?: number } | null;
+};
+
 /** Ширина поля под схему: по ней — колонки и просвет между таблицами (без ResizeObserver — как на 27"). */
 function useRoom() {
   const ref = useRef<HTMLDivElement>(null);
@@ -421,8 +448,8 @@ function useRoom() {
 
 /** Схема связей и переключатель «Схема связей | Чертёж». `drawing` — чертёж по той же форме (рисуется, только пока открыта
  *  его вкладка). `titled={false}` — без заголовка «Схема связей» (его несёт блок ЭТК). Разъёмов нет — ничего не рисует. */
-export function LinkSchemeView({ scheme, drawing, titled = true, onNet, onColor }: { scheme: LinkScheme; drawing?: () => ReactNode; titled?: boolean;
-  onNet?: (wireKey: string, net: string) => void; onColor?: ColorOpen }) {
+export function LinkSchemeView({ scheme, drawing, titled = true, onNet, onColor, interact }: { scheme: LinkScheme; drawing?: () => ReactNode; titled?: boolean;
+  onNet?: (wireKey: string, net: string) => void; onColor?: ColorOpen; interact?: SchemeInteract }) {
   const [view, setView] = useState<SchemeView>("scheme");
   const room = useRoom();
   if (!scheme.connectors.length) return null;
@@ -437,7 +464,7 @@ export function LinkSchemeView({ scheme, drawing, titled = true, onNet, onColor 
       <span className="muted">{schemeCounts(L)}</span>
     </div>
     {shown === "drawing" ? drawing!() : <div className="pin-links-scroll" ref={room.ref}>
-      <LinkSchemeSvg scheme={scheme} layout={L} onNet={onNet} onColor={onColor} />
+      <LinkSchemeSvg scheme={scheme} layout={L} onNet={onNet} onColor={onColor} interact={interact} />
       {!L.wires.length && <small className="muted pin-links-empty">Линии появятся, когда провод встанет на контакт.</small>}
     </div>}
   </div>;
@@ -447,7 +474,7 @@ export function LinkSchemeView({ scheme, drawing, titled = true, onNet, onColor 
 /** Ячейка «Цвет» в генераторе: ключ жилы и где открыть палитру (координаты экрана). */
 export type ColorOpen = (wireKey: string, at: { left: number; top: number; above: number }) => void;
 
-export function PinoutLinks({ ends, units, housings, joins, info = {}, drawing, onNet, onColor }: {
+export function PinoutLinks({ ends, units, housings, joins, info = {}, drawing, onNet, onColor, interact }: {
   ends: PinoutEnd[];
   units: PinUnit[];
   housings: Record<string, ConnectorHousing | null>;
@@ -457,6 +484,7 @@ export function PinoutLinks({ ends, units, housings, joins, info = {}, drawing, 
   /** Цепь провода из ячейки таблицы: ключ провода (`PinUnit.key`), имя ("" — снять). */
   onNet?: (wireKey: string, net: string) => void;
   onColor?: ColorOpen;
+  interact?: SchemeInteract;
 }) {
-  return <LinkSchemeView scheme={pinoutScheme(ends, units, housings, joins, info)} drawing={drawing} onNet={onNet} onColor={onColor} />;
+  return <LinkSchemeView scheme={pinoutScheme(ends, units, housings, joins, info)} drawing={drawing} onNet={onNet} onColor={onColor} interact={interact} />;
 }

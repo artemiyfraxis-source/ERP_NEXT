@@ -114,7 +114,8 @@ it("does not send a scheme nobody edited", async () => {
 it("picks up the hand-edited scheme saved with the card, with times from its last build, and sends it back", async () => {
   const onBuild = mount({ card: builtCard(savedRoute) });
   expect(await screen.findByText("правлена вручную")).toBeInTheDocument();
-  expect(cardTitles()).toEqual(["Нарезанные провода", "Готовый кабель"]);
+  // Ручная схема — карточка на блок (блоки правит мышь), а не по стадиям.
+  expect(cardTitles()).toEqual(["Резка — МГТФ 0,12", "Жгут готов"]);
   // операции 2 и 3 — 2 + 3 мин на партию из одной штуки; вход — две штуки резки по 1 мин, «2 шт» на связи
   const final = schemeCards()[1];
   expect(final.querySelector(".rc-meta")).toHaveTextContent("2 оп. · 5 мин/шт");
@@ -233,6 +234,9 @@ it("USB: «Выше» on a block reorders the operations, the build sends that o
   // Список операций и схема — в новом порядке; шаблоны операций остались при них. Сторона В собирается раньше,
   // готовый кабель — после стороны А.
   expect(opList()).toEqual(["Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2", "Монтаж в разъём В1 — I-DS1071-SCB02X5", "Монтаж в разъём А1 — I-DS1071-SCB02X5"]);
+  // «Изменить схему» рисует карточкой каждый блок; готово — карточки по стадиям.
+  expect(cardTitles()).toEqual(["Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2", "Монтаж в разъём В1 — I-DS1071-SCB02X5", "Монтаж в разъём А1 — I-DS1071-SCB02X5"]);
+  fireEvent.click(screen.getByRole("button", { name: "Готово" }));
   expect(cardTitles()).toEqual(["Нарезанные и обжатые провода", "Сторона В собрана", "Готовый кабель"]);
   expect(schemeNames()).toEqual([
     "Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2", "Монтаж в разъём В1 — I-DS1071-SCB02X5", "Монтаж в разъём А1 — I-DS1071-SCB02X5",

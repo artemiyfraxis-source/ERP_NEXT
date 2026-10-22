@@ -68,23 +68,69 @@ def _titles() -> dict[str, str]:
     return found
 
 
-def sto_section(code: str) -> dict[str, str] | None:
-    """{section, title} раздела СТО для кода операции; None — раздела нет."""
+def _section_codes(code: str) -> list[str]:
+    """Коды разделов СТО для кода операции по порядку; пусто — раздела нет."""
     code = str(code or "").strip()
     if not code:
-        return None
+        return []
     for pattern, section in _RULES:
         if pattern.search(code):
-            found = {"section": section, "title": _titles()[section]}
+            found = section
             break
     else:
-        return None
+        return []
     # Совмещённая операция «CUT_WIRE+1crimp+tin» — резка, опрессовка и лужение в одном: даём все разделы СТО.
-    extra = [part for part, pattern in _COMBINED if pattern.search(code) and part != found["section"]]
-    if extra:
-        sections = [found["section"], *extra]
-        found = {"section": ", ".join(sections), "title": "; ".join(_titles()[part] for part in sections)}
+    return [found, *(part for part, pattern in _COMBINED if pattern.search(code) and part != found)]
+
+
+def sto_section(code: str) -> dict[str, str] | None:
+    """{section, title} раздела СТО для кода операции; None — раздела нет."""
+    sections = _section_codes(code)
+    if not sections:
+        return None
+    return {"section": ", ".join(sections), "title": "; ".join(_titles()[part] for part in sections)}
+
+
+@lru_cache(maxsize=1)
+def _section_norms() -> dict[str, list[dict[str, str]]]:
+    found: dict[str, list[dict[str, str]]] = {}
+
+    def walk(sections: list[dict[str, Any]]) -> None:
+        for section in sections:
+            found[str(section["code"])] = list(section.get("norms") or [])
+            walk(section.get("subsections") or [])
+
+    walk(sto()["sections"])
     return found
+
+
+def _clause_items(clauses: str) -> list[str]:
+    """«п. 5.5, 5.6 (прил. А, табл. 1)» → [«5.5», «5.6 (прил. А, табл. 1)»]: запятые в скобках не делят."""
+    body = re.sub(r"^\s*п\.\s*", "", clauses.strip())
+    items, depth, current = [], 0, ""
+    for char in body:
+        depth += (char == "(") - (char == ")")
+        if char == "," and depth == 0:
+            items.append(current.strip())
+            current = ""
+        else:
+            current += char
+    return [*items, current.strip()] if current.strip() else items
+
+
+def sto_norms(code: str) -> list[dict[str, str]]:
+    """Нормативные требования раздела(ов) СТО для кода операции: [{doc, clauses, subject}].
+
+    Совмещённые коды склеивают нормы своих разделов (документ — один раз, пункты — по порядку без повторов);
+    общая пайка (4.4) — нормы 4.4.2 и 4.4.3."""
+    sections = _section_codes(code)
+    sources = [part for section in sections for part in (("4.4.2", "4.4.3") if section == "4.4" else (section,))]
+    merged: dict[str, dict[str, Any]] = {}
+    for source in sources:
+        for norm in _section_norms().get(source, []):
+            entry = merged.setdefault(norm["doc"], {"doc": norm["doc"], "items": [], "subject": norm.get("subject", "")})
+            entry["items"].extend(item for item in _clause_items(norm["clauses"]) if item not in entry["items"])
+    return [{"doc": entry["doc"], "clauses": "п. " + ", ".join(entry["items"]), "subject": entry["subject"]} for entry in merged.values()]
 
 
 _COMBINED = (
@@ -101,4 +147,4 @@ def outside_sto(code: str) -> bool:
 
 
 def sto_reference() -> dict[str, str]:
-    return {"designation": str(sto()["designation"]), "revision": str(sto()["revision"])}
+    return {"designation": str(sto()["designation"]), "revision": str(sto()["revision"]), "title": str(sto()["title"])}

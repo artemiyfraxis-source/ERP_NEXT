@@ -12,6 +12,7 @@ import { isoDay } from "./Gantt";
 import { daysUntil } from "./productionGraph";
 import { goodsPieces } from "./FinishedGoodsStates";
 import { DispatchFields, changedDispatch, dispatchDraft, readFile, type DispatchDraft } from "./DispatchCard";
+import { CarrierSelect, PICKUP_CARRIER, isPickup, termsFor, termsText } from "./carriers";
 import "./shipping.css";
 
 /* Отгрузка (владелец 12–14.10.2026) — путь готовой продукции слева направо, штуки КБ в сквозных статусах.
@@ -274,7 +275,6 @@ function RegisterGood({ busy, mutate, onDone }: { busy: string; mutate: Mutate; 
 }
 
 /* Остальные поля карточки — под «Ещё»: владелец 14.10 оставил на виду получателя, адрес, телефон и УПД. */
-const MORE_FIELDS: Array<["contact" | "carrier", string, string]> = [["contact", "Контактное лицо", "кто принимает"], ["carrier", "ТК / способ", "СДЭК, Деловые линии…"]];
 const REQUISITE_FIELDS: Array<[keyof ProjectAddressee, string, string]> = [
   ["po", "Заказ № (PO)", "номер заказа заказчика"], ["contract", "№ договора", ""], ["spec", "№ спецификации", "пусто — № проекта"],
   ["invoice", "№ счёта", ""], ["pays", "Оплачивает доставку", "заказчик / мы"], ["customer_address", "Адрес заказчика", "юридический"],
@@ -311,12 +311,14 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
     setProblem("");
     const over = chosen.find((line) => num(qty[line.good.id]) > line.ready);
     if (over) { setProblem(`${over.good.item_index}: на складе только ${over.ready}`); return; }
-    if (!card.shipping_point.trim()) { setProblem("Укажите адрес доставки"); return; }
+    // Самовывоз: адреса доставки нет, серверу нужна непустая точка — пишем «Самовывоз», как в старых карточках.
+    const sent = pickup && !card.shipping_point.trim() ? { ...card, shipping_point: PICKUP_CARRIER } : card;
+    if (!sent.shipping_point.trim()) { setProblem("Укажите адрес доставки"); return; }
     const lines = chosen.map((line) => ({ good_id: line.good.id, version: line.good.version, quantity: qty[line.good.id] }));
     void mutate(`pack:${row.project}`, async () => {
       const before = storedMore();
       const changed = editCard ? {
-        ...changedDispatch(card, stored),
+        ...changedDispatch(sent, stored),
         ...Object.fromEntries(Object.entries(more).filter(([key, value]) => value.trim() !== before[key as keyof MoreDraft])
           .map(([key, value]) => [key, key === "terms" ? value || null : value.trim()])),
       } : {};
@@ -342,8 +344,8 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
     });
   };
 
+  const pickup = isPickup(more.carrier);
   const filled = [
-    stored?.contact, stored?.terms === "ДОСТАВКА ТК" ? "Доставка ТК" : stored?.terms === "САМОВЫВОЗ" ? "Самовывоз" : "", stored?.carrier,
     stored?.plan_date ? formatDate(stored.plan_date) : "", ...(canManage ? REQUISITE_FIELDS.map(([key]) => String(stored?.[key] ?? "")) : []),
   ].filter(Boolean);
 
@@ -369,23 +371,27 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
     {canEdit && readyLines.length > 0 && <>
       <div className="ship-dispatch">
         <h3>Данные отправки</h3>
-        <DispatchFields project={row.project} draft={card} onChange={setCard} editable={editCard} card={stored} suffix={` проекта ${row.project}`}
+        <DispatchFields project={row.project} draft={card} onChange={setCard} editable={editCard} card={stored} suffix={` проекта ${row.project}`} hideAddress={pickup}
           onCardSaved={(saved, message) => void mutate(`addressee:${row.project}`, async () => saved, message)} />
+        <div className="form-grid ship-way">
+          <label>ТК<CarrierSelect label={`ТК проекта ${row.project}`} disabled={!editCard} value={more.carrier}
+            onChange={(carrier) => setMore({ ...more, carrier, terms: termsFor(carrier) ?? more.terms })} /></label>
+          <label>Условия<span className="ship-terms" aria-label={`Условия доставки проекта ${row.project}`}>{termsText(more.terms) || "—"}</span></label>
+          <label>Контактное лицо<input aria-label={`Контактное лицо проекта ${row.project}`} disabled={!editCard} placeholder={editCard ? "кто принимает" : ""} value={more.contact}
+            onChange={(event) => setMore({ ...more, contact: event.target.value })} /></label>
+          {canManage && <label>Отгрузить до<input aria-label={`Отгрузить до: проект ${row.project}`} type="date" min={today()} value={docs.deadline}
+            onChange={(event) => setDocs({ ...docs, deadline: event.target.value })} /></label>}
+        </div>
       </div>
-      <details className="ship-more"><summary>Ещё: {canManage ? "УПД, " : ""}контакт, доставка, план{canManage ? ", реквизиты" : ""} <span className="muted">· {filled.length ? filled.join(" · ") : "не заполнены"}</span></summary>
-        {canManage && <div className="ship-form ship-pack-docs">
-          <label>№ УПД<input aria-label={`№ УПД проекта ${row.project}`} value={docs.upd_number} onChange={(event) => setDocs({ ...docs, upd_number: event.target.value })} /></label>
-          <label>Дата УПД<input aria-label={`Дата УПД проекта ${row.project}`} type="date" value={docs.upd_date} onChange={(event) => setDocs({ ...docs, upd_date: event.target.value })} /></label>
-          <label>Отгрузить до<input aria-label={`Отгрузить до: проект ${row.project}`} type="date" min={today()} value={docs.deadline} onChange={(event) => setDocs({ ...docs, deadline: event.target.value })} /></label>
-        </div>}
+      <details className="ship-more"><summary>Реквизиты: {canManage ? "УПД, " : ""}план, документы <span className="muted">· {filled.length ? filled.join(" · ") : "не заполнены"}</span></summary>
         <div className="ship-form">
-          {MORE_FIELDS.map(([key, label, placeholder]) => <label key={key}>{label}
-            <input aria-label={`${label} проекта ${row.project}`} disabled={!editCard} placeholder={editCard ? placeholder : ""} value={more[key]} onChange={(event) => setMore({ ...more, [key]: event.target.value })} /></label>)}
-          <label>Условия доставки<select aria-label={`Условия доставки проекта ${row.project}`} disabled={!editCard} value={more.terms} onChange={(event) => setMore({ ...more, terms: event.target.value })}>
-            <option value="">не выбрано</option><option value="САМОВЫВОЗ">Самовывоз</option><option value="ДОСТАВКА ТК">Доставка ТК</option></select></label>
-          <label>Плановая дата проекта<input aria-label={`Плановая дата проекта ${row.project}`} type="date" min={today()} value={plan.plan_date} onChange={(event) => setPlan({ ...plan, plan_date: event.target.value })} onBlur={(event) => saveRequisite("plan_date", event.target.value)} /></label>
+          {canManage && <>
+            <label>№ УПД<input aria-label={`№ УПД проекта ${row.project}`} value={docs.upd_number} onChange={(event) => setDocs({ ...docs, upd_number: event.target.value })} /></label>
+            <label>Дата УПД<input aria-label={`Дата УПД проекта ${row.project}`} type="date" value={docs.upd_date} onChange={(event) => setDocs({ ...docs, upd_date: event.target.value })} /></label>
+          </>}
           <label className="ship-span2">Комментарий проекта<input aria-label={`Комментарий проекта ${row.project}`} placeholder="попадёт в новые отправки" value={plan.note} onChange={(event) => setPlan({ ...plan, note: event.target.value })} onBlur={(event) => saveRequisite("note", event.target.value.trim())} /></label>
-          {canManage && REQUISITE_FIELDS.map(([key, label, placeholder]) => <label key={key}>{label}
+          <label>Плановая дата проекта<input aria-label={`Плановая дата проекта ${row.project}`} type="date" min={today()} value={plan.plan_date} onChange={(event) => setPlan({ ...plan, plan_date: event.target.value })} onBlur={(event) => saveRequisite("plan_date", event.target.value)} /></label>
+          {canManage && REQUISITE_FIELDS.filter(([key]) => !(pickup && key === "pays")).map(([key, label, placeholder]) => <label key={key}>{label}
             <input aria-label={`${label} проекта ${row.project}`} placeholder={placeholder} value={requisites[key] ?? ""} onChange={(event) => setRequisites({ ...requisites, [key]: event.target.value })} onBlur={(event) => saveRequisite(key, event.target.value.trim())} /></label>)}
         </div>
       </details>
@@ -524,8 +530,8 @@ function CreateShipment({ goods, busy, mutate, onDone }: { goods: FinishedGood[]
     <div className="ship-form">
       {text("customer", "Заказчик")}{text("receiver", "Получатель")}{text("shipping_point", "Точка отгрузки", "ship-span2")}
       {text("contact", "Контакт")}{text("phone", "Телефон")}
-      <label>Условия<select value={draft.terms} onChange={(event) => setDraft({ ...draft, terms: event.target.value })}><option value="">из карточки проекта</option><option>САМОВЫВОЗ</option><option>ДОСТАВКА ТК</option></select></label>
-      {text("carrier", "ТК / способ")}
+      <label>ТК<CarrierSelect label="ТК заявки" empty="из карточки проекта" value={draft.carrier} onChange={(carrier) => setDraft({ ...draft, carrier, terms: termsFor(carrier) ?? "" })} /></label>
+      <label>Условия<span className="ship-terms">{termsText(draft.terms) || "из карточки проекта"}</span></label>
       <label>Тип УПД<select value={draft.upd_type} onChange={(event) => setDraft({ ...draft, upd_type: event.target.value })}><option value="">из карточки проекта</option>{UPD_TYPES.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
       <label>Дедлайн<input type="date" value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} /></label>
     </div>
@@ -641,7 +647,6 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
 
 const HEAD_FIELDS: Array<[keyof Shipment & string, string]> = [
   ["receiver", "Получатель"], ["shipping_point", "Адрес отгрузки"], ["contact", "Контактное лицо"], ["phone", "Телефон"],
-  ["carrier", "ТК / способ"],
 ];
 
 /** Шапка открытой отправки. Поле сохраняется при уходе из него; пустое поле адресата снова берётся из
@@ -649,7 +654,7 @@ const HEAD_FIELDS: Array<[keyof Shipment & string, string]> = [
 function ShipmentHead({ shipment, busy, mutate }: { shipment: Shipment; busy: string; mutate: Mutate }) {
   const initial = (): Record<string, string> => ({
     ...Object.fromEntries(HEAD_FIELDS.map(([key]) => [key, String(shipment[key] ?? "")])),
-    terms: shipment.terms ?? "", deadline: shipment.deadline ?? "", note: shipment.note,
+    deadline: shipment.deadline ?? "", note: shipment.note,
   });
   const [draft, setDraft] = useState(initial);
   // Сохранили поле или карточка проекта поменяла адрес — показываем то, что теперь в отправке.
@@ -663,10 +668,18 @@ function ShipmentHead({ shipment, busy, mutate }: { shipment: Shipment; busy: st
     const sent = value === "" && (key === "terms" || key === "deadline") ? null : value;
     void mutate(`head:${shipment.id}:${key}`, () => shippingApi.head(shipment.id, { version: shipment.version, [key]: sent }), "Отправка сохранена");
   };
+  // ТК выбирается из списка, условия выводятся из него и уходят в той же правке (владелец 22.10).
+  const changeCarrier = (carrier: string) => {
+    if (carrier === shipment.carrier.trim()) return;
+    const terms = termsFor(carrier);
+    void mutate(`head:${shipment.id}:carrier`, () => shippingApi.head(shipment.id, { version: shipment.version, carrier, ...(terms && terms !== shipment.terms ? { terms } : {}) }), "Отправка сохранена");
+  };
+  const pickup = isPickup(shipment.carrier);
   const mark = (key: string) => inherited(key) ? <small className="ship-inherited">из карточки проекта</small> : null;
   return <div className="ship-form">
-    {HEAD_FIELDS.map(([key, label]) => <label key={key} className={key === "shipping_point" ? "ship-span2" : undefined}><span>{label}{mark(key)}</span><input aria-label={`${label} ${shipment.number}`} disabled={Boolean(busy)} placeholder={inherited(key) ? "" : "пусто — из карточки проекта"} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} onBlur={() => save(key)} /></label>)}
-    <label><span>Условия доставки{mark("terms")}</span><select aria-label={`Условия доставки ${shipment.number}`} disabled={Boolean(busy)} value={draft.terms} onChange={(event) => setDraft({ ...draft, terms: event.target.value })} onBlur={() => save("terms")}><option value="">из карточки проекта</option><option>САМОВЫВОЗ</option><option>ДОСТАВКА ТК</option></select></label>
+    {HEAD_FIELDS.filter(([key]) => !(pickup && key === "shipping_point")).map(([key, label]) => <label key={key} className={key === "shipping_point" ? "ship-span2" : undefined}><span>{label}{mark(key)}</span><input aria-label={`${label} ${shipment.number}`} disabled={Boolean(busy)} placeholder={inherited(key) ? "" : "пусто — из карточки проекта"} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} onBlur={() => save(key)} /></label>)}
+    <label><span>ТК{mark("carrier")}</span><CarrierSelect label={`ТК ${shipment.number}`} empty={inherited("carrier") ? "из карточки проекта" : "не выбрано"} disabled={Boolean(busy)} value={shipment.carrier} onChange={changeCarrier} /></label>
+    <label><span>Условия{mark("terms")}</span><span className="ship-terms" aria-label={`Условия доставки ${shipment.number}`}>{termsText(shipment.terms) || "—"}</span></label>
     <label>Срок отгрузки<input type="date" aria-label={`Дедлайн ${shipment.number}`} disabled={Boolean(busy)} value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} onBlur={() => save("deadline")} /></label>
     <label className="ship-span2">Комментарий<AutoTextarea aria-label={`Комментарий ${shipment.number}`} disabled={Boolean(busy)} value={draft.note} onChange={(note) => setDraft({ ...draft, note })} onBlur={() => save("note")} /></label>
   </div>;

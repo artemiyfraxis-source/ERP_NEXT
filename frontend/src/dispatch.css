@@ -2,6 +2,8 @@
 .dispatch-grid.form-grid { padding: 0; }
 /* Четыре поля в ряд на широком экране: адрес длиннее остальных, тип УПД — короткий список. */
 @media (min-width: 1600px) { .dispatch-grid.form-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.9fr) minmax(0, 1fr) minmax(0, .8fr); } }
+/* Самовывоз: адреса нет — три поля в ряд без дыры. */
+@media (min-width: 1600px) { .dispatch-grid.dispatch-grid-3.form-grid { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, .8fr); } }
 .dispatch-card .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .dispatch-card .page-head h2 { margin: 0; font-size: 16px; }
 .dispatch-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }

@@ -82,7 +82,7 @@ def test_flag_marking_prints_on_the_flag_machine_installs_fixes_and_checks():
     steps = op["card"]["steps"]
     assert [step["kind"] for step in steps] == ["Операция", "Операция", "Операция", "Контроль"]
     assert steps[0]["text"] == "Напечатать хлястики — ZCUT-RT430 «Маркиратор проводов флашковый»: надписи по таблице «Метки по КД», 38 шт. на партию."
-    assert steps[3]["tolerance"] == "Согласно КД"
+    assert steps[3]["tolerance"] == "по КД"
     assert [step["number"] for step in steps] == ["1", "2", "3", "4"]
     assert not any("термо" in step["text"].lower() or "трубк" in step["text"] for step in steps)
     assert op["card"]["defects"].splitlines() == ["Хлястик:", *(f"{name}: {cause}" for name, cause in TYPES[0]["defects"])]
@@ -142,7 +142,7 @@ def test_mixed_marking_lists_each_kind_block_once_in_the_order_of_its_first_mark
     assert groups == ["Термоусадочная трубка:", "Хлястик:", "Бирка:"]
     assert "76 шт. на партию" in steps[0]["text"]  # две термотрубки на изделие
     assert steps[0]["text"].startswith("Термоусадочная трубка — напечатать надписи на трубках")
-    assert any(step["text"].startswith("Хлястик — ВИЗУАЛЬНЫЙ КОНТРОЛЬ") for step in steps)
+    assert any(step["text"].startswith("Хлястик — проверить хлястик") for step in steps)
 
 
 def test_without_references_the_flag_machine_is_named_generically_and_no_time_rows_are_added():
@@ -178,7 +178,7 @@ def test_tube_cutting_step_lists_the_lengths_from_the_marks_table():
     op, _warnings = _build([_tube("Термотрубка", "X1", 25), _tube("Термотрубка", "X2", "30,5")])
     step = op["card"]["steps"][1]
     assert step["text"] == "Нарезать трубки в размер: X1 — 25 мм, X2 — 30,5 мм — Автомат мерной резки гофрированных и термоусаживаемых трубок."
-    assert step["tolerance"] == "Согласно КД"
+    assert step["tolerance"] == "по КД"
     assert [row["length"] for row in op["fields"]["marks"]] == ["25", "30,5"]
 
 
@@ -197,7 +197,7 @@ def test_tube_rows_without_length_keep_the_not_set_tolerance_only_for_them():
 def test_length_of_a_non_tube_mark_is_ignored_and_old_marks_stay_not_set():
     op, _warnings = _build([_tube("Хлястик", "КБ1", 25)])
     assert "length" not in op["fields"]["marks"][0]
-    assert all("мм" not in step["text"] for step in op["card"]["steps"])
+    assert all("25 мм" not in step["text"] for step in op["card"]["steps"])
     op, _warnings = _build([_mark("Термотрубка", "X1")])
     assert op["card"]["steps"][1]["tolerance"] == "длина не задана"
     assert "length" not in op["fields"]["marks"][0]

@@ -79,7 +79,7 @@ from .harness import ШагМаршрута
 КОД_ПАЙКА_ЭКРАНА = "SDR_COAX_housing"
 КОД_ОПРЕССОВКА_ВТУЛКИ = "PRS_SLEEVE_coax"
 КОД_УСАДКА = "HEAT_TYT_short"
-КОД_КРЫШКА_ОБЖИМ = "PRS_CAP"
+КОД_КРЫШКА_ОБЖИМ = "PRS_CAP_COAX"
 КОД_КРЫШКА_ВИНТ = "INS_CAP"
 
 

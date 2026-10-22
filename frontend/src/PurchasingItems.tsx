@@ -468,7 +468,7 @@ function ItemCardDialog({ id, readOnly, onOpenUpd, onClose, onChanged }: { id: s
                 <h3>Склад</h3>
                 {card.stock.lots.length === 0 ? <p className="muted">Партий этой позиции на складе нет.</p> : (
                   <>
-                    <p>Итого: {card.stock.totals.map((t) => `остаток ${t.balance.replace(".", ",")} ${t.unit}, в резерве ${t.reserved.replace(".", ",")}, доступно ${t.available.replace(".", ",")}`).join("; ")}.</p>
+                    <p>Итого: {card.stock.totals.map((t) => `остаток ${t.balance.replace(".", ",")} ${t.unit}, в резерве ${t.reserved.replace(".", ",")}, свободно ${t.available.replace(".", ",")}`).join("; ")}.</p>
                     <div className="table-wrap history-table">
                       <table className="grid" aria-label="Склад по позиции">
                         <thead><tr><th>Склад</th><th>ГРН</th><th>Пакет</th><th>Место</th><th className="num">Остаток</th><th className="num">Резерв</th><th className="num">Доступно</th><th>Связь</th></tr></thead>

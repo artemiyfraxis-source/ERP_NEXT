@@ -22,6 +22,7 @@ import os
 import re
 import sqlite3
 import sys
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -249,7 +250,7 @@ class Importer:
     def stored_file(self, relative: str, name: str) -> UUID | None:
         path = (self.data_dir / relative.replace("\\", "/")).resolve()
         if self.data_dir.resolve() not in path.parents or not path.is_file():
-            self.report.add("файлы: нет на диске")
+            self.report.add("без файла: УПД/ЭДО")
             return None
         content = path.read_bytes()
         sha = hashlib.sha256(content).hexdigest()
@@ -307,6 +308,8 @@ class Importer:
                 self.report.add("УПД: добавлены")
             else:
                 for key, value in parsed.items():
+                    if key == "file_id" and value is None:
+                        continue  # a run without the data folder must not detach a file attached earlier
                     setattr(row, key, value)
                 # The buyer's word given in ERP stays; Roller_Buyer's fills only what ERP does not have.
                 if row.manual_header is None and own["manual_header"] is not None:
@@ -424,6 +427,59 @@ class Importer:
         return self.report
 
 
+def resolve_suppliers(session: Session, snapshot: sqlite3.Connection) -> dict[int, UUID | None]:
+    """Read-only: the ERP supplier of each Roller_Buyer supplier, matched as `Importer.import_suppliers` does (INN, then
+    the name key when the INNs do not contradict). None — our own company, or not in ERP yet (run this import first)."""
+    by_inn = {row.inn: row.id for row in session.scalars(select(SupplierRow)) if row.inn}
+    by_key = {row.name_key: row.supplier_id for row in session.scalars(select(SupplierNameRow))}
+    by_key.update({row.name_key: row.id for row in session.scalars(select(SupplierRow))})
+    found: dict[int, UUID | None] = {}
+    for rb in snapshot.execute("select id, name, inn from suppliers order by id"):
+        inn = supplier_repo.normalize_inn(rb["inn"]) if rb["inn"] else None
+        if inn in OWN_INNS:
+            found[rb["id"]] = None
+            continue
+        if inn and not supplier_repo.inn_valid(inn):
+            inn = None
+        match = by_inn.get(inn) if inn else None
+        key = supplier_repo.supplier_key(rb["name"])
+        if match is None and key in by_key:
+            other = session.get(SupplierRow, by_key[key])
+            if other is not None and (not inn or not other.inn or other.inn == inn):
+                match = other.id
+        found[rb["id"]] = match
+    return found
+
+
+def resolve_items(session: Session, snapshot: sqlite3.Connection) -> dict[int, UUID]:
+    """Read-only: the ERP nomenclature item of each Roller_Buyer item, matched as `Importer.import_items` does (part
+    number key, else name + unit); an item missing in ERP is left out."""
+    by_part: dict[str, UUID] = {}
+    by_name: dict[tuple[str, str], UUID] = {}
+    for row in session.scalars(select(ItemRow)):
+        if row.part_key:
+            by_part[row.part_key] = row.id
+        by_name.setdefault((alias_key(row.name), row.unit), row.id)
+    found: dict[int, UUID] = {}
+    for rb in snapshot.execute("select id, name, part_number, unit from items order by id"):
+        own = session.get(ItemRow, _id("item", rb["id"]))
+        if own is not None:
+            found[rb["id"]] = own.id
+            continue
+        key = part_key(_clean(rb["part_number"])[:255] or None)
+        unit = _UNITS.get(rb["unit"], rb["unit"])
+        match = by_part.get(key) if key else by_name.get((alias_key(_clean(rb["name"])[:512]), unit))
+        if match is not None:
+            found[rb["id"]] = match
+    return found
+
+
+def _without_nul(raw: bytes) -> str:
+    """Every text read from the snapshot: SQLite keeps NUL (0x00) in text, PostgreSQL refuses it. Covers plain values
+    and JSON columns alike (a JSON-escaped backslash-u0000 would come back as NUL after json.loads)."""
+    return raw.decode("utf-8", errors="replace").replace("\x00", "").replace("\\u0000", "")
+
+
 def open_snapshot(path: Path) -> sqlite3.Connection:
     if _LIVE_DB.search(str(path)):
         raise SystemExit("Это живая база Roller_Buyer — нужна копия (npm run backup или SQLite backup API)")
@@ -431,6 +487,7 @@ def open_snapshot(path: Path) -> sqlite3.Connection:
         raise SystemExit(f"Нет файла {path}")
     connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
+    connection.text_factory = _without_nul
     if connection.execute("pragma integrity_check").fetchone()[0] != "ok":
         raise SystemExit("Копия Roller_Buyer не проходит integrity_check")
     return connection
@@ -439,7 +496,8 @@ def open_snapshot(path: Path) -> sqlite3.Connection:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Roller_Buyer → ERP: поставщики, номенклатура, цены, УПД, счета")
     parser.add_argument("--snapshot", required=True, type=Path, help="копия buyer.db")
-    parser.add_argument("--data-dir", required=True, type=Path, help="DATA_DIR Roller_Buyer (только чтение)")
+    parser.add_argument("--data-dir", type=Path, default=None,
+                        help="DATA_DIR Roller_Buyer (только чтение); без него файлы пропускаются и считаются «без файла»")
     parser.add_argument("--apply", action="store_true", help="записать (без флага — пробный прогон с откатом)")
     args = parser.parse_args(argv)
     from app.database import build_engine, build_purchasing_uow_factory
@@ -452,7 +510,8 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.now(timezone.utc)
     uow = build_purchasing_uow_factory(build_engine(database_url))()
     with uow:
-        report = Importer(uow.session, snapshot, args.data_dir, now).run()
+        data_dir = args.data_dir or Path(tempfile.mkdtemp(prefix="rb-no-files-"))
+        report = Importer(uow.session, snapshot, data_dir, now).run()
         uow.audit.add(AuditEvent(
             id=_id("audit", now.isoformat()), aggregate_id=ACTOR.id, event_type="purchasing.roller_buyer_imported",
             actor=ACTOR, occurred_at=now, details={key: str(value) for key, value in report.counts.items()},

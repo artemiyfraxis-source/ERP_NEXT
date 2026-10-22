@@ -57,3 +57,18 @@ def audience_emails(session: Session, audiences: Iterable[str]) -> list[str]:
         if any(in_audience(rule, level, level_rows.get(level, {}), exceptions.get(user_id, {})) for rule in rules):
             emails.add(email)
     return sorted(emails)
+
+
+# The access level «Кладовщик» (`identity.domain.LEVEL_LABELS`): the person the shop calls a storekeeper.
+STOREKEEPER_LEVEL = "storekeeper"
+
+
+def active_at_level(session: Session, user_ids: Iterable[UUID], level: str) -> set[UUID]:
+    """Of `user_ids`, those who are active users right now and hold exactly `level` (a deactivated user, a stranger id
+    — an API token, the system actor — and a person of another level, full-access ones included, are not)."""
+    ids = tuple(user_ids)
+    if not ids:
+        return set()
+    return set(session.scalars(select(IdentityUserRow.id).where(
+        IdentityUserRow.id.in_(ids), IdentityUserRow.active.is_(True), IdentityUserRow.access_level == level,
+    )))

@@ -122,7 +122,7 @@ function packingListHtml(form: PackingListForm, sheet: number): string {
     `<td class="grey lbl">${label("Номер пломбы", "Seal number")}</td><td class="white seal">${escapeHtml(form.seal)}</td></tr>` +
     `<tr><td class="grey lbl mid" rowspan="2">${label("ФИО:", "Name")}</td><td class="white val packer" rowspan="2">${escapeHtml(form.packer)}</td>` +
     `<td class="grey lbl">${label("Штамп/подпись кладовщика:", "Storekeeper stamp/sign")}</td><td class="white"></td></tr>` +
-    `<tr><td class="grey lbl">${label("Дата упаковки:", "Shipping Date")}</td><td class="white val shipped">${escapeHtml(form.shipped_at)}</td></tr></table>` +
+    `<tr><td class="grey lbl">${label("Дата отгрузки:", "Shipping Date")}</td><td class="white val shipped">${escapeHtml(form.shipped_at)}</td></tr></table>` +
     foot("Форма/Form 04.2 / Rev.4 / 25.05.2026", sheet) + `</section>`;
 }
 
@@ -132,6 +132,10 @@ function deliveryNoteHtml(form: DeliveryNoteForm, sheet: number): string {
   const [prefix, project, dash, index] = form.number;
   // Сетка шапки образца: у трёх строк разные границы клеток — 10 колонок покрывают их все.
   const grid = [24.3, 6.8, 5.3, 8.3, 2.7, 8.6, 10, 1.6, 18.1, 14.3].map((width) => `<col style="width:${width}%">`).join("");
+  // Заказ заказчика — «PO | # | номер»; без него в клетке номер проекта, без одинокого «PO #».
+  const poCells = form.po_from_card
+    ? `<td class="val strong">PO</td><td class="val strong">#</td><td class="val strong po" colspan="2">${escapeHtml(form.po)}</td>`
+    : `<td class="val strong po" colspan="4">${escapeHtml(form.po)}</td>`;
   const wide = (value: string, css = "") => `<td colspan="3"${css ? ` class="${css}"` : ""}>${escapeHtml(value)}</td>`;
   return `<section class="form" aria-label="${escapeHtml(form.title)}">${top("ОТГРУЗОЧНАЯ ВЕДОМОСТЬ", "DELIVERY NOTE")}` +
     `<table class="head"><colgroup>${grid}</colgroup>` +
@@ -142,8 +146,8 @@ function deliveryNoteHtml(form: DeliveryNoteForm, sheet: number): string {
     `<tr><td class="grey lbl mid">${label("Заказчик", "Customer")}</td><td class="grey lbl mid" colspan="4">${label("Заказ №", "Request #")}</td>` +
     `<td class="grey lbl mid" colspan="3">${label("Номер договора", "Contract number")}</td>` +
     `<td class="grey lbl mid">${label("Номер спецификации", "Specification number")}</td><td class="grey lbl mid">${label("Номер счета", "Invoice number")}</td></tr>` +
-    `<tr class="refs"><td class="val customer">${escapeHtml(form.customer)}</td><td class="val strong">PO</td><td class="val strong">#</td>` +
-    `<td class="val strong po" colspan="2">${escapeHtml(form.po)}</td><td class="val contract" colspan="3">${escapeHtml(form.contract)}</td>` +
+    `<tr class="refs"><td class="val customer">${escapeHtml(form.customer)}</td>${poCells}` +
+    `<td class="val contract" colspan="3">${escapeHtml(form.contract)}</td>` +
     `<td class="val spec">${escapeHtml(form.spec)}</td><td class="val strong invoice">${escapeHtml(form.invoice)}</td></tr></table>` +
     `<table class="section delivery"><colgroup><col style="width:24%"><col style="width:28%"><col style="width:22%"><col style="width:26%"></colgroup>` +
     sectionHead(4, "1. ДАННЫЕ О ПОСТАВКЕ ИЗДЕЛИЙ", "DELIVERY DATA") +

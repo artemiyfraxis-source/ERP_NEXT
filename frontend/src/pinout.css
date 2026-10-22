@@ -206,3 +206,13 @@
 .palette-custom input[type="text"] { height: 28px; width: 150px; }
 .palette-custom input[type="color"] { width: 36px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: none; cursor: pointer; }
 @media (pointer: coarse) { .palette-group .swatch { width: 40px; height: 40px; } .palette-custom input[type="color"] { width: 48px; height: 40px; } }
+
+/* Легенда номеров под палитрой проводов — вместо одной загадочной подсказки. */
+.tcgen .pin-legend { display: flex; flex-wrap: wrap; gap: 2px 16px; margin: 0; font-size: 12px; color: var(--muted-foreground); }
+.tcgen .pin-legend > div { display: inline-flex; align-items: baseline; gap: 6px; }
+.tcgen .pin-legend dt { font-weight: 700; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.tcgen .pin-legend dd { margin: 0; }
+.pin-diagram .pin-end-des { font-weight: 600; color: var(--muted-foreground); }
+.pin-ghost { position: fixed; z-index: 60; display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--primary); border-radius: 8px;
+  background: var(--card); font-size: 12.5px; pointer-events: none; box-shadow: 0 2px 8px rgb(0 0 0 / 18%); }
+.tcgen .pin-chip-wire .pin-num::before, .tcgen .pin-hand .pin-num::before { content: "№\00a0"; font-weight: 400; color: var(--muted-foreground); }

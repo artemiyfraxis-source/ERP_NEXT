@@ -1,6 +1,7 @@
 """Комплект ТД: обозначения, нормоконтроль и разделы СТО — чистые правила (td_issues.py, td_sto.py)."""
 
 import csv
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -12,9 +13,10 @@ from app.modules.techcards.td_issues import (
     TdIssue, TdIssueBlocked, TdIssueConflict, TdIssueInvalid, designations, normcontrol, parse_input, print_card,
     sto_sections, td_ops_of, with_td_ops,
 )
-from app.modules.techcards.td_sto import outside_sto, sto, sto_section
+from app.modules.techcards.td_sto import outside_sto, sto, sto_norms, sto_section
 
 NOW = datetime(2026, 10, 20, 9, 0, tzinfo=timezone.utc)
+TEMPLATES_AFTER = Path(__file__).resolve().parents[3] / "docs" / "data" / "operation-templates-2026-10-22" / "templates-after.json"
 OPS_TSV = Path(__file__).resolve().parents[2] / "data" / "reference-mirror" / "БД.ОП.tsv"
 
 
@@ -288,3 +290,42 @@ def test_grade_warnings_and_old_snapshots():
     assert "td_ops" not in old and print_card(old)["td_ops"]["PRS_TERMINAL_auto::A::A"]["source"] == "по умолчанию"
     fresh = with_td_ops(old, REFERENCE)
     assert print_card(fresh) is fresh
+
+
+def test_every_audited_template_code_resolves_to_sto_sections_with_norms():
+    codes = [item["code"] for item in json.loads(TEMPLATES_AFTER.read_text(encoding="utf-8"))]
+    assert len(codes) >= 100
+    for code in codes:
+        if outside_sto(code):
+            continue
+        found = sto_section(code)
+        assert found is not None, code
+        norms = sto_norms(code)
+        assert norms, code
+        assert all(item["doc"] and item["clauses"].startswith("п. ") for item in norms), code
+
+
+def test_sto_norms_merge_combined_codes_and_general_soldering():
+    def by_doc(code):
+        return {item["doc"]: item["clauses"] for item in sto_norms(code)}
+
+    single = by_doc("PRS_TERMINAL_auto")
+    assert single == {item["doc"]: item["clauses"] for item in sto()["sections"][2]["norms"]}
+    combined = sto_norms("CUT_WIRE+1crimp+tin")
+    docs = [item["doc"] for item in combined]
+    assert len(docs) == len(set(docs))  # документ один раз
+    cut, crimp, tin = by_doc("CUT_WIRE_auto"), by_doc("PRS_TERMINAL_auto"), by_doc("SDR_tin")
+    assert set(docs) == set(cut) | set(crimp) | set(tin)
+    merged = by_doc("CUT_WIRE+1crimp+tin")["ГОСТ 23587-96"]
+    assert all(clause in merged for clause in ("5.10", "6.2.1", "5.11"))
+    assert merged.count("5.10") == 1  # пункт, повторяющийся в разделах, — один раз
+    # Общая пайка (4.4) — нормы 4.4.2 и 4.4.3.
+    general = by_doc("SDR_GX12")
+    assert "ГОСТ Р МЭК 61191-4-2019" in general and "ГОСТ 23592-96" in general
+    assert sto_norms("ZZZ_new") == [] and sto_norms("") == [] and sto_norms("OTK_auto") == []
+
+
+def test_sto_sections_carry_norms():
+    out = sto_sections({"document": {"operations": [_operation(code="CUT_WIRE+1strip")]}})
+    value = out["CUT_WIRE+1strip::A::A"]
+    assert value["section"] == "4.1, 4.2" and value["norms"] == sto_norms("CUT_WIRE+1strip")
