@@ -94,7 +94,7 @@ it("713К.4 КБ1: the owner sets the processing through the form and gets the s
   const rows = [...document.querySelectorAll(".spl-edit-row")].map((el) => el.textContent || "");
   expect(rows).toHaveLength(4);
   expect(rows.map((t) => t.match(/^С(\d)(\d) конц/)?.slice(1, 3).join(":"))).toEqual(["1:4", "2:4", "3:3", "4:3"]);
-  expect(rows[0]).toMatch(/другой конец: .*конт\. \d/);
+  expect(rows[0]).toMatch(/→ .*конт\. \d/);
   expect(screen.getByLabelText("Сростки")).toHaveTextContent("№ 1");
   expect(screen.getByRole("combobox", { name: "Новый сросток" })).toBeTruthy();
   expect(screen.queryByLabelText("Проводов в сростке")).toBeNull();

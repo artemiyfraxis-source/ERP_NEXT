@@ -124,7 +124,7 @@ type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "
 const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, markMats: [], cableRecords: [], library: [] };
 const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"], ["manual", "Ручная сборка"]];
 const WRAP_KINDS: Array<[WrapKind, string]> = [
-  ["tape", "Лента поверх жгута — в конце маршрута"], ["braid", "Оплётка — надевается до обжима"], ["under", "Лента под оплётку — слой перед ней"],
+  ["tape", "Лента поверх — последней операцией"], ["braid", "Оплётка — до обжима контактов"], ["under", "Лента под оплётку — слоем ниже"],
 ];
 const MEASURE_MODES = [
   ["inner", "Между разъёмами", "+L+"], ["outer", "От краёв разъёмов", "−L−"], ["cut", "Длина реза по КД", "без припуска"],
@@ -1111,9 +1111,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const wrapUsed = S.wrap.enabled ? S.wrap.slots.slice(0, complex ? 4 : 1).filter((slot) => slot.mat && wrapName(slot)) : [];
   const hasBraid = wrapUsed.some((slot) => slot.kind === "braid");
   const wrapPlan = [
-    ...wrapUsed.filter((slot) => slot.kind === "under" && hasBraid).map((slot) => `Лента ${wrapName(slot)} — первым слоем, до оплётки`),
-    ...wrapUsed.filter((slot) => slot.kind === "braid").map((slot) => `Оплётка ${wrapName(slot)} — до обжима контактов и термоусадки`),
-    ...wrapUsed.filter((slot) => slot.kind === "tape" || (slot.kind === "under" && !hasBraid)).map((slot) => `Лента ${wrapName(slot)} — последней операцией, после монтажа`),
+    ...wrapUsed.filter((slot) => slot.kind === "under" && hasBraid).map((slot) => `${wrapName(slot)} — лента первым слоем, до оплётки`),
+    ...wrapUsed.filter((slot) => slot.kind === "braid").map((slot) => `${wrapName(slot)} — оплётка, до обжима контактов и термоусадки`),
+    ...wrapUsed.filter((slot) => slot.kind === "tape" || (slot.kind === "under" && !hasBraid)).map((slot) => `${wrapName(slot)} — лента последней операцией, после монтажа`),
   ];
   const spliceRows = complex ? gen.spliceRows_(true) : [];
   const spliceEndKey = (end: WireEnd) => `${end.idx}:${end.unit}:${end.side}`;
@@ -1139,7 +1139,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const opsCount = manualTab ? manual.ops.length : ops.length;
   const summary = `${opsCount} ${plural(opsCount, "операция", "операции", "операций")} · партия ${partQty} шт`;
 
-  const sheet = <section className={manualTab ? "gsec full" : "gsec"} aria-label="Данные из листа">
+  const sheet = <section className={manualTab ? "gsec full" : "gsec gen-sheet"} aria-label="Данные из листа">
     <div className="gsec-head"><h3>Данные из листа</h3>
       <span className="gsec-meta">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="kv" key={key}>{key} <b>{value}</b></span>)}</span>
       {kitEdit && !kitAdding && <button type="button" className="btn-link" onClick={() => { setKitAdding(true); setKitNote({ text: "", error: false }); }}>+ Комплектующее</button>}</div>
@@ -1273,13 +1273,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {spliceRows.map((row) => <div className="spl-edit-row" role="listitem" key={row.id}>
           <b>{row.label}</b><span className="spl-size">{row.size} {plural(row.size, "конец", "конца", "концов")}</span>
           <span className="spl-ends">{row.wires.map((w) => <span className="spl-end" key={`${w.end.idx}.${w.end.unit}${w.end.side}`}>
-            {spliceEndText(w.end)}{w.from ? <small>{`другой конец: ${w.from}`}</small> : null}
+            {spliceEndText(w.end)}{w.from ? <small title="Другой конец этого провода">{`→ ${w.from}`}</small> : null}
             <button type="button" className="btn-remove" title={`Убрать из ${row.label}`} aria-label={`Убрать ${spliceEndText(w.end)} из ${row.label}`}
-              onClick={() => update((current) => leaveJoin(D, current, w.end))}>×</button></span>)}</span>
-          <select className="hs-add" aria-label={`Добавить конец в ${row.label}`} value="" onChange={(event) => { const end = parseSpliceEnd(event.target.value); if (end) update((current) => joinSplice(D, current, end, row.id)); }}>
+              onClick={() => update((current) => leaveJoin(D, current, w.end))}>×</button></span>)}
+            <select className="hs-add" aria-label={`Добавить конец в ${row.label}`} value="" onChange={(event) => { const end = parseSpliceEnd(event.target.value); if (end) update((current) => joinSplice(D, current, end, row.id)); }}>
             <option value="">+ Добавить конец</option>
             {freeSpliceEnds.map((end) => <option key={spliceEndKey(end)} value={spliceEndKey(end)}>{spliceEndText(end)}</option>)}
           </select>
+          </span>
         </div>)}
         <select className="hs-add" aria-label="Новый сросток" value="" disabled={!freeSpliceEnds.length}
           onChange={(event) => { const end = parseSpliceEnd(event.target.value); if (end) update((current) => joinSplice(D, current, end, "new")); }}>
@@ -1328,7 +1329,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       onChange={(on) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, enabled: on } }))}>
       {/* Второй–четвёртый материал — по одному, следующий появляется, когда выбран предыдущий (владелец 18.10). */}
       {S.wrap.slots.map((slot, i) => (i === 0 || (complex && !!(slot.mat || S.wrap.slots[i - 1].mat))) && <div className="opt-grid" key={WRAP_SLOTS_[i] || "1"}>
-        <Field label={["Слой 1 — материал из состава", "Слой 2 — ещё материал", "Слой 3 — ещё материал", "Слой 4 — ещё материал"][i]} hint={i ? "необязательно: например лента под оплётку" : undefined} className="span2">
+        <Field label={["Слой 1 — материал из состава", "Слой 2 — ещё материал", "Слой 3 — ещё материал", "Слой 4 — ещё материал"][i]} hint={i ? "необязательно" : undefined} className="span2">
           {selectComps(wrapOpts, slot.mat, (id) => update((current) => {
             const c = makeGen(D, current).getCompById(id);
             const g = makeGen(D, current);

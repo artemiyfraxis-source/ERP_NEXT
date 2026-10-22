@@ -1703,6 +1703,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 @container (min-width: 1000px) {
   .tcgen .gen-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tcgen .gen-grid > .full { grid-column: 1 / -1; }
+  /* «Данные из листа» не растягивает ряд: высоту задаёт соседняя карточка («Кабели»), список состава прокручивается внутри —
+     под короткой карточкой кабелей не остаётся пустого места (владелец 22.10). */
+  .tcgen .gen-grid > .gen-sheet { contain: size; align-self: stretch; min-height: 300px; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+  .tcgen .gen-grid > .gen-sheet .gtable-wrap { overflow: auto; min-height: 0; }
 }
 .project-etk .etk-empty { color: var(--muted-foreground); font-size: 13px; padding: 4px 0; }
 
@@ -4633,15 +4637,14 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 
 /* Сростки «Сложной сборки»: список со схемы, только чтение */
 .tcgen .spl-edit { display: flex; flex-direction: column; gap: 4px; }
-.tcgen .spl-edit-row { display: grid; grid-template-columns: 28px 64px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.tcgen .spl-edit-row { display: grid; grid-template-columns: 28px 64px minmax(0, 1fr); gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .tcgen .spl-size { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .tcgen .spl-ends { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
-.tcgen .spl-end { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: 6px; padding: 0 0 0 8px; background: var(--card); }
+.tcgen .spl-end { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: 6px; padding: 0 0 0 8px; background: var(--card); }
 .tcgen .spl-end small { color: var(--muted-foreground); font-size: 12px; }
 .tcgen .spl-end .btn-remove { width: 24px; height: 24px; }
 .tcgen .spl-edit select.hs-add { margin: 0; }
 .tcgen .spl-count summary { cursor: pointer; font-size: 12px; color: var(--muted-foreground); }
-@media (max-width: 900px) { .tcgen .spl-edit-row { grid-template-columns: 28px 64px minmax(0, 1fr); } .tcgen .spl-edit-row select { grid-column: 1 / -1; } }
 /* ---- КП из PDF и текста ---- */
 .quote-import-panel { display: grid; gap: 6px; }
 .quote-import { display: grid; gap: 6px; }

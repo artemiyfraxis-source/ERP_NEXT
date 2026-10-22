@@ -58,3 +58,5 @@
 .pin-links-x text { fill: var(--tone-danger); font-size: 13px; }
 .pin-links-row.is-live:hover .pin-links-x { opacity: 1; }
 @media (pointer: coarse) { .pin-links-x { display: none; } }
+
+.pin-links-row.is-live, .pin-links-row.is-live text { user-select: none; -webkit-user-select: none; }
