@@ -3142,7 +3142,8 @@ export interface AutoplanContext {
   period: { start: string; last_day: string; auto: boolean };
   max_days: number;
   tasks: Array<{ id: string; number: string; project: string; item: string; name: string; deadline: string | null }>;
-  new: Array<{ techcard_id: string; project: string; index: string; name: string; run: string; deadline: string | null; operations: number; skipped: string }>;
+  /** launched — уже запущено по КБ, quantity — остаток тиража к запуску (новое задание). */
+  new: Array<{ techcard_id: string; project: string; index: string; name: string; run: string; launched?: number; quantity?: number | null; deadline: string | null; operations: number; skipped: string }>;
   projects: Array<{ project: string; deadline: string | null; tasks: number; new: number }>;
   fitters: Array<{ id: string; name: string; site: string; free_seconds: number }>;
 }
@@ -3165,13 +3166,15 @@ export interface BoardEquipment { key: string; label: string; limited: boolean }
 export interface BoardTask extends ProductionTask {
   operations: Array<ProductionOperation & { equipment: BoardEquipment }>;
   run?: string;
+  /** Новое задание: уже запущено по КБ (quantity — остаток тиража к запуску). */
+  launched?: number;
   warnings?: string[];
 }
 export interface BoardSkipped { techcard_id: string; techcard_version: number; project: string; index: string; name: string; reason: string }
 export interface BoardData { project: string; tasks: BoardTask[]; future: BoardTask[]; skipped: BoardSkipped[] }
 export type BoardAssignItem =
   | { task_id: string; task_version: number; operation_id: string }
-  | { techcard_id: string; techcard_version: number; position: number; quantity?: number; run?: number };
+  | { techcard_id: string; techcard_version: number; position: number; quantity?: number; run?: number; launched?: number };
 export interface BoardAssignResult {
   tasks: ProductionTask[];
   created: Array<{ id: string; number: string }>;
@@ -3185,8 +3188,8 @@ export const productionApi = {
   board: (project = "") => api<BoardData>(`/api/production/board${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   boardAssign: (payload: { operator_id: string; requested_start: string | null; items: BoardAssignItem[] }) =>
     api<BoardAssignResult>("/api/production/board/assign", { method: "POST", body: JSON.stringify(payload) }),
-  /** «Уже сделано» по КБ без задания: задание (тираж run, по умолчанию весь тираж КБ) и готовые штуки этапа — одной транзакцией. */
-  boardOutput: (payload: { techcard_id: string; techcard_version: number; position: number; good_quantity: number; fill_inputs: boolean; run?: number }) =>
+  /** «Уже сделано» по новому заданию КБ: задание (тираж run, по умолчанию весь остаток тиража КБ) и готовые штуки этапа — одной транзакцией. */
+  boardOutput: (payload: { techcard_id: string; techcard_version: number; position: number; good_quantity: number; fill_inputs: boolean; run?: number; launched?: number }) =>
     api<{ task: ProductionTask; operation_id: string; box: ProductionBox; filled: ProductionBox[]; warnings: string[] }>("/api/production/board/manual-output", {
       method: "POST", body: JSON.stringify(payload),
     }),

@@ -13,6 +13,7 @@ from app.modules.production.infrastructure import ProductionOperationOperatorRow
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.techcards.operation_cards import parse_operation_template
 from app.modules.techcards.project_cards import ProjectTechcard
+from app.shared.persistence import AuditEventRow
 from tests.production.test_autoplan_api import (  # noqa: F401 — фикстура client
     ANNA, BORIS, NOW, apply, client, issue, launch, preview, tasks_of,
 )
@@ -404,11 +405,12 @@ def test_ready_pieces_on_a_kb_without_task_create_the_task_and_record_them_in_on
     assert all(not operation["operator_ids"] for operation in task["operations"])
     assert body["operation_id"] == task["operations"][0]["id"]
     assert body["warnings"][0].startswith(f"Создано задание {task['number']}. Записано 4 шт на этап 1")
-    assert board(http)["future"] == []
+    # Запущено 6 из 10 — остальные 4 снова «новое задание».
+    assert [(item["quantity"], item["launched"]) for item in board(http)["future"]] == [(4, 6)]
     with sessions() as session:
         assert session.scalar(select(ProductionTaskRow)).source_idempotency_key == f"board:{card.id}:1"
-    # Доска устарела: по КБ задание уже есть — 409, второго задания нет.
-    again = board_output(http, future, 1, 1)
+    # Доска устарела: по КБ с тех пор запустили — 409, второго задания нет.
+    again = board_output(http, future, 1, 1, launched=future["launched"])
     assert again.status_code == 409, again.text
     assert len(tasks_of(http)) == 1
 
@@ -443,3 +445,198 @@ def test_autoplan_of_a_project_launches_new_tasks_with_the_run_from_the_project_
     assert applied.status_code == 200, applied.text
     [task] = tasks_of(http).values()
     assert task["quantity"] == 3
+
+
+# --- Остаток тиража и «запущено — когда поставили на кого-то» (владелец 22.10) ---------------------------------------
+
+
+def remove_share(http, task: dict, position: int, operator: UUID):
+    operation = next(item for item in task["operations"] if item["position"] == position)
+    return http.post(f"/api/production/tasks/{task['id']}/operations/{operation['id']}/share", json={
+        "version": task["version"], "operator_id": str(operator), "remove": True,
+    })
+
+
+def cancel_reasons(sessions) -> list[str]:
+    with sessions() as session:
+        return [(row.details or {}).get("reason", "") for row in session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "production.cancelled"))]
+
+
+def test_a_partial_run_leaves_the_rest_of_the_kb_run_as_a_new_task(library):
+    http, sessions = library
+    card = issue_route("КБ2")
+    [future] = board(http)["future"]
+    assert (future["quantity"], future["launched"], future["run"]) == (10, 0, "10")
+
+    first = assign(http, ANNA, [{**item, "run": 4} for item in future_items(future, 1)])
+
+    assert first.status_code == 200, first.text
+    shown = board(http)
+    [rest] = shown["future"]
+    # Запущено 4 из 10 — остальные 6 снова «новое задание»; id другие: доска до запуска устарела.
+    assert (rest["quantity"], rest["launched"], rest["techcard_version"]) == (6, 4, card.version)
+    assert rest["id"] != future["id"] and len(shown["tasks"]) == 1
+    second = assign(http, BORIS, future_items(rest, 1))
+    assert second.status_code == 200, second.text
+    [created] = second.json()["created"]
+    assert tasks_of(http)[created["id"]]["quantity"] == 6
+    with sessions() as session:
+        rows = session.scalars(select(ProductionTaskRow).order_by(ProductionTaskRow.launch_seq)).all()
+        assert [(row.quantity, row.launch_seq, row.source_idempotency_key) for row in rows] == [
+            (4, 1, f"board:{card.id}:1"), (6, 2, f"board:{card.id}:2")]
+    # Весь тираж запущен — нового задания нет; доска, прочитанная раньше, — 409, третьего задания нет.
+    assert board(http)["future"] == []
+    stale = assign(http, ANNA, future_items(rest, 2))
+    assert stale.status_code == 409, stale.text
+    assert len(tasks_of(http)) == 2
+
+
+def test_the_rest_of_the_run_cannot_be_launched_above_it_or_from_a_stale_board(library):
+    http, _ = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+    assert board_output(http, future, 1, 2, run=7, launched=future["launched"]).status_code == 200
+    [rest] = board(http)["future"]
+    assert (rest["quantity"], rest["launched"]) == (3, 7)
+
+    above = assign(http, ANNA, [{**item, "run": 4} for item in future_items(rest, 1)])
+    # Доска видела «запущено 0» (до первого задания) — по КБ запустили ещё: 409, а не второе задание мимо остатка.
+    stale = board_output(http, future, 1, 1, launched=0)
+
+    assert above.status_code == 422 and "от 1 до 3 (остаток: тираж КБ 10, уже запущено 7)" in above.json()["detail"]
+    assert stale.status_code == 409 and "уже запущено 7 шт из 10" in stale.json()["detail"], stale.text
+    assert sorted(task["quantity"] for task in tasks_of(http).values()) == [7]
+
+
+def test_removing_the_last_fitter_of_an_untouched_task_cancels_it_and_the_kb_is_new_again(library):
+    http, sessions = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+    done = assign(http, ANNA, [{**item, "run": 6} for item in future_items(future, 1, 2)])
+    assert done.status_code == 200, done.text
+    [task] = board(http)["tasks"]
+    assert board(http)["future"][0]["quantity"] == 4
+
+    once = remove_share(http, task, 1, ANNA)
+    assert once.status_code == 200, once.text
+    assert once.json()["task"]["status"] == "Запущено"  # на этапе 2 Анна ещё стоит
+    last = remove_share(http, once.json()["task"], 2, ANNA)
+
+    assert last.status_code == 200, last.text
+    body = last.json()
+    assert body["task"]["status"] == "Отменено"
+    assert body["warnings"][0] == (
+        f"Задание {task['number']} отменено: снят последний исполнитель, работы по нему не было — 708К КБ2 снова к запуску на 6 шт")
+    assert cancel_reasons(sessions) == ["Снят последний исполнитель — задание не начато"]
+    shown = board(http)
+    assert shown["tasks"] == []
+    [again] = shown["future"]
+    assert (again["quantity"], again["launched"]) == (10, 0)
+
+
+def test_removing_the_last_fitter_after_work_started_keeps_the_task(library):
+    http, sessions = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+    assert assign(http, ANNA, future_items(future, 1)).status_code == 200
+    [task] = board(http)["tasks"]
+    operation = task["operations"][0]
+    made = http.post(f"/api/production/tasks/{task['id']}/operations/{operation['id']}/manual-output", json={
+        "good_quantity": 2, "operator_id": None, "fill_inputs": False,
+    })
+    assert made.status_code == 200, made.text
+    [task] = board(http)["tasks"]
+
+    response = remove_share(http, task, 1, ANNA)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["task"]["status"] == "Запущено"
+    assert all(not item["operator_ids"] for item in response.json()["task"]["operations"])
+    assert cancel_reasons(sessions) == []
+    shown = board(http)
+    assert [item["id"] for item in shown["tasks"]] == [task["id"]] and shown["future"] == []
+
+
+def test_a_started_share_is_work_too_and_a_crew_keeps_the_task(library):
+    http, sessions = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+    assert assign(http, ANNA, future_items(future, 1)).status_code == 200
+    [task] = board(http)["tasks"]
+    assert assign(http, BORIS, [{"task_id": task["id"], "task_version": task["version"], "position": 2}]).status_code == 200
+    [task] = board(http)["tasks"]
+    # Снят один из двух исполнителей задания — задание остаётся.
+    first = remove_share(http, task, 2, BORIS)
+    assert first.status_code == 200 and first.json()["task"]["status"] == "Запущено"
+    with sessions() as session:
+        row = session.scalar(select(ProductionOperationOperatorRow).where(ProductionOperationOperatorRow.operator_id == ANNA))
+        row.started_at = NOW
+        session.commit()
+    [task] = board(http)["tasks"]
+
+    response = remove_share(http, task, 1, ANNA)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["task"]["status"] == "Запущено"
+    assert cancel_reasons(sessions) == []
+
+
+def test_clearing_the_crew_of_the_only_assigned_operation_cancels_an_untouched_task(library):
+    http, sessions = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+    assert assign(http, ANNA, future_items(future, 1)).status_code == 200
+    [task] = board(http)["tasks"]
+    operation = task["operations"][0]
+
+    response = http.post(f"/api/production/tasks/{task['id']}/operations/{operation['id']}/assign", json={
+        "version": task["version"], "operator_ids": [],
+    })
+
+    assert response.status_code == 200, response.text
+    assert response.json()["task"]["status"] == "Отменено"
+    assert cancel_reasons(sessions) == ["Снят последний исполнитель — задание не начато"]
+    assert board(http)["future"][0]["quantity"] == 10
+
+
+def test_a_cancelled_task_is_not_restored_above_the_kb_run(library):
+    http, _ = library
+    issue_route("КБ2")
+    [future] = board(http)["future"]
+    assert assign(http, ANNA, [{**item, "run": 6} for item in future_items(future, 1)]).status_code == 200
+    [task] = board(http)["tasks"]
+    cancelled = remove_share(http, task, 1, ANNA).json()["task"]
+    assert cancelled["status"] == "Отменено"
+    [again] = board(http)["future"]
+    assert assign(http, BORIS, [{**item, "run": 5} for item in future_items(again, 1)]).status_code == 200
+
+    restore = http.post(f"/api/production/tasks/{cancelled['id']}/cancel", json={"version": cancelled["version"], "cancelled": False})
+
+    assert restore.status_code == 422, restore.text
+    assert restore.json()["detail"] == (
+        f"Задание {cancelled['number']} не вернуть в работу: по 708К КБ2 уже запущено 5 из тиража 10 шт, а в задании 6 шт")
+    # Вернуть 6 шт к запущенным 5 из 10 — выше тиража КБ: задание остаётся отменённым.
+    assert tasks_of(http)[cancelled["id"]]["status"] == "Отменено"
+
+
+def test_autoplan_launches_the_rest_of_a_partly_launched_run(library):
+    http, _ = library
+    card = issue_route("КБ2")
+    [future] = board(http)["future"]
+    assert assign(http, ANNA, [{**item, "run": 3} for item in future_items(future, 1)]).status_code == 200
+    plan = {"mode": "project", "project": "708К", "people": [str(ANNA), str(BORIS)]}
+
+    planned = preview(http, **plan)
+
+    assert [(item["techcard_id"], item["quantity"]) for item in planned["new_tasks"]] == [(str(card.id), 7)]
+    context = http.post("/api/production/autoplan/context", json=plan)
+    assert context.status_code == 200, context.text
+    assert [(item["quantity"], item["launched"], item["run"]) for item in context.json()["new"]] == [(7, 3, "10")]
+    assert http.post("/api/production/autoplan/preview", json={**plan, "runs": {str(card.id): 8}}).status_code == 422
+    applied = apply(http, planned, **plan)
+    assert applied.status_code == 200, applied.text
+    assert sorted(task["quantity"] for task in tasks_of(http).values()) == [3, 7]
+    assert board(http)["future"] == []
+    # Весь цех видит то же правило: остатка нет — нового задания нет.
+    assert preview(http)["new_tasks"] == []

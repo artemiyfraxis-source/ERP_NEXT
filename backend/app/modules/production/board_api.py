@@ -51,8 +51,10 @@ class BoardItemPayload(BaseModel):
     position: int | None = Field(default=None, ge=1)
     # Штук изделий; null — вся операция.
     quantity: int | None = Field(default=None, ge=1, le=1_000_000)
-    # Тираж нового задания (только у КБ без задания); null — весь тираж КБ.
+    # Тираж нового задания (только у КБ к запуску); null — весь остаток тиража КБ.
     run: int | None = Field(default=None, ge=1, le=1_000_000)
+    # Сколько по КБ было запущено, когда доску читали (future.launched); запустили ещё — 409.
+    launched: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def _reference(self) -> "BoardItemPayload":
@@ -72,9 +74,10 @@ class BoardOutputPayload(BaseModel):
     techcard_version: int = Field(ge=1)
     position: int = Field(ge=1)
     good_quantity: int = Field(gt=0, le=1_000_000)
-    # Тираж нового задания; null — весь тираж КБ.
+    # Тираж нового задания; null — весь остаток тиража КБ.
     run: int | None = Field(default=None, ge=1, le=1_000_000)
     fill_inputs: bool = False
+    launched: int | None = Field(default=None, ge=0)
 
 
 class AssignPayload(BaseModel):
@@ -132,8 +135,8 @@ def board(
     references_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
     project: Annotated[str, Query(max_length=200)] = "",
 ) -> dict:
-    """Запущенные задания (не отданные площадке) и будущие задания КБ с выданной техкартой без задания — из выданной
-    сейчас ревизии; у каждой операции группа оборудования. КБ без тиража или с маршрутом, который не собрался, —
+    """Запущенные задания (не отданные площадке) и будущие задания КБ с выданной техкартой на остаток тиража (quantity;
+    launched — уже запущено по КБ) — из выданной сейчас ревизии; у каждой операции группа оборудования. КБ без тиража или с маршрутом, который не собрался, —
     в skipped с причиной. project — номер проекта; пусто — все."""
     cards, ready = _techcards(techcards_factory)
     wanted = normalize_project_number(project) if project.strip() else ""
@@ -164,7 +167,8 @@ def board(
         body.update({
             "pending": True, "techcard_id": str(item.card.techcard_id), "techcard_version": item.card.version,
             "techcard_revision": item.card.revision if item.card.revision >= 1 else None,
-            "customer": item.card.customer, "run": item.card.run, "warnings": list(item.card.route.warnings),
+            "customer": item.card.customer, "run": item.card.run, "launched": item.card.launched,
+            "warnings": list(item.card.route.warnings),
         })
         future.append(_with_equipment(body, item.task, equipment_of(item.task, item.card.document, machines, categories)))
     return {
@@ -200,7 +204,7 @@ def assign(
         items=tuple(BoardItem(
             task_id=item.task_id, task_version=item.task_version, techcard_id=item.techcard_id,
             techcard_version=item.techcard_version, operation_id=item.operation_id, position=item.position,
-            quantity=item.quantity, run=item.run,
+            quantity=item.quantity, run=item.run, launched=item.launched,
         ) for item in payload.items),
         actor=principal.actor, now=now,
     )
@@ -244,7 +248,7 @@ def manual_output(
     done = _handle(lambda: record_board_output(BoardOutputCommand(
         techcard_id=payload.techcard_id, techcard_version=payload.techcard_version, position=payload.position,
         good_quantity=payload.good_quantity, actor=principal.actor, now=now, run=payload.run,
-        fill_inputs=payload.fill_inputs,
+        fill_inputs=payload.fill_inputs, launched=payload.launched,
     ), uow_factory(), cards, ready))
     box = done.box
     warnings = [f"Создано задание {done.task.number}. Записано {_number(box.quantity)} шт на этап {box.operation_position}, коробка {box.code or box.number}."]
