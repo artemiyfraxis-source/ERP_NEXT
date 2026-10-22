@@ -2,8 +2,8 @@ import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useSta
 import { LoadMore } from "./LoadMore";
 import { urlParam } from "./navigation";
 import { SuggestInput } from "./SuggestInput";
-import { useStageOption } from "./StageOptions";
-import { LABELS_OPTION, LotLabel } from "./LabelPrint";
+import { LotLabel } from "./LabelPrint";
+import { printLotLabels } from "./lotLabel";
 import { usePurposeLabel } from "./purposeLabels";
 import { VIA_LABELS, purchasingItemsApi, type ItemBrief, type ItemRow } from "./purchasingItemsApi";
 import { useLatestSearch } from "./useLatestSearch";
@@ -24,7 +24,6 @@ import {
 } from "./api";
 import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
-import { lotReceivedAt, printLotLabels } from "./lotLabel";
 import { countLabel } from "./format";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { UndoLast, WarehouseScanResults, type ScanRequest } from "./WarehouseScan";
@@ -37,7 +36,7 @@ import {
 } from "./WarehouseColumns";
 
 /** Номенклатура на партиях (option references.items): off = no request, no chip, no action. */
-const LotItems = createContext<{ on: boolean; items: Record<string, ItemBrief>; reload: () => void }>({ on: false, items: {}, reload: () => undefined });
+const LotItems = createContext<{ items: Record<string, ItemBrief>; reload: () => void }>({ items: {}, reload: () => undefined });
 
 const EMPTY_PASSPORT: WarehouseLotPassport = {
   mass_1: "", mass_10: "", mass_100: "", expiry_date: null,
@@ -102,9 +101,6 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   const [totalsStamp, setTotalsStamp] = useState(0);
   const [error, setError] = useState("");
   const [query, setQuery] = useState(() => urlParam("q"));
-  const wordSearch = useStageOption("warehouse.word_search");
-  const itemsOn = useStageOption("references.items");
-  const scanOn = useStageOption("warehouse.scan");
   const searchRef = useRef<HTMLInputElement>(null);
   const [scanRequest, setScanRequest] = useState<ScanRequest | null>(null);
   const [lotItems, setLotItems] = useState<Record<string, ItemBrief>>({});
@@ -234,7 +230,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   }, [query, warehouse, includeZero, flat, sort.key, sort.desc, groupBy]);
 
   useEffect(() => {
-    if (!itemsOn || lots.length === 0) { setLotItems({}); return; }
+    if (lots.length === 0) { setLotItems({}); return; }
     let live = true;
     const ids = lots.map((lot) => lot.id);
     const parts: string[][] = [];
@@ -244,7 +240,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       .then((answers) => { if (live) setLotItems(Object.assign({}, ...answers)); })
       .catch(() => { if (live) setLotItems({}); });
     return () => { live = false; };
-  }, [itemsOn, lots, itemsTick]);
+  }, [lots, itemsTick]);
 
   async function openPutawaySheet() {
     setPutawayError("");
@@ -279,7 +275,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   }
 
   return (
-    <LotItems.Provider value={{ on: itemsOn, items: lotItems, reload: () => setItemsTick((n) => n + 1) }}>
+    <LotItems.Provider value={{ items: lotItems, reload: () => setItemsTick((n) => n + 1) }}>
     <section className="page stock-page">
       <header className="page-head">
         <h1>Склад</h1>
@@ -312,13 +308,13 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="filters table-toolbar stock-toolbar">
         {/* One field for both (owner 22.10): typing filters the table; with warehouse.scan Enter opens the ГРН / place. */}
-        <form className="stock-search-form" role={scanOn ? "search" : undefined}
-          onSubmit={(event) => { event.preventDefault(); if (scanOn) setScanRequest({ code: query, at: Date.now() }); }}>
+        <form className="stock-search-form" role="search"
+          onSubmit={(event) => { event.preventDefault(); setScanRequest({ code: query, at: Date.now() }); }}>
           <input ref={searchRef} className="search stock-search" aria-label="Поиск по складу" autoComplete="off" spellCheck={false}
-            placeholder={scanOn ? "Скан, ГРН, место или слова: артикул, название…" : wordSearch ? "Слова в любом порядке: артикул, название, ГРН, место…" : "Поиск: резистор, 6-1, ГРН…"}
-            title={scanOn ? "Enter по ГРН или месту открывает карточку" : undefined}
+            placeholder="Скан, ГРН, место или слова: артикул, название…"
+            title="Enter по ГРН или месту открывает карточку"
             value={query} onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => { if (event.key === "Escape" && scanOn) { setQuery(""); setScanRequest(null); } }} />
+            onKeyDown={(event) => { if (event.key === "Escape") { setQuery(""); setScanRequest(null); } }} />
         </form>
         <label className="check-inline"><input type="checkbox" checked={includeZero} onChange={(event) => setIncludeZero(event.target.checked)} />показывать нулевые</label>
         <label className="inline-select">группировать<select aria-label="Группировка склада" value={groupBy} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}>
@@ -339,8 +335,8 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
           />
         </div>
       </div>
-      {scanOn && <WarehouseScanResults request={scanRequest} inputRef={searchRef} readOnly={readOnly}
-        disabled={Boolean(busy) || loading} mutate={mutate} onClose={() => setScanRequest(null)} />}
+      <WarehouseScanResults request={scanRequest} inputRef={searchRef} readOnly={readOnly}
+        disabled={Boolean(busy) || loading} mutate={mutate} onClose={() => setScanRequest(null)} />
       {panel === "types" && <ItemTypesPanel
         onClose={() => setPanel("")}
         onChanged={async (types, renamed) => {
@@ -722,7 +718,7 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
       const open = expanded.has(item.key);
       return <Fragment key={item.key}>
         <tr className={open ? "stock-article-row open" : "stock-article-row"} title="Партии карточками" onClick={() => toggle(item.key)}>
-          {columns.map((key) => articleCell(key, item, open, () => toggle(item.key), key === pinned, lotItems.on ? lotItems.items : {}))}
+          {columns.map((key) => articleCell(key, item, open, () => toggle(item.key), key === pinned, lotItems.items))}
         </tr>
         {open && <tr className="stock-cards-row"><td colSpan={columns.length}><div className="lot-cards">
           {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} canLink={canLink} />)}
@@ -1172,7 +1168,6 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
   onSaved: () => void;
 }) {
   const [values, setValues] = useState(() => rowValues(lot));
-  const strict = useStageOption("warehouse.strict_quantities");
   const [notice, setNotice] = useState("");
   const number = (field: RowEditField) => Number(values[field].trim() || lot[field] || 0);
   const balance = Math.round((number("inbound") - number("written_off")) * 1_000_000) / 1_000_000;
@@ -1202,12 +1197,12 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
     /></label>)}
     {ROW_EDIT_NUMBERS.map(([field, label]) => <label key={field}>{label}<input
       type="number" min="0" step="any" placeholder={String(lot[field] ?? "")}
-      readOnly={strict}
+      readOnly
       value={values[field]}
       onChange={(event) => { setNotice(""); setValues((current) => ({ ...current, [field]: event.target.value })); }}
     /></label>)}
     </div>
-    {strict && <p className="page-sub">Приход, списано и резерв меняются только движениями: списание, возврат, перемещение.</p>}
+    <p className="page-sub">Приход, списано и резерв меняются только движениями: списание, возврат, перемещение.</p>
     <p className="page-sub" role="status">{notice || `Баланс станет: ${balance} ${lot.unit}`}</p>
     <div className="move-actions">
       <button type="button" className="secondary" onClick={onClose}>Назад</button>
@@ -1491,23 +1486,8 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
   const close = () => setDialog("");
   const writtenOff = Number(lot.written_off) > 0;
   const passport = passportLine(lot);
-  const [printing, setPrinting] = useState(false);
-  const printLabel = async () => {
-    setPrinting(true);
-    try {
-      const receivedAt = await lotReceivedAt(lot.grn, lot.package);
-      printLotLabels([{
-        grn: lot.grn, package: lot.package, article: lot.article, name: lot.name, quantity: `${lot.balance} ${lot.unit}`,
-        place: lot.storage_location, warehouse: lot.warehouse, receivedAt,
-      }]);
-    } finally {
-      setPrinting(false);
-    }
-  };
   const itemsCtx = useContext(LotItems);
   const brief = itemsCtx.items[lot.id];
-  const undoOn = useStageOption("warehouse.undo");
-  const labelsOn = useStageOption(LABELS_OPTION);
 
   return (
     <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
@@ -1522,31 +1502,30 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
         {Number(lot.reserved) > 0 && <span title={lot.reserve_note || undefined}>резерв {lot.reserved} {lot.unit}{lot.reserve_note ? ` · ${lot.reserve_note.replace(/^резерв: /, "")}` : ""}</span>}
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
-      {itemsCtx.on && brief && <p className="lot-card-meta"><small className="muted lot-item-chip" title={`Связь: ${VIA_LABELS[brief.via]}`}>Позиция: {brief.name}</small></p>}
+      {brief && <p className="lot-card-meta"><small className="muted lot-item-chip" title={`Связь: ${VIA_LABELS[brief.via]}`}>Позиция: {brief.name}</small></p>}
       <div className="lot-card-actions">
         {!readOnly && <>
           <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
           {writtenOff && <button className="secondary small" disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => setDialog("return")}>Вернуть на склад</button>}
           <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
           <button className="secondary small" disabled={disabled} onClick={() => setDialog("edit")}>✎ Правка</button>
-          {labelsOn && <button className="secondary small" title="Предпросмотр и печать этикетки ГРН" onClick={() => setDialog("label")}>Этикетка…</button>}
+          <button className="secondary small" title="Предпросмотр и печать этикетки ГРН" onClick={() => setDialog("label")}>Этикетка…</button>
         </>}
-        {!readOnly && itemsCtx.on && <button className="secondary small" disabled={disabled} onClick={() => setDialog("item")}>Позиция номенклатуры…</button>}
+        {!readOnly && <button className="secondary small" disabled={disabled} onClick={() => setDialog("item")}>Позиция номенклатуры…</button>}
         {canLink && <button className="secondary small" title="Привязать к записи базы или создать запись" onClick={() => setDialog("link")}>В базу данных…</button>}
         {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
-        {!labelsOn && <button className="secondary small" disabled={printing} onClick={() => void printLabel()}>{printing ? "Готовим этикетку…" : "Печать этикетки"}</button>}
       </div>
-      {!readOnly && undoOn && <UndoLast lot={lot} disabled={disabled} mutate={mutate} />}
+      {!readOnly && <UndoLast lot={lot} disabled={disabled} mutate={mutate} />}
       {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {canLink && dialog === "link" && <StockLinkDialog lot={lot} onClose={close} />}
       {history && dialog === "history" && <LotHistoryDialog lot={lot} onClose={close} />}
-      {!readOnly && labelsOn && dialog === "label" && <LotDialog title="Этикетка" lot={lot} onClose={close}>
+      {!readOnly && dialog === "label" && <LotDialog title="Этикетка" lot={lot} onClose={close}>
         <LotLabel key={lot.version} lotId={lot.id} />
         <div className="move-actions"><button type="button" className="secondary" onClick={close}>Закрыть</button></div>
       </LotDialog>}
-      {!readOnly && itemsCtx.on && dialog === "item" && <LotItemDialog lot={lot} brief={brief} onClose={close} onChanged={itemsCtx.reload} />}
+      {!readOnly && dialog === "item" && <LotItemDialog lot={lot} brief={brief} onClose={close} onChanged={itemsCtx.reload} />}
     </article>
   );
 }
