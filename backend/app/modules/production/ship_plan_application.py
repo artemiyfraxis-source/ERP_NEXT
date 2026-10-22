@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Mapping, Sequence
 from uuid import UUID
 
-from .application import UnitOfWork, _busy, _progress, _shift, _skills, _with_absences
+from .application import UnitOfWork, _busy, _load_clock, _progress, _shift, _skills, _with_absences
 from .autoplan import AutoplanInput, SetupKey, operation_keys
 from .autoplan_application import (
     AutoplanCommand,
@@ -85,7 +85,9 @@ def _input(
         for task in sorted(scope.tasks.values(), key=lambda value: (value.created_at, str(value.id)))
     ) + tuple(item.task for item in sorted(scope.new_tasks.values(), key=lambda value: (value.card.project, value.card.index)))
     team = tuple(item.id for item in scope.team_rows)
-    busy = _with_absences(_busy(tasks, UUID(int=0), UUID(int=0), now), tuple(uow.calendar.absences()), team, now.tzinfo)
+    busy = _with_absences(
+        _busy(tasks, UUID(int=0), UUID(int=0), now, _load_clock(uow, now, tasks)), tuple(uow.calendar.absences()), team, now.tzinfo,
+    )
     keys: dict[UUID, SetupKey] = {}
     steps: dict[UUID, tuple[MachineStep, ...]] = {}
     warnings = list(scope.warnings)

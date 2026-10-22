@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import type { ProductionAbsence, ProductionOperation, ProductionOperator, ProductionShare, ProductionShift, ProductionTask } from "./api";
 import { kbLabel } from "./format";
 import { deadlineEnd } from "./Gantt";
-import { DEFAULT_SHIFT, dayHours, sharesOf, workingDay } from "./MasterBoard";
+import { DEFAULT_SHIFT, loadWindow, sharesOf, windowDayHours, workingDay, type LoadClock } from "./MasterBoard";
 import { periodWords } from "./PlanLoadSheet";
 import { feedsText } from "./productionGraph";
 
@@ -21,6 +21,8 @@ export type LoadItem = {
   finish: number;
   done: boolean;
   late: boolean;
+  /** Взята, план истёк, не сдана — окно от «сейчас» на остаток (loadWindow). */
+  overrun: boolean;
   deadline: string | null;
   quantity: number | null;
   task: ProductionTask;
@@ -127,27 +129,23 @@ export function LoadLegend({ capacity, late = true, off = true }: { capacity: nu
 const dayStart = (day: string) => new Date(`${day}T00:00:00`).getTime();
 const itemsOnDay = (items: LoadItem[], day: string) => items.filter((item) => item.finish > dayStart(day) && item.start < dayStart(day) + DAY_MS);
 
-// Часы одной доли в день: dayHours пропускает выполненные, поэтому считаем её как невыполненную.
-function itemDayHours(operatorId: string, day: string, item: LoadItem, shift: ProductionShift) {
-  const operation = { ...item.op, state: "не начата" as const, shares: [{ ...item.share, operator_id: operatorId, finished_at: null }] };
-  return dayHours(operatorId, day, [{ ...item.task, operations: [operation] }], shift);
-}
-
-/** Загрузка человека по дням: часы пересечения плановых окон его долей со сменой (как «Монтажники» в Ресурсном планировании). */
-export function peopleLoad(operators: ProductionOperator[], tasks: ProductionTask[], days: string[], shift: ProductionShift): PersonLoad[] {
+/** Загрузка человека по дням: часы пересечения окон его долей со сменой (как «Монтажники» в Ресурсном планировании);
+ *  с clock затянувшаяся доля идёт от «сейчас» на остаток (loadWindow — то же правило, что на доске мастера). */
+export function peopleLoad(operators: ProductionOperator[], tasks: ProductionTask[], days: string[], shift: ProductionShift, clock?: LoadClock): PersonLoad[] {
   const live = tasks.filter((task) => task.status !== "Отменено" && !task.handed_to);
   const rows = operators.map((operator) => {
     const items: LoadItem[] = [];
     for (const task of live) {
       for (const op of task.operations) {
         for (const share of sharesOf(op, operator.id)) {
-          if (!share.planned_start || !share.planned_finish) continue;
-          const finish = new Date(share.planned_finish).getTime();
           const done = op.state === "выполнена" || Boolean(share.finished_at);
+          const window = loadWindow(task, op, share, shift, done ? undefined : clock);
+          if (!window) continue;
+          const { start, finish, overrun } = window;
           const end = deadlineEnd(task.deadline);
           items.push({
             key: `${task.id}-${op.id}-${items.length}`, pz: `${task.number} · ${itemId(task)}`, operation: `${op.position}. ${op.stage || op.description}`,
-            feeds: feedsText(task, op), start: new Date(share.planned_start).getTime(), finish, done,
+            feeds: feedsText(task, op), start, finish, done, overrun,
             late: Boolean(!done && end && finish > end.getTime()), deadline: task.deadline, quantity: share.quantity, task, op, share,
           });
         }
@@ -157,7 +155,7 @@ export function peopleLoad(operators: ProductionOperator[], tasks: ProductionTas
     let total = 0;
     for (const day of days) {
       let sum = 0;
-      for (const item of itemsOnDay(items, day)) sum += itemDayHours(operator.id, day, item, shift);
+      for (const item of itemsOnDay(items, day)) sum += windowDayHours(item.start, item.finish, day, shift);
       if (sum > 0.05) { hoursByDay[day] = sum; total += sum; }
     }
     return { operator, items, total, hoursByDay };
@@ -220,7 +218,8 @@ export function PeopleLoadGrid({ operators, tasks, absences, holidays, shift, we
   const count = width >= WIDE_FROM ? LOAD_DAYS_WIDE : LOAD_DAYS;
   const days = useMemo(() => loadDays(week, new Date(), count), [week, count]);
   const today = isoOf(new Date());
-  const people = useMemo(() => peopleLoad(operators, tasks, days, workShift), [operators, tasks, days, workShift]);
+  const people = useMemo(() => peopleLoad(operators, tasks, days, workShift, { now: Date.now(), holidays, absences }),
+    [operators, tasks, days, workShift, holidays, absences]);
   const shown = onlyBusy ? people.filter((person) => person.total > 0.05) : people;
   const period = `${dayMonth(days[0])}–${dayMonth(days[days.length - 1])}`;
   const weeks = Math.round(days.length / 7);
@@ -293,6 +292,7 @@ function DayDetail({ person, day, capacity, shift, onClose }: { person: PersonLo
       })()}
       {item.deadline && <small> · дедлайн {dayMonth(item.deadline)}</small>}
       {item.done && <em> · выполнена</em>}
+      {item.overrun && <strong> · затянулось</strong>}
       {item.late && <strong> · позже дедлайна</strong>}
     </li>)}</ul>
   </div>;

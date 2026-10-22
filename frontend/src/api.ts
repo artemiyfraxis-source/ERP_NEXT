@@ -836,6 +836,8 @@ export interface ProductionShare {
   planned_finish: string | null;
   started_at: string | null;
   finished_at: string | null;
+  /** Сдано по доле (годные + брак, штуки операции); есть в списке заданий. */
+  output?: string;
 }
 
 export interface ProductionLaunchable {

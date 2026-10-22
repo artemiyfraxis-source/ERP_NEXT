@@ -138,9 +138,85 @@ def _live(task: ProductionTask) -> bool:
     return task.status is ProductionStatus.RUNNING and not task.handed_to
 
 
-def nodes_of(tasks: Iterable[ProductionTask], progress: Progress) -> dict[NodeKey, Node]:
+# Затянувшаяся доля (владелец, 22.10: «нет заданий которые идут долго»): взятая и не сданная доля, чей план истёк,
+# занимает монтажника и дальше — от «сейчас» на остаток своей нормы, не меньше часа его работы.
+OVERRUN_FLOOR_SECONDS = 60 * 60
+
+
+@dataclass(frozen=True)
+class LoadClock:
+    """«Сейчас» для загрузки монтажников: момент, календарь цеха, компетенции и сданное. По нему затянувшаяся доля
+    держит монтажника после своего плана (overrun_window); план в базе при этом не переписывается."""
+    now: datetime
+    calendar: DispatchCalendar
+    skills: dict[str, dict[UUID, OperatorSkill]]
+    progress: Progress
+
+
+def remaining_seconds(
+    operation: ProductionOperation,
+    units: Decimal,
+    operator_ids: tuple[UUID, ...],
+    skills: dict[str, dict[UUID, OperatorSkill]],
+) -> int:
+    """Норма на оставшиеся units штук операции: штучное время / коэффициенты исполнителей, без подготовки — она
+    позади, работа уже взята (как share_seconds, но на остаток)."""
+    rate = rate_of(skills, operation.skill_codes, operator_ids)
+    return ceil(operation.seconds_per_unit * max(units, Decimal(0)) / (rate if rate > 0 else Decimal(1)))
+
+
+def share_group(operation: ProductionOperation, share: OperationShare) -> tuple[OperationShare, ...]:
+    """Доли с общим окном: бригада (штуки не разделены) — вся бригада, иначе — сама доля."""
+    if share.quantity is None:
+        return tuple(item for item in operation.shares if item.quantity is None)
+    return (share,)
+
+
+def overrun_window(
+    task: ProductionTask,
+    operation: ProductionOperation,
+    shares: Iterable[OperationShare],
+    clock: LoadClock | None,
+) -> tuple[datetime, datetime] | None:
+    """Окно, которое затянувшаяся доля (или бригада) занимает у монтажника: взята («взял»), не сдана целиком, план
+    кончился раньше «сейчас». Тогда она идёт от «сейчас» на норму несданных штук (доля минус сданное ею; у бригады —
+    вся операция минус сданное), не меньше OVERRUN_FLOOR_SECONDS работы, по смене, праздникам и отсутствиям — как
+    плановое окно. Пауза работы монтажника не освобождает: доля всё ещё его. None — доля идёт по своему плану
+    (не взята, сдана, план ещё не кончился). Задания — в поясе clock.now (localize)."""
+    if clock is None or not _live(task):
+        return None
+    planned = [item for item in shares if item.planned_start is not None and item.planned_finish is not None]
+    if not planned or not any(item.started_at is not None and item.finished_at is None for item in planned):
+        return None
+    if max(item.planned_finish for item in planned) >= clock.now:
+        return None
+    progress = clock.progress
+    whole = task.operation_units(operation.id)
+    done = progress.by_operation.get(operation.id, Decimal(0))
+    if done >= whole:
+        return None
+    if planned[0].quantity is None:
+        units = whole - done
+    else:
+        share = planned[0]
+        units = task.operation_units(operation.id, share.quantity) - progress.by_operator.get(
+            (operation.id, share.operator_id), Decimal(0),
+        )
+    if units <= 0:
+        return None
+    people = tuple(item.operator_id for item in planned)
+    seconds = max(OVERRUN_FLOOR_SECONDS, remaining_seconds(operation, units, people, clock.skills))
+    return _clear_of_absences(clock.now, seconds, people, clock.calendar)
+
+
+def nodes_of(
+    tasks: Iterable[ProductionTask],
+    progress: Progress,
+    clock: LoadClock | None = None,
+) -> dict[NodeKey, Node]:
     """Узлы плана: доли с плановым окном в живых заданиях. Бригада — один узел: её окно общее.
-    Закреплены (не двигаются) начатые и законченные доли и выполненные операции."""
+    Закреплены (не двигаются) начатые и законченные доли и выполненные операции. С clock затянувшаяся доля стоит
+    окном от «сейчас» (overrun_window), а не истёкшим планом."""
     result: dict[NodeKey, Node] = {}
     for task in tasks:
         if not _live(task):
@@ -160,17 +236,20 @@ def nodes_of(tasks: Iterable[ProductionTask], progress: Progress) -> dict[NodeKe
 
             crew = [share for share in planned if share.quantity is None]
             if crew:
+                window = overrun_window(task, operation, crew, clock) or (
+                    min(share.planned_start for share in crew), max(share.planned_finish for share in crew),
+                )
                 result[(operation.id, None)] = Node(
                     (operation.id, None), task, operation, tuple(share.operator_id for share in crew), None,
-                    min(share.planned_start for share in crew), max(share.planned_finish for share in crew),
-                    any(fixed(share) for share in crew),
+                    *window, any(fixed(share) for share in crew),
                 )
             for share in planned:
                 if share.quantity is None:
                     continue
+                window = overrun_window(task, operation, (share,), clock) or (share.planned_start, share.planned_finish)
                 result[(operation.id, share.operator_id)] = Node(
                     (operation.id, share.operator_id), task, operation, (share.operator_id,), share.quantity,
-                    share.planned_start, share.planned_finish, fixed(share),
+                    *window, fixed(share),
                 )
     return result
 
@@ -206,16 +285,18 @@ def place(
     calendar: DispatchCalendar,
     skills: dict[str, dict[UUID, OperatorSkill]],
     progress: Progress,
+    now: datetime | None = None,
 ) -> tuple[datetime, datetime]:
     """Окно доли монтажника с выбранного момента: первое время, где она не залезает на уже идущую работу
-    (начатую раньше этого момента, начатую по факту, или прежние этапы этой же сборки), и не раньше его прежних
-    этапов этой сборки. Прежние этапы — те, чей полуфабрикат доходит до этой операции по схеме (в цепочке — все
+    (начатую раньше этого момента, начатую по факту — затянувшуюся тоже, от «сейчас», — или прежние этапы этой же
+    сборки), и не раньше его прежних этапов этой сборки. now — «сейчас» для затянувшейся работы (без него — только
+    плановые окна). Прежние этапы — те, чей полуфабрикат доходит до этой операции по схеме (в цепочке — все
     меньшие номера); параллельная ветка той же сборки — просто другая работа монтажника. Работа, что стоит позже,
     не мешает — её потом сдвигает reflow. Хвост — на следующие рабочие дни, отсутствия (отпуск, больничный)
     перепрыгиваются."""
     seconds = share_seconds(task, operation, quantity, (operator_id,), skills)
     others = [
-        node for node in nodes_of(tasks, progress).values()
+        node for node in nodes_of(tasks, progress, LoadClock(now, calendar, skills, progress) if now else None).values()
         if operator_id in node.operator_ids and node.operation.id != operation.id
     ]
     upstream = upstream_ids(task.operations, operation.id)
@@ -326,7 +407,7 @@ def reflow(
     опоздал вход на час — сборка уходит на час, а не остаётся на месте и не встаёт «после конца». Новая доля связь по
     схеме не двигает: следующий этап той же сборки мог нарочно идти внахлёст."""
     holidays, shift = calendar.holidays, calendar.shift
-    nodes = nodes_of(tasks, progress)
+    nodes = nodes_of(tasks, progress, LoadClock(now, calendar, skills, progress))
     old = {key: (node.start, node.finish) for key, node in nodes.items()}
     placed: set[NodeKey] = set()
     for key, before in sources.items():
