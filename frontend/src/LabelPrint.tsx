@@ -2,10 +2,11 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import "./labelPrint.css";
 import { api, failureText } from "./api";
 
-/* «Печать этикеток ГРН» (stage option warehouse.labels), ported from Roller_Buyer `components/LabelPrint.tsx`: the printer
-   settings card, a lot's label (preview exactly as the printer gets it, copies, «Печать») and the labels of what receiving
-   has just put on stock. The backend saves every job as a file first; without a printer (or off Windows) it stops there. */
+/* «Печать этикеток ГРН», ported from Roller_Buyer `components/LabelPrint.tsx`: the printer settings card, a lot's label
+   (preview exactly as the printer gets it, copies, «Печать») and the labels of what receiving has just put on stock.
+   Printing goes only through the server queue: the print agent on the warehouse PC takes a job and prints it. */
 
+/** Kept only until EquipmentPage and TsdPage stop importing it (stage options are being removed); gates nothing here. */
 export const LABELS_OPTION = "warehouse.labels";
 
 export type LabelCodeType = "qr" | "code128" | "both";
@@ -21,8 +22,12 @@ export type PrintSettings = {
   offset_x_mm: number;
   offset_y_mm: number;
 };
-export type PrintResult = { status: "printed" | "saved" | "failed"; reason: string | null; file: string; copies: number };
-type SettingsAnswer = { settings: PrintSettings; code_types: Record<LabelCodeType, string>; print_dir: string; copies_max: number };
+export type PrintResult = { status: "queued" | "printed" | "saved" | "failed"; reason: string | null; file: string; copies: number; job_id?: string };
+export type AgentStatus = {
+  last_seen: string | null; host: string; printer: string; queue: number; last_error: string;
+  last_job: { status: string; finished_at: string | null; error: string } | null;
+};
+type SettingsAnswer = { settings: PrintSettings; code_types: Record<LabelCodeType, string>; copies_max: number };
 
 const CODE_TYPES: [LabelCodeType, string][] = [["both", "QR и Code128"], ["qr", "QR-код"], ["code128", "Штрихкод Code128"]];
 export const COPIES_MAX = 50;
@@ -30,7 +35,7 @@ export const COPIES_MAX = 50;
 export const labelsApi = {
   settings: () => api<SettingsAnswer>("/api/stock/labels/settings"),
   save: (settings: PrintSettings) => api<{ settings: PrintSettings }>("/api/stock/labels/settings", { method: "PUT", body: JSON.stringify(settings) }),
-  printers: () => api<{ printers: string[]; on_windows: boolean }>("/api/stock/labels/printers"),
+  agentStatus: () => api<AgentStatus>("/api/stock/labels/agent/status"),
   test: () => api<PrintResult>("/api/stock/labels/test", { method: "POST", body: "{}" }),
   printLot: (lotId: string, copies: number) =>
     api<PrintResult>(`/api/stock/batches/${encodeURIComponent(lotId)}/label`, { method: "POST", body: JSON.stringify({ copies }) }),
@@ -42,9 +47,37 @@ export const lotLabelUrl = (lotId: string, stamp: number | string = 0) => `/api/
 
 /** Roller_Buyer's toast words: printed, or why not and the saved job's file name. */
 export function printResultText(result: PrintResult) {
+  if (result.status === "queued") return result.reason ?? "В очереди принтера.";
   return result.status === "printed"
     ? `Отправлено на принтер: ${result.copies} шт.`
     : `${result.reason ?? "Не напечатано."} Задание: ${result.file.split(/[\\/]/).pop()}`;
+}
+
+const AGENT_DOCS = "https://github.com/artemiyfraxis-source/ERP_NEXT/tree/main/tools/print-agent";
+export const AGENT_POLL_MS = 10_000;
+
+/** Whole minutes since `iso`; null when the moment is unknown. */
+export function minutesSince(iso: string | null, now = Date.now()): number | null {
+  const at = iso ? Date.parse(iso) : NaN;
+  return Number.isNaN(at) ? null : Math.max(0, Math.floor((now - at) / 60_000));
+}
+
+/** The agent's status, asked again every 10 s while `active`. */
+export function useAgentStatus(active = true) {
+  const [status, setStatus] = useState<AgentStatus | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    const load = () => labelsApi.agentStatus().then(
+      (loaded) => { if (!cancelled) { setStatus(loaded); setFailed(false); } },
+      () => { if (!cancelled) setFailed(true); },
+    );
+    void load();
+    const timer = window.setInterval(() => void load(), AGENT_POLL_MS);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [active]);
+  return { status, failed };
 }
 
 function copiesOf(value: string) {
@@ -54,8 +87,21 @@ function copiesOf(value: string) {
 
 /** The outcome of a print, where the toast would be in Roller_Buyer. */
 export function PrintOutcome({ result, error }: { result: PrintResult | null; error: string }) {
+  // A queued job is followed until the agent reports a job finished after it was queued.
+  const [queuedAt, setQueuedAt] = useState(0);
+  useEffect(() => { setQueuedAt(result?.status === "queued" ? Date.now() - 5000 : 0); }, [result]);
+  const { status } = useAgentStatus(queuedAt > 0);
   if (error) return <div className="error-banner" role="alert">{error}</div>;
   if (!result) return null;
+  if (result.status === "queued") {
+    const job = status?.last_job;
+    if (job?.finished_at && Date.parse(job.finished_at) >= queuedAt) {
+      return job.status === "printed"
+        ? <div className="success-banner" role="status">Напечатано</div>
+        : <div className="error-banner" role="alert">{job.error || "Не напечатано"}</div>;
+    }
+    return <div className="success-banner" role="status">{printResultText(result)}</div>;
+  }
   return <div className={result.status === "printed" ? "success-banner" : "error-banner"} role="status">{printResultText(result)}</div>;
 }
 
@@ -102,7 +148,6 @@ export function LotLabel({ lotId, readOnly = false, onPrinted }: { lotId: string
 export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }) {
   const [answer, setAnswer] = useState<SettingsAnswer | null>(null);
   const [form, setForm] = useState<Record<keyof PrintSettings, string> | null>(null);
-  const [printers, setPrinters] = useState<{ printers: string[]; on_windows: boolean } | null>(null);
   const [stamp, setStamp] = useState(0);
   const [busy, setBusy] = useState<"" | "save" | "test">("");
   const [error, setError] = useState("");
@@ -116,7 +161,6 @@ export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }
       setAnswer(loaded);
       setForm(asForm(loaded.settings));
     }, (reason) => { if (!cancelled) setError(failureText(reason, "Настройки печати не загрузились")); });
-    labelsApi.printers().then((list) => { if (!cancelled) setPrinters(list); }, () => { if (!cancelled) setPrinters({ printers: [], on_windows: false }); });
     return () => { cancelled = true; };
   }, []);
 
@@ -126,9 +170,6 @@ export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }
   </section>;
 
   const set = (key: keyof PrintSettings) => (event: { target: { value: string } }) => setForm({ ...form, [key]: event.target.value });
-  const known = printers?.printers ?? [];
-  // A saved printer that Windows no longer lists stays selectable — the settings must not change by themselves.
-  const choices = form.printer_name && !known.includes(form.printer_name) ? [form.printer_name, ...known] : known;
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -165,14 +206,9 @@ export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }
 
   return <section className="panel equipment-card" aria-label="Печать этикеток ГРН">
     <h2>Печать этикеток ГРН</h2>
+    <AgentBlock />
     <form className="printer-settings" onSubmit={(event) => void save(event)}>
       <fieldset className="printer-fields" disabled={readOnly}>
-        <label className="printer-name">Принтер
-          <select value={form.printer_name} onChange={set("printer_name")}>
-            <option value="">— не выбран (задание сохраняется файлом) —</option>
-            {choices.map((name) => <option key={name} value={name}>{name}</option>)}
-          </select>
-        </label>
         <label>Код
           <select value={form.code_type} onChange={set("code_type")}>
             {CODE_TYPES.map(([key, label]) => <option key={key} value={key}>{answer.code_types[key] ?? label}</option>)}
@@ -216,13 +252,32 @@ export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }
       Зазор между этикетками покажет встроенная калибровка принтера (зажать кнопку FEED при включении). Если оттиск съехал — поправьте
       сдвигом, макет трогать не нужно. Предпросмотр — ровно те точки, что уйдут в принтер; он обновляется после «Сохранить».
     </p>
-    <p className="page-sub">
-      {printers && !printers.on_windows
-        ? "Сервер ERP работает не на Windows: в очередь печати ничего не отправляется, задания только сохраняются файлами"
-        : "Принтеры — из Windows компьютера, на котором работает сервер ERP (принтер подключён к нему по USB)"}
-      {` · задания: ${answer.print_dir}`}
-    </p>
   </section>;
+}
+
+/** «Агент печати»: is the warehouse PC's agent alive, its printer and queue; how to install it when it never came. */
+function AgentBlock() {
+  const { status, failed } = useAgentStatus();
+  if (!status) return <p className="page-sub">{failed ? "Агент печати: состояние не загрузилось" : "Агент печати: загрузка…"}</p>;
+  const minutes = minutesSince(status.last_seen);
+  if (minutes === null) {
+    return <div className="agent-block tone-warn" role="status" aria-label="Агент печати">
+      <p><b>Агент печати:</b> ещё не подключался — установите агент (<a href={AGENT_DOCS} target="_blank" rel="noreferrer">инструкция</a>)</p>
+      <ol className="agent-howto">
+        <li>Скачайте папку <code>tools/print-agent</code> из репозитория ERP на ПК склада, к которому подключён принтер.</li>
+        <li>В «Доступы → Токены» выпустите токен «Печать этикеток» с областью «Печать этикеток (агент склада)».</li>
+        <li>Запустите <code>install.ps1</code> в PowerShell и вставьте токен.</li>
+      </ol>
+      {status.queue > 0 && <p>В очереди: {status.queue}</p>}
+    </div>;
+  }
+  const tone = minutes >= 10 ? "tone-danger" : minutes >= 1 ? "tone-warn" : "tone-ok";
+  const where = `${status.host ? `ПК ${status.host}` : "ПК склада"}${status.printer ? `, принтер ${status.printer}` : ""}`;
+  return <div className={`agent-block ${tone}`} role="status" aria-label="Агент печати">
+    <p><b>Агент печати:</b> {minutes < 1 ? `на связи · ${where}, был только что` : `не на связи ${minutes} мин · ${where}`}</p>
+    <p>В очереди: {status.queue}</p>
+    {status.last_error && <p className="tone-danger">Ошибка агента: {status.last_error}</p>}
+  </div>;
 }
 
 function asForm(settings: PrintSettings): Record<keyof PrintSettings, string> {
