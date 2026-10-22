@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { EtkRoute } from "./api";
 import type { PfArt } from "./etkPfArt";
-import { etkOpRuns, etkPfGroups, etkRoutePathDiagram, etkPfOutName, etkRouteChips, etkRouteDiagram, etkRouteSummary, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
+import { etkOpRuns, etkPfComponentInputs, etkPfGroups, etkPfNeed, etkRoutePathDiagram, etkPfOutName, etkRouteChips, etkRouteDiagram, etkRouteSummary, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
 import { formatQty } from "./format";
 import { CableArt } from "./RouteCanvas";
 import "./EtkRouteDiagram.css";
@@ -120,6 +120,10 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
   const diagram = pathOnly && active ? etkRoutePathDiagram(route, active) : etkRouteDiagram(route);
   const hidden = route.blocks.length - diagram.columns.reduce((sum, column) => sum + column.boxes.length, 0);
   const groups = new Map(etkPfGroups(route, list, batch).map((group) => [group.key, group]));
+  // Сколько штук ПФ отдаёт на партию — выходу без нормы в результате (типовая сборка пишет её только изделию).
+  const need = etkPfNeed(route, batch);
+  // Комплектующие ПФ — строками входа, когда схема без блоков комплекта (у «Сложной сборки» они приходят блоками).
+  const ownParts = !route.blocks.some((block) => block.kit);
   const scroller = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const [room, setRoom] = useState(0);
@@ -267,9 +271,14 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
               const open = box.key === active;
               // Задание: чужой ПФ — только название, номера операций и выход (схема входит в планшет).
               const brief = !onPick && !open;
-              const inputs = brief ? [] : open ? box.inputs : box.inputs.slice(0, SHOWN_INPUTS);
               const sketch = group && !brief ? art(group, box.inputs.map((input) => input.text)) : null;
               const output = group?.output[0];
+              const parts = group && !brief && ownParts ? etkPfComponentInputs(group, batch) : [];
+              const room = open ? Number.MAX_SAFE_INTEGER : SHOWN_INPUTS;
+              const shownParts = parts.slice(0, room);
+              const inputs = brief ? [] : box.inputs.slice(0, Math.max(0, room - shownParts.length));
+              const hiddenInputs = parts.length - shownParts.length + box.inputs.length - inputs.length;
+              const made = output ? rowQty(output) || (need.get(box.key) ? formatQty(need.get(box.key), output.unit || "шт") : "") : "";
               const state = hot ? (linked(box.key) ? " near" : " dim") : "";
               const label = `ПФ ${box.label}`;
               // Внутрь — только у выбранного или открытого ПФ; у прочих щелчок сначала выбирает блок.
@@ -293,10 +302,12 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
                   <span className="etk-dag-name">{box.name}</span>
                   {brief && group && group.ops.length > 0 && <small className="etk-dag-brief">оп. {etkOpRuns(group.ops.map((position) => list[position - 1]?.position || position), opNumber)}</small>}
                 </button>
-                {inputs.length > 0 && <span className="etk-dag-ins" aria-label="Вход">
+                {inputs.length + shownParts.length > 0 && <span className="etk-dag-ins" aria-label="Вход">
+                  {shownParts.map((part) => <span key={`part:${part.title}`} className="etk-dag-in part" title={part.title}>
+                    {part.text}{part.qty && <> — <i className="num">{part.qty}</i></>}</span>)}
                   {inputs.map((input) => <span key={`${input.label}:${input.text}`} className="etk-dag-in">
                     <b>{input.label}</b> {input.text}{input.times && <i> {input.times}</i>}</span>)}
-                  {box.inputs.length > inputs.length && <span className="etk-dag-in more">ещё {box.inputs.length - inputs.length}</span>}
+                  {hiddenInputs > 0 && <span className="etk-dag-in more">ещё {hiddenInputs}</span>}
                 </span>}
                 {sketch && <div className="etk-dag-art" aria-label={`Эскиз ${label}`} role="img">
                   {sketch.main && ("svg" in sketch.main ? <div dangerouslySetInnerHTML={{ __html: sketch.main.svg }} />
@@ -321,7 +332,7 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
                 })}</ol>}
                 {output && <div className="etk-dag-out" aria-label={`Выход ${label}`}>
                   <span title={group.output.map((row) => row.name).filter(Boolean).join("; ") || undefined}>→ {etkPfOutName(group) || "—"}{group.output.length > 1 ? ` и ещё ${group.output.length - 1}` : ""}</span>
-                  <span className="num">{rowQty(output)}</span>
+                  <span className="num">{made}</span>
                 </div>}
               </section>;
             })}

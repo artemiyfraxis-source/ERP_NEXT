@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KitsetBom, ProjectTechcard } from "./api";
 import { GenPfScheme, PREVIEW_DELAY, previewSummary, useBuildPreview, type BuildPreview } from "./GenPfScheme";
 import { TcGenerator } from "./TcGenerator";
+import { etkPfNeed } from "./etkRoute";
 
 /* Схема ПФ генератора как в собранной ЭТК (владелец 22.10: «как на 713К»): сервер собирает ЭТК из формы без записи,
    схема — EtkRouteDiagram техкарты; правка формы перестраивает её через паузу, последний ответ побеждает. */
@@ -20,8 +21,10 @@ function built(name = "Жгут готов"): ProjectTechcard {
     document: {
       kit: { part_quantity: "10" },
       operations: [
-        { position: 1, type: "cutWire", code: "CUT_WIRE_auto", title: "CUT_WIRE_auto | Резка", result: [{ name: "Провода нарезаны", norm: "20", unit: "шт" }] },
-        { position: 2, type: "prsTerm", code: "PRS", side: "A", title: "PRS | Опрессовка терминалов (А)" },
+        { position: 1, type: "cutWire", code: "CUT_WIRE_auto", title: "CUT_WIRE_auto | Резка", result: [{ name: "Провода нарезаны", norm: "", unit: "шт." }],
+          components: [{ name: "НВ4 0,5 красный", art: "НВ4 0,5 красный", norm: "6", unit: "м" }, { name: "НВ4 0,5 черный", art: "НВ4 0,5 черный", norm: "6", unit: "м" }] },
+        { position: 2, type: "prsTerm", code: "PRS", side: "A", title: "PRS | Опрессовка терминалов (А)",
+          components: [{ name: "Контакт XH", art: "SXH-001T-P0.6", norm: "20", unit: "шт." }, { name: "Колодка XH 4", art: "XHP-4", norm: "10", unit: "шт." }] },
         { position: 3, type: "prsTerm", code: "PRS", side: "B", title: "PRS | Опрессовка терминалов (В)", result: [{ name, norm: "10", unit: "шт" }] },
       ],
       route: {
@@ -89,6 +92,17 @@ describe("useBuildPreview", () => {
   });
 });
 
+describe("etkPfNeed", () => {
+  it("sums the pieces a ПФ hands to every consumer for the batch", () => {
+    const block = (key: string, final = false) => ({ key, name: key, ops: [1], final, components: [], outputs: 1, inputs: 0, minutes: 0, unit_minutes: 0, rolled_minutes: 0, rolled_ops: 0 });
+    const need = etkPfNeed({
+      blocks: [block("wire"), block("a"), block("b"), block("x", true)],
+      edges: [{ from: "wire", to: "a", per_unit: 2 }, { from: "wire", to: "b", per_unit: 3 }, { from: "a", to: "x", per_unit: 1 }, { from: "b", to: "x", per_unit: 1 }],
+    }, 500);
+    expect(Object.fromEntries(need)).toEqual({ wire: 2500, a: 500, b: 500, x: 500 });
+  });
+});
+
 describe("GenPfScheme", () => {
   it("draws the built ETK scheme: ПФ by level with inputs, operations by number and the output", () => {
     render(<GenPfScheme preview={{ card: built(), loading: false, error: "" }} />);
@@ -99,6 +113,27 @@ describe("GenPfScheme", () => {
     expect(within(pf).getByLabelText(/^Выход/)).toHaveTextContent("Жгут готов");
     expect(screen.queryByText("Схема ПФ")).not.toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("lists each ПФ's own parts per piece and the pieces it hands on for the batch, like the 713К view", () => {
+    render(<GenPfScheme preview={{ card: built(), loading: false, error: "" }} />);
+    const regions = screen.getAllByRole("region");
+    const cut = regions.find((item) => /^ПФ .*Провода нарезаны$/.test(item.getAttribute("aria-label") ?? ""))!;
+    const final = regions.find((item) => /^ПФ .*Жгут готов$/.test(item.getAttribute("aria-label") ?? ""))!;
+    expect(within(cut).getByLabelText("Вход")).toHaveTextContent("НВ4 0,5 красный — 0,6 мНВ4 0,5 черный — 0,6 м");
+    // The cut wires have no norm in their result: 10 pieces × 2 per harness.
+    expect(within(cut).getByLabelText(/^Выход/)).toHaveTextContent(/Провода нарезаны\s*20\sшт/);
+    expect(within(final).getByLabelText("Вход")).toHaveTextContent(/Контакт XH — 2 шт.*Колодка XH 4 — 1 шт.*Провода нарезаны/);
+    expect(within(final).getByLabelText(/^Выход/)).toHaveTextContent(/Жгут готов\s*10\sшт/);
+  });
+
+  it("leaves the parts to the kit blocks of a «Сложная сборка» scheme", () => {
+    const card = built();
+    const route = card.document!.route as { blocks: Array<Record<string, unknown>> };
+    route.blocks[0].kit = true;
+    render(<GenPfScheme preview={{ card, loading: false, error: "" }} />);
+    expect(screen.queryByText(/НВ4 0,5 красный —/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Колодка XH 4 —/)).not.toBeInTheDocument();
   });
 
   it("says «Строим схему…» while building, keeps the old scheme and shows the error banner", () => {
