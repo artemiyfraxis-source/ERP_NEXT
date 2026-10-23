@@ -23,7 +23,9 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 TZ=Europe/Moscow
 WORKDIR /app/backend
 # Node.js runs the techcard generator form without a browser (app.workflows.techcards_all generate).
-RUN apt-get update && apt-get install -y --no-install-recommends nodejs && rm -rf /var/lib/apt/lists/*
+# tesseract (rus+eng) + poppler's pdftoppm: OCR of a paper УПД from the warehouse scanner (warehouse/receipt_ocr.py).
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs tesseract-ocr tesseract-ocr-rus poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.lock.txt ./
 RUN pip install -r requirements.lock.txt
 COPY backend/ ./

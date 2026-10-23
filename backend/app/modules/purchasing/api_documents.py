@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from app.shared.clock import moscow_now
@@ -22,10 +23,12 @@ from app.workflows import purchasing_documents_receiving as receiving_flow
 
 from . import doc_chain, doc_search, invoices
 from .deps import purchasing_uow_factory, receiving_uow_factory
+from .infrastructure import InvoiceRow
 
 router = APIRouter(prefix="/api/purchasing", tags=["purchasing"])
 
 CHAIN_PAGE_SIZE = 150
+_NOTE_POLICY = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 Uow = Annotated[Callable, Depends(purchasing_uow_factory)]
 ReceivingUow = Annotated[Callable | None, Depends(receiving_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
@@ -102,6 +105,22 @@ def invoice_file(invoice_id: UUID, file_row_id: UUID, _: Viewer, make_uow: Uow):
     with uow, _errors():
         content, name = invoices.invoice_file(uow.session, invoice_id, file_row_id)
     return file_response(content, name)
+
+
+@router.get("/invoices/{invoice_id}/document")
+def invoice_document(invoice_id: UUID, _: Viewer, make_uow: Uow) -> Response:
+    """СЧЕТ of an order the Roller_Buyer import put on a Kaiten invoice of the registry (procurement
+    `kaiten_invoice_url`): the invoice's PDF once the registry has it, else a page saying the file is not attached."""
+    uow = make_uow()
+    with uow, _errors():
+        row = uow.session.get(InvoiceRow, invoice_id)
+        if row is None:
+            raise invoices.InvoiceNotFound("Счёт не найден")
+        found = invoices.invoice_pdf(uow.session, invoice_id, row.number)
+        page = None if found is not None else invoices.missing_file_page(row)
+    if found is not None:
+        return file_response(*found)
+    return HTMLResponse(page, headers={"Content-Security-Policy": _NOTE_POLICY, "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/doc-chain")

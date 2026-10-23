@@ -10,13 +10,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
+from html import escape
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .doc_chain import Chain, ChainInvoice, World, load_invoice_files
-from .doc_refs import PaymentOrder
+from .doc_refs import PaymentOrder, norm_doc_number
 from .infrastructure import DocumentFileRow, InvoiceFileRow, InvoiceRow, SupplierRow
 
 PAGE_SIZE = 100
@@ -181,6 +183,45 @@ def invoice_file(session: Session, invoice_id: UUID, file_row_id: UUID) -> tuple
     if stored is None:
         raise InvoiceNotFound("Файл не найден")
     return stored.content, row.name
+
+
+def invoice_pdf(session: Session, invoice_id: UUID, number: str | None = None) -> tuple[bytes, str] | None:
+    """The invoice's own PDF downloaded into the registry: the file Kaiten marks as the invoice, else a PDF named with
+    `number` (the Roller_Buyer import picks it the same way); None while none is downloaded."""
+    files = [row for row in session.scalars(
+        select(InvoiceFileRow).where(InvoiceFileRow.invoice_id == invoice_id).order_by(InvoiceFileRow.seq))
+        if row.file_id is not None and row.name.lower().endswith(".pdf")]
+    key = norm_doc_number(number or "")
+    row = (next((item for item in files if item.kind == "invoice"), None)
+           or next((item for item in files if key and key in norm_doc_number(item.name)), None))
+    stored = session.get(DocumentFileRow, row.file_id) if row is not None else None
+    return (bytes(stored.content), row.name) if stored is not None else None
+
+
+def invoice_title(row: InvoiceRow) -> str:
+    """«Счёт Kaiten № … от …» — how an order shows the registry's invoice it stands on."""
+    number = f" № {row.number}" if row.number else f" (карточка {row.external_id})"
+    return f"Счёт Kaiten{number}" + (f" от {row.doc_date:%d.%m.%Y}" if row.doc_date else "")
+
+
+def missing_file_page(row: InvoiceRow) -> str:
+    """What the invoice link of an order opens while the registry has no PDF of the invoice yet."""
+    title = f"{invoice_title(row)} (файл не приложен)"
+    facts = [
+        ("Карточка Kaiten", f"{row.external_id} — {row.title}"),
+        ("Продавец", " ".join(item for item in (row.seller_name or "", f"ИНН {row.seller_inn}" if row.seller_inn else "") if item)),
+        ("Сумма", f"{Decimal(row.total) / 100:,.2f} ₽".replace(",", " ").replace(".", ",") if row.total is not None else ""),
+        ("Оплата", f"{row.payment_date:%d.%m.%Y}" if row.payment_date else ""),
+    ]
+    rows = "".join(f"<tr><th>{escape(name)}</th><td>{escape(value)}</td></tr>" for name, value in facts if value)
+    return (
+        f'<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>{escape(title)}</title>'
+        '<style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;color:#202124}th{text-align:left;padding-right:16px;'
+        'font-weight:500;color:#5f6368}</style></head>'
+        f"<body><h1 style=\"font-size:18px\">{escape(title)}</h1><table>{rows}</table>"
+        "<p>Счёт есть в реестре «Счета», но его PDF ещё не скачан. Файл приложится к заказу при переносе "
+        "из Roller_Buyer с папкой файлов.</p></body></html>"
+    )
 
 
 def supplier_inn(session: Session, supplier_id: UUID | None) -> str | None:

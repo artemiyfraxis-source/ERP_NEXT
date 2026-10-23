@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
-import { ApiError, warehouseApi, type WarehouseLot, type WarehouseReceipt as ReceiptDoc } from "./api";
+import { ApiError, warehouseApi, type WarehouseLot, type WarehouseReceipt as ReceiptDoc, type WarehouseReceiptScan } from "./api";
 import { labelsApi } from "./LabelPrint";
 import { PageWindow } from "./PageWindow";
 import { SuggestInput } from "./SuggestInput";
@@ -85,6 +85,9 @@ function AcceptDialog({ line, warehouse, onClose, onAccept }: {
   </PageWindow>;
 }
 
+const SCAN_POLL_MS = 1500;
+const SCAN_WAIT_MS = 130_000;
+
 /** «Внести позиции»: the supply header and a paste grid; every row is accepted on its own with «Принять». */
 export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }: Props) {
   const [header, setHeader] = useState<ReceiptHeader>(emptyHeader);
@@ -95,6 +98,10 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [scanStatus, setScanStatus] = useState<"" | "pending" | "claimed">("");
+  const [scanError, setScanError] = useState("");
+  const scanJobId = useRef<string | null>(null);
+  const scanAborted = useRef(false);
   const [accepting, setAccepting] = useState<number | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -221,23 +228,70 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     });
   }
 
+  function applyScanResult(result: WarehouseReceiptScan) {
+    const next = applyScan(header, lines, result);
+    setHeader(next.header);
+    setLines(withTrailingBlank(next.lines));
+    setScanFile(result.scan_file);
+    setNote(result.note || `Распознано строк: ${next.added}`);
+    next.lines.forEach((line, index) => { if (line !== lines[index] && line.article.trim()) lookup(index, line.article); });
+  }
+
   async function scan(file: File) {
     setScanning(true);
     setError("");
     try {
-      const result = await warehouseApi.scanReceipt(file);
-      const next = applyScan(header, lines, result);
-      setHeader(next.header);
-      setLines(withTrailingBlank(next.lines));
-      setScanFile(result.scan_file);
-      setNote(result.note || `Распознано строк: ${next.added}`);
-      next.lines.forEach((line, index) => { if (line !== lines[index] && line.article.trim()) lookup(index, line.article); });
+      applyScanResult(await warehouseApi.scanReceipt(file));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось разобрать УПД");
     } finally {
       setScanning(false);
       if (fileInput.current) fileInput.current.value = "";
     }
+  }
+
+  /** «Сканировать»: задание уходит на ПК склада, ответ опрашиваем каждые 1,5 с, не дольше 130 с. */
+  async function scanFromScanner() {
+    setScanning(true);
+    setError("");
+    setScanError("");
+    setScanStatus("pending");
+    scanAborted.current = false;
+    scanJobId.current = null;
+    try {
+      const job = await warehouseApi.startScanJob();
+      scanJobId.current = job.id;
+      const deadline = Date.now() + SCAN_WAIT_MS;
+      let current = job;
+      for (;;) {
+        if (scanAborted.current) return;
+        if (current.status === "done" && current.result) { applyScanResult(current.result); return; }
+        if (current.status === "failed") { setScanError(current.error || "Сканер не ответил"); return; }
+        setScanStatus(current.status === "claimed" ? "claimed" : "pending");
+        if (Date.now() >= deadline) {
+          setScanError("ПК склада не ответил за 130 с. Проверьте, что он включён и агент запущен");
+          void warehouseApi.cancelScanJob(job.id).catch(() => undefined);
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, SCAN_POLL_MS));
+        if (scanAborted.current) return;
+        current = await warehouseApi.scanJob(job.id);
+      }
+    } catch (reason) {
+      if (!scanAborted.current) setScanError(reason instanceof Error ? reason.message : "Не удалось отсканировать УПД");
+    } finally {
+      scanJobId.current = null;
+      setScanStatus("");
+      setScanning(false);
+    }
+  }
+
+  function cancelScan() {
+    scanAborted.current = true;
+    const id = scanJobId.current;
+    if (id) void warehouseApi.cancelScanJob(id).catch(() => undefined);
+    setScanStatus("");
+    setScanning(false);
   }
 
   async function resume(id: string) {
@@ -372,11 +426,18 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
           {headerField("upd_date", "Дата УПД", "date")}
           {headerField("purpose", "Назначение")}
           <div className="wr-scan">
-            <button type="button" className="secondary" disabled={scanning} onClick={() => fileInput.current?.click()}>{scanning ? "Разбираем УПД…" : "Отсканировать УПД"}</button>
+            <button type="button" className="secondary" disabled={scanning} onClick={() => void scanFromScanner()}>Сканировать</button>
+            <button type="button" className="secondary" disabled={scanning} onClick={() => fileInput.current?.click()}>{scanning && !scanStatus ? "Разбираем УПД…" : "Файл…"}</button>
             <input ref={fileInput} type="file" hidden aria-label="Файл УПД" accept=".pdf,image/*" {...(phone ? { capture: "environment" as const } : {})}
               onChange={(event) => { const file = event.target.files?.[0]; if (file) void scan(file); }} />
           </div>
         </div>
+        {scanStatus || scanError ? (
+          <p className={`wr-scan-status${scanError ? " error" : ""}`} role="status">
+            {scanError || (scanStatus === "claimed" ? "Сканирует…" : "Положите УПД на стекло сканера — ждём ПК склада…")}
+            {scanStatus ? <> <a href="#" onClick={(event) => { event.preventDefault(); cancelScan(); }}>Отменить</a></> : null}
+          </p>
+        ) : null}
         <p className="rg-hint">
           Ctrl+V — вставка блока из Excel · Enter — вниз, Tab — вправо · пустое назначение — из шапки · до {RECEIPT_LIMIT} строк
         </p>

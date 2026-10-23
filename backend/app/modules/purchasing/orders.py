@@ -23,6 +23,7 @@ from uuid import UUID, uuid4, uuid5
 
 from sqlalchemy import select
 
+from app.modules.procurement.domain import is_kaiten_invoice_url
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.workflows.purchasing_orders import OrderLineFacts
@@ -168,6 +169,9 @@ def order_json(number: str, lines: Sequence[OrderLineFacts], facts: OrderFactRow
             key = (line.invoice_url or "", line.invoice_number or "")
             invoices.setdefault(key, {
                 "number": line.invoice_number, "date": _iso(line.invoice_date), "url": line.invoice_url,
+                # The Roller_Buyer import's stand-in for the file: a Kaiten invoice of «Счета» (the link opens its PDF
+                # once the registry has it, else «файл не приложен»).
+                "kaiten": is_kaiten_invoice_url(line.invoice_url),
             })
     open_lines = [line for line in staged if line.status in (AWAITING, TO_PAY, IN_TRANSIT, QUARANTINE)]
     expected = sorted({line.expected_arrival for line in open_lines if line.expected_arrival})

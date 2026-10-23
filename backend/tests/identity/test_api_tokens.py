@@ -119,7 +119,8 @@ def test_admin_issues_lists_and_revokes_a_token_and_only_the_hash_is_stored(toke
     [row] = listed["tokens"]
     assert row["id"] == issued["id"] and row["name"] == "Claude Code"
     assert "token" not in row and secret not in str(listed)
-    assert set(listed["scopes"]) == {"tcgen", "assembly", "refs:read", "refs:write", "labels:print"}
+    assert set(listed["scopes"]) == {"tcgen", "assembly", "refs:read", "refs:write", "labels:print",
+                                       "scan:upload"}
 
     with sessions() as session:
         stored = session.scalar(select(IdentityApiTokenRow))

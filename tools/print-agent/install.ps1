@@ -1,6 +1,6 @@
 ﻿<#
  Установка агента печати этикеток. Запускать в PowerShell на ПК склада (под тем пользователем, который работает за ПК).
-   .\install.ps1 -Token <токен ERP со scope labels:print>
+   .\install.ps1 -Token <токен ERP со scopes labels:print и scan:upload> [-Scanner <IP сканера>]
  Удаление: .\install.ps1 -Uninstall   (или uninstall.ps1)
 #>
 [CmdletBinding()]
@@ -8,6 +8,7 @@ param(
     [string]$Server = 'https://erp-server.tail811f20.ts.net',
     [string]$Token,
     [string]$Printer,
+    [string]$Scanner,
     [switch]$Uninstall
 )
 
@@ -30,7 +31,7 @@ function Remove-Agent {
 
 if ($Uninstall) { Remove-Agent; return }
 
-if (-not $Token) { throw 'Нужен -Token (токен ERP со scope labels:print, создаёт администратор в ERP).' }
+if (-not $Token) { throw 'Нужен -Token (токен ERP со scopes labels:print и scan:upload, создаёт администратор в ERP).' }
 
 $printers = @(Get-Printer | Select-Object -ExpandProperty Name)
 if (-not $Printer) {
@@ -53,6 +54,7 @@ $cfg = [ordered]@{
     tokenProtected = (ConvertFrom-SecureString $secure)
 }
 $cfgPath = Join-Path $Dir 'config.json'
+if ($Scanner) { $cfg['scanner'] = $Scanner.Trim() }
 [IO.File]::WriteAllText($cfgPath, ($cfg | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
 
 # Доступ к папке: только SYSTEM, администраторы и текущий пользователь.
@@ -73,6 +75,7 @@ Write-Host ''
 Write-Host 'Агент печати этикеток установлен.'
 Write-Host "  Сервер:   $($cfg.server)"
 Write-Host "  Принтер:  $Printer"
+Write-Host "  Сканер:   $(if ($Scanner) { $Scanner + ' (eSCL)' } else { 'USB (WIA), адрес не задан' })"
 Write-Host "  Задача:   $TaskName (запуск при входе в Windows, уже запущена)"
 Write-Host "  Журнал:   $Dir\agent.log"
 Write-Host 'Токен сохранён в зашифрованном виде и в журнал не пишется.'
