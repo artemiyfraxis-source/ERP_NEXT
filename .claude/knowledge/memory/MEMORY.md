@@ -30,6 +30,7 @@
 - [Coax contact depth](coax-contact-depth.md) — заглубление = body face → contact by tracing lines; SMA male E 0,38…1,14, female H+I+J 1,88…2,41; mm only
 - [U.FL is not MHF1](ufl-not-mhf.md) — owner 20.10: Hirose U.FL ≠ I-PEX MHF1/IPEX; never merge across series even with one supplier code
 - [Coax pin type](coax-pin-type.md) — angled = «пайка внутри корпуса», never crimp; 2.92/3.5 = «цанга»; seller «обжимной» is the shield, not the pin
+- [Coax VSWR acceptance](coax-vswr-acceptance.md) — owner 22.10: assembly VSWR judged by the limit its connectors allow (Γ1+Γ2), not a generic ≤1,3
 - [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
 - [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
 - [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range
@@ -40,6 +41,10 @@
 - [One article, one row](one-article-one-row.md) — owner 19.10: each supplier article its own row, cheapest seller; coax card = VNA + connectors from БД.КОАКС
 - [Connector gender names](connector-gender-names.md) — вилка = штыри, розетка = гнёзда во всех сериях; слово берётся из contacts (owner 17.10)
 - [БД.ПРОВ split](prov-kind-split-plan.md) — DONE 21.10 #620: cable_kind per row, own columns per kind; монтажные = row per colour (Марка+Цвет)
-- [RV tech-doc base](rv-td-base.md) — ГОСТ РВ ТД base rev 1 + СТО (Claude Doc), built in ERP by PR #614/#622/#624 (td_issues auto-issued in background, print kit); 3.1102→ГОСТ Р 3.102-2024, no «КТК» in ЕСТД
-- [Витя's hybrid on prod](vitya-hybrid-stage-options.md) — #627 21.10; all 24 stage options ON in prod since 22.10 (owner: test it) via ERP_STAGE_OPTIONS file in /opt/erp/import/stage
+- [RV tech-doc base](rv-td-base.md) — ГОСТ РВ ТД base rev 1 + СТО (Claude Doc), built in ERP by PR #614/#622/#624 (td_issues auto-issued in background, print kit); 3.1102→ГОСТ Р 3.102-2024, no «КТК» in ЕСТД; 22.10 СТО ред. 2 + clause-level norms, 112 templates audited (#643), equipment/code facts
+- [Витя's hybrid is permanent](vitya-hybrid-stage-options.md) — #627/#641 22.10: stage options cut out (no flags); labels via DB queue + print agent on warehouse PC; presets 58×30/58×40/100×50
 - [Hook-up wire suppliers](hookup-wire-suppliers.md) — Снабкабель + Паритет base for монтажные провода; what each sells, price quirks; монтажные = row per colour
+- [Warehouse scanner on USB](warehouse-scanner-usb.md) — Pantum BM2300W by USB at the warehouse PC, agent scans via WIA, never ask for an IP
+- [Warehouse PC SSH](warehouse-pc-ssh.md) — I can SSH into the warehouse PC via the erp-server jump and fix the agent myself; hosts and recipe in the private brain
+- [УПД scan learning](upd-scan-learning.md) — review Алексей's scans vs accepted lots, turn misses into parser rules; per-supplier corrections planned
+- [Owner can't open artifacts](owner-cant-open-artifacts.md) — no Claude Docs/artifacts for him: docs as Markdown in repo docs/ + GitHub link
