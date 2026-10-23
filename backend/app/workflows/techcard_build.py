@@ -132,6 +132,15 @@ def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: b
     )
 
 
+def load_coax_refs(references_factory: Callable[[], ReferencesUnitOfWork]) -> tuple[tuple[Mapping[str, Any], ...], tuple[CoaxCard, ...]]:
+    """The current БД.КОАКС rows and «Коаксиальные кабели» cards — the inputs of `enrich_coax_vswr_norm` — read without
+    the technology snapshot (the ОТК computes the norm of an old ETK from the references as they are now)."""
+    with references_factory() as uow:
+        rows = _rows(uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000))
+        cards = tuple(uow.cable_structure.cards())
+    return rows, cards
+
+
 def refs_stamp(refs: Refs) -> str:
     """Stable hash of the reference data the enrichers read (not of the import time: reloading the same data gives
     the same stamp); a card whose stored stamp differs has to be re-derived."""

@@ -1,7 +1,9 @@
 """Замеры КСВН коаксиальных сборок и паспортные данные изделия по HTTP (ОТК, ВАЦ).
 
 Норму КСВН сервер берёт из ЭТК, на ревизии которой запущено задание (ключ `coaxVswrNorm`), — клиент норму не передаёт.
-ЭТК, выпущенная до нормы (ключа нет), даёт «норма не задана»: вердикт ставит контролёр с причиной.
+ЭТК, выпущенная до нормы (ключа нет), но с коаксиальной сборкой в `build_config.coax` (разъёмы на обоих концах), получает
+норму «на лету» — теми же `enrich_coax_vswr_norm` / `vswr_norm` по текущим справочникам (`source: "computed"`, основание
+с датой), без пересборки ЭТК. Не коаксиальная сборка — «норма не задана» с причиной, вердикт ставит контролёр.
 Замер пишет раздел «ОТК» (правка), читает «Производство» (просмотр) — как остальной ОТК в production/api.py.
 Паспорт изделия — JSON из разделов: сведения об изделии и ЭТК, норма с основанием и список проверок ОТК (`checks`);
 КСВН — первая проверка (`kind: "vswr"`), другие виды проверок добавляются в тот же список.
@@ -33,17 +35,23 @@ from app.modules.production.vswr import (
     record_vswr,
     vswr_file,
 )
+from app.modules.production.autoplan_api import references_uow_factory
+from app.modules.production.domain import ProductionStatus
 from app.modules.techcards.etk_builder import vswr_control, vswr_in_sample
 from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_overview_principal, production_quality_principal
 from app.shared.stored_files import file_response
+from app.workflows.techcard_build import enrich_coax_vswr_norm, load_coax_refs
 
 router = APIRouter(prefix="/api/production/vswr", tags=["production"])
 
 NORM_KEY = "coaxVswrNorm"
 OLD_ETK_REASON = "ЭТК выпущена до нормы КСВН"
 NO_ETK_REASON = "ЭТК задания не найдена — норма КСВН неизвестна"
+NOT_COAX_REASON = "не коаксиальная сборка"
+NO_REFS_REASON = "справочники коаксиальных разъёмов недоступны — норма КСВН не рассчитана"
+COMPUTED = "computed"
 
 
 class RecordVswrPayload(BaseModel):
@@ -68,12 +76,56 @@ def undefined_norm(reason: str) -> dict[str, Any]:
     return {"status": "undefined", "reason": reason, "vswrMax": None}
 
 
-def etk_norm(document: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Норма КСВН из документа ЭТК; ключа нет (ЭТК старее нормы) — «не задана» с причиной."""
-    norm = document.get(NORM_KEY) if isinstance(document, Mapping) else None
+def coax_config(document: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """`build_config.coax` of the ETK when it is an assembly with a connector on both ends (the only kind that has a
+    norm); anything else — None."""
+    config = document.get("build_config") if isinstance(document, Mapping) else None
+    coax = config.get("coax") if isinstance(config, Mapping) else None
+    if not isinstance(coax, Mapping):
+        return None
+    for side in ("sideA", "sideB"):
+        end = coax.get(side)
+        if not isinstance(end, Mapping) or not str(end.get("article") or "").strip():
+            return None
+    return coax
+
+
+class CoaxRefs:
+    """The БД.КОАКС rows and cable cards, read at most once per request and only when an old ETK needs them."""
+
+    def __init__(self, factory: Callable[[], Any] | None) -> None:
+        self._factory = factory
+        self._loaded: tuple[Any, Any] | None = None
+
+    def get(self) -> tuple[Any, Any] | None:
+        if self._loaded is None and self._factory is not None:
+            self._loaded = load_coax_refs(self._factory)
+        return self._loaded
+
+
+def computed_norm(document: Mapping[str, Any] | None, refs: CoaxRefs, now: datetime) -> dict[str, Any]:
+    """The norm of an ETK issued before `coaxVswrNorm`, from its coax config and the references of today."""
+    coax = coax_config(document)
+    if coax is None:
+        return undefined_norm(NOT_COAX_REASON)
+    loaded = refs.get()
+    if loaded is None:
+        return undefined_norm(NO_REFS_REASON)
+    rows, cards = loaded
+    norm = enrich_coax_vswr_norm({"coax": coax}, rows, cards)["coax"].get("vswrNorm")
     if not isinstance(norm, Mapping):
-        return undefined_norm(OLD_ETK_REASON)
-    return dict(norm)
+        return undefined_norm(NOT_COAX_REASON)
+    return {**norm, "source": COMPUTED,
+            "basis": f"рассчитана по справочникам на {now:%d.%m.%Y} — {OLD_ETK_REASON}"}
+
+
+def etk_norm(document: Mapping[str, Any] | None, refs: CoaxRefs | None = None, now: datetime | None = None) -> dict[str, Any]:
+    """Норма КСВН из документа ЭТК; ключа нет (ЭТК старее нормы) — расчёт по её коаксиальной сборке и текущим
+    справочникам, а без сборки — «не задана» с причиной."""
+    norm = document.get(NORM_KEY) if isinstance(document, Mapping) else None
+    if isinstance(norm, Mapping):
+        return dict(norm)
+    return computed_norm(document, refs or CoaxRefs(None), now or moscow_now())
 
 
 def etk_control(document: Mapping[str, Any] | None, norm: Mapping[str, Any]) -> dict[str, Any]:
@@ -153,7 +205,7 @@ def _norm_result(norm: Mapping[str, Any]) -> dict[str, Any]:
         "vswr_max": _num(norm.get("vswrMax")) if status == "ok" else None,
         "band_mhz": list(band) if isinstance(band, (list, tuple)) else None,
         "s21_db": norm.get("s21Db"), "length_m": norm.get("lengthM"),
-        "source": norm.get("source"),
+        "source": norm.get("source"), "basis": norm.get("basis"),
     }
 
 
@@ -233,12 +285,14 @@ def upload_measurement(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], Any], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
+    refs_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
 ) -> dict:
-    """Замер из файла ВАЦ. Норма — из закреплённой ревизии ЭТК задания; вердикт по ней сам, а без нормы — вручную."""
+    """Замер из файла ВАЦ. Норма — из закреплённой ревизии ЭТК задания (старая ЭТК — расчёт по справочникам); вердикт
+    по ней сам, а без нормы — вручную."""
     content = _decode(payload)
     task = _task(uow_factory, payload.task_id)
     document, etk = _task_etk(techcards_factory, task)
-    norm = etk_norm(document) if etk["techcard_id"] else undefined_norm(NO_ETK_REASON)
+    norm = etk_norm(document, CoaxRefs(refs_factory), now) if etk["techcard_id"] else undefined_norm(NO_ETK_REASON)
     measurement = _guard(lambda: record_vswr(RecordVswrCommand(
         task_id=task.id, position=payload.position, instrument_id=payload.instrument_id,
         file_name=payload.file_name, content=content, norm=norm, actor=principal.actor, now=now,
@@ -248,12 +302,89 @@ def upload_measurement(
     return {"measurement": _measurement_result(measurement, trace=True), "position": payload.position}
 
 
+@router.get("/tasks")
+def coax_tasks(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], Any], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
+    refs_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
+) -> dict:
+    """Список для выбора задания в «Замерах КСВН»: только задания, чья закреплённая ЭТК — коаксиальная сборка. Каждая
+    ЭТК читается один раз, справочники — один раз и только если нужна норма старой ЭТК; файлов замеров не грузим."""
+    with uow_factory() as uow:
+        tasks = [task for task in uow.production.list(limit=1000) if task.status is not ProductionStatus.CANCELLED]
+    documents = _etk_documents(techcards_factory, tasks)
+    refs = CoaxRefs(refs_factory)
+    norms: dict[tuple[Any, Any, Any, Any], dict[str, Any]] = {}
+    rows = []
+    for task in tasks:
+        key = (task.techcard_id, task.techcard_revision, task.project, task.item)
+        document = documents.get(key)
+        if document is None or coax_config(document) is None:
+            continue
+        if key not in norms:
+            norms[key] = etk_norm(document, refs, now)
+        norm = norms[key]
+        shown = _norm_result(norm)
+        control = etk_control(document, norm)
+        required = [position for position in range(1, task.quantity + 1) if vswr_in_sample(control, position)]
+        rows.append({
+            "id": str(task.id), "number": task.number, "name": task.name, "item": task.item,
+            "quantity": task.quantity, "status": task.status.value,
+            "norm": {"status": shown["status"], "vswr_max": shown["vswr_max"], "source": shown["source"]},
+            "control": control,
+            "required": {"total": len(required), "measured": _measured_count(uow_factory, task, required)},
+        })
+    return {"tasks": rows}
+
+
+def _etk_documents(techcards_factory: Callable[[], Any] | None, tasks) -> dict[tuple[Any, Any, Any, Any], dict[str, Any]]:
+    """Документ закреплённой ревизии ЭТК каждого задания (ключ — как в `coax_tasks`); одна транзакция, каждая
+    (карточка, ревизия) читается один раз."""
+    if techcards_factory is None:
+        return {}
+    found: dict[tuple[Any, Any, Any, Any], dict[str, Any]] = {}
+    by_card: dict[tuple[Any, Any], dict[str, Any]] = {}
+    with techcards_factory() as techcards:
+        for task in tasks:
+            key = (task.techcard_id, task.techcard_revision, task.project, task.item)
+            if key in found:
+                continue
+            card = techcards.techcards.get(task.techcard_id) if task.techcard_id else None
+            if card is None:
+                card = issued_card_for_item(techcards, task.project, task.item)
+            if card is None:
+                continue
+            card_key = (card.id, task.techcard_revision)
+            if card_key not in by_card:
+                by_card[card_key] = dict(pinned_card(techcards, card, task.techcard_revision)[0].document or {})
+            found[key] = by_card[card_key]
+    return found
+
+
+def _measured_count(uow_factory, task, required: list[int]) -> int:
+    """Сколько из требуемых изделий задания уже имеют замер; заданию без замеров изделия не перебираем."""
+    measured_ids = {item.serial_id for item in list_vswr_for_task(task.id, uow_factory())}
+    if not measured_ids:
+        return 0
+    count = 0
+    with uow_factory() as uow:
+        for position in required:
+            serial = uow.serials.by_position(task.id, position)
+            if serial is not None and serial.id in measured_ids:
+                count += 1
+    return count
+
+
 @router.get("/tasks/{task_id}")
 def task_measurements(
     task_id: UUID,
     _principal: Annotated[Principal, Depends(production_overview_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], Any], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
+    refs_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
 ) -> dict:
     """По изделиям задания: действующий (последний) замер и число попыток; изделия без замера — attempts 0."""
     task = _task(uow_factory, task_id)
@@ -270,7 +401,7 @@ def task_measurements(
             if serial is not None:
                 serials.append((position, serial))
     document, etk = _task_etk(techcards_factory, task)
-    norm = etk_norm(document) if etk["techcard_id"] else undefined_norm(NO_ETK_REASON)
+    norm = etk_norm(document, CoaxRefs(refs_factory), now) if etk["techcard_id"] else undefined_norm(NO_ETK_REASON)
     control = etk_control(document, norm)
     # Требуемые замеры — по всей партии задания (выборка 1 из N: первое и каждое N-е), замерено — у кого есть замер.
     measured = {position for position, serial in serials if serial.id in latest}
@@ -322,12 +453,14 @@ def serial_passport(
     _principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], Any], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    refs_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
 ) -> dict:
     """Паспорт изделия: изделие и ЭТК, кабель и концы, норма с основанием, проверки ОТК (сейчас — КСВН по ВАЦ)."""
     task = _task(uow_factory, task_id)
     serial, rows = _serial_measurements(uow_factory, task, position)
     document, etk = _task_etk(techcards_factory, task)
-    etk_side = etk_norm(document) if etk["techcard_id"] else undefined_norm(NO_ETK_REASON)
+    etk_side = etk_norm(document, CoaxRefs(refs_factory), now) if etk["techcard_id"] else undefined_norm(NO_ETK_REASON)
     latest = rows[-1] if rows else None
     # Норма паспорта — та, по которой судили последний замер (снимок); замера ещё нет — норма из ЭТК задания.
     norm = latest.norm if latest is not None else etk_side
@@ -359,8 +492,9 @@ def serial_passport(
         "etk": etk,
         "norm": {
             **_norm_result(norm),
-            "basis": (f"ЭТК {etk['item_index']}, ревизия {etk['revision']}" if etk["techcard_id"]
-                      else "ЭТК задания не найдена"),
+            "basis": ((f"ЭТК {etk['item_index']}, ревизия {etk['revision']}" if etk["techcard_id"]
+                       else "ЭТК задания не найдена")
+                      + (f"; {norm['basis']}" if isinstance(norm, Mapping) and norm.get("basis") else "")),
             "from_snapshot": latest is not None,
         },
         "checks": checks,
