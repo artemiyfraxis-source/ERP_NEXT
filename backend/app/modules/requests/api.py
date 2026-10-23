@@ -15,11 +15,12 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.shared.http_auth import (
     Principal,
     authenticated_principal,
+    handoff_principal,
     myrequests_principal,
     newrequest_principal,
-    procurement_edit_principal,
     requests_form_principal,
     requests_view_principal,
+    section_allowed,
 )
 from app.shared.clock import moscow_now, moscow_today
 
@@ -507,16 +508,19 @@ def import_requests(
 @router.post("/handoff", status_code=202)
 def handoff_requests(
     payload: HandoffRequestsInput,
-    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    principal: Annotated[Principal, Depends(handoff_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(unit_of_work_factory)],
 ) -> dict:
     try:
+        buyer = section_allowed(principal, ("procurement",), "edit")
         command = HandoffRequestsCommand(
             request_ids=tuple(payload.request_ids),
             actor=principal.actor,
             now=now,
             retransfer=payload.retransfer,
+            as_buyer=buyer,
+            own_only=not buyer and not section_allowed(principal, ("requests",), "edit"),
         )
         messages = _retry_transaction(
             lambda: handoff_requests_use_case(command, uow_factory()),
@@ -525,6 +529,8 @@ def handoff_requests(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     return {
         "accepted": [
             {

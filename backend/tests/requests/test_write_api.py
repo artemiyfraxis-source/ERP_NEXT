@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -111,7 +111,63 @@ def test_request_body_limit_rejects_oversized_payload(write_api):
     assert response.status_code == 413
 
 
-def test_handoff_requires_buyer_and_retry_does_not_duplicate_outbox(write_api):
+def test_anyone_hands_their_own_request_over_with_nobody_as_its_buyer(write_api):
+    # Owner 23.10: «Передавать заявки в закупку всем». The initiator is not a buyer — the line goes to Procurement
+    # with nobody's name on it («Неразобранные»), not onto the initiator's desk; «Повторно» stays the buyer's.
+    client, _, sessions = write_api
+    created = client.post(
+        "/api/requests",
+        headers={"Idempotency-Key": "create:handoff:own"},
+        json={"requests": [request_payload()]},
+    ).json()
+    request_id = created["requests"][0]["id"]
+
+    handed = client.post("/api/requests/handoff", json={"request_ids": [request_id]})
+
+    assert handed.status_code == 202, handed.text
+    with sessions() as session:
+        row = session.get(RequestRow, UUID(request_id))
+        assert row.status == "В работе" and row.procurement_actor_name is None
+        message = session.scalars(select(OutboxMessageRow)).one()
+        assert message.payload["buyer_id"] is None
+    again = client.post("/api/requests/handoff", json={"request_ids": [request_id], "retransfer": True})
+    assert again.status_code == 422
+
+
+def test_without_requests_on_edit_only_ones_own_request_is_handed_over(write_api):
+    client, _, sessions = write_api
+    created = client.post(
+        "/api/requests",
+        headers={"Idempotency-Key": "create:handoff:other"},
+        json={"requests": [request_payload()]},
+    ).json()
+    request_id = created["requests"][0]["id"]
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=uuid4(), name="Сидоров", department="РНД"),
+        email="sidorov@example.test",
+        roles=frozenset({"employee"}),
+        permissions={"newrequest": "edit", "myrequests": "view"},
+    )
+
+    foreign = client.post("/api/requests/handoff", json={"request_ids": [request_id]})
+
+    assert foreign.status_code == 403
+    assert foreign.json()["detail"] == "Передать в закупку можно только свои заявки"
+    with sessions() as session:
+        assert session.get(RequestRow, UUID(request_id)).status == "Новый"
+        assert session.scalar(select(func.count()).select_from(OutboxMessageRow)) == 0
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=uuid4(), name="Козлова", department="Коммерция"),
+        email="kozlova@example.test",
+        roles=frozenset({"commercial"}),
+        permissions={"requests": "edit", "procurement": "view"},
+    )
+    assert client.post("/api/requests/handoff", json={"request_ids": [request_id]}).status_code == 202
+    with sessions() as session:
+        assert session.get(RequestRow, UUID(request_id)).procurement_actor_name is None
+
+
+def test_a_buyer_takes_the_handed_request_and_a_retry_does_not_duplicate_outbox(write_api):
     client, engine, sessions = write_api
     created = client.post(
         "/api/requests",
@@ -120,14 +176,11 @@ def test_handoff_requires_buyer_and_retry_does_not_duplicate_outbox(write_api):
     ).json()
     request_id = created["requests"][0]["id"]
 
-    forbidden = client.post("/api/requests/handoff", json={"request_ids": [request_id]})
-    assert forbidden.status_code == 403
-
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Петров", department="Закупки"),
         email="petrov@example.test",
         roles=frozenset({"buyer"}),
-        permissions={"procurement": "edit"},
+        permissions={"procurement": "edit", "myrequests": "edit"},
     )
     first = client.post("/api/requests/handoff", json={"request_ids": [request_id]})
     retry = client.post("/api/requests/handoff", json={"request_ids": [request_id]})
@@ -224,7 +277,7 @@ def test_retransfer_is_an_explicit_flag_and_refused_for_a_new_request(write_api)
         actor=Actor(name="Петров", department="Закупки"),
         email="petrov@example.test",
         roles=frozenset({"buyer"}),
-        permissions={"procurement": "edit"},
+        permissions={"procurement": "edit", "myrequests": "edit"},
     )
 
     too_early = client.post("/api/requests/handoff", json={"request_ids": [request_id], "retransfer": True})

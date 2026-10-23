@@ -18,3 +18,6 @@ table on 16" and hide columns.
 
 **How to apply:** when building or touching a screen with a row → card/edit flow, use PageWindow (Esc closes; click
 outside closes only read-only windows). Brief workers with this rule explicitly. Related: [[erp-screens-rules]].
+
+**Exception (owner, 23.10.2026):** «Запросы КП» → «Внести КП» stays an inline list under the request matrix (drop a PDF,
+supplier from the request) — Витя's request, owner: «тут сделай как он хочет». Don't move it back into a window.
