@@ -50,6 +50,12 @@ gsm-repiteri.ru, «Амел», kroks.ru, vegatel.ru («оттуда кстати
   a row per «Применяемый кабель» (51 of those cable names are not in БД.ПРОВ). No AMEL analog for UHF, Fakra, F, FME, mini-UHF,
   MHF1, CRC9 — their КСВ stays empty.
 
+- RUICHI datasheets (ruichi.ru/files/Datasheet-RUICHI_raz_<series>-<hash>.pdf, image-only, one page) give no КСВ, only
+  «Максимальная частота»: SMA 18, N 11, TNC 11, BNC 4, F 2 ГГц, UHF 300 МГц; ruichi.ru/upload/catalog.xlsx has КСВ only for antennas.
+  23.10: RUICHI rows got the maker frequency (12 shop values overwritten), КСВ = АМЭЛ reference; top-up of 222 rows,
+  backup erp_2026-10-23_201705.dump. Own rows without any КСВ source left: UHF 55, F 30, Fakra 14, SMA 10 (angled female),
+  FME 7, СР-50 7, QMA 6, mini-UHF 5, CRC9/TS9 4, MHF1 3.
+
 **How to apply:** coax cables come only from АМЭЛ / Kroks / gsm-repiteri; a new cable from elsewhere is an exception
 to flag, not to add silently. Enrich from these first; fill only empty cells, write to prod per [[prod-reference-write]].
 [[module-reference-db]]
