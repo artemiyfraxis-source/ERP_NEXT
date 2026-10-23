@@ -189,6 +189,38 @@ describe("RequestsPage", () => {
     expect(await screen.findByRole("button", { name: "В закупку" })).toBeInTheDocument();
   });
 
+  it("«В закупку» is everyone's (owner 23.10): «Заявки» on edit hands any new request, «Повторно» stays the buyer's", async () => {
+    const inWork = { ...row, id: "in-work", legacy_id: "REQ-2", status: "В работе" };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/requests/schema") return json(schema);
+      return json({ requests: [row, inWork] });
+    });
+
+    render(<RequestsPage principal={{ ...principal, roles: ["commercial"], access_level: "operator", permissions: { requests: "edit", procurement: "view" } }} />);
+
+    expect(await screen.findByRole("button", { name: "В закупку" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^В работе · / }));
+    expect(screen.queryByRole("button", { name: "Повторно в закупку" })).not.toBeInTheDocument();
+  });
+
+  it("«Мои заявки»: one's own new request goes to procurement from the row", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") return json(schema);
+      if (path.startsWith("/api/requests/mine")) return json({ requests: [row], total: 1, limit: 50, offset: 0 });
+      if (path === "/api/requests/handoff" && init?.method === "POST") return json({ accepted: [row.id] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(<RequestsPage principal={{ ...principal, roles: ["employee"], access_level: "operator", permissions: { myrequests: "view", newrequest: "edit" } }} view="mine" />);
+    fireEvent.click(await screen.findByRole("button", { name: "В закупку" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/requests/handoff",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ request_ids: [row.id], retransfer: false }) }),
+    ));
+  });
+
   it("RQ-MINE: «Мои заявки» loads the server-side mine endpoint, not the shared list, and shows the stage", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = String(input);

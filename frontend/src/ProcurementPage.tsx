@@ -160,8 +160,8 @@ function initialTab(): ProcurementTab | null {
 
 /** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
  *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork).
- *  `canHandoff` — the right `procurement` on edit (same check as the server and the «Заявки» register): the strip
- *  «Не переданы в закупку» in «Заявки» hands requests over; read-only viewers only get the way to the register.
+ *  `canHandoff` — «Снабжение» or «Заявки» on edit (owner 23.10: «В закупку» is everyone's; the server checks the
+ *  same): the strip «Не переданы в закупку» in «Заявки» hands requests over; the rest only get the way to the register.
  *  `openRegister` — the «Заявки» register (no menu item of its own). */
 export function ProcurementPage({ readOnly = false, buyerName = "", canHandoff = false, openRegister }: {
   readOnly?: boolean; buyerName?: string; canHandoff?: boolean; openRegister?: () => void;

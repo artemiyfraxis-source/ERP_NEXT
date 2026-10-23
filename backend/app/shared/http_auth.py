@@ -155,6 +155,13 @@ myrequests_principal = require_section(
     "view",
     detail="Раздел «Мои заявки» вам не открыт.",
 )
+# «В закупку» — everyone who files or sees requests (owner, 23.10); the route narrows it: a buyer takes the line,
+# «Заявки» on edit hands any request, the rest only their own.
+handoff_principal = require_section(
+    ("procurement", "requests", "myrequests", "newrequest"),
+    "view",
+    detail="Передать заявку в закупку вам не открыто.",
+)
 # ID-3 (SUPPLYMAP PORTAL_SECTIONS_, Portal.gs:661-664): templates (`erptctpl`) and the generator (`tcgen`) have keys of
 # their own; the techcards router admits any of the three and each route narrows it down.
 # A token passes the router gate untouched; each route's own gate decides (only tcgen_principal admits `tcgen`).
