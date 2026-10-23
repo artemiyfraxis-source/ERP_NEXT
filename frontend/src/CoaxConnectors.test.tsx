@@ -54,14 +54,40 @@ it("groups the connectors by type in the shop's series order with the stripping 
   const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
   const cells = within(n316).getAllByRole("cell").map((cell) => cell.textContent);
   expect(["L1", "L2", "L3"].map((name) => cells[heads.indexOf(name)])).toEqual(["4", "2", "6"]);
-  expect(heads.slice(heads.indexOf("L3") + 1, heads.indexOf("L3") + 4)).toEqual(["HEX, мм", "Частота, ГГц", "КСВ"]);
+  // owner 23.10: the stripping and crimp group — L1–L3, HEX, depth — then the electrical one: frequency, VSWR, Ω
+  expect(heads.slice(heads.indexOf("L3") + 1, heads.indexOf("L3") + 6)).toEqual(["HEX, мм", "Заглубление, мм", "Частота, ГГц", "КСВ", "Ом"]);
   expect(cells[heads.indexOf("HEX, мм")]).toBe("3,25");
+  expect(cells[heads.indexOf("Ом")]).toBe("50");
   expect(heads.some((head) => /D1/.test(head ?? ""))).toBe(false);
   expect(within(n316).getByRole("link", { name: "gsm-repiteri.ru" })).toHaveAttribute("href", "https://gsm-repiteri.ru/n-111l");
   expect(cells[heads.indexOf("Цена, ₽")]).toBe("420");
   fireEvent.click(screen.getByRole("button", { name: /Угловые/ }));
   expect(screen.getByText("SMA-C174P")).toBeInTheDocument();
   expect(screen.queryByText("N-111L")).toBeNull();
+});
+
+it("orders every column by group in «Колонки» and shows the same «нужные» as before plus «Ом» — владелец 23.10", () => {
+  window.localStorage.setItem("erp-table:db:coax-connectors-2310", JSON.stringify({ hidden: [] }));
+  render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} ownColumns={["Своё поле"]} />);
+  expect(screen.getAllByRole("columnheader").map((head) => head.textContent)).toEqual([
+    "Артикул", "Тип", "Кабель", "Пол", "Исполнение", "Полярность", "Монтаж",
+    "Тип пина", "Тип экрана", "L1", "L2", "L3", "HEX, мм", "Заглубление, мм",
+    "Частота, ГГц", "КСВ", "Ом",
+    "Производитель", "Своё поле",
+    "Поставщик", "Артикул поставщика", "Карточка на сайте", "Цена, ₽", "Дата цены",
+    "Наименование", "Примечание", "Источник данных",
+  ]);
+});
+
+it("hides by default the identification details, the price date and the service columns; no L+ / L−, program, size or body material", () => {
+  render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} />);
+  expect(screen.getAllByRole("columnheader").map((head) => head.textContent)).toEqual([
+    "Артикул", "Тип", "Кабель", "Исполнение", "Тип пина", "Тип экрана", "L1", "L2", "L3", "HEX, мм", "Заглубление, мм",
+    "Частота, ГГц", "КСВ", "Ом", "Производитель", "Поставщик", "Артикул поставщика", "Карточка на сайте", "Цена, ₽",
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  const offered = within(screen.getByRole("group", { name: "Показывать колонки" })).getAllByRole("checkbox").map((box) => box.parentElement?.textContent ?? "");
+  for (const gone of ["L+", "L−", "L-", "Программа", "Габариты", "Материал корпуса"]) expect(offered).not.toContain(gone);
 });
 
 it("shows the contact depth as a short number with its source as a hint; the long source column is hidden — владелец 19.10", () => {

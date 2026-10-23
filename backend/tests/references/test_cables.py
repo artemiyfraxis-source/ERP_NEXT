@@ -219,10 +219,10 @@ def test_api_lists_moves_and_edits_cables(tmp_path, sessions, cables_api):  # no
 
     listed = cables_api.get("/api/references/cables").json()
     assert listed["counts"] == {"coax": 5, "wire": 3, "multi": 2}
-    assert listed["columns"][:2] == ["Марка", "Тип провода"]
+    assert listed["columns"][:4] == ["Марка", "Цвет", "Цвета", "Тип провода"]
     by_kind = listed["columns_by_kind"]
     assert "AWG" not in by_kind["coax"] and "Волновое сопротивление, Ом" in by_kind["coax"]
-    assert "Волновое сопротивление, Ом" not in by_kind["wire"] and "Ток, А" in by_kind["wire"] and "AWG" in by_kind["wire"]
+    assert "Волновое сопротивление, Ом" not in by_kind["wire"] and "Ток, А" not in by_kind["wire"] and "AWG" in by_kind["wire"]
     assert "Ток, А" not in by_kind["multi"] and listed["custom_columns_by_kind"] == {"coax": [], "wire": [], "multi": []}
     rg316 = next(row for row in listed["rows"] if row["cable"] == "RG316")
     assert rg316["kind"] == "coax" and rg316["dia"]["cable"] == "RG-316" and rg316["record"]["fields"]["Волновое сопротивление, Ом"] == "50"

@@ -449,12 +449,18 @@ EDITABLE_TABS = frozenset(TechOperationTab) - VIEW_ONLY_TABS
 VIEW_ONLY_BASES = ("spr_kab", "tk_templates")
 MAX_ROW_EDITS = 200
 
-# БД.ПРОВ sheet columns (SUPPLYMAP DbMirror.gs DB_MIRROR_NEW_) of all three cable lists together.
+# БД.ПРОВ sheet columns (SUPPLYMAP DbMirror.gs DB_MIRROR_NEW_) of all three cable lists together, in the order every list
+# shows them (owner 23.10.2026: «сделай сортировку нормальную, чтобы своя инфа в своём месте»): identification,
+# construction (core → insulation → screen → jacket → outer Ø), electrical, mechanics and conditions, supply, service.
+# The same group order holds on screen, where the owner's own columns and the computed ones go into their group
+# (frontend `cableColumnOrder.ts`).
 _PROV_COLUMNS = (
-    "Марка", "Тип провода", "Стандарт", "Производители", "Сечение, мм2", "AWG", "Жила: проволок × диаметр, мм",
-    "Число жил", "Цвета", "Цвет", "Наружный диаметр, мм", "Изоляция", "Экран", "Волновое сопротивление, Ом",
-    "Темп. от, °C", "Темп. до, °C", "Напряжение, В", "Ток, А", "Масса, г/м", "Закупок", "Цена посл., ₽/м без НДС",
-    "Поставщик", "Ссылка на datasheet", "Источник данных", "Категория",
+    "Марка", "Цвет", "Цвета", "Тип провода", "Стандарт", "Производители",
+    "AWG", "Сечение, мм2", "Число жил", "Жила: проволок × диаметр, мм", "Изоляция", "Экран", "Наружный диаметр, мм",
+    "Волновое сопротивление, Ом", "Напряжение, В", "Ток, А",
+    "Масса, г/м", "Темп. от, °C", "Темп. до, °C",
+    "Поставщик", "Цена посл., ₽/м без НДС", "Закупок",
+    "Ссылка на datasheet", "Источник данных", "Категория",
 )
 # Each cable list has its own columns (owner 20.10.2026: «у каждого своя структура»): the sheet columns less those the
 # list never fills on prod (20.10.2026) — a coax cable has no AWG, current or category, a монтажный wire no wave
@@ -463,14 +469,27 @@ _PROV_COLUMNS = (
 # thickness) are no БД.ПРОВ cells: they live in СПР.КАБ and `hookup_wires`.
 # A монтажный wire has one colour per row (owner 20.10.2026: «каждый цвет своя строка»): its «Цвет» is one colour, the
 # list «Цвета» (the colours of a multicore cable's cores, a coax jacket's colour) is no column of it.
+# Cleaned 23.10.2026 (owner: «почистил мусорные столбцы?»; «если что-то заполняется на 3 % — это мусор для БД»): a column
+# that says one thing for every row of the list (монтажный «Экран» = «нет», «Число жил» = 1), the old free text a
+# structured column replaced (coax «Изоляция» → «Материал диэлектрика» + «Материал оболочки», «Экран» → «Материал
+# экрана»; multicore «Изоляция» → «Материал изоляции жилы» + «Материал оболочки»; монтажный «Изоляция» = «Материал
+# оболочки») and a column filled in ≤ 5 % of the list's rows (coax «Сечение» 0,5 %, монтажный «Ток» 4 %, multicore
+# «Категория» and «Волновое сопротивление» 1 %) is no column of the list. A filled value stays in the record (and the
+# readers — the harness catalogue, the coax materials, the kind rule — read it as before); the supply columns stay in
+# every list however sparse (owner 19.10.2026).
 _PROV_NEVER = {
-    "coax": ("AWG", "Ток, А", "Категория", "Цвет"),
-    "wire": ("Волновое сопротивление, Ом", "Категория", "Цвета"),
-    "multi": ("Ток, А", "Цвет"),
+    "coax": ("AWG", "Ток, А", "Категория", "Цвет", "Сечение, мм2", "Число жил", "Изоляция", "Экран"),
+    "wire": ("Волновое сопротивление, Ом", "Категория", "Цвета", "Экран", "Число жил", "Изоляция", "Ток, А"),
+    "multi": ("Ток, А", "Цвет", "Категория", "Изоляция", "Волновое сопротивление, Ом"),
 }
 CABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     kind: tuple(name for name in _PROV_COLUMNS if name not in _PROV_NEVER[kind]) for kind in CABLE_KIND_VALUES
 }
+
+# БД.КОАКС sheet columns that are no column of the table any more (owner 23.10.2026: «если что-то заполняется на 3 % —
+# это мусор для БД»): «L+», «L-», «Программа» (0 %), «Габариты» (3,5 %), «Материал корпуса» (2 %). Values stay in the
+# records; the ETK generator reads L+ / L− / program from its own fields (`lPlus`, `lMinus`, `program`) as before.
+COAX_DROPPED_COLUMNS = frozenset({"L+", "L-", "L−", "Программа", "Габариты", "Материал корпуса"})
 
 
 # --- «Монтажные провода»: one row per colour (owner 20.10.2026: «имелось ввиду каждый цвет своя строка») ---
