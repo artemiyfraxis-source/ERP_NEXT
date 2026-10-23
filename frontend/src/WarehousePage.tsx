@@ -11,12 +11,10 @@ import {
   receivingApi,
   requestsApi,
   warehouseApi,
-  type WarehouseAddResult,
   type WarehouseDestination,
   type WarehouseJournal,
   type WarehouseLot,
   type WarehouseLotPassport,
-  type WarehouseManualItem,
   type WarehouseRackLayout,
   type WarehouseRowEdit,
   type WarehouseTotal,
@@ -25,8 +23,10 @@ import {
 import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
 import { countLabel } from "./format";
-import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
+import { BUSY_TITLE } from "./WarehousePlaceHint";
 import { UndoLast, WarehouseScanResults, type ScanRequest } from "./WarehouseScan";
+import { WarehouseReceipt } from "./WarehouseReceipt";
+import { receiptLine } from "./warehouseReceiptLogic";
 import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
 import { StockLinkDialog } from "./StockLinkDialog";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
@@ -38,22 +38,9 @@ import {
 /** Номенклатура на партиях (a failing read = no chip, no action). */
 const LotItems = createContext<{ items: Record<string, ItemBrief>; reload: () => void }>({ items: {}, reload: () => undefined });
 
-const EMPTY_PASSPORT: WarehouseLotPassport = {
-  mass_1: "", mass_10: "", mass_100: "", expiry_date: null,
-  manufacturer: "", description: "", storage_conditions: "", datasheet: "", certificate: "",
-};
-
 /** Lot passport as one line for the operations row (SK-6); empty fields are left out. */
 function passportLine(lot: WarehouseLot) {
   return passportParts(lot.unit_mass_g ? `Масса 1 шт: ${lot.unit_mass_g} г` : "", lot);
-}
-
-/** The same line for a quick-entry row: the mass as typed (1, 10 or 100 pieces). */
-function manualPassportLine(item: WarehouseManualItem) {
-  const mass = ([["mass_1", 1], ["mass_10", 10], ["mass_100", 100]] as const)
-    .filter(([field]) => String(item[field] ?? "").trim())
-    .map(([field, count]) => `Масса ${count} шт: ${item[field]} г`).join(" · ");
-  return passportParts(mass, item);
 }
 
 function passportParts(mass: string, fields: Partial<Omit<WarehouseLotPassport, "mass_1" | "mass_10" | "mass_100">>) {
@@ -116,9 +103,6 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "article", desc: false });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [panel, setPanel] = useState<"" | "types" | "import" | "journal" | "racks">("");
-  const [assigned, setAssigned] = useState<WarehouseAddResult["assigned"]>([]);
-  const [copied, setCopied] = useState("");
-  const [labelsNote, setLabelsNote] = useState("");
   // Type suggestions (SK-14): the dictionary + the canonical types already on the stock.
   const [typeChoices, setTypeChoices] = useState<string[]>([]);
   // WH-6: печатный «Лист перемещения на склад» для принятых партий без места — тот же механизм,
@@ -351,43 +335,11 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       {panel === "import" && <StockImportPanel onClose={() => setPanel("")} onApplied={() => reload()} />}
       {panel === "racks" && <RackLayoutPanel onClose={() => setPanel("")} />}
       {panel === "journal" && <StockJournalPanel onClose={() => setPanel("")} />}
-      {assigned.length > 0 && <section className="panel" aria-label="Записано на склад">
-        <div className="manual-stock-head"><h2>Записано на склад: {assigned.length}</h2><button type="button" className="link-button" onClick={() => { setAssigned([]); setCopied(""); setLabelsNote(""); }}>Закрыть</button></div>
-        <p className="page-sub">Номера партий, присвоенные строкам. Слева — номер строки, как она стояла на экране.</p>
-        {labelsNote && <p className="page-sub" role="status">{labelsNote}</p>}
-        <div className="table-wrap"><table className="grid compact"><thead><tr><th>#</th><th>ГРН</th><th>Артикул</th><th>Кол-во</th><th>Место</th><th>Склад</th></tr></thead>
-          <tbody>{assigned.map((row) => <tr key={row.id}><td>{row.i + 1}</td><td><strong>{row.grn}</strong></td><td>{row.article}</td><td className="num">{row.quantity} {row.unit}</td><td>{row.storage_location || "—"}</td><td>{row.warehouse}</td></tr>)}</tbody>
-        </table></div>
-        <div className="header-actions"><button type="button" className="secondary small" onClick={() => {
-          // Копия — табуляцией: вставляется в таблицу/этикетку столбцами (PortalApp.html wa05ShowGrns_).
-          const text = assigned.map((row) => [row.grn, row.article, `${row.quantity} ${row.unit}`, row.storage_location, row.warehouse].join("\t")).join("\n");
-          void navigator.clipboard.writeText(text).then(() => setCopied("Скопировано."), () => setCopied("Браузер не дал скопировать — выдели таблицу мышью."));
-        }}>Скопировать</button><span className="page-sub" role="status">{copied}</span></div>
-      </section>}
-      {adding && <ManualStockForm
-        busy={Boolean(busy) || loading}
+      {adding && <WarehouseReceipt
         knownLots={lots}
         typeChoices={typeChoices}
-        onCancel={() => setAdding(false)}
-        onLabels={setLabelsNote}
-        onAdded={async (items) => {
-          requestVersion.current += 1;
-          setBusy("manual");
-          setError("");
-          try {
-            const result = await warehouseApi.add(items);
-            if (result.assigned.length) { setAssigned(result.assigned); setCopied(""); setLabelsNote(""); }
-            // Rows with an error stay in the form; the rest are entered (SK-10, stock05Add_).
-            if (!result.errors.length) setAdding(false);
-            if (result.added) await reload();
-            return result;
-          } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "Не удалось внести позиции");
-            return null;
-          } finally {
-            setBusy("");
-          }
-        }}
+        onClose={() => setAdding(false)}
+        onAccepted={() => { requestVersion.current += 1; void reload(); }}
       />}
       {moveOpen && <MoveStockDialog
         preset={moveLot}
@@ -747,230 +699,6 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
       </Fragment>;
     })}
   </>;
-}
-
-function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded, onLabels }: {
-  busy: boolean;
-  /** «Внести и печать этикеток»: what went to the print queue — shown on the page, the form closes on success. */
-  onLabels?: (note: string) => void;
-  knownLots: WarehouseLot[];
-  typeChoices: string[];
-  onCancel: () => void;
-  onAdded: (items: WarehouseManualItem[]) => Promise<WarehouseAddResult | null>;
-}) {
-  const purposeText = usePurposeLabel();
-  // Rows put aside with «В список» and rows the server did not accept (with the reason).
-  const [rows, setRows] = useState<Array<{ item: WarehouseManualItem; error: string }>>([]);
-  const [report, setReport] = useState("");
-  const [passport, setPassport] = useState<WarehouseLotPassport>(EMPTY_PASSPORT);
-  const passportField = (field: keyof WarehouseLotPassport) => ({
-    value: passport[field] ?? "",
-    onChange: (event: { target: { value: string } }) => {
-      const value = event.target.value;
-      setPassport((current) => ({ ...current, [field]: field === "expiry_date" ? value || null : value }));
-    },
-  });
-  const [warehouse, setWarehouse] = useState("ЦАР");
-  const [article, setArticle] = useState("");
-  const [series, setSeries] = useState("");
-  const [name, setName] = useState("");
-  const [itemType, setItemType] = useState("");
-  const [purpose, setPurpose] = useState("Склад");
-  const [unit, setUnit] = useState("шт");
-  const [quantity, setQuantity] = useState("");
-  const [storageLocation, setStorageLocation] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const printAfter = useRef(false);
-  const [articleSource, setArticleSource] = useState("");
-  // Already entered positions by article: pick one to copy its name/series/type, then change the article.
-  const knownArticles = useMemo(() => {
-    const byKey = new Map<string, WarehouseLot>();
-    for (const lot of knownLots) {
-      const key = lot.article.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru");
-      if (key && !byKey.has(key)) byKey.set(key, lot);
-    }
-    return new Map([...byKey.values()].map((lot) => [lot.article.trim(), lot.name]));
-  }, [knownLots]);
-
-  useEffect(() => {
-    const currentArticle = article.trim();
-    if (!currentArticle) {
-      setArticleSource("");
-      return;
-    }
-
-    const key = currentArticle.replace(/\s+/g, " ").toLocaleLowerCase("ru");
-    const known = knownLots.find((lot) => lot.article.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru") === key);
-    if (known) {
-      setName((current) => current || known.name);
-      setSeries((current) => current || known.series);
-      setItemType((current) => current || known.item_type);
-      setUnit((current) => current || known.unit);
-      setArticleSource("Подставлено по уже внесённой партии");
-    }
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void warehouseApi.articleInfo(currentArticle).then(({ info }) => {
-        if (cancelled || !info) return;
-        setName((current) => current || info.name);
-        setSeries((current) => current || info.series);
-        setItemType((current) => current || info.item_type);
-        setArticleSource(`Подставлено: ${info.source}. Проверьте и при необходимости поправьте.`);
-      }).catch(() => undefined);
-    }, 250);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [article, knownLots]);
-
-  const currentItem = (): WarehouseManualItem | null => {
-    if (!article.trim() && !name.trim() && !quantity.trim()) return null;
-    return {
-      warehouse,
-      article: article.trim(),
-      series: series.trim(),
-      name: name.trim(),
-      item_type: itemType.trim(),
-      purpose: purpose.trim(),
-      unit: unit.trim(),
-      quantity,
-      storage_location: storageLocation.trim(),
-      // Only what was filled: an empty passport keeps the plain quick-entry payload.
-      ...Object.fromEntries(Object.entries(passport).filter(([, value]) => String(value ?? "").trim())),
-    };
-  };
-  // The next row keeps the warehouse, purpose, unit and place — a pass over the stock goes shelf by shelf.
-  const clearRow = () => {
-    setArticle(""); setName(""); setSeries(""); setItemType(""); setQuantity("");
-    setPassport(EMPTY_PASSPORT); setArticleSource("");
-  };
-  // «Править»: the listed row goes back into the form; an unfinished row in the form takes its place in the list.
-  const editRow = (index: number) => {
-    const { item } = rows[index];
-    const current = currentItem();
-    setRows((existing) => existing.flatMap((row, other) => other !== index ? [row] : current ? [{ item: current, error: "" }] : []));
-    setWarehouse(item.warehouse); setArticle(item.article); setSeries(item.series); setName(item.name);
-    setItemType(item.item_type); setPurpose(item.purpose); setUnit(item.unit); setQuantity(item.quantity);
-    setStorageLocation(item.storage_location);
-    setPassport(Object.fromEntries(Object.keys(EMPTY_PASSPORT).map((field) => {
-      const key = field as keyof WarehouseLotPassport;
-      return [key, item[key] ?? EMPTY_PASSPORT[key]];
-    })) as unknown as WarehouseLotPassport);
-    setArticleSource(""); setReport("");
-  };
-  const anyRefused = rows.some((row) => row.error);
-  const pending = rows.length + (currentItem() ? 1 : 0);
-  const placeHint = usePlaceHint(warehouse, storageLocation,
-    rows.filter((row) => row.item.warehouse === warehouse).map((row) => row.item.storage_location));
-
-  return (
-    <form className="panel manual-stock-form" noValidate onSubmit={async (event) => {
-      event.preventDefault();
-      if (submitting) return;
-      const withLabels = printAfter.current;
-      printAfter.current = false;
-      const current = currentItem();
-      const items = [...rows.map((row) => row.item), ...(current ? [current] : [])];
-      if (!items.length) {
-        setReport("Добавьте хотя бы одну позицию");
-        return;
-      }
-      setSubmitting(true);
-      try {
-        const result = await onAdded(items);
-        if (!result) return;
-        if (current) clearRow();
-        // «Внести и печатать этикетки»: по одной на каждую созданную партию — через очередь принтера склада, тем же
-        // шаблоном, что «Этикетка…» (владелец 23.10: печать браузером выходила повёрнутой на 90°).
-        let labelsNote = "";
-        if (withLabels && result.assigned.length) {
-          const sent = await Promise.allSettled(result.assigned.map((row) => labelsApi.printLot(row.id, 1)));
-          const failed = result.assigned.filter((_, index) => sent[index].status === "rejected").map((row) => row.grn);
-          const queued = result.assigned.length - failed.length;
-          const note = failed.length
-            ? `Этикетки: в очереди ${queued}, не отправлены (${failed.length}): ${failed.join(", ")} — «Этикетка…» у партии`
-            : `Этикетки в очереди принтера: ${queued}`;
-          labelsNote = `. ${note}`;
-          onLabels?.(note);
-        }
-        const refused = result.errors.map(({ i, error }) => ({ item: items[i], error: `${i + 1} — ${error}` }));
-        setRows(refused);
-        // SUPPLYMAP wording (PortalApp.html: «Записано: N. Не приняты строки (M): i+1 — ошибка; …»).
-        setReport(`Записано: ${result.added}` + labelsNote + (refused.length
-          ? `. Не приняты строки (${refused.length}): ${refused.map((row) => row.error).join("; ")}`
-          : ". Можно продолжать."));
-      } finally {
-        setSubmitting(false);
-      }
-    }}>
-      <div className="manual-stock-head"><h2>Быстрый ввод</h2><button type="button" className="link-button" onClick={onCancel}>Отмена</button></div>
-      {/* Owner, 12.10: артикул, количество, единица и место — первой строкой, остальное ниже. */}
-      <div className="manual-stock-grid">
-        <label>Артикул<SuggestInput options={[...knownArticles.keys()]} describe={(option) => knownArticles.get(option) ?? ""} minLength={2} value={article} onChange={(value) => {
-          setArticleSource("");
-          setArticle(value);
-        }} /></label>
-        <label>Количество<input aria-label="Количество для внесения" type="number" min="0.000001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-        <label>Единица<input value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
-        <label>Место хранения<input aria-label="Место хранения для внесения" placeholder="1F4" className={placeHint.busy ? "place-busy" : undefined} title={placeHint.busy ? BUSY_TITLE : undefined} value={storageLocation} onChange={(event) => setStorageLocation(event.target.value)} /></label>
-        <label className="span-2">Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
-        <label>Тип<SuggestInput options={typeChoices} value={itemType} onChange={setItemType} /></label>
-        <label>Склад<select value={warehouse} onChange={(event) => setWarehouse(event.target.value)}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>
-        <label className="span-2 span-3">Назначение<input value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
-      </div>
-      <PlaceHint {...placeHint} place={storageLocation} onPick={setStorageLocation} />
-      <details className="manual-stock-passport">
-        <summary>Паспорт партии — необязательно</summary>
-        <p className="page-sub">Масса: заполните любое одно поле — мелочь точнее взвесить десятком или сотней, хранится масса одной штуки.</p>
-        <div className="manual-stock-grid">
-          <label>Масса 1 шт, г<input aria-label="Масса 1 шт, г" inputMode="decimal" {...passportField("mass_1")} /></label>
-          <label>Масса 10 шт, г<input aria-label="Масса 10 шт, г" inputMode="decimal" {...passportField("mass_10")} /></label>
-          <label>Масса 100 шт, г<input aria-label="Масса 100 шт, г" inputMode="decimal" {...passportField("mass_100")} /></label>
-          <label>Срок годности<input aria-label="Срок годности" type="date" {...passportField("expiry_date")} /></label>
-          <label>Производитель<input aria-label="Производитель" {...passportField("manufacturer")} /></label>
-          <label>Описание<input aria-label="Описание" {...passportField("description")} /></label>
-          <label>Условия хранения<input aria-label="Условия хранения" {...passportField("storage_conditions")} /></label>
-          <label>Datasheet<input aria-label="Datasheet" {...passportField("datasheet")} /></label>
-          <label>Сертификат<input aria-label="Сертификат" {...passportField("certificate")} /></label>
-        </div>
-      </details>
-      {articleSource && <p className="page-sub" role="status">{articleSource}</p>}
-      {rows.length > 0 && <table className="grid compact manual-stock-rows" aria-label="Позиции к внесению">
-        <thead><tr><th>Артикул</th><th>Наименование</th><th>Серия</th><th>Тип</th><th className="num">Кол-во</th><th>Место</th><th>Склад</th><th>Назначение</th><th>Паспорт</th>{anyRefused && <th>Не принята</th>}<th /></tr></thead>
-        <tbody>{rows.map((row, index) => <tr key={index}>
-          <td>{row.item.article || "—"}</td>
-          <td>{row.item.name || "—"}</td>
-          <td>{row.item.series || "—"}</td>
-          <td>{row.item.item_type || "—"}</td>
-          <td className="num">{String(row.item.quantity).trim() ? `${row.item.quantity} ${row.item.unit}` : "—"}</td>
-          <td>{row.item.storage_location || "—"}</td>
-          <td>{row.item.warehouse}</td>
-          <td>{purposeText(row.item.purpose) || "—"}</td>
-          <td className="manual-stock-passport-cell">{manualPassportLine(row.item) || "—"}</td>
-          {anyRefused && <td className="danger-text">{row.error}</td>}
-          <td className="manual-stock-row-actions">
-            <button type="button" className="link-button" aria-label={`Править строку ${index + 1}`} onClick={() => editRow(index)}>Править</button>
-            <button type="button" className="link-button" aria-label="Убрать строку" onClick={() => setRows((current) => current.filter((_, other) => other !== index))}>×</button>
-          </td>
-        </tr>)}</tbody>
-      </table>}
-      {report && <p className="page-sub" role="log">{report}</p>}
-      <div className="manual-stock-actions">
-        <button type="button" className="secondary" disabled={busy || submitting} onClick={() => {
-          const current = currentItem();
-          if (!current) return;
-          setRows((existing) => [...existing, { item: current, error: "" }]);
-          clearRow();
-          setReport("");
-        }}>+ В список</button>
-        <button className="primary" disabled={busy || submitting}>{submitting ? "Вносим…" : pending > 1 ? `Внести (${pending})` : "Внести"}</button>
-        <button className="secondary" disabled={busy || submitting} onClick={() => { printAfter.current = true; }}>{pending > 1 ? `Внести и печать этикеток (${pending})` : "Внести и печать этикетки"}</button>
-      </div>
-    </form>
-  );
 }
 
 const WAREHOUSES = ["ЦАР", "ЖУК"];
@@ -1530,6 +1258,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
         {Number(lot.reserved) > 0 && lot.reserve_note && <span title={lot.reserve_note}>{lot.reserve_note.replace(/^резерв: /, "")}</span>}
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
+      {receiptLine(lot.receipt) && <p className="lot-card-meta"><small className="muted">{receiptLine(lot.receipt)}</small></p>}
       {brief && <p className="lot-card-meta"><small className="muted lot-item-chip" title={`Связь: ${VIA_LABELS[brief.via]}`}>Позиция: {brief.name}</small></p>}
       <div className="lot-card-actions">
         {!readOnly && <>

@@ -26,6 +26,7 @@ from app.shared.warehouse_location import (
 from .domain import (
     WAREHOUSES,
     StockLot,
+    WarehouseReceipt,
     WarehouseValidationError,
     WriteOffEntry,
     lot_row_changes,
@@ -458,9 +459,10 @@ def _manual_quantity(value: object) -> Decimal:
     return quantity
 
 
-def _manual_lot(item: ManualStockItem) -> StockLot:
+def manual_lot(item: ManualStockItem, receipt: WarehouseReceipt | None = None) -> StockLot:
     """One quick-entry row → a lot without its number yet (stock05NormItem_ + placeFits_, Stock05.gs:74-109,
-    744-757). SUPPLYMAP texts where it has them; the rest are ERP's own lot checks."""
+    744-757). SUPPLYMAP texts where it has them; the rest are ERP's own lot checks. A line of a delivery
+    («Приход на склад») points at its receipt and carries it as its source."""
     article, name = item.article.strip(), item.name.strip()
     if not article and not name:
         raise WarehouseValidationError("пустой артикул")
@@ -480,7 +482,8 @@ def _manual_lot(item: ManualStockItem) -> StockLot:
         unit=item.unit.strip() or MANUAL_STOCK_DEFAULT_UNIT,
         quantity=quantity,
         storage_location=item.storage_location,
-        source_receiving_ids=(f"manual:{uuid4()}",),
+        source_receiving_ids=(f"manual:{receipt.id if receipt is not None else uuid4()}",),
+        receipt_id=receipt.id if receipt is not None else None,
         article=article,  # empty → the name (StockLot.create, Warehouse.gs:522)
         series=item.series,
         unit_mass_g=_manual_unit_mass(item),
@@ -504,35 +507,61 @@ def add_manual_stock(command: AddManualStockCommand, uow: UnitOfWork) -> ManualS
     errors: list[ManualStockRowError] = []
     for index, item in enumerate(command.items):
         try:
-            good.append((index, _manual_lot(item)))
+            good.append((index, manual_lot(item)))
         except WarehouseValidationError as error:
             errors.append(ManualStockRowError(i=index, error=str(error)))
     if not good:
         return ManualStockResult(assigned=(), errors=tuple(errors))
     with uow:
-        first = uow.warehouse.reserve_manual_numbers(command.now.year, len(good))
-        assigned = []
-        for offset, (index, draft) in enumerate(good):
-            grn = f"OLD.{command.now.year % 100:02d}.{first + offset:07d}"
-            lot = replace(draft, grn=grn)
-            uow.warehouse.add(lot)
-            uow.audit.add(
-                AuditEvent(
-                    id=uuid4(),
-                    aggregate_id=lot.id,
-                    event_type="warehouse.manually_received",
-                    actor=command.actor,
-                    occurred_at=command.now,
-                    details={
-                        "grn": grn,
-                        "quantity": _audit_value(lot.inbound),
-                        "storage_location": lot.storage_location,
-                    },
-                )
-            )
-            assigned.append(ManualStockAssigned(i=index, lot=lot))
+        assigned = place_manual_lots(uow, good, command.actor, command.now)
         uow.commit()
         return ManualStockResult(assigned=tuple(assigned), errors=tuple(errors))
+
+
+def receipt_audit(receipt: WarehouseReceipt) -> dict[str, str]:
+    """The delivery header as the arrival event of its lot keeps it (the «Журнал склада» reads it back)."""
+    return {
+        "receipt_id": str(receipt.id),
+        "supplier": receipt.supplier,
+        "invoice_number": receipt.invoice_number,
+        "invoice_date": receipt.invoice_date.isoformat() if receipt.invoice_date else "",
+        "upd_number": receipt.upd_number,
+        "upd_date": receipt.upd_date.isoformat() if receipt.upd_date else "",
+    }
+
+
+def place_manual_lots(
+    uow: UnitOfWork,
+    drafts: Sequence[tuple[int, StockLot]],
+    actor: Actor,
+    now: datetime,
+    receipt: WarehouseReceipt | None = None,
+) -> list[ManualStockAssigned]:
+    """Checked rows → lots on stock inside the caller's transaction: consecutive OLD.YY numbers of the entry moment and
+    one `warehouse.manually_received` event each (with the delivery header when the lots come with a receipt)."""
+    first = uow.warehouse.reserve_manual_numbers(now.year, len(drafts))
+    assigned = []
+    for offset, (index, draft) in enumerate(drafts):
+        grn = f"OLD.{now.year % 100:02d}.{first + offset:07d}"
+        lot = replace(draft, grn=grn)
+        uow.warehouse.add(lot)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=lot.id,
+                event_type="warehouse.manually_received",
+                actor=actor,
+                occurred_at=now,
+                details={
+                    "grn": grn,
+                    "quantity": _audit_value(lot.inbound),
+                    "storage_location": lot.storage_location,
+                    **(receipt_audit(receipt) if receipt is not None else {}),
+                },
+            )
+        )
+        assigned.append(ManualStockAssigned(i=index, lot=lot))
+    return assigned
 
 
 LotKey = tuple[str, str, str]

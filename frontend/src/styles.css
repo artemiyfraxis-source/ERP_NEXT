@@ -499,7 +499,6 @@ input:disabled, select:disabled, textarea:disabled { color: var(--disabled-fg); 
 input:focus, select:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
 .suggest-list { position: fixed; z-index: 1000; max-height: 256px; overflow: auto; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .12); }
 .suggest-list li { padding: 7px 10px; border-radius: 6px; color: var(--foreground); font-size: 14px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.manual-stock-grid .span-2 { grid-column: span 2; }
 .suggest-list .suggest-desc { color: var(--muted-foreground); }
 .suggest-list li.active { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 @media (pointer: coarse) { .suggest-list li { padding: 11px 12px; } }
@@ -548,20 +547,53 @@ th, td { padding: 11px 14px; border-bottom: 1px solid var(--border); text-align:
 .stock-article-row td { background: var(--card); }
 .stock-group-row td { background: var(--bg-teal-10); color: var(--fg-teal-1); font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .stock-actions { display: grid; grid-template-columns: minmax(260px, .7fr) minmax(420px, 1.3fr); gap: 22px; }
-.manual-stock-form { margin-bottom: 16px; padding: 18px; }
 .manual-stock-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .manual-stock-head h2 { font-size: 16px; font-weight: 600; }
 details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 13px; font-weight: 600; }
-.manual-stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; align-items: end; margin-bottom: 14px; }
-/* «Быстрый ввод»: плотная форма как в остальных — поля 32 px, на 16" и шире четыре в ряд без дыр (1+1+1+1 / 2+1+1 / 1+3). */
-.manual-stock-form label { gap: 4px; }
-.manual-stock-form input, .manual-stock-form select { height: 32px; padding: 5px 9px; font-size: 13px; }
-@media (min-width: 1500px) {
-  .manual-stock-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-flow: dense; gap: 8px 12px; }
-  .manual-stock-grid .span-3 { grid-column: span 3; }
-}
-@media (pointer: coarse) { .manual-stock-form input, .manual-stock-form select { height: 40px; } }
 .place-busy { background: var(--bg-amber-5); border-color: var(--ln-amber-2); }
+/* «Внести позиции»: поставка — шапка и таблица позиций (строки как в заявке, .rg-*), «Принять» — окно места и этикеток. */
+.wr-form { padding: 18px; }
+.wr-resume { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; white-space: nowrap; }
+.wr-head { display: grid; grid-template-columns: 90px minmax(180px, 1.6fr) repeat(4, minmax(110px, 1fr)) minmax(100px, .8fr) auto; gap: 8px 12px; align-items: end; margin-bottom: 8px; }
+.wr-head label { gap: 4px; }
+.wr-head input, .wr-head select { height: 30px; padding: 4px 9px; font-size: 13px; }
+.wr-scan { display: flex; align-items: end; }
+.wr-scroll { max-height: calc(100vh - 360px); }
+.wr-table { min-width: 1340px; }
+.wr-table th { font-size: 12px; }
+.wr-table input, .wr-table select { height: 30px; }
+.wr-table input::placeholder { color: var(--muted-foreground); opacity: .7; font-style: normal; }
+.wr-col-article { width: 150px; } .wr-col-quantity { width: 74px; } .wr-col-unit { width: 56px; } .wr-col-item_type { width: 124px; }
+.wr-col-manufacturer { width: 120px; } .wr-col-series { width: 100px; } .wr-col-name { width: 16%; } .wr-col-purpose { width: 84px; }
+.wr-col-expiry_date { width: 112px; } .wr-col-datasheet { width: 84px; } .wr-col-certificate { width: 76px; }
+.wr-col-act { width: 116px; padding: 0 8px !important; text-align: right; white-space: nowrap !important; }
+.wr-table td.wr-col-quantity input { text-align: right; }
+.wr-table input.wr-auto { color: var(--muted-foreground); font-style: italic; }
+.wr-table input.wr-auto:focus { color: var(--foreground); font-style: normal; }
+.wr-ro { display: block; padding: 0 6px; overflow: hidden; text-overflow: ellipsis; line-height: 30px; }
+/* № and Артикул stay at the left edge, the action column at the right one: the middle scrolls under them */
+.wr-table .wr-stick { position: sticky; z-index: 1; background: var(--card); }
+.wr-table th.wr-stick { z-index: 4; background: var(--accent); }
+.wr-table .wr-stick-no { left: 0; width: 40px; min-width: 40px; }
+.wr-table .wr-stick-article { left: 40px; box-shadow: 3px 0 4px -3px rgba(0, 26, 24, .25); }
+.wr-table .wr-stick-act { right: 0; box-shadow: -3px 0 4px -3px rgba(0, 26, 24, .25); }
+.wr-table tbody tr:nth-child(even) .wr-stick { background: color-mix(in srgb, var(--accent) 35%, var(--card)); }
+.wr-table tbody tr:hover .wr-stick { background: color-mix(in srgb, var(--primary) 7%, var(--card)); }
+.wr-table tbody tr.wr-done .wr-stick { background: color-mix(in srgb, var(--primary) 6%, var(--card)); }
+.wr-done { background: color-mix(in srgb, var(--primary) 6%, transparent) !important; }
+.wr-accepted { font-size: 12px; font-weight: 600; color: var(--tone-ok); }
+.wr-done-row td { padding: 2px 8px !important; background: color-mix(in srgb, var(--primary) 6%, var(--card)); }
+.wr-sub { position: sticky; left: 12px; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; max-width: calc(100vw - 80px); }
+.wr-note-row td { padding: 2px 8px !important; background: var(--bg-amber-5); }
+.wr-note-row .warning-inline { margin: 0; }
+.wr-accept { display: grid; gap: 10px; padding: 18px; }
+.wr-accept label { gap: 4px; }
+.wr-summary { margin: 0; font-weight: 600; }
+.wr-places { margin: 0; font-size: 13px; color: var(--muted-foreground); }
+.wr-chip { margin-left: 8px; padding: 2px 4px; font-weight: 600; }
+.wr-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+@media (max-width: 1100px) { .wr-head { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (pointer: coarse) { .wr-head input, .wr-head select, .wr-table input, .wr-table select { height: 40px; } .wr-ro { line-height: 40px; } .wr-table .wr-stick-act .rg-link { padding: 10px 6px; } }
 /* «Переместить» (SUPPLYMAP wh05Move): a modal over the stock list, opened from a lot card or the toolbar. */
 .dialog-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(0, 26, 24, .35); }
 /* PageWindow: панель страницы окном поверх неё (Простои, Календарь цеха, Компетенции, Запуск задания). */
@@ -588,10 +620,6 @@ details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 
 .move-dialog .history-table { max-height: 60vh; overflow: auto; }
 .move-dialog .history-table table { width: 100%; }
 .move-dialog .dialog-inline-action { align-self: end; justify-self: start; }
-.manual-stock-rows { margin-bottom: 12px; }
-.manual-stock-rows .manual-stock-passport-cell { max-width: 420px; color: var(--muted-foreground); }
-.manual-stock-rows .manual-stock-row-actions { white-space: nowrap; text-align: right; }
-.manual-stock-rows .manual-stock-row-actions .link-button + .link-button { margin-left: 10px; }
 .manual-stock-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 td small, td strong { display: block; }
 td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; line-height: 1.3; }
@@ -1400,8 +1428,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .inline-action { align-items: stretch; flex-direction: column; }
   .warehouse-grid { grid-template-columns: 1fr; }
   .stock-actions { grid-template-columns: 1fr; }
-  .manual-stock-grid { grid-template-columns: 1fr; }
-  .manual-stock-grid .span-2 { grid-column: auto; }
   .fulfillment-actions { align-items: stretch; flex-direction: column; }
   .fulfillment-danger-group { margin-left: 0; padding-left: 0; border-left: 0; flex-direction: column; }
   .fulfillment-actions label { width: 100%; }

@@ -83,9 +83,14 @@ def stored_templates(uow, kind: str) -> dict[str, StoredTemplate]:
 
 def stored_template(uow, kind: str, label_format: str) -> StoredTemplate | None:
     with uow:
-        row = _session(uow).scalar(select(LabelTemplateRow).where(
-            LabelTemplateRow.kind == kind, LabelTemplateRow.format == label_format))
-        return _stored(row) if row is not None else None
+        return stored_template_in(_session(uow), kind, label_format)
+
+
+def stored_template_in(session: Session, kind: str, label_format: str) -> StoredTemplate | None:
+    """The same read inside a transaction already open (a receipt line queues its label together with the lot)."""
+    row = session.scalar(select(LabelTemplateRow).where(
+        LabelTemplateRow.kind == kind, LabelTemplateRow.format == label_format))
+    return _stored(row) if row is not None else None
 
 
 def _journal(uow, event_type: str, actor: Actor, now: datetime, details: dict) -> None:

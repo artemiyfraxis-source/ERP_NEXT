@@ -423,6 +423,61 @@ export interface WarehouseLot {
   storage_conditions?: string;
   datasheet?: string;
   certificate?: string;
+  /** The supply («Поставка») the lot was accepted with; null for lots entered before it existed. */
+  receipt?: WarehouseReceiptRef | null;
+}
+
+export interface WarehouseReceiptRef {
+  id: string;
+  supplier: string;
+  invoice_number: string;
+  invoice_date: string | null;
+  upd_number: string;
+  upd_date: string | null;
+}
+
+/** The supply document of «+ Внести позиции»: header fields; `scan_file` is the stored scan of the УПД. */
+export interface WarehouseReceiptFields {
+  warehouse: string;
+  supplier: string;
+  invoice_number: string;
+  invoice_date: string | null;
+  upd_number: string;
+  upd_date: string | null;
+  purpose: string;
+  scan_file?: string;
+}
+
+export interface WarehouseReceipt extends WarehouseReceiptRef, Omit<WarehouseReceiptFields, "scan_file"> {
+  version: number;
+  scan_file: string;
+  created_at: string;
+  created_by: string;
+  lots_count: number;
+}
+
+export interface WarehouseReceiptAccept {
+  article: string;
+  quantity: string;
+  unit: string;
+  item_type: string;
+  manufacturer: string;
+  series: string;
+  name: string;
+  purpose: string;
+  expiry_date: string | null;
+  datasheet: string;
+  certificate: string;
+  storage_location: string;
+  labels: number;
+  confirm_expected: boolean;
+}
+
+export interface WarehouseReceiptScan {
+  scan_file: string;
+  recognised: { supplier: string; inn: string; upd_number: string; upd_date: string; invoice_number: string; invoice_date: string };
+  lines: Array<{ article: string; name: string; quantity: string; unit: string }>;
+  note: string;
 }
 
 /** МАССА 1 ШТ as typed: the weight of 1, 10 or 100 pieces, grams; any one is enough. */
@@ -439,27 +494,6 @@ export interface WarehouseLotPassport extends UnitMassFields {
   storage_conditions: string;
   datasheet: string;
   certificate: string;
-}
-
-/** A quick-entry row («Внести позиции»); empty article → the name, empty unit/purpose → «шт»/«Склад». */
-export type WarehouseManualItem = {
-  warehouse: string;
-  article: string;
-  series: string;
-  name: string;
-  item_type: string;
-  purpose: string;
-  unit: string;
-  quantity: string;
-  storage_location: string;
-} & Partial<WarehouseLotPassport>;
-
-/** Quick-entry answer (SK-10, stock05Add_): bad rows are skipped; `i` is the 0-based index of the sent row. */
-export interface WarehouseAddResult {
-  added: number;
-  lots: WarehouseLot[];
-  assigned: Array<{ i: number; id: string; grn: string; article: string; quantity: string; unit: string; storage_location: string; warehouse: string }>;
-  errors: Array<{ i: number; error: string }>;
 }
 
 /** Editable fields of a stock row (SK-7); ГРН, пакет and склад are the row key and are not here. */
@@ -542,6 +576,20 @@ export interface WarehouseArticleInfo {
   name: string;
   item_type: string;
   source: string;
+  unit?: string;
+  manufacturer?: string;
+  datasheet?: string;
+  certificate?: string;
+  description?: string;
+  storage_conditions?: string;
+  expiry_date?: string | null;
+}
+
+/** What the supply asked about an article: the places it already lies on and an order waiting in «Приёмка». */
+export interface WarehouseArticleHints {
+  info: WarehouseArticleInfo | null;
+  places?: string[];
+  expected?: { order_number: string; supplier: string } | null;
 }
 
 export interface FulfillmentLot {
@@ -3021,13 +3069,21 @@ export const warehouseApi = {
   shelfPlaces: (warehouse: string, shelf: string) => api<WarehouseShelfPlaces>(
     `/api/stock/places?warehouse=${encodeURIComponent(warehouse)}&shelf=${encodeURIComponent(shelf)}`,
   ),
-  articleInfo: (article: string) => api<{ info: WarehouseArticleInfo | null }>(
-    `/api/stock/article-info?q=${encodeURIComponent(article)}`,
+  articleInfo: (article: string, supply?: { supplier?: string; invoice_number?: string; warehouse?: string }) => api<WarehouseArticleHints>(
+    `/api/stock/article-info?${new URLSearchParams({ q: article, ...Object.fromEntries(Object.entries(supply ?? {}).filter(([, value]) => value)) as Record<string, string> })}`,
   ),
-  add: (items: WarehouseManualItem[]) => api<WarehouseAddResult>("/api/stock/batches", {
-    method: "POST",
-    body: JSON.stringify({ items }),
-  }),
+  receipts: (limit = 20) => api<{ receipts: WarehouseReceipt[] }>(`/api/stock/receipts?limit=${limit}`),
+  receipt: (id: string) => api<{ receipt: WarehouseReceipt; lots: WarehouseLot[] }>(`/api/stock/receipts/${encodeURIComponent(id)}`),
+  createReceipt: (fields: WarehouseReceiptFields) => api<WarehouseReceipt>("/api/stock/receipts", { method: "POST", body: JSON.stringify(fields) }),
+  updateReceipt: (id: string, fields: WarehouseReceiptFields & { version: number }) =>
+    api<WarehouseReceipt>(`/api/stock/receipts/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(fields) }),
+  acceptReceiptLot: (id: string, item: WarehouseReceiptAccept) =>
+    api<{ lot: WarehouseLot; label_job_id: string | null; label_error: string }>(`/api/stock/receipts/${encodeURIComponent(id)}/accept`, { method: "POST", body: JSON.stringify(item) }),
+  scanReceipt: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api<WarehouseReceiptScan>("/api/stock/receipts/scan", { method: "POST", body: form });
+  },
   writeOff: (lotId: string, version: number, quantity: string, purpose: string, reason: string, date?: string) =>
     api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/writeoff`, {
       method: "POST",

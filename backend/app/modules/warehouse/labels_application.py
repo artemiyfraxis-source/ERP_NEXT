@@ -19,7 +19,9 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from .label_jobs import COPIES_MAX, QUEUED, enqueue
-from .label_templates import StoredTemplate, reset_template, save_template, stored_template, stored_templates
+from .label_templates import (
+    StoredTemplate, reset_template, save_template, stored_template, stored_template_in, stored_templates,
+)
 from .labels.defaults import default_template
 from .labels.layout import GrnLabelData, LabelLayout, label_png
 from .labels.render import render
@@ -135,6 +137,11 @@ def lot_label_data(uow, lot_id: UUID) -> GrnLabelData:
         if lot is None:
             raise KeyError("Партия не найдена")
         received = uow.warehouse.received_at(lot_id)
+    return label_of(lot, received)
+
+
+def label_of(lot, received: datetime | None) -> GrnLabelData:
+    """The label of a lot already read (ГРН, артикул, наименование, остаток, место, склад, дата прихода)."""
     name = lot.name or lot.article
     return GrnLabelData(
         grn=lot_code(lot.grn, lot.package),
@@ -184,6 +191,15 @@ def render_label(uow, content: LabelContent, settings: PrintSettings) -> LabelLa
     """The label as it prints: the saved template of its kind in the settings' format, else the built-in one.
     ValueError — a code does not fit its element."""
     stored = stored_template(uow, content.kind, format_key(settings.width_mm, settings.height_mm))
+    if stored is not None and stored.template is not None:
+        return render(stored.template, content, settings)
+    return render_builtin(content, settings)
+
+
+def lot_layout_in(session, lot, received: datetime | None, settings: PrintSettings) -> LabelLayout:
+    """The lot's label as `render_label` draws it, read inside a transaction already open."""
+    content = lot_content(label_of(lot, received))
+    stored = stored_template_in(session, content.kind, format_key(settings.width_mm, settings.height_mm))
     if stored is not None and stored.template is not None:
         return render(stored.template, content, settings)
     return render_builtin(content, settings)
