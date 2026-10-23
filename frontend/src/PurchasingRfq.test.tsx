@@ -139,7 +139,8 @@ it("a line not asked of a supplier is «не запрашивали», the heade
   expect(screen.getByText("ООО Альфа ★").closest("th")).toHaveTextContent("позиций: 2 из 2");
 
   fireEvent.click(within(head).getByRole("button", { name: "+ КП ООО Бета" }));
-  const quote = await screen.findByRole("dialog", { name: "КП от «ООО Бета»" });
+  const quote = await screen.findByRole("region", { name: "Внести КП" });
+  expect(within(quote).getByLabelText("Поставщик КП")).toHaveValue("s2");
   expect(within(quote).getByLabelText("Цена Разъём")).toBeInTheDocument();
   expect(within(quote).queryByLabelText("Цена Клемма")).not.toBeInTheDocument();
   fireEvent.click(within(quote).getByRole("button", { name: "Отмена" }));
@@ -190,8 +191,8 @@ it("the pasted text fills the form with the pack recalculated, lists the rest an
   mockImportServer(posts);
   render(<PurchasingRfq />);
   fireEvent.click(await screen.findByRole("button", { name: "+ КП ООО Бета" }));
-  const quote = await screen.findByRole("dialog", { name: "КП от «ООО Бета»" });
-  fireEvent.click(await within(quote).findByRole("button", { name: "Вставить из PDF / текста" }));
+  const quote = await screen.findByRole("region", { name: "Внести КП" });
+  fireEvent.click(await within(quote).findByRole("button", { name: "Вставить текст КП" }));
   fireEvent.change(within(quote).getByLabelText("Текст КП"), { target: { value: "Разъём SHR-02 (100 шт) 1 уп 500,00 7 дн" } });
   fireEvent.click(within(quote).getByRole("button", { name: "Разобрать текст" }));
   // Every row is matched or skipped before anything reaches the form.
@@ -257,6 +258,64 @@ it("«&letters=1» opens the supplier letters with the request; «Свернут
   fireEvent.click(screen.getByRole("button", { name: "Письма поставщикам" }));
   await waitFor(() => expect(window.location.search).toBe("?section=procurement&tab=rfq&rfq=r1&letters=1"));
   window.history.replaceState({}, "", "/");
+});
+
+it("the card shows projects, «решено N/M» and the sums; the archive is its own list (Витя via the owner 23.10)", async () => {
+  const summary = (over: Record<string, unknown>) => ({
+    id: "r1", number: "КП-2610-001", seq: 1, title: "Разъёмы", created_at: "2026-10-01T10:00:00", closed_at: null, mine: true,
+    lines: 3, suppliers: 2, sent: 2, quotes: 4, decided: 1, to_decide: 2, projects: ["П-0042", "П-0614"],
+    plan_sum: "12270.4", decided_sum: "5535", invoiced: 0, archived: false, ...over,
+  });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/purchasing/rfqs?scope=mine") {
+      return json({ rfqs: [
+        summary({}),
+        summary({ id: "r2", number: "КП-2610-002", seq: 2, title: "Кабель", decided: 0, decided_sum: null, projects: [] }),
+        summary({ id: "r3", number: "КП-2610-003", seq: 3, title: "Расходники", decided: 1, to_decide: 1, invoiced: 1, archived: true }),
+      ] });
+    }
+    if (path === "/api/purchasing/rfqs/directory") return json({ suppliers: [] });
+    if (/^\/api\/purchasing\/rfqs\/r\d$/.test(path)) {
+      const id = path.split("/").pop()!;
+      return json({ ...matrix, rfq: { ...matrix.rfq, id, number: `КП-2610-00${id.slice(1)}`, title: null } });
+    }
+    return json({}, 404);
+  });
+  render(<PurchasingRfq />);
+  const first = (await screen.findByText("№ 1")).closest("button") as HTMLElement;
+  expect(within(first).getByText("П-0042, П-0614")).toBeInTheDocument();
+  expect(within(first).getByText("1/2")).toBeInTheDocument();
+  expect(within(first).getByText("01.10.2026")).toBeInTheDocument();
+  expect(within(first).getByText("План").nextSibling).toHaveTextContent(/^12\s270 ₽$/);
+  expect(within(first).getByText("Решено").nextSibling).toHaveTextContent(/^5\s535 ₽$/);
+  const second = screen.getByText("№ 2").closest("button") as HTMLElement;
+  expect(within(second).queryByText("Решено")).not.toBeInTheDocument(); // nothing decided — the plan only
+  expect(screen.queryByText("№ 3")).not.toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "КП-2610-001" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("tab", { name: "Архив 1" }));
+  const archived = (await screen.findByText("№ 3")).closest("button") as HTMLElement;
+  expect(within(archived).getByText("счета получены")).toBeInTheDocument();
+  expect(screen.queryByText("№ 1")).not.toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "КП-2610-003" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "В работе 2" })).toHaveAttribute("aria-selected", "false");
+});
+
+it("«Внести КП» opens a list under the matrix with the request's suppliers to pick from", async () => {
+  mockServer();
+  render(<PurchasingRfq />);
+  fireEvent.click(await screen.findByRole("button", { name: "Внести КП" }));
+  const entry = screen.getByRole("region", { name: "Внести КП" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  // Below the matrix in the page order.
+  const table = screen.getByRole("button", { name: "Разъём — ООО Альфа" });
+  expect(table.compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const picker = within(entry).getByLabelText("Поставщик КП");
+  expect(within(picker).getAllByRole("option").map((option) => option.textContent)).toEqual(["ООО Альфа ★ — КП есть", "ООО Бета — КП есть"]);
+  expect(within(entry).getByRole("group", { name: "Файл КП" })).toHaveTextContent("Перетащите сюда PDF с КП");
+  fireEvent.click(screen.getByRole("button", { name: "Свернуть КП" }));
+  expect(screen.queryByRole("region", { name: "Внести КП" })).not.toBeInTheDocument();
 });
 
 it("opens «Все» at once when the user has no requests of his own but another buyer does (owner 22.10)", async () => {
