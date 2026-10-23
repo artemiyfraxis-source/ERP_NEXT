@@ -256,6 +256,61 @@ it("scans a УПД: fills the empty header fields, appends the lines and shows t
   expect(cellOf("Наименование")).toHaveValue("Зет");
 });
 
+it("scans from the scanner: waits for the PC, then fills the header like a file upload", async () => {
+  const calls = mockApi({
+    "POST /api/stock/receipts/scan-jobs": () => json({ id: "s1", status: "pending" }),
+    "GET /api/stock/receipts/scan-jobs/s1": () => json({
+      id: "s1", status: "done", error: "",
+      result: {
+        scan_file: "scan-2.pdf", note: "Распознано: 1 строка.",
+        recognised: { supplier: "ООО Сканер", inn: "", upd_number: "21", upd_date: "", invoice_number: "", invoice_date: "" },
+        lines: [{ article: "S-1", name: "Эс", quantity: "2", unit: "шт" }],
+      },
+    }),
+  });
+  await openSupply();
+  fireEvent.click(screen.getByRole("button", { name: "Сканировать" }));
+
+  expect(await screen.findByText("Распознано: 1 строка.")).toBeInTheDocument();
+  expect(screen.getByLabelText("Поставщик")).toHaveValue("ООО Сканер");
+  expect(cellOf("Артикул")).toHaveValue("S-1");
+  expect(calls.some((call) => call.method === "POST" && call.path === "/api/stock/receipts/scan-jobs")).toBe(true);
+  expect(screen.getByRole("button", { name: "Сканировать" })).toBeEnabled();
+});
+
+it("shows the scanner error in red and frees the buttons", async () => {
+  mockApi({
+    "POST /api/stock/receipts/scan-jobs": () => json({ id: "s2", status: "pending" }),
+    "GET /api/stock/receipts/scan-jobs/s2": () => json({ id: "s2", status: "failed", error: "Сканер не отвечает", result: null }),
+  });
+  await openSupply();
+  fireEvent.click(screen.getByRole("button", { name: "Сканировать" }));
+
+  const status = await screen.findByText("Сканер не отвечает");
+  expect(status).toHaveClass("error");
+  expect(screen.getByRole("button", { name: "Сканировать" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Файл…" })).toBeEnabled();
+});
+
+it("cancels a waiting scan: DELETE goes out and the buttons come back", async () => {
+  const calls = mockApi({
+    "POST /api/stock/receipts/scan-jobs": () => json({ id: "s3", status: "pending" }),
+    "GET /api/stock/receipts/scan-jobs/s3": () => json({ id: "s3", status: "pending", error: "", result: null }),
+    "DELETE /api/stock/receipts/scan-jobs/s3": () => json({ id: "s3", status: "failed" }),
+  });
+  await openSupply();
+  fireEvent.click(screen.getByRole("button", { name: "Сканировать" }));
+
+  expect(await screen.findByText(/Положите УПД на стекло сканера/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Сканировать" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Файл…" })).toBeDisabled();
+  fireEvent.click(screen.getByText("Отменить"));
+
+  await waitFor(() => expect(screen.getByRole("button", { name: "Сканировать" })).toBeEnabled());
+  expect(calls.some((call) => call.method === "DELETE" && call.path === "/api/stock/receipts/scan-jobs/s3")).toBe(true);
+  expect(screen.queryByText(/Положите УПД/)).toBeNull();
+});
+
 it("starts with one blank row, adds the next when the article is typed, and offers no buttons on blank rows", async () => {
   mockApi();
   await openSupply();
