@@ -96,9 +96,10 @@ def _upload(agent: dict, job_id: str, name: str, content: bytes, kind: str):
 # --- schema -----------------------------------------------------------------------------------------------------
 
 
-def test_scan_jobs_migration_is_the_single_head():
+def test_scan_jobs_migration_is_followed_only_by_the_article_split():
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["0145_warehouse_scan_jobs"]
+    script = ScriptDirectory.from_config(config)
+    assert script.get_revision("0146_split_article_maker").down_revision == "0145_warehouse_scan_jobs"
 
 
 def test_database_holds_done_with_a_file_and_only_done(tmp_path, monkeypatch):

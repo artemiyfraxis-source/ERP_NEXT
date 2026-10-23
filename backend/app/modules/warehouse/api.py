@@ -11,6 +11,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.shared.article_maker import split_article_maker
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
@@ -586,7 +587,10 @@ def article_info(
     """What «Внести позиции» / «Приход на склад» fill for a typed article. Sources in priority order, each filling
     only what is still empty: the last lot of the article, the reference DB (code rules, БД.ТЕР, БД.КОАКС), the
     purchasing nomenclature, the procurement line of the delivery's invoice. `places` — where the article lies with a
-    balance (in `warehouse`), newest first, at most 5; `expected` — the line «Приёмка» is still waiting for."""
+    balance (in `warehouse`), newest first, at most 5; `expected` — the line «Приёмка» is still waiting for.
+    «XHP-4@JST» is looked up as «XHP-4», and «JST» fills an empty «Производитель» (owner 23.10.2026)."""
+    split = split_article_maker(article)
+    article = split.article or article
     records = []
     factory = _factory(request, "references_uow_factory")
     if factory is not None:
@@ -602,6 +606,7 @@ def article_info(
         "series": identity.series, "name": identity.name, "item_type": identity.item_type,
     }
     facts = article_facts(uow_factory(), article, warehouse, (
+        ("артикул", {"manufacturer": split.maker} if split.maker else None),
         (identity.source if identity is not None else "", reference),
         ("номенклатура закупок", item),
         (f"строка закупки {line['legacy_id']}" if line else "", line),

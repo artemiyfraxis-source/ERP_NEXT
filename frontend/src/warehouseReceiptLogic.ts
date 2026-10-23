@@ -165,7 +165,8 @@ export function applyReceiptPaste(
       .map((row) => Object.fromEntries(PASTE_ORDER.map((key) => [key, key === "quantity" ? cellValue(key, row[key] ?? "") : (row[key] ?? "")])) as Partial<Record<LineKey, string>>)
       .filter((row) => PASTE_ORDER.some((key) => row[key]));
     const result = appendParsedRows<LineKey, ReceiptLine>(lines, rows, lineSetup);
-    return { lines: result.positions, header, filled: result.filled, dropped: result.dropped, mode: "headers", unknown: parsed.unknown };
+    const split = result.positions.map((line, index) => (line === lines[index] ? line : splitArticleCell(line)));
+    return { lines: split, header, filled: result.filled, dropped: result.dropped, mode: "headers", unknown: parsed.unknown };
   }
   const result = applyGridPaste<LineKey, ReceiptLine>(lines, rowIndex, colKey, text, {
     ...lineSetup,
@@ -182,8 +183,10 @@ export function applyReceiptPaste(
     if (!was) return line;
     if (was.accepted) return was;
     const changed = PASTE_ORDER.filter((key) => line[key] !== was[key]);
-    return changed.length ? { ...was, ...Object.fromEntries(changed.map((key) => [key, line[key]])), auto: was.auto.filter((key) => !changed.includes(key)), error: "" } : was;
-  });
+    if (!changed.length) return was;
+    const next = { ...was, ...Object.fromEntries(changed.map((key) => [key, line[key]])), auto: was.auto.filter((key) => !changed.includes(key)), error: "" };
+    return changed.includes("article") ? splitArticleCell(next) : next;
+  }).map((line, index) => (lines[index] ? line : splitArticleCell(line)));
   return { lines: positions, header: {}, filled: result.filled, dropped: result.dropped, mode: "cells", unknown: [] };
 }
 
@@ -211,7 +214,8 @@ export function applyScan(header: ReceiptHeader, lines: ReceiptLine[], scan: War
     article: line.article.trim(), name: line.name.trim(), unit: line.unit.trim(), quantity: cellValue("quantity", line.quantity),
   }));
   const result = appendParsedRows<LineKey, ReceiptLine>(lines, rows, { limit: RECEIPT_LIMIT, seed: emptyLine(), isBlank: isBlankLine });
-  return { header: nextHeader, lines: result.positions, added: result.filled };
+  const split = result.positions.map((line, index) => (line === lines[index] ? line : splitArticleCell(line)));
+  return { header: nextHeader, lines: split, added: result.filled };
 }
 
 /** Header as the server takes it (empty dates are null). */
@@ -278,6 +282,87 @@ export function applyHints(line: ReceiptLine, hints: WarehouseArticleHints): Rec
     : line;
   next = { ...next, places: hints.places ?? [], expected: hints.expected ? `заказ № ${hints.expected.order_number}` : "" };
   return next;
+}
+
+/* «XHP-4@JST» → article «XHP-4», manufacturer «JST» (owner 23.10.2026). Mirror of backend `app/shared/article_maker.py`
+ * (the test runs both on the same real articles): only a trailing «@token» of 2..20 letters, digits, spaces, «&», «-»
+ * is a maker; «##6000» / «упаковка 6000 шт» are the pack, text after «@MAKER,» a note. */
+const PACK_WORDS = /[\s,;]*упаковк[аеиу]\s*(?:по\s*)?(\d[\d\s]*?)\s*шт\.?\s*$/iu;
+const PACK_HASH = /\s*##\s*(\d+)\s*$/u;
+const MAKER = /^[0-9A-Za-zА-Яа-яЁё][0-9A-Za-zА-Яа-яЁё &-]{0,18}[0-9A-Za-zА-Яа-яЁё]$/u;
+const LETTER = /[A-Za-zА-Яа-яЁё]/u;
+const LATIN = /[A-Za-z]/;
+const TWINS: Record<string, string> = Object.fromEntries(
+  [..."АВЕКМНОРСТХУаеорсху"].map((letter, index) => [letter, "ABEKMHOPCTXYaeopcxy"[index]]),
+);
+const MAKER_ALIASES: Record<string, string> = { CONFLY: "CONNFLY", CONDAR: "SCONDAR", CHINA: "Китай", "КИТАЙ": "Китай" };
+
+export type ArticleSplit = { article: string; maker: string; packQty: number | null; note: string };
+
+const PY_SPACE = /[\s\u001c-\u001f\u0085]/gu; // Python's str.split() whitespace
+const trimChars = (text: string, chars: string) => {
+  let start = 0;
+  let end = text.length;
+  while (start < end && chars.includes(text[start])) start += 1;
+  while (end > start && chars.includes(text[end - 1])) end -= 1;
+  return text.slice(start, end);
+};
+
+export function normalizeMaker(value: string): string {
+  let text = trimChars(value.replace(PY_SPACE, " ").split(" ").filter(Boolean).join(" "), " .,;:");
+  if (!text) return "";
+  if (LATIN.test(text)) text = [...text].map((letter) => TWINS[letter] ?? letter).join("");
+  text = text.toUpperCase();
+  return MAKER_ALIASES[text] ?? text;
+}
+
+function packOf(digits: string): number | null {
+  const number = digits.replace(/\s/gu, "");
+  return /^\d+$/.test(number) && Number(number) > 0 ? Number(number) : null;
+}
+
+export function splitArticleMaker(text: string | null | undefined): ArticleSplit {
+  let value = String(text ?? "").trim();
+  let packQty: number | null = null;
+  let note = "";
+  let maker = "";
+  const words = PACK_WORDS.exec(value);
+  if (words && words.index > 0) {
+    packQty = packOf(words[1]);
+    value = value.slice(0, words.index).trimEnd();
+  }
+  const at = value.lastIndexOf("@");
+  if (at > 0) {
+    const head = value.slice(0, at);
+    const tail = value.slice(at + 1);
+    const comma = tail.indexOf(",");
+    const name = (comma < 0 ? tail : tail.slice(0, comma)).trim().replace(/[.;:]+$/u, "");
+    const rest = comma < 0 ? "" : tail.slice(comma + 1);
+    if (!head.includes("@") && head.trim() && MAKER.test(name) && LETTER.test(name)) {
+      maker = normalizeMaker(name);
+      note = rest.split(PY_SPACE).filter(Boolean).join(" ");
+      value = head.trimEnd();
+    }
+  }
+  const hashed = PACK_HASH.exec(value);
+  if (hashed && hashed.index > 0) {
+    packQty = packQty ?? packOf(hashed[1]);
+    value = value.slice(0, hashed.index).trimEnd();
+  }
+  return { article: value, maker, packQty, note };
+}
+
+/** «XHP-4@JST» in Артикул → «XHP-4», and «JST» into an EMPTY Производитель. A text with a pack size or a note after the
+ *  maker is left as typed: the grid has no «Описание», the server splits it on «Принять» and keeps them there. */
+export function splitArticleCell(line: ReceiptLine): ReceiptLine {
+  if (line.accepted) return line;
+  const split = splitArticleMaker(line.article);
+  if (!split.maker || split.packQty || split.note) return line;
+  const manufacturer = line.manufacturer.trim() ? line.manufacturer : split.maker;
+  return {
+    ...line, article: split.article, manufacturer,
+    auto: line.auto.filter((key) => key !== "article" && (key !== "manufacturer" || manufacturer === line.manufacturer)),
+  };
 }
 
 /** An editing of a cell: it is the user's own text now. */

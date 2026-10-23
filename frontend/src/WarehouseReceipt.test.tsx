@@ -52,6 +52,23 @@ async function openSupply() {
 const cellOf = (label: string, row = 1) => screen.getByLabelText(`${label}, строка ${row}`) as HTMLInputElement;
 const type = (label: string, value: string, row = 1) => fireEvent.change(cellOf(label, row), { target: { value } });
 
+it("«XHP-4@JST» in Артикул: split on leaving the cell or at once when pasted, the lookup asks for the bare article", async () => {
+  const calls = mockApi();
+  await openSupply();
+  type("Артикул", "XHP-4@JST");
+  expect(cellOf("Артикул")).toHaveValue("XHP-4@JST"); // not while typing
+  fireEvent.blur(cellOf("Артикул"));
+  await waitFor(() => expect(cellOf("Артикул")).toHaveValue("XHP-4"));
+  expect(cellOf("Производитель")).toHaveValue("JST");
+  await waitFor(() => expect(calls.some((call) => call.path.startsWith("/api/stock/article-info?q=XHP-4&"))).toBe(true));
+
+  const second = cellOf("Артикул", 2);
+  fireEvent.change(cellOf("Производитель", 2), { target: { value: "Molex Inc." } });
+  fireEvent.paste(second, { clipboardData: { getData: () => "0039012085@Molex" } });
+  await waitFor(() => expect(cellOf("Артикул", 2)).toHaveValue("0039012085"));
+  expect(cellOf("Производитель", 2)).toHaveValue("Molex Inc.");
+});
+
 it("types an article and a quantity: the lookup fills only the empty cells, quietly, with the supply's data", async () => {
   const calls = mockApi({
     "GET /api/stock/article-info": () => json({

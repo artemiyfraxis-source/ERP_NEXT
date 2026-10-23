@@ -420,6 +420,8 @@ def _warehouse_payload(line: ReceivingLine) -> dict:
         # Warehouse.gs:418-420: СРОК ГОДНОСТИ and МАССА 1 ШТ go with the receipt into the stock row.
         "expiry_date": line.expiry_date.isoformat() if line.expiry_date else None,
         "unit_mass_g": format(line.unit_mass_g, "f") if line.unit_mass_g is not None else None,
+        # «Производитель» of the line fills the lot's empty one (owner 23.10.2026); older events have no key.
+        "manufacturer": line.manufacturer,
     }
 
 

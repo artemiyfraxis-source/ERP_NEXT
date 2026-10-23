@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping
 
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.techcards.connector_housings import housing_of, normalize_article
+from app.shared.article_maker import split_article_maker
 
 
 # Stock05.gs STOCK05_COAX_FAM_RE_ (SUPPLYMAP 39a5a97): ISMA and the 2.92 / 3.5 mm precision families.
@@ -139,8 +140,10 @@ def _without_manufacturer(value: object) -> str:
 
 
 def _without_supplier(value: str) -> str:
-    """The «@SUPPLIER …» tail (0039012025@MOLEX) is not part of the article."""
-    return _SUPPLIER_TAIL.sub("", value, count=1)
+    """The «@SUPPLIER …» tail (0039012025@MOLEX) is not part of the article: the shared split first («##6000»,
+    «упаковка … шт» go too), then — for inference only — any «@…» tail it leaves as not a maker
+    («0510210700@MOLEX SH12501-7Y china (на тесты)» is still read as 0510210700)."""
+    return _SUPPLIER_TAIL.sub("", split_article_maker(value).article, count=1)
 
 
 def _sex(code: str) -> str:

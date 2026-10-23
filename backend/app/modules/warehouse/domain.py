@@ -434,11 +434,13 @@ class StockLot:
         storage_location: str = "",
         expiry_date: date | None = None,
         unit_mass_g: Decimal | None = None,
+        manufacturer: str = "",
     ) -> StockLot:
         """Repeated receipt of the same ГРН+ПАКЕТ (SUPPLYMAP Warehouse.gs applyWarehouseAdds_ 492-515): the
         incoming НАЗНАЧЕНИЕ and МЕСТО ХРАНЕНИЯ replace the lot's; an empty one keeps what the lot has.
         The place goes through the same strict check as the first receipt. СРОК ГОДНОСТИ is always the
-        incoming one, even empty (line 498); МАССА 1 ШТ changes only with a real mass (line 508)."""
+        incoming one, even empty (line 498); МАССА 1 ШТ changes only with a real mass (line 508).
+        ПРОИЗВОДИТЕЛЬ fills only an empty one (owner 23.10.2026)."""
         source = str(source_receiving_id or "").strip()
         if not source:
             raise WarehouseValidationError("Источник приёмки обязателен")
@@ -449,6 +451,7 @@ class StockLot:
         return replace(
             self,
             article=self.article or str(article or "").strip(),
+            manufacturer=self.manufacturer or _detail("manufacturer", manufacturer),
             series=str(series or "").strip() or self.series,
             purpose=str(purpose or "").strip() or self.purpose,
             storage_location=normalize_location(place) if place else self.storage_location,
