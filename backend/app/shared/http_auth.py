@@ -155,10 +155,11 @@ myrequests_principal = require_section(
     "view",
     detail="Раздел «Мои заявки» вам не открыт.",
 )
-# «В закупку» — everyone who files or sees requests (owner, 23.10); the route narrows it: a buyer takes the line,
-# «Заявки» on edit hands any request, the rest only their own.
+# «В закупку» — everyone who files or sees requests (owner, 23.10; every employee has «Мои заявки»); the route narrows
+# it: «Снабжение» on edit takes the line as its buyer, «Заявки» on edit hands any request, the rest only their own.
+# «Снабжение» on view alone opens nothing here (ID-6: a viewer of the three sections never writes through them).
 handoff_principal = require_section(
-    ("procurement", "requests", "myrequests", "newrequest"),
+    ("requests", "myrequests", "newrequest"),
     "view",
     detail="Передать заявку в закупку вам не открыто.",
 )

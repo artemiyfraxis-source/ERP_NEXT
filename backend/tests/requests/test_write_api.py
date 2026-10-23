@@ -180,7 +180,7 @@ def test_a_buyer_takes_the_handed_request_and_a_retry_does_not_duplicate_outbox(
         actor=Actor(name="Петров", department="Закупки"),
         email="petrov@example.test",
         roles=frozenset({"buyer"}),
-        permissions={"procurement": "edit"},
+        permissions={"procurement": "edit", "myrequests": "edit"},
     )
     first = client.post("/api/requests/handoff", json={"request_ids": [request_id]})
     retry = client.post("/api/requests/handoff", json={"request_ids": [request_id]})
@@ -277,7 +277,7 @@ def test_retransfer_is_an_explicit_flag_and_refused_for_a_new_request(write_api)
         actor=Actor(name="Петров", department="Закупки"),
         email="petrov@example.test",
         roles=frozenset({"buyer"}),
-        permissions={"procurement": "edit"},
+        permissions={"procurement": "edit", "myrequests": "edit"},
     )
 
     too_early = client.post("/api/requests/handoff", json={"request_ids": [request_id], "retransfer": True})
