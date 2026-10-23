@@ -179,6 +179,25 @@ def test_list_filters_counts_and_order(env):
     assert client.get(f"{BASE}?status=lost").status_code == 422
 
 
+def test_kind_filter_groups_document_kinds_and_counts_them(env):
+    client, sessions = env
+    for index, kind in enumerate(["УПД", "УПД до 2019 года", "ТОРГ-12", "Счёт-фактура", "М-15", "Корректировочный СФ", "акт", "Прочее"]):
+        upd(sessions, f"file-kind-{index:04d}", kind=kind, number=str(index + 1), total_gross=100_000 + index * 1_000,
+            doc_date=date(2026, 3, 1 + index))
+    upd(sessions, "file-kind-copy", kind="УПД", status="Дубликат", dup_of="file-kind-0000")
+    relink(sessions)
+    ids = lambda query: sorted(c["id"][-4:] for c in cards(client, query)["items"])  # noqa: E731
+    assert ids("?kind=upd") == ["0000", "0001"]
+    assert ids("?kind=tn_sf") == ["0002", "0003"]
+    assert ids("?kind=m15") == ["0004"]
+    assert ids("?kind=other") == ["0005", "0006", "0007"]
+    assert len(cards(client)["items"]) == 8
+    # Counts ignore the chosen group (so every tab shows its own number) and leave the copies out.
+    assert cards(client, "?kind=m15")["kinds"] == {"upd": 2, "m15": 1, "tn_sf": 2, "other": 3}
+    assert cards(client, "?kind=m15")["counts"]["parsed"] == 1
+    assert client.get(f"{BASE}?kind=акт").status_code == 422
+
+
 def test_a_misread_seller_inn_keeps_the_supplier_the_seller_and_the_twin(env):
     """Крокс from the live registry: three readings of one INN, № 1320 scanned twice."""
     client, sessions = env
