@@ -99,6 +99,10 @@ export type DefectItem = { name: string; text: string };
 export type DefectGroup = { title: string; items: DefectItem[] };
 export type Defects = { intro: string[]; groups: DefectGroup[] };
 
+/** Пункт «4.3.1 Название» из таблицы дефектов СТО ФРАК-001-2026 (код строки — три и более числа через точку). */
+export const STO_ROW = /^\d+\.\d+(?:\.\d+)+\s/;
+const STO_SPLIT = /;\s*(?=\d+\.\d+(?:\.\d+)+\s)/;
+
 const EXPLAINS = /^(Приводит|Это|Признак|Допустим|Снижает|Возника|Происходит|Характерн|Причин|Вед[её]т|Влеч[её]т|Нарушает|При |Так как|Что )/;
 
 function listItem(fragment: string): DefectItem | null {
@@ -116,7 +120,8 @@ function listItem(fragment: string): DefectItem | null {
  *  группы без номера «Термические дефекты (Раздел 4):», строка-перечень «Типовые дефекты (NG): а; б (признак); в.»
  *  и строки-предложения без двоеточия «Надрезы, царапины или обрыв проволочек жилы.». */
 export function parseDefects(raw: unknown): Defects {
-  const text = str(raw).replace(/\r/g, "").replace(/([.)»:])(?=[А-ЯЁA-Z«][^.:;\n]{1,70}:)/g, "$1\n");
+  const text = str(raw).replace(/\r/g, "").split("\n")
+    .map((row) => (STO_ROW.test(row.trim()) ? row : row.replace(/([.)»:])(?=[А-ЯЁA-Z«][^.:;\n]{1,70}:)/g, "$1\n"))).join("\n");
   const intro: string[] = [];
   const groups: DefectGroup[] = [];
   const current = () => {
@@ -127,6 +132,16 @@ export function parseDefects(raw: unknown): Defects {
   for (const source of text.split("\n")) {
     const line = source.trim().replace(/^[-•*–]\s*/, "");
     if (!line) continue;
+    // Хвост карточек по СТО ФРАК-001-2026 («Критерии, метод контроля и действие — по СТО…; при расхождении…») — не дефект.
+    if (/^критерии, метод контроля/i.test(line)) { intro.push(line.replace(/[.:]\s*$/, "")); continue; }
+    // Строки СТО «4.3.1 Название; 4.3.2 Название»: каждый пункт со своим кодом строки; двоеточие внутри названия не режет.
+    if (STO_ROW.test(line)) {
+      for (const part of line.split(STO_SPLIT)) {
+        const name = part.trim().replace(/[.;]\s*$/, "");
+        if (name) current().items.push({ name, text: "" });
+      }
+      continue;
+    }
     if (/^(типовые дефекты|в соответствии|для данной операции)/i.test(line) && (/:\s*$/.test(line) || !line.includes(":"))) {
       intro.push(line.replace(/:\s*$/, ""));
       continue;
