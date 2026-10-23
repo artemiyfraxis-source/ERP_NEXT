@@ -153,16 +153,20 @@ def test_edit_journals_was_and_became_per_changed_field():
     {"inbound": Decimal("12")}, {"written_off": Decimal("3")}, {"reserved": Decimal("1")},
     {"name": "Разъём питания", "written_off": Decimal("3")},
 ])
-def test_edit_of_a_quantity_is_refused_and_writes_nothing(changes):
-    # Quantities change only by movements (write-off, return, transfer), never by the row edit.
+def test_a_quantity_is_edited_by_hand_and_journaled(changes):
+    # Owner 23.10.2026: quantities are edited by hand again (the «only by movements» rule is cut out).
     initial = lot()
     uow = _uow_with(initial)
 
-    with pytest.raises(WarehouseValidationError, match="Количества меняются только движениями"):
-        edit_lot_row(EditLotRowCommand(
-            lot_id=initial.id, expected_version=initial.version, actor=ACTOR, now=NOW, changes=changes,
-        ), uow)
-    assert (uow.warehouse.get(initial.id), uow.audit.items, uow.commits) == (initial, [], 0)
+    updated, _ = edit_lot_row(EditLotRowCommand(
+        lot_id=initial.id, expected_version=initial.version, actor=ACTOR, now=NOW, changes=changes,
+    ), uow)
+    for field, value in changes.items():
+        assert getattr(updated, field) == value
+    [event] = uow.audit.items
+    quantity = next(field for field in ("inbound", "written_off", "reserved") if field in changes)
+    assert event.event_type == "warehouse.row_edited" and f"{quantity}_from" in event.details
+    assert uow.commits == 1
 
 
 def test_edit_without_changes_writes_nothing():

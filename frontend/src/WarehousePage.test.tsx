@@ -1133,7 +1133,7 @@ function lotFetch() {
   });
 }
 
-it("makes the quantity inputs read-only and the search hint new", async () => {
+it("lets the quantities be edited by hand again (owner 23.10) and shows the new search hint", async () => {
   lotFetch();
 
   render(<WarehousePage />);
@@ -1142,11 +1142,10 @@ it("makes the quantity inputs read-only and the search hint new", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
   fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
   const form = within(screen.getByRole("form", { name: "Правка строки" }));
-  await waitFor(() => expect(form.getByLabelText("Приход")).toHaveAttribute("readonly"));
-  expect(form.getByLabelText("Списано")).toHaveAttribute("readonly");
-  expect(form.getByLabelText("Резерв")).toHaveAttribute("readonly");
-  expect(form.getByLabelText("Тип")).not.toHaveAttribute("readonly");
-  expect(form.getByText(/меняются только движениями/)).toBeInTheDocument();
+  await waitFor(() => expect(form.getByLabelText("Приход")).not.toHaveAttribute("readonly"));
+  expect(form.getByLabelText("Списано")).not.toHaveAttribute("readonly");
+  expect(form.getByLabelText("Резерв")).not.toHaveAttribute("readonly");
+  expect(form.queryByText(/меняются только движениями/)).not.toBeInTheDocument();
 });
 
 function itemsFetch(calls: string[], posted: string[] = []) {

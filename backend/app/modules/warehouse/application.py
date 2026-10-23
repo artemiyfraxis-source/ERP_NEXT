@@ -1181,13 +1181,8 @@ def edit_lot_row(command: EditLotRowCommand, uow: UnitOfWork) -> tuple[StockLot,
         changes = lot_row_changes(current, updated)
         if not changes:
             return current, []
-        # Quantities move only through write-off, return and transfer, never by hand (the journal stays complete).
-        if any(
-            getattr(current, name) != getattr(updated, name) for name in ("inbound", "written_off", "reserved")
-        ):
-            raise WarehouseValidationError(
-                "Количества меняются только движениями: списание, возврат, перемещение"
-            )
+        # Quantities are edited by hand again (owner 23.10.2026: the «only by movements» rule is cut out); the journal
+        # keeps «было → стало» for every field, quantities included.
         details = {
             "grn": updated.grn,
             "package": updated.package,
