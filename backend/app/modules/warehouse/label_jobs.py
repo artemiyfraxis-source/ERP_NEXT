@@ -112,18 +112,31 @@ def _session(uow) -> Session:
     return session
 
 
+def add_job(session: Session, *, tspl: bytes, copies: int, kind: str, lot_id: UUID | None, created_by: str,
+            now: datetime) -> UUID:
+    """One job into the caller's open transaction (the «Принять» of a delivery line queues its labels together with
+    the lot). ValueError — copies out of 1..50 or an empty job."""
+    if not 1 <= copies <= COPIES_MAX:
+        raise ValueError(f"Копий — от 1 до {COPIES_MAX}")
+    if not tspl:
+        raise ValueError("Пустое задание печати")
+    job_id = uuid4()
+    session.add(LabelJobRow(
+        id=job_id, created_at=now, created_by=created_by[:255], lot_id=lot_id if kind == "lot" else None,
+        kind=kind, copies=copies, tspl=tspl, status=PENDING,
+    ))
+    return job_id
+
+
 def enqueue(uow, *, tspl: bytes, copies: int, kind: str, lot_id: UUID | None, created_by: str, now: datetime) -> UUID:
     """Queue one job; the agent picks it up. ValueError — copies out of 1..50 or an empty job."""
     if not 1 <= copies <= COPIES_MAX:
         raise ValueError(f"Копий — от 1 до {COPIES_MAX}")
     if not tspl:
         raise ValueError("Пустое задание печати")
-    job_id = uuid4()
     with uow:
-        _session(uow).add(LabelJobRow(
-            id=job_id, created_at=now, created_by=created_by[:255], lot_id=lot_id if kind == "lot" else None,
-            kind=kind, copies=copies, tspl=tspl, status=PENDING,
-        ))
+        job_id = add_job(_session(uow), tspl=tspl, copies=copies, kind=kind, lot_id=lot_id, created_by=created_by,
+                         now=now)
         uow.commit()
     return job_id
 

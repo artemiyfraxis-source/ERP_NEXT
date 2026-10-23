@@ -22,6 +22,7 @@ from app.shared.http_auth import (
 from app.shared.events import AuditEvent
 from app.shared.warehouse_location import STORAGE_LOCATION_MAX_LENGTH, RackLayout, current_rack_layout, rack_layout_from_config
 from app.modules.references.domain import TechOperationTab
+from app.workflows.stock_receipt import expected_in_receiving, procurement_line, purchasing_item
 from app.workflows.warehouse_article import infer_article_identity
 
 from .application import (
@@ -55,9 +56,10 @@ from .application import (
     warehouse_totals,
     write_off,
 )
-from .domain import LOT_DETAIL_LIMITS, LOT_ROW_FIELDS, StockLot, WarehouseValidationError
+from .domain import LOT_DETAIL_LIMITS, LOT_ROW_FIELDS, StockLot, WarehouseReceipt, WarehouseValidationError
 from .item_types import ITEM_TYPE_MAX_LENGTH, ITEM_TYPES_MAX
 from .journal import warehouse_journal
+from .receipts_application import article_facts, lot_receipts
 from .reference_fields import (
     BULK_EDIT_FIELDS,
     BULK_EDIT_LIMIT,
@@ -169,11 +171,10 @@ class MoveLocationPayload(BaseModel):
     target_location: str = Field(min_length=3, max_length=16)
 
 
-class ManualStockInput(BaseModel):
-    """A quick-entry row. Only the shape and the column lengths are checked here — a bad value in a row is
-    the row's error (`errors[{i, error}]`), not the batch's (SK-10, Stock05.gs:744-757)."""
+class StockItemInput(BaseModel):
+    """A quick-entry row without its warehouse (a delivery line takes the delivery's). Only the shape and the column
+    lengths are checked here — a bad value in a row is the row's error, not the request's (SK-10, Stock05.gs:744-757)."""
 
-    warehouse: str = Field(default="", max_length=8)  # empty → ЦАР
     article: str = Field(default="", max_length=1024)  # empty → the name (Warehouse.gs:522)
     series: str = Field(default="", max_length=255)
     name: str = Field(default="", max_length=1024)
@@ -192,6 +193,34 @@ class ManualStockInput(BaseModel):
     storage_conditions: str = Field(default="", max_length=LOT_DETAIL_LIMITS["storage_conditions"])
     datasheet: str = Field(default="", max_length=LOT_DETAIL_LIMITS["datasheet"])
     certificate: str = Field(default="", max_length=LOT_DETAIL_LIMITS["certificate"])
+
+    def manual_item(self, warehouse: str = "") -> ManualStockItem:
+        return ManualStockItem(
+            warehouse=warehouse,
+            article=self.article,
+            series=self.series.strip(),
+            name=self.name,
+            item_type=self.item_type.strip(),
+            purpose=self.purpose,
+            unit=self.unit,
+            quantity=self.quantity,
+            storage_location=self.storage_location,
+            mass_1=self.mass_1,
+            mass_10=self.mass_10,
+            mass_100=self.mass_100,
+            expiry_date=self.expiry_date,
+            manufacturer=self.manufacturer,
+            description=self.description,
+            storage_conditions=self.storage_conditions,
+            datasheet=self.datasheet,
+            certificate=self.certificate,
+        )
+
+
+class ManualStockInput(StockItemInput):
+    """A row of «Внести позиции» (`errors[{i, error}]` per row)."""
+
+    warehouse: str = Field(default="", max_length=8)  # empty → ЦАР
 
 
 class ManualStockPayload(BaseModel):
@@ -236,6 +265,20 @@ def _result(lot: StockLot) -> dict:
         "storage_conditions": lot.storage_conditions,
         "datasheet": lot.datasheet,
         "certificate": lot.certificate,
+    }
+
+
+def receipt_brief(receipt: WarehouseReceipt | None) -> dict | None:
+    """The delivery a lot came with, as the lot list shows it."""
+    if receipt is None:
+        return None
+    return {
+        "id": str(receipt.id),
+        "supplier": receipt.supplier,
+        "invoice_number": receipt.invoice_number,
+        "invoice_date": receipt.invoice_date.isoformat() if receipt.invoice_date else None,
+        "upd_number": receipt.upd_number,
+        "upd_date": receipt.upd_date.isoformat() if receipt.upd_date else None,
     }
 
 
@@ -361,12 +404,14 @@ def lots(
         raise HTTPException(status_code=404, detail=str(error)) from error
     page = lots[:limit]
     holders = _reserve_holders(request, [lot for lot in page if lot.reserved > 0])
+    receipts = lot_receipts(uow_factory(), page)
     return {
         "lots": [
             {
                 **_result(lot),
                 "reserve_holders": holders.get(lot.id, []),
                 "reserve_note": _reserve_note(holders.get(lot.id, [])),
+                "receipt": receipt_brief(receipts.get(lot.receipt_id)),
             }
             for lot in page
         ],
@@ -420,13 +465,15 @@ def scan(
     except KeyError as error:
         raise HTTPException(status_code=404, detail=error.args[0]) from error
     holders = _reserve_holders(request, [lot for lot in result.lots if lot.reserved > 0])
+    receipts = lot_receipts(uow_factory(), result.lots)
     return {
         "kind": result.kind,
         "code": result.code,
         "place": result.place,
         "lots": [
             {**_result(lot), "reserve_holders": holders.get(lot.id, []),
-             "reserve_note": _reserve_note(holders.get(lot.id, []))}
+             "reserve_note": _reserve_note(holders.get(lot.id, [])),
+             "receipt": receipt_brief(receipts.get(lot.receipt_id))}
             for lot in result.lots
         ],
     }
@@ -521,25 +568,53 @@ def shelf_places(
     }
 
 
+def _factory(request: Request, name: str):
+    factory = getattr(request.app.state, name, None)
+    return factory if callable(factory) else None
+
+
 @router.get("/article-info")
 def article_info(
     request: Request,
     _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
     article: Annotated[str, Query(alias="q", min_length=1, max_length=1024)],
+    supplier: Annotated[str, Query(max_length=255)] = "",
+    invoice_number: Annotated[str, Query(max_length=128)] = "",
+    warehouse: Annotated[str | None, Query(pattern="^(ЦАР|ЖУК)$")] = None,
 ) -> dict:
+    """What «Внести позиции» / «Приход на склад» fill for a typed article. Sources in priority order, each filling
+    only what is still empty: the last lot of the article, the reference DB (code rules, БД.ТЕР, БД.КОАКС), the
+    purchasing nomenclature, the procurement line of the delivery's invoice. `places` — where the article lies with a
+    balance (in `warehouse`), newest first, at most 5; `expected` — the line «Приёмка» is still waiting for."""
     records = []
-    factory = getattr(request.app.state, "references_uow_factory", None)
-    if callable(factory):
+    factory = _factory(request, "references_uow_factory")
+    if factory is not None:
         with factory() as uow:
             for tab in (TechOperationTab.TERMINAL, TechOperationTab.COAX):
                 records.extend(uow.tech_operations.list(tab=tab, query="", limit=10_000))
-    info = infer_article_identity(article, records)
-    return {"info": None if info is None else {
-        "series": info.series,
-        "name": info.name,
-        "item_type": info.item_type,
-        "source": info.source,
-    }}
+    identity = infer_article_identity(article, records)
+    item = purchasing_item(_factory(request, "purchasing_uow_factory"), article)
+    line = procurement_line(
+        _factory(request, "procurement_uow_factory"), supplier=supplier, invoice_number=invoice_number, article=article,
+    )
+    reference = None if identity is None else {
+        "series": identity.series, "name": identity.name, "item_type": identity.item_type,
+    }
+    facts = article_facts(uow_factory(), article, warehouse, (
+        (identity.source if identity is not None else "", reference),
+        ("номенклатура закупок", item),
+        (f"строка закупки {line['legacy_id']}" if line else "", line),
+    ))
+    expected = expected_in_receiving(
+        _factory(request, "receiving_uow_factory"), _factory(request, "procurement_uow_factory"),
+        supplier=supplier, invoice_number=invoice_number, article=article,
+    )
+    return {
+        "info": facts.info,
+        "places": facts.places,
+        "expected": None if expected is None else {"order_number": expected.order_number, "supplier": expected.supplier},
+    }
 
 
 @router.post("/batches")
@@ -552,29 +627,7 @@ def add_batches(
     try:
         result = add_manual_stock(
             AddManualStockCommand(
-                items=tuple(
-                    ManualStockItem(
-                        warehouse=item.warehouse,
-                        article=item.article,
-                        series=item.series.strip(),
-                        name=item.name,
-                        item_type=item.item_type.strip(),
-                        purpose=item.purpose,
-                        unit=item.unit,
-                        quantity=item.quantity,
-                        storage_location=item.storage_location,
-                        mass_1=item.mass_1,
-                        mass_10=item.mass_10,
-                        mass_100=item.mass_100,
-                        expiry_date=item.expiry_date,
-                        manufacturer=item.manufacturer,
-                        description=item.description,
-                        storage_conditions=item.storage_conditions,
-                        datasheet=item.datasheet,
-                        certificate=item.certificate,
-                    )
-                    for item in payload.items
-                ),
+                items=tuple(item.manual_item(item.warehouse) for item in payload.items),
                 actor=principal.actor,
                 now=now,
             ),

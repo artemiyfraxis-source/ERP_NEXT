@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime
@@ -20,6 +21,10 @@ WAREHOUSES = ("ЦАР", "ЖУК")
 
 class WarehouseValidationError(ValueError):
     """A warehouse operation would violate physical stock accounting."""
+
+
+class ReceiptConflict(RuntimeError):
+    """The receipt header was changed since the client read it (its version moved on)."""
 
 
 def normalize_location(value: str) -> str:
@@ -156,6 +161,8 @@ class StockLot:
     storage_conditions: str = ""
     datasheet: str = ""
     certificate: str = ""
+    # The receipt document («Приход на склад») the lot was entered with; None — before it existed or not by hand.
+    receipt_id: UUID | None = None
 
     @classmethod
     def create(
@@ -181,6 +188,7 @@ class StockLot:
         storage_conditions: str = "",
         datasheet: str = "",
         certificate: str = "",
+        receipt_id: UUID | None = None,
     ) -> StockLot:
         """location_as_is — old data: an empty place or an old address is kept as it was."""
         if str(warehouse).strip() not in WAREHOUSES:
@@ -225,6 +233,7 @@ class StockLot:
             storage_conditions=_detail("storage_conditions", storage_conditions),
             datasheet=_detail("datasheet", datasheet),
             certificate=_detail("certificate", certificate),
+            receipt_id=receipt_id,
         )
 
     @property
@@ -542,4 +551,101 @@ class WriteOffEntry:
             actor_id=actor_id,
             actor_name=str(actor_name or "").strip(),
             source_key=source_key,
+        )
+
+# «Приход на склад» (поставка): the header texts → their longest value and the name the screen shows.
+RECEIPT_TEXT_LIMITS = {"supplier": 255, "invoice_number": 64, "upd_number": 64, "purpose": 128, "scan_file": 512}
+_RECEIPT_TEXT_LABELS = {"supplier": "Поставщик", "invoice_number": "№ счёта", "upd_number": "№ УПД",
+                        "purpose": "Назначение", "scan_file": "Скан УПД"}
+RECEIPT_SCAN_PATH = "/api/stock/receipts/files/"
+_SCAN_FILE = re.compile(re.escape(RECEIPT_SCAN_PATH) + r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def receipt_date(value: object, label: str) -> date | None:
+    """A date of the receipt header as the screen sends it: ГГГГ-ММ-ДД or empty (None)."""
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if not _ISO_DATE.match(text):
+            raise ValueError(text)
+        return date.fromisoformat(text)
+    except ValueError as error:
+        raise WarehouseValidationError(f"{label} — дата ГГГГ-ММ-ДД, а не «{text}»") from error
+
+
+@dataclass(frozen=True)
+class ReceiptHeader:
+    """What the storekeeper types in the «поставка» header (all but the warehouse may stay empty)."""
+
+    warehouse: str
+    supplier: str = ""
+    invoice_number: str = ""
+    invoice_date: date | None = None
+    upd_number: str = ""
+    upd_date: date | None = None
+    purpose: str = ""
+    scan_file: str = ""
+
+    def checked(self) -> ReceiptHeader:
+        warehouse = str(self.warehouse or "").strip()
+        if not warehouse:
+            raise WarehouseValidationError("Выберите склад прихода")
+        if warehouse not in WAREHOUSES:
+            raise WarehouseValidationError(f"Неизвестный склад «{warehouse}»")
+        texts = {name: str(getattr(self, name) or "").strip() for name in RECEIPT_TEXT_LIMITS}
+        for name, text in texts.items():
+            if len(text) > RECEIPT_TEXT_LIMITS[name]:
+                raise WarehouseValidationError(
+                    f"Поле «{_RECEIPT_TEXT_LABELS[name]}» длиннее {RECEIPT_TEXT_LIMITS[name]} знаков"
+                )
+        if texts["scan_file"] and not _SCAN_FILE.fullmatch(texts["scan_file"]):
+            raise WarehouseValidationError("Скан УПД — ссылка на файл, загруженный в приход")
+        return replace(self, warehouse=warehouse, invoice_date=self.invoice_date, upd_date=self.upd_date, **texts)
+
+
+@dataclass(frozen=True)
+class WarehouseReceipt:
+    """«Приход на склад» — one supplier delivery (поставка): склад, поставщик, счёт, УПД, the default НАЗНАЧЕНИЕ of
+    its lines and the scan of the УПД. Each line is accepted on its own («Принять») and becomes a lot pointing here;
+    the moment a line was accepted is its lot's audit event, the header has no date of its own."""
+
+    id: UUID
+    version: int
+    warehouse: str
+    supplier: str
+    invoice_number: str
+    invoice_date: date | None
+    upd_number: str
+    upd_date: date | None
+    purpose: str
+    scan_file: str
+    created_at: datetime
+    created_by: str
+    updated_at: datetime
+
+    @classmethod
+    def create(cls, header: ReceiptHeader, *, now: datetime, created_by: str) -> WarehouseReceipt:
+        header = header.checked()
+        return cls(
+            id=uuid4(), version=1, warehouse=header.warehouse, supplier=header.supplier,
+            invoice_number=header.invoice_number, invoice_date=header.invoice_date, upd_number=header.upd_number,
+            upd_date=header.upd_date, purpose=header.purpose, scan_file=header.scan_file, created_at=now,
+            created_by=str(created_by or "").strip(), updated_at=now,
+        )
+
+    def edited(self, header: ReceiptHeader, *, now: datetime, has_lots: bool) -> WarehouseReceipt:
+        """The header retyped; the warehouse stays once a line went on stock there (its lots lie in it)."""
+        header = header.checked()
+        if has_lots and header.warehouse != self.warehouse:
+            raise WarehouseValidationError(
+                f"Склад прихода не меняется: позиции уже приняты на склад {self.warehouse}"
+            )
+        return replace(
+            self, version=self.version + 1, warehouse=header.warehouse, supplier=header.supplier,
+            invoice_number=header.invoice_number, invoice_date=header.invoice_date, upd_number=header.upd_number,
+            upd_date=header.upd_date, purpose=header.purpose, scan_file=header.scan_file, updated_at=now,
         )

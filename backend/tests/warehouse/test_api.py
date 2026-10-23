@@ -257,7 +257,9 @@ def test_stock_article_info_infers_current_supplymap_coax_codes(warehouse_api):
     response = client.get("/api/stock/article-info?q=N-C58P")
 
     assert response.status_code == 200, response.text
-    assert response.json()["info"] == {
+    info = response.json()["info"]
+    # «Приход на склад» added the passport keys; the ones the quick entry reads keep their values.
+    assert {key: info[key] for key in ("series", "name", "item_type", "source")} == {
         "series": "N",
         "name": "N-male RG-58",
         "item_type": "Коаксиальный соединитель",

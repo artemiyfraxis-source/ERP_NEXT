@@ -27,6 +27,7 @@ from .modules.procurement import requests_api as procurement_requests_api
 from .modules.receiving import api as receiving_api
 from .modules.warehouse import api as warehouse_api
 from .modules.warehouse import labels_api as warehouse_labels_api
+from .modules.warehouse import receipts_api as warehouse_receipts_api
 from .modules.fulfillment import api as fulfillment_api
 from .modules.production import api as production_api
 from .modules.production import plan_api as production_plan_api
@@ -93,7 +94,7 @@ app.add_middleware(
     RequestBodyLimitMiddleware,
     max_bytes=1_048_576,
     path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/production/vswr": 4 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576,
-                 "/api/procurement/invoice-files": 30 * 1_048_576, "/api/receiving/files": 30 * 1_048_576,
+                 "/api/procurement/invoice-files": 30 * 1_048_576, "/api/receiving/files": 30 * 1_048_576, "/api/stock/receipts/scan": 21 * 1_048_576,
                  "/api/techcards/assembly/drawings": 30 * 1_048_576, "/api/purchasing/upd/import-edo": 30 * 1_048_576,
                  "/api/references/import": MAX_IMPORT_BODY_BYTES},
 )
@@ -116,6 +117,7 @@ app.include_router(procurement_requests_api.router)
 app.include_router(receiving_api.router)
 app.include_router(warehouse_api.router)
 app.include_router(warehouse_labels_api.router)
+app.include_router(warehouse_receipts_api.router)
 app.include_router(fulfillment_api.router)
 app.include_router(production_api.router)
 app.include_router(production_plan_api.router)
