@@ -9,7 +9,7 @@
   409 — the article is awaited in «Приёмка» (re-send with `confirm_expected: true`) or the receipt is unknown 404.
 - `POST /api/stock/receipts/scan` (multipart `file`: PDF, JPG, PNG ≤ 20 MB) → `{scan_file, recognised: {supplier, inn,
   upd_number, upd_date, invoice_number, invoice_date}, lines: [{article, name, quantity, unit}], note}`;
-  `GET /api/stock/receipts/files/{id}` serves the stored scan."""
+  `GET /api/stock/receipts/files/{id}` serves the stored scan. The scanner of the warehouse PC — `scan_jobs_api.py`."""
 
 from __future__ import annotations
 
@@ -239,13 +239,13 @@ def _recognised(found: RecognisedUpd) -> dict:
     }
 
 
-def _scan(request: Request, file_name: str, content: bytes, principal: Principal, now: datetime, uow_factory) -> dict:
-    link, kind = _checked(lambda: store_scan(uow_factory(), file_name, content, principal.actor, now))
+def scan_answer(purchasing_factory, link: str, content: bytes, kind: str | None) -> dict:
+    """What «Отсканировать УПД» answers for a stored scan: `{scan_file, recognised, lines, note}` (also the `result`
+    of a done scanner job). Blocking: OCR may take seconds — call it off the event loop."""
     found, note = recognise_upd(content, kind)
     lines: list[dict] = []
     document = upd_document(
-        _factory(request, "purchasing_uow_factory"), number=found.upd_number, day=found.upd_date, inn=found.inn,
-        seller=found.supplier,
+        purchasing_factory, number=found.upd_number, day=found.upd_date, inn=found.inn, seller=found.supplier,
     ) if found.upd_number else None
     if document is not None:
         basis = parse_upd_text(document["basis"])
@@ -262,6 +262,11 @@ def _scan(request: Request, file_name: str, content: bytes, principal: Principal
     return {"scan_file": link, "recognised": _recognised(found), "lines": lines, "note": note}
 
 
+def _scan(request: Request, file_name: str, content: bytes, principal: Principal, now: datetime, uow_factory) -> dict:
+    link, kind = _checked(lambda: store_scan(uow_factory(), file_name, content, principal.actor, now))
+    return scan_answer(_factory(request, "purchasing_uow_factory"), link, content, kind)
+
+
 @router.post("/receipts/scan")
 async def scan_receipt_document(
     request: Request,
@@ -269,8 +274,8 @@ async def scan_receipt_document(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
-    """«Отсканировать УПД»: the file is stored, its text layer read; a УПД purchasing already holds under the same number
-    (date ±3 days or the same seller) gives the header and the lines."""
+    """«Отсканировать УПД» from a file: the file is stored, its text layer read (no text — OCR); a УПД purchasing
+    already holds under the same number (date ±3 days or the same seller) gives the header and the lines."""
     body = await request.body()
     if len(body) > SCAN_FILE_LIMIT + 64 * 1024:
         raise HTTPException(status_code=422, detail="Скан УПД больше 20 МБ")

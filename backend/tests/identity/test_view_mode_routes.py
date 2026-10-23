@@ -22,6 +22,7 @@ EDIT_ONLY_READS = {
     "/api/stock/article-info",  # feeds «Внести позиции»
     "/api/stock/item-types",  # «Типы» dictionary editor
     "/api/stock/export",  # first half of «Загрузить правки»
+    "/api/stock/receipts/scan-jobs/{job_id}",  # the poll of «Отсканировать УПД» the storekeeper queued (23.10)
     "/api/procurement/mine",  # the buyer's own taken lines
     "/api/procurement/in-work/mine",
     "/api/procurement/kp",  # КП form

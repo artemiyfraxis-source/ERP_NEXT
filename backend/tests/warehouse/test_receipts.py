@@ -22,7 +22,7 @@ from app.modules.purchasing.infrastructure import (
     ItemRow, SqlAlchemyPurchasingUnitOfWork, UpdDocumentRow, UpdLineRow,
 )
 from app.modules.receiving.infrastructure import ReceivingLineRow, SqlAlchemyReceivingUnitOfWork
-from app.modules.warehouse import receipts_application
+from app.modules.warehouse import receipt_ocr, receipts_application
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork, StockLotRow
 from app.modules.warehouse.label_jobs import LabelJobRow
 from app.modules.warehouse.receipt_scan import NO_TEXT, parse_upd_text
@@ -123,11 +123,12 @@ def test_migration_adds_receipts_and_keeps_old_lots_unlinked(tmp_path, monkeypat
         assert connection.execute("SELECT count(*) FROM warehouse_lots").fetchone() == (1,)
 
 
-def test_migration_is_the_single_head():
+def test_migration_is_followed_only_by_the_scan_queue():
     from alembic.script import ScriptDirectory
 
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["0144_warehouse_receipts"]
+    script = ScriptDirectory.from_config(config)
+    assert script.get_revision("0145_warehouse_scan_jobs").down_revision == "0144_warehouse_receipts"
 
 
 # --- header -----------------------------------------------------------------------------------------------------
@@ -378,8 +379,9 @@ def test_scan_of_a_pdf_with_text_is_stored_and_recognised(stand):
     assert _receipt(client, scan_file=body["scan_file"])["scan_file"] == body["scan_file"]
 
 
-def test_scan_of_a_picture_is_stored_and_asks_to_type_the_header(stand):
+def test_scan_of_a_picture_is_stored_and_asks_to_type_the_header(stand, monkeypatch):
     client, _ = stand
+    monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: "")  # OCR read nothing on the picture
     body = client.post("/api/stock/receipts/scan", files={"file": ("photo.png", PNG, "image/png")}).json()
     assert body["note"] == NO_TEXT == "Текст не распознан — заполните вручную"
     assert body["recognised"]["upd_number"] == "" and body["recognised"]["upd_date"] is None

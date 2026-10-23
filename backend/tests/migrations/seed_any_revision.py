@@ -174,6 +174,8 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("finished_goods", "before_erp"): Decimal(0),
     # A VSWR verdict without a norm (the seeder leaves norm_vswr_max empty) is a manual one (0142_production_vswr).
     ("production_vswr_measurements", "verdict_manual"): True,
+    # A scan job's recognition answer exists only once it is done; the seeder's job is pending (0145_warehouse_scan_jobs).
+    ("warehouse_scan_jobs", "result"): "",
 }
 # Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
 # label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).
