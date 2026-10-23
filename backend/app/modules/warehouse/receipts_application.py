@@ -30,7 +30,7 @@ from .domain import (
 )
 from .label_jobs import COPIES_MAX, add_job
 from .labels.settings import DEFAULT_PRINT_SETTINGS
-from .labels_application import label_of, tspl_job
+from .labels_application import lot_layout_in, tspl_job
 
 RECEIPTS_LIST_LIMIT = 100
 SCAN_FILE_LIMIT = 20 * 1024 * 1024
@@ -140,7 +140,7 @@ def _queue_labels(uow, lot: StockLot, copies: int, actor: Actor, now: datetime) 
         return None, "Партия принята; очередь печати недоступна — напечатайте этикетку из карточки партии"
     try:
         settings = uow.label_settings.load() or DEFAULT_PRINT_SETTINGS
-        tspl = tspl_job(label_of(lot, now), settings, copies)
+        tspl = tspl_job(lot_layout_in(session, lot, now, settings), settings, copies)
         return add_job(session, tspl=tspl, copies=copies, kind="lot", lot_id=lot.id, created_by=actor.name,
                        now=now), ""
     except Exception as error:  # noqa: BLE001 — a label (fonts, settings, layout) must never cost the accepted lot

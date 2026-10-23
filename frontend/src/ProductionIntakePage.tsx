@@ -6,10 +6,11 @@ import { FinishedGoodsHandoff } from "./FinishedGoodsHandoff";
 import { formatDay, formatDayMonth } from "./format";
 import { isoDay } from "./Gantt";
 import { daysUntil } from "./productionGraph";
-import { canAct } from "./navigation";
+import { canAct, canSee } from "./navigation";
 import { intakeApi, type IntakeAct, type IntakeRow } from "./productionIntakeApi";
 import { IntakeWindow, leftOf } from "./IntakeWindow";
 import { PrintOutcome, type PrintResult } from "./LabelPrint";
+import { PrintSetupButton } from "./PrintSetupWindow";
 import "./productionIntake.css";
 
 /* «Приёмка с производства» (владелец 14.10): всё, что у нас в работе, по проектам. Склад принимает кусками —
@@ -182,7 +183,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   };
 
   return <section className="page intake-page">
-    <header className="page-head"><h1>Приёмка с производства</h1></header>
+    <header className="page-head"><h1>Приёмка с производства</h1>
+      {/* Принтер и шаблон этикеток — складские настройки: видит тот, кому открыт склад, правит — кто его правит. */}
+      {canSee(principal, "warehouse") && <div className="page-actions"><PrintSetupButton kind="intake" readOnly={!canAct(principal, "warehouse")} /></div>}</header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner" role="status">{notice}</div>}
     {!loaded ? <div className="empty">Загрузка…</div> : <>

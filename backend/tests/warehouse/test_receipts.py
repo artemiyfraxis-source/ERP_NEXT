@@ -127,7 +127,7 @@ def test_migration_is_the_single_head():
     from alembic.script import ScriptDirectory
 
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["0143_warehouse_receipts"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["0144_warehouse_receipts"]
 
 
 # --- header -----------------------------------------------------------------------------------------------------

@@ -2264,13 +2264,13 @@ export function failureText(reason: unknown, fallback: string) {
 }
 
 /** `timeoutMs`: свой срок ответа (null — без срока); `safe`: POST, который ничего не меняет или безопасен к повтору
- *  (предпросмотр, вход, выход) — его срок и обрыв сети считаются как у чтения. */
-export type ApiInit = RequestInit & { timeoutMs?: number | null; safe?: boolean };
+ *  (предпросмотр, вход, выход) — его срок и обрыв сети считаются как у чтения; `blob`: ответ — файл, не JSON. */
+export type ApiInit = RequestInit & { timeoutMs?: number | null; safe?: boolean; blob?: boolean };
 
 const READ_METHODS = ["GET", "HEAD", "OPTIONS", "TRACE"];
 
 export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
-  const { timeoutMs, safe, signal: outer, ...request } = init;
+  const { timeoutMs, safe, blob, signal: outer, ...request } = init;
   const headers = new Headers(request.headers);
   // FormData (a file upload) sets its own multipart boundary — the header is left to the browser.
   if (request.body && !(request.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
@@ -2314,7 +2314,8 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
       throw new ApiError(errorMessage(payload.detail, response.status), response.status, payload.detail);
     }
     if (response.status === 204) return undefined as T;
-    return response.json() as Promise<T>;
+    // `blob` — a picture (label preview PNG), not JSON.
+    return (blob ? response.blob() : response.json()) as Promise<T>;
   }
   try {
     return await Promise.race([send(), stop]);
