@@ -31,6 +31,7 @@
 - [U.FL is not MHF1](ufl-not-mhf.md) — owner 20.10: Hirose U.FL ≠ I-PEX MHF1/IPEX; never merge across series even with one supplier code
 - [Coax pin type](coax-pin-type.md) — angled = «пайка внутри корпуса», never crimp; 2.92/3.5 = «цанга»; seller «обжимной» is the shield, not the pin
 - [Coax VSWR acceptance](coax-vswr-acceptance.md) — owner 22.10: assembly VSWR judged by the limit its connectors allow (Γ1+Γ2), not a generic ≤1,3
+- [Sparse columns are junk](sparse-columns-are-junk.md) — owner 23.10: a БД column filled ≤ ~5 % is removed (or moved out); fixed group order of columns
 - [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
 - [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
 - [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range
@@ -48,3 +49,4 @@
 - [Warehouse PC SSH](warehouse-pc-ssh.md) — I can SSH into the warehouse PC via the erp-server jump and fix the agent myself; hosts and recipe in the private brain
 - [УПД scan learning](upd-scan-learning.md) — review Алексей's scans vs accepted lots, turn misses into parser rules; per-supplier corrections planned
 - [Owner can't open artifacts](owner-cant-open-artifacts.md) — no Claude Docs/artifacts for him: docs as Markdown in repo docs/ + GitHub link
+- [Verify Витя's requests](vitya-requests-verify.md) — check each of Витя's edits against code and prod usage before building; risky ones to the owner first

@@ -214,20 +214,20 @@
 /* Тёмная тема: включается опцией ui.dark_theme (ThemeSwitch ставит data-theme на <html>). */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --background: #0f1716;
-  --foreground: #e4ecea;
-  --card: #16201f;
+  --background: #111417;
+  --foreground: #e5e8eb;
+  --card: #191d22;
   --primary: #19b9a5;
   --primary-foreground: #fff;
-  --accent: #223130;
-  --muted-foreground: #94a3a0;
-  --border: #2a3735;
-  --sheet-line: #26332f;
-  --sheet-head: #1b2827;
-  --sheet-edit: #131c1b;
-  --sheet-hover: #4a5e5a;
-  --sheet-dirty: #12352f;
-  --sheet-selected: #172f2b;
+  --accent: #20252b;
+  --muted-foreground: #939ba4;
+  --border: #2a3037;
+  --sheet-line: #262c33;
+  --sheet-head: #1d2227;
+  --sheet-edit: #14181c;
+  --sheet-hover: #4a525b;
+  --sheet-dirty: #143230;
+  --sheet-selected: #1a2a2c;
   --sheet-invalid: #f08080;
   --sheet-invalid-bg: #3a1e1e;
   --tone-ok: #6fcf97;
@@ -235,14 +235,14 @@
   --tone-danger: #f08080;
   --warn-soft: #33290f;
   --warn-border: #8a6a24;
-  --seg-bg: #1f2c2b;
-  --seg-fg: #b5c4c1;
-  --switch-off: #3a4a47;
-  --chip-box: #5a6d69;
-  --table-head: #1b2827;
-  --table-head-fg: #b9c8c5;
-  --table-zebra: #131d1c;
-  --panel-soft: #121b1a;
+  --seg-bg: #232930;
+  --seg-fg: #b4bcc4;
+  --switch-off: #3a424a;
+  --chip-box: #5b646d;
+  --table-head: #1d2227;
+  --table-head-fg: #b9c0c8;
+  --table-zebra: #15191d;
+  --panel-soft: #14181c;
   --on-accent: #fff;
   --bg-red-1: #2e1515;
   --bg-red-2: #2e1715;
@@ -381,24 +381,24 @@
   --fg-blue-7: #b9bfca;
   --fg-purple-1: #9983cb;
   --fg-amber-1: #f6db96;
-  --ink: #e4ecea;
+  --ink: #e5e8eb;
   /* Локальные наборы (диаграмма плана, контроль, чипы): переопределяются здесь, т.к. :root[data-theme] специфичнее :root. */
   --ctl-line: #d9615a; --ctl-bg: #2e1c1c; --ctl-text: #f08080;
-  --chip-info-bg: #1c2b44; --chip-warn-bg: #33290f; --chip-ok-bg: #12301f; --chip-neutral-bg: #232e2d;
+  --chip-info-bg: #1c2b44; --chip-warn-bg: #33290f; --chip-ok-bg: #12301f; --chip-neutral-bg: #22272d;
   --zg-c0: #6f9bd6; --zg-c1: #4fbfae; --zg-c2: #d9965a; --zg-c3: #a98bd6; --zg-c4: #7fbd5f; --zg-c5: #d9788d;
   --zg-c6: #5fb0d4; --zg-c7: #c2a84a; --zg-c8: #8f97e0; --zg-c9: #d08460; --zg-c10: #5fbf8e; --zg-c11: #c27fc8;
-  --zg-head: #1b2827; --zg-off: #131d1c; --zg-off-head: #1a2524; --zg-grid: #243230; --zg-edge: #3a4a47;
-  --zg-flag-off: #6a7d79; --zg-track: #2a3735; --zg-late: #f08080; --zg-late-bg: #3a1e1e;
+  --zg-head: #1d2227; --zg-off: #15191d; --zg-off-head: #1a1f23; --zg-grid: #252b32; --zg-edge: #3a424a;
+  --zg-flag-off: #6c757e; --zg-track: #2a3037; --zg-late: #f08080; --zg-late-bg: #3a1e1e;
   --zg-soon-bg: #33290f; --zg-soon: #e0b04a; --zg-ok-bg: #12301f; --zg-ok: #6fcf97; --zg-arrival: #7fb2f0;
   --zg-shadow: rgba(0, 0, 0, .5);
   /* main 12.10: status chips, info/neutral tones, disabled controls — dark values. */
-  --tone-info: #7aa7ff; --tone-neutral: #94a3a0;
+  --tone-info: #7aa7ff; --tone-neutral: #939ba4;
   --chip-success-bg: #163a26; --chip-success-fg: #86d9a6;
   --chip-info-bg: #172a45; --chip-info-fg: #9ab9ff;
   --chip-warning-bg: #3a2e10; --chip-warning-fg: #f0c46a;
   --chip-danger-bg: #3d1a18; --chip-danger-fg: #f4a59d;
-  --chip-neutral-bg: #232d2c; --chip-neutral-fg: #c2ccca;
-  --danger-soft: #3d1a18; --disabled-bg: #26302f; --disabled-fg: #8a9896;
+  --chip-neutral-bg: #22272d; --chip-neutral-fg: #c3c9cf;
+  --danger-soft: #3d1a18; --disabled-bg: #262b31; --disabled-fg: #8b939b;
 }
 @media (pointer: coarse) { :root { --control-h: 40px; --control-h-cell: 40px; } }
 
@@ -4650,7 +4650,7 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .etk-pick-semi td { background: color-mix(in srgb, var(--primary) 6%, transparent); }
 
 /* Параметры операции в шапке ЭТК: Сторона А | Общие | Сторона В. Значения читаются с руки у станка. */
-.etk-params { display: grid; gap: 0; margin: 12px 0 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #f7f9f7; }
+.etk-params { display: grid; gap: 0; margin: 12px 0 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--panel-soft); }
 .etk-params section { padding: 8px 14px 10px; border-left: 1px solid var(--border); min-width: 0; }
 .etk-params section:first-child { border-left: 0; }
 .etk-params section > strong { display: block; margin: 0 0 4px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-foreground); }
@@ -4996,3 +4996,14 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .tcgen .gvswr-cust .gvswr-basis { flex: 1 1 260px; min-width: 220px; }
 .tcgen .gvswr-cust .gvswr-basis input { flex: 1; min-width: 0; font-weight: 400; text-align: left; font-variant-numeric: normal; }
 .tcgen .gvswr-ref { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* «Очереди»: действия строки. Вторая строка (ссылки) раскрывается поверх соседней строки, а не растягивает свою —
+   строка не «разъезжается» при наведении; колонка действий шире, «Документы…» видна целиком. */
+.procurement-stage .data-table td.menu { position: relative; min-width: 200px; padding-right: 12px; overflow: visible; }
+.procurement-stage td .row-actions { position: relative; max-width: none; width: auto; }
+.procurement-stage td .row-actions .row-actions-main button { flex: 0 0 auto; overflow: visible; text-overflow: clip; }
+.procurement-stage .row-actions-more { position: absolute; top: calc(100% - 2px); right: 0; z-index: 8; width: max-content; max-width: 260px; box-sizing: border-box; border: 0 solid var(--border); border-radius: 6px; background: var(--card); }
+.procurement-stage tr:hover .row-actions-more, .procurement-stage tr:focus-within .row-actions-more { max-height: 96px; margin-top: 0; padding: 4px 8px; border-width: 1px; box-shadow: 0 4px 12px rgba(0, 0, 0, .18); }
+@media (pointer: coarse) {
+  .procurement-stage .row-actions-more { position: static; width: auto; max-width: 100%; background: transparent; box-shadow: none; padding: 0; border: 0; }
+}

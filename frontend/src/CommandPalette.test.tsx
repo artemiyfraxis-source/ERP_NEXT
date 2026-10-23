@@ -118,13 +118,34 @@ it("commands are filtered by the sections the user can open", async () => {
   press({ key: "k", code: "KeyK", ctrlKey: true });
   await screen.findByRole("combobox");
   expect(screen.getAllByRole("option").map((option) => option.querySelector(".palette-title")?.textContent)).toEqual([
-    "Оформить заявку", "Сегодня", "Запросы КП", "Счета и поставки", "Склад", "Приёмка", "Поставщики", "Номенклатура", "Внутренние проекты",
+    "Оформить заявку", "Сегодня", "Запросы КП", "Закупка", "Счета и поставки", "Склад", "Приёмка", "Поставщики", "Номенклатура", "УПД",
+    "Внутренние проекты",
   ]);
   const input = screen.getByRole("combobox");
   fireEvent.change(input, { target: { value: "поставщики" } });
   expect(screen.getAllByRole("option").map((option) => option.querySelector(".palette-title")?.textContent)).toEqual(["Поставщики"]);
   fireEvent.keyDown(input, { key: "Enter" });
-  expect(window.location.search).toBe("?section=procurement&tab=directory");
+  // The purchasing reference books left «Снабжение» (Витя's edit 4): «Справочники → Закупка».
+  expect(window.location.search).toBe("?section=purchasingrefs&tab=directory");
+});
+
+it("«Мои заявки» and the «Заявки» register are one search away now that the menu has no items for them", async () => {
+  serve([]);
+  await mount(person({ myrequests: "edit", requests: "edit" }));
+  press({ key: "k", code: "KeyK", ctrlKey: true });
+  const input = await screen.findByRole("combobox");
+  fireEvent.change(input, { target: { value: "заявки" } });
+  expect(screen.getAllByRole("option").map((option) => option.querySelector(".palette-title")?.textContent))
+    .toEqual(expect.arrayContaining(["Мои заявки", "Реестр заявок"]));
+});
+
+it("a search result for a moved tab lands in its new section", async () => {
+  serve([{ group: "Поставщики", title: "Ромашка", subtitle: "", section: "procurement", params: { tab: "directory", q: "Ромашка" } }]);
+  await mount(person({ procurement: "view" }));
+  press({ key: "k", code: "KeyK", ctrlKey: true });
+  fireEvent.change(await screen.findByRole("combobox"), { target: { value: "ромашка" } });
+  fireEvent.click(await screen.findByText("Ромашка"));
+  expect(new URL(window.location.href).searchParams.get("section")).toBe("purchasingrefs");
 });
 
 it("an admin sees every command", async () => {

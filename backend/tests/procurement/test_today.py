@@ -218,9 +218,10 @@ def test_kaiten_invoices_to_pay_and_upds_to_check():
     assert keys(result) == ["kaiten", "upd", "available"]
     kaiten = section(result, "kaiten")["items"][0]
     assert (kaiten["detail"], kaiten["days"], kaiten["link"]) == (
-        "поставщик не прочитан · 1 234,56 ₽", 2, {"tab": "invoices", "status": "to_pay"})
+        "поставщик не прочитан · 1 234,56 ₽", 2, {"section": "primarydocs", "tab": "invoices", "status": "to_pay"})
     upd = section(result, "upd")["items"][0]
-    assert (upd["title"], upd["link"]) == ("3 документа", {"tab": "upd", "status": "needs_review"})
+    # The documents left «Снабжение» (Витя's edit 4): the links name «Первичная документация».
+    assert (upd["title"], upd["link"]) == ("3 документа", {"section": "primarydocs", "tab": "upd", "status": "needs_review"})
     assert section(result, "available")["items"][0]["link"] == {"tab": "queues"}
     assert keys(page(kaiten=[], upd_to_check=0)) == []  # the options are on, nothing to do
 

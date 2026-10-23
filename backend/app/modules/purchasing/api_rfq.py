@@ -312,8 +312,8 @@ def rfq_delete_quote(quote_id: UUID, principal: Edit, now: Now, uow: Uow) -> Res
 
 
 @router.get("")
-def rfq_list(principal: View, uow: Uow, scope: Literal["mine", "all"] = "mine") -> dict:
-    return {"rfqs": _run(lambda: service.list_rfqs(uow(), principal.actor, scope == "all"))}
+def rfq_list(principal: View, uow: Uow, lines: Lines, scope: Literal["mine", "all"] = "mine") -> dict:
+    return {"rfqs": _run(lambda: service.list_rfqs(uow(), lines, principal.actor, scope == "all"))}
 
 
 @router.post("", status_code=201)

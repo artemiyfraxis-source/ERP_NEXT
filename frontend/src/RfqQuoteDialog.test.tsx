@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { parseTiers, QuoteDialog } from "./RfqQuoteDialog";
+import { firstSupplier, parseTiers, QuoteEntry } from "./RfqQuoteDialog";
 import type { RfqLine, RfqMatrix, RfqSupplier } from "./purchasingRfqApi";
 
 const line = (id: string, name: string): RfqLine => ({
@@ -50,7 +50,7 @@ it("sends the quote number, the note and the price breaks; a broken break stops 
   const posts: { path: string; body: any }[] = [];
   server(posts);
   const onSaved = vi.fn();
-  render(<QuoteDialog matrix={matrix} supplier={matrix.suppliers[0]} onClose={() => undefined} onSaved={onSaved} />);
+  render(<QuoteEntry matrix={matrix} supplierId="s1" onClose={() => undefined} onSaved={onSaved} />);
   fireEvent.change(screen.getByLabelText("Номер КП"), { target: { value: "КП-17" } });
   fireEvent.change(screen.getByLabelText("Примечание к КП"), { target: { value: "цены до конца месяца" } });
   fireEvent.change(screen.getByLabelText("Цена Разъём"), { target: { value: "100" } });
@@ -68,17 +68,35 @@ it("sends the quote number, the note and the price breaks; a broken break stops 
   });
 });
 
-it("a quote from a supplier not in the request adds him first", async () => {
+const two: RfqMatrix = {
+  ...matrix,
+  suppliers: [{ ...supplier("s1", "ООО Альфа"), answered: true }, { ...supplier("s2", "ООО Бета"), line_ids: [] }],
+  lines: [line("a", "Разъём"), line("b", "Клемма")],
+};
+
+it("opens on the column asked for, else on the first who has not answered", () => {
+  expect(firstSupplier(two, "s1")).toBe("s1");
+  expect(firstSupplier(two, null)).toBe("s2");
+  expect(firstSupplier({ ...two, suppliers: [{ ...two.suppliers[0] }] }, null)).toBe("s1");
+  expect(firstSupplier({ ...two, suppliers: [] }, null)).toBe("");
+});
+
+it("an inline list, not a window: the supplier is picked from the request's own, the rows follow what he was asked", async () => {
   const posts: { path: string; body: any }[] = [];
   server(posts);
   const onSaved = vi.fn();
-  render(<QuoteDialog matrix={matrix} supplier={null} onClose={() => undefined} onSaved={onSaved} />);
-  expect(screen.getByRole("dialog", { name: "Внести КП" })).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Поставщик КП"), { target: { value: "ООО Новый" } });
-  fireEvent.change(screen.getByLabelText("Цена Разъём"), { target: { value: "95" } });
-  fireEvent.click(screen.getByRole("button", { name: "Сохранить КП" }));
-  await waitFor(() => expect(onSaved).toHaveBeenCalledWith("ООО Новый"));
-  expect(posts.map((post) => post.path)).toEqual(["/api/purchasing/rfqs/r1/suppliers", "/api/purchasing/rfqs/r1/quotes"]);
-  expect(posts[0].body).toEqual({ name: "ООО Новый", reason: "manual" });
-  expect(posts[1].body.supplier_id).toBe("s9");
+  render(<QuoteEntry matrix={two} supplierId={null} onClose={() => undefined} onSaved={onSaved} />);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  const entry = screen.getByRole("region", { name: "Внести КП" });
+  const picker = within(entry).getByLabelText("Поставщик КП");
+  // Only the request's suppliers — no free text, no directory search.
+  expect(within(picker).getAllByRole("option").map((option) => option.textContent)).toEqual(["ООО Альфа — КП есть", "ООО Бета"]);
+  expect(picker).toHaveValue("s2");
+  expect(within(entry).queryByLabelText("Цена Разъём")).not.toBeInTheDocument(); // ООО Бета was asked nothing
+  fireEvent.change(picker, { target: { value: "s1" } });
+  fireEvent.change(within(entry).getByLabelText("Цена Клемма"), { target: { value: "95" } });
+  fireEvent.click(within(entry).getByRole("button", { name: "Сохранить КП" }));
+  await waitFor(() => expect(onSaved).toHaveBeenCalledWith("ООО Альфа"));
+  expect(posts.map((post) => post.path)).toEqual(["/api/purchasing/rfqs/r1/quotes"]);
+  expect(posts[0].body).toMatchObject({ supplier_id: "s1", lines: [{ rfq_line_id: "b", unit_price: "95" }] });
 });

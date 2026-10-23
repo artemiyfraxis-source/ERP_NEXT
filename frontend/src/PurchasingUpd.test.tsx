@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ProcurementPage } from "./ProcurementPage";
+import { PrimaryDocsPage } from "./PrimaryDocsPage";
 import { PurchasingUpd } from "./PurchasingUpd";
 import { docIssues, inputToKop, lineIssues, rub } from "./purchasingUpdApi";
 
@@ -17,7 +17,7 @@ const card = (over: Record<string, unknown> = {}) => ({
 });
 
 const listing = (items: unknown[]) => ({
-  items, total: items.length, page: 1, page_size: 100,
+  items, total: items.length, page: 1, page_size: 100, kinds: { upd: 2, m15: 1, tn_sf: 0, other: 3 },
   counts: { waiting: 1, parsed: 1, needs_review: 1, verified: 0, duplicate: 2, not_purchase: 0 }, review: 1,
   origins: { edo: 1, google: 2 }, buyers: [{ key: "ours", count: 2 }, { key: "7726465440", count: 1 }],
   suppliers: [{ id: "s1", name: "ООО «Дарт»", count: 1 }], no_supplier: 2, sum_gross: 1_523_000,
@@ -94,9 +94,10 @@ const query = (calls: Call[]) => calls.filter((call) => call.method === "GET" &&
 it("lists documents with status, source, other-buyer chips and the corrected seller INN", async () => {
   mockServer();
   render(<PurchasingUpd />);
-  const table = await screen.findByRole("table", { name: "Реестр УПД" });
-  const rows = within(table).getAllByRole("row");
+  const table = await screen.findByRole("list", { name: "Реестр УПД" });
+  const rows = [table, ...within(table).getAllByRole("listitem")];
   expect(rows).toHaveLength(3);
+  expect(rows[1].textContent).toContain("Дарт 500.pdf");
   expect(rows[1].textContent).toContain("21.04.2026");
   expect(rows[1].textContent).toContain("500,00");
   expect(rows[2].textContent).toContain("Требует ручной проверки");
@@ -112,7 +113,7 @@ it("sends the filters to the server: status, review, duplicates, source, buyer, 
   const calls: Call[] = [];
   mockServer(calls);
   render(<PurchasingUpd />);
-  await screen.findByRole("table", { name: "Реестр УПД" });
+  await screen.findByRole("list", { name: "Реестр УПД" });
   fireEvent.click(screen.getByRole("button", { name: "Требует ручной проверки 1" }));
   await waitFor(() => expect(query(calls).some((p) => p.get("status") === "needs_review")).toBe(true));
   fireEvent.click(screen.getByRole("button", { name: "Требует проверки 1" }));
@@ -160,7 +161,7 @@ it("opens the card: header, lines, the file in a new tab, twins, «Провер�
   await waitFor(() => expect(calls.find((call) => call.path.endsWith("/project"))?.body).toBe(JSON.stringify({ project_reference: "591К.3" })));
 
   fireEvent.click(within(view).getByRole("button", { name: "← Реестр УПД" }));
-  await screen.findByRole("table", { name: "Реестр УПД" });
+  await screen.findByRole("list", { name: "Реестр УПД" });
 });
 
 it("edits the buyer's version with live checks and saves it against the version it was opened on", async () => {
@@ -239,11 +240,27 @@ it("«Продавцы без поставщика» previews the names and crea
   expect(bodies).toEqual([{ dry_run: true, inns: null }, { dry_run: false, inns: ["7707083893"] }]);
 });
 
-it("the «УПД» tab of «Лист закупки» exists", async () => {
+it("the kind tabs УПД · М-15 · ТН+СФ · Прочие send the group and show its count", async () => {
+  const calls: Call[] = [];
+  mockServer(calls);
+  render(<PurchasingUpd />);
+  const tabs = await screen.findByRole("group", { name: "Вид документа" });
+  await waitFor(() => expect(tabs.textContent).toContain("Все виды 6"));
+  expect(within(tabs).getByRole("button", { name: "М-15 1" })).toBeInTheDocument();
+  expect(within(tabs).getByRole("button", { name: "ТН+СФ 0" })).toBeInTheDocument();
+  fireEvent.click(within(tabs).getByRole("button", { name: "Прочие 3" }));
+  await waitFor(() => expect(query(calls).at(-1)?.get("kind")).toBe("other"));
+  fireEvent.click(within(tabs).getByRole("button", { name: "УПД 2" }));
+  await waitFor(() => expect(query(calls).at(-1)?.get("kind")).toBe("upd"));
+  fireEvent.click(within(tabs).getByRole("button", { name: "Все виды 6" }));
+  await waitFor(() => expect(calls.at(-1)?.path).toBe("/api/purchasing/upd"));
+});
+
+it("the «УПД» tab of «Первичная документация» exists", async () => {
   mockServer();
-  render(<ProcurementPage />);
+  render(<PrimaryDocsPage />);
   fireEvent.click(await screen.findByRole("tab", { name: "УПД" }));
-  expect(await screen.findByRole("table", { name: "Реестр УПД" })).toBeInTheDocument();
+  expect(await screen.findByRole("list", { name: "Реестр УПД" })).toBeInTheDocument();
 });
 
 it("checks match the server's rules", () => {
