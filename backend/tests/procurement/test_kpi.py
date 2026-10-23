@@ -67,7 +67,8 @@ def test_kpi_endpoint_answers(procurement_api):  # noqa: F811
     assert body["total"]["lines"] == 1 and body["total"]["paid_sum"] == "500.00"
     assert body["rows"][0]["buyer"] == "Петров" and body["buyers"] == ["Петров"]
     assert body["kpi"]["money"]["spend"] == "500.00" and body["suppliers"] == [] and body["highlights"] == []
-    assert body["kpi"]["quality"]["defect_pct"] is None
+    assert body["kpi"]["quality"]["defect_pct"] is None  # nothing received: no data
+    assert body["kpi"]["competition"]["decisions"] == 0 and body["kpi"]["money"]["delivery_spend"] is None  # facts are wired
     assert client.get("/api/procurement/kpi?from=2026-09-30&to=2026-09-01").status_code == 422
 
 
