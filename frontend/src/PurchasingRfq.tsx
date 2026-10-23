@@ -36,18 +36,27 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
   const [panelFor, setPanelFor] = useState<{ id: string; letters: boolean; invoices: boolean } | null>(
     link.rfq ? { id: link.rfq, letters: link.letters, invoices: link.invoices } : null);
   const [creating, setCreating] = useState(false);
+  // «Мои / Все» (owner 22.10: «почему отсутствуют запросы КП» — they were another buyer's). null — not chosen yet:
+  // «Мои», or «Все» at once when the user has no requests of his own but others do. Others' requests are view-only.
+  const [scope, setScope] = useState<"mine" | "all" | null>(readOnly ? "all" : null);
   const [error, setError] = useState("");
 
   const reload = useCallback(async (pick?: string) => {
     try {
-      const { rfqs: next } = await rfqApi.list(readOnly ? "all" : "mine");
+      let wanted: "mine" | "all" = readOnly ? "all" : scope ?? "mine";
+      let { rfqs: next } = await rfqApi.list(wanted);
+      if (scope === null && wanted === "mine" && next.length === 0) {
+        const others = await rfqApi.list("all");
+        if (others.rfqs.length) { wanted = "all"; next = others.rfqs; }
+      }
+      if (scope === null && !readOnly) setScope(wanted);
       setRfqs(next);
       setSelected((current) => pick ?? (next.some((rfq) => rfq.id === current) ? current : next[0]?.id ?? ""));
       setError("");
     } catch (reason) {
       setError(failureText(reason, "Запросы КП не загрузились"));
     }
-  }, [readOnly]);
+  }, [readOnly, scope]);
 
   useEffect(() => { void reload(link.rfq || undefined); }, [reload, link.rfq]);
   useEffect(() => { if (selected && panelFor?.id !== selected) syncRfqUrl(selected); }, [selected, panelFor]);
@@ -70,9 +79,16 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
           <h2 style={{ margin: 0, fontSize: 16 }}>Запросы КП</h2>
           {!readOnly && <button type="button" className="primary small" onClick={() => setCreating(true)}>+ Запрос</button>}
         </div>
+        {!readOnly && (
+          <div className="seg-tabs" role="tablist" aria-label="Чьи запросы">
+            <button type="button" role="tab" aria-selected={scope === "mine"} className={scope === "mine" ? "on" : undefined} onClick={() => setScope("mine")}>Мои</button>
+            <button type="button" role="tab" aria-selected={scope === "all"} className={scope === "all" ? "on" : undefined} onClick={() => setScope("all")}>Все</button>
+          </div>
+        )}
+        {scope === "all" && !readOnly && <p className="page-sub" style={{ margin: 0 }}>Все закупщики — менять можно только свои запросы.</p>}
         {error && <div className="error-banner" role="alert">{error}</div>}
         {!error && rfqs === null && <div className="empty">Загрузка…</div>}
-        {rfqs?.length === 0 && <div className="empty">Запросов нет — нажмите «+ Запрос» и отметьте строки «В работе».</div>}
+        {rfqs?.length === 0 && <div className="empty">{scope === "all" ? "Запросов КП ещё нет." : "Запросов нет — нажмите «+ Запрос» и отметьте строки «В работе»."}</div>}
         {rfqs?.map((rfq) => (
           <button
             key={rfq.id} type="button" aria-pressed={rfq.id === selected}
@@ -80,7 +96,7 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
             style={{ display: "grid", gap: 2, opacity: rfq.closed_at ? 0.7 : 1 }}
             onClick={() => setSelected(rfq.id)}
           >
-            <strong>{rfq.number}{rfq.closed_at ? " · закрыт" : ""}</strong>
+            <strong className="rfq-seq" title={rfq.number}>№ {rfq.seq ?? rfq.number}{rfq.closed_at ? <span className="rfq-closed"> · закрыт</span> : null}</strong>
             {rfq.title && <span>{rfq.title}</span>}
             <small className="muted">
               {formatDay(rfq.created_at)} · строк {rfq.lines} · поставщиков {rfq.suppliers} · КП {rfq.quotes} · решено {rfq.decided}

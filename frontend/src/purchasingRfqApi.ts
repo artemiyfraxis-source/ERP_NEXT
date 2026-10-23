@@ -5,7 +5,7 @@ import type { GateCode, PricierCode, ReasonFields } from "./rfqReasons";
 const BASE = "/api/purchasing/rfqs";
 
 export type RfqSummary = {
-  id: string; number: string; title: string | null; created_at: string; closed_at: string | null; mine: boolean;
+  id: string; number: string; seq?: number; title: string | null; created_at: string; closed_at: string | null; mine: boolean;
   lines: number; suppliers: number; sent: number; quotes: number; decided: number;
 };
 
@@ -85,7 +85,7 @@ export type RfqSupplier = {
 
 export type RfqMatrix = {
   rfq: {
-    id: string; number: string; title: string | null; created_at: string; closed_at: string | null; mine: boolean;
+    id: string; number: string; seq?: number; title: string | null; created_at: string; closed_at: string | null; mine: boolean;
     note?: string | null; version?: number;
   };
   /** lines taken out of the request (newest first) */

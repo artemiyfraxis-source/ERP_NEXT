@@ -397,7 +397,9 @@ def create_rfq(
 
 
 def list_rfqs(uow: UnitOfWork, actor: Actor, all_buyers: bool = False) -> list[dict]:
-    """Open first, then the newest."""
+    """Open first, then the newest by number. `seq` — the request's ordinal among ALL requests (1 = the first ever), by
+    number «КП-ГГММ-NNN» (issued in creation order; Roller_Buyer imports keep RB's order): the short «№ 7» the buyer
+    reads (owner 22.10: «не нужен полный номер, просто порядковый номер жирно»), the same in «Мои» and «Все»."""
     with uow:
         session = _session(uow)
         statement = select(RfqRow)
@@ -424,10 +426,12 @@ def list_rfqs(uow: UnitOfWork, actor: Actor, all_buyers: bool = False) -> list[d
             select(RfqLineRow.rfq_id, func.count()).join(DecisionRow, DecisionRow.rfq_line_id == RfqLineRow.id)
             .where(RfqLineRow.rfq_id.in_(ids)).group_by(RfqLineRow.rfq_id)
         ).all())
-        rfqs.sort(key=lambda rfq: (rfq.closed_at is not None, -rfq.created_at.timestamp()))
+        numbers = list(session.scalars(select(RfqRow.number).order_by(RfqRow.number, RfqRow.created_at)))
+        seq = {number: index for index, number in enumerate(numbers, start=1)}
+        rfqs.sort(key=lambda rfq: (rfq.closed_at is not None, -seq[rfq.number]))
         return [
             {
-                "id": str(rfq.id), "number": rfq.number, "title": rfq.title,
+                "id": str(rfq.id), "number": rfq.number, "seq": seq[rfq.number], "title": rfq.title,
                 "created_at": rfq.created_at.isoformat(), "closed_at": rfq.closed_at.isoformat() if rfq.closed_at else None,
                 "mine": rfq.buyer_id == actor.id,
                 "lines": lines.get(rfq.id, 0), "suppliers": suppliers.get(rfq.id, (0, 0))[0],

@@ -429,6 +429,9 @@ nav { display: block; }
 .nav-group h4 { margin: 0 0 6px; padding: 0 9px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; }
 .nav-item { width: 100%; display: flex; align-items: center; border: 0; border-radius: 6px; padding: 8px 9px; color: var(--foreground); background: transparent; text-align: left; font-size: 13px; }
 .nav-item:hover { background: var(--accent); }
+/* «Запросы КП»: the request's ordinal, bold and large (owner 22.10: «просто порядковый номер жирно, чтобы было заметно»). */
+.rfq-seq { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.rfq-seq .rfq-closed { font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
 .nav-item.active { color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); box-shadow: inset 2px 0 var(--primary); font-weight: 500; }
 .profile { margin-top: auto; padding: 16px 9px 0; border-top: 1px solid var(--border); display: grid; gap: 4px; font-size: 12.5px; }
 .profile span { color: var(--muted-foreground); font-size: 11.5px; }

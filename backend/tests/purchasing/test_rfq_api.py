@@ -195,6 +195,18 @@ def test_a_stale_line_version_is_a_conflict_and_nothing_is_saved(rfq_api):
     assert fresh.status_code == 201, fresh.text
 
 
+def test_the_list_goes_by_number_newest_first_with_an_ordinal_the_same_for_everyone(rfq_api):
+    """Owner 22.10: «идут не по порядку» and «просто порядковый номер жирно» — the order is the number's, not the
+    creation time's (imports keep Roller_Buyer's moments), and `seq` is the ordinal among all requests."""
+    client, lines, _ = rfq_api
+    first = _rfq(client, lines[:1])
+    second = _rfq(client, lines[1:2])
+    listed = client.get(BASE).json()["rfqs"]
+    assert [row["id"] for row in listed] == [second["id"], first["id"]]
+    assert [row["seq"] for row in listed] == [2, 1]
+    assert [row["seq"] for row in client.get(f"{BASE}?scope=all").json()["rfqs"]] == [2, 1]
+
+
 def test_only_the_lines_buyer_puts_it_into_a_request_or_decides(rfq_api):
     client, lines, _ = rfq_api
     rfq = _rfq(client, lines[:1])
