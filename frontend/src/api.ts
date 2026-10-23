@@ -3094,6 +3094,8 @@ export const warehouseApi = {
     return api<WarehouseReceiptScan>("/api/stock/receipts/scan", { method: "POST", body: form });
   },
   /** Скан со сканера ПК склада: задание, опрос, отмена. */
+  mergeScans: (files: string[]) =>
+    api<WarehouseReceiptScan>("/api/stock/receipts/scan-merge", { method: "POST", body: JSON.stringify({ files }) }),
   startScanJob: () => api<WarehouseScanJob>("/api/stock/receipts/scan-jobs", { method: "POST" }),
   scanJob: (id: string) => api<WarehouseScanJob>(`/api/stock/receipts/scan-jobs/${encodeURIComponent(id)}`),
   cancelScanJob: (id: string) => api<WarehouseScanJob>(`/api/stock/receipts/scan-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),

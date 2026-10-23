@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 DPI = 300
-PAGES = 2
+PAGES = 10
 TIMEOUT = 60  # seconds per program call
 LANGUAGES = "rus+eng"
 PAGE_SEGMENTATION = "6"  # one uniform block of text: a УПД is a form, its lines read best kept together

@@ -7,6 +7,7 @@
   scan_file, created_at, created_by, lots_count}`; dates ГГГГ-ММ-ДД or null.
 - `POST /api/stock/receipts/{id}/accept` — one line → `{lot, label_job_id, label_error}`; 422 — the line's error,
   409 — the article is awaited in «Приёмка» (re-send with `confirm_expected: true`) or the receipt is unknown 404.
+- `POST /api/stock/receipts/scan-merge` ({files: [2..20 links]} → the same answer for ONE merged PDF).
 - `POST /api/stock/receipts/scan` (multipart `file`: PDF, JPG, PNG ≤ 20 MB) → `{scan_file, recognised: {supplier, inn,
   upd_number, upd_date, invoice_number, invoice_date}, lines: [{article, name, quantity, unit}], note}`;
   `GET /api/stock/receipts/files/{id}` serves the stored scan. The scanner of the warehouse PC — `scan_jobs_api.py`."""
@@ -40,6 +41,7 @@ from .receipts_application import (
     ExpectedInReceiving,
     accept_receipt_line,
     create_receipt,
+    merge_scans,
     receipt_with_lots,
     recent_receipts,
     scan_file,
@@ -286,3 +288,25 @@ async def scan_receipt_document(
         raise HTTPException(status_code=422, detail="Файл не передан: нужен multipart с полем «file»")
     file_name, content = upload
     return await run_in_threadpool(_scan, request, file_name, content, principal, now, uow_factory)
+
+
+class ScanMergeInput(BaseModel):
+    files: list[str]
+
+
+def _merge(request: Request, links: list[str], principal: Principal, now: datetime, uow_factory) -> dict:
+    link, content = _checked(lambda: merge_scans(uow_factory(), links, principal.actor, now))
+    return scan_answer(_factory(request, "purchasing_uow_factory"), link, content, "application/pdf")
+
+
+@router.post("/receipts/scan-merge")
+async def merge_receipt_scans(
+    payload: ScanMergeInput,
+    request: Request,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: UowFactory,
+) -> dict:
+    """A УПД of several sheets: the stored scans (links, page order) are glued into one PDF, stored and recognised
+    like `POST /receipts/scan`; answers the same `{scan_file, recognised, lines, note}`."""
+    return await run_in_threadpool(_merge, request, payload.files, principal, now, uow_factory)

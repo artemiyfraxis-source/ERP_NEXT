@@ -100,6 +100,8 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState<"" | "pending" | "claimed">("");
   const [scanError, setScanError] = useState("");
+  const [scanPages, setScanPagesState] = useState<string[]>([]);
+  const scanPagesRef = useRef<string[]>([]);
   const scanJobId = useRef<string | null>(null);
   const scanAborted = useRef(false);
   const [accepting, setAccepting] = useState<number | null>(null);
@@ -250,6 +252,25 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     });
   }
 
+  function setScanPages(pages: string[]) {
+    scanPagesRef.current = pages;
+    setScanPagesState(pages);
+  }
+
+  /** A sheet (or several) came: the first one is the scan itself, the next ones are glued to the earlier pages into
+   *  ONE PDF by the server, and the merged document's answer is what fills the form. */
+  async function takePages(results: WarehouseReceiptScan[]) {
+    const pages = [...scanPagesRef.current, ...results.map((result) => result.scan_file)];
+    if (pages.length < 2) {
+      setScanPages(pages);
+      applyScanResult(results[0]);
+      return;
+    }
+    const merged = await warehouseApi.mergeScans(pages);
+    setScanPages(pages);
+    applyScanResult(merged);
+  }
+
   function applyScanResult(result: WarehouseReceiptScan) {
     const next = applyScan(header, lines, result);
     setHeader(next.header);
@@ -259,11 +280,13 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     next.lines.forEach((line, index) => { if (line !== lines[index] && line.article.trim()) lookup(index, line.article); });
   }
 
-  async function scan(file: File) {
+  async function scan(files: File[]) {
     setScanning(true);
     setError("");
     try {
-      applyScanResult(await warehouseApi.scanReceipt(file));
+      const results: WarehouseReceiptScan[] = [];
+      for (const file of files) results.push(await warehouseApi.scanReceipt(file));
+      await takePages(results);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось разобрать УПД");
     } finally {
@@ -273,7 +296,8 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   }
 
   /** «Сканировать»: задание уходит на ПК склада, ответ опрашиваем каждые 1,5 с, не дольше 130 с. */
-  async function scanFromScanner() {
+  async function scanFromScanner(fresh = false) {
+    if (fresh) { setScanPages([]); setScanFile(""); }
     setScanning(true);
     setError("");
     setScanError("");
@@ -287,7 +311,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
       let current = job;
       for (;;) {
         if (scanAborted.current) return;
-        if (current.status === "done" && current.result) { applyScanResult(current.result); return; }
+        if (current.status === "done" && current.result) { await takePages([current.result]); return; }
         if (current.status === "failed") { setScanError(current.error || "Сканер не ответил"); return; }
         setScanStatus(current.status === "claimed" ? "claimed" : "pending");
         if (Date.now() >= deadline) {
@@ -325,6 +349,8 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
       setReceipt(saved);
       setHeader(headerFromReceipt(saved));
       setScanFile(saved.scan_file ?? "");
+      setScanPages([]);
+      setScanPages([]);
       setLines(withTrailingBlank(lots.map(lineFromLot).slice(0, RECEIPT_LIMIT)));
       setNote(`Поставка продолжена: принято позиций — ${lots.length}`);
     } catch (reason) {
@@ -448,16 +474,28 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
           {headerField("upd_date", "Дата УПД", "date")}
           {headerField("purpose", "Назначение")}
           <div className="wr-scan">
-            <button type="button" className="secondary" disabled={scanning} onClick={() => void scanFromScanner()}>Сканировать</button>
+            {scanPages.length > 0 ? (
+              <>
+                <button type="button" className="secondary" disabled={scanning} onClick={() => void scanFromScanner()}>+ Страница</button>
+                <button type="button" className="secondary" disabled={scanning} onClick={() => void scanFromScanner(true)}>Сканировать заново</button>
+              </>
+            ) : (
+              <button type="button" className="secondary" disabled={scanning} onClick={() => void scanFromScanner()}>Сканировать</button>
+            )}
             <button type="button" className="secondary" disabled={scanning} onClick={() => fileInput.current?.click()}>{scanning && !scanStatus ? "Разбираем УПД…" : "Файл…"}</button>
-            <input ref={fileInput} type="file" hidden aria-label="Файл УПД" accept=".pdf,image/*" {...(phone ? { capture: "environment" as const } : {})}
-              onChange={(event) => { const file = event.target.files?.[0]; if (file) void scan(file); }} />
+            <input ref={fileInput} type="file" hidden multiple aria-label="Файл УПД" accept=".pdf,image/*" {...(phone ? { capture: "environment" as const } : {})}
+              onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void scan(files); }} />
           </div>
         </div>
         {scanStatus || scanError ? (
           <p className={`wr-scan-status${scanError ? " error" : ""}`} role="status">
             {scanError || (scanStatus === "claimed" ? "Сканирует…" : "Положите УПД на стекло сканера — ждём ПК склада…")}
             {scanStatus ? <> <a href="#" onClick={(event) => { event.preventDefault(); cancelScan(); }}>Отменить</a></> : null}
+          </p>
+        ) : null}
+        {scanFile ? (
+          <p className="wr-scan-status">
+            Скан: {scanPages.length > 0 ? `${scanPages.length} стр. · ` : ""}<a href={scanFile} target="_blank" rel="noreferrer">открыть</a>
           </p>
         ) : null}
         <p className="rg-hint">

@@ -363,11 +363,11 @@ def test_a_picture_is_read_by_tesseract_in_russian_and_english(programs):
     assert options["timeout"] == 60
 
 
-def test_a_pdf_without_text_is_rasterised_two_pages_at_300_dpi(programs):
+def test_a_pdf_without_text_is_rasterised_up_to_ten_pages_at_300_dpi(programs):
     found, note = recognise_upd(identity_pdf([]), "application/pdf")
     assert found.upd_number == "992177" and note == ""
     pdftoppm, *tesseract = [arguments for arguments, _ in programs.calls]
-    assert pdftoppm[:8] == ["/usr/bin/pdftoppm", "-r", "300", "-f", "1", "-l", "2", "-png"]
+    assert pdftoppm[:8] == ["/usr/bin/pdftoppm", "-r", "300", "-f", "1", "-l", "10", "-png"]
     assert len(tesseract) == 2
 
 
