@@ -42,8 +42,6 @@ _INVOICE_TAIL = (
 _INVOICE = (
     re.compile(r"Основани[ея][^\n]{0,80}?" + _INVOICE_TAIL, re.I),
     re.compile(_INVOICE_TAIL, re.I),
-    # (5) «К платёжно-расчётному документу № 916 от 19.10.2026» — the shop's suppliers put the invoice here (owner 23.10).
-    re.compile(r"К\s+пл[аa]т[её]жно\s*-\s*р[аa]сч[её]тному\s+документу\s*" + _NO + r"\s*" + _NUMBER + _OT + _DATE, re.I),
 )
 _SELLER = re.compile(r"Продавец\s*:?\s*([^\n]+)", re.I)
 _SELLER_INN = re.compile(r"ИН[НH]\s*/\s*КПП\s+продавца\s*:?\s*(\d{12}|\d{10})(?!\d)", re.I)
@@ -115,11 +113,12 @@ def parse_upd_text(text: str) -> RecognisedUpd:
     )
 
 
-def recognise_upd(content: bytes, kind: str | None) -> tuple[RecognisedUpd, str]:
-    """What the file says and a note for the screen («» — everything that is looked for was found). The text layer of
-    a PDF first; nothing recognised in it (or a picture) — OCR; no OCR on this server — `OCR_MISSING`."""
+def recognise_upd_text(content: bytes, kind: str | None) -> tuple[RecognisedUpd, str, str]:
+    """What the file says, a note for the screen («» — everything that is looked for was found) and the text it was
+    read from (its item rows are read by `upd_lines`). The text layer of a PDF first; nothing recognised in it (or a
+    picture) — OCR; no OCR on this server — `OCR_MISSING`."""
     if kind not in RECOGNISED_KINDS:
-        return RecognisedUpd(), NO_TEXT
+        return RecognisedUpd(), NO_TEXT, ""
     text, heavy = "", False
     if kind == "application/pdf":
         try:
@@ -129,11 +128,18 @@ def recognise_upd(content: bytes, kind: str | None) -> tuple[RecognisedUpd, str]
     found = parse_upd_text(text)
     if found.empty:
         try:
-            found = parse_upd_text(receipt_ocr.ocr_text(content, kind))
+            text = receipt_ocr.ocr_text(content, kind)
         except receipt_ocr.OcrUnavailable:
-            return found, TOO_HEAVY if heavy else OCR_MISSING
+            return found, TOO_HEAVY if heavy else OCR_MISSING, text
+        found = parse_upd_text(text)
     if found.empty:
-        return found, NO_TEXT
+        return found, NO_TEXT, text
     if not (found.supplier and found.upd_number and found.upd_date):
-        return found, PARTLY
-    return found, ""
+        return found, PARTLY, text
+    return found, "", text
+
+
+def recognise_upd(content: bytes, kind: str | None) -> tuple[RecognisedUpd, str]:
+    """`recognise_upd_text` without the text."""
+    found, note, _text = recognise_upd_text(content, kind)
+    return found, note

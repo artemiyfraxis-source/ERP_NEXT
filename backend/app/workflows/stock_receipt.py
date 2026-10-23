@@ -6,7 +6,9 @@ storekeeper types a delivery. Read-only — no module's state changes here.
   by hand too would count it twice;
 * `purchasing_item` — the purchasing nomenclature card of the article (name, manufacturer, type, unit);
 * `procurement_line` — the procurement line of this supplier's invoice with this article;
-* `upd_document` — a closing document (УПД) purchasing already holds under the number the scan carries.
+* `upd_document` — a closing document (УПД) purchasing already holds under the number the scan carries;
+* `known_articles` — the articles the ERP already writes (stock lots, purchasing nomenclature, reference DB), which an
+  article read off a scanned УПД snaps to.
 
 A stand without one of the modules wired (factory None) simply gets nothing from it."""
 
@@ -17,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import distinct, or_, select
 
 from app.modules.procurement.infrastructure import ProcurementLineRow as PL
 from app.modules.purchasing.doc_refs import norm_doc_number
@@ -25,6 +27,8 @@ from app.modules.purchasing.infrastructure import ItemRow, UpdDocumentRow, UpdLi
 from app.modules.purchasing.upd_sellers import seller_name_key
 from app.modules.receiving.domain import ReceivingStatus
 from app.modules.receiving.infrastructure import ReceivingLineRow as RC
+from app.modules.references.domain import TechOperationTab
+from app.modules.warehouse.infrastructure import StockLotRow
 from app.workflows.article_key import code_key
 
 OPEN_RECEIVING = (ReceivingStatus.IN_TRANSIT.value, ReceivingStatus.WAITING.value)
@@ -183,3 +187,29 @@ def upd_document(
                 ],
             }
     return None
+
+
+# Reference DB tabs whose records are articles of what the shop buys.
+_ARTICLE_TABS = (TechOperationTab.MATERIAL, TechOperationTab.TERMINAL, TechOperationTab.COAX, TechOperationTab.WIRE)
+
+
+def known_articles(
+    warehouse_factory: Callable | None, purchasing_factory: Callable | None, references_factory: Callable | None,
+) -> list[tuple[str, str]]:
+    """(article, where from) of every article the ERP already writes, in the order a scanned one snaps to them: stock
+    lots (the shop's own spelling), the live purchasing nomenclature, the reference DB records."""
+    known: list[tuple[str, str]] = []
+    if warehouse_factory is not None:
+        with warehouse_factory() as uow:
+            known += [(article, "партии склада") for article in uow.session.scalars(
+                select(distinct(StockLotRow.article)).where(StockLotRow.article != "")) if article]
+    if purchasing_factory is not None:
+        with purchasing_factory() as uow:
+            known += [(article, "номенклатуры закупок") for article in uow.session.scalars(
+                select(ItemRow.part_number).where(ItemRow.archived_at.is_(None), ItemRow.part_number.is_not(None)))
+                if article]
+    if references_factory is not None:
+        with references_factory() as uow:
+            known += [(record.display_text, "справочника") for tab in _ARTICLE_TABS
+                      for record in uow.tech_operations.list(tab=tab, query="", limit=10_000)]
+    return known

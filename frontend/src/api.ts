@@ -485,7 +485,11 @@ export interface WarehouseScanJob {
 export interface WarehouseReceiptScan {
   scan_file: string;
   recognised: { supplier: string; inn: string; upd_number: string; upd_date: string; invoice_number: string; invoice_date: string };
-  lines: Array<{ article: string; name: string; quantity: string; unit: string }>;
+  /** Lines read off a scan carry how they came: packs × pack («3» × «100 м», «рул.»), the supplier's code, the source. */
+  lines: Array<{
+    article: string; name: string; quantity: string; unit: string;
+    packs?: string | null; pack?: string | null; pack_kind?: string | null; supplier_code?: string | null; source?: string | null;
+  }>;
   note: string;
 }
 

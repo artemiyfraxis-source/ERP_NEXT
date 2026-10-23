@@ -41,6 +41,8 @@ export type ReceiptLine = Record<LineKey, string> & {
   auto: LineKey[];
   /** where the lookup took them from (the row's title) */
   source: string;
+  /** how a scanned УПД line came: «3 рул. × 100 м · скан УПД» (the row's title too) */
+  scan: string;
   /** places the article already lies on */
   places: string[];
   /** «заказ №…», when the article is awaited in «Приёмка» */
@@ -98,7 +100,7 @@ export function emptyHeader(): ReceiptHeader {
 }
 
 export function emptyLine(): ReceiptLine {
-  const line = { auto: [], source: "", places: [], expected: "", accepted: null, error: "" } as unknown as ReceiptLine;
+  const line = { auto: [], source: "", scan: "", places: [], expected: "", accepted: null, error: "" } as unknown as ReceiptLine;
   for (const key of PASTE_ORDER) line[key] = "";
   return line;
 }
@@ -219,8 +221,30 @@ export function applyScan(header: ReceiptHeader, lines: ReceiptLine[], scan: War
     article: text(line.article), name: text(line.name), unit: text(line.unit), quantity: cellValue("quantity", text(line.quantity)),
   }));
   const result = appendParsedRows<LineKey, ReceiptLine>(lines, rows, { limit: RECEIPT_LIMIT, seed: emptyLine(), isBlank: isBlankLine });
-  const split = result.positions.map((line, index) => (line === lines[index] ? line : splitArticleCell(line)));
+  const first = result.positions.length - result.filled;
+  const split = result.positions.map((line, index) => {
+    if (line === lines[index]) return line;
+    const scanned = (scan.lines ?? [])[index - first];
+    const hint = scanned ? scanHint(scanned) : "";
+    return splitArticleCell(hint ? { ...line, scan: hint } : line);
+  });
   return { header: nextHeader, lines: split, added: result.filled };
+}
+
+/** «3 рул. × 100 м · скан УПД, артикул из партии склада · код поставщика 00-42»: how a scanned line came. */
+export function scanHint(line: WarehouseReceiptScan["lines"][number]): string {
+  const packs = text(line.packs);
+  const pack = text(line.pack);
+  const kind = text(line.pack_kind) || "уп.";
+  const packed = pack ? (packs ? `${packs} ${kind} × ${pack}` : `${kind} ${pack}`) : "";
+  const code = text(line.supplier_code);
+  return [packed, text(line.source), code ? `код поставщика ${code}` : ""].filter(Boolean).join(" · ");
+}
+
+/** The row's title: how the scan gave it, then what the article lookup filled. */
+export function lineTitle(line: ReceiptLine): string | undefined {
+  const parts = [line.scan ?? "", line.auto.length && line.source ? `Подставлено: ${line.source}` : ""].filter(Boolean);
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
 /** Header as the server takes it (empty dates are null). */

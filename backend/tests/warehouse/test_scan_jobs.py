@@ -498,4 +498,20 @@ def test_the_seller_stops_at_the_buyer_column_of_a_scanned_upd():
     )
     assert (found.supplier, found.inn, found.upd_number) == ('ООО "Сафетин"', "6686070480", "1788")
     assert found.upd_date == date(2026, 10, 20)
-    assert (found.invoice_number, found.invoice_date) == ("916", date(2026, 10, 19)), "the shop's invoice line (owner 23.10)"
+    assert (found.invoice_number, found.invoice_date) == ("", None), "(5) is not the invoice (owner 23.10)"
+
+
+@pytest.mark.parametrize("basis", [
+    "Основание передачи (сдачи) / получения (приёмки): Счет № 916 от 19.10.2026 (8)",
+    "Основание передачи (сдачи) / получения (приемки): | Cчeт N° 916 oт 19 .10,2026 [8]",  # OCR noise
+    "Основание передачи (сдачи) / получения (приёмки):\nСчет № 916 от 19.10.2026 (8)",  # split over two lines
+])
+def test_the_invoice_is_read_from_the_basis_of_transfer_only(basis):
+    """Owner 23.10: the invoice is «Основание передачи (сдачи) / получения (приёмки)» (8), not «К платёжно-расчётному
+    документу» (5)."""
+    found = parse_upd_text(
+        "Счет-фактура № 1788 от 20 октября 2026 г. (1)\n"
+        "К платежно-расчетному документу № 555 от 01.10.2026 (5)\n"
+        f"{basis}\n"
+    )
+    assert (found.invoice_number, found.invoice_date) == ("916", date(2026, 10, 19))

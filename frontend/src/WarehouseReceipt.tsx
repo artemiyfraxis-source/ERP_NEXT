@@ -7,7 +7,7 @@ import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import {
   GRID_COLUMNS, LABELS_MAX, RECEIPT_LIMIT, applyHints, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell,
   DEFAULT_PURPOSE, emptyHeader, emptyLine, fillEmpty, headerChanged, headerFields, headerFromReceipt, isBlankLine, lineFromLot, lineSummary,
-  mergeHeader, shortDate, splitArticleCell, withTrailingBlank,
+  lineTitle, mergeHeader, shortDate, splitArticleCell, withTrailingBlank,
   type HeaderKey, type LineKey, type ReceiptHeader, type ReceiptLine,
 } from "./warehouseReceiptLogic";
 
@@ -516,7 +516,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
                   const done = line.accepted;
                   return <Fragment key={row}>
                     <tr className={[line.error ? "rg-row-bad" : "", done ? "wr-done" : ""].filter(Boolean).join(" ") || undefined}
-                      title={line.auto.length && line.source ? `Подставлено: ${line.source}` : undefined}>
+                      title={lineTitle(line)}>
                       <td className="rg-no wr-stick wr-stick-no">{row + 1}</td>
                       {GRID_COLUMNS.map((column) => <td key={column.key} className={`wr-col-${column.key}${column.key === "article" ? " wr-stick wr-stick-article" : ""}`}>
                         {done ? <span className="wr-ro" title={line[column.key]}>{column.key === "expiry_date" ? shortDate(line[column.key]) : line[column.key]}</span> : control(row, column.key, line)}
