@@ -222,6 +222,7 @@ export function OrderCardBody({ number, today, readOnly, refreshKey = 0, onChang
                   ? <a href={invoice.url} target="_blank" rel="noreferrer">{invoice.number ? `№ ${invoice.number}` : "счёт"}</a>
                   : `№ ${invoice.number}`}
                 {invoice.date ? ` от ${formatDay(invoice.date)}` : ""}
+                {invoice.kaiten && <span className="muted"> · счёт Kaiten, файл не приложен</span>}
               </span>
             ))}
           </dd></div>
