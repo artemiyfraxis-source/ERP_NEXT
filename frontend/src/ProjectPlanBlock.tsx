@@ -105,7 +105,14 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
   const [text, setText] = useState("");
   const [deadline, setDeadline] = useState(row.deadline ?? "");
 
-  useEffect(() => { setDeadline(row.deadline ?? ""); setText(""); }, [row.project, row.deadline]);
+  // Сброс при смене проекта или срока — прямо при рендере, а не эффектом: эффект после первого показа мог стереть то, что
+  // уже набрали (запись исчезала, кнопка «Записать» гасла).
+  const [formFor, setFormFor] = useState(`${row.project}|${row.deadline ?? ""}`);
+  if (formFor !== `${row.project}|${row.deadline ?? ""}`) {
+    setFormFor(`${row.project}|${row.deadline ?? ""}`);
+    setDeadline(row.deadline ?? "");
+    setText("");
+  }
 
   async function submit() {
     await addEvent({ project: row.project, kind, blocker, text, deadline: deadline || null });

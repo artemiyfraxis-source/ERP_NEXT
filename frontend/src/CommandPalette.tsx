@@ -119,7 +119,13 @@ export function CommandPalette({ principal }: { principal: Principal }) {
     return list;
   }, [results, query, principal]);
 
-  useEffect(() => { setActive(0); }, [results, query]);
+  // Выбор встаёт на первую строку при новом ответе или тексте — при рендере, а не эффектом: эффект после показа ответа
+  // мог сбросить уже нажатую стрелку.
+  const [shownFor, setShownFor] = useState<{ results: typeof results; query: string }>({ results, query });
+  if (shownFor.results !== results || shownFor.query !== query) {
+    setShownFor({ results, query });
+    setActive(0);
+  }
 
   if (!open) return null;
 
