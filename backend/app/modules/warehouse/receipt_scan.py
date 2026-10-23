@@ -85,7 +85,12 @@ def scan_day(text: str | None) -> date | None:
     return None
 
 
+# A scanned УПД reads the seller and buyer columns as one line: «ООО "Сафетин" (2) Покупатель: ООО …» (23.10).
+_NEXT_FIELD = re.compile(r"\s*(?:\(\s*\d+\s*[а-яa-z]?\s*\)|Покупатель|Адрес\b|ИН[НH]\s*/)", re.I)
+
+
 def _supplier(raw: str) -> str:
+    raw = _NEXT_FIELD.split(raw, maxsplit=1)[0]
     name = _EDGE_NOISE.sub("", _MARK.sub("", _EDGE_NOISE.sub("", raw)))
     return "" if not name or name.upper().startswith(("ИНН", "ИНH")) else name[:255]
 
