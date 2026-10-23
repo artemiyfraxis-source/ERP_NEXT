@@ -119,6 +119,7 @@ from .domain import (
     ACTUAL_UNITS,
     BY_SUPPLIER_STAGES,
     DATASHEET_MAX_LENGTH,
+    LINE_DOCUMENT_KIND_ERROR,
     LINE_DOCUMENT_KINDS,
     NOTE_MAX_LENGTH,
     STATUS_ORDER,
@@ -204,6 +205,9 @@ class SupplierRequestsInput(BaseModel):
     """Ticked ready lines; no body — every ready line of the buyer, as SUPPLYMAP's single button did."""
 
     line_ids: list[UUID] = Field(min_length=1, max_length=500)
+    # «Закупка» → «Запросить счёт» (owner 23.10): the line versions the screen showed; a line that moved on since is
+    # 409 and nothing is formed. Omitted — the old ticked-lines behaviour.
+    versions: dict[UUID, int] | None = Field(default=None, max_length=500)
 
 
 class PaidBatchItemInput(BaseModel):
@@ -358,7 +362,7 @@ class DatasheetInput(VersionInput):
 
 
 class LineDocumentInput(BaseModel):
-    """РАЗРЕШЕНИЕ (`permit`) or ДОК. КАЧЕСТВА (`quality`) file of the line."""
+    """РАЗРЕШЕНИЕ (`permit`), ДОК. КАЧЕСТВА (`quality`) or ПП (`payment`) file of the line."""
 
     kind: str = Field(min_length=1, max_length=16)
     file_name: str = Field(min_length=1, max_length=512)
@@ -1251,6 +1255,19 @@ def _order_result(order: SupplierOrder) -> dict:
     }
 
 
+def _require_versions(versions: Mapping[UUID, int], uow: UnitOfWork) -> None:
+    """The lines as the screen showed them: a missing line is 404, a moved one 409."""
+    with uow:
+        for line_id, version in versions.items():
+            line = uow.procurement.get(line_id)
+            if line is None:
+                raise HTTPException(status_code=404, detail="Строка закупки не найдена")
+            if line.version != version:
+                raise HTTPException(
+                    status_code=409, detail=f"{line.legacy_id}: строка изменилась после загрузки — обновите данные",
+                )
+
+
 @router.post("/supplier-requests")
 def supplier_requests(
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
@@ -1258,8 +1275,11 @@ def supplier_requests(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
     payload: SupplierRequestsInput | None = None,
 ) -> dict:
-    """Ticked lines: what cannot go is listed in `skipped` ({line_id, legacy_id, reason}), the rest are formed."""
+    """Ticked lines: what cannot go is listed in `skipped` ({line_id, legacy_id, reason}), the rest are formed.
+    With `versions` a ticked line whose version moved on is 409 before anything is formed."""
     line_ids = tuple(dict.fromkeys(payload.line_ids)) if payload else None
+    if payload is not None and payload.versions is not None:
+        _require_versions(payload.versions, uow_factory())
     try:
         result = _retry_transaction(
             lambda: build_supplier_requests(
@@ -1518,7 +1538,7 @@ def line_files(
     _principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
-    """The line's РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files with their kind, oldest first (invoices and КП are not listed)."""
+    """The line's РАЗРЕШЕНИЕ, ДОК. КАЧЕСТВА and ПП files with their kind, oldest first (invoices and КП are not listed)."""
     found = line_documents([line_id], uow_factory()).get(line_id, [])
     return {"files": [_file_result(item) for item in found]}
 
@@ -1531,10 +1551,10 @@ def upload_line_file(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
-    """A РАЗРЕШЕНИЕ or ДОК. КАЧЕСТВА file to the line; a quality document also sets ДОК. КАЧЕСТВА «Да». Answers with
+    """A РАЗРЕШЕНИЕ, ДОК. КАЧЕСТВА or ПП file to the line; a quality document also sets ДОК. КАЧЕСТВА «Да». Answers with
     the stored file and the line with all its files."""
     if payload.kind not in LINE_DOCUMENT_KINDS:
-        raise HTTPException(status_code=422, detail="Вид файла: разрешение или документ качества")
+        raise HTTPException(status_code=422, detail=LINE_DOCUMENT_KIND_ERROR)
     content = decode_upload(payload.content_base64, "Файл повреждён")
     line, stored = _command_errors(
         lambda: upload_line_document(

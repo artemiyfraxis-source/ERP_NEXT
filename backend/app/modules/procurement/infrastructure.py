@@ -765,10 +765,12 @@ class SqlAlchemyProcurementRepository:
 
 class ProcurementFileRow(Base):
     """A file of a procurement line: invoices and КП (`uploadInvoice` kept them in the Drive folder «Счета»), and
-    since 0089 the line's РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files (`kind`)."""
+    since 0089 the line's РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files (`kind`), since 0147 the ПП of a paid order (`payment`)."""
 
     __tablename__ = "procurement_files"
-    __table_args__ = (CheckConstraint("kind IN ('other', 'permit', 'quality')", name="ck_procurement_files_kind"),)
+    __table_args__ = (
+        CheckConstraint("kind IN ('other', 'permit', 'quality', 'payment')", name="ck_procurement_files_kind"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     line_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
