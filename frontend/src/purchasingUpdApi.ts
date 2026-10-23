@@ -41,7 +41,17 @@ export interface UpdCard {
   buyer_inn: string; buyer_kind: UpdBuyerKind; buyer_org_inn: string | null; buyer_note: string;
 }
 
+/** Tabs of the registry: УПД · М-15 · ТН+СФ · Прочие (backend upd_registry.kind_group). */
+export type UpdKindGroup = "upd" | "m15" | "tn_sf" | "other";
+export const UPD_KIND_GROUPS: { key: UpdKindGroup; label: string; hint: string }[] = [
+  { key: "upd", label: "УПД", hint: "«УПД» и «УПД до 2019 года»" },
+  { key: "m15", label: "М-15", hint: "накладные М-15 (давальческие материалы)" },
+  { key: "tn_sf", label: "ТН+СФ", hint: "«ТОРГ-12» и «Счёт-фактура»" },
+  { key: "other", label: "Прочие", hint: "корректировочные счета-фактуры, акты и всё остальное" },
+];
+
 export interface UpdList {
+  kinds: Record<UpdKindGroup, number>;
   items: UpdCard[]; total: number; page: number; page_size: number; counts: Record<UpdStatus, number>; review: number;
   origins: Record<UpdOrigin, number>; buyers: { key: string; count: number }[];
   /** Suppliers the documents in force are linked to, and how many documents have none. */
@@ -97,11 +107,11 @@ export interface SellersImportResult {
 
 export interface UpdFilters {
   q: string; status: UpdStatus | ""; origin: UpdOrigin | ""; buyer: string; supplierId: string; noSupplier: boolean;
-  dateFrom: string; dateTo: string; review: boolean; duplicates: boolean; page: number;
+  dateFrom: string; dateTo: string; review: boolean; duplicates: boolean; kind: UpdKindGroup | ""; page: number;
 }
 export const EMPTY_FILTERS: UpdFilters = {
   q: "", status: "", origin: "", buyer: "", supplierId: "", noSupplier: false, dateFrom: "", dateTo: "", review: false,
-  duplicates: false, page: 1,
+  duplicates: false, kind: "", page: 1,
 };
 
 const BASE = "/api/purchasing/upd";
@@ -121,6 +131,7 @@ export const purchasingUpdApi = {
     if (filters.dateTo) params.set("date_to", filters.dateTo);
     if (filters.review) params.set("review", "true");
     if (filters.duplicates) params.set("duplicates", "true");
+    if (filters.kind) params.set("kind", filters.kind);
     if (filters.page > 1) params.set("page", String(filters.page));
     const text = params.toString();
     return api<UpdList>(text ? `${BASE}?${text}` : BASE);

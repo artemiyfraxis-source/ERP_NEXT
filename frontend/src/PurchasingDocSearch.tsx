@@ -4,6 +4,7 @@ import { urlParam } from "./navigation";
 import { InvoiceCardDialog, PositionsTable } from "./PurchasingInvoices";
 import { ORIGIN_LABELS, dayText, documentsApi, invoiceFileUrl, rub, type SearchHit, type SearchKind, type SearchResult } from "./purchasingDocumentsApi";
 import { StatusChip } from "./StatusChip";
+import "./purchasingDocs.css";
 
 /** «Поиск по документам»: an article, a piece of a name, a number, a seller or an amount →
  *  every UPD and Kaiten invoice that has it. Separators, case, «ё» and Latin look-alikes do not matter. */
@@ -69,7 +70,7 @@ function HitCard({ hit, onOpenUpd, onOpenInvoice }: { hit: SearchHit; onOpenUpd?
   const title = `${hit.doc_kind}${hit.number ? ` № ${hit.number}` : ""} от ${dayText(hit.date)}`;
   const open = hit.kind === "invoice" ? () => onOpenInvoice(hit.id) : onOpenUpd ? () => onOpenUpd(hit.id) : undefined;
   return (
-    <article className="doc-hit" aria-label={title}>
+    <article className="doc-hit pdoc-card" aria-label={title}>
       <div className="doc-hit-head">
         {open ? <button type="button" className="link-button doc-link" onClick={open}>{title}</button> : <strong>{title}</strong>}
         {hit.origin && <StatusChip tone={hit.origin === "edo" ? "info" : "neutral"}>{ORIGIN_LABELS[hit.origin]}</StatusChip>}

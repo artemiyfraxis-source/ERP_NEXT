@@ -7,6 +7,7 @@ import {
   type ChainList, type ChainQuery, type ChainUpd, type DocChain, type DocCheck, type ReceivingSummary,
 } from "./purchasingDocumentsApi";
 import { StatusChip } from "./StatusChip";
+import "./purchasingDocs.css";
 
 /** «Цепочка документов»: every Kaiten invoice with our payment orders, the closing documents
  *  found for it (from the UPD's basis and payment references, or the buyer's word), and the ERP receiving behind each
@@ -88,53 +89,21 @@ export function PurchasingDocChain({ readOnly = false, onOpenUpd }: { readOnly?:
         <div className="empty">{query.view === "problems" ? "Расхождений нет: все счета закрыты документами или ещё в сроке." : "Ничего не найдено."}</div>
       )}
       {list && list.chains.length > 0 && (
-        <div className="table-wrap data-table">
-          <table className="grid doc-table" aria-label="Цепочки документов">
-            <thead>
-              <tr><th>Счёт</th><th>Оплата</th><th>Закрывающие</th><th>Приёмка</th><th>Состояние</th><th>Что не так</th></tr>
-            </thead>
-            <tbody>
-              {list.chains.map((chain) => (
-                <Fragment key={chain.key}>
-                  <tr className={`clickable${open === chain.key ? " doc-row-open" : ""}`} onClick={() => setOpen(open === chain.key ? null : chain.key)}>
-                    <td className="text"><InvoiceCell chain={chain} /></td>
-                    <td className="text">
-                      {chain.invoice?.payments.length
-                        ? chain.invoice.payments.map((p) => <div key={`${p.number}|${p.date}`}>№ {p.number} от {dayText(p.date)} · {rub(p.sum)}</div>)
-                        : <span className="muted">{chain.invoice ? INVOICE_STATUS_LABELS[chain.invoice.status] : "—"}</span>}
-                    </td>
-                    <td className="text">
-                      {chain.upds.length ? (
-                        <>
-                          <div>{chain.upds.length === 1 ? docLabel(chain.upds[0]) : `${chain.upds.length} док.`} · {rub(chain.closed_gross)}</div>
-                          <div className="doc-origins">
-                            {(["edo", "google"] as const).filter((o) => chain.upds.some((u) => u.origin === o)).map((o) => (
-                              <StatusChip key={o} tone={o === "edo" ? "info" : "neutral"}>{ORIGIN_LABELS[o]}</StatusChip>
-                            ))}
-                          </div>
-                        </>
-                      ) : <span className="muted">нет</span>}
-                      {chain.suggestions.length > 0 && <div className="doc-check warning">возможно: {chain.suggestions.map(docLabel).join(", ")}</div>}
-                    </td>
-                    <td className="text">{list.receiving_available ? <ReceivingCount upds={chain.upds} /> : <span className="muted">—</span>}</td>
-                    <td><StatusChip tone={CHAIN_STATE_TONE[chain.state]}>{CHAIN_STATE_LABELS[chain.state]}</StatusChip></td>
-                    <td className="text">
-                      {chain.checks.slice(0, 2).map((check, index) => <div key={index} className={CHECK_CLASS[check.level]}>{check.text}</div>)}
-                      {chain.checks.length > 2 && <div className="muted">ещё {chain.checks.length - 2}</div>}
-                    </td>
-                  </tr>
-                  {open === chain.key && (
-                    <tr className="doc-detail-row">
-                      <td colSpan={6}>
-                        <ChainDetail chain={chain} readOnly={readOnly} receivingAvailable={list.receiving_available} onChanged={changed} onOpenUpd={onOpenUpd} />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ul className="pdoc-grid" aria-label="Цепочки документов">
+          {list.chains.map((chain) => (
+            <Fragment key={chain.key}>
+              <li>
+                <ChainTile chain={chain} receivingAvailable={list.receiving_available} open={open === chain.key}
+                  onToggle={() => setOpen(open === chain.key ? null : chain.key)} />
+              </li>
+              {open === chain.key && (
+                <li className="pdoc-detail">
+                  <ChainDetail chain={chain} readOnly={readOnly} receivingAvailable={list.receiving_available} onChanged={changed} onOpenUpd={onOpenUpd} />
+                </li>
+              )}
+            </Fragment>
+          ))}
+        </ul>
       )}
       {list && list.chains.length < list.total && (
         <div className="inline-action">
@@ -144,6 +113,48 @@ export function PurchasingDocChain({ readOnly = false, onOpenUpd }: { readOnly?:
         </div>
       )}
     </section>
+  );
+}
+
+function ChainTile({ chain, receivingAvailable, open, onToggle }: { chain: DocChain; receivingAvailable: boolean; open: boolean; onToggle: () => void }) {
+  return (
+    <article className={`pdoc-card clickable${open ? " is-open" : ""}`} onClick={onToggle}>
+      <div className="pdoc-top">
+        <span className="pdoc-title"><InvoiceCell chain={chain} /></span>
+        <span className="pdoc-chips"><StatusChip tone={CHAIN_STATE_TONE[chain.state]}>{CHAIN_STATE_LABELS[chain.state]}</StatusChip></span>
+      </div>
+      <div className="pdoc-block">
+        <span className="pdoc-block-label">Оплата</span>
+        {chain.invoice?.payments.length
+          ? chain.invoice.payments.map((p) => <div key={`${p.number}|${p.date}`}>№ {p.number} от {dayText(p.date)} · {rub(p.sum)}</div>)
+          : <span className="muted">{chain.invoice ? INVOICE_STATUS_LABELS[chain.invoice.status] : "—"}</span>}
+      </div>
+      <div className="pdoc-block">
+        <span className="pdoc-block-label">Закрывающие</span>
+        {chain.upds.length ? (
+          <>
+            <div>{chain.upds.length === 1 ? docLabel(chain.upds[0]) : `${chain.upds.length} док.`} · {rub(chain.closed_gross)}</div>
+            <div className="doc-origins">
+              {(["edo", "google"] as const).filter((o) => chain.upds.some((u) => u.origin === o)).map((o) => (
+                <StatusChip key={o} tone={o === "edo" ? "info" : "neutral"}>{ORIGIN_LABELS[o]}</StatusChip>
+              ))}
+            </div>
+          </>
+        ) : <span className="muted">нет</span>}
+        {chain.suggestions.length > 0 && <div className="doc-check warning">возможно: {chain.suggestions.map(docLabel).join(", ")}</div>}
+      </div>
+      <div className="pdoc-block">
+        <span className="pdoc-block-label">Приёмка</span>
+        {receivingAvailable ? <ReceivingCount upds={chain.upds} /> : <span className="muted">—</span>}
+      </div>
+      {chain.checks.length > 0 && (
+        <div className="pdoc-block">
+          <span className="pdoc-block-label">Что не так</span>
+          {chain.checks.slice(0, 2).map((check, index) => <div key={index} className={CHECK_CLASS[check.level]}>{check.text}</div>)}
+          {chain.checks.length > 2 && <div className="muted">ещё {chain.checks.length - 2}</div>}
+        </div>
+      )}
+    </article>
   );
 }
 

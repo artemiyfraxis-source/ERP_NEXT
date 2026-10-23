@@ -5,10 +5,11 @@ import { urlParam } from "./navigation";
 import { PurchasingUpdCard } from "./PurchasingUpdCard";
 import {
   EDO_STATUS_LABELS, EMPTY_FILTERS, UPD_ORIGIN_HINTS, UPD_ORIGIN_LABELS, UPD_STATUS_LABELS, UPD_STATUS_ORDER, UPD_STATUS_TONES,
-  buyerLabel, fileToBase64, purchasingUpdApi as updApi, rub,
+  UPD_KIND_GROUPS, buyerLabel, fileToBase64, purchasingUpdApi as updApi, rub,
   type EdoFileResult, type SellersImportResult, type UpdCard, type UpdFilters, type UpdList, type UpdSellers,
 } from "./purchasingUpdApi";
 import { StatusChip } from "./StatusChip";
+import "./purchasingDocs.css";
 
 /** `&tab=upd&status=needs_review` (a link from «Сегодня»): the registry opens on that status. */
 function filtersFromUrl(): UpdFilters {
@@ -73,6 +74,19 @@ export function PurchasingUpd({ readOnly = false, focusId, extraBlocks }: {
         {!readOnly && <button type="button" className="secondary" onClick={() => setSellersOpen(true)}>Продавцы без поставщика</button>}
         {!readOnly && <button type="button" className="primary" onClick={() => setUploading(true)}>Загрузить из ЭДО</button>}
       </div>
+      <div className="pdoc-tabs">
+        <span className="seg-tabs upd-kind" role="group" aria-label="Вид документа">
+          <button type="button" className={filters.kind === "" ? "on" : undefined} aria-pressed={filters.kind === ""} onClick={() => set({ kind: "" })}>
+            Все виды{list ? ` ${Object.values(list.kinds ?? {}).reduce((sum, n) => sum + n, 0)}` : ""}
+          </button>
+          {UPD_KIND_GROUPS.map((group) => (
+            <button key={group.key} type="button" className={filters.kind === group.key ? "on" : undefined} aria-pressed={filters.kind === group.key}
+              title={group.hint} onClick={() => set({ kind: group.key })}>
+              {group.label}{list ? ` ${list.kinds?.[group.key] ?? 0}` : ""}
+            </button>
+          ))}
+        </span>
+      </div>
       <div className="upd-filters">
         <span className="seg-tabs upd-origin" role="group" aria-label="Источник">
           {(["", "edo", "google"] as const).map((origin) => (
@@ -130,17 +144,9 @@ export function PurchasingUpd({ readOnly = false, focusId, extraBlocks }: {
           ? "Реестр пуст. Нажмите «Загрузить из ЭДО» и выберите XML или ZIP из Диадока."
           : "Ничего не найдено — смените фильтр или строку поиска."}</div>
       ) : (
-        <div className="table-wrap data-table">
-          <table className="grid wide upd-table" aria-label="Реестр УПД">
-            <thead>
-              <tr>
-                <th>Дата</th><th>№</th><th>Вид</th><th className="grow">Продавец</th><th className="num">Сумма с НДС</th><th>Статус</th>
-                <th className="num">Позиций</th><th>Отметки</th>
-              </tr>
-            </thead>
-            <tbody>{list.items.map((card) => <UpdRow key={card.id} card={card} onOpen={() => setOpenId(card.id)} />)}</tbody>
-          </table>
-        </div>
+        <ul className="pdoc-grid" aria-label="Реестр УПД">
+          {list.items.map((card) => <li key={card.id}><UpdCardTile card={card} onOpen={() => setOpenId(card.id)} /></li>)}
+        </ul>
       ))}
       {list && (
         <div className="inline-action upd-summary">
@@ -158,39 +164,43 @@ export function PurchasingUpd({ readOnly = false, focusId, extraBlocks }: {
   );
 }
 
-function UpdRow({ card, onOpen }: { card: UpdCard; onOpen: () => void }) {
+function UpdCardTile({ card, onOpen }: { card: UpdCard; onOpen: () => void }) {
   const seller = card.supplier_name ?? (card.seller_name || card.file_name);
+  const marks = [
+    card.manual && "своя версия",
+    card.changed_in_parser && "изменён разборщиком",
+    card.twin_of && (card.origin === "google" ? "копия — есть XML из ЭДО" : "копия"),
+    card.copies > 0 && `копий: ${card.copies}`,
+    !card.has_file && card.status !== "duplicate" && "файла нет",
+    card.supplier_id === null && card.status !== "duplicate" && "без поставщика",
+  ].filter(Boolean);
   return (
-    <tr className="clickable" onClick={onOpen}>
-      <td>{formatDate(card.date) || "—"}</td>
-      <td>{card.number || "—"}</td>
-      <td>{card.kind || "—"}</td>
-      <td className="text">
-        <button type="button" className="link-button table-link" onClick={(event) => { event.stopPropagation(); onOpen(); }}>{seller}</button>
-        {card.seller_note && <small className="upd-note">{card.seller_note}{card.seller_org_inn ? ` → ${card.seller_org_inn}` : ""}</small>}
-        {card.issues.length > 0 && card.status !== "parsed" && <small className="upd-issues">{card.issues.join("; ")}</small>}
-      </td>
-      <td className="num">{rub(card.total_gross)}</td>
-      <td>
-        <span className="upd-chips">
+    <article className={`pdoc-card clickable${card.status === "duplicate" ? " is-dim" : ""}`} onClick={onOpen}>
+      <div className="pdoc-top">
+        <span className="pdoc-title">
+          <button type="button" className="link-button table-link" onClick={(event) => { event.stopPropagation(); onOpen(); }}>{seller}</button>
+        </span>
+        <span className="pdoc-chips">
           <StatusChip tone={UPD_STATUS_TONES[card.status]}>{UPD_STATUS_LABELS[card.status]}</StatusChip>
           <StatusChip tone={card.origin === "edo" ? "info" : "neutral"} title={UPD_ORIGIN_HINTS[card.origin]}>{UPD_ORIGIN_LABELS[card.origin]}</StatusChip>
           {card.buyer_kind === "other" && <StatusChip tone="warning" title={card.buyer_note || "документ на другую организацию"}>ИНН {card.buyer_org_inn}</StatusChip>}
           {card.project_reference && <StatusChip tone="neutral">{card.project_reference}</StatusChip>}
         </span>
-      </td>
-      <td className="num">{card.line_count}</td>
-      <td className="text upd-marks">
-        {[
-          card.manual && "своя версия",
-          card.changed_in_parser && "изменён разборщиком",
-          card.twin_of && (card.origin === "google" ? "копия — есть XML из ЭДО" : "копия"),
-          card.copies > 0 && `копий: ${card.copies}`,
-          !card.has_file && card.status !== "duplicate" && "файла нет",
-          card.supplier_id === null && card.status !== "duplicate" && "без поставщика",
-        ].filter(Boolean).join(" · ")}
-      </td>
-    </tr>
+      </div>
+      <div className="pdoc-meta">
+        <span>{card.kind || "—"}</span>
+        <span>№ {card.number || "—"}</span>
+        <span>{formatDate(card.date) || "—"}</span>
+        <span className="pdoc-sum">{rub(card.total_gross)}</span>
+      </div>
+      <div className="pdoc-sub">
+        <span>{card.line_count} поз.</span>
+        {marks.map((mark) => <span key={String(mark)}>{mark}</span>)}
+      </div>
+      {card.seller_note && <div className="pdoc-note">{card.seller_note}{card.seller_org_inn ? ` → ${card.seller_org_inn}` : ""}</div>}
+      {card.issues.length > 0 && card.status !== "parsed" && <div className="pdoc-issues">{card.issues.join("; ")}</div>}
+      <div className="pdoc-file" title={card.file_name}>{card.file_name}</div>
+    </article>
   );
 }
 

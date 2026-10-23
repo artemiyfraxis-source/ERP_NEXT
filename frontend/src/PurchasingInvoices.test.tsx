@@ -63,8 +63,8 @@ it("lists invoices with the payment check, the closing state and the files", asy
   const calls: string[] = [];
   mockServer(calls);
   render(<PurchasingInvoices />);
-  const table = await screen.findByRole("table", { name: "Счета" });
-  const cells = within(table).getAllByRole("row")[1];
+  const list = await screen.findByRole("list", { name: "Счета" });
+  const cells = within(list).getAllByRole("listitem")[0];
   expect(cells.textContent).toContain("15.09.2025");
   expect(cells.textContent).toContain("43851");
   expect(cells.textContent).toContain("СнабКабель");

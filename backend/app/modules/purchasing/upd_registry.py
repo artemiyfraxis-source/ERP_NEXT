@@ -271,6 +271,19 @@ def _needs_review(card: dict[str, Any]) -> bool:
     return card["status"] == "needs_review" or (card["changed_in_parser"] and card["status"] != "duplicate")
 
 
+# «Вид» of the registry tabs: stored kinds (EDO: edo_xml.py, paper: the Google parser) folded into four groups.
+KIND_GROUPS = ("upd", "m15", "tn_sf", "other")
+_KIND_GROUP = {
+    "упд": "upd", "упд до 2019 года": "upd", "м-15": "m15", "торг-12": "tn_sf", "счёт-фактура": "tn_sf",
+    "счет-фактура": "tn_sf",
+}
+
+
+def kind_group(kind: str | None) -> str:
+    """УПД = «УПД» and «УПД до 2019 года»; ТН+СФ = «ТОРГ-12» and «Счёт-фактура»; М-15; the rest (correction, акт, …) = other."""
+    return _KIND_GROUP.get((kind or "").strip().lower(), "other")
+
+
 @dataclass(frozen=True)
 class ListFilter:
     q: str = ""
@@ -283,6 +296,7 @@ class ListFilter:
     buyer: str | None = None  # ours | other | unknown | an INN
     review: bool = False  # «требует проверки»: the parser's doubt, or the parser changed it after the buyer's word
     duplicates: bool = False  # the copies, shown apart; hidden otherwise
+    kind: str | None = None  # one of KIND_GROUPS
     page: int = 1
 
 
@@ -311,7 +325,9 @@ def list_documents(session: Session, wanted: ListFilter) -> dict[str, Any]:
     needle = _fold(wanted.q.strip())
     supplier = str(wanted.supplier_id) if wanted.supplier_id else None
 
-    def kept(card: dict[str, Any]) -> bool:
+    def kept(card: dict[str, Any], by_kind: bool = True) -> bool:
+        if by_kind and wanted.kind and kind_group(card["kind"]) != wanted.kind:
+            return False
         if wanted.origin and card["origin"] != wanted.origin:
             return False
         if wanted.buyer:
@@ -336,6 +352,8 @@ def list_documents(session: Session, wanted: ListFilter) -> dict[str, Any]:
         return True
 
     base = [card for card in cards if kept(card)]
+    pool = [card for card in cards if kept(card, by_kind=False) and card["status"] != "duplicate"]
+    kinds = {group: sum(1 for card in pool if kind_group(card["kind"]) == group) for group in KIND_GROUPS}
     counts = {status: sum(1 for card in base if card["status"] == status) for status in STATUSES}
     review_count = sum(1 for card in base if _needs_review(card))
     if wanted.status:
@@ -351,7 +369,7 @@ def list_documents(session: Session, wanted: ListFilter) -> dict[str, Any]:
     page = max(1, wanted.page)
     return {
         "items": shown[(page - 1) * PAGE_SIZE:page * PAGE_SIZE], "total": len(shown), "page": page,
-        "page_size": PAGE_SIZE, "counts": counts, "review": review_count, "origins": origins,
+        "page_size": PAGE_SIZE, "counts": counts, "kinds": kinds, "review": review_count, "origins": origins,
         "buyers": [{"key": key, "count": count} for key, count in buyer_list], "suppliers": supplier_list,
         "no_supplier": sum(1 for card in in_force if card["supplier_id"] is None),
         "sum_gross": sum(card["total_gross"] or 0 for card in shown if card["status"] != "duplicate"),
