@@ -37,7 +37,7 @@ from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_pr
 from .api import warehouse_uow_factory
 from .application import UnitOfWork
 from .domain import RECEIPT_SCAN_PATH
-from .receipts_api import _checked, _factory, multipart_file, scan_answer
+from .receipts_api import ScanSources, _checked, multipart_file, scan_answer, scan_sources
 from .receipts_application import SCAN_FILE_LIMIT, scan_file, store_job_scan
 from .scan_jobs import (
     DONE, FAILED, ScanJob, ScanJobClosed, cancel_job, claim, create_job, fail_job, get_job, save_result, stored_result,
@@ -86,7 +86,7 @@ def _job_lock(job_id: UUID) -> threading.Lock:
         return _running.setdefault(job_id, threading.Lock())
 
 
-def job_result(uow_factory: Callable[[], UnitOfWork], purchasing_factory, job: ScanJob) -> dict | None:
+def job_result(uow_factory: Callable[[], UnitOfWork], sources: ScanSources, job: ScanJob) -> dict | None:
     """The done job's answer: the stored one, else made now (and stored once). Blocking — run it off the event loop."""
     if job.status != DONE or job.file_id is None:
         return None
@@ -100,7 +100,7 @@ def job_result(uow_factory: Callable[[], UnitOfWork], purchasing_factory, job: S
             found = scan_file(uow_factory(), job.file_id)
             content = found[1] if found else b""
             link = f"{RECEIPT_SCAN_PATH}{job.file_id}"
-            answer = scan_answer(purchasing_factory, link, content, sniffed_type(content))
+            answer = scan_answer(sources, link, content, sniffed_type(content))
             save_result(uow_factory(), job.id, json.dumps(answer, ensure_ascii=False))
             return answer
     finally:
@@ -108,9 +108,9 @@ def job_result(uow_factory: Callable[[], UnitOfWork], purchasing_factory, job: S
             _running.pop(job.id, None)
 
 
-def _recognise_after_upload(uow_factory, purchasing_factory, job_id: UUID, now: datetime) -> None:
+def _recognise_after_upload(uow_factory, sources: ScanSources, job_id: UUID, now: datetime) -> None:
     try:
-        job_result(uow_factory, purchasing_factory, get_job(uow_factory(), job_id, now=now))
+        job_result(uow_factory, sources, get_job(uow_factory(), job_id, now=now))
     except Exception:  # noqa: BLE001 — the screen's poll makes the answer itself when this one fails
         log.exception("Распознавание скана УПД по заданию %s не удалось", job_id)
 
@@ -133,7 +133,7 @@ def scan_job(
     uow_factory: UowFactory,
 ) -> dict:
     job = _queue(lambda: get_job(uow_factory(), job_id, now=now))
-    result = job_result(uow_factory, _factory(request, "purchasing_uow_factory"), job)
+    result = job_result(uow_factory, scan_sources(request, uow_factory), job)
     return {**_brief(job), "error": job.error, "result": result}
 
 
@@ -190,7 +190,7 @@ async def scan_agent_result(
         await run_in_threadpool(
             lambda: _queue(lambda: _checked(lambda: store_job_scan(uow_factory(), job_id, file_name, content, now))))
         background.add_task(
-            _recognise_after_upload, uow_factory, _factory(request, "purchasing_uow_factory"), job_id, now,
+            _recognise_after_upload, uow_factory, scan_sources(request, uow_factory), job_id, now,
         )
         return {"ok": True, "id": str(job_id), "status": DONE}
     error = _error_text(body)

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import {
   applyHints, withTrailingBlank, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell, emptyHeader, emptyLine, fillEmpty,
-  headerChanged, headerFields, headerFromReceipt, isBlankLine, lineFromLot, lineSummary, mergeHeader, normalizeMaker, receiptLine,
+  headerChanged, headerFields, headerFromReceipt, isBlankLine, lineFromLot, lineSummary, lineTitle, mergeHeader, normalizeMaker, receiptLine,
   splitArticleCell, splitArticleMaker, type ReceiptLine,
 } from "./warehouseReceiptLogic";
 import type { WarehouseReceipt } from "./api";
@@ -84,6 +84,33 @@ it("a scan fills empty header fields and appends its lines", () => {
   expect(result.header).toMatchObject({ supplier: "Свой", upd_number: "17", upd_date: "2026-10-03" });
   expect(result.lines[0]).toMatchObject({ article: "Z-1", name: "Зет", quantity: "4" });
   expect(result.added).toBe(1);
+  expect(lineTitle(result.lines[0])).toBeUndefined(); // a registry line has no pack, no source
+});
+
+it("a scanned line read off the paper keeps its rolls × length as the row's title", () => {
+  const filledRow = filled({ article: "A-1", quantity: "1" });
+  const result = applyScan(emptyHeader(), [filledRow, emptyLine()], {
+    scan_file: "s.pdf", note: "",
+    recognised: { supplier: "", inn: "", upd_number: "", upd_date: "", invoice_number: "", invoice_date: "" },
+    lines: [
+      { article: "МТ-2К 6,4/3,2 белая", name: "Маркировочная трубка", quantity: "300", unit: "м", packs: "3", pack: "100 м",
+        pack_kind: "рул.", supplier_code: "00-00042353", source: "скан УПД" },
+      { article: "TP-I120EW", name: "Лента", quantity: "32", unit: "м", packs: "2", pack: "16 м", pack_kind: null,
+        supplier_code: "", source: "скан УПД, артикул из номенклатуры закупок" },
+      { article: "XHP-4", name: "Корпус", quantity: "25", unit: "шт", packs: "", pack: "", source: null },
+      { article: "K-1", name: "Кабель", quantity: "305", unit: "м", pack: "305 м", pack_kind: "бух." },
+    ],
+  });
+  expect(result.added).toBe(4);
+  expect(result.lines[0]).toBe(filledRow);
+  expect(result.lines[1]).toMatchObject({ article: "МТ-2К 6,4/3,2 белая", quantity: "300", unit: "м",
+    scan: "3 рул. × 100 м · скан УПД · код поставщика 00-00042353" });
+  expect(lineTitle(result.lines[2])).toBe("2 уп. × 16 м · скан УПД, артикул из номенклатуры закупок");
+  expect(result.lines[3].scan).toBe("");
+  expect(lineTitle(result.lines[3])).toBeUndefined();
+  expect(result.lines[4].scan).toBe("бух. 305 м");
+  expect(lineTitle({ ...result.lines[1], auto: ["name"], source: "партия OLD.1" }))
+    .toBe("3 рул. × 100 м · скан УПД · код поставщика 00-00042353 · Подставлено: партия OLD.1");
 });
 
 it("splits the maker off like the server does, on every real article of the warehouse", () => {

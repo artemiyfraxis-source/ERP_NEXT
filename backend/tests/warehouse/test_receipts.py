@@ -421,6 +421,44 @@ def test_scan_takes_header_and_lines_of_the_upd_purchasing_already_holds(stand):
     ]
 
 
+OCR_ROWS = (Path(__file__).parent / "fixtures" / "upd-1788-ocr-rows.txt").read_text(encoding="utf-8")
+
+
+def test_scan_without_a_registry_upd_reads_the_rows_off_the_scan_and_snaps_known_articles(stand, monkeypatch):
+    """Owner 23.10, the first real scan: the article from the name, the roll length × the rolls."""
+    client, sessions = stand
+    monkeypatch.setattr(app.state, "references_uow_factory", None, raising=False)
+    monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: "\n".join([*UPD_TEXT, OCR_ROWS]))
+    with sessions() as session:
+        session.add(ItemRow(id=uuid4(), name="Лента самоклеющаяся 12 мм", part_number="TP-I120EW", part_key="TPI120EW",
+                            manufacturer="", category="other", item_type="", unit="м", created_at=NOW))
+        session.commit()
+
+    body = client.post("/api/stock/receipts/scan", files={"file": ("скан.png", PNG, "image/png")}).json()
+
+    assert body["recognised"]["upd_number"] == "123"
+    assert body["note"] == "Строки прочитаны со скана (6) — сверьте артикулы и количество"
+    assert [(line["article"], line["quantity"], line["unit"], line["packs"], line["pack"]) for line in body["lines"]] == [
+        ("МТ-2К 6,4/3,2 белая", "300", "м", "3", "100 м"),
+        ("МТ-2К 4,8/2,4 белая", "300", "м", "3", "100 м"),
+        ("МТ-2К 3,2/1,6 белая", "600", "м", "3", "200 м"),
+        ("МТ-2К 2,4/1,2 белая", "600", "м", "3", "200 м"),
+        ("Тр-I090EW", "32", "м", "2", "16 м"),
+        ("TP-I120EW", "32", "м", "2", "16 м"),
+    ]
+    assert body["lines"][5]["source"] == "скан УПД, артикул из номенклатуры закупок"
+    assert body["lines"][0]["supplier_code"] == "00-00042353" and body["lines"][0]["pack_kind"] == "рул."
+
+
+def test_scan_rows_come_even_when_the_header_is_not_read(stand, monkeypatch):
+    client, _ = stand
+    monkeypatch.setattr(app.state, "references_uow_factory", None, raising=False)
+    monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: OCR_ROWS)
+    body = client.post("/api/stock/receipts/scan", files={"file": ("скан.png", PNG, "image/png")}).json()
+    assert len(body["lines"]) == 6
+    assert body["note"] == "Шапка не распознана — заполните вручную. Строки прочитаны со скана (6) — сверьте артикулы и количество"
+
+
 def test_upd_text_reads_word_dates_and_a_seller_without_marks():
     found = parse_upd_text("Универсальный передаточный документ № А-77 от 5 октября 2026 г.\nПродавец ООО Альфа")
     assert (found.upd_number, found.upd_date, found.supplier) == ("А-77", date(2026, 10, 5), "ООО Альфа")

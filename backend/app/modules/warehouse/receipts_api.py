@@ -9,13 +9,16 @@
   409 — the article is awaited in «Приёмка» (re-send with `confirm_expected: true`) or the receipt is unknown 404.
 - `POST /api/stock/receipts/scan-merge` ({files: [2..20 links]} → the same answer for ONE merged PDF).
 - `POST /api/stock/receipts/scan` (multipart `file`: PDF, JPG, PNG ≤ 20 MB) → `{scan_file, recognised: {supplier, inn,
-  upd_number, upd_date, invoice_number, invoice_date}, lines: [{article, name, quantity, unit}], note}`;
+  upd_number, upd_date, invoice_number, invoice_date}, lines: [{article, name, quantity, unit, packs, pack, pack_kind,
+  supplier_code, source}], note}` — lines of the УПД purchasing holds, else the item rows read off the scan
+  (`upd_lines`: quantity × pack, article snapped to a known one);
   `GET /api/stock/receipts/files/{id}` serves the stored scan. The scanner of the warehouse PC — `scan_jobs_api.py`."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
@@ -29,12 +32,12 @@ from app.shared.clock import moscow_now
 from app.shared.file_types import sniffed_type
 from app.shared.http_auth import Principal, warehouse_edit_principal, warehouse_view_principal
 from app.shared.stored_files import file_response
-from app.workflows.stock_receipt import expected_in_receiving, upd_document
+from app.workflows.stock_receipt import expected_in_receiving, known_articles, upd_document
 
 from .api import StockItemInput, _result, receipt_brief, warehouse_uow_factory
 from .application import UnitOfWork
 from .domain import ReceiptConflict, ReceiptHeader, WarehouseReceipt, WarehouseValidationError, receipt_date
-from .receipt_scan import RecognisedUpd, parse_upd_text, recognise_upd
+from .receipt_scan import NO_TEXT, RecognisedUpd, parse_upd_text, recognise_upd_text
 from .receipts_application import (
     SCAN_FILE_LIMIT,
     AcceptLineCommand,
@@ -48,6 +51,8 @@ from .receipts_application import (
     store_scan,
     update_receipt,
 )
+from .upd_lines import line_answer, parse_upd_lines, snap_articles
+
 router = APIRouter(prefix="/api/stock", tags=["warehouse"])
 UowFactory = Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)]
 
@@ -242,13 +247,34 @@ def _recognised(found: RecognisedUpd) -> dict:
     }
 
 
-def scan_answer(purchasing_factory, link: str, content: bytes, kind: str | None) -> dict:
+@dataclass(frozen=True)
+class ScanSources:
+    """Where a scan's answer reads from besides the file: the purchasing УПД registry, and the known articles of the
+    warehouse, purchasing and the reference DB (factories; None — that source is skipped)."""
+
+    purchasing: Callable | None = None
+    warehouse: Callable | None = None
+    references: Callable | None = None
+
+
+def scan_sources(request: Request, warehouse: Callable | None) -> ScanSources:
+    return ScanSources(
+        purchasing=_factory(request, "purchasing_uow_factory"), warehouse=warehouse,
+        references=_factory(request, "references_uow_factory"),
+    )
+
+
+OCR_LINES = "Строки прочитаны со скана ({count}) — сверьте артикулы и количество"
+
+
+def scan_answer(sources: ScanSources, link: str, content: bytes, kind: str | None) -> dict:
     """What «Отсканировать УПД» answers for a stored scan: `{scan_file, recognised, lines, note}` (also the `result`
-    of a done scanner job). Blocking: OCR may take seconds — call it off the event loop."""
-    found, note = recognise_upd(content, kind)
+    of a done scanner job). Lines: the УПД purchasing holds under the number first, else the item rows of the
+    recognised text. Blocking: OCR may take seconds — call it off the event loop."""
+    found, note, text = recognise_upd_text(content, kind)
     lines: list[dict] = []
     document = upd_document(
-        purchasing_factory, number=found.upd_number, day=found.upd_date, inn=found.inn, seller=found.supplier,
+        sources.purchasing, number=found.upd_number, day=found.upd_date, inn=found.inn, seller=found.supplier,
     ) if found.upd_number else None
     if document is not None:
         basis = parse_upd_text(document["basis"])
@@ -262,13 +288,18 @@ def scan_answer(purchasing_factory, link: str, content: bytes, kind: str | None)
         )
         lines = document["lines"]
         note = "Найден УПД в документах закупки — шапка и строки взяты из него"
+    if not lines and (read := parse_upd_lines(text)):
+        read = snap_articles(read, known_articles(sources.warehouse, sources.purchasing, sources.references))
+        lines = [line_answer(line) for line in read]
+        read_note = OCR_LINES.format(count=len(lines))
+        note = f"Шапка не распознана — заполните вручную. {read_note}" if note == NO_TEXT else note or read_note
     return {"scan_file": link, "recognised": _recognised(found), "lines": lines, "note": note}
 
 
 def _scan(request: Request, file_name: str, content: bytes, principal: Principal, now: datetime, uow_factory) -> dict:
     link, _stored_kind = _checked(lambda: store_scan(uow_factory(), file_name, content, principal.actor, now))
     # Read what came (a picture straight to OCR), though a picture is stored as PDF.
-    return scan_answer(_factory(request, "purchasing_uow_factory"), link, content, sniffed_type(content))
+    return scan_answer(scan_sources(request, uow_factory), link, content, sniffed_type(content))
 
 
 @router.post("/receipts/scan")
@@ -296,7 +327,7 @@ class ScanMergeInput(BaseModel):
 
 def _merge(request: Request, links: list[str], principal: Principal, now: datetime, uow_factory) -> dict:
     link, content = _checked(lambda: merge_scans(uow_factory(), links, principal.actor, now))
-    return scan_answer(_factory(request, "purchasing_uow_factory"), link, content, "application/pdf")
+    return scan_answer(scan_sources(request, uow_factory), link, content, "application/pdf")
 
 
 @router.post("/receipts/scan-merge")
