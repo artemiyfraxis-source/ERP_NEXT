@@ -198,6 +198,26 @@ class StockLotRow(Base):
 track_read_versions(StockLotRow)
 
 
+class ArticleSplitLogRow(Base):
+    """Migration 0146 (owner 23.10.2026): a lot whose «XHP-4@JST» was split into «XHP-4» + «JST» — the values before
+    and after. Written once by the migration, read by its downgrade; the app never writes it."""
+
+    __tablename__ = "warehouse_article_split_log"
+
+    lot_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("warehouse_lots.id", ondelete="RESTRICT", name="fk_warehouse_article_split_log_lot_id"),
+        primary_key=True,
+    )
+    old_article: Mapped[str] = mapped_column(String(1024), nullable=False)
+    new_article: Mapped[str] = mapped_column(String(1024), nullable=False)
+    old_manufacturer: Mapped[str] = mapped_column(String(255), nullable=False)
+    new_manufacturer: Mapped[str] = mapped_column(String(255), nullable=False)
+    old_description: Mapped[str] = mapped_column(Text, nullable=False)
+    new_description: Mapped[str] = mapped_column(Text, nullable=False)
+    migrated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class WriteOffEntryRow(Base):
     """The СПИСАНИЕ journal: append-only, one row per movement of one lot (SK-13)."""
 

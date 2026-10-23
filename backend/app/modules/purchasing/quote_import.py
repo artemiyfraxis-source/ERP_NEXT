@@ -24,6 +24,7 @@ from uuid import UUID
 from pypdf import PdfReader
 from sqlalchemy import or_, select
 
+from app.shared.article_maker import split_article_maker
 from app.shared.identity import Actor
 from app.shared.pdf_text import PdfLimitExceeded, pdf_text
 from app.workflows.article_key import code_key
@@ -202,7 +203,7 @@ _LEAD_CELL = re.compile(r"(\d+)\s*(?:-\s*\d+\s*)?(р\.?\s*д\.?|рд|раб[а-�
 _ROW_NUMBER = re.compile(r"^\d{1,3}[.)]?$")
 _LETTERS = re.compile(r"[a-zа-яё]{2}", re.I)
 _LATIN_CODE = re.compile(r"^[A-Z0-9][A-Z0-9\-./]*(?: [A-Z0-9\-./]+)?$")
-_AT_ARTICLE = re.compile(r"(\S+?)(?:##\d+)?@([A-Za-z0-9]+)")
+_AT_ARTICLE = re.compile(r"\S+@[A-Za-z0-9]+")  # «SXH-001T-P0.6##6000@JST» → split_article_maker
 _PACK_IN_NAME = re.compile(r"(?:упаковк[аеи]|уп\.)\s*(?:по\s*)?\d[\d\s]*\s*(?:шт|м)\b", re.I)
 _NOT_A_NAME = re.compile(r"^(?:итого|всего|в том числе|ндс|страница|цены|сумма|директор|конфиденциально|товары|"
                          r"наименование|№|без ндс|с ндс|оплат)", re.I)
@@ -315,8 +316,9 @@ def _name_and_article(atoms: list[_Atom], qty: _Num) -> tuple[str, str]:
         name = " ".join(words)
     name = re.sub(r"^\d{1,3}[.)]?\s+", "", name).strip(" -–—;,")
     at = _AT_ARTICLE.search(name)
-    if at and not article:
-        article = at.group(1)
+    split = split_article_maker(at.group(0)) if at else None
+    if split and split.maker and not article:
+        article = split.article
     return name, article
 
 

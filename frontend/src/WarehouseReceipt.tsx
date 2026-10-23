@@ -7,7 +7,7 @@ import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import {
   GRID_COLUMNS, LABELS_MAX, RECEIPT_LIMIT, applyHints, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell,
   DEFAULT_PURPOSE, emptyHeader, emptyLine, fillEmpty, headerChanged, headerFields, headerFromReceipt, isBlankLine, lineFromLot, lineSummary,
-  mergeHeader, shortDate, withTrailingBlank,
+  mergeHeader, shortDate, splitArticleCell, withTrailingBlank,
   type HeaderKey, type LineKey, type ReceiptHeader, type ReceiptLine,
 } from "./warehouseReceiptLogic";
 
@@ -183,6 +183,16 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     }
   }
 
+  /** «XHP-4@JST» typed into Артикул: on leaving the cell it becomes «XHP-4», «JST» goes into an empty Производитель. */
+  function splitArticle(row: number) {
+    const line = lines[row];
+    if (!line) return;
+    const next = splitArticleCell(line);
+    if (next === line) return;
+    patchLine(row, splitArticleCell);
+    lookup(row, next.article);
+  }
+
   function move(row: number, key: LineKey, delta: number) {
     const next = row + delta;
     if (next < 0) return;
@@ -208,7 +218,19 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
 
   function onPaste(event: ClipboardEvent, row: number, key: LineKey) {
     const text = event.clipboardData.getData("text/plain");
-    if (!/[\t\n]/.test(text.replace(/\r?\n$/, ""))) return;
+    if (!/[\t\n]/.test(text.replace(/\r?\n$/, ""))) {
+      // One «XHP-4@JST» pasted over the whole Артикул cell is split at once; anything else pastes as usual.
+      const target = event.target as HTMLInputElement;
+      const whole = target.selectionStart === 0 && target.selectionEnd === target.value.length;
+      const line = lines[row];
+      if (key !== "article" || !whole || !line || line.accepted) return;
+      const next = splitArticleCell(editCell(line, "article", text.trim()));
+      if (next.article === text.trim()) return;
+      event.preventDefault();
+      patchLine(row, () => ({ ...next, places: [], expected: "" }));
+      lookup(row, next.article);
+      return;
+    }
     event.preventDefault();
     const result = applyReceiptPaste(lines, row, key, text);
     if ("error" in result) { setNote(result.error); return; }
@@ -377,7 +399,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     const value = line[key];
     const set = (next: string) => setCell(row, key, next);
     if (key === "article") {
-      return <SuggestInput {...common} options={[...knownArticles.keys()]} describe={(option) => knownArticles.get(option) ?? ""} minLength={2} value={value} onChange={set} />;
+      return <SuggestInput {...common} options={[...knownArticles.keys()]} describe={(option) => knownArticles.get(option) ?? ""} minLength={2} value={value} onChange={set} onBlur={() => splitArticle(row)} />;
     }
     if (key === "item_type") return <SuggestInput {...common} options={typeChoices} value={value} onChange={set} />;
     if (key === "expiry_date") return !line.article.trim() ? null : <input {...common} type="date" value={value} onChange={(event) => set(event.target.value)} />;

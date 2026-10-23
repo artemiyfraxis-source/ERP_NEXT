@@ -125,6 +125,27 @@ class FulfillmentLineRow(Base):
     absent_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
+class ArticleSplitLineLogRow(Base):
+    """Migration 0146 (owner 23.10.2026): a line of a free request that had copied its lot's «XHP-4@JST» and got the
+    lot's new «XHP-4». Written once by the migration, read by its downgrade; a deleted line takes its row along."""
+
+    __tablename__ = "warehouse_article_split_line_log"
+
+    line_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("fulfillment_lines.id", ondelete="CASCADE", name="fk_warehouse_article_split_line_log_line"),
+        primary_key=True,
+    )
+    lot_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("warehouse_lots.id", ondelete="RESTRICT", name="fk_warehouse_article_split_line_log_lot"),
+        nullable=False,
+    )
+    old_article: Mapped[str] = mapped_column(String(255), nullable=False)
+    new_article: Mapped[str] = mapped_column(String(255), nullable=False)
+    migrated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 _OPEN_STATUSES = (FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED, FulfillmentStatus.COMPLETE)
 
 

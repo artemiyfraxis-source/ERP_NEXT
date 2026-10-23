@@ -11,6 +11,7 @@ from decimal import Decimal, DecimalException
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
+from app.shared.article_maker import split_article_maker, split_extras, with_extras
 from app.shared.clock import MOSCOW
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
@@ -254,6 +255,10 @@ class ManualStockResult:
 
 
 def _lot_from_payload(payload: dict) -> StockLot:
+    """The `warehouse.received` payload → the incoming lot. «XHP-4@JST» in the article is split: the lot keeps
+    «XHP-4», the maker fills an empty «Производитель» (owner 23.10.2026); events before the split had no
+    `manufacturer` key and stay valid."""
+    split = split_article_maker(payload.get("article"))
     try:
         return StockLot.create(
             warehouse=str(payload["warehouse"]),
@@ -266,10 +271,12 @@ def _lot_from_payload(payload: dict) -> StockLot:
             quantity=Decimal(str(payload["quantity"])),
             storage_location=str(payload["storage_location"]),
             source_receiving_ids=(str(payload.get("receipt_id") or payload["receiving_line_id"]),),
-            article=str(payload.get("article") or ""),
+            article=split.article,
             series=str(payload.get("series") or ""),
             expiry_date=date.fromisoformat(payload["expiry_date"]) if payload.get("expiry_date") else None,
             unit_mass_g=Decimal(str(payload["unit_mass_g"])) if payload.get("unit_mass_g") else None,
+            manufacturer=str(payload.get("manufacturer") or "").strip() or split.maker,
+            description=split_extras(split),
         )
     except (KeyError, ValueError, TypeError, DecimalException) as error:
         if isinstance(error, WarehouseValidationError):
@@ -331,6 +338,7 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
                 storage_location=incoming.storage_location,
                 expiry_date=incoming.expiry_date,
                 unit_mass_g=incoming.unit_mass_g,
+                manufacturer=incoming.manufacturer,
             )
         except WarehouseValidationError as error:
             uow.outbox.mark_failed(message.id, now, str(error))
@@ -462,8 +470,11 @@ def _manual_quantity(value: object) -> Decimal:
 def manual_lot(item: ManualStockItem, receipt: WarehouseReceipt | None = None) -> StockLot:
     """One quick-entry row → a lot without its number yet (stock05NormItem_ + placeFits_, Stock05.gs:74-109,
     744-757). SUPPLYMAP texts where it has them; the rest are ERP's own lot checks. A line of a delivery
-    («Приход на склад») points at its receipt and carries it as its source."""
-    article, name = item.article.strip(), item.name.strip()
+    («Приход на склад») points at its receipt and carries it as its source. «XHP-4@JST» typed as the article is
+    split: the lot keeps «XHP-4», «JST» fills an empty «Производитель», «##6000» / a note go to «Описание»
+    (owner 23.10.2026)."""
+    split = split_article_maker(item.article)
+    article, name = split.article, item.name.strip()
     if not article and not name:
         raise WarehouseValidationError("пустой артикул")
     quantity = _manual_quantity(item.quantity)
@@ -488,8 +499,8 @@ def manual_lot(item: ManualStockItem, receipt: WarehouseReceipt | None = None) -
         series=item.series,
         unit_mass_g=_manual_unit_mass(item),
         expiry_date=item.expiry_date,
-        manufacturer=item.manufacturer,
-        description=item.description,
+        manufacturer=str(item.manufacturer or "").strip() or split.maker,
+        description=with_extras(item.description, split_extras(split)),
         storage_conditions=item.storage_conditions,
         datasheet=item.datasheet,
         certificate=item.certificate,
