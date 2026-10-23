@@ -201,17 +201,22 @@ export function mergeHeader(current: ReceiptHeader, found: Partial<ReceiptHeader
 }
 
 /** The УПД scan: its recognised header fills the empty fields, its lines follow the filled rows. */
+/** Server text as a cell value: null, a number or a missing key become a string («trim» of null broke the window). */
+export function text(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
 export function applyScan(header: ReceiptHeader, lines: ReceiptLine[], scan: WarehouseReceiptScan): { header: ReceiptHeader; lines: ReceiptLine[]; added: number } {
-  const found = scan.recognised;
+  const found = scan.recognised ?? ({} as Partial<WarehouseReceiptScan["recognised"]>);
   const nextHeader = mergeHeader(header, {
-    supplier: found.supplier.trim(),
-    invoice_number: found.invoice_number.trim(),
-    invoice_date: dateToIso(found.invoice_date),
-    upd_number: found.upd_number.trim(),
-    upd_date: dateToIso(found.upd_date),
+    supplier: text(found.supplier),
+    invoice_number: text(found.invoice_number),
+    invoice_date: dateToIso(text(found.invoice_date)),
+    upd_number: text(found.upd_number),
+    upd_date: dateToIso(text(found.upd_date)),
   });
-  const rows = scan.lines.map((line) => ({
-    article: line.article.trim(), name: line.name.trim(), unit: line.unit.trim(), quantity: cellValue("quantity", line.quantity),
+  const rows = (scan.lines ?? []).map((line) => ({
+    article: text(line.article), name: text(line.name), unit: text(line.unit), quantity: cellValue("quantity", text(line.quantity)),
   }));
   const result = appendParsedRows<LineKey, ReceiptLine>(lines, rows, { limit: RECEIPT_LIMIT, seed: emptyLine(), isBlank: isBlankLine });
   const split = result.positions.map((line, index) => (line === lines[index] ? line : splitArticleCell(line)));
@@ -374,17 +379,17 @@ export function editCell(line: ReceiptLine, key: LineKey, value: string): Receip
 export function lineFromLot(lot: WarehouseLot): ReceiptLine {
   return {
     ...emptyLine(),
-    article: lot.article, quantity: lot.inbound, unit: lot.unit, item_type: lot.item_type, manufacturer: lot.manufacturer ?? "",
-    series: lot.series, name: lot.name, purpose: lot.purpose, expiry_date: lot.expiry_date ?? "",
-    datasheet: lot.datasheet ?? "", certificate: lot.certificate ?? "",
+    article: text(lot.article), quantity: text(lot.inbound), unit: text(lot.unit), item_type: text(lot.item_type),
+    manufacturer: text(lot.manufacturer), series: text(lot.series), name: text(lot.name), purpose: text(lot.purpose),
+    expiry_date: text(lot.expiry_date), datasheet: text(lot.datasheet), certificate: text(lot.certificate),
     accepted: { lotId: lot.id, grn: lot.grn, place: lot.storage_location, labels: 0, labelError: "" },
   };
 }
 
 export function headerFromReceipt(receipt: WarehouseReceipt): ReceiptHeader {
   return {
-    warehouse: receipt.warehouse, supplier: receipt.supplier, invoice_number: receipt.invoice_number,
-    invoice_date: receipt.invoice_date ?? "", upd_number: receipt.upd_number, upd_date: receipt.upd_date ?? "", purpose: receipt.purpose,
+    warehouse: receipt.warehouse, supplier: text(receipt.supplier), invoice_number: text(receipt.invoice_number),
+    invoice_date: text(receipt.invoice_date), upd_number: text(receipt.upd_number), upd_date: text(receipt.upd_date), purpose: text(receipt.purpose),
   };
 }
 
