@@ -95,6 +95,8 @@ it("renders «Многожильные кабели» in groups of the mark fami
   const groups = screen.getAllByRole("row").filter((item) => item.classList.contains("group-row")).map((item) => item.textContent);
   expect(groups).toEqual(["КДЭВГ · 1", "LiYCY · 1", "U/UTP Cat5e · 1"]);
   expect(screen.getByRole("columnheader", { name: "Материал экрана" })).toBeInTheDocument();
-  expect(screen.queryByRole("columnheader", { name: "Экран" })).toBeNull(); // owner 15.10: the old text cell is in «Колонки»
+  // owner 23.10: «Экран» says the screen type (нет / общий — фольга / попарный) and stands next to «Материал экрана»
+  const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+  expect(heads.indexOf("Материал экрана")).toBe(heads.indexOf("Экран") + 1);
   expect(screen.queryByText("Разобрать позже")).toBeNull();
 });

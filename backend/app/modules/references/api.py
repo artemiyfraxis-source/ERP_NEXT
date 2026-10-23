@@ -35,7 +35,7 @@ from .cable_structure import (
 )
 from .cables import CONNECTOR_FIELDS, DIAMETERS, CableKind, CableRow, cable_counts, compatible_connectors
 from .domain import (
-    BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, merge_country_pairs, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
+    BASE_COLUMNS, COAX_DROPPED_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, merge_country_pairs, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
     StockLinkEntry, TechOperationTab,
 )
 from .technology import (
@@ -195,8 +195,9 @@ def _sheet_columns(tab: TechOperationTab | None, records: Sequence[TechOperation
     keys = schema_keys(tab.value)
     richest = max(records, key=lambda item: sum(1 for key in item.fields if key not in keys))
     sheet = [key for key in richest.fields if key not in keys]
-    if tab == TechOperationTab.COAX:  # D1–D3 are the cable's («Коаксиальные кабели»), not a connector column
-        sheet = [key for key in sheet if not is_coax_cable_column(key)]
+    if tab == TechOperationTab.COAX:  # D1–D3 are the cable's («Коаксиальные кабели»), not a connector column; the
+        # columns dropped 23.10.2026 (`COAX_DROPPED_COLUMNS`) neither — their values stay in the records
+        sheet = [key for key in sheet if not is_coax_cable_column(key) and key not in COAX_DROPPED_COLUMNS]
     if tab == TechOperationTab.EQUIPMENT:  # the fields ERP adds to the sheet's columns (code, tool, links)
         sheet += [key for key in EXTRA_KEYS if key not in sheet]
     return sheet or list(richest.fields)

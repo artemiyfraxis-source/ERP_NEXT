@@ -4,7 +4,7 @@
 // уходит байт в байт, неизменённая группа — своими исходными строками (номер заголовка — по новому порядку),
 // строки вне групп (вступление, заголовок без дефектов «Согласно IPC…:») — на своём месте, изменённое — каноном
 // «N. Группа:» / «Дефект: причина».
-import { parseDefects, type DefectGroup, type DefectItem, type Defects } from "./etkOperation";
+import { parseDefects, STO_ROW, type DefectGroup, type DefectItem, type Defects } from "./etkOperation";
 
 export type { DefectItem };
 /** Группа формы; `origin` — её номер в разборе исходного текста (null — новая). */
@@ -35,11 +35,16 @@ export function serializeDefects(draft: DefectsEdit, original: string): string {
 
   const writeGroup = (group: DefectEditGroup) => {
     if (group.title) out.push(`${numbered ? `${++position}. ` : ""}${clean(group.title)}:`);
-    out.push(...group.items.map(itemLine));
+    // Пункты СТО («4.2.13 Кабель: надрезы») — как в исходном тексте: одной строкой через «; », двоеточие в названии цело.
+    if (group.items.length && group.items.every((item) => STO_ROW.test(item.name.trim()))) out.push(`${group.items.map(stoItem).join("; ")}.`);
+    else out.push(...group.items.map(itemLine));
   };
-  if (!blocks) {
-    out.push(...next.intro);
+  const headIntro = next.intro.filter((line) => !CRITERIA.test(line)).map(canonIntro);
+  const tailIntro = next.intro.filter((line) => CRITERIA.test(line)).map(canonIntro);
+  if (!blocks || !blocks.length) {
+    out.push(...headIntro);
     next.groups.forEach(writeGroup);
+    out.push(...tailIntro);
     return out.join("\n");
   }
 
@@ -56,8 +61,11 @@ export function serializeDefects(draft: DefectsEdit, original: string): string {
       out.push([renumbered, ...rest].join("\n"));
       return;
     }
-    out.push(...block.intro);
+    // Строки вступления — с исходной пунктуацией; «Критерии, метод контроля…» стоит после дефектов, где и был.
+    const lines = block.intro.map((line) => restoreIntro(line, block.lines));
+    out.push(...lines.filter((line) => !CRITERIA.test(line)));
     mine.forEach(writeGroup);
+    out.push(...lines.filter((line) => CRITERIA.test(line)));
   };
   for (const group of next.groups) {
     if (group.origin === null) { writeGroup(group); continue; }
@@ -70,6 +78,8 @@ export function serializeDefects(draft: DefectsEdit, original: string): string {
 }
 
 const NUMBER = /^(\s*)\d+([.)])/;
+/** Хвостовая строка карточек по СТО ФРАК-001-2026: после дефектов, с точкой на конце. */
+const CRITERIA = /^критерии, метод контроля/i;
 
 type RawBlock = { lines: string[]; heading: boolean; intro: string[]; groups: number[] };
 
@@ -135,6 +145,28 @@ function opensGroup(line: string): boolean {
 /** Одна строка без «:» и «;» — иначе разбор разрежет название или примет его за заголовок группы. */
 function clean(value: string): string {
   return value.replace(/\s*\n\s*/g, " ").replace(/\s*[:;]\s*/g, ", ").trim();
+}
+
+/** Строка вступления, как она стояла в исходном тексте: разбор отрезает конечные «:» и «.» — вернуть их. */
+function restoreIntro(line: string, raw: string[]): string {
+  for (const source of raw) {
+    const trimmed = source.trim().replace(/^[-•*–]\s*/, "");
+    if (trimmed.startsWith(line) && /^[.:]?\s*$/.test(trimmed.slice(line.length))) return trimmed;
+  }
+  return canonIntro(line);
+}
+
+/** Вступление без исходного текста: строки СТО — «ТИПОВЫЕ ДЕФЕКТЫ — по СТО…:» и «Критерии, …КД и ДИ изготовителя.». */
+function canonIntro(line: string): string {
+  if (CRITERIA.test(line)) return /[.:]$/.test(line) ? line : `${line}.`;
+  return /СТО ФРАК/.test(line) && !/:$/.test(line) ? `${line}:` : line;
+}
+
+/** Пункт СТО одной строкой без «;» и переводов строки; двоеточие в названии остаётся. Причина — через тире. */
+function stoItem(item: DefectItem): string {
+  const one = (value: string) => value.replace(/\s*\n\s*/g, " ").replace(/\s*;\s*/g, ", ").trim().replace(/\.$/, "");
+  const name = one(item.name), text = one(item.text);
+  return text ? `${name} — ${text}` : name;
 }
 
 function itemLine(item: DefectItem): string {

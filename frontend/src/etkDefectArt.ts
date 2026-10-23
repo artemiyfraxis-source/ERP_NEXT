@@ -3,6 +3,8 @@
 // Одна на все ТК: рисунок выбирается при показе по названию дефекта и коду операции, поэтому выданные ТК
 // перевыпускать не нужно. Названия дефектов берутся из шаблонов SUPPLYMAP (БД.ТК «ТИПОВЫЕ ДЕФЕКТЫ»).
 
+import { STO_SCENES } from "./etkStoScenes";
+
 const E = "#17272b";
 const INS = "#7f919b", INS_LO = "#5d6e78";
 const CU = "#c87533", CU_HI = "#eba66e", CU_LO = "#8a4a1c";
@@ -621,6 +623,183 @@ const CLOSE_UP = "6 14 80 50";
 const CX_VIEW = "24 12 92 44";
 const W = { ins: (x2 = 58) => ins(4, x2), bare: (x1 = 58, x2 = 100) => cond(x1, x2) };
 
+// ── рисунки под строки СТО ФРАК-001-2026, ред. 2, для которых в библиотеке не было подходящего (таблица — etkStoScenes.ts) ──
+const BAND = "#c9ced3";
+/** Сросток ленточным обжимом: два провода слева, жилы в ленте-обжиме справа. */
+function spliceBase(o: { bandX?: number; bandW?: number; bandH?: number; insTo?: number; strandsTo?: number; tilt?: number } = {}): string {
+  const bx = o.bandX ?? 52, bw = o.bandW ?? 26, bh = o.bandH ?? 24;
+  let out = ins(4, o.insTo ?? 40, 28, 8) + ins(4, o.insTo ?? 40, 40, 8) + cond(o.insTo ?? 40, bx + bw - 4, 28, 4) + cond(o.insTo ?? 40, bx + bw - 4, 40, 4);
+  const band = rect(bx, 34 - bh / 2, bw, bh, BAND, ` rx="3" stroke="${TIN_LO}" stroke-width=".8"`) + line(bx + 2, 34 - bh / 2 + 3, bx + bw - 2, 34 - bh / 2 + 3, "#fff", 1.2);
+  out += o.tilt ? `<g transform="rotate(${o.tilt} ${bx + bw / 2} 34)">${band}</g>` : band;
+  if (o.strandsTo) out += path(`M${bx + bw},30 L${o.strandsTo},27 M${bx + bw},34 L${o.strandsTo + 4},34 M${bx + bw},38 L${o.strandsTo},42`, "none", CU, 1.4);
+  return out;
+}
+/** Терминал с жилой: изоляция, жила и обжим (для сцен «жила и барабан»). */
+const termWire = (wire: string, opts: Parameters<typeof terminal>[2] = {}) => ins(2, 40) + wire + terminal(14, 34, opts);
+/** Скрутка двух проводов со своим шагом на каждом участке. */
+function twistRun(x0: number, pitches: number[]): string {
+  let out = "", x = x0;
+  for (const p of pitches) {
+    out += path(`M${x},30 C${x + p * 0.3},30 ${x + p * 0.2},38 ${x + p / 2},38 C${x + p * 0.8},38 ${x + p * 0.7},30 ${x + p},30`, "none", "#1a73e8", 3) +
+      path(`M${x},38 C${x + p * 0.3},38 ${x + p * 0.2},30 ${x + p / 2},30 C${x + p * 0.8},30 ${x + p * 0.7},38 ${x + p},38`, "none", "#e8f0fe", 3);
+    x += p;
+  }
+  return out;
+}
+
+const STO_NEW_SCENES: Record<string, () => Scene> = {
+  tubeShrunkEnd: () => ({
+    ok: ins(60, 112, 34, 8) + tube(4, 84, 34, 18) + text(58, 60, "трубка круглая", GREEN),
+    ng: ins(60, 112, 34, 8) + path("M4,25 L64,25 Q78,29 84,31 L84,37 Q78,39 64,43 L4,43 z", TUBE, E, 0.7) + mark(76, 34, 10, 12) + text(58, 60, "конец сжался при резке", RED),
+  }),
+  strandBreak: () => ({
+    ok: W.ins() + W.bare(),
+    ng: W.ins() + W.bare() + rect(70, 31, 4, 3, "#fff") + rect(82, 34, 5, 3, "#fff") + path("M70,31 L73,26 M82,37 L86,43 M92,31 L96,26", "none", CU, 1.3) + mark(82, 34, 20, 11) + text(58, 62, "оборванные проволоки", RED),
+  }),
+  crimpMatch: () => ({
+    ok: termWire(cond(40, 66, 34, 6)),
+    ng: termWire(cond(40, 66, 34, 2.4), { wings: "open" }) + mark(34, 28, 22, 15),
+    view: CLOSE_UP,
+  }),
+  brushShort: () => ({
+    ok: termWire(cond(40, 66, 34, 6)) + rect(62, 31, 4, 6, CU) + mark(64, 34, 5, 6, GREEN),
+    ng: termWire(cond(40, 54, 34, 6)) + rect(55, 31, 10, 6, "#fff", ` stroke="${RED}" stroke-dasharray="2 2"`) + mark(60, 34, 8, 9),
+    view: CLOSE_UP,
+  }),
+  carrierStrip: () => {
+    const strip = (x: number) => rect(x, 26, 14, 16, TIN, ` stroke="${E}" stroke-width=".6"`) + circle(x + 7, 34, 2.6, "#fff", E, 0.5);
+    return {
+      ok: ins(0, 30) + cond(30, 46, 34, 6) + terminal(6),
+      ng: ins(0, 30) + cond(30, 46, 34, 6) + terminal(6) + strip(98) + mark(104, 34, 11, 11) + text(58, 62, "остаток ленты", RED),
+    };
+  },
+  ohms: () => {
+    const meter = (value: string, color: string) => rect(22, 10, 72, 40, "#eef2f3", ` rx="4" stroke="${E}" stroke-width=".8"`) + rect(28, 16, 60, 18, "#dfe9e3", ` rx="2" stroke="${TIN_LO}" stroke-width=".5"`) +
+      text(58, 30, value, color, 11, "middle", 700) + circle(40, 42, 3, TIN, E, 0.5) + circle(76, 42, 3, TIN, E, 0.5);
+    return { ok: meter("0,4 мОм", GREEN) + text(58, 64, "в норме по КД", GREEN), ng: meter("9,8 мОм", RED) + mark(58, 25, 32, 11) + text(58, 64, "выше нормы", RED) };
+  },
+  crimpMarks: () => {
+    const lug = (marks: number[]) => ins(2, 22) + cond(22, 38, 34, 6) + rect(30, 24, 70, 20, TIN, ` rx="2" stroke="${E}" stroke-width=".8"`) +
+      marks.map((x) => rect(x, 22, 6, 24, TIN_LO, ` rx="1" opacity=".75"`)).join("");
+    return {
+      ok: lug([44, 74]) + dim(47, 77, 16, "по ДИ", GREEN),
+      ng: lug([54, 58]) + dim(57, 61, 16, "", RED) + mark(56, 34, 10, 14) + text(58, 62, "обжатия слиты", RED),
+    };
+  },
+  tinInCrimp: () => ({
+    ok: termWire(cond(40, 66, 34, 6)),
+    ng: termWire(tinned(40, 66, 34, 6)) + mark(52, 34, 14, 8),
+    view: CLOSE_UP,
+  }),
+  spliceLoose: () => ({
+    ok: spliceBase(),
+    ng: spliceBase({ tilt: 9 }) + mark(66, 34, 18, 19) + text(58, 62, "обжим неплотный", RED),
+  }),
+  spliceStrands: () => ({
+    ok: spliceBase(),
+    ng: spliceBase({ strandsTo: 100 }) + mark(88, 34, 14, 12) + text(58, 62, "проволоки торчат", RED),
+  }),
+  spliceIns: () => ({
+    ok: spliceBase(),
+    ng: spliceBase({ insTo: 62 }) + rect(52, 22, 26, 24, BAND, ` rx="3" opacity=".55" stroke="${TIN_LO}" stroke-width=".8"`) + mark(58, 34, 12, 16) + text(58, 62, "изоляция под лентой", RED),
+  }),
+  spliceSize: () => ({
+    ok: spliceBase() + dim(52, 78, 14, "по КД", GREEN),
+    ng: spliceBase({ bandX: 46, bandW: 44, bandH: 30 }) + dim(46, 90, 14, "≠ КД", RED) + mark(68, 34, 24, 17),
+  }),
+  tnKink: () => ({
+    ok: tinOk() + text(58, 58, "жила прямая", GREEN),
+    ng: TN.ins() + TN.gap() + `<g transform="rotate(-16 60 34)">${tinEnd(60, 104)}</g>` + mark(62, 34, 10, 10) + text(58, 62, "излом на границе лужения", RED),
+  }),
+  flux: () => {
+    const joint = () => ins(4, 30) + tinEnd(30, 96, 34, 7);
+    return {
+      ok: joint() + text(58, 58, "соединение чистое", GREEN),
+      ng: joint() + [[44, 29], [58, 39], [72, 29], [84, 38], [52, 36]].map(([x, y]) => `<ellipse cx="${x}" cy="${y}" rx="4" ry="2.2" fill="#b9894a" opacity=".75"/>`).join("") + mark(64, 34, 28, 10) + text(58, 62, "остатки флюса", RED),
+    };
+  },
+  solderNoHook: () => {
+    const tab = rect(60, 14, 44, 40, TIN, ` rx="3" stroke="${E}" stroke-width=".8"`) + circle(82, 34, 5, "#fff", E, 0.6);
+    return {
+      ok: tab + ins(4, 44, 34, 8) + cond(44, 62, 34, 4) + path("M62,34 C66,18 98,18 98,34 C98,48 68,48 70,38", "none", CU, 2.2) + text(58, 64, "обхват жилой", GREEN),
+      ng: tab + ins(4, 44, 34, 8) + cond(44, 74, 34, 4) + circle(76, 34, 6, SOLDER, TIN_LO, 0.7) + mark(70, 34, 12, 10) + text(58, 64, "жила просто приложена", RED),
+    };
+  },
+  cupDepth: () => ({
+    ok: ins(4, 42) + cup(56) + cond(42, 94, 34, 5) + dim(56, 94, 20, "до дна", GREEN),
+    ng: ins(4, 42) + cup(56) + cond(42, 70, 34, 5) + dim(70, 94, 20, "пусто", RED) + mark(82, 34, 14, 8),
+  }),
+  compBurn: () => {
+    const body = (burnt: boolean) => line(4, 34, 112, 34, TIN, 2) + rect(34, 24, 48, 20, burnt ? "#6b5a3e" : "#2b3238", ` rx="4" stroke="${E}" stroke-width=".8"`) +
+      rect(40, 24, 5, 20, burnt ? "#a8967a" : "#d0d4d8") + (burnt ? path("M56,24 C54,16 66,16 64,24 M60,44 C58,52 70,52 68,44", "#8a7355", RED, 1) + path("M50,26 L56,34 L52,40", "none", RED, 1.2) : "");
+    return { ok: body(false), ng: body(true) + mark(60, 34, 26, 16) + text(58, 66, "корпус вспучен", RED) };
+  },
+  shellSeam: () => {
+    const base = ins(4, 30, 34, 18, "#3f474d") + braid(30, 52, 34, 14) + rect(52, 14, 50, 40, TIN, ` rx="3" stroke="${E}" stroke-width=".8"`);
+    return {
+      ok: base + rect(50, 16, 5, 36, SOLDER, ` stroke="${TIN_LO}" stroke-width=".5"`) + text(58, 64, "шов по окружности", GREEN),
+      ng: base + rect(50, 16, 5, 13, SOLDER, ` stroke="${TIN_LO}" stroke-width=".5"`) + rect(50, 40, 5, 12, SOLDER, ` stroke="${TIN_LO}" stroke-width=".5"`) + mark(52, 34, 8, 9) + text(58, 64, "шов с разрывом", RED),
+    };
+  },
+  shrinkWrinkle: () => ({
+    ok: ins(4, 112) + tube(34, 86, 34, 15),
+    ng: ins(4, 112) + tube(34, 86, 34, 15) + path("M46,26 l3,16 M58,26 l-2,16 M70,26 l3,16", "none", "#8e979d", 1) + circle(52, 30, 3, "#6b747a", "#aab3b9", 0.6) + circle(76, 38, 2.4, "#6b747a", "#aab3b9", 0.6) + mark(60, 34, 26, 11) + text(58, 60, "складки, пузыри", RED),
+  }),
+  cxNutUnder: () => ({
+    ok: coaxBody(30, 76, 90) + hexSleeve(76, 104) + jacket(104, 114, 34, 10) + text(58, 62, "гайка по моменту", GREEN),
+    ng: coaxBody(30, 76, 98) + [80, 84, 88, 92, 96].map((x) => line(x, 28, x, 40, TIN_LO, 1)).join("") + hexSleeve(98, 114) + mark(88, 34, 12, 12) + text(58, 62, "резьба видна", RED),
+  }),
+  vswr: () => {
+    const frame = rect(10, 6, 96, 46, "#fff", ` rx="2" stroke="${TIN_LO}" stroke-width=".8"`) + line(10, 24, 106, 24, MUTED, 0.8, ' stroke-dasharray="4 2"') + text(14, 21, "предел", MUTED, 7, "start");
+    return {
+      ok: frame + path("M12,46 C30,42 40,36 52,38 S80,34 104,40", "none", GREEN, 1.8) + text(58, 64, "КСВН в пределе", GREEN),
+      ng: frame + path("M12,46 C32,40 40,12 56,10 S84,40 104,36", "none", RED, 1.8) + mark(56, 14, 14, 9) + text(58, 64, "КСВН выше предела", RED),
+    };
+  },
+  tieSpacing: () => {
+    const bundle = [26, 32, 38, 44].map((y) => line(4, y, 112, y, INS, 5.5)).join("");
+    const ties = (xs: number[]) => xs.map((x) => rect(x, 20, 6, 30, "#2a2e33", ` rx="2"`)).join("");
+    return {
+      ok: bundle + ties([22, 54, 86]) + dim(25, 57, 14, "шаг по КД", GREEN),
+      ng: bundle + ties([16, 30, 90]) + dim(19, 33, 14, "", RED) + mark(26, 34, 16, 18) + text(58, 62, "шаг не по КД", RED),
+    };
+  },
+  bendRadius: () => ({
+    ok: path("M8,54 L40,54 Q72,54 72,22 L72,6", "none", INS, 8) + path("M8,54 L40,54 Q72,54 72,22 L72,6", "none", "#fff", 1, ' opacity=".3"') + text(36, 20, "R по КД", GREEN),
+    ng: path("M8,54 L64,54 Q68,54 68,50 L68,6", "none", INS, 8) + mark(66, 52, 10, 9) + text(32, 30, "R < нормы", RED),
+  }),
+  corrOpen: () => {
+    const corr = rect(4, 22, 108, 24, "#2f3337", ` rx="4"`) + [10, 22, 34, 46, 58, 70, 82, 94, 106].map((x) => line(x, 22, x, 46, "#555d63", 1.2)).join("");
+    return {
+      ok: corr + line(4, 34, 112, 34, "#14181b", 1.4) + text(58, 62, "разрез сомкнут", GREEN),
+      ng: corr + rect(20, 29, 60, 10, "#e8eaed") + [31, 34, 37].map((y) => line(20, y, 84, y, INS, 2.6)).join("") + path("M80,30 l10,-8 M82,36 l10,6", "none", INS, 2.6) + mark(52, 34, 34, 11) + text(58, 62, "жгут выходит", RED),
+    };
+  },
+  twistPitch: () => ({
+    ok: ins(4, 20, 34, 18, "#3f474d") + twistRun(20, [14, 14, 14, 14, 14, 14]) + dim(20, 34, 18, "P", GREEN),
+    ng: ins(4, 20, 34, 18, "#3f474d") + twistRun(20, [10, 34, 12, 38]) + dim(30, 64, 18, "P ≠", RED) + mark(48, 34, 20, 11),
+  }),
+  wetting: () => ({
+    ok: rect(10, 44, 96, 8, INS, ` rx="2" stroke="${E}" stroke-width=".6"`) + path("M32,44 Q58,36 84,44 z", "#a7d3f2", "#5b9bd5", 0.8) + text(58, 28, "капля растекается", GREEN) + text(58, 66, "активация есть", GREEN),
+    ng: rect(10, 44, 96, 8, INS, ` rx="2" stroke="${E}" stroke-width=".6"`) + path("M46,44 C42,26 74,26 70,44 z", "#a7d3f2", "#5b9bd5", 0.8) + mark(58, 36, 16, 12) + text(58, 20, "капля шариком", RED) + text(58, 66, "активации нет", RED),
+  }),
+  weldSize: () => {
+    const node = (x: number, w: number, h: number) => ins(4, 34) + cond(34, x) + rect(x, 34 - h / 2, w, h, "#d9a06e", ` rx="2" stroke="${CU_LO}" stroke-width=".6"`) + cond(x + w, 84) + ins(84, 112);
+    return {
+      ok: node(50, 20, 12) + dim(50, 70, 18, "по ТИ", GREEN),
+      ng: node(44, 34, 20) + dim(44, 78, 14, "вне ТИ", RED) + mark(61, 34, 20, 15),
+    };
+  },
+  weldGap: () => ({
+    ok: ins(4, 34) + cond(34, 50) + rect(50, 28, 20, 12, "#d9a06e", ` rx="2" stroke="${CU_LO}" stroke-width=".6"`) + cond(70, 84) + ins(84, 112) + dim(34, 50, 18, "зазор", GREEN),
+    ng: ins(4, 58) + rect(50, 28, 20, 12, "#d9a06e", ` rx="2" opacity=".85" stroke="${CU_LO}" stroke-width=".6"`) + cond(70, 84) + ins(84, 112) + mark(56, 34, 12, 12) + text(58, 60, "изоляция в узле", RED),
+  }),
+  fold: () => ({
+    ok: ins(4, 50) + rect(50, 28, 40, 12, CU, ` stroke="${CU_LO}" stroke-width=".5"`) + `<ellipse cx="90" cy="34" rx="3.5" ry="6" fill="${CU}" stroke="${CU_LO}" stroke-width=".5"/>` + line(50, 34, 90, 34, CU_LO, 0.6) + dim(50, 90, 18, "по КД", GREEN),
+    ng: ins(4, 50) + cond(50, 98, 34, 6) + path("M80,31 L92,26 M82,37 L94,43", "none", CU, 1.3) + dim(50, 98, 18, "не сложена", RED) + mark(88, 34, 14, 12),
+  }),
+};
+
 const SCENES: Record<string, () => Scene> = {
   nick: () => ({
     ok: W.ins() + W.bare(),
@@ -1061,6 +1240,7 @@ const SCENES: Record<string, () => Scene> = {
   ...MARK_SCENES,
   ...MARK_AUTO_SCENES,
   ...COAX_SCENES,
+  ...STO_NEW_SCENES,
   generic: () => ({ ok: "", ng: "" }),
 };
 
@@ -1286,6 +1466,9 @@ export function defectGroupCode(code: string, groupTitle: string): string {
 
 /** Какой рисунок библиотеки подходит дефекту; «generic» — подходящего нет. */
 export function defectSceneId(name: string, note = "", code = ""): string {
+  // Пункт СТО («4.3.14 Высота обжима…»): рисунок по коду строки СТО, а не по словам названия.
+  const sto = STO_SCENES[/^(\d+\.\d+(?:\.\d+)+)\s/.exec(name)?.[1] ?? ""];
+  if (sto && sto in SCENES) return sto;
   const ctx = defectContext(code);
   for (const source of [name, note]) {
     if (!source) continue;
