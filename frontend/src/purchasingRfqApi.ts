@@ -7,6 +7,12 @@ const BASE = "/api/purchasing/rfqs";
 export type RfqSummary = {
   id: string; number: string; seq?: number; title: string | null; created_at: string; closed_at: string | null; mine: boolean;
   lines: number; suppliers: number; sent: number; quotes: number; decided: number;
+  /** «решено N/M»: M — the lines still in the request, cancelled ones left out */
+  to_decide?: number; invoiced?: number; projects?: string[];
+  /** the calculation's price with VAT × quantity; the sum of the chosen quotes */
+  plan_sum?: string | null; decided_sum?: string | null;
+  /** closed, or every line decided and invoiced («В оплату» or later) */
+  archived?: boolean;
 };
 
 export type RfqCandidate = {

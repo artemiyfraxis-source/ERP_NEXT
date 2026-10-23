@@ -12,8 +12,9 @@ import {
 } from "./purchasingRfqApi";
 import { picksOf, RfqPool, suggestionKey, SuggestionList } from "./RfqPool";
 import { rfqLinkState, syncRfqUrl } from "./rfqLinks";
-import { QuoteDialog } from "./RfqQuoteDialog";
-import { Dialog, money, number, quantity } from "./rfqUi";
+import { QuoteEntry } from "./RfqQuoteDialog";
+import { Dialog, number } from "./rfqUi";
+import "./rfq.css";
 import { RfqLetters } from "./RfqLetters";
 import { MatrixTable } from "./RfqMatrix";
 import { DecisionPanel } from "./RfqDecision";
@@ -26,6 +27,41 @@ import { RfqKaitenInvoices } from "./RfqKaitenInvoices";
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
  *  reasons the gate asks for → supplier and quantity go into the procurement line. */
 
+/** A request is in the archive once closed or decided and invoiced to the end (the API says which; `closed_at` before). */
+export const archivedRfq = (rfq: RfqSummary) => rfq.archived ?? Boolean(rfq.closed_at);
+const rub = (value: string) => `${number(value, 0)} ₽`;
+
+/** The list card (Витя via the owner, 23.10): ordinal, date, projects and the КП count bold; «решено N/M»; the plan
+ *  sum, and after a decision the decided one. */
+export function RfqCard({ rfq, active, onOpen }: { rfq: RfqSummary; active: boolean; onOpen: () => void }) {
+  const total = rfq.to_decide ?? rfq.lines;
+  const archived = archivedRfq(rfq);
+  return (
+    <button
+      type="button" aria-pressed={active} className={`nav-item rfq-card${active ? " active" : ""}`}
+      style={{ opacity: archived ? 0.75 : 1 }} onClick={onOpen}
+    >
+      <span className="rfq-card-top">
+        <strong className="rfq-seq" title={rfq.number}>№ {rfq.seq ?? rfq.number}</strong>
+        <span className="rfq-card-date" title="Дата составления">{formatDay(rfq.created_at)}</span>
+      </span>
+      {(rfq.projects?.length ?? 0) > 0 && <span className="rfq-card-projects" title="Проекты строк">{rfq.projects!.join(", ")}</span>}
+      {rfq.title && <span className="rfq-card-title">{rfq.title}</span>}
+      <span className="rfq-card-meta">
+        <span>КП <b>{rfq.quotes}</b></span>
+        <span className={total > 0 && rfq.decided >= total ? "rfq-all-decided" : undefined}>решено <b>{rfq.decided}/{total}</b></span>
+        <span>поставщиков {rfq.suppliers}</span>
+      </span>
+      {(rfq.plan_sum || rfq.decided_sum) && (
+        <dl className="rfq-card-sums">
+          {rfq.plan_sum && <><dt>План</dt><dd>{rub(rfq.plan_sum)}</dd></>}
+          {rfq.decided_sum && <><dt>Решено</dt><dd className="rfq-sum-decided">{rub(rfq.decided_sum)}</dd></>}
+        </dl>
+      )}
+      {archived && <span className="rfq-card-archived">{rfq.closed_at ? `закрыт ${formatDay(rfq.closed_at)}` : "счета получены"}</span>}
+    </button>
+  );
+}
 
 export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {}) {
   // `?rfq=<id>[&letters=1|&invoices=1]` (CONTRACTS.md): the request to open and the panel to open with it.
@@ -39,6 +75,8 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
   // «Мои / Все» (owner 22.10: «почему отсутствуют запросы КП» — they were another buyer's). null — not chosen yet:
   // «Мои», or «Все» at once when the user has no requests of his own but others do. Others' requests are view-only.
   const [scope, setScope] = useState<"mine" | "all" | null>(readOnly ? "all" : null);
+  // «В работе» — the first taken first; «Архив» — closed, or decided and invoiced to the end (Витя via the owner 23.10).
+  const [view, setView] = useState<"work" | "archive">("work");
   const [error, setError] = useState("");
 
   const reload = useCallback(async (pick?: string) => {
@@ -51,7 +89,10 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
       }
       if (scope === null && !readOnly) setScope(wanted);
       setRfqs(next);
-      setSelected((current) => pick ?? (next.some((rfq) => rfq.id === current) ? current : next[0]?.id ?? ""));
+      // A request asked for by id (the address, a new one) opens in its own list.
+      const wantedRfq = pick ? next.find((rfq) => rfq.id === pick) : undefined;
+      if (wantedRfq) setView(archivedRfq(wantedRfq) ? "archive" : "work");
+      setSelected((current) => pick ?? (next.some((rfq) => rfq.id === current) ? current : ""));
       setError("");
     } catch (reason) {
       setError(failureText(reason, "Запросы КП не загрузились"));
@@ -60,6 +101,12 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
 
   useEffect(() => { void reload(link.rfq || undefined); }, [reload, link.rfq]);
   useEffect(() => { if (selected && panelFor?.id !== selected) syncRfqUrl(selected); }, [selected, panelFor]);
+  const shown = (rfqs ?? []).filter((rfq) => archivedRfq(rfq) === (view === "archive"));
+  const archivedCount = (rfqs ?? []).filter(archivedRfq).length;
+  // The open request is one of the list shown: a tab switch (or a request moved to the archive) opens its first one.
+  useEffect(() => {
+    if (rfqs && !shown.some((rfq) => rfq.id === selected)) setSelected(shown[0]?.id ?? "");
+  }, [rfqs, view, selected]); // eslint-disable-line react-hooks/exhaustive-deps -- `shown` follows rfqs and view
 
   if (creating) {
     // The pool takes the whole width (a sheet of lines, not a modal list); the new request's matrix opens after it.
@@ -73,10 +120,10 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
   }
 
   return (
-    <section className="page" style={{ display: "grid", gridTemplateColumns: "210px minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
-      <aside className="panel" style={{ padding: 12, display: "grid", gap: 6 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-          <h2 style={{ margin: 0, fontSize: 16 }}>Запросы КП</h2>
+    <section className="page rfq-page">
+      <aside className="panel rfq-aside">
+        <div className="rfq-aside-head">
+          <h2>Запросы КП</h2>
           {!readOnly && <button type="button" className="primary small" onClick={() => setCreating(true)}>+ Запрос</button>}
         </div>
         {!readOnly && (
@@ -86,23 +133,19 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
           </div>
         )}
         {scope === "all" && !readOnly && <p className="page-sub" style={{ margin: 0 }}>Все закупщики — менять можно только свои запросы.</p>}
+        {rfqs !== null && rfqs.length > 0 && (
+          <div className="seg-tabs" role="tablist" aria-label="Работа или архив">
+            <button type="button" role="tab" aria-selected={view === "work"} className={view === "work" ? "on" : undefined} onClick={() => setView("work")}>В работе {rfqs.length - archivedCount}</button>
+            <button type="button" role="tab" aria-selected={view === "archive"} className={view === "archive" ? "on" : undefined} onClick={() => setView("archive")} title="Закрытые запросы и те, по которым все строки решены и счета получены">Архив {archivedCount}</button>
+          </div>
+        )}
         {error && <div className="error-banner" role="alert">{error}</div>}
         {!error && rfqs === null && <div className="empty">Загрузка…</div>}
         {rfqs?.length === 0 && <div className="empty">{scope === "all" ? "Запросов КП ещё нет." : "Запросов нет — нажмите «+ Запрос» и отметьте строки «В работе»."}</div>}
-        {rfqs?.map((rfq) => (
-          <button
-            key={rfq.id} type="button" aria-pressed={rfq.id === selected}
-            className={`nav-item${rfq.id === selected ? " active" : ""}`}
-            style={{ display: "grid", gap: 2, opacity: rfq.closed_at ? 0.7 : 1 }}
-            onClick={() => setSelected(rfq.id)}
-          >
-            <strong className="rfq-seq" title={rfq.number}>№ {rfq.seq ?? rfq.number}{rfq.closed_at ? <span className="rfq-closed"> · закрыт</span> : null}</strong>
-            {rfq.title && <span>{rfq.title}</span>}
-            <small className="muted">
-              {formatDay(rfq.created_at)} · строк {rfq.lines} · поставщиков {rfq.suppliers} · КП {rfq.quotes} · решено {rfq.decided}
-            </small>
-          </button>
-        ))}
+        {rfqs !== null && rfqs.length > 0 && shown.length === 0 && (
+          <div className="empty">{view === "archive" ? "В архиве пусто: сюда попадают закрытые запросы и те, где все счета получены." : readOnly ? "Запросов в работе нет." : "Запросов в работе нет — нажмите «+ Запрос» для нового."}</div>
+        )}
+        {shown.map((rfq) => <RfqCard key={rfq.id} rfq={rfq} active={rfq.id === selected} onOpen={() => setSelected(rfq.id)} />)}
       </aside>
       <div style={{ minWidth: 0 }}>
         {selected
@@ -126,8 +169,9 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
   const [matrix, setMatrix] = useState<RfqMatrix | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  // «+ КП» of a supplier column, or «Внести КП» from anyone (null supplier — chosen in the dialog).
-  const [quoteFor, setQuoteFor] = useState<{ supplier: RfqSupplier | null } | null>(null);
+  // The inline «Внести КП» under the matrix: opened by «+ КП» of a column (that supplier) or the head button (null —
+  // the form picks the first who has not answered).
+  const [quoteFor, setQuoteFor] = useState<{ supplierId: string | null } | null>(null);
   const [linesFor, setLinesFor] = useState<RfqSupplier | null>(null);
   const [decisionFor, setDecisionFor] = useState<{ lineId: string; supplierId: string } | null>(null);
   const [suggesting, setSuggesting] = useState(false);
@@ -206,7 +250,7 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 12 }}>
         <h2 style={{ margin: 0, fontSize: 16 }}>{rfq.number}{rfq.title ? ` · ${rfq.title}` : ""}</h2>
         <span className="muted" style={{ fontSize: 12 }}>
-          от {formatDay(rfq.created_at)} · {rfq.closed_at ? `закрыт ${formatDay(rfq.closed_at)}` : "открыт"} · нужно КП: {matrix.settings.gate_min_quotes}
+          от <strong style={{ color: "var(--foreground)" }}>{formatDay(rfq.created_at)}</strong> · {rfq.closed_at ? `закрыт ${formatDay(rfq.closed_at)}` : "открыт"} · нужно КП: {matrix.settings.gate_min_quotes}
           {matrix.settings.gate_require_non_key ? ", хотя бы одно не от ключевого" : ""}
         </span>
         <div className="rfq-head-actions">
@@ -230,7 +274,12 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
         </div>
         {editable && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-            <button type="button" className="secondary small" onClick={() => setQuoteFor({ supplier: null })}>Внести КП</button>
+            {suppliers.length > 0 && (
+              <button
+                type="button" className="secondary small" aria-expanded={Boolean(quoteFor)}
+                onClick={() => setQuoteFor(quoteFor ? null : { supplierId: null })}
+              >{quoteFor ? "Свернуть КП" : "Внести КП"}</button>
+            )}
             <button type="button" className="secondary small" onClick={() => setSuggesting(true)}>Подобрать поставщиков</button>
             <form onSubmit={(event) => void addSupplier(event)} style={{ display: "flex", gap: 6 }}>
               <input
@@ -299,7 +348,7 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
           }),
           onLines: (supplier) => setLinesFor(supplier),
           onSent: (supplier) => void act(() => rfqApi.markSent(id, supplier.supplier_id), `«${supplier.name}»: запрос отправлен`, "Не отмечено"),
-          onQuote: (supplier) => setQuoteFor({ supplier }),
+          onQuote: (supplier) => setQuoteFor({ supplierId: supplier.supplier_id }),
           onDeclined: (supplier) => {
             const note = window.prompt(`«${supplier.name}» отказался отвечать. Комментарий (необязательно):`, "");
             if (note !== null) void act(() => rfqApi.markDeclined(id, supplier.supplier_id, note), `«${supplier.name}»: отказ отмечен`, "Не отмечено");
@@ -307,6 +356,12 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
           onRemove: (supplier) => void act(() => rfqApi.removeSupplier(id, supplier.supplier_id), `«${supplier.name}» убран из запроса`, "Поставщик не убран"),
         }}
       />
+      {quoteFor && editable && !basket && (
+        <QuoteEntry
+          matrix={matrix} supplierId={quoteFor.supplierId} onClose={() => setQuoteFor(null)}
+          onSaved={(name) => { setQuoteFor(null); void refresh(`КП «${name}» внесено`); }}
+        />
+      )}
       {showRemoved && <RemovedLines matrix={matrix} />}
       {!basket && <RfqKaitenInvoices m={matrix} editable={editable} onDone={(message) => void refresh(message)} />}
       {lines.length === 0 && (
@@ -330,12 +385,6 @@ function RfqMatrixView({ id, readOnly, onChanged, openLetters = false, openInvoi
             </span>
           ))}
         </div>
-      )}
-      {quoteFor && (
-        <QuoteDialog
-          matrix={matrix} supplier={quoteFor.supplier} directory={directory} onClose={() => setQuoteFor(null)}
-          onSaved={(name) => { setQuoteFor(null); void refresh(`КП «${name}» внесено`); }}
-        />
       )}
       {linesFor && (
         <SupplierLinesDialog

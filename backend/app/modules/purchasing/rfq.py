@@ -396,10 +396,19 @@ def create_rfq(
         return {"id": str(rfq.id), "number": rfq.number, "suppliers": len(added)}
 
 
-def list_rfqs(uow: UnitOfWork, actor: Actor, all_buyers: bool = False) -> list[dict]:
-    """Open first, then the newest by number. `seq` — the request's ordinal among ALL requests (1 = the first ever), by
-    number «КП-ГГММ-NNN» (issued in creation order; Roller_Buyer imports keep RB's order): the short «№ 7» the buyer
-    reads (owner 22.10: «не нужен полный номер, просто порядковый номер жирно»), the same in «Мои» and «Все»."""
+# The procurement line has its invoice: «В оплату» and every stage after it (ProcurementStatus as LineView carries it).
+INVOICED = frozenset({"В оплату", "В пути", "Карантин", "Готово"})
+
+
+def list_rfqs(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, all_buyers: bool = False) -> list[dict]:
+    """Every request with what its card shows: the projects of its lines, «решено N/M», the plan sum (the calculation's
+    price with VAT × quantity, as «по плану» in «Заявки») and the sum of the chosen quotes. `seq` — the request's ordinal
+    among ALL requests (1 = the first ever), by number «КП-ГГММ-NNN» (issued in creation order; Roller_Buyer imports
+    keep RB's order): the short «№ 7» the buyer reads (owner 22.10), the same in «Мои» and «Все».
+
+    `archived` (computed, no column): the request is closed, or every line still in it is decided and each one already
+    has its invoice («В оплату» or later). Order (Витя via the owner, 23.10): the work in hand first, the first taken
+    first; then the archive, the newest first. A line cancelled in «Заявки» counts in neither the plan nor M."""
     with uow:
         session = _session(uow)
         statement = select(RfqRow)
@@ -409,10 +418,16 @@ def list_rfqs(uow: UnitOfWork, actor: Actor, all_buyers: bool = False) -> list[d
         ids = [rfq.id for rfq in rfqs]
         if not ids:
             return []
-        lines = dict(session.execute(
-            select(RfqLineRow.rfq_id, func.count()).where(RfqLineRow.rfq_id.in_(ids), RfqLineRow.removed_at.is_(None))
-            .group_by(RfqLineRow.rfq_id)
-        ).all())
+        live = list(session.scalars(
+            select(RfqLineRow).where(RfqLineRow.rfq_id.in_(ids), RfqLineRow.removed_at.is_(None))))
+        decisions = {
+            row.rfq_line_id: row
+            for row in session.scalars(select(DecisionRow).where(DecisionRow.rfq_line_id.in_([line.id for line in live])))
+        } if live else {}
+        views = lines.get_many([line.procurement_line_id for line in live]) if live else {}
+        of_rfq: dict[UUID, list[RfqLineRow]] = {rfq_id: [] for rfq_id in ids}
+        for line in live:
+            of_rfq[line.rfq_id].append(line)
         suppliers: dict[UUID, tuple[int, int]] = {}
         for rfq_id, total, sent in session.execute(
             select(RfqSupplierRow.rfq_id, func.count(), func.count(RfqSupplierRow.sent_at))
@@ -422,23 +437,39 @@ def list_rfqs(uow: UnitOfWork, actor: Actor, all_buyers: bool = False) -> list[d
         quotes = dict(session.execute(
             select(QuoteRow.rfq_id, func.count()).where(QuoteRow.rfq_id.in_(ids)).group_by(QuoteRow.rfq_id)
         ).all())
-        decided = dict(session.execute(
-            select(RfqLineRow.rfq_id, func.count()).join(DecisionRow, DecisionRow.rfq_line_id == RfqLineRow.id)
-            .where(RfqLineRow.rfq_id.in_(ids)).group_by(RfqLineRow.rfq_id)
-        ).all())
         numbers = list(session.scalars(select(RfqRow.number).order_by(RfqRow.number, RfqRow.created_at)))
         seq = {number: index for index, number in enumerate(numbers, start=1)}
-        rfqs.sort(key=lambda rfq: (rfq.closed_at is not None, -seq[rfq.number]))
-        return [
-            {
+
+        def status(line: RfqLineRow) -> str | None:
+            view = views.get(line.procurement_line_id)
+            return view.status if view else None
+
+        def card(rfq: RfqRow) -> dict:
+            own = of_rfq[rfq.id]
+            active = [line for line in own if status(line) != CANCELLED]
+            decided = [line for line in active if line.id in decisions]
+            planned = [line for line in active if line.budget_unit_gross is not None]
+            invoiced = [line for line in decided if status(line) in INVOICED]
+            projects = sorted({
+                view.project.strip() for line in active
+                if (view := views.get(line.procurement_line_id)) is not None and view.project and view.project.strip()
+            })
+            return {
                 "id": str(rfq.id), "number": rfq.number, "seq": seq[rfq.number], "title": rfq.title,
                 "created_at": rfq.created_at.isoformat(), "closed_at": rfq.closed_at.isoformat() if rfq.closed_at else None,
                 "mine": rfq.buyer_id == actor.id,
-                "lines": lines.get(rfq.id, 0), "suppliers": suppliers.get(rfq.id, (0, 0))[0],
-                "sent": suppliers.get(rfq.id, (0, 0))[1], "quotes": quotes.get(rfq.id, 0), "decided": decided.get(rfq.id, 0),
+                "lines": len(own), "suppliers": suppliers.get(rfq.id, (0, 0))[0],
+                "sent": suppliers.get(rfq.id, (0, 0))[1], "quotes": quotes.get(rfq.id, 0),
+                "decided": len(decided), "to_decide": len(active), "invoiced": len(invoiced), "projects": projects,
+                "plan_sum": num(sum((line.budget_unit_gross * line.quantity for line in planned), Decimal(0)))
+                if planned else None,
+                "decided_sum": num(sum((decisions[line.id].total_gross for line in decided), Decimal(0))) if decided else None,
+                "archived": rfq.closed_at is not None or bool(active) and len(invoiced) == len(active),
             }
-            for rfq in rfqs
-        ]
+
+        cards = [card(rfq) for rfq in rfqs]
+        cards.sort(key=lambda row: (row["archived"], -row["seq"] if row["archived"] else row["seq"]))
+        return cards
 
 
 # ── suppliers of a request ──────────────────────────────────────────────────────────────────────────────────────

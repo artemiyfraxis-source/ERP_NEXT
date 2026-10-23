@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { applyChoices } from "./RfqQuoteImport";
-import { QuoteDialog } from "./RfqQuoteDialog";
+import { QuoteEntry } from "./RfqQuoteDialog";
 import type { ImportedQuoteLine, RfqLine, RfqMatrix, RfqSupplier } from "./purchasingRfqApi";
 
 const row = (over: Partial<ImportedQuoteLine>): ImportedQuoteLine => ({
@@ -58,7 +58,7 @@ it("Excel paste: the buyer re-maps a column and ticks «цены с НДС» off
     }
     return json({ available: false, options: [] });
   });
-  render(<QuoteDialog matrix={matrix} supplier={supplier} onClose={() => undefined} onSaved={() => undefined} />);
+  render(<QuoteEntry matrix={matrix} supplierId="s1" onClose={() => undefined} onSaved={() => undefined} />);
   fireEvent.click(screen.getByRole("button", { name: "Вставить из Excel" }));
   fireEvent.change(screen.getByLabelText("Таблица из Excel"), { target: { value: "Товар\tКод\tШт\tЦена\nКлемма\tK1\t2\t100" } });
   fireEvent.click(screen.getByLabelText("цены с НДС"));
@@ -93,8 +93,7 @@ it("a PDF: the header fills «Номер КП» and «Действует до»,
     return json({});
   });
   const onSaved = vi.fn();
-  render(<QuoteDialog matrix={matrix} supplier={supplier} onClose={() => undefined} onSaved={onSaved} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Вставить из PDF / текста" }));
+  render(<QuoteEntry matrix={matrix} supplierId="s1" onClose={() => undefined} onSaved={onSaved} />);
   const file = new File(["%PDF-1.4 test"], "КП Альфа.pdf", { type: "application/pdf" });
   fireEvent.change(screen.getByLabelText("PDF с КП"), { target: { files: [file] } });
   const review = await screen.findByRole("region", { name: "Проверка импорта" });
@@ -108,4 +107,43 @@ it("a PDF: the header fills «Номер КП» and «Действует до»,
   expect(saved).toMatchObject({ source: "file", number: "КП-123/45", valid_until: "2026-10-30", file_name: "КП Альфа.pdf" });
   expect(atob(saved.file_base64)).toBe("%PDF-1.4 test");
   expect(saved.aliases).toEqual([{ rfq_line_id: "a", text: "Разъём" }]);
+});
+
+it("a PDF dropped on the zone is read like a picked one; the ИНН of another supplier of the request picks him", async () => {
+  const posts: any[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") {
+      posts.push({ path, body: JSON.parse(String(init.body)) });
+      return json({
+        source: "file", vat_included: true, default_vat_rate: "22", unread: [], unmatched: [],
+        lines: [row({ source_name: "Клемма", rfq_line_id: "b", matched_by: "name", price: "7" })],
+        header: { number: "17", valid_until: null, inn: "7700000002", supplier_id: "s2", supplier_name: "ООО Бета", in_request: true },
+      });
+    }
+    return json({});
+  });
+  const beta: RfqSupplier = { ...supplier, supplier_id: "s2", name: "ООО Бета" };
+  render(<QuoteEntry matrix={{ ...matrix, suppliers: [supplier, beta] }} supplierId="s1" onClose={() => undefined} onSaved={() => undefined} />);
+  const zone = screen.getByRole("group", { name: "Файл КП" });
+  fireEvent.dragOver(zone, { dataTransfer: { files: [] } });
+  expect(zone).toHaveClass("over");
+  const file = new File(["%PDF-1.4 beta"], "Бета.pdf", { type: "application/pdf" });
+  fireEvent.drop(zone, { dataTransfer: { files: [file], getData: () => "" } });
+  expect(zone).not.toHaveClass("over");
+  const review = await screen.findByRole("region", { name: "Проверка импорта" });
+  expect(posts[0]).toMatchObject({ path: "/api/purchasing/rfqs/r1/quotes/import", body: { supplier_id: "s1", file_name: "Бета.pdf" } });
+  fireEvent.click(within(review).getByRole("button", { name: "Перенести в КП" }));
+  expect(screen.getByLabelText("Поставщик КП")).toHaveValue("s2");
+  expect(screen.getByText("Поставщик выбран по ИНН в документе: «ООО Бета».")).toBeInTheDocument();
+  expect(screen.getByLabelText("Цена Клемма")).toHaveValue("7");
+});
+
+it("a dropped file that is neither PDF nor text is not sent", () => {
+  const fetch = vi.spyOn(globalThis, "fetch");
+  render(<QuoteEntry matrix={matrix} supplierId="s1" onClose={() => undefined} onSaved={() => undefined} />);
+  const file = new File(["PK"], "КП.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  fireEvent.drop(screen.getByRole("group", { name: "Файл КП" }), { dataTransfer: { files: [file], getData: () => "" } });
+  expect(screen.getByRole("alert")).toHaveTextContent("Перетащите PDF или текстовый файл");
+  expect(fetch).not.toHaveBeenCalled();
 });
