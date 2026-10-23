@@ -329,7 +329,7 @@ def _supplier_cards(
     """The supplier card of each line's supplier text (by the name keys), and the cards left without a line."""
     cards = {row.id: row for row in session.execute(select(SupplierRow.id, SupplierRow.name, SupplierRow.name_key, SupplierRow.is_key))}
     by_key = {row.name_key: row.id for row in cards.values()}
-    by_key.update({row.name_key: row.supplier_id for row in session.execute(select(SupplierNameRow))})
+    by_key.update({row.name_key: row.supplier_id for row in session.scalars(select(SupplierNameRow))})
 
     def facts_of(supplier_id: UUID) -> SupplierFacts:
         card = cards[supplier_id]

@@ -18,8 +18,9 @@ from app.modules.procurement.infrastructure import (
 )
 from app.modules.procurement.kpi import build_kpi
 from app.modules.purchasing.infrastructure import (
-    DecisionRow, OrderFactRow, QuoteLineRow, QuoteRow, RfqLineRow, RfqRow, RfqSupplierRow, SupplierRow,
+    DecisionRow, OrderFactRow, QuoteLineRow, QuoteRow, RfqLineRow, RfqRow, RfqSupplierRow, SupplierNameRow, SupplierRow,
 )
+from app.modules.purchasing.suppliers import supplier_key
 from app.modules.receiving.domain import MECHANICAL_DAMAGE
 from app.modules.receiving.infrastructure import ReceivingLineRow
 from app.shared.persistence import AuditEventRow, create_schema
@@ -281,6 +282,17 @@ def test_supplier_rating_response_and_price_against_the_best(sessions):
     assert rows["Альфа"]["price_vs_best_pct"] == "10.0" and rows["Альфа"]["is_key"] is False
     assert rows["Бета"]["price_vs_best_pct"] == "0.0" and rows["Бета"]["is_key"] is True and rows["Бета"]["order_lines"] == 0
     assert rows["Молчун"]["response_pct"] == "0.0" and rows["Молчун"]["price_vs_best_pct"] is None
+
+
+def test_a_supplier_text_matches_its_card_by_an_alias(sessions):
+    # Prod 23.10: aliases are read as rows of the alias table, not as tuples — the sheet answered 500 on them.
+    line = bought(sessions, supplier="Альфа-Снаб")
+    alpha = supplier(sessions, "Альфа", key=True)
+    with sessions() as s:
+        s.add(SupplierNameRow(name_key=supplier_key("Альфа-Снаб"), supplier_id=alpha, created_at=DECIDED))
+        s.commit()
+    row = sheet(sessions, [line])["suppliers"][0]
+    assert row["is_key"] is True and row["asked"] == 0
 
 
 def test_a_supplier_text_without_a_card_has_no_request_data(sessions):
