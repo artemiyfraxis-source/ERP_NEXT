@@ -42,6 +42,8 @@ _INVOICE_TAIL = (
 _INVOICE = (
     re.compile(r"Основани[ея][^\n]{0,80}?" + _INVOICE_TAIL, re.I),
     re.compile(_INVOICE_TAIL, re.I),
+    # (5) «К платёжно-расчётному документу № 916 от 19.10.2026» — the shop's suppliers put the invoice here (owner 23.10).
+    re.compile(r"К\s+пл[аa]т[её]жно\s*-\s*р[аa]сч[её]тному\s+документу\s*" + _NO + r"\s*" + _NUMBER + _OT + _DATE, re.I),
 )
 _SELLER = re.compile(r"Продавец\s*:?\s*([^\n]+)", re.I)
 _SELLER_INN = re.compile(r"ИН[НH]\s*/\s*КПП\s+продавца\s*:?\s*(\d{12}|\d{10})(?!\d)", re.I)
