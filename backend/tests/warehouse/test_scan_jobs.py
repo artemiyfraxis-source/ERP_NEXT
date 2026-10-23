@@ -197,6 +197,17 @@ def test_button_agent_file_and_the_answer_of_a_hand_uploaded_scan(queue):
     assert again.status_code == 409 and again.json()["detail"] == "Задание сканирования уже закрыто"
     with sessions() as session:
         assert len(session.scalars(select(WarehouseReceiptFileRow)).all()) == 2, "the retry stored nothing"
+
+
+def test_a_flatbed_jpeg_of_nine_megabytes_reaches_the_queue(queue):
+    """The Pantum on USB gives ~9 MB JPEGs (23.10): the agent's upload is not cut by the 1 MB default body limit."""
+    admin, agent, _clock, _sessions = queue
+    job_id = _new_job(admin)
+    assert _claim(agent) == job_id
+    jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + b"\x00" * (9 * 1_048_576) + b"\xff\xd9"
+    uploaded = _upload(agent, job_id, "scan.jpg", jpeg, "image/jpeg")
+    assert uploaded.status_code == 200, uploaded.text
+    assert _job(admin, job_id)["status"] == "done"
     assert _upload(agent, str(uuid4()), "scan.pdf", identity_pdf(UPD_TEXT), "application/pdf").status_code == 404
     assert admin.get(f"{JOBS}/{uuid4()}").status_code == 404
 
