@@ -107,6 +107,11 @@ def lot_label_data(uow, lot_id: UUID) -> GrnLabelData:
         if lot is None:
             raise KeyError("Партия не найдена")
         received = uow.warehouse.received_at(lot_id)
+    return label_of(lot, received)
+
+
+def label_of(lot, received: datetime | None) -> GrnLabelData:
+    """The label of a lot already read (ГРН, артикул, наименование, остаток, место, склад, дата прихода)."""
     name = lot.name or lot.article
     return GrnLabelData(
         grn=lot_code(lot.grn, lot.package),

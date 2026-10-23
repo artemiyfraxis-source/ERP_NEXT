@@ -9,8 +9,8 @@ from uuid import UUID
 from datetime import date, datetime
 
 from sqlalchemy import (
-    JSON, Boolean, CheckConstraint, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, delete,
-    func, or_, select,
+    JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text,
+    UniqueConstraint, Uuid, delete, func, or_, select, update,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
@@ -18,14 +18,142 @@ from app.shared.persistence import (
     AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository, check_read_version,
     note_written_version, track_read_versions,
 )
+from app.shared.clock import as_utc
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.shared.warehouse_location import RackLayout, forget_rack_layout, rack_layout_from_config, storage_location_has_slot
 
-from .domain import WAREHOUSES, StockLot, WriteOffEntry
+from .domain import RECEIPT_TEXT_LIMITS, WAREHOUSES, ReceiptConflict, StockLot, WarehouseReceipt, WriteOffEntry
 from .journal import MIRRORED_BY_WRITEOFFS, JournalEvent
 from .labels.settings import DEFAULT_PRINT_SETTINGS, LABEL_SIZES, PrintSettings
 from .word_search import words_matcher
+
+
+class WarehouseReceiptRow(Base):
+    """«Приход на склад» (migration 0143): the header of one delivery; its accepted lines are lots pointing at it."""
+
+    __tablename__ = "warehouse_receipts"
+    __table_args__ = (
+        CheckConstraint("warehouse IN ('ЦАР', 'ЖУК')", name="ck_warehouse_receipts_warehouse"),
+        CheckConstraint("version >= 1", name="ck_warehouse_receipts_version"),
+        Index("ix_warehouse_receipts_created_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    warehouse: Mapped[str] = mapped_column(String(8), nullable=False)
+    supplier: Mapped[str] = mapped_column(String(RECEIPT_TEXT_LIMITS["supplier"]), nullable=False, default="",
+                                          server_default="")
+    invoice_number: Mapped[str] = mapped_column(String(RECEIPT_TEXT_LIMITS["invoice_number"]), nullable=False,
+                                                default="", server_default="")
+    invoice_date: Mapped[date | None] = mapped_column(Date)
+    upd_number: Mapped[str] = mapped_column(String(RECEIPT_TEXT_LIMITS["upd_number"]), nullable=False, default="",
+                                            server_default="")
+    upd_date: Mapped[date | None] = mapped_column(Date)
+    purpose: Mapped[str] = mapped_column(String(RECEIPT_TEXT_LIMITS["purpose"]), nullable=False, default="",
+                                         server_default="")
+    scan_file: Mapped[str] = mapped_column(String(RECEIPT_TEXT_LIMITS["scan_file"]), nullable=False, default="",
+                                           server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WarehouseReceiptFileRow(Base):
+    """The scan of a delivery's УПД («Отсканировать УПД»), kept in the database like the procurement invoice files."""
+
+    __tablename__ = "warehouse_receipt_files"
+    __table_args__ = (CheckConstraint("size > 0", name="ck_warehouse_receipt_files_size"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+_RECEIPT_FIELDS = tuple(column.name for column in WarehouseReceiptRow.__table__.columns)
+
+
+def _receipt(row) -> WarehouseReceipt:
+    return WarehouseReceipt(**{name: getattr(row, name) for name in _RECEIPT_FIELDS})
+
+
+class SqlAlchemyWarehouseReceipts:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, receipt: WarehouseReceipt) -> None:
+        self.session.add(WarehouseReceiptRow(**{name: getattr(receipt, name) for name in _RECEIPT_FIELDS}))
+        self.session.flush()
+
+    def get(self, receipt_id: UUID) -> WarehouseReceipt | None:
+        row = self.session.get(WarehouseReceiptRow, receipt_id)
+        return _receipt(row) if row is not None else None
+
+    def save(self, receipt: WarehouseReceipt) -> None:
+        """Compare-and-swap on the version: the row must still be at `receipt.version - 1`."""
+        values = {name: getattr(receipt, name) for name in _RECEIPT_FIELDS if name != "id"}
+        result = self.session.execute(
+            update(WarehouseReceiptRow)
+            .where(WarehouseReceiptRow.id == receipt.id, WarehouseReceiptRow.version == receipt.version - 1)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise ReceiptConflict("Приход изменён другим пользователем: обновите и повторите")
+
+    def recent(self, limit: int = 20) -> list[WarehouseReceipt]:
+        rows = self.session.scalars(
+            select(WarehouseReceiptRow)
+            .order_by(WarehouseReceiptRow.created_at.desc(), WarehouseReceiptRow.id.desc())
+            .limit(limit)
+        )
+        return [_receipt(row) for row in rows]
+
+    def by_ids(self, ids) -> dict[UUID, WarehouseReceipt]:
+        """The receipts of a page of lots, one query per 500 ids (unknown ids are skipped)."""
+        wanted = sorted(set(ids))
+        found: dict[UUID, WarehouseReceipt] = {}
+        for start in range(0, len(wanted), 500):
+            for row in self.session.scalars(
+                select(WarehouseReceiptRow).where(WarehouseReceiptRow.id.in_(wanted[start:start + 500]))
+            ):
+                found[row.id] = _receipt(row)
+        return found
+
+    def lots_count(self, ids) -> dict[UUID, int]:
+        wanted = sorted(set(ids))
+        if not wanted:
+            return {}
+        self.session.flush()
+        rows = self.session.execute(
+            select(StockLotRow.receipt_id, func.count())
+            .where(StockLotRow.receipt_id.in_(wanted))
+            .group_by(StockLotRow.receipt_id)
+        )
+        return {receipt_id: int(count) for receipt_id, count in rows}
+
+    def lots(self, receipt_id: UUID) -> list[StockLot]:
+        """The accepted lines of a receipt, in the order they were numbered."""
+        self.session.flush()
+        rows = self.session.scalars(
+            select(StockLotRow).where(StockLotRow.receipt_id == receipt_id).order_by(StockLotRow.grn, StockLotRow.package)
+        )
+        return [_domain(row) for row in rows]
+
+    def add_file(self, file_id: UUID, file_name: str, content_type: str, content: bytes, uploaded_by: str,
+                 uploaded_at: datetime) -> None:
+        self.session.add(WarehouseReceiptFileRow(
+            id=file_id, file_name=file_name[:512], content_type=content_type[:255], size=len(content), content=content,
+            uploaded_by=uploaded_by[:255], uploaded_at=uploaded_at,
+        ))
+
+    def file(self, file_id: UUID) -> tuple[str, bytes] | None:
+        row = self.session.get(WarehouseReceiptFileRow, file_id)
+        return (row.file_name, row.content) if row is not None else None
 
 
 class StockLotRow(Base):
@@ -58,6 +186,11 @@ class StockLotRow(Base):
     storage_conditions: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
     datasheet: Mapped[str] = mapped_column(Text, nullable=False, default="")
     certificate: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    receipt_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("warehouse_receipts.id", ondelete="RESTRICT", name="fk_warehouse_lots_receipt_id"),
+        index=True,
+    )
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -250,6 +383,7 @@ def _row(lot: StockLot) -> StockLotRow:
         storage_conditions=lot.storage_conditions,
         datasheet=lot.datasheet,
         certificate=lot.certificate,
+        receipt_id=lot.receipt_id,
     )
 
 
@@ -291,6 +425,7 @@ def _domain(row: StockLotRow) -> StockLot:
         storage_conditions=row.storage_conditions,
         datasheet=row.datasheet,
         certificate=row.certificate,
+        receipt_id=row.receipt_id,
     )
 
 
@@ -518,6 +653,30 @@ class SqlAlchemyWarehouseRepository:
             )
         )
 
+    def article_lots(self, article: str, limit: int = 200) -> list[tuple[StockLot, datetime | None]]:
+        """Lots of one article (case aside, zero balance too) with the moment each came on stock, newest first: the
+        source of «Приход на склад» autofill and of the places the article already lies on."""
+        text = str(article or "").strip()
+        if not text:
+            return []
+        self.session.flush()
+        arrived = (
+            select(AuditEventRow.aggregate_id.label("lot_id"), func.min(AuditEventRow.occurred_at).label("at"))
+            .where(AuditEventRow.event_type.in_(LOT_ARRIVAL_EVENTS))
+            .group_by(AuditEventRow.aggregate_id)
+            .subquery()
+        )
+        rows = self.session.execute(
+            select(StockLotRow, arrived.c.at)
+            .outerjoin(arrived, arrived.c.lot_id == StockLotRow.id)
+            .where(func.upper(StockLotRow.article) == text.upper())
+            .limit(limit)
+        )
+        found = [(_domain(row), at) for row, at in rows]
+        found.sort(key=lambda item: (item[1] is not None, as_utc(item[1]) if item[1] else None, item[0].grn),
+                   reverse=True)
+        return found
+
     def audit_trail(self, lot_id: UUID) -> list[tuple[str, dict]]:
         """(event_type, details) of every audit event on the lot, oldest first."""
         self.session.flush()
@@ -625,6 +784,7 @@ class SqlAlchemyWarehouseUnitOfWork:
         self.session = self.session_factory()
         self.warehouse = SqlAlchemyWarehouseRepository(self.session)
         self.writeoffs = SqlAlchemyWriteOffJournal(self.session)
+        self.receipts = SqlAlchemyWarehouseReceipts(self.session)
         self.journal = SqlAlchemyWarehouseJournalReader(self.session)
         self.item_types = SqlAlchemyItemTypeDictionary(self.session)
         self.label_settings = SqlAlchemyLabelSettings(self.session)

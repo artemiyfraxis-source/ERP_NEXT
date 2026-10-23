@@ -91,6 +91,32 @@ _RECEIPT_CHANGES = (("storage_location", "место"), ("purpose", "назна�
                     ("unit_mass_g", "масса 1 шт"))
 
 
+def _day(value: str) -> str:
+    """ГГГГ-ММ-ДД → ДД.ММ.ГГГГ; anything else as it is."""
+    parts = value.split("-")
+    return f"{parts[2]}.{parts[1]}.{parts[0]}" if len(parts) == 3 and all(part.isdigit() for part in parts) else value
+
+
+def _document(label: str, number: str, day: str) -> str:
+    if not number and not day:
+        return ""
+    return label + (f" {number}" if number else "") + (f" от {_day(day)}" if day else "")
+
+
+def _receipt_text(details: Mapping[str, object]) -> str:
+    """«· Приход: <поставщик> · УПД <№> от <дата> · счёт <№> от <дата>» of a lot accepted from a delivery; the parts
+    the header left empty are left out."""
+    if not _text(details, "receipt_id"):
+        return ""
+    supplier = _text(details, "supplier")
+    parts = [
+        f"Приход: {supplier}" if supplier else "",
+        _document("УПД", _text(details, "upd_number"), _text(details, "upd_date")),
+        _document("счёт", _text(details, "invoice_number"), _text(details, "invoice_date")),
+    ]
+    return "".join(f" · {part}" for part in parts if part)
+
+
 def event_text(event_type: str, details: Mapping[str, object]) -> str:
     """СОБЫТИЕ of one warehouse audit event, in the words of the SUPPLYMAP Journal."""
     if event_type == "warehouse.received":
@@ -101,7 +127,11 @@ def event_text(event_type: str, details: Mapping[str, object]) -> str:
         return "; ".join([f"Приход из приёмки: +{_number(details.get('quantity'))}", *changes])
     if event_type == "warehouse.manually_received":
         place = _text(details, "storage_location")
-        return f"Внесено вручную: +{_number(details.get('quantity'))}" + (f" · место {place}" if place else "")
+        return (f"Внесено вручную: +{_number(details.get('quantity'))}" + (f" · место {place}" if place else "")
+                + _receipt_text(details))
+    if event_type in ("warehouse.receipt_created", "warehouse.receipt_edited"):
+        verb = "заведена" if event_type == "warehouse.receipt_created" else "изменена"
+        return f"Поставка {verb}: склад {_text(details, 'warehouse') or '—'}" + _receipt_text(details)
     if event_type == "warehouse.legacy_imported":
         place = _text(details, "storage_location")
         return (f"Перенос остатков из SUPPLYMAP: приход {_number(details.get('inbound'))}, "
