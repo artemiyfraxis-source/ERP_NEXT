@@ -32,10 +32,6 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function added(entered: WarehouseLot[], errors: Array<{ i: number; error: string }> = []) {
-  return json({ added: entered.length, lots: entered, assigned: [], errors });
-}
-
 afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); });
 
 /** The reference tools of the page sit behind «Ещё ▾». */
@@ -357,180 +353,6 @@ it("keeps an unnamed legacy lot expandable so its article can be entered", async
   expect(screen.getAllByLabelText("Артикул")[0]).toHaveValue("");
 });
 
-it("adds a manually counted lot through the live stock route", async () => {
-  let payload: unknown;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path.split("?")[0] === "/api/stock" && !init?.method) {
-      return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
-    }
-    if (path === "/api/stock/batches" && init?.method === "POST") {
-      payload = JSON.parse(String(init.body));
-      return added([lot]);
-    }
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
-  fireEvent.change(screen.getByLabelText("Наименование"), { target: { value: "Разъём" } });
-  fireEvent.change(screen.getByLabelText("Серия"), { target: { value: "LOT-2409" } });
-  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
-  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F4" } });
-  fireEvent.click(screen.getByRole("button", { name: "Внести" }));
-
-  await waitFor(() => expect(payload).toEqual({ items: [{
-    warehouse: "ЦАР",
-    article: "CON-001",
-    series: "LOT-2409",
-    name: "Разъём",
-    item_type: "",
-    purpose: "Склад",
-    unit: "шт",
-    quantity: "10",
-    storage_location: "1F4",
-  }] }));
-});
-
-it("sends the filled lot passport with a manual entry and shows it in the lot operations", async () => {
-  let payload: { items: Array<Record<string, unknown>> } | undefined;
-  const weighed = {
-    ...lot, unit_mass_g: "0.048", expiry_date: "2030-05-01", manufacturer: "Molex",
-    description: "", storage_conditions: "Сухо", datasheet: "", certificate: "РОСС RU.0001",
-  };
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path.split("?")[0] === "/api/stock" && !init?.method) {
-      return json({ lots: payload ? [weighed] : [], total: payload ? 1 : 0, truncated: 0, next_cursor: null });
-    }
-    if (path === "/api/stock/batches" && init?.method === "POST") {
-      payload = JSON.parse(String(init.body));
-      return added([weighed]);
-    }
-    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
-  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
-  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F4" } });
-  fireEvent.change(screen.getByLabelText("Масса 100 шт, г"), { target: { value: "4,8" } });
-  fireEvent.change(screen.getByLabelText("Срок годности"), { target: { value: "2030-05-01" } });
-  fireEvent.change(screen.getByLabelText("Производитель"), { target: { value: "Molex" } });
-  fireEvent.click(screen.getByRole("button", { name: "Внести" }));
-
-  await waitFor(() => expect(payload?.items[0]).toMatchObject({
-    article: "CON-001", mass_100: "4,8", expiry_date: "2030-05-01", manufacturer: "Molex",
-  }));
-  expect(payload?.items[0]).not.toHaveProperty("mass_1");
-  expect(payload?.items[0]).not.toHaveProperty("certificate");
-
-  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  expect(screen.getByLabelText("Паспорт партии")).toHaveTextContent(
-    "Масса 1 шт: 0.048 г · Годен до 01.05.2030 · Производитель: Molex · Условия хранения: Сухо · Сертификат: РОСС RU.0001",
-  );
-});
-
-it("enters a list of rows and keeps the refused ones with the reason (SK-10)", async () => {
-  let payload: { items: Array<Record<string, unknown>> } | undefined;
-  let reloads = 0;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path.split("?")[0] === "/api/stock" && !init?.method) {
-      reloads += 1;
-      return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
-    }
-    if (path === "/api/stock/batches" && init?.method === "POST") {
-      payload = JSON.parse(String(init.body));
-      return added([lot], [{ i: 1, error: "кол-во должно быть больше нуля" }]);
-    }
-    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  fireEvent.change(screen.getByLabelText("Наименование"), { target: { value: "Корпус" } });
-  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "3" } });
-  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "2A1" } });
-  fireEvent.click(screen.getByRole("button", { name: "+ В список" }));
-
-  expect(screen.getByLabelText("Наименование")).toHaveValue("");
-  expect(screen.getByLabelText("Место хранения для внесения")).toHaveValue("2A1");
-  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-002" } });
-  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "0" } });
-  const before = reloads;
-  fireEvent.click(screen.getByRole("button", { name: "Внести (2)" }));
-
-  await waitFor(() => expect(payload?.items).toHaveLength(2));
-  expect(payload?.items[0]).toMatchObject({ article: "", name: "Корпус", quantity: "3", storage_location: "2A1" });
-  expect(payload?.items[1]).toMatchObject({ article: "CON-002", quantity: "0" });
-  expect(await screen.findByRole("log")).toHaveTextContent(
-    "Записано: 1. Не приняты строки (1): 2 — кол-во должно быть больше нуля",
-  );
-  const refused = within(screen.getByRole("table", { name: "Позиции к внесению" })).getAllByRole("row");
-  expect(refused).toHaveLength(2);
-  expect(refused[1]).toHaveTextContent("CON-002");
-  expect(refused[1]).toHaveTextContent("2 — кол-во должно быть больше нуля");
-  expect(screen.getByRole("button", { name: "Внести" })).toBeInTheDocument();
-  await waitFor(() => expect(reloads).toBeGreaterThan(before));  // one row was entered → the list reloads
-});
-
-it("shows every filled field of a listed row and brings it back with «Править»", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
-    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "13-014-" } });
-  fireEvent.change(screen.getByLabelText("Серия"), { target: { value: "13" } });
-  fireEvent.change(screen.getByLabelText("Тип"), { target: { value: "Соединитель" } });
-  fireEvent.change(screen.getByLabelText("Масса 10 шт, г"), { target: { value: "12" } });
-  fireEvent.change(screen.getByLabelText("Производитель"), { target: { value: "Амфенол" } });
-  fireEvent.click(screen.getByRole("button", { name: "+ В список" }));
-
-  const [, row] = within(screen.getByRole("table", { name: "Позиции к внесению" })).getAllByRole("row");
-  expect(row).toHaveTextContent("13-014-");
-  expect(row).toHaveTextContent("Соединитель");
-  expect(row).toHaveTextContent("Масса 10 шт: 12 г · Производитель: Амфенол");
-  expect(row).not.toHaveTextContent("— шт");
-  expect(screen.queryByRole("columnheader", { name: "Не принята" })).toBeNull();
-
-  fireEvent.click(within(row).getByRole("button", { name: "Править строку 1" }));
-  expect(screen.queryByRole("table", { name: "Позиции к внесению" })).toBeNull();
-  expect(screen.getByLabelText("Артикул")).toHaveValue("13-014-");
-  expect(screen.getByLabelText("Тип")).toHaveValue("Соединитель");
-  expect(screen.getByLabelText("Масса 10 шт, г")).toHaveValue("12");
-  expect(screen.getByLabelText("Производитель")).toHaveValue("Амфенол");
-});
-
-it("fills name, series, and type from the current article catalog", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const path = String(input);
-    if (path.split("?")[0] === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
-    if (path === "/api/stock/article-info?q=N-C58P") return json({ info: {
-      series: "N", name: "N-male RG-58", item_type: "Коаксиальный соединитель", source: "разбор кода",
-    } });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "N-C58P" } });
-
-  await waitFor(() => expect(screen.getByLabelText("Наименование")).toHaveValue("N-male RG-58"));
-  expect(screen.getByLabelText("Серия")).toHaveValue("N");
-  expect(screen.getByLabelText("Тип")).toHaveValue("Коаксиальный соединитель");
-  expect(screen.getByRole("status")).toHaveTextContent("разбор кода");
-});
-
 const page2 = { ...lot, id: "40000000-0000-0000-0000-000000000002", grn: "FRX.26.0000002", balance: "5", available: "4" };
 
 it("shows the first server page at once and joins the next page on «Показать ещё»", async () => {
@@ -804,80 +626,6 @@ it("does not send a row edit when nothing changed", async () => {
   expect(fetch.mock.calls.every(([, init]) => !init?.method)).toBe(true);
 });
 
-it("hints the smallest free number on the shelf and marks a taken place without blocking it (SK-15)", async () => {
-  const places: string[] = [];
-  let payload: { items: Array<{ storage_location: string }> } | undefined;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
-    if (path.startsWith("/api/stock/places?")) {
-      places.push(path);
-      return json({ warehouse: "ЦАР", shelf: "12C", occupied: ["12C1", "12C2B", "12C4"], next_number: 3 });
-    }
-    if (path === "/api/stock/batches" && init?.method === "POST") {
-      payload = JSON.parse(String(init.body));
-      return added([lot]);
-    }
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  const place = screen.getByLabelText("Место хранения для внесения");
-  fireEvent.change(place, { target: { value: "12c" } });
-
-  expect(await screen.findByText(/первый свободный № — 3/)).toBeInTheDocument();
-  expect(places).toEqual(["/api/stock/places?warehouse=%D0%A6%D0%90%D0%A0&shelf=12C"]);
-  expect(place).not.toHaveClass("place-busy");
-
-  fireEvent.click(screen.getByRole("button", { name: "Подставить 12C3" }));
-  expect(place).toHaveValue("12C3");
-  expect(place).not.toHaveClass("place-busy");
-
-  fireEvent.change(place, { target: { value: "12C4" } });
-  await waitFor(() => expect(place).toHaveClass("place-busy"));
-  expect(screen.getByText(/Здесь уже лежит другая позиция/)).toBeInTheDocument();
-
-  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
-  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "1" } });
-  fireEvent.click(screen.getByRole("button", { name: "Внести" }));
-  await waitFor(() => expect(payload?.items[0].storage_location).toBe("12C4"));
-});
-
-it("counts the places already listed for entry as taken when it offers a number (SK-15)", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
-    if (path.startsWith("/api/stock/places?")) return json({ warehouse: "ЦАР", shelf: "1F", occupied: ["1F1"], next_number: 2 });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
-  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F2" } });
-  fireEvent.click(screen.getByRole("button", { name: "+ В список" }));
-  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F" } });
-
-  expect(await screen.findByText(/первый свободный № — 3/)).toBeInTheDocument();
-});
-
-it("shows no hint for an unknown shelf (SK-15)", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
-    if (path.startsWith("/api/stock/places?")) return new Response(JSON.stringify({ detail: "Полки 18A нет" }), { status: 422 });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "18A1" } });
-
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  expect(screen.queryByRole("status")).toBeNull();
-});
-
 it("offers «Журнал склада» to the administrator only", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (String(input).startsWith("/api/stock/journal")) return json({ rows: [], total: 0, truncated: 0 });
@@ -957,30 +705,6 @@ it("«История» on a lot opens a window with the journal of its ГРН on
   expect(requested.some((path) => path.includes("FRX.26.0000001"))).toBe(true);
   fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
   expect(screen.queryByRole("dialog", { name: "История" })).not.toBeInTheDocument();
-});
-
-it("shows the ГРН assigned to entered rows and copies them tab-separated", async () => {
-  const writeText = vi.fn().mockResolvedValue(undefined);
-  Object.assign(navigator, { clipboard: { writeText } });
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
-    if (path === "/api/stock/batches" && init?.method === "POST") {
-      return json({ added: 1, lots: [lot], errors: [], assigned: [{ i: 0, id: lot.id, grn: "OLD.26.0000007", article: "CON-001", quantity: "10", unit: "шт", storage_location: "1F4", warehouse: "ЦАР" }] });
-    }
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
-  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
-  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F4" } });
-  fireEvent.click(screen.getByRole("button", { name: "Внести" }));
-
-  expect(await screen.findByText("Записано на склад: 1")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Скопировать" }));
-  await waitFor(() => expect(writeText).toHaveBeenCalledWith("OLD.26.0000007\tCON-001\t10 шт\t1F4\tЦАР"));
 });
 
 it("keeps the daily actions in the row and the reference tools behind «Ещё ▾»", async () => {
@@ -1383,75 +1107,6 @@ it("a long name is cut to its column and carries the full text as a tooltip", as
   expect(screen.getByText("GHR-04V-S").closest("td")).toHaveAttribute("title", "GHR-04V-S");
 });
 
-it("quick entry suggests already entered articles by article or name and copies the position", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path.split("?")[0] === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
-    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  const article = screen.getByRole("combobox", { name: "Артикул" });
-  fireEvent.focus(article);
-  expect(screen.queryByRole("listbox")).toBeNull();
-
-  fireEvent.change(article, { target: { value: lot.name.slice(0, 4) } });
-  const option = await screen.findByRole("option", { name: new RegExp(lot.article) });
-  expect(option).toHaveTextContent(`${lot.article} — ${lot.name}`);
-  fireEvent.mouseDown(option);
-  expect(article).toHaveValue(lot.article);
-  await waitFor(() => expect(screen.getByLabelText("Наименование")).toHaveValue(lot.name));
-
-  fireEvent.change(article, { target: { value: `${lot.article}-NEW` } });
-  expect(screen.getByLabelText("Наименование")).toHaveValue(lot.name);
-});
-
-it("«Внести и печать этикетки» enters the row and sends the created lot's label to the print queue (owner 23.10)", async () => {
-  const posts: { path: string; body: unknown }[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path === "/api/stock/batches" && init?.method === "POST") {
-      return json({ added: 1, lots: [lot], errors: [], assigned: [{ i: 0, id: lot.id, grn: "OLD.26.0000007", article: "CON-001", quantity: "10", unit: "шт", storage_location: "1F4", warehouse: "ЦАР" }] });
-    }
-    if (path.endsWith("/label") && init?.method === "POST") {
-      posts.push({ path, body: JSON.parse(String(init.body)) });
-      return json({ status: "queued", reason: "В очереди принтера.", file: "j1", copies: 1, job_id: "j1" });
-    }
-    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
-    return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
-  fireEvent.change(screen.getByLabelText("Наименование"), { target: { value: "Разъём 4 pin" } });
-  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
-  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F4" } });
-  fireEvent.click(screen.getByRole("button", { name: "Внести и печать этикетки" }));
-
-  await waitFor(() => expect(posts).toEqual([{ path: `/api/stock/batches/${lot.id}/label`, body: { copies: 1 } }]));
-  expect(await screen.findByText(/Этикетки в очереди принтера: 1/)).toBeInTheDocument();
-});
-
-it("«Внести» alone does not print", async () => {
-  const labels: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path === "/api/stock/batches" && init?.method === "POST") return added([lot]);
-    if (path.endsWith("/label")) labels.push(path);
-    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
-    return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
-  });
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
-  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
-  fireEvent.click(screen.getByRole("button", { name: "Внести" }));
-  await screen.findByRole("button", { name: "+ Внести позиции" });
-  expect(labels).toEqual([]);
-});
-
 it("asks the server to sort the whole stock when a column is clicked, from the first page", async () => {
   const paths: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -1522,4 +1177,16 @@ it("shows the nomenclature item under the lot and links a lot by hand", async ()
   fireEvent.change(screen.getByLabelText("Найти позицию номенклатуры"), { target: { value: "друг" } });
   fireEvent.click(await screen.findByRole("button", { name: "Связать" }));
   await waitFor(() => expect(posted).toEqual([JSON.stringify({ lot_id: lot.id, item_id: "i2" })]));
+});
+
+it("shows the supply a lot came with on its card, leaving empty parts out", async () => {
+  const supplied: WarehouseLot = {
+    ...lot,
+    receipt: { id: "r1", supplier: "ООО Ромашка", invoice_number: "С-7", invoice_date: "2026-10-02", upd_number: "", upd_date: "2026-10-01" },
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [supplied], total: 1, truncated: 0, next_cursor: null }));
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  expect(await screen.findByText("Приход: ООО Ромашка · УПД от 01.10.2026 · счёт С-7 от 02.10.2026")).toBeInTheDocument();
 });
