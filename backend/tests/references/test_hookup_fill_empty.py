@@ -168,7 +168,8 @@ def test_fill_empty_writes_only_the_empty_cells_and_a_second_run_changes_nothing
     assert after["ПВАМ 0,35"][STRANDS] and after["МС 15-11 0,12"][STRANDS].startswith("многопроволочная")
     pugv = after["ПуГВ 1,0"]
     assert pugv[STRANDS] and pugv["Цвет"] == "" and pugv["Источник данных"]
-    assert all(pugv[name] == "" for name in ("Стандарт", "Наружный диаметр, мм", "Изоляция", "Напряжение, В"))
+    assert all(pugv[name] == "" for name in ("Стандарт", "Наружный диаметр, мм", "Напряжение, В"))
+    assert not pugv.get("Изоляция")  # no column of the монтажные since 23.10.2026: no empty cell kept either
 
     again = import_hookups(_factory(uow)(), _load(CUT), ACTOR, NOW, fill_empty=True)
     assert (again.changed, again.updated, again.hookups_created, again.hookups_updated) == (0, [], 0, 0)
