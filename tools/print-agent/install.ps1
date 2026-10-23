@@ -3,7 +3,8 @@
    .\install.ps1 -Token <токен ERP со scopes labels:print и scan:upload> [-Scanner <IP сканера>]
  Удаление: .\install.ps1 -Uninstall   (или uninstall.ps1)
 #>
-[CmdletBinding()]
+# No positional binding: a stray word after the token (a pasted «14:20») is an error, not the server address.
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$Server = 'https://erp-server.tail811f20.ts.net',
     [string]$Token,
@@ -54,6 +55,9 @@ function Remove-Agent {
 if ($Uninstall) { Remove-Agent; return }
 
 if (-not $Token) { throw 'Нужен -Token (токен ERP со scopes labels:print и scan:upload, создаёт администратор в ERP).' }
+# A chat client turns a pasted link into «https://host (https://host/)»: keep the first word only.
+$Server = ($Server.Trim() -split '\s+')[0]
+if ($Server -notmatch '^https?://[^\s/]+') { throw "Адрес сервера должен начинаться с https:// — получено «$Server»." }
 
 $printers = @(Get-Printer | Select-Object -ExpandProperty Name)
 if (-not $Printer) {
