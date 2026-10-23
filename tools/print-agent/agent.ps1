@@ -2,6 +2,7 @@
  Агент печати этикеток Fraxis ERP (TSC по USB, RAW TSPL через очередь Windows).
  Каждые 3 с забирает задание у сервера, отправляет байты в очередь, сообщает результат.
  Параметры: -DryRun (не печатать, результат ok=false "dry run"), -Once (один опрос и выход).
+ Сканер УПД: -Scanner <адрес> (eSCL; без адреса - WIA), -TestScan (один скан в файл, без ERP).
 #>
 [CmdletBinding()]
 param(
@@ -10,8 +11,10 @@ param(
     [string]$Server,
     [string]$Token,
     [string]$Printer,
+    [string]$Scanner,
     [switch]$DryRun,
-    [switch]$Once
+    [switch]$Once,
+    [switch]$TestScan
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,11 +40,12 @@ function Write-Log {
 
 function Read-AgentConfig {
     param([string]$Path)
-    $cfg = @{ server = ''; token = ''; printer = '' }
+    $cfg = @{ server = ''; token = ''; printer = ''; scanner = '' }
     if ($Path -and (Test-Path $Path)) {
         $raw = Get-Content -Raw -Encoding UTF8 $Path | ConvertFrom-Json
         if ($raw.server) { $cfg.server = [string]$raw.server }
         if ($raw.printer) { $cfg.printer = [string]$raw.printer }
+        if ($raw.scanner) { $cfg.scanner = [string]$raw.scanner }
         if ($raw.tokenProtected) {
             # DPAPI: расшифровывается только тем пользователем Windows, который ставил агент
             $sec = ConvertTo-SecureString -String $raw.tokenProtected
@@ -167,9 +171,9 @@ function Invoke-PollOnce {
 }
 
 function Start-AgentLoop {
-    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [switch]$DryRun, [switch]$Once)
+    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [switch]$DryRun, [switch]$Once, [string]$ScannerAddress)
     $delay = 3
-    Write-Log "Агент запущен: сервер $Base, принтер '$PrinterName'$(if ($DryRun) { ', DRY RUN' })"
+    Write-Log "Агент запущен: сервер $Base, принтер '$PrinterName'$(if ($DryRun) { ', DRY RUN' }), сканер: $(if ($ScannerAddress) { $ScannerAddress } else { 'USB (WIA)' })"
     while ($true) {
         $state = 'error'
         try {
@@ -182,8 +186,258 @@ function Start-AgentLoop {
             $delay = [Math]::Min($delay * 2, 30)
             continue
         }
+        # Скан УПД: свои ошибки ловит сама функция, цикл они не роняют
+        $scanState = 'idle'
+        try { $scanState = Invoke-ScanPollOnce -Base $Base -AuthToken $AuthToken -ScannerAddress $ScannerAddress } catch { Write-Log "Скан: ошибка $($_.Exception.Message)" }
         if ($Once) { return }
-        if ($state -eq 'idle') { Start-Sleep -Seconds 3 }
+        if ($state -eq 'idle' -and $scanState -ne 'done') { Start-Sleep -Seconds 3 }
+    }
+}
+
+# ---------------------------------------------------------------- Сканер УПД
+# eSCL (AirScan, Mopria) по адресу сканера из настроек; без адреса - WIA (USB).
+
+$script:EsclTemplate = @'
+<?xml version="1.0" encoding="UTF-8"?>
+<scan:ScanSettings xmlns:pwg="http://www.pwg.org/schemas/2010/12/sm" xmlns:scan="http://schemas.hp.com/imaging/escl/2011/05/03">
+<pwg:Version>2.63</pwg:Version>
+<pwg:ScanRegions><pwg:ScanRegion>
+<pwg:ContentRegionUnits>escl:ThreeHundredthsOfInches</pwg:ContentRegionUnits>
+<pwg:XOffset>0</pwg:XOffset><pwg:YOffset>0</pwg:YOffset><pwg:Width>2480</pwg:Width><pwg:Height>3508</pwg:Height>
+</pwg:ScanRegion></pwg:ScanRegions>
+<pwg:InputSource>Platen</pwg:InputSource>
+<scan:ColorMode>Grayscale8</scan:ColorMode>
+<scan:XResolution>300</scan:XResolution>
+<scan:YResolution>300</scan:YResolution>
+<pwg:DocumentFormat>{MIME}</pwg:DocumentFormat>
+<scan:DocumentFormatExt>{MIME}</scan:DocumentFormatExt>
+</scan:ScanSettings>
+'@
+
+# Проверка сертификата отключается только на время обращения к сканеру (у него самоподписанный).
+function Initialize-TlsSkip {
+    if ('ErpTlsSkip' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public static class ErpTlsSkip {
+  public static void On() { ServicePointManager.ServerCertificateValidationCallback = delegate (object s, X509Certificate c, X509Chain ch, SslPolicyErrors e) { return true; }; }
+  public static void Off() { ServicePointManager.ServerCertificateValidationCallback = null; }
+}
+'@
+}
+
+# Один HTTP-запрос к сканеру. Status 0 = нет соединения. Исключений не бросает.
+function Invoke-EsclRequest {
+    param([string]$Method, [string]$Url, [string]$Body, [string]$ContentType, [int]$TimeoutSec = 30)
+    $result = @{ Status = 0; Location = ''; Bytes = [byte[]]@(); Error = '' }
+    try {
+        $req = [Net.WebRequest]::Create($Url)
+        $req.Method = $Method
+        $req.Timeout = $TimeoutSec * 1000
+        $req.ReadWriteTimeout = $TimeoutSec * 1000
+        if ($Body) {
+            $data = [Text.Encoding]::UTF8.GetBytes($Body)
+            $req.ContentType = $ContentType
+            $req.ContentLength = $data.Length
+            $out = $req.GetRequestStream()
+            try { $out.Write($data, 0, $data.Length) } finally { $out.Close() }
+        }
+        try { $resp = $req.GetResponse() } catch [Net.WebException] {
+            if (-not $_.Exception.Response) { throw }
+            $resp = $_.Exception.Response
+        }
+        try {
+            $result.Status = [int]$resp.StatusCode
+            $result.Location = [string]$resp.Headers['Location']
+            $ms = New-Object IO.MemoryStream
+            $stream = $resp.GetResponseStream()
+            try { $stream.CopyTo($ms) } finally { $stream.Close() }
+            $result.Bytes = $ms.ToArray()
+        } finally { $resp.Close() }
+    } catch {
+        $result.Error = $_.Exception.Message
+    }
+    return $result
+}
+
+function Get-EsclBases {
+    param([string]$Address)
+    if ($Address -match '^https?://') { return @(($Address.TrimEnd('/') -replace '/eSCL.*$', '')) }
+    $addr = $Address.TrimEnd('/')
+    return @("http://$addr", "https://$addr")
+}
+
+# Возможности сканера (GET /eSCL/ScannerCapabilities) одной строкой для журнала; $null - не отвечает.
+function Get-EsclCapabilities {
+    param([string]$Address)
+    Initialize-TlsSkip
+    [ErpTlsSkip]::On()
+    try {
+        foreach ($base in (Get-EsclBases $Address)) {
+            $r = Invoke-EsclRequest -Method GET -Url "$base/eSCL/ScannerCapabilities" -TimeoutSec 10
+            if ($r.Status -eq 200) {
+                $text = [Text.Encoding]::UTF8.GetString($r.Bytes)
+                $model = [regex]::Match($text, '<[^>]*MakeAndModel>([^<]*)<').Groups[1].Value
+                $formats = ([regex]::Matches($text, '<[^>]*DocumentFormat(?:Ext)?>([^<]*)<') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique) -join ', '
+                $platen = if ($text -match 'Platen') { 'да' } else { 'нет' }
+                return "$base : модель '$model', форматы: $formats, стекло (Platen): $platen"
+            }
+        }
+    } finally { [ErpTlsSkip]::Off() }
+    return $null
+}
+
+# Скан одним форматом. Connect=$false - нет связи по этой схеме; Retry=$true - формат не принят.
+function Invoke-EsclScanBase {
+    param([string]$Base, [string]$Mime)
+    $xml = $script:EsclTemplate.Replace('{MIME}', $Mime)
+    $r = $null
+    for ($i = 0; $i -lt 5; $i++) {
+        $r = Invoke-EsclRequest -Method POST -Url "$Base/eSCL/ScanJobs" -Body $xml -ContentType 'text/xml' -TimeoutSec 30
+        if ($r.Status -ne 503) { break }
+        Start-Sleep -Seconds 2
+    }
+    if ($r.Status -eq 0) { return @{ Connect = $false; Error = $r.Error } }
+    if ($r.Status -eq 400 -or $r.Status -eq 409) { return @{ Connect = $true; Retry = $true; Error = "сканер отклонил формат $Mime (код $($r.Status))" } }
+    if ($r.Status -ne 201 -or -not $r.Location) { return @{ Connect = $true; Error = "сканер не принял задание (код $($r.Status))" } }
+    $loc = $r.Location
+    if ($loc -notmatch '^https?://') { $loc = $Base + '/' + $loc.TrimStart('/') }
+    $loc = $loc.TrimEnd('/')
+    try {
+        $deadline = (Get-Date).AddSeconds(30)
+        while ($true) {
+            $d = Invoke-EsclRequest -Method GET -Url "$loc/NextDocument" -TimeoutSec 90
+            if ($d.Status -eq 503 -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1; continue }
+            break
+        }
+        if ($d.Status -eq 200 -and $d.Bytes.Length -gt 0) {
+            $ext = if ($Mime -eq 'application/pdf') { 'pdf' } else { 'jpg' }
+            return @{ Connect = $true; Bytes = $d.Bytes; Ext = $ext; Mime = $Mime }
+        }
+        if ($d.Status -eq 0) { return @{ Connect = $true; Error = "сканер не отдал страницу: $($d.Error)" } }
+        return @{ Connect = $true; Error = "сканер не отдал страницу (код $($d.Status))" }
+    } finally {
+        Invoke-EsclRequest -Method DELETE -Url $loc -TimeoutSec 5 | Out-Null
+    }
+}
+
+function Invoke-EsclScan {
+    param([string]$Address)
+    Initialize-TlsSkip
+    [ErpTlsSkip]::On()
+    try {
+        $lastError = 'нет связи со сканером'
+        foreach ($base in (Get-EsclBases $Address)) {
+            foreach ($mime in @('application/pdf', 'image/jpeg')) {
+                $r = Invoke-EsclScanBase -Base $base -Mime $mime
+                if (-not $r.Connect) { $lastError = "нет связи со сканером $base ($($r.Error))"; break }
+                if ($r.Bytes) { return $r }
+                $lastError = $r.Error
+                if (-not $r.Retry) { break }
+            }
+        }
+        throw "Сканер: $lastError"
+    } finally { [ErpTlsSkip]::Off() }
+}
+
+# USB-сканер через WIA: первое устройство типа "сканер", JPEG.
+function Invoke-WiaScan {
+    $dm = New-Object -ComObject WIA.DeviceManager
+    $info = $null
+    foreach ($di in $dm.DeviceInfos) { if ($di.Type -eq 1) { $info = $di; break } }
+    if (-not $info) { throw 'Сканер не найден: адрес не задан, а USB-сканера (WIA) нет' }
+    $item = $info.Connect().Items.Item(1)
+    foreach ($p in @(@(6146, 2), @(6147, 300), @(6148, 300))) {
+        try { $item.Properties.Item([string]$p[0]).Value = $p[1] } catch {}
+    }
+    $img = $item.Transfer('{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}')
+    return @{ Bytes = [byte[]]$img.FileData.BinaryData; Ext = 'jpg'; Mime = 'image/jpeg' }
+}
+
+# Скан выбранным способом. Вынесено в функцию, чтобы тесты подменяли её.
+function Invoke-ScannerScan {
+    param([string]$Address)
+    if ($Address) { return Invoke-EsclScan -Address $Address }
+    return Invoke-WiaScan
+}
+
+# multipart/form-data байтами: тело бинарное, заголовки в UTF-8, CRLF.
+function New-MultipartBody {
+    param([string]$Boundary, [string]$FieldName, [string]$FileName, [string]$ContentType, [byte[]]$Bytes)
+    $ms = New-Object IO.MemoryStream
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    $head = "--$Boundary`r`nContent-Disposition: form-data; name=`"$FieldName`"; filename=`"$FileName`"`r`nContent-Type: $ContentType`r`n`r`n"
+    $h = $utf8.GetBytes($head)
+    $ms.Write($h, 0, $h.Length)
+    $ms.Write($Bytes, 0, $Bytes.Length)
+    $t = $utf8.GetBytes("`r`n--$Boundary--`r`n")
+    $ms.Write($t, 0, $t.Length)
+    return $ms.ToArray()
+}
+
+function Send-ScanFile {
+    param([string]$Url, [string]$AuthToken, [byte[]]$Bytes, [string]$FileName, [string]$ContentType)
+    $boundary = 'frx' + [Guid]::NewGuid().ToString('N')
+    $body = New-MultipartBody -Boundary $boundary -FieldName 'file' -FileName $FileName -ContentType $ContentType -Bytes $Bytes
+    Invoke-RestMethod -Method Post -Uri $Url -Body $body -ContentType "multipart/form-data; boundary=$boundary" `
+        -Headers @{ Authorization = "Bearer $AuthToken" } -TimeoutSec 60 | Out-Null
+}
+
+# Один опрос заданий сканирования: 'idle' / 'done' / 'error'. Исключения наружу не выходят.
+function Invoke-ScanPollOnce {
+    param([string]$Base, [string]$AuthToken, [string]$ScannerAddress)
+    $id = ''
+    try {
+        $claim = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/claim" -Body @{ host = $env:COMPUTERNAME } -AuthToken $AuthToken
+        $script:ScanClaimError = ''
+        if (-not $claim.job) { return 'idle' }
+        $id = [string]$claim.job.id
+    } catch {
+        $msg = $_.Exception.Message
+        if ($msg -ne $script:ScanClaimError) { Write-Log "Скан: опрос заданий не удался: $msg"; $script:ScanClaimError = $msg }
+        return 'error'
+    }
+    $how = if ($ScannerAddress) { "сканер $ScannerAddress (eSCL)" } else { 'USB (WIA)' }
+    Write-Log "Скан: задание $id, $how"
+    $resultUrl = "$Base/api/stock/scan/agent/jobs/$id/result"
+    try {
+        $scan = Invoke-ScannerScan -Address $ScannerAddress
+        Send-ScanFile -Url $resultUrl -AuthToken $AuthToken -Bytes $scan.Bytes -FileName "scan.$($scan.Ext)" -ContentType $scan.Mime
+        Write-Log "Скан отправлен: задание $id, $($scan.Bytes.Length) байт, $($scan.Mime)"
+    } catch {
+        $err = $_.Exception.Message
+        Write-Log "Скан: ошибка задания ${id}: $err"
+        try { Invoke-ErpApi -Url $resultUrl -Body @{ error = $err } -AuthToken $AuthToken | Out-Null }
+        catch { Write-Log "Скан: не удалось сообщить об ошибке: $($_.Exception.Message)" }
+        return 'error'
+    }
+    return 'done'
+}
+
+# -TestScan: один скан выбранным способом в файл, без ERP.
+function Invoke-TestScan {
+    param([string]$ScannerAddress, [string]$Dir)
+    if (-not $Dir) { $Dir = Join-Path $env:ProgramData 'FraxisPrintAgent' }
+    if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
+    try {
+        if ($ScannerAddress) {
+            $caps = Get-EsclCapabilities -Address $ScannerAddress
+            $line = if ($caps) { "возможности сканера - $caps" } else { "/eSCL/ScannerCapabilities на $ScannerAddress не отвечает" }
+            Write-Log "Скан: $line"
+            Write-Host $line
+        }
+        Write-Host 'Положите лист на стекло, сканирую...'
+        $scan = Invoke-ScannerScan -Address $ScannerAddress
+        $path = Join-Path $Dir "test-scan.$($scan.Ext)"
+        [IO.File]::WriteAllBytes($path, $scan.Bytes)
+        Write-Log "Скан: тест, $($scan.Bytes.Length) байт сохранено в $path"
+        Write-Host "Готово: $path ($($scan.Bytes.Length) байт)"
+    } catch {
+        Write-Log "Скан: ошибка теста: $($_.Exception.Message)"
+        Write-Host "Ошибка: $($_.Exception.Message)"
+        throw
     }
 }
 
@@ -193,9 +447,11 @@ if ($MyInvocation.InvocationName -ne '.') {
     if ($Server) { $cfg.server = $Server }
     if ($Token) { $cfg.token = $Token }
     if ($Printer) { $cfg.printer = $Printer }
+    if ($Scanner) { $cfg.scanner = $Scanner }
+    if ($TestScan) { Invoke-TestScan -ScannerAddress $cfg.scanner; return }
     if (-not $cfg.server -or -not $cfg.token -or -not $cfg.printer) {
         Write-Log "Нет настроек (сервер/токен/принтер) в $ConfigPath"
         throw "Агент не настроен: запустите install.ps1"
     }
-    Start-AgentLoop -Base $cfg.server.TrimEnd('/') -AuthToken $cfg.token -PrinterName $cfg.printer -DryRun:$DryRun -Once:$Once
+    Start-AgentLoop -Base $cfg.server.TrimEnd('/') -AuthToken $cfg.token -PrinterName $cfg.printer -DryRun:$DryRun -Once:$Once -ScannerAddress $cfg.scanner
 }

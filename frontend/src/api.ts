@@ -473,6 +473,15 @@ export interface WarehouseReceiptAccept {
   confirm_expected: boolean;
 }
 
+export type WarehouseScanJobStatus = "pending" | "claimed" | "done" | "failed";
+
+export interface WarehouseScanJob {
+  id: string;
+  status: WarehouseScanJobStatus;
+  error?: string;
+  result?: WarehouseReceiptScan | null;
+}
+
 export interface WarehouseReceiptScan {
   scan_file: string;
   recognised: { supplier: string; inn: string; upd_number: string; upd_date: string; invoice_number: string; invoice_date: string };
@@ -3084,6 +3093,10 @@ export const warehouseApi = {
     form.append("file", file);
     return api<WarehouseReceiptScan>("/api/stock/receipts/scan", { method: "POST", body: form });
   },
+  /** Скан со сканера ПК склада: задание, опрос, отмена. */
+  startScanJob: () => api<WarehouseScanJob>("/api/stock/receipts/scan-jobs", { method: "POST" }),
+  scanJob: (id: string) => api<WarehouseScanJob>(`/api/stock/receipts/scan-jobs/${encodeURIComponent(id)}`),
+  cancelScanJob: (id: string) => api<WarehouseScanJob>(`/api/stock/receipts/scan-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   writeOff: (lotId: string, version: number, quantity: string, purpose: string, reason: string, date?: string) =>
     api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/writeoff`, {
       method: "POST",

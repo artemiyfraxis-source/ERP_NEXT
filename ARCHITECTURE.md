@@ -764,7 +764,7 @@ SK-9 (`existing_shelf`), иначе 422. Только подсказка: в б�
 - Тип позиции не приводился к канону (`stock05CanonType_`, `STOCK05_TYPE_ALIAS_`) — не входило в SK-10; с SK-14 приводится.
 - Пустой запрос (`items: []`) — 422, как раньше; SUPPLYMAP отвечает `added: 0`.
 
-«Приход на склад» (owner 23.10.2026; `receipts_application.py`, `receipts_api.py`, миграция `0143_warehouse_receipts`)
+«Приход на склад» (owner 23.10.2026; `receipts_application.py`, `receipts_api.py`, миграция `0144_warehouse_receipts`)
 — быстрый ввод как документ поставки. Шапка `warehouse_receipts`: склад (CHECK ЦАР/ЖУК), поставщик, № и дата счёта,
 № и дата УПД, назначение по умолчанию, ссылка на скан УПД, `version`; своей даты приёмки нет — момент приёмки строки
 есть событие её партии. Строки принимаются по одной: `POST /api/stock/receipts/{id}/accept` (строка быстрого ввода без
@@ -790,6 +790,21 @@ SK-9 (`existing_shelf`), иначе 422. Только подсказка: в б�
 upd_number, upd_date}` или null, читается одним запросом на страницу). Журнал: «… · Приход: <поставщик> · УПД <№> от
 <дата> · счёт <№> от <дата>», пустые части опускаются; шапка пишет «Поставка заведена/изменена». `/api/stock/batches`
 не изменился.
+
+Скан УПД со сканера склада (owner 23.10.2026; `scan_jobs.py`, `scan_jobs_api.py`, `receipt_ocr.py`, миграция
+`0145_warehouse_scan_jobs`) — очередь по образцу очереди печати. Кнопка ставит задание `POST /api/stock/receipts/
+scan-jobs` → `{id, status}` (права — правка склада); агент ПК склада (токен API со scope `scan:upload`, один токен может
+нести и `labels:print`) забирает старое ожидающее `POST /api/stock/scan/agent/claim` → `{job: {id} | null}`, сканирует
+на Pantum BM2300W (eSCL) и шлёт файл `POST /api/stock/scan/agent/jobs/{id}/result` (multipart `file`, PDF/JPG/PNG ≤ 20 МБ:
+файл в `warehouse_receipt_files` от имени кладовщика, задание `done`) или `{"error": "…"}` (`failed`); повтор — 409.
+Экран опрашивает `GET …/scan-jobs/{id}` → `{id, status, error, result}`, где `result` — ровно ответ
+`POST /api/stock/receipts/scan`, распознаётся один раз (после ответа агенту) и хранится в строке задания;
+`DELETE …/scan-jobs/{id}` — «Отменено». Ожидающее дольше 120 с или взятое дольше 180 с при первом чтении очереди
+становится `failed` «Сканер не ответил — проверьте агент на ПК склада». CHECK: `done` ⇔ есть файл (FK RESTRICT),
+`failed` — с причиной, моменты по статусу. Распознавание: текстовый слой PDF, если в нём ничего не найдено или это
+картинка — OCR (`pdftoppm` 300 dpi, первые 2 страницы → `tesseract -l rus+eng --psm 6`, 60 с на вызов; в образе
+`tesseract-ocr`, `tesseract-ocr-rus`, `poppler-utils`); нет программ — «Распознавание недоступно на сервере —
+заполните вручную». Тот же путь служит загрузке файла вручную.
 
 Паспорт партии (SK-6; `Config.gs:164-174`, `Stock05.gs:123-161`, `Receiving.gs:437-441`, `Warehouse.gs:416-527`):
 МАССА 1 ШТ, Г (`unit_mass_g`), СРОК ГОДНОСТИ (`expiry_date`), ПРОИЗВОДИТЕЛЬ, ОПИСАНИЕ, УСЛОВИЯ ХРАНЕНИЯ, DATASHEET,
