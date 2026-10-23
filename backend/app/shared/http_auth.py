@@ -155,6 +155,14 @@ myrequests_principal = require_section(
     "view",
     detail="Раздел «Мои заявки» вам не открыт.",
 )
+# «В закупку» — everyone who files or sees requests (owner, 23.10; every employee has «Мои заявки»); the route narrows
+# it: «Снабжение» on edit takes the line as its buyer, «Заявки» on edit hands any request, the rest only their own.
+# «Снабжение» on view alone opens nothing here (ID-6: a viewer of the three sections never writes through them).
+handoff_principal = require_section(
+    ("requests", "myrequests", "newrequest"),
+    "view",
+    detail="Передать заявку в закупку вам не открыто.",
+)
 # ID-3 (SUPPLYMAP PORTAL_SECTIONS_, Portal.gs:661-664): templates (`erptctpl`) and the generator (`tcgen`) have keys of
 # their own; the techcards router admits any of the three and each route narrows it down.
 # A token passes the router gate untouched; each route's own gate decides (only tcgen_principal admits `tcgen`).

@@ -335,7 +335,7 @@ export function App() {
         {activeSection === "myrequests" && <RequestsPage principal={principal} view="mine" />}
         {activeSection === "requests" && <RequestsPage principal={principal} />}
         {activeSection === "procurement" && <ProcurementPage key={visit} readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name}
-          canHandoff={canAct(principal, "procurement")} openRegister={visibleNav.some(({ id }) => id === "requests") ? () => navigate("requests") : undefined} />}
+          canHandoff={canAct(principal, "procurement") || canAct(principal, "requests")} openRegister={visibleNav.some(({ id }) => id === "requests") ? () => navigate("requests") : undefined} />}
         {activeSection === "purchasingrefs" && <PurchasingRefsPage key={visit} readOnly={!canAct(principal, "procurement")} />}
         {activeSection === "primarydocs" && <PrimaryDocsPage key={visit} readOnly={!canAct(principal, "procurement")} />}
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}

@@ -168,7 +168,10 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const [busy, setBusy] = useState(false);
   const [serverQuery, setServerQuery] = useState("");
   const canEdit = principal.permissions.newrequest === "edit";
-  const canHandoff = canAct(principal, "procurement");
+  // «В закупку» — всем (владелец, 23.10): свои заявки — из «Моих заявок», любые — с «Заявками» на правку; «Повторно в
+  // закупку» — закупщику. Сервер проверяет то же: не закупщик передаёт строку без закупщика («Неразобранные»).
+  const canRetransfer = canAct(principal, "procurement");
+  const canHandoff = view === "mine" || canRetransfer || canAct(principal, "requests");
 
   const [createMode, setCreateMode] = useState<"manual" | "excel" | "calc">(restored?.createMode ?? "manual");
   const purposeText = usePurposeLabel();
@@ -553,6 +556,14 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     { key: "order_number", title: "№ заказа", value: (row) => row.order_number ?? "" },
     { key: "expected_arrival", title: "Ожид. дата", value: (row) => formatDate(row.expected_arrival) },
     { key: "procurement_sum", title: "Сумма", value: (row) => row.procurement_sum ?? "", numeric: true },
+    {
+      key: "actions",
+      title: "",
+      value: () => "",
+      render: (row) => row.status === "Новый"
+        ? <button className="secondary small row-action" disabled={busy} onClick={() => void handoff([row.id]).catch(() => undefined)}>В закупку</button>
+        : null,
+    },
   ];
   const allColumns: DataColumn<RequestRow>[] = [
     ...baseColumns,
@@ -563,7 +574,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       render: (row) => (
         <>
           {row.status === "Новый" && canHandoff && <button className="secondary small row-action" disabled={busy} onClick={() => void handoff([row.id]).catch(() => undefined)}>В закупку</button>}
-          {row.status === "В работе" && canHandoff && <button className="secondary small row-action" disabled={busy} onClick={() => void handoff([row.id], true).catch(() => undefined)}>Повторно в закупку</button>}
+          {row.status === "В работе" && canRetransfer && <button className="secondary small row-action" disabled={busy} onClick={() => void handoff([row.id], true).catch(() => undefined)}>Повторно в закупку</button>}
         </>
       ),
     },
