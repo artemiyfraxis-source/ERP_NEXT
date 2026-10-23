@@ -800,6 +800,448 @@ const STO_NEW_SCENES: Record<string, () => Scene> = {
   }),
 };
 
+// ── рисунки «в точку» под строки СТО без стандартного рисунка: один рисунок — один критерий (владелец 23.10) ────────
+const FIB = "#b8ad92", AMBER = "#b9894a", PCB = "#2f6b57";
+const dash = (x1: number, y1: number, x2: number, y2: number, color: string) => line(x1, y1, x2, y2, color, 0.8, ' stroke-dasharray="3 2"');
+/** Стрелка усилия (зелёная — норма). */
+const force = (x1: number, y1: number, x2: number, y2: number, color = GREEN) => arrow(x1, y1, x2, y2, color);
+const OWN_SCENES: Record<string, () => Scene> = {
+  // 4.1.7 Коаксиал: жила вровень с диэлектриком
+  coaxCoreOffset: () => {
+    const base = jacket(4, 28, 34, 18) + braid(28, 42, 34, 14) + ins(42, 74, 34, 12, "#f4f4f2");
+    return {
+      ok: base + rect(72, 31, 2.5, 6, CU, ` stroke="${CU_LO}" stroke-width=".4"`) + dash(74, 14, 74, 54, GREEN) + text(58, 62, "жила вровень", GREEN),
+      ng: base + cond(74, 94, 34, 4) + dash(74, 14, 74, 54, RED) + mark(86, 34, 12, 8) + text(58, 62, "жила выступает", RED),
+    };
+  },
+  // 4.1.20 Рукав: оплавленный торец с открытым просветом / заплавленный
+  sleeveMeltClosed: () => ({
+    ok: circle(58, 34, 24, TUBE, E, 0.8) + circle(58, 34, 15, "#fff", E, 0.7) + circle(58, 34, 20, "none", "#6d757c", 1.4) + text(58, 67, "просвет открыт", GREEN),
+    ng: path("M58,10 C74,8 84,20 82,34 C84,48 72,60 58,58 C42,61 32,48 34,34 C32,20 44,12 58,10 z", TUBE, E, 0.8) + circle(58, 34, 4, "#fff", E, 0.5) +
+      mark(58, 34, 12, 12) + text(58, 67, "торец заплавлен", RED),
+  }),
+  // 4.2.9 Провод с волокнистым покровом: нити не торчат / торчат
+  fiberLoose: () => {
+    const hairs = [[72, 29, 86, 24], [74, 31, 90, 30], [73, 36, 89, 40], [71, 39, 84, 45], [75, 34, 92, 34]]
+      .map(([a, b, c, d]) => path(`M${a},${b} Q${(a + c) / 2},${b - 2} ${c},${d}`, "none", FIB, 1)).join("");
+    return {
+      ok: ins(4, 74, 34, 14, FIB) + cond(74, 104, 34, 5) + text(58, 60, "покров закреплён", GREEN),
+      ng: ins(4, 74, 34, 14, FIB) + cond(74, 104, 34, 5) + hairs + mark(82, 34, 14, 14) + dim(74, 90, 14, "> 1 мм", RED) + text(58, 62, "нити торчат", RED),
+    };
+  },
+  // 4.2.12 Частичное стягивание: остаток изоляции сдвинут на L
+  partialStrip: () => ({
+    ok: ins(4, 38) + cond(38, 60, 34, 6) + ins(60, 76, 34, 12) + cond(76, 106, 34, 6) + dim(38, 60, 20, "L", GREEN) + text(58, 58, "сдвиг на L", GREEN),
+    ng: ins(4, 38) + cond(38, 82, 34, 6) + ins(82, 96, 34, 12) + cond(96, 108, 34, 6) + dim(38, 82, 20, "≠ L", RED) + mark(88, 34, 10, 11) + text(58, 58, "сдвиг не на L", RED),
+  }),
+  // 4.2.18 Экран кабеля: срез оплётки ровный / проволоки за зоной разделки
+  shieldWiresOut: () => {
+    const base = jacket(4, 32, 34, 18) + braid(32, 54, 34, 14);
+    return {
+      ok: base + ins(54, 78, 34, 8, "#f4f4f2") + cond(78, 104, 34, 4) + text(58, 60, "срез ровный", GREEN),
+      ng: base + ins(54, 78, 34, 8, "#f4f4f2") + cond(78, 104, 34, 4) + path("M52,28 L72,26 M53,30 L80,31 M52,40 L76,44 M54,38 L70,37", "none", "#8d9297", 1) +
+        mark(66, 34, 16, 14) + text(58, 62, "проволоки за срезом", RED),
+    };
+  },
+  // 4.2.19 Расстояние L от среза экрана до торца изоляции жилы
+  shieldToCore: () => {
+    const base = jacket(4, 28, 34, 18) + braid(28, 46, 34, 14);
+    return {
+      ok: base + ins(46, 74, 34, 9, "#f4f4f2") + cond(74, 104, 34, 4) + dim(46, 74, 20, "L", GREEN) + text(58, 60, "L в допуске", GREEN),
+      ng: base + ins(46, 96, 34, 9, "#f4f4f2") + cond(96, 108, 34, 4) + dim(46, 96, 20, "L", RED) + mark(84, 34, 14, 9) + text(58, 60, "L больше нормы", RED),
+    };
+  },
+  // 4.2.20 Внешняя волокнистая оплётка кабеля: под бандажом / распущена
+  outerBraidFree: () => {
+    const fibre = (x2: number) => rect(34, 25, x2 - 34, 18, FIB, ` stroke="${E}" stroke-width=".6"`) +
+      Array.from({ length: Math.floor((x2 - 34) / 4) }, (_, i) => line(36 + i * 4, 25, 38 + i * 4, 43, "#8f8567", 0.6)).join("");
+    return {
+      ok: jacket(4, 34, 34, 16) + fibre(80) + rect(72, 23, 8, 22, "#2a2e33", ` rx="1.5"`) + cond(80, 106, 34, 5) + text(58, 60, "под бандажом", GREEN),
+      ng: jacket(4, 34, 34, 16) + fibre(72) + path("M72,27 L90,20 M72,31 L96,28 M72,35 L94,38 M72,40 L88,48 M72,43 L82,52", "none", FIB, 1.4) + cond(76, 106, 34, 5) +
+        mark(84, 34, 16, 17) + text(58, 62, "оплётка распущена", RED),
+    };
+  },
+  // 4.2.25 Экран пары: фольга цела до среза / порвана
+  pairFoilTorn: () => {
+    const wires = rect(34, 29, 70, 5, "#1a73e8", ` rx="2"`) + rect(34, 36, 70, 5, "#f2a60d", ` rx="2"`);
+    const foil = (x1: number, x2: number) => rect(x1, 24, x2 - x1, 20, "#e3e8ec", ` stroke="${TIN_LO}" stroke-width=".7"`) + line(x1 + 2, 27, x2 - 2, 27, "#fff", 1.2);
+    return {
+      ok: jacket(4, 34, 34, 20) + wires + foil(34, 72) + text(58, 60, "фольга цела", GREEN),
+      ng: jacket(4, 34, 34, 20) + wires + foil(34, 46) + foil(62, 72) + path("M46,24 L50,30 L47,36 L51,44 M62,24 L58,31 L61,37 L57,44", "none", TIN_LO, 0.9) + mark(54, 34, 11, 14) + text(58, 60, "фольга порвана", RED),
+    };
+  },
+  // 4.2.34 Коаксиал: срез оплётки ровный / ступенькой
+  braidCutEven: () => {
+    const head = jacket(4, 30, 34, 18);
+    const strands = (ends: number[]) => ends.map((x, i) => line(30, 27.5 + i * 2.6, x, 27.5 + i * 2.6, "#8d9297", 2.2)).join("");
+    return {
+      ok: head + rect(30, 26, 22, 16, "#e2e5e8", ` stroke="${E}" stroke-width=".5"`) + ins(52, 80, 34, 9, "#f4f4f2") + cond(80, 106, 34, 4) + line(52, 25, 52, 43, GREEN, 0.9) + text(58, 60, "срез ровный", GREEN),
+      ng: head + strands([52, 62, 46, 66, 54, 60]) + ins(60, 84, 34, 9, "#f4f4f2") + cond(84, 106, 34, 4) + mark(56, 34, 14, 12) + text(58, 60, "пряди разной длины", RED),
+    };
+  },
+  // 4.3.1 Контакт, матрица и жила согласованы
+  matchTrio: () => {
+    const tile = (x: number, title: string, value: string, color: string) =>
+      rect(x, 14, 32, 30, "#fff", ` rx="3" stroke="${color}" stroke-width="1.2"`) + text(x + 16, 24, title, MUTED, 6.5, "middle", 600) + text(x + 16, 38, value, color, 9, "middle", 700);
+    return {
+      ok: tile(4, "Контакт", "0,5", GREEN) + tile(42, "Матрица", "0,5", GREEN) + tile(80, "Жила", "0,5", GREEN) + text(58, 62, "комплект подобран", GREEN),
+      ng: tile(4, "Контакт", "0,5", MUTED) + tile(42, "Матрица", "1,5", RED) + tile(80, "Жила", "0,5", MUTED) + line(44, 18, 70, 40, RED, 1.3) + line(70, 18, 44, 40, RED, 1.3) + text(58, 62, "матрица не та", RED),
+    };
+  },
+  // 4.3.30 Обжим наконечника ТМЛ: размер по граням S в пределах ДИ
+  tmlGeom: () => {
+    const lug = (h: number) => ins(2, 22) + cond(22, 38, 34, 6) + rect(30, 34 - h / 2, 62, h, TIN, ` rx="2" stroke="${E}" stroke-width=".8"`) + rect(46, 34 - h / 2 - 1, 22, h + 2, TIN_LO, ` rx="1" opacity=".7"`);
+    return {
+      ok: lug(18) + vdim(100, 25, 43, "S", GREEN) + text(58, 62, "S по таблице матриц", GREEN),
+      ng: lug(26) + vdim(100, 21, 47, "S", RED) + mark(57, 34, 14, 17) + text(58, 62, "S вне таблицы", RED),
+    };
+  },
+  // 4.3.38 Гильза коаксиала: размер HEX по граням в пределах ДИ (штангенциркуль)
+  hexFlats: () => {
+    const view = (r: number, color: string, label: string) => {
+      const half = r * 0.866;
+      return hexSection(46, 32, r, "ok") + rect(46 - half - 5, 14, 3, 36, "#4a525a", ` rx="1"`) + rect(46 + half + 2, 14, 3, 36, "#4a525a", ` rx="1"`) +
+        dim(46 - half - 3, 46 + half + 3, 11, label, color);
+    };
+    return { ok: view(18, GREEN, "HEX по ДИ"), ng: view(23, RED, "HEX > ДИ") };
+  },
+  // 4.3.45 Колпачок: жилы до упора, обжим по центру
+  capStop: () => {
+    const cap = (strandsTo: number, crimpX: number) => ins(2, 40, 34, 12) + rect(40, 23, 60, 22, "#eef1f3", ` rx="7" stroke="${TIN_LO}" stroke-width="1"`) +
+      cond(36, strandsTo, 34, 11) + rect(crimpX, 21, 8, 26, TIN_LO, ` rx="1" opacity=".8"`);
+    return {
+      ok: cap(94, 62) + text(58, 62, "до упора, обжим по центру", GREEN),
+      ng: cap(62, 44) + rect(63, 29, 32, 10, "#fff", ` stroke="${RED}" stroke-dasharray="2 2"`) + mark(76, 34, 20, 13) + text(58, 62, "не до упора, обжим у края", RED),
+    };
+  },
+  // 4.3.50 Микроразъём: оплётка под обжимом / проволоки наружу
+  mhfBraidOut: () => {
+    const body = ins(4, 38, 34, 7, "#3f474d") + rect(38, 27, 16, 14, TIN, ` rx="1.5" stroke="${E}" stroke-width=".7"`) + line(40, 31, 52, 31, TIN_HI, 1) +
+      rect(54, 25, 30, 18, TIN, ` rx="2" stroke="${E}" stroke-width=".8"`) + circle(75, 34, 5, "#f4f4f2", E, 0.6) + circle(75, 34, 1.6, CU, CU_LO, 0.3);
+    return {
+      ok: body + text(58, 60, "оплётка под обжимом", GREEN),
+      ng: body + path("M38,28 L30,20 M40,27 L36,16 M38,41 L30,49 M41,42 L38,52", "none", "#8d9297", 1.2) + mark(36, 34, 12, 20) + text(58, 62, "проволоки наружу", RED),
+    };
+  },
+  // 4.4.2.9 Зазор C между изоляцией и пайкой
+  bareGapC: () => ({
+    ok: cup(56) + ins(4, 46) + cond(46, 94, 34, 5) + dim(46, 58, 20, "C", GREEN) + text(58, 60, "C в пределах", GREEN),
+    ng: cup(56) + ins(4, 26) + cond(26, 94, 34, 5) + dim(26, 56, 20, "C", RED) + mark(40, 34, 15, 8) + text(58, 60, "голая жила длинная", RED),
+  }),
+  // 4.4.2.11 Пайка необлужённой жилы
+  untinnedSolder: () => ({
+    ok: cup(56) + ins(4, 42) + tinned(42, 94, 34, 5) + path("M56,29 Q58,31 54,31 L54,37 Q58,37 56,39 z", SOLDER, TIN_LO, 0.5) + text(58, 60, "жила облужена", GREEN),
+    ng: cup(56) + ins(4, 42) + cond(42, 94, 34, 5) + circle(60, 29, 2.6, SOLDER, TIN_LO, 0.5) + circle(66, 40, 2.2, SOLDER, TIN_LO, 0.5) + mark(64, 34, 18, 9) + text(58, 60, "медь, припой не взял", RED),
+  }),
+  // 4.4.2.12 Чашка: не более трёх проводов (вид с торца)
+  cupCount: () => {
+    const cupEnd = circle(58, 32, 20, TIN, E, 0.8) + circle(58, 32, 15, "#7e8a91", TIN_LO, 0.6);
+    const w = (x: number, y: number) => circle(x, y, 4.2, CU, CU_LO, 0.5) + circle(x, y, 2.2, CU_HI, "none", 0);
+    return {
+      ok: cupEnd + w(52, 36) + w(64, 36) + w(58, 27) + text(58, 66, "три провода", GREEN),
+      ng: cupEnd + w(50, 38) + w(61, 40) + w(66, 29) + w(55, 28) + w(46, 29) + w(58, 33) + mark(58, 32, 22) + text(58, 66, "больше трёх", RED),
+    };
+  },
+  // 4.4.2.14 Галтель: гладкая / трещина от смещения провода при кристаллизации
+  solderCrack: () => ({
+    ok: cup(56) + ins(4, 42) + cond(42, 94, 34, 5) + path("M56,29.5 Q56,32 51,32 L51,36 Q56,36 56,38.5 z", SOLDER, TIN_LO, 0.5) + text(58, 60, "галтель гладкая", GREEN),
+    ng: cup(56) + `<g transform="rotate(-7 56 34)">${ins(4, 42) + cond(42, 94, 34, 5)}</g>` + path("M56,29.5 Q56,32 51,32 L51,36 Q56,36 56,38.5 z", SOLDER, TIN_LO, 0.5) +
+      path("M53,29 L51,33 L54,36 L52,40", "none", RED, 1.3) + mark(53, 34, 9, 10) + text(58, 60, "трещина в галтели", RED),
+  }),
+  // 4.4.2.17 Остатки флюса вокруг паяного соединения
+  fluxJoint: () => {
+    const joint = cup(56) + ins(4, 42) + cond(42, 94, 34, 5) + path("M56,29.5 Q56,32 51,32 L51,36 Q56,36 56,38.5 z", SOLDER, TIN_LO, 0.5);
+    return {
+      ok: joint + text(58, 60, "вокруг чисто", GREEN),
+      ng: joint + [[50, 22], [66, 20], [84, 22], [48, 46], [70, 48], [88, 46], [58, 52]].map(([x, y]) => `<ellipse cx="${x}" cy="${y}" rx="5" ry="2.6" fill="${AMBER}" opacity=".75"/>`).join("") +
+        mark(68, 34, 30, 22) + text(58, 66, "янтарные остатки флюса", RED),
+    };
+  },
+  // 4.4.2.18 Контактная часть штыря: чистая / капля припоя и флюс
+  pinSolderDrop: () => {
+    const pin = rect(4, 24, 40, 20, TIN, ` rx="2" stroke="${E}" stroke-width=".8"`) + rect(44, 31, 56, 6, TIN_HI, ` stroke="${E}" stroke-width=".7"`) + path("M100,31 L108,34 L100,37 z", TIN_HI, E, 0.6);
+    return {
+      ok: pin + text(58, 58, "контактная часть чистая", GREEN),
+      ng: pin + circle(70, 29, 5, SOLDER, TIN_LO, 0.7) + `<ellipse cx="86" cy="36" rx="7" ry="3" fill="${AMBER}" opacity=".8"/>` + mark(78, 32, 18, 10) + text(58, 58, "припой и флюс на штыре", RED),
+    };
+  },
+  // 4.4.3.2 LEMO: повив чашки целый / одна проволочка к соседней чашке
+  lemoStray: () => {
+    const ring = (cx: number) => circle(cx, 32, 16, TIN, E, 0.8) + circle(cx, 32, 10, "#7e8a91", TIN_LO, 0.5) +
+      Array.from({ length: 10 }, (_, i) => circle(cx + 7 * Math.cos((i / 10) * 2 * Math.PI), 32 + 7 * Math.sin((i / 10) * 2 * Math.PI), 1.7, CU, CU_LO, 0.4)).join("");
+    return {
+      ok: ring(30) + ring(86) + text(58, 66, "повив внутри чашки", GREEN),
+      ng: ring(30) + ring(86) + path("M36,30 Q54,20 76,28", "none", CU, 1.4) + mark(56, 26, 20, 8) + text(58, 66, "проволочка к соседней", RED),
+    };
+  },
+  // 4.4.3.8 Плата USB-C: резистор CC на площадках / пустые площадки
+  usbcCc: () => {
+    const board = rect(30, 6, 80, 46, PCB, ` rx="3" stroke="#1d4a3b" stroke-width=".8"`) + rect(4, 22, 30, 24, TIN, ` rx="9" stroke="${E}" stroke-width=".8"`) + rect(10, 30, 18, 8, "#2b3136", ` rx="3"`);
+    const pads = rect(60, 28, 9, 12, TIN_HI, ` stroke="#1d4a3b" stroke-width=".4"`) + rect(78, 28, 9, 12, TIN_HI, ` stroke="#1d4a3b" stroke-width=".4"`);
+    return {
+      ok: board + pads + rect(64, 29, 18, 10, "#2b3136", ` rx="1.5"`) + rect(64, 29, 4, 10, SOLDER) + rect(78, 29, 4, 10, SOLDER) + text(76, 47, "CC", "#d8e8e0", 7, "middle", 700) + text(58, 64, "резистор на месте", GREEN),
+      ng: board + pads + mark(73, 34, 18, 10) + text(76, 47, "CC", "#d8e8e0", 7, "middle", 700) + text(58, 64, "площадки пустые", RED),
+    };
+  },
+  // 4.4.3.10 Чашка контакта XT: провод до конца / голая медь над чашкой
+  xtCup: () => ({
+    ok: cup(50) + ins(4, 48, 34, 12) + cond(48, 88, 34, 5) + text(58, 60, "изоляция у чашки", GREEN),
+    ng: cup(50) + ins(4, 26, 34, 12) + cond(26, 88, 34, 5) + dim(26, 50, 20, "> 1,5 мм", RED) + mark(38, 34, 13, 8) + text(58, 60, "голая медь над чашкой", RED),
+  }),
+  // 4.4.3.14 Наконечник: припой только в хвостовике / поднялся по жиле
+  lugWick: () => {
+    const lug = rect(52, 28, 28, 12, TIN, ` stroke="${E}" stroke-width=".7"`) + circle(98, 34, 13, TIN, E, 0.8) + circle(98, 34, 5, "#fff", E, 0.6) + rect(80, 31, 6, 6, TIN, ` stroke="${E}" stroke-width=".5"`);
+    return {
+      ok: ins(4, 42, 34, 12) + cond(42, 54, 34, 6) + lug + text(58, 60, "жила гибкая", GREEN),
+      ng: ins(4, 24, 34, 12) + tinEnd(24, 54, 34, 6) + lug + dim(24, 52, 20, "припой на жиле", RED) + mark(38, 34, 15, 8) + text(58, 60, "жила жёсткая", RED),
+    };
+  },
+  // 4.4.3.17 «Крокодил»: губки свободны / залиты припоем
+  crocClamp: () => {
+    const jaws = ins(4, 40, 34, 10) + rect(38, 24, 16, 20, TIN_LO, ` rx="2" stroke="${E}" stroke-width=".7"`) +
+      path("M54,24 L104,29 L104,33 L58,33 z", TIN, E, 0.7) + path("M54,44 L104,39 L104,35 L58,35 z", TIN, E, 0.7) +
+      path("M70,30.5 l3,2 l3,-2 l3,2 l3,-2 l3,2 l3,-2 M70,37.5 l3,-2 l3,2 l3,-2 l3,2 l3,-2 l3,2", "none", TIN_LO, 0.6);
+    return {
+      ok: jaws + text(58, 60, "губки свободно смыкаются", GREEN),
+      ng: jaws + path("M56,31 C66,22 94,24 102,31 L102,37 C94,46 66,46 56,37 z", SOLDER, TIN_LO, 0.8) + mark(80, 34, 26, 12) + text(58, 60, "губки залиты припоем", RED),
+    };
+  },
+  // 4.4.4.1 Сросток: жилы скручены перед пайкой / встык
+  spliceMech: () => ({
+    ok: ins(4, 30) + ins(86, 112) + cond(30, 86, 34, 5) + path("M34,31 L40,37 L46,31 L52,37 L58,31 L64,37 L70,31 L76,37 L82,31", "none", CU_LO, 1) +
+      rect(34, 30, 48, 8, SOLDER, ` rx="4" opacity=".65"`) + text(58, 58, "жилы скручены", GREEN),
+    ng: ins(4, 30) + ins(86, 112) + cond(30, 52, 34, 5) + cond(64, 86, 34, 5) + path("M48,34 C48,24 68,24 68,34 C68,42 48,42 48,34 z", SOLDER, TIN_LO, 0.8) + mark(58, 34, 14, 12) + text(58, 58, "жилы встык, без скрутки", RED),
+  }),
+  // 4.4.4.3 Сросток: трубка надета до пайки / лежит отдельно
+  tubeBefore: () => {
+    const joint = ins(4, 56) + cond(56, 76, 34, 5) + ins(76, 112) + path("M60,34 C60,26 74,26 74,34 C74,41 60,41 62,34 z", SOLDER, TIN_LO, 0.8);
+    return {
+      ok: joint + tube(10, 40, 34, 15) + text(58, 60, "трубка уже на проводе", GREEN),
+      ng: joint + tube(18, 56, 53, 12) + arrow(38, 46, 38, 41, RED) + dash(22, 42, 52, 42, RED) + mark(66, 34, 12, 10) + text(58, 68, "трубка лежит отдельно", RED),
+    };
+  },
+  // 4.4.4.6 Бандаж экранов: число и ширина по КД
+  shieldBand: () => {
+    const tails = (n: number, spread: number) => Array.from({ length: n }, (_, i) => path(`M36,34 Q58,${34 + (i - (n - 1) / 2) * spread} 90,34`, "none", TIN_LO, 1.4)).join("");
+    return {
+      ok: jacket(4, 36, 34, 20) + tails(3, 4) + rect(62, 26, 7, 16, "#2a2e33", ` rx="1.5"`) + dim(62, 69, 18, "по КД", GREEN) + text(58, 60, "3 экрана, бандаж узкий", GREEN),
+      ng: jacket(4, 36, 34, 20) + tails(6, 5) + rect(56, 19, 18, 30, "#2a2e33", ` rx="1.5"`) + dim(56, 74, 12, "шире КД", RED) + mark(65, 34, 13, 17) + text(58, 63, "6 экранов, бандаж шире", RED),
+    };
+  },
+  // 4.4.4.7 Бандаж экранов: лужёная проволока / изолента
+  shieldBandMat: () => {
+    const tails = [-4, 0, 4].map((d) => path(`M36,34 Q58,${34 + d} 92,34`, "none", TIN_LO, 1.4)).join("");
+    return {
+      ok: jacket(4, 36, 34, 20) + tails + rect(58, 26, 14, 16, SOLDER, ` rx="2" stroke="${TIN_LO}" stroke-width=".7"`) +
+        Array.from({ length: 6 }, (_, i) => line(60 + i * 2.2, 26, 60 + i * 2.2, 42, TIN_LO, 0.6)).join("") + text(58, 60, "лужёная проволока", GREEN),
+      ng: jacket(4, 36, 34, 20) + tails + rect(58, 24, 14, 20, "#1b1f23", ` rx="3"`) + line(60, 28, 70, 28, "#6d757c", 1) + mark(65, 34, 12, 14) + text(58, 60, "изолента вместо проволоки", RED),
+    };
+  },
+  // 4.4.5.8 Угловой контакт: жила стоит в чашке / торец жилы упёрся в стенку корпуса
+  cxAngleWall: () => {
+    const box = path("M32,6 L106,6 L106,54 L32,54", "#eef1f3", TIN_LO, 1.2) + circle(76, 34, 9, TIN, E, 0.7) + circle(76, 34, 4, "#7e8a91", E, 0.4);
+    return {
+      ok: box + ins(4, 34, 34, 10) + cond(32, 68, 34, 4) + dash(32, 34, 68, 34, GREEN) + text(70, 64, "жила в центре чашки", GREEN, 7.5),
+      ng: box + ins(4, 34, 34, 10) + path("M32,34 L50,34 L70,10", "none", CU, 4) + circle(70, 9, 2.4, CU_HI, CU_LO, 0.4) + mark(70, 12, 9, 7) + text(70, 64, "торец жилы на стенке", RED, 7.5),
+    };
+  },
+  // 4.5.6 Экран не заходит под изоляционную трубку
+  shieldUnderTube: () => {
+    const core = ins(46, 98, 34, 9, "#f4f4f2") + cond(98, 110, 34, 4);
+    const under = `<g opacity=".85">${tube(48, 86, 34, 17)}</g>`;
+    return {
+      ok: jacket(4, 28, 34, 18) + braid(28, 42, 34, 14) + core + under + text(58, 60, "оплётка до трубки", GREEN),
+      ng: jacket(4, 28, 34, 18) + core + under + braid(28, 62, 34, 14) + path("M48,28 L66,27 M48,40 L64,42", "none", "#c9ced2", 1.1) + mark(58, 34, 14, 13) + text(58, 60, "оплётка под трубкой", RED),
+    };
+  },
+  // 4.5.10 Трубка надета до монтажа разъёма / пропущена
+  tubeMissing: () => {
+    const conn = ins(4, 72) + housing(70, 20, 38, 28) + cond(66, 72, 34, 4);
+    return {
+      ok: conn + tube(14, 48, 34, 14) + text(58, 60, "трубка надета до монтажа", GREEN),
+      ng: conn + rect(14, 26, 34, 16, "none", ` rx="3" stroke="${RED}" stroke-dasharray="3 2" stroke-width="1.2"`) + text(31, 37.5, "?", RED, 11, "middle", 700) + text(58, 60, "разъём собран, трубки нет", RED),
+    };
+  },
+  // 4.5.14 Коаксиал с прижимом: гильза, гайка, шайба надеты по порядку / гильзы нет
+  coaxPartsMissing: () => {
+    const nut = rect(52, 24, 12, 20, TIN, ` rx="1" stroke="${TIN_LO}" stroke-width=".8"`) + line(58, 24, 58, 44, TIN_LO, 0.6);
+    const washer = rect(68, 26, 4, 16, TIN_HI, ` stroke="${TIN_LO}" stroke-width=".7"`) + rect(75, 28, 7, 12, TUBE, ` rx="1.5"`);
+    const cable = jacket(4, 112, 34, 12);
+    return {
+      ok: cable + hexSleeve(30, 48) + nut + washer + text(58, 60, "детали по порядку", GREEN),
+      ng: cable + rect(30, 23, 18, 22, "none", ` rx="3" stroke="${RED}" stroke-dasharray="3 2" stroke-width="1.2"`) + nut + washer + text(39, 38, "?", RED, 11, "middle", 700) + text(58, 60, "гильзы нет", RED),
+    };
+  },
+  // 4.5.17 Лента без клеевого слоя: проклейка через 3–5 витков / витки расходятся
+  tapeNoGlue: () => {
+    const turns = (xs: number[]) => xs.map((x) => path(`M${x},24 L${x + 7},44 L${x + 13},44 L${x + 6},24 z`, "#e8e2c8", "#a69f84", 0.6)).join("");
+    return {
+      ok: ins(4, 112, 34, 14) + turns([30, 36, 42, 48, 54]) + rect(70, 24, 6, 20, "#d9a035", ` rx="1.5"`) + text(58, 60, "проклейка в конце намотки", GREEN),
+      ng: ins(4, 112, 34, 14) + turns([30, 42, 54, 66]) + path("M80,26 C92,16 100,24 94,32", "none", "#e8e2c8", 2.4) + mark(60, 34, 34, 14) + text(58, 60, "витки без клея расходятся", RED),
+    };
+  },
+  // 4.5.24 Колпачок: до упора / на половине, сползает
+  capHalf: () => ({
+    ok: ins(4, 50, 34, 12) + cond(50, 62, 34, 6) + rect(46, 24, 56, 20, "#d85a4a", ` rx="7" stroke="${E}" stroke-width=".7"`) + text(58, 60, "до упора на изоляцию", GREEN),
+    ng: ins(4, 50, 34, 12) + cond(50, 82, 34, 6) + rect(70, 24, 38, 20, "#d85a4a", ` rx="7" stroke="${E}" stroke-width=".7"`) + dim(50, 70, 18, "голая жила", RED) + arrow(60, 52, 78, 52, RED) + mark(60, 34, 12, 9) + text(58, 66, "сидит на половине", RED),
+  }),
+  // 4.6.2 Маркер на проводе у разъёма: есть / пропущен
+  markMissing: () => {
+    const conn = flagWire() + housing(82, 20, 28, 28);
+    return {
+      ok: conn + markTube(34, 66, { text: "X1" }) + text(58, 62, "маркер на проводе", GREEN),
+      ng: conn + rect(34, 26.5, 32, 15, "none", ` rx="3" stroke="${RED}" stroke-dasharray="3 2" stroke-width="1.2"`) + text(50, 38, "?", RED, 11, "middle", 700) + text(58, 62, "маркера нет", RED),
+    };
+  },
+  // 4.6.6 Бирки в пучке: все читаются в одну сторону / одна перевёрнута
+  tagsOrient: () => {
+    const wire = [8, 14].map((y) => line(4, y, 112, y, INS, 5)).join("");
+    const tag = (x: number, label: string, flip: boolean, ink = E) =>
+      line(x + 14, 16, x + 14, 26, "#2a2e33", 1.2) + (flip ? `<g transform="rotate(180 ${x + 14} 38)">` : "") + rect(x, 26, 28, 24, LABEL, ` rx="2" stroke="${LABEL_E}" stroke-width=".7"`) +
+      text(x + 14, 42, label, ink, 9, "middle", 700) + (flip ? "</g>" : "");
+    return {
+      ok: wire + tag(8, "W1", false) + tag(44, "W2", false) + tag(80, "W3", false) + text(58, 64, "все в одну сторону", GREEN),
+      ng: wire + tag(8, "W1", false) + tag(44, "W2", true, RED) + tag(80, "W3", false) + mark(58, 38, 20, 16) + text(58, 64, "одна бирка перевёрнута", RED),
+    };
+  },
+  // 4.7.1 Соединитель: расконсервирован / в плёнке и смазке
+  connGrease: () => {
+    const conn = housing(30, 16, 56, 32) + [42, 56, 70].map((x) => circle(x, 32, 4, "#2b3136", E, 0.5)).join("");
+    return {
+      ok: conn + text(58, 62, "чистый, без смазки", GREEN),
+      ng: conn + rect(26, 12, 64, 40, "#cfe4f2", ` rx="5" opacity=".6" stroke="#8fb4cc" stroke-width=".8"`) + path("M34,20 l10,6 M60,16 l-6,12 M76,44 l-10,-8", "none", "#fff", 1.2) +
+        `<ellipse cx="48" cy="38" rx="7" ry="3" fill="${AMBER}" opacity=".8"/>` + mark(58, 32, 34, 22) + text(58, 64, "в плёнке и смазке", RED),
+    };
+  },
+  // 4.7.2 Детали кожуха надеты на кабель до заделки / лежат рядом
+  shellPartsMissing: () => {
+    const contact = rect(88, 30, 20, 8, TIN, ` rx="1" stroke="${E}" stroke-width=".6"`);
+    const shell = rect(14, 22, 14, 24, "#9fa7ad", ` rx="2" stroke="${E}" stroke-width=".7"`) + rect(30, 24, 22, 20, "#b8c0c6", ` rx="2" stroke="${E}" stroke-width=".7"`);
+    return {
+      ok: ins(4, 84) + shell + contact + text(58, 62, "кожух надет до заделки", GREEN),
+      ng: ins(4, 84) + contact + `<g transform="translate(34 24)">${rect(0, 0, 14, 20, "#9fa7ad", ` rx="2" stroke="${E}" stroke-width=".7"`) + rect(16, 2, 22, 16, "#b8c0c6", ` rx="2" stroke="${E}" stroke-width=".7"`)}</g>` +
+        arrow(70, 52, 90, 40, RED) + mark(66, 34, 24, 8) + text(58, 14, "контакты заделаны", RED, 7.5),
+    };
+  },
+  // 4.7.4 Проверка потягиванием: контакт держится / вышел из корпуса
+  pullTest: () => ({
+    ok: ins(2, 40, 34, 10) + rect(38, 31, 30, 6, TIN, ` stroke="${E}" stroke-width=".6"`) + housing(52, 18, 48, 32) + rect(52, 31, 36, 6, TIN, ` opacity=".85" stroke="${E}" stroke-width=".6"`) +
+      force(30, 56, 6, 56) + text(58, 64, "5–10 Н, контакт держит", GREEN, 7.5),
+    ng: ins(2, 20, 34, 10) + rect(18, 31, 30, 6, TIN, ` stroke="${E}" stroke-width=".6"`) + housing(52, 18, 48, 32) + force(30, 56, 6, 56, RED) +
+      mark(50, 34, 12, 10) + text(58, 64, "контакт вышел из корпуса", RED, 7.5),
+  }),
+  // 4.7.21 Вилка RJ в разрезе: фиксатор на оболочке / на жилах
+  rjClamp: () => {
+    const plug = rect(40, 12, 66, 44, "#e9f1f5", ` rx="3" stroke="#8fa0a8" stroke-width=".9"`);
+    const cores = (x: number) => ["#1a73e8", "#f2a60d", "#188038", "#8d6e63"].map((c, i) => line(x, 28 + i * 4, 102, 28 + i * 4, c, 2)).join("");
+    return {
+      ok: plug + jacket(4, 58, 34, 20) + cores(58) + rect(44, 12, 8, 44, "#2a2e33", ` rx="1"`) + text(58, 66, "фиксатор на оболочке", GREEN),
+      ng: plug + jacket(4, 40, 34, 20) + cores(40) + rect(44, 12, 8, 44, "#2a2e33", ` rx="1"`) + mark(48, 34, 9, 20) + text(58, 66, "фиксатор на жилах", RED),
+    };
+  },
+  // 4.7.22 Экранированная вилка: дренаж касается экрана вилки / не достаёт
+  rjShieldDrain: () => {
+    const shell = rect(54, 16, 50, 36, TIN, ` rx="2" stroke="${E}" stroke-width=".8"`) + line(58, 20, 100, 20, TIN_HI, 1.2);
+    const cable = jacket(4, 38, 34, 22) + rect(38, 26, 10, 16, "#e3e8ec", ` stroke="${TIN_LO}" stroke-width=".6"`);
+    return {
+      ok: cable + shell + path("M48,28 Q52,22 62,24", "none", TIN_LO, 1.6) + circle(62, 24, 2.4, SOLDER, TIN_LO, 0.5) + text(58, 64, "дренаж на экране вилки", GREEN),
+      ng: cable + shell + path("M48,28 Q50,22 52,23", "none", TIN_LO, 1.6) + mark(54, 24, 8, 8) + text(58, 64, "дренаж не доходит", RED),
+    };
+  },
+  // 4.8.4 Корпус коаксиального разъёма в разрезе: проволока экрана на диэлектрике
+  cxBraidInside: () => {
+    const body = jacket(4, 28, 34, 18) + rect(28, 14, 76, 40, "#eef1f3", ` rx="2" stroke="${TIN_LO}" stroke-width="1"`) + rect(54, 24, 32, 20, "#f4f4f2", ` stroke="${E}" stroke-width=".6"`) + cond(30, 100, 34, 3.4);
+    return {
+      ok: body + path("M28,22 L50,22", "none", "#8d9297", 1.4) + text(58, 64, "диэлектрик чист", GREEN),
+      ng: body + path("M28,24 Q48,20 62,28 Q70,33 74,34", "none", "#8d9297", 1.4) + mark(66, 30, 12, 8) + text(58, 64, "проволока на диэлектрике", RED),
+    };
+  },
+  // 4.8.10 Угловой разъём: крышка садится / наплыв припоя поднимает крышку
+  cxAngleCover: () => {
+    const base = ins(4, 30, 34, 10) + rect(30, 26, 62, 26, TIN_LO, ` rx="2" stroke="${E}" stroke-width=".8"`) + circle(52, 34, 5, SOLDER, TIN_LO, 0.5);
+    return {
+      ok: base + rect(30, 18, 62, 8, TIN, ` rx="2" stroke="${E}" stroke-width=".8"`) + text(58, 64, "крышка села", GREEN),
+      ng: base + circle(56, 27, 6, SOLDER, TIN_LO, 0.7) + `<g transform="rotate(-9 30 24)">${rect(30, 14, 62, 8, TIN, ` rx="2" stroke="${E}" stroke-width=".8"`)}</g>` + mark(60, 24, 12, 9) + text(58, 64, "наплыв, крышка не села", RED, 7.5),
+    };
+  },
+  // 4.8.15 Прижимной разъём: оплётка под зажимным кольцом / выступает за кольцо
+  braidBeyondRing: () => {
+    const ring = rect(52, 20, 16, 28, TIN, ` rx="2" stroke="${E}" stroke-width=".8"`) + line(60, 20, 60, 48, TIN_LO, 0.6);
+    const cable = jacket(4, 30, 34, 16) + ins(70, 100, 34, 9, "#f4f4f2") + cond(100, 112, 34, 4);
+    return {
+      ok: cable + braid(30, 56, 34, 14) + ring + text(58, 62, "оплётка под кольцом", GREEN),
+      ng: cable + braid(30, 80, 34, 14) + ring + path("M70,28 L82,25 M70,40 L82,43", "none", "#8d9297", 1) + mark(76, 34, 12, 12) + text(58, 62, "оплётка за кольцом", RED),
+    };
+  },
+  // 4.9.9 Торец гофры: гладкий / острые кромки
+  corrSharp: () => {
+    const corr = (x2: number) => rect(4, 22, x2 - 4, 24, "#2f3337", ` rx="4"`) + [10, 22, 34, 46, 58, 70, 82].filter((x) => x < x2 - 4).map((x) => line(x, 22, x, 46, "#555d63", 1.2)).join("");
+    return {
+      ok: corr(94) + path("M94,22 Q100,34 94,46", "none", "#555d63", 1) + text(58, 62, "торец гладкий", GREEN),
+      ng: corr(90) + path("M90,22 L100,25 L92,28 L102,32 L92,35 L101,39 L92,42 L99,46 L90,46 z", "#2f3337", RED, 0.8) + mark(94, 34, 12, 16) + text(58, 62, "острые кромки на торце", RED),
+    };
+  },
+  // 4.10.3 Шаг свивки больше нормы
+  twistLoose: () => ({
+    ok: ins(4, 20, 34, 18, "#3f474d") + twistRun(20, [14, 14, 14, 14, 14, 14]) + dim(20, 34, 18, "P", GREEN) + text(58, 60, "шаг по КД", GREEN),
+    ng: ins(4, 20, 34, 18, "#3f474d") + twistRun(20, [38, 38]) + dim(20, 58, 18, "P больше нормы", RED) + mark(56, 34, 30, 11) + text(58, 60, "свивка рыхлая", RED),
+  }),
+  // 4.10.4 Провод закручен вокруг собственной оси: метка идёт прямо / по спирали
+  axisTwist: () => ({
+    ok: ins(4, 112, 34, 14) + line(6, 34, 110, 34, "#1a73e8", 2.4) + text(58, 60, "метка идёт прямо", GREEN),
+    ng: ins(4, 112, 34, 14) + Array.from({ length: 8 }, (_, i) => line(10 + i * 13, 28, 18 + i * 13, 40, "#1a73e8", 2.4)).join("") + mark(58, 34, 40, 11) + text(58, 60, "метка идёт по спирали", RED),
+  }),
+  // 4.11.1 Лист сопровождения: отметки приёмки пайки и прозвонки до заливки / нет отметок
+  sealBeforeAccept: () => {
+    const check = (y: number, color: string) => path(`M42,${y} l3,3 l6,-7`, "none", color, 1.6);
+    const row = (y: number, label: string, done: boolean, color: string) =>
+      rect(40, y - 5, 10, 10, "#fff", ` stroke="${color}" stroke-width="1"`) + (done ? check(y, color) : "") + text(56, y + 3, label, E, 7.5, "start");
+    const sheet = rect(26, 3, 68, 57, "#fff", ` rx="2" stroke="${LABEL_E}" stroke-width=".8"`);
+    return {
+      ok: sheet + row(16, "Пайка", true, GREEN) + row(30, "Прозвонка", true, GREEN) + row(44, "Заливка", false, MUTED) + text(58, 68, "приёмка до заливки", GREEN),
+      ng: sheet + row(16, "Пайка", false, RED) + row(30, "Прозвонка", false, RED) + row(44, "Заливка", true, RED) + mark(58, 22, 24, 14) + text(58, 68, "заливка без приёмки", RED),
+    };
+  },
+  // 4.11.15 Окно времени после плазмы: операция в окне / окно превышено
+  plasmaWindow: () => {
+    const cx = 58, cy = 32, r = 24;
+    const pt = (deg: number, rr: number) => `${(cx + rr * Math.sin((deg * Math.PI) / 180)).toFixed(1)},${(cy - rr * Math.cos((deg * Math.PI) / 180)).toFixed(1)}`;
+    const face = (hand: number, color: string) => circle(cx, cy, r, "#fff", E, 0.9) + path(`M${cx},${cy} L${pt(0, r - 2)} A${r - 2},${r - 2} 0 0 1 ${pt(120, r - 2)} z`, "#cfe7d7", "none", 0) +
+      line(cx, cy, +pt(hand, r - 5).split(",")[0], +pt(hand, r - 5).split(",")[1], color, 1.8) + circle(cx, cy, 2, color, "none", 0);
+    return {
+      ok: face(70, GREEN) + text(100, 14, "окно", GREEN, 7.5) + text(58, 66, "в окне после плазмы", GREEN, 7.5),
+      ng: face(200, RED) + mark(cx, cy, r + 3) + text(100, 14, "окно", MUTED, 7.5) + text(58, 66, "окно времени превышено", RED, 7.5),
+    };
+  },
+  // 4.11.24 УЗ-сварка: жилы лежат параллельно / перекрещены перед сонотродом
+  weldCross: () => {
+    const colors = ["#1a73e8", "#d93025", "#188038", "#f2a60d"];
+    const tool = rect(58, 8, 36, 10, "#8d9297", ` rx="2" stroke="${E}" stroke-width=".7"`) + rect(58, 52, 36, 8, "#8d9297", ` rx="2" stroke="${E}" stroke-width=".7"`);
+    const wire = (i: number, d: string) => path(d, "none", colors[i], 3.2);
+    return {
+      ok: tool + colors.map((_, i) => wire(i, `M4,${24 + i * 5.5} L100,${24 + i * 5.5}`)).join("") + text(58, 68, "жилы параллельно", GREEN),
+      ng: tool + wire(0, "M4,24 L100,24") + wire(1, "M4,29.5 C30,29.5 42,35.5 62,35.5 L100,35.5") + wire(2, "M4,35.5 C30,35.5 42,29.5 62,29.5 L100,29.5") + wire(3, "M4,41 L100,41") +
+        mark(40, 32.5, 12, 9) + text(58, 68, "жилы перекрещены", RED),
+    };
+  },
+  // 4.12.1 Жила в хвостовике: прямая / сложена вдвое без указания в КД
+  foldUnauth: () => {
+    const barrel = rect(52, 22, 34, 24, TIN, ` rx="2" stroke="${E}" stroke-width=".8"`);
+    return {
+      ok: ins(4, 34, 34, 12) + cond(34, 74, 34, 6) + barrel + text(58, 62, "жила не сложена", GREEN),
+      ng: ins(4, 34, 34, 12) + path("M34,30 L76,30 Q84,34 76,38 L34,38", "none", CU, 2.4) + barrel.replace(TIN, "#d8dde0") + mark(70, 34, 18, 14) + text(58, 62, "сложена вдвое без КД", RED),
+    };
+  },
+  // 4.12.6 Сложенная часть жилы: медь / облужена или спаяна
+  foldTinned: () => {
+    const fold = (fill: string, edge: string) => path("M34,30 L76,30 Q84,34 76,38 L34,38", "none", edge, 5.2) + path("M34,30 L76,30 Q84,34 76,38 L34,38", "none", fill, 3.2);
+    return {
+      ok: ins(4, 34, 34, 12) + fold(CU, CU_LO) + text(58, 62, "сложенная часть — медь", GREEN),
+      ng: ins(4, 34, 34, 12) + fold(SOLDER, TIN_LO) + circle(78, 34, 4.5, SOLDER, TIN_LO, 0.6) + mark(60, 34, 24, 10) + text(58, 62, "сложенная часть облужена", RED),
+    };
+  },
+};
+
 const SCENES: Record<string, () => Scene> = {
   nick: () => ({
     ok: W.ins() + W.bare(),
@@ -1241,6 +1683,7 @@ const SCENES: Record<string, () => Scene> = {
   ...MARK_AUTO_SCENES,
   ...COAX_SCENES,
   ...STO_NEW_SCENES,
+  ...OWN_SCENES,
   generic: () => ({ ok: "", ng: "" }),
 };
 
@@ -1464,10 +1907,15 @@ export function defectGroupCode(code: string, groupTitle: string): string {
   return kind && defectContext(code) === "mark" ? `MARK:${kind}` : code;
 }
 
+/** Код строки СТО в начале названия пункта дефекта («4.3.14 Высота обжима…» → «4.3.14»); нет — "". */
+export function stoRowCode(name: string): string {
+  return /^(\d+\.\d+(?:\.\d+)+)\s/.exec(String(name || ""))?.[1] ?? "";
+}
+
 /** Какой рисунок библиотеки подходит дефекту; «generic» — подходящего нет. */
 export function defectSceneId(name: string, note = "", code = ""): string {
   // Пункт СТО («4.3.14 Высота обжима…»): рисунок по коду строки СТО, а не по словам названия.
-  const sto = STO_SCENES[/^(\d+\.\d+(?:\.\d+)+)\s/.exec(name)?.[1] ?? ""];
+  const sto = STO_SCENES[stoRowCode(name)];
   if (sto && sto in SCENES) return sto;
   const ctx = defectContext(code);
   for (const source of [name, note]) {

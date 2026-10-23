@@ -50,3 +50,4 @@
 - [УПД scan learning](upd-scan-learning.md) — review Алексей's scans vs accepted lots, turn misses into parser rules; per-supplier corrections planned
 - [Owner can't open artifacts](owner-cant-open-artifacts.md) — no Claude Docs/artifacts for him: docs as Markdown in repo docs/ + GitHub link
 - [Verify Витя's requests](vitya-requests-verify.md) — check each of Витя's edits against code and prod usage before building; risky ones to the owner first
+- [ГОСТ Р 72182 series](gost-72182-series.md) — 23.10 «Соединения без пайки» parts .2/.3/.4/.6/.7/.9 downloaded outside git (ERP-norms), verified maps; open: СТО fixes, US_WELD/IDC templates, ETK pictures

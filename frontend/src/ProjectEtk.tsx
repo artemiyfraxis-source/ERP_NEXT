@@ -19,7 +19,8 @@ import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes
 import { etkConfigOp, etkPfArt } from "./etkPfArt";
 import { etkDocOperations, etkTitle, harnessPins, navSub, opCode } from "./etkDocOps";
 import { EtkRouteDiagram } from "./EtkRouteDiagram";
-import { defectArt, defectGroupCode, defectOperationCode } from "./etkDefectArt";
+import { defectGroupCode, defectOperationCode } from "./etkDefectArt";
+import { DefectPicture, useStdFigures } from "./EtkStdFigure";
 import { ETK_TOOLING_SECTIONS, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
@@ -405,7 +406,7 @@ export function DefectsView({ text, code, number, alwaysOpen = false }: { text: 
       {parsed.groups.map((group, index) => <div className="etk-def-group" key={`${group.title}:${index}`}>
         {group.title && <div className="tr-sec-h">{group.title}</div>}
         <div className="etk-def-grid">{group.items.map((item, position) => <div className="etk-def" key={`${item.name}:${position}`}>
-          <span className="etk-def-pic" dangerouslySetInnerHTML={{ __html: defectArt(item.name, item.text, defectGroupCode(code, group.title)) }} />
+          <DefectPicture className="etk-def-pic" name={item.name} note={item.text} code={defectGroupCode(code, group.title)} />
           <div><b>{item.name}</b><small>{item.text}</small></div>
         </div>)}</div>
       </div>)}
@@ -693,6 +694,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
   /** Откуда брать эскизы; по умолчанию раздел техкарт. Монтажнику экран «Мои задания» даёт свой источник. */
   sketchSource?: EtkSketchSource;
 }) {
+  const stdFigures = useStdFigures();
   const source: EtkSketchSource = sketchSource ?? {
     list: () => techcardsApi.sketches(card.id),
     url: (operationKey, at) => techcardsApi.sketchUrl(card.id, operationKey, at),
@@ -736,7 +738,8 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     <div className="etk-top">
       <div className="etk-title">{title ?? <strong>{card.project} · {card.item_index}</strong>}
         <span className="muted">{countLabel(list.length, ["операция", "операции", "операций"])} · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
-      {list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, sketchLinks(), serial))}>Печать / PDF</button>}
+      {list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, sketchLinks(), serial,
+        stdFigures ? { index: stdFigures, base: window.location.origin } : null))}>Печать / PDF</button>}
       {canGenerate && onRebuild && <button className="secondary small" onClick={onRebuild}>Пересобрать</button>}
       {canEdit && !issued && card.document && <button className="primary small" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}
     </div>
