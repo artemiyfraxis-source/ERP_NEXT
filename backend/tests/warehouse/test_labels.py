@@ -1,6 +1,7 @@
-"""GRN label layout, Code128 and the TSPL job, ported from Roller_Buyer
+"""GRN label: the built-in templates drawn by the one renderer, Code128 and the TSPL job, ported from Roller_Buyer
 `apps/api/src/test/labels.test.ts` with its vectors; the byte vectors of the TSPL job and Code128 were produced by
-Roller_Buyer's own builder for the same input."""
+Roller_Buyer's own builder for the same input. Since 23.10.2026 the layout is a template (`labels/defaults.py`), the
+designer's templates are covered by test_label_templates.py."""
 
 from dataclasses import replace
 from datetime import date
@@ -9,17 +10,11 @@ import pytest
 from PIL import Image
 
 from app.modules.warehouse.labels.code128 import code128_modules, encode_code128
-from app.modules.warehouse.labels.layout import (
-    QR_DOTS_PER_MODULE,
-    GrnLabelData,
-    LabelOptions,
-    build_grn_label,
-    label_png,
-    qr_symbol,
-    render_label,
-)
+from app.modules.warehouse.labels.layout import QR_DOTS_PER_MODULE, GrnLabelData, label_png, qr_symbol
 from app.modules.warehouse.labels.settings import DEFAULT_PRINT_SETTINGS, LABEL_SIZES, PrintSettings
+from app.modules.warehouse.labels.template import lot_content
 from app.modules.warehouse.labels.tspl import TsplOptions, build_tspl_job, pack_for_tspl
+from app.modules.warehouse.labels_application import render_builtin
 
 SAMPLE = GrnLabelData(
     grn="26.0000001",
@@ -33,9 +28,6 @@ SAMPLE = GrnLabelData(
     warehouse="ЦАР",
 )
 
-BOTH = LabelOptions(code_type="both")
-LOW = LabelOptions(height_mm=30)  # the old 58 × 30 label
-
 # Roller_Buyer encodeCode128('FRX.26.0000041').
 RB_FRX_BARS = [
     2, 1, 1, 2, 1, 4, 1, 3, 2, 3, 1, 1, 2, 3, 1, 1, 3, 1, 3, 3, 1, 1, 2, 1, 1, 2, 2, 2, 3, 1, 2, 2, 3, 2, 1, 1, 2, 2,
@@ -44,16 +36,20 @@ RB_FRX_BARS = [
 ]
 
 
+def builtin(data: GrnLabelData, **settings):
+    return render_builtin(lot_content(data), PrintSettings(**settings))
+
+
 def test_canvas_is_one_to_one_with_the_printer_resolution():
-    label = build_grn_label(SAMPLE)
+    label = builtin(SAMPLE)
     # The default 58 × 40 mm at 300 dpi — 11.81 dots per mm.
     assert (label.width, label.height) == (685, 472)
     assert label.image.size == (685, 472) and label.image.mode == "1"
-    assert build_grn_label(SAMPLE, LOW).image.size == (685, 354)
+    assert builtin(SAMPLE, height_mm=30).image.size == (685, 354)
 
 
 def test_qr_is_a_whole_number_of_dots_per_module():
-    label = build_grn_label(SAMPLE, LabelOptions(code_type="qr"))
+    label = builtin(SAMPLE, code_type="qr")
     # A fractional module would give uneven cells and scanner misses.
     assert label.qr_module_dots == QR_DOTS_PER_MODULE == 6
     # Ten characters of the alphanumeric set — version 1, 21 modules.
@@ -62,7 +58,7 @@ def test_qr_is_a_whole_number_of_dots_per_module():
 
 
 def test_the_label_says_what_the_storekeeper_reads_by_eye():
-    texts = build_grn_label(replace(SAMPLE, item_name=SAMPLE.item_name + " для проверки переноса на вторую строку")).texts
+    texts = builtin(replace(SAMPLE, item_name=SAMPLE.item_name + " для проверки переноса на вторую строку")).texts
     # Cyrillic «ГРН», never Latin «GRN»; then the number, the quantity with the unit.
     assert texts[:3] == ("ГРН", "26.0000001", "25 м")
     assert "GRN" not in texts
@@ -75,35 +71,31 @@ def test_the_label_says_what_the_storekeeper_reads_by_eye():
 
 
 def test_a_name_that_already_carries_the_article_is_not_doubled():
-    texts = build_grn_label(GrnLabelData("FRX.26.0000001", "510210200", "Molex 510210200 PicoBlade", "5", "шт", "", None)).texts
+    texts = builtin(GrnLabelData("FRX.26.0000001", "510210200", "Molex 510210200 PicoBlade", "5", "шт", "", None)).texts
     assert texts == ("ГРН", "FRX.26.0000001", "5 шт", "Molex 510210200 PicoBlade")  # no place, no date, no article
 
 
 def test_a_short_name_stays_on_one_line_and_the_place_is_empty_before_putaway():
-    texts = build_grn_label(GrnLabelData("FRX.26.0000001", "A-1", "Разъём", "5", "шт", "", date(2026, 9, 25), "", "ЦАР")).texts
+    texts = builtin(GrnLabelData("FRX.26.0000001", "A-1", "Разъём", "5", "шт", "", date(2026, 9, 25), "", "ЦАР")).texts
     assert texts[3:] == ("Разъём", "A-1", "ЦАР", "поступило 25.09.2026")
 
 
-def test_the_series_does_not_ride_on_the_date_line_when_it_does_not_fit():
-    data = GrnLabelData("FRX.26.0000001", "", "Разъём", "5", "шт", "очень-длинная-серия-изготовителя-2026", date(2026, 9, 25))
-    assert build_grn_label(data).texts[-1] == "поступило 25.09.2026"
+def test_a_series_too_long_for_the_date_line_is_cut_and_the_date_stays():
+    data = GrnLabelData("FRX.26.0000001", "", "Разъём", "5", "шт", "очень-длинная-серия-изготовителя-2026-года-партия", date(2026, 9, 25))
+    last = builtin(data).texts[-1]
+    assert last.startswith("поступило 25.09.2026") and last.endswith("…")
 
 
-def test_a_low_label_58x30_still_fits_and_drops_the_article_before_the_name():
+def test_a_low_label_58x30_fits_without_the_article():
     long = GrnLabelData("FRX.26.0000041", "510210200", "Соединитель PicoBlade 2pin (MOLEX) в корпусе", "338", "шт", "12/2026",
                         date(2026, 9, 25), "1F4", "ЦАР")
-    for options in (LOW, LabelOptions(height_mm=30, code_type="both")):
-        label = build_grn_label(long, options)
-        assert label.image.size == (685, 354)
-        assert "510210200" not in label.texts, "the article goes first"
+    for code_type in ("qr", "both"):
+        label = builtin(long, height_mm=30, code_type=code_type)
+        assert label.image.size == (685, 354) and not label.overflow
+        assert "510210200" not in label.texts, "the low label has no article line"
         assert "1F4 · ЦАР" in label.texts and label.texts[-1].startswith("поступило 25.09.2026")
     # Where it has room (58 × 40) the article is there.
-    assert "510210200" in build_grn_label(long).texts
-
-
-def test_the_name_is_the_last_to_go_on_a_low_label():
-    label = build_grn_label(SAMPLE, LabelOptions(height_mm=30, code_type="both"))
-    assert label.texts[3].startswith("Провод МГТФ") and "TSRSLT-001" not in label.texts
+    assert "510210200" in builtin(long).texts
 
 
 def test_code128_start_b_checksum_stop_and_whole_dot_modules():
@@ -114,11 +106,11 @@ def test_code128_start_b_checksum_stop_and_whole_dot_modules():
     assert bars[-7:] == [2, 3, 3, 1, 1, 1, 2], "stop"
     assert encode_code128("FRX.26.0000041") == RB_FRX_BARS
 
-    label = build_grn_label(SAMPLE, BOTH)
+    label = builtin(SAMPLE, code_type="both")
     assert label.bar_module_dots == 3, "a quarter millimetre at 300 dpi"
     assert label.qr_module_dots == 6
     # At 203 dpi the same size has fewer dots, the modules stay whole.
-    small = build_grn_label(SAMPLE, LabelOptions(dpi=203, code_type="both"))
+    small = builtin(SAMPLE, dpi=203, code_type="both")
     assert small.width == 464
     assert small.bar_module_dots == 2
     assert isinstance(small.qr_module_dots, int)
@@ -128,11 +120,12 @@ def test_code128_refuses_cyrillic_and_the_label_falls_back_to_qr_alone():
     with pytest.raises(ValueError, match="Code128 B не кодирует"):
         encode_code128("ФРХ.26.0000001")
     cyrillic = GrnLabelData("ФРХ.26.0000001", "", "Разъём", "1", "шт", "", None)
-    with pytest.raises(ValueError):
-        build_grn_label(cyrillic, BOTH)
-    label = render_label(cyrillic, PrintSettings(code_type="both"))
-    assert (label.width, label.height) == (685, 472)
-    assert label.bar_module_dots is None and label.qr_module_dots == 6
+    for code_type in ("both", "code128"):
+        label = builtin(cyrillic, code_type=code_type)
+        assert (label.width, label.height) == (685, 472)
+        assert label.bar_module_dots is None and not label.skipped
+        # 25 modules in UTF-8 bytes: the built-in QR box gives them 5 whole dots each.
+        assert (label.qr_modules, label.qr_module_dots) == (25, 5)
 
 
 def test_qr_keeps_level_m_latin_alphanumeric_and_cyrillic_as_utf8_bytes():
@@ -145,24 +138,25 @@ def test_qr_keeps_level_m_latin_alphanumeric_and_cyrillic_as_utf8_bytes():
 
 @pytest.mark.parametrize("grn", ["FRX.26.0000041", "FRX.26.0000041-2", "ФРХ.26.0000041-П2", "R&D.26.0000001"])
 @pytest.mark.parametrize("code_type", ["both", "qr", "code128"])
-def test_every_code_type_renders_long_names_without_exceptions(grn, code_type):
+@pytest.mark.parametrize("width, height", LABEL_SIZES)
+def test_every_code_type_renders_long_names_without_exceptions(grn, code_type, width, height):
     data = GrnLabelData(grn, "X" * 300, "Очень длинное наименование " * 20, "123456.789", "шт", "серия " * 40, date(2026, 10, 1))
-    label = render_label(data, PrintSettings(code_type=code_type))
-    assert label.image.size == (685, 472)
+    label = builtin(data, code_type=code_type, width_mm=width, height_mm=height)
+    assert label.image.size == (round(width * 300 / 25.4), round(height * 300 / 25.4))
     assert label_png(label).startswith(b"\x89PNG")
 
 
 def test_the_default_code_is_the_qr_alone_and_code128_stays_an_option():
-    default = render_label(SAMPLE, DEFAULT_PRINT_SETTINGS)
+    default = render_builtin(lot_content(SAMPLE), DEFAULT_PRINT_SETTINGS)
     assert default.qr_module_dots == 6 and default.bar_module_dots is None
-    both = render_label(SAMPLE, PrintSettings(code_type="both"))
+    both = builtin(SAMPLE, code_type="both")
     assert both.qr_module_dots == 6 and both.bar_module_dots == 3
-    only = render_label(SAMPLE, PrintSettings(code_type="code128"))
+    only = builtin(SAMPLE, code_type="code128")
     assert only.qr_module_dots is None and only.bar_module_dots == 3
 
 
 def test_the_place_and_warehouse_are_on_the_label():
-    texts = build_grn_label(GrnLabelData("FRX.26.0000001", "X", "Y", "1", "шт", "", None, "1F4", "ЦАР")).texts
+    texts = builtin(GrnLabelData("FRX.26.0000001", "X", "Y", "1", "шт", "", None, "1F4", "ЦАР")).texts
     assert "1F4 · ЦАР" in texts
 
 
@@ -192,7 +186,7 @@ def test_a_tiny_job_is_byte_for_byte_roller_buyers():
 
 
 def test_the_job_carries_size_gap_and_the_whole_raster():
-    raster = build_grn_label(SAMPLE, LOW).image
+    raster = builtin(SAMPLE, height_mm=30).image
     job = build_tspl_job(raster, TsplOptions(gap_mm=3, copies=2, width_mm=58, height_mm=30.5))
     text = job.decode("latin-1")
     assert "SIZE 58 mm,30.5 mm" in text
@@ -243,7 +237,7 @@ WIDE = GrnLabelData(
 
 @pytest.mark.parametrize("code_type", ["qr", "both", "code128"])
 def test_wide_label_is_100_by_50_with_every_field(code_type):
-    label = render_label(WIDE, PrintSettings(width_mm=100, height_mm=50, code_type=code_type))
+    label = builtin(WIDE, width_mm=100, height_mm=50, code_type=code_type)
     assert (label.width, label.height) == (1181, 591) and label.image.mode == "1"
     texts = label.texts
     assert texts[:3] == ("ГРН", "FRX.26.0000041-12", "338 шт")
@@ -252,17 +246,18 @@ def test_wide_label_is_100_by_50_with_every_field(code_type):
     assert texts[-3:] == ("510210200", "1F4 · ЦАР", "поступило 25.09.2026 · серия 12/2026")
     assert label.qr_module_dots == (None if code_type == "code128" else 12)
     assert label.bar_module_dots == (None if code_type == "qr" else 3)
+    assert not label.overflow
 
 
 def test_wide_label_stays_inside_its_margins_and_the_qr_does_not_meet_the_bars():
-    label = render_label(WIDE, PrintSettings(width_mm=100, height_mm=50, code_type="both"))
+    label = builtin(WIDE, width_mm=100, height_mm=50, code_type="both")
     left, top, right, bottom = Image.eval(label.image.convert("L"), lambda v: 255 - v).getbbox()
     assert left >= 11 and top >= 11 and right <= label.width - 11 and bottom <= label.height - 11
 
 
 def test_wide_label_cuts_a_very_long_name_at_three_lines_and_skips_empty_fields():
     data = GrnLabelData("FRX.26.0000041", "X1", "Очень длинное наименование " * 20, "1", "шт", "", None)
-    texts = render_label(data, PrintSettings(width_mm=100, height_mm=50, code_type="both")).texts
+    texts = builtin(data, width_mm=100, height_mm=50, code_type="both").texts
     name_lines = [text for text in texts[3:] if text != "X1"]
     assert len(name_lines) == 3 and name_lines[-1].endswith("…")
     assert not any(text.startswith("поступило") for text in texts)
@@ -270,6 +265,6 @@ def test_wide_label_cuts_a_very_long_name_at_three_lines_and_skips_empty_fields(
 
 def test_narrow_labels_keep_their_layouts():
     for height, expected in ((30, 354), (40, 472)):
-        label = render_label(SAMPLE, PrintSettings(width_mm=58, height_mm=height))
+        label = builtin(SAMPLE, width_mm=58, height_mm=height)
         assert (label.width, label.height) == (685, expected)
         assert label.texts[0] == "ГРН" and label.qr_module_dots is not None

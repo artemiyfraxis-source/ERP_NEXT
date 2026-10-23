@@ -11,14 +11,22 @@ The print agent of the warehouse PC (owner 22.10.2026; the TSC MB341 is on USB t
   TSPL already ends with `PRINT <copies>,1`, the bytes go to the printer once.
 - `POST /api/stock/labels/agent/jobs/{id}/result` `{ok, error}` → `{ok: true}`; 404 — no such job, 409 — its result
   is already in (a retry after a lost answer: drop the job).
-`GET /api/stock/labels/agent/status` (warehouse view) — the agent's last call and the queue, for «Оборудование»."""
+`GET /api/stock/labels/agent/status` (warehouse view) — the agent's last call and the queue, for «Оборудование».
+
+The label designer (owner 23.10.2026), kind = «lot» | «intake», format = «58x30» | «58x40» | «100x50»:
+- `GET /api/stock/labels/templates/{kind}` (view) → the fields of the kind and the template of every format;
+- `PUT /api/stock/labels/templates/{kind}/{format}` (edit) `{template, version|null}` → saved; 409 — stale version;
+- `DELETE /api/stock/labels/templates/{kind}/{format}` (edit) → back to the built-in template;
+- `POST /api/stock/labels/templates/{kind}/{format}/preview` (edit — every POST of the warehouse takes edit)
+  `{template, sample}` → image/png.
+Every print and preview draws the template of its kind in the settings' current format (labels_application.py)."""
 
 from __future__ import annotations
 
 import base64
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security
@@ -33,7 +41,9 @@ from app.shared.http_auth import (
 from .api import warehouse_uow_factory
 from .application import UnitOfWork
 from .label_jobs import JobFinished, agent_status, claim, report
+from .label_templates import StaleTemplate
 from .labels.settings import CODE_TYPE_LABELS, PrintSettings
+from .labels.template import FORMATS, TEMPLATE_KINDS, lot_content
 from .labels_application import (
     COPIES_MAX,
     SAMPLE,
@@ -41,8 +51,12 @@ from .labels_application import (
     label_settings,
     lot_label_data,
     preview_png,
+    preview_template_png,
     print_label,
+    reset_label_template,
     save_label_settings,
+    save_label_template,
+    templates_view,
 )
 
 AGENT_SCOPE = "labels:print"
@@ -126,7 +140,7 @@ def printers(_principal: Annotated[Principal, Depends(warehouse_view_principal)]
 
 @router.get("/labels/sample.png")
 def sample_png(_principal: Annotated[Principal, Depends(warehouse_view_principal)], uow_factory: UowFactory) -> Response:
-    return _png(_rendered(lambda: preview_png(SAMPLE, label_settings(uow_factory()))))
+    return _png(_rendered(lambda: preview_png(uow_factory(), lot_content(SAMPLE), label_settings(uow_factory()))))
 
 
 @router.post("/labels/test")
@@ -136,7 +150,7 @@ def test_print(
     uow_factory: UowFactory,
 ) -> dict:
     return _rendered(lambda: print_label(
-        uow_factory(), SAMPLE, label_settings(uow_factory()), 1, now, kind="sample", lot_id=None,
+        uow_factory(), lot_content(SAMPLE), label_settings(uow_factory()), 1, now, kind="sample", lot_id=None,
         created_by=principal.actor.name,
     )).as_dict()
 
@@ -159,7 +173,8 @@ def lot_label_png(
     _principal: Annotated[Principal, Depends(warehouse_view_principal)],
     uow_factory: UowFactory,
 ) -> Response:
-    return _png(_rendered(lambda: preview_png(lot_label_data(uow_factory(), lot_id), label_settings(uow_factory()))))
+    return _png(_rendered(lambda: preview_png(
+        uow_factory(), lot_content(lot_label_data(uow_factory(), lot_id)), label_settings(uow_factory()))))
 
 
 @router.post("/batches/{lot_id}/label")
@@ -173,9 +188,105 @@ def print_lot_label(
     """`{copies}` → `{status: queued, reason, file, copies, job_id}`: the job waits for the agent of the warehouse PC."""
     copies = (payload or PrintPayload()).copies
     return _rendered(lambda: print_label(
-        uow_factory(), lot_label_data(uow_factory(), lot_id), label_settings(uow_factory()), copies, now,
+        uow_factory(), lot_content(lot_label_data(uow_factory(), lot_id)), label_settings(uow_factory()), copies, now,
         kind="lot", lot_id=lot_id, created_by=principal.actor.name,
     )).as_dict()
+
+
+# --- The label designer's templates (owner 23.10.2026) ------------------------------------------------------------
+
+
+class TemplatePayload(BaseModel):
+    template: Any = None  # checked by `parse_template`, so the 422 speaks Russian
+    version: int | None = None
+
+
+class PreviewPayload(BaseModel):
+    template: Any = None
+    sample: str | None = None  # a lot's id for kind «lot»; null — the sample label
+
+
+def _kind_format(kind: str, label_format: str | None = None) -> None:
+    if kind not in TEMPLATE_KINDS:
+        raise HTTPException(status_code=404, detail=f"Нет такого вида этикетки: «{kind}» (есть «lot», «intake»)")
+    if label_format is not None and label_format not in FORMATS:
+        raise HTTPException(status_code=404, detail=f"Нет такого формата этикетки: «{label_format}» (есть {', '.join(FORMATS)})")
+
+
+def _designed(operation):
+    try:
+        return operation()
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=error.args[0]) from error
+    except StaleTemplate as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:  # TemplateError, or a code does not fit its element
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.get("/labels/templates/{kind}")
+def get_templates(
+    kind: str, _principal: Annotated[Principal, Depends(warehouse_view_principal)], uow_factory: UowFactory,
+) -> dict:
+    """`{kind, kind_label, fields: [{key, label}], formats: {"58x30"|"58x40"|"100x50": {template, is_default, version,
+    width_mm, height_mm, updated_at, updated_by}}, current_format, code_type}`."""
+    _kind_format(kind)
+    return templates_view(uow_factory(), kind, label_settings(uow_factory()))
+
+
+@router.put("/labels/templates/{kind}/{label_format}")
+def put_template(
+    kind: str,
+    label_format: str,
+    payload: TemplatePayload,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: UowFactory,
+) -> dict:
+    """`{template, version}` (the version loaded, null — over the built-in one) → the saved `{template, is_default:
+    false, version, …}`; 409 — saved or reset by someone since; 422 — not a valid template (Russian)."""
+    _kind_format(kind, label_format)
+    return _designed(lambda: save_label_template(
+        uow_factory(), kind, label_format, payload.template, payload.version, label_settings(uow_factory()),
+        principal.actor, now,
+    ))
+
+
+@router.delete("/labels/templates/{kind}/{label_format}")
+def delete_template(
+    kind: str,
+    label_format: str,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: UowFactory,
+) -> dict:
+    """Back to the built-in template → `{template, is_default: true, version: null, …}`."""
+    _kind_format(kind, label_format)
+    return reset_label_template(uow_factory(), kind, label_format, label_settings(uow_factory()), principal.actor, now)
+
+
+@router.post("/labels/templates/{kind}/{label_format}/preview")
+def preview_template(
+    kind: str,
+    label_format: str,
+    payload: PreviewPayload,
+    _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    uow_factory: UowFactory,
+) -> Response:
+    """The unsaved template as image/png, dot for dot what would print (the format's size, the settings' dpi)."""
+    _kind_format(kind, label_format)
+
+    def content():
+        if kind != "lot" or not payload.sample:
+            return None  # the sample label of the kind
+        try:
+            lot_id = UUID(payload.sample)
+        except ValueError as error:
+            raise KeyError("Партия не найдена") from error
+        return lot_content(lot_label_data(uow_factory(), lot_id))
+
+    return _png(_designed(lambda: preview_template_png(
+        payload.template, kind, label_format, label_settings(uow_factory()), content())))
 
 
 @router.post("/labels/agent/claim")
