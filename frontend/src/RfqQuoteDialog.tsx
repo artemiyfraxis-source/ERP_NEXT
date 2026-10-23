@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { failureText } from "./api";
 import {
   rfqApi,
@@ -6,14 +6,14 @@ import {
   type RfqLine,
   type RfqMatrix,
   type RfqSupplier,
-  type SupplierBrief,
 } from "./purchasingRfqApi";
-import { decimalInput, Dialog, localToday, quantity } from "./rfqUi";
+import { decimalInput, localToday, quantity } from "./rfqUi";
 import { RfqQuoteImport, type ImportResult } from "./RfqQuoteImport";
 
-/** «КП от поставщика» (Roller_Buyer QuoteEntryPanel): the header — supplier, received, «Номер КП», valid until,
- *  delivery, minimum order, note — and a row per request line asked of him: price, VAT, MOQ, pack, price breaks
- *  «500: 90; 1000: 80», lead time, in stock, can't supply, analog. A row left empty is not offered. */
+/** «Внести КП» (Roller_Buyer QuoteEntryPanel): a list under the request's matrix, not a window (Витя via the owner,
+ *  23.10). The header — the supplier picked from those in the request, received, «Номер КП», valid until, delivery,
+ *  minimum order, note — the drop zone for the supplier's PDF, and a row per request line asked of him: price, VAT, MOQ,
+ *  pack, price breaks «500: 90; 1000: 80», lead time, in stock, can't supply, analog. A row left empty is not offered. */
 
 type QuoteRowState = {
   price: string; vat_included: boolean; vat_rate: string; moq: string; pack: string; lead: string;
@@ -39,22 +39,32 @@ export function parseTiers(text: string): { from: string; price: string }[] | nu
 }
 
 /** The lines asked of a supplier (all of them for a supplier not in the request yet), cancelled ones left out. */
-export function askedLines(matrix: RfqMatrix, supplier: RfqSupplier | null): RfqLine[] {
+export function askedLines(matrix: RfqMatrix, supplier: RfqSupplier | null | undefined): RfqLine[] {
   const live = matrix.lines.filter((line) => !line.cancelled);
   return supplier?.line_ids ? live.filter((line) => supplier.line_ids?.includes(line.id)) : live;
 }
 
-export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved }: {
-  matrix: RfqMatrix; supplier: RfqSupplier | null; directory?: SupplierBrief[]; onClose: () => void;
-  onSaved: (name: string) => void;
+/** Whom the form opens on: the column it was opened from, else the first who has not answered yet, else the first. */
+export function firstSupplier(matrix: RfqMatrix, wanted: string | null): string {
+  const known = matrix.suppliers.find((item) => item.supplier_id === wanted)
+    ?? matrix.suppliers.find((item) => !item.answered && !item.declined_at)
+    ?? matrix.suppliers[0];
+  return known?.supplier_id ?? "";
+}
+
+export function QuoteEntry({ matrix, supplierId: wanted, onClose, onSaved }: {
+  matrix: RfqMatrix; supplierId: string | null; onClose: () => void; onSaved: (name: string) => void;
 }) {
   const blank = (): QuoteRowState => ({
     price: "", vat_included: true, vat_rate: matrix.settings.default_vat_rate, moq: "", pack: "", lead: "", tiers: "",
     in_stock: false, declined: false, analog: false, analog_note: "",
   });
+  const [supplierId, setSupplierId] = useState(() => firstSupplier(matrix, wanted));
+  const supplier = matrix.suppliers.find((item) => item.supplier_id === supplierId);
   const asked = askedLines(matrix, supplier);
-  const [rows, setRows] = useState<Record<string, QuoteRowState>>(() => Object.fromEntries(asked.map((line) => [line.id, blank()])));
-  const [supplierName, setSupplierName] = useState("");
+  const live = matrix.lines.filter((line) => !line.cancelled);
+  // Every live line has its row: switching the supplier keeps what was typed for the lines both were asked.
+  const [rows, setRows] = useState<Record<string, QuoteRowState>>(() => Object.fromEntries(live.map((line) => [line.id, blank()])));
   const [receivedOn, setReceivedOn] = useState(localToday());
   const [quoteNumber, setQuoteNumber] = useState("");
   const [validUntil, setValidUntil] = useState("");
@@ -68,24 +78,21 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
   const [source, setSource] = useState<"manual" | "paste" | "file">("manual");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLElement>(null);
+  const picker = useRef<HTMLSelectElement>(null);
+
+  // Opened (or re-aimed by another column's «+ КП»): the list is under the matrix — bring it into view.
+  useEffect(() => {
+    if (wanted) setSupplierId(firstSupplier(matrix, wanted));
+    const still = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    box.current?.scrollIntoView?.({ block: "start", behavior: still ? "auto" : "smooth" });
+    picker.current?.focus({ preventScroll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the column asked for moves the form
+  }, [wanted]);
 
   const patch = (lineId: string, change: Partial<QuoteRowState>) =>
-    setRows((current) => ({ ...current, [lineId]: { ...current[lineId], ...change } }));
-
-  /** Who the quote is from: the column it was opened from, else the name typed (request → directory → new). */
-  async function resolveSupplier(): Promise<{ id: string; name: string } | null> {
-    if (supplier) return { id: supplier.supplier_id, name: supplier.name };
-    const name = supplierName.trim().replace(/\s+/g, " ");
-    if (!name) return null;
-    const same = (value: string) => value.trim().toLowerCase() === name.toLowerCase();
-    const inRequest = matrix.suppliers.find((item) => same(item.name));
-    if (inRequest) return { id: inRequest.supplier_id, name: inRequest.name };
-    const known = directory.find((item) => same(item.name));
-    const added = await rfqApi.addSupplier(matrix.rfq.id, known ? { supplier_id: known.supplier_id } : { name });
-    return { id: added.supplier_id, name: added.name };
-  }
-  const knownSupplierId = supplier?.supplier_id
-    ?? matrix.suppliers.find((item) => item.name.trim().toLowerCase() === supplierName.trim().toLowerCase())?.supplier_id;
+    setRows((current) => ({ ...current, [lineId]: { ...(current[lineId] ?? blank()), ...change } }));
+  const rowOf = (lineId: string) => rows[lineId] ?? blank();
 
   /** The reviewed import into the form: rows, the header found in the text, the file to keep, the wordings. */
   function applyImport(result: ImportResult) {
@@ -108,11 +115,14 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
     const notes = [...result.notes];
     if (header?.number) setQuoteNumber(header.number);
     if (header?.valid_until) setValidUntil(header.valid_until);
-    if (header?.inn) {
-      const label = `${header.supplier_name ?? "продавец"}, ИНН ${header.inn}`;
-      if (!supplier && header.supplier_name && !supplierName.trim()) setSupplierName(header.supplier_name);
-      else if (supplier && header.supplier_id !== supplier.supplier_id) {
-        notes.unshift(`В документе поставщик: ${label}. ${header.supplier_id === null ? "В справочнике его нет — добавьте в «Поставщики»" : header.in_request ? "Он есть в этом запросе — внесите КП в его столбец" : "В этом запросе его нет — внесите КП через «Внести КП»"} или проверьте, тот ли это документ.`);
+    if (header?.inn && header.supplier_id !== supplierId) {
+      const inRequest = matrix.suppliers.find((item) => item.supplier_id === header.supplier_id);
+      if (inRequest) {
+        setSupplierId(inRequest.supplier_id);
+        notes.unshift(`Поставщик выбран по ИНН в документе: «${inRequest.name}».`);
+      } else {
+        const label = `${header.supplier_name ?? "продавец"}, ИНН ${header.inn}`;
+        notes.unshift(`В документе поставщик: ${label}. ${header.supplier_id === null ? "В справочнике его нет — добавьте в «Поставщики»" : "В этом запросе его нет — добавьте его в запрос («Добавить поставщика»)"} или проверьте, тот ли это документ.`);
       }
     }
     setImportNotes(notes);
@@ -120,15 +130,19 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
     setSource(result.source);
   }
 
-  const badTiers = asked.filter((line) => !rows[line.id].declined && rows[line.id].tiers.trim() && parseTiers(rows[line.id].tiers) === null);
+  const badTiers = asked.filter((line) => !rowOf(line.id).declined && rowOf(line.id).tiers.trim() && parseTiers(rowOf(line.id).tiers) === null);
 
   async function save() {
+    if (!supplier) {
+      setError("Выберите поставщика");
+      return;
+    }
     if (badTiers.length > 0) {
       setError(`Ступени цены не прочитаны: ${badTiers.map((line) => line.name).join(", ")} — формат «количество: цена; …»`);
       return;
     }
     const lines: QuoteLineInput[] = asked.flatMap((line) => {
-      const row = rows[line.id];
+      const row = rowOf(line.id);
       if (!row.declined && !decimalInput(row.price)) return [];
       return [{
         rfq_line_id: line.id, unit_price: row.declined ? null : decimalInput(row.price), vat_included: row.vat_included,
@@ -145,20 +159,14 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
     setBusy(true);
     setError("");
     try {
-      const who = await resolveSupplier();
-      if (!who) {
-        setError("Укажите поставщика");
-        setBusy(false);
-        return;
-      }
       await rfqApi.addQuote(matrix.rfq.id, {
-        supplier_id: who.id, received_on: receivedOn || null, valid_until: validUntil || null,
+        supplier_id: supplier.supplier_id, received_on: receivedOn || null, valid_until: validUntil || null,
         delivery_cost: decimalInput(delivery) || null, min_order_sum: decimalInput(minOrder) || null, source, lines,
         number: quoteNumber.trim() || null, note: note.trim() || null,
         ...(importFile && source === "file" ? { file_name: importFile.name, file_base64: importFile.base64 } : {}),
         aliases: lines.filter((line) => wording[line.rfq_line_id]).map((line) => ({ rfq_line_id: line.rfq_line_id, text: wording[line.rfq_line_id] })),
       });
-      onSaved(who.name);
+      onSaved(supplier.name);
     } catch (reason) {
       setError(failureText(reason, "КП не сохранено"));
     } finally {
@@ -167,19 +175,26 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
   }
 
   const small: CSSProperties = { width: 80 };
-  const pool = [...matrix.suppliers.map((item) => item.name), ...directory.map((item) => item.name)];
   return (
-    <Dialog title={supplier ? `КП от «${supplier.name}»` : "Внести КП"} wide className="rfq-quote-dialog" onClose={onClose}>
-      <div className="rfq-quote-head">
-        {!supplier && (
-          <label>Поставщик
-            <input aria-label="Поставщик КП" list="rfq-quote-suppliers" value={supplierName} placeholder="Из запроса, справочника или новый"
-              onChange={(event) => setSupplierName(event.target.value)} style={{ width: 260 }} />
-            <datalist id="rfq-quote-suppliers">
-              {[...new Set(pool)].map((name) => <option key={name} value={name} />)}
-            </datalist>
-          </label>
+    <section ref={box} className="rfq-quote-entry" aria-label="Внести КП">
+      <div className="rfq-quote-entry-head">
+        <h3>Внести КП</h3>
+        {supplier && (
+          <span className="muted" style={{ fontSize: 12 }}>
+            {asked.length < live.length ? `у поставщика запрошено позиций: ${asked.length} из ${live.length} — остальные в КП не вносятся` : `позиций: ${asked.length}`}
+          </span>
         )}
+      </div>
+      <div className="rfq-quote-head">
+        <label>Поставщик
+          <select ref={picker} aria-label="Поставщик КП" value={supplierId} onChange={(event) => setSupplierId(event.target.value)}>
+            {matrix.suppliers.map((item) => (
+              <option key={item.supplier_id} value={item.supplier_id}>
+                {item.name}{item.is_key ? " ★" : ""}{item.answered ? " — КП есть" : item.declined_at ? " — отказался" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>Получено<input type="date" value={receivedOn} onChange={(event) => setReceivedOn(event.target.value)} /></label>
         <label>Номер КП<input aria-label="Номер КП" value={quoteNumber} maxLength={64} onChange={(event) => setQuoteNumber(event.target.value)} style={{ width: 120 }} /></label>
         <label>Действует до<input type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} /></label>
@@ -187,23 +202,15 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
         <label>Мин. заказ, ₽<input inputMode="decimal" value={minOrder} onChange={(event) => setMinOrder(event.target.value)} style={{ width: 110 }} /></label>
         <label className="rfq-quote-note">Примечание<input aria-label="Примечание к КП" value={note} maxLength={2000} onChange={(event) => setNote(event.target.value)} /></label>
       </div>
-      <RfqQuoteImport rfqId={matrix.rfq.id} supplierId={knownSupplierId} lines={asked} importEnabled onApply={applyImport} />
+      <RfqQuoteImport rfqId={matrix.rfq.id} supplierId={supplier?.supplier_id} lines={asked} importEnabled onApply={applyImport} />
       {importNotes.length > 0 && (
         <ul className="quote-import-notes" aria-label="Что сделано при разборе">
           {importNotes.map((text) => <li key={text}>{text}</li>)}
         </ul>
       )}
       {importFile && <p className="muted" style={{ margin: 0, fontSize: 12 }}>Файл «{importFile.name}» сохранится вместе с КП.</p>}
-      {supplier && asked.length < matrix.lines.filter((line) => !line.cancelled).length && (
-        <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-          У поставщика запрошено позиций: {asked.length} из {matrix.lines.filter((line) => !line.cancelled).length} — остальные в КП не вносятся.
-        </p>
-      )}
-      {!supplier && (
-        <p className="muted" style={{ margin: 0, fontSize: 12 }}>Поставщика нет в запросе — он добавится в запрос с этим КП (ответил — значит, запрошен).</p>
-      )}
       {error && <div className="error-banner" role="alert">{error}</div>}
-      <div className="inwork-scroll" style={{ maxHeight: "50vh" }}>
+      <div className="inwork-scroll">
         <table className="inwork-table">
           <thead>
             <tr>
@@ -214,7 +221,7 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
           </thead>
           <tbody>
             {asked.map((line) => {
-              const row = rows[line.id];
+              const row = rowOf(line.id);
               const tiersBad = !row.declined && row.tiers.trim() !== "" && parseTiers(row.tiers) === null;
               return (
                 <tr key={line.id}>
@@ -246,11 +253,11 @@ export function QuoteDialog({ matrix, supplier, directory = [], onClose, onSaved
           </tbody>
         </table>
       </div>
-      <div className="form-actions">
-        <span className="muted" style={{ marginRight: "auto", fontSize: 12 }}>Пустая строка без отказа — позиция не предложена. Повторное КП заменит прежнее по этим позициям.</span>
+      <div className="rfq-quote-actions">
+        <span className="rfq-quote-hint">Пустая строка без отказа — позиция не предложена. Повторное КП заменит прежнее по этим позициям.</span>
         <button type="button" className="secondary" onClick={onClose}>Отмена</button>
-        <button type="button" className="primary" disabled={busy || (!supplier && !supplierName.trim())} onClick={() => void save()}>Сохранить КП</button>
+        <button type="button" className="primary" disabled={busy || !supplier} onClick={() => void save()}>Сохранить КП</button>
       </div>
-    </Dialog>
+    </section>
   );
 }

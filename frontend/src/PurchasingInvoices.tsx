@@ -8,6 +8,7 @@ import {
   type InvoiceCard, type InvoiceFile, type InvoiceLine, type InvoiceList, type InvoiceQuery, type InvoiceRow, type InvoiceStatus,
 } from "./purchasingDocumentsApi";
 import { StatusChip } from "./StatusChip";
+import "./purchasingDocs.css";
 
 /** «Счета»: the invoice registry mirrored from Kaiten — every card with its PDF and our
  *  payment orders, seller and total read from the PDF, the payment from the order's file name, and the closing
@@ -73,18 +74,9 @@ export function PurchasingInvoices({ readOnly = false, onOpenUpd }: { readOnly?:
         <div className="empty">{query.q || query.status || query.closing || query.from || query.to ? "Ничего не найдено." : "Счетов ещё нет: их загружает перенос из Kaiten."}</div>
       )}
       {list && list.items.length > 0 && (
-        <div className="table-wrap data-table">
-          <table className="grid" aria-label="Счета">
-            <thead>
-              <tr>
-                <th>Дата</th><th>Счёт</th><th>Поставщик</th><th className="num">Сумма</th><th>Статус</th><th>Оплата</th><th>Закрывающие</th><th>Файлы</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.items.map((row) => <InvoiceTableRow key={row.id} row={row} onOpen={() => setOpenId(row.id)} />)}
-            </tbody>
-          </table>
-        </div>
+        <ul className="pdoc-grid" aria-label="Счета">
+          {list.items.map((row) => <li key={row.id}><InvoiceTile row={row} onOpen={() => setOpenId(row.id)} /></li>)}
+        </ul>
       )}
       {list && list.total > list.page_size && (
         <div className="inline-action">
@@ -111,36 +103,40 @@ function PaymentCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-function InvoiceTableRow({ row, onOpen }: { row: InvoiceRow; onOpen: () => void }) {
+function InvoiceTile({ row, onOpen }: { row: InvoiceRow; onOpen: () => void }) {
   return (
-    <tr className="clickable" onClick={onOpen}>
-      <td>{dayText(row.date ?? row.card_created?.slice(0, 10) ?? null)}</td>
-      <td className="text">
-        <button type="button" className="link-button table-link" onClick={(event) => { event.stopPropagation(); onOpen(); }}>
-          {row.number ? <span className="doc-number">{row.number}</span> : row.title}
-        </button>
-        {row.parse_issues && <div className="muted">{row.parse_issues}</div>}
-        {row.line_count > 0 && <div className="muted">позиций: {row.line_count}</div>}
-      </td>
-      <td className="text">
-        {row.supplier_name ?? row.seller_name ?? <span className="muted">—</span>}
-        {row.seller_inn && <div className="muted">{row.seller_inn}</div>}
-      </td>
-      <td className="num">{rub(row.total)}</td>
-      <td><StatusChip tone={INVOICE_STATUS_TONE[row.status]}>{INVOICE_STATUS_LABELS[row.status]}</StatusChip></td>
-      <td className="text"><PaymentCell row={row} /></td>
-      <td className="text">
-        {row.chain && (
-          <span title={row.chain.checks.map((c) => c.text).join("\n")}>
-            <StatusChip tone={CHAIN_STATE_TONE[row.chain.state]}>{CHAIN_STATE_LABELS[row.chain.state]}</StatusChip>
-          </span>
-        )}
-        {row.chain && row.chain.upds > 0 && <div className="muted">{row.chain.upds} док. · {rub(row.chain.closed_gross)}</div>}
-      </td>
-      <td className="text doc-files" onClick={(event) => event.stopPropagation()}>
-        {row.files.map((file) => <FileLink key={file.id} invoiceId={row.id} file={file} short />)}
-      </td>
-    </tr>
+    <article className="pdoc-card clickable" onClick={onOpen}>
+      <div className="pdoc-top">
+        <span className="pdoc-title">
+          <button type="button" className="link-button table-link" onClick={(event) => { event.stopPropagation(); onOpen(); }}>
+            {row.number ? <span className="doc-number">{row.number}</span> : row.title}
+          </button>
+        </span>
+        <span className="pdoc-chips"><StatusChip tone={INVOICE_STATUS_TONE[row.status]}>{INVOICE_STATUS_LABELS[row.status]}</StatusChip></span>
+      </div>
+      <div className="pdoc-meta">
+        <span>{dayText(row.date ?? row.card_created?.slice(0, 10) ?? null)}</span>
+        <span>{row.supplier_name ?? row.seller_name ?? <span className="muted">—</span>}{row.seller_inn && <span className="muted"> · {row.seller_inn}</span>}</span>
+        <span className="pdoc-sum">{rub(row.total)}</span>
+      </div>
+      <div className="pdoc-sub">
+        <span>Оплата: <PaymentCell row={row} /></span>
+        {row.line_count > 0 && <span>позиций: {row.line_count}</span>}
+      </div>
+      {row.chain && (
+        <div className="pdoc-sub" title={row.chain.checks.map((c) => c.text).join("\n")}>
+          <span>Закрывающие:</span>
+          <StatusChip tone={CHAIN_STATE_TONE[row.chain.state]}>{CHAIN_STATE_LABELS[row.chain.state]}</StatusChip>
+          {row.chain.upds > 0 && <span>{row.chain.upds} док. · {rub(row.chain.closed_gross)}</span>}
+        </div>
+      )}
+      {row.parse_issues && <div className="pdoc-issues">{row.parse_issues}</div>}
+      {row.files.length > 0 && (
+        <div className="pdoc-files doc-files" onClick={(event) => event.stopPropagation()}>
+          {row.files.map((file) => <FileLink key={file.id} invoiceId={row.id} file={file} short />)}
+        </div>
+      )}
+    </article>
   );
 }
 

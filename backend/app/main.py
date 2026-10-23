@@ -60,6 +60,7 @@ from .modules.purchasing import api_internal_projects as purchasing_internal_pro
 from .modules.purchasing import api_items as purchasing_items_api
 from .modules.purchasing import api_orders as purchasing_orders_api
 from .modules.purchasing import api_prices as purchasing_prices_api
+from .modules.purchasing import api_purchase_board as purchasing_buy_api
 from .modules.purchasing import api_rfq as purchasing_rfq_api
 from .modules.purchasing import api_settings as purchasing_settings_api
 from .modules.purchasing import api_suppliers as purchasing_suppliers_api
@@ -146,7 +147,7 @@ app.include_router(devices_api.router)
 app.include_router(search_api.router)
 for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasing_items_api, purchasing_rfq_api,
                purchasing_internal_projects_api, purchasing_prices_api, purchasing_upd_api, purchasing_documents_api,
-               purchasing_orders_api):
+               purchasing_orders_api, purchasing_buy_api):
     app.include_router(_purchasing.router)
 app.include_router(finished_goods_api.router)
 app.include_router(production_intake_api.router)

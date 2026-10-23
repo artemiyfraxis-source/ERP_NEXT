@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { NOTIFICATIONS_CHANGED } from "./NotificationBell";
+import { openSection } from "./navigation";
 import { READ_DEADLINE_MS, READ_TIMEOUT_TEXT, type Principal, type RequestRow, type RequestSchema } from "./api";
 
 /* Аудит F07/U01: фоновый 401 не стирает неотправленную пачку заявок, черновик живёт в памяти оболочки по
@@ -130,7 +131,8 @@ describe("background 401 (F07)", () => {
     fakeErp().session = "anna";
     render(<App />);
     fireEvent.change(await nameCell(), { target: { value: "Разъём" } });
-    fireEvent.click(screen.getByRole("button", { name: "Мои заявки" }));
+    // «Мои заявки» is no menu item (Витя's edit 2): it opens from the personal card, as an in-app place.
+    act(() => openSection("myrequests"));
     await screen.findByRole("heading", { name: "Мои заявки", level: 1 });
     fireEvent.click(screen.getByRole("button", { name: "Оформить заявку" }));
     expect((await nameCell()).value).toBe("Разъём");

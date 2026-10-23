@@ -1,0 +1,19 @@
+/* «Показатели» листа закупки: карточки метрик, рейтинг, печать. Таблицы — DataTable. */
+.kpi-page { display: grid; gap: 16px; }
+.kpi-page .panel + .panel { margin-top: 0; }
+.kpi-page .kpi-filters { padding: 0 20px 14px; align-items: end; }
+.kpi-page .kpi-filters .seg-tabs { margin: 0; }
+.kpi-page .kpi-filters .kpi-print { margin-left: auto; }
+.kpi-page .error-banner, .kpi-page > .panel > .empty { margin: 0 20px 14px; }
+.kpi-page .kpi-note { padding: 0 20px 14px; }
+.kpi-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: 16px; }
+.kpi-card { padding: 14px 18px 8px; }
+.kpi-card h3 { margin: 0 0 6px; font-size: 14px; font-weight: 700; }
+.kpi-card dl { margin: 0; }
+.kpi-card dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.kpi-card dl > div:first-child { border-top: 0; }
+.kpi-card dt { color: var(--muted-foreground); }
+.kpi-card dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.kpi-card dd small { font-weight: 400; color: var(--muted-foreground); }
+.kpi-nodata { font-weight: 400; color: var(--muted-foreground); }
+@media (pointer: coarse) { .kpi-page .kpi-filters .seg-tabs button { min-height: 40px; } }

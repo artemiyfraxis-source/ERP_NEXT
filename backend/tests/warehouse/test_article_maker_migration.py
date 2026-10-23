@@ -37,7 +37,8 @@ def _config(path: Path) -> Config:
 def test_migration_follows_the_scan_queue_and_is_the_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
     assert script.get_revision(REVISION).down_revision == "0145_warehouse_scan_jobs"
-    assert script.get_heads() == [REVISION]
+    # On the single chain (test_alembic_single_head): the head is this revision or one after it (0147 followed).
+    assert REVISION in {rev.revision for rev in script.iterate_revisions(script.get_current_head(), "base")}
     assert _migration().DESTRUCTIVE is False
 
 

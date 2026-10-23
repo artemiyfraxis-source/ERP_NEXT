@@ -109,7 +109,7 @@ def list_documents(
     _: Viewer, make_uow: Uow, q: Annotated[str, Query(max_length=100)] = "", status: str | None = None,
     origin: str | None = None, supplier_id: UUID | None = None, no_supplier: bool = False,
     date_from: date | None = None, date_to: date | None = None, buyer: str | None = None, review: bool = False,
-    duplicates: bool = False, page: Annotated[int, Query(ge=1)] = 1,
+    duplicates: bool = False, kind: str | None = None, page: Annotated[int, Query(ge=1)] = 1,
 ) -> dict:
     if status is not None and status not in STATUSES:
         raise HTTPException(status_code=422, detail="Неизвестный статус документа")
@@ -117,9 +117,11 @@ def list_documents(
         raise HTTPException(status_code=422, detail="Источник: edo или google")
     if buyer is not None and not _BUYER.match(buyer):
         raise HTTPException(status_code=422, detail="Покупатель: ours, other, unknown или ИНН")
+    if kind is not None and kind not in repo.KIND_GROUPS:
+        raise HTTPException(status_code=422, detail="Вид: upd, m15, tn_sf или other")
     wanted = repo.ListFilter(
         q=q, status=status, origin=origin, supplier_id=supplier_id, no_supplier=no_supplier, date_from=date_from,
-        date_to=date_to, buyer=buyer, review=review, duplicates=duplicates, page=page,
+        date_to=date_to, buyer=buyer, review=review, duplicates=duplicates, kind=kind, page=page,
     )
     uow = make_uow()
     with uow:

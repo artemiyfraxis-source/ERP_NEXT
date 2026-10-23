@@ -12,7 +12,8 @@ import {
 /** Quote import (Roller_Buyer QuoteImport, without an LLM): rows pasted from Excel — the columns guessed from the header
  *  and re-mapped by the buyer, «цены с НДС» ticked or not — or the text / PDF text layer of a quote. Every imported row
  *  ends matched to a request line or explicitly skipped — nothing is dropped silently — and only then fills the form.
- *  The header found in the text («№», «действует до», the seller's ИНН) comes along; a PDF is kept with the quote. */
+ *  The header found in the text («№», «действует до», the seller's ИНН) comes along; a PDF is kept with the quote.
+ *  A PDF (or a text file, or text) dragged onto the drop zone goes the same way (Витя via the owner, 23.10). */
 
 export const COLUMN_KEYS: PasteColumn[] = ["name", "article", "qty", "unit", "price", "vat", "lead"];
 const COLUMN_LABELS: Record<PasteColumn, string> = {
@@ -72,11 +73,13 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  async function parsePaste(columns?: Record<string, number>) {
+  const [over, setOver] = useState(false);
+
+  async function parsePaste(columns?: Record<string, number>, text = pasteText) {
     setBusy(true);
     setError("");
     try {
-      const result = await rfqApi.paste(rfqId, pasteText, supplierId, { ...(vatTouched ? { vat_included: vatIncluded } : {}), ...(columns ? { columns } : {}) });
+      const result = await rfqApi.paste(rfqId, text, supplierId, { ...(vatTouched ? { vat_included: vatIncluded } : {}), ...(columns ? { columns } : {}) });
       setPaste(result);
       setVatIncluded(result.vat_included);
       setReview({ rows: result.rows, choices: result.rows.map((row) => row.rfq_line_id), vatIncluded: result.vat_included,
@@ -121,6 +124,39 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
     reader.readAsDataURL(file);
   }
 
+  /** Dropped or typed-in text: rows with tabs are a table from Excel, anything else the text of a quote. */
+  function takeText(text: string) {
+    if (!text.trim()) return;
+    if (text.includes("\t")) {
+      setMode("paste");
+      setPasteText(text);
+      void parsePaste(undefined, text);
+    } else {
+      setMode("text");
+      setImportText(text);
+      void parseText({ text });
+    }
+  }
+
+  /** A file dropped on the zone or picked: a PDF is read as a PDF, a text file as text; nothing else is read. */
+  function takeFile(file: File | undefined) {
+    if (!file) return;
+    const name = file.name.toLowerCase();
+    if (file.type === "application/pdf" || name.endsWith(".pdf")) {
+      readFile(file);
+    } else if (file.type.startsWith("text/") || /\.(txt|csv|tsv)$/.test(name)) {
+      void file.text().then(takeText, () => setError("Файл не прочитан"));
+    } else {
+      setError("Перетащите PDF или текстовый файл. Таблицу из Excel скопируйте и вставьте через «Вставить из Excel».");
+    }
+  }
+
+  function drop(data: DataTransfer) {
+    const file = data.files?.[0];
+    if (file) takeFile(file);
+    else takeText(data.getData("text/plain"));
+  }
+
   function apply() {
     if (!review) return;
     onApply({ ...applyChoices(review.rows, review.choices), vatIncluded: review.vatIncluded, source: review.source,
@@ -142,12 +178,23 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
 
   return (
     <div className="quote-import">
-      <div className="rfq-quote-import-bar">
+      <div
+        className={`rfq-drop${over ? " over" : ""}${busy ? " busy" : ""}`} role="group" aria-label="Файл КП" aria-busy={busy}
+        onDragOver={(event) => { event.preventDefault(); if (!over) setOver(true); }}
+        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(false); }}
+        onDrop={(event) => { event.preventDefault(); setOver(false); if (!busy) drop(event.dataTransfer); }}
+      >
+        {importEnabled && <span aria-live="polite"><strong>{busy ? "Разбираю КП…" : "Перетащите сюда PDF с КП"}</strong> — до 20 МБ, файл сохранится вместе с КП</span>}
+        {importEnabled && (
+          <label className="secondary small rfq-drop-pick">Выбрать файл
+            <input type="file" accept="application/pdf,.pdf,text/plain,.txt" aria-label="PDF с КП" disabled={busy} onChange={(event) => { takeFile(event.target.files?.[0]); event.target.value = ""; }} />
+          </label>
+        )}
         <button type="button" className="secondary small" aria-expanded={mode === "paste"} onClick={() => setMode(mode === "paste" ? "none" : "paste")}>Вставить из Excel</button>
         {importEnabled && (
-          <button type="button" className="secondary small" aria-expanded={mode === "text"} onClick={() => setMode(mode === "text" ? "none" : "text")}>Вставить из PDF / текста</button>
+          <button type="button" className="secondary small" aria-expanded={mode === "text"} onClick={() => setMode(mode === "text" ? "none" : "text")}>Вставить текст КП</button>
         )}
-        <span className="muted">Или заполните таблицу ниже вручную.</span>
+        <span>или заполните таблицу вручную</span>
       </div>
       {mode === "paste" && (
         <div className="quote-import-panel">
@@ -183,9 +230,6 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
           />
           <div className="quote-import-actions">
             <button type="button" className="secondary small" disabled={!importText.trim() || busy} onClick={() => void parseText({ text: importText })}>Разобрать текст</button>
-            <label className="quote-import-file">или PDF с текстовым слоем (до 20 МБ) — файл сохранится вместе с КП
-              <input type="file" accept="application/pdf,.pdf" aria-label="PDF с КП" disabled={busy} onChange={(event) => { readFile(event.target.files?.[0]); event.target.value = ""; }} />
-            </label>
           </div>
         </div>
       )}

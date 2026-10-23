@@ -27,5 +27,8 @@ Working path (used for БД.КОАКС L1–L3, 49 rows):
 - Renaming a БД.КОАКС «Артикул» breaks links: warehouse lots and kits carry the connector by that name and the
   generator matches by it. Supplier codes go to the custom column «Артикул поставщика», never into the name.
 
+- Reading prod reference rows over the web API: `GET /api/references/tech-operations?tab=…` returns only 200 rows by default —
+  always pass `&limit=5000` (22.10 a БД.КОАКС fill covered only the first 200 of 610 rows; topped up 23.10).
+
 **Why:** no prod API token exists for `refs:write`; the xlsx round-trip is keyed by ID and breaks on prod.
 **How to apply:** same recipe for терминалы and провода fills; still never overwrite filled cells without the owner. [[live-data-protocol]] [[module-reference-db]]

@@ -2,13 +2,14 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react
 import { api, failureText } from "./api";
 import { formatDate } from "./format";
 import { projectLabel, useInternalProjects } from "./internalProjects";
-import { openPlace } from "./navigation";
+import { openPlace, sectionOfTab } from "./navigation";
 
 /** Option `procurement.today`: Roller_Buyer's «Сегодня» (TodayPage.tsx) — what needs the buyer's hand now, section by
  *  section in the order of doing. Every row opens the place where the next step is taken (in-app, without a reload);
  *  a card of a project or an order opens in place to show its positions. Refreshed every minute. */
 export type TodayTone = "danger" | "warning" | "accent" | "neutral" | "success";
-/** `?section=procurement` params of the place: `{tab: "orders", order: "PO-1"}` (CONTRACTS.md deep links). */
+/** `?section=procurement` params of the place: `{tab: "orders", order: "PO-1"}` (CONTRACTS.md deep links); `section`
+ *  names another section (`{section: "primarydocs", tab: "upd", …}` — the documents left «Снабжение»). */
 export type TodayLink = Record<string, string>;
 export type TodayItem = {
   title: string;
@@ -29,16 +30,21 @@ export type TodayDto = { today: string; sections: TodaySection[]; calm: boolean 
 const SHOWN = 8; // RB: eight items, then «и ещё N»
 const REFRESH_MS = 60_000;
 
+/** The section and its params; an old link to a moved tab lands in its new section (MOVED_TABS). */
+function placeOf({ section = "procurement", ...params }: TodayLink): [string, Record<string, string>] {
+  return [sectionOfTab(section, params.tab), params];
+}
+
 function hrefOf(link: TodayLink): string {
-  const params = new URLSearchParams({ section: "procurement", ...link });
-  return `?${params.toString()}`;
+  const [section, params] = placeOf(link);
+  return `?${new URLSearchParams({ section, ...params }).toString()}`;
 }
 
 function follow(event: MouseEvent, link: TodayLink) {
   // A plain click stays in the app; Ctrl/middle click opens the address in a new tab as any link does.
   if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
-  openPlace("procurement", link);
+  openPlace(...placeOf(link));
 }
 
 function titleOf(item: TodayItem): string {

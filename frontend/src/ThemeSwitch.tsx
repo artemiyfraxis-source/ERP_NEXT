@@ -1,20 +1,21 @@
 import { useEffect, useState } from "react";
 
-export type ThemeChoice = "light" | "dark" | "system";
+export type ThemeChoice = "light" | "dark";
 export const THEME_KEY = "erp-theme";
 
 const CHOICES: { value: ThemeChoice; label: string }[] = [
   { value: "light", label: "Светлая" },
   { value: "dark", label: "Тёмная" },
-  { value: "system", label: "Как в системе" },
 ];
 
+/** Сохранённое «system» (бывшая опция «Как в системе») читается как «Светлая» и тихо переписывается. */
 function readChoice(): ThemeChoice {
   try {
     const stored = window.localStorage.getItem(THEME_KEY);
-    return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+    if (stored === "system") window.localStorage.setItem(THEME_KEY, "light");
+    return stored === "dark" ? "dark" : "light";
   } catch {
-    return "system";
+    return "light";
   }
 }
 
@@ -22,26 +23,11 @@ function writeChoice(choice: ThemeChoice) {
   try { window.localStorage.setItem(THEME_KEY, choice); } catch { /* storage blocked: the choice lasts until reload */ }
 }
 
-function systemQuery(): MediaQueryList | null {
-  return typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-}
-
-/** Переключатель «Светлая · Тёмная · Как в системе». Always mounted in the sidebar. */
+/** Переключатель «Светлая · Тёмная». Always mounted in the sidebar. */
 export function ThemeSwitch() {
   const [choice, setChoice] = useState<ThemeChoice>(readChoice);
 
-  useEffect(() => {
-    const root = document.documentElement;
-    if (choice !== "system") {
-      root.dataset.theme = choice;
-      return;
-    }
-    const query = systemQuery();
-    const apply = () => { root.dataset.theme = query?.matches ? "dark" : "light"; };
-    apply();
-    query?.addEventListener?.("change", apply);
-    return () => { query?.removeEventListener?.("change", apply); };
-  }, [choice]);
+  useEffect(() => { document.documentElement.dataset.theme = choice; }, [choice]);
 
   function pick(next: ThemeChoice) {
     writeChoice(next);

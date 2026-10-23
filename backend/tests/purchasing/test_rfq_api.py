@@ -195,16 +195,83 @@ def test_a_stale_line_version_is_a_conflict_and_nothing_is_saved(rfq_api):
     assert fresh.status_code == 201, fresh.text
 
 
-def test_the_list_goes_by_number_newest_first_with_an_ordinal_the_same_for_everyone(rfq_api):
+def test_the_list_goes_by_number_first_taken_first_with_an_ordinal_the_same_for_everyone(rfq_api):
     """Owner 22.10: «идут не по порядку» and «просто порядковый номер жирно» — the order is the number's, not the
-    creation time's (imports keep Roller_Buyer's moments), and `seq` is the ordinal among all requests."""
+    creation time's (imports keep Roller_Buyer's moments), and `seq` is the ordinal among all requests. Витя via the
+    owner 23.10: the first taken into work comes first."""
     client, lines, _ = rfq_api
     first = _rfq(client, lines[:1])
     second = _rfq(client, lines[1:2])
     listed = client.get(BASE).json()["rfqs"]
-    assert [row["id"] for row in listed] == [second["id"], first["id"]]
-    assert [row["seq"] for row in listed] == [2, 1]
-    assert [row["seq"] for row in client.get(f"{BASE}?scope=all").json()["rfqs"]] == [2, 1]
+    assert [row["id"] for row in listed] == [first["id"], second["id"]]
+    assert [row["seq"] for row in listed] == [1, 2]
+    assert [row["seq"] for row in client.get(f"{BASE}?scope=all").json()["rfqs"]] == [1, 2]
+
+
+def _status(sessions, line_id, status: str, project: str | None = None) -> None:
+    with sessions() as session:
+        row = session.get(ProcurementLineRow, line_id)
+        row.status = status
+        if project is not None:
+            row.project_reference = project
+        session.commit()
+
+
+def test_the_card_carries_plan_and_decided_sums_decided_of_to_decide_and_the_archive(rfq_api):
+    """Витя via the owner 23.10: «решено» as N/M, the plan sum on the card and after a decision the decided one; a
+    request whose every line is decided and invoiced («В оплату» or later) — or a closed one — goes to the archive, which
+    comes after the work in hand, newest first."""
+    client, lines, sessions = rfq_api
+    _status(sessions, lines[0].id, "В работе", project="П-0042")
+    _status(sessions, lines[1].id, "В работе", project="П-0007")
+    rfq = _rfq(client, lines)
+    matrix = client.get(f"{BASE}/{rfq['id']}").json()
+    line_a = next(line for line in matrix["lines"] if line["procurement_line_id"] == str(lines[0].id))
+    line_b = next(line for line in matrix["lines"] if line["procurement_line_id"] == str(lines[1].id))
+
+    card = client.get(BASE).json()["rfqs"][0]
+    # Plan: only line A has a calculation price — 2 × 110; nothing decided yet.
+    assert (card["plan_sum"], card["decided_sum"], card["decided"], card["to_decide"]) == ("220", None, 0, 2)
+    assert card["projects"] == ["П-0007", "П-0042"] and card["archived"] is False
+
+    supplier = _supplier(client, rfq["id"], "ООО Один")
+    _quote(client, rfq["id"], supplier, line_a["id"], unit_price="100")
+    _quote(client, rfq["id"], supplier, line_b["id"], unit_price="30")
+    cells = client.get(f"{BASE}/{rfq['id']}").json()["lines"]
+    quote_line = {line["id"]: line["cells"][supplier]["quote_line_id"] for line in cells}
+    decided = client.post(f"{BASE}/{rfq['id']}/decisions", json={
+        "rfq_line_id": line_a["id"], "quote_line_id": quote_line[line_a["id"]], "gate_override_reason": "Срочно"})
+    assert decided.status_code == 201, decided.text
+    card = client.get(BASE).json()["rfqs"][0]
+    assert (card["decided_sum"], card["decided"], card["to_decide"], card["archived"]) == ("200", 1, 2, False)
+
+    # The decided line invoiced, the other one still undecided: still in work.
+    _status(sessions, lines[0].id, "В оплату")
+    assert client.get(BASE).json()["rfqs"][0]["archived"] is False
+
+    # The undecided line cancelled in «Заявки»: out of M and the plan; every line left is decided and invoiced.
+    _status(sessions, lines[1].id, "Отменено")
+    card = client.get(BASE).json()["rfqs"][0]
+    assert (card["decided"], card["to_decide"], card["invoiced"], card["projects"]) == (1, 1, 1, ["П-0042"])
+    assert card["archived"] is True
+
+    # A later stage counts as invoiced too; «Жду счет» does not.
+    _status(sessions, lines[0].id, "В пути")
+    assert client.get(BASE).json()["rfqs"][0]["archived"] is True
+    _status(sessions, lines[0].id, "Жду счет")
+    assert client.get(BASE).json()["rfqs"][0]["archived"] is False
+    _status(sessions, lines[0].id, "В оплату")
+
+    # Two newer requests: one in work, one closed. Work in hand first (oldest first), then the archive newest first.
+    extra = [consume_procurement_requested(message(n), app.state.procurement_uow_factory()) for n in (3, 4)]
+    assert client.post("/api/procurement/take", json={"line_ids": [str(line.id) for line in extra]}).status_code == 200
+    working = _rfq(client, extra[:1])
+    closed = _rfq(client, extra[1:])
+    assert client.post(f"{BASE}/{closed['id']}/close").status_code == 200
+    listed = client.get(BASE).json()["rfqs"]
+    assert [row["id"] for row in listed] == [working["id"], closed["id"], rfq["id"]]
+    assert [row["archived"] for row in listed] == [False, True, True]
+    assert listed[1]["plan_sum"] is None and listed[1]["to_decide"] == 0
 
 
 def test_only_the_lines_buyer_puts_it_into_a_request_or_decides(rfq_api):
