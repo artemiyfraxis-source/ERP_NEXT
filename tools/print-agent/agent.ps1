@@ -389,13 +389,14 @@ function New-MultipartBody {
     $ms.Write($Bytes, 0, $Bytes.Length)
     $t = $utf8.GetBytes("`r`n--$Boundary--`r`n")
     $ms.Write($t, 0, $t.Length)
-    return $ms.ToArray()
+    # The comma keeps the byte[] whole: a bare `return` unrolls it into Object[] and the upload goes out as text (422).
+    return ,$ms.ToArray()
 }
 
 function Send-ScanFile {
     param([string]$Url, [string]$AuthToken, [byte[]]$Bytes, [string]$FileName, [string]$ContentType)
     $boundary = 'frx' + [Guid]::NewGuid().ToString('N')
-    $body = New-MultipartBody -Boundary $boundary -FieldName 'file' -FileName $FileName -ContentType $ContentType -Bytes $Bytes
+    [byte[]]$body = New-MultipartBody -Boundary $boundary -FieldName 'file' -FileName $FileName -ContentType $ContentType -Bytes $Bytes
     Invoke-RestMethod -Method Post -Uri $Url -Body $body -ContentType "multipart/form-data; boundary=$boundary" `
         -Headers @{ Authorization = "Bearer $AuthToken" } -TimeoutSec 60 | Out-Null
 }
