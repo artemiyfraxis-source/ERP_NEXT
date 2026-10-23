@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import { HookupWireTable, parseTempRange } from "./CableStructure";
 import { CableTable, rangeText } from "./CableTables";
@@ -107,7 +107,10 @@ function mockApi(calls: Call[] = [], rows: CableRow[] = ROWS) {
   return calls;
 }
 
-afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
+// Раскладка колонок пишется в localStorage эффектом таблицы: чистим и до теста, и после размонтирования (cleanup идёт
+// после afterEach файла), иначе поздняя запись предыдущего теста попадает в следующий.
+beforeEach(() => { window.localStorage.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); });
 // The coax table shows its key columns only (owner 19.10); a test that reads another column shows them all, as «Колонки» does.
 const showAllCoax = (hidden: string[] = []) => window.localStorage.setItem("erp-table:db:cables:coax:5-2", JSON.stringify({ hidden }));
 // what the table before the card kept in «Колонки»
