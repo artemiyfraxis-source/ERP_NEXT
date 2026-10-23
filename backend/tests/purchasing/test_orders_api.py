@@ -120,7 +120,8 @@ def test_the_order_walks_the_columns_with_its_facts_and_payment(orders_api):
     number, lines = _invoiced(client, sessions)
     order = _order(client, number)
     assert order["column"] == "unpaid"
-    assert order["invoices"] == [{"number": "СЧ-7", "date": "2026-09-16", "url": "https://files.test/invoice.pdf"}]
+    assert order["invoices"] == [{"number": "СЧ-7", "date": "2026-09-16", "url": "https://files.test/invoice.pdf",
+                                  "kaiten": False}]
     assert (order["sum"], order["sum_estimated"], order["promised"], order["expected"]) == ("4880", False, "2026-09-25", "2026-09-25")
     assert "lines" not in order  # the board and the table read the lines with the card
     card = client.get(f"{BASE}/{number}").json()["order"]

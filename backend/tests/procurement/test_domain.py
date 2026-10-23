@@ -16,9 +16,12 @@ from app.modules.procurement.domain import (
     create_line_from_requested,
     designation_key,
     is_backorder_id,
+    is_kaiten_invoice_url,
+    kaiten_invoice_url,
     next_backorder_id,
     next_retransfer_revision,
     next_system_id,
+    normalize_invoice_url,
     number_to_revision,
     removal_blocker,
     requested_buyer,
@@ -306,6 +309,26 @@ def test_invoice_without_prices_goes_to_payment_and_names_only_the_real_blockers
 
     assert invoiced.status is ProcurementStatus.TO_PAY
     assert invoiced.price_missing() == ["ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)"]
+
+
+def test_a_kaiten_invoice_of_the_registry_stands_in_for_the_file_only_for_commands_not_for_the_forms():
+    """Витя, 23.10: the RB import puts an order on its Kaiten invoice of «Счета» when the PDF is missing. The HTTP forms
+    (`normalize_invoice_url`) still refuse that path — a buyer's own invoice needs a file or a link."""
+    buyer = Actor(name="Петров", department="Закупки")
+    reference = kaiten_invoice_url(UUID("00000000-0000-4000-8000-0000000000a1"))
+    assert reference == "/api/purchasing/invoices/00000000-0000-4000-8000-0000000000a1/document"
+    assert is_kaiten_invoice_url(reference) and not is_kaiten_invoice_url("/api/procurement/files/x")
+    with pytest.raises(ValueError):
+        normalize_invoice_url(reference)
+
+    invoiced = replace(awaiting_invoice(buyer), invoice_item_name="Разъём SMA").record_invoice(
+        reference, date(2026, 9, 30), buyer, invoice_number="НФ-1",
+    )
+    assert (invoiced.status, invoiced.invoice_url, invoiced.invoice_number) == (ProcurementStatus.TO_PAY, reference, "НФ-1")
+    stored = "/api/procurement/files/00000000-0000-4000-8000-0000000000b2"
+    assert invoiced.replace_invoice(stored, buyer).invoice_url == stored
+    with pytest.raises(ProcurementValidationError):
+        invoiced.replace_invoice(reference.replace("/document", "/files"), buyer)
 
 
 def test_payment_of_an_invoice_without_prices_is_refused_with_the_missing_fields():
