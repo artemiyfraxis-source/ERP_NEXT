@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ProcurementPage } from "./ProcurementPage";
+import { PrimaryDocsPage } from "./PrimaryDocsPage";
 import { PurchasingUpd } from "./PurchasingUpd";
 import { docIssues, inputToKop, lineIssues, rub } from "./purchasingUpdApi";
 
@@ -256,9 +256,9 @@ it("the kind tabs УПД · М-15 · ТН+СФ · Прочие send the group an
   await waitFor(() => expect(calls.at(-1)?.path).toBe("/api/purchasing/upd"));
 });
 
-it("the «УПД» tab of «Лист закупки» exists", async () => {
+it("the «УПД» tab of «Первичная документация» exists", async () => {
   mockServer();
-  render(<ProcurementPage />);
+  render(<PrimaryDocsPage />);
   fireEvent.click(await screen.findByRole("tab", { name: "УПД" }));
   expect(await screen.findByRole("list", { name: "Реестр УПД" })).toBeInTheDocument();
 });

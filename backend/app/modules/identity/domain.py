@@ -156,7 +156,7 @@ SECTION_LABELS: dict[str, str] = {
     "newrequest": "Оформить заявку",
     "myrequests": "Мои заявки",
     "requests": "Заявки",
-    "procurement": "Лист закупки",
+    "procurement": "Снабжение, справочник закупки, первичная документация",
     "receiving": "Приёмка",
     "warehouse": "Склад",
     "fulfillment": "Запросы на комплектацию (набор)",
@@ -515,9 +515,11 @@ LEVEL_SECTION_LABELS: dict[str, str] = {
     "myops": "Задания",
     "quality": "ОТК",
     "newrequest": "Оформить заявку",
+    # Витя's edits 2–4 (owner 23.10): the keys stay, the screens moved — «Мои заявки» open from the personal card, the
+    # «Заявки» register from «Снабжение»; `procurement` also opens «Справочники → Закупка» and «Первичная документация».
     "myrequests": "Мои заявки",
     "requests": "Заявки",
-    "procurement": "Лист закупки",
+    "procurement": "Снабжение, справочник закупки, первичная документация",
     "receiving": "Приёмка",
     "warehouse": "Склад",
     "fulfillment": "Запросы на комплектацию (набор)",

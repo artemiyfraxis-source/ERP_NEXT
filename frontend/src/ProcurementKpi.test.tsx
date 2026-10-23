@@ -54,6 +54,7 @@ it("shows the table with buyer rows and a total, and refetches on a buyer filter
   const requests: string[] = [];
   mockServer(requests);
   render(<ProcurementPage />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Статистика" })); // «Показатели» live in «Статистика» (Витя's edit 4)
   fireEvent.click(await screen.findByRole("tab", { name: "Показатели" }));
   expect(await screen.findByRole("cell", { name: "Петров" })).toBeInTheDocument();
   expect(screen.getByText("Итого")).toBeInTheDocument();
@@ -66,6 +67,7 @@ it("shows the table with buyer rows and a total, and refetches on a buyer filter
 it("shows the cards, the supplier rating and the best savings; a metric without a source reads «нет данных»", async () => {
   mockServer();
   render(<ProcurementPage />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Статистика" }));
   fireEvent.click(await screen.findByRole("tab", { name: "Показатели" }));
   const money = (await screen.findByRole("heading", { name: "Деньги" })).closest("section")!;
   expect(within(money).getByText(/40,00 ₽/)).toBeInTheDocument();
@@ -84,6 +86,7 @@ it("a period button refetches the range; the print button prints the sheet", asy
   mockServer(requests);
   const printed = vi.spyOn(print, "openPrintDocument").mockImplementation(() => {});
   render(<ProcurementPage />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Статистика" }));
   fireEvent.click(await screen.findByRole("tab", { name: "Показатели" }));
   await screen.findByRole("heading", { name: "Деньги" });
   fireEvent.click(screen.getByRole("button", { name: "Год" }));

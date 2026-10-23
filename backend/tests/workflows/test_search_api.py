@@ -126,7 +126,11 @@ def test_every_group_answers_and_tells_where_to_go(env):
     assert by_group["Проекты"]["params"] == {"tab": "internal"}
     assert by_group["Склад"]["section"] == "stock" and by_group["Склад"]["params"] == {"q": "FRX.26.0000003-П2"}
     assert by_group["Запросы КП"]["params"] == {"tab": "rfq"}
+    # The purchasing reference books left «Снабжение» (Витя's edit 4): «Справочники → Закупка».
+    assert by_group["Номенклатура"]["section"] == "purchasingrefs" and by_group["Номенклатура"]["params"]["tab"] == "items"
     suppliers = client.get(URL, params={"q": "ромашка"})
+    supplier = next(item for item in suppliers.json()["results"] if item["group"] == "Поставщики")
+    assert (supplier["section"], supplier["params"]["tab"]) == ("purchasingrefs", "directory")
     assert {"Поставщики", "Строки закупки"} <= groups(suppliers)
     assert titles(suppliers, "Поставщики") == ["Ромашка Электро"]
     commercial = client.get(URL, params={"q": "591"}).json()["results"]

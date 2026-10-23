@@ -42,10 +42,47 @@ it("returns to login when an active session is rejected", async () => {
     throw new Error(`Unexpected request: ${path}`);
   });
 
+  // «Заявки» is no menu item next to «Снабжение» (Витя's edit 3): the register opens by its address.
+  window.history.replaceState({}, "", "/?section=requests");
   render(<App />);
-  fireEvent.click(await screen.findByRole("button", { name: "Заявки" }));
 
   expect(await screen.findByRole("button", { name: "Войти" }, { timeout: 5000 })).toBeInTheDocument();
+});
+
+const sidebar = () => within(screen.getByRole("navigation", { name: "Основная навигация" }));
+
+// Витя's edit 4: the old «Лист закупки» tabs moved out; bookmarks and links land in the new places (MOVED_TABS).
+describe("old «Лист закупки» links", () => {
+  const cases: Array<[string, string, string]> = [
+    ["directory", "purchasingrefs", "Закупка"], ["items", "purchasingrefs", "Закупка"],
+    ["catalog", "purchasingrefs", "Закупка"], ["settings", "purchasingrefs", "Закупка"],
+    ["upd", "primarydocs", "Первичная документация"], ["invoices", "primarydocs", "Первичная документация"],
+    ["chain", "primarydocs", "Первичная документация"], ["docsearch", "primarydocs", "Первичная документация"],
+  ];
+  it.each(cases)("?section=procurement&tab=%s opens «%s»", async (tab, section, heading) => {
+    window.history.replaceState({}, "", `/?section=procurement&tab=${tab}&q=Ромашка`);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input) === "/api/auth/me" ? json(principal) : json({ detail: "нет в тесте" }, 404));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: heading, level: 1 })).toBeInTheDocument();
+    const params = new URL(window.location.href).searchParams;
+    // The address says the new place; the tab and its filters stay.
+    expect([params.get("section"), params.get("tab"), params.get("q")]).toEqual([section, tab, "Ромашка"]);
+    expect(screen.getByRole("tab", { selected: true })).toBeInTheDocument();
+  });
+
+  it("keeps the work tabs where they were", async () => {
+    window.history.replaceState({}, "", "/?section=procurement&tab=orders");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input) === "/api/auth/me" ? json(principal) : json({ detail: "нет в тесте" }, 404));
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Снабжение", level: 1 })).toBeInTheDocument();
+    expect(new URL(window.location.href).searchParams.get("section")).toBe("procurement");
+  });
 });
 
 it("opens procurement by the section grant alone: the level's name decides nothing", async () => {
@@ -54,8 +91,11 @@ it("opens procurement by the section grant alone: the level's name decides nothi
   render(<App />);
 
   expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Лист закупки" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Заявки" })).toBeInTheDocument();
+  expect(sidebar().getByRole("button", { name: "Снабжение" })).toBeInTheDocument();
+  // Витя's edits 2–3: the register and own requests leave the menu; the same key opens the moved tabs' sections.
+  expect(sidebar().queryByRole("button", { name: "Заявки" })).not.toBeInTheDocument();
+  expect(sidebar().getByRole("button", { name: "Первичная документация" })).toBeInTheDocument();
+  expect(sidebar().getByRole("button", { name: "Закупка" })).toBeInTheDocument();
 });
 
 it("draws the block tiles with line icons, never emoji (audit М-6)", async () => {
@@ -80,8 +120,9 @@ it("closes procurement without a grant on it, whatever the level", async () => {
   render(<App />);
 
   expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Лист закупки" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Заявки" })).toBeInTheDocument();
+  expect(sidebar().queryByRole("button", { name: "Снабжение" })).not.toBeInTheDocument();
+  // Without «Снабжение» the register is the only way in: it stays in the menu.
+  expect(sidebar().getByRole("button", { name: "Заявки" })).toBeInTheDocument();
 });
 
 it("ID-6: a view grant opens procurement, receiving and stock read-only", async () => {
@@ -99,7 +140,7 @@ it("ID-6: a view grant opens procurement, receiving and stock read-only", async 
 
   expect(await screen.findByText("Склад открыт вам только на просмотр.")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "+ Внести позиции" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Лист закупки" })).toBeInTheDocument();
+  expect(sidebar().getByRole("button", { name: "Снабжение" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Приёмка" })).toBeInTheDocument();
 });
 
@@ -376,7 +417,7 @@ it("NAV-1: home shows the blocks as tiles and a block shows its section cards in
 
   expect(await screen.findByRole("heading", { name: /Снабжение/, level: 1 })).toBeInTheDocument();
   expect(within(screen.getByRole("main")).getAllByRole("button").map((button) => button.getAttribute("aria-label")))
-    .toEqual([null, "Оформить заявку", "Мои заявки", "Заявки"]);
+    .toEqual([null, "Оформить заявку", "Заявки"]); // «Мои заявки» open from the personal card
   expect(window.location.search).toBe("?block=supply");
   // Sidebar groups agree with the blocks.
   const nav = screen.getByRole("navigation", { name: "Основная навигация" });

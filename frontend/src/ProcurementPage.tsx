@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { urlParam } from "./navigation";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { openUpdCard, urlParam } from "./navigation";
 import {
   ApiError,
   failureText,
@@ -23,18 +23,11 @@ import { ProcurementKpi } from "./ProcurementKpi";
 import { ProcurementRequests } from "./ProcurementRequests";
 import { ProcurementToday } from "./ProcurementToday";
 import { projectLabel, useInternalProjects } from "./internalProjects";
-import { PurchasingCatalog } from "./PurchasingCatalog";
-import { PurchasingDocChain } from "./PurchasingDocChain";
-import { PurchasingDocSearch } from "./PurchasingDocSearch";
-import { PurchasingInvoices } from "./PurchasingInvoices";
-import { PurchasingItems } from "./PurchasingItems";
 import { PurchasingOrders } from "./PurchasingOrders";
 import { PurchasingRfq } from "./PurchasingRfq";
 import { openRfq } from "./rfqLinks";
-import { PurchasingSettings } from "./PurchasingSettings";
-import { PurchasingSuppliers } from "./PurchasingSuppliers";
-import { PurchasingUpd } from "./PurchasingUpd";
-import { UpdInvoicesBlock } from "./UpdInvoicesBlock";
+import { RequestsHandoff } from "./RequestsHandoff";
+import "./procurementNav.css";
 import { ProcurementStockPicker, waitsForGrn } from "./ProcurementStockPicker";
 import {
   BackorderStage, COMPACT_BELOW, OrderStageBlock, OtherStage, StageHeading, orderGroups, orderStage,
@@ -49,8 +42,22 @@ import { LineDocumentsForm, readBase64 } from "./ProcurementLineDocuments";
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
 
-type ProcurementTab = "today" | "requests" | "queues" | "sheet" | "suppliers" | "kpi" | "rfq" | "orders" | "directory" | "items" | "catalog" | "settings"
-  | "upd" | "invoices" | "chain" | "docsearch";
+/* «Снабжение» (the former «Лист закупки», Витя's edit 4, owner-approved 23.10): the buyer's work tabs in the order of
+   doing, «Статистика» last with its own row. A new work tab (e.g. «Закупка» between «Запросы КП» and «Счета и
+   поставки») = its key in `WorkTab`, a row in `WORK_TABS` and its view in `ProcurementPage`. The reference books and
+   the documents that were tabs here live in `PurchasingRefsPage` / `PrimaryDocsPage`; old links land there through
+   `MOVED_TABS` (navigation.ts). */
+type WorkTab = "today" | "requests" | "rfq" | "orders";
+type StatsTab = "queues" | "sheet" | "suppliers" | "kpi";
+type ProcurementTab = WorkTab | StatsTab;
+
+const WORK_TABS: ReadonlyArray<[WorkTab, string]> = [
+  ["today", "Сегодня"], ["requests", "Заявки"], ["rfq", "Запросы КП"], ["orders", "Счета и поставки"],
+];
+const STATS_TABS: ReadonlyArray<[StatsTab, string]> = [
+  ["queues", "Очереди"], ["sheet", "Весь лист"], ["suppliers", "По поставщикам"], ["kpi", "Показатели"],
+];
+const isStats = (tab: ProcurementTab): tab is StatsTab => STATS_TABS.some(([key]) => key === tab);
 
 // «Мои позиции» (владелец, 05.10) — один блок «В работе»: строки к запросу (с «Готов к запросу») по поставщикам,
 // под ними лента заказов — заказ не переезжает между блоками, его статус (Жду счёт → Ждёт оплаты → В пути →
@@ -142,19 +149,22 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
   { key: "eta", title: "Ожидается", value: (line) => line.expected_arrival },
 ];
 
-const TABS: readonly ProcurementTab[] = [
-  "today", "requests", "queues", "sheet", "suppliers", "kpi", "rfq", "orders", "directory", "items", "catalog", "settings", "upd", "invoices", "chain",
-  "docsearch",
-];
-/** `?tab=` (the global search lands on a tab); an unknown or switched-off tab falls back to the default below. */
+/** `?tab=` (the global search lands on a tab; `stats` — «Статистика» on its first tab); an unknown or switched-off
+ *  tab falls back to the default below. */
 function initialTab(): ProcurementTab | null {
   const value = urlParam("tab");
-  return TABS.find((tab) => tab === value) ?? null;
+  if (value === "stats") return "queues";
+  return [...WORK_TABS, ...STATS_TABS].find(([tab]) => tab === value)?.[0] ?? null;
 }
 
 /** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
- *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork). */
-export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly?: boolean; buyerName?: string } = {}) {
+ *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork).
+ *  `canHandoff` — the right `procurement` on edit (same check as the server and the «Заявки» register): the strip
+ *  «Не переданы в закупку» in «Заявки» hands requests over; read-only viewers only get the way to the register.
+ *  `openRegister` — the «Заявки» register (no menu item of its own). */
+export function ProcurementPage({ readOnly = false, buyerName = "", canHandoff = false, openRegister }: {
+  readOnly?: boolean; buyerName?: string; canHandoff?: boolean; openRegister?: () => void;
+} = {}) {
   // «Сегодня» — первая вкладка и вкладка по умолчанию (список самого закупщика, поэтому не в режиме просмотра).
   useInternalProjects(); // «ВП-001 · Название» in the project columns
   const todayOn = !readOnly;
@@ -163,12 +173,12 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   // Своих и свободных позиций нет — очереди пусты: первым открывается «Весь лист», а не пустой экран (аудит 10.10, СН-1).
   const [autoOpened, setAutoOpened] = useState(false);
   const pickedByHand = useRef(picked !== null); // a tab from the URL counts as chosen by hand
-  const [updFocus, setUpdFocus] = useState<string | undefined>(undefined); // a UPD number elsewhere → its card in «УПД»
+  // «Статистика» opens on the inner tab chosen last in this visit.
+  const [lastStats, setLastStats] = useState<StatsTab>(picked && isStats(picked) ? picked : "queues");
   const pick = (next: ProcurementTab) => {
     pickedByHand.current = true; setAutoOpened(false); setPicked(next);
-    if (next === "upd") setUpdFocus(undefined); // the tab itself opens the list, not the last card
+    if (isStats(next)) setLastStats(next);
   };
-  const openUpd = (id: string) => { pick("upd"); setUpdFocus(id); };
   useEffect(() => {
     const follow = () => { if (urlParam("tab") === "orders") { pickedByHand.current = true; setAutoOpened(false); setPicked("orders"); } };
     window.addEventListener("popstate", follow);
@@ -182,42 +192,35 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   // The sheet opened by itself (empty queues while the lists were still loading) gives way to «Сегодня».
   const tab: ProcurementTab = picked && shown[picked] === false ? "queues"
     : autoOpened && todayOn ? "today" : picked ?? (todayOn ? "today" : "queues");
-  const groups: Array<Array<[ProcurementTab, string, boolean]>> = [
-    [["today", "Сегодня", todayOn], ["requests", "Заявки", true], ["rfq", "Запросы КП", true], ["orders", "Счета и поставки", true]],
-    [["queues", "Очереди", true], ["sheet", "Весь лист", true], ["suppliers", "По поставщикам", true], ["kpi", "Показатели", true]],
-    [["directory", "Поставщики", true], ["items", "Номенклатура", true], ["catalog", "Каталог закупок", true], ["settings", "Настройки", true]],
-    [["upd", "УПД", true], ["invoices", "Счета Kaiten", true], ["chain", "Цепочка документов", true], ["docsearch", "Поиск по документам", true]],
-  ];
-  const visibleGroups = groups.map((group) => group.filter(([, , on]) => on)).filter((group) => group.length);
+  const workTabs = WORK_TABS.filter(([key]) => shown[key] !== false);
+  const inStats = isStats(tab);
   return (
     <>
-      <header className="page-head"><h1>Лист закупки</h1></header>
-      {readOnly && <p className="page-sub">Лист закупки открыт вам только на просмотр: что свободно и что едет.</p>}
+      <header className="page-head"><h1>Снабжение</h1></header>
+      {readOnly && <p className="page-sub">Снабжение открыто вам только на просмотр: что свободно и что едет.</p>}
       <div className="seg-tabs" role="tablist" aria-label="Разделы закупки">
-        {visibleGroups.map((group, index) => (
-          <Fragment key={group[0][0]}>
-            {index > 0 && <span className="tab-sep" aria-hidden="true" />}
-            {group.map(([key, label]) => (
-              <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => pick(key)}>{label}</button>
-            ))}
-          </Fragment>
+        {workTabs.map(([key, label]) => (
+          <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => pick(key)}>{label}</button>
         ))}
+        <span className="tab-sep" aria-hidden="true" />
+        <button type="button" role="tab" aria-selected={inStats} className={inStats ? "on" : undefined} onClick={() => pick(lastStats)}>Статистика</button>
       </div>
+      {inStats && (
+        <div className="seg-tabs procurement-subtabs" role="tablist" aria-label="Статистика">
+          {STATS_TABS.map(([key, label]) => (
+            <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => pick(key)}>{label}</button>
+          ))}
+        </div>
+      )}
       {tab === "sheet" && autoOpened && <p className="page-sub procurement-auto-note">У вас нет позиций в работе и свободных позиций нет — показан весь лист. Свои позиции появятся во вкладке «Очереди».</p>}
       {tab === "today" && <ProcurementToday ordersOn />}
-      {tab === "requests" && <ProcurementRequests readOnly={readOnly} />}
+      {tab === "requests" && <>
+        <RequestsHandoff canHandoff={canHandoff} openRegister={openRegister} />
+        <ProcurementRequests readOnly={readOnly} />
+      </>}
       {tab === "kpi" && <ProcurementKpi />}
       {tab === "rfq" && <PurchasingRfq readOnly={readOnly} />}
-      {tab === "orders" && <PurchasingOrders readOnly={readOnly} onOpenUpd={openUpd} onOpenRfq={(id) => openRfq(id)} />}
-      {tab === "directory" && <PurchasingSuppliers readOnly={readOnly} onOpenUpd={openUpd} />}
-      {tab === "items" && <PurchasingItems readOnly={readOnly} onOpenUpd={openUpd} />}
-      {tab === "catalog" && <PurchasingCatalog readOnly={readOnly} onOpenUpd={openUpd} />}
-      {tab === "settings" && <PurchasingSettings readOnly={readOnly} />}
-      {tab === "upd" && <PurchasingUpd readOnly={readOnly} focusId={updFocus}
-        extraBlocks={(documentId) => <UpdInvoicesBlock documentId={documentId} readOnly={readOnly} />} />}
-      {tab === "invoices" && <PurchasingInvoices readOnly={readOnly} onOpenUpd={openUpd} />}
-      {tab === "chain" && <PurchasingDocChain readOnly={readOnly} onOpenUpd={openUpd} />}
-      {tab === "docsearch" && <PurchasingDocSearch readOnly={readOnly} onOpenUpd={openUpd} />}
+      {tab === "orders" && <PurchasingOrders readOnly={readOnly} onOpenUpd={openUpdCard} onOpenRfq={(id) => openRfq(id)} />}
       {tab === "queues" && <ProcurementQueues readOnly={readOnly} buyerName={buyerName} onIdle={openSheetWhenIdle} onOpenSheet={() => pick("sheet")} />}
       {tab === "sheet" && <section className="page"><ProcurementSheetView buyerName={readOnly ? "" : buyerName} /></section>}
       {tab === "suppliers" && <section className="page"><ProcurementBySupplier /></section>}

@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { PrimaryDocsPage } from "./PrimaryDocsPage";
 import { ProcurementPage } from "./ProcurementPage";
 import type { TodayItem, TodaySection } from "./ProcurementToday";
 
@@ -116,18 +117,32 @@ it("refreshes itself every minute", async () => {
   await waitFor(() => expect(calls()).toBe(2));
 });
 
+it("a document row leads to «Первичная документация»: by the link's own section, and an old tab-only link too", async () => {
+  mockServer([
+    section("kaiten", "Оплатить счета Kaiten", [row("Счёт 12", { section: "primarydocs", tab: "invoices", status: "to_pay" }, 2)]),
+    section("upd", "Проверить УПД", [row("3 документа", { tab: "upd", status: "needs_review" })]),
+  ]);
+  render(<ProcurementPage />);
+  const invoice = await screen.findByRole("link", { name: /Счёт 12/ });
+  expect(invoice).toHaveAttribute("href", "?section=primarydocs&tab=invoices&status=to_pay");
+  // An old server's link names only the tab: MOVED_TABS sends it to the new section as well.
+  expect(screen.getByRole("link", { name: /3 документа/ })).toHaveAttribute("href", "?section=primarydocs&tab=upd&status=needs_review");
+  fireEvent.click(invoice);
+  expect(Object.fromEntries(new URL(window.location.href).searchParams)).toEqual({ section: "primarydocs", tab: "invoices", status: "to_pay" });
+});
+
 it("the documents tabs open on the status a «Сегодня» link names", async () => {
-  window.history.replaceState({}, "", "/?section=procurement&tab=invoices&status=to_pay");
+  window.history.replaceState({}, "", "/?section=primarydocs&tab=invoices&status=to_pay");
   const fetch = mockServer([], (path) =>
     path.startsWith("/api/purchasing/invoices") ? json({ items: [], total: 0, page: 1, page_size: 50, counts: {} }) : null);
-  render(<ProcurementPage />);
+  render(<PrimaryDocsPage />);
   await waitFor(() => expect(fetch.mock.calls.some(([input]) => String(input).startsWith("/api/purchasing/invoices") && String(input).includes("status=to_pay"))).toBe(true));
   cleanup();
   vi.restoreAllMocks();
 
-  window.history.replaceState({}, "", "/?section=procurement&tab=upd&status=needs_review");
+  window.history.replaceState({}, "", "/?section=primarydocs&tab=upd&status=needs_review");
   const second = mockServer([], (path) =>
     path.startsWith("/api/purchasing/upd") ? json({ items: [], total: 0, page: 1, page_size: 50, counts: {}, review: 0, origins: {}, buyers: [] }) : null);
-  render(<ProcurementPage />);
+  render(<PrimaryDocsPage />);
   await waitFor(() => expect(second.mock.calls.some(([input]) => String(input).startsWith("/api/purchasing/upd?") && String(input).includes("status=needs_review"))).toBe(true));
 });

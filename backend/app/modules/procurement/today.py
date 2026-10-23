@@ -8,7 +8,8 @@ pay, the UPDs to check. The line status is the one «Заявки» shows (`requ
 groups by (`domain.line_project`), so both screens always agree.
 
 Sections come in the order of doing; empty ones are not sent. An item is {title, detail, link, days(, lines)}: `link` is
-the place of the next step as `?section=procurement` params (CONTRACTS.md deep links), `days` — late / waiting, it sorts
+the place of the next step as `?section=procurement` params (CONTRACTS.md deep links; `section` names another one —
+the documents live in «Первичная документация», `primarydocs`), `days` — late / waiting, it sorts
 the section (the oldest first). A card of a project or an order carries its positions (`lines`) and opens in place.
 
 ERP differences, each said where it happens: «Давальческое — ждём М-15» is left out (ERP has no tolling fact); ERP's
@@ -641,7 +642,7 @@ def _kaiten(invoices: Sequence[KaitenInvoice], today: date) -> list[dict]:
     return [{
         "title": invoice.title,
         "detail": f"{invoice.seller or 'поставщик не прочитан'}{f' · {rub(invoice.total)} ₽' if invoice.total is not None else ''}",
-        "link": {"tab": "invoices", "status": "to_pay"},
+        "link": {"section": "primarydocs", "tab": "invoices", "status": "to_pay"},
         "days": (today - invoice.created_on).days,
     } for invoice in invoices]
 
@@ -652,7 +653,7 @@ def _upd(count: int) -> list[dict]:
     return [{
         "title": f"{count} {plural(count, 'документ', 'документа', 'документов')}",
         "detail": "разборщик сомневается в реквизитах или суммах",
-        "link": {"tab": "upd", "status": "needs_review"}, "days": None,
+        "link": {"section": "primarydocs", "tab": "upd", "status": "needs_review"}, "days": None,
     }]
 
 

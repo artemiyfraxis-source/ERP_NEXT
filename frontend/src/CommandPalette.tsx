@@ -17,8 +17,12 @@ const COMMANDS: Command[] = [
   { label: "Счета и поставки", section: "procurement", params: { tab: "orders" }, words: "заказы поставщикам оплата доставка" },
   { label: "Склад", section: "stock", words: "остатки ГРН" },
   { label: "Приёмка", section: "receiving", words: "входной контроль" },
-  { label: "Поставщики", section: "procurement", params: { tab: "directory" } },
-  { label: "Номенклатура", section: "procurement", params: { tab: "items" }, words: "справочник" },
+  { label: "Поставщики", section: "purchasingrefs", params: { tab: "directory" }, words: "справочники закупка" },
+  { label: "Номенклатура", section: "purchasingrefs", params: { tab: "items" }, words: "справочники закупка" },
+  { label: "УПД", section: "primarydocs", params: { tab: "upd" }, words: "первичная документация документы" },
+  // No menu items since Витя's edits 2–3: the register and own requests are one search away.
+  { label: "Мои заявки", section: "myrequests", words: "личная карточка" },
+  { label: "Реестр заявок", section: "requests", words: "заявки передать в закупку" },
   { label: "Внутренние проекты", section: "projects", params: { tab: "internal" }, words: "ВП" },
 ];
 
