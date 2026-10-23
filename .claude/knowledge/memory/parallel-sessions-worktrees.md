@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: be43bccf-ce4c-4562-96ff-e0fbf3ca21a2
-  modified: 2026-10-17T12:02:18.129Z
+  modified: 2026-10-23T10:20:56.651Z
 ---
 
 On 2026-10-04 two orchestrator sessions ran at once on the owner's PC (erp-next-5b and erp-next-e7). e7 saw a
@@ -32,4 +32,12 @@ leaving a gutted directory.
   unlink the junctions before removing that worktree ([[worktree-symlink-removal]]).
 - Workers that start the app need their own ports (14.10: three workers collided on 8021/8031/8047) — give each
   `ERP_API_PORT` / `ERP_WEB_PORT` in the brief (defaults 8021/5176 belong to the owner's preview, [[erp-local-demo]]).
+- `isolation: "worktree"` branches from the HEAD of the session's CURRENT cwd (`worktree.baseRef: "head"`). After a
+  `cd` into a worker worktree the cwd can stay there, and new workers then silently start from that worker's branch
+  (22.10: the label-presets worker got the ТД branch instead of `stage-out-1022` and redid the label template). In
+  every brief, name the base explicitly: `git checkout -B <topic> <base-branch>` as the worker's first step.
+- A claim sent to the sessions `ListAgents` shows is not enough. On 23.10 another owner session (not in the list) built
+  and released the same feature, scan-to-ERP #654 with migration 0145, while this session built it a second time; the
+  duplicate was dropped. Right before dispatching workers, and again before integrating, run `git fetch` +
+  `git log origin/main -15` + `gh pr list`. Look for the topic's words and the migration number.
 - Related: [[erp-merge-gotchas]], [[owner-working-rules]].
