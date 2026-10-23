@@ -7,6 +7,8 @@ import type {
 /** The server takes at most this many rows in one supply. */
 export const RECEIPT_LIMIT = 100;
 export const LABELS_MAX = 50;
+/** The purpose of a lot when neither the row nor the header names one (shown as a grey placeholder). */
+export const DEFAULT_PURPOSE = "Склад";
 
 export type ReceiptHeader = {
   warehouse: string;
@@ -28,8 +30,8 @@ export type AcceptedInfo = {
   lotId: string;
   grn: string;
   place: string;
-  /** «Этикеток в печать: N» */
-  labelNote: string;
+  /** how many labels went to print (0 = none or failed) */
+  labels: number;
   /** the red reason the labels did not go out */
   labelError: string;
 };
@@ -92,7 +94,7 @@ const MESSAGES = {
 };
 
 export function emptyHeader(): ReceiptHeader {
-  return { warehouse: "ЦАР", supplier: "", invoice_number: "", invoice_date: "", upd_number: "", upd_date: "", purpose: "Склад" };
+  return { warehouse: "ЦАР", supplier: "", invoice_number: "", invoice_date: "", upd_number: "", upd_date: "", purpose: "" };
 }
 
 export function emptyLine(): ReceiptLine {
@@ -104,6 +106,20 @@ export function emptyLine(): ReceiptLine {
 /** A row nobody filled: no article, name or quantity. It is neither accepted nor counted. */
 export function isBlankLine(line: ReceiptLine): boolean {
   return !line.accepted && !line.article.trim() && !line.name.trim() && !line.quantity.trim();
+}
+
+/** Nothing typed in any cell, nothing accepted: the one row that waits at the bottom. */
+export function isEmptyLine(line: ReceiptLine): boolean {
+  return !line.accepted && PASTE_ORDER.every((key) => !line[key].trim());
+}
+
+/** The grid always ends with exactly one empty row (none only at the row limit). */
+export function withTrailingBlank(lines: ReceiptLine[]): ReceiptLine[] {
+  const kept = [...lines];
+  while (kept.length > 1 && isEmptyLine(kept[kept.length - 1]) && isEmptyLine(kept[kept.length - 2])) kept.pop();
+  const last = kept[kept.length - 1];
+  if ((!last || !isEmptyLine(last)) && kept.length < RECEIPT_LIMIT) kept.push(emptyLine());
+  return kept.length === lines.length && kept.every((line, index) => line === lines[index]) ? lines : kept;
 }
 
 /** A row can be accepted: article and a quantity above zero. */
@@ -207,7 +223,7 @@ export function headerFields(header: ReceiptHeader, scanFile: string): Warehouse
     invoice_date: header.invoice_date || null,
     upd_number: header.upd_number.trim(),
     upd_date: header.upd_date || null,
-    purpose: header.purpose.trim(),
+    purpose: header.purpose.trim() || DEFAULT_PURPOSE,
     ...(scanFile ? { scan_file: scanFile } : {}),
   };
 }
@@ -230,7 +246,7 @@ export function buildAccept(line: ReceiptLine, header: ReceiptHeader, place: str
     manufacturer: line.manufacturer.trim(),
     series: line.series.trim(),
     name: line.name.trim(),
-    purpose: line.purpose.trim() || header.purpose.trim(),
+    purpose: line.purpose.trim() || header.purpose.trim() || DEFAULT_PURPOSE,
     expiry_date: line.expiry_date || null,
     datasheet: line.datasheet.trim(),
     certificate: line.certificate.trim(),
@@ -276,7 +292,7 @@ export function lineFromLot(lot: WarehouseLot): ReceiptLine {
     article: lot.article, quantity: lot.inbound, unit: lot.unit, item_type: lot.item_type, manufacturer: lot.manufacturer ?? "",
     series: lot.series, name: lot.name, purpose: lot.purpose, expiry_date: lot.expiry_date ?? "",
     datasheet: lot.datasheet ?? "", certificate: lot.certificate ?? "",
-    accepted: { lotId: lot.id, grn: lot.grn, place: lot.storage_location, labelNote: "", labelError: "" },
+    accepted: { lotId: lot.id, grn: lot.grn, place: lot.storage_location, labels: 0, labelError: "" },
   };
 }
 

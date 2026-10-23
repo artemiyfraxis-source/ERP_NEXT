@@ -6,12 +6,11 @@ import { SuggestInput } from "./SuggestInput";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import {
   GRID_COLUMNS, LABELS_MAX, RECEIPT_LIMIT, applyHints, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell,
-  emptyHeader, emptyLine, fillEmpty, headerChanged, headerFields, headerFromReceipt, isBlankLine, lineFromLot, lineSummary,
-  mergeHeader, shortDate,
+  DEFAULT_PURPOSE, emptyHeader, emptyLine, fillEmpty, headerChanged, headerFields, headerFromReceipt, isBlankLine, lineFromLot, lineSummary,
+  mergeHeader, shortDate, withTrailingBlank,
   type HeaderKey, type LineKey, type ReceiptHeader, type ReceiptLine,
 } from "./warehouseReceiptLogic";
 
-const START_ROWS = 5;
 const norm = (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru");
 
 type Props = {
@@ -34,7 +33,10 @@ function AcceptDialog({ line, warehouse, onClose, onAccept }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState("");
+  const placeInput = useRef<HTMLInputElement>(null);
   const hint = usePlaceHint(warehouse, place);
+  // PageWindow focuses its own box after the children mount: «Место» takes the focus back
+  useEffect(() => { const timer = window.setTimeout(() => placeInput.current?.focus(), 0); return () => window.clearTimeout(timer); }, []);
   const count = Math.floor(Number(labels));
   const labelsOk = Number.isFinite(count) && count >= 1 && count <= LABELS_MAX;
 
@@ -59,8 +61,9 @@ function AcceptDialog({ line, warehouse, onClose, onAccept }: {
       <div className="manual-stock-head"><h2>Принять позицию</h2></div>
       <p className="wr-summary">{lineSummary(line)}</p>
       <label>Место *
-        <input autoFocus aria-label="Место хранения" placeholder="1F4" className={hint.busy ? "place-busy" : undefined}
-          title={hint.busy ? BUSY_TITLE : undefined} value={place} onChange={(event) => { setPlace(event.target.value); setConflict(""); }} />
+        <input ref={placeInput} autoFocus aria-label="Место хранения" placeholder="1F4" className={hint.busy ? "place-busy" : undefined}
+          title={hint.busy ? BUSY_TITLE : undefined} value={place} onChange={(event) => { setPlace(event.target.value); setConflict(""); }}
+          onKeyDown={(event) => { if (event.key === "Enter" && !conflict && !busy) { event.preventDefault(); void send(false); } }} />
       </label>
       {line.places.length > 0 && <p className="wr-places">уже лежит:{" "}
         {line.places.map((code) => <button key={code} type="button" className="link-button wr-chip" onClick={() => setPlace(code)}>{code}</button>)}
@@ -85,7 +88,7 @@ function AcceptDialog({ line, warehouse, onClose, onAccept }: {
 /** «Внести позиции»: the supply header and a paste grid; every row is accepted on its own with «Принять». */
 export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }: Props) {
   const [header, setHeader] = useState<ReceiptHeader>(emptyHeader);
-  const [lines, setLines] = useState<ReceiptLine[]>(() => Array.from({ length: START_ROWS }, emptyLine));
+  const [lines, setLines] = useState<ReceiptLine[]>(() => [emptyLine()]);
   const [receipt, setReceipt] = useState<ReceiptDoc | null>(null);
   const [scanFile, setScanFile] = useState("");
   const [recent, setRecent] = useState<ReceiptDoc[]>([]);
@@ -95,11 +98,11 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   const [accepting, setAccepting] = useState<number | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef<{ row: number; key: LineKey } | null>(null);
   const timers = useRef(new Map<number, number>());
   const headerRef = useRef(header);
   headerRef.current = header;
-  const atLimit = lines.length >= RECEIPT_LIMIT;
   const acceptedCount = lines.filter((line) => line.accepted).length;
   const pendingCount = lines.filter((line) => !line.accepted && !isBlankLine(line)).length;
   const phone = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
@@ -142,7 +145,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
 
   const setHead = (key: HeaderKey, value: string) => setHeader((current) => ({ ...current, [key]: value }));
   const patchLine = (row: number, change: (line: ReceiptLine) => ReceiptLine) =>
-    setLines((current) => current.map((line, index) => (index === row ? change(line) : line)));
+    setLines((current) => withTrailingBlank(current.map((line, index) => (index === row ? change(line) : line))));
 
   /** Article lookup: a known lot at once, the catalog after 250 ms. Fills EMPTY cells only. */
   function lookup(row: number, article: string) {
@@ -173,19 +176,10 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     }
   }
 
-  function add() {
-    setLines((current) => (current.length >= RECEIPT_LIMIT ? current : [...current, emptyLine()]));
-  }
-
   function move(row: number, key: LineKey, delta: number) {
     const next = row + delta;
     if (next < 0) return;
-    if (next >= lines.length) {
-      if (atLimit) return;
-      pendingFocus.current = { row: next, key };
-      add();
-      return;
-    }
+    if (next >= lines.length) return;
     const element = cell(next, key);
     element?.focus();
     if (element instanceof HTMLInputElement) element.select();
@@ -211,7 +205,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     event.preventDefault();
     const result = applyReceiptPaste(lines, row, key, text);
     if ("error" in result) { setNote(result.error); return; }
-    setLines(result.lines);
+    setLines(withTrailingBlank(result.lines));
     const merged = mergeHeader(header, result.header);
     const headerFilled = (Object.keys(result.header) as HeaderKey[]).filter((name) => merged[name] !== header[name]).length;
     setHeader(merged);
@@ -234,7 +228,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
       const result = await warehouseApi.scanReceipt(file);
       const next = applyScan(header, lines, result);
       setHeader(next.header);
-      setLines(next.lines);
+      setLines(withTrailingBlank(next.lines));
       setScanFile(result.scan_file);
       setNote(result.note || `Распознано строк: ${next.added}`);
       next.lines.forEach((line, index) => { if (line !== lines[index] && line.article.trim()) lookup(index, line.article); });
@@ -255,7 +249,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
       setReceipt(saved);
       setHeader(headerFromReceipt(saved));
       setScanFile(saved.scan_file ?? "");
-      setLines([...lots.map(lineFromLot), ...Array.from({ length: START_ROWS }, emptyLine)].slice(0, RECEIPT_LIMIT));
+      setLines(withTrailingBlank(lots.map(lineFromLot).slice(0, RECEIPT_LIMIT)));
       setNote(`Поставка продолжена: принято позиций — ${lots.length}`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось открыть поставку");
@@ -288,14 +282,18 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     patchLine(row, (current) => ({
       ...current,
       error: "",
+      // what went to the server stays on the row
+      unit: current.unit.trim() || "шт",
+      purpose: current.purpose.trim() || headerRef.current.purpose.trim() || DEFAULT_PURPOSE,
       accepted: {
         lotId: result.lot.id,
         grn: result.lot.grn,
         place: result.lot.storage_location || place,
-        labelNote: !result.label_error && labels > 0 ? `Этикеток в печать: ${labels}` : "",
+        labels: !result.label_error ? labels : 0,
         labelError: result.label_error,
       },
     }));
+    if (scroller.current) scroller.current.scrollLeft = 0;
     onAccepted(result.lot);
   }
 
@@ -304,10 +302,10 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     if (!accepted) return;
     try {
       await labelsApi.printLot(accepted.lotId, 1);
-      patchLine(row, (line) => (line.accepted ? { ...line, accepted: { ...line.accepted, labelNote: "Этикеток в печать: 1", labelError: "" } } : line));
+      patchLine(row, (line) => (line.accepted ? { ...line, accepted: { ...line.accepted, labels: 1, labelError: "" } } : line));
     } catch (reason) {
       const text = reason instanceof Error ? reason.message : "Не удалось отправить этикетку";
-      patchLine(row, (line) => (line.accepted ? { ...line, accepted: { ...line.accepted, labelNote: "", labelError: text } } : line));
+      patchLine(row, (line) => (line.accepted ? { ...line, accepted: { ...line.accepted, labels: 0, labelError: text } } : line));
     }
   }
 
@@ -328,11 +326,11 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
       return <SuggestInput {...common} options={[...knownArticles.keys()]} describe={(option) => knownArticles.get(option) ?? ""} minLength={2} value={value} onChange={set} />;
     }
     if (key === "item_type") return <SuggestInput {...common} options={typeChoices} value={value} onChange={set} />;
-    if (key === "expiry_date") return <input {...common} type="date" value={value} onChange={(event) => set(event.target.value)} />;
+    if (key === "expiry_date") return !line.article.trim() ? null : <input {...common} type="date" value={value} onChange={(event) => set(event.target.value)} />;
     return <input
       {...common}
       inputMode={key === "quantity" ? "decimal" : undefined}
-      placeholder={key === "purpose" ? header.purpose : key === "unit" ? "шт" : undefined}
+      placeholder={isBlankLine(line) ? undefined : key === "purpose" ? header.purpose.trim() || DEFAULT_PURPOSE : key === "unit" ? "шт" : undefined}
       value={value}
       onChange={(event) => set(event.target.value)}
     />;
@@ -340,13 +338,13 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
 
   const headerField = (key: HeaderKey, label: string, type = "text") => (
     <label>{label}
-      <input type={type} value={header[key]} onChange={(event) => setHead(key, event.target.value)} />
+      <input type={type} value={header[key]} placeholder={key === "purpose" ? DEFAULT_PURPOSE : undefined} onChange={(event) => setHead(key, event.target.value)} />
     </label>
   );
   const colSpan = GRID_COLUMNS.length + 2;
 
   return (
-    <PageWindow label="Внести позиции" width={1500} close={onClose}>
+    <PageWindow label="Внести позиции" width="min(2200px, calc(100vw - 32px))" close={onClose}>
       <div className="panel wr-form" ref={root}>
         <div className="manual-stock-head">
           <h2>Поставка</h2>
@@ -380,16 +378,16 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
           </div>
         </div>
         <p className="rg-hint">
-          Вставьте блок из Excel или Таблиц прямо в таблицу (Ctrl+V в любую ячейку) · Enter — вниз, Tab — вправо, на последней строке Enter добавляет строку · пустое назначение берётся из шапки · до {RECEIPT_LIMIT} строк
+          Ctrl+V — вставка блока из Excel · Enter — вниз, Tab — вправо · пустое назначение — из шапки · до {RECEIPT_LIMIT} строк
         </p>
         <div className="rg">
-          <div className="rg-scroll wr-scroll">
+          <div className="rg-scroll wr-scroll" ref={scroller}>
             <table className="rg-table wr-table" aria-label="Позиции поставки">
               <thead>
                 <tr>
-                  <th className="rg-no">№</th>
-                  {GRID_COLUMNS.map((column) => <th key={column.key} className={`wr-col-${column.key}`}>{column.label}{column.required ? " *" : ""}</th>)}
-                  <th className="wr-col-act" />
+                  <th className="rg-no wr-stick wr-stick-no">№</th>
+                  {GRID_COLUMNS.map((column) => <th key={column.key} className={`wr-col-${column.key}${column.key === "article" ? " wr-stick wr-stick-article" : ""}`}>{column.label}{column.required ? " *" : ""}</th>)}
+                  <th className="wr-col-act wr-stick wr-stick-act" />
                 </tr>
               </thead>
               <tbody>
@@ -398,24 +396,28 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
                   return <Fragment key={row}>
                     <tr className={[line.error ? "rg-row-bad" : "", done ? "wr-done" : ""].filter(Boolean).join(" ") || undefined}
                       title={line.auto.length && line.source ? `Подставлено: ${line.source}` : undefined}>
-                      <td className="rg-no">{row + 1}</td>
-                      {GRID_COLUMNS.map((column) => <td key={column.key} className={`wr-col-${column.key}`}>
+                      <td className="rg-no wr-stick wr-stick-no">{row + 1}</td>
+                      {GRID_COLUMNS.map((column) => <td key={column.key} className={`wr-col-${column.key}${column.key === "article" ? " wr-stick wr-stick-article" : ""}`}>
                         {done ? <span className="wr-ro" title={line[column.key]}>{column.key === "expiry_date" ? shortDate(line[column.key]) : line[column.key]}</span> : control(row, column.key, line)}
                       </td>)}
-                      <td className="wr-col-act">
+                      <td className="wr-col-act wr-stick wr-stick-act">
                         {done
-                          ? <span className="wr-accepted">Принято · ГРН {done.grn} · {done.place || "без места"}{" "}
-                            <button type="button" className="rg-link" onClick={() => void reprint(row)}>Этикетка ещё раз</button></span>
-                          : <>
+                          ? <span className="wr-accepted">✓ Принято</span>
+                          : !isBlankLine(line) && <>
                             <button type="button" className="rg-link wr-accept-btn" disabled={!canAccept(line) || accepting !== null} aria-label={`Принять строку ${row + 1}`}
                               onClick={() => setAccepting(row)}>Принять</button>
                             <button type="button" className="rg-link" aria-label={`Убрать строку ${row + 1}`}
-                              onClick={() => setLines((current) => (current.length > 1 ? current.filter((_, index) => index !== row) : [emptyLine()]))}>Убрать</button>
+                              onClick={() => setLines((current) => withTrailingBlank(current.filter((_, index) => index !== row)))}>Убрать</button>
                           </>}
-                        {done?.labelNote && <small className="wr-label-note" role="status">{done.labelNote}</small>}
-                        {done?.labelError && <small className="danger-text" role="alert">{done.labelError}</small>}
                       </td>
                     </tr>
+                    {done && <tr className="wr-done-row"><td colSpan={colSpan}>
+                      <span className="wr-sub">
+                        <span className="wr-accepted">Принято · ГРН {done.grn} · место {done.place || "не указано"}{done.labels ? ` · этикеток ${done.labels}` : ""}</span>
+                        <button type="button" className="rg-link" onClick={() => void reprint(row)}>Этикетка ещё раз</button>
+                        {done.labelError && <small className="danger-text" role="alert">{done.labelError}</small>}
+                      </span>
+                    </td></tr>}
                     {!done && line.expected && <tr className="wr-note-row"><td colSpan={colSpan}>
                       <span className="warning-inline">ожидается в Приёмке: {line.expected}</span>
                     </td></tr>}
@@ -429,8 +431,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
           <div className="rg-bar">
             <span className="rg-count">Строк: <b>{lines.length}</b> из {RECEIPT_LIMIT} · принято <b>{acceptedCount}</b> · к приёмке <b>{pendingCount}</b></span>
             <span className="rg-spacer" />
-            <button type="button" className="secondary small" disabled={atLimit} onClick={add}>+ Добавить строку</button>
-            <button type="button" className="primary" onClick={onClose}>Закрыть</button>
+            <button type="button" className="secondary" onClick={onClose}>Закрыть</button>
           </div>
         </div>
       </div>
