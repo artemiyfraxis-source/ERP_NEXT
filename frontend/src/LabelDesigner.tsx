@@ -170,7 +170,8 @@ export function LabelDesigner({ initialKind, usedFormat = null, readOnly = false
   // The server's picture of the draft: debounced, the last request wins (an older answer is cancelled).
   const draftText = slot ? JSON.stringify(slot.draft) : "";
   useEffect(() => {
-    if (!draftText) return;
+    // The server draws a preview for those who may change the warehouse only (every warehouse POST needs edit).
+    if (!draftText || readOnly) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       templatesApi.preview(kind, format, JSON.parse(draftText) as LabelTemplate, controller.signal).then(dataUrl).then((url) => {
@@ -181,7 +182,7 @@ export function LabelDesigner({ initialKind, usedFormat = null, readOnly = false
       });
     }, PREVIEW_DELAY_MS);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [kind, format, draftText]);
+  }, [kind, format, draftText, readOnly]);
 
   function setDraft(change: (elements: TemplateElement[]) => TemplateElement[]) {
     setSlots((all) => {
@@ -334,7 +335,7 @@ export function LabelDesigner({ initialKind, usedFormat = null, readOnly = false
               })}
             </div>
           </div>
-          <p className="ld-hint muted">{formatText(format)} мм · {preview.error ? <span className="tone-danger">Предпросмотр: {preview.error}</span> : "фон — ровно то, что напечатает принтер"}
+          <p className="ld-hint muted">{formatText(format)} мм · {readOnly ? "предпросмотр и правка шаблона — у тех, кто может менять склад" : preview.error ? <span className="tone-danger">Предпросмотр: {preview.error}</span> : "фон — ровно то, что напечатает принтер"}
             {!readOnly && " · стрелки — 0,5 мм, Shift — 2 мм, Delete — удалить"}</p>
         </div>
         <ElementProps element={current} fields={kindFields} size={[width, height]} readOnly={readOnly}

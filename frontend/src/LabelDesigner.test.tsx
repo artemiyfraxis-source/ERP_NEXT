@@ -212,6 +212,10 @@ it("a viewer sees the template but no palette, «Сохранить» or «Сб�
   expect(screen.queryByLabelText("Добавить поле")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Сохранить" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Сбросить к стандартному" })).not.toBeInTheDocument();
+  // The server draws a preview only for those who may change the warehouse: a viewer never asks for it.
+  expect(screen.getByText(/предпросмотр и правка шаблона — у тех, кто может менять склад/)).toBeInTheDocument();
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(calls.some((call) => call.path.endsWith("/preview"))).toBe(false);
 });
 
 async function openTemplateTab() {
