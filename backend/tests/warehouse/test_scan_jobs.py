@@ -441,3 +441,48 @@ def test_real_ocr_reads_a_scanned_pdf():
     _page_picture(UPD_TEXT).save(buffer, format="PDF", resolution=150)
     found, _note = recognise_upd(buffer.getvalue(), "application/pdf")
     assert (found.upd_number, found.upd_date) == ("123", date(2026, 10, 20))
+
+
+def _jpeg(width: int = 120, height: int = 80) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("L", (width, height), 255).save(buffer, "JPEG", dpi=(300, 300))
+    return buffer.getvalue()
+
+
+def test_a_picture_from_the_scanner_is_kept_as_pdf(queue):
+    """Owner 23.10: «хранить надо PDF» — the agent sends a JPEG, the receipt keeps a one-page PDF."""
+    admin, agent, _clock, sessions = queue
+    job_id = _new_job(admin)
+    assert _claim(agent) == job_id
+    assert _upload(agent, job_id, "scan.jpg", _jpeg(), "image/jpeg").status_code == 200
+    result = _job(admin, job_id)["result"]
+    served = admin.get(result["scan_file"])
+    assert served.headers["content-type"] == "application/pdf" and served.content.startswith(b"%PDF")
+    with sessions() as session:
+        stored = session.get(WarehouseReceiptFileRow, session.get(ScanJobRow, UUID(job_id)).file_id)
+        assert stored.file_name == "scan.pdf"
+
+
+def test_a_sideways_page_is_read_turned(monkeypatch, tmp_path):
+    """A landscape УПД lies sideways on the flatbed: the page that reads as noise is tried at 90° and 270°."""
+    image = tmp_path / "scan.png"
+    from PIL import Image
+
+    Image.new("L", (40, 20), 255).save(image)
+    upright = " ".join(["Продавец Покупатель Количество"] * 20)
+    seen: list[str] = []
+
+    def fake(tesseract, picture):
+        seen.append(picture.name)
+        return upright if picture.name.endswith("-r90.png") else "ii |l ~~"
+
+    monkeypatch.setattr(receipt_ocr, "_tesseract", fake)
+    assert receipt_ocr._read_page("tesseract", image) == upright
+    assert seen == ["scan.png", "scan-r90.png", "scan-r270.png"]
+    seen.clear()
+    monkeypatch.setattr(receipt_ocr, "_tesseract", lambda tesseract, picture: seen.append(picture.name) or upright)
+    assert receipt_ocr._read_page("tesseract", image) == upright and seen == ["scan.png"], "an upright page is read once"

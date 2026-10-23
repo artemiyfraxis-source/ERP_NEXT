@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
 from app.shared.clock import moscow_now
+from app.shared.file_types import sniffed_type
 from app.shared.http_auth import Principal, warehouse_edit_principal, warehouse_view_principal
 from app.shared.stored_files import file_response
 from app.workflows.stock_receipt import expected_in_receiving, upd_document
@@ -263,8 +264,9 @@ def scan_answer(purchasing_factory, link: str, content: bytes, kind: str | None)
 
 
 def _scan(request: Request, file_name: str, content: bytes, principal: Principal, now: datetime, uow_factory) -> dict:
-    link, kind = _checked(lambda: store_scan(uow_factory(), file_name, content, principal.actor, now))
-    return scan_answer(_factory(request, "purchasing_uow_factory"), link, content, kind)
+    link, _stored_kind = _checked(lambda: store_scan(uow_factory(), file_name, content, principal.actor, now))
+    # Read what came (a picture straight to OCR), though a picture is stored as PDF.
+    return scan_answer(_factory(request, "purchasing_uow_factory"), link, content, sniffed_type(content))
 
 
 @router.post("/receipts/scan")
