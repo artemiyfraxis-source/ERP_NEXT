@@ -118,7 +118,7 @@ it("commands are filtered by the sections the user can open", async () => {
   press({ key: "k", code: "KeyK", ctrlKey: true });
   await screen.findByRole("combobox");
   expect(screen.getAllByRole("option").map((option) => option.querySelector(".palette-title")?.textContent)).toEqual([
-    "Оформить заявку", "Сегодня", "Запросы КП", "Счета и поставки", "Склад", "Приёмка", "Поставщики", "Номенклатура", "УПД",
+    "Оформить заявку", "Сегодня", "Запросы КП", "Закупка", "Счета и поставки", "Склад", "Приёмка", "Поставщики", "Номенклатура", "УПД",
     "Внутренние проекты",
   ]);
   const input = screen.getByRole("combobox");

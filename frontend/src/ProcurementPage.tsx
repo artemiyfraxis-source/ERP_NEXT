@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { openUpdCard, urlParam } from "./navigation";
+import { openPlace, openUpdCard, urlParam } from "./navigation";
 import {
   ApiError,
   failureText,
@@ -23,6 +23,7 @@ import { ProcurementKpi } from "./ProcurementKpi";
 import { ProcurementRequests } from "./ProcurementRequests";
 import { ProcurementToday } from "./ProcurementToday";
 import { projectLabel, useInternalProjects } from "./internalProjects";
+import { PurchasingBuy } from "./PurchasingBuy";
 import { PurchasingOrders } from "./PurchasingOrders";
 import { PurchasingRfq } from "./PurchasingRfq";
 import { openRfq } from "./rfqLinks";
@@ -47,12 +48,12 @@ const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
    поставки») = its key in `WorkTab`, a row in `WORK_TABS` and its view in `ProcurementPage`. The reference books and
    the documents that were tabs here live in `PurchasingRefsPage` / `PrimaryDocsPage`; old links land there through
    `MOVED_TABS` (navigation.ts). */
-type WorkTab = "today" | "requests" | "rfq" | "orders";
+type WorkTab = "today" | "requests" | "rfq" | "buy" | "orders";
 type StatsTab = "queues" | "sheet" | "suppliers" | "kpi";
 type ProcurementTab = WorkTab | StatsTab;
 
 const WORK_TABS: ReadonlyArray<[WorkTab, string]> = [
-  ["today", "Сегодня"], ["requests", "Заявки"], ["rfq", "Запросы КП"], ["orders", "Счета и поставки"],
+  ["today", "Сегодня"], ["requests", "Заявки"], ["rfq", "Запросы КП"], ["buy", "Закупка"], ["orders", "Счета и поставки"],
 ];
 const STATS_TABS: ReadonlyArray<[StatsTab, string]> = [
   ["queues", "Очереди"], ["sheet", "Весь лист"], ["suppliers", "По поставщикам"], ["kpi", "Показатели"],
@@ -180,7 +181,10 @@ export function ProcurementPage({ readOnly = false, buyerName = "", canHandoff =
     if (isStats(next)) setLastStats(next);
   };
   useEffect(() => {
-    const follow = () => { if (urlParam("tab") === "orders") { pickedByHand.current = true; setAutoOpened(false); setPicked("orders"); } };
+    const follow = () => {
+      const next = urlParam("tab");
+      if (next === "orders" || next === "buy") { pickedByHand.current = true; setAutoOpened(false); setPicked(next); }
+    };
     window.addEventListener("popstate", follow);
     return () => window.removeEventListener("popstate", follow);
   }, []);
@@ -220,6 +224,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "", canHandoff =
       </>}
       {tab === "kpi" && <ProcurementKpi />}
       {tab === "rfq" && <PurchasingRfq readOnly={readOnly} />}
+      {tab === "buy" && <PurchasingBuy readOnly={readOnly} onOpenRfq={(id) => openRfq(id)} onOpenOrder={(order) => openPlace("procurement", { tab: "orders", order })} />}
       {tab === "orders" && <PurchasingOrders readOnly={readOnly} onOpenUpd={openUpdCard} onOpenRfq={(id) => openRfq(id)} />}
       {tab === "queues" && <ProcurementQueues readOnly={readOnly} buyerName={buyerName} onIdle={openSheetWhenIdle} onOpenSheet={() => pick("sheet")} />}
       {tab === "sheet" && <section className="page"><ProcurementSheetView buyerName={readOnly ? "" : buyerName} /></section>}
