@@ -52,11 +52,37 @@ _STORED_INVOICE = re.compile(r"/api/procurement/files/[0-9a-f]{8}-[0-9a-f]{4}-[0
 
 
 def normalize_invoice_url(value: str | None) -> str | None:
-    """СЧЕТ: an absolute http(s) link or the path of an invoice file stored by ERP."""
+    """СЧЕТ as the buyer gives it (the HTTP forms): an absolute http(s) link or the path of an invoice file stored by ERP."""
     text = str(value or "").strip()
     if _STORED_INVOICE.fullmatch(text):
         return text
     return normalize_document_url(value)
+
+
+# A Kaiten invoice of ERP's registry «Счета» (purchasing_invoices) standing in for the invoice file (Витя, 23.10.2026:
+# an order RB knows as paid must not wait for a PDF the import did not have). Only the Roller_Buyer import writes it: the
+# HTTP forms keep `normalize_invoice_url`, which refuses this path, so a buyer's own invoice still needs a file or a link.
+# The path opens the registry's PDF once it is there, else says the file is not attached yet.
+KAITEN_INVOICE_PATH = "/api/purchasing/invoices/"
+_KAITEN_INVOICE = re.compile(
+    r"/api/purchasing/invoices/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/document"
+)
+
+
+def kaiten_invoice_url(invoice_id: UUID) -> str:
+    return f"{KAITEN_INVOICE_PATH}{invoice_id}/document"
+
+
+def is_kaiten_invoice_url(value: str | None) -> bool:
+    return bool(_KAITEN_INVOICE.fullmatch(str(value or "").strip()))
+
+
+def _line_invoice_url(value: str | None) -> str | None:
+    """СЧЕТ a command may write: what the forms accept, or a Kaiten invoice of the registry (see above)."""
+    text = str(value or "").strip()
+    if _KAITEN_INVOICE.fullmatch(text):
+        return text
+    return normalize_invoice_url(value)
 
 
 class ProcurementStatus(str, Enum):
@@ -563,7 +589,7 @@ class ProcurementLine:
         """`uploadInvoice` on a «Жду счет» line: СЧЕТ, and № / ДАТА СЧЕТА from the file when recognised."""
         self._require_owner(actor)
         try:
-            url = normalize_invoice_url(invoice_url)
+            url = _line_invoice_url(invoice_url)
         except ValueError as error:
             raise ProcurementValidationError(str(error)) from error
         if url is None:
@@ -608,7 +634,7 @@ class ProcurementLine:
         """
         self._require_owner(actor)
         try:
-            url = normalize_invoice_url(invoice_url)
+            url = _line_invoice_url(invoice_url)
         except ValueError as error:
             raise ProcurementValidationError(str(error)) from error
         if url is None:

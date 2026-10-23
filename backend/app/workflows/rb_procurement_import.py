@@ -21,9 +21,13 @@ receiving outbox) is theirs, and a re-run never repeats a step a line has alread
   into purchasing_document_files), the decision written into the line as the RFQ bridge writes it (`save_procurement_
   facts`: ПОСТАВЩИК, КОЛ-ВО, ЕД.ИЗМ → «Готов к запросу»);
 * order → the procurement commands a buyer runs: «Сформировать запрос» (ERP's own № ЗАКАЗА PO-NNN, «Жду счет»),
-  «Внести КП» with the order's prices and the Kaiten invoice file («В оплату»), «Оплачено» («В пути»), the order-wide
+  «Внести КП» with the order's prices and the Kaiten invoice («В оплату»), «Оплачено» («В пути»), the order-wide
   ОЖИД. ДАТА when RB rescheduled it (the audit keeps the promised date — `purchasing_orders` reads «обещано» from it),
-  then the order facts of «Счета и поставки» (в оплату, отгружен, трек, доставка, заметка);
+  then the order facts of «Счета и поставки» (в оплату, отгружен, трек, доставка, заметка). The invoice is its PDF
+  (from the data folder, else from the registry «Счета»); without one, the order's Kaiten invoice in the registry
+  stands in for it (Витя, 23.10: an order RB knows as paid does not wait for the file) — СЧЕТ links to that registry
+  invoice («файл не приложен»), and a later run that has the PDF puts it in its place («Счёт заменён»). An order whose
+  invoice is not in the registry stays «Жду счет» and is listed;
 * cancelled → «Отменено» with RB's reason; «Давальческое» (the customer supplies it) → «Отменено» with that reason;
   «Со склада» → stays «В работе» with a note: ERP's «Со склада» is a reserve on a lot the buyer picks himself;
 * settings → purchasing_settings (RB's stored values over RB's defaults).
@@ -36,7 +40,8 @@ A line with no «нужно к» in RB gets the project's ДЛ from the producti
 the request day + 14.
 
 Without `--data-dir` (or with an empty one) everything but the files is imported: a missing quote / invoice file is
-counted as «без файла», and a re-run with the folder attaches the files to what is already there."""
+counted as «без файла», and a re-run with the folder attaches the files to what is already there (an order already on
+its Kaiten invoice gets the PDF, nothing else moves)."""
 
 from __future__ import annotations
 
@@ -67,6 +72,7 @@ from app.modules.procurement.application import (
     KpRow,
     OrderLineRef,
     PaySupplierOrderCommand,
+    ReplaceInvoiceCommand,
     SaveKpCommand,
     SaveProcurementFactsCommand,
     SetNoteCommand,
@@ -74,6 +80,7 @@ from app.modules.procurement.application import (
     UploadInvoiceFileCommand,
     build_supplier_requests,
     pay_supplier_order,
+    replace_invoice,
     save_kp,
     save_procurement_facts,
     set_order_expected_arrival,
@@ -88,12 +95,15 @@ from app.modules.procurement.domain import (
     ProcurementLine,
     ProcurementStatus,
     create_line_from_requested,
+    is_kaiten_invoice_url,
+    kaiten_invoice_url,
     next_system_id,
 )
 from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchemyProcurementUnitOfWork
 from app.modules.procurement.money import MoneyInput
 from app.modules.procurement.requests_application import CancelManyCommand, CancelManyItem, cancel_procurement_lines
 from app.modules.production.infrastructure import ProductionPlanProjectRow
+from app.modules.purchasing import invoices as purchasing_invoices
 from app.modules.purchasing import items as purchasing_items
 from app.modules.purchasing import orders as purchasing_orders
 from app.modules.purchasing import settings as purchasing_settings
@@ -102,6 +112,7 @@ from app.modules.purchasing.doc_refs import norm_doc_number
 from app.modules.purchasing.infrastructure import (
     DecisionRow,
     DocumentFileRow,
+    InvoiceRow,
     LineItemRow,
     OrderFactRow,
     QuoteLineRow,
@@ -1042,13 +1053,16 @@ class ProcurementFlowImporter:
             raise ValueError("строки заказа разошлись по разным заказам ERP")
         number = numbers.pop()
         self.report.notes.append(f"заказ RB № {rb['number']} ({supplier}) → {number}")
-        invoice, content, file_name = self.invoice_of(rb)
+        invoice, registry, content, file_name = self.invoice_of(rb)
         invoice_day = _day(invoice["date"]) if invoice else None
         invoice_day = invoice_day or order_day
-        # 2. «Внести КП»: the order's prices, the invoice № and date, the promised date; with the invoice file → «В оплату».
+        # Without the PDF the order's Kaiten invoice of the registry «Счета» stands in for it (see the module doc).
+        reference = kaiten_invoice_url(registry.id) if registry is not None and content is None else None
+        # 2. «Внести КП»: the order's prices, the invoice № and date, the promised date; with the invoice → «В оплату».
         awaiting = all(line.status is ProcurementStatus.AWAITING_INVOICE for line in lines.values())
-        if awaiting and (content is not None or any(line.money.price_with_vat is None for line in lines.values())):
-            url = None
+        if awaiting and (content is not None or reference is not None
+                         or any(line.money.price_with_vat is None for line in lines.values())):
+            url = reference
             if content is not None:
                 uploaded = upload_invoice_file(UploadInvoiceFileCommand(
                     line_id=next(iter(lines)), file_name=file_name, content_type="application/pdf", content=content,
@@ -1076,20 +1090,46 @@ class ProcurementFlowImporter:
             ), self.procurement())
             if result.invoice_error:
                 raise ValueError(f"счёт не принят: {result.invoice_error}")
-            self.report.add("заказы: цены и счёт внесены" if url else "заказы: цены внесены, счёта нет — «Жду счет»")
+            self.touched.update(quantities)
+            self.report.add("заказы: цены и счёт внесены" if content is not None
+                            else "заказы: цены и счёт Kaiten внесены (файл не приложен)" if url
+                            else "заказы: цены внесены, счёта нет — «Жду счет»")
         lines = {key: self.line(key) for key in quantities}
         if all(line.status is ProcurementStatus.AWAITING_INVOICE for line in lines.values()):
+            why = (f"счёт Kaiten {invoice['external_id']} не перенесён в реестр «Счета» ERP" if invoice
+                   else "счёта нет ни в RB, ни в Kaiten")
             self.report.differs.append(
-                f"заказ RB № {rb['number']} → {number}: файла счёта нет ни в RB, ни в Kaiten — в ERP «Жду счет» "
-                f"(в RB «{'оплачен' if rb['paid_at'] else 'заказан'}»): ERP вносит счёт и оплату только с файлом счёта")
-        # 3. «Оплачено» once for the order → «В пути», expected by Receiving.
+                f"заказ RB № {rb['number']} → {number}: {why} — в ERP «Жду счет» "
+                f"(в RB «{'оплачен' if rb['paid_at'] else 'заказан'}»): ERP вносит счёт и оплату по файлу счёта "
+                "или по счёту Kaiten из реестра «Счета»")
+        # 2a. The PDF has come since the order went on on its Kaiten invoice: it takes that invoice's place.
+        on_kaiten = [line for line in lines.values()
+                     if is_kaiten_invoice_url(line.invoice_url) and line.status is not ProcurementStatus.CANCELLED]
+        if content is not None and on_kaiten:
+            uploaded = upload_invoice_file(UploadInvoiceFileCommand(
+                line_id=on_kaiten[0].id, file_name=file_name, content_type="application/pdf", content=content,
+                actor=self.buyer, now=self.now,
+            ), self.procurement())
+            for line in on_kaiten:
+                replace_invoice(ReplaceInvoiceCommand(
+                    line_id=line.id, expected_version=line.version, invoice_url=uploaded.url, actor=self.buyer,
+                    now=self.now,
+                ), self.procurement())
+            self.touched.update(line.id for line in on_kaiten)
+            self.report.add("заказы: файл счёта приложен к счёту Kaiten")
+            lines = {key: self.line(key) for key in quantities}
+        # 3. «Оплачено» once for the order → «В пути», expected by Receiving: RB's payment day; an order RB saw shipped
+        # without one takes the payment day of its Kaiten invoice.
         paid_day = _day(rb["paid_at"])
+        if paid_day is None and rb["shipped_at"] and registry is not None and registry.status == "paid":
+            paid_day = registry.payment_date
         if paid_day is not None and all(line.status is ProcurementStatus.TO_PAY for line in lines.values()):
             paid_at = self.order_moment(order_id, max(paid_day, invoice_day)) + timedelta(minutes=4)
             pay_supplier_order(PaySupplierOrderCommand(
                 order_number=number, lines=[OrderLineRef(line.id, line.version) for line in lines.values()],
                 actor=self.buyer, now=paid_at,
             ), self.procurement())
+            self.touched.update(quantities)
             self.report.add("заказы: оплачены")
         lines = {key: self.line(key) for key in quantities}
         # 4. RB moved the date after the promise: the order-wide ОЖИД. ДАТА (the audit keeps the promised one).
@@ -1100,16 +1140,18 @@ class ProcurementFlowImporter:
                 order_number=number, expected_arrival=expected,
                 lines=[OrderLineRef(line.id, line.version) for line in lines.values()], actor=self.buyer, now=self.now,
             ), self.procurement())
+            self.touched.update(quantities)
             self.report.add("заказы: перенесена ожидаемая дата (обещанная — в журнале)")
         # 5. The facts procurement has no place for.
         self.order_facts(number, rb)
 
-    def invoice_of(self, order: dict) -> tuple[dict | None, bytes | None, str]:
+    def invoice_of(self, order: dict) -> tuple[dict | None, InvoiceRow | None, bytes | None, str]:
         """The Kaiten invoice of an RB order (RB matches it by supplier and number, `kaiten-rfq.ts` orderOf; a card the
-        parser did not read is found by the number in its title or file name) and its invoice file."""
+        parser did not read is found by the number in its title or file name), the same invoice in ERP's registry
+        «Счета» (by its Kaiten card), and its PDF: from the data folder, else the one the registry has downloaded."""
         number = norm_doc_number(order["number"] or "")
         if not number:
-            return None, None, ""
+            return None, None, None, ""
         same = [inv for inv in self.rb.invoices if inv["supplier_id"] in (order["supplier_id"], None)]
         found = next((inv for inv in same if inv["number"] and norm_doc_number(inv["number"]) == number), None)
         how = "по номеру"
@@ -1118,22 +1160,32 @@ class ProcurementFlowImporter:
                           or any(number in norm_doc_number(item.get("name", "")) for item in _json(inv["files"]))), None)
             how = "по названию карточки"
         if found is None:
-            return None, None, ""
+            return None, None, None, ""
+        registry = self.session.scalar(select(InvoiceRow).where(
+            InvoiceRow.source == "kaiten", InvoiceRow.external_id == str(found["external_id"])))
         files = _json(found["files"])
         pdfs = [item for item in files if str(item.get("name", "")).lower().endswith(".pdf") and item.get("path")]
         chosen = (next((item for item in pdfs if item.get("kind") == "invoice"), None)
                   or next((item for item in pdfs if number in norm_doc_number(item.get("name", ""))), None))
+        content, name, missing = None, "", "без файла счёта"
+        if chosen is not None:
+            path = (self.data_dir / str(chosen["path"]).replace("\\", "/")).resolve()
+            if self.data_dir.resolve() in path.parents and path.is_file():
+                content, name = path.read_bytes(), str(chosen["name"])
+            else:
+                missing = f"файла {chosen['path']} нет на диске"
+        if content is None and registry is not None:
+            stored = purchasing_invoices.invoice_pdf(self.session, registry.id, order["number"])
+            if stored is not None:
+                content, name = stored
+                self.report.add("счета заказов: файл из реестра «Счета»")
+        if content is None:
+            self.report.add("без файла: счета заказов")
+        stand_in = (" — в ERP по счёту Kaiten из реестра «Счета» (файл не приложен)" if registry is not None
+                    else " — в реестре «Счета» ERP его нет")
         self.report.notes.append(f"заказ RB № {order['number']}: счёт Kaiten {found['external_id']} ({how})"
-                                 + ("" if chosen else " — без файла счёта"))
-        if chosen is None:
-            self.report.add("без файла: счета заказов")
-            return found, None, ""
-        path = (self.data_dir / str(chosen["path"]).replace("\\", "/")).resolve()
-        if self.data_dir.resolve() not in path.parents or not path.is_file():
-            self.report.add("без файла: счета заказов")
-            self.report.notes.append(f"заказ RB № {order['number']}: файла {chosen['path']} нет на диске")
-            return found, None, ""
-        return found, path.read_bytes(), str(chosen["name"])
+                                 + (f" — {missing}{stand_in}" if content is None else ""))
+        return found, registry, content, name
 
     def order_facts(self, number: str, rb: dict) -> None:
         with self.purchasing() as uow:

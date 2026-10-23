@@ -13,17 +13,20 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.procurement.application import SetNoteCommand, set_procurement_note
+from app.modules.procurement.domain import kaiten_invoice_url
 from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchemyProcurementUnitOfWork
 from app.modules.purchasing.infrastructure import (
     DecisionRow,
     DocumentFileRow,
+    InvoiceFileRow,
+    InvoiceRow,
     LineItemRow,
     OrderFactRow,
     PurchasingSettingRow,
@@ -423,32 +426,144 @@ def test_planned_date_is_the_project_deadline_from_the_plan_else_request_day_plu
         assert _line(session, 11).planned_date == date(2026, 10, 26)  # 776К.1 is not in the plan: 12.10 + 14
 
 
-def test_without_data_dir_everything_but_files_imports_and_a_rerun_with_files_attaches_them(erp, snapshot, tmp_path):
+def _registry(session) -> dict[str, UUID]:
+    """Kaiten card → the invoice of ERP's registry «Счета»."""
+    return {row.external_id: row.id for row in session.scalars(select(InvoiceRow))}
+
+
+def _events(session, line_id: UUID, event_type: str) -> int:
+    return session.scalar(select(func.count()).select_from(AuditEventRow).where(
+        AuditEventRow.aggregate_id == line_id, AuditEventRow.event_type == event_type))
+
+
+def test_without_data_dir_rb_paid_orders_go_on_on_their_kaiten_invoice_and_a_rerun_with_files_attaches_them(
+        api, erp, snapshot, tmp_path):
+    """Витя, 23.10: «оплаченные заказы висят на ЖДУ СЧЁТ». Without the PDF the order's Kaiten invoice of «Счета» is the
+    basis for «Внести КП» and «Оплачено»; the PDF comes with a later run and takes its place."""
     path, data = snapshot
     empty = tmp_path / "empty"
     empty.mkdir()
     _reference(erp, (path, empty))
     report = _flow(erp, (path, empty))
     assert not report.skipped, report.skipped
-    assert report.counts["без файла: КП"] == 1 and report.counts["без файла: счета заказов"] >= 1
+    assert report.counts["без файла: КП"] == 1 and report.counts["без файла: счета заказов"] == 2
+    assert report.counts["заказы: цены и счёт Kaiten внесены (файл не приложен)"] == 2
     with erp() as session:
+        registry = _registry(session)
         assert session.get(QuoteRow, _id("quote", 1)).file_id is None
-        assert _line(session, 6).status == "Жду счет"  # no invoice file: ERP keeps «Жду счет»
+        shipped, to_pay, waiting = _line(session, 6), _line(session, 11), _line(session, 7)
+        # RB paid and shipped → «В пути» on the Kaiten invoice; RB «в оплату» → «В оплату»; no invoice → «Жду счет».
+        assert (shipped.status, shipped.invoice_url, shipped.invoice_number, shipped.invoice_date) == (
+            "В пути", kaiten_invoice_url(registry["100"]), "НФ-E14422", date(2026, 10, 14))
+        assert shipped.paid_at is not None and shipped.actual_sum == Decimal("27000.00")
+        assert (to_pay.status, to_pay.invoice_url) == ("В оплату", kaiten_invoice_url(registry["101"]))
+        assert (waiting.status, waiting.invoice_url) == ("Жду счет", None)
+        facts = session.get(OrderFactRow, shipped.order_number)
+        assert (facts.sent_to_pay_on, facts.shipped_on) == (date(2026, 10, 14), date(2026, 10, 16))
+        assert session.get(OrderFactRow, to_pay.order_number).sent_to_pay_on == date(2026, 10, 13)
+        assert _events(session, shipped.id, "procurement.invoice_recorded") == 1
+        assert _events(session, shipped.id, "procurement.paid") == 1
+    assert report.statuses[("shipped", "В пути")] == 1 and report.statuses[("to_pay", "В оплату")] == 1
+    assert any("18071137" in text and "счёта нет ни в RB, ни в Kaiten" in text for text in report.differs)
+    assert not any("НФ-E14422 →" in text for text in report.differs)
+    # The order card shows the Kaiten invoice; its link says the file is not attached yet.
+    card = api.get(f"/api/purchasing/orders/{shipped.order_number}").json()["order"]
+    assert card["column"] == "transit"
+    assert card["invoices"] == [{"number": "НФ-E14422", "date": "2026-10-14", "url": kaiten_invoice_url(registry["100"]),
+                                 "kaiten": True}]
+    page = api.get(card["invoices"][0]["url"])
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert "Счёт Kaiten № НФ-E14422 от 14.10.2026 (файл не приложен)" in page.text
     before = _counts(erp)
     # The same run again changes nothing.
     _flow(erp, (path, empty), now=datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc))
     assert _counts(erp) == before
-    # With the folder: the files are attached, the orders move on; no line or request is made twice.
+    # With the folder: the registry has the PDF (the link opens it), the order's lines get it in place of the Kaiten
+    # invoice, the stages stay; no line or request is made twice.
     _reference(erp, snapshot)
+    assert api.get(card["invoices"][0]["url"]).content == b"%PDF-1.4 invoice NF"
     again = _flow(erp, snapshot, now=datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc))
     assert not again.skipped, again.skipped
+    assert again.counts["заказы: файл счёта приложен к счёту Kaiten"] == 2
     after = _counts(erp)
     for table in ("procurement_lines", "requests", "purchasing_rfqs", "purchasing_quotes", "purchasing_quote_lines"):
         assert after[table] == before[table], table
     with erp() as session:
         quote = session.get(QuoteRow, _id("quote", 1))
         assert session.get(DocumentFileRow, quote.file_id).content == b"%PDF-1.4 quote one"
-        assert _line(session, 6).status == "В пути" and _line(session, 6).invoice_url
+        shipped, to_pay = _line(session, 6), _line(session, 11)
+        assert shipped.status == "В пути" and shipped.invoice_url.startswith("/api/procurement/files/")
+        assert to_pay.status == "В оплату" and to_pay.invoice_url.startswith("/api/procurement/files/")
+        assert (shipped.invoice_number, shipped.invoice_date) == ("НФ-E14422", date(2026, 10, 14))
+        for event in ("procurement.invoice_recorded", "procurement.paid", "procurement.invoice_replaced"):
+            assert _events(session, shipped.id, event) == 1, event
+    assert api.get(shipped.invoice_url).content == b"%PDF-1.4 invoice NF"
+    # And once more: nothing new, no event twice.
+    third = _flow(erp, snapshot, now=datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc))
+    assert _counts(erp) == after and not third.skipped
+    assert "заказы: файл счёта приложен к счёту Kaiten" not in third.counts
+
+
+def test_the_registry_pdf_is_the_invoice_when_the_data_folder_lacks_it(erp, snapshot, tmp_path):
+    path, _data = snapshot
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    _reference(erp, snapshot)  # the registry «Счета» has downloaded the invoice PDFs
+    report = _flow(erp, (path, empty))
+    assert report.counts["счета заказов: файл из реестра «Счета»"] == 2 and "без файла: счета заказов" not in report.counts
+    with erp() as session:
+        line = _line(session, 6)
+        assert line.status == "В пути" and line.invoice_url.startswith("/api/procurement/files/")
+
+
+def test_a_paid_rb_order_whose_kaiten_invoice_is_not_in_the_registry_stays_awaiting_and_is_listed(erp, snapshot, tmp_path):
+    path, _data = snapshot
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    _reference(erp, (path, empty))
+    with erp() as session:
+        invoice_id = _registry(session)["100"]
+        session.execute(delete(InvoiceFileRow).where(InvoiceFileRow.invoice_id == invoice_id))
+        session.execute(delete(InvoiceRow).where(InvoiceRow.id == invoice_id))
+        session.commit()
+    report = _flow(erp, (path, empty))
+    with erp() as session:
+        line = _line(session, 6)
+        assert (line.status, line.invoice_url, line.paid_at) == ("Жду счет", None, None)
+        assert line.actual_price_with_vat == Decimal("135.00")  # the prices are in: «Внести КП» without the invoice
+        assert _line(session, 11).status == "В оплату"  # its own Kaiten invoice is in the registry
+    assert report.statuses[("shipped", "Жду счет")] == 1
+    assert any("НФ-E14422" in text and "счёт Kaiten 100 не перенесён в реестр «Счета» ERP" in text
+               for text in report.differs)
+    # The state prod was left in on 22.10: once the invoice is in the registry, a re-run takes the order on.
+    _reference(erp, (path, empty))
+    again = _flow(erp, (path, empty), now=datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc))
+    assert not again.skipped, again.skipped
+    assert again.counts["заказы: цены и счёт Kaiten внесены (файл не приложен)"] == 1
+    assert again.counts["заказы: оплачены"] == 1
+    with erp() as session:
+        line = _line(session, 6)
+        assert (line.status, line.invoice_url) == ("В пути", kaiten_invoice_url(_registry(session)["100"]))
+        assert _events(session, line.id, "procurement.kp_saved") == 1  # the prices were already in: not saved twice
+
+
+def test_an_order_rb_saw_shipped_without_a_payment_day_is_paid_on_its_kaiten_payment_day(erp, snapshot, tmp_path):
+    path, _data = snapshot
+    copy = tmp_path / "unpaid.db"
+    shutil.copy(path, copy)
+    db = sqlite3.connect(copy)
+    db.execute("update orders set paid_at = null where id = 1")
+    db.execute("update invoices set payment_date = '2026-10-15' where id = 1")
+    db.commit()
+    db.close()
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    _reference(erp, (copy, empty))
+    _flow(erp, (copy, empty))
+    with erp() as session:
+        line = _line(session, 6)
+        paid = {row.id: row.paid_on for row in order_lines(session, order_numbers=[line.order_number])}
+        assert line.status == "В пути" and paid[line.id] == date(2026, 10, 15)
 
 
 def test_buyer_is_found_by_login_without_regard_to_case(erp):

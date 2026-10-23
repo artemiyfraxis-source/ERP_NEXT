@@ -16,7 +16,8 @@ export type OrderLine = {
   accepted_quantity: string | null; counted_quantity: string | null; inspected_on: string | null;
 };
 
-export type OrderInvoice = { number: string | null; date: string | null; url: string | null };
+/** `kaiten` — the invoice is a Kaiten registry record put in by the Roller_Buyer import, no PDF attached yet. */
+export type OrderInvoice = { number: string | null; date: string | null; url: string | null; kaiten?: boolean };
 
 export type Order = {
   order_number: string; supplier: string; buyer: string; mine: boolean; order_date: string | null; column: OrderColumn;
