@@ -155,8 +155,10 @@ NOTE_EDITABLE = frozenset(set(ProcurementStatus) - {ProcurementStatus.NEW, Procu
 NOTE_MAX_LENGTH = 2000
 # DATASHEET (a link or a text) — edited in the КОММЕНТАРИЙ window by the line's buyer.
 DATASHEET_MAX_LENGTH = 2000
-# Files the buyer attaches to a line besides invoices and КП: РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА (procurement_files.kind).
-LINE_DOCUMENT_KINDS = {"permit": "Разрешение", "quality": "Документ качества"}
+# Files the buyer attaches to a line besides invoices and КП: РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА (procurement_files.kind);
+# since 0147 also the ПП of a paid supplier order («Закупка» → «Внести ПП», owner 23.10) — kept, never parsed.
+LINE_DOCUMENT_KINDS = {"permit": "Разрешение", "quality": "Документ качества", "payment": "Платёжное поручение"}
+LINE_DOCUMENT_KIND_ERROR = "Вид файла: разрешение, документ качества или платёжное поручение"
 # ОЖИД. ДАТА: `gateAwaitInvoice_` (Guards.gs:523-560) opens it once the order is placed («Жду счет»); the ETA floats
 # until the goods are in, so the buyer moves it through «Карантин» (решено агентом — проверить: «Готово» is closed).
 EXPECTED_ARRIVAL_EDITABLE = frozenset(
@@ -893,10 +895,11 @@ class ProcurementLine:
         return replace(self, datasheet=text, version=self.version + 1)
 
     def attach_document(self, kind: str, actor: Actor) -> ProcurementLine:
-        """A РАЗРЕШЕНИЕ or ДОК. КАЧЕСТВА file on the line. A quality document attached means the goods go with one:
-        ДОК. КАЧЕСТВА turns «Да» (receiving then checks it) — a new version; a permit or a line already «Да» stays."""
+        """A РАЗРЕШЕНИЕ, ДОК. КАЧЕСТВА or ПП file on the line. A quality document attached means the goods go with one:
+        ДОК. КАЧЕСТВА turns «Да» (receiving then checks it) — a new version; a permit, a ПП or a line already «Да»
+        stays."""
         if kind not in LINE_DOCUMENT_KINDS:
-            raise ProcurementValidationError("Вид файла: разрешение или документ качества")
+            raise ProcurementValidationError(LINE_DOCUMENT_KIND_ERROR)
         self._require_sheet_edit(actor, "файл")
         if kind != "quality" or _norm(self.quality_document) == "да":
             return self
