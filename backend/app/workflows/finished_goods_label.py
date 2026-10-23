@@ -3,7 +3,8 @@
 Акт приёмки живёт в Shipping, очередь печати этикеток — в Warehouse; связывает их этот сценарий (межмодульный код только
 здесь, как у остальных `workflows/`): берёт акт и КБ из Shipping, собирает `GrnLabelData` и ставит задание в ту же
 очередь, откуда его забирает агент печати склада. Задание — `kind="lot"`, `lot_id` = id акта (в очереди это просто
-ссылка без внешнего ключа; партий склада у ГП нет, схема не меняется)."""
+ссылка без внешнего ключа; партий склада у ГП нет, схема не меняется). Рисуется по шаблону этикетки вида «intake»
+конструктора этикеток (владелец 23.10.2026): сохранённому для текущего формата или встроенному."""
 
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.shipping.infrastructure import FinishedGoodsActRow, SqlAlchemyFinishedGoodsRepository
 from app.modules.warehouse.labels.layout import GrnLabelData
+from app.modules.warehouse.labels.template import LabelContent, intake_content
 from app.modules.warehouse.labels_application import PrintResult, label_settings, print_label
 
 GOODS_WAREHOUSE = "ГП"  # склад готовой продукции — вторая часть строки «место · склад» на этикетке
@@ -28,6 +30,13 @@ NOT_FOUND = "Акт приёмки с таким ГРН не найден"
 class ActLabel:
     act_id: UUID
     data: GrnLabelData
+    project: str = ""
+    item_index: str = ""
+
+    @property
+    def content(self) -> LabelContent:
+        """The values of the «intake» label template (the designer's fields of «Приёмка с производства»)."""
+        return intake_content(self.data, self.project, self.item_index)
 
 
 def _quantity(value: Decimal) -> str:
@@ -51,13 +60,13 @@ def act_label_data(sessions: Callable[[], Session], grn: str) -> ActLabel:
             grn=row.grn, sku=f"{good.project} {good.item_index}", item_name=good.name or good.article,
             quantity=_quantity(quantity), unit=good.unit, manufacturer_batch="", received_on=row.received_at,
             place=(row.location or good.location or "").strip(), warehouse=GOODS_WAREHOUSE,
-        ))
+        ), good.project, good.item_index)
 
 
 def print_act_label(sessions: Callable[[], Session], warehouse_uow_factory: Callable[[], object], grn: str, copies: int,
                     now: datetime, *, created_by: str) -> PrintResult:
     label = act_label_data(sessions, grn)
     return print_label(
-        warehouse_uow_factory(), label.data, label_settings(warehouse_uow_factory()), copies, now,
+        warehouse_uow_factory(), label.content, label_settings(warehouse_uow_factory()), copies, now,
         kind="lot", lot_id=label.act_id, created_by=created_by,
     )

@@ -108,3 +108,31 @@ def test_print_needs_warehouse_edit(labels):
         as_viewer(role, section, mode)
         assert client.post(f"/api/shipping/intake/{acts[0].grn}/label").status_code == 403, (section, mode)
     assert not _jobs(sessions)
+
+
+def test_the_act_label_prints_the_saved_intake_template_not_the_lots(labels):
+    client, sessions, acts = labels
+    grn = acts[0].grn
+    label = act_label_data(sessions, grn)
+    assert (label.project, label.item_index) == ("533К.12", "КБ1")
+    assert dict(label.content.values) == {
+        "grn": grn, "quantity": "100 шт", "name": "CCW-0,2 жгут", "project": "533К.12", "item_index": "КБ1",
+        "project_item": "533К.12 КБ1", "place": "А-1", "warehouse": "ГП", "place_warehouse": "А-1 · ГП",
+        "received": "поступило 22.10.2026",
+    }
+    assert label.content.kind == "intake"
+    client.post(f"/api/shipping/intake/{grn}/label")
+    # A lot template does not reach the act's label; the intake one does.
+    lot = {"elements": [{"id": "x", "kind": "text", "text": "ПАРТИЯ", "x_mm": 1, "y_mm": 1, "w_mm": 50, "h_mm": 20,
+                         "font_mm": 8}]}
+    assert client.put("/api/stock/labels/templates/lot/58x40", json={"template": lot}).status_code == 200
+    client.post(f"/api/shipping/intake/{grn}/label")
+    intake = {"elements": [
+        {"id": "kb", "kind": "text", "text": "{project_item}", "x_mm": 1, "y_mm": 1, "w_mm": 56, "h_mm": 10, "font_mm": 4},
+        {"id": "qr", "kind": "qr", "x_mm": 1, "y_mm": 12, "w_mm": 27, "h_mm": 27},
+    ]}
+    assert client.put("/api/stock/labels/templates/intake/58x40", json={"template": intake}).status_code == 200
+    client.post(f"/api/shipping/intake/{grn}/label")
+    built_in, under_lot_template, designed = (job.tspl for job in _jobs(sessions))
+    assert built_in == under_lot_template
+    assert designed != built_in and designed.startswith(b"SIZE 58 mm,40 mm")

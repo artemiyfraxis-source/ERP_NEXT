@@ -1,0 +1,68 @@
+/* «Настройка печати этикеток» window and its «Шаблон этикетки» designer. */
+.print-setup { display: grid; gap: 12px; }
+.print-setup .page-head { display: flex; align-items: center; gap: 12px; margin: 0; }
+.print-setup .page-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.print-setup .page-head > button { margin-left: auto; }
+.print-setup .seg-tabs { margin: 0; }
+
+.label-designer { display: grid; gap: 12px; min-width: 0; }
+.ld-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.ld-bar .seg-tabs { margin: 0; }
+.ld-used { font-weight: 400; color: var(--muted-foreground); }
+.seg-tabs button.on .ld-used { color: var(--primary); }
+.ld-dot { color: var(--tone-warn); }
+.ld-state { font-size: 13px; }
+.ld-actions { display: flex; gap: 8px; margin-left: auto; }
+.label-designer > .error-banner, .label-designer > .success-banner { display: flex; align-items: center; gap: 12px; margin: 0; }
+.ld-reload { margin-left: auto; }
+
+.ld-body { display: grid; grid-template-columns: 216px minmax(0, 1fr) 272px; gap: 16px; align-items: start; }
+.ld-body.read-only { grid-template-columns: 216px minmax(0, 1fr) 272px; }
+.ld-side, .ld-props { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.ld-side h3, .ld-props h3 { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; font-size: 14px; font-weight: 600; }
+.ld-palette { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ld-palette select { grid-column: 1 / -1; }
+.ld-palette button { justify-content: flex-start; }
+.ld-list { display: grid; gap: 2px; max-height: 300px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.ld-list button { width: 100%; overflow: hidden; border: 0; border-radius: 6px; padding: 4px 8px; background: transparent; color: var(--foreground);
+  font-size: 13px; font-weight: 400; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.ld-list button:hover { background: var(--accent); }
+.ld-list button.on { background: var(--sheet-selected); color: var(--primary); }
+.ld-kind { color: var(--muted-foreground); }
+.ld-list button.on .ld-kind { color: inherit; }
+.ld-empty { margin: 0; font-size: 13px; }
+
+.ld-stage { display: grid; gap: 8px; min-width: 0; }
+.ld-canvas-wrap { display: grid; place-items: center; min-height: 160px; padding: 16px 0; border-radius: 8px; background: var(--panel-soft); outline: none; }
+.ld-canvas-wrap:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+/* The label is paper-white in either theme; the preview is the printer's dots, the boxes are drawn over it. */
+.ld-canvas { position: relative; border: 1px solid var(--border); background: #fff; box-shadow: 0 1px 3px rgba(0, 26, 24, .12); touch-action: none; user-select: none; }
+.ld-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.ld-el { position: absolute; min-width: 6px; min-height: 6px; box-sizing: border-box; border: 1px dashed color-mix(in srgb, var(--primary) 55%, transparent); cursor: move; }
+.ld-el:hover { border-style: solid; background: color-mix(in srgb, var(--primary) 6%, transparent); }
+.ld-el.on { border: 2px solid var(--primary); background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.read-only .ld-el { cursor: default; }
+.ld-cap { display: none; overflow: hidden; padding: 1px 3px; color: var(--muted-foreground); font-size: 11px; line-height: 1.2; white-space: nowrap; text-overflow: ellipsis; }
+.no-preview .ld-cap { display: block; }
+.ld-handle { position: absolute; right: -6px; bottom: -6px; width: 10px; height: 10px; border: 2px solid var(--card); border-radius: 2px; background: var(--primary); cursor: nwse-resize; }
+.ld-hint { margin: 0; font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
+
+.ld-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; min-width: 0; margin: 0; border: 0; padding: 0; }
+.ld-grid label { display: grid; gap: 4px; min-width: 0; font-size: 12px; color: var(--muted-foreground); }
+.ld-grid label.wide { grid-column: 1 / -1; }
+.ld-grid label.check-inline { display: inline-flex; color: var(--foreground); font-size: 13px; }
+.ld-grid input:not([type="checkbox"]), .ld-grid select { width: 100%; min-width: 0; font-variant-numeric: tabular-nums; }
+.ld-remove { justify-self: start; margin-top: 4px; }
+
+.ld-confirm { display: grid; gap: 12px; }
+.ld-confirm h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.ld-confirm p { margin: 0; }
+.ld-confirm-actions { display: flex; gap: 8px; }
+
+@media (max-width: 1180px) {
+  .ld-body, .ld-body.read-only { grid-template-columns: minmax(0, 1fr); }
+  .ld-actions { margin-left: 0; }
+}
+@media (pointer: coarse) {
+  .ld-handle { width: 18px; height: 18px; right: -10px; bottom: -10px; }
+}

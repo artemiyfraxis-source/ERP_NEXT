@@ -62,7 +62,7 @@ def seed(engine: Engine, rows: int = ROWS) -> dict[str, int]:
                 continue
             parents = _parent_values(connection, table)
             lots = _lot_ids(connection, metadata) if "lot_id" in table.c and not table.c.lot_id.foreign_keys else []
-            count = 1 if table.name in _SINGLE_ROW_TABLES else rows
+            count = 1 if table.name in _SINGLE_ROW_TABLES else min(rows, _ROW_CAPS.get(table.name, rows))
             values = [_row(table, index, parents, lots, checks, engine.dialect.name) for index in range(count)]
             connection.execute(table.insert(), values)
             inserted[table.name] = len(values)
@@ -147,7 +147,7 @@ def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any
         if name == "lot_id" and lots:
             row[name] = lots[index % len(lots)]
             continue
-        if (table.name, name) in checks:
+        if (table.name, name) in checks and (table.name, name) not in _SHAPED_VALUES:
             row[name] = checks[(table.name, name)]
             continue
         row[name] = _value(table.name, column, index)
@@ -177,6 +177,8 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
 }
 # Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
 # label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).
+_LABEL_TEMPLATE_KINDS = ("lot", "intake")
+_LABEL_FORMATS = ("58x30", "58x40", "100x50")
 _LABEL_SETTINGS = {"width_mm": 58, "height_mm": 30, "dpi": 300, "gap_mm": 2, "density": 12, "speed": 2,
                    "offset_x_mm": 0, "offset_y_mm": 0}
 _SHAPED_VALUES: dict[tuple[str, str], Any] = {
@@ -186,7 +188,13 @@ _SHAPED_VALUES: dict[tuple[str, str], Any] = {
     ("production_vswr_measurements", "band_from_mhz"): lambda i: Decimal(1),
     ("production_vswr_measurements", "band_to_mhz"): lambda i: Decimal(8800),
     ("production_vswr_measurements", "max_vswr_mhz"): lambda i: Decimal(1000),
+    # One saved label template per kind × format, UNIQUE (0143_warehouse_label_templates): row i takes its own pair.
+    ("warehouse_label_templates", "kind"): lambda i: _LABEL_TEMPLATE_KINDS[i // len(_LABEL_FORMATS)],
+    ("warehouse_label_templates", "format"): lambda i: _LABEL_FORMATS[i % len(_LABEL_FORMATS)],
 }
+# Shaped values win over a CHECK's first `IN (…)` value; a table with a UNIQUE of shaped pairs gets no more rows than
+# there are pairs.
+_ROW_CAPS = {"warehouse_label_templates": len(_LABEL_TEMPLATE_KINDS) * len(_LABEL_FORMATS)}
 # One row per installation (CHECK `id = 1`): seeded with a single row (the label print agent's heartbeat, 0141, too).
 _SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings", "warehouse_label_agent"})
 

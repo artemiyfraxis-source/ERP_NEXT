@@ -146,9 +146,10 @@ export function LotLabel({ lotId, readOnly = false, onPrinted }: { lotId: string
   </div>;
 }
 
-/** «Оборудование» → «Печать этикеток ГРН»: which Windows queue, label size, code, gap from the calibration, heat, speed,
- *  offset; the preview of a sample label refreshes after «Сохранить»; «Пробная этикетка» prints it. */
-export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }) {
+/** «Настройка печати» → «Принтер» (moved from «Оборудование», owner 23.10): label size, code, gap from the calibration,
+ *  heat, speed, offset; the preview of a sample label refreshes after «Сохранить»; «Пробная этикетка» prints it.
+ *  `onSettings` — the settings as loaded and as saved (the window marks the format in use). */
+export function PrinterSettingsCard({ readOnly = false, onSettings }: { readOnly?: boolean; onSettings?: (settings: PrintSettings) => void }) {
   const [answer, setAnswer] = useState<SettingsAnswer | null>(null);
   const [form, setForm] = useState<Record<keyof PrintSettings, string> | null>(null);
   const [stamp, setStamp] = useState(0);
@@ -156,6 +157,8 @@ export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [result, setResult] = useState<PrintResult | null>(null);
+  const report = useRef(onSettings);
+  report.current = onSettings;
 
   useEffect(() => {
     let cancelled = false;
@@ -163,12 +166,12 @@ export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }
       if (cancelled) return;
       setAnswer(loaded);
       setForm(asForm(loaded.settings));
+      report.current?.(loaded.settings);
     }, (reason) => { if (!cancelled) setError(failureText(reason, "Настройки печати не загрузились")); });
     return () => { cancelled = true; };
   }, []);
 
-  if (!form || !answer) return <section className="panel equipment-card" aria-label="Печать этикеток ГРН">
-    <h2>Печать этикеток ГРН</h2>
+  if (!form || !answer) return <section className="printer-card" aria-label="Печать этикеток ГРН">
     {error ? <div className="error-banner" role="alert">{error}</div> : <p className="page-sub">Загрузка…</p>}
   </section>;
 
@@ -184,6 +187,7 @@ export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }
     try {
       const { settings } = await labelsApi.save(fromForm(form));
       setForm(asForm(settings));
+      report.current?.(settings);
       setStamp(Date.now());
       setSaved("Настройки сохранены");
     } catch (reason) {
@@ -207,8 +211,7 @@ export function PrinterSettingsCard({ readOnly = false }: { readOnly?: boolean }
     }
   }
 
-  return <section className="panel equipment-card" aria-label="Печать этикеток ГРН">
-    <h2>Печать этикеток ГРН</h2>
+  return <section className="printer-card" aria-label="Печать этикеток ГРН">
     <AgentBlock />
     <form className="printer-settings" onSubmit={(event) => void save(event)}>
       <fieldset className="printer-fields" disabled={readOnly}>
