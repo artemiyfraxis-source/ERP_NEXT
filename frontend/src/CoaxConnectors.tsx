@@ -137,7 +137,7 @@ const DEPTH_SOURCE = "Заглубление контакта, источник"
 // Поля, у которых в таблице своя колонка: такой же «свой столбец» («+ Столбец») второй раз не показывается.
 const BUILT_IN = new Set(["Артикул поставщика", "HEX обжима, мм", "Ссылка", "Цена, ₽", "Дата цены", "Монтаж", "Производитель",
   "Волновое сопротивление, Ом", "Частота до, ГГц", "КСВ", "Наименование", "Источник данных", "Тип пина", "Тип экрана",
-  DEPTH, DEPTH_SOURCE].map((name) => name.toLowerCase()));
+  "Полярность", "Примечание", DEPTH, DEPTH_SOURCE].map((name) => name.toLowerCase()));
 
 /** Ссылка на карточку товара: видно сайт, полный адрес — в подсказке; клик открывает карточку, строку не выбирает. */
 function SiteLink({ href }: { href: string }) {
@@ -178,6 +178,13 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
   const length = (name: "L1" | "L2" | "L3"): DataColumn<TechOperationRecord> => ({
     key: name, title: name, hint: `Разделка ${name}, мм`, numeric: true, value: text(name, name.toLowerCase()), edit: cell(name),
   });
+  // Порядок групп (владелец 23.10.2026: «своя инфа в своём месте»): разъём (артикул, тип, кабель, пол, исполнение,
+  // полярность, монтаж) | разделка и обжим (пин, экран, L1–L3, HEX, заглубление) | электрика (частота, КСВ, Ом) |
+  // производитель | поставка | служебное. L+ / L−, «Программа», «Габариты», «Материал корпуса» — не столбцы базы
+  // (заполнены на 0–3,5 %); значения остаются в записях, генератор читает L+ / L− из своих полей.
+  // Источник заглубления в таблице не нужен вовсе (владелец 19.10: «источник заглубления я всё ещё вижу») — только
+  // подсказкой на значении; любой «свой» столбец «Заглубление контакта…» отсекается, как бы он ни был записан.
+  const own = ownColumns.filter((name) => !BUILT_IN.has(name.trim().toLowerCase()) && !/^заглублени/i.test(name.trim()));
   const columns: DataColumn<TechOperationRecord>[] = [
     // Длинные артикулы, типы и кабели («1/2″ SuperFlex (⌀13,5 мм)») переносятся, а не раздвигают таблицу за край ноутбука.
     { key: "article", title: "Артикул", value: (record) => coaxArticle(record.fields), render: (record) => <strong>{coaxArticle(record.fields) || "—"}</strong>, wrap: true, maxWidth: 170 },
@@ -185,6 +192,7 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
     { key: "wire", title: "Кабель", value: (record) => coaxWire(record.fields), wrap: true, maxWidth: 100 },
     { key: "gender", title: "Пол", value: (record) => coaxGender(record.fields), hidden: true },
     { key: "angle", title: "Исполнение", value: (record) => coaxAngle(record.fields) },
+    { key: "polarity", title: "Полярность", value: text("Полярность"), hidden: true, edit: cell("Полярность") },
     // Монтаж — в карточке и в «Колонках»; карточка открывается окном, таблица занимает всю ширину.
     { key: "mount", title: "Монтаж", value: text("Монтаж"), hidden: true, edit: cell("Монтаж") },
     { key: "pin", title: "Тип пина", value: text("Тип пина", "pinType"), wrap: true, maxWidth: 80, edit: cell("Тип пина") },
@@ -196,15 +204,22 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
       value: (record) => (hasHex(record.fields) ? pick(record.fields, "HEX обжима, мм") : ""),
       render: (record) => (hasHex(record.fields) ? pick(record.fields, "HEX обжима, мм") || "—" : "—"),
       edit: hexEdit },
-    // Частотный диапазон и КСВ из карточки — сразу за HEX (владелец 19.10).
-    { key: "ghz", title: "Частота, ГГц", hint: "Рабочая частота до, ГГц — из карточки разъёма", numeric: true, value: text("Частота до, ГГц"),
-      render: (record) => pick(record.fields, "Частота до, ГГц") ? `до ${pick(record.fields, "Частота до, ГГц")}` : "—", edit: cardCell("Частота до, ГГц") },
-    { key: "vswr", title: "КСВ", hint: "КСВН по карточке поставщика", value: text("КСВ"), wrap: true, maxWidth: 140, edit: cardCell("КСВ") },
     { key: "depth", title: "Заглубление, мм", hint: "Заглубление контакта от торца корпуса, мм", numeric: true, value: text(DEPTH),
       render: (record) => pick(record.fields, DEPTH)
         ? <span title={pick(record.fields, DEPTH_SOURCE) || undefined}>{pick(record.fields, DEPTH)}</span> : "—",
       edit: canEdit ? ownCellEdit<TechOperationRecord>(DEPTH, (record) => record) : undefined },
+    // Частота, КСВ и волновое сопротивление из карточки — одной группой.
+    { key: "ghz", title: "Частота, ГГц", hint: "Рабочая частота до, ГГц — из карточки разъёма", numeric: true, value: text("Частота до, ГГц"),
+      render: (record) => pick(record.fields, "Частота до, ГГц") ? `до ${pick(record.fields, "Частота до, ГГц")}` : "—", edit: cardCell("Частота до, ГГц") },
+    { key: "vswr", title: "КСВ", hint: "КСВН по карточке поставщика", value: text("КСВ"), wrap: true, maxWidth: 140, edit: cardCell("КСВ") },
+    { key: "ohm", title: "Ом", hint: "Волновое сопротивление, Ом", value: text("Волновое сопротивление, Ом"), numeric: true, edit: cell("Волновое сопротивление, Ом") },
     { key: "mfr", title: "Производитель", value: (record) => coaxMaker(record.fields), render: (record) => coaxMaker(record.fields) || "—", wrap: true, maxWidth: 120, edit: cell("Производитель") },
+    // Свой столбец владельца («+ Столбец») — в конец данных, перед поставкой.
+    ...own.map((name): DataColumn<TechOperationRecord> => ({
+      key: `own:${name}`, title: name, value: text(name), wrap: true, maxWidth: 140,
+      edit: canEdit ? ownCellEdit<TechOperationRecord>(name, (record) => record) : undefined,
+      remove: removeColumn?.(name),
+    })),
     { key: "supplier", title: "Поставщик", value: (record) => coaxSupplier(record.fields), render: (record) => coaxSupplier(record.fields) || "—", wrap: true, maxWidth: 130 },
     { key: "vendorArticle", title: "Артикул поставщика", value: text("Артикул поставщика"), wrap: true, maxWidth: 160, edit: cell("Артикул поставщика") },
     { key: "link", title: "Карточка на сайте", value: text("Ссылка"), render: (record) => <SiteLink href={pick(record.fields, "Ссылка")} />, edit: cell("Ссылка") },
@@ -214,16 +229,9 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
         ? <span title={pick(record.fields, "Дата цены") ? `Цена на ${pick(record.fields, "Дата цены")}` : undefined}>{pick(record.fields, "Цена, ₽")}</span> : "—",
     },
     { key: "priceDate", title: "Дата цены", value: text("Дата цены"), hidden: true, edit: cell("Дата цены") },
-    { key: "ohm", title: "Ом", value: text("Волновое сопротивление, Ом"), numeric: true, hidden: true, edit: cell("Волновое сопротивление, Ом") },
     { key: "name", title: "Наименование", value: text("Наименование"), hidden: true, edit: cell("Наименование") },
+    { key: "note", title: "Примечание", value: text("Примечание"), hidden: true, wrap: true, maxWidth: 200, edit: cell("Примечание") },
     { key: "source", title: "Источник данных", value: text("Источник данных"), hidden: true, edit: cell("Источник данных") },
-    // Источник заглубления в таблице не нужен вовсе (владелец 19.10: «источник заглубления я всё ещё вижу») — только подсказкой
-    // на значении; любой «свой» столбец «Заглубление контакта…» отсекается, как бы он ни был записан.
-    ...ownColumns.filter((name) => !BUILT_IN.has(name.trim().toLowerCase()) && !/^заглублени/i.test(name.trim())).map((name): DataColumn<TechOperationRecord> => ({
-      key: `own:${name}`, title: name, value: text(name), wrap: true, maxWidth: 140,
-      edit: canEdit ? ownCellEdit<TechOperationRecord>(name, (record) => record) : undefined,
-      remove: removeColumn?.(name),
-    })),
   ];
 
   return <div className="coax-db">
@@ -233,8 +241,9 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
         rows={rows}
         columns={columns}
         rowKey={(record) => record.id}
-        // «-2»: раскладка до 19.10 прятала «Частоту» (была скрыта по умолчанию) и показывала новый «источник заглубления».
-        storageKey="db:coax-connectors-2"
+        // Новый ключ — порядок групп 23.10 («Ом» рядом с КСВ, заглубление за HEX): раскладка, сохранённая до него, его
+        // не прячет. Общего набора у таблицы нет.
+        storageKey="db:coax-connectors-2310"
         exportName="Коаксиальные разъёмы"
         presets={PRESETS}
         groupBy={(record) => coaxTypeGroup(record.fields)}
@@ -269,7 +278,6 @@ const CARD_ROWS: Array<[string, (fields: Fields) => string, boolean?]> = [
   ["Исполнение", coaxAngle],
   ["Полярность", (fields) => pick(fields, "Полярность")],
   ["Разделка L1 · L2 · L3", stripping, true],
-  ["L+ · L−", (fields) => joinDots([pick(fields, "L+", "lPlus"), pick(fields, "L-", "L−", "lMinus")])],
   ["HEX обжима", (fields) => (hasHex(fields) && pick(fields, "HEX обжима, мм") ? `${pick(fields, "HEX обжима, мм")} мм` : "")],
   ["Тип пина", (fields) => pick(fields, "Тип пина", "pinType"), true],
   ["Тип экрана", (fields) => pick(fields, "Тип экрана", "shieldType"), true],
@@ -279,14 +287,11 @@ const CARD_ROWS: Array<[string, (fields: Fields) => string, boolean?]> = [
   ["Волновое сопротивление", (fields) => (pick(fields, "Волновое сопротивление, Ом") ? `${pick(fields, "Волновое сопротивление, Ом")} Ом` : "")],
   ["Частота до", (fields) => (pick(fields, "Частота до, ГГц") ? `${pick(fields, "Частота до, ГГц")} ГГц` : "")],
   ["КСВ", (fields) => pick(fields, "КСВ")],
-  ["Материал корпуса", (fields) => pick(fields, "Материал корпуса")],
   ["Покрытие", (fields) => pick(fields, "Покрытие")],
-  ["Габариты", (fields) => pick(fields, "Габариты")],
   ["Производитель", coaxMaker],
   ["Поставщик", coaxSupplier],
   ["Артикул поставщика", (fields) => pick(fields, "Артикул поставщика")],
   ["Цена", (fields) => (pick(fields, "Цена, ₽") ? `${pick(fields, "Цена, ₽")} ₽${pick(fields, "Дата цены") ? ` на ${pick(fields, "Дата цены")}` : ""}` : "")],
-  ["Программа", (fields) => pick(fields, "program", "Программа")],
   ["Примечание", (fields) => pick(fields, "Примечание")],
   ["Источник данных", (fields) => pick(fields, "Источник данных")],
 ];

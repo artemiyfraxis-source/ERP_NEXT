@@ -111,10 +111,8 @@ function mockApi(calls: Call[] = [], rows: CableRow[] = ROWS) {
 // после afterEach файла), иначе поздняя запись предыдущего теста попадает в следующий.
 beforeEach(() => { window.localStorage.clear(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); });
-// The coax table shows its key columns only (owner 19.10); a test that reads another column shows them all, as «Колонки» does.
-const showAllCoax = (hidden: string[] = []) => window.localStorage.setItem("erp-table:db:cables:coax:5-2", JSON.stringify({ hidden }));
-// what the table before the card kept in «Колонки»
-const WAS_HIDDEN = ["Сечение, мм2", "AWG", "Число жил", "__reason", "Тип провода", "Изоляция", "Экран", "Цвета", "Источник данных", "__span", "__op", "__fc", "__kind"];
+// The coax table shows its «Только нужные» (owner 23.10); a test that reads another column shows them all, as «Колонки» does.
+const showAllCoax = (hidden: string[] = []) => window.localStorage.setItem("erp-table:db:cables:coax:2310", JSON.stringify({ hidden }));
 
 it("groups the tabs by what the shop picks from and shows a count on every chip", async () => {
   mockApi();
@@ -161,13 +159,14 @@ it("shows each cable in its own list with the parameters of that list", async ()
   expect(await screen.findByText("RG316")).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "D1 жила, мм" })).toBeInTheDocument();
   expect(screen.getByText("0,5")).toBeInTheDocument();
-  expect(screen.queryByRole("columnheader", { name: "D3 оплётка, мм" })).toBeNull(); // D2 and D3 are in «Колонки» and in the card
+  expect(screen.getByRole("columnheader", { name: "D3 оплётка, мм" })).toBeInTheDocument(); // D1–D3 are «нужные» (owner 23.10)
   expect(screen.getAllByText("RG58").length).toBeGreaterThan(0);
   expect(screen.getByRole("columnheader", { name: "Волновое сопротивление, Ом" })).toBeInTheDocument();
   expect(screen.queryByText("UL1061 22AWG")).toBeNull();
   expect(screen.queryByText("КСПВГ 4x0,20")).toBeNull();
 
-  // the frequencies are in «Колонки» and in the card, not in the table by default
+  // the operating frequency is a «нужный» column; the other frequencies are in «Колонки» and in the card
+  expect(screen.getByRole("columnheader", { name: "Рабочая частота, ГГц" })).toBeInTheDocument();
   for (const name of ["Диапазон частот", "Диапазон VNA", "Частота среза, ГГц"]) expect(screen.queryByRole("columnheader", { name })).toBeNull();
 
   // hook-up wires: the conductor comes from the size table; an unparsed wire says so
@@ -179,7 +178,7 @@ it("shows each cable in its own list with the parameters of that list", async ()
     const index = screen.getAllByRole("columnheader").findIndex((head) => head.textContent === header);
     return row.querySelectorAll("td")[index];
   };
-  // «Серия» is the group header (owner 16.10), hidden; the materials follow «Ø наружный».
+  // «Серия» is the group header (owner 16.10), hidden.
   expect(screen.queryByRole("columnheader", { name: "Серия" })).toBeNull();
   expect(cell("UL1061 22AWG", "Сечение, мм²")).toHaveTextContent(/^0,35$/); // the size row, not the БД.ПРОВ 0,33
   expect(cell("UL1061 22AWG", "Ø жилы, мм")).toHaveTextContent(/^0,64$/);
@@ -196,17 +195,28 @@ it("shows each cable in its own list with the parameters of that list", async ()
   expect(screen.queryByRole("button", { name: /^Прочие кабели/ })).toBeNull();
 });
 
-describe("coax column order (owner 15.10: «сначала конструктивные характеристики — диаметры, потом материал…»)", () => {
+describe("coax column order (owner 23.10: «сделай сортировку нормальную, чтобы своя инфа в своём месте»)", () => {
   const OWN = ["Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены", "Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки"];
+  // an old server: the shared БД.ПРОВ columns, «Изоляция» among them (no column of any list since 23.10)
   const BASE = [...COLUMNS, "Изоляция", "Экран", "Стандарт", "Производители", "Поставщик", "Цвета", "Источник данных"];
-  const VISIBLE = ["Марка кабеля", "D1 жила, мм", "Наружный диаметр, мм", "Волновое сопротивление, Ом", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м"];
+  // «Только нужные» of the coax list (owner 23.10), in the group order: each diameter next to its layer
+  const VISIBLE = [
+    "Марка кабеля", "Тип провода", "D1 жила, мм", "Материал жилы", "Материал диэлектрика", "D2 диэлектрик, мм", "Материал экрана",
+    "D3 оплётка, мм", "Материал оболочки", "Наружный диаметр, мм", "Волновое сопротивление, Ом", "Погонная ёмкость, пФ/м",
+    "Рабочая частота, ГГц", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м",
+  ];
+  // every column in «Колонки» order: identification → construction → electrical → mechanics → supply → service; an
+  // unknown column («Изоляция» of the old server) before the supply
   const ORDER = [
-    "Марка кабеля", "D1 жила, мм", "D2 диэлектрик, мм", "D3 оплётка, мм", "Наружный диаметр, мм",
-    "Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки", "Волновое сопротивление, Ом",
-    // owner 19.10: «Параметры» of the card — table columns after the impedance
-    "Погонная ёмкость, пФ/м", "Радиус изгиба неподвижно, мм", "Радиус изгиба многократно, мм", "Напряжение макс., В", "Масса, г/м",
-    "Диапазон частот", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены",
-    "Карточка",
+    "Марка кабеля", "Цвета", "Тип провода", "Стандарт", "Производители",
+    "AWG", "Сечение, мм2", "Число жил", "D1 жила, мм", "Материал жилы", "Материал диэлектрика", "D2 диэлектрик, мм", "Экран",
+    "Материал экрана", "D3 оплётка, мм", "Материал оболочки", "Наружный диаметр, мм",
+    "Волновое сопротивление, Ом", "Погонная ёмкость, пФ/м", "Рабочая частота, ГГц", "Частота среза, ГГц", "Диапазон VNA",
+    "Диапазон частот", "Напряжение макс., В",
+    "Радиус изгиба неподвижно, мм", "Радиус изгиба многократно, мм", "Масса, г/м",
+    "Изоляция",
+    "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены",
+    "Источник данных", "Карточка", "Вкладка", "Почему здесь",
   ];
   const withColumns = (columns: string[], own: string[]) => {
     mockApi();
@@ -217,49 +227,47 @@ describe("coax column order (owner 15.10: «сначала конструкти�
   };
   const heads = () => screen.getAllByRole("columnheader").map((head) => head.textContent ?? "").filter(Boolean);
 
-  it("shows only the key columns by default (owner 19.10: the rest is in «Колонки» and in the card)", async () => {
+  it("shows the list's «Только нужные» by default, in the group order", async () => {
     withColumns([...BASE, ...OWN], OWN);
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
     expect(heads()).toEqual(VISIBLE);
   });
 
-  it("keeps construction, materials, impedance, one range, standard, maker, then supplier, article and price apart in «Колонки»", async () => {
-    showAllCoax(WAS_HIDDEN);
+  it("puts every column, the owner's own and the card's too, into its group in «Колонки»", async () => {
+    showAllCoax();
     withColumns([...BASE, ...OWN], OWN);
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
-    expect(heads()).toEqual(ORDER); // «Изоляция», «Экран» and the card's frequencies are kept in «Колонки», hidden
+    expect(heads()).toEqual(ORDER);
   });
 
   it("does not draw the material columns before they are added", async () => {
-    showAllCoax(WAS_HIDDEN);
+    showAllCoax();
     withColumns([...BASE, "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"], ["Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
     expect(heads()).toEqual(ORDER.filter((name) => !name.startsWith("Материал")));
   });
 
-  it("ignores a coax layout saved before the card (the old key showed every column)", async () => {
-    window.localStorage.setItem("erp-table:db:cables:coax:5", JSON.stringify({ order: ["__card", "cable"], hidden: [] }));
+  it("ignores a coax layout saved before the group order of 23.10 (the old key)", async () => {
+    window.localStorage.setItem("erp-table:db:cables:coax:5-2", JSON.stringify({ order: ["__card", "cable"], hidden: [] }));
     withColumns([...BASE, ...OWN], OWN);
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
     expect(heads()).toEqual(VISIBLE);
   });
 
-  it("keeps the coax materials off the multicore list; its supply columns stay apart", async () => {
+  it("shows the multicore list's own «нужные»: core insulation, screen type, screen, jacket, supply", async () => {
     withColumns([...BASE, ...OWN, "Материал изоляции жилы"], [...OWN, "Материал изоляции жилы"]);
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
     fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
     await screen.findByText("КСПВГ 4x0,20");
-    const shown = heads();
-    // owner 15.10: «у многожильных нужно материал жилы, материал изоляции жилы, материал экрана если есть, материал оболочки»
-    expect(shown.filter((name) => name.startsWith("Материал"))).toEqual(["Материал жилы", "Материал изоляции жилы", "Материал экрана", "Материал оболочки"]);
-    expect(shown).not.toContain("Изоляция");
-    expect(shown).not.toContain("Экран");
-    expect(shown).toEqual(expect.arrayContaining(["Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м"]));
+    expect(heads()).toEqual([
+      "Марка кабеля", "Тип провода", "AWG", "Сечение, мм2", "Число жил", "Материал изоляции жилы", "Экран", "Материал экрана",
+      "Материал оболочки", "Наружный диаметр, мм", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м",
+    ]);
   });
 
   it("fills a parameter column from БД.ПРОВ, else from the card; a family card's value is muted «как у»", async () => {
@@ -557,10 +565,15 @@ it("groups the hook-up wires by series with the shared values in the header, siz
   } as unknown as Parameters<typeof HookupWireTable>[0]["data"];
   render(<HookupWireTable data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} kindSelect={() => null} />);
 
-  // no «Серия» column (the group header says it); the materials right after «Ø наружный» (owner 16.10)
+  // no «Серия» column (the group header says it); the jacket material right before «Ø наружный» (owner 23.10: core →
+  // jacket → outer Ø)
   const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
   expect(heads).not.toContain("Серия");
-  expect(heads[heads.indexOf("Ø наружный, мм") + 1]).toBe("Материал оболочки");
+  expect(heads[heads.indexOf("Ø наружный, мм") - 1]).toBe("Материал оболочки");
+  // «Только нужные» of the монтажные (owner 23.10) in the group order; the structure's «Изоляция» is no column
+  expect(heads).toEqual(["Марка провода", "Цвет", "AWG", "Сечение, мм²", "Структура жилы", "Ø жилы, мм", "Материал оболочки",
+    "Ø наружный, мм", "Напряжение, В", "Температура, °C", "Поставщик", "Ссылка"]);
+  expect(heads).not.toContain("Изоляция");
   // the coax parameters are not a column of this list; the supplier's page — «открыть», right after the supplier
   expect(heads).not.toContain("Погонная ёмкость, пФ/м");
   expect(heads[heads.indexOf("Поставщик") + 1]).toBe("Ссылка");
@@ -600,13 +613,14 @@ describe("coax cells edited right in the table (owner 14.10: «ещё бы ка�
     return input;
   };
 
-  it("shows «Производители», then «Поставщик» (owner 15.10) and writes a БД.ПРОВ cell with its old value, then reads the list again", async () => {
+  it("keeps «Производители» with the identification, «Поставщик» with the supply, and writes a БД.ПРОВ cell with its old value", async () => {
     showAllCoax();
     const calls = mockApi();
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
     const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
-    expect(heads.indexOf("Поставщик")).toBe(heads.indexOf("Производители") + 1);
+    expect(heads.indexOf("Производители")).toBeLessThan(heads.indexOf("D1 жила, мм"));
+    expect(heads.indexOf("Поставщик")).toBeGreaterThan(heads.indexOf("Масса, г/м"));
 
     type(cellOf("RG316", "Волновое сопротивление, Ом"), "75");
     await waitFor(() => expect(calls.find((call) => call.method === "PATCH")).toMatchObject({
@@ -650,9 +664,9 @@ describe("coax cells edited right in the table (owner 14.10: «ещё бы ка�
     await screen.findByText("RG316");
     expect(cellOf("RG316", "Марка кабеля")).not.toHaveClass("dt-editable");
     expect(cellOf("RG316", "Карточка")).not.toHaveClass("dt-editable");
-    expect(cellOf("RG316", "Стандарт")).not.toHaveClass("dt-editable"); // the БД.ПРОВ row has no such cell: the server would refuse it
+    expect(cellOf("RG316", "Цвета")).not.toHaveClass("dt-editable"); // the БД.ПРОВ row has no such cell: the server would refuse it
     expect(cellOf("RG316", "Поставщик")).not.toHaveClass("dt-editable");
-    expect(cellOf("RG58", "Стандарт")).not.toHaveClass("dt-editable"); // a D-table-only cable has no БД.ПРОВ row
+    expect(cellOf("RG58", "Цвета")).not.toHaveClass("dt-editable"); // a D-table-only cable has no БД.ПРОВ row
     expect(cellOf("RG58", "D1 жила, мм")).toHaveClass("dt-editable");
     unmount();
 
@@ -1047,20 +1061,21 @@ describe("columns of each cable list (БД.ПРОВ cable_kind)", () => {
       .toMatchObject({ tab: "prov", cable_kind: "multi", fields: { "Марка": "ПВС 3x1" } }));
   });
 
-  it("keeps the user's «Колонки» choice of the coax list across a reload, over the key-columns default", async () => {
+  it("keeps the user's «Колонки» choice of the coax list across a reload, over the list's default", async () => {
     withKinds();
     const first = render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
-    expect(screen.queryByRole("columnheader", { name: "Материал диэлектрика" })).toBeNull(); // hidden by default
+    expect(screen.queryByRole("columnheader", { name: "Диапазон VNA" })).toBeNull(); // hidden by default
+    expect(screen.getByRole("columnheader", { name: "Полка коакса" })).toBeInTheDocument(); // a new own column is shown
     fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Материал диэлектрика" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Диапазон VNA" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Поставщик" })); // a default-visible one switched off
-    expect(screen.getByRole("columnheader", { name: "Материал диэлектрика" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Диапазон VNA" })).toBeInTheDocument();
     first.unmount();
 
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
-    expect(screen.getByRole("columnheader", { name: "Материал диэлектрика" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Диапазон VNA" })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Поставщик" })).toBeNull();
   });
 });
