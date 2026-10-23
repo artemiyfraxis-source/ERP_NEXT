@@ -7,6 +7,7 @@ nothing crashes. A program that fails or runs past its timeout gives no text."""
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -18,6 +19,10 @@ TIMEOUT = 60  # seconds per program call
 LANGUAGES = "rus+eng"
 PAGE_SEGMENTATION = "6"  # one uniform block of text: a УПД is a form, its lines read best kept together
 IMAGE_SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png"}
+# A УПД is a landscape form: on the warehouse flatbed it lies sideways (23.10). An upright page reads hundreds of
+# Russian words; below this many the page is tried turned by 90° both ways and the best reading wins.
+UPRIGHT_WORDS = 40
+_WORD = re.compile(r"[А-Яа-яЁё]{4,}")
 
 
 class OcrUnavailable(RuntimeError):
@@ -44,6 +49,33 @@ def _tesseract(tesseract: str, image: Path) -> str:
     return out.decode("utf-8", "replace") if out else ""
 
 
+def _words(text: str) -> int:
+    return len(_WORD.findall(text))
+
+
+def _read_page(tesseract: str, image: Path) -> str:
+    """The page as it lies; if it reads as noise, turned by 90° and 270° (Pillow), whichever gives more words."""
+    best = _tesseract(tesseract, image)
+    if _words(best) >= UPRIGHT_WORDS:
+        return best
+    from PIL import Image  # only a sideways scan needs it
+
+    try:
+        with Image.open(image) as picture:
+            turns = []
+            for angle in (90, 270):
+                turned = image.with_name(f"{image.stem}-r{angle}.png")
+                picture.rotate(angle, expand=True).save(turned)
+                turns.append(turned)
+    except OSError:
+        return best
+    for turned in turns:
+        text = _tesseract(tesseract, turned)
+        if _words(text) > _words(best):
+            best = text
+    return best
+
+
 def _pdf_pages(content: bytes, folder: Path) -> list[Path]:
     pdftoppm = _program("pdftoppm")
     source = folder / "scan.pdf"
@@ -65,4 +97,4 @@ def ocr_text(content: bytes, kind: str | None) -> str:
             images = [image]
         else:
             return ""
-        return "\n".join(text for image in images if (text := _tesseract(tesseract, image).strip()))
+        return "\n".join(text for image in images if (text := _read_page(tesseract, image).strip()))

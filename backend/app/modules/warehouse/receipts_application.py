@@ -13,6 +13,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
+from io import BytesIO
+from pathlib import PurePath
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
@@ -187,9 +189,27 @@ def checked_scan(file_name: str, content: bytes) -> tuple[str, str]:
     return str(file_name or "").strip() or f"УПД{SCAN_KINDS[kind]}", kind
 
 
+def as_pdf(name: str, kind: str, content: bytes) -> tuple[str, str, bytes]:
+    """A scan is kept as PDF (owner 23.10.2026: «хранить надо PDF»): a JPG / PNG becomes a one-page PDF at its own
+    resolution (300 dpi when the picture says none). A picture Pillow cannot open is kept as it came."""
+    if kind == "application/pdf":
+        return name, kind, content
+    from PIL import Image  # only a picture scan needs it
+
+    try:
+        with Image.open(BytesIO(content)) as picture:
+            dpi = picture.info.get("dpi") or (300, 300)
+            page = picture if picture.mode in ("L", "RGB") else picture.convert("RGB")
+            buffer = BytesIO()
+            page.save(buffer, "PDF", resolution=float(dpi[0]) or 300.0)
+    except (OSError, ValueError):
+        return name, kind, content
+    return str(PurePath(name).with_suffix(".pdf")), "application/pdf", buffer.getvalue()
+
+
 def store_scan(uow: UnitOfWork, file_name: str, content: bytes, actor: Actor, now: datetime) -> tuple[str, str]:
-    """The УПД scan kept in the database; returns its link (the header's `scan_file`) and what the bytes are."""
-    name, kind = checked_scan(file_name, content)
+    """The УПД scan kept in the database (as PDF); returns its link (the header's `scan_file`) and what it is."""
+    name, kind, content = as_pdf(*checked_scan(file_name, content), content)
     file_id = uuid4()
     with uow:
         uow.receipts.add_file(file_id, name, kind, content, actor.name, now)
@@ -206,6 +226,7 @@ def store_job_scan(uow: UnitOfWork, job_id: UUID, file_name: str, content: bytes
     except WarehouseValidationError as error:
         scan_jobs.fail_job(uow, job_id, error=str(error), now=now)
         raise
+    name, kind, content = as_pdf(name, kind, content)
     file_id = uuid4()
     with uow:
         session = uow.session

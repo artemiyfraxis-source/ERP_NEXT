@@ -352,8 +352,23 @@ function Invoke-WiaScan {
     foreach ($p in @(@(6146, 2), @(6147, 300), @(6148, 300))) {
         try { $item.Properties.Item([string]$p[0]).Value = $p[1] } catch {}
     }
-    $img = $item.Transfer('{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}')
-    return @{ Bytes = [byte[]]$img.FileData.BinaryData; Ext = 'jpg'; Mime = 'image/jpeg' }
+    $WiaJpeg = '{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}'
+    $img = $item.Transfer($WiaJpeg)
+    # The Pantum driver ignores the asked format and hands an uncompressed BMP (9–26 MB, over the server's 21 MB).
+    # WIA.ImageProcess «Convert» fails from PowerShell (FormatID cast), so the BMP is re-encoded by System.Drawing.
+    if ($img.FormatID -eq $WiaJpeg) { return @{ Bytes = [byte[]]$img.FileData.BinaryData; Ext = 'jpg'; Mime = 'image/jpeg' } }
+    $bmp = Join-Path $env:TEMP ('fraxis-scan-' + [Guid]::NewGuid().ToString('N') + '.bmp')
+    $img.SaveFile($bmp)
+    Add-Type -AssemblyName System.Drawing
+    $src = [Drawing.Image]::FromFile($bmp)
+    try {
+        $codec = [Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+        $ep = New-Object Drawing.Imaging.EncoderParameters 1
+        $ep.Param[0] = New-Object Drawing.Imaging.EncoderParameter ([Drawing.Imaging.Encoder]::Quality, [long]80)
+        $ms = New-Object IO.MemoryStream
+        $src.Save($ms, $codec, $ep)
+        return @{ Bytes = $ms.ToArray(); Ext = 'jpg'; Mime = 'image/jpeg' }
+    } finally { $src.Dispose(); Remove-Item $bmp -Force -ErrorAction SilentlyContinue }
 }
 
 # Скан выбранным способом. Вынесено в функцию, чтобы тесты подменяли её.
