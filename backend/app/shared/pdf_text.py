@@ -201,8 +201,10 @@ def _cmap(stream: bytes, budget: _Budget) -> tuple[int, dict[int, str]]:
                     table[start + offset] = _utf16(item)
                 continue
             base = _hex_bytes(target[1:-1])
+            first, size = int.from_bytes(base, "big"), len(base)
             for offset in range(min(stop - start, 0xFFFF) + 1):
-                shifted = base[:-1] + bytes([(base[-1] + offset) & 0xFF]) if base else b""
+                # the whole target counts up, not its last byte alone: Tesseract's identity map <0000> <FFFF> <0000> crosses 0xFF
+                shifted = ((first + offset) % (1 << (8 * size))).to_bytes(size, "big") if base else b""
                 table[start + offset] = shifted.decode("utf-16-be", "ignore")
     return width, table
 
