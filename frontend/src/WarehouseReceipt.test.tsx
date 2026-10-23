@@ -118,9 +118,9 @@ it("accepts a row: the supply is created first, then the position with its place
   fireEvent.change(dialog.getByLabelText("Этикеток"), { target: { value: "3" } });
   fireEvent.click(dialog.getByRole("button", { name: "Принять" }));
 
-  expect(await screen.findByText(/Принято · ГРН FRX\.26\.0000009 · 1F4/)).toBeInTheDocument();
+  expect(await screen.findByText(/Принято · ГРН FRX\.26\.0000009 · место 1F4/)).toBeInTheDocument();
   expect(screen.queryByRole("dialog", { name: "Принять позицию" })).toBeNull();
-  expect(screen.getByText("Этикеток в печать: 3")).toBeInTheDocument();
+  expect(screen.getByText(/этикеток 3/)).toBeInTheDocument();
 });
 
 it("sends the supply header before the first acceptance and the labels count with it", async () => {
@@ -220,7 +220,7 @@ it("marks a busy place in the acceptance window without blocking it, and prints 
 
   fireEvent.click(await screen.findByRole("button", { name: "Этикетка ещё раз" }));
   await waitFor(() => expect(calls.some((call) => call.path.endsWith("/label"))).toBe(true));
-  expect(await screen.findByText("Этикеток в печать: 1")).toBeInTheDocument();
+  expect(await screen.findByText(/этикеток 1/)).toBeInTheDocument();
 });
 
 it("resumes a recent supply: its accepted lots come back as read-only rows", async () => {
@@ -231,7 +231,7 @@ it("resumes a recent supply: its accepted lots come back as read-only rows", asy
   await openSupply();
   fireEvent.change(await screen.findByLabelText("Продолжить поставку"), { target: { value: "r1" } });
 
-  expect(await screen.findByText(/Принято · ГРН FRX\.26\.0000009 · 1F4/)).toBeInTheDocument();
+  expect(await screen.findByText(/Принято · ГРН FRX\.26\.0000009 · место 1F4/)).toBeInTheDocument();
   expect(screen.getByLabelText("Поставщик")).toHaveValue("ООО Ромашка");
   expect(screen.getByLabelText("№ УПД")).toHaveValue("5");
 });
@@ -254,4 +254,15 @@ it("scans a УПД: fills the empty header fields, appends the lines and shows t
   expect(screen.getByLabelText("№ счёта")).toHaveValue("С-1");
   expect(cellOf("Артикул")).toHaveValue("Z-1");
   expect(cellOf("Наименование")).toHaveValue("Зет");
+});
+
+it("starts with one blank row, adds the next when the article is typed, and offers no buttons on blank rows", async () => {
+  mockApi();
+  await openSupply();
+  expect(screen.getAllByLabelText(/^Артикул, строка/)).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Принять строку 1" })).toBeNull();
+  type("Артикул", "GHR-04V-S");
+  expect(screen.getAllByLabelText(/^Артикул, строка/)).toHaveLength(2);
+  expect(screen.getByRole("button", { name: "Принять строку 1" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Принять строку 2" })).toBeNull();
 });

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import {
-  applyHints, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell, emptyHeader, emptyLine, fillEmpty,
+  applyHints, withTrailingBlank, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell, emptyHeader, emptyLine, fillEmpty,
   headerChanged, headerFields, mergeHeader, receiptLine, type ReceiptLine,
 } from "./warehouseReceiptLogic";
 import type { WarehouseReceipt } from "./api";
@@ -29,7 +29,7 @@ it("header columns of a block fill only EMPTY header fields", () => {
 });
 
 it("a plain block fills from the focused cell and never overwrites an accepted row", () => {
-  const accepted = filled({ article: "OLD", quantity: "1", accepted: { lotId: "l", grn: "G", place: "1A1", labelNote: "", labelError: "" } });
+  const accepted = filled({ article: "OLD", quantity: "1", accepted: { lotId: "l", grn: "G", place: "1A1", labels: 0, labelError: "" } });
   const result = applyReceiptPaste([accepted, emptyLine()], 0, "article", "X\t2\nY\t3");
   if ("error" in result) throw new Error(result.error);
   expect(result.lines[0]).toBe(accepted);
@@ -86,4 +86,12 @@ it("formats the lot card line", () => {
   expect(receiptLine(null)).toBe("");
   expect(receiptLine({ id: "r", supplier: "ООО", invoice_number: "", invoice_date: null, upd_number: "5", upd_date: "2026-10-01" }))
     .toBe("Приход: ООО · УПД 5 от 01.10.2026");
+});
+
+it("keeps exactly one empty row at the bottom", () => {
+  expect(withTrailingBlank([filled({ article: "A" })])).toHaveLength(2);
+  expect(withTrailingBlank([filled({ article: "A" }), emptyLine(), emptyLine(), emptyLine()])).toHaveLength(2);
+  const ready = [filled({ article: "A" }), emptyLine()];
+  expect(withTrailingBlank(ready)).toBe(ready);
+  expect(withTrailingBlank([])).toHaveLength(1);
 });
