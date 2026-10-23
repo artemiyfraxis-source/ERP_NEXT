@@ -238,6 +238,50 @@ def store_job_scan(uow: UnitOfWork, job_id: UUID, file_name: str, content: bytes
     return f"{RECEIPT_SCAN_PATH}{file_id}"
 
 
+SCAN_PAGES_MAX = 20
+
+
+def merge_scans(uow: UnitOfWork, links: Sequence[str], actor: Actor, now: datetime) -> tuple[str, bytes]:
+    """A multi-page УПД scanned sheet by sheet (the flatbed has no feeder): the stored scans, in page order, become ONE
+    PDF kept as a new file «УПД.pdf»; returns its link and the bytes. Foreign link / unreadable file / over 20 MB —
+    WarehouseValidationError."""
+    from pypdf import PdfReader, PdfWriter  # only a merge needs it
+    from pypdf.errors import PyPdfError
+
+    if not 2 <= len(links) <= SCAN_PAGES_MAX:
+        raise WarehouseValidationError(f"Склеить можно от 2 до {SCAN_PAGES_MAX} страниц")
+    writer = PdfWriter()
+    for link in links:
+        link = str(link)
+        tail = link[len(RECEIPT_SCAN_PATH):] if link.startswith(RECEIPT_SCAN_PATH) else ""
+        try:
+            found = scan_file(uow, UUID(tail))
+        except ValueError:
+            found = None
+        if found is None:
+            raise WarehouseValidationError("Скан не найден — загрузите страницу заново")
+        name, content = found
+        kind = sniffed_type(content)
+        try:
+            _name, kind, content = as_pdf(name, kind, content)
+            if kind != "application/pdf":
+                raise ValueError(kind)
+            for page in PdfReader(BytesIO(content)).pages:
+                writer.add_page(page)
+        except (PyPdfError, ValueError, OSError):
+            raise WarehouseValidationError("Страницу скана не удалось прочитать — загрузите её заново") from None
+    buffer = BytesIO()
+    writer.write(buffer)
+    merged = buffer.getvalue()
+    if len(merged) > SCAN_FILE_LIMIT:
+        raise WarehouseValidationError("Скан УПД больше 20 МБ")
+    file_id = uuid4()
+    with uow:
+        uow.receipts.add_file(file_id, "УПД.pdf", "application/pdf", merged, actor.name, now)
+        uow.commit()
+    return f"{RECEIPT_SCAN_PATH}{file_id}", merged
+
+
 def scan_file(uow: UnitOfWork, file_id: UUID) -> tuple[str, bytes] | None:
     with uow:
         return uow.receipts.file(file_id)

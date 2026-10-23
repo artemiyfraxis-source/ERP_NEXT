@@ -292,7 +292,7 @@ it("scans from the scanner: waits for the PC, then fills the header like a file 
   expect(screen.getByLabelText("Поставщик")).toHaveValue("ООО Сканер");
   expect(cellOf("Артикул")).toHaveValue("S-1");
   expect(calls.some((call) => call.method === "POST" && call.path === "/api/stock/receipts/scan-jobs")).toBe(true);
-  expect(screen.getByRole("button", { name: "Сканировать" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "+ Страница" })).toBeEnabled();
 });
 
 it("shows the scanner error in red and frees the buttons", async () => {
@@ -337,4 +337,64 @@ it("starts with one blank row, adds the next when the article is typed, and offe
   expect(screen.getAllByLabelText(/^Артикул, строка/)).toHaveLength(2);
   expect(screen.getByRole("button", { name: "Принять строку 1" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Принять строку 2" })).toBeNull();
+});
+
+
+const answer = (scan_file: string, article: string) => ({
+  scan_file, note: "Распознано.",
+  recognised: { supplier: "ООО Скан", inn: "", upd_number: "17", upd_date: "", invoice_number: "", invoice_date: "" },
+  lines: [{ article, name: "Н", quantity: "1", unit: "шт" }],
+});
+
+function scannerPages(files: string[]) {
+  let started = 0;
+  return mockApi({
+    "POST /api/stock/receipts/scan-jobs": () => json({ id: `p${++started}`, status: "pending" }),
+    "GET /api/stock/receipts/scan-jobs/p1": () => json({ id: "p1", status: "done", error: "", result: answer(files[0], "A-1") }),
+    "GET /api/stock/receipts/scan-jobs/p2": () => json({ id: "p2", status: "done", error: "", result: answer(files[1], "A-2") }),
+    "GET /api/stock/receipts/scan-jobs/p3": () => json({ id: "p3", status: "done", error: "", result: answer(files[2], "A-3") }),
+    "POST /api/stock/receipts/scan-merge": () => json(answer("merged.pdf", "A-2")),
+  });
+}
+
+it("a second sheet is merged with the first one: scan-merge gets both links, the line count is page-wide", async () => {
+  const calls = scannerPages(["p1.pdf", "p2.pdf", "p3.pdf"]);
+  await openSupply();
+  fireEvent.click(screen.getByRole("button", { name: "Сканировать" }));
+  expect(await screen.findByText("Скан:", { exact: false })).toBeInTheDocument();
+  expect(screen.getByText(/1 стр\./)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "+ Страница" }));
+  expect(await screen.findByText(/2 стр\./)).toBeInTheDocument();
+  const merge = calls.filter((call) => call.path === "/api/stock/receipts/scan-merge");
+  expect(merge).toHaveLength(1);
+  expect(merge[0].body).toEqual({ files: ["p1.pdf", "p2.pdf"] });
+  expect(screen.getByRole("link", { name: "открыть" })).toHaveAttribute("href", "merged.pdf");
+  expect(cellOf("Артикул", 1)).toHaveValue("A-1");
+  expect(cellOf("Артикул", 2)).toHaveValue("A-2");
+});
+
+it("«Сканировать заново» drops the pages and the scan", async () => {
+  const calls = scannerPages(["p1.pdf", "p2.pdf", "p3.pdf"]);
+  await openSupply();
+  fireEvent.click(screen.getByRole("button", { name: "Сканировать" }));
+  expect(await screen.findByText(/1 стр\./)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Сканировать заново" }));
+  await waitFor(() => expect(calls.filter((call) => call.path === "/api/stock/receipts/scan-jobs" && call.method === "POST")).toHaveLength(2));
+  expect(await screen.findByText(/1 стр\./)).toBeInTheDocument();
+  expect(calls.some((call) => call.path === "/api/stock/receipts/scan-merge")).toBe(false);
+});
+
+it("several files are uploaded one by one and merged once", async () => {
+  let uploaded = 0;
+  const calls = mockApi({
+    "POST /api/stock/receipts/scan": () => json(answer(`f${++uploaded}.pdf`, `F-${uploaded}`)),
+    "POST /api/stock/receipts/scan-merge": () => json(answer("merged.pdf", "F-1")),
+  });
+  await openSupply();
+  const files = ["a", "b", "c"].map((name) => new File(["x"], `${name}.pdf`, { type: "application/pdf" }));
+  fireEvent.change(screen.getByLabelText("Файл УПД"), { target: { files } });
+  expect(await screen.findByText(/3 стр\./)).toBeInTheDocument();
+  const merge = calls.filter((call) => call.path === "/api/stock/receipts/scan-merge");
+  expect(merge).toHaveLength(1);
+  expect(merge[0].body).toEqual({ files: ["f1.pdf", "f2.pdf", "f3.pdf"] });
 });

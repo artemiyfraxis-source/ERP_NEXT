@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import {
   applyHints, withTrailingBlank, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell, emptyHeader, emptyLine, fillEmpty,
-  headerChanged, headerFields, mergeHeader, normalizeMaker, receiptLine, splitArticleCell, splitArticleMaker, type ReceiptLine,
+  headerChanged, headerFields, headerFromReceipt, isBlankLine, lineFromLot, lineSummary, mergeHeader, normalizeMaker, receiptLine,
+  splitArticleCell, splitArticleMaker, type ReceiptLine,
 } from "./warehouseReceiptLogic";
 import type { WarehouseReceipt } from "./api";
 
@@ -140,4 +141,26 @@ it("keeps exactly one empty row at the bottom", () => {
   const ready = [filled({ article: "A" }), emptyLine()];
   expect(withTrailingBlank(ready)).toBe(ready);
   expect(withTrailingBlank([])).toHaveLength(1);
+});
+
+it("server nulls and numbers never reach .trim() (owner 23.10: «trim» error in «Поставка»)", () => {
+  const scan = {
+    scan_file: "/api/stock/receipts/files/1",
+    recognised: { supplier: null, inn: null, upd_number: "1788", upd_date: "2026-10-20", invoice_number: null, invoice_date: null },
+    lines: [{ article: null, name: "Трубка МТ-2К", quantity: 3, unit: null }],
+    note: "",
+  } as unknown as Parameters<typeof applyScan>[2];
+  const { header, lines } = applyScan(emptyHeader(), [emptyLine()], scan);
+  expect(header.upd_number).toBe("1788");
+  expect(lines[0]).toMatchObject({ article: "", name: "Трубка МТ-2К", quantity: "3", unit: "" });
+  expect(lineSummary(lines[0])).toContain("Трубка МТ-2К");
+
+  const lot = { id: "l1", grn: "FRX.26.1", article: "XHP-4", inbound: 1000, unit: "шт", item_type: null, manufacturer: null, series: null,
+    name: "XH 4pin", purpose: null, expiry_date: null, datasheet: null, certificate: null, storage_location: "1F4" };
+  const line = lineFromLot(lot as never);
+  expect(line).toMatchObject({ quantity: "1000", item_type: "", purpose: "", manufacturer: "" });
+  expect(isBlankLine(line)).toBe(false);
+  const fromReceipt = headerFromReceipt({ warehouse: "ЦАР", supplier: null, invoice_number: null, upd_number: null, purpose: null,
+    invoice_date: null, upd_date: null } as unknown as WarehouseReceipt);
+  expect(headerFields(fromReceipt, "")).toMatchObject({ supplier: "", purpose: "Склад" });
 });

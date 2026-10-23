@@ -453,3 +453,44 @@ def test_journal_text_names_invoice_and_leaves_out_empty_parts():
     details = {"quantity": "2", "storage_location": "1F4", "receipt_id": "x", "supplier": "", "upd_number": "",
                "upd_date": "", "invoice_number": "С-1", "invoice_date": "2026-10-01"}
     assert event_text("warehouse.manually_received", details) == "Внесено вручную: +2 · место 1F4 · счёт С-1 от 01.10.2026"
+
+
+def _jpeg(fmt: str = "JPEG") -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (40, 60), "white").save(buffer, fmt)
+    return buffer.getvalue()
+
+
+def test_scan_merge_glues_stored_sheets_into_one_pdf(stand, monkeypatch):
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    client, _ = stand
+    monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: "")
+    first = client.post("/api/stock/receipts/scan",
+                        files={"file": ("упд.pdf", _jpeg("PDF"), "application/pdf")}).json()
+    second = client.post("/api/stock/receipts/scan", files={"file": ("лист2.jpg", _jpeg(), "image/jpeg")}).json()
+    response = client.post("/api/stock/receipts/scan-merge", json={"files": [first["scan_file"], second["scan_file"]]})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == {"scan_file", "recognised", "lines", "note"}
+    assert body["scan_file"] not in (first["scan_file"], second["scan_file"])
+    served = client.get(body["scan_file"])
+    assert served.headers["content-type"] == "application/pdf"
+    assert len(PdfReader(BytesIO(served.content)).pages) == 2
+
+
+def test_scan_merge_refuses_a_foreign_link_and_a_wrong_count(stand):
+    client, _ = stand
+    one = client.post("/api/stock/receipts/scan",
+                      files={"file": ("упд.pdf", _jpeg("PDF"), "application/pdf")}).json()["scan_file"]
+    ghost = f"/api/stock/receipts/files/{uuid4()}"
+    for links in ([one, ghost], [one, "http://evil/x"], [one], [one] * 21):
+        response = client.post("/api/stock/receipts/scan-merge", json={"files": links})
+        assert response.status_code == 422, links
+        assert any("а" <= ch.lower() <= "я" for ch in response.json()["detail"])
