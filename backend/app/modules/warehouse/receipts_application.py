@@ -19,6 +19,7 @@ from app.shared.events import AuditEvent
 from app.shared.file_types import sniffed_type
 from app.shared.identity import Actor
 
+from . import scan_jobs
 from .application import ManualStockItem, UnitOfWork, manual_lot, place_manual_lots, receipt_audit
 from .domain import (
     RECEIPT_SCAN_PATH,
@@ -174,8 +175,8 @@ def accept_receipt_line(
     return AcceptedLine(receipt=receipt, lot=placed.lot, label_job_id=job_id, label_error=label_error)
 
 
-def store_scan(uow: UnitOfWork, file_name: str, content: bytes, actor: Actor, now: datetime) -> tuple[str, str]:
-    """The УПД scan kept in the database; returns its link (the header's `scan_file`) and what the bytes are."""
+def checked_scan(file_name: str, content: bytes) -> tuple[str, str]:
+    """A scan ERP keeps: its file name (a default one when none came) and what the bytes are (PDF / JPG / PNG)."""
     if not content:
         raise WarehouseValidationError("Файл не передан")
     if len(content) > SCAN_FILE_LIMIT:
@@ -183,12 +184,37 @@ def store_scan(uow: UnitOfWork, file_name: str, content: bytes, actor: Actor, no
     kind = sniffed_type(content)
     if kind not in SCAN_KINDS:
         raise WarehouseValidationError("Скан УПД — файл PDF, JPG или PNG")
-    name = str(file_name or "").strip() or f"УПД{SCAN_KINDS[kind]}"
+    return str(file_name or "").strip() or f"УПД{SCAN_KINDS[kind]}", kind
+
+
+def store_scan(uow: UnitOfWork, file_name: str, content: bytes, actor: Actor, now: datetime) -> tuple[str, str]:
+    """The УПД scan kept in the database; returns its link (the header's `scan_file`) and what the bytes are."""
+    name, kind = checked_scan(file_name, content)
     file_id = uuid4()
     with uow:
         uow.receipts.add_file(file_id, name, kind, content, actor.name, now)
         uow.commit()
     return f"{RECEIPT_SCAN_PATH}{file_id}", kind
+
+
+def store_job_scan(uow: UnitOfWork, job_id: UUID, file_name: str, content: bytes, now: datetime) -> str:
+    """The scanner agent's file for a claimed job: kept like a hand-uploaded scan (in the name of the storekeeper who
+    pressed the button) and the job done, one transaction; returns the file's link. A file ERP does not keep fails the
+    job with the reason and raises WarehouseValidationError; KeyError / ScanJobClosed — no such job / not claimed."""
+    try:
+        name, kind = checked_scan(file_name, content)
+    except WarehouseValidationError as error:
+        scan_jobs.fail_job(uow, job_id, error=str(error), now=now)
+        raise
+    file_id = uuid4()
+    with uow:
+        session = uow.session
+        job = scan_jobs.open_for_result(session, job_id, now)
+        uow.receipts.add_file(file_id, name, kind, content, job.requested_by, now)
+        session.flush()  # the file row before the job points at it
+        scan_jobs.finish_with_file(session, job_id, file_id, now)
+        uow.commit()
+    return f"{RECEIPT_SCAN_PATH}{file_id}"
 
 
 def scan_file(uow: UnitOfWork, file_id: UUID) -> tuple[str, bytes] | None:

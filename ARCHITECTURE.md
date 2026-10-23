@@ -791,6 +791,21 @@ upd_number, upd_date}` или null, читается одним запросом
 <дата> · счёт <№> от <дата>», пустые части опускаются; шапка пишет «Поставка заведена/изменена». `/api/stock/batches`
 не изменился.
 
+Скан УПД со сканера склада (owner 23.10.2026; `scan_jobs.py`, `scan_jobs_api.py`, `receipt_ocr.py`, миграция
+`0145_warehouse_scan_jobs`) — очередь по образцу очереди печати. Кнопка ставит задание `POST /api/stock/receipts/
+scan-jobs` → `{id, status}` (права — правка склада); агент ПК склада (токен API со scope `scan:upload`, один токен может
+нести и `labels:print`) забирает старое ожидающее `POST /api/stock/scan/agent/claim` → `{job: {id} | null}`, сканирует
+на Pantum BM2300W (eSCL) и шлёт файл `POST /api/stock/scan/agent/jobs/{id}/result` (multipart `file`, PDF/JPG/PNG ≤ 20 МБ:
+файл в `warehouse_receipt_files` от имени кладовщика, задание `done`) или `{"error": "…"}` (`failed`); повтор — 409.
+Экран опрашивает `GET …/scan-jobs/{id}` → `{id, status, error, result}`, где `result` — ровно ответ
+`POST /api/stock/receipts/scan`, распознаётся один раз (после ответа агенту) и хранится в строке задания;
+`DELETE …/scan-jobs/{id}` — «Отменено». Ожидающее дольше 120 с или взятое дольше 180 с при первом чтении очереди
+становится `failed` «Сканер не ответил — проверьте агент на ПК склада». CHECK: `done` ⇔ есть файл (FK RESTRICT),
+`failed` — с причиной, моменты по статусу. Распознавание: текстовый слой PDF, если в нём ничего не найдено или это
+картинка — OCR (`pdftoppm` 300 dpi, первые 2 страницы → `tesseract -l rus+eng --psm 6`, 60 с на вызов; в образе
+`tesseract-ocr`, `tesseract-ocr-rus`, `poppler-utils`); нет программ — «Распознавание недоступно на сервере —
+заполните вручную». Тот же путь служит загрузке файла вручную.
+
 Паспорт партии (SK-6; `Config.gs:164-174`, `Stock05.gs:123-161`, `Receiving.gs:437-441`, `Warehouse.gs:416-527`):
 МАССА 1 ШТ, Г (`unit_mass_g`), СРОК ГОДНОСТИ (`expiry_date`), ПРОИЗВОДИТЕЛЬ, ОПИСАНИЕ, УСЛОВИЯ ХРАНЕНИЯ, DATASHEET,
 СЕРТИФИКАТ — поля `StockLot` (миграция `0030_warehouse_lot_details`). Массу вводят любым из трёх полей — вес 1, 10 или
