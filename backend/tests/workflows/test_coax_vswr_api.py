@@ -30,6 +30,7 @@ def _csv(points):
 
 GOOD = _csv([(900, 2.5), (1000, 1.10), (2400, 1.30), (3000, 1.20)])
 BAD = _csv([(1000, 1.10), (1800, 1.42), (3000, 1.20)])
+WORSE = _csv([(1000, 1.10), (1800, 1.62), (3000, 1.20)])
 
 
 def _as(permissions, name="Контролёр"):
@@ -39,15 +40,15 @@ def _as(permissions, name="Контролёр"):
     )
 
 
-def _card(extra: dict | None):
+def _card(extra: dict | None, index="КБ1", config: dict | None = None):
     card = ProjectTechcard.create(
-        project="591K.3", item_index="КБ1", product_name="Кабель ВЧ", source_calculation="", deadline=None, now=NOW,
+        project="591K.3", item_index=index, product_name="Кабель ВЧ", source_calculation="", deadline=None, now=NOW,
     ).rebuild({
         "operations": [{"code": f"OP-{i}", "connector": str(i), "side": ""} for i, *_ in enumerate(OPS, 1)],
         "build_config": {"ops": [
             {"type": "assembly", "stage": stage, "opNumber": code, "tOp": t_op, "tPrep": t_prep}
             for code, stage, t_op, t_prep in OPS
-        ]},
+        ], **(config or {})},
         "kit": {"part_quantity": "10"}, **(extra or {}),
     }, NOW).issue(NOW)
     with app.state.techcards_uow_factory() as uow:
@@ -140,7 +141,82 @@ def test_undefined_norm_needs_a_manual_verdict_with_a_reason(production_api):  #
     assert result["norm_vswr_max"] is None
 
 
-def test_old_etk_without_the_key_is_an_undefined_norm_with_the_reason(production_api):  # noqa: F811
+COAX_CONFIG = {"coax": {
+    "cableLength": 500, "cableArt": "RG-316", "cableName": "RG-316",
+    "sideA": {"article": "SMA-J-1", "type": "SMA-male"}, "sideB": {"article": "SMA-P-2", "type": "SMA-female"},
+}}
+ROWS = (
+    {"coaxArticle": "SMA-J-1", "КСВ": "≤1,2", "Частота до, ГГц": "6"},
+    {"coaxArticle": "SMA-P-2", "КСВ": "≤1,25", "Частота до, ГГц": "6"},
+)
+
+
+class _Records:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def list(self, **_kwargs):
+        return [type("Record", (), {"fields": row})() for row in self.rows]
+
+
+class _FakeRefs:
+    tech_operations = _Records(ROWS)
+    cable_structure = type("Cables", (), {"cards": staticmethod(lambda: [])})()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+def _old_coax_setup(client, config=COAX_CONFIG, key="vswr-old"):
+    _as({"quality": "edit", "production": "edit"})
+    app.state.references_uow_factory = lambda: _FakeRefs()
+    card = _card(None, config=config)
+    return card, _launch(client, card, key=key), _instrument(client)
+
+
+def _drop_refs():
+    if hasattr(app.state, "references_uow_factory"):
+        del app.state.references_uow_factory
+
+
+def test_old_etk_with_a_coax_config_gets_a_computed_norm_and_an_automatic_verdict(production_api):  # noqa: F811
+    client, _ = production_api
+    try:
+        _card_, task, instrument = _old_coax_setup(client)
+        band = {"band_from_mhz": 1000, "band_to_mhz": 3000}
+        good = client.post("/api/production/vswr", json=_body(task, instrument, GOOD, **band))
+        bad = client.post("/api/production/vswr", json=_body(task, instrument, WORSE, position=2, name="sn2.csv", **band))
+        listed = client.get(f"/api/production/vswr/tasks/{task['id']}").json()
+        passport = client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1/passport").json()
+    finally:
+        _drop_refs()
+
+    assert good.status_code == 200, good.text
+    measurement = good.json()["measurement"]
+    assert measurement["norm"]["source"] == "computed" and measurement["norm_vswr_max"] == 1.51
+    assert measurement["norm"]["basis"] == "рассчитана по справочникам на 22.09.2026 — ЭТК выпущена до нормы КСВН"
+    assert measurement["verdict"] == "pass" and not measurement["verdict_manual"]
+    assert bad.json()["measurement"]["verdict"] == "fail"
+    assert listed["norm"]["status"] == "ok" and listed["norm"]["source"] == "computed"
+    assert listed["control"] == {"mode": "all", "every": None} and listed["required"] == {"total": 3, "measured": 2}
+    assert passport["norm"]["basis"].endswith("рассчитана по справочникам на 22.09.2026 — ЭТК выпущена до нормы КСВН")
+
+
+def test_old_etk_computed_norm_takes_the_control_mode_from_the_config(production_api):  # noqa: F811
+    client, _ = production_api
+    config = {"coax": {**COAX_CONFIG["coax"], "vswrControl": {"mode": "sample", "every": 2}}}
+    try:
+        _card_, task, _instrument_ = _old_coax_setup(client, config)
+        listed = client.get(f"/api/production/vswr/tasks/{task['id']}").json()
+    finally:
+        _drop_refs()
+    assert listed["control"] == {"mode": "sample", "every": 2} and listed["required"]["total"] == 2
+
+
+def test_old_etk_without_a_coax_config_is_not_a_coax_assembly(production_api):  # noqa: F811
     client, _ = production_api
     _card_, task, instrument = _setup(client, None)
 
@@ -151,8 +227,30 @@ def test_old_etk_without_the_key_is_an_undefined_norm_with_the_reason(production
 
     assert refused.status_code == 422
     assert manual.status_code == 200, manual.text
-    assert manual.json()["measurement"]["norm"]["reason"] == "ЭТК выпущена до нормы КСВН"
-    assert listed["norm"] == {**listed["norm"], "status": "undefined", "reason": "ЭТК выпущена до нормы КСВН"}
+    assert manual.json()["measurement"]["norm"]["reason"] == "не коаксиальная сборка"
+    assert listed["norm"] == {**listed["norm"], "status": "undefined", "reason": "не коаксиальная сборка"}
+
+
+def test_task_list_has_only_coax_assemblies_with_counts(production_api):  # noqa: F811
+    client, _ = production_api
+    try:
+        _card_, coax_task, instrument = _old_coax_setup(client)
+        client.post("/api/production/vswr", json=_body(coax_task, instrument, GOOD))
+        _launch(client, _card(None, index="КБ2"), key="plain-1", quantity=2)  # ЭТК без коаксиальной сборки — в список не попадает
+        new_card = _card({"coaxVswrNorm": NORM}, index="КБ3", config=COAX_CONFIG)
+        new_task = _launch(client, new_card, key="vswr-new", quantity=4)
+        listed = client.get("/api/production/vswr/tasks")
+    finally:
+        _drop_refs()
+
+    assert listed.status_code == 200, listed.text
+    rows = {row["id"]: row for row in listed.json()["tasks"]}
+    assert set(rows) == {coax_task["id"], new_task["id"]}
+    old = rows[coax_task["id"]]
+    assert old["number"] == coax_task["number"] and old["quantity"] == 3 and old["status"]
+    assert old["norm"] == {"status": "ok", "vswr_max": 1.51, "source": "computed"}
+    assert old["required"] == {"total": 3, "measured": 1}
+    assert rows[new_task["id"]]["norm"]["vswr_max"] == 1.35 and rows[new_task["id"]]["required"] == {"total": 4, "measured": 0}
 
 
 def test_parser_and_domain_errors_are_russian_422(production_api):  # noqa: F811

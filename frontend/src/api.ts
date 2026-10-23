@@ -1271,6 +1271,18 @@ export interface VswrNorm {
 }
 /** «Контроль КСВН» ЭТК задания: каждое изделие, выборочно 1 из `every` (первое и каждое N-е) или без проверки. */
 export interface VswrControl { mode: "all" | "sample" | "none"; every: number | null }
+/** Строка выбора задания в «Замерах КСВН»: только задания, чья ЭТК — коаксиальная сборка. */
+export interface VswrTaskListItem {
+  id: string;
+  number: string;
+  name: string;
+  item: string;
+  quantity: number;
+  status: string;
+  norm: { status: "ok" | "undefined"; vswr_max: number | null; source: string | null };
+  control: VswrControl;
+  required: { total: number; measured: number };
+}
 export interface VswrSerialRow {
   position: number;
   serial_id: string;
@@ -3519,6 +3531,7 @@ export const productionApi = {
       method: "POST", body: JSON.stringify({ version, disposition, act_reference: actReference }),
     }),
   instruments: () => api<{ instruments: ProductionInstrument[] }>("/api/production/instruments"),
+  vswrTasks: () => api<{ tasks: VswrTaskListItem[] }>("/api/production/vswr/tasks"),
   vswrTask: (taskId: string) => api<VswrTaskOverview>(`/api/production/vswr/tasks/${taskId}`),
   uploadVswr: (payload: VswrUploadPayload) =>
     api<{ measurement: VswrMeasurement; position: number }>("/api/production/vswr", { method: "POST", body: JSON.stringify(payload) }),

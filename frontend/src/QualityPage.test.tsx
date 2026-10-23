@@ -71,6 +71,7 @@ interface Data {
   instruments?: ProductionInstrument[];
   rejections?: unknown[];
   defects?: unknown[];
+  vswrTasks?: unknown[];
   get?: (path: string) => Response | null;
 }
 
@@ -90,6 +91,7 @@ function qualityFetch(data: Data = {}, post: (path: string, body: unknown) => Re
     if (path === "/api/production/instruments") return json({ instruments: data.instruments ?? [] });
     if (path === "/api/production/qc/rejections") return json({ rejections: data.rejections ?? [] });
     if (path === "/api/production/defects") return json({ defects: data.defects ?? [] });
+    if (path === "/api/production/vswr/tasks") return json({ tasks: data.vswrTasks ?? [] });
     const handled = data.get?.(path);
     if (handled) return handled;
     throw new Error(`Unexpected request: ${path}`);
@@ -315,12 +317,23 @@ const overview = (norm: object, latest: unknown = null, control: { mode: string;
 });
 const okNorm = { status: "ok", reason: "", vswr_max: 2.06, band_mhz: [1700, 1900], source: "SMA-J 1,25, SMA-J 1,3" };
 const noNorm = { status: "undefined", reason: "у разъёма нет КСВ в справочнике", vswr_max: null, band_mhz: null };
+const listed = (extra: object = {}) => ({
+  id: branched.id, number: "ПЗ-0001", name: "Жгут", item: branched.item, quantity: 10, status: "Запущено",
+  norm: { status: "ok", vswr_max: 2.06, source: null }, control: { mode: "all", every: null }, required: { total: 10, measured: 3 }, ...extra,
+});
 const vna = { ...micrometer, name: "Анализатор цепей", instrument_type: "ВАЦ" };
 
+// Список заданий приходит отдельным запросом: ждём строку выбора, потом выбираем.
+async function pickTask() {
+  const picker = await screen.findByLabelText("Задание");
+  await within(picker).findByRole("option", { name: /ПЗ-0001/ });
+  fireEvent.change(picker, { target: { value: branched.id } });
+}
+
 async function openVswr(norm: object, latest: unknown = null, extra: Partial<Data> = {}) {
-  qualityFetch({ instruments: [vna], get: (path) => (path === vswrBase ? json(overview(norm, latest)) : null), ...extra });
+  qualityFetch({ instruments: [vna], vswrTasks: [listed()], get: (path) => (path === vswrBase ? json(overview(norm, latest)) : null), ...extra });
   render(<QualityPage principal={qc} />);
-  fireEvent.change(await screen.findByLabelText("Задание"), { target: { value: branched.id } });
+  await pickTask();
 }
 
 // После выбора задания подменяем ответы: POST замера и тот же обзор.
@@ -349,9 +362,9 @@ it("shows the vswr section: the norm line and a dense table of units with their 
 });
 
 it("sample 1 of N: marks the units in and out of the sample, counts the required ones, still lets measure the rest", async () => {
-  qualityFetch({ instruments: [vna], get: (path) => (path === vswrBase ? json(overview(okNorm, measurement("pass"), { mode: "sample", every: 50 })) : null) });
+  qualityFetch({ instruments: [vna], vswrTasks: [listed()], get: (path) => (path === vswrBase ? json(overview(okNorm, measurement("pass"), { mode: "sample", every: 50 })) : null) });
   render(<QualityPage principal={qc} />);
-  fireEvent.change(await screen.findByLabelText("Задание"), { target: { value: branched.id } });
+  await pickTask();
   expect(await screen.findByText("· выборочно 1 из 50")).toBeInTheDocument();
   expect(screen.getByText("замерено 1 из 1 требуемых")).toBeInTheDocument();
   const table = screen.getByRole("heading", { name: "Замеры КСВН" }).closest(".panel") as HTMLElement;
@@ -367,6 +380,29 @@ it("every unit: the norm line says so and every unit is required", async () => {
   expect(await screen.findByText("· контроль: каждое изделие")).toBeInTheDocument();
   expect(screen.getByText("замерено 0 из 10 требуемых")).toBeInTheDocument();
   expect(screen.queryByText("вне выборки")).not.toBeInTheDocument();
+});
+
+it("the task picker lists only the coax tasks from the vswr endpoint, with the measured count", async () => {
+  qualityFetch({ instruments: [vna], vswrTasks: [listed()] }); // /api/production/tasks has a task too, but it is not a coax one
+  render(<QualityPage principal={qc} />);
+  const picker = await screen.findByLabelText("Задание");
+  await within(picker).findByRole("option", { name: /ПЗ-0001/ });
+  const options = within(picker).getAllByRole("option").map((option) => option.textContent);
+  expect(options).toEqual(["— выберите задание —", "ПЗ-0001 · Жгут · 10 шт · замерено 3 из 10"]);
+});
+
+it("the task picker says there are no coax tasks when the list is empty", async () => {
+  qualityFetch({ instruments: [vna], vswrTasks: [] });
+  render(<QualityPage principal={qc} />);
+  expect(await screen.findByText("Нет заданий на коаксиальные сборки")).toBeInTheDocument();
+  expect(within(await screen.findByLabelText("Задание")).getAllByRole("option")).toHaveLength(1);
+});
+
+it("a computed norm shows its basis instead of the service word", async () => {
+  const computed = { ...okNorm, source: "computed", basis: "рассчитана по справочникам на 23.10.2026 — ЭТК выпущена до нормы КСВН" };
+  await openVswr(computed);
+  expect(await screen.findByText(/Норма ≤ 2,06 по комплектующим \(рассчитана по справочникам на 23\.10\.2026 — ЭТК выпущена до нормы КСВН\)/)).toBeInTheDocument();
+  expect(screen.queryByText(/computed/)).not.toBeInTheDocument();
 });
 
 it("says why the norm is undefined", async () => {
