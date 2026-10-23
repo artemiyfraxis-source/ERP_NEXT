@@ -969,12 +969,10 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
     /></label>)}
     {ROW_EDIT_NUMBERS.map(([field, label]) => <label key={field}>{label}<input
       type="number" min="0" step="any" placeholder={String(lot[field] ?? "")}
-      readOnly
       value={values[field]}
       onChange={(event) => { setNotice(""); setValues((current) => ({ ...current, [field]: event.target.value })); }}
     /></label>)}
     </div>
-    <p className="page-sub">Приход, списано и резерв меняются только движениями: списание, возврат, перемещение.</p>
     <p className="page-sub" role="status">{notice || `Баланс станет: ${balance} ${lot.unit}`}</p>
     <div className="move-actions">
       <button type="button" className="secondary" onClick={onClose}>Назад</button>
