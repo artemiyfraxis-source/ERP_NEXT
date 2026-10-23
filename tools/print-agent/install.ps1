@@ -55,6 +55,8 @@ function Remove-Agent {
 if ($Uninstall) { Remove-Agent; return }
 
 if (-not $Token) { throw 'Нужен -Token (токен ERP со scopes labels:print и scan:upload, создаёт администратор в ERP).' }
+# A chat client turns a pasted link into «https://host (https://host/)»: keep the first word only.
+$Server = ($Server.Trim() -split '\s+')[0]
 if ($Server -notmatch '^https?://[^\s/]+') { throw "Адрес сервера должен начинаться с https:// — получено «$Server»." }
 
 $printers = @(Get-Printer | Select-Object -ExpandProperty Name)
