@@ -44,6 +44,7 @@ FIELDS: dict[str, dict[str, str]] = {
         "place": "Место",
         "warehouse": "Склад",
         "place_warehouse": "Место · склад",
+        "manufacturer_place": "Производитель · место · склад",
         "received": "Дата поступления",
         "series": "Серия изготовителя",
         "received_series": "Поступление и серия",
@@ -270,14 +271,19 @@ def _common(data: GrnLabelData) -> dict[str, str]:
     }
 
 
+def _place(data: GrnLabelData) -> str:
+    return " · ".join(part for part in (data.place, data.warehouse) if part)
+
+
 def lot_content(data: GrnLabelData) -> LabelContent:
-    """A warehouse lot. The article is left out when the name already carries it (names made from price books)."""
+    """A warehouse lot. The article is left out only when it is the name itself (it is already printed)."""
     series = f"серия {data.manufacturer_batch}" if data.manufacturer_batch else ""
     values = _common(data) | {
-        "article": data.sku if data.sku and data.sku not in data.item_name else "",
+        "article": data.sku if data.sku and data.sku != data.item_name else "",
         "series": series,
         "received_series": " · ".join(part for part in (_received(data), series) if part),
         "manufacturer": data.manufacturer,
+        "manufacturer_place": " · ".join(part for part in (data.manufacturer, _place(data)) if part),
         "purpose": data.purpose,
     }
     return LabelContent("lot", data.grn, values)

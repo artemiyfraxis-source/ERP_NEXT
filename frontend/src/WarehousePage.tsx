@@ -111,6 +111,9 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   // Своё сообщение: загрузка склада (через 250 мс после открытия) сбрасывает общую ошибку и стёрла бы его.
   const [putawayError, setPutawayError] = useState("");
   const requestVersion = useRef(0);
+  // Lots «Внести позиции» has just put on the stock: a reload may not return them on its first page (the flat table is
+  // in id order), so they stay in the table until the window is closed and the list is read once more.
+  const receivedLots = useRef<WarehouseLot[]>([]);
   // Group and article totals come from the server for the whole filter, so they do not depend on how many lots are
   // loaded. The request follows the grouping and every (re)load/change (the stamp); filter changes bump the stamp
   // through reload(), which already waits for the typing to stop.
@@ -161,7 +164,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   const serverOrder = () => flat ? {} : { sort: sort.key, desc: sort.desc, group: groupBy };
 
   /** The first server page only: the table is on screen after one request; the rest comes on demand. */
-  async function reload() {
+  async function reload(received: WarehouseLot[] = receivedLots.current) {
     const version = ++requestVersion.current;
     setTotalsStamp((value) => value + 1);
     setLoading(true);
@@ -169,7 +172,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     try {
       const page = await warehouseApi.list({ query, includeZero, warehouse, ...serverOrder() });
       if (version !== requestVersion.current) return;
-      setLots(mergeLots([], page.lots));
+      setLots(mergeLots([], [...page.lots, ...received]));
       setTotal(page.total);
       setCursor(page.next_cursor);
     } catch (reason) {
@@ -229,6 +232,14 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     return () => { live = false; };
   }, [lots, itemsTick]);
 
+  /** Closing «Внести позиции» reads the stock once more, so the table behind shows what was accepted. */
+  function closeReceipt() {
+    const received = receivedLots.current;
+    receivedLots.current = [];
+    setAdding(false);
+    if (received.length > 0) void reload([]);
+  }
+
   async function openPutawaySheet() {
     setPutawayError("");
     setPutawayBusy(true);
@@ -286,7 +297,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
             ...(admin ? [{ label: "Журнал склада", run: () => setPanel((value) => value === "journal" ? "" : "journal") }] : []),
           ]} />
           <PrintSetupButton kind="lot" readOnly={readOnly} />
-          {!readOnly && <button className="primary" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>}
+          {!readOnly && <button className="primary" disabled={loading || Boolean(busy)} onClick={() => { if (adding) closeReceipt(); else setAdding(true); }}>+ Внести позиции</button>}
         </div>
       </header>
       {views}
@@ -338,8 +349,13 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       {adding && <WarehouseReceipt
         knownLots={lots}
         typeChoices={typeChoices}
-        onClose={() => setAdding(false)}
-        onAccepted={() => { requestVersion.current += 1; void reload(); }}
+        onClose={() => closeReceipt()}
+        onAccepted={(accepted) => {
+          receivedLots.current = mergeLots(receivedLots.current, [accepted]);
+          requestVersion.current += 1;
+          setLots((current) => mergeLots(current, [accepted]));
+          void reload();
+        }}
       />}
       {moveOpen && <MoveStockDialog
         preset={moveLot}

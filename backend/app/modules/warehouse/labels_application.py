@@ -39,14 +39,15 @@ LabelKind = Literal["lot", "sample"]
 # A sample with the same fields as a real label — to see that everything fits (Roller_Buyer SAMPLE).
 SAMPLE = GrnLabelData(
     grn="FRX.26.0000041",
-    sku="510210200",
-    item_name="Соединитель PicoBlade 2pin (MOLEX)",
+    sku="XHP-4",
+    item_name="XH 4pin (однорядный)",
     quantity="338",
     unit="шт",
     manufacturer_batch="12/2026",
     received_on=date(2026, 9, 25),
     place="1F4",
     warehouse="ЦАР",
+    manufacturer="JST",
 )
 # The sample of an act of «Приёмка с производства» (ГРН «ГП.YY.NNNNNNN», «проект КБ» in the article's place).
 SAMPLE_INTAKE = intake_content(GrnLabelData(

@@ -23,8 +23,8 @@ from app.modules.warehouse.labels_application import SAMPLE, SAMPLE_INTAKE
 from tests.view_access import as_viewer
 from tests.warehouse.test_api import warehouse_api  # noqa: F401 — fixture
 
-LOT_KEYS = ["grn", "quantity", "name", "article", "place", "warehouse", "place_warehouse", "received", "series",
-            "received_series", "manufacturer", "purpose"]
+LOT_KEYS = ["grn", "quantity", "name", "article", "place", "warehouse", "place_warehouse", "manufacturer_place",
+            "received", "series", "received_series", "manufacturer", "purpose"]
 INTAKE_KEYS = ["grn", "quantity", "name", "project", "item_index", "project_item", "place", "warehouse",
                "place_warehouse", "received"]
 
@@ -371,3 +371,9 @@ def test_a_saved_template_that_no_longer_parses_prints_the_built_in_one(labels):
     assert (entry["is_default"], entry["version"]) == (True, 3), "the version stays to save over it"
     assert client.post(f"/api/stock/batches/{lot.id}/label", json={"copies": 1}).status_code == 200
     assert client.put("/api/stock/labels/templates/lot/58x40", json={"template": MINE, "version": 3}).json()["version"] == 4
+
+
+def test_the_designers_sample_lot_shows_the_article_and_the_manufacturer():
+    values = lot_content(SAMPLE).values
+    assert (values["article"], values["manufacturer"]) == ("XHP-4", "JST")
+    assert values["manufacturer_place"] == "JST · 1F4 · ЦАР"
