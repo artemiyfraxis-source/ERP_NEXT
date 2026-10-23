@@ -67,6 +67,21 @@ describe("рисунки по строкам СТО ФРАК-001-2026, ред. 2
     }
   });
 
+  it("gives each of the 64 rows without a standard figure its own scene, never «generic», and keeps a shared scene only for one criterion", () => {
+    const own = ("4.1.7 4.1.20 4.2.9 4.2.12 4.2.18 4.2.19 4.2.20 4.2.25 4.2.34 4.3.1 4.3.18 4.3.30 4.3.35 4.3.38 4.3.45 4.3.50 4.4.1.9 " +
+      "4.4.2.9 4.4.2.11 4.4.2.12 4.4.2.14 4.4.2.15 4.4.2.17 4.4.2.18 4.4.3.2 4.4.3.8 4.4.3.10 4.4.3.13 4.4.3.14 4.4.3.17 4.4.4.1 4.4.4.3 " +
+      "4.4.4.6 4.4.4.7 4.4.5.8 4.5.5 4.5.6 4.5.10 4.5.14 4.5.17 4.5.24 4.6.2 4.6.4 4.6.6 4.7.1 4.7.2 4.7.4 4.7.21 4.7.22 4.8.4 4.8.10 " +
+      "4.8.13 4.8.15 4.8.16 4.9.9 4.10.1 4.10.3 4.10.4 4.11.1 4.11.13 4.11.15 4.11.24 4.12.1 4.12.6").split(" ");
+    expect(own).toHaveLength(64);
+    expect(new Set(own).size).toBe(64);
+    const bad = own.filter((code) => !STO_SCENES[code] || STO_SCENES[code] === "generic" || !DEFECT_SCENES.includes(STO_SCENES[code]));
+    expect(bad).toEqual([]);
+    // Один рисунок на нескольких из этих строк — только у пар с одним и тем же критерием.
+    const shared = new Map<string, string[]>();
+    for (const code of own) shared.set(STO_SCENES[code], [...(shared.get(STO_SCENES[code]) ?? []), code]);
+    expect([...shared.values()].filter((codes) => codes.length > 1)).toEqual([]);
+  });
+
   it("falls back to the word rules for a name without an STO code", () => {
     expect(defectSceneId("Косой рез", "", "CUT_WIRE_hand")).toBe("skew");
     expect(defectSceneId("4.9 Раздел без пункта")).toBe("generic");
