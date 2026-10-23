@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ProcurementPage } from "./ProcurementPage";
+import { PrimaryDocsPage } from "./PrimaryDocsPage";
 import { PurchasingDocChain } from "./PurchasingDocChain";
 
 function json(body: unknown, status = 200) {
@@ -116,14 +116,16 @@ function procurementServer() {
     if (path === "/api/procurement/today") return json({ today: "2026-10-21", sections: [], calm: true });
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     if (path.startsWith("/api/purchasing/invoices")) return json({ items: [], total: 0, page: 1, page_size: 100, counts: { to_pay: 0, paid: 0, return: 0, other: 0 }, sum: 0 });
+    // «Первичная документация» opens on «УПД».
+    if (path.startsWith("/api/purchasing/upd")) return json({ items: [], total: 0, page: 1, page_size: 50, counts: {}, review: 0, origins: {}, buyers: [] });
     return json({ lines: [], buyers: [], stages: [], next_cursor: null });
   });
 }
 
-it("the procurement page shows «Счета Kaiten», «Цепочка документов», «Поиск по документам»", async () => {
+it("«Первичная документация» shows «Счета Kaiten», «Цепочка документов», «Поиск по документам»", async () => {
   procurementServer();
-  render(<ProcurementPage />);
-  const tabs = await screen.findByRole("tablist", { name: "Разделы закупки" });
+  render(<PrimaryDocsPage />);
+  const tabs = await screen.findByRole("tablist", { name: "Первичная документация" });
   await waitFor(() => expect(within(tabs).getByRole("tab", { name: "Счета Kaiten" })).toBeInTheDocument());
   expect(within(tabs).getByRole("tab", { name: "Цепочка документов" })).toBeInTheDocument();
   expect(within(tabs).getByRole("tab", { name: "Поиск по документам" })).toBeInTheDocument();

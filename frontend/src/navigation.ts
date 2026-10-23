@@ -7,11 +7,11 @@ import type { AccessMode, Principal } from "./api";
 export type Section =
   | "cabinet" | "card"
   | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
-  | "newrequest" | "myrequests" | "requests" | "procurement"
+  | "newrequest" | "myrequests" | "requests" | "procurement" | "purchasingrefs" | "primarydocs"
   | "receiving" | "stock" | "equipment" | "issues" | "handout" | "intake" | "shipping"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
 
-export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "refs";
+export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "docs" | "refs";
 
 export interface NavItem {
   id: Section;
@@ -28,16 +28,20 @@ export interface NavItem {
   /** A screen opened from another section, not a card or menu item of its own: SUPPLYMAP opens the ЭТК inside
    *  «Проекты» (hub 'tc'), so the menu highlights that section instead. */
   within?: Section;
+  /** With `within`: still a menu item for a person to whom the `within` section is closed (their only way in). */
+  menuWithoutParent?: boolean;
 }
 
 export const BLOCKS: Array<{ id: BlockId; title: string; sub: string }> = [
   { id: "prod", title: "Производство", sub: "проекты · планирование · задания" },
-  { id: "supply", title: "Снабжение", sub: "оформить · заявки · закупка" },
+  { id: "supply", title: "Снабжение", sub: "оформить заявку · сегодня · запросы КП · счета и поставки" },
   // Приёмка sits in Склад: the storekeeper does incoming inspection, not the buyer (SUPPLYMAP, owner 26.07.2026).
   { id: "stock", title: "Склад", sub: "приёмка · остатки · выдача · отгрузка" },
   { id: "mgmt", title: "Менеджмент", sub: "производственный план · сотрудники · доступы · журнал" },
+  // Primary documents of purchasing (УПД, счета, их цепочка): a block of their own (Витя's edit 4, owner-approved 23.10).
+  { id: "docs", title: "Документация", sub: "первичная документация" },
   // Reference books are not a production step (owner 29.09.2026): their own block, last in the menu.
-  { id: "refs", title: "Справочники", sub: "база данных · шаблоны техкарт" },
+  { id: "refs", title: "Справочники", sub: "база данных · шаблоны техкарт · закупка" },
 ];
 
 // Access levels (owner 04.10.2026): a card opens by its section key and nothing else — no role lists. superadmin / admin
@@ -68,13 +72,16 @@ export const NAV: NavItem[] = [
   // браку — правка `production` (экран сам прячет то, что не открыто).
   { id: "myops", label: "Задания", sub: "мои операции", permission: "myops", block: "prod" },
   { id: "quality", label: "ОТК", sub: "очередь на проверку · брак · средства измерения", permission: "quality", block: "prod" },
-  // Снабжение. «Оформить заявку» and «Мои заявки» are sections of their own, not actions inside «Заявки»
-  // (SUPPLYMAP Portal.gs PORTAL_SECTIONS_, owner 27.08.2026): a rank-and-file user needs the form and own rows.
-  // NAV-SECTIONS: each has its own access key, so «Заявки» can be closed without taking them away.
+  // Снабжение. «Оформить заявку» is a section of its own (SUPPLYMAP Portal.gs PORTAL_SECTIONS_, owner 27.08.2026).
+  // NAV-SECTIONS: «Мои заявки» and «Заявки» keep their access keys but are no menu items since Витя's edits 2–3
+  // (owner-approved 23.10): «Мои заявки» open from the personal card, the «Заявки» register from the «Заявки» tab of
+  // «Снабжение». A level without «Снабжение» still finds «Заявки» in the menu (`visibleBlocks`).
   { id: "newrequest", label: "Оформить заявку", sub: "вручную · из Excel · из расчёта", permission: "newrequest", minimum: "edit", block: "supply" },
-  { id: "myrequests", label: "Мои заявки", sub: "мои позиции и на каком они этапе", permission: "myrequests", block: "supply" },
-  { id: "requests", label: "Заявки", sub: "проверить и передать в закупку", permission: "requests", block: "supply" },
-  { id: "procurement", label: "Лист закупки", sub: "работа и взять в работу", permission: "procurement", block: "supply" },
+  { id: "myrequests", label: "Мои заявки", sub: "мои позиции и на каком они этапе", permission: "myrequests", block: "supply", within: "card" },
+  { id: "requests", label: "Заявки", sub: "проверить и передать в закупку", permission: "requests", block: "supply", within: "procurement", menuWithoutParent: true },
+  // «Снабжение» — the former «Лист закупки» (Витя's edit 4): the buyer's daily work plus «Статистика». Its reference
+  // books moved to «Справочники → Закупка», its documents to «Документация → Первичная документация» (same key).
+  { id: "procurement", label: "Снабжение", sub: "сегодня · заявки · запросы КП · счета и поставки · статистика", permission: "procurement", block: "supply" },
   // Склад
   { id: "receiving", label: "Приёмка", sub: "входной контроль и оприходование", permission: "receiving", block: "stock" },
   { id: "stock", label: "Склад", sub: "остатки · внести · переместить", permission: "warehouse", block: "stock" },
@@ -95,7 +102,25 @@ export const NAV: NavItem[] = [
   { id: "access", label: "Доступы", sub: "уровни × разделы · исключения по сотрудникам", fullAccessOnly: true, block: "mgmt" },
   { id: "notifications", label: "Уведомления", sub: "мои события", block: "mgmt" },
   { id: "operations", label: "Системный журнал", sub: "аудит и очередь событий", permission: "operations", block: "mgmt" },
+  // Документация
+  { id: "primarydocs", label: "Первичная документация", sub: "УПД · счета Kaiten · цепочка документов · поиск по документам", permission: "procurement", block: "docs" },
+  // Справочники: after «База данных» above
+  { id: "purchasingrefs", label: "Закупка", sub: "поставщики · номенклатура · каталог закупок · настройки", permission: "procurement", block: "refs" },
 ];
+
+/** Tabs that left «Снабжение» (Витя's edit 4): an old `?section=procurement&tab=<tab>` link — a bookmark, «Сегодня»,
+ *  the global search — opens the tab in its new section. The one table of these moves. */
+export const MOVED_TABS: Readonly<Record<string, Readonly<Record<string, Section>>>> = {
+  procurement: {
+    directory: "purchasingrefs", items: "purchasingrefs", catalog: "purchasingrefs", settings: "purchasingrefs",
+    upd: "primarydocs", invoices: "primarydocs", chain: "primarydocs", docsearch: "primarydocs",
+  },
+};
+
+/** The section a link to `section` + `tab` lands in now: the moved tab's new section, or `section` itself. */
+export function sectionOfTab(section: string, tab: string | null | undefined): string {
+  return (tab && MOVED_TABS[section]?.[tab]) || section;
+}
 
 export function hasAccess(
   permissions: Principal["permissions"],
@@ -167,8 +192,11 @@ export function visibleNav(principal: Principal) {
 /** Blocks with at least one section this principal may open, sections in block order. */
 export function visibleBlocks(principal: Principal) {
   const items = visibleNav(principal);
+  // A screen opened from another section is no menu item; one marked `menuWithoutParent` is, while that section is
+  // closed to this person (a level with «Заявки» but no «Снабжение» keeps its way in).
+  const inMenu = (item: NavItem) => !item.within || (item.menuWithoutParent && !items.some(({ id }) => id === item.within));
   return BLOCKS
-    .map((block) => ({ ...block, items: items.filter((item) => item.block === block.id && !item.within) }))
+    .map((block) => ({ ...block, items: items.filter((item) => item.block === block.id && inMenu(item)) }))
     .filter((block) => block.items.length > 0);
 }
 
@@ -189,16 +217,21 @@ export function isBlock(value: string | null): value is BlockId {
 export function openPlace(section: string, params: Record<string, string> = {}) {
   const url = new URL(window.location.href);
   url.search = "";
-  url.searchParams.set("section", section);
+  url.searchParams.set("section", sectionOfTab(section, params.tab));
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   window.history.pushState({}, "", url);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+/** A UPD's card in «Документация → Первичная документация» (`&upd=<id>`), from any screen that names the document. */
+export function openUpdCard(id: string) {
+  openPlace("primarydocs", { tab: "upd", upd: id });
+}
+
 /** Go to another section the way the menu does: `?section=…` in the address bar plus a popstate for the shell. */
 export function openSection(section: string, extra: Record<string, string> = {}) {
   const url = new URL(window.location.href);
-  url.searchParams.set("section", section);
+  url.searchParams.set("section", sectionOfTab(section, extra.tab));
   url.searchParams.delete("block");
   for (const [key, value] of Object.entries(extra)) url.searchParams.set(key, value);
   window.history.pushState({}, "", url);

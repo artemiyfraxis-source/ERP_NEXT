@@ -151,7 +151,7 @@ def _items(session: Session, words: list[str], patterns: list[str]) -> list[dict
         order=row.name, base=row.archived_at.is_(None),
     ):
         if _hit(words, _text(name, part)):
-            found[item_id] = _result(G_ITEMS, name, _dot(part, category), "procurement", tab="items", q=name)
+            found[item_id] = _result(G_ITEMS, name, _dot(part, category), "purchasingrefs", tab="items", q=name)
             if len(found) >= PER_GROUP:
                 return list(found.values())
     statement = select(row.id, row.name, row.part_number, alias.alias_text).join(
@@ -161,7 +161,7 @@ def _items(session: Session, words: list[str], patterns: list[str]) -> list[dict
         statement = statement.where(narrow)
     for item_id, name, part, alias_text in session.execute(statement):
         if item_id not in found and _hit(words, _text(name, part, alias_text)):
-            found[item_id] = _result(G_ITEMS, name, _dot(part, f"у поставщика: {alias_text}"), "procurement",
+            found[item_id] = _result(G_ITEMS, name, _dot(part, f"у поставщика: {alias_text}"), "purchasingrefs",
                                      tab="items", q=name)
             if len(found) >= PER_GROUP:
                 break
@@ -175,7 +175,7 @@ def _suppliers(session: Session, words: list[str], patterns: list[str]) -> list[
                                 order=row.name, base=row.archived_at.is_(None)):
         if _hit(words, _text(name, inn)):
             found.append(_result(G_SUPPLIERS, name, _dot(f"ИНН {inn}" if inn else "", "ключевой" if key else ""),
-                                 "procurement", tab="directory", q=name))
+                                 "purchasingrefs", tab="directory", q=name))
             if len(found) >= PER_GROUP:
                 break
     return found

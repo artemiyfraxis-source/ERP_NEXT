@@ -18,6 +18,7 @@ import {
   isViewOnly,
   isSection,
   runsTheSystem,
+  sectionOfTab,
   visibleBlocks,
   visibleNav as visibleNavFor,
   type BlockId,
@@ -30,6 +31,8 @@ import { BlockIcon } from "./BlockIcon";
 import { countLabel } from "./format";
 import { FulfillmentPage } from "./FulfillmentPage";
 import { ProcurementPage } from "./ProcurementPage";
+import { PurchasingRefsPage } from "./PurchasingRefsPage";
+import { PrimaryDocsPage } from "./PrimaryDocsPage";
 import { ProductionPage } from "./ProductionPage";
 import { ProductionPlanPage } from "./ProductionPlanPage";
 import { QualityPage } from "./QualityPage";
@@ -65,8 +68,16 @@ type Place = { section: Section; block: BlockId | null; user?: string | null; ha
 
 function placeFromUrl(): Place {
   const params = new URLSearchParams(window.location.search);
-  const value = params.get("section");
+  let value = params.get("section");
   if (isTsdAddress()) return { section: "cabinet", block: null, tsd: true };
+  // A tab that moved to another section (MOVED_TABS): the address bar says the new place, the tab and its filters stay.
+  const moved = value && sectionOfTab(value, params.get("tab"));
+  if (moved && moved !== value) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", moved);
+    window.history.replaceState(window.history.state, "", url);
+    value = moved;
+  }
   if (value === "warehouse") return { section: "stock", block: null };
   if (value === "projects" && params.get("project") && params.get("harness")) {
     return { section: value, block: null, harness: { project: params.get("project")!, index: params.get("harness")!, library: params.get("library") === "1" } };
@@ -323,7 +334,10 @@ export function App() {
         {activeSection === "newrequest" && <RequestsPage principal={principal} view="create" />}
         {activeSection === "myrequests" && <RequestsPage principal={principal} view="mine" />}
         {activeSection === "requests" && <RequestsPage principal={principal} />}
-        {activeSection === "procurement" && <ProcurementPage key={visit} readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name} />}
+        {activeSection === "procurement" && <ProcurementPage key={visit} readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name}
+          canHandoff={canAct(principal, "requests")} openRegister={visibleNav.some(({ id }) => id === "requests") ? () => navigate("requests") : undefined} />}
+        {activeSection === "purchasingrefs" && <PurchasingRefsPage key={visit} readOnly={!canAct(principal, "procurement")} />}
+        {activeSection === "primarydocs" && <PrimaryDocsPage key={visit} readOnly={!canAct(principal, "procurement")} />}
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
         {activeSection === "stock" && <WarehousePage key={visit} admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
           canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}

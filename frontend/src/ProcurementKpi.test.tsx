@@ -37,6 +37,7 @@ it("shows the table with buyer rows and a total, and refetches on a buyer filter
   const requests: string[] = [];
   mockServer(requests);
   render(<ProcurementPage />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Статистика" })); // «Показатели» live in «Статистика» (Витя's edit 4)
   fireEvent.click(await screen.findByRole("tab", { name: "Показатели" }));
   expect(await screen.findByRole("cell", { name: "Петров" })).toBeInTheDocument();
   expect(screen.getByText("Итого")).toBeInTheDocument();

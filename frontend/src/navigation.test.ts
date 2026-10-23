@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import { ACCESS_LEVEL_LABELS, accessLevelLabel, type AccessMode, type Principal } from "./api";
-import { BLOCKS, NAV, canAct, canSee, hasFullAccess, isViewOnly, runsTheSystem, visibleBlocks } from "./navigation";
+import {
+  BLOCKS, MOVED_TABS, NAV, canAct, canSee, hasFullAccess, isViewOnly, runsTheSystem, sectionOfTab, visibleBlocks, visibleNav,
+} from "./navigation";
 
 const user = { id: "1", email: "u@example.test", name: "Сотрудник", department: "КБ" };
 
@@ -23,14 +25,16 @@ const ALL_EDIT = Object.fromEntries(
 
 const EVERYTHING = {
   "Производство": ["Проекты", "Ресурсное планирование", "Задания", "ОТК"],
-  "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
+  // «Мои заявки» and «Заявки» are no menu items (Витя's edits 2–3): the card and «Снабжение → Заявки» open them.
+  "Снабжение": ["Оформить заявку", "Снабжение"],
   "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
   "Менеджмент": ["Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
-  "Справочники": ["База данных"],
+  "Документация": ["Первичная документация"],
+  "Справочники": ["База данных", "Закупка"],
 };
 
-it("keeps SUPPLYMAP's four blocks in SUPPLYMAP's order, reference books last", () => {
-  expect(BLOCKS.map((block) => block.title)).toEqual(["Производство", "Снабжение", "Склад", "Менеджмент", "Справочники"]);
+it("keeps SUPPLYMAP's four blocks in SUPPLYMAP's order, the documents next, reference books last", () => {
+  expect(BLOCKS.map((block) => block.title)).toEqual(["Производство", "Снабжение", "Склад", "Менеджмент", "Документация", "Справочники"]);
 });
 
 it("shows superadmin and admin every block, «Доступы» and «Сотрудники» included, whatever the permissions map holds", () => {
@@ -61,38 +65,44 @@ const COMMERCIAL = {
 it("gives the operator the request form, own rows, own tasks and read-only stock", () => {
   expect(layout(as("operator", OPERATOR))).toEqual({
     "Производство": ["Задания"],
-    "Снабжение": ["Оформить заявку", "Мои заявки"],
+    "Снабжение": ["Оформить заявку"],
     "Склад": ["Приёмка", "Склад", "Оборудование"],
     "Менеджмент": ["Уведомления"],
     "Справочники": ["База данных"],
   });
 });
 
-it("gives the foreman the shop, the stock and the storekeeper's shipping, no reference book", () => {
+it("gives the foreman the shop, the stock and the storekeeper's shipping, of the reference books only purchasing's", () => {
   expect(layout(as("foreman", FOREMAN))).toEqual({
     "Производство": ["Ресурсное планирование", "Задания", "ОТК"],
-    "Снабжение": ["Оформить заявку", "Мои заявки", "Лист закупки"],
+    "Снабжение": ["Оформить заявку", "Снабжение"],
     "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
+    // «Снабжение» on view reads its moved tabs too.
+    "Документация": ["Первичная документация"],
+    "Справочники": ["Закупка"],
   });
 });
 
 it("gives the technical lead projects, planning, the whole supply block and the reference book", () => {
   expect(layout(as("tech_lead", TECH_LEAD))).toEqual({
     "Производство": ["Проекты", "Ресурсное планирование", "ОТК"],
-    "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
+    "Снабжение": ["Оформить заявку", "Снабжение"],
     "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
-    "Справочники": ["База данных"],
+    "Документация": ["Первичная документация"],
+    "Справочники": ["База данных", "Закупка"],
   });
 });
 
 it("gives the commercial lead projects, the supply sheets and shipping for reading", () => {
   expect(layout(as("commercial", COMMERCIAL))).toEqual({
     "Производство": ["Проекты", "Ресурсное планирование"],
-    "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
+    "Снабжение": ["Оформить заявку", "Снабжение"],
     "Склад": ["Склад", "Оборудование", "Приёмка с производства", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
+    "Документация": ["Первичная документация"],
+    "Справочники": ["Закупка"],
   });
 });
 
@@ -140,14 +150,34 @@ it("opens «Отгрузка» by either shipping key: the manager's or the stor
 });
 
 it("hides «Оформить заявку» from a view-only grant on newrequest", () => {
+  // Without «Снабжение» the «Заявки» register stays in the menu: it is the person's only way in.
   expect(section(as("operator", { newrequest: "view", myrequests: "edit", requests: "view" }), "Снабжение"))
-    .toEqual(["Мои заявки", "Заявки"]);
+    .toEqual(["Заявки"]);
 });
 
 it("NAV-SECTIONS: closing «Заявки» keeps the form and own rows", () => {
-  expect(section(as("operator", OWN), "Снабжение")).toEqual(["Оформить заявку", "Мои заявки"]);
+  expect(section(as("operator", OWN), "Снабжение")).toEqual(["Оформить заявку"]);
+  expect(visibleNav(as("operator", OWN)).map(({ id }) => id)).toContain("myrequests"); // open from the personal card
   // «Заявки» no longer opens the other two.
   expect(section(as("operator", { requests: "edit" }), "Снабжение")).toEqual(["Заявки"]);
+});
+
+it("Витя's edits 2–3: «Мои заявки» and «Заявки» leave the menu, both still open by their keys", () => {
+  const buyer = as("tech_lead", { ...OWN, requests: "edit", procurement: "edit" });
+  expect(section(buyer, "Снабжение")).toEqual(["Оформить заявку", "Снабжение"]);
+  expect(visibleNav(buyer).map(({ id }) => id)).toEqual(expect.arrayContaining(["myrequests", "requests"]));
+  const register = NAV.find(({ id }) => id === "requests")!;
+  expect(register.within).toBe("procurement"); // the menu highlights «Снабжение» on the register
+});
+
+it("sends an old link of a moved «Лист закупки» tab to its new section through one table", () => {
+  for (const tab of ["directory", "items", "catalog", "settings"]) expect(sectionOfTab("procurement", tab)).toBe("purchasingrefs");
+  for (const tab of ["upd", "invoices", "chain", "docsearch"]) expect(sectionOfTab("procurement", tab)).toBe("primarydocs");
+  for (const tab of ["today", "requests", "rfq", "orders", "queues", "sheet", "suppliers", "kpi", null, undefined]) {
+    expect(sectionOfTab("procurement", tab)).toBe("procurement");
+  }
+  expect(sectionOfTab("stock", "upd")).toBe("stock"); // only «Снабжение»'s tabs moved
+  expect(Object.values(MOVED_TABS.procurement).every((target) => NAV.some(({ id }) => id === target))).toBe(true);
 });
 
 it("NAV-SECTIONS: picking and handout open by their own keys", () => {
@@ -163,7 +193,9 @@ it("hides a block with no section the principal may open", () => {
 it("opens a section by its key and the mode alone: no level name decides, a missing key closes it", () => {
   // A grant is the whole decision — the level's name adds nothing and takes nothing away.
   for (const level of ["operator", "foreman", "tech_lead", "commercial"]) {
-    expect(section(as(level, { procurement: "edit" }), "Снабжение")).toEqual(["Лист закупки"]);
+    expect(section(as(level, { procurement: "edit" }), "Снабжение")).toEqual(["Снабжение"]);
+    expect(section(as(level, { procurement: "view" }), "Документация")).toEqual(["Первичная документация"]);
+    expect(section(as(level, { procurement: "view" }), "Справочники")).toEqual(["Закупка"]);
     expect(section(as(level, { receiving: "view" }), "Склад")).toEqual(["Приёмка"]);
     expect(section(as(level, { warehouse: "view" }), "Склад")).toEqual(["Склад", "Оборудование"]);
   }
