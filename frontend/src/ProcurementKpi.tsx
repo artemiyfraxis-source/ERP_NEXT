@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, failureText } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
+import { openPrintDocument } from "./print";
+import "./procurementKpi.css";
 
-/** Option `procurement.kpi`: indicators of the lines paid in a period, per buyer and in total (server-computed). */
+/** Option `procurement.kpi`: the buyer's indicators of the lines paid in a period (server-computed, the sheet of
+ * Roller_Buyer «KPI»): cards, supplier rating, best savings and the per-buyer table. `null` = «нет данных». */
 type Average = { days: string | null; n: number };
 export type KpiRow = {
   buyer: string;
@@ -14,13 +17,46 @@ export type KpiRow = {
   paid_to_received: Average;
   savings: { sum: string; n: number; excluded: number };
 };
-type KpiResult = { rows: KpiRow[]; total: KpiRow; buyers: string[] };
+type Sheet = {
+  money: {
+    spend: string; baseline_spend: string; savings: string; savings_pct: string | null; compared_lines: number;
+    surplus_spend: string | null; vs_last_purchase: string | null; delivery_spend: string | null;
+  };
+  delivery: {
+    due: number; on_time: number; on_time_pct: string | null; avg_delay_days: string | null;
+    avg_request_to_order_days: string | null; avg_request_to_delivery_days: string | null;
+  };
+  quality: { lines: number; defect_pct: string | null; defect_amount: string | null; returned_amount: string | null };
+  competition: {
+    avg_offers: string | null; with_non_key_pct: string | null; override_pct: string | null; top1_share: string | null;
+    top3_share: string | null; new_suppliers: number | null;
+  };
+};
+export type SupplierRating = {
+  supplier: string; is_key: boolean | null; asked: number | null; answered: number | null; response_pct: string | null;
+  order_lines: number; spend: string; on_time_pct: string | null; defect_pct: string | null; price_vs_best_pct: string | null;
+};
+export type Highlight = {
+  line_id: string; order_number: string | null; order_date: string | null; supplier: string | null; item: string;
+  quantity: string; unit: string; unit_price: string; baseline_unit_price: string; savings: string;
+};
+type KpiResult = { rows: KpiRow[]; total: KpiRow; buyers: string[]; kpi: Sheet; suppliers: SupplierRating[]; highlights: Highlight[] };
 
-const money = (value: string) => `${Number(value).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`;
+const NO_DATA = "нет данных";
+const group = (value: number, digits: number) => value.toLocaleString("ru-RU", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+const money = (value: string) => `${group(Number(value), 2)} ₽`;
+const pct = (value: string) => `${group(Number(value), 1)} %`;
+const days = (value: string) => `${group(Number(value), 1)} дн.`;
+const count = (value: string) => group(Number(value), 1);
+const signedPct = (value: string) => `${Number(value) > 0 ? "+" : ""}${pct(value)}`;
 const average = (value: Average) => (value.days === null ? "—" : `${value.days.replace(".", ",")} (n=${value.n})`);
 const number = (value: string | null) => (value === null ? null : Number(value));
+const dayMonth = (iso: string | null) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : "—");
+const text = (value: string | null, format: (value: string) => string) => (value === null ? NO_DATA : format(value));
+const cell = (value: string | null, format: (value: string) => string): ReactNode =>
+  value === null ? <span className="kpi-nodata" title="Нет данных за период">{NO_DATA}</span> : format(value);
 
-const columns: DataColumn<KpiRow>[] = [
+const buyerColumns: DataColumn<KpiRow>[] = [
   { key: "buyer", title: "Закупщик", value: (row) => row.buyer, render: (row) => <strong>{row.buyer}</strong> },
   { key: "lines", title: "Позиций оплачено", numeric: true, value: (row) => row.lines },
   { key: "sum", title: "Сумма с НДС", numeric: true, value: (row) => Number(row.paid_sum), render: (row) => money(row.paid_sum) },
@@ -36,19 +72,94 @@ const columns: DataColumn<KpiRow>[] = [
   },
 ];
 
+const supplierColumns: DataColumn<SupplierRating>[] = [
+  { key: "supplier", title: "Поставщик", value: (row) => row.supplier, render: (row) => <strong>{row.supplier}</strong> },
+  { key: "asked", title: "Спрошен", numeric: true, value: (row) => row.asked, render: (row) => row.asked ?? cell(null, String) },
+  { key: "answered", title: "Ответил", numeric: true, value: (row) => row.answered, render: (row) => row.answered ?? cell(null, String) },
+  { key: "response", title: "Отклик", numeric: true, hint: "Доля запросов КП, на которые поставщик ответил.", value: (row) => number(row.response_pct), render: (row) => cell(row.response_pct, pct) },
+  { key: "lines", title: "Строк заказа", numeric: true, value: (row) => row.order_lines },
+  { key: "spend", title: "Сумма с НДС", numeric: true, value: (row) => Number(row.spend), render: (row) => money(row.spend) },
+  { key: "ontime", title: "В срок", numeric: true, hint: "Доля его строк, пришедших к ожидаемой дате.", value: (row) => number(row.on_time_pct), render: (row) => cell(row.on_time_pct, pct) },
+  { key: "defect", title: "Брак", numeric: true, value: (row) => number(row.defect_pct), render: (row) => cell(row.defect_pct, pct) },
+  {
+    key: "best", title: "Цена к лучшей", numeric: true, hint: "Насколько его цена в среднем выше самого дешёвого КП по тем же строкам.",
+    value: (row) => number(row.price_vs_best_pct), render: (row) => cell(row.price_vs_best_pct, signedPct),
+  },
+];
+
+const highlightColumns: DataColumn<Highlight>[] = [
+  { key: "order", title: "Заказ", value: (row) => `${dayMonth(row.order_date)} ${row.order_number ?? ""}`, render: (row) => `${dayMonth(row.order_date)} · ${row.order_number ?? "—"}` },
+  { key: "item", title: "Позиция", value: (row) => row.item, wrap: true, grow: true },
+  { key: "supplier", title: "Поставщик", value: (row) => row.supplier ?? "—" },
+  { key: "qty", title: "Кол-во", numeric: true, value: (row) => Number(row.quantity), render: (row) => `${group(Number(row.quantity), 0)} ${row.unit}` },
+  { key: "base", title: "Цена расчёта", numeric: true, value: (row) => Number(row.baseline_unit_price), render: (row) => money(row.baseline_unit_price) },
+  { key: "price", title: "Цена оплаты", numeric: true, value: (row) => Number(row.unit_price), render: (row) => money(row.unit_price) },
+  { key: "saved", title: "Экономия", numeric: true, value: (row) => Number(row.savings), render: (row) => <strong>{money(row.savings)}</strong> },
+];
+
+type Preset = "month" | "last" | "quarter" | "year";
+const PRESETS: Array<[Preset, string]> = [["month", "Этот месяц"], ["last", "Прошлый месяц"], ["quarter", "Квартал"], ["year", "Год"]];
+
 function isoDay(date: Date) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/** Roller `presetRange`: the current month / quarter / year run up to today, «прошлый месяц» is the whole month. */
+export function presetRange(preset: Preset, now = new Date()): { from: string; to: string } {
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  if (preset === "last") return { from: isoDay(new Date(year, month - 1, 1)), to: isoDay(new Date(year, month, 0)) };
+  const first = preset === "month" ? month : preset === "quarter" ? Math.floor(month / 3) * 3 : 0;
+  return { from: isoDay(new Date(year, first, 1)), to: isoDay(now) };
+}
+
+function Card({ title, children }: { title: string; children: ReactNode }) {
+  return <section className="panel kpi-card"><h3>{title}</h3><dl>{children}</dl></section>;
+}
+
+function Metric({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return <div title={hint}><dt>{label}</dt><dd>{children}</dd></div>;
+}
+
+function printSheet(result: KpiResult, from: string, to: string, buyer: string) {
+  const { kpi } = result;
+  const best = result.highlights.map((row) => [`${dayMonth(row.order_date)} ${row.order_number ?? ""}`.trim(), row.item, money(row.baseline_unit_price), money(row.unit_price), money(row.savings)]);
+  openPrintDocument("Итоги работы закупщика", [{
+    title: "Итоги работы закупщика за период",
+    subtitle: `${dayMonth(from)} – ${dayMonth(to)}${buyer ? `, закупщик ${buyer}` : ""}`,
+    blocks: [
+      { table: { columns: ["Показатель", "Значение"], rows: [
+        ["Экономия к расчёту", kpi.money.savings_pct === null ? NO_DATA : `${money(kpi.money.savings)} (${pct(kpi.money.savings_pct)})`],
+        ["Оплачено за период", money(kpi.money.spend)],
+        ["Поставок в срок", text(kpi.delivery.on_time_pct, pct)],
+        ["Строк с браком", text(kpi.quality.defect_pct, pct)],
+      ] } },
+      { heading: "Топ-5 экономии" },
+      best.length
+        ? { table: { columns: ["Заказ", "Позиция", "Цена расчёта", "Цена оплаты", "Экономия"], rows: best } }
+        : { text: "Нет оплаченных позиций дешевле расчёта." },
+      { heading: "Сроки и качество" },
+      { table: { columns: ["Показатель", "Значение"], rows: [
+        ["Средняя просрочка", text(kpi.delivery.avg_delay_days, days)],
+        ["Заявка → заказ", text(kpi.delivery.avg_request_to_order_days, days)],
+        ["Заявка → приёмка", text(kpi.delivery.avg_request_to_delivery_days, days)],
+        ["Брак, ₽", text(kpi.quality.defect_amount, money)],
+        ["Возвраты, ₽", text(kpi.quality.returned_amount, money)],
+      ] } },
+    ],
+    sign: `Сформировано ${new Date().toLocaleString("ru-RU")}`,
+  }]);
+}
+
 export function ProcurementKpi() {
-  const now = new Date();
-  const [from, setFrom] = useState(isoDay(new Date(now.getFullYear(), now.getMonth(), 1)));
-  const [to, setTo] = useState(isoDay(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
+  const [preset, setPreset] = useState<Preset | null>("month");
+  const [range, setRange] = useState(() => presetRange("month"));
   const [buyer, setBuyer] = useState("");
   const [result, setResult] = useState<KpiResult | null>(null);
   const [buyers, setBuyers] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const { from, to } = range;
 
   useEffect(() => {
     if (!from || !to) return;
@@ -62,28 +173,85 @@ export function ProcurementKpi() {
     return () => { live = false; };
   }, [from, to, buyer]);
 
-  const rows = result ? [...result.rows, result.total] : [];
+  const choose = (next: Preset) => { setPreset(next); setRange(presetRange(next)); };
+  const edit = (patch: Partial<typeof range>) => { setPreset(null); setRange((current) => ({ ...current, ...patch })); };
+  const k = result?.kpi;
   return (
-    <section className="panel table-panel">
-      <div className="panel-heading"><h2>Показатели закупщика</h2><span>оплаченные позиции за период</span></div>
-      <div className="inline-action kpi-filters">
-        <label>С<input type="date" aria-label="Период с" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
-        <label>По<input type="date" aria-label="Период по" value={to} onChange={(event) => setTo(event.target.value)} /></label>
-        <label>Закупщик
-          <select aria-label="Закупщик" value={buyer} onChange={(event) => setBuyer(event.target.value)}>
-            <option value="">Все</option>
-            {buyers.map((name) => <option key={name} value={name}>{name}</option>)}
-          </select>
-        </label>
-      </div>
-      {error && <div className="error-banner" role="alert">{error}</div>}
-      {!error && !result && <div className="empty">Загружаю…</div>}
-      {result && (
+    <div className="kpi-page">
+      <section className="panel table-panel">
+        <div className="panel-heading"><h2>Показатели закупщика</h2><span>оплаченные позиции за {dayMonth(from)} – {dayMonth(to)}</span></div>
+        <div className="kpi-filters">
+          <div className="seg-tabs" role="group" aria-label="Период">
+            {PRESETS.map(([key, label]) => (
+              <button key={key} type="button" className={preset === key ? "on" : undefined} aria-pressed={preset === key} onClick={() => choose(key)}>{label}</button>
+            ))}
+          </div>
+          <label>С<input type="date" aria-label="Период с" value={from} onChange={(event) => edit({ from: event.target.value })} /></label>
+          <label>По<input type="date" aria-label="Период по" value={to} onChange={(event) => edit({ to: event.target.value })} /></label>
+          <label>Закупщик
+            <select aria-label="Закупщик" value={buyer} onChange={(event) => setBuyer(event.target.value)}>
+              <option value="">Все</option>
+              {buyers.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+          <button type="button" className="secondary small kpi-print" disabled={!result} onClick={() => result && printSheet(result, from, to, buyer)}>Итоги на печать</button>
+        </div>
+        {error && <div className="error-banner" role="alert">{error}</div>}
+        {!error && !result && <div className="empty">Загружаю…</div>}
+      </section>
+
+      {result && k && (
         <>
-          <DataTable label="Показатели закупщиков" rows={rows} columns={columns} rowKey={(row) => row.buyer} compactBelow={1000} emptyText="За период оплат нет." />
-          <p className="kpi-note">«В срок» — дата приёмки не позже ожидаемой даты (она может сдвигаться до поступления). Экономия — (цена расчёта с НДС − цена факт с НДС) × количество факт, только где совпадают единицы.</p>
+          <div className="kpi-cards">
+            <Card title="Деньги">
+              <Metric label="Экономия к расчёту" hint="Цена расчёта с НДС минус цена оплаты с НДС, на потребность. Минус — заплатили дороже расчёта.">
+                {k.money.savings_pct === null ? cell(null, String) : <>{money(k.money.savings)} <small>({pct(k.money.savings_pct)})</small></>}
+              </Metric>
+              <Metric label="Оплачено с НДС" hint="Сумма оплаченных в периоде позиций.">{money(k.money.spend)}</Metric>
+              <Metric label="Сверх потребности" hint="Заплачено за количество сверх заявки — минимальные партии, целые катушки. Это запас, а не экономия.">{cell(k.money.surplus_spend, money)}</Metric>
+              <Metric label="К прошлой закупке" hint="Нужна цена прошлой закупки той же позиции — в строке закупки её нет.">{cell(k.money.vs_last_purchase, money)}</Metric>
+              <Metric label="В т.ч. доставка">{cell(k.money.delivery_spend, money)}</Metric>
+            </Card>
+            <Card title="Сроки">
+              <Metric label="В срок к ожидаемой дате" hint="Доля позиций, пришедших не позже ожидаемой даты. Просроченные без приёмки считаются опоздавшими; ожидаемую дату можно сдвигать до поступления.">
+                {cell(k.delivery.on_time_pct, pct)}{k.delivery.due > 0 && <small> ({k.delivery.on_time} из {k.delivery.due})</small>}
+              </Metric>
+              <Metric label="Средняя просрочка" hint="Среднее опоздание опоздавших позиций, дней от ожидаемой даты.">{cell(k.delivery.avg_delay_days, days)}</Metric>
+              <Metric label="Заявка → заказ" hint="Сколько в среднем проходит от даты заявки до заказа — скорость работы закупки.">{cell(k.delivery.avg_request_to_order_days, days)}</Metric>
+              <Metric label="Заявка → приёмка" hint="От даты заявки до фактической даты приёмки.">{cell(k.delivery.avg_request_to_delivery_days, days)}</Metric>
+            </Card>
+            <Card title="Качество">
+              <Metric label="Строк с браком" hint="Доля оплаченных позиций, где при приёмке нашёлся брак.">{cell(k.quality.defect_pct, pct)}</Metric>
+              <Metric label="Брак, ₽">{cell(k.quality.defect_amount, money)}</Metric>
+              <Metric label="Возвраты, ₽">{cell(k.quality.returned_amount, money)}</Metric>
+            </Card>
+            <Card title="Конкуренция">
+              <Metric label="Среднее КП на решение" hint="Сколько КП с ценой было в среднем, когда выбирали поставщика.">{cell(k.competition.avg_offers, count)}</Metric>
+              <Metric label="С не ключевым" hint="Доля решений, где среди КП был не ключевой поставщик.">{cell(k.competition.with_non_key_pct, pct)}</Metric>
+              <Metric label="Обход гейта" hint="Доля решений, принятых без нужного числа КП.">{cell(k.competition.override_pct, pct)}</Metric>
+              <Metric label="Топ-1 поставщик" hint="Доля оплат у самого крупного поставщика. Высокая — зависимость от одного.">{cell(k.competition.top1_share, pct)}</Metric>
+              <Metric label="Топ-3 поставщика" hint="Доля оплат у трёх самых крупных поставщиков.">{cell(k.competition.top3_share, pct)}</Metric>
+              <Metric label="Новых поставщиков" hint="Нужна история заказов до периода.">{k.competition.new_suppliers === null ? cell(null, String) : k.competition.new_suppliers}</Metric>
+            </Card>
+          </div>
+
+          <section className="panel table-panel">
+            <div className="panel-heading"><h2>Рейтинг поставщиков</h2><span>по оплатам периода</span></div>
+            <DataTable label="Рейтинг поставщиков" rows={result.suppliers} columns={supplierColumns} rowKey={(row) => row.supplier} compactBelow={1000} emptyText="За период оплат нет — выберите период шире." />
+          </section>
+
+          <section className="panel table-panel">
+            <div className="panel-heading"><h2>Лучшая экономия</h2><span>пять позиций, оплаченных дешевле расчёта</span></div>
+            <DataTable label="Лучшая экономия" rows={result.highlights} columns={highlightColumns} rowKey={(row) => row.line_id} compactBelow={1000} emptyText="Нет позиций дешевле расчёта: экономия считается, когда у строки есть цена расчёта и оплаты в одних единицах." />
+          </section>
+
+          <section className="panel table-panel">
+            <div className="panel-heading"><h2>По закупщикам</h2><span>оплаченные позиции за период</span></div>
+            <DataTable label="Показатели закупщиков" rows={[...result.rows, result.total]} columns={buyerColumns} rowKey={(row) => row.buyer} compactBelow={1000} emptyText="За период оплат нет." />
+            <p className="kpi-note">«В срок» — дата приёмки не позже ожидаемой даты (она может сдвигаться до поступления). Экономия — (цена расчёта с НДС − цена оплаты с НДС) × количество, но не больше потребности заявки, только где совпадают единицы.</p>
+          </section>
         </>
       )}
-    </section>
+    </div>
   );
 }
