@@ -1408,12 +1408,16 @@ it("quick entry suggests already entered articles by article or name and copies 
   expect(screen.getByLabelText("Наименование")).toHaveValue(lot.name);
 });
 
-it("«Внести и печать этикетки» enters the row and prints the label of the created lot", async () => {
-  const frames = capturePrintFrames();
+it("«Внести и печать этикетки» enters the row and sends the created lot's label to the print queue (owner 23.10)", async () => {
+  const posts: { path: string; body: unknown }[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/stock/batches" && init?.method === "POST") {
       return json({ added: 1, lots: [lot], errors: [], assigned: [{ i: 0, id: lot.id, grn: "OLD.26.0000007", article: "CON-001", quantity: "10", unit: "шт", storage_location: "1F4", warehouse: "ЦАР" }] });
+    }
+    if (path.endsWith("/label") && init?.method === "POST") {
+      posts.push({ path, body: JSON.parse(String(init.body)) });
+      return json({ status: "queued", reason: "В очереди принтера.", file: "j1", copies: 1, job_id: "j1" });
     }
     if (path.startsWith("/api/stock/article-info")) return json({ info: null });
     return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
@@ -1427,15 +1431,16 @@ it("«Внести и печать этикетки» enters the row and prints 
   fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F4" } });
   fireEvent.click(screen.getByRole("button", { name: "Внести и печать этикетки" }));
 
-  await waitFor(() => expect(frames.print).toHaveBeenCalledTimes(1));
-  for (const text of ["OLD.26.0000007", "CON-001", "Разъём 4 pin", "10 шт", "1F4", "ЦАР", "Поступило "]) expect(frames.html[0]).toContain(text);
+  await waitFor(() => expect(posts).toEqual([{ path: `/api/stock/batches/${lot.id}/label`, body: { copies: 1 } }]));
+  expect(await screen.findByText(/Этикетки в очереди принтера: 1/)).toBeInTheDocument();
 });
 
 it("«Внести» alone does not print", async () => {
-  const frames = capturePrintFrames();
+  const labels: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/stock/batches" && init?.method === "POST") return added([lot]);
+    if (path.endsWith("/label")) labels.push(path);
     if (path.startsWith("/api/stock/article-info")) return json({ info: null });
     return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
   });
@@ -1444,7 +1449,7 @@ it("«Внести» alone does not print", async () => {
   fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
   fireEvent.click(screen.getByRole("button", { name: "Внести" }));
   await screen.findByRole("button", { name: "+ Внести позиции" });
-  expect(frames.print).not.toHaveBeenCalled();
+  expect(labels).toEqual([]);
 });
 
 it("asks the server to sort the whole stock when a column is clicked, from the first page", async () => {

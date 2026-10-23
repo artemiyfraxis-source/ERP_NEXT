@@ -2,8 +2,7 @@ import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useSta
 import { LoadMore } from "./LoadMore";
 import { urlParam } from "./navigation";
 import { SuggestInput } from "./SuggestInput";
-import { LotLabel } from "./LabelPrint";
-import { printLotLabels } from "./lotLabel";
+import { LotLabel, labelsApi } from "./LabelPrint";
 import { usePurposeLabel } from "./purposeLabels";
 import { VIA_LABELS, purchasingItemsApi, type ItemBrief, type ItemRow } from "./purchasingItemsApi";
 import { useLatestSearch } from "./useLatestSearch";
@@ -118,6 +117,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   const [panel, setPanel] = useState<"" | "types" | "import" | "journal" | "racks">("");
   const [assigned, setAssigned] = useState<WarehouseAddResult["assigned"]>([]);
   const [copied, setCopied] = useState("");
+  const [labelsNote, setLabelsNote] = useState("");
   // Type suggestions (SK-14): the dictionary + the canonical types already on the stock.
   const [typeChoices, setTypeChoices] = useState<string[]>([]);
   // WH-6: печатный «Лист перемещения на склад» для принятых партий без места — тот же механизм,
@@ -350,8 +350,9 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       {panel === "racks" && <RackLayoutPanel onClose={() => setPanel("")} />}
       {panel === "journal" && <StockJournalPanel onClose={() => setPanel("")} />}
       {assigned.length > 0 && <section className="panel" aria-label="Записано на склад">
-        <div className="manual-stock-head"><h2>Записано на склад: {assigned.length}</h2><button type="button" className="link-button" onClick={() => { setAssigned([]); setCopied(""); }}>Закрыть</button></div>
+        <div className="manual-stock-head"><h2>Записано на склад: {assigned.length}</h2><button type="button" className="link-button" onClick={() => { setAssigned([]); setCopied(""); setLabelsNote(""); }}>Закрыть</button></div>
         <p className="page-sub">Номера партий, присвоенные строкам. Слева — номер строки, как она стояла на экране.</p>
+        {labelsNote && <p className="page-sub" role="status">{labelsNote}</p>}
         <div className="table-wrap"><table className="grid compact"><thead><tr><th>#</th><th>ГРН</th><th>Артикул</th><th>Кол-во</th><th>Место</th><th>Склад</th></tr></thead>
           <tbody>{assigned.map((row) => <tr key={row.id}><td>{row.i + 1}</td><td><strong>{row.grn}</strong></td><td>{row.article}</td><td className="num">{row.quantity} {row.unit}</td><td>{row.storage_location || "—"}</td><td>{row.warehouse}</td></tr>)}</tbody>
         </table></div>
@@ -366,13 +367,14 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
         knownLots={lots}
         typeChoices={typeChoices}
         onCancel={() => setAdding(false)}
+        onLabels={setLabelsNote}
         onAdded={async (items) => {
           requestVersion.current += 1;
           setBusy("manual");
           setError("");
           try {
             const result = await warehouseApi.add(items);
-            if (result.assigned.length) { setAssigned(result.assigned); setCopied(""); }
+            if (result.assigned.length) { setAssigned(result.assigned); setCopied(""); setLabelsNote(""); }
             // Rows with an error stay in the form; the rest are entered (SK-10, stock05Add_).
             if (!result.errors.length) setAdding(false);
             if (result.added) await reload();
@@ -745,8 +747,10 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
   </>;
 }
 
-function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
+function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded, onLabels }: {
   busy: boolean;
+  /** «Внести и печать этикеток»: what went to the print queue — shown on the page, the form closes on success. */
+  onLabels?: (note: string) => void;
   knownLots: WarehouseLot[];
   typeChoices: string[];
   onCancel: () => void;
@@ -876,18 +880,23 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
         const result = await onAdded(items);
         if (!result) return;
         if (current) clearRow();
-        // «Внести и печатать этикетки»: по одной на каждую созданную партию, дата поступления — сегодня.
+        // «Внести и печатать этикетки»: по одной на каждую созданную партию — через очередь принтера склада, тем же
+        // шаблоном, что «Этикетка…» (владелец 23.10: печать браузером выходила повёрнутой на 90°).
+        let labelsNote = "";
         if (withLabels && result.assigned.length) {
-          const today = new Date().toISOString().slice(0, 10);
-          printLotLabels(result.assigned.map((row) => ({
-            grn: row.grn, article: row.article, name: items[row.i]?.name ?? "", quantity: `${row.quantity} ${row.unit}`,
-            place: row.storage_location, warehouse: row.warehouse, receivedAt: today,
-          })));
+          const sent = await Promise.allSettled(result.assigned.map((row) => labelsApi.printLot(row.id, 1)));
+          const failed = result.assigned.filter((_, index) => sent[index].status === "rejected").map((row) => row.grn);
+          const queued = result.assigned.length - failed.length;
+          const note = failed.length
+            ? `Этикетки: в очереди ${queued}, не отправлены (${failed.length}): ${failed.join(", ")} — «Этикетка…» у партии`
+            : `Этикетки в очереди принтера: ${queued}`;
+          labelsNote = `. ${note}`;
+          onLabels?.(note);
         }
         const refused = result.errors.map(({ i, error }) => ({ item: items[i], error: `${i + 1} — ${error}` }));
         setRows(refused);
         // SUPPLYMAP wording (PortalApp.html: «Записано: N. Не приняты строки (M): i+1 — ошибка; …»).
-        setReport(`Записано: ${result.added}` + (refused.length
+        setReport(`Записано: ${result.added}` + labelsNote + (refused.length
           ? `. Не приняты строки (${refused.length}): ${refused.map((row) => row.error).join("; ")}`
           : ". Можно продолжать."));
       } finally {
