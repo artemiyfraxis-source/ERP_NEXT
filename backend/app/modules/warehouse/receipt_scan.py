@@ -42,6 +42,8 @@ _INVOICE_TAIL = (
 _INVOICE = (
     re.compile(r"Основани[ея][^\n]{0,80}?" + _INVOICE_TAIL, re.I),
     re.compile(_INVOICE_TAIL, re.I),
+    # (5) «К платёжно-расчётному документу № 916 от 19.10.2026» — the shop's suppliers put the invoice here (owner 23.10).
+    re.compile(r"К\s+пл[аa]т[её]жно\s*-\s*р[аa]сч[её]тному\s+документу\s*" + _NO + r"\s*" + _NUMBER + _OT + _DATE, re.I),
 )
 _SELLER = re.compile(r"Продавец\s*:?\s*([^\n]+)", re.I)
 _SELLER_INN = re.compile(r"ИН[НH]\s*/\s*КПП\s+продавца\s*:?\s*(\d{12}|\d{10})(?!\d)", re.I)
@@ -85,7 +87,12 @@ def scan_day(text: str | None) -> date | None:
     return None
 
 
+# A scanned УПД reads the seller and buyer columns as one line: «ООО "Сафетин" (2) Покупатель: ООО …» (23.10).
+_NEXT_FIELD = re.compile(r"\s*(?:\(\s*\d+\s*[а-яa-z]?\s*\)|Покупатель|Адрес\b|ИН[НH]\s*/)", re.I)
+
+
 def _supplier(raw: str) -> str:
+    raw = _NEXT_FIELD.split(raw, maxsplit=1)[0]
     name = _EDGE_NOISE.sub("", _MARK.sub("", _EDGE_NOISE.sub("", raw)))
     return "" if not name or name.upper().startswith(("ИНН", "ИНH")) else name[:255]
 

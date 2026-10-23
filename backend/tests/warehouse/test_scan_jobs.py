@@ -486,3 +486,16 @@ def test_a_sideways_page_is_read_turned(monkeypatch, tmp_path):
     seen.clear()
     monkeypatch.setattr(receipt_ocr, "_tesseract", lambda tesseract, picture: seen.append(picture.name) or upright)
     assert receipt_ocr._read_page("tesseract", image) == upright and seen == ["scan.png"], "an upright page is read once"
+
+
+def test_the_seller_stops_at_the_buyer_column_of_a_scanned_upd():
+    """The real Pantum scan of УПД № 1788 (23.10): seller and buyer columns come as one OCR line."""
+    found = parse_upd_text(
+        "Счет-фактура № 1788 от 20 октября 2026 г. (1)\n"
+        "Продавец: ООО \"Сафетин\" (2) Покупатель: ООО «ЗЭП «ФРАКСИС»\n"
+        "ИНН/КПП продавца: 6686070480/668601001 (2б) ИНН/КПП покупателя: 5040191181/772401001\n"
+        "К платежно-расчетному документу № 916 от 19.10.2026 (5)\n"
+    )
+    assert (found.supplier, found.inn, found.upd_number) == ('ООО "Сафетин"', "6686070480", "1788")
+    assert found.upd_date == date(2026, 10, 20)
+    assert (found.invoice_number, found.invoice_date) == ("916", date(2026, 10, 19)), "the shop's invoice line (owner 23.10)"
