@@ -4989,3 +4989,10 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .tcgen .gvswr-every { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); font-size: 12.5px; font-weight: 600; }
 .tcgen .gvswr-every .gunit { width: 92px; }
 .tcgen .gvswr-every input { font-variant-numeric: tabular-nums; text-align: right; }
+/* «Норма заказчика (КД)» коакса под «Контролем КСВН» (владелец 23.10). */
+.tcgen .gvswr-cust-field { display: flex; flex-direction: column; gap: 4px; }
+.tcgen .gvswr-cust .gvswr-num { width: 64px; font-variant-numeric: tabular-nums; text-align: right; }
+.tcgen .gvswr-cust .gunit input { font-variant-numeric: tabular-nums; text-align: right; }
+.tcgen .gvswr-cust .gvswr-basis { flex: 1 1 260px; min-width: 220px; }
+.tcgen .gvswr-cust .gvswr-basis input { flex: 1; min-width: 0; font-weight: 400; text-align: left; font-variant-numeric: normal; }
+.tcgen .gvswr-ref { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }

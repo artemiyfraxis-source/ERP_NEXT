@@ -86,3 +86,15 @@ it("a unit outside the 1-of-N sample refers to the batch sample and its verdicts
   expect(measured).not.toContain("в выборку не входило");
   expect(measured).toContain("cable.s1p");
 });
+
+it("a customer norm prints as the acceptance norm with its basis and the components norm for reference", () => {
+  const html = flat(buildCoaxPassportHtml(passport([check], { norm: {
+    status: "ok", reason: "", vswr_max: 1.5, band_mhz: [700, 2700], source: "customer",
+    basis: "ЭТК 716К.1.КБ2, ревизия 3; ТУ 16-505.123, п. 3.4",
+    components: { status: "ok", reason: "", vswr_max: 2.06, band_mhz: [1, 6000] },
+  } })));
+  expect(html).toContain("КСВН не более 1,5 (норма заказчика)");
+  expect(html).toContain("ЭТК 716К.1.КБ2, ревизия 3; ТУ 16-505.123, п. 3.4");
+  expect(html).toContain("700 … 2 700");
+  expect(html).toContain("<th>Норма по комплектующим (справочно)</th><td>КСВН не более 2,06</td>");
+});

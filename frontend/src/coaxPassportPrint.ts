@@ -105,7 +105,8 @@ const CHECK_RENDERERS: Record<string, (check: PassportCheck, passport: CableAsse
 export function buildCoaxPassportHtml(passport: CableAssemblyPassport): string {
   const { product, etk, norm } = passport;
   const title = `Паспорт кабельной сборки ${product.serial_number ?? ""}`.trim();
-  const normText = norm.status === "ok" ? `КСВН не более ${num(norm.vswr_max)}` : `не определена — ${norm.reason || "причина не указана"}`;
+  const customer = norm.status === "ok" && norm.source === "customer";
+  const normText = norm.status === "ok" ? `КСВН не более ${num(norm.vswr_max)}${customer ? " (норма заказчика)" : ""}` : `не определена — ${norm.reason || "причина не указана"}`;
   const etkText = etk.techcard_id ? `${etk.item_index}, ревизия ${etk.revision ?? DASH}` : "ЭТК не найдена";
   const productRows: [string, string][] = [
     ["Изделие", product.name],
@@ -121,6 +122,11 @@ export function buildCoaxPassportHtml(passport: CableAssemblyPassport): string {
     ["Основание нормы", norm.basis],
   ];
   if (norm.band_mhz && norm.band_mhz[0] !== null) normRows.push(["Полоса нормы, МГц", `${num(norm.band_mhz[0], 1)} … ${num(norm.band_mhz[1], 1)}`]);
+  if (customer && norm.components) {
+    const components = norm.components;
+    normRows.push(["Норма по комплектующим (справочно)", components.status === "ok" && components.vswr_max !== null
+      ? `КСВН не более ${num(components.vswr_max)}` : `не определена${components.reason ? ` — ${components.reason}` : ""}`]);
+  }
   if (passport.control?.mode === "sample") normRows.push(["Контроль КСВН", `выборочный, 1 из ${passport.control.every} (первое изделие партии и каждое ${passport.control.every}-е)`]);
   const checks = passport.checks.length
     ? passport.checks.map((check) => `<section class="check"><h2>${escapeHtml(check.title)}</h2>${(CHECK_RENDERERS[check.kind] ?? genericCheck)(check, passport)}</section>`).join("")

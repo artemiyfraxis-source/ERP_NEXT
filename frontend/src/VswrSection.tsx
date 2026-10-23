@@ -23,7 +23,22 @@ import { VswrChart } from "./VswrChart";
 const FILE_ACCEPT = ".s1p,.csv,.txt";
 const num = (value: number | null | undefined, digits = 2) => (value === null || value === undefined ? "" : formatNumber(value, { digits }));
 
+/** Справочная норма по комплектующим при норме заказчика: «по комплектующим ≤ 2,06 — справочно». */
+export function componentsText(norm: VswrNorm): string {
+  const components = norm.components;
+  if (!components) return "";
+  return components.status === "ok" && components.vswr_max !== null
+    ? `по комплектующим ≤ ${num(components.vswr_max)} — справочно`
+    : `по комплектующим не определена${components.reason ? ` (${components.reason})` : ""} — справочно`;
+}
+
 export function normLine(norm: VswrNorm): string {
+  if (norm.status === "ok" && norm.source === "customer") {
+    // Норма заказчика (технолог, ЭТК): вердикт — по её полосе; основание — ТУ / КД / заказ (и ревизия ЭТК, если новее).
+    const band = norm.band_mhz ? ` в полосе ${num(norm.band_mhz[0], 1)} … ${num(norm.band_mhz[1], 1)} МГц` : "";
+    const reference = componentsText(norm);
+    return `Норма заказчика ≤ ${num(norm.vswr_max)}${band}${norm.basis ? ` (${norm.basis})` : ""}${reference ? `; ${reference}` : ""}`;
+  }
   if (norm.status === "ok") {
     const band = norm.band_mhz && norm.band_mhz[0] !== null && norm.band_mhz[1] !== null ? `, полоса ${num(norm.band_mhz[0], 1)} … ${num(norm.band_mhz[1], 1)} МГц` : "";
     // source = "computed": норма рассчитана на лету для ЭТК до нормы — вместо служебного слова показываем основание.
@@ -199,6 +214,7 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
   const [result, setResult] = useState<VswrMeasurement | null>(null);
   const problems = uploadProblems({ instrumentId, file, bandFrom, bandTo, norm, verdict, reason });
   const undefinedNorm = norm.status !== "ok";
+  const customer = norm.status === "ok" && norm.source === "customer";
 
   async function submit() {
     if (!file || busy || problems.length) return;
@@ -234,8 +250,9 @@ function VswrUploadWindow({ task, norm, row, instruments, close, onSaved, canRej
         <label className="half">Файл замера
           <input type="file" accept={FILE_ACCEPT} aria-label="Файл замера" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
         </label>
-        <label>Полоса от, МГц<input inputMode="decimal" value={bandFrom} onChange={(event) => setBandFrom(event.target.value)} /></label>
-        <label>Полоса до, МГц<input inputMode="decimal" value={bandTo} onChange={(event) => setBandTo(event.target.value)} /></label>
+        {/* Норма заказчика: полоса — её, вердикт сервер выносит только по её точкам. */}
+        <label>Полоса от, МГц<input inputMode="decimal" value={bandFrom} readOnly={customer} title={customer ? "Полоса нормы заказчика" : undefined} onChange={(event) => setBandFrom(event.target.value)} /></label>
+        <label>Полоса до, МГц<input inputMode="decimal" value={bandTo} readOnly={customer} title={customer ? "Полоса нормы заказчика" : undefined} onChange={(event) => setBandTo(event.target.value)} /></label>
         {undefinedNorm && <>
           <label>Вердикт
             <select value={verdict} onChange={(event) => setVerdict(event.target.value)}>

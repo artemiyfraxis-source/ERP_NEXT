@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it } from "vitest";
-import { COAX_SHIELD_OPTIONS, coaxFromFields, withCoaxVswrFromConfig, coaxShieldKind_, coaxRecordFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { COAX_SHIELD_OPTIONS, coaxFromFields, coaxVswrCustProblem, coaxVswrCustStricter, coaxVswrCustomer_, componentsVswrMax, withCoaxVswrFromConfig, coaxShieldKind_, coaxRecordFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type CoaxVswrCustForm, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 import { genCards } from "./routeCards";
 import { deriveRoute, type RouteOp } from "./routeLogic";
 
@@ -879,5 +879,60 @@ describe("длина зачистки у разъёма", () => {
     const strips = makeGen(D, S).getActiveOps().map((op) => op.strip).filter(Boolean);
     expect(JSON.stringify(strips)).toContain('"7"');
     expect(JSON.stringify(strips)).not.toContain('"9"');
+  });
+});
+
+describe("коакс: норма заказчика (КД) задаётся на этапе ТК (владелец 23.10)", () => {
+  const D = data([
+    { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
+    { id: "a", type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
+    { id: "b", type: "Соед", name: "SMA", art: "SMA-K", qty: 1 },
+  ], "Сборка RG316 150mm");
+  const cust = (patch: Partial<CoaxVswrCustForm> = {}): CoaxVswrCustForm => ({ max: "1,5", from: "700", to: "2700", basis: "ТУ 16-505.123, п. 3.4", ...patch });
+  const withCust = (form: CoaxVswrCustForm | undefined, mode: GenState["coax"]["vswrMode"] = "all") => {
+    const S = initState(D);
+    return { ...S, coax: { ...S.coax, vswrMode: mode, vswrCust: form } };
+  };
+  const cfgOf = (S: GenState) => makeGen(D, S).buildConfig() as Record<string, any>;
+
+  it("empty fields mean the norm by components: nothing in the config, no problem", () => {
+    expect(coaxVswrCustProblem(undefined)).toBe("");
+    expect(coaxVswrCustProblem({ max: "", from: "", to: "", basis: "" })).toBe("");
+    expect(cfgOf(withCust(undefined)).coax).not.toHaveProperty("vswrCustomer");
+  });
+
+  it("a set norm goes to build_config.coax.vswrCustomer with numbers", () => {
+    expect(cfgOf(withCust(cust())).coax.vswrCustomer).toEqual({ vswrMax: 1.5, fromMhz: 700, toMhz: 2700, basis: "ТУ 16-505.123, п. 3.4" });
+    // «Не проверять» — нормы нет.
+    expect(cfgOf(withCust(cust(), "none")).coax).not.toHaveProperty("vswrCustomer");
+  });
+
+  it("validates КСВН ≥ 1, from < to and a basis; the error stops the build", () => {
+    expect(coaxVswrCustProblem(cust({ max: "0,9" }))).toBe("Норма заказчика: КСВН не может быть меньше 1");
+    expect(coaxVswrCustProblem(cust({ from: "2700", to: "700" }))).toBe("Норма заказчика: начало полосы должно быть больше 0 и меньше конца");
+    expect(coaxVswrCustProblem(cust({ to: "" }))).toBe("Норма заказчика: укажите полосу — от и до, МГц");
+    expect(coaxVswrCustProblem(cust({ basis: " " }))).toBe("Норма заказчика: укажите основание — ТУ, КД или заказ");
+    expect(coaxVswrCustProblem(cust({ max: "" }))).toBe("Норма заказчика: укажите КСВН или очистите поля");
+    const S = withCust(cust({ basis: "" }));
+    expect(cfgOf(S).coax).not.toHaveProperty("vswrCustomer");
+    expect(makeGen(D, S).validate().error).toBe("Норма заказчика: укажите основание — ТУ, КД или заказ");
+  });
+
+  it("a saved card reopens with its customer norm", () => {
+    const S = withCoaxVswrFromConfig(initState(D), { coax: { vswrControl: { mode: "all", every: null },
+      vswrCustomer: { vswrMax: 1.5, fromMhz: 700, toMhz: 2700, basis: "заказ 77" } } });
+    expect(S.coax.vswrCust).toEqual({ max: "1,5", from: "700", to: "2700", basis: "заказ 77" });
+    expect(cfgOf(S).coax.vswrCustomer).toEqual({ vswrMax: 1.5, fromMhz: 700, toMhz: 2700, basis: "заказ 77" });
+  });
+
+  it("the components norm comes from the ETK norm and a stricter customer norm warns", () => {
+    expect(componentsVswrMax({ coaxVswrNorm: { status: "ok", vswrMax: 2.06 } })).toBe(2.06);
+    expect(componentsVswrMax({ coaxVswrNorm: { status: "ok", vswrMax: 1.5, source: "customer", components: { status: "ok", vswrMax: 2.06 } } })).toBe(2.06);
+    expect(componentsVswrMax({ coaxVswrNorm: { status: "undefined", vswrMax: null } })).toBeNull();
+    expect(componentsVswrMax(null)).toBeNull();
+    const customer = coaxVswrCustomer_(cust());
+    expect(coaxVswrCustStricter(customer, 2.06)).toBe(true);
+    expect(coaxVswrCustStricter(customer, 1.4)).toBe(false);
+    expect(coaxVswrCustStricter(customer, null)).toBe(false);
   });
 });

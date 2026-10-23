@@ -224,6 +224,9 @@ export type GenState = {
     /** «Контроль КСВН» (владелец 22.10: «1 из 50, всю партию или вообще не проверять»): каждое изделие, выборочно 1 из
      *  `vswrEvery` или без проверки. Нет поля — карта собрана до настройки: операция есть, ЭТК пишет её как раньше. */
     vswrMode?: CoaxVswrMode; vswrEvery?: string;
+    /** «Норма заказчика (КД)» (владелец 23.10: «норма заказчика — на этапе ТК, я задаю»): КСВН ≤ max в полосе from…to
+     *  МГц по основанию basis. Пусто — норма по комплектующим, как раньше. Уходит в build_config.coax.vswrCustomer. */
+    vswrCust?: CoaxVswrCustForm;
   };
   selectedTemplates: Record<string, string>;
   manualTemplates: string[];
@@ -245,15 +248,66 @@ export function coaxVswrControl_(coax: Pick<GenState["coax"], "vswrMode" | "vswr
   return { mode: "sample", every: every >= 2 ? every : COAX_VSWR_EVERY };
 }
 
+/** Поля «Нормы заказчика (КД)» в форме — как их набрал технолог (запятая или точка). */
+export type CoaxVswrCustForm = { max: string; from: string; to: string; basis: string };
+/** build_config.coax.vswrCustomer: КСВН ≤ vswrMax в полосе fromMhz…toMhz, основание — ТУ / КД / заказ. */
+export type CoaxVswrCustomer = { vswrMax: number; fromMhz: number; toMhz: number; basis: string };
+
+const custNumber = (text: string | undefined) => {
+  const trimmed = String(text ?? "").trim().replace(",", ".");
+  return trimmed === "" ? null : Number(trimmed);
+};
+
+/** Что не так в «Норме заказчика»; пусто — поля пусты (норма по комплектующим) или норма читается. Те же правила
+ *  проверяет сервер при «Создать» (coax_vswr.customer_norm). */
+export function coaxVswrCustProblem(form: CoaxVswrCustForm | undefined): string {
+  if (!form) return "";
+  const max = custNumber(form.max), from = custNumber(form.from), to = custNumber(form.to);
+  const basis = form.basis.trim();
+  if (max === null) return from !== null || to !== null || basis ? "Норма заказчика: укажите КСВН или очистите поля" : "";
+  if (!Number.isFinite(max)) return "Норма заказчика: КСВН — число";
+  if (max < 1) return "Норма заказчика: КСВН не может быть меньше 1";
+  if (from === null || to === null) return "Норма заказчика: укажите полосу — от и до, МГц";
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return "Норма заказчика: полоса — числа в МГц";
+  if (from <= 0 || from >= to) return "Норма заказчика: начало полосы должно быть больше 0 и меньше конца";
+  if (!basis) return "Норма заказчика: укажите основание — ТУ, КД или заказ";
+  return "";
+}
+
+/** Норма заказчика для build_config; поля пусты или с ошибкой — null (ошибку показывает форма и не даёт собрать). */
+export function coaxVswrCustomer_(form: CoaxVswrCustForm | undefined): CoaxVswrCustomer | null {
+  if (!form || custNumber(form.max) === null || coaxVswrCustProblem(form)) return null;
+  return { vswrMax: custNumber(form.max)!, fromMhz: custNumber(form.from)!, toMhz: custNumber(form.to)!, basis: form.basis.trim().replace(/\s+/g, " ") };
+}
+
+/** Норма по комплектующим из документа ЭТК (`coaxVswrNorm`; при норме заказчика — её `components`): КСВН или null. */
+export function componentsVswrMax(document: unknown): number | null {
+  const norm = document && typeof document === "object" ? (document as { coaxVswrNorm?: unknown }).coaxVswrNorm : null;
+  if (!norm || typeof norm !== "object") return null;
+  const record = norm as { source?: unknown; components?: unknown; status?: unknown; vswrMax?: unknown };
+  const base = (record.source === "customer" && record.components && typeof record.components === "object" ? record.components : record) as { status?: unknown; vswrMax?: unknown };
+  return base.status === "ok" && typeof base.vswrMax === "number" ? base.vswrMax : null;
+}
+
+/** Норма заказчика строже, чем позволяют разъёмы по паспорту: технолог предупреждён, сборка не блокируется. */
+export function coaxVswrCustStricter(customer: CoaxVswrCustomer | null, components: number | null): boolean {
+  return !!customer && components !== null && customer.vswrMax < components;
+}
+
 /** Режим контроля КСВН собранной карты возвращается в форму из build_config.coax.vswrControl; у коакс-карты без него
- *  (собрана до настройки) режима нет — ЭТК пересобирается как раньше. Карта не коакс — форма как есть. */
+ *  (собрана до настройки) режима нет — ЭТК пересобирается как раньше. Карта не коакс — форма как есть. Норма
+ *  заказчика — из build_config.coax.vswrCustomer. */
 export function withCoaxVswrFromConfig(S: GenState, config: unknown): GenState {
   const coax = config && typeof config === "object" ? (config as { coax?: unknown }).coax : null;
   if (!coax || typeof coax !== "object") return S;
   const raw = (coax as { vswrControl?: { mode?: unknown; every?: unknown } }).vswrControl;
   const mode = raw && ["all", "sample", "none"].includes(String(raw.mode)) ? raw.mode as CoaxVswrMode : undefined;
   const every = mode === "sample" && Number(raw?.every) >= 2 ? String(raw?.every) : String(COAX_VSWR_EVERY);
-  return { ...S, coax: { ...S.coax, vswrMode: mode, vswrEvery: every } };
+  const cust = (coax as { vswrCustomer?: Partial<Record<keyof CoaxVswrCustomer, unknown>> }).vswrCustomer;
+  const text = (value: unknown) => (value === null || value === undefined ? "" : String(value).replace(".", ","));
+  const vswrCust = cust && typeof cust === "object"
+    ? { max: text(cust.vswrMax), from: text(cust.fromMhz), to: text(cust.toMhz), basis: String(cust.basis ?? "") } : S.coax.vswrCust;
+  return { ...S, coax: { ...S.coax, vswrMode: mode, vswrEvery: every, ...(vswrCust ? { vswrCust } : {}) } };
 }
 
 export type OpSpec = {
@@ -2986,6 +3040,8 @@ export function makeGen(D: GenData, S: GenState) {
     });
     const tut = coaxBomTut_(), cable = coaxBomCableComp_(), sleeve = coaxBomSleeve_();
     const vswrControl = coaxVswrControl_(S.coax);
+    // Норма заказчика — только у сборки с разъёмом на стороне В и проверкой КСВН.
+    const vswrCustomer = sideB && vswrControl?.mode !== "none" ? coaxVswrCustomer_(S.coax.vswrCust) : null;
     return {
       mode: "coax", tab: "coax",
       assemblyIndex: findKey(/индекс/i),
@@ -3001,6 +3057,7 @@ export function makeGen(D: GenData, S: GenState) {
         sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : "", coaxShieldOf_("A")),
         sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : "", coaxShieldOf_("B")),
         ...(vswrControl ? { vswrControl } : {}),
+        ...(vswrCustomer ? { vswrCustomer } : {}),
       },
       ops, ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
     };
@@ -3265,6 +3322,9 @@ export function makeGen(D: GenData, S: GenState) {
   }
   function validate() {
     const cfg = buildConfig();
+    // «Норма заказчика (КД)» коакса, которую не прочитать, — стоп до остальных проверок (сервер тоже ответит 422).
+    const custProblem = S.tab === "coax" && S.coax.sideB && S.coax.vswrMode !== "none" ? coaxVswrCustProblem(S.coax.vswrCust) : "";
+    if (custProblem) return { cfg, error: custProblem, warnings: [] as string[] };
     const ops = (cfg.ops as Array<{ templateId: string; type: string }>).filter((o) => o.templateId);
     if (!ops.length) return { cfg, error: "Выберите шаблон хотя бы для одной операции.", warnings: [] as string[] };
     const twistCheck = twistProblems_();

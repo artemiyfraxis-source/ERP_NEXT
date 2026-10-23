@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 import re
+from copy import deepcopy
 from typing import Any, Iterable, Mapping, Sequence
 
 from .cable_structure import CoaxAttenuation, CoaxCard, card_for
@@ -154,4 +155,81 @@ def vswr_norm(
     norm.update(status=STATUS_OK, vswrMax=round(vswr_of(gamma), 2))
     if band_to is None:
         norm["reason"] = "верхняя граница полосы не определена — нет «Частота до» у разъёмов и рабочей частоты кабеля"
+    return norm
+
+
+# --- Норма заказчика (владелец 23.10.2026: «норма заказчика — на этапе ТК; я главный на производстве по технологии») ----
+#
+# Технолог задаёт в генераторе (КОАКС, под «Контроль КСВН») норму из КД заказчика: КСВН ≤ x в полосе от … до МГц и
+# основание (ТУ / КД / заказ) — `build_config.coax.vswrCustomer` {vswrMax, fromMhz, toMhz, basis}. Задана — она и есть
+# норма приёмки (`source: "customer"`), вердикт ОТК — по точкам её полосы; норма по комплектующим остаётся справочно
+# (`components`). Не задана — норма по комплектующим, как раньше.
+
+SOURCE_CUSTOMER = "customer"
+COMPONENT_KEYS = ("status", "reason", "vswrMax", "bandMhz", "s21Db", "ends")
+
+
+class CustomerNormError(ValueError):
+    """The technologist's customer norm cannot be read; the message is for the screen."""
+
+
+def _strict_number(value: object) -> float | None:
+    text = str(value if value is not None else "").strip().replace(",", ".")
+    if not text:
+        return None
+    try:
+        number = float(text)
+    except ValueError:
+        raise CustomerNormError(f"Норма заказчика: «{value}» — не число") from None
+    if not math.isfinite(number):
+        raise CustomerNormError(f"Норма заказчика: «{value}» — не число")
+    return number
+
+
+def customer_norm(raw: object) -> dict[str, Any] | None:
+    """`build_config.coax.vswrCustomer` read and checked: {vswrMax, fromMhz, toMhz, basis}. Not set or no КСВН — None
+    (the norm by components). КСВН < 1, no band or «от» ≥ «до», no basis — CustomerNormError with the Russian reason."""
+    if not isinstance(raw, Mapping):
+        return None
+    vswr_max = _strict_number(raw.get("vswrMax"))
+    if vswr_max is None:
+        return None
+    if vswr_max < 1:
+        raise CustomerNormError("Норма заказчика: КСВН не может быть меньше 1")
+    low, high = _strict_number(raw.get("fromMhz")), _strict_number(raw.get("toMhz"))
+    if low is None or high is None:
+        raise CustomerNormError("Норма заказчика: укажите полосу — от и до, МГц")
+    if low <= 0 or low >= high:
+        raise CustomerNormError("Норма заказчика: начало полосы должно быть больше 0 и меньше конца")
+    basis = " ".join(str(raw.get("basis") or "").split())
+    if not basis:
+        raise CustomerNormError("Норма заказчика: укажите основание — ТУ, КД или заказ")
+    return {"vswrMax": round(vswr_max, 3), "fromMhz": round(low, 3), "toMhz": round(high, 3), "basis": basis[:300]}
+
+
+def components_of(norm: Mapping[str, Any]) -> dict[str, Any]:
+    """The norm by components inside a norm: `components` of a customer norm, else the norm itself."""
+    if norm.get("source") == SOURCE_CUSTOMER and isinstance(norm.get("components"), Mapping):
+        return dict(norm["components"])
+    return {key: norm.get(key) for key in COMPONENT_KEYS if key in norm}
+
+
+def customer_of(norm: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The customer requirement a norm carries ({vswrMax, fromMhz, toMhz, basis}); a norm by components — None."""
+    if not isinstance(norm, Mapping) or norm.get("source") != SOURCE_CUSTOMER:
+        return None
+    customer = norm.get("customer")
+    return dict(customer) if isinstance(customer, Mapping) else None
+
+
+def with_customer_norm(components: Mapping[str, Any], customer: Mapping[str, Any]) -> dict[str, Any]:
+    """The acceptance norm when the technologist set the customer's: status "ok", КСВН and band — the customer's,
+    `basis` — its text, `components` — the norm by components for reference (also when it is not defined); the
+    assembly facts (cable, length, ends) stay where the passport reads them."""
+    base = components_of(components)
+    norm = {key: deepcopy(value) for key, value in components.items() if key not in ("source", "basis", "customer", "components")}
+    norm.update(
+        status=STATUS_OK, reason="", vswrMax=customer["vswrMax"], bandMhz=[customer["fromMhz"], customer["toMhz"]],
+        source=SOURCE_CUSTOMER, basis=customer["basis"], customer=dict(customer), components=deepcopy(base),
+    )
     return norm

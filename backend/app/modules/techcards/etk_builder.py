@@ -1287,6 +1287,19 @@ def vswr_step(norm: Mapping[str, Any], control: Mapping[str, Any] | None = None)
     band_text = (f"в полосе {start}…{_format(band[1], 2)} МГц" if band[1]
                  else f"в полосе от {start} МГц (верхняя граница не определена — нет «Частота до» у разъёмов и кабеля)")
     head = f"Измерить КСВН (S11) {band_text}, {load}"
+    if norm.get("source") == "customer" and norm.get("vswrMax") is not None:
+        # Норма заказчика (технолог, владелец 23.10) — приёмка по ней в её полосе; по комплектующим — справочно.
+        maximum = _format(norm["vswrMax"], 3)
+        basis = str(norm.get("basis") or "").strip()
+        components = norm.get("components") if isinstance(norm.get("components"), Mapping) else {}
+        if components.get("status") == "ok" and components.get("vswrMax") is not None:
+            reference = f"по комплектующим ≤ {_format(components['vswrMax'], 2)} — справочно"
+        else:
+            reference = ("по комплектующим норма не определена"
+                         + (f" ({components['reason']})" if components.get("reason") else "") + " — справочно")
+        text = (f"{head}. Норма заказчика ≤ {maximum} в полосе {start}…{_format(band[1], 2)} МГц"
+                + (f" ({basis})" if basis else "") + f"; {reference}.")
+        return text, f"≤ {maximum}"
     if norm.get("status") != "ok" or norm.get("vswrMax") is None:
         reason = str(norm.get("reason") or "нет данных разъёмов")
         return f"{head}; норма не определена — {reason}, решение принимает ОТК.", "решение ОТК"
