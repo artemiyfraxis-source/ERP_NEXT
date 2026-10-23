@@ -48,7 +48,35 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 (то же самое: `install.ps1 -Uninstall`). Удаляет задачу и папку `C:\ProgramData\FraxisPrintAgent`. Токен в ERP после этого лучше отозвать.
 
+## Сканер УПД (Pantum BM2300W)
+
+Кнопка «Сканировать» в окне «Поставка» отправляет задание на ПК склада; агент сканирует лист со стекла и загружает файл в ERP, дальше УПД разбирается как обычный файл. Сканер Pantum BM2300W умеет Mopria Scan (eSCL/AirScan), поэтому драйвер сканера на ПК не нужен: агент говорит со сканером по сети.
+
+1. Узнайте IP-адрес принтера: на панели принтера (Сеть, Wi-Fi, информация о сети), в списке клиентов роутера или в приложении Pantum. Лучше закрепить за принтером постоянный адрес в роутере.
+2. Токену ERP нужны scopes `labels:print` и `scan:upload`.
+3. Установите (или переустановите) агент с адресом сканера:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Token "ТОКЕН_ИЗ_ERP" -Scanner "192.168.1.50"
+```
+
+4. Проверка без ERP: положите лист на стекло и выполните
+
+```powershell
+Stop-ScheduledTask -TaskName "Fraxis — печать этикеток"
+powershell -ExecutionPolicy Bypass -File C:\ProgramData\FraxisPrintAgent\agent.ps1 -TestScan
+Start-ScheduledTask -TaskName "Fraxis — печать этикеток"
+```
+
+Агент выведет возможности сканера (модель, форматы, стекло), отсканирует лист и сохранит `C:\ProgramData\FraxisPrintAgent\test-scan.pdf` (или `.jpg`). Откройте файл: лист должен быть целиком. В журнале строки «Скан: ...».
+
+- Скан идёт с планшета (стекла), A4, серый, 300 dpi, PDF; если сканер не принимает PDF, агент повторяет в JPEG. Сначала пробуется http, потом https (сертификат сканера самоподписанный, проверка отключается только для обращения к нему).
+- Если `-Scanner` не задан, агент ищет USB-сканер через Windows (WIA, первое устройство-сканер) и сканирует в JPEG. Нужен установленный драйвер сканера.
+- Журнал: «Скан: задание ...», «Скан отправлен ...», «Скан: ошибка ...». Текст ошибки уходит и в ERP, оператор видит его в окне «Поставка». Ошибка скана печать этикеток не останавливает.
+- Не отвечает сканер: проверьте, что принтер включён и в той же сети, что и ПК; `Test-NetConnection 192.168.1.50 -Port 80`. Адрес сменился: переустановите с новым `-Scanner`.
+
 ## Для разработчика
 - Контракт с сервером: `POST /api/stock/labels/agent/claim` `{printer, host}` -> `{job: {id, copies, tspl_b64} | null}`; `POST /api/stock/labels/agent/jobs/<id>/result` `{ok, error}`; заголовок `Authorization: Bearer <токен>`. Копии уже внутри TSPL (`PRINT n`), агент отправляет задание один раз.
+- Скан: `POST /api/stock/scan/agent/claim` `{host}` -> `{job: {id} | null}`; `POST /api/stock/scan/agent/jobs/<id>/result` — `multipart/form-data` с полем `file` (PDF или JPEG) либо JSON `{"error": "..."}`. Тесты: `tools\print-agent\tests\agent-scan.Tests.ps1`.
 - Тесты: `Invoke-Pester tools\print-agent\tests\agent.Tests.ps1` (Pester 3+, печать подменена). Ручной сквозной тест с мок-сервером: `powershell -NoProfile -ExecutionPolicy Bypass -File tools\print-agent\tests\mock-server.ps1`.
 - Файлы `.ps1` хранятся в UTF-8 с BOM: Windows PowerShell 5.1 иначе портит кириллицу.
