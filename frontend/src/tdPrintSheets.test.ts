@@ -89,6 +89,21 @@ const sheets = html.split('<section class="sheet">').slice(1);
 const byHeading = (title: string): string => sheets.find((sheet) => sheet.includes(`<div class="content"><h2>${title}`)) ?? "";
 const textOf = (value: string) => value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
+it("комплект ТД заказчику не несёт рисунков стандартов (IPC туда нельзя; ГОСТ — только через customerFigures)", async () => {
+  const { indexStdFigures, customerFigures } = await import("./stdFigures");
+  const base = model();
+  const document = base.card.document as { operations: Record<string, unknown>[] };
+  const withSto = { ...base, card: { ...base.card, document: { ...document, operations: [
+    { ...cut, card: { ...cut.card, defects: "4.3.14 Высота обжима вне допуска; 4.1.2 Длина вне допуска" } }, second, third,
+  ] } } } as TdPrintModel;
+  const kit = buildTdKitHtml(withSto);
+  expect(kit).not.toContain("/api/techcards/std-figures");
+  expect(kit).not.toMatch(/<img\b/i);
+  const ipc = { id: "f", sto_code: "4.3.14", position: 1, role: "defect", source_kind: "ipc", caption: "IPC/WHMA-A-620E, рис. 3-12",
+    content_type: "image/png", sha256: "c".repeat(64), width: 1, height: 1, size: 1, customer_allowed: false, created_at: "", created_by: "" } as const;
+  expect(customerFigures(indexStdFigures([ipc]).get("4.3.14") ?? [])).toEqual([]);
+});
+
 it("каждый лист несёт основную надпись: обозначение, литеру, Лист/Листов и четыре фамилии", () => {
   expect(sheets.length).toBeGreaterThan(8);
   for (const sheet of sheets) {

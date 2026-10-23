@@ -68,6 +68,20 @@ def _titles() -> dict[str, str]:
     return found
 
 
+@lru_cache(maxsize=1)
+def sto_row_codes() -> frozenset[str]:
+    """Коды строк СТО («4.3.14»): к ним привязаны рисунки стандартов (std_figures)."""
+    found: set[str] = set()
+
+    def walk(sections: list[dict[str, Any]]) -> None:
+        for section in sections:
+            found.update(str(row["code"]) for row in section.get("rows") or [])
+            walk(section.get("subsections") or [])
+
+    walk(sto()["sections"])
+    return frozenset(found)
+
+
 def _section_codes(code: str) -> list[str]:
     """Коды разделов СТО для кода операции по порядку; пусто — раздела нет."""
     code = str(code or "").strip()

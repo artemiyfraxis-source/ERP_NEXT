@@ -1464,10 +1464,15 @@ export function defectGroupCode(code: string, groupTitle: string): string {
   return kind && defectContext(code) === "mark" ? `MARK:${kind}` : code;
 }
 
+/** Код строки СТО в начале названия пункта дефекта («4.3.14 Высота обжима…» → «4.3.14»); нет — "". */
+export function stoRowCode(name: string): string {
+  return /^(\d+\.\d+(?:\.\d+)+)\s/.exec(String(name || ""))?.[1] ?? "";
+}
+
 /** Какой рисунок библиотеки подходит дефекту; «generic» — подходящего нет. */
 export function defectSceneId(name: string, note = "", code = ""): string {
   // Пункт СТО («4.3.14 Высота обжима…»): рисунок по коду строки СТО, а не по словам названия.
-  const sto = STO_SCENES[/^(\d+\.\d+(?:\.\d+)+)\s/.exec(name)?.[1] ?? ""];
+  const sto = STO_SCENES[stoRowCode(name)];
   if (sto && sto in SCENES) return sto;
   const ctx = defectContext(code);
   for (const source of [name, note]) {

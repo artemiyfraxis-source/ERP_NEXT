@@ -51,6 +51,7 @@ from .modules.techcards import assembly_api
 from .modules.techcards import harness_catalog_api
 from .modules.techcards import harness_api
 from .modules.techcards import td_issues_api
+from .modules.techcards import std_figures_api
 from .shared.bulk_import import MAX_IMPORT_BODY_BYTES
 from .shared.http_auth import techcards_router_principal
 from .workflows import devices_api, employee_card_api, leave_api, search_api
@@ -98,7 +99,7 @@ app.add_middleware(
     path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/production/vswr": 4 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576,
                  "/api/procurement/invoice-files": 30 * 1_048_576, "/api/receiving/files": 30 * 1_048_576, "/api/stock/receipts/scan": 21 * 1_048_576,
                  "/api/stock/scan/agent/jobs": 21 * 1_048_576,
-                 "/api/techcards/assembly/drawings": 30 * 1_048_576, "/api/purchasing/upd/import-edo": 30 * 1_048_576,
+                 "/api/techcards/assembly/drawings": 30 * 1_048_576, "/api/techcards/std-figures": 18 * 1_048_576, "/api/purchasing/upd/import-edo": 30 * 1_048_576,
                  "/api/references/import": MAX_IMPORT_BODY_BYTES},
 )
 app.add_middleware(IdentitySessionMiddleware)
@@ -112,6 +113,8 @@ app.include_router(
     td_issues_api.router,
     dependencies=[Depends(techcards_router_principal)],
 )
+# Рисунки стандартов читает любой вошедший (карточки дефектов в «Заданиях»), поэтому без входа в техкарты.
+app.include_router(std_figures_api.router)
 app.include_router(harness_catalog_api.router)
 app.include_router(identity_api.router)
 app.include_router(requests_api.router)

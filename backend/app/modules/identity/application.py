@@ -850,6 +850,8 @@ API_TOKEN_SCOPES: dict[str, str] = {
     # The same agent scans УПД on the shop scanner (owner 23.10.2026): only the scan queue's claim / result routes. One
     # token may carry both scopes.
     "scan:upload": "Сканирование УПД (агент склада)",
+    # Скрипт загрузки рисунков стандартов к строкам СТО (owner 23.10.2026): only PUT /api/techcards/std-figures/{code}.
+    "figures:write": "Загрузка рисунков стандартов",
 }
 API_TOKEN_MAX_DAYS = 365
 API_TOKEN_NAME_MAX = 128

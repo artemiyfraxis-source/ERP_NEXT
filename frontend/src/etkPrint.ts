@@ -10,7 +10,8 @@ import {
   ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
   type EtkTopologyData,
 } from "./etkDraw";
-import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, solderMode, toolingSections } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, parseDefects, solderMode, toolingSections } from "./etkOperation";
+import { figuresForDefect, stdFiguresPrintHtml, type StdFigureIndex } from "./stdFigures";
 import { formatDateTime, unitLabel } from "./format";
 import { etkCardSourceNote } from "./etkCardSource";
 import { etkPartSource, etkPfGroups, etkPfOutName, etkRouteDiagram, etkRouteOf, etkSemiSource, formatMinutes, opNumber, type EtkPfRow } from "./etkRoute";
@@ -145,11 +146,22 @@ function table(columns: string[], body: string[][]): PrintBlock[] {
   return body.length ? [{ table: { columns, rows: body } }] : [];
 }
 
+/** Рисунки стандартов для печати ЭТК: список по строкам СТО и адрес ERP (ссылки в окне печати — абсолютные). */
+export interface EtkPrintFigures { index: StdFigureIndex; base: string }
+
+/** Под текстом «Типовых дефектов» — рисунки стандартов пунктов, у которых они есть (цеховая печать: ГОСТ и IPC). */
+function defectFigures(defects: string, figures: EtkPrintFigures | null | undefined): PrintBlock[] {
+  if (!figures) return [];
+  return parseDefects(defects).groups.flatMap((group) => group.items)
+    .map((item) => stdFiguresPrintHtml(item.name, figuresForDefect(figures.index, item.name), figures.base))
+    .filter(Boolean).map((figure) => ({ figure }));
+}
+
 /** `sketches` — своя картинка эскиза по ключу операции (код::разъём::сторона), абсолютной ссылкой на файл в ERP.
  *  `serial` — номера изделий задания: надписи с «№ изделия» печатаются диапазоном, в конце — лист «Надписи меток»;
  *  без задания — «№ по партии». Надпись без номера печатается как раньше. */
 export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision[], sketches: Record<string, string> = {},
-  serial?: MarkSerialRange | null): PrintPage[] {
+  serial?: MarkSerialRange | null, figures?: EtkPrintFigures | null): PrintPage[] {
   const document = object(card.document);
   const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(document.kit) };
   const revision = card.revision || 1;
@@ -245,7 +257,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
           ...table(["№", "Что маркируем", "Надпись", "Материал", "Где", ...(withLength ? ["Длина, мм"] : []), "На изделие", "На партию"], marks),
           ...table(["Тип", "№", "Описание операции, материалов и оснастки", "Допуск"], steps),
         ] : []),
-        ...(defects ? [section("Типовые дефекты"), { text: defects }] : []),
+        ...(defects ? [section("Типовые дефекты"), { text: defects }, ...defectFigures(defects, figures)] : []),
         ...(figure ? [section("Эскиз"), { figure }] : []),
         ...(result.length || time.length ? [
           section("Результат"),
