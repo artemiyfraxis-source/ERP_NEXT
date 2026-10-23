@@ -1,10 +1,13 @@
+// @ts-ignore — типы node в проекте не подключены, снимок артикулов читается напрямую из backend/tests
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import {
   applyHints, withTrailingBlank, applyReceiptPaste, applyScan, buildAccept, canAccept, editCell, emptyHeader, emptyLine, fillEmpty,
-  headerChanged, headerFields, mergeHeader, receiptLine, type ReceiptLine,
+  headerChanged, headerFields, mergeHeader, normalizeMaker, receiptLine, splitArticleCell, splitArticleMaker, type ReceiptLine,
 } from "./warehouseReceiptLogic";
 import type { WarehouseReceipt } from "./api";
 
+declare const process: { cwd(): string };
 const filled = (patch: Partial<ReceiptLine>): ReceiptLine => ({ ...emptyLine(), ...patch });
 
 const LEGACY = [
@@ -80,6 +83,49 @@ it("a scan fills empty header fields and appends its lines", () => {
   expect(result.header).toMatchObject({ supplier: "Свой", upd_number: "17", upd_date: "2026-10-03" });
   expect(result.lines[0]).toMatchObject({ article: "Z-1", name: "Зет", quantity: "4" });
   expect(result.added).toBe(1);
+});
+
+it("splits the maker off like the server does, on every real article of the warehouse", () => {
+  const snapshot = JSON.parse(readFileSync(`${process.cwd()}/../backend/tests/warehouse/fixtures/prod-maker-articles-1023.json`, "utf8") as string) as
+    Record<string, [string, string, number | null, string]>;
+  expect(Object.keys(snapshot)).toHaveLength(209);
+  for (const [text, [article, maker, packQty, note]] of Object.entries(snapshot)) {
+    expect(splitArticleMaker(text), text).toEqual({ article, maker, packQty, note });
+  }
+  expect(splitArticleMaker("0430250400 @ TE Connectivity")).toEqual({ article: "0430250400", maker: "TE CONNECTIVITY", packQty: null, note: "" });
+  expect(splitArticleMaker("SHF-001T-0.8BS упаковка 5 000 шт.")).toEqual({ article: "SHF-001T-0.8BS", maker: "", packQty: 5000, note: "" });
+  for (const kept of ["info@mail.ru", "XHP-4@J", "ABC@123", "@JST", "A@B@JST", "XHP-4@.JST", "51021-0300"]) {
+    expect(splitArticleMaker(kept).article, kept).toBe(kept);
+  }
+  expect(normalizeMaker("RUICHI,")).toBe("RUICHI");
+  expect(normalizeMaker("china")).toBe("Китай");
+});
+
+it("Артикул «XHP-4@JST» becomes «XHP-4» and fills an empty Производитель only", () => {
+  expect(splitArticleCell(filled({ article: "XHP-4@JST" }))).toMatchObject({ article: "XHP-4", manufacturer: "JST" });
+  expect(splitArticleCell(filled({ article: "0039012085@Molex", manufacturer: "Molex Inc." })))
+    .toMatchObject({ article: "0039012085", manufacturer: "Molex Inc." });
+  const plain = filled({ article: "GHR-04V-S" });
+  expect(splitArticleCell(plain)).toBe(plain);
+  const packed = filled({ article: "SXH-001T-P0.6##6000@JST" }); // the pack has no cell: the server keeps it in «Описание»
+  expect(splitArticleCell(packed)).toBe(packed);
+  const accepted = filled({ article: "XHP-4@JST", accepted: { lotId: "l", grn: "OLD.26.1", place: "1F4", labels: 0, labelError: "" } });
+  expect(splitArticleCell(accepted)).toBe(accepted);
+});
+
+it("pasted and scanned articles are split", () => {
+  const cells = applyReceiptPaste([emptyLine()], 0, "article", "XHP-4@JST\t5\nPHR-2@JST\t3");
+  if ("error" in cells) throw new Error(cells.error);
+  expect(cells.lines.slice(0, 2).map((line) => [line.article, line.manufacturer, line.quantity])).toEqual([["XHP-4", "JST", "5"], ["PHR-2", "JST", "3"]]);
+  const headed = applyReceiptPaste([emptyLine()], 0, "article", "Артикул\tПроизводитель\tКол-во\nXHP-4@JST\tJ.S.T.\t2");
+  if ("error" in headed) throw new Error(headed.error);
+  expect(headed.lines[0]).toMatchObject({ article: "XHP-4", manufacturer: "J.S.T.", quantity: "2" });
+  const scanned = applyScan(emptyHeader(), [emptyLine()], {
+    scan_file: "s.pdf", note: "",
+    recognised: { supplier: "", inn: "", upd_number: "", upd_date: "", invoice_number: "", invoice_date: "" },
+    lines: [{ article: "0500588001 @MOLEX", name: "Контакт", quantity: "4", unit: "шт" }],
+  });
+  expect(scanned.lines[0]).toMatchObject({ article: "0500588001", manufacturer: "MOLEX" });
 });
 
 it("formats the lot card line", () => {

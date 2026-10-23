@@ -188,3 +188,12 @@ def test_stock_name_comes_from_the_upd_name(erp):
     line = consume_receiving_expected(expected_message(), receiving())
     assert _warehouse_payload(line)["name"] == "Разъём 1"
     assert _warehouse_payload(replace(line, document_name="Вилка 2РМ14"))["name"] == "Вилка 2РМ14"
+
+
+def test_stock_event_carries_the_manufacturer_of_the_line(erp):
+    from app.modules.receiving.application import _warehouse_payload
+
+    receiving, _, _ = erp
+    line = consume_receiving_expected(expected_message(), receiving())
+    assert _warehouse_payload(replace(line, manufacturer="JST"))["manufacturer"] == "JST"
+    assert _warehouse_payload(replace(line, manufacturer=""))["manufacturer"] == ""
