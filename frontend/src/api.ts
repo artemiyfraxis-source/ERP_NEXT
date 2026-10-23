@@ -1965,6 +1965,25 @@ export interface OperationSketch {
   uploaded_at: string;
 }
 
+/** Рисунок стандарта к строке СТО (вырезка ГОСТ Р 72182 / IPC/WHMA-A-620E), байты — в базе ERP. */
+export interface StdFigure {
+  id: string;
+  sto_code: string;
+  position: number;
+  role: "norm" | "defect" | "ref";
+  source_kind: "gost" | "ipc";
+  caption: string;
+  content_type: string;
+  sha256: string;
+  width: number;
+  height: number;
+  size: number;
+  /** Можно печатать в комплект ТД заказчику: только ГОСТ; IPC — для цеха. */
+  customer_allowed: boolean;
+  created_at: string;
+  created_by: string;
+}
+
 export interface ConnectorFamily {
   family: string;
   title: string;
@@ -3835,6 +3854,10 @@ export const techcardsApi = {
     }),
   deleteSketch: (cardId: string, operationKey: string) =>
     api<{ deleted: number }>(`/api/techcards/projects/${cardId}/sketches/${encodeURIComponent(operationKey)}`, { method: "DELETE" }),
+  /** Рисунки стандартов к строкам СТО (без байтов); картинка — по id, кешируется браузером надолго. */
+  stdFigures: () => api<{ items: StdFigure[] }>("/api/techcards/std-figures"),
+  stdFigureUrl: (figure: Pick<StdFigure, "id" | "sha256">) =>
+    `/api/techcards/std-figures/${encodeURIComponent(figure.id)}/image?v=${encodeURIComponent(figure.sha256.slice(0, 12))}`,
   /** База разъёмов: семейства корпусов с образцом артикула и раскладкой контактов. */
   connectorFamilies: (article = "") => api<{ items: ConnectorFamily[]; match: ConnectorFamily["housing"] | null; series_count?: number }>(
     `/api/techcards/connector-families${article ? `?article=${encodeURIComponent(article)}` : ""}`),

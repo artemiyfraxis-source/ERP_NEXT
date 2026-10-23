@@ -2757,6 +2757,21 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-def b { display: block; font-size: 12.5px; }
 .etk-def small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4; color: var(--muted-foreground); }
 .etk-def-text { white-space: pre-line; font-size: 12.5px; }
+/* Рисунки стандартов (ГОСТ Р 72182 / IPC/WHMA-A-620E) к строке СТО: в ряд, метка «Норма» / «Брак», подпись источника. */
+.etk-std-figs { display: flex; gap: 8px; align-items: stretch; line-height: normal; }
+/* Рисунки одной высоты в ряду — подписи источника на одной линии внизу. */
+.etk-std-fig { display: grid; grid-template-rows: auto 1fr auto; gap: 3px; flex: 1 1 0; min-width: 0; margin: 0; }
+.etk-std-fig > a { display: block; align-self: start; border-radius: 4px; }
+.etk-std-fig > a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.etk-std-fig img { display: block; width: 100%; height: auto; max-height: 150px; object-fit: contain; object-position: left top; background: #fff; border: 1px solid var(--border); border-radius: 4px; }
+.etk-std-fig figcaption { align-self: end; font-size: 10.5px; line-height: 1.3; color: var(--muted-foreground); }
+.etk-std-role { justify-self: start; padding: 0 6px; border-radius: 999px; font-size: 10.5px; font-weight: 600; line-height: 16px; }
+.etk-std-role.norm { background: var(--chip-ok-bg); color: var(--tone-ok); }
+.etk-std-role.defect { background: var(--chip-danger-bg); color: var(--chip-danger-fg); }
+.tc-def-pic.etk-std-figs { flex-wrap: wrap; gap: 4px; }
+.tc-def-pic .etk-std-fig { flex-basis: 64px; }
+.tc-def-pic .etk-std-fig img { max-height: 80px; }
+.tc-def-pic .etk-std-fig figcaption { font-size: 10px; }
 /* 6 Результат: таблица «что отдаём дальше — сколько» + плитка расчётного времени отдельной цифрой. */
 .etk-result { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 40px; }
 /* Метки по КД в «Ходе операции» маркировки — та же таблица, что у результата. */

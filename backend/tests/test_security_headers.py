@@ -17,6 +17,27 @@ def test_api_responses_are_not_cached_or_embeddable():
     assert "connect-src 'self'" in policy
 
 
+def test_a_route_may_keep_its_own_private_cache_but_not_a_shared_one():
+    from fastapi import FastAPI, Response
+
+    from app.shared.security_headers import SecurityHeadersMiddleware
+
+    probe = FastAPI()
+    probe.add_middleware(SecurityHeadersMiddleware)
+
+    @probe.get("/api/private")
+    def private() -> Response:
+        return Response(b"x", headers={"Cache-Control": "private, max-age=31536000, immutable"})
+
+    @probe.get("/api/public")
+    def public() -> Response:
+        return Response(b"x", headers={"Cache-Control": "public, max-age=600"})
+
+    client = TestClient(probe)
+    assert client.get("/api/private").headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert client.get("/api/public").headers["cache-control"] == "no-store"
+
+
 def test_https_responses_enable_hsts():
     response = TestClient(app, base_url="https://erp.example.test").get("/api/health")
 
