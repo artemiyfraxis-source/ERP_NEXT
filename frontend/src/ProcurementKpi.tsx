@@ -20,15 +20,19 @@ export type KpiRow = {
 type Sheet = {
   money: {
     spend: string; baseline_spend: string; savings: string; savings_pct: string | null; compared_lines: number;
-    surplus_spend: string | null; vs_last_purchase: string | null; delivery_spend: string | null;
+    kp_savings: string | null; kp_savings_pct: string | null; kp_compared_lines: number;
+    surplus_spend: string | null; vs_last_purchase: string | null; compared_with_last: number; delivery_spend: string | null;
   };
   delivery: {
     due: number; on_time: number; on_time_pct: string | null; avg_delay_days: string | null;
     avg_request_to_order_days: string | null; avg_request_to_delivery_days: string | null;
   };
-  quality: { lines: number; defect_pct: string | null; defect_amount: string | null; returned_amount: string | null };
+  quality: {
+    lines: number; received_lines: number | null; lines_with_defect: number | null; defect_pct: string | null;
+    defect_amount: string | null; returned_amount: string | null;
+  };
   competition: {
-    avg_offers: string | null; with_non_key_pct: string | null; override_pct: string | null; top1_share: string | null;
+    decisions: number | null; avg_offers: string | null; with_non_key_pct: string | null; override_pct: string | null; top1_share: string | null;
     top3_share: string | null; new_suppliers: number | null;
   };
 };
@@ -73,14 +77,17 @@ const buyerColumns: DataColumn<KpiRow>[] = [
 ];
 
 const supplierColumns: DataColumn<SupplierRating>[] = [
-  { key: "supplier", title: "Поставщик", value: (row) => row.supplier, render: (row) => <strong>{row.supplier}</strong> },
+  {
+    key: "supplier", title: "Поставщик", value: (row) => row.supplier,
+    render: (row) => <><strong>{row.supplier}</strong>{row.is_key && <small title="Ключевой поставщик в справочнике"> ключевой</small>}</>,
+  },
   { key: "asked", title: "Спрошен", numeric: true, value: (row) => row.asked, render: (row) => row.asked ?? cell(null, String) },
   { key: "answered", title: "Ответил", numeric: true, value: (row) => row.answered, render: (row) => row.answered ?? cell(null, String) },
-  { key: "response", title: "Отклик", numeric: true, hint: "Доля запросов КП, на которые поставщик ответил.", value: (row) => number(row.response_pct), render: (row) => cell(row.response_pct, pct) },
+  { key: "response", title: "Отклик", numeric: true, hint: "Доля запросов КП, отправленных в периоде, на которые поставщик прислал КП.", value: (row) => number(row.response_pct), render: (row) => cell(row.response_pct, pct) },
   { key: "lines", title: "Строк заказа", numeric: true, value: (row) => row.order_lines },
   { key: "spend", title: "Сумма с НДС", numeric: true, value: (row) => Number(row.spend), render: (row) => money(row.spend) },
   { key: "ontime", title: "В срок", numeric: true, hint: "Доля его строк, пришедших к ожидаемой дате.", value: (row) => number(row.on_time_pct), render: (row) => cell(row.on_time_pct, pct) },
-  { key: "defect", title: "Брак", numeric: true, value: (row) => number(row.defect_pct), render: (row) => cell(row.defect_pct, pct) },
+  { key: "defect", title: "Брак", numeric: true, hint: "Доля его принятых строк, где входной контроль нашёл брак.", value: (row) => number(row.defect_pct), render: (row) => cell(row.defect_pct, pct) },
   {
     key: "best", title: "Цена к лучшей", numeric: true, hint: "Насколько его цена в среднем выше самого дешёвого КП по тем же строкам.",
     value: (row) => number(row.price_vs_best_pct), render: (row) => cell(row.price_vs_best_pct, signedPct),
@@ -131,6 +138,7 @@ function printSheet(result: KpiResult, from: string, to: string, buyer: string) 
     blocks: [
       { table: { columns: ["Показатель", "Значение"], rows: [
         ["Экономия к расчёту", kpi.money.savings_pct === null ? NO_DATA : `${money(kpi.money.savings)} (${pct(kpi.money.savings_pct)})`],
+        ["Экономия к КП", kpi.money.kp_savings_pct === null || kpi.money.kp_savings === null ? NO_DATA : `${money(kpi.money.kp_savings)} (${pct(kpi.money.kp_savings_pct)})`],
         ["Оплачено за период", money(kpi.money.spend)],
         ["Поставок в срок", text(kpi.delivery.on_time_pct, pct)],
         ["Строк с браком", text(kpi.quality.defect_pct, pct)],
@@ -207,10 +215,15 @@ export function ProcurementKpi() {
               <Metric label="Экономия к расчёту" hint="Цена расчёта с НДС минус цена оплаты с НДС, на потребность. Минус — заплатили дороже расчёта.">
                 {k.money.savings_pct === null ? cell(null, String) : <>{money(k.money.savings)} <small>({pct(k.money.savings_pct)})</small></>}
               </Metric>
+              <Metric label="Экономия к КП" hint="Самое дешёвое КП ключевого поставщика на день решения минус цена оплаты с НДС, на потребность. Только строки с решением по запросу КП в тех же единицах.">
+                {k.money.kp_savings_pct === null || k.money.kp_savings === null ? cell(null, String) : <>{money(k.money.kp_savings)} <small>({pct(k.money.kp_savings_pct)}, строк {k.money.kp_compared_lines})</small></>}
+              </Metric>
               <Metric label="Оплачено с НДС" hint="Сумма оплаченных в периоде позиций.">{money(k.money.spend)}</Metric>
               <Metric label="Сверх потребности" hint="Заплачено за количество сверх заявки — минимальные партии, целые катушки. Это запас, а не экономия.">{cell(k.money.surplus_spend, money)}</Metric>
-              <Metric label="К прошлой закупке" hint="Нужна цена прошлой закупки той же позиции — в строке закупки её нет.">{cell(k.money.vs_last_purchase, money)}</Metric>
-              <Metric label="В т.ч. доставка">{cell(k.money.delivery_spend, money)}</Metric>
+              <Metric label="К прошлой закупке" hint="Сколько стоила бы потребность по цене прошлой оплаты той же позиции (артикул или название, те же единицы) минус заплаченное. Плюс — купили дешевле прошлого раза.">
+                {k.money.vs_last_purchase === null ? cell(null, String) : <>{money(k.money.vs_last_purchase)} <small>(строк {k.money.compared_with_last})</small></>}
+              </Metric>
+              <Metric label="Доставка по заказам" hint="Доставка, внесённая в заказы этих позиций, один раз на заказ. В «Оплачено» и в доли поставщиков не входит.">{cell(k.money.delivery_spend, money)}</Metric>
             </Card>
             <Card title="Сроки">
               <Metric label="В срок к ожидаемой дате" hint="Доля позиций, пришедших не позже ожидаемой даты. Просроченные без приёмки считаются опоздавшими; ожидаемую дату можно сдвигать до поступления.">
@@ -221,17 +234,20 @@ export function ProcurementKpi() {
               <Metric label="Заявка → приёмка" hint="От даты заявки до фактической даты приёмки.">{cell(k.delivery.avg_request_to_delivery_days, days)}</Metric>
             </Card>
             <Card title="Качество">
-              <Metric label="Строк с браком" hint="Доля оплаченных позиций, где при приёмке нашёлся брак.">{cell(k.quality.defect_pct, pct)}</Metric>
-              <Metric label="Брак, ₽">{cell(k.quality.defect_amount, money)}</Metric>
-              <Metric label="Возвраты, ₽">{cell(k.quality.returned_amount, money)}</Metric>
+              <Metric label="Строк с браком" hint="Доля принятых строк, где входной контроль нашёл «Механическое повреждение / брак». Строки, ещё не прошедшие приёмку, не считаются.">
+                {cell(k.quality.defect_pct, pct)}{k.quality.received_lines !== null && <small> ({k.quality.lines_with_defect} из {k.quality.received_lines})</small>}
+              </Metric>
+              <Metric label="Брак, ₽" hint="Приёмка хранит характер несоответствия, но не количество брака — сумму посчитать не из чего.">{cell(k.quality.defect_amount, money)}</Metric>
+              <Metric label="Возвраты, ₽" hint="Возвращённое поставщику количество по журналу приёмки × цена оплаты с НДС.">{cell(k.quality.returned_amount, money)}</Metric>
             </Card>
             <Card title="Конкуренция">
+              <Metric label="Решений по КП" hint="Решений о выборе поставщика, принятых в периоде по запросам закупщика.">{k.competition.decisions === null ? cell(null, String) : k.competition.decisions}</Metric>
               <Metric label="Среднее КП на решение" hint="Сколько КП с ценой было в среднем, когда выбирали поставщика.">{cell(k.competition.avg_offers, count)}</Metric>
               <Metric label="С не ключевым" hint="Доля решений, где среди КП был не ключевой поставщик.">{cell(k.competition.with_non_key_pct, pct)}</Metric>
               <Metric label="Обход гейта" hint="Доля решений, принятых без нужного числа КП.">{cell(k.competition.override_pct, pct)}</Metric>
               <Metric label="Топ-1 поставщик" hint="Доля оплат у самого крупного поставщика. Высокая — зависимость от одного.">{cell(k.competition.top1_share, pct)}</Metric>
               <Metric label="Топ-3 поставщика" hint="Доля оплат у трёх самых крупных поставщиков.">{cell(k.competition.top3_share, pct)}</Metric>
-              <Metric label="Новых поставщиков" hint="Нужна история заказов до периода.">{k.competition.new_suppliers === null ? cell(null, String) : k.competition.new_suppliers}</Metric>
+              <Metric label="Новых поставщиков" hint="Поставщики этого периода, у которых это первая оплата за всё время (склад не считается).">{k.competition.new_suppliers === null ? cell(null, String) : k.competition.new_suppliers}</Metric>
             </Card>
           </div>
 

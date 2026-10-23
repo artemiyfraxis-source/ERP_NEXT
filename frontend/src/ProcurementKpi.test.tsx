@@ -17,10 +17,16 @@ const row = (buyer: string, lines: number) => ({
 });
 
 const sheet = {
-  money: { spend: "1250.50", compared_spend: "1210.50", baseline_spend: "1290.50", savings: "40.00", savings_pct: "3.1", compared_lines: 1, surplus_spend: null, vs_last_purchase: null, delivery_spend: null },
+  money: { spend: "1250.50", compared_spend: "1210.50", baseline_spend: "1290.50", savings: "40.00", savings_pct: "3.1", compared_lines: 1, kp_savings: null, kp_savings_pct: null, kp_compared_lines: 0, surplus_spend: null, vs_last_purchase: null, compared_with_last: 0, delivery_spend: null },
   delivery: { due: 2, on_time: 1, on_time_pct: "50.0", avg_delay_days: "3.0", avg_request_to_order_days: "4.0", avg_request_to_delivery_days: null },
-  quality: { lines: 2, lines_with_defect: null, defect_pct: null, defect_amount: null, returned_amount: null },
+  quality: { lines: 2, received_lines: null, lines_with_defect: null, defect_pct: null, defect_amount: null, returned_amount: null },
   competition: { decisions: null, avg_offers: null, with_non_key_pct: null, override_pct: null, top1_share: "60.0", top3_share: "100.0", new_suppliers: null },
+};
+const withFacts = {
+  ...sheet,
+  money: { ...sheet.money, kp_savings: "600.00", kp_savings_pct: "12.0", kp_compared_lines: 1, vs_last_purchase: "200.00", compared_with_last: 1, delivery_spend: "1500.00" },
+  quality: { lines: 2, received_lines: 2, lines_with_defect: 1, defect_pct: "50.0", defect_amount: null, returned_amount: "220.00" },
+  competition: { ...sheet.competition, decisions: 4, avg_offers: "2.0", with_non_key_pct: "50.0", override_pct: "25.0", new_suppliers: 1 },
 };
 const supplier = {
   supplier: "Альфа", is_key: null, asked: null, answered: null, response_pct: null, order_lines: 2, spend: "1250.50",
@@ -31,12 +37,16 @@ const highlight = {
   unit_price: "100.00", baseline_unit_price: "120.00", savings: "40.00",
 };
 
-function mockServer(requests: string[] = []) {
+function mockServer(requests: string[] = [], filled = false) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path.startsWith("/api/procurement/kpi")) {
       requests.push(path);
-      return json({ rows: [row("Петров", 2)], total: row("Итого", 2), buyers: ["Петров"], kpi: sheet, suppliers: [supplier], highlights: [highlight] });
+      return json({
+        rows: [row("Петров", 2)], total: row("Итого", 2), buyers: ["Петров"], kpi: filled ? withFacts : sheet,
+        suppliers: [filled ? { ...supplier, is_key: true, asked: 2, answered: 1, response_pct: "50.0", defect_pct: "0.0", price_vs_best_pct: "10.0" } : supplier],
+        highlights: [highlight],
+      });
     }
     if (path === "/api/procurement/today") return json({ today: "2026-10-21", sections: [], calm: true });
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
@@ -103,4 +113,25 @@ it("period presets follow Roller's: month and year up to today, last month whole
   expect(presetRange("last", now)).toEqual({ from: "2026-09-01", to: "2026-09-30" });
   expect(presetRange("quarter", now)).toEqual({ from: "2026-10-01", to: "2026-10-23" });
   expect(presetRange("year", now)).toEqual({ from: "2026-01-01", to: "2026-10-23" });
+});
+
+it("shows the figures that purchasing and receiving add: КП savings, last purchase, delivery, defects, decisions, quote answers", async () => {
+  mockServer([], true);
+  render(<ProcurementPage />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Статистика" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "Показатели" }));
+  const money = (await screen.findByRole("heading", { name: "Деньги" })).closest("section")!;
+  expect(within(money).getByText(/600,00 ₽/)).toBeInTheDocument();
+  expect(within(money).getByText(/12,0 %, строк 1/)).toBeInTheDocument();
+  expect(within(money).getByText(/200,00 ₽/)).toBeInTheDocument();
+  expect(within(money).getByText("1 500,00 ₽")).toBeInTheDocument();
+  const quality = screen.getByRole("heading", { name: "Качество" }).closest("section")!;
+  expect(within(quality).getByText(/1 из 2/)).toBeInTheDocument();
+  expect(within(quality).getByText("220,00 ₽")).toBeInTheDocument();
+  expect(within(quality).getAllByText("нет данных")).toHaveLength(1); // the defect quantity is not stored
+  const competition = screen.getByRole("heading", { name: "Конкуренция" }).closest("section")!;
+  expect(within(competition).getByText("4")).toBeInTheDocument();
+  expect(within(competition).getByText("25,0 %")).toBeInTheDocument();
+  expect(screen.getByText("ключевой")).toBeInTheDocument();
+  expect(screen.getByText("+10,0 %")).toBeInTheDocument();
 });

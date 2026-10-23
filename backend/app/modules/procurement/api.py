@@ -140,8 +140,9 @@ from .domain import (
 from .stock_port import StockLotView
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from .exchange_rates import CbrExchangeRates
-from .kpi import build_kpi
+from .kpi import build_kpi, period_lines
 from app.workflows.procurement_history import line_history
+from app.workflows.purchasing_kpi import purchasing_kpi_facts
 from app.workflows.procurement_today import today_page
 from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
@@ -849,7 +850,11 @@ def buyer_kpi(
         )
         lines = [_line_domain(row) for row in rows]
         buyers = sorted(set(uow.procurement.buyer_names()), key=str.casefold)
-    return {**build_kpi(lines, date_from, date_to, buyer or None), "buyers": buyers}
+        today = moscow_now().date()
+        paid = [line for group in period_lines(lines, date_from, date_to, buyer or None).values() for line in group]
+        # Receiving, the КП decisions and the quotes live in other modules: one read-only workflow gathers them.
+        facts = purchasing_kpi_facts(uow.session, paid, date_from, date_to, buyer or None, today)
+    return {**build_kpi(lines, date_from, date_to, buyer or None, today, facts), "buyers": buyers}
 
 
 @router.get("/in-work")
