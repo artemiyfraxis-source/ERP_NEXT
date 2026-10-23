@@ -1,4 +1,4 @@
-// Рисунок «Норма | Брак» по коду строки СТО ФРАК-001-2026, ред. 2 (backend/data/sto-frak-001-2026.json, 320 строк).
+// Рисунок «Норма | Брак» по коду строки СТО ФРАК-001-2026, ред. 3 (backend/data/sto-frak-001-2026.json, 351 строка).
 // Таблица составлена вручную строка за строкой: у пункта «4.3.14 Высота обжима вне допуска» название в тексте ЭТК
 // стоит после кода, а по одним словам название опознаётся неверно («Деформация» — у провода, у контакта, у корпуса).
 // Рисунки — из библиотеки etkDefectArt.ts; одна сцена обслуживает несколько строк. Проверка полноты — etkDefectArt.test.ts.
@@ -71,7 +71,7 @@ export const STO_SCENES: Record<string, string> = {
   "4.8.6": "housingCrack", "4.8.7": "coaxPin", "4.8.8": "latch", "4.8.9": "pinch", "4.8.10": "cxAngleCover",
   "4.8.11": "cxClampLoose", "4.8.12": "cxNutOver", "4.8.13": "cxNutUnder", "4.8.14": "cxGasketMissing",
   "4.8.15": "braidBeyondRing", "4.8.16": "vswr",
-  // 4.9 Вязка, укладка, стяжки, гофра на жгуте
+  // 4.9 Раскладка, вязка, укладка, стяжки, гофра на жгуте, смотка в бухту
   "4.9.1": "tieSpacing", "4.9.2": "tieTight", "4.9.3": "tieTail", "4.9.4": "tieLoose", "4.9.5": "bendRadius",
   "4.9.6": "cover", "4.9.7": "pinch", "4.9.8": "tieTight", "4.9.9": "corrSharp", "4.9.10": "tieLoose",
   "4.9.11": "corrOpen", "4.9.12": "corrOpen", "4.9.13": "tieLoose",
@@ -86,4 +86,13 @@ export const STO_SCENES: Record<string, string> = {
   "4.11.22": "birdcage", "4.11.23": "weldGap", "4.11.24": "weldCross", "4.11.25": "insDamage",
   // 4.12 Подготовка жилы
   "4.12.1": "foldUnauth", "4.12.2": "fold", "4.12.3": "nick", "4.12.4": "birdcage", "4.12.5": "unlay", "4.12.6": "foldTinned",
+  // ред. 3 (изменение 2, 23.10): новые строки по ГОСТ Р 72182, ГОСТ 2358x/23594, IPC — сцены из библиотеки
+  "4.2.37": "braidHairs",
+  "4.3.54": "pull", "4.3.55": "crimpMarks", "4.3.56": "spliceStrands", "4.3.57": "spliceIns", "4.3.58": "insGrip",
+  "4.3.59": "idc", "4.3.60": "latch", "4.3.61": "idc", "4.3.62": "insDamage",
+  "4.4.2.21": "dirt", "4.4.4.8": "spliceSize", "4.4.4.9": "shieldSpread", "4.5.29": "tape", "4.6.24": "markShift",
+  "4.7.24": "missing", "4.7.25": "bendRadius", "4.8.17": "vswr",
+  "4.9.14": "tieSpacing", "4.9.15": "tieLoose", "4.9.16": "tieSpacing", "4.9.17": "loop", "4.9.18": "cover",
+  "4.9.19": "length", "4.9.20": "pinout", "4.9.21": "loop", "4.9.22": "twist",
+  "4.11.26": "tinInCrimp", "4.11.27": "missing", "4.11.28": "size", "4.11.29": "crimpMarks",
 };

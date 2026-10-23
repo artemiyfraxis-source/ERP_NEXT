@@ -105,7 +105,7 @@ def test_open_issue_freezes_the_card_and_names_the_documents(td):
         "10::A::": {"profession": "Монтажник радиоэлектронной аппаратуры и приборов", "grade": "", "source": "по умолчанию"},
         "20::B::": {"profession": "Монтажник радиоэлектронной аппаратуры и приборов", "grade": "", "source": "по умолчанию"},
     }
-    assert printed["sto"] == {"designation": "СТО ФРАК-001-2026", "revision": "2", "title": "Жгуты и кабельные сборки. Типовые дефекты и критерии приёмки"}
+    assert printed["sto"] == {"designation": "СТО ФРАК-001-2026", "revision": "3", "title": "Жгуты и кабельные сборки. Типовые дефекты и критерии приёмки"}
     assert set(printed["sto_sections"]) == {"10::A::", "20::B::"}
     assert printed["changes"] == []
     listed = client.get(f"/api/techcards/projects/{card['id']}/td-issues").json()
