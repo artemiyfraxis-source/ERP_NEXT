@@ -764,7 +764,7 @@ SK-9 (`existing_shelf`), иначе 422. Только подсказка: в б�
 - Тип позиции не приводился к канону (`stock05CanonType_`, `STOCK05_TYPE_ALIAS_`) — не входило в SK-10; с SK-14 приводится.
 - Пустой запрос (`items: []`) — 422, как раньше; SUPPLYMAP отвечает `added: 0`.
 
-«Приход на склад» (owner 23.10.2026; `receipts_application.py`, `receipts_api.py`, миграция `0143_warehouse_receipts`)
+«Приход на склад» (owner 23.10.2026; `receipts_application.py`, `receipts_api.py`, миграция `0144_warehouse_receipts`)
 — быстрый ввод как документ поставки. Шапка `warehouse_receipts`: склад (CHECK ЦАР/ЖУК), поставщик, № и дата счёта,
 № и дата УПД, назначение по умолчанию, ссылка на скан УПД, `version`; своей даты приёмки нет — момент приёмки строки
 есть событие её партии. Строки принимаются по одной: `POST /api/stock/receipts/{id}/accept` (строка быстрого ввода без
