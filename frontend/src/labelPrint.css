@@ -1,9 +1,10 @@
-/* «Печать этикеток ГРН» and the «Оборудование» section. */
+/* «Печать этикеток ГРН»: the printer card of «Настройка печати», and the «Оборудование» section. */
 .equipment-cards { display: grid; gap: 16px; margin-top: 12px; }
 .equipment-card { display: grid; gap: 12px; max-width: 1100px; padding: 16px 20px; }
 .panel.equipment-card > h2:first-child { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
-.equipment-card .page-sub { margin: 0; }
-.equipment-card .error-banner, .equipment-card .success-banner { margin: 0; }
+.printer-card { display: grid; gap: 12px; }
+.equipment-card .page-sub, .printer-card .page-sub { margin: 0; }
+.equipment-card .error-banner, .equipment-card .success-banner, .printer-card .error-banner, .printer-card .success-banner { margin: 0; }
 .agent-block { display: grid; gap: 4px; margin: 0; font-size: 13px; }
 .agent-block p { margin: 0; }
 .agent-howto { margin: 0; padding-left: 20px; color: var(--foreground); }

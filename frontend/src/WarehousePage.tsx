@@ -3,6 +3,7 @@ import { LoadMore } from "./LoadMore";
 import { urlParam } from "./navigation";
 import { SuggestInput } from "./SuggestInput";
 import { LotLabel } from "./LabelPrint";
+import { PrintSetupButton } from "./PrintSetupWindow";
 import { printLotLabels } from "./lotLabel";
 import { usePurposeLabel } from "./purposeLabels";
 import { VIA_LABELS, purchasingItemsApi, type ItemBrief, type ItemRow } from "./purchasingItemsApi";
@@ -300,6 +301,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
             ]),
             ...(admin ? [{ label: "Журнал склада", run: () => setPanel((value) => value === "journal" ? "" : "journal") }] : []),
           ]} />
+          <PrintSetupButton kind="lot" readOnly={readOnly} />
           {!readOnly && <button className="primary" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>}
         </div>
       </header>

@@ -43,12 +43,10 @@ it("device browser errors are listed", async () => {
   expect(errors).toHaveTextContent("TypeError: x is not a function");
 });
 
-it("«Оборудование» has the ТСД card and the label printer card", async () => {
-  api({
-    "GET /api/stock/label-settings": () => json({ detail: "нет" }, 404),
-    "GET /api/stock/label-printers": () => json({ printers: [], on_windows: false }),
-  });
+it("«Оборудование» has the ТСД card; the label printer moved to «Настройка печати»", async () => {
+  api();
   render(<EquipmentPage admin />);
   expect(await screen.findByRole("region", { name: "ТСД" })).toBeInTheDocument();
-  expect(await screen.findByRole("region", { name: "Печать этикеток ГРН" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Печать этикеток ГРН" })).not.toBeInTheDocument();
+  expect(screen.getByText(/Настройка печати/)).toBeInTheDocument();
 });
