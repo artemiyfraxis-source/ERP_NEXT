@@ -564,9 +564,9 @@ details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 
 .wr-table input, .wr-table select { height: 30px; }
 .wr-table input::placeholder { color: var(--muted-foreground); opacity: .7; font-style: normal; }
 .wr-col-article { width: 150px; } .wr-col-quantity { width: 74px; } .wr-col-unit { width: 56px; } .wr-col-item_type { width: 124px; }
-.wr-col-manufacturer { width: 120px; } .wr-col-series { width: 100px; } .wr-col-name { width: 18%; } .wr-col-purpose { width: 84px; }
+.wr-col-manufacturer { width: 120px; } .wr-col-series { width: 100px; } .wr-col-name { width: 16%; } .wr-col-purpose { width: 84px; }
 .wr-col-expiry_date { width: 112px; } .wr-col-datasheet { width: 84px; } .wr-col-certificate { width: 76px; }
-.wr-col-act { width: 150px; padding: 0 8px !important; text-align: right; white-space: nowrap !important; }
+.wr-col-act { width: 116px; padding: 0 8px !important; text-align: right; white-space: nowrap !important; }
 .wr-table td.wr-col-quantity input { text-align: right; }
 .wr-table input.wr-auto { color: var(--muted-foreground); font-style: italic; }
 .wr-table input.wr-auto:focus { color: var(--foreground); font-style: normal; }
