@@ -26,6 +26,7 @@ SAMPLE = GrnLabelData(
     received_on=date(2026, 8, 31),
     place="1F4",
     warehouse="ЦАР",
+    manufacturer="JST",
 )
 
 # Roller_Buyer encodeCode128('FRX.26.0000041').
@@ -59,25 +60,24 @@ def test_qr_is_a_whole_number_of_dots_per_module():
 
 def test_the_label_says_what_the_storekeeper_reads_by_eye():
     texts = builtin(replace(SAMPLE, item_name=SAMPLE.item_name + " для проверки переноса на вторую строку")).texts
-    # Cyrillic «ГРН», never Latin «GRN»; then the number, the quantity with the unit.
-    assert texts[:3] == ("ГРН", "26.0000001", "25 м")
-    assert "GRN" not in texts
-    # The name wraps to two lines, the ellipsis only ends the second one; the article has its own line.
+    # Cyrillic «ГРН», never Latin «GRN»; then the number and the article big beside the QR — no quantity.
+    assert texts[:3] == ("ГРН", "26.0000001", "TSRSLT-001")
+    assert "GRN" not in texts and "25 м" not in texts
+    # The name wraps to two lines, the ellipsis only ends the second one; then the manufacturer and the place.
     assert texts[3].startswith("Провод МГТФ") and not texts[3].endswith("…")
     assert texts[4].endswith("…")
-    assert texts[5] == "TSRSLT-001"
-    assert texts[6] == "1F4 · ЦАР"
-    assert texts[7] == "поступило 31.08.2026 · серия L-2026-07"
+    assert texts[5:] == ("JST", "1F4 · ЦАР", "поступило 31.08.2026 · серия L-2026-07")
 
 
-def test_a_name_that_already_carries_the_article_is_not_doubled():
-    texts = builtin(GrnLabelData("FRX.26.0000001", "510210200", "Molex 510210200 PicoBlade", "5", "шт", "", None)).texts
-    assert texts == ("ГРН", "FRX.26.0000001", "5 шт", "Molex 510210200 PicoBlade")  # no place, no date, no article
+def test_the_article_is_dropped_only_when_it_is_the_name_itself():
+    carried = builtin(GrnLabelData("FRX.26.0000001", "510210200", "Molex 510210200 PicoBlade", "5", "шт", "", None)).texts
+    assert carried == ("ГРН", "FRX.26.0000001", "510210200", "Molex 510210200 PicoBlade")  # the article stays: it is searched by
+    assert lot_content(GrnLabelData("FRX.26.0000001", "A-1", "A-1", "5", "шт", "", None)).value("article") == ""
 
 
 def test_a_short_name_stays_on_one_line_and_the_place_is_empty_before_putaway():
     texts = builtin(GrnLabelData("FRX.26.0000001", "A-1", "Разъём", "5", "шт", "", date(2026, 9, 25), "", "ЦАР")).texts
-    assert texts[3:] == ("Разъём", "A-1", "ЦАР", "поступило 25.09.2026")
+    assert texts[2:] == ("A-1", "Разъём", "ЦАР", "поступило 25.09.2026")
 
 
 def test_a_series_too_long_for_the_date_line_is_cut_and_the_date_stays():
@@ -86,16 +86,16 @@ def test_a_series_too_long_for_the_date_line_is_cut_and_the_date_stays():
     assert last.startswith("поступило 25.09.2026") and last.endswith("…")
 
 
-def test_a_low_label_58x30_fits_without_the_article():
+def test_a_low_label_58x30_puts_the_manufacturer_on_the_place_line():
     long = GrnLabelData("FRX.26.0000041", "510210200", "Соединитель PicoBlade 2pin (MOLEX) в корпусе", "338", "шт", "12/2026",
-                        date(2026, 9, 25), "1F4", "ЦАР")
+                        date(2026, 9, 25), "1F4", "ЦАР", "JST")
     for code_type in ("qr", "both"):
         label = builtin(long, height_mm=30, code_type=code_type)
         assert label.image.size == (685, 354) and not label.overflow
-        assert "510210200" not in label.texts, "the low label has no article line"
-        assert "1F4 · ЦАР" in label.texts and label.texts[-1].startswith("поступило 25.09.2026")
-    # Where it has room (58 × 40) the article is there.
-    assert "510210200" in builtin(long).texts
+        assert label.texts[2] == "510210200", "the article is big beside the QR"
+        assert "JST · 1F4 · ЦАР" in label.texts and label.texts[-1].startswith("поступило 25.09.2026")
+    # Where it has room (58 × 40) the manufacturer has its own line.
+    assert builtin(long).texts[-3:-1] == ("JST", "1F4 · ЦАР")
 
 
 def test_code128_start_b_checksum_stop_and_whole_dot_modules():
@@ -231,7 +231,7 @@ def test_any_other_size_is_refused_in_russian(width, height):
 
 WIDE = GrnLabelData(
     "FRX.26.0000041-12", "510210200", "Соединитель PicoBlade 2pin вилка на плату угловая шаг 1,25 мм (MOLEX)", "338", "шт",
-    "12/2026", date(2026, 9, 25), "1F4", "ЦАР",
+    "12/2026", date(2026, 9, 25), "1F4", "ЦАР", "JST",
 )
 
 
@@ -240,10 +240,10 @@ def test_wide_label_is_100_by_50_with_every_field(code_type):
     label = builtin(WIDE, width_mm=100, height_mm=50, code_type=code_type)
     assert (label.width, label.height) == (1181, 591) and label.image.mode == "1"
     texts = label.texts
-    assert texts[:3] == ("ГРН", "FRX.26.0000041-12", "338 шт")
+    assert texts[:3] == ("ГРН", "FRX.26.0000041-12", "510210200")
     # The name in full, over up to three lines.
     assert " ".join(texts[3:-3]) == WIDE.item_name and 1 <= len(texts) - 6 <= 3
-    assert texts[-3:] == ("510210200", "1F4 · ЦАР", "поступило 25.09.2026 · серия 12/2026")
+    assert texts[-3:] == ("JST", "1F4 · ЦАР", "поступило 25.09.2026 · серия 12/2026")
     assert label.qr_module_dots == (None if code_type == "code128" else 12)
     assert label.bar_module_dots == (None if code_type == "qr" else 3)
     assert not label.overflow
@@ -258,7 +258,7 @@ def test_wide_label_stays_inside_its_margins_and_the_qr_does_not_meet_the_bars()
 def test_wide_label_cuts_a_very_long_name_at_three_lines_and_skips_empty_fields():
     data = GrnLabelData("FRX.26.0000041", "X1", "Очень длинное наименование " * 20, "1", "шт", "", None)
     texts = builtin(data, width_mm=100, height_mm=50, code_type="both").texts
-    name_lines = [text for text in texts[3:] if text != "X1"]
+    name_lines = [text for text in texts[3:]]
     assert len(name_lines) == 3 and name_lines[-1].endswith("…")
     assert not any(text.startswith("поступило") for text in texts)
 

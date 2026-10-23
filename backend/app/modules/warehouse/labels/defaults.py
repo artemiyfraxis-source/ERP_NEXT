@@ -7,6 +7,10 @@ Code128 the bars run along the bottom; a low 58 × 30 label with bars takes ever
 on the left, the text stacked on the right, the name over up to three lines. The type of code follows the settings'
 «Код на этикетке» — only for these built-in templates; a saved template carries its own codes.
 
+A lot label (23.10.2026) has no quantity: the ARTICLE stands big and bold beside the QR under the ГРН (the storekeeper
+searches by it); full width below it the name, the manufacturer, «место · склад» and the date with the series. The low
+58 × 30 puts the manufacturer on the place line («JST · 1F4 · ЦАР»), the taller formats give it a line of its own.
+
 Intake (an act of «Приёмка с производства») prints as today: «проект КБ» where a lot has its article, no series."""
 
 from __future__ import annotations
@@ -56,8 +60,15 @@ def _code(id_: str, kind: str, x: float, y: float, w: float, h: float) -> dict:
 
 
 def _lower_fields(kind: str) -> tuple[str, str]:
-    """(the line under the name, the date line) of each kind."""
-    return ("article", "received_series") if kind == "lot" else ("project_item", "received")
+    """(the line under the name of the taller formats, the date line) of each kind."""
+    return ("manufacturer", "received_series") if kind == "lot" else ("project_item", "received")
+
+
+def _right_row(kind: str, narrow: bool) -> dict:
+    """The row under the ГРН beside the QR: a lot's article (what the storekeeper searches by), an intake's quantity."""
+    if kind == "lot":
+        return {"id": "article", "font_mm": 3.0 if narrow else 4.0, "field": "article", "bold": True}
+    return {"id": "quantity", "font_mm": 2.7 if narrow else 3.8, "field": "quantity", "bold": True}
 
 
 def _narrow(kind: str, width: float, height: float, code_type: str) -> list[dict]:
@@ -72,20 +83,23 @@ def _narrow(kind: str, width: float, height: float, code_type: str) -> list[dict
     top, bottom = _stack(x, 1.2 if scale == 1 else 1.0, width - MARGIN - x, [
         (0, {"id": "caption", "font_mm": 1.4 * scale, "text": "ГРН", "bold": True}),
         (gap, {"id": "grn", "font_mm": 3.2 * scale, "field": "grn", "mono": True, "bold": True}),
-        (gap, {"id": "quantity", "font_mm": 2.7 * scale, "field": "quantity", "bold": True}),
+        (gap, _right_row(kind, True) | {"font_mm": _right_row(kind, True)["font_mm"] * scale}),
     ])
     elements += top
     if with_qr:
         bottom = max(bottom, MARGIN + qr_side)
+    lot = kind == "lot"
     second, date_line = _lower_fields(kind)
+    place = "place_warehouse" if height >= 40 or not lot else "manufacturer_place"
     rows: list[tuple[float, dict]] = [(0.6 * scale, {
         "id": "name", "font_mm": 1.8 * scale, "field": "name", "bold": True, "lines": 2 if height >= 40 else 1,
         "fit": "ellipsis",
     })]
     if height >= 40:
-        rows.append((0.4, {"id": second, "font_mm": 1.5, "field": second, "fit": "ellipsis"}))
+        extra = "manufacturer" if lot else second
+        rows.append((0.4, {"id": extra, "font_mm": 1.5, "field": extra, "fit": "ellipsis"}))
     rows += [
-        (0.4, {"id": "place_warehouse", "font_mm": 1.9 * scale, "field": "place_warehouse", "bold": True, "fit": "ellipsis"}),
+        (0.4, {"id": place, "font_mm": 1.9 * scale, "field": place, "bold": True, "fit": "ellipsis"}),
         (0.4, {"id": date_line, "font_mm": round(1.5 * scale, 1), "field": date_line, "fit": "ellipsis"}),
     ]
     lower, _ = _stack(MARGIN, bottom, width - 2 * MARGIN, rows)
@@ -110,9 +124,10 @@ def _wide(kind: str, width: float, height: float, code_type: str) -> list[dict]:
     rows: list[tuple[float, dict]] = [
         (0, {"id": "caption", "font_mm": 1.8, "text": "ГРН"}),
         (0.2, {"id": "grn", "font_mm": 4.5, "field": "grn", "mono": True, "bold": True}),
-        (0.5, {"id": "quantity", "font_mm": 3.8, "field": "quantity", "bold": True}),
+        (0.5, _right_row(kind, False)),
         (0.5, {"id": "name", "font_mm": 2.1, "field": "name", "bold": True, "lines": 3, "fit": "ellipsis"}),
-        (0.5, {"id": second, "font_mm": 1.8, "field": second, "fit": "ellipsis"}),
+        (0.5, {"id": "manufacturer" if kind == "lot" else second, "font_mm": 1.8,
+               "field": "manufacturer" if kind == "lot" else second, "fit": "ellipsis"}),
         (0.2, {"id": "place_warehouse", "font_mm": 1.8, "field": "place_warehouse", "fit": "ellipsis"}),
         (0.2, {"id": date_line, "font_mm": 1.8, "field": date_line, "fit": "ellipsis"}),
     ]

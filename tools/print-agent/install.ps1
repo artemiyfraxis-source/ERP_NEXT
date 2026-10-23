@@ -16,15 +16,37 @@ $ErrorActionPreference = 'Stop'
 $TaskName = 'Fraxis — печать этикеток'
 $Dir = Join-Path $env:ProgramData 'FraxisPrintAgent'
 
-function Remove-Agent {
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+function Get-AgentProcess {
+    @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+        Where-Object { $_.CommandLine -like '*FraxisPrintAgent*agent.ps1*' })
+}
+
+# Останавливает уже запущенный агент: задачу и сам процесс (Register-ScheduledTask -Force не трогает живой процесс,
+# он остался бы со старым токеном). Ждёт, пока процессы выйдут, не дольше $WaitSeconds. Возвращает $true, если что-то остановили.
+function Stop-Agent {
+    param([int]$WaitSeconds = 10)
+    $stopped = $false
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($task) {
+        if ($task.State -eq 'Running') { $stopped = $true }
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }
     # на случай, если процесс агента ещё жив
-    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
-        Where-Object { $_.CommandLine -like '*FraxisPrintAgent*agent.ps1*' } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    $alive = Get-AgentProcess
+    foreach ($process in $alive) {
+        $stopped = $true
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ((Get-AgentProcess).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+    return $stopped
+}
+
+function Remove-Agent {
+    Stop-Agent | Out-Null
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    }
     if (Test-Path $Dir) { Remove-Item $Dir -Recurse -Force }
     Write-Host 'Агент печати удалён: задача и папка убраны.'
 }
@@ -42,6 +64,9 @@ if (-not $Printer) {
 } elseif ($printers -notcontains $Printer) {
     throw ("Очереди '$Printer' нет. Установленные: " + ($printers -join '; '))
 }
+
+# Переустановка: прежний агент (со старым токеном) останавливается до записи нового, иначе он продолжит работать.
+if (Stop-Agent) { Write-Host 'Прежний агент остановлен' }
 
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
 Copy-Item (Join-Path $PSScriptRoot 'agent.ps1') (Join-Path $Dir 'agent.ps1') -Force
