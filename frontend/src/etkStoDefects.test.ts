@@ -1,9 +1,12 @@
 // «Типовые дефекты» по СТО ФРАК-001-2026, ред. 2 (релиз 22.10, #643): разбор текста карточки и рисунок на каждый пункт.
+// @ts-ignore — типы node в проекте не подключены, файлы читаются напрямую из репозитория
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { DEFECT_SCENES, defectArt, defectSceneArt, defectSceneId } from "./etkDefectArt";
 import { parseDefects, STO_ROW } from "./etkOperation";
 import { STO_SCENES } from "./etkStoScenes";
+
+declare const process: { cwd(): string };
 
 type Sto = { sections: StoNode[] };
 type StoNode = { rows?: Array<{ code: string; defect: string }>; subsections?: StoNode[] };
