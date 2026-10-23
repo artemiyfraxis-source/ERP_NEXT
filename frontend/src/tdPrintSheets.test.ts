@@ -230,12 +230,12 @@ it("в комплекте нет латинских кодов видов опе
   expect(html).not.toContain("CUT_WIRE");
 });
 
-it("СТО печатается целиком: все 320 кодов дефектов, повтор шапки таблиц, действия и лист изменений", () => {
+it("СТО печатается целиком: все 351 код дефектов, повтор шапки таблиц, действия и лист изменений", () => {
   const out = buildStoHtml(sto);
   const codes: string[] = [];
   const walk = (section: Sto["sections"][number]): void => { section.rows.forEach((row) => codes.push(row.code)); (section.subsections ?? []).forEach(walk); };
   sto.sections.forEach(walk);
-  expect(codes).toHaveLength(320);
+  expect(codes).toHaveLength(351);
   for (const code of codes) expect(out).toContain(`<td class="code">${code}</td>`);
   expect(out).toContain("thead { display: table-header-group; }");
   expect(out).toContain("A4 landscape");
