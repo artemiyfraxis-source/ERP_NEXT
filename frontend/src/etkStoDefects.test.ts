@@ -1,4 +1,4 @@
-// «Типовые дефекты» по СТО ФРАК-001-2026, ред. 2 (релиз 22.10, #643): разбор текста карточки и рисунок на каждый пункт.
+// «Типовые дефекты» по СТО ФРАК-001-2026 (ред. 2 — релиз 22.10, #643; ред. 3 — 23.10): разбор текста карточки и рисунок на каждый пункт.
 // @ts-ignore — типы node в проекте не подключены, файлы читаются напрямую из репозитория
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -15,8 +15,8 @@ type Template = { code: string; record: { defects: string } };
 
 const root = `${process.cwd()}/..`;
 const sto = JSON.parse(readFileSync(`${root}/backend/data/sto-frak-001-2026.json`, "utf8") as string) as Sto;
-// Тексты после перезаписи 22.10 — снимок прода из репозитория (docs/data/operation-templates-2026-10-22).
-const templates = JSON.parse(readFileSync(`${root}/docs/data/operation-templates-2026-10-22/templates-after.json`, "utf8") as string) as Template[];
+// Тексты шаблонов после записи 23.10 (docs/data/operation-templates-2026-10-23/payload.json; 111 правленых + 10 новых кодов).
+const templates = JSON.parse(readFileSync(`${root}/docs/data/operation-templates-2026-10-23/payload.json`, "utf8") as string) as Template[];
 
 function stoRows(node: StoNode): Array<{ code: string; defect: string }> {
   return [...(node.rows ?? []), ...(node.subsections ?? []).flatMap(stoRows)];
@@ -47,9 +47,9 @@ describe("parseDefects: текст по СТО ФРАК-001-2026", () => {
   });
 });
 
-describe("рисунки по строкам СТО ФРАК-001-2026, ред. 2", () => {
+describe("рисунки по строкам СТО ФРАК-001-2026, ред. 3", () => {
   it("has a picture for every one of the STO rows and no stray entries in the table", () => {
-    expect(rows).toHaveLength(320);
+    expect(rows).toHaveLength(351);
     expect(Object.keys(STO_SCENES).sort()).toEqual(rows.map((row) => row.code).sort());
     const missing = rows.filter((row) => {
       const id = defectSceneId(`${row.code} ${row.defect}`);
@@ -88,9 +88,9 @@ describe("рисунки по строкам СТО ФРАК-001-2026, ред. 2
   });
 });
 
-describe("тексты 111 шаблонов операций после 22.10", () => {
+describe("тексты 121 шаблона операций после 23.10", () => {
   it("parse into exactly one item per STO code, with no «Критерии…» garbage items", () => {
-    expect(templates).toHaveLength(111);
+    expect(templates).toHaveLength(121);
     const wrong: string[] = [];
     for (const template of templates) {
       const text = template.record.defects;
@@ -111,7 +111,7 @@ describe("тексты 111 шаблонов операций после 22.10", 
         }
       }
     }
-    expect(total).toBe(1496);
+    expect(total).toBe(1617);
     expect(generic).toEqual([]);
   });
 });
@@ -119,7 +119,7 @@ describe("тексты 111 шаблонов операций после 22.10", 
 describe("форма правки: тексты по СТО ФРАК-001-2026 туда и обратно", () => {
   const trim = (text: string) => text.replace(/[ \t]+$/gm, "").trimEnd();
 
-  it("saves every one of the 111 templates unchanged when nothing was edited", () => {
+  it("saves every one of the 121 templates unchanged when nothing was edited", () => {
     const changed = templates.filter((template) => {
       const text = template.record.defects;
       return trim(serializeDefects(defectsDraft(text), text)) !== trim(text);
