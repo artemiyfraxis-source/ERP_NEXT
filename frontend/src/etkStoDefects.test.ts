@@ -2,6 +2,7 @@
 // @ts-ignore — типы node в проекте не подключены, файлы читаются напрямую из репозитория
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { defectsDraft, serializeDefects } from "./etkDefectEdit";
 import { DEFECT_SCENES, defectArt, defectSceneArt, defectSceneId } from "./etkDefectArt";
 import { parseDefects, STO_ROW } from "./etkOperation";
 import { STO_SCENES } from "./etkStoScenes";
@@ -97,5 +98,46 @@ describe("тексты 111 шаблонов операций после 22.10", 
     }
     expect(total).toBe(1496);
     expect(generic).toEqual([]);
+  });
+});
+
+describe("форма правки: тексты по СТО ФРАК-001-2026 туда и обратно", () => {
+  const trim = (text: string) => text.replace(/[ \t]+$/gm, "").trimEnd();
+
+  it("saves every one of the 111 templates unchanged when nothing was edited", () => {
+    const changed = templates.filter((template) => {
+      const text = template.record.defects;
+      return trim(serializeDefects(defectsDraft(text), text)) !== trim(text);
+    });
+    expect(changed.map((template) => template.code)).toEqual([]);
+  });
+
+  it("writes every template back from the form model alone in the same form — groups, «Критерии…» line and the colon in names included", () => {
+    const changed = templates.filter((template) => {
+      const draft = defectsDraft(template.record.defects);
+      draft.groups.forEach((group) => { group.origin = null; });
+      return trim(serializeDefects(draft, "")) !== trim(template.record.defects);
+    });
+    expect(changed.map((template) => template.code)).toEqual([]);
+  });
+
+  it("keeps the «4.2.13 Кабель, Ethernet, USB: надрезы…» form, the class groups and both service lines when a row is edited", () => {
+    const original = templates.find((template) => template.code === "STRIP_CABLE")!.record.defects;
+    const draft = defectsDraft(original);
+    draft.groups[0].items[0].name = "4.2.13 Кабель, Ethernet, USB: надрезы, обрывы жил и экрана";
+    draft.groups[1].items.push({ name: "4.2.99 Кабель: новый пункт", text: "" });
+    const saved = serializeDefects(draft, original);
+    const lines = saved.split("\n");
+    expect(lines[0]).toBe(original.split("\n")[0]);
+    expect(lines[1]).toBe("1. Критические — не допускаются:");
+    expect(lines[2].startsWith("4.2.13 Кабель, Ethernet, USB: надрезы, обрывы жил и экрана; 4.2.15 Кабель: оголение внутренней жилы; ")).toBe(true);
+    expect(lines[2].endsWith(".")).toBe(true);
+    expect(lines[3]).toBe("2. Значительные — не допускаются:");
+    expect(lines[4].endsWith("; 4.2.99 Кабель: новый пункт.")).toBe(true);
+    expect(lines[5]).toBe(original.split("\n").at(-1));
+    const reread = parseDefects(saved);
+    expect(reread.intro).toHaveLength(2);
+    expect(reread.groups.map((group) => group.items.map((item) => item.name))).toEqual(
+      draft.groups.map((group) => group.items.map((item) => item.name)));
   });
 });
