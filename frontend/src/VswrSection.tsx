@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   productionApi,
   type ProductionInstrument,
-  type ProductionTask,
   type VswrMeasurement,
   type VswrControl,
   type VswrNorm,
   type VswrSerialRow,
+  type VswrTaskListItem,
   type VswrTaskOverview,
 } from "./api";
 import { printCoaxPassport } from "./coaxPassportPrint";
@@ -26,7 +26,10 @@ const num = (value: number | null | undefined, digits = 2) => (value === null ||
 export function normLine(norm: VswrNorm): string {
   if (norm.status === "ok") {
     const band = norm.band_mhz && norm.band_mhz[0] !== null && norm.band_mhz[1] !== null ? `, полоса ${num(norm.band_mhz[0], 1)} … ${num(norm.band_mhz[1], 1)} МГц` : "";
-    return `Норма ≤ ${num(norm.vswr_max)} по комплектующим${norm.source ? `: ${norm.source}` : ""}${band}`;
+    // source = "computed": норма рассчитана на лету для ЭТК до нормы — вместо служебного слова показываем основание.
+    const computed = norm.source === "computed";
+    const source = computed ? (norm.basis ? ` (${norm.basis})` : "") : norm.source ? `: ${norm.source}` : "";
+    return `Норма ≤ ${num(norm.vswr_max)} по комплектующим${source}${band}`;
   }
   return `Норма не определена — ${norm.reason || "причина не указана"}`;
 }
@@ -53,15 +56,14 @@ const verdictChip = (measurement: VswrMeasurement | null) => measurement
 
 export interface VswrRejectRequest { taskId: string; serialNumber: string; description: string }
 
-export function VswrSection({ tasks, instruments, canUpload, canReject, onReject }: {
-  tasks: ProductionTask[];
+export function VswrSection({ instruments, canUpload, canReject, onReject }: {
   instruments: ProductionInstrument[];
   canUpload: boolean;
   /** Есть ли у задания коробка в очереди ОТК — только тогда «Не годно» ведёт в брак. */
   canReject: (taskId: string) => boolean;
   onReject: (request: VswrRejectRequest) => void;
 }) {
-  const choices = useMemo(() => tasks.filter((task) => !task.pending), [tasks]);
+  const [choices, setChoices] = useState<VswrTaskListItem[] | null>(null);
   const [taskId, setTaskId] = useState("");
   const [overview, setOverview] = useState<VswrTaskOverview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -83,6 +85,15 @@ export function VswrSection({ tasks, instruments, canUpload, canReject, onReject
   }
 
   useEffect(() => { void load(taskId); }, [taskId]);
+  useEffect(() => {
+    let alive = true;
+    productionApi.vswrTasks().then((result) => { if (alive) setChoices(result.tasks); }).catch((reason) => {
+      if (!alive) return;
+      setChoices([]);
+      setError(reason instanceof Error ? reason.message : "Не удалось загрузить задания на коаксиальные сборки");
+    });
+    return () => { alive = false; };
+  }, []);
 
   async function openPassport(row: VswrSerialRow) {
     setError("");
@@ -123,12 +134,15 @@ export function VswrSection({ tasks, instruments, canUpload, canReject, onReject
       <label className="vswr-task-pick">Задание
         <select value={taskId} onChange={(event) => setTaskId(event.target.value)}>
           <option value="">— выберите задание —</option>
-          {choices.map((task) => <option key={task.id} value={task.id}>{task.number} · {task.name || task.item} · {task.quantity} шт</option>)}
+          {(choices ?? []).map((task) => <option key={task.id} value={task.id}>
+            {task.number} · {task.name || task.item} · {task.quantity} шт{task.control.mode === "none" ? "" : ` · замерено ${task.required.measured} из ${task.required.total}`}
+          </option>)}
         </select>
       </label>
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
-    {!taskId && <div className="empty">Выберите задание коаксиальной сборки — здесь появятся её изделия и замеры.</div>}
+    {choices !== null && choices.length === 0 && !error && <div className="empty">Нет заданий на коаксиальные сборки</div>}
+    {!taskId && !(choices !== null && choices.length === 0) && <div className="empty">Выберите задание коаксиальной сборки — здесь появятся её изделия и замеры.</div>}
     {taskId && loading && !overview && <div className="empty">Загрузка…</div>}
     {overview && <>
       <div className="vswr-head">

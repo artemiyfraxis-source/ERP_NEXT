@@ -97,7 +97,7 @@ export function QualityPage({ principal }: { principal: Principal }) {
     {notice && <div className="success-banner">{notice}</div>}
     {!loaded && <div className="empty">Загрузка…</div>}
     {loaded && canQuality && <QualityPanel boxes={boxes} tasks={tasks} instruments={instruments} busy={Boolean(busy)} mutate={mutate} prefill={prefill} />}
-    {loaded && canQuality && <VswrSection tasks={tasks} instruments={instruments} canUpload={canQuality} canReject={(taskId) => Boolean(queueBox(taskId))} onReject={rejectFromVswr} />}
+    {loaded && canQuality && <VswrSection instruments={instruments} canUpload={canQuality} canReject={(taskId) => Boolean(queueBox(taskId))} onReject={rejectFromVswr} />}
     {loaded && canEdit && <div className="review-row">
       <QcRejectionReview rejections={qcRejections} busy={Boolean(busy)} mutate={mutate} />
       <DefectReview defects={defects} operators={operators} busy={Boolean(busy)} mutate={mutate} />
