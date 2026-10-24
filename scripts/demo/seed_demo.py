@@ -129,8 +129,10 @@ def staff():
 # ── 2. Requests ─────────────────────────────────────────────────────────────────────────────────────
 
 
-def rq(name, typ, qty, unit, proj, price, *, purpose="Обеспечение производства", cat="ОП", qd="Да",
+def rq(name, typ, qty, unit, proj, price, *, purpose=None, cat="ОП", qd="Да",
        point=MSK, dl=7, pl=21, comment=None):
+    # Номер проекта заказчика (614К.1, 621К.2) — всегда назначение «Коммерческий проект»: иначе весь POST отвечает 422.
+    purpose = purpose or ("Коммерческий проект" if proj else "Обеспечение производства")
     d = dict(purpose=purpose, delivery_point=point, name=name, item_type=typ, quantity=str(qty), unit=unit,
              quality_document=qd, procurement_deadline=D(dl), planned_date=D(pl), category=cat,
              price_with_vat=price)
@@ -154,6 +156,10 @@ def requests_():
         rq("Разъём DB-9 вилка на кабель", "Комплектующие", 25, "шт", "621К.2", "118.00", dl=8, pl=20),
         rq("Стяжки нейлоновые 200х3.6", "Расходники", 10, "уп", "621К.2", "210.00", point=RAM, dl=9, pl=21),
         rq("Кембрики маркировочные 2.5 мм", "Расходники", 5, "уп", "614К.1", "380.00", dl=10, pl=21),
+        # Эти три уйдут в «Запросы КП» (шаг 3b): без поставщика, срочность разная.
+        rq("Гильзы НШВИ 0.75 мм², красные", "Расходники", 500, "шт", "614К.1", "3.20", dl=1, pl=9),
+        rq("Лента polyimide 10 мм", "Расходники", 8, "шт", "621К.2", "260.00", point=RAM, dl=6, pl=16),
+        rq("Трубка ТУТ 2:1, 3 мм, прозрачная", "Расходники", 80, "м", "621К.2", "19.00", dl=12, pl=25),
         rq("Обжимной инструмент для клемм JST", "Инструмент", 2, "шт", "", "4500.00",
            purpose="Хоз деятельность", cat="Общепром", qd="Нет", dl=14, pl=30),
         rq("Флюс-гель ФТС, 10 мл", "Расходники", 6, "шт", "", "150.00",
@@ -256,7 +262,46 @@ def procurement():
     outbox()
 
 
-# ── 4. Receiving ────────────────────────────────────────────────────────────────────────────────────
+@step("3b. Запрос КП и решения")
+def rfq():
+    """Запрос КП на три строки у трёх поставщиков, по три котировки на строку, решения по двум строкам:
+    в «Запросах КП» — матрица с ценами, в «Закупке» — карточки по решениям."""
+    buyer = S["petrov.buyer"]
+    want = ("Гильзы НШВИ", "Лента polyimide", "Трубка ТУТ")
+    lines = [l for l in buyer.ok("GET", "/api/purchasing/rfqs/candidates")["lines"] if l["name"].startswith(want)]
+    if len(lines) != len(want):
+        FAILS.append(f"rfq: ожидались строки {want}, в кандидатах {[l['name'] for l in lines]}")
+        return
+    suppliers = ["ООО «ЧипДип»", "ООО «Электро-Сервис»", "ООО «Кабельторг»"]
+    made = buyer.ok("POST", "/api/purchasing/rfqs", "rfqs", json={
+        "line_ids": [l["id"] for l in lines], "title": "Расходники для жгутов",
+        "suppliers": [{"name": n, "reason": "manual"} for n in suppliers], "sent_on": D(-2)})
+    if not made:
+        return
+    rfq_id = made["id"]
+    matrix = buyer.ok("GET", f"/api/purchasing/rfqs/{rfq_id}")
+    if not matrix:
+        return
+    sup_ids = {x["name"]: x["supplier_id"] for x in matrix["suppliers"]}
+    order = {w: i for i, w in enumerate(want)}
+    rlines = sorted(matrix["lines"], key=lambda r: next(order[w] for w in want if r["name"].startswith(w)))
+    price = {  # поставщик -> цена за единицу с НДС по строкам (Гильзы, Лента, Трубка)
+        suppliers[0]: (3.50, 285.00, 21.50), suppliers[1]: (3.20, 270.00, 19.40), suppliers[2]: (3.90, 292.00, 18.90)}
+    for sname, prices in price.items():
+        rows = [{"rfq_line_id": rl["id"], "unit_price": str(p), "vat_included": True,
+                 "lead_days": 3 if sname == suppliers[1] else 7, "in_stock": sname == suppliers[0]}
+                for rl, p in zip(rlines, prices)]
+        buyer.ok("POST", f"/api/purchasing/rfqs/{rfq_id}/quotes", "quotes", json={
+            "supplier_id": sup_ids[sname], "received_on": D(-1), "valid_until": D(14), "source": "manual",
+            "number": f"КП-{sname[5:9]}", "lines": rows})
+    # Решение — по самой дешёвой котировке двух строк (три цены на строку — «ворота» пройдены); «Лента» остаётся без решения.
+    matrix = buyer.ok("GET", f"/api/purchasing/rfqs/{rfq_id}")
+    for rl in (matrix["lines"] if matrix else []):
+        if rl["name"].startswith("Лента") or not rl.get("cheapest_quote_line_id"):
+            continue
+        buyer.ok("POST", f"/api/purchasing/rfqs/{rfq_id}/decisions", "decisions", json={
+            "rfq_line_id": rl["id"], "quote_line_id": rl["cheapest_quote_line_id"]})
+    outbox()
 
 
 @step("4. Receiving")
@@ -660,7 +705,7 @@ def notifications():
 
 def main():
     S["adm"] = Client()
-    for fn in (staff, requests_, handoff, procurement, receiving, stock, techcards, production, fulfillment, shipping, notifications):
+    for fn in (staff, requests_, handoff, procurement, rfq, receiving, stock, techcards, production, fulfillment, shipping, notifications):
         fn()
     print("\nCOUNTS:", json.dumps(COUNT, ensure_ascii=False))
     print(f"FAILURES ({len(FAILS)}):")
