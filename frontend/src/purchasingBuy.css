@@ -6,7 +6,8 @@
 .seg-tabs button.on .buy-count { background: color-mix(in srgb, var(--primary) 14%, var(--card)); color: var(--primary); }
 .purchasing-buy .error-banner, .purchasing-buy .success-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; }
 
-.buy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+/* Не «.buy-grid»: это имя у таблицы «В работе» в «Очередях» (styles.css), глобальный display:grid ломал её раскладку. */
+.buy-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
 .buy-card { display: grid; grid-template-rows: 1fr auto; border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 8px; background: var(--card); }
 .buy-card:hover { border-color: var(--primary); }
 .buy-card[data-stage="ready"] { border-left-color: var(--primary); }
