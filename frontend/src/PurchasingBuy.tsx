@@ -235,7 +235,7 @@ export function PurchasingBuy({ readOnly = false, onOpenRfq, onOpenOrder }: {
       )}
 
       {shown.length > 0 && (
-        <div className="buy-grid" role="list" aria-label="Поставщики">
+        <div className="buy-cards" role="list" aria-label="Поставщики">
           {shown.map((card) => (
             <article key={card.key} role="listitem" className={`buy-card${card.mine ? "" : " is-foreign"}`} data-stage={card.stage}>
               <button type="button" className="buy-card-open" onClick={() => setOpenKey(card.key)} aria-label={`${card.supplier} · ${card.tag} · ${card.count} поз.`}>
