@@ -77,6 +77,8 @@ class BatchPayload(BaseModel):
     mass_1: MassInput = None
     mass_10: MassInput = None
     mass_100: MassInput = None
+    # КОЛ-ВО БРАКА этой партии — когда отмечен брак.
+    defect_quantity: Quantity | None = None
 
     @field_validator("quality_document_url")
     @classmethod
@@ -93,6 +95,8 @@ class InspectionPayload(BaseModel):
     quality_document_url: str | None = Field(default=None, max_length=4096)
     expiry_date: date | None = None
     manual_nonconformities: list[str] = Field(default_factory=list, max_length=2)
+    # КОЛ-ВО БРАКА: обязательно с «Механическое повреждение / брак», 0 < брак ≤ факт; без брака не передаётся.
+    defect_quantity: Quantity | None = None
     disposition: str | None = Field(default=None, max_length=255)
     manual_grn_prefix: str | None = Field(default=None, max_length=8)
     series: str = Field(default="", max_length=255)
@@ -148,6 +152,7 @@ class DeliveryLinePayload(BaseModel):
     fact_quantity: Quantity | None = None
     storage_location: str | None = Field(default=None, max_length=16)
     deviation: Literal["none", "brak", "peresort", "no_quality_doc", "expired"] = "none"
+    # «Брак»: КОЛ-ВО БРАКА строки, обязательно; другие отклонения — только в описание несоответствия.
     deviation_quantity: Quantity | None = None
     expiry_date: date | None = None
     series: str = Field(default="", max_length=255)
@@ -252,6 +257,7 @@ def _result(line: ReceivingLine) -> dict:
         "disposition": line.disposition,
         "verdict": line.verdict,
         "nonconformities": list(line.nonconformities),
+        "defect_quantity": _decimal(line.defect_quantity),
         # Non-blocking: accepted without УПД (ЭДО later); gone once «Внести УПД» adds it.
         "shipping_document_note": SHIPPING_DOCUMENT_PENDING_NOTE if line.shipping_document_pending else None,
         "accepted_quantity": _decimal(line.accepted_quantity),
@@ -452,10 +458,13 @@ def inspect(
             quality_document_number=payload.quality_document_number.strip(),
             standard=payload.standard.strip(),
             quality_document_date=payload.quality_document_date,
+            defect_quantity=data.defect_quantity,
         )
 
     if len(payload.batches) == 1:
         raise HTTPException(status_code=422, detail="Для разбивки нужно минимум 2 партии")
+    if payload.batches and payload.defect_quantity is not None:
+        raise HTTPException(status_code=422, detail="При разбивке на партии количество брака указывается у каждой партии")
     if payload.batches:
         batches = tuple(inspection_for(batch) for batch in payload.batches)
         lines = _run(

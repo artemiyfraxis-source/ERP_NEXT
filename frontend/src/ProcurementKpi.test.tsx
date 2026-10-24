@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { presetRange } from "./ProcurementKpi";
+import { defectText, presetRange } from "./ProcurementKpi";
 import { ProcurementPage } from "./ProcurementPage";
 import * as print from "./print";
 
@@ -19,13 +19,13 @@ const row = (buyer: string, lines: number) => ({
 const sheet = {
   money: { spend: "1250.50", compared_spend: "1210.50", baseline_spend: "1290.50", savings: "40.00", savings_pct: "3.1", compared_lines: 1, kp_savings: null, kp_savings_pct: null, kp_compared_lines: 0, surplus_spend: null, vs_last_purchase: null, compared_with_last: 0, delivery_spend: null },
   delivery: { due: 2, on_time: 1, on_time_pct: "50.0", avg_delay_days: "3.0", avg_request_to_order_days: "4.0", avg_request_to_delivery_days: null },
-  quality: { lines: 2, received_lines: null, lines_with_defect: null, defect_pct: null, defect_amount: null, returned_amount: null },
+  quality: { lines: 2, received_lines: null, lines_with_defect: null, defect_pct: null, defect_amount: null, defect_without_quantity: null, returned_amount: null },
   competition: { decisions: null, avg_offers: null, with_non_key_pct: null, override_pct: null, top1_share: "60.0", top3_share: "100.0", new_suppliers: null },
 };
 const withFacts = {
   ...sheet,
   money: { ...sheet.money, kp_savings: "600.00", kp_savings_pct: "12.0", kp_compared_lines: 1, vs_last_purchase: "200.00", compared_with_last: 1, delivery_spend: "1500.00" },
-  quality: { lines: 2, received_lines: 2, lines_with_defect: 1, defect_pct: "50.0", defect_amount: null, returned_amount: "220.00" },
+  quality: { lines: 2, received_lines: 2, lines_with_defect: 1, defect_pct: "50.0", defect_amount: "132.00", defect_without_quantity: 1, returned_amount: "220.00" },
   competition: { ...sheet.competition, decisions: 4, avg_offers: "2.0", with_non_key_pct: "50.0", override_pct: "25.0", new_suppliers: 1 },
 };
 const supplier = {
@@ -44,7 +44,7 @@ function mockServer(requests: string[] = [], filled = false) {
       requests.push(path);
       return json({
         rows: [row("Петров", 2)], total: row("Итого", 2), buyers: ["Петров"], kpi: filled ? withFacts : sheet,
-        suppliers: [filled ? { ...supplier, is_key: true, asked: 2, answered: 1, response_pct: "50.0", defect_pct: "0.0", price_vs_best_pct: "10.0" } : supplier],
+        suppliers: [filled ? { ...supplier, is_key: true, asked: 2, answered: 1, response_pct: "50.0", defect_pct: "50.0", defect_amount: "132.00", price_vs_best_pct: "10.0" } : supplier],
         highlights: [highlight],
       });
     }
@@ -128,10 +128,22 @@ it("shows the figures that purchasing and receiving add: КП savings, last purc
   const quality = screen.getByRole("heading", { name: "Качество" }).closest("section")!;
   expect(within(quality).getByText(/1 из 2/)).toBeInTheDocument();
   expect(within(quality).getByText("220,00 ₽")).toBeInTheDocument();
-  expect(within(quality).getAllByText("нет данных")).toHaveLength(1); // the defect quantity is not stored
+  // «Брак, ₽» = кол-во брака × цена оплаты; a brak line accepted without a quantity is named, not a zero.
+  expect(within(quality).getByText("132,00 ₽")).toBeInTheDocument();
+  expect(within(quality).getByText(/без количества: 1/)).toBeInTheDocument();
+  expect(within(quality).queryByText("нет данных")).toBeNull();
+  expect(screen.getAllByText("132,00 ₽")).toHaveLength(2); // and in the supplier rating, under its %
   const competition = screen.getByRole("heading", { name: "Конкуренция" }).closest("section")!;
   expect(within(competition).getByText("4")).toBeInTheDocument();
   expect(within(competition).getByText("25,0 %")).toBeInTheDocument();
   expect(screen.getByText("ключевой")).toBeInTheDocument();
   expect(screen.getByText("+10,0 %")).toBeInTheDocument();
+});
+
+it("«Брак, ₽» on the printed sheet: the sum, the brak lines without a quantity, or «нет данных»", () => {
+  const quality = { lines: 3, received_lines: 3, lines_with_defect: 2, defect_pct: "66.7", returned_amount: "0.00" };
+  expect(defectText({ ...quality, defect_amount: "132.00", defect_without_quantity: 0 })).toBe("132,00 ₽");
+  expect(defectText({ ...quality, defect_amount: "132.00", defect_without_quantity: 1 })).toBe("132,00 ₽ (без количества: 1 строка)");
+  expect(defectText({ ...quality, defect_amount: null, defect_without_quantity: 2 })).toBe("нет данных (без количества: 2 строки)");
+  expect(defectText({ ...quality, defect_amount: null, defect_without_quantity: null })).toBe("нет данных");
 });

@@ -8,7 +8,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, case, func, or_, select, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, case, func, or_, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.identity import Actor
@@ -27,6 +27,11 @@ from .domain import (
     ReceivingLine,
     ReceivingStatus,
     queue_rank,
+)
+
+
+DEFECT_QUANTITY_CHECK = (
+    "defect_quantity IS NULL OR (defect_quantity > 0 AND fact_quantity IS NOT NULL AND defect_quantity <= fact_quantity)"
 )
 
 
@@ -49,6 +54,8 @@ class ReceivingLineRow(Base):
         Index("ix_receiving_warehouse_status_created_id", "warehouse", "status", "created_at", "id"),
         # Все строки строки закупки, архивные и партии тоже (уникальный индекс выше — только живые).
         Index("ix_receiving_lines_procurement_line_id", "procurement_line_id"),
+        # КОЛ-ВО БРАКА (0149): a part of the fact, never zero or more than it.
+        CheckConstraint(DEFECT_QUANTITY_CHECK, name="ck_receiving_lines_defect_quantity"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -120,6 +127,7 @@ class ReceivingLineRow(Base):
     complaint_act_date: Mapped[date | None] = mapped_column(Date)
     use_permit_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
     use_permit_date: Mapped[date | None] = mapped_column(Date)
+    defect_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     # Проект НАЗНАЧЕНИЯ и ЦЕЛИ для сравнения (`project_from_purpose`; «» — проекта нет): строки проекта по индексу.
     # Ставятся при записи своих полей; NULL — строка мимо ORM (читается и сверяется в Python).
     purpose_project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
@@ -203,6 +211,7 @@ def _row(line: ReceivingLine) -> ReceivingLineRow:
         complaint_act_date=line.complaint_act_date,
         use_permit_number=line.use_permit_number,
         use_permit_date=line.use_permit_date,
+        defect_quantity=line.defect_quantity,
     )
 
 
@@ -278,6 +287,7 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
         complaint_act_date=row.complaint_act_date,
         use_permit_number=row.use_permit_number or "",
         use_permit_date=row.use_permit_date,
+        defect_quantity=row.defect_quantity,
     )
 
 

@@ -29,7 +29,7 @@ type Sheet = {
   };
   quality: {
     lines: number; received_lines: number | null; lines_with_defect: number | null; defect_pct: string | null;
-    defect_amount: string | null; returned_amount: string | null;
+    defect_amount: string | null; defect_without_quantity: number | null; returned_amount: string | null;
   };
   competition: {
     decisions: number | null; avg_offers: string | null; with_non_key_pct: string | null; override_pct: string | null; top1_share: string | null;
@@ -38,7 +38,8 @@ type Sheet = {
 };
 export type SupplierRating = {
   supplier: string; is_key: boolean | null; asked: number | null; answered: number | null; response_pct: string | null;
-  order_lines: number; spend: string; on_time_pct: string | null; defect_pct: string | null; price_vs_best_pct: string | null;
+  order_lines: number; spend: string; on_time_pct: string | null; defect_pct: string | null; defect_amount?: string | null;
+  price_vs_best_pct: string | null;
 };
 export type Highlight = {
   line_id: string; order_number: string | null; order_date: string | null; supplier: string | null; item: string;
@@ -87,7 +88,11 @@ const supplierColumns: DataColumn<SupplierRating>[] = [
   { key: "lines", title: "Строк заказа", numeric: true, value: (row) => row.order_lines },
   { key: "spend", title: "Сумма с НДС", numeric: true, value: (row) => Number(row.spend), render: (row) => money(row.spend) },
   { key: "ontime", title: "В срок", numeric: true, hint: "Доля его строк, пришедших к ожидаемой дате.", value: (row) => number(row.on_time_pct), render: (row) => cell(row.on_time_pct, pct) },
-  { key: "defect", title: "Брак", numeric: true, hint: "Доля его принятых строк, где входной контроль нашёл брак.", value: (row) => number(row.defect_pct), render: (row) => cell(row.defect_pct, pct) },
+  {
+    key: "defect", title: "Брак", numeric: true, hint: "Доля его принятых строк, где входной контроль нашёл брак; ниже — брак в рублях (кол-во брака × цена оплаты с НДС).",
+    value: (row) => number(row.defect_pct),
+    render: (row) => <>{cell(row.defect_pct, pct)}{row.defect_amount ? <small>{money(row.defect_amount)}</small> : null}</>,
+  },
   {
     key: "best", title: "Цена к лучшей", numeric: true, hint: "Насколько его цена в среднем выше самого дешёвого КП по тем же строкам.",
     value: (row) => number(row.price_vs_best_pct), render: (row) => cell(row.price_vs_best_pct, signedPct),
@@ -121,6 +126,15 @@ export function presetRange(preset: Preset, now = new Date()): { from: string; t
   return { from: isoDay(new Date(year, first, 1)), to: isoDay(now) };
 }
 
+/** «Брак, ₽»: сумма по строкам с количеством брака; строки с браком без количества (приняты до 24.10.2026) названы,
+ *  а не считаются нулём. Ни у одной нет количества — «нет данных». */
+export function defectText(quality: Sheet["quality"]) {
+  const missing = quality.defect_without_quantity ?? 0;
+  const note = missing > 0 ? `без количества: ${missing} ${missing === 1 ? "строка" : missing < 5 ? "строки" : "строк"}` : "";
+  if (quality.defect_amount === null) return note ? `${NO_DATA} (${note})` : NO_DATA;
+  return note ? `${money(quality.defect_amount)} (${note})` : money(quality.defect_amount);
+}
+
 function Card({ title, children }: { title: string; children: ReactNode }) {
   return <section className="panel kpi-card"><h3>{title}</h3><dl>{children}</dl></section>;
 }
@@ -152,7 +166,7 @@ function printSheet(result: KpiResult, from: string, to: string, buyer: string) 
         ["Средняя просрочка", text(kpi.delivery.avg_delay_days, days)],
         ["Заявка → заказ", text(kpi.delivery.avg_request_to_order_days, days)],
         ["Заявка → приёмка", text(kpi.delivery.avg_request_to_delivery_days, days)],
-        ["Брак, ₽", text(kpi.quality.defect_amount, money)],
+        ["Брак, ₽", defectText(kpi.quality)],
         ["Возвраты, ₽", text(kpi.quality.returned_amount, money)],
       ] } },
     ],
@@ -237,7 +251,9 @@ export function ProcurementKpi() {
               <Metric label="Строк с браком" hint="Доля принятых строк, где входной контроль нашёл «Механическое повреждение / брак». Строки, ещё не прошедшие приёмку, не считаются.">
                 {cell(k.quality.defect_pct, pct)}{k.quality.received_lines !== null && <small> ({k.quality.lines_with_defect} из {k.quality.received_lines})</small>}
               </Metric>
-              <Metric label="Брак, ₽" hint="Приёмка хранит характер несоответствия, но не количество брака — сумму посчитать не из чего.">{cell(k.quality.defect_amount, money)}</Metric>
+              <Metric label="Брак, ₽" hint="Кол-во брака, внесённое при приёмке, × цена оплаты с НДС. Строки с браком, принятые без количества, в сумму не входят и названы отдельно.">
+                {cell(k.quality.defect_amount, money)}{(k.quality.defect_without_quantity ?? 0) > 0 && <small> (без количества: {k.quality.defect_without_quantity})</small>}
+              </Metric>
               <Metric label="Возвраты, ₽" hint="Возвращённое поставщику количество по журналу приёмки × цена оплаты с НДС.">{cell(k.quality.returned_amount, money)}</Metric>
             </Card>
             <Card title="Конкуренция">

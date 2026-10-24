@@ -25,6 +25,7 @@ from .domain import (
     DELIVERY_DEVIATIONS,
     EXPIRED,
     MANUAL_NONCONFORMITIES,
+    MECHANICAL_DAMAGE,
     MISSING_QUALITY_DOCUMENT,
     QUEUE_DEFAULT,
     QUEUE_PRESETS,
@@ -522,6 +523,7 @@ def _inspect_line(
                 "from_status": current.status.value,
                 "to_status": inspected.status.value,
                 "verdict": inspected.verdict,
+                **_defect_detail(inspected),
                 **(audit_details or {}),
             },
         )
@@ -530,6 +532,11 @@ def _inspect_line(
         _request_backorder(inspected, uow, now)
     _notify_nonconformity(inspected, uow, now)
     return inspected
+
+
+def _defect_detail(line: ReceivingLine) -> dict[str, str]:
+    """КОЛ-ВО БРАКА in the journal of a ВК: a re-inspection overwrites the line, the journal keeps each one."""
+    return {"defect_quantity": str(line.defect_quantity)} if line.defect_quantity is not None else {}
 
 
 def _backorder_key(line: ReceivingLine) -> str:
@@ -678,6 +685,7 @@ def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -
                         "from_status": current.status.value,
                         "to_status": line.status.value,
                         "verdict": line.verdict,
+                        **_defect_detail(line),
                         "batch_of": current.legacy_id,
                         "batch_quantity": str(line.ordered_quantity),
                     },
@@ -1024,6 +1032,8 @@ def _delivery_inspection(
             raise ReceivingValidationError("Количество отклонения — больше нуля и не больше факта")
         description = f"{nature}: {format(item.deviation_quantity.normalize(), 'f')} {current.unit}"
     return InspectionInput(
+        # «Брак» with its quantity is КОЛ-ВО БРАКА of the line (required there, checked by the domain).
+        defect_quantity=item.deviation_quantity if nature == MECHANICAL_DAMAGE else None,
         fact_quantity=fact,
         document_quantity=document,
         ordered_quantity=current.ordered_quantity,
@@ -1366,6 +1376,14 @@ def _incoming_results(line: ReceivingLine) -> tuple[tuple[str, str, str], ...]:
     )
 
 
+def _defect_row(line: ReceivingLine) -> list[tuple[str, str, str]]:
+    """«Кол-во брака» on the АН and РК of a brak line; a line inspected before 24.10.2026 has none recorded."""
+    if MECHANICAL_DAMAGE not in line.nonconformities:
+        return []
+    value = _qty(line.defect_quantity, line.unit) if line.defect_quantity is not None else "не указано"
+    return [("", "Кол-во брака", value)]
+
+
 def build_act_print_sheet(line: ReceivingLine, kind: str) -> PrintSheet:
     if kind not in ACT_KINDS:
         raise KeyError(f"Неизвестный вид акта: {kind}")
@@ -1443,6 +1461,7 @@ def build_act_print_sheet(line: ReceivingLine, kind: str) -> PrintSheet:
             ("", "№ партии", _dash(line.series)),
             ("", "Основание", basis),
             ("", "Существо претензии (вина поставщика)", _dash(", ".join(claimed))),
+            *_defect_row(line),
             ("", "Описание несоответствия", _dash(line.nonconformity_description)),
             (
                 "",
@@ -1458,6 +1477,7 @@ def build_act_print_sheet(line: ReceivingLine, kind: str) -> PrintSheet:
             ("", "№ партии", _dash(line.series)),
             ("", "Основание", basis),
             ("", "Характер несоответствия", _dash(", ".join(line.nonconformities))),
+            *_defect_row(line),
             ("", "Описание несоответствия", _dash(line.nonconformity_description)),
             ("", "Классификация", "☐ Критическое  ☐ Значительное  ☐ Малозначительное"),
             ("", "Решение по продукции", _dash(line.disposition)),

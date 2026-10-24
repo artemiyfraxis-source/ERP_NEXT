@@ -338,6 +338,8 @@ export interface ReceivingLine {
   disposition: string | null;
   verdict: string | null;
   nonconformities: string[];
+  /** КОЛ-ВО БРАКА: сколько из факта брак, при «Механическое повреждение / брак»; null — брака нет или не указано. */
+  defect_quantity?: string | null;
   /** «УПД не приложен — придёт по ЭДО»: ВК прошёл без УПД, не блокирует; null после «Внести УПД». */
   shipping_document_note?: string | null;
   accepted_quantity: string | null;
