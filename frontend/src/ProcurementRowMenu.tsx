@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
+import { RowActionMenu } from "./RowActionMenu";
 
 export type MenuItem = { label: string; /** Короткая надпись на кнопке (узкая колонка действий); полное название — в подсказке и имени кнопки. */ short?: string; title?: string; disabled?: boolean; run: () => void };
 
@@ -57,6 +58,23 @@ export function RowMenu({ label, items, disabled }: { label: string; items: Menu
   );
 }
 
+const COARSE = "(pointer: coarse)";
+
+/** Сенсорный экран (планшет): второстепенные действия строки уходят в меню «Ещё» — на касание нет наведения, а ссылки второй строкой раздували строку до ~125 px. */
+function useTouchPointer(): boolean {
+  const query = () => (typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(COARSE) : null);
+  const [touch, setTouch] = useState(() => Boolean(query()?.matches));
+  useEffect(() => {
+    const media = query();
+    if (!media) return undefined;
+    const sync = () => setTouch(media.matches);
+    sync();
+    media.addEventListener?.("change", sync);
+    return () => media.removeEventListener?.("change", sync);
+  }, []);
+  return touch;
+}
+
 /** Сколько действий строки видны сразу кнопками; остальные — текстовыми ссылками второй строкой. */
 const PRIMARY_ACTIONS = 2;
 
@@ -65,6 +83,7 @@ const PRIMARY_ACTIONS = 2;
  *  на строке, на планшете (pointer: coarse) видны всегда. Колонка узкая (~150 px): две кнопки в одну строку, у длинных
  *  действий есть `short` (полное название — в подсказке и имени кнопки). Все лежат в DOM и доступны с клавиатуры. */
 export function RowActions({ label, items, disabled }: { label: string; items: MenuItem[]; disabled?: boolean }) {
+  const touch = useTouchPointer();
   const primary = items.slice(0, PRIMARY_ACTIONS);
   const rest = items.slice(PRIMARY_ACTIONS);
   return (
@@ -74,7 +93,11 @@ export function RowActions({ label, items, disabled }: { label: string; items: M
           <button key={item.label} type="button" className="secondary small" disabled={disabled || item.disabled} aria-label={item.short ? item.label : undefined} title={item.title ?? (item.short ? item.label : undefined)} onClick={() => item.run()}>{item.short ?? item.label}</button>
         ))}
       </span>
-      {rest.length > 0 && (
+      {rest.length > 0 && touch && (
+        <RowActionMenu caption="Ещё" label={`Ещё: ${label}`} disabled={disabled}
+          items={rest.map((item) => ({ label: item.label, disabled: item.disabled, run: item.run }))} />
+      )}
+      {rest.length > 0 && !touch && (
         <span className="row-actions-more">
           {rest.map((item) => (
             <button key={item.label} type="button" className="link-button" disabled={disabled || item.disabled} title={item.title} onClick={() => item.run()}>{item.label}</button>

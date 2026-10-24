@@ -28,7 +28,7 @@ function renderTable(lines: ProcurementLine[], handlers: Partial<Props> = {}) {
 
 const value = (label: string) => (screen.getByLabelText(label) as HTMLInputElement).value;
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it("treats only http(s) and www as a link and labels it by the site", () => {
   expect(linkHref("https://chipdip.ru/p/1")).toBe("https://chipdip.ru/p/1");
@@ -289,6 +289,25 @@ it("keeps every row action visible on the row (no «⋯» menu), without approva
   expect(actions.getByRole("button", { name: "Документы, прослеживаемость…" })).toHaveAttribute("title", "Документы, прослеживаемость…");
   fireEvent.click(actions.getByRole("button", { name: "Документы, прослеживаемость…" }));
   expect(screen.getByText("детали")).toBeInTheDocument();
+});
+
+it("on a touch screen puts the secondary row actions into an «Ещё» menu: opens, lists them, runs one, closes on Esc", () => {
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("coarse"), media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+  const onCancel = vi.fn();
+  renderTable([line(1)], { onCancel });
+  const actions = within(screen.getByRole("group", { name: "Действия SM-1" }));
+  expect(actions.getAllByRole("button").map((item) => item.textContent)).toEqual(["Со склада", "Документы…", "Ещё"]);
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  const more = actions.getByRole("button", { name: "Ещё: Действия SM-1" });
+  fireEvent.click(more);
+  const menu = within(screen.getByRole("menu"));
+  expect(menu.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Есть на складе, без ГРН", "Отменить строку", "История"]);
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  fireEvent.click(more);
+  fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: "Отменить строку" }));
+  expect(onCancel).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 });
 
 it("selects all, a Shift range, and runs bulk actions on the chosen rows", async () => {
