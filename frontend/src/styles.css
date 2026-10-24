@@ -5029,4 +5029,9 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .procurement-stage .buy-grid tbody tr:nth-last-child(-n+2) .row-actions-more { top: auto; bottom: calc(100% - 2px); }
 @media (pointer: coarse) {
   .procurement-stage .row-actions-more { position: static; width: auto; max-width: 100%; background: transparent; box-shadow: none; padding: 0; border: 0; }
+  /* Касание: второстепенные действия строки — в меню «Ещё» рядом с кнопками, строка не выше самой кнопки. */
+  .procurement-stage .data-table td.menu { min-width: 236px; }
+  .procurement-stage .buy-grid col.c-menu { width: 236px; }
+  .procurement-stage td .row-actions:has(> .row-action-menu) { flex-direction: row; align-items: center; gap: 4px; }
+  .procurement-stage .row-action-open.captioned { min-width: 0; height: 40px; padding: 0 10px; border-color: var(--border); background: var(--card); color: var(--foreground); font-size: 12px; font-weight: 600; white-space: nowrap; }
 }
