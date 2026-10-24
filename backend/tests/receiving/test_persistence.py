@@ -153,7 +153,7 @@ def test_quarantine_timer_reads_the_stored_act_date_and_persists_the_move():
                 expected_version=line.version,
                 inspection=InspectionInput(
                     fact_quantity=Decimal("10"),
-                    manual_nonconformities=("Механическое повреждение / брак",),  # брак -> «Ожидание»
+                    manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1"),  # брак -> «Ожидание»
                     document_quantity=Decimal("10"),
                     ordered_quantity=Decimal("10"),
                     has_shipping_document=False,

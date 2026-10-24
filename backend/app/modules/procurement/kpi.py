@@ -16,9 +16,10 @@ Facts a procurement line does not carry (receiving defects and returns, the КП
 asked and answered, the previous purchase, delivery billed on orders) come in `PurchasingFacts`, read by
 `app.workflows.purchasing_kpi`; without them (or where their source is empty) the metric stays None («нет данных»,
 never a made-up zero). «Экономия к КП» is the Roller baseline: the cheapest КП of a key supplier at the moment of the
-decision (`purchasing_decisions.baseline_unit_gross`) against the price paid; «к расчёту» stays beside it. Never
-available: the defect quantity (receiving stores the nature of the nonconformity, not how many pieces) — «Брак, ₽» —
-and «взято → счёт» (a line stores no «taken» timestamp)."""
+decision (`purchasing_decisions.baseline_unit_gross`) against the price paid; «к расчёту» stays beside it. «Брак, ₽» =
+КОЛ-ВО БРАКА recorded at receiving (since 24.10.2026) × the price paid with VAT; brak deliveries inspected before carry
+no quantity and are counted as «без количества», never as zero. Never available: «взято → счёт» (a line stores no
+«taken» timestamp)."""
 
 from __future__ import annotations
 
@@ -46,6 +47,8 @@ class LineFacts:
     received: bool = False
     defect: bool = False
     returned_quantity: Decimal = Decimal("0")
+    defect_quantity: Decimal | None = None  # КОЛ-ВО БРАКА of its deliveries with a recorded quantity, None = none
+    defect_unknown: int = 0  # its brak deliveries without a recorded quantity
     kp_baseline_unit: Decimal | None = None  # cheapest КП of a key supplier at the decision, in the line's unit
     previous_unit: Decimal | None = None  # gross price of the previous purchase of the same item, in the line's unit
 
@@ -226,11 +229,27 @@ def _spend_by_supplier(lines: list[ProcurementLine]) -> list[Decimal]:
     return sorted(spend.values(), reverse=True)
 
 
+def _defect_money(seen: list[tuple[ProcurementLine, LineFacts]]) -> tuple[Decimal | None, int]:
+    """(Σ КОЛ-ВО БРАКА × paid unit price with VAT, brak lines without an amount). None when no brak line has one: a
+    brak line with no recorded quantity (or no paid price) is «без количества», never a zero."""
+    amounts: list[Decimal] = []
+    unknown = 0
+    for line, own in seen:
+        if not own.defect:
+            continue
+        price = line.money.price_with_vat
+        if own.defect_quantity is not None and price is not None:
+            amounts.append(_amount(own.defect_quantity, price))
+        if own.defect_unknown or own.defect_quantity is None or price is None:
+            unknown += 1
+    return (sum(amounts, ZERO) if amounts else None), unknown
+
+
 def _quality(lines: list[ProcurementLine], facts: PurchasingFacts | None) -> dict:
     """Defects and returns exist only for lines that went through receiving; none received = «нет данных»."""
     block = {
         "lines": len(lines), "received_lines": None, "lines_with_defect": None, "defect_pct": None,
-        "defect_amount": None, "returned_amount": None,
+        "defect_amount": None, "defect_without_quantity": None, "returned_amount": None,
     }
     if facts is None:
         return block
@@ -244,9 +263,11 @@ def _quality(lines: list[ProcurementLine], facts: PurchasingFacts | None) -> dic
          if own.returned_quantity > 0 and line.money.price_with_vat is not None),
         ZERO,
     )
+    defect_amount, without_quantity = _defect_money(seen)
     block.update(
         received_lines=len(seen), lines_with_defect=defective, defect_pct=_pct(defective, len(seen)),
-        returned_amount=_money(returned),
+        defect_amount=_money(defect_amount) if defect_amount is not None else None,
+        defect_without_quantity=without_quantity, returned_amount=_money(returned),
     )
     return block
 
@@ -308,11 +329,20 @@ def compute_kpi(
     }
 
 
-def _defect_pct(own: list[ProcurementLine], facts: PurchasingFacts | None) -> str | None:
+def _received(own: list[ProcurementLine], facts: PurchasingFacts | None) -> list[tuple[ProcurementLine, LineFacts]]:
     if facts is None:
-        return None
-    seen = [facts.lines[line.id] for line in own if line.id in facts.lines and facts.lines[line.id].received]
-    return _pct(sum(1 for item in seen if item.defect), len(seen))
+        return []
+    return [(line, facts.lines[line.id]) for line in own if line.id in facts.lines and facts.lines[line.id].received]
+
+
+def _defect_pct(own: list[ProcurementLine], facts: PurchasingFacts | None) -> str | None:
+    seen = _received(own, facts)
+    return _pct(sum(1 for _, item in seen if item.defect), len(seen))
+
+
+def _supplier_defect_amount(own: list[ProcurementLine], facts: PurchasingFacts | None) -> str | None:
+    amount, _ = _defect_money(_received(own, facts))
+    return _money(amount) if amount is not None else None
 
 
 def _rating(
@@ -329,6 +359,7 @@ def _rating(
         "spend": _money(sum((line.money.sum for line in own if line.money.sum is not None), ZERO)),
         "on_time_pct": _delivery_block(own, today)["on_time_pct"] if own else None,
         "defect_pct": _defect_pct(own, facts),
+        "defect_amount": _supplier_defect_amount(own, facts),
         "price_vs_best_pct": str(best.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)) if best is not None else None,
     }
 

@@ -202,13 +202,97 @@ it("keeps persisted documents and manual defects during repeated control", async
     "https://files.test/quality.pdf",
   );
   expect(screen.getByLabelText("Механическое повреждение / брак")).toBeChecked();
+  expect(screen.getByText("Механическое повреждение / брак: кол-во не указано")).toBeInTheDocument();
+  const count = screen.getByLabelText("Кол-во брака, шт");
+  expect(count).toHaveValue(null); // a brak line from before the count: typed by the technologist, not assumed
+  expect(count).toBeRequired();
+  fireEvent.change(count, { target: { value: "3" } });
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
 
   await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
     shipping_document_url: "https://files.test/upd.pdf",
     quality_document_url: "https://files.test/quality.pdf",
     manual_nonconformities: ["Механическое повреждение / брак"],
+    defect_quantity: "3",
   })));
+});
+
+it("ticking брак asks for the defect count, prefilled with the whole fact and capped by it; unticking drops it", async () => {
+  const inspections: Record<string, unknown>[] = [];
+  let current = line;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (isQueue(path)) return json({ lines: [current] });
+    if (path.endsWith("/inspect") && init?.method === "POST") {
+      inspections.push(JSON.parse(String(init.body)));
+      current = { ...line, status: "Ожидание", nonconformities: ["Механическое повреждение / брак"], defect_quantity: "4", fact_quantity: "8", version: 3 };
+      return json({ line: current });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage />);
+  await openRow();
+  fireEvent.change(await screen.findByLabelText("Фактическое количество"), { target: { value: "8" } });
+  expect(screen.queryByLabelText("Кол-во брака, шт")).toBeNull();
+  fireEvent.click(screen.getByLabelText("Механическое повреждение / брак"));
+  const count = screen.getByLabelText("Кол-во брака, шт");
+  expect(count).toHaveValue(8);
+  expect(count).toHaveAttribute("max", "8");
+  fireEvent.change(count, { target: { value: "4" } });
+  fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
+  await waitFor(() => expect(inspections).toHaveLength(1));
+  expect(inspections[0]).toMatchObject({ manual_nonconformities: ["Механическое повреждение / брак"], defect_quantity: "4" });
+  expect(await screen.findByText("Механическое повреждение / брак: 4 шт")).toBeInTheDocument();
+});
+
+it("a line without брак sends no defect count", async () => {
+  let inspection: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (isQueue(path)) return json({ lines: [line] });
+    if (path.endsWith("/inspect") && init?.method === "POST") {
+      inspection = JSON.parse(String(init.body));
+      return json({ line });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ReceivingPage />);
+  await openRow();
+  fireEvent.click(await screen.findByLabelText("Механическое повреждение / брак"));
+  fireEvent.click(screen.getByLabelText("Механическое повреждение / брак")); // unticked again
+  fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
+  await waitFor(() => expect(inspection).toBeDefined());
+  expect(inspection).not.toHaveProperty("defect_quantity");
+});
+
+it("batches with брак take a defect count per batch", async () => {
+  let inspection: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (isQueue(path)) return json({ lines: [line] });
+    if (path.endsWith("/inspect") && init?.method === "POST") {
+      inspection = JSON.parse(String(init.body));
+      return json({ line, lines: [line] });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ReceivingPage />);
+  await openRow();
+  fireEvent.click(await screen.findByRole("button", { name: "+ партия" }));
+  fireEvent.change(screen.getByLabelText("Партия 1: факт"), { target: { value: "6" } });
+  fireEvent.change(screen.getByLabelText("Партия 2: факт"), { target: { value: "4" } });
+  fireEvent.click(screen.getByLabelText("Механическое повреждение / брак"));
+  expect(screen.queryByLabelText("Кол-во брака, шт")).toBeNull(); // the per-batch column instead
+  expect(screen.getByLabelText("Партия 1: кол-во брака")).toHaveValue(6);
+  fireEvent.change(screen.getByLabelText("Партия 1: кол-во брака"), { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Провести ВК по партиям (2)" }));
+  await waitFor(() => expect(inspection).toBeDefined());
+  expect(inspection).not.toHaveProperty("defect_quantity");
+  expect(inspection!.batches).toEqual([
+    expect.objectContaining({ fact_quantity: "6", defect_quantity: "1" }),
+    expect.objectContaining({ fact_quantity: "4", defect_quantity: "4" }),
+  ]);
 });
 
 it("shows that a paid shortfall went back to procurement as a backorder", async () => {
@@ -535,7 +619,11 @@ it("a discrepancy row sends the fact, an unticked line stays out, the deviation 
   fireEvent.click(await screen.findByLabelText("Пришло: A-2 · Клемма"));
   fireEvent.change(screen.getByLabelText("Факт: A-1 · Разъём"), { target: { value: "8" } });
   fireEvent.change(screen.getByLabelText("Отклонение: A-1 · Разъём"), { target: { value: "brak" } });
-  fireEvent.change(screen.getByLabelText("Брак, шт: A-1 · Разъём"), { target: { value: "2" } });
+  const count = screen.getByLabelText("Кол-во брака, шт: A-1 · Разъём");
+  expect(count).toHaveValue(8); // the whole fact by default, capped by it
+  expect(count).toHaveAttribute("max", "8");
+  expect(count).toBeRequired();
+  fireEvent.change(count, { target: { value: "2" } });
   fireEvent.click(screen.getByRole("button", { name: "Провести поставку (1 поз.)" }));
 
   await waitFor(() => expect(calls).toHaveLength(1));

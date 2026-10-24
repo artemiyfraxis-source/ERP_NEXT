@@ -13,10 +13,18 @@ import { SupplierReturnPanel } from "./SupplierReturnPanel";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { LoadMore } from "./LoadMore";
 
+const BRAK = "Механическое повреждение / брак";
 const MANUAL_CHECKS = [
-  "Механическое повреждение / брак",
+  BRAK,
   "Не тот товар (несоответствие счету)",
 ];
+
+/** «Механическое повреждение / брак: 3 шт»; брак, принятый до учёта количества, — «кол-во не указано». */
+function natureText(line: ReceivingLine) {
+  return line.nonconformities
+    .map((item) => item === BRAK ? `${item}: ${line.defect_quantity ? `${line.defect_quantity} ${line.unit}` : "кол-во не указано"}` : item)
+    .join(" · ");
+}
 
 const COLUMNS: DataColumn<ReceivingLine>[] = [
   { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, hidden: true },
@@ -34,6 +42,7 @@ const COLUMNS: DataColumn<ReceivingLine>[] = [
   { key: "warehouse", title: "Склад", value: (line) => line.warehouse, filter: true, hidden: true },
   { key: "series", title: "Серия", value: (line) => line.series, hidden: true },
   { key: "fact", title: "Факт", value: (line) => line.fact_quantity ?? "", numeric: true, hidden: true },
+  { key: "defect", title: "Брак", value: (line) => line.defect_quantity ?? "", numeric: true, hidden: true },
   { key: "verdict", title: "Вердикт", value: (line) => line.verdict ?? "", filter: true, hidden: true },
 ];
 
@@ -262,6 +271,11 @@ interface DeliveryRow {
   expiry: string;
 }
 
+/** Факт строки поставки, как его примет сервер: введённый, иначе по УПД, иначе заказанное. */
+function deliveryFact(row: DeliveryRow) {
+  return row.fact.trim() || row.document.trim() || row.line.ordered_quantity;
+}
+
 const DEVIATIONS: { value: DeliveryDeviation; label: string }[] = [
   { value: "none", label: "—" },
   { value: "brak", label: "Брак" },
@@ -364,10 +378,14 @@ function DeliveryPanel({ group, onClose, onDone }: {
                   <td><input type="number" min="0.000001" step="any" className="qty" placeholder="как по УПД" aria-label={`Факт: ${itemTitle(row.line)}`} value={row.fact} disabled={locked} onChange={(event) => edit(row.line.id, { fact: event.target.value })} /></td>
                   <td><input className="place" placeholder={commonPlace || "1F4"} aria-label={`Место: ${itemTitle(row.line)}`} value={row.place} disabled={locked} onChange={(event) => edit(row.line.id, { place: event.target.value })} /></td>
                   <td className="deviation">
-                    <select aria-label={`Отклонение: ${itemTitle(row.line)}`} value={row.deviation} disabled={locked} onChange={(event) => edit(row.line.id, { deviation: event.target.value as DeliveryDeviation })}>
+                    <select aria-label={`Отклонение: ${itemTitle(row.line)}`} value={row.deviation} disabled={locked} onChange={(event) => {
+                      const deviation = event.target.value as DeliveryDeviation;
+                      // Брак — по умолчанию вся строка (факт); приёмщик уменьшает до числа бракованных.
+                      edit(row.line.id, deviation === "brak" && !row.deviationQuantity.trim() ? { deviation, deviationQuantity: deliveryFact(row) } : { deviation });
+                    }}>
                       {DEVIATIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                     </select>
-                    {row.deviation === "brak" && <input type="number" min="0.000001" step="any" className="qty" placeholder={`N ${row.line.unit}`} aria-label={`Брак, ${row.line.unit}: ${itemTitle(row.line)}`} value={row.deviationQuantity} disabled={locked} onChange={(event) => edit(row.line.id, { deviationQuantity: event.target.value })} />}
+                    {row.deviation === "brak" && <label className="defect-qty">Кол-во брака<input type="number" min="0.000001" max={deliveryFact(row)} step="any" required className="qty" title={`Не больше факта: ${deliveryFact(row)} ${row.line.unit}`} aria-label={`Кол-во брака, ${row.line.unit}: ${itemTitle(row.line)}`} value={row.deviationQuantity} disabled={locked} onChange={(event) => edit(row.line.id, { deviationQuantity: event.target.value })} /><span>{row.line.unit}</span></label>}
                     {row.deviation === "expired" && <input type="date" aria-label={`Срок годности: ${itemTitle(row.line)}`} value={row.expiry} disabled={locked} onChange={(event) => edit(row.line.id, { expiry: event.target.value })} />}
                   </td>
                   {done && <td className="num">{row.ticked ? (result?.grn ? <strong>{result.grn}</strong> : <StatusChip status={result?.status} />) : ""}{result && Number(result.backorder_quantity) > 0 && <span className="delivery-short">недовоз {result.backorder_quantity} {result.unit} → дозавоз</span>}</td>}
@@ -696,6 +714,8 @@ function ReceivingCard({
   });
   const [note, setNote] = useState(line.inspection_note ?? "");
   const [description, setDescription] = useState("");
+  // КОЛ-ВО БРАКА: строка, уже отмеченная браком без количества, ждёт ввода — без подстановки факта.
+  const [defect, setDefect] = useState(line.defect_quantity ?? "");
   // RC-13: партии изготовителя одной поставки; пусто — обычная приёмка одной строкой.
   const [batches, setBatches] = useState<Batch[]>([]);
   const [packages, setPackages] = useState<string[]>([]);
@@ -732,12 +752,14 @@ function ReceivingCard({
       standard: quality.standard.trim(),
       note: note.trim(),
       nonconformity_description: description.trim(),
+      ...(brak && batches.length < 2 ? { defect_quantity: defect.trim() || null } : {}),
       ...(batches.length >= 2 ? { batches: batches.map((batch) => ({
         document_quantity: batch.document_quantity || null,
         fact_quantity: batch.fact_quantity || null,
         series: batch.series.trim(),
         expiry_date: batch.expiry_date || null,
         manufacture_date: batch.manufacture_date || null,
+        ...(brak ? { defect_quantity: batch.defect_quantity.trim() || null } : {}),
       })) } : {}),
     }).catch(() => undefined);
   }
@@ -746,11 +768,21 @@ function ReceivingCard({
   const placeable = !readOnly && line.status === "Принято" && !line.warehouse_event_emitted;
   const unpackable = placeable && Boolean(line.grn) && !line.package && !line.storage_location;
   const batchMode = batches.length >= 2;
+  const brak = manual.includes(BRAK);
+  const factLimit = fact || documentQty;
+
+  /** Отметка брака: количество по умолчанию — весь факт (строки или каждой партии), приёмщик его уменьшает. */
+  function toggleManual(item: string, checked: boolean) {
+    setManual((current) => checked ? [...current, item] : current.filter((value) => value !== item));
+    if (item !== BRAK || !checked) return;
+    if (!defect.trim()) setDefect(factLimit);
+    setBatches((current) => current.map((batch) => batch.defect_quantity.trim() ? batch : { ...batch, defect_quantity: batch.fact_quantity || batch.document_quantity }));
+  }
 
   function startBatches() {
     setBatches((current) => current.length
       ? [...current, emptyBatch()]
-      : [{ ...emptyBatch(), document_quantity: documentQty, fact_quantity: fact, series, expiry_date: expiry, manufacture_date: manufactureDate }, emptyBatch()]);
+      : [{ ...emptyBatch(), document_quantity: documentQty, fact_quantity: fact, series, expiry_date: expiry, manufacture_date: manufactureDate, defect_quantity: brak ? defect : "" }, emptyBatch()]);
   }
 
   function editBatch(index: number, patch: Partial<Batch>) {
@@ -763,7 +795,7 @@ function ReceivingCard({
         <div><strong>{line.legacy_id} · {itemTitle(line)}</strong><small>{line.supplier} · заказано {line.ordered_quantity} {line.unit} · {line.warehouse}</small></div>
         <StatusChip status={line.status} />
       </div>
-      {line.nonconformities.length > 0 && <p className="nonconformity">{line.nonconformities.join(" · ")}</p>}
+      {line.nonconformities.length > 0 && <p className="nonconformity">{natureText(line)}</p>}
       {line.nonconformity_description && <p className="nonconformity">{line.nonconformity_description}</p>}
       {line.shipping_document_note && <p className="hint">{line.shipping_document_note}</p>}
       {(line.document_number || line.inspection_note) && <p className="hint">{[line.document_number && `УПД ${line.document_number}${line.document_date ? ` от ${line.document_date}` : ""}`, line.inspection_note].filter(Boolean).join(" · ")}</p>}
@@ -799,17 +831,19 @@ function ReceivingCard({
             <label className="check-field"><input type="checkbox" checked={historical} onChange={(event) => setHistorical(event.target.checked)} />Историческая приёмка: срок годности сверяется с датой УПД</label>
             <label className="wide">Примечание<AutoTextarea value={note} onChange={setNote} /></label>
             <label className="wide">Описание несоответствия<AutoTextarea value={description} onChange={setDescription} /></label>
-            <fieldset className="check-field wide"><legend>Несоответствия ручной проверки</legend>{MANUAL_CHECKS.map((item) => <label key={item}><input type="checkbox" checked={manual.includes(item)} onChange={(event) => setManual((current) => event.target.checked ? [...current, item] : current.filter((value) => value !== item))} />{item}</label>)}</fieldset>
+            <fieldset className="check-field wide"><legend>Несоответствия ручной проверки</legend>{MANUAL_CHECKS.map((item) => <label key={item}><input type="checkbox" checked={manual.includes(item)} onChange={(event) => toggleManual(item, event.target.checked)} />{item}</label>)}</fieldset>
+            {brak && !batchMode && <label title={`Сколько из фактического количества брак — не больше ${factLimit || "факта"} ${line.unit}. Принятое количество и склад не меняются.`}>Кол-во брака, {line.unit}<input type="number" min="0.000001" max={factLimit || undefined} step="any" required value={defect} onChange={(event) => setDefect(event.target.value)} /></label>}
           </div>
           {batchMode && (
             <table className="batches">
-              <thead><tr><th>Партия</th><th>По УПД</th><th>Факт</th><th>Серия</th><th>Срок годности</th><th>Дата изготовления</th><th /></tr></thead>
+              <thead><tr><th>Партия</th><th>По УПД</th><th>Факт</th>{brak && <th>Кол-во брака, {line.unit}</th>}<th>Серия</th><th>Срок годности</th><th>Дата изготовления</th><th /></tr></thead>
               <tbody>
                 {batches.map((batch, index) => (
                   <tr key={index}>
                     <td>{index + 1}</td>
                     <td><input aria-label={`Партия ${index + 1}: по УПД`} type="number" min="0.000001" step="any" required={!batch.fact_quantity} value={batch.document_quantity} onChange={(event) => editBatch(index, { document_quantity: event.target.value })} /></td>
                     <td><input aria-label={`Партия ${index + 1}: факт`} type="number" min="0.000001" step="any" required={!batch.document_quantity} value={batch.fact_quantity} onChange={(event) => editBatch(index, { fact_quantity: event.target.value })} /></td>
+                    {brak && <td><input aria-label={`Партия ${index + 1}: кол-во брака`} type="number" min="0.000001" max={batch.fact_quantity || batch.document_quantity || undefined} step="any" required value={batch.defect_quantity} onChange={(event) => editBatch(index, { defect_quantity: event.target.value })} /></td>}
                     <td><input aria-label={`Партия ${index + 1}: серия`} value={batch.series} onChange={(event) => editBatch(index, { series: event.target.value })} /></td>
                     <td><input aria-label={`Партия ${index + 1}: срок годности`} type="date" value={batch.expiry_date} onChange={(event) => editBatch(index, { expiry_date: event.target.value })} /></td>
                     <td><input aria-label={`Партия ${index + 1}: дата изготовления`} type="date" value={batch.manufacture_date} onChange={(event) => editBatch(index, { manufacture_date: event.target.value })} /></td>
@@ -871,8 +905,9 @@ interface Batch {
   series: string;
   expiry_date: string;
   manufacture_date: string;
+  defect_quantity: string;
 }
 
 function emptyBatch(): Batch {
-  return { document_quantity: "", fact_quantity: "", series: "", expiry_date: "", manufacture_date: "" };
+  return { document_quantity: "", fact_quantity: "", series: "", expiry_date: "", manufacture_date: "", defect_quantity: "" };
 }
