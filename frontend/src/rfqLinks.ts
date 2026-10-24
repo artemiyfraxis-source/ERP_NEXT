@@ -5,12 +5,16 @@ import { openPlace } from "./navigation";
 
 export type RfqPanel = "letters" | "invoices";
 
-export type RfqLinkState = { rfq: string; letters: boolean; invoices: boolean };
+export type RfqLinkState = { rfq: string; letters: boolean; invoices: boolean; list: RfqList };
+
+/** The list tab: `&rfqlist=archive` — «Архив»; absent — «В работе». */
+export type RfqList = "work" | "archive";
 
 /** The request and the panel the address bar asks for ("" — none). */
 export function rfqLinkState(search = window.location.search): RfqLinkState {
   const params = new URLSearchParams(search);
-  return { rfq: params.get("rfq") ?? "", letters: params.get("letters") === "1", invoices: params.get("invoices") === "1" };
+  return { rfq: params.get("rfq") ?? "", letters: params.get("letters") === "1", invoices: params.get("invoices") === "1",
+    list: params.get("rfqlist") === "archive" ? "archive" : "work" };
 }
 
 /** The address of a request (for a link elsewhere in the ERP): relative, the shell resolves it. */
@@ -34,5 +38,13 @@ export function syncRfqUrl(rfqId: string, panels: { letters?: boolean; invoices?
   for (const panel of ["letters", "invoices"] as const) {
     if (panels[panel]) url.searchParams.set(panel, "1"); else url.searchParams.delete(panel);
   }
+  if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
+}
+
+/** Keep the list tab («Архив») in the address without a new history entry; «В работе» drops the parameter. */
+export function syncRfqList(list: RfqList) {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get("section") !== "procurement") return;
+  if (list === "archive") url.searchParams.set("rfqlist", "archive"); else url.searchParams.delete("rfqlist");
   if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
 }
