@@ -189,6 +189,9 @@ class InspectionInput:
     quality_document_number: str = ""
     standard: str = ""
     quality_document_date: date | None = None
+    # КОЛ-ВО БРАКА (owner 24.10.2026): how many pieces of the fact are defective — a record for «Брак, ₽», it never
+    # changes the accepted quantity or stock. Required with «Механическое повреждение / брак», absent without it.
+    defect_quantity: Decimal | None = None
 
 
 # RC-9: акты приёмки (Config.gs DOC_TYPES): вид → (префикс номера, заголовок).
@@ -240,6 +243,7 @@ class InspectionResult:
     missing_documents: bool
     nonconformity_act_required: bool
     complaint_required: bool
+    defect_quantity: Decimal | None = None
 
 
 def _positive(value: Decimal, label: str) -> Decimal:
@@ -252,6 +256,23 @@ def _positive(value: Decimal, label: str) -> Decimal:
 def _append_unique(items: list[str], value: str) -> None:
     if value not in items:
         items.append(value)
+
+
+def checked_defect_quantity(
+    defect_quantity: Decimal | None, fact_quantity: Decimal, nonconformities: Iterable[str]
+) -> Decimal | None:
+    """КОЛ-ВО БРАКА: given exactly when the line carries «Механическое повреждение / брак», 0 < брак ≤ факт.
+    The database holds the same range (`ck_receiving_lines_defect_quantity`); old brak lines stay NULL."""
+    if MECHANICAL_DAMAGE not in set(nonconformities):
+        if defect_quantity is not None:
+            raise ReceivingValidationError("Количество брака указано, а брак не отмечен")
+        return None
+    if defect_quantity is None:
+        raise ReceivingValidationError("Отмечен брак — укажите количество брака")
+    defect = Decimal(defect_quantity)
+    if defect <= 0 or defect > Decimal(fact_quantity):
+        raise ReceivingValidationError("Количество брака — больше нуля и не больше фактического количества")
+    return defect
 
 
 def inspect_delivery(data: InspectionInput) -> InspectionResult:
@@ -290,6 +311,7 @@ def inspect_delivery(data: InspectionInput) -> InspectionResult:
         status = ReceivingStatus.ACCEPTED
         verdict = "Годен"
 
+    defect_quantity = checked_defect_quantity(data.defect_quantity, fact, nature)
     act_items = [item for item in nonconforming if item not in DOCUMENT_NONCONFORMITIES]
     quantity_fault = any(item in QUANTITY_FAULTS for item in nature)
     quality_fault = any(item in QUALITY_FAULTS for item in nature)
@@ -305,6 +327,7 @@ def inspect_delivery(data: InspectionInput) -> InspectionResult:
         missing_documents=any(item in DOCUMENT_NONCONFORMITIES for item in nature),
         nonconformity_act_required=bool(act_items),
         complaint_required=complaint,
+        defect_quantity=defect_quantity,
     )
 
 
@@ -478,6 +501,8 @@ class ReceivingLine:
     complaint_act_date: date | None = None
     use_permit_number: str = ""
     use_permit_date: date | None = None
+    # КОЛ-ВО БРАКА of the last ВК (InspectionInput.defect_quantity); NULL on a brak line inspected before 24.10.2026.
+    defect_quantity: Decimal | None = None
 
     @property
     def shipping_document_pending(self) -> bool:
@@ -598,6 +623,7 @@ class ReceivingLine:
             disposition=str(data.disposition or "").strip() or None,
             verdict=result.verdict,
             nonconformities=result.nonconformities,
+            defect_quantity=result.defect_quantity,
             accepted_quantity=result.accepted_quantity,
             backorder_quantity=result.backorder_quantity,
             grn=grn,

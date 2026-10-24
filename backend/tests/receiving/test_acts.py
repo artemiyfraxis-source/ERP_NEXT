@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from datetime import date, timedelta
+from decimal import Decimal
 
 from app.modules.receiving.application import (
     InspectReceivingCommand,
@@ -60,7 +61,7 @@ def test_release_from_waiting_issues_use_permit(erp):
     receiving, _, _ = erp
     line = consume_receiving_expected(expected_message(), receiving())
     # A defect holds the line (a missing УПД or a shortfall no longer does, owner 05.10.2026).
-    waiting = run(receiving, line, replace(inspection(), manual_nonconformities=("Механическое повреждение / брак",)))
+    waiting = run(receiving, line, replace(inspection(), manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1")))
     assert waiting.status.value == "Ожидание"
 
     # Брак не подтвердился: повторный контроль без несоответствий — выход из «Ожидания» в «Принято» с РИ.

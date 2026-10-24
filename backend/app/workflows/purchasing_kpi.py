@@ -12,7 +12,9 @@ cut the request-side facts. Sources, Roller_Buyer `kpi-data.ts` on ERP tables:
   order; the delivery quoted in a КП is not what was billed).
 * «Новых поставщиков» — suppliers whose first paid line (any buyer) falls in the period and who are in the period's lines.
 * Брак / возвраты — `receiving_lines` of the line: nonconformity «Механическое повреждение / брак»; returned quantity from
-  the audit event `receiving.returned_to_supplier`. The defect quantity is not stored, so «Брак, ₽» has no source.
+  the audit event `receiving.returned_to_supplier`. «Брак, ₽» — `receiving_lines.defect_quantity` (since 24.10.2026):
+  one delivery counted once — of a `-ВN` revision chain only its latest row with brak; batches `-ПN` each on their own.
+  A brak row without the quantity (inspected before) is «без количества».
 * Решения / среднее КП / с неключевым / обход гейта — `purchasing_decisions` decided in the period (`decided_at`, Moscow day)
   of the buyer's requests: `priced_quotes` snapshot, non-key among the offers current on the decision day, override code.
 * Спрошен / ответил / цена к лучшей — `purchasing_rfq_suppliers.sent_at` in the period and the quotes of that request;
@@ -108,19 +110,36 @@ def _decisions_of(session: Session, line_ids: list[UUID]) -> dict[UUID, tuple[De
 
 
 def _receiving_of(session: Session, line_ids: list[UUID]) -> dict[UUID, dict]:
-    """procurement line → {received, defect, returned} from its receiving lines (revisions and batches included)."""
-    facts: dict[UUID, dict] = defaultdict(lambda: {"received": False, "defect": False, "returned": ZERO})
+    """procurement line → {received, defect, returned, defect_quantity, defect_unknown} from its receiving lines
+    (revisions and batches included)."""
+    facts: dict[UUID, dict] = defaultdict(lambda: {
+        "received": False, "defect": False, "returned": ZERO, "defect_quantity": None, "defect_unknown": 0,
+    })
     owner: dict[UUID, UUID] = {}
+    # A delivery and its `-ВN` revisions are one physical delivery: its latest row with brak holds the quantity.
+    brak: dict[UUID, tuple] = {}
     for chunk in _chunks(line_ids):
         for row in session.execute(
             select(ReceivingLineRow.id, ReceivingLineRow.procurement_line_id, ReceivingLineRow.status,
-                   ReceivingLineRow.nonconformities)
+                   ReceivingLineRow.nonconformities, ReceivingLineRow.revision_root_id, ReceivingLineRow.created_at,
+                   ReceivingLineRow.defect_quantity)
             .where(ReceivingLineRow.procurement_line_id.in_(chunk))
         ):
             owner[row.id] = row.procurement_line_id
             own = facts[row.procurement_line_id]
             own["received"] = own["received"] or row.status not in _NOT_INSPECTED
-            own["defect"] = own["defect"] or MECHANICAL_DAMAGE in (row.nonconformities or [])
+            if MECHANICAL_DAMAGE in (row.nonconformities or []):
+                own["defect"] = True
+                lineage = row.revision_root_id or row.id
+                moment = as_utc(row.created_at)
+                if lineage not in brak or moment > brak[lineage][1]:
+                    brak[lineage] = (row.procurement_line_id, moment, row.defect_quantity)
+    for line_id, _, quantity in brak.values():
+        own = facts[line_id]
+        if quantity is None:
+            own["defect_unknown"] += 1
+        else:
+            own["defect_quantity"] = (own["defect_quantity"] or ZERO) + quantity
     for chunk in _chunks(owner):
         for row in session.execute(
             select(AuditEventRow.aggregate_id, AuditEventRow.details)
@@ -196,6 +215,8 @@ def _line_facts(session: Session, lines: Sequence[ProcurementLine]) -> tuple[dic
         out[line.id] = LineFacts(
             received=bool(got and got["received"]), defect=bool(got and got["defect"]),
             returned_quantity=got["returned"] if got else ZERO,
+            defect_quantity=got["defect_quantity"] if got else None,
+            defect_unknown=got["defect_unknown"] if got else 0,
             kp_baseline_unit=baseline if same_unit else None,
             previous_unit=history.previous_price(line),
         )

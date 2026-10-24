@@ -125,11 +125,12 @@ def required(model) -> dict:
     return values
 
 
-def receive(sessions, line, nonconformities=(), status="Принято"):
+def receive(sessions, line, nonconformities=(), status="Принято", **row):
     values = required(ReceivingLineRow)
     rid = uuid4()
     values.update(id=rid, procurement_line_id=line.id, source_idempotency_key=f"k{rid}", legacy_id="SM-1", status=status,
                   nonconformities=list(nonconformities))
+    values.update(row)
     with sessions() as s:
         s.add(ReceivingLineRow(**values))
         s.commit()
@@ -217,7 +218,38 @@ def test_defects_and_returns_come_from_receiving(sessions):
     quality = sheet(sessions, [bad, good, waiting])["kpi"]["quality"]
     assert quality["received_lines"] == 2 and quality["lines_with_defect"] == 1 and quality["defect_pct"] == "50.0"
     assert quality["returned_amount"] == "220.00"  # 5 × 44
-    assert quality["defect_amount"] is None  # the defect quantity is not stored
+    # brak inspected before 24.10 carries no quantity: «нет данных», counted as «без количества», never a zero
+    assert quality["defect_amount"] is None and quality["defect_without_quantity"] == 1
+
+
+def test_defect_money_is_the_defect_quantity_times_the_paid_price(sessions):
+    counted, older, good = bought(sessions), bought(sessions, price="10", supplier="Бета"), bought(sessions)
+    receive(sessions, counted, [MECHANICAL_DAMAGE], status="Ожидание", fact_quantity=Decimal("100"),
+            defect_quantity=Decimal("3"))
+    receive(sessions, older, [MECHANICAL_DAMAGE], status="Ожидание", fact_quantity=Decimal("100"))  # no quantity
+    receive(sessions, good)
+    result = sheet(sessions, [counted, older, good])
+    quality = result["kpi"]["quality"]
+    assert quality["defect_amount"] == "132.00"  # 3 × 44; the line without a quantity is not a zero …
+    assert quality["defect_without_quantity"] == 1  # … it is named
+    assert quality["lines_with_defect"] == 2 and quality["defect_pct"] == "66.7"
+    rating = {row["supplier"]: row for row in result["suppliers"]}
+    assert rating["Альфа"]["defect_amount"] == "132.00" and rating["Альфа"]["defect_pct"] == "50.0"
+    assert rating["Бета"]["defect_amount"] is None and rating["Бета"]["defect_pct"] == "100.0"
+
+
+def test_a_delivery_and_its_vk_revisions_count_their_defect_once_batches_each(sessions):
+    line = bought(sessions)
+    root = receive(sessions, line, [MECHANICAL_DAMAGE], status="Архив ВК", fact_quantity=Decimal("60"),
+                   defect_quantity=Decimal("5"), created_at=datetime(2026, 10, 6, 9, 0, tzinfo=timezone.utc))
+    receive(sessions, line, [MECHANICAL_DAMAGE], status="Ожидание", fact_quantity=Decimal("60"),
+            defect_quantity=Decimal("2"), revision_of_id=root, revision_root_id=root, legacy_id="SM-1-В2",
+            created_at=datetime(2026, 10, 7, 9, 0, tzinfo=timezone.utc))  # the re-inspection's count replaces the first
+    receive(sessions, line, [MECHANICAL_DAMAGE], status="Ожидание", fact_quantity=Decimal("40"),
+            defect_quantity=Decimal("1"), split_of_id=root, legacy_id="SM-1-П2")  # another batch: its own pieces
+    quality = sheet(sessions, [line])["kpi"]["quality"]
+    assert quality["defect_amount"] == "132.00"  # (2 + 1) × 44
+    assert quality["defect_without_quantity"] == 0 and quality["lines_with_defect"] == 1
 
 
 def test_nothing_received_is_no_data(sessions):
@@ -334,5 +366,6 @@ def test_the_number_of_queries_does_not_grow_with_the_lines(sessions):
     rfq, ids = request(sessions, many)
     for line in many:
         decide(sessions, ids[line.id], quote(sessions, rfq, seller, ids[line.id], "44"))
-        receive(sessions, line)
+        receive(sessions, line, [MECHANICAL_DAMAGE], status="Ожидание", fact_quantity=Decimal("100"),
+                defect_quantity=Decimal("1"))
     assert queries(many) == queries(few)

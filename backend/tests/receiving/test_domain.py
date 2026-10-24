@@ -132,7 +132,7 @@ def test_missing_documents_are_noted_and_confirmed_defect_goes_to_quarantine():
     documents = inspect_delivery(inspection(quality_document_required=True, quality_document_present=False))
     defect = inspect_delivery(
         inspection(
-            manual_nonconformities=("Механическое повреждение / брак",),
+            manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1"),
             disposition="Изолятор",
         )
     )
@@ -174,7 +174,7 @@ def test_missing_quality_document_is_a_warning_not_a_block():
     defect = inspect_delivery(
         inspection(
             quality_document_required=True,
-            manual_nonconformities=("Механическое повреждение / брак",),
+            manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1"),
         )
     )
     assert defect.status is ReceivingStatus.WAITING
@@ -182,7 +182,7 @@ def test_missing_quality_document_is_a_warning_not_a_block():
 
 def test_shortfall_with_a_defect_still_waits_and_expiry_only_with_a_date():
     defect = inspect_delivery(
-        inspection(fact_quantity=Decimal("8"), manual_nonconformities=("Механическое повреждение / брак",))
+        inspection(fact_quantity=Decimal("8"), manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1"))
     )
     no_date = inspect_delivery(inspection(expiry_date=None))
 
@@ -367,7 +367,7 @@ def test_quarantine_notify_targets_follow_the_nature(nature, expected):
 
 def waiting_line(inspected_on=date(2026, 9, 24)):
     line = create_line_from_expected(expected_message()).inspect(
-        inspection(manual_nonconformities=("Механическое повреждение / брак",), inspection_date=inspected_on),
+        inspection(manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1"), inspection_date=inspected_on),
         Actor(name="Приёмщик", department="ОТК"),
         existing_grns=(),
     )
@@ -393,7 +393,7 @@ def test_waiting_without_decision_goes_to_quarantine_after_two_workdays():
 def test_timer_restarts_on_reinspection_and_ignores_other_statuses():
     line = waiting_line(date(2026, 9, 21))
     again = line.inspect(
-        inspection(manual_nonconformities=("Механическое повреждение / брак",), inspection_date=date(2026, 9, 24)),
+        inspection(manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1"), inspection_date=date(2026, 9, 24)),
         Actor(name="Приёмщик", department="ОТК"),
         existing_grns=(line.grn,),
     )

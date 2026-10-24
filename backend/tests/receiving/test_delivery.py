@@ -372,7 +372,7 @@ def test_expired_deviation_needs_an_expired_date(erp):
 def test_waiting_line_is_released_by_a_delivery(erp):
     receiving, _, _ = erp
     (line,) = expect(receiving, 1)
-    (waiting,) = deliver(receiving, [item(line, deviation="brak")]).lines
+    (waiting,) = deliver(receiving, [item(line, deviation="brak", deviation_quantity=Decimal("2"))]).lines
     assert waiting.status is ReceivingStatus.WAITING
 
     (released,) = deliver(receiving, [item(waiting, storage_location="1F4")], document_number="УПД-77").lines
