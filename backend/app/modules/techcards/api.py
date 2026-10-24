@@ -31,7 +31,7 @@ from app.modules.references.application import UnitOfWork as ReferencesUnitOfWor
 from app.modules.references.domain import TechOperationTab
 from app.workflows.etk_lots import IssuedKitLots
 from app.workflows.new_operation import NewOperationUnitOfWork, create_operation
-from app.workflows.techcard_build import with_technology
+from app.workflows.techcard_build import coax_customer_problem, with_technology
 from app.workflows.item_names import ReferenceNames, reference_records
 from app.workflows.warehouse_article import infer_article_identity
 
@@ -302,6 +302,13 @@ def _run(operation):
         raise HTTPException(status_code=404, detail="Карточка проекта не найдена") from error
     except (IntegrityError, StaleDataError) as error:
         raise HTTPException(status_code=409, detail="Карточка проекта изменена конкурентно") from error
+
+
+def _refuse_coax_customer(config: dict[str, Any]) -> None:
+    """«Норма заказчика (КД)» коакса, которую не прочитать (КСВН < 1, полоса, основание), — 422 до сборки."""
+    problem = coax_customer_problem(config)
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
 
 
 def etk_issued_lots(request: Request) -> IssuedLots | None:
@@ -694,6 +701,7 @@ def auto_build_project_etk(
 ) -> dict:
     if payload.draft_id is not None:
         _draft_run(lambda: draft_for_card(payload.draft_id, card_id, uow_factory))
+    _refuse_coax_customer(payload.config)
     config, technology_source = with_technology(payload.config, references_factory)
     card = _run(lambda: auto_build_project_techcard(AutoBuildProjectTechcardCommand(
         card_id=card_id,
@@ -731,6 +739,7 @@ def preview_project_etk(
         Depends(optional_references_uow_factory),
     ],
 ) -> dict:
+    _refuse_coax_customer(payload.config)
     config, technology_source = with_technology(payload.config, references_factory)
     card = _run(lambda: preview_project_techcard(AutoBuildProjectTechcardCommand(
         card_id=card_id,

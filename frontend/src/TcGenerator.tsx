@@ -13,6 +13,7 @@ import {
   type ProjectTechcard,
   type TerminalResolution,
 } from "./api";
+import { formatNumber } from "./format";
 import {
   CRIMP_BOTH_,
   FOLD_STRIP_MM_,
@@ -43,7 +44,12 @@ import {
   switchGenTab,
   withCoaxVswrFromConfig,
   coaxVswrControl_,
+  coaxVswrCustomer_,
+  coaxVswrCustProblem,
+  coaxVswrCustStricter,
+  componentsVswrMax,
   COAX_VSWR_EVERY,
+  type CoaxVswrCustForm,
   type CoaxVswrMode,
   syncCoverRow_,
   syncHsWithBraid_,
@@ -1508,6 +1514,16 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </section>
   </>;
 
+  // Норма заказчика (КД) коакса: справочная норма по комплектующим — из схемы ПФ (то, что соберёт «Создать»), а пока
+  // схемы нет — из собранной ЭТК.
+  const custForm: CoaxVswrCustForm = S.coax.vswrCust ?? { max: "", from: "", to: "", basis: "" };
+  const custProblem = coaxVswrCustProblem(custForm);
+  const componentsMax = componentsVswrMax(pf.card?.document) ?? componentsVswrMax(card.document);
+  const custStricter = coaxVswrCustStricter(coaxVswrCustomer_(custForm), componentsMax);
+  const setCust = (patch: Partial<CoaxVswrCustForm>) => update((current) => ({
+    ...current, coax: { ...current.coax, vswrCust: { ...(current.coax.vswrCust ?? { max: "", from: "", to: "", basis: "" }), ...patch } },
+  }));
+
   const coaxSections = <>
     <section className="gsec" aria-label="Коакс-кабель">
       <div className="gsec-head"><h3>Коакс-кабель</h3>
@@ -1536,6 +1552,26 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
                 value={S.coax.vswrEvery ?? String(COAX_VSWR_EVERY)}
                 onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, vswrEvery: event.target.value } }))} /></label>}
           </div></div>}
+        {S.coax.sideB && S.coax.vswrMode !== "none" && <div className="gfield span-all gvswr-cust-field" role="group" aria-label="Норма заказчика (КД)">
+          <span className="gfield-label">Норма заказчика (КД)<small>пусто — норма по комплектующим</small></span>
+          <div className="gvswr gvswr-cust">
+            <label className="gvswr-every">КСВН ≤
+              <input className="gvswr-num" aria-label="Норма заказчика: КСВН не более" inputMode="decimal" placeholder="1,5"
+                value={custForm.max} onChange={(event) => setCust({ max: event.target.value })} /></label>
+            <label className="gvswr-every">в полосе
+              <UnitInput unit="МГц" aria-label="Норма заказчика: полоса от, МГц" inputMode="decimal" placeholder="от"
+                value={custForm.from} onChange={(event) => setCust({ from: event.target.value })} /></label>
+            <label className="gvswr-every">…
+              <UnitInput unit="МГц" aria-label="Норма заказчика: полоса до, МГц" inputMode="decimal" placeholder="до"
+                value={custForm.to} onChange={(event) => setCust({ to: event.target.value })} /></label>
+            <label className="gvswr-every gvswr-basis">Основание
+              <input aria-label="Норма заказчика: основание" placeholder="ТУ …, п. … / КД … / заказ …"
+                value={custForm.basis} onChange={(event) => setCust({ basis: event.target.value })} /></label>
+          </div>
+          <small className="gvswr-ref">{componentsMax !== null ? `по комплектующим ≤ ${formatNumber(componentsMax, { digits: 2 })}` : "по комплектующим — рассчитается при сборке ЭТК"}</small>
+          {custProblem && <div className="warning-inline" role="alert">{custProblem}</div>}
+          {!custProblem && custStricter && <div className="warning-inline">Норма заказчика строже возможностей разъёмов (по паспорту до {formatNumber(componentsMax, { digits: 2 })}) — ожидайте брак</div>}
+        </div>}
       </div>
       <Toggle checked={S.coax.tutEnabled} title="ТУТ на концах" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: on } }))}>
         <Field label="Длина ТУТ" className="short"><UnitInput unit="мм" type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></Field>

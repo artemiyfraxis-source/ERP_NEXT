@@ -34,7 +34,13 @@ from app.modules.references.cable_structure import (
     CoaxCard, HookupWire, WireGauge, decimal_or_none, gauge_gost_awg, section_key,
 )
 from app.modules.references.cables import hookup_series_rest
-from app.modules.references.coax_vswr import cable_card, vswr_norm
+from app.modules.references.coax_vswr import (
+    CustomerNormError,
+    cable_card,
+    customer_norm,
+    vswr_norm,
+    with_customer_norm,
+)
 from app.modules.references.domain import TechOperationTab, cable_key, gost_awg_map, pick_wire_row
 from app.modules.references.wire_dia import outer_by_series
 from app.modules.references.technology import (
@@ -488,6 +494,19 @@ def enrich_coax_diameters(config: Mapping[str, Any], dia_rows: Iterable[Mapping[
     return enriched
 
 
+def coax_customer_problem(config: Mapping[str, Any]) -> str | None:
+    """Why the generator's «Норма заказчика (КД)» (`coax.vswrCustomer`) cannot be built from, in Russian; None — not set
+    or readable. «Создать» and the scheme preview answer 422 with it."""
+    coax = config.get("coax") if isinstance(config, Mapping) else None
+    if not isinstance(coax, Mapping):
+        return None
+    try:
+        customer_norm(coax.get("vswrCustomer"))
+    except CustomerNormError as error:
+        return str(error)
+    return None
+
+
 def enrich_coax_vswr_norm(
     config: Mapping[str, Any], coax_rows: Iterable[Mapping[str, Any]], cards: Iterable[CoaxCard],
 ) -> dict[str, Any]:
@@ -509,6 +528,14 @@ def enrich_coax_vswr_norm(
     cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
     coax["vswrNorm"] = vswr_norm(ends, coax_rows, cable_card(cards, cable) if cable else None, cable,
                                  coax.get("cableLength"))
+    # «Норма заказчика (КД)» технолога (владелец 23.10) — норма приёмки, по комплектующим — справочно. Сборка её
+    # проверяет на входе (422), здесь нечитаемая не встречается; встретилась (старый конфиг) — норма по комплектующим.
+    try:
+        customer = customer_norm(coax.get("vswrCustomer"))
+    except CustomerNormError:
+        customer = None
+    if customer is not None:
+        coax["vswrNorm"] = with_customer_norm(coax["vswrNorm"], customer)
     control = vswr_control(coax.get("vswrControl"))
     if control:
         coax["vswrNorm"]["control"] = control

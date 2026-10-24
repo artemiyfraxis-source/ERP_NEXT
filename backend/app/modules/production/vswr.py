@@ -115,6 +115,24 @@ def norm_band(norm: Mapping[str, Any]) -> tuple[Decimal, Decimal] | None:
     return low, high
 
 
+CUSTOMER_SOURCE = "customer"
+_EDGE_HZ = 1000.0  # край полосы в файле — с точностью до кГц (частота пика хранится до кГц)
+
+
+def customer_band(norm: Mapping[str, Any]) -> tuple[Decimal, Decimal] | None:
+    """Полоса нормы заказчика (технолог задаёт её в ЭТК, владелец 23.10); норма по комплектующим — None."""
+    return norm_band(norm) if norm.get("source") == CUSTOMER_SOURCE else None
+
+
+def require_coverage(points: Sequence[VswrPoint], low: Decimal, high: Decimal) -> None:
+    """Файл замера должен покрывать полосу нормы заказчика целиком: иначе вердикт по её точкам не вынести."""
+    frequencies = [frequency for frequency, _vswr in points]
+    if not frequencies or min(frequencies) > float(low) * 1e6 + _EDGE_HZ or max(frequencies) < float(high) * 1e6 - _EDGE_HZ:
+        raise ProductionValidationError(
+            f"Файл замера не покрывает полосу нормы заказчика {_mhz_text(low)}…{_mhz_text(high)} МГц",
+        )
+
+
 def validate_band(low: Decimal, high: Decimal) -> tuple[Decimal, Decimal]:
     low, high = Decimal(low).quantize(_MHZ), Decimal(high).quantize(_MHZ)
     if not low.is_finite() or not high.is_finite() or low <= 0 or high > Decimal("1000000"):
@@ -220,7 +238,11 @@ def record_vswr(command: RecordVswrCommand, uow: QualityUnitOfWork) -> VswrMeasu
     if not file_name:
         raise ProductionValidationError("У файла замера нет имени")
     norm = _norm_snapshot(command.norm)
-    if command.band_from_mhz is None and command.band_to_mhz is None:
+    customer = customer_band(norm)
+    if customer is not None:
+        # Норма заказчика: вердикт — только по точкам её полосы, какую бы полосу ни прислал клиент.
+        band = customer
+    elif command.band_from_mhz is None and command.band_to_mhz is None:
         band = norm_band(norm)
         if band is None:
             raise ProductionValidationError("Укажите полосу замера: в норме ЭТК её нет")
@@ -230,6 +252,8 @@ def record_vswr(command: RecordVswrCommand, uow: QualityUnitOfWork) -> VswrMeasu
         band = (command.band_from_mhz, command.band_to_mhz)
     low, high = validate_band(*band)
     points = parse_vna_file(content, file_name)
+    if customer is not None:
+        require_coverage(points, low, high)
     peak = peak_index(points, low, high)
     peak_hz, peak_vswr = points[peak]
     max_vswr = Decimal(str(peak_vswr)).quantize(_VSWR, rounding=ROUND_HALF_UP)

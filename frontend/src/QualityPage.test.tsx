@@ -405,6 +405,18 @@ it("a computed norm shows its basis instead of the service word", async () => {
   expect(screen.queryByText(/computed/)).not.toBeInTheDocument();
 });
 
+it("a customer norm shows its band, basis and the components norm for reference; the band is locked in the upload form", async () => {
+  const customer = { ...okNorm, vswr_max: 1.5, band_mhz: [700, 2700], source: "customer", basis: "ТУ 16-505.123, п. 3.4; норма заказчика из ревизии 4 ЭТК",
+    components: { status: "ok", reason: "", vswr_max: 2.06, band_mhz: [1, 6000] } };
+  await openVswr(customer);
+  const line = await screen.findByText(/^Норма заказчика ≤ 1,5 в полосе 700/);
+  expect(line.textContent!.replace(/\s+/g, " ")).toBe("Норма заказчика ≤ 1,5 в полосе 700 … 2 700 МГц (ТУ 16-505.123, п. 3.4; норма заказчика из ревизии 4 ЭТК); по комплектующим ≤ 2,06 — справочно");
+  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByLabelText("Полоса от, МГц")).toHaveValue("700");
+  expect(within(dialog).getByLabelText("Полоса до, МГц")).toHaveAttribute("readonly");
+});
+
 it("says why the norm is undefined", async () => {
   await openVswr(noNorm);
   expect(await screen.findByText("Норма не определена — у разъёма нет КСВ в справочнике")).toBeInTheDocument();

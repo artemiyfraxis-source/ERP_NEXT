@@ -1268,6 +1268,8 @@ export interface VswrNorm {
   length_m?: number | null;
   source?: string | null;
   basis?: string;
+  /** При норме заказчика (`source: "customer"`) — справочная норма по комплектующим. */
+  components?: { status: "ok" | "undefined"; reason: string; vswr_max: number | null; band_mhz: [number | null, number | null] | null } | null;
 }
 /** «Контроль КСВН» ЭТК задания: каждое изделие, выборочно 1 из `every` (первое и каждое N-е) или без проверки. */
 export interface VswrControl { mode: "all" | "sample" | "none"; every: number | null }
