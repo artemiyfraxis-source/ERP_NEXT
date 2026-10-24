@@ -11,7 +11,7 @@ import {
   type SupplierBrief,
 } from "./purchasingRfqApi";
 import { picksOf, RfqPool, suggestionKey, SuggestionList } from "./RfqPool";
-import { rfqLinkState, syncRfqUrl } from "./rfqLinks";
+import { rfqLinkState, syncRfqList, syncRfqUrl } from "./rfqLinks";
 import { QuoteEntry } from "./RfqQuoteDialog";
 import { Dialog, number } from "./rfqUi";
 import "./rfq.css";
@@ -76,7 +76,7 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
   // «Мои», or «Все» at once when the user has no requests of his own but others do. Others' requests are view-only.
   const [scope, setScope] = useState<"mine" | "all" | null>(readOnly ? "all" : null);
   // «В работе» — the first taken first; «Архив» — closed, or decided and invoiced to the end (Витя via the owner 23.10).
-  const [view, setView] = useState<"work" | "archive">("work");
+  const [view, setView] = useState<"work" | "archive">(link.list);
   const [error, setError] = useState("");
 
   const reload = useCallback(async (pick?: string) => {
@@ -101,6 +101,7 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
 
   useEffect(() => { void reload(link.rfq || undefined); }, [reload, link.rfq]);
   useEffect(() => { if (selected && panelFor?.id !== selected) syncRfqUrl(selected); }, [selected, panelFor]);
+  useEffect(() => { syncRfqList(view); }, [view]);
   const shown = (rfqs ?? []).filter((rfq) => archivedRfq(rfq) === (view === "archive"));
   const archivedCount = (rfqs ?? []).filter(archivedRfq).length;
   // The open request is one of the list shown: a tab switch (or a request moved to the archive) opens its first one.
