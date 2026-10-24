@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AutoTextarea } from "./AutoTextarea";
 import { ApiError, failureText, receivingApi, type DeliveryDeviation, type DeliveryLinePayload, type ReceivingLine, type ReceivingQuery } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
@@ -12,6 +12,7 @@ import { VIA_LABELS, purchasingItemsApi, type ItemBrief } from "./purchasingItem
 import { SupplierReturnPanel } from "./SupplierReturnPanel";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { LoadMore } from "./LoadMore";
+import { PageWindow } from "./PageWindow";
 
 const BRAK = "Механическое повреждение / брак";
 const MANUAL_CHECKS = [
@@ -435,8 +436,14 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
   const [chip, setChip] = useState("");
   const [waiting, setWaiting] = useState<ReceivingLine[]>([]);
   const [delivery, setDelivery] = useState<ExpectedGroup | null>(null);
+  // Карточка строки (ВК, размещение, акты) — окном поверх очереди (владелец 14.10: «всё, что править, — окнами»).
+  const [openId, setOpenId] = useState("");
+  const openLine = openId ? lines.find((line) => line.id === openId) : undefined;
   const chipRef = useRef("");
   chipRef.current = chip;
+
+  // Строка ушла из очереди после действия (другой отбор, ревизия ВК) — окно закрывается, итог — на странице.
+  useEffect(() => { if (openId && !openLine) setOpenId(""); }, [openId, openLine]);
 
   useEffect(() => {
     // A failed read just leaves the lines without the item name.
@@ -617,12 +624,13 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
         </div>
       </header>
       {readOnly && <p className="page-sub">Приёмка открыта вам только на просмотр.</p>}
-      {error && <div className="error-banner" role="alert">{error}</div>}
+      {/* При открытом окне ошибка и итог действия — в окне, иначе их закрывает окно. */}
+      {error && !openLine && <div className="error-banner" role="alert">{error}</div>}
       {returning && <SupplierReturnPanel onDone={() => void reload()} onClose={() => setReturning(false)} />}
       <ExpectedBlock groups={expectedGroups(waiting)} readOnly={readOnly} loading={loading || Boolean(busy)} onAccept={(group) => { setNotice(""); setUpdRows(null); setDelivery(group); }} />
       {delivery && !readOnly && <DeliveryPanel key={delivery.key} group={delivery} onClose={() => setDelivery(null)} onDone={(done) => { setNotice(deliveryDoneText(done)); void refreshAll().catch(() => undefined); }} />}
       {updRows && <UpdPanel rows={updRows} busy={Boolean(busy)} onSubmit={(payload) => void attachDocuments(updRows, payload)} onClose={() => setUpdRows(null)} />}
-      {notice && <div className="success-banner" role="status">{notice}</div>}
+      {notice && !openLine && <div className="success-banner" role="status">{notice}</div>}
       <div className="calendar-chips queue-chips" role="group" aria-label="Быстрый отбор">
         <button type="button" className={`calendar-chip${chip ? "" : " active"}`} aria-pressed={!chip} onClick={() => setChip("")}>Все</button>
         {QUEUE_CHIPS.map((item) => (
@@ -650,22 +658,81 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
         toolbar={(
           <label className="inline-select">Группировать<select value={group} onChange={(event) => setGroup(event.target.value)}><option value="">нет</option><option value="supplier">по поставщику</option><option value="order">по заказу</option></select></label>
         )}
-        renderDetail={(line) => (
-          <ReceivingCard
-            key={`${line.id}:${line.version}`}
-            line={line}
-            busy={busy === line.id}
-            disabled={Boolean(busy) || loading}
-            onInspect={inspect}
-            onPlace={place}
-            onUnpack={unpack}
-            onOpenVkRevision={openVkRevision}
-            readOnly={readOnly}
-          />
-        )}
+        onRowClick={(line) => { setError(""); setNotice(""); setOpenId(line.id); }}
+        rowTitle={(line) => cardActions(line, readOnly).inspectable ? "Открыть входной контроль" : "Открыть карточку строки"}
       />
       {nextCursor && <LoadMore busy={loading || Boolean(busy)} token={lines.length} onMore={() => void reload(nextCursor)} />}
+      {openLine && (
+        <ReceivingWindow
+          line={openLine}
+          readOnly={readOnly}
+          error={error}
+          notice={notice}
+          close={() => setOpenId("")}
+          busy={busy === openLine.id}
+          disabled={Boolean(busy) || loading}
+          onInspect={inspect}
+          onPlace={place}
+          onUnpack={unpack}
+          onOpenVkRevision={openVkRevision}
+        />
+      )}
     </section>
+  );
+}
+
+/** Что можно сделать со строкой: ВК, размещение, разукомплектовка, новый ВК. «Режим просмотра» (ID-6) — ничего. */
+function cardActions(line: ReceivingLine, readOnly: boolean) {
+  const inspectable = !readOnly && ["В пути", "Ожидание", "Карантин"].includes(line.status);
+  const placeable = !readOnly && line.status === "Принято" && !line.warehouse_event_emitted;
+  const unpackable = placeable && Boolean(line.grn) && !line.package && !line.storage_location;
+  const revisable = !readOnly && Boolean(line.verdict) && line.status !== "Архив ВК" && !line.warehouse_event_emitted;
+  return { inspectable, placeable, unpackable, revisable };
+}
+
+interface CardProps {
+  line: ReceivingLine;
+  busy: boolean;
+  disabled: boolean;
+  onInspect: (line: ReceivingLine, payload: Record<string, unknown>) => Promise<void>;
+  onPlace: (line: ReceivingLine, location: string) => Promise<void>;
+  onUnpack: (line: ReceivingLine, quantities: string[]) => Promise<void>;
+  onOpenVkRevision: (line: ReceivingLine) => Promise<void>;
+  readOnly: boolean;
+}
+
+/** Окно строки приёмки. Есть что вводить (ВК, место, пакеты) — щелчок мимо окна не закрывает его, а закрытие
+ *  с набранным спрашивает; карточка без полей (просмотр, «На складе», архив) закрывается и щелчком мимо. */
+function ReceivingWindow({ error, notice, close, ...card }: CardProps & { error: string; notice: string; close: () => void }) {
+  const dirty = useRef(false);
+  const [asking, setAsking] = useState(false);
+  const { inspectable, placeable, unpackable } = cardActions(card.line, card.readOnly);
+  const tryClose = () => { if (dirty.current) setAsking(true); else close(); };
+  return (
+    <PageWindow label={`${inspectable ? "Входной контроль" : "Строка приёмки"} ${card.line.legacy_id}`} width={1240} dismissable={!(inspectable || placeable || unpackable)} close={tryClose}>
+      <ReceivingCard
+        key={`${card.line.id}:${card.line.version}`}
+        {...card}
+        onClose={tryClose}
+        onDirty={(value) => { dirty.current = value; }}
+        banner={<>
+          {error && <div className="error-banner" role="alert">{error}</div>}
+          {notice && <div className="success-banner" role="status">{notice}</div>}
+        </>}
+      />
+      {asking && (
+        <PageWindow label="Несохранённый входной контроль" width={480} close={() => setAsking(false)}>
+          <section className="panel receiving-confirm">
+            <h2>Закрыть без сохранения?</h2>
+            <p>Введённые данные строки {card.line.legacy_id} не проведены — они пропадут.</p>
+            <div className="header-actions">
+              <button type="button" className="primary" onClick={() => setAsking(false)}>Вернуться к строке</button>
+              <button type="button" className="secondary" onClick={close}>Закрыть без сохранения</button>
+            </div>
+          </section>
+        </PageWindow>
+      )}
+    </PageWindow>
   );
 }
 
@@ -678,16 +745,13 @@ function ReceivingCard({
   onUnpack,
   onOpenVkRevision,
   readOnly,
-}: {
-  line: ReceivingLine;
-  busy: boolean;
-  disabled: boolean;
-  onInspect: (line: ReceivingLine, payload: Record<string, unknown>) => Promise<void>;
-  onPlace: (line: ReceivingLine, location: string) => Promise<void>;
-  onUnpack: (line: ReceivingLine, quantities: string[]) => Promise<void>;
-  onOpenVkRevision: (line: ReceivingLine) => Promise<void>;
-  readOnly: boolean;
-}) {
+  onClose,
+  onDirty,
+  banner,
+}: CardProps & { onClose: () => void; onDirty: (dirty: boolean) => void; banner: ReactNode }) {
+  // Новая версия строки (ВК проведён) — новая карточка: набранное ушло на сервер.
+  useEffect(() => { onDirty(false); }, []);
+  const touch = () => onDirty(true);
   const [fact, setFact] = useState(line.fact_quantity ?? line.ordered_quantity);
   const [documentQty, setDocumentQty] = useState(line.document_quantity ?? line.ordered_quantity);
   const [shippingDocument, setShippingDocument] = useState(line.shipping_document_url ?? "");
@@ -764,9 +828,7 @@ function ReceivingCard({
     }).catch(() => undefined);
   }
 
-  const inspectable = !readOnly && ["В пути", "Ожидание", "Карантин"].includes(line.status);
-  const placeable = !readOnly && line.status === "Принято" && !line.warehouse_event_emitted;
-  const unpackable = placeable && Boolean(line.grn) && !line.package && !line.storage_location;
+  const { inspectable, placeable, unpackable, revisable } = cardActions(line, readOnly);
   const batchMode = batches.length >= 2;
   const brak = manual.includes(BRAK);
   const factLimit = fact || documentQty;
@@ -780,6 +842,7 @@ function ReceivingCard({
   }
 
   function startBatches() {
+    touch();
     setBatches((current) => current.length
       ? [...current, emptyBatch()]
       : [{ ...emptyBatch(), document_quantity: documentQty, fact_quantity: fact, series, expiry_date: expiry, manufacture_date: manufactureDate, defect_quantity: brak ? defect : "" }, emptyBatch()]);
@@ -788,20 +851,23 @@ function ReceivingCard({
   function editBatch(index: number, patch: Partial<Batch>) {
     setBatches((current) => current.map((batch, position) => position === index ? { ...batch, ...patch } : batch));
   }
-  const revisable = !readOnly && Boolean(line.verdict) && line.status !== "Архив ВК" && !line.warehouse_event_emitted;
   return (
     <article className="panel receiving-card">
       <div className="procurement-title">
         <div><strong>{line.legacy_id} · {itemTitle(line)}</strong><small>{line.supplier} · заказано {line.ordered_quantity} {line.unit} · {line.warehouse}</small></div>
-        <StatusChip status={line.status} />
+        <div className="receiving-card-actions">
+          <StatusChip status={line.status} />
+          <button type="button" className="secondary small" onClick={onClose}>Закрыть</button>
+        </div>
       </div>
+      {banner}
       {line.nonconformities.length > 0 && <p className="nonconformity">{natureText(line)}</p>}
       {line.nonconformity_description && <p className="nonconformity">{line.nonconformity_description}</p>}
       {line.shipping_document_note && <p className="hint">{line.shipping_document_note}</p>}
-      {(line.document_number || line.inspection_note) && <p className="hint">{[line.document_number && `УПД ${line.document_number}${line.document_date ? ` от ${line.document_date}` : ""}`, line.inspection_note].filter(Boolean).join(" · ")}</p>}
+      {(line.document_number || line.inspection_note) && <p className="hint">{[line.document_number && `УПД ${line.document_number}${line.document_date ? ` от ${formatDate(line.document_date)}` : ""}`, line.inspection_note].filter(Boolean).join(" · ")}</p>}
       {Number(line.backorder_quantity) > 0 && <p className="nonconformity">Недовоз {line.backorder_quantity} {line.unit} — оплаченный остаток ушёл в закупку дозавозом</p>}
       {inspectable && (
-        <form onSubmit={submitInspection}>
+        <form onSubmit={submitInspection} onChange={touch}>
           <div className="facts-grid">
             <DocumentField lineId={line.id} kind="upd" label="Документ УПД/М-15" value={shippingDocument} disabled={disabled} hint="УПД по ЭДО можно внести позже — «Внести УПД» в списке." onChange={setShippingDocument} />
             <label>№ УПД/М-15<input value={documentNumber} onChange={(event) => setDocumentNumber(event.target.value)} /></label>
@@ -860,14 +926,14 @@ function ReceivingCard({
         </form>
       )}
       {placeable && (
-        <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onPlace(line, location).catch(() => undefined); }}>
+        <form className="inline-action" onChange={touch} onSubmit={(event) => { event.preventDefault(); void onPlace(line, location).catch(() => undefined); }}>
           <label>Место на складе<input required placeholder="1F4" title={placeHint.busy ? BUSY_TITLE : undefined} value={location} onChange={(event) => setLocation(event.target.value)} /></label>
           <button className="primary small" disabled={disabled}>{busy ? "Передаём…" : "Передать на склад"}</button>
-          <PlaceHint {...placeHint} place={location} onPick={setLocation} />
+          <PlaceHint {...placeHint} place={location} onPick={(value) => { touch(); setLocation(value); }} />
         </form>
       )}
       {unpackable && (packages.length ? (
-        <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onUnpack(line, packages).then(() => setPackages([])).catch(() => undefined); }}>
+        <form className="inline-action" onChange={touch} onSubmit={(event) => { event.preventDefault(); void onUnpack(line, packages).then(() => setPackages([])).catch(() => undefined); }}>
           {packages.map((value, index) => (
             <label key={index}>Пакет {index + 1}<input aria-label={`Пакет ${index + 1}`} type="number" min="0.000001" step="any" required value={value} onChange={(event) => setPackages((current) => current.map((item, position) => position === index ? event.target.value : item))} /></label>
           ))}

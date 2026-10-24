@@ -1693,6 +1693,18 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .receiving-card .file-button { display: inline-flex; align-items: center; cursor: pointer; }
 .receiving-card .batches th, .receiving-card .batches td { padding:4px 6px; text-align:left; font-size:13px; }
 .receiving-card .batches input { width:100%; min-width:80px; }
+.receiving-card-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+/* Поля ВК выравниваются по верху строки: поле с кнопкой «Файл» не сдвигает соседние вниз; галочка — слева от подписи. */
+.receiving-card .facts-grid { align-items: start; }
+.receiving-card .facts-grid > label.check-field { display: flex; align-items: center; gap: 8px; align-self: stretch; }
+.receiving-card .facts-grid > label.check-field input { flex-shrink: 0; }
+/* Окно строки приёмки: шапка с «Закрыть» и кнопка «Провести входной контроль» видны при прокрутке длинной формы ВК. */
+.page-window > .receiving-card > .procurement-title:first-child { position: sticky; top: 0; z-index: 2; margin: -18px -18px 0; padding: 14px 18px 12px; background: var(--card); border-bottom: 1px solid var(--border); }
+.page-window > .receiving-card > .procurement-title + .error-banner, .page-window > .receiving-card > .procurement-title + .success-banner { margin: 12px 0 0; }
+.page-window > .receiving-card form > .header-actions:last-child { position: sticky; bottom: 0; z-index: 2; margin: 0 -18px; padding: 12px 18px; background: var(--card); border-top: 1px solid var(--border); }
+.receiving-confirm { display: grid; gap: 12px; }
+.receiving-confirm h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.receiving-confirm p { margin: 0; }
 
 
 
