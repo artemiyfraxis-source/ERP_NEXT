@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PurchasingRfq } from "./PurchasingRfq";
 
 function json(body: unknown, status = 200) {
@@ -339,4 +339,57 @@ it("opens «Все» at once when the user has no requests of his own but anothe
   fireEvent.click(screen.getByRole("tab", { name: "Мои" }));
   expect(await screen.findByText("Запросов нет — нажмите «+ Запрос» и отметьте строки «В работе».")).toBeInTheDocument();
   expect(asked.filter((path) => path === "/api/purchasing/rfqs?scope=mine").length).toBeGreaterThanOrEqual(2);
+});
+
+describe("the list tab lives in the address", () => {
+  const summary = (id: string, n: number, archived: boolean) => ({
+    id, number: `КП-2610-00${n}`, seq: n, title: "Т", created_at: "2026-10-01T10:00:00", closed_at: null, mine: true,
+    lines: 1, suppliers: 1, sent: 1, quotes: 1, decided: 0, to_decide: 1, projects: [], plan_sum: "1", decided_sum: null, invoiced: 0, archived,
+  });
+  const mockApi = () => vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/purchasing/rfqs?scope=mine") return json({ rfqs: [summary("r1", 1, false), summary("r3", 3, true)] });
+    if (path === "/api/purchasing/rfqs/directory") return json({ suppliers: [] });
+    if (/^\/api\/purchasing\/rfqs\/r\d$/.test(path)) {
+      const id = path.split("/").pop()!;
+      return json({ ...matrix, rfq: { ...matrix.rfq, id, number: `КП-2610-00${id.slice(1)}`, title: null } });
+    }
+    return json({}, 404);
+  });
+  afterEach(() => window.history.replaceState({}, "", "/"));
+
+  it("a tab click writes rfqlist without a new history entry; «В работе» removes it", async () => {
+    window.history.replaceState({}, "", "/?section=procurement&tab=rfq");
+    const before = window.history.length;
+    mockApi();
+    render(<PurchasingRfq />);
+    await screen.findByText("№ 1");
+    fireEvent.click(screen.getByRole("tab", { name: "Архив 1" }));
+    await waitFor(() => expect(window.location.search).toContain("rfqlist=archive"));
+    expect(window.location.search).toContain("rfq=r3");
+    expect(window.history.length).toBe(before);
+    fireEvent.click(screen.getByRole("tab", { name: "В работе 1" }));
+    await waitFor(() => expect(window.location.search).not.toContain("rfqlist"));
+  });
+
+  it("the address opens «Архив» on mount, and a reload keeps it", async () => {
+    window.history.replaceState({}, "", "/?section=procurement&tab=rfq&rfqlist=archive");
+    mockApi();
+    const first = render(<PurchasingRfq />);
+    expect(await screen.findByText("№ 3")).toBeInTheDocument();
+    expect(screen.queryByText("№ 1")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Архив 1" })).toHaveAttribute("aria-selected", "true");
+    first.unmount();
+    render(<PurchasingRfq />); // «reload»: the address is all that is left
+    expect(await screen.findByText("№ 3")).toBeInTheDocument();
+    expect(window.location.search).toContain("rfqlist=archive");
+  });
+
+  it("a link to an archived request still opens «Архив» and writes the tab", async () => {
+    window.history.replaceState({}, "", "/?section=procurement&tab=rfq&rfq=r3");
+    mockApi();
+    render(<PurchasingRfq />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Архив 1" })).toHaveAttribute("aria-selected", "true"));
+    await waitFor(() => expect(window.location.search).toContain("rfqlist=archive"));
+  });
 });
