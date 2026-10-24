@@ -133,7 +133,11 @@ export function parseDefects(raw: unknown): Defects {
     const line = source.trim().replace(/^[-•*–]\s*/, "");
     if (!line) continue;
     // Хвост карточек по СТО ФРАК-001-2026 («Критерии, метод контроля и действие — по СТО…; при расхождении…») — не дефект.
-    if (/^критерии, метод контроля/i.test(line)) { intro.push(line.replace(/[.:]\s*$/, "")); continue; }
+    if (/^критерии, метод контроля/i.test(line)) {
+      const tail = line.replace(/[.:]\s*$/, "");
+      if (!intro.includes(tail)) intro.push(tail);  // совмещённая карта: хвост СТО у каждой части — показать один раз
+      continue;
+    }
     // Строки СТО «4.3.1 Название; 4.3.2 Название»: каждый пункт со своим кодом строки; двоеточие внутри названия не режет.
     if (STO_ROW.test(line)) {
       for (const part of line.split(STO_SPLIT)) {

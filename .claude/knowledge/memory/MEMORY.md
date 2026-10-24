@@ -27,7 +27,7 @@
 - [Crimp contacts protocol](crimp-contacts-protocol.md) — owner's old v5.2 terminal DB rules: keep REEL+BAG in one row, null-spec, N units; ERP keeps Molex hyphens; field gaps vs TerminalRecord
 - [Prod reference write](prod-reference-write.md) — owner wants DB fills written straight to prod: ssh + import_rows by natural key, old="" guard, backup-now
 - [ETK auto revisions](etk-auto-revisions.md) — since 19.10 reference/builder changes issue new ETK revisions automatically (ETK_AUTO_REVISION=1 on prod); no «Пересобрать»
-- [Coax contact depth](coax-contact-depth.md) — заглубление = body face → contact by tracing lines; SMA male E 0,38…1,14, female H+I+J 1,88…2,41; mm only
+- [Coax contact depth](coax-contact-depth.md) — заглубление = body face → contact by tracing lines; SMA male E 0,38…1,14, female 1,88…2,23 by MIL-STD-348B (owner 24.10: MIL beats maker sheets); mm only
 - [U.FL is not MHF1](ufl-not-mhf.md) — owner 20.10: Hirose U.FL ≠ I-PEX MHF1/IPEX; never merge across series even with one supplier code
 - [Coax pin type](coax-pin-type.md) — angled = «пайка внутри корпуса», never crimp; 2.92/3.5 = «цанга»; seller «обжимной» is the shield, not the pin
 - [Coax VSWR acceptance](coax-vswr-acceptance.md) — owner 22.10: assembly VSWR judged by the limit its connectors allow (Γ1+Γ2), not a generic ≤1,3
