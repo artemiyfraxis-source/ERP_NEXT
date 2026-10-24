@@ -1613,6 +1613,9 @@ def _labelled_defects(text: str, label: str) -> str:
     return "\n".join(lines)
 
 
+_DEFECT_CRITERIA = re.compile(r"^критерии, метод контроля", re.IGNORECASE)
+
+
 def _combined_defects(code: str, defects: str, cards_by_code: Mapping[str, OperationCardTemplate]) -> str:
     parts = [defects.rstrip()] if defects.strip() else []
     for pattern, component, label in COMBINED_DEFECTS:
@@ -1622,7 +1625,18 @@ def _combined_defects(code: str, defects: str, cards_by_code: Mapping[str, Opera
         extra = _labelled_defects(card.defects, label)
         if extra:
             parts.append(extra)
-    return "\n".join(parts)
+    if len(parts) < 2:
+        return "\n".join(parts)
+    # Every СТО card ends with «Критерии, метод контроля и действие — по СТО…»: a combined card says it once, at the end
+    # (owner 24.10: no repeats in the ETK).
+    lines, criteria = [], []
+    for line in "\n".join(parts).split("\n"):
+        if _DEFECT_CRITERIA.match(line.strip()):
+            if line.strip() not in criteria:
+                criteria.append(line.strip())
+            continue
+        lines.append(line)
+    return "\n".join(lines + criteria)
 
 
 # Мерительный инструмент, которым шаг карты велит мерить, а в перечне инструмента карты его нет (шаблоны резки

@@ -45,6 +45,12 @@ describe("parseDefects: текст по СТО ФРАК-001-2026", () => {
     const parsed = parseDefects("Типовые дефекты (NG):\nНеверная распиновка: Порядок проводов не по чертежу.\nКритерии, метод контроля и действие — по СТО.");
     expect(parsed.groups.flatMap((group) => group.items.map((item) => item.name))).toEqual(["Неверная распиновка"]);
   });
+
+  it("shows the «Критерии…» line once when a combined card carries it from every part", () => {
+    const tail = "Критерии, метод контроля и действие — по СТО ФРАК-001-2026, ред. 2; при расхождении приоритет у КД и ДИ изготовителя.";
+    const parsed = parseDefects(`${text}\nОпрессовка — критические — не допускаются:\n4.3.1 Матрица не та.\n${tail}`);
+    expect(parsed.intro.filter((line) => line.startsWith("Критерии"))).toHaveLength(1);
+  });
 });
 
 describe("рисунки по строкам СТО ФРАК-001-2026, ред. 3", () => {

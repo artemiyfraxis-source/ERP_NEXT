@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -505,6 +506,20 @@ def test_combined_marking_and_coax_cards_add_their_transition_defects():
     assert "Разделка коаксиала — " in coax
     plain = by_code["CUT_WIRE_auto"].defects
     assert _combined_defects("CUT_WIRE_auto", plain, by_code) == plain.rstrip()
+
+
+def test_combined_card_states_the_sto_criteria_line_once_at_the_end():
+    from app.modules.techcards.etk_builder import _combined_defects
+
+    tail = "Критерии, метод контроля и действие — по СТО ФРАК-001-2026, ред. 3; при расхождении приоритет у КД и ДИ изготовителя."
+    by_code = {card.code: card for card in CARDS}
+    cut = "ТИПОВЫЕ ДЕФЕКТЫ — по СТО ФРАК-001-2026, ред. 3, разд. 4.1 «Резка»:\n1. Критические — не допускаются:\n4.1.1 Длина вне допуска.\n" + tail
+    crimp = "ТИПОВЫЕ ДЕФЕКТЫ — по СТО ФРАК-001-2026, ред. 3, разд. 4.3:\n1. Критические — не допускаются:\n4.3.1 Матрица не та.\n" + tail
+    by_code["PRS_TERMINAL_auto"] = replace(by_code["PRS_TERMINAL_auto"], defects=crimp)
+    combined = _combined_defects("CUT_WIRE+1crimp", cut, by_code)
+    assert combined.count("Критерии, метод контроля") == 1
+    assert combined.endswith(tail)
+    assert "Опрессовка — критические — не допускаются:\n4.3.1 Матрица не та." in combined
 
 
 def test_cut_crimp_and_tin_uses_the_erp_template_with_tin_defects_and_the_machine_applicator():
