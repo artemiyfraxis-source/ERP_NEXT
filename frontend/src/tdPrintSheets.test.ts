@@ -89,6 +89,21 @@ const sheets = html.split('<section class="sheet">').slice(1);
 const byHeading = (title: string): string => sheets.find((sheet) => sheet.includes(`<div class="content"><h2>${title}`)) ?? "";
 const textOf = (value: string) => value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
+it("комплект ТД заказчику не несёт рисунков стандартов (IPC туда нельзя; ГОСТ — только через customerFigures)", async () => {
+  const { indexStdFigures, customerFigures } = await import("./stdFigures");
+  const base = model();
+  const document = base.card.document as { operations: Record<string, unknown>[] };
+  const withSto = { ...base, card: { ...base.card, document: { ...document, operations: [
+    { ...cut, card: { ...cut.card, defects: "4.3.14 Высота обжима вне допуска; 4.1.2 Длина вне допуска" } }, second, third,
+  ] } } } as TdPrintModel;
+  const kit = buildTdKitHtml(withSto);
+  expect(kit).not.toContain("/api/techcards/std-figures");
+  expect(kit).not.toMatch(/<img\b/i);
+  const ipc = { id: "f", sto_code: "4.3.14", position: 1, role: "defect", source_kind: "ipc", caption: "IPC/WHMA-A-620E, рис. 3-12",
+    content_type: "image/png", sha256: "c".repeat(64), width: 1, height: 1, size: 1, customer_allowed: false, created_at: "", created_by: "" } as const;
+  expect(customerFigures(indexStdFigures([ipc]).get("4.3.14") ?? [])).toEqual([]);
+});
+
 it("каждый лист несёт основную надпись: обозначение, литеру, Лист/Листов и четыре фамилии", () => {
   expect(sheets.length).toBeGreaterThan(8);
   for (const sheet of sheets) {
@@ -230,12 +245,12 @@ it("в комплекте нет латинских кодов видов опе
   expect(html).not.toContain("CUT_WIRE");
 });
 
-it("СТО печатается целиком: все 320 кодов дефектов, повтор шапки таблиц, действия и лист изменений", () => {
+it("СТО печатается целиком: все 351 код дефектов, повтор шапки таблиц, действия и лист изменений", () => {
   const out = buildStoHtml(sto);
   const codes: string[] = [];
   const walk = (section: Sto["sections"][number]): void => { section.rows.forEach((row) => codes.push(row.code)); (section.subsections ?? []).forEach(walk); };
   sto.sections.forEach(walk);
-  expect(codes).toHaveLength(320);
+  expect(codes).toHaveLength(351);
   for (const code of codes) expect(out).toContain(`<td class="code">${code}</td>`);
   expect(out).toContain("thead { display: table-header-group; }");
   expect(out).toContain("A4 landscape");

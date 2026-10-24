@@ -6,7 +6,8 @@
 // (tcRecordNormalize_); неизменённая карточка уходит на сохранение как пришла.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from "react";
 import type { OperationCardStepValue, OperationCardToolValue, OperationRecordEdit } from "./api";
-import { defectArt, defectGroupCode } from "./etkDefectArt";
+import { defectGroupCode } from "./etkDefectArt";
+import { DefectPicture } from "./EtkStdFigure";
 import { defectsDraft, defectsStructured, serializeDefects, type DefectsEdit } from "./etkDefectEdit";
 import { TOOLING_ORDER } from "./etkOperation";
 import { RowMenu, type MenuItem } from "./ProcurementRowMenu";
@@ -246,7 +247,7 @@ function DefectsEditor({ value, code, onChange }: { value: DefectsEdit; code: st
         const label = `${at + 1}.${index + 1}`;
         const setItem = (patch: Partial<typeof item>) => setGroup(at, { items: group.items.map((other, position) => position === index ? { ...other, ...patch } : other) });
         return <div className="tc-def" key={index}>
-          <span className="tc-def-pic" dangerouslySetInnerHTML={{ __html: defectArt(item.name, item.text, defectGroupCode(code, group.title)) }} />
+          <DefectPicture className="tc-def-pic" name={item.name} note={item.text} code={defectGroupCode(code, group.title)} />
           <AutoText singleLine className="tc-def-name" aria-label={`Дефект ${label}`} autoFocus={fresh === `${at}:${index}`} value={item.name} onChange={(name) => setItem({ name })} />
           <AutoText aria-label={`Признак ${label}`} value={item.text} onChange={(text) => setItem({ text })} />
           <RowMenu label={`Действия: дефект ${label}`} items={[

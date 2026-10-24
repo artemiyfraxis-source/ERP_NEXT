@@ -43,7 +43,10 @@ class SecurityHeadersMiddleware:
                 headers["Cross-Origin-Opener-Policy"] = "same-origin"
                 content_type = headers.get("content-type", "")
                 path = str(scope.get("path", ""))
-                if path.startswith("/api") or content_type.startswith("text/html"):
+                # A route may let the viewer's own browser keep an immutable picture (`private, …`: never a shared
+                # cache) — the standard figures and connector pictures; every other API answer is no-store.
+                own = headers.get("cache-control", "")
+                if (path.startswith("/api") and not own.startswith("private")) or content_type.startswith("text/html"):
                     headers["Cache-Control"] = "no-store"
                 if scope.get("scheme") == "https":
                     headers["Strict-Transport-Security"] = (

@@ -16,7 +16,7 @@ from app.modules.techcards.td_issues import (
 from app.modules.techcards.td_sto import outside_sto, sto, sto_norms, sto_section
 
 NOW = datetime(2026, 10, 20, 9, 0, tzinfo=timezone.utc)
-TEMPLATES_AFTER = Path(__file__).resolve().parents[3] / "docs" / "data" / "operation-templates-2026-10-22" / "templates-after.json"
+TEMPLATES_AFTER = Path(__file__).resolve().parents[3] / "docs" / "data" / "operation-templates-2026-10-23" / "payload.json"
 OPS_TSV = Path(__file__).resolve().parents[2] / "data" / "reference-mirror" / "БД.ОП.tsv"
 
 
@@ -148,7 +148,8 @@ def test_warnings_for_missing_control_time_analog_and_sto_section():
     for item in findings:
         by_key.setdefault(item["operation_key"], []).append(item["code"])
 
-    assert sorted(by_key["Handjob::A::A"]) == ["analog_used", "no_control_step", "no_sto_section", "no_time_norm"]
+    # «Сборка» (Handjob) — раздел 4.9 СТО с 23.10.2026: замечания только о шаге контроля, норме времени и аналоге.
+    assert sorted(by_key["Handjob::A::A"]) == ["analog_used", "no_control_step", "no_time_norm"]
     analog = next(item for item in findings if item["code"] == "analog_used")
     assert analog["text"] == (
         "Операция 1 «Опрессовка контактов»: вместо BL2018TS по КД применён аналог SHF-001T-0.8BS — для РВ нужно "
@@ -202,8 +203,8 @@ def test_every_known_operation_family_has_an_sto_section():
         "INS_tape": "4.5", "INS_TAPE_AUTO": "4.5", "INS_MARK": "4.6", "INS_MARK_TUBE_AUTO": "4.6", "INS_ПМЛ": "4.6",
         "LASER_MARK": "4.6", "PRINT_MARK": "4.6", "INS_housing_GX": "4.7", "INS_housing_DB/DH/СНП": "4.7",
         "INS_terminal_2,54-6,3": "4.7", "INS_lock": "4.7", "INS_RJ_cat6/7": "4.7", "INS_housing_COAX": "4.8",
-        "INS_housing_COAX_clamp": "4.8", "PRS_CAP_COAX": "4.8", "Str-Str long": "4.8", "INS_стяжки": "4.9",
-        "INS_гофра_разрез": "4.9", "TWIST": "4.10", "TWIST_BAY": "4.10", "TWST_SHILED": "4.10", "MOLD_auto": "4.11",
+        "INS_housing_COAX_clamp": "4.8", "PRS_CAP_COAX": "4.8", "INS_стяжки": "4.9",
+        "INS_гофра_разрез": "4.9", "TWIST": "4.10", "TWIST_BAY": "4.9", "TWST_SHILED": "4.2", "MOLD_auto": "4.11",
         "SEAL": "4.11", "PLASM": "4.11", "US_WELD": "4.11", "PREP_FOLD": "4.12",
     }
     assert set(expected) <= codes, set(expected) - codes  # примеры — настоящие коды БД.ОП
@@ -252,7 +253,7 @@ def test_grade_defaults_by_operation_family():
         "INS_TAPE_AUTO": "2", "INS_гофра_разрез": "2", "CUT_WIRE+1strip": "2", "CUT_WIRE+1crimp+tin": "3",
         "PRS_TERMINAL_auto": "3", "INS_housing_GX": "3", "HEAT_TYT_short": "3", "TWIST": "3", "TWST_SHILED": "3",
         "SEAL": "3", "PLASM": "3", "LASER_MARK": "3", "PRINT_MARK": "3", "SDR_tin": "3", "SDR_GX12": "3",
-        "SDR_COAX_pin_R/A": "4", "INS_housing_COAX": "4", "PRS_CAP_COAX": "4", "Str-Str long": "4", "US_WELD": "4",
+        "SDR_COAX_pin_R/A": "4", "INS_housing_COAX": "4", "PRS_CAP_COAX": "4", "US_WELD": "4",
         "MOLD_auto": "4", "ZZZ_new": "",
     }
     assert {code: default_grade(code)[1] for code in expected} == expected

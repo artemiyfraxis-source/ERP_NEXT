@@ -197,6 +197,11 @@ class HandoffRequestsCommand:
     actor: Actor
     now: datetime
     retransfer: bool = False
+    # «В закупку» is open to everyone (owner, 23.10). A buyer who presses it takes the line «В работе»; anyone else
+    # hands it over with nobody's name on it (`queue_for_procurement`: «Неразобранные»), and «Повторно» stays the
+    # buyer's. `own_only` — without «Заявки»/«Снабжение» on edit only one's own requests (by initiator id).
+    as_buyer: bool = True
+    own_only: bool = False
 
 
 def _creation_fingerprint(command: CreateRequestsCommand) -> str:
@@ -347,6 +352,8 @@ def handoff_requests(
             request = uow.requests.get(request_id)
             if request is None:
                 raise KeyError(f"Request not found: {request_id}")
+            if command.own_only and request.actor.id != command.actor.id:
+                raise PermissionError("Передать в закупку можно только свои заявки")
             requests[request_id] = request
 
         messages: dict[UUID, OutboxMessage] = {}
@@ -354,9 +361,11 @@ def handoff_requests(
         for request_id in request_ids:
             request = requests[request_id]
             if command.retransfer:
+                if not command.as_buyer:
+                    raise ValidationError("Повторно в закупку передаёт закупщик")
                 request = request.retransfer(command.actor)
             elif request.status is RequestStatus.NEW:
-                request = request.start_procurement(command.actor)
+                request = request.start_procurement(command.actor) if command.as_buyer else request.queue_for_procurement()
             line = build_procurement_requested_snapshot(request, today=command.now.date())
             existing_message = uow.outbox.by_idempotency_key(line.idempotency_key)
             if existing_message is not None:

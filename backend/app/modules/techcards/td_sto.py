@@ -4,12 +4,14 @@
 Код операции — код карты библиотеки (БД.ОП «Номер»: CUT_WIRE+1strip, PRS_TERMINAL_auto, INS_housing_GX …). Раздел
 ищется по правилам сверху вниз, первое совпадение решает; частные правила стоят выше общих префиксов:
 - 4.8 «Коаксиальные разъёмы» — монтаж корпуса коаксиала (INS_housing_COAX*), опрессовка крышки коаксиала
-  (PRS_CAP_COAX) и коаксиальные сборки целиком (Str-Str, R/A-MHF1, MHF1-MHF1 …); пайка пинов и корпусов коаксиала —
+  (PRS_CAP_COAX); пайка пинов и корпусов коаксиала —
   4.4.5, обжим гильзы (PRS_SLEEVE_coax) — 4.3, как велит область 4.8;
 - 4.4 «Лужение и пайка» — по подразделам: SDR_tin → 4.4.1, SDR_W_W → 4.4.4, SDR_COAX_* → 4.4.5, прочая пайка → 4.4
   (общие дефекты 4.4.2 и особенности разъёмов 4.4.3 печатаются вместе);
 - маркировка (INS_MARK*, INS_ПМЛ, LASER_MARK, PRINT_MARK) → 4.6; корпуса, терминалы, фиксаторы, RJ (INS_housing*,
-  INS_terminal*, INS_lock, INS_RJ*) → 4.7; стяжки и гофра (INS_стяжки, INS_гофра*) → 4.9; изоляция (HEAT_*, INS_TUT,
+  INS_terminal*, INS_lock, INS_RJ*) → 4.7; стяжки и гофра (INS_стяжки, INS_гофра*), раскладка на плазе (Раскладка),
+  ручная сборка жгута (Handjob) и смотка в бухту (TWIST_BAY) → 4.9; скрутка экрана на станке снятия оболочки
+  (TWST_SHILED) — разделка экрана → 4.2; изоляция (HEAT_*, INS_TUT,
   INS_SLEEVE*, INS_WRAP, INS_BRAID, INS_NEYLON, INS_CAP, INS_END_CAP, INS_tape, INS_TAPE*) → 4.5;
 - по префиксу: CUT_ → 4.1 (и совмещённые CUT_WIRE+1strip…), STRIP_ → 4.2, PRS_ → 4.3, TWIST/TWST → 4.10,
   MOLD_ / SEAL / PLASM / US_WELD → 4.11, PREP_FOLD → 4.12.
@@ -30,14 +32,14 @@ STO_FILE = Path(__file__).resolve().parents[3] / "data" / "sto-frak-001-2026.jso
 _RULES: tuple[tuple[re.Pattern[str], str], ...] = tuple((re.compile(pattern), section) for pattern, section in (
     (r"^INS_housing_COAX", "4.8"),
     (r"^PRS_CAP_COAX$", "4.8"),
-    (r"^(Str|R/A|MHF1)-", "4.8"),
     (r"^SDR_tin$", "4.4.1"),
     (r"^SDR_W_W$", "4.4.4"),
     (r"^SDR_COAX", "4.4.5"),
     (r"^SDR_", "4.4"),
     (r"^(INS_MARK|INS_ПМЛ$|LASER_MARK$|PRINT_MARK$)", "4.6"),
     (r"^(INS_housing|INS_terminal|INS_lock$|INS_RJ)", "4.7"),
-    (r"^(INS_стяжки$|INS_гофра)", "4.9"),
+    (r"^(INS_стяжки$|INS_гофра|Раскладка$|Handjob$|TWIST_BAY$)", "4.9"),
+    (r"^TWST_SHILED$", "4.2"),
     (r"^(HEAT_|INS_TUT$|INS_SLEEVE|INS_WRAP$|INS_BRAID$|INS_NEYLON$|INS_CAP$|INS_END_CAP$|INS_tape$|INS_TAPE)", "4.5"),
     (r"^CUT_", "4.1"),
     (r"^STRIP_", "4.2"),
@@ -66,6 +68,20 @@ def _titles() -> dict[str, str]:
 
     walk(sto()["sections"])
     return found
+
+
+@lru_cache(maxsize=1)
+def sto_row_codes() -> frozenset[str]:
+    """Коды строк СТО («4.3.14»): к ним привязаны рисунки стандартов (std_figures)."""
+    found: set[str] = set()
+
+    def walk(sections: list[dict[str, Any]]) -> None:
+        for section in sections:
+            found.update(str(row["code"]) for row in section.get("rows") or [])
+            walk(section.get("subsections") or [])
+
+    walk(sto()["sections"])
+    return frozenset(found)
 
 
 def _section_codes(code: str) -> list[str]:

@@ -152,6 +152,9 @@ GATES: tuple[Gate, ...] = (
     _gate("requests_form", "Форма заявки — справочные данные", ("newrequest", "requests"), VIEW),
     _gate("newrequest", "Оформить заявку", ("newrequest",), EDIT),
     _gate("myrequests", "Мои заявки", ("myrequests",), VIEW),
+    # Owner 23.10.2026: «В закупку» — всем (a gate of its own after the transfer, was «Снабжение: правка»); the route
+    # limits non-buyers to their own requests and never makes them the line's buyer.
+    _gate("handoff", "Заявки — передача в закупку", ("requests", "myrequests", "newrequest"), VIEW),
     _gate("techcards_router", "Техкарты — вход в раздел", ("techcards", "erptctpl", "tcgen"), VIEW),
     _gate("techcards_view", "Техкарты проектов — просмотр", ("techcards",), VIEW),
     _gate("techcards_edit", "Техкарты проектов — правка", ("techcards",), EDIT),
