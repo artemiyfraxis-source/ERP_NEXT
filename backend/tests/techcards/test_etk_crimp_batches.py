@@ -310,3 +310,14 @@ def test_without_the_generators_scheme_the_chain_stays_linear():
     document = build(manual)
     assert all("source" not in row for row in op_by_key(document, "insTermA2")["semis"])
     assert op_by_key(document, "twistA2")["result"][0]["name"] != "Ветвь X2 «I3», сторона А"
+
+
+def test_config_saved_with_the_old_marking_code_builds_the_same_card_by_template_id():
+    """Переименование 25.10 (INS_MARK_TUBE_AUTO -> PRINT_MARK_TUBE, id шаблона прежний): конфиг с прежним opNum находит ту же карту по templateId."""
+    old = deepcopy(CONFIG)
+    for op in old["ops"]:
+        if op.get("opNum") == "PRINT_MARK_TUBE":
+            op["opNum"] = "INS_MARK_TUBE_AUTO"
+    before, after = build(old), build()
+    assert op_by_key(before, "cutMark")["code"] == "PRINT_MARK_TUBE"
+    assert [op["code"] for op in before["operations"]] == [op["code"] for op in after["operations"]]
