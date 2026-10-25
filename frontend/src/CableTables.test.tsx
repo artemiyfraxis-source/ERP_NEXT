@@ -568,7 +568,7 @@ it("shows the cable lists read-only without the reference edit right", async () 
   expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
 });
 
-it("groups the hook-up wires by series with the shared values in the header, sizes by number, a row per colour", () => {
+it("groups the hook-up wires by series with the series name only in the header, sizes by number, a row per colour", () => {
   const gauge = (id: string, section: number) => ({ id, awg: "", section_mm2: section, conductor_d_mm: null, strands: "", label: `${section} мм²`, wires: 1 });
   const wire = (series: string, mark: string, gauge_id: string, color: string, voltage: number) => ({
     id: `${mark}:${color}`, kind: "wire" as const, auto_kind: "wire" as const, reason: "", manual: false, cable: mark, dia: null, dia_hint: null,
@@ -595,11 +595,13 @@ it("groups the hook-up wires by series with the shared values in the header, siz
   expect(heads).not.toContain("Погонная ёмкость, пФ/м");
   expect(heads[heads.indexOf("Поставщик") + 1]).toBe("Ссылка");
   expect(screen.getAllByRole("link", { name: /^Открыть страницу ПуГВ/ })[0]).toHaveAttribute("href", "https://snabcable.ru/mounting/mgtf-mgtfe/pv-3-pugv/");
-  // one header: series, the jacket material (not the rudimentary «Изоляция»), what all sizes share, the number of sizes
-  expect(screen.getByText("ПуГВ · ПВХ-пластикат · 450 В · −50 … +65 °C")).toBeInTheDocument();
-  // not repeated in the rows
-  expect(screen.queryAllByText("450")).toHaveLength(0);
-  expect(screen.queryAllByText("ПВХ-пластикат", { selector: "td *" })).toHaveLength(0);
+  // the header is the series name only; voltage and temperature are in every row (owner 25.10)
+  expect(document.querySelector("tr.group-row")?.textContent).toBe("ПуГВ · 5");
+  expect(screen.queryByText(/450 В|−50 … \+65 °C/)).toBeNull();
+  const body = [...document.querySelectorAll("tbody tr:not(.group-row)")] as HTMLElement[];
+  const cellText = (tr: HTMLElement, header: string) => tr.querySelectorAll("td")[heads.indexOf(header)]?.textContent;
+  expect(body.map((tr) => cellText(tr, "Температура, °C"))).toEqual(Array(5).fill("−50 … +65"));
+  expect(body.map((tr) => cellText(tr, "Напряжение, В"))).toEqual(Array(5).fill("450"));
   // 2,5 · 4 · 10 · 16, not the text order 10 · 16 · 2,5 · 4
   const marks = [...document.querySelectorAll("tbody tr:not(.group-row) strong")].map((node) => node.textContent);
   expect(marks).toEqual(["ПуГВ 2,5", "ПуГВ 2,5", "ПуГВ 4", "ПуГВ 10", "ПуГВ 16"]);
