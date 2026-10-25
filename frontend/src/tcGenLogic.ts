@@ -384,6 +384,9 @@ const HOUSING_CONN_RE_ = /\bd[-\s]?sub\b|\bdb[-\s]?\d|\bde[-\s]?9\b|\bdh[-\s]?\d
 export const DIODE_RE_ = /tvs|диод|\d[.,]\d\s*ke\d|\bsmbj\d/i;
 export const LUG_RE_ = /^\s*(?:нки|нви|нвки|ншви|нши|рпи|тмл)(?![а-яa-z])/i;
 /** Наконечник по артикулу/наименованию; название из справочника («наконечник втулочный») — запасной ход. */
+/** Оплётка по артикулу/наименованию/названию: «XP-3», «XS-5», «Оплетка XS-3»; в названии — ещё слово «оплётка». */
+export const isBraidComp_ = (c: Comp) => [c.art, c.name, c.title].some((t) => /^\s*(?:оплетка\s*)?x[ps][\s-]*\d/i.test(t || ""))
+  || /оплётк|оплетк/i.test(`${c.name || ""} ${c.title || ""}`);
 export const isLugComp_ = (c: Comp) => LUG_RE_.test(`${c.art || ""} ${c.name || ""}`) || (!!c.title && (LUG_RE_.test(c.title) || /^\s*наконечник/i.test(c.title)));
 export const FOLD_STRIP_MM_ = "10";
 const JACKETED_RE_ = /\b\d+\s*P(?:R|AIR)?\b|\b\d+\s*C\s*[*xх×]|\b[SFU]?\/?[SFU]TP\b|\bUSB\b|витая\s*пара|экранир/i;
@@ -3381,12 +3384,12 @@ export function makeGen(D: GenData, S: GenState) {
     pfGraph: (): PfGraph | null => { if (!isComplex_()) return null; getActiveOps(); return graph_; },
     wrapCandidates: () => {
       const re = new RegExp(/лент|оплет|оплёт|рукав|braid|sleeve|wrap|/.source + PROTECT_TUBE_RE_.source, "i");
-      const hit = (c: Comp) => re.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`);
+      const hit = (c: Comp) => re.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`) || isBraidComp_(c);
       const list = comps().filter((c) => hit(c) || /^др/i.test(c.type || ""));
       const autos = list.filter(hit).filter((c) => !(/медн/i.test(`${c.name || ""} ${c.art || ""}`) && rjCableCat_() === "cat5"));
       return { list, autos };
     },
-    guessWrapKind_: (c: Comp | null): WrapKind => (c && /лент|tape/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`) ? "tape" : "braid"),
+    guessWrapKind_: (c: Comp | null): WrapKind => (c && !isBraidComp_(c) && /лент|tape/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`) ? "tape" : "braid"),
     prefillWrapLen_: (c: Comp | null) => { const m = c ? qtyNum(c) : 0; return m > 0 ? String(Math.round(m * 1000)) : ""; },
     num0,
   };

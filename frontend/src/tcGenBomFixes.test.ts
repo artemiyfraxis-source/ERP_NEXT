@@ -134,3 +134,31 @@ describe("наконечники на свободных концах, а не �
     expect(makeGen(D, spliced).spliceSleeveComps_().map((c) => c.art)).toEqual(["НШВИ 0.34-8"]);
   });
 });
+
+describe("оплётка XP-n / XS-n", () => {
+  it("394К.10 КБ2: «XP-3» (Др, 0,57) — оплётка в засеве обёртки, длина 570 мм", () => {
+    const b = bom("Кабельная сборка X", [
+      comp("k0", "Соед", "SMR-02V-B", 2), comp("k1", "Терминал", "SYM-001T-P0.6", 4),
+      comp("k2", "Провод", "Силикон 22AWG красный", "0.65"), comp("k3", "Провод", "Силикон 22AWG черный", "0.65"),
+      comp("k4", "ТУТ", "ТУТ 6/3мм", "0.06"), comp("k5", "Др", "XP-3", "0.57"),
+    ]);
+    const { D, S } = run(b);
+    expect(S.wrap.enabled).toBe(true);
+    expect(S.wrap.slots[0]).toMatchObject({ mat: "k5", kind: "braid", len: "570" });
+    expect(makeGen(D, S).getActiveOps().some((o) => o.type === "insWrap" && o.wrapKind === "braid")).toBe(true);
+  });
+
+  it("663К.1 КБ3: «XP-3» 0,2 при проводах МС16-13; «Оплетка XS-5» и название «оплётка» — тоже оплётка", () => {
+    const b = bom("Кабельная сборка Y", [comp("k0", "Соед", "GHR-06V-S", 2), comp("k1", "Провод", "МС16-13 0,12 красный", "0.3"), comp("k2", "Др", "XP-3", "0.2")]);
+    expect(run(b).S.wrap.slots[0]).toMatchObject({ mat: "k2", kind: "braid", len: "200" });
+    for (const [art, title] of [["Оплетка XS-5", ""], ["Z-77", "Рукав-оплётка"]]) {
+      const alt = bom("Кабельная сборка Y", [comp("k0", "Соед", "GHR-06V-S", 2), comp("k1", "Провод", "МС16-13 0,12 красный", "0.3"), comp("k2", "Др", art, "0.2", title)]);
+      expect(run(alt).S.wrap.slots[0]).toMatchObject({ mat: "k2", kind: "braid" });
+    }
+  });
+
+  it("обычная «Др» без признаков оплётки обёрткой не становится", () => {
+    const b = bom("Кабельная сборка Y", [comp("k0", "Соед", "GHR-06V-S", 2), comp("k1", "Провод", "МС16-13 0,12 красный", "0.3"), comp("k2", "Др", "XPS-ключ", "1")]);
+    expect(run(b).S.wrap.enabled).toBe(false);
+  });
+});
