@@ -5062,3 +5062,6 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
   .procurement-stage td .row-actions:has(> .row-action-menu) { flex-direction: row; align-items: center; gap: 4px; }
   .procurement-stage .row-action-open.captioned { min-width: 0; height: 40px; padding: 0 10px; border-color: var(--border); background: var(--card); color: var(--foreground); font-size: 12px; font-weight: 600; white-space: nowrap; }
 }
+
+/* «Сортировка: размер, затем наименование» над таблицей списка «Базы данных» (владелец 25.10.2026). */
+.sort-hint { font-size: 13px; white-space: nowrap; align-self: center; }
