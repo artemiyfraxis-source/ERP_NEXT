@@ -1,0 +1,47 @@
+/* «Распиновка и сростки»: плотная таблица жил с выбором концов и список сростков под ней. */
+.tcgen .pt { display: grid; gap: 8px; min-width: 0; }
+.tcgen .pt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12.5px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.tcgen .pt-conns { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.tcgen .pt-conn { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.tcgen .pt-conn input { width: 84px; height: 28px; font-weight: 600; }
+.tcgen .pt-conn-art { color: var(--muted-foreground); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcgen .pt-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.tcgen .pt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tcgen .pt-table th { position: sticky; top: 0; padding: 4px 8px; text-align: left; font-size: 12px; font-weight: 500; color: var(--muted-foreground); background: var(--card); border-bottom: 1px solid var(--border); white-space: nowrap; }
+.tcgen .pt-table td { padding: 2px 8px; height: 32px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.tcgen .pt-table tbody tr.pt-first td { border-top: 1px solid var(--muted-foreground); }
+.tcgen .pt-table tbody tr:first-child td { border-top: 0; }
+.tcgen .pt-table tbody tr.has-problem, .tcgen .pt-table tbody tr.pt-note { background: var(--warn-soft); }
+.tcgen .pt-table tbody tr.pt-note td { height: auto; padding: 0 8px 4px; border-top: 0; font-size: 12px; }
+.tcgen .pt-table tbody tr.has-problem td { border-bottom-color: transparent; }
+.tcgen .pt-note span { display: block; }
+.tcgen .pt-table tbody tr:hover { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.tcgen .pt-num { width: 40px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.tcgen .pt-len { width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .pt-len input { width: 76px; height: 28px; text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .pt-same { color: var(--muted-foreground); padding-right: 8px; }
+.tcgen .pt-wire { max-width: 200px; }
+.tcgen .pt-wire-in { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tcgen .pt-wire-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tcgen .pt-wire small { margin-left: 6px; color: var(--muted-foreground); font-size: 12px; }
+.tcgen .pt-dot { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--pin-outline); }
+.tcgen .pt-end { display: flex; align-items: center; gap: 6px; }
+.tcgen .pt-end select { width: 100%; min-width: 150px; height: 28px; font-size: 13px; }
+.tcgen .pt-end select.is-open { border-color: var(--tone-warn); }
+.tcgen .pt-extra { color: var(--muted-foreground); white-space: nowrap; }
+.tcgen .pt-splices { display: grid; gap: 4px; }
+.tcgen .pt-splices-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.tcgen .pt-none { margin: 0; color: var(--muted-foreground); font-size: 12.5px; }
+.tcgen .pt-splice { display: grid; grid-template-columns: 32px 64px minmax(0, 1fr) 28px; gap: 4px 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.tcgen .pt-splice-count { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.tcgen .pt-splice-ends { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
+.tcgen .pt-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px 0 8px; height: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); font-variant-numeric: tabular-nums; }
+.tcgen .pt-chip small { color: var(--muted-foreground); }
+.tcgen .pt-sleeve { height: 28px; min-width: 160px; max-width: 280px; font-size: 13px; }
+.tcgen .pt-splice-problem { grid-column: 1 / -1; }
+@media (pointer: coarse) {
+  .tcgen .pt-table td { height: 44px; }
+  .tcgen .pt-end select, .tcgen .pt-len input, .tcgen .pt-sleeve { height: 40px; }
+  .tcgen .pt-chip { height: 36px; }
+}
+.tcgen .spl-list > summary { cursor: pointer; color: var(--muted-foreground); font-size: 12.5px; padding: 2px 0; }
