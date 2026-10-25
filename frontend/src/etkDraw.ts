@@ -526,8 +526,9 @@ export function etkTubePieces(operation: Row): EtkTubePiece[] {
   });
 }
 
-/** Печать и резка маркировочной трубки (INS_MARK_TUBE_AUTO, маркиратор ZCUT-RT660): трубка печатается текстом и режется. */
-const MARK_PRINT_CODE = "INS_MARK_TUBE_AUTO";
+/** Печать и резка маркировочной трубки (PRINT_MARK_TUBE, маркиратор ZCUT-RT660): трубка печатается текстом и режется.
+ *  Выпущенные ЭТК хранят прежний код INS_MARK_TUBE_AUTO — рисунок узнаёт оба. */
+const MARK_PRINT_CODE = /^(PRINT_MARK_TUBE|INS_MARK_TUBE_AUTO)/;
 
 /** Текст на отрезке маркировки: «Маркировка «I3»» → «I3»; без кавычек — пусто. */
 export function etkMarkText(label: string): string {
@@ -557,7 +558,7 @@ function markPrintFigure(pieces: EtkTubePiece[]): string {
 export function etkDrawTubeCut(operation: Row): string {
   const pieces = etkTubePieces(operation);
   if (!pieces.length) return "";
-  if (str(operation.code).toUpperCase().startsWith(MARK_PRINT_CODE) || str(operation.tmplHint).toUpperCase().startsWith(MARK_PRINT_CODE)) return markPrintFigure(pieces);
+  if (MARK_PRINT_CODE.test(str(operation.code).toUpperCase()) || MARK_PRINT_CODE.test(str(operation.tmplHint).toUpperCase())) return markPrintFigure(pieces);
   const shown = pieces.slice(0, TUBE_ROWS), rowH = 34, top = 14;
   const lens = shown.map((piece) => Number(piece.len.replace(",", ".")) || 0), longest = Math.max(1, ...lens);
   let body = "";

@@ -273,7 +273,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const manualIds = useMemo(() => new Set((kit?.components || []).filter((item) => item.manual).map((item) => item.id)), [kit]);
   const kitTitles = useMemo(() => new Map((kit?.components || []).map((item) => [item.id, { title: item.title || "", hint: item.title_hint || "" }])), [kit]);
   const components = useMemo<Comp[]>(() => (kit?.components || []).map((item) => ({
-    id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", kd: item.kd || "", qty: item.qty,
+    id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", ...(item.title ? { title: item.title } : {}), kd: item.kd || "", qty: item.qty,
   })), [kit]);
   // tcLoadBomFromKit: «Кол-во» — тираж сборки, партию генератор берёт отсюда.
   const assemblyInfo = useMemo<Record<string, string>>(() => ({
@@ -1530,7 +1530,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <DrawingButton busy={drawBusy} exists={drawingExists} problem={configDrawingProblem(config)} onBuild={() => void buildDrawing(config)} /></div>
       <DrawingNoteView note={drawNote} index={card.item_index} onOpen={onOpenDrawing} />
       <div className="opt-grid">
-        <Field label="Длина по чертежу"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value } }))} /></Field>
+        <Field label="Длина по чертежу"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value }, coaxLenFrom: undefined }))} /></Field>
         <div className="gfield span2"><span className="gfield-label">Экран (на сборку)</span>
           <Seg label={S.coax.sideB ? "Тип экрана, сторона А" : "Тип экрана"} value={S.coax.shield} options={COAX_SHIELD_OPTIONS}
             onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield } }))} />

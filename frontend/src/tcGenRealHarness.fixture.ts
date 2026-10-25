@@ -54,7 +54,9 @@ export const end = (idx: number, unit: number, side: "A" | "B"): WireEnd => ({ i
 
 /** Технолог набирает жгут: разъёмы (терминал подбирается сам), кабели с длинами, контакты, сростки и хвосты. */
 export function harness(data: GenData): GenState {
+  // Оплётку XP-3 (и, с ней, жгутовую термоусадку) засев теперь включает сам; эти сценарии собирают их руками (fullHarness) — до этого их нет.
   let S = complexByHand(initState(data));
+  S = { ...S, wrap: { ...S.wrap, enabled: false, slots: S.wrap.slots.map((slot) => ({ ...slot, mat: "" })) }, hs: { ...S.hs, enabled: false } };
   // Сторона А: «5», I3, C, A6; сторона В: SCB01X3, SCB02X3.
   S = addEndpoint(addEndpoint(addEndpoint(addEndpoint(S, "A"), "A"), "A"), "B");
   const conn: Array<[string, string, string]> = [
@@ -107,7 +109,7 @@ export const FULL_TEMPLATES: Tmpl[] = ([
   ["cut-wire-1strip-резка-с-разделкой", "CUT_WIRE+1strip | Резка с разделкой", "Резка с разделкой"],
   ["cut-wire-2strip-резка-с-разделкой", "CUT_WIRE+2strip | Резка с разделкой", "Резка с разделкой"],
   ["cut-wire-2strip-tin-резка-с-зачисткой-двух-концов-и-лужением", "CUT_WIRE+2strip+tin | Резка с зачисткой двух концов и лужением", "Автомат резка + опрессовка"],
-  ["ins-mark-tube-auto-печать-и-резка-маркировочной-трубки", "INS_MARK_TUBE_AUTO | Печать и резка маркировочной трубки", "Монтаж маркировки"],
+  ["ins-mark-tube-auto-печать-и-резка-маркировочной-трубки", "PRINT_MARK_TUBE | Печать и резка маркировочной трубки", "Монтаж маркировки"],
   ["cut-neylon-резка-линейных-материалов", "CUT_NEYLON | Резка линейных материалов", "Резка линейных материалов"],
   ["prs-terminal-auto-опрессовка-терминалов-a", "PRS_TERMINAL_auto | Опрессовка терминалов (A)", "Опрессовка терминалов"],
   ["prs-terminal-auto-опрессовка-терминалов-b", "PRS_TERMINAL_auto | Опрессовка терминалов (B)", "Опрессовка терминалов"],
@@ -116,7 +118,7 @@ export const FULL_TEMPLATES: Tmpl[] = ([
 ] as const).map(([id, title, category]) => ({ id, title, category }));
 // Строки БД.ОП новых карт (прод, 16.10): маркиратор 4 с / 600 с, резка с зачисткой и лужением 6,5 с / 600 с.
 export const FULL_OPS: OpRec[] = [
-  { opNumber: "INS_MARK_TUBE_AUTO", opName: "Печать и резка маркировочной трубки", tOp: "4", tPrep: "600", tMachine: "" },
+  { opNumber: "PRINT_MARK_TUBE", opName: "Печать и резка маркировочной трубки", tOp: "4", tPrep: "600", tMachine: "" },
   { opNumber: "CUT_WIRE+2strip+tin", opName: "Резка с зачисткой двух концов и лужением", tOp: "6,5", tPrep: "600", tMachine: "" },
 ];
 export const DSA: GenData = {

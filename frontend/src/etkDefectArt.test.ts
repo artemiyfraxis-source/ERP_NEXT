@@ -184,9 +184,10 @@ describe("defect picture library", () => {
       expect(panels[0]).not.toEqual(panels[1]);
     }
   });
-  it("draws every defect of the marking-tube card (INS_MARK_TUBE_AUTO) with its own printed-tube scene, never «!»", () => {
-    const code = "INS_MARK_TUBE_AUTO";
+  it("draws every defect of the marking-tube card (PRINT_MARK_TUBE) with its own printed-tube scene, never «!»", () => {
+    const code = "PRINT_MARK_TUBE";
     expect(defectContext(code)).toBe("markAuto");
+    expect(defectContext("INS_MARK_TUBE_AUTO")).toBe("markAuto"); // уже выпущенные ЭТК хранят прежний код
     const cases: Array<[string, string]> = [
       ["Текст не соответствует КД", "autoText"], ["Нечитаемый текст", "autoBlur"], ["Текст сдвинут", "autoShift"],
       ["Длина вне допуска по КД", "autoLength"], ["Косой или рваный рез", "autoCut"], ["Загрязнение и деформация", "autoDirt"],

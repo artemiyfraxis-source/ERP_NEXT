@@ -484,7 +484,7 @@
       "type": "cutTut",
       "opKey": "cutMark",
       "templateId": "ins-mark-tube-auto-печать-и-резка-маркировочной-трубки",
-      "opNum": "INS_MARK_TUBE_AUTO",
+      "opNum": "PRINT_MARK_TUBE",
       "tPrep": "600",
       "tOp": "4",
       "tMachine": "",

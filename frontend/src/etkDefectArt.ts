@@ -353,7 +353,7 @@ const MARK_SCENES: Record<string, () => Scene> = {
   }),
 };
 
-// ── печать и резка маркировочной трубки (INS_MARK_TUBE_AUTO, маркиратор ZCUT-RT660; владелец 17.10): светлые отрезки с
+// ── печать и резка маркировочной трубки (PRINT_MARK_TUBE, маркиратор ZCUT-RT660; владелец 17.10): светлые отрезки с
 // напечатанным текстом, не тёмная трубка резки ────────────────────────────────────────────────────────────────
 /** Отрезок маркировочной трубки с текстом x1..x2 (y 34, высота 15) — уже отрезанный, без провода. */
 const autoPiece = (x1: number, x2: number, o: Ink & { y?: number; h?: number } = {}) => {
@@ -1693,7 +1693,7 @@ type Rule = [string, RegExp, Ctx[]?];
 const MARK_TUBES: Ctx[] = ["markHeat", "markPvc"];
 const MARK_AUTO: Ctx[] = ["markAuto"];
 const RULES: Rule[] = [
-  // Печать и резка маркировочной трубки (INS_MARK_TUBE_AUTO): свои рисунки на каждый дефект карты, «!» не остаётся.
+  // Печать и резка маркировочной трубки (PRINT_MARK_TUBE, раньше INS_MARK_TUBE_AUTO): свои рисунки на каждый дефект карты, «!» не остаётся.
   ["autoText", /^текст не соответств|не соответствует кд/i, MARK_AUTO],
   ["autoBlur", /нечитаем|смазан|бледн/i, MARK_AUTO],
   ["autoShift", /сдвинут|смещ/i, MARK_AUTO],
@@ -1884,7 +1884,7 @@ export function defectContext(code: string): Ctx {
   if (/^SDR_TIN$/.test(c)) return "tin";
   if (/^SDR/.test(c)) return "solder";
   if (/^HEAT|^INS_TUT|_TUT/.test(c)) return "shrink";
-  if (/^INS_MARK_TUBE_AUTO/.test(c)) return "markAuto";
+  if (/^(PRINT_MARK_TUBE|INS_MARK_TUBE_AUTO)/.test(c)) return "markAuto"; // старый код — в уже выпущенных ЭТК
   if (/^INS_MARK|MARK$/.test(c)) return "mark";
   if (/^(MOLD|PLASM)/.test(c)) return "mold";
   if (/^US_WELD/.test(c)) return "weld";

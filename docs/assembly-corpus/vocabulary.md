@@ -61,6 +61,8 @@ ERP из `backend/data/techcard-library-erp.json` (всего 108 кодов; к
 | `SDR_XT60` | Пайка | solderConn | — |
 | `SDR_XT90` | Пайка | solderConn | — |
 | `SDR_GX12` | Пайка | solderConn | — |
+| `SDR_QS8` | Пайка | solderConn | AMASS QS8-S / AS150 / AS150U / XT150 (пули 6–8 мм, провод 6–8 AWG) |
+| `SDR_SA` | Пайка | solderConn | Weipu SA (SA6 / SA8 / SA12, вилка и розетка) |
 | `SDR_GX16` | Пайка | solderConn | — |
 | `SDR_LEMO` | Пайка | solderConn | — |
 | `SDR_W_W` | Пайка | splice | — |
@@ -113,10 +115,12 @@ ERP из `backend/data/techcard-library-erp.json` (всего 108 кодов; к
 | `INS_RJ_cat6/7` | Монтаж RJ | insTerm | — |
 | `INS_housing_DB/DH/СНП` | Монтаж корпуса | insHousing | — |
 | `INS_housing_GX` | Монтаж корпуса | insHousing | — |
+| `INS_housing_SA` | Монтаж корпуса | insHousing | Weipu SA: хвостовик, кабельный зажим, муфта |
 | `INS_housing_USB` | Монтаж корпуса | insHousing | — |
 | `INS_NEYLON` | Монтаж | — | — |
 | `INS_ПМЛ` | Монтаж | — | — |
 | `INS_MARK` | Монтаж | — | — |
+| `PRINT_MARK_TUBE` | Печать и резка маркировочной трубки | cutTut (`markTube`) | тексты и длины по КД; до 25.10.2026 — `INS_MARK_TUBE_AUTO` (тот же `templateId`) |
 | `INS_CAP` | Монтаж | coaxCapScrew | — |
 | `INS_lock` | Монтаж | — | — |
 | `INS_гофра_разрез` | Монтаж | — | — |

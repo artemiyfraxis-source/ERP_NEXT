@@ -23,7 +23,7 @@ from app.modules.techcards.project_cards import ProjectTechcard
 ROOT = Path(__file__).resolve().parents[2]
 LIBRARY = json.loads((ROOT / "data" / "techcard-library.json").read_text(encoding="utf-8"))
 ERP_LIBRARY = json.loads((ROOT / "data" / "techcard-library-erp.json").read_text(encoding="utf-8"))
-# The ERP cards too: CUT_WIRE+2strip+tin (tails) and INS_MARK_TUBE_AUTO (marking) live there.
+# The ERP cards too: CUT_WIRE+2strip+tin (tails) and PRINT_MARK_TUBE (marking) live there.
 CARDS = parse_operation_library(LIBRARY["templates"] + ERP_LIBRARY["templates"])
 CONFIG = json.loads((Path(__file__).with_name("generator_713k4_config.json")).read_text(encoding="utf-8"))
 
@@ -95,7 +95,7 @@ def test_a_single_crimp_cut_keeps_its_old_etk_key():
 def test_marking_is_printed_and_cut_put_on_with_the_branch_tubes_and_shrunk_with_them():
     document = build()
     cut = op_by_key(document, "cutMark")
-    assert (cut["code"], cut["connector"]) == ("INS_MARK_TUBE_AUTO", "маркировка")
+    assert (cut["code"], cut["connector"]) == ("PRINT_MARK_TUBE", "маркировка")  # конфиг с opNum INS_MARK_TUBE_AUTO собирается по templateId
     assert cut["components"] == [
         {"art": f'Маркировка "{text}" 4/2мм', "name": f'Маркировка "{text}" 4/2мм', "norm": "500", "unit": "Шт."}
         for text in ("5", "I3", "C", "A6")]
@@ -310,3 +310,14 @@ def test_without_the_generators_scheme_the_chain_stays_linear():
     document = build(manual)
     assert all("source" not in row for row in op_by_key(document, "insTermA2")["semis"])
     assert op_by_key(document, "twistA2")["result"][0]["name"] != "Ветвь X2 «I3», сторона А"
+
+
+def test_config_saved_with_the_old_marking_code_builds_the_same_card_by_template_id():
+    """Переименование 25.10 (INS_MARK_TUBE_AUTO -> PRINT_MARK_TUBE, id шаблона прежний): конфиг с прежним opNum находит ту же карту по templateId."""
+    old = deepcopy(CONFIG)
+    for op in old["ops"]:
+        if op.get("opNum") == "PRINT_MARK_TUBE":
+            op["opNum"] = "INS_MARK_TUBE_AUTO"
+    before, after = build(old), build()
+    assert op_by_key(before, "cutMark")["code"] == "PRINT_MARK_TUBE"
+    assert [op["code"] for op in before["operations"]] == [op["code"] for op in after["operations"]]

@@ -680,7 +680,11 @@ def _mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[st
     } for item in _mark_items(op) if str(item.get("text") or "").strip() or str(item.get("target") or "").strip()]
 
 
-def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> list[dict[str, str]]:
+def _components(
+    op: Mapping[str, Any], config: Mapping[str, Any], code: str, *, manual: bool = False,
+) -> list[dict[str, str]]:
+    """`manual` — «Ручная сборка» (25.10): cut tubes go to the kit in metres, tape names its material; the generator's
+    own ETKs stay as they were."""
     quantity = _part_quantity(config)
     if _splice_method(op):
         # Sleeves of the splices — by the method, whatever the card (PRS_COPPER of the band crimp lists no parts).
@@ -689,7 +693,8 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
     operation_type = str(op.get("type") or "")
     # Опрессовка центрального контакта (владелец 19.10) идёт картой опрессовки коакса, пока своей нет: её вход —
     # разъём своей стороны, какой бы картой она ни шла.
-    if code in NO_COMPONENTS and operation_type != "coaxPinCrimp":
+    own_material = manual and operation_type == "insWrap" and not op.get("wrapCut") and bool(op.get("wrapArt") or op.get("wrapName"))
+    if code in NO_COMPONENTS and operation_type != "coaxPinCrimp" and not own_material:
         return []
     if operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
         rows = _group_cut_components(_wires(op, config), quantity)
@@ -706,7 +711,7 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
                     for art, row in terminals.items())
         return rows
     if operation_type.startswith("coax"):
-        return _coax_components(op, config)
+        return _coax_components(op, config, manual=manual)
     if _braid_cut(op):
         # Резка оплётки ветвей: оплётка в метрах — сумма отрезков (по позиции состава) на партию.
         metres: dict[str, dict[str, Any]] = {}
@@ -714,6 +719,10 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
             row = metres.setdefault(part["art"], {"name": part["name"], "m": Decimal(0)})
             row["m"] += part["count"] * _decimal(part["len"]) / 1000
         return [{"art": art, "name": row["name"], "norm": _format(row["m"] * quantity), "unit": "М."} for art, row in metres.items()]
+    if manual and operation_type == "cutTut":
+        metres = _cut_tube_metres(op, quantity)
+        if metres:
+            return metres
     if operation_type == "cutTut" and _tut_parts(op):
         # Резка трубок нескольких позиций состава (маркировка «5», «I3»…): каждая — своей строкой, отрезков на партию.
         return [{"art": part["art"], "name": part["name"], "norm": _format(part["count"] * quantity), "unit": "Шт."} for part in _tut_parts(op)]
@@ -739,7 +748,24 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
     return []
 
 
-def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+def _cut_tube_metres(op: Mapping[str, Any], quantity: Decimal) -> list[dict[str, str]]:
+    """A cut tube in the kit is in metres (spec and kit say so): segments × length per item × the batch. «Ручная сборка»
+    only; [] — a length is missing somewhere, the cut stays in pieces as the generator counts it."""
+    parts = _tut_parts(op)
+    if parts:
+        if not all(_decimal(part["len"]) > 0 for part in parts):
+            return []
+        return [{"art": part["art"], "name": part["name"], "norm": _format(part["count"] * _decimal(part["len"]) / 1000 * quantity),
+                 "unit": "М."} for part in parts]
+    segments = [item for item in _list(op.get("tutSegs")) if isinstance(item, Mapping)]
+    if not segments or not all(_decimal(item.get("len")) > 0 and _decimal(item.get("count")) > 0 for item in segments):
+        return []
+    metres = sum((_decimal(item["count"]) * _decimal(item["len"]) / 1000 for item in segments), Decimal(0))
+    return [{"art": str(op.get("tutArt") or ""), "name": str(op.get("tutName") or op.get("tutArt") or ""),
+             "norm": _format(metres * quantity), "unit": "М."}]
+
+
+def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any], *, manual: bool = False) -> list[dict[str, str]]:
     """Вход коаксиальной операции (генератор, вкладка «Коакс»; владелец 15.10 «не появилось кол-во»): у вкладки нет
     `wires`, всё — в `config.coax`. Резка — кабель в метрах (длина реза уже с припуском L+ разъёмов), резка ТУТ — отрезки,
     пайка контакта — разъём своей стороны (один раз: корпус собирается из того же комплекта), втулка — по одной на
@@ -758,6 +784,8 @@ def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[d
     if operation_type == "coaxCut":
         return row("cableArt", "cableName", _decimal(coax.get("cableLength")) * quantity / 1000, "М.")
     if operation_type == "coaxCutTut":
+        if manual and _decimal(coax.get("tutLength")) > 0:
+            return row("tutArt", "tutName", units * _decimal(coax.get("tutLength")) / 1000 * quantity, "М.")
         return row("tutArt", "tutName", units * quantity, "Шт.")
     if operation_type == "coaxInsSleeve":
         # Втулка — только на обжимных сторонах; гайка, шайба и уплотнитель прижимной стороны входят в комплект разъёма.
@@ -824,8 +852,15 @@ def _single_name(config: Mapping[str, Any], result: str, is_last: bool) -> str:
     return str(config.get("assemblyName") or result) if is_last else result
 
 
+# «Ручная сборка»: these also hand on pieces of the product, and the tube operations never multiply the product
+# by the tube count (the count is their own consumption). The generator's own ETKs keep their rows.
+MANUAL_PIECE_TYPES = {"splice", "insHousing"}
+MANUAL_PRODUCT_TUT_TYPES = {"insTut", "endCap", "foldCore", "stripCable"}
+
+
 def _result_rows(
     op: Mapping[str, Any], config: Mapping[str, Any], result: str, is_last: bool, single: str | None = None,
+    *, manual: bool = False,
 ) -> list[dict[str, str]]:
     """SUPPLYMAP etkResult_: what the operation hands on and how many pieces per batch. `single` — the name of the
     one-piece row (default: the result, the product after the last operation; «Ручная сборка» passes its block's)."""
@@ -847,10 +882,11 @@ def _result_rows(
     norm = ""
     if operation_type == "coaxCutTut":
         norm = _format(max(Decimal(1), _decimal(op.get("units"))) * quantity)
-    elif operation_type in PIECE_TYPES or operation_type.startswith("coax"):
+    elif operation_type in PIECE_TYPES or operation_type.startswith("coax") or (manual and operation_type in MANUAL_PIECE_TYPES):
         norm = _format(quantity)
     if operation_type in TUT_TYPES:
-        whole = operation_type == "insTut" and (op.get("harness") or _mark_tube(op))
+        whole = (operation_type == "insTut" and (op.get("harness") or _mark_tube(op))) or (
+            manual and operation_type in MANUAL_PRODUCT_TUT_TYPES)
         norm = _format(quantity if whole else _decimal(op.get("tutCount")) * quantity)
     # The last operation hands over the product itself: never leave its quantity blank.
     return [_row(single, norm or (_format(quantity) if is_last else ""))]
@@ -1782,7 +1818,7 @@ def _typed_operation(
     op: Mapping[str, Any], config: Mapping[str, Any], *, position: int, code: str,
     card: OperationCardTemplate | None, cards_by_code: Mapping[str, OperationCardTemplate],
     previous: str, result: str, single: str, is_last: bool, semis: list[dict[str, str]], connector: str,
-    warnings: list[str], result_rows: list[dict[str, str]] | None = None,
+    warnings: list[str], result_rows: list[dict[str, str]] | None = None, manual: bool = False,
 ) -> dict[str, Any]:
     """One ETK operation from a generator operation (cut, crimp, mount, TUT, coax…): its card with the placeholders
     filled, kit lines, result rows, time and the fields of its sketch. `previous` / `result` — the product names of the
@@ -1800,8 +1836,8 @@ def _typed_operation(
         "connector_article": str(_endpoint(op).get("connArt") or _endpoint(op).get("connName") or ""),
         "template_id": str(op.get("templateId") or ""), "title": card.title if card else "",
         "card": _resolve_card(card, replacements, fields, cards_by_code) if card else None,
-        "components": _components(op, config, code), "semis": semis,
-        "result": _result_rows(op, config, result, is_last, single) if result_rows is None else result_rows,
+        "components": _components(op, config, code, manual=manual), "semis": semis,
+        "result": _result_rows(op, config, result, is_last, single, manual=manual) if result_rows is None else result_rows,
         "result_label": "Изделие" if is_last else "Полуфабрикат",
         "time": _time(op, config, single),
         "times": _times(op),
@@ -2304,7 +2340,7 @@ def _manual_generator_operation(
     operation = _typed_operation(
         item.source, config, position=item.position, code=item.code, card=item.card, cards_by_code=cards_by_code,
         previous=item.previous, result=item.product, single=single, is_last=is_last, semis=semis,
-        connector=_typed_connector(item.source, seq), warnings=warnings,
+        connector=_typed_connector(item.source, seq), warnings=warnings, manual=True,
     )
     if operation["card"] is not None and _manual_text(item.source.get("label")):
         operation["card"]["name"] = item.label
@@ -2362,6 +2398,56 @@ def _distinct_generator_keys(items: Sequence[_ManualOp], built: list[dict[str, A
             operation["connector"] = connector
 
 
+def _block_products(
+    items: Sequence[_ManualOp], route: Route, raw_route: Mapping[str, Any], config: Mapping[str, Any], final_name: str,
+) -> list[_ManualOp]:
+    """The generator operations' product names (and the product they take) along the block scheme: a block starts from
+    the name of the block feeding it — the one that moved a product on, a tube cut only feeds its tubes — and folds its
+    own operations onto it. An explicit `result` still wins; the other operations name as in `_manual_ops`."""
+    by_position = {item.position: item for item in items}
+    by_key = {block.key: block for block in route.blocks}
+    named = {str(block.get("key") or "").strip() for block in raw_route.get("blocks") or []
+             if isinstance(block, Mapping) and str(block.get("name") or "").strip()}
+    feeders: dict[str, list[str]] = defaultdict(list)
+    for edge in route.edges:
+        feeders[edge.target].append(edge.source)
+    done: dict[int, _ManualOp] = {}
+    ends: dict[str, tuple[str, bool]] = {}  # block key → (what it hands on: its name, did it move a product on)
+
+    def end_of(key: str) -> tuple[str, bool]:
+        if key not in ends:
+            ends[key] = walk(by_key[key])
+        return ends[key]
+
+    def walk(block: Block) -> tuple[str, bool]:
+        fed = [end_of(source) for source in feeders[block.key]]
+        previous = next((name for name, moved in fed if moved), fed[0][0] if fed else "")
+        chain: list[Mapping[str, Any]] = []
+        seed, moved = previous, False
+        for position in sorted(block.ops):
+            item = by_position[position]
+            op = item.source
+            written = _manual_text(op.get("result"))
+            if item.generator:
+                before = previous
+                product = written or _result_name(op, config, previous, [*chain, op], seed)
+                if _advances_chain(op):
+                    previous, moved = product, True
+                    chain, seed = ([], written) if written else ([*chain, op], seed)
+                done[position] = _replace(item, product=product, previous=before)
+            else:
+                product = previous = written or f"Полуфабрикат после «{item.label}»"
+                chain, seed, moved = [], product, True
+                done[position] = _replace(item, product=product, previous="")
+        if block.key in named:
+            return block.name, moved
+        return (final_name if block.final else done[sorted(block.ops)[-1]].product), moved
+
+    for block in route.blocks:
+        end_of(block.key)
+    return [done[item.position] for item in items]
+
+
 def _build_manual(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str = "", technology_source: Mapping[str, Any] | None = None,
@@ -2377,6 +2463,12 @@ def _build_manual(
     route_ops = [RouteOp(position=item.position, type=item.kind, code=item.code, name=item.product) for item in items]
     raw_route = config.get("route")
     route = parse_route(raw_route, route_ops, final_name, manual=True) if raw_route else chain_route(route_ops, final_name)
+    if raw_route:
+        # A scheme of blocks: the default product name of an operation comes from its own block and the block that
+        # feeds it, not from the operation before it in the list (that one can sit in another branch).
+        items = _block_products(items, route, raw_route, config, final_name)
+        route_ops = [RouteOp(position=item.position, type=item.kind, code=item.code, name=item.product) for item in items]
+        route = parse_route(raw_route, route_ops, final_name, manual=True)
 
     # The ETK key of an operation (code::connector::side) carries its `seq` — the number the generator gave it when it
     # was added and keeps through reorders — so a hand-edited ETK operation stays with its own operation on rebuild.
