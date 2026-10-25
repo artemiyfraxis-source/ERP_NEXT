@@ -209,7 +209,6 @@ const LINK = "Ссылка";
 const COAX_ONLY = new Set(["Погонная ёмкость, пФ/м", "Радиус изгиба неподвижно, мм", "Радиус изгиба многократно, мм"]);
 const CORE_MATERIAL = "Материал жилы";
 const JACKET_MATERIAL = "Материал оболочки";
-type Shared = { jacket?: string; voltage?: string; temp?: string };
 
 export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar, removeColumn }: {
   data: CablesResult;
@@ -232,35 +231,12 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     || (byId.get(a.hookup?.gauge_id ?? "")?.section_mm2 ?? 0) - (byId.get(b.hookup?.gauge_id ?? "")?.section_mm2 ?? 0)
     || a.cable.localeCompare(b.cable, "ru", { numeric: true })
     || (a.record?.fields[COLOR] ?? "").localeCompare(b.record?.fields[COLOR] ?? "", "ru")), [data.rows, byId]);
-  // What every size of a series shares goes into the group header and is not repeated per row (a series of 2+ sizes only).
-  const shared = useMemo(() => {
-    const bySeries = new Map<string, CableRow[]>();
-    for (const row of rows) if (row.hookup) bySeries.set(row.hookup.series, [...(bySeries.get(row.hookup.series) ?? []), row]);
-    const result = new Map<string, Shared>();
-    for (const [series, list] of bySeries) {
-      if (list.length < 2) continue;
-      const same = (pick: (wire: HookupWire, row: CableRow) => string) => {
-        const values = new Set(list.map((row) => pick(row.hookup as HookupWire, row).trim()));
-        const [only] = [...values];
-        return values.size === 1 && only ? only : undefined;
-      };
-      result.set(series, {
-        jacket: same((_wire, row) => row.record?.fields[JACKET_MATERIAL] ?? ""),
-        voltage: same((wire) => wire.voltage_v === null ? "" : String(wire.voltage_v)),
-        temp: same((wire) => range(wire.temp_min_c, wire.temp_max_c)),
-      });
-    }
-    return result;
-  }, [rows]);
-  const sharedOf = (row: CableRow) => row.hookup ? shared.get(row.hookup.series) : undefined;
   const makerNames = useMemo(() => makerSuggestions(data.rows.map((item) => item.record?.fields[MAKERS] ?? "")), [data.rows]);
   const seriesColors = (series: string) => [...new Set(rows.filter((item) => item.hookup?.series === series.trim())
     .flatMap((item) => parseColors(item.record?.fields[COLOR] ?? "")))].join(", ");
-  // The table itself appends « · N» — the number of sizes in the group.
-  const groupLabel = (name: string) => {
-    const own = name === UNPARSED ? undefined : shared.get(name);
-    return [name, own?.jacket, own?.voltage && `${own.voltage} В`, own?.temp && `${own.temp} °C`].filter(Boolean).join(" · ");
-  };
+  // The group header is the series name only (the table appends « · N»): voltage, temperature and jacket are in the
+  // rows (owner 25.10.2026: «у группировки есть параметры, а в таблице нет — наоборот надо»).
+  const groupLabel = (name: string) => name;
   const gaugeOf = (row: CableRow) => row.hookup ? byId.get(row.hookup.gauge_id) ?? null : null;
   // The structure is the mark's: a new colour of a structured mark takes it (`HookupEditor`).
   const hookupOf = (mark: string) => rows.find((item) => item.hookup && markKey(item.cable) === markKey(mark))?.hookup ?? null;
@@ -333,12 +309,11 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "strands", title: "Структура жилы", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
       edit: canEdit ? fieldCellEdit<CableRow>(STRANDS, (row) => row.record) : undefined },
     { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm), edit: hookupEdit("outer_d_mm") },
-    { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
-    { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", edit: tempEdit },
+    { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
+    { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", edit: tempEdit },
     ...kindCols.filter((name) => name !== MARK && name !== CORE_COLORS && name !== COLOR && name !== STRANDS && !MIRRORED.includes(name) && !COAX_ONLY.has(name)).map((name): DataColumn<CableRow> => ({
       key: name, title: name, value: (row) => field(row, name),
-      // The series' common jacket material is in the group header (owner 15.10: «Изоляция» — a rudiment).
-      render: (row) => name === JACKET_MATERIAL && sharedOf(row)?.jacket ? null : name === LINK ? supplierLink(row) : clip(field(row, name)),
+      render: (row) => name === LINK ? supplierLink(row) : clip(field(row, name)),
       // «Тип провода» is free text as in the window; the list a wire is in — the «Вкладка» cell.
       edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldCellEdit<CableRow>(name, (row) => row.record),
       remove: own.includes(name) ? removeColumn?.(name) : undefined,
