@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { autoConfig, generatorData, refsFromRecords, type BatchBom, type BatchRefs } from "./tcGenBatch";
-import { initState, makeGen } from "./tcGenLogic";
+import { initState, makeGen, updateEndpoint } from "./tcGenLogic";
 
 // Прогон 25.10 по 95 производственным сборкам без техкарт (tcGenBatch.autoConfig — то же, что «Создать»): состав
 // приходит как GET /api/techcards/kitsets/{project}/bom/{index}, со справочным названием `title` у каждой позиции.
@@ -217,6 +217,21 @@ describe("клеевая ТТК на корпусах паяных разъём�
     const b = kb3();
     const withTut = bom(b.name, [...b.components, comp("k4", "ТУТ", "ТУТ 3,0/1,5", "0.05")]);
     expect(run(withTut).S.endpoints.some((e) => e.shrinkOn)).toBe(false);
+  });
+
+  it("выключили засеянную термоусадку — трубка «на пайку» возвращается; ручной tutOff остаётся", () => {
+    const { D, S } = run(kb3());
+    const off = updateEndpoint(D, S, S.endpoints[0].id, { shrinkOn: false });
+    const e0 = off.endpoints[0];
+    expect([e0.shrinkOn, e0.tutOff]).toEqual([false, false]);
+    expect(S.endpoints[1].tutOff).toBe(true); // второй разъём не тронут
+    const types = makeGen(D, off).getActiveOps().map((o) => o.type);
+    expect(types).toContain("insTut");
+    // tutOff, поставленный руками, переживает выключение термоусадки
+    const hand = updateEndpoint(D, updateEndpoint(D, S, S.endpoints[0].id, { tutOff: true }), S.endpoints[0].id, { shrinkOn: false });
+    expect(hand.endpoints[0].tutOff).toBe(true);
+    // и повторное включение не возвращает tutOff само
+    expect(updateEndpoint(D, off, S.endpoints[0].id, { shrinkOn: true }).endpoints[0].tutOff).toBe(false);
   });
 
   it("обжимные разъёмы ТТК не получают", () => {

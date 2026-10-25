@@ -77,6 +77,8 @@ export type Endpoint = {
   /** «Термоусадка поверх разъёма»: рукав на тыльной части разъёма (корпус + выход проводов). Поля необязательны — старые
       сохранённые состояния грузятся без них. shrinkMat пуст — строка ТТК листа (иначе первая ТУТ); shrinkLen пуст — 20 мм. */
   shrinkOn?: boolean; shrinkMat?: string; shrinkLen?: string;
+  /** `tutOff` выставил засев (ТТК ушла на корпус разъёма): выключение этой термоусадки возвращает трубку «на пайку». */
+  tutOffBySeed?: boolean;
   /** «Сборка корпуса после пайки» паяльного разъёма (владелец 15.10): детали корпуса надеваются на кабель до пайки, корпус
    *  собирается после усадки ТУТ на чашках. Нет поля — по типу разъёма (housingDefault_: D-Sub, круглые, коаксиальные). */
   housingOn?: boolean;
@@ -3448,7 +3450,7 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
   {
     const tut = makeGen(D, S).bomTut_();
     if (tut && /ттк|клеев/i.test(`${tut.name || ""} ${tut.art || ""}`)) {
-      S = { ...S, endpoints: S.endpoints.map((e) => (e.method === "solder" && e.connId ? { ...e, shrinkOn: true, shrinkMat: tut.id, tutOff: true } : e)) };
+      S = { ...S, endpoints: S.endpoints.map((e) => (e.method === "solder" && e.connId ? { ...e, shrinkOn: true, shrinkMat: tut.id, tutOff: true, tutOffBySeed: true } : e)) };
     }
   }
   // seedWrapFromBom_
@@ -3796,6 +3798,9 @@ export function updateEndpoint(D: GenData, S: GenState, id: string, patch: Parti
   const ep = S.endpoints.find((e) => e.id === id);
   if (!ep) return S;
   let next: Endpoint = { ...ep, ...patch };
+  // Ручной tutOff снимает пометку засева; выключение засеянной термоусадки возвращает трубку на пайку (только то, что поставил засев).
+  if ("tutOff" in patch) next = { ...next, tutOffBySeed: false };
+  else if (patch.shrinkOn === false && ep.tutOffBySeed) next = { ...next, tutOff: false, tutOffBySeed: false };
   let selectedTemplates = S.selectedTemplates;
   if ("connId" in patch) {
     if (ep.methodAuto) {
