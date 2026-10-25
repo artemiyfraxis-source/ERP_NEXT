@@ -23,7 +23,7 @@ from app.modules.techcards.project_cards import ProjectTechcard
 ROOT = Path(__file__).resolve().parents[2]
 LIBRARY = json.loads((ROOT / "data" / "techcard-library.json").read_text(encoding="utf-8"))
 ERP_LIBRARY = json.loads((ROOT / "data" / "techcard-library-erp.json").read_text(encoding="utf-8"))
-# The ERP cards too: CUT_WIRE+2strip+tin (tails) and INS_MARK_TUBE_AUTO (marking) live there.
+# The ERP cards too: CUT_WIRE+2strip+tin (tails) and PRINT_MARK_TUBE (marking) live there.
 CARDS = parse_operation_library(LIBRARY["templates"] + ERP_LIBRARY["templates"])
 CONFIG = json.loads((Path(__file__).with_name("generator_713k4_config.json")).read_text(encoding="utf-8"))
 
@@ -95,7 +95,7 @@ def test_a_single_crimp_cut_keeps_its_old_etk_key():
 def test_marking_is_printed_and_cut_put_on_with_the_branch_tubes_and_shrunk_with_them():
     document = build()
     cut = op_by_key(document, "cutMark")
-    assert (cut["code"], cut["connector"]) == ("INS_MARK_TUBE_AUTO", "маркировка")
+    assert (cut["code"], cut["connector"]) == ("PRINT_MARK_TUBE", "маркировка")  # конфиг с opNum INS_MARK_TUBE_AUTO собирается по templateId
     assert cut["components"] == [
         {"art": f'Маркировка "{text}" 4/2мм', "name": f'Маркировка "{text}" 4/2мм', "norm": "500", "unit": "Шт."}
         for text in ("5", "I3", "C", "A6")]

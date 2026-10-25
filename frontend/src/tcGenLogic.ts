@@ -137,7 +137,9 @@ export const tailStripMm = (S: Pick<GenState, "tailTin">) => (S.tailTin?.strip |
  *  лужение хвоста (БД.ОП, ОБ.098). */
 export const TAIL_CUT_CODE_ = "CUT_WIRE+2strip+tin";
 /** Печать и резка маркировочной трубки на маркираторе ZCUT-RT660 (ОБ.102). */
-export const MARK_CUT_CODE_ = "INS_MARK_TUBE_AUTO";
+export const MARK_CUT_CODE_ = "PRINT_MARK_TUBE";
+/** Прежний код той же карты (до 25.10.2026): библиотека, где переименование ещё не записано, и сохранённые конфиги. */
+export const MARK_CUT_CODE_OLD_ = "INS_MARK_TUBE_AUTO";
 /** Резка оплётки (линейных материалов). */
 export const BRAID_CUT_CODE_ = "CUT_NEYLON";
 export type CoaxStripMode = "machine" | "separate";
@@ -2510,10 +2512,10 @@ export function makeGen(D: GenData, S: GenState) {
     const one = parts.every((p) => p.art === parts[0].art) ? parts[0] : null;
     const atConn = tubes.every((t) => t.spec.placeKind === "conn");
     const heat = tubes.filter((t) => t.shrink).reduce((n, t) => n + t.spec.qty, 0);
-    // Печать и резка на маркираторе ZCUT-RT660 (INS_MARK_TUBE_AUTO); нет карты в библиотеке — резка трубки, как раньше.
-    const printed = hasTemplateCode_(MARK_CUT_CODE_);
+    // Печать и резка на маркираторе ZCUT-RT660 (PRINT_MARK_TUBE); нет карты в библиотеке — резка трубки, как раньше.
+    const markCode = [MARK_CUT_CODE_, MARK_CUT_CODE_OLD_].find(hasTemplateCode_), printed = !!markCode;
     return {
-      cut: { type: "cutTut", opKey: "cutMark", tmplHint: printed ? MARK_CUT_CODE_ : "CUT_TUT_short", tmplWant: MARK_CUT_CODE_, cat: "Резка", markTube: true,
+      cut: { type: "cutTut", opKey: "cutMark", tmplHint: markCode || "CUT_TUT_short", tmplWant: markCode || MARK_CUT_CODE_, cat: "Резка", markTube: true,
         label: `${printed ? "Печать и резка" : "Резка"} маркировки — ${sizes}`,
         tutArt: one ? one.art : "", tutName: one ? one.name : "", tutCount: count, tutSegs: segs, tutParts: parts },
       on: { type: "insTut", opKey: "onMark", tmplHint: "INS_TUT", cat: "Монтаж", markTube: true, tutCount: count,
@@ -2995,7 +2997,7 @@ export function makeGen(D: GenData, S: GenState) {
    *  cutWire1…N идут по порядку партий, и при перегруппировке тот же ключ достаётся резке другого вида. */
   function templateIdFor(spec: OpSpec) {
     // Залипший (не ручной) шаблон с другим кодом, чем просит правило генератора, тоже пересчитывается, если карта с
-    // нужным кодом есть: 713К.4 КБ1 (17.10) — резка маркировки ушла на INS_MARK_TUBE_AUTO, а у ключа cutMark остался
+    // нужным кодом есть: 713К.4 КБ1 (17.10) — резка маркировки ушла на PRINT_MARK_TUBE, а у ключа cutMark остался
     // CUT_TUT_short (резка трубок: не тот станок, не те дефекты).
     const stuck = S.selectedTemplates[spec.opKey];
     const want = (spec.tmplWant || spec.tmplHint || "").trim();

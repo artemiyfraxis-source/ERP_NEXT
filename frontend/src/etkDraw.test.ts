@@ -407,14 +407,15 @@ describe("cut of tubes (owner 16.10, 713К.4 КБ1: no picture)", () => {
     expect(etkFigure(cut)).toBe(svg);
   });
 
-  it("marking op INS_MARK_TUBE_AUTO: light tubes with the printed text ON the tube, no dark fill (owner 17.10)", () => {
-    const mark = { type: "cutTut", code: "INS_MARK_TUBE_AUTO", result: [{ name: "Трубки нарезаны: Маркировка «5» — 4 шт по 15 мм; Маркировка «I3» — 2 шт по 15 мм; Маркировка «C» — 3 шт по 20 мм; Маркировка «A6» — 1 шт по 12 мм" }] };
+  it("marking op PRINT_MARK_TUBE (old code INS_MARK_TUBE_AUTO in issued ETKs too): light tubes with the printed text ON the tube, no dark fill (owner 17.10)", () => {
+    const mark = { type: "cutTut", code: "PRINT_MARK_TUBE", result: [{ name: "Трубки нарезаны: Маркировка «5» — 4 шт по 15 мм; Маркировка «I3» — 2 шт по 15 мм; Маркировка «C» — 3 шт по 20 мм; Маркировка «A6» — 1 шт по 12 мм" }] };
     const svg = etkDrawTubeCut(mark);
     for (const text of ["5", "I3", "C", "A6"]) expect(svg).toContain(`font-weight="700" fill="#17272b">${text}</text>`);
     expect(svg).toContain("Маркировка «5» ×4 · 15 мм");
     expect(svg).toContain('fill="#fbfaf5"');
     expect(svg).not.toContain("#3b4147");
     expect(etkFigure(mark)).toBe(svg);
+    expect(etkDrawTubeCut({ ...mark, code: "INS_MARK_TUBE_AUTO" })).toBe(svg);
     expect(etkMarkText("Маркировка «I3»")).toBe("I3");
     expect(etkMarkText("Маркировка \"C\" 4/2мм")).toBe("C");
     // Резка обычной трубки (другая карта) остаётся тёмной планкой.
