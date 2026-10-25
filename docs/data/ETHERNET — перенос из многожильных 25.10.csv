@@ -1,0 +1,231 @@
+﻿Марка,Тип провода,Число жил,Категория,Экран (код),Экран было,Число пар,Прокладка,ID строки
+F/UTP Cat 5e,"витая пара (LAN, для внутренней и внешней прокладки)",8,Cat5e,F/UTP,алюмолавсановая фольга + дренажный проводник,4,внутренняя и наружная,630e70c2-ce48-4f43-a2d7-b51ff2839fe0
+FTP-4P-Cat.5e-PATCH-GY,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,05055289-f7b8-4fdf-a202-cd56ba9eb77d
+FTP-4P-Cat.5e-PATCH-LSZH-BK,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,7ccfd266-246d-4014-9de0-91a07692251a
+FTP-4P-Cat.5e-PATCH-LSZH-BL,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,00ceb2ea-4cba-4398-9ebf-94daa06b14a8
+FTP-4P-Cat.5e-PATCH-LSZH-GN,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,be3708bb-d3d9-44e2-9318-5b290bb52421
+FTP-4P-Cat.5e-PATCH-LSZH-GY,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,2ee9c938-6062-464c-8580-2f6f2a54417d
+FTP-4P-Cat.5e-PATCH-LSZH-OR,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,2d2042c3-cbfe-4afa-9f40-f56b3700c3e2
+FTP-4P-Cat.5e-PATCH-LSZH-RD,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,90aef0a1-4881-4d3f-97de-178f844fbd02
+FTP-4P-Cat.5e-PATCH-LSZH-WH,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,2008c73b-6999-46d8-954c-171481e245a0
+FTP-4P-Cat.5e-PATCH-LSZH-YL,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,9054f935-7cd8-4e73-952e-a5805f9641c3
+FTP-4P-Cat.5e-SOLID-GY,витая пара F/UTP Cat5e (экран — фольга),8 (4 пары),Cat5e,F/UTP,общий — фольга,4,,5d20d8c9-3197-4f48-82cd-71eb61a82a5b
+FTP-4P-Cat.5e-SOLID-LSLTx-GN,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,b786d8d3-9256-447f-b41d-096b4495405e
+FTP-4P-Cat.5e-SOLID-LSLTx-GY,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,d48d01f3-8eaa-452c-97f2-c29c623a3c27
+FTP-4P-Cat.5e-SOLID-LSZH,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,dec87267-520e-42a9-aff7-3bcaa50136c2
+FTP-4P-Cat.5e-SOLID-LSZH-BK,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,bb8d6afd-65b5-47a4-8f2e-45cded3d54cf
+FTP-4P-Cat.5e-SOLID-LSZH-BL,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,d7131e1a-d772-408f-973d-b9721d92f331
+FTP-4P-Cat.5e-SOLID-LSZH-GN,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,2be7d715-b0cf-446d-962b-00914c006c9b
+FTP-4P-Cat.5e-SOLID-LSZH-GY,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,62ef0c13-48fe-4d88-baa3-b3fa809416bd
+FTP-4P-Cat.5e-SOLID-LSZH-RD,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,4b34e3be-ae65-4604-bf02-93a17d176c6c
+FTP-4P-Cat.5e-SOLID-LSZH-WH,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,99ebea70-8b63-4212-a032-62042b8851ef
+FTP-4P-Cat.5e-SOLID-LSZH-YL,"витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,86b524c3-8de2-411f-afdb-172fefc32277
+FTP-4P-Cat.5e-SOLID-OUT-PE-UV,"витая пара F/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,наружная,2e514f9e-8c77-4ad9-9dd7-f19c6727f4e2
+FTP-4P-Cat.5e-SOLID-ST-OUT,"витая пара F/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,наружная,9c0c5238-8c71-40e9-b3fb-a0cbb81362b4
+FTP-4P-Cat.6-SOLID-GY,"витая пара F/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,F/UTP,общий — фольга,4,внутренняя,84463fcd-3cea-4762-a991-9323634b323a
+FTP-4P-Cat.6-SOLID-LSZH,"витая пара F/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,F/UTP,общий — фольга,4,внутренняя,2ae9c567-1352-48a0-a70f-4429023d222a
+FTP-4P-Cat.6-SOLID-OUT-LSZH-UV,"витая пара F/UTP Cat6 (LAN, внутренняя и наружная прокладка)",8 (4 пары),Cat6,F/UTP,общий — фольга,4,внутренняя и наружная,d0ae0e9b-0f55-4072-bedf-33215dc80115
+IE-4-PATCH SF/UTP Cat5e 4X2X24AWG,"витая пара SF/UTP Cat5e (LAN, Industrial Ethernet, гибкий (patch))",8 (4 пары),Cat5e,SF/UTP,общий — фольга + оплётка,4,,5f394fff-070c-4c47-ba3e-6d63621b9990
+IE-4-SOLID F/UTP Cat5e 4X2X24AWG,"витая пара F/UTP Cat5e (LAN, Industrial Ethernet)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,,2ebe6d3c-7c54-49a6-9bc3-d351ce223376
+"ParLan ARM F/UTP Cat5e PE 4х2х0,52","витая пара F/UTP Cat5e (LAN, наружная прокладка, бронированный (ARM))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,наружная,32b455b6-ad70-4269-8023-7e7a90b78b0f
+"ParLan ARM F/UTP Cat5e PVCLS нг(A)-FRLS 2х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,ef90f986-0d70-4e75-b092-9ae61c1120eb
+"ParLan ARM F/UTP Cat5e PVCLS нг(A)-FRLS 4х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,b4bd005e-3a7e-4b35-b15d-11b42e75b598
+"ParLan ARM F/UTP Cat5e PVCLS нг(A)-FRLSLTx 2х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,6509e5b6-9f33-4fd0-8897-d2b5e1b96b03
+"ParLan ARM F/UTP Cat5e PVCLS нг(A)-FRLSLTx 4х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,b59b7d53-2f95-4480-b8d8-e916e5d5da19
+"ParLan ARM F/UTP Cat5e ZH нг(A)-FRHF 2х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,fbf3f0ed-a293-4411-b058-7d7fdfcc825b
+"ParLan ARM F/UTP Cat5e ZH нг(A)-FRHF 4х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,6355dffb-9792-4c5e-b1f0-35f3ce6c5110
+"ParLan ARM F/UTP Cat5e ZH нг(А)-HF 4х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка, бронированный (ARM))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,d7d35726-1ded-405c-95a3-36f50558c44c
+"ParLan ARM PS F/UTP Cat5e PE 4х2х0,52","витая пара F/UTP Cat5e (LAN, наружная прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,наружная,fcedb79e-8765-417a-96d1-c4a98d572a27
+"ParLan ARM PS F/UTP Cat5e PVCLS нг(A)-FRLS 2х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,37b04339-f262-4b28-b515-5b0f23d09afd
+"ParLan ARM PS F/UTP Cat5e PVCLS нг(A)-FRLS 4х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,387923e5-cf14-482a-88b9-bcf3d079b5ae
+"ParLan ARM PS F/UTP Cat5e PVCLS нг(A)-FRLSLTx 2х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,b068341d-668c-4839-85e8-5633c0b5657e
+"ParLan ARM PS F/UTP Cat5e PVCLS нг(A)-FRLSLTx 4х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,951dfd00-5a41-470a-901c-683821f50e11
+"ParLan ARM PS F/UTP Cat5e ZH нг(A)-FRHF 2х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,eb2d303e-0d8b-47c9-b601-61a0b7bb57c4
+"ParLan ARM PS F/UTP Cat5e ZH нг(A)-FRHF 4х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,c8c69923-e910-47d3-9bdd-1da26266eeb1
+"ParLan ARM PS F/UTP Cat5e ZH нг(А)-HF 4х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,99020b34-0de5-4ff8-ba5e-eaf3006d8d59
+"ParLan ARM PS F/UTP Cat6 PE 4х2х0,57","витая пара F/UTP Cat6 (LAN, наружная прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat6,F/UTP,общий — фольга,4,наружная,2d296adf-ffad-410e-806d-92d72cac3f47
+"ParLan ARM PS F/UTP Cat6 ZH нг(А)-HF4х2х0,57","витая пара F/UTP Cat6 (LAN, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat6,F/UTP,общий — фольга,4,внутренняя,f7291d58-2746-48f8-9da6-306dd28ae2fb
+"ParLan ARM PS U/UTP Cat5e PE 4х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat5e,U/UTP,нет,4,наружная,889ed191-d396-40dd-b746-f854a0e1d42f
+"ParLan ARM PS U/UTP Cat5e PVCLS нг(А)-FRLS 2х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,a7e379ae-eda8-4646-96ae-dc7243f1400b
+"ParLan ARM PS U/UTP Cat5e PVCLS нг(А)-FRLS 4х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,c3ce6a3b-03ab-4cd8-a637-9cb820ac7bd1
+"ParLan ARM PS U/UTP Cat5e PVCLS нг(А)-FRLSLTх 2х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,1e430a14-8311-46c0-8de1-a364a3f1c58d
+"ParLan ARM PS U/UTP Cat5e PVCLS нг(А)-FRLSLTх 4х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,88c416cf-78d9-4ee1-91ad-16a3cd5ad63f
+"ParLan ARM PS U/UTP Cat5e ZH нг(А)-FRHF 2х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,5d1554bc-50ba-4a02-b05e-6a9e8a049c50
+"ParLan ARM PS U/UTP Cat5e ZH нг(А)-FRHF 4х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,d2443cf7-4770-4eab-84cf-9c611b49c8de
+"ParLan ARM PS U/UTP Cat5e ZH нг(А)-HF 4х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,7cd40478-d08a-4c90-86fe-ac17db0fd545
+"ParLan ARM PS U/UTP Cat6 PE 4х2х0,57","витая пара U/UTP Cat6 (LAN, наружная прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat6,U/UTP,нет,4,наружная,98c37da7-5a0b-417e-b291-3186c3445dde
+"ParLan ARM PS U/UTP Cat6 ZH нг(А)-HF 4х2х0,57","витая пара U/UTP Cat6 (LAN, внутренняя прокладка, бронированный в защитном шланге (ARM PS))",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,ece1bb28-bc1f-469a-961d-162cb609383b
+"ParLan ARM U/UTP Cat5e PE 4х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка, бронированный (ARM))",8 (4 пары),Cat5e,U/UTP,нет,4,наружная,e950046d-888b-4a63-b36b-3fe4bd18b548
+"ParLan ARM U/UTP Cat5e PVCLS нг(А)-FRLS 2х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,84df42db-ab35-40ee-8847-8918f2453763
+"ParLan ARM U/UTP Cat5e PVCLS нг(А)-FRLS 4х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,e4ff241a-5a38-47f8-8c13-14501769fc3e
+"ParLan ARM U/UTP Cat5e PVCLS нг(А)-FRLSLTх 2х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,93511e33-b32a-4703-b425-262e623f5105
+"ParLan ARM U/UTP Cat5e PVCLS нг(А)-FRLSLTх 4х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,2329e476-2901-4fb6-be62-030651f3bdb6
+"ParLan ARM U/UTP Cat5e ZH нг(А)-FRHF 2х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,ba0ffa97-e128-4283-ad46-0cd557ed1005
+"ParLan ARM U/UTP Cat5e ZH нг(А)-FRHF 4х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка, бронированный (ARM))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,e6d82652-003b-4ba4-b5aa-9744aff9d7a2
+"ParLan ARM U/UTP Cat5e ZH нг(А)-HF 4х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка, бронированный (ARM))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,724a0511-ff8a-46e4-a88c-d665d1dcc9b4
+"ParLan combi F/UTP2 Cat5e PE 2х0,75","витая пара F/UTP Cat5e (LAN, наружная прокладка, комбинированный (витая пара + силовые жилы))",6 (2 пар + 2 силовые),Cat5e,F/UTP,общий — фольга,2,наружная,2f0da095-48ae-453f-9783-690579164de1
+"ParLan combi F/UTP2 Cat5e PE 2х1,50","витая пара F/UTP Cat5e (LAN, наружная прокладка, комбинированный (витая пара + силовые жилы))",6 (2 пар + 2 силовые),Cat5e,F/UTP,общий — фольга,2,наружная,bcc9c98e-d3c9-4e99-bd3c-f700c2c9244d
+"ParLan combi F/UTP4 Cat5e PE 2х0,75","витая пара F/UTP Cat5e (LAN, наружная прокладка, комбинированный (витая пара + силовые жилы))",10 (4 пар + 2 силовые),Cat5e,F/UTP,общий — фольга,4,наружная,1eb45b28-7ba3-4e4f-8f24-8057b7ae0887
+"ParLan complex F/UTP2 Cat5e PVC/PEtr 2х0,75","витая пара F/UTP Cat5e (LAN, наружная прокладка, комбинированный (витая пара + силовые жилы))",6 (2 пар + 2 силовые),Cat5e,F/UTP,общий — фольга,2,наружная,6f1a307d-cf67-4a26-9437-48a035b6645b
+"ParLan complex F/UTP4 Cat5e PVC/PEtr 2х0,50","витая пара F/UTP Cat5e (LAN, наружная прокладка, комбинированный (витая пара + силовые жилы))",10 (4 пар + 2 силовые),Cat5e,F/UTP,общий — фольга,4,наружная,f1c7d6a4-fe92-4491-a637-0495407c83e5
+"ParLan complex F/UTP4 Cat5e PVC/PEtr 2х0,75","витая пара F/UTP Cat5e (LAN, наружная прокладка, комбинированный (витая пара + силовые жилы))",10 (4 пар + 2 силовые),Cat5e,F/UTP,общий — фольга,4,наружная,f9b62ea5-9256-4c43-be1d-3c29bb3a4018
+"ParLan F/UTP Cat5e PE 10х2х0,52","витая пара F/UTP Cat5e (LAN, наружная прокладка)",20 (10 пар),Cat5e,F/UTP,общий — фольга,10,наружная,de3ea102-c25d-4543-b2f9-60f2ada58299
+"ParLan F/UTP Cat5e PE 2х2х0,52","витая пара F/UTP Cat5e (LAN, наружная прокладка)",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,наружная,4f5b5380-110e-4597-a81b-57b950993f3e
+"ParLan F/UTP Cat5e PE 4х2х0,52","витая пара F/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,наружная,8cc3c073-33a4-4586-a604-fbbcdb5fa9fa
+"ParLan F/UTP Cat5e PE 4х2х0,52 (100м)","витая пара F/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,наружная,c6834f9a-173d-40ec-a208-7e8d32e26bb7
+"ParLan F/UTP Cat5e PE 8х2х0,52","витая пара F/UTP Cat5e (LAN, наружная прокладка)",16 (8 пар),Cat5e,F/UTP,общий — фольга,8,наружная,b9b4fbe7-0403-4fa0-8f22-3c793b35f992
+"ParLan F/UTP Cat5e PUR 4х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,6176dc4c-1f93-41d4-85ff-620ac8ffa228
+"ParLan F/UTP Cat5e PVC 1х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",2 (1 пара),Cat5e,F/UTP,общий — фольга,1,внутренняя,f73ff6f3-4c3d-4260-b90e-06376264045c
+"ParLan F/UTP Cat5e PVC 2х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,6e8568cd-8993-4bb2-bab4-fbebe8992e2d
+"ParLan F/UTP Cat5e PVC 4х2х0,52",витая пара F/UTP Cat5e,8 (4 пары),Cat5e,F/UTP,общий — фольга,4,,91f5636c-6307-483c-bddd-221c856eecc0
+"ParLan F/UTP Cat5e PVC/PE 2х2х0,52","витая пара F/UTP Cat5e (LAN, наружная прокладка)",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,наружная,48b0e51b-e32e-438e-b13a-194aea9134d7
+"ParLan F/UTP Cat5e PVC/PE 4х2х0,52","витая пара F/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,наружная,3677dc72-11d9-48cc-8ed6-03b73b71cfa4
+"ParLan F/UTP Cat5e PVC/PEtr 2х2х0,52","витая пара F/UTP Cat5e (LAN, наружная прокладка)",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,наружная,682bcccb-7fb6-4dbc-9f5a-177746b5fd0f
+"ParLan F/UTP Cat5e PVC/PEtr 4х2х0,52","витая пара F/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,наружная,baa170db-9dd7-42b3-9682-e0c92cb70b04
+"ParLan F/UTP Cat5e PVCLS нг(A)-FRLS 2х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,6efdf827-9f06-4d24-88b4-7c2d2cbb15e2
+"ParLan F/UTP Cat5e PVCLS нг(A)-FRLS 4х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,c48f56eb-016e-4899-8623-11dd5d31f730
+"ParLan F/UTP Cat5e PVCLS нг(A)-FRLSLTx 2х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,04e772c3-86e2-4f8b-a381-ee99db4e3996
+"ParLan F/UTP Cat5e PVCLS нг(A)-FRLSLTx 4х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,8503b071-0c4a-4135-82f3-7ad064875e3d
+"ParLan F/UTP Cat5e PVCLS нг(A)-LSLTx 2х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,96aa8159-2404-453f-ae92-960ff03ca714
+"ParLan F/UTP Cat5e PVCLS нг(A)-LSLTx 4х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,85c455a8-d757-4034-ad8c-eaf88341225a
+"ParLan F/UTP Cat5e ZH Мнг(А)-HF 4х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,b8e930e6-c77e-482d-90b2-1f5dd1f5b883
+"ParLan F/UTP Cat5e ZH нг(A)-FRHF 2х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,cb56fe39-bb71-4e18-b507-1b1ed1de2552
+"ParLan F/UTP Cat5e ZH нг(A)-FRHF 4х2х0,52","витая пара F/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,8af8e34f-8767-435d-9799-47553ae307ee
+"ParLan F/UTP Cat5e ZH нг(А)-HF 10х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",20 (10 пар),Cat5e,F/UTP,общий — фольга,10,внутренняя,de8b06c5-0370-4b08-9dbe-54b23bdbc7b6
+"ParLan F/UTP Cat5e ZH нг(А)-HF 2х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,F/UTP,общий — фольга,2,внутренняя,599ef79e-8fd1-4d15-981f-5eb9745dd03a
+"ParLan F/UTP Cat5e ZH нг(А)-HF 4х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,8a97a844-fee1-4958-a3e8-2fd59f95c070
+"ParLan F/UTP Cat5e ZH нг(А)-HF 4х2х0,52 (100м)","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,внутренняя,8436781a-fe8e-4d21-bdd5-8879e8f64987
+"ParLan F/UTP Cat5e ZH нг(А)-HF 8х2х0,52","витая пара F/UTP Cat5e (LAN, внутренняя прокладка)",16 (8 пар),Cat5e,F/UTP,общий — фольга,8,внутренняя,fc6dc321-de90-47e7-aeab-8fc2af92cd1f
+"ParLan F/UTP Cat6 PVC 4х2х0,57","витая пара F/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,F/UTP,общий — фольга,4,внутренняя,c5e2dae6-568f-4606-abe6-5f5d191ccbdd
+"ParLan F/UTP Cat6 PVCLS нг(A)-LSLTx 4х2х0,57","витая пара F/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,F/UTP,общий — фольга,4,внутренняя,f64428dd-d8a6-41e9-bab2-34acd1ca43d8
+"ParLan F/UTP Cat6 ZH нг(А)-HF 4х2х0,57","витая пара F/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,F/UTP,общий — фольга,4,внутренняя,6c52dbfa-d4a3-4d94-ba79-008915ea85ac
+"ParLan Patch F/UTP Cat5e PVC 4х2х0,60","витая пара F/UTP Cat5e (LAN, патч-корд)",8 (4 пары),Cat5e,F/UTP,общий — фольга,4,,7f9f363b-2cc6-42fe-8593-a833015ae349
+"ParLan Patch SF/UTP Cat5e ZH нг(А)-HF 2х2х0,60","витая пара SF/UTP Cat5e (LAN, патч-корд (гибкий))",4 (2 пары),Cat5e,SF/UTP,общий — фольга + оплётка,2,,b214ffa5-6577-4715-b8c5-f86cc5b89bb6
+"ParLan Patch SF/UTP Cat5e ZH нг(А)-HF 4х2х0,60","витая пара SF/UTP Cat5e (LAN, патч-корд (гибкий))",8 (4 пары),Cat5e,SF/UTP,общий — фольга + оплётка,4,,d00f53a5-6084-42de-9428-beb1ac245df1
+"ParLan Patch U/UTP Cat5e 2x2x0,48","витая пара (LAN, патч-корд)",4,Cat5e,U/UTP,нет,2,,8da6d551-f56f-41b4-a0df-18ec872d4691
+"ParLan Patch U/UTP Cat5e PVC 4х2х0,60","витая пара U/UTP Cat5e (LAN, патч-корд)",8 (4 пары),Cat5e,U/UTP,нет,4,,050e6f65-9a8e-437c-a042-e099010e0a15
+"ParLan S/FTP Cat6A PUR 4х2х0,57","витая пара S/FTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,e670471d-cd26-49b7-9b31-9dadb3b16ec7
+"ParLan S/FTP Cat6A PVC 4x2x0,57","витая пара S/FTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,b8c9960f-46dd-4865-b9d5-b3ca04253e98
+"ParLan S/FTP Cat6A PVCLS нг(A)-LSLTx 4х2х0,57","витая пара S/FTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,85e1f50f-120c-4067-99a6-22ed5d1100bc
+"ParLan S/FTP Cat6A ZH Мнг(А)-HF 4х2х0,57","витая пара S/FTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,1d55a822-e44a-4f01-853f-55bcbedaf805
+"ParLan S/FTP Cat6A ZH нг(А)-HF 4x2x0,57","витая пара S/FTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,70a5945d-c2a4-43d9-bcba-7e462b2e94fe
+"ParLan S/FTP Cat7 ZH нг(А)-HF 4x2x0,60","витая пара S/FTP Cat7 (LAN, внутренняя прокладка)",8 (4 пары),Cat7,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,900f78c1-68ca-4ab7-bae9-3e7c282a6562
+"ParLan S/FTP Cat7A ZH нг(А)-HF 4x2x0,60","витая пара S/FTP Cat7A (LAN, внутренняя прокладка)",8 (4 пары),Cat7A,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,83da8094-ba53-4fea-a458-8dda691c25fd
+"ParLan SF/UTP Cat5e ZH нг(А)-HF 4х2х0,52","витая пара SF/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,SF/UTP,общий — фольга + оплётка,4,внутренняя,070d7d9f-6548-44bf-b9f1-024c3efb8167
+"ParLan U/FTP Cat 6А ZH нг(А)-HF 4х2х0,57","витая пара U/FTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,U/FTP,каждая пара — фольга,4,внутренняя,01eb1c0c-a296-4458-86e3-a12aa20af8a1
+"ParLan U/FTP Cat6А PVCLSнг(А)-LSLTx 4х2х0,57","витая пара U/FTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,U/FTP,каждая пара — фольга,4,внутренняя,7adc0d55-28b8-4e55-a6b0-be45e0ba291f
+"ParLan U/UTP Cat5e PE 10х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка)",20 (10 пар),Cat5e,U/UTP,нет,10,наружная,f03bd11e-f50d-487f-9641-555506644cba
+"ParLan U/UTP Cat5e PE 16х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка)",32 (16 пар),Cat5e,U/UTP,нет,16,наружная,7d3e93f4-1e2f-425f-bfb3-20103796d1d7
+"ParLan U/UTP Cat5e PE 25х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка)",50 (25 пар),Cat5e,U/UTP,нет,25,наружная,95dec55e-6d6c-4949-9e5e-bee88d29caef
+"ParLan U/UTP Cat5e PE 2х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,наружная,6f0120b6-8a69-4818-9d02-51c7255236af
+"ParLan U/UTP Cat5e PE 4х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,наружная,572723be-2769-45bc-89e9-23499d9c1b40
+"ParLan U/UTP Cat5e PE 8х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка)",16 (8 пар),Cat5e,U/UTP,нет,8,наружная,b3f9813e-38f6-472f-8d52-25bd9fce5df0
+"ParLan U/UTP Cat5e PUR 4х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,f9a57176-5734-48f7-a173-ea92e587fbba
+"ParLan U/UTP Cat5e PVC 1х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",2 (1 пара),Cat5e,U/UTP,нет,1,внутренняя,ca6c7c56-b68f-46a8-a4f5-19c48bbb1b0b
+"ParLan U/UTP Cat5e PVC 2х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,81c7c84d-11cd-4b08-8890-254d8418f9af
+"ParLan U/UTP Cat5e PVC 4х2х0,52 (100м)","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,77267b6e-2c55-4fb7-a88f-fe88724a1f34
+"ParLan U/UTP Cat5e PVC/PE 2х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,наружная,1a7a7923-a7c0-4f9b-a2bc-00a1bf93602d
+"ParLan U/UTP Cat5e PVC/PE 4х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,наружная,b0eaa7e6-9f0d-47c6-9891-412e36d1bb51
+"ParLan U/UTP Cat5e PVC/PE 4х2х0,52(100м)","витая пара U/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,наружная,4f2ca5bb-e84e-422a-bca0-1ace73239e92
+"ParLan U/UTP Cat5e PVC/PEtr 2х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,наружная,dc5964a1-59e9-4bdb-8497-60725d721ec3
+"ParLan U/UTP Cat5e PVC/PEtr 4х2х0,52","витая пара U/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,наружная,58003371-4eec-4838-b2bd-d9d6004dd773
+"ParLan U/UTP Cat5e PVCLS нг(A)-FRLS 2х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,1e469f83-f493-4dde-a0d3-1b58f2aae03b
+"ParLan U/UTP Cat5e PVCLS нг(A)-FRLS 4х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,60574d70-831e-46f5-a24a-ce497680918d
+"ParLan U/UTP Cat5e PVCLS нг(A)-FRLSLTx 2х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,c35ac111-3b54-4994-9161-163e527f5079
+"ParLan U/UTP Cat5e PVCLS нг(A)-FRLSLTx 4х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,f342434e-5cd1-4ec7-9340-44bf7b96f673
+"ParLan U/UTP Cat5e PVCLS нг(A)-LSLTx 2х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,958185cb-e961-4381-bed9-e250bead8fa4
+"ParLan U/UTP Cat5e PVCLS нг(A)-LSLTx 4х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,55946619-5eb2-40d7-9063-212489bcf1ac
+"ParLan U/UTP Cat5e PVCLS нг(А)-LSLTx 4х2х0,52 (100м)","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,8212e49a-7183-43e3-a23d-57add800b6d6
+"ParLan U/UTP Cat5e ZH Мнг(А)-HF 4х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,d8075bcc-b8ad-485c-a02f-33922ac481b1
+"ParLan U/UTP Cat5e ZH нг(A)-FRHF 2х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,31323fa5-3edd-4ed7-b2ce-ddba6b024d7a
+"ParLan U/UTP Cat5e ZH нг(A)-FRHF 4х2х0,52","витая пара U/UTP Cat5e (LAN, огнестойкий, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,115afb16-0a10-4cd5-a66a-ee365df6651f
+"ParLan U/UTP Cat5e ZH нг(A)-HF 4х2х0,52 (100м)","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,c8f5fa16-e229-4b3a-b031-6002d1f05bf4
+"ParLan U/UTP Cat5e ZH нг(А)-HF 10х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",20 (10 пар),Cat5e,U/UTP,нет,10,внутренняя,011b3e4b-afda-4fd8-a9ef-d2ea1ddbc47e
+"ParLan U/UTP Cat5e ZH нг(А)-HF 16х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",32 (16 пар),Cat5e,U/UTP,нет,16,внутренняя,d97bcd3c-f78f-4c11-8dd6-dbcc707e56f0
+"ParLan U/UTP Cat5e ZH нг(А)-HF 1х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",2 (1 пара),Cat5e,U/UTP,нет,1,внутренняя,b980dfd6-c107-4e56-adee-73e11322e36f
+"ParLan U/UTP Cat5e ZH нг(А)-HF 25х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",50 (25 пар),Cat5e,U/UTP,нет,25,внутренняя,dfac12d4-e0a6-4776-a788-32bea369abe0
+"ParLan U/UTP Cat5e ZH нг(А)-HF 2х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,e1a19c88-2e01-413b-957b-ee6356f8a1d1
+"ParLan U/UTP Cat5e ZH нг(А)-HF 4х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,3b99fc3a-c9e7-441c-a918-09f8820fa497
+"ParLan U/UTP Cat5e ZH нг(А)-HF 8х2х0,52","витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",16 (8 пар),Cat5e,U/UTP,нет,8,внутренняя,b22f94eb-6cbd-4cb0-931a-439792291fab
+"ParLan U/UTP Cat6 PUR 4х2х0,57","витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,756ec2b0-3927-48fb-b727-c55c4c2f57cf
+"ParLan U/UTP Cat6 PVC 4х2х0,57","витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,1154cfac-55c5-4d9c-a329-fb51b5e819dd
+"ParLan U/UTP Cat6 PVCLS нг(A)-LSLTx 4х2х0,57","витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,e63818e9-b20e-41c7-bda0-7d2d0734ac92
+"ParLan U/UTP Cat6 ZH Мнг(А)-HF 4х2х0,57","витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,be435dc6-3406-4f2b-b1fe-0cc28f1f7e61
+"ParLan U/UTP Cat6 ZH нг(А)-HF 4х2х0,57","витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,8685d6b7-2680-4fec-9d58-ce38166e542c
+SFTP-4P-Cat.5e,витая пара SFTP/SF-UTP Cat5e (общий экран фольга+оплётка),8 (4 пары),Cat5e,SF/UTP,"спиральная фольга (25% нахлёст, 0,025×20мм) + оплётка 52% покрытия",4,,4be4adb3-733e-4574-9d42-2a7c3fdedbbd
+SFTP-4P-Cat.5e-PATCH-GY,"витая пара SF/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,SF/UTP,общий — фольга + оплётка,4,внутренняя,f4a39f49-97fd-4321-bfd2-e06d12b78409
+SFTP-4P-Cat.5e-SOLID-GY,"витая пара SF/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,SF/UTP,общий — фольга + оплётка,4,внутренняя,924fc6c2-7f4a-42ac-a7be-462d0f612608
+SFTP-4P-Cat.5e-SOLID-OUT-LSZH-UV,"витая пара SF/UTP Cat5e (LAN, внутренняя и наружная прокладка)",8 (4 пары),Cat5e,SF/UTP,общий — фольга + оплётка,4,внутренняя и наружная,cce0e9f4-e91f-49ce-a40c-c4af159e3c32
+SFTP-4P-Cat.6-SOLID-LSZH,"витая пара SF/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,SF/UTP,общий — фольга + оплётка,4,внутренняя,cf014338-f84a-4ce7-926b-6cd754a6b27c
+SFTP-4P-Cat.6a-SOLID-IN-LSZH,"витая пара S/FTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,0ee4c679-6d3e-4f91-adb0-a0f2668b02e5
+SSTP-4P-Cat.7-PATCH-IN-LSZH,"витая пара (LAN, экранированная)",8,Cat7,S/FTP,S/FTP (фольга по парам + общий экран),4,,c0d2458b-846d-4b07-bf18-3f5ce039443f
+SSTP-4P-Cat.7-SOLID-IN-LSZH,"витая пара S/FTP Cat7 (LAN, внутренняя прокладка)",8 (4 пары),Cat7,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,ce71df93-7735-425c-abbf-5a73c3b02771
+SSTP-4P-Cat.7a-SOLID-IN-LSZH,"витая пара S/FTP Cat7A (LAN, внутренняя прокладка)",8 (4 пары),Cat7A,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,754c51f4-c629-46a1-b14f-643397991cd9
+SSTP-4P-Cat.8-SOLID-IN-LSZH-BL,"витая пара S/FTP Cat8 (LAN, внутренняя прокладка)",8 (4 пары),Cat8,S/FTP,"каждая пара — фольга, общий — оплётка",4,внутренняя,a9b2e490-acea-48a5-a358-dfbacd422d14
+STP-4P-Cat.6a-SOLID-IN-LSZH,"витая пара U/FTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,U/FTP,каждая пара — фольга,4,внутренняя,a1537eba-6201-4978-9dee-80fb89567cdb
+STP-4P-Cat.6a-SOLID-IN-PVC,"витая пара U/FTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,U/FTP,каждая пара — фольга,4,внутренняя,f2486eb3-5d40-4e41-9f98-c0de6971cbd0
+STP-4P-Cat.6a-SOLID-OUT-LSZH-UV,"витая пара U/FTP Cat6A (LAN, внутренняя и наружная прокладка)",8 (4 пары),Cat6A,U/FTP,каждая пара — фольга,4,внутренняя и наружная,a7ddf987-e268-4a79-aa7a-f887cff880a7
+"U/UTP 4х2х0,52мм Cat 5e",витая пара U/UTP Cat5e (без экрана),8 (4 пары),Cat5e,U/UTP,нет,4,,d2e02f1b-90f0-4249-a4dd-b28060b1621b
+UTP-100P-Cat.5-IN,"витая пара U/UTP Cat5 (LAN, многопарный, магистральный)",200 (100 пар),Cat5,U/UTP,нет,100,,baf0c758-a040-4e44-81f5-57a571e4addc
+UTP-100P-Cat.5-IN-LSZH,"витая пара U/UTP Cat5 (LAN, многопарный, магистральный)",200 (100 пар),Cat5,U/UTP,нет,100,,ded9f167-b687-429e-bd31-8e8db2eeccc9
+UTP-10P-Cat.5-IN-LSZH,"витая пара U/UTP Cat5 (LAN, многопарный, магистральный)",20 (10 пар),Cat5,U/UTP,нет,10,,f2e65836-cc83-4ee0-bc90-0a6f5a3aea91
+UTP-1P-Cat.5e-PATCH,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",2 (1 пара),Cat5e,U/UTP,нет,1,внутренняя,3b53c559-c33c-4d62-abb1-ef9df9f2ae68
+UTP-1P-Cat.5e-SOLID,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",2 (1 пара),Cat5e,U/UTP,нет,1,внутренняя,3bde79ca-7549-44bf-9b02-b8b5488cf03a
+UTP-1P-Cat.5e-SOLID-CROSS-BL,"витая пара U/UTP Cat5e (LAN, кроссировочная (jumper wire))",2 (1 пара),Cat5e,U/UTP,нет,1,,8c016e28-8f34-489f-a6b3-d848046fa670
+UTP-1P-Cat.5e-SOLID-CROSS-BR,"витая пара U/UTP Cat5e (LAN, кроссировочная (jumper wire))",2 (1 пара),Cat5e,U/UTP,нет,1,,9ec9f47f-2f54-4c0a-a77d-71dc9769ff84
+UTP-1P-Cat.5e-SOLID-CROSS-GN,"витая пара U/UTP Cat5e (LAN, кроссировочная (jumper wire))",2 (1 пара),Cat5e,U/UTP,нет,1,,d47d0d1c-7cce-4770-8b48-1b329f1c1857
+UTP-1P-Cat.5e-SOLID-CROSS-OR,"витая пара U/UTP Cat5e (LAN, кроссировочная (jumper wire))",2 (1 пара),Cat5e,U/UTP,нет,1,,be2304e2-908b-46cc-914f-33392cbc46b1
+UTP-1P-Cat.5e-SOLID-LSZH-GY,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",2 (1 пара),Cat5e,U/UTP,нет,1,внутренняя,4ae9ab20-2c56-4052-9af8-1b7641fddece
+UTP-25P-Cat.5-IN,"витая пара U/UTP Cat5 (LAN, многопарный, магистральный)",50 (25 пар),Cat5,U/UTP,нет,25,,1fbe760f-b2b1-41af-9253-888aef7a2bf6
+UTP-25P-Cat.5-IN-LSZH,"витая пара U/UTP Cat5 (LAN, многопарный, магистральный)",50 (25 пар),Cat5,U/UTP,нет,25,,14e20d62-5ced-4204-898a-c4854758ec35
+UTP-25P-Cat.5-OUT,"витая пара U/UTP Cat5 (LAN, наружная прокладка)",50 (25 пар),Cat5,U/UTP,нет,25,наружная,38da2030-bfc2-4973-949b-9688330fdd3d
+UTP-2P-Cat.5e-SOLID-GY,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,4bc7d361-7c5e-4861-aabd-459eb41038cc
+UTP-2P-Cat.5e-SOLID-GY-LIGHT,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,74622d60-f121-455a-93f5-9494cbccf1fe
+UTP-2P-Cat.5e-SOLID-LSZH-GY,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,bad1b143-395c-4cfe-bd0a-a4521aa048ad
+UTP-2P-Cat.5e-SOLID-LSZH-GY-LIGHT,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,40497d40-5c7a-4a1e-9782-5d85d62cc740
+UTP-2P-Cat.5e-SOLID-LSZH-OR,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",4 (2 пары),Cat5e,U/UTP,нет,2,внутренняя,ed85dac1-0cdc-4c66-b231-767bfd41079d
+UTP-4P-Cat.5e-PATCH-BK,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,a75aea92-d0b1-4639-a392-b59320520950
+UTP-4P-Cat.5e-PATCH-BL,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,16263a4f-55dc-494e-95e6-28524db8e2a1
+UTP-4P-Cat.5e-PATCH-GN,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,1059b92e-92c5-4931-b110-f3867a4be724
+UTP-4P-Cat.5e-PATCH-GY,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,ddcd2239-0ea7-4a98-b8d0-60fdaf638566
+UTP-4P-Cat.5e-PATCH-LSZH-GY,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,03b306ff-6d97-40fa-9d6d-ebef1dfafbcd
+UTP-4P-Cat.5e-PATCH-OR,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,36ce60be-bbb1-47b7-8c64-21e4272111c3
+UTP-4P-Cat.5e-PATCH-RD,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,723c8296-3fc1-4671-ae83-91680669edba
+UTP-4P-Cat.5e-PATCH-WH,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,4814c3ba-1cfc-4a98-8b97-ff50fb2b1818
+UTP-4P-Cat.5e-PATCH-YL,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка, гибкий (patch))",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,76c8dcdf-3b0f-442f-96b0-1a50e95bad79
+UTP-4P-Cat.5e-SOLID-BK,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,11129442-a26c-433b-bedf-ca6712b3e2ef
+UTP-4P-Cat.5e-SOLID-BL,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,54f709ed-6981-4eeb-a83c-b1207b4f8f43
+UTP-4P-Cat.5e-SOLID-GN,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,a026debb-e355-4342-89d2-39c17e994030
+UTP-4P-Cat.5e-SOLID-GY,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,7b76333c-27aa-4fd9-8dbf-6d2886c874f2
+UTP-4P-Cat.5e-SOLID-GY-LIGHT,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,d9246e57-8448-46fe-b17c-5a77adef1436
+UTP-4P-Cat.5e-SOLID-LSLTx-GN,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,446a778a-84d3-4882-ab51-bf4c00416bc3
+UTP-4P-Cat.5e-SOLID-LSLTx-GY,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,1a71d903-3ab0-4371-bea0-3f0931a71026
+UTP-4P-Cat.5e-SOLID-LSZH,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,ec8ea90e-cfdb-4c2d-ab0b-cb676d309ca8
+UTP-4P-Cat.5e-SOLID-LSZH-BK,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,5df7ca0e-1051-438b-b660-b7092f967542
+UTP-4P-Cat.5e-SOLID-LSZH-BL,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,a4e35be6-64e8-487a-bc39-bf45ef6174bb
+UTP-4P-Cat.5e-SOLID-LSZH-GN,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,260acdc5-e115-40d1-91db-6024c7236799
+UTP-4P-Cat.5e-SOLID-LSZH-GY,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,e128206e-31d3-4798-9d07-e23b0c177cdb
+UTP-4P-Cat.5e-SOLID-LSZH-GY-LIGHT,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,11e72fe4-9295-4958-b49c-d41173801844
+UTP-4P-Cat.5e-SOLID-LSZH-OR-LIGHT,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,55ecf09b-d58c-4716-9a75-64ed1694cafe
+UTP-4P-Cat.5e-SOLID-LSZH-RD,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,dc93e5f6-1380-484a-91be-2338983d2659
+UTP-4P-Cat.5e-SOLID-LSZH-WH,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,5666be1c-f1f4-4f7d-8b1e-17328df8ab25
+UTP-4P-Cat.5e-SOLID-LSZH-YL,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,b84f5cb1-cb95-4c03-8613-97b2d8fdd1b5
+UTP-4P-Cat.5e-SOLID-OR,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,6f714297-1e1f-4511-90a6-e07c802a55cd
+UTP-4P-Cat.5e-SOLID-OUT-LSZH-UV,"витая пара U/UTP Cat5e (LAN, внутренняя и наружная прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя и наружная,efdba195-1863-4860-86c2-7bc42c8270a9
+UTP-4P-Cat.5e-SOLID-OUT-PE-UV,"витая пара U/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,наружная,a03d4d3c-4982-482a-bfa8-a281a2c1e935
+UTP-4P-Cat.5e-SOLID-RD,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,e0a50639-ccd0-4d50-b979-0fcc5e666965
+UTP-4P-Cat.5e-SOLID-ST-OUT,"витая пара U/UTP Cat5e (LAN, наружная прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,наружная,a19e5097-fe62-46f1-944e-964a947a61b0
+UTP-4P-Cat.5e-SOLID-WH,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,4e825646-4e91-434c-9faa-649a7fba102d
+UTP-4P-Cat.5e-SOLID-YL,"витая пара U/UTP Cat5e (LAN, внутренняя прокладка)",8 (4 пары),Cat5e,U/UTP,нет,4,внутренняя,6d1bbd98-1ff5-4a85-8d13-3cdccec90d15
+UTP-4P-Cat.6-SOLID-GY,"витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,79f5aa0d-c9d6-4f70-8e5f-4ccd482f0f0e
+UTP-4P-Cat.6-SOLID-LSLTx-GN,"витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,f85470d2-bff1-4dc1-8f1f-b52f8f29c7e8
+UTP-4P-Cat.6-SOLID-LSLTx-GY,"витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,78ba52e6-d9f0-44cf-a368-632fe3c266f7
+UTP-4P-Cat.6-SOLID-LSZH,"витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,22d9a467-1660-43d2-a796-6364eba1a941
+UTP-4P-Cat.6-SOLID-LSZH-GY,"витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,70ece916-1c68-4093-b562-b51901171a06
+UTP-4P-Cat.6-SOLID-LSZH-WH,"витая пара U/UTP Cat6 (LAN, внутренняя прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя,244b27a0-da4a-4d0b-8f2b-43119cb72932
+UTP-4P-Cat.6-SOLID-OUT-LSZH-UV,"витая пара U/UTP Cat6 (LAN, внутренняя и наружная прокладка)",8 (4 пары),Cat6,U/UTP,нет,4,внутренняя и наружная,8a3a5a91-9c3e-41f2-b937-b23d5873c4cd
+UTP-4P-Cat.6a-SOLID-LSZH-OR,"витая пара U/UTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,U/UTP,нет,4,внутренняя,1b6d5cc6-3bce-4891-bc95-5e75209360d3
+UTP-4P-Cat.6a-SOLID-OUT-LSZH-UV,"витая пара U/UTP Cat6A (LAN, внутренняя и наружная прокладка)",8 (4 пары),Cat6A,U/UTP,нет,4,внутренняя и наружная,ae0ecbb1-95ce-4a93-b3cc-d44c9da859ef
+UTP-4P-Cat.6a-SOLID-PVC-GY,"витая пара U/UTP Cat6A (LAN, внутренняя прокладка)",8 (4 пары),Cat6A,U/UTP,нет,4,внутренняя,e5537fdf-c495-4cca-bb9e-58ce819cb9ec
+UTP-50P-Cat.5-IN,"витая пара U/UTP Cat5 (LAN, многопарный, магистральный)",100 (50 пар),Cat5,U/UTP,нет,50,,cf650da2-e202-4a29-8f61-5dd5f21f443b
+UTP-50P-Cat.5-IN-LSZH,"витая пара U/UTP Cat5 (LAN, многопарный, магистральный)",100 (50 пар),Cat5,U/UTP,нет,50,,625b3cff-6b7f-4428-b53b-b3755c6fd728

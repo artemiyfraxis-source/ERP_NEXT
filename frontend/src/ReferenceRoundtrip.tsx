@@ -19,6 +19,7 @@ const TARGETS: Record<string, { table: string; kind?: string }> = {
   cab_coax: { table: "prov", kind: "coax" },
   cab_wire: { table: "prov", kind: "wire" },
   cab_multi: { table: "prov", kind: "multi" },
+  cab_lan: { table: "prov", kind: "lan" },
   cov: { table: "mat", kind: "cov" },
   mat: { table: "mat" },
   // «Материалы» расформированы (15.10.2026): вкладки по назначению выгружают всю БД.МАТ — файл тот же, строки по ID.
