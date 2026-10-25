@@ -29,6 +29,9 @@ TUBE_CUTS = frozenset({"cutTut", "coaxCutTut"})
 # Coax stripping as its own operation prepares the cut cable, not a side (owner 14.10: «зачистка идёт до всего
 # остального»): cut, strip A, strip B are one semi-finished product with the cut.
 COAX_STRIPS = frozenset({"coaxStrip"})
+# The strip of a FAKRA/HFM end (opKey `coaxSideStrip…`, owner 25.10) belongs to its side: the cable is cut whole, then each end is
+# «put the parts on -> strip -> assemble» in its own block (a seal can't be slid over a stripped braid). Not «Нарезанный кабель».
+SIDE_STRIP_KEY = "coaxSideStrip"
 # Cutting coax with stripping on the rotary machine (CUT_COAX+1strip / +2strip).
 _COAX_CUT_STRIP = re.compile(r"^CUT_COAX\+\d*STRIP")
 # Crimping the ends by hand: terminals and lugs (a double crimp is the same operation), splices.
@@ -55,11 +58,15 @@ def _side(op: RouteOp) -> str:
     return _SIDES[by_key.group(1)] if by_key else ""
 
 
+def _cable_strip(op: RouteOp) -> bool:
+    return op.type in COAX_STRIPS and not op.key.startswith(SIDE_STRIP_KEY)
+
+
 def _cut_stage(op: RouteOp) -> str:
     code = op.code.upper()
     if op.type in TUBE_CUTS or code.startswith("CUT_TUT"):
         return TUBES
-    if op.type in WIRE_CUTS or op.type in COAX_STRIPS or code.startswith("CUT_"):
+    if op.type in WIRE_CUTS or _cable_strip(op) or code.startswith("CUT_"):
         return WIRES
     return ""
 
@@ -89,7 +96,8 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
     def assembly(op: RouteOp) -> bool:
         return bool(_side(op)) and not _cut_stage(op) and not _wire_end_prep(op) and op.type not in CONTACT_SOLDERS
 
-    pins = {op.position for op in ordered if op.type in CONTACT_SOLDERS and _side(op) and any(
+    owned = {_side(op) for op in ordered if op.key.startswith(SIDE_STRIP_KEY)}  # the centre contact of such an end is the side's own work
+    pins = {op.position for op in ordered if op.type in CONTACT_SOLDERS and _side(op) and _side(op) not in owned and any(
         other.position > op.position and _side(other) == _side(op) and assembly(other) for other in ordered)}
 
     def end_prep(op: RouteOp) -> bool:
@@ -123,8 +131,8 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
 
 def _title(stage: str, ops: Sequence[RouteOp]) -> str:
     if stage == WIRES:
-        if ops and all(op.type == "coaxCut" or op.type in COAX_STRIPS for op in ops):
-            stripped = any(op.type in COAX_STRIPS or _COAX_CUT_STRIP.match(op.code.upper()) for op in ops)
+        if ops and all(op.type == "coaxCut" or _cable_strip(op) for op in ops):
+            stripped = any(_cable_strip(op) or _COAX_CUT_STRIP.match(op.code.upper()) for op in ops)
             return "Нарезанный и разделанный кабель" if stripped else "Нарезанный кабель"
         return "Нарезанные и обжатые провода" if any(op.type == "cutWireCrimp" for op in ops) else "Нарезанные провода"
     if stage == TUBES:
