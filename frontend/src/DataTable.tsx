@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { selectRange } from "./bulk";
 import { EMPTY, displayCell, formatNumber } from "./format";
 import { matchesSearch, searchRows } from "./searchText";
@@ -183,8 +183,10 @@ const levelFree = (head: HTMLTableCellElement) => Boolean(head.dataset.col)
   && !(head.classList.contains("dt-w") || head.classList.contains("grow") || (head.style.width && head.dataset.level === undefined));
 /** Blocks: the widest natural width a column is measured at (a longer text wraps), the narrowest a text column gets. */
 const LEVEL_MAX = 360;
-const LEVEL_MIN = 72;
-const LEVEL_FACTOR = 0.55;
+const LEVEL_MIN = 64;
+const LEVEL_FACTOR = 0.3;
+const LEVEL_SLACK = 1.04;
+const LEVEL_READABLE = 0.55;
 const MAX_WIDTH = 900;
 const WIDTH_STEP = 16;
 /** Поля ячейки слева и справа (`.data-table th, td { padding: 6px 12px }`): ширина колонки = текст + они. */
@@ -740,12 +742,19 @@ export function DataTable<T>({
       }
       if (texts > 0 && numbers + texts > room) factor = Math.min(factor, Math.max(0, room - numbers) / texts);
     });
-    // Text squeezed below about half its width reads worse than a list that scrolls sideways (coax: 19 columns on 16").
-    factor = Math.max(factor, LEVEL_FACTOR);
-    const next = new Map<string, number>();
-    for (const [key, width] of natural) {
-      if (width > 0) next.set(key, Math.floor(numeric.has(key) ? width : Math.max(Math.min(width, LEVEL_MIN), width * factor)));
-    }
+    const widthsAt = (at: number) => {
+      const result = new Map<string, number>();
+      for (const [key, width] of natural) {
+        if (width > 0) result.set(key, Math.floor(numeric.has(key) ? width : Math.max(Math.min(width, LEVEL_MIN), width * at)));
+      }
+      return result;
+    };
+    // Text narrows down to a third of its width to fit; a list that cannot fit even so (coax: 19 columns on 16") scrolls
+    // sideways anyway — its text keeps more than half its width, it reads better.
+    let next = widthsAt(Math.max(factor, LEVEL_FACTOR));
+    const tooWide = tables.some((table, index) => [...headsOf(table)].reduce((sum, head) =>
+      sum + (levelFree(head) ? next.get(head.dataset.col!) ?? 0 : 0), fixed[index]) > (table.parentElement?.clientWidth ?? 0) * LEVEL_SLACK);
+    if (tooWide) next = widthsAt(Math.max(factor, LEVEL_READABLE));
     levelled.current = { widths: next, round: levelled.current.round + 1, room: tables[0]?.parentElement?.clientWidth ?? 0 };
     tables.forEach(applyLevel);
   }
@@ -769,9 +778,18 @@ export function DataTable<T>({
     }
     // Only a list that cannot fit even so is as wide as its columns and scrolls sideways, in its own box.
     const wrap = table.parentElement;
-    const wide = sum > levelled.current.room + 1;
+    // (a few per cent over — the rounding and the narrowest text width — the table squeezes in by itself)
+    const wide = sum > levelled.current.room * LEVEL_SLACK;
     table.style.width = wide ? `${Math.ceil(sum)}px` : "";
     wrap?.classList.toggle("dt-scroll-x", wide);
+    // A wide block moves sideways by its own bar, pinned to the bottom of the screen: the block itself is no scroll box,
+    // so its header still sticks under the toolbar while the page scrolls (owner 25.10.2026).
+    const bar = wrap?.nextElementSibling as HTMLElement | null;
+    if (bar?.classList.contains("dt-hscroll")) {
+      bar.hidden = !wide;
+      (bar.firstElementChild as HTMLElement).style.width = wide ? `${Math.ceil(sum)}px` : "";
+      if (wide) bar.scrollLeft = parseFloat(rootRef.current?.style.getPropertyValue("--dt-x") || "0") || 0;
+    }
     table.dataset.levelRound = String(round);
   }
   const levelRef = useRef(levelBlocks);
@@ -1026,7 +1044,18 @@ export function DataTable<T>({
     if (!active || (editing && sameCell(editing, active))) return;
     const cell = [...(rootRef.current?.querySelectorAll<HTMLElement>("td[data-col]") ?? [])]
       .find((item) => item.dataset.col === active.col && item.dataset.row === active.row);
-    if (cell && document.activeElement !== cell) cell.focus();
+    if (cell && document.activeElement !== cell) cell.focus({ preventScroll: Boolean(cell.closest(".dt-scroll-x")) });
+    // In a wide block the active cell comes into view through the block's bar (the block itself does not scroll).
+    const wrap = cell?.closest<HTMLElement>(".dt-scroll-x");
+    const bar = wrap?.nextElementSibling as HTMLElement | null;
+    if (cell && wrap && bar?.classList.contains("dt-hscroll")) {
+      const key = wrap.querySelector<HTMLElement>("thead th.key, thead th:first-child")?.offsetWidth ?? 0;
+      const left = cell.offsetLeft - key;
+      const right = cell.offsetLeft + cell.offsetWidth - wrap.clientWidth;
+      if (left < bar.scrollLeft) bar.scrollLeft = Math.max(0, left);
+      else if (right > bar.scrollLeft) bar.scrollLeft = right;
+      cell.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    }
   }, [active, editing]);
 
   const inRange = new Set(rangeFrom !== null ? rangeRows().map(rowKey) : []);
@@ -1162,6 +1191,22 @@ export function DataTable<T>({
     );
   }
 
+  /** A wide block's bar moves the tables of every wide block together — their columns are level (`--dt-x` on the list);
+      the key column stays in place. */
+  function sideScroll(event: ReactUIEvent<HTMLDivElement>) {
+    const x = event.currentTarget.scrollLeft;
+    rootRef.current?.style.setProperty("--dt-x", `${x}px`);
+    for (const bar of rootRef.current?.querySelectorAll<HTMLElement>(":scope > .dt-hscroll") ?? []) {
+      if (bar !== event.currentTarget && !bar.hidden && bar.scrollLeft !== x) bar.scrollLeft = x;
+    }
+  }
+  /** A sideways wheel or a trackpad swipe over a wide block moves its bar. */
+  function sideWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    const bar = event.currentTarget.nextElementSibling as HTMLElement | null;
+    if (!bar?.classList.contains("dt-hscroll") || bar.hidden) return;
+    const delta = event.deltaX || (event.shiftKey ? event.deltaY : 0);
+    if (delta) bar.scrollLeft += delta;
+  }
   function toggleCollapsed(name: string) {
     setCollapsed((current) => {
       const next = new Set(current);
@@ -1363,12 +1408,13 @@ export function DataTable<T>({
             <Heading className={section !== undefined ? "dt-block-title dt-sub-title" : "dt-block-title"}>{collapsibleGroups
               ? <button type="button" className="dt-block-fold" aria-expanded={!folded} onClick={() => toggleCollapsed(name)}><span aria-hidden="true">{folded ? "▸" : "▾"}</span> {caption}</button>
               : caption}</Heading>
-            {!folded && <div className="table-wrap">
+            {!folded && <div className="table-wrap" onWheel={sideWheel}>
               <table ref={index === 0 ? tableRef : undefined} className={tableClass} aria-label={typeof title === "string" ? title : name}>
                 {headOf({ title: typeof title === "string" ? title : name, rows: groupRows }, heads)}
                 <tbody>{groupRows.map(renderRow)}</tbody>
               </table>
             </div>}
+            {!folded && <div className="dt-hscroll" hidden aria-hidden="true" onScroll={sideScroll}><div /></div>}
           </Fragment>;
         })}
         {!shown.length && <div className="table-wrap">

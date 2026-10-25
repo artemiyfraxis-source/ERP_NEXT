@@ -1579,7 +1579,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
    fit scrolls sideways (`dt-scroll-x`). `overflow: clip` keeps the rounded corners without a scroll container. */
 .data-table.dt-blocks { grid-template-columns: minmax(0, 1fr); }
 .data-table.dt-blocks > .table-wrap { max-height: none; overflow: clip; }
-.data-table.dt-blocks > .table-wrap.dt-scroll-x { overflow-x: auto; }
+/* A block too wide even so: the wide tables move together by a bar pinned to the screen bottom (`--dt-x`, DataTable),
+   the key column stays; the block is still no scroll box, so the header keeps sticking. */
+.data-table.dt-blocks > .table-wrap.dt-scroll-x > table { transform: translateX(calc(-1 * var(--dt-x, 0px))); }
+.data-table.dt-blocks > .table-wrap.dt-scroll-x > table:not(.selectable) :is(td, th).key { transform: translateX(var(--dt-x, 0px)); }
+.data-table.dt-blocks > .table-wrap.dt-scroll-x > table:not(.selectable) th.key { z-index: 3; }
+.data-table.dt-blocks > .dt-hscroll { position: sticky; bottom: 0; z-index: 3; height: 14px; margin-top: -10px; overflow-x: auto; overflow-y: hidden; background: var(--background); }
+.data-table.dt-blocks > .dt-hscroll > div { height: 1px; }
+@media (pointer: coarse) { .data-table.dt-blocks > .dt-hscroll { height: 24px; } }
 .data-table.dt-blocks table.grid.wide { width: 100%; min-width: 0; }
 .data-table.dt-blocks thead th { top: var(--dt-head-top, 0px); }
 .data-table.dt-blocks > .table-wrap td:not(.num) { white-space: normal; }
