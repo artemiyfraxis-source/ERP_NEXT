@@ -116,6 +116,21 @@ def _build(config: dict[str, Any], cards) -> dict[str, Any]:
     return build_etk(config, cards)
 
 
+def _manual_fix(key: str, typed: dict[str, Any], manual: dict[str, Any]) -> bool:
+    """The deliberate differences of «Ручная сборка» (25.10, etk-manual-fixes): a cut tube is issued to the kit in
+    metres (the generator counts pieces), a tube operation inside a block chain hands on pieces of the product, not the tube
+    count, and a splice / housing hands on a quantity instead of a blank. Everything else of the operation stays equal."""
+    if key == "components" and typed["type"] == "cutTut":
+        return [row["unit"] for row in manual["components"]] == ["М."] * len(manual["components"]) and \
+            [row["art"] for row in manual["components"]] == [row["art"] for row in typed["components"]]
+    if key == "result" and typed["type"] in {"insTut", "endCap", "foldCore", "stripCable"}:
+        return [row["name"] for row in manual["result"]] == [row["name"] for row in typed["result"]]
+    if key == "result" and typed["type"] in {"splice", "insHousing"}:  # not last in a block: no longer a blank quantity
+        return [row["name"] for row in manual["result"]] == [row["name"] for row in typed["result"]] and \
+            all(not row["norm"] for row in typed["result"]) and all(row["norm"] for row in manual["result"])
+    return False
+
+
 def _pair(case: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     factory, cards = CASES[case]
     converted = generator_to_assembly(factory())
@@ -129,6 +144,8 @@ def test_converted_assembly_builds_the_same_operations_through_the_manual_path(c
     assert len(manual["operations"]) == len(typed["operations"])
     for expected, built in zip(typed["operations"], manual["operations"]):
         for key in COMPARED:
+            if key in {"components", "result"} and _manual_fix(key, expected, built):
+                continue
             assert built[key] == expected[key], (case, expected["position"], key)
     assert manual["topology"] == typed["topology"]
     assert manual.get("connections") == typed.get("connections")

@@ -218,6 +218,7 @@ def submit_assembly_draft(
     return {
         "dry_run": dry_run, "draft": _draft_json(draft) if draft else None,
         "warnings": list(checked.warnings), "operations": checked.operations, "route": checked.route,
+        "operation_details": list(checked.details),
     }
 
 
