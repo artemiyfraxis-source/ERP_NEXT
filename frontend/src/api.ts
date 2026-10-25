@@ -1610,7 +1610,7 @@ export interface ReferenceBase {
 export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
-export type CableKind = "coax" | "wire" | "multi";
+export type CableKind = "coax" | "wire" | "multi" | "lan";
 /** Столбец общего набора таблицы: ключ и виден ли он всем. */
 export interface SharedColumn { key: string; visible: boolean }
 

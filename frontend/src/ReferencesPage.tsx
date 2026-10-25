@@ -44,7 +44,7 @@ import {
    references read like one database. Project techcards (ЭТК) stay with the projects. */
 
 type MapTab = "suppliers" | "countries";
-type CableTab = "cab_coax" | "cab_wire" | "cab_multi";
+type CableTab = "cab_coax" | "cab_wire" | "cab_multi" | "cab_lan";
 export type DbTab = "templates" | "connectors" | "gauges" | "cov" | TechOperationTab | MapTab | CableTab | MaterialTab;
 type TabDef = { id: DbTab; label: string; base?: string };
 
@@ -73,6 +73,8 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "cab_coax", label: "Коаксиальные кабели" },
     { id: "cab_wire", label: "Монтажные провода" },
     { id: "cab_multi", label: "Многожильные кабели" },
+    // 25.10.2026 (владелец): «интернетные вынести вообще в другую вкладку — новая вкладка, новая БД», «ETHERNET».
+    { id: "cab_lan", label: "ETHERNET" },
   ] },
   // БД.МАТ is a working base in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
   // Owner 12.10.2026: оболочки (ТУТ, ТТК, оплётки, гофра) — отдельной таблицей из строк БД.МАТ, с разбором и сортировкой;
@@ -87,7 +89,7 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "gauges", label: "Сечения AWG ↔ мм²" },
   ] },
 ];
-const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_multi: "multi" };
+const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_multi: "multi", cab_lan: "lan" };
 // Keys of the tabs these replaced (saved tab, `initialTab`): «Провода и кабели» → монтажные, «Коаксиальные кабели:
 // D1 · D2 · D3» → коаксиальные кабели; «Материалы» (15.10.2026) → «Оболочки», куда ушла бóльшая часть строк.
 // «Прочие кабели» закрыты 20.10.2026: сохранённая вкладка ведёт в многожильные.
@@ -301,7 +303,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     try {
       setCables(await referencesApi.cables());
     } catch (reason) {
-      setCables({ columns: [], counts: { coax: 0, wire: 0, multi: 0 }, rows: [], gauges: [] });
+      setCables({ columns: [], counts: { coax: 0, wire: 0, multi: 0, lan: 0 }, rows: [], gauges: [] });
       setError(failureText(reason, "Не удалось загрузить кабели и провода"));
     }
   }

@@ -20,7 +20,7 @@ from .cable_structure import (
 )
 from .cables import (
     DIAMETERS, CableKind, CableRow, auto_kind, cable_mark, cable_rows, clean_diameter, connectors_by_cable, diameter_index,
-    NOT_HOOKUP_REASON, hookup_series, resolve_kind,
+    NOT_HOOKUP_REASON, hookup_series, lan_fill, resolve_kind,
 )
 from .domain import (
     CABLE_COLUMNS, CABLE_DROPPED, CABLE_KIND_VALUES, CABLE_WRITABLE, COAX_DROPPED_COLUMNS, cable_fields, cable_list_own,
@@ -789,9 +789,15 @@ def _wire_fields(kind: CableKind, fields: Mapping[str, str], uow: UnitOfWork, *,
                  pad_all: bool = False) -> dict[str, str]:
     """A БД.ПРОВ row's fields shaped to its list (`domain.cable_fields`): its columns are the list's and the owner's
     columns of the list. `pad_own` — the row gets the owner's columns of the list it lacks (empty), as a new record
-    always did; `pad_all` — every column of the list (a loaded row, editable on screen in every cell)."""
+    always did; `pad_all` — every column of the list (a loaded row, editable on screen in every cell).
+    An ETHERNET row always gets every column of its list (its supply and material columns are the list's, not the
+    owner's, so a row created or moved here is editable in each) and its empty «Категория», «Экран», «Число пар»,
+    «Прокладка» read from the type, the mark and «Число жил» (`cables.lan_fill`)."""
     sheet = CABLE_COLUMNS[kind.value]
     own = tuple(cable_list_own(kind.value, custom_columns(TechOperationTab.WIRE, uow, kind.value)))
+    if kind == CableKind.LAN:
+        pad_all = True
+        fields = lan_fill(fields, str(fields.get(MARK_FIELD) or ""))
     pad = (*sheet, *own) if pad_all else own if pad_own else ()
     return cable_fields((*sheet, *own), fields, pad)
 

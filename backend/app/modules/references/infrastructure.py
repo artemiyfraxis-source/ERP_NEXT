@@ -72,9 +72,9 @@ def terminal_card_checks(dialect: str) -> dict[str, str]:
     }
 
 
-# A БД.ПРОВ row is in exactly one cable list, a row of another tab in none (migration 0129 holds a literal copy).
+# A БД.ПРОВ row is in exactly one cable list, a row of another tab in none (migrations 0131 and 0150 hold literal copies; 0150 added «lan»).
 CABLE_KIND_CHECK = (
-    "(tab = 'prov' AND cable_kind IS NOT NULL AND cable_kind IN ('coax', 'wire', 'multi'))"
+    "(tab = 'prov' AND cable_kind IS NOT NULL AND cable_kind IN ('coax', 'wire', 'multi', 'lan'))"
     " OR (tab <> 'prov' AND cable_kind IS NULL)"
 )
 

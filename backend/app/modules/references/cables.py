@@ -1,5 +1,6 @@
 """«Кабели и провода» (owner 04.10.2026, 10.10.2026): БД.ПРОВ and the coax D1·D2·D3 table (СПР.КАБ · коаксиал) as three
-lists — коаксиальные кабели, монтажные провода, многожильные кабели («Прочие кабели» closed 20.10.2026).
+lists — коаксиальные кабели, монтажные провода, многожильные кабели («Прочие кабели» closed 20.10.2026) and, since
+25.10.2026, ETHERNET (the LAN cables moved out of the многожильные, migration 0150).
 
 Storage stays as SUPPLYMAP keeps it: БД.ПРОВ rows (`prov`) and the D-table rows (`kab_coax`) the ETK generator reads
 by cable name. Each БД.ПРОВ row stores its list (`TechOperationRecord.cable_kind`, migration 0129); the rule here
@@ -21,10 +22,12 @@ class CableKind(str, Enum):
     COAX = "coax"
     WIRE = "wire"
     MULTI = "multi"
+    LAN = "lan"
 
 
 CABLE_KIND_LABELS = {
     CableKind.COAX: "Коаксиальные кабели", CableKind.WIRE: "Монтажные провода", CableKind.MULTI: "Многожильные кабели",
+    CableKind.LAN: "ETHERNET",
 }
 DIAMETERS = ("D1", "D2", "D3")
 MARK_FIELD = "Марка"
@@ -56,6 +59,87 @@ def diameter_index(records: Iterable[TechOperationRecord]) -> dict[str, TechOper
         if key:
             index[key] = record
     return index
+
+
+# «ETHERNET» (owner 25.10.2026: «интернетные вынести вообще в другую вкладку — новая вкладка, новая БД», «не витая
+# пара»): the LAN cables — a category (Cat5 … Cat8), an ISO/IEC 11801 screen code (U/UTP, F/UTP, SF/UTP, U/FTP, S/FTP
+# and the shop's SFTP / SSTP / FTP / UTP), the word LAN or an industrial Ethernet (Industrial Ethernet, PROFINET,
+# EtherCAT) in the type or the mark. A twisted pair of no Ethernet — PROFIBUS / RS-485, CAN, a telephone pair (ТПП,
+# КСПВ, ШТЛЭн), a control cable (КДВВГ, LiYCY, DIN 47100 PAAR-TRONIC) — names none of them and stays многожильный.
+# Migration 0150 holds a literal copy of this rule (`ETHERNET`).
+ETHERNET = re.compile(
+    r"ethernet|profinet|ethercat|\bLAN\b|\b[cс]at(?:egory)?\.?\s?(?:5e?|6a?|7a?|8)(?![0-9])|категори[яи]\s?(?:5e?|6a?|7a?|8)(?![0-9])"
+    r"|(?<![A-Za-z])(?:[USF]{1,2}/[UF]TP|SFTP|SSTP|FTP|UTP)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+LAN_CATEGORY_FIELD = "Категория"
+LAN_SCREEN_FIELD = "Экран"
+LAN_PAIRS_FIELD = "Число пар"
+LAN_LAYING_FIELD = "Прокладка"
+_LAN_CATEGORY = re.compile(r"\b[cс]at(?:egory)?\.?\s?(5e|5|6a|6|7a|7|8)(?![0-9])|категори[яи]\s?(5e|5|6a|6|7a|7|8)(?![0-9])", re.IGNORECASE)
+_LAN_SCREEN = re.compile(r"(?<![A-Za-z])(SF/UTP|S/FTP|F/FTP|U/FTP|F/UTP|U/UTP|S/UTP|SFTP|SSTP|FTP|UTP)(?![A-Za-z])", re.IGNORECASE)
+# The shop's short codes in ISO/IEC 11801 terms (Cabeus SFTP = SF/UTP, SSTP = S/FTP).
+_LAN_SCREEN_CODES = {"SFTP": "SF/UTP", "SSTP": "S/FTP", "FTP": "F/UTP", "UTP": "U/UTP"}
+_LAN_PAIRS = re.compile(r"\(\s*(\d+)\s*пар")
+
+
+def is_ethernet(fields: Mapping[str, str], mark: str) -> bool:
+    """A LAN cable by its type or mark (`ETHERNET`): «витая пара U/UTP Cat5e (LAN, …)», «IE-4-SOLID F/UTP Cat5e», «… PROFINET»."""
+    return bool(ETHERNET.search(f"{fields.get(TYPE_FIELD) or ''} {mark or ''}"))
+
+
+def lan_category(text: str) -> str:
+    """«витая пара U/UTP Cat5e (LAN…)» → «Cat5e», «SSTP-4P-Cat.7-PATCH» → «Cat7», «Cat6A» → «Cat6A»; none — ""."""
+    match = _LAN_CATEGORY.search(text or "")
+    return f"Cat{(match.group(1) or match.group(2)).upper().replace('E', 'e')}" if match else ""
+
+
+def lan_screen(text: str) -> str:
+    """The ISO/IEC 11801 screen code a type or mark names: «F/UTP», «SFTP/SF-UTP» → «SF/UTP», «SSTP» → «S/FTP»; none — ""."""
+    match = _LAN_SCREEN.search(text or "")
+    if not match:
+        return ""
+    code = match.group(1).upper()
+    return _LAN_SCREEN_CODES.get(code, code)
+
+
+def lan_pairs(cores: str) -> str:
+    """«8 (4 пары)» → «4», «6 (2 пар + 2 силовые)» → «2», «8» → «4» (a LAN cable is made of pairs); else ""."""
+    text = str(cores or "")
+    match = _LAN_PAIRS.search(text)
+    if match:
+        return match.group(1)
+    bare = re.fullmatch(r"\s*(\d+)\s*", text)
+    return str(int(bare.group(1)) // 2) if bare and int(bare.group(1)) % 2 == 0 and int(bare.group(1)) > 0 else ""
+
+
+def lan_laying(text: str) -> str:
+    """«внутренняя прокладка» → «внутренняя», «наружная» / «внешней» → «наружная», both → «внутренняя и наружная»."""
+    lowered = str(text or "").casefold()
+    inner, outer = "внутрен" in lowered, "наруж" in lowered or "внешн" in lowered
+    return "внутренняя и наружная" if inner and outer else "внутренняя" if inner else "наружная" if outer else ""
+
+
+def lan_derived(fields: Mapping[str, str], mark: str) -> dict[str, str]:
+    """The cells of an ETHERNET row the type, the mark and «Число жил» give: «Категория», «Экран» (the code), «Число
+    пар», «Прокладка» — each only where it is said (the type first, then the mark)."""
+    kind_type = str(fields.get(TYPE_FIELD) or "")
+    derived = {
+        LAN_CATEGORY_FIELD: lan_category(kind_type) or lan_category(mark),
+        LAN_SCREEN_FIELD: lan_screen(kind_type) or lan_screen(mark),
+        LAN_PAIRS_FIELD: lan_pairs(str(fields.get(CORES_FIELD) or "")),
+        LAN_LAYING_FIELD: lan_laying(kind_type),
+    }
+    return {name: value for name, value in derived.items() if value}
+
+
+def lan_fill(fields: Mapping[str, str], mark: str) -> dict[str, str]:
+    """An ETHERNET row's fields with the empty derived cells (`lan_derived`) filled; a filled cell is never changed."""
+    filled = dict(fields)
+    for name, value in lan_derived(fields, mark).items():
+        if not str(filled.get(name) or "").strip():
+            filled[name] = value
+    return filled
 
 
 def _cores(fields: Mapping[str, str]) -> int | None:
@@ -112,6 +196,8 @@ def shape_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | 
     1. «Тип провода» starts with «коакс» → коаксиальный;
     2. the mark has a row in the D1·D2·D3 table → коаксиальный;
     3. no type, the mark carries the generator's coax markers (RG-…, coax, коакс) → коаксиальный;
+    3a. the type or the mark names an Ethernet cable (`is_ethernet`: Cat5e, U/UTP, LAN, PROFINET…) → ETHERNET
+        (owner 25.10.2026: «интернетные вынести вообще в другую вкладку»);
     4. more than one core, or the type says «многожильный» → многожильный кабель (owner 10.10.2026: «все многожильные
        в отдельную вкладку»; UL2725 is listed with one core but typed as a multi-core cable);
     5. one core («Число жил» = 1) → монтажный провод;
@@ -125,6 +211,9 @@ def shape_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | 
         return CableKind.COAX, "есть в таблице D1 · D2 · D3"
     if not kind_type and _COAX_MARK.search(mark):
         return CableKind.COAX, "марка коаксиального кабеля"
+    if is_ethernet(fields, mark):
+        found = lan_category(f"{kind_type} {mark}") or lan_screen(f"{kind_type} {mark}") or "LAN"
+        return CableKind.LAN, f"кабель Ethernet ({found})"
     cores = _cores(fields)
     if cores is not None and cores > 1:
         return CableKind.MULTI, f"жил: {cores}"
@@ -139,12 +228,12 @@ def shape_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | 
 
 def auto_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> tuple[CableKind, str]:
     """Deterministic class of a БД.ПРОВ row and the reason shown to the user. Коаксиальные and многожильные — by
-    shape (`shape_kind`); every other row is a монтажный провод: of a series of the база монтажных (`hookup_series`),
+    shape (`shape_kind`), ETHERNET too; every other row is a монтажный провод: of a series of the база монтажных (`hookup_series`),
     whatever its type or core count says (ПВАМ typed «силовой» is one), or a mark of no series (NOT_HOOKUP_REASON — no
     structure is made for it). «Прочие кабели» is closed (owner 20.10.2026): a row that used to land there has at most
     one core, so it is монтажный. A row stores its list; this rule gives the list of a row being created."""
     kind, reason = shape_kind(fields, mark, dia_keys)
-    if kind in (CableKind.COAX, CableKind.MULTI):
+    if kind in (CableKind.COAX, CableKind.MULTI, CableKind.LAN):
         return kind, reason
     series = hookup_series(mark)
     if series is None:

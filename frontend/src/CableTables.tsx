@@ -26,7 +26,7 @@ import { arrangeCableColumns, knownCableColumn } from "./cableColumnOrder";
    list a row is in comes from the server (references/cables.py); the user moves a row from its editor. */
 
 export { CABLE_KIND_LABELS };
-const KINDS: CableKind[] = ["coax", "wire", "multi"];
+const KINDS: CableKind[] = ["coax", "wire", "multi", "lan"];
 
 /** «Вкладка» of a БД.ПРОВ row: the list it is in, and why (rule or a manual move). */
 export function kindSelect(row: CableRow, value: CableKind, onChange: (kind: CableKind) => void): ReactNode {
@@ -70,6 +70,7 @@ const NEW_TYPE: Record<CableKind, Record<string, string>> = {
   coax: { [TYPE]: "коаксиальный", "Число жил": "1" },
   wire: { [TYPE]: "монтажный", "Число жил": "1" },
   multi: { [TYPE]: "многожильный" },
+  lan: { [TYPE]: "витая пара (LAN)" },
 };
 /** «Частота до, ГГц» of a coax cable (owner 25.10.2026: one frequency field, as at the connectors): its БД.ПРОВ cell,
     else the rated maximum operating frequency of its own card (`from` says so); a family card's («как у») is no value
@@ -125,7 +126,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
   // as numbers inside.
   const rows = useMemo(() => {
     const own = data.rows.filter((row) => row.kind === kind);
-    return kind === "multi" ? own.sort((a, b) => compareByFamily(cells(a), cells(b))) : kind === "coax" ? sortCoax(own) : own;
+    return kind === "multi" || kind === "lan" ? own.sort((a, b) => compareByFamily(cells(a), cells(b))) : kind === "coax" ? sortCoax(own) : own;
   }, [data.rows, kind]);
   const coaxGroup = useMemo(() => coaxGroupOf(rows), [rows]);
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
@@ -165,7 +166,8 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
     const long = values.some((value) => value.length > 28);
     return {
       key: name, title: name, value: (row) => field(row, name),
-      edit: name === CATEGORY_CELL ? categoryEdit : canEdit && own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldEdit(name),
+      // ETHERNET: «Категория» — Cat5e / Cat6…, a cell like any other, not the shop category of the многожильные
+      edit: name === CATEGORY_CELL && kind !== "lan" ? categoryEdit : canEdit && own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldEdit(name),
       remove: own.includes(name) ? removeColumn?.(name) : undefined,
       render: long ? (row) => <span className="cable-clip" title={field(row, name)}>{field(row, name)}</span> : undefined,
       numeric: values.length > 0 && values.every((value) => NUMBER.test(value)),
@@ -263,7 +265,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       renderDetail={kind === "coax" ? undefined : detail}
       onRowClick={kind === "coax" ? (row) => setOpenId(row.id) : undefined}
       collapsibleGroups={kind === "coax"}
-      groupBy={kind === "multi" ? (row) => cableFamily(cells(row)).family : kind === "coax" ? coaxGroup : undefined}
+      groupBy={kind === "multi" || kind === "lan" ? (row) => cableFamily(cells(row)).family : kind === "coax" ? coaxGroup : undefined}
       // Each group sorts its own rows (owner 16.10: «у каждой группы своя»); every row of the list at once, no page.
       groupSort
       pageSize={Infinity}
