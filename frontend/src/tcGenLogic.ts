@@ -3443,6 +3443,14 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
     lugs.filter((c) => !taken.has(c.id)).forEach((c, i) => eps.push(mk("B", null, c, i + 1)));
   }
   S = { ...S, endpoints: eps, nextEndpointId: eps.length };
+  // Клеевая ТТК в составе без обычной ТУТ при паяных разъёмах — термоусадка на корпус разъёма (776К. КБ2–КБ4): на каждый
+  // паяный разъём — отрезок, «на пайку» на жилу трубка не надевается. Размер трубки правилу не важен.
+  {
+    const tut = makeGen(D, S).bomTut_();
+    if (tut && /ттк|клеев/i.test(`${tut.name || ""} ${tut.art || ""}`)) {
+      S = { ...S, endpoints: S.endpoints.map((e) => (e.method === "solder" && e.connId ? { ...e, shrinkOn: true, shrinkMat: tut.id, tutOff: true } : e)) };
+    }
+  }
   // seedWrapFromBom_
   const { autos } = makeGen(D, S).wrapCandidates();
   if (autos.length) {

@@ -192,3 +192,35 @@ describe("кабель с неверным типом в расчёте", () => 
     expect(makeGen(D, S).bomLists().conns.map((c) => c.art)).toEqual(["LP-12-C04PE-02-001", "LP-12-C02PE-02-001"]);
   });
 });
+
+describe("клеевая ТТК на корпусах паяных разъёмов", () => {
+  const kb3 = (ttk = "ТТК 16/4мм, черная") => bom("Кабельная сборка USB-AM to USB-C 180mm", [
+    comp("k0", "Соед", "DS1107-W", 1, "USB-A вилка под пайку"),
+    comp("k1", "Соед", "USB3.1 TYPE-C 24PM-035", 1, "Корпус USB Type-C 24 конт., двухрядный"),
+    comp("k2", "Провод", "CCCU-4G", "0.19"), comp("k3", "ТТК", ttk, "0.06"),
+  ]);
+  const shrinkOps = (b: BatchBom) => { const { D, S } = run(b); return { S, ops: makeGen(D, S).getActiveOps() }; };
+
+  it("776К. КБ3: ТТК надета на оба паяных разъёма — отрезок, «надеть» и усадка, а не трубка на жилу", () => {
+    const { S, ops } = shrinkOps(kb3());
+    expect(S.endpoints.map((e) => [e.method, e.shrinkOn, e.shrinkMat])).toEqual([["solder", true, "k3"], ["solder", true, "k3"]]);
+    const types = ops.map((o) => o.type);
+    expect(types).toEqual(expect.arrayContaining(["cutTut", "insTut", "heatTut", "solderConn"]));
+    expect(ops.find((o) => o.type === "cutTut")!.label).toBe("Резка ТТК поверх разъёма А1, В1 — 2×20 мм");
+  });
+
+  it("размер ТТК не важен: 12/4 — то же", () => {
+    expect(shrinkOps(kb3("ТТК 12/4мм, черная")).S.endpoints.every((e) => e.shrinkOn)).toBe(true);
+  });
+
+  it("есть обычная ТУТ — она остаётся на пайку, ТТК на корпус не навешивается", () => {
+    const b = kb3();
+    const withTut = bom(b.name, [...b.components, comp("k4", "ТУТ", "ТУТ 3,0/1,5", "0.05")]);
+    expect(run(withTut).S.endpoints.some((e) => e.shrinkOn)).toBe(false);
+  });
+
+  it("обжимные разъёмы ТТК не получают", () => {
+    const crimp = bom("X", [comp("k0", "Соед", "XHP-2", 2), comp("k1", "Терминал", "SXH-001T-P0.6", 4), comp("k2", "Провод", "ПВАМ 0,35", "0.3"), comp("k3", "ТТК", "ТТК 16/4мм", "0.06")]);
+    expect(run(crimp).S.endpoints.some((e) => e.shrinkOn)).toBe(false);
+  });
+});
