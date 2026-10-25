@@ -1,7 +1,7 @@
 // Поля строки БД.ОП на карточке операции: лист хранит ~25 колонок под своими заголовками (регистр и сокращения как на
 // листе), экран показывает нужные, сгруппированными и по-русски. Скрытие — только в интерфейсе: в `fields` остаётся
 // каждый ключ, неизвестная колонка попадает в «Прочее» и не пропадает.
-import { cleanHeader, headerLabel } from "./referenceLabels";
+import { headerKey, headerLabel } from "./referenceLabels";
 
 /** Колонки БД.ОП, которые схема дублирует под своими ключами (opNumber = «Номер» …): показываются один раз, по листу. */
 export const OP_SCHEMA_KEYS = new Set(["opNumber", "opName", "tOp", "tPrep", "tMachine"]);
@@ -45,7 +45,7 @@ const RAW_PREFIX = ["время чел", "уд.цена"];
 const NODE_PREFIX = { roll: "скорость проката", tool: "скорость работы инструмента", toolOps: "кол-во операций инструмента" };
 
 type Spec = Omit<OpField, "key" | "value"> & { group: OpGroupId; unit?: string; basisUnit?: boolean };
-const norm = (key: string) => cleanHeader(key).toLocaleLowerCase("ru-RU");
+const norm = headerKey;
 
 /** Spec колонки; null — скрыть, undefined — неизвестная («Прочее»). */
 function spec(key: string): Spec | null | undefined {

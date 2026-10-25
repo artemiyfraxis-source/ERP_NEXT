@@ -105,7 +105,7 @@ function equipmentChoices(equipment: TechOperationRecord[], column: string) {
 
 /** Операции таблицей (аудит БД-2: 139 карточек — это 6 500 px прокрутки, справочник читается строками): шаблоны ТК +
     операции БД.ОП без шаблона; категории — чипы с числом, строка целиком открывает карточку операции. */
-function OperationsTable({ entries, onOpen, toolbar, own, editing }: { entries: OperationEntry[]; onOpen: (entry: OperationEntry) => void; toolbar?: ReactNode; own?: OwnColumns; editing?: OpEditing }) {
+function OperationsTable({ entries, onOpen, toolbar, own, editing, loading = false }: { entries: OperationEntry[]; onOpen: (entry: OperationEntry) => void; toolbar?: ReactNode; own?: OwnColumns; editing?: OpEditing; loading?: boolean }) {
   // Время — из строки БД.ОП (её правят в ячейке), у шаблона без строки — из его норм.
   const seconds = (entry: OperationEntry) => entry.op?.tOp || entry.template?.norms?.operation_seconds || "";
   const can = Boolean(editing?.canEdit);
@@ -184,6 +184,7 @@ function OperationsTable({ entries, onOpen, toolbar, own, editing }: { entries: 
     rowLabel={(entry) => entry.code}
     onEdited={own?.onEdited}
     toolbar={toolbar}
+    loading={loading}
     emptyText="Ничего не найдено."
   />;
 }
@@ -208,6 +209,9 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   // БД.ОП rows (only with the reference-book grant): op-only operations become cards too, and every card shows its row.
   const [opRows, setOpRows] = useState<TechOperationRecord[]>([]);
+  // The library and the БД.ОП rows came (or failed): until then the list says «Загрузка…», not «Ничего не найдено».
+  const [libraryReady, setLibraryReady] = useState(false);
+  const [opsReady, setOpsReady] = useState(false);
   const [selectedOpCode, setSelectedOpCode] = useState("");
   const [templateDetail, setTemplateDetail] = useState<OperationCardDetail | null>(null);
   const [sheetsOpen, setSheetsOpen] = useState(false);
@@ -314,13 +318,15 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
       setTemplates(libraryResult.items);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить техкарты");
+    } finally {
+      setLibraryReady(true);
     }
   }
 
   useEffect(() => { void load(); }, []);
   useEffect(() => {
-    if (!showLibrary || !principal.permissions.erpref) return;
-    void loadOps().catch(() => undefined);
+    if (!showLibrary || !principal.permissions.erpref) { setOpsReady(true); return; }
+    void loadOps().catch(() => undefined).finally(() => setOpsReady(true));
   }, [showLibrary, principal.permissions.erpref]);
   useEffect(() => {
     if (!selectedTemplateId) { setTemplateDetail(null); return; }
@@ -391,7 +397,7 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     /> : templateDetail && selectedTemplateId ? <OperationCard code={templateDetail.code} name={templateDetail.name} template={templateDetail} op={opByCode.get(templateDetail.code)}
       canEditTemplate={canEditTemplates} canEditOp={canEditOps} initialEdit={editOnOpen || freshCode === templateDetail.code} onBack={() => { setSelectedTemplateId(""); setFreshCode(""); setEditOnOpen(false); }} onSaveTemplate={saveTemplate} onOpSaved={replaceOp}
     /> : <>
-    <OperationsTable entries={operationEntries}
+    <OperationsTable entries={operationEntries} loading={!libraryReady || !opsReady}
       own={{ names: opOwn, canEdit: canEditOps, onEdited: () => loadOps().catch(() => undefined), removeOf: opRemoval.removeOf }}
       editing={{ canEdit: canEditOps, equipment }}
       toolbar={<>{canCreateOp && <button type="button" className="primary small" onClick={() => setNewOpOpen(true)}>Новая операция</button>}<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button>

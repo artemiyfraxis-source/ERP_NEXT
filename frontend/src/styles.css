@@ -1575,35 +1575,44 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table.dt-blocks .dt-block-fold:focus-visible { outline: var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
 .data-table.dt-blocks .dt-block-fold > span[aria-hidden] { display: inline-block; width: 14px; color: var(--muted-foreground); }
 /* No scroll box of its own: a block grows to its height and the page scrolls; its header sticks under the toolbar
-   (`--dt-head-top`, DataTable). The columns fit the width (DataTable levels them), text wraps; only a list that cannot
-   fit scrolls sideways (`dt-scroll-x`). `overflow: clip` keeps the rounded corners without a scroll container. */
+   (`--dt-head-top`, DataTable). The columns fit the width (DataTable levels them from the data, `table-layout: fixed`),
+   one line per row (26.10.2026: «8 строк на экран» — a long text is cut with «…», the whole on hover); only a list that
+   cannot fit scrolls sideways (`dt-scroll-x`). `overflow: clip` keeps the rounded corners without a scroll container.
+   Nothing that sticks has a shadow, the key column does not stick sideways (the block does not scroll): scrolling the
+   page repaints no sticky cell («когда листаешь, фпс падает»). */
 .data-table.dt-blocks { grid-template-columns: minmax(0, 1fr); }
 .data-table.dt-blocks > .table-wrap { max-height: none; overflow: clip; }
-/* A block too wide even so: the wide tables move together by a bar pinned to the screen bottom (`--dt-x`, DataTable),
-   the key column stays; the block is still no scroll box, so the header keeps sticking. */
+.data-table.dt-blocks table.grid.wide { width: 100%; min-width: 0; }
+.data-table.dt-blocks table.dt-fixed { table-layout: fixed; }
+/* The header row sticks as one (the `thead`, not each of its cells: one sticky box per table to move on a scroll). */
+.data-table.dt-blocks > .table-wrap > table > thead { position: sticky; top: var(--dt-head-top, 0px); z-index: 2; }
+.data-table.dt-blocks > .table-wrap > table > thead > tr > th { position: relative; top: auto; box-shadow: none; }
+.data-table.dt-blocks table:not(.selectable) td.key { position: static; box-shadow: none; border-right: 1px solid var(--border); }
+.data-table.dt-blocks table:not(.selectable) thead th:first-child { left: auto; box-shadow: none; border-right: 1px solid var(--border); }
+.data-table.dt-blocks > .table-wrap > table > tbody > tr:not(.detail) > td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.data-table.dt-blocks > .table-wrap > table > tbody > tr:not(.detail) > td :where(*) { white-space: nowrap; }
+.data-table.dt-blocks > .table-wrap > table > tbody > tr:not(.detail) > td.dt-editing { overflow: visible; }
+.data-table.dt-blocks > .table-wrap .cell-wrap { min-width: 0; max-width: none; overflow: hidden; text-overflow: ellipsis; }
+.data-table.dt-blocks table.dt-fixed > tbody > tr > td > :is(div, span, strong):only-child { overflow: hidden; text-overflow: ellipsis; }
+/* A clipped text («…», the whole on hover) takes the cell's width, not its own: it never widens the column. */
+.data-table.dt-blocks :is(.cable-clip, .db-clip) { max-width: none; }
+/* A caption takes two lines at most (the widths leave it room for them), the rest on hover. */
+.data-table.dt-blocks thead th .sort-head { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; text-align: inherit; overflow-wrap: anywhere; }
+/* A block too wide even so: the wide tables move together (`--dt-x`, DataTable) by a bar on top of the block's header —
+   it sticks with the header and never lies over a row (it used to be pinned to the screen bottom, over the last row);
+   the key column stays in place. */
 .data-table.dt-blocks > .table-wrap.dt-scroll-x > table { transform: translateX(calc(-1 * var(--dt-x, 0px))); }
 .data-table.dt-blocks > .table-wrap.dt-scroll-x > table:not(.selectable) :is(td, th).key { transform: translateX(var(--dt-x, 0px)); }
-.data-table.dt-blocks > .table-wrap.dt-scroll-x > table:not(.selectable) th.key { z-index: 3; }
-.data-table.dt-blocks > .dt-hscroll { position: sticky; bottom: 0; z-index: 3; height: 14px; margin-top: -10px; overflow-x: auto; overflow-y: hidden; background: var(--background); }
-.data-table.dt-blocks > .dt-hscroll > div { height: 1px; }
-@media (pointer: coarse) { .data-table.dt-blocks > .dt-hscroll { height: 24px; } }
-.data-table.dt-blocks table.grid.wide { width: 100%; min-width: 0; }
-.data-table.dt-blocks thead th { top: var(--dt-head-top, 0px); }
-.data-table.dt-blocks > .table-wrap td:not(.num) { white-space: normal; }
-.data-table.dt-blocks table.grid.wide td.fit:not(.text) :where(*) { white-space: normal; }
-.data-table.dt-blocks table.grid.wide th.fit .sort-head { white-space: normal; text-align: inherit; }
-/* A clipped text («…», the whole on hover) takes the cell's width, not its own: it never widens the column. */
-.data-table.dt-blocks .cable-clip { width: 0; min-width: 100%; max-width: none; }
-/* Measuring the natural widths for a moment: every table at its content width, one line per cell. */
-.data-table.dt-blocks.dt-measuring table.grid.wide { width: max-content; }
-.data-table.dt-blocks.dt-measuring table.grid.wide .fit { width: auto; }
-/* the first rows of a block give its natural widths: a list of a thousand rows is not laid out twice */
-.data-table.dt-blocks.dt-measuring > .table-wrap > table > tbody > tr:nth-child(n+21) { display: none; }
-.data-table.dt-blocks.dt-measuring > .table-wrap td, .data-table.dt-blocks.dt-measuring > .table-wrap td :where(*) { white-space: nowrap; }
-/* a header wraps at a short width, so a number column is as wide as its numbers, not its caption */
-.data-table.dt-blocks.dt-measuring th .sort-head { max-width: 160px; white-space: normal; }
-.data-table.dt-blocks.dt-measuring th.num .sort-head { max-width: 64px; }
-.data-table.dt-blocks.dt-measuring .cable-clip { width: auto; min-width: 0; max-width: 260px; }
+.data-table.dt-blocks > .table-wrap > .dt-hscroll { position: sticky; top: var(--dt-head-top, 0px); z-index: 4; height: 12px; overflow-x: auto; overflow-y: hidden; background: var(--table-head); }
+.data-table.dt-blocks > .table-wrap > .dt-hscroll > div { height: 1px; }
+.data-table.dt-blocks > .table-wrap.dt-scroll-x > table > thead { top: calc(var(--dt-head-top, 0px) + 12px); }
+@media (pointer: coarse) {
+  .data-table.dt-blocks > .table-wrap > .dt-hscroll { height: 24px; }
+  .data-table.dt-blocks > .table-wrap.dt-scroll-x > table > thead { top: calc(var(--dt-head-top, 0px) + 24px); }
+}
+/* Rows out of the window: empty space of their height (DataTable puts the rows near the screen in the page). */
+.data-table.dt-blocks .dt-window-gap { box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.data-table.dt-blocks > .table-wrap > table > tbody.dt-gap > tr > td, .data-table.dt-blocks > .table-wrap > table > tbody.dt-gap > tr:hover > td { padding: 0; border: 0; background: var(--card); }
 /* The keys of the in-cell editing: a «?» at the toolbar, the hint on hover or focus. */
 .dt-help { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; cursor: help; }
 .dt-help:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }

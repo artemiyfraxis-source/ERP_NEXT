@@ -4,8 +4,24 @@
    только для показа: в форме правки и в выгрузке поле остаётся под своим ключом. */
 
 /** Заголовок листа без переносов, двойных пробелов и пробела перед запятой. */
+// Headers are a few dozen strings read for every cell of a list (a value, a hint, a sort): each is cleaned once.
+const CLEAN = new Map<string, string>();
+const LABEL = new Map<string, string>();
+const KEY = new Map<string, string>();
+
 export function cleanHeader(header: string): string {
-  return String(header ?? "").replace(/\s+/g, " ").replace(/\s+,/g, ",").trim();
+  const raw = String(header ?? "");
+  let clean = CLEAN.get(raw);
+  if (clean === undefined) { clean = raw.replace(/\s+/g, " ").replace(/\s+,/g, ",").trim(); CLEAN.set(raw, clean); }
+  return clean;
+}
+
+/** `cleanHeader` in lower case — the key headers are compared by. */
+export function headerKey(header: string): string {
+  const raw = String(header ?? "");
+  let key = KEY.get(raw);
+  if (key === undefined) { key = cleanHeader(raw).toLocaleLowerCase("ru-RU"); KEY.set(raw, key); }
+  return key;
 }
 
 // Целые заголовки, которые нельзя починить общей заменой (ключ — после `cleanHeader`, без регистра).
@@ -31,10 +47,14 @@ const WORDS: Array<[RegExp, string]> = [
 
 /** Подпись колонки справочника: русская, без переносов строк. */
 export function headerLabel(header: string): string {
-  const clean = cleanHeader(header);
-  const whole = HEADERS[clean.toLocaleLowerCase("ru-RU")];
-  if (whole) return whole;
-  return WORDS.reduce((text, [pattern, to]) => text.replace(pattern, to), clean);
+  const raw = String(header ?? "");
+  let label = LABEL.get(raw);
+  if (label === undefined) {
+    const clean = cleanHeader(raw);
+    label = HEADERS[headerKey(raw)] ?? WORDS.reduce((text, [pattern, to]) => text.replace(pattern, to), clean);
+    LABEL.set(raw, label);
+  }
+  return label;
 }
 
 // Значения «Тип контакта» на листе БД.ТЕР — по-английски; на экране — как говорит цех.
@@ -49,7 +69,7 @@ const SITES: Record<string, string> = { "цар": "ЦАР", "жук": "ЖУК" }
 /** Значение ячейки справочника для показа (поиск, сортировка и выгрузка идут по нему же). */
 export function valueLabel(header: string, value: string): string {
   const text = String(value ?? "");
-  const key = cleanHeader(header).toLocaleLowerCase("ru-RU");
+  const key = headerKey(header);
   if (key === "тип контакта") {
     for (const [pattern, to] of CONTACT_SEX) if (pattern.test(text.trim())) return to;
   }
