@@ -74,7 +74,7 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "cab_wire", label: "Монтажные провода" },
     { id: "cab_multi", label: "Многожильные кабели" },
     // 25.10.2026 (владелец): «интернетные вынести вообще в другую вкладку — новая вкладка, новая БД», «ETHERNET».
-    { id: "cab_lan", label: "ETHERNET" },
+    { id: "cab_lan", label: "Кабели Ethernet" },
   ] },
   // БД.МАТ is a working base in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
   // Owner 12.10.2026: оболочки (ТУТ, ТТК, оплётки, гофра) — отдельной таблицей из строк БД.МАТ, с разбором и сортировкой;

@@ -796,9 +796,10 @@ KIND_FIELD = "Вид кабеля"
 _KIND_WORDS = {
     **{kind.value: kind for kind in CableKind},
     **{_label.casefold(): kind for kind, _label in CABLE_KIND_LABELS.items()},
-    **{_label.split()[0].casefold(): kind for kind, _label in CABLE_KIND_LABELS.items()},
+    **{_label.split()[0].casefold(): kind for kind, _label in CABLE_KIND_LABELS.items() if _label.split()[0] != "Кабели"},
+    "ethernet": CableKind.LAN,  # the list's name until 25.10.2026 and its own word («Кабели Ethernet»)
 }
-KIND_REASON = "«Вид кабеля»: Коаксиальные, Монтажные, Многожильные или ETHERNET (coax / wire / multi / lan)"
+KIND_REASON = "«Вид кабеля»: Коаксиальные, Монтажные, Многожильные или Ethernet (coax / wire / multi / lan)"
 
 
 def cable_kind_value(value: str) -> CableKind:

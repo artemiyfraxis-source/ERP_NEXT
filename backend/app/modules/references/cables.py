@@ -27,7 +27,7 @@ class CableKind(str, Enum):
 
 CABLE_KIND_LABELS = {
     CableKind.COAX: "Коаксиальные кабели", CableKind.WIRE: "Монтажные провода", CableKind.MULTI: "Многожильные кабели",
-    CableKind.LAN: "ETHERNET",
+    CableKind.LAN: "Кабели Ethernet",
 }
 DIAMETERS = ("D1", "D2", "D3")
 MARK_FIELD = "Марка"

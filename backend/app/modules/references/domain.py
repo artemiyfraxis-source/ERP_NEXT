@@ -43,7 +43,7 @@ MAP_KINDS = (ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY, ReferenceKind.GOST_A
 # «Прочие кабели» is gone (owner 20.10.2026): every БД.ПРОВ row is коаксиальный, монтажный, многожильный or — since
 # 25.10.2026 (migration 0150) — an ETHERNET cable («lan»).
 CABLE_KIND_VALUES = ("coax", "wire", "multi", "lan")
-CABLE_KIND_REASON = "Список кабеля: коаксиальные, монтажные, многожильные или ETHERNET"
+CABLE_KIND_REASON = "Список кабеля: коаксиальные, монтажные, многожильные или кабели Ethernet"
 
 
 class TechOperationTab(str, Enum):
