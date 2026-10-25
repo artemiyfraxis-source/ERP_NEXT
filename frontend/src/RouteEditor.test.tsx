@@ -177,7 +177,7 @@ it("shows no time when the card has never been built", () => {
   expect(screen.queryByText(/мин\/шт/)).not.toBeInTheDocument();
   expect(screen.getByText(/3 карточки/)).toHaveTextContent("3 карточки · 5 операций");
   expect(screen.getByText(/3 карточки/)).not.toHaveTextContent("на изделие");
-  expect(within(cards()[2]).getAllByText("—")).toHaveLength(3);
+  expect(within(cards()[2]).queryByText("—")).not.toBeInTheDocument();
 });
 
 it("derives the same scheme as the ETK does from the operation types", () => {
@@ -229,7 +229,8 @@ it("«Изменить схему» adds «Выше/Ниже» to the opened blo
   fireEvent.click(op(/Свивка/));
   expect(screen.queryByRole("button", { name: "↑ Выше" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Изменить схему" }));
-  expect(screen.getByRole("status")).toHaveTextContent("Тяните операцию");
+  expect(screen.queryByText(/Тяните операцию на другую/)).not.toBeInTheDocument();
+  expect(document.querySelectorAll(".rc-card .rc-grip").length).toBeGreaterThan(0);
   fireEvent.click(within(screen.getByRole("region", { name: "Блок «Свивка»" })).getByRole("button", { name: "↑ Выше" }));
   // Свивка встаёт перед монтажом А1; схема автоматическая — её выведут заново.
   expect(onMove).toHaveBeenCalledWith([1, 3, 2, 4], null);
@@ -331,7 +332,7 @@ it("editing draws a card per block (not per stage), shows the hint about the mou
   mount();
   edit();
   expect(cards().map((item) => item.querySelector(".rc-title")?.textContent)).toEqual(["Резка провода", "Резка ТУТ", "Надеть ТУТ", "Пайка разъёма", "Усадка ТУТ"]);
-  expect(screen.getByRole("status")).toHaveTextContent("Тяните операцию");
+  expect(screen.queryByText(/Тяните операцию на другую/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Отменить" })).toBeDisabled();
 });
 

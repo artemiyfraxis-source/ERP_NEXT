@@ -2272,7 +2272,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .manual-assembly { container-type: inline-size; }
 .tcgen .manual-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px 20px; align-items: start; }
 .tcgen .manual-diagram { display: grid; gap: 8px; min-width: 0; }
-.tcgen .manual-keys { margin: 0; background: transparent; padding: 0; color: var(--muted-foreground); }
 @container (min-width: 1100px) {
   .tcgen .manual-body.has-pane { grid-template-columns: minmax(0, 1fr) minmax(520px, 1.1fr); }
   .tcgen .manual-body.has-pane .manual-block { padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
@@ -4511,6 +4510,12 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .rc-op-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-op-note { padding: 0 6px; border-radius: 999px; background: var(--chip-warning-bg); color: var(--chip-warning-fg); font-size: 11px; line-height: 16px; }
 .rc-op-time { color: var(--muted-foreground); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Ручка перетаскивания: точки 2 × 3, видна только в «Изменить схему». У операции — первая колонка строки. */
+.rc-grip { flex: none; width: 9px; height: 14px; color: var(--muted-foreground); opacity: .7; background: radial-gradient(circle, currentColor 1.1px, transparent 1.4px) 0 0 / 5px 5px; }
+.rc-card-head .rc-grip { height: 12px; }
+.rc-op.has-grip { grid-template-columns: 9px 20px minmax(0, 1fr) auto auto; }
+.rc-op.has-grip:hover .rc-grip { opacity: 1; color: var(--primary); }
+.rc-op-time:empty { display: none; }
 @media (pointer: coarse) {
   .rc-link-btn { width: 40px; height: 40px; }
   .rc-card-x { width: 40px; height: 40px; }
@@ -4526,6 +4531,7 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .route-dnd .rc-card.is-drop-into, .route-dnd .rc-card.is-drop-join, .route-dnd .rc-card.is-drop-feed { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent); }
 .route-dnd .rc-card.is-drop-join { background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
 .route-dnd .rc-card.is-drop-feed { box-shadow: inset 0 6px 0 var(--primary), 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent); }
+.route-dnd.is-flow-right .rc-card.is-drop-feed { box-shadow: inset 6px 0 0 var(--primary), 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent); }
 .route-dnd .rc-ops li.is-drop-before, .route-dnd .rc-ops li.is-drop-after { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 .route-dnd .rc-ops li.is-drop-before { box-shadow: inset 0 3px 0 var(--primary); }
 .route-dnd .rc-ops li.is-drop-after { box-shadow: inset 0 -3px 0 var(--primary); }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   blockCards, crimpWires, cutEnds, depthOrder, genArtHeight, genCardHeight, genCards, inputsHeight, layoutByDepth, linkGeometry, opStages, opsMinutes,
-  schemeArt, widestRow, EMPTY_ART,
+  schemeArt, widestRow, EMPTY_ART, FLOW_GAP_X, layoutFlow, levelCount, pickFlow, turnPath,
 } from "./routeCards";
 import { blockTitle, deriveRoute, parseRoute, routeLevels, routeProblem, type RouteOp } from "./routeLogic";
 import type { PinoutEnd, PinUnit } from "./pinoutCheck";
@@ -306,5 +306,39 @@ describe("рисунки карточек генератора", () => {
     // Обжато на станке резки — в обжатые не попадает.
     const machine = schemeArt([{ type: "cutWireCrimp", opKey: "cutWire", side: "A", label: "Резка с обжимом А", wireIdxs: [0] } as OpSpec], ends, [units[0]], {}, null);
     expect(machine.crimped).toEqual([]);
+  });
+});
+
+describe("схема слева направо (владелец 25.10: цепочка занимала 40 % ширины)", () => {
+  const chain = [{ from: "kit", to: "mid" }, { from: "mid", to: "final" }];
+  it("picks left-to-right for a chain and narrow branches, top-down for a wide fan-in, top-down when columns do not fit", () => {
+    expect(levelCount(["kit", "mid", "final"], chain)).toBe(3);
+    expect(pickFlow(["kit", "mid", "final"], chain, 1500)).toBe("right");
+    expect(pickFlow(["a", "b", "final"], [{ from: "a", to: "final" }, { from: "b", to: "final" }], 1500)).toBe("right");
+    const fan = ["a", "b", "c", "d", "final"];
+    expect(pickFlow(fan, fan.slice(0, 4).map((from) => ({ from, to: "final" })), 1500)).toBe("down");
+    expect(pickFlow(["kit", "mid", "final"], chain, 600)).toBe("down");
+    expect(pickFlow(["kit", "mid", "final"], chain, 0)).toBe("down");
+    expect(pickFlow(["only"], [], 1500)).toBe("down");
+  });
+
+  it("lays levels out as columns: depth along x, level neighbours stacked", () => {
+    const size = () => ({ width: 200, height: 100 });
+    const places = layoutFlow(["a", "b", "final"], [{ from: "a", to: "final" }, { from: "b", to: "final" }], size, { gapX: 16, gapY: 40, margin: 4 }, "right");
+    expect(places.get("a")).toEqual({ x: 4, y: 4 });
+    expect(places.get("b")).toEqual({ x: 4, y: 144 });
+    expect(places.get("final")).toEqual({ x: 4 + 200 + FLOW_GAP_X, y: 4 });
+  });
+
+  it("turns a link path back from rotated coordinates: pairs swap, V and H trade places", () => {
+    expect(turnPath("M10,20 V50 Q10,60 18,60 H40 L1,2")).toBe("M20,10H50Q60,10 60,18V40L2,1");
+  });
+
+  it("draws a left-to-right link from the right side of the source to the left side of the target", () => {
+    const from = { x: 0, y: 0, width: 200, height: 100 }, to = { x: 300, y: 0, width: 200, height: 100 };
+    expect(linkGeometry(from, to, [], "right")).toEqual({ d: "M200,50H300", mid: { x: 250, y: 50 } });
+    const bend = linkGeometry(from, { ...to, y: 150 }, [], "right");
+    expect(bend.d.startsWith("M200,50H")).toBe(true);
+    expect(bend.d.endsWith("H300")).toBe(true);
   });
 });

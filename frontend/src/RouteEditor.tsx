@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { formatMinutes } from "./etkRoute";
 import { PerUnit } from "./RouteDiagram";
 import { FacesThumb, FinalThumb, RouteCanvas, TubeThumbs, WireThumbs, type CanvasCard } from "./RouteCanvas";
-import { CRIMP_STAGES, EMPTY_ART, GEN_CARD, GEN_SPACING, blockCards, crimpWires, genArtHeight, genCardHeight, genCards, inputsHeight, layoutByDepth, opsMinutes, widestRow, type CardKind, type GenArt, type GenStage } from "./routeCards";
+import { CRIMP_STAGES, EMPTY_ART, GEN_CARD, GEN_SPACING, blockCards, crimpWires, genArtHeight, genCardHeight, genCards, inputsHeight, layoutFlow, levelCount, opsMinutes, pickFlow, widestRow, FLOW_GAP_X, type CardKind, type GenArt, type GenStage } from "./routeCards";
 import { pluralRu } from "./tcGenLogic";
 import {
   addEdge,
@@ -168,13 +168,17 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   const subtitle = (card: ViewCard) => (!blockView && card.final && finalName.trim() ? finalName.trim() : "");
   const opRow = coarsePointer() ? 40 : GEN_CARD.opRow;
   // Карточки делят ширину итога по самому широкому ряду (220…400 px); уже 220 — холст уменьшается по ширине.
-  const columns = widestRow(gen.cards.map((card) => card.id), gen.links);
-  const cardWidth = boxWidth ? Math.max(220, Math.min(400, Math.floor((boxWidth - 2 * GEN_SPACING.margin - GEN_SPACING.gapX * (columns - 1)) / columns))) : GEN_CARD.width;
+  // Цепочка и узкие ветки — слева направо на всю ширину рамки (владелец 25.10), широкие — рядами сверху вниз.
+  const cardIds = gen.cards.map((card) => card.id);
+  const flow = pickFlow(cardIds, gen.links, boxWidth, GEN_SPACING.margin);
+  const columns = flow === "right" ? levelCount(cardIds, gen.links) : widestRow(cardIds, gen.links);
+  const columnGap = flow === "right" ? FLOW_GAP_X : GEN_SPACING.gapX;
+  const cardWidth = boxWidth ? Math.max(220, Math.min(flow === "right" ? 600 : 400, Math.floor((boxWidth - 2 * GEN_SPACING.margin - columnGap * (columns - 1)) / columns))) : GEN_CARD.width;
   const artHeight = (card: ViewCard) => (blockView ? inputsHeight(card.inputs?.length ?? 0) : asBlocks ? 0 : genArtHeight(card.id as GenStage, art, card.final));
   const sizes = new Map(gen.cards.map((card) => [card.id, {
     width: cardWidth, height: genCardHeight(card.ops.length, artHeight(card), opRow) + (subtitle(card) ? 16 : 0),
   }]));
-  const places = layoutByDepth(gen.cards.map((card) => card.id), gen.links, (id) => sizes.get(id)!, GEN_SPACING);
+  const places = layoutFlow(cardIds, gen.links, (id) => sizes.get(id)!, GEN_SPACING, flow);
   const cardArt = (card: ViewCard): ReactNode => {
     if (blockView) {
       const inputs = card.inputs ?? [];
@@ -218,7 +222,9 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
     if (!card || block === from.key) return null;
     const rect = card.getBoundingClientRect();
     const final = !!byKey.get(from.key)?.final;
-    return { kind: "card", block, zone: !final && y < rect.top + rect.height * 0.4 ? "feed" : "join" };
+    // «Подать в блок» — край, с которого в него входят: верх при схеме сверху вниз, левая часть — слева направо.
+    const early = flow === "right" ? x < rect.left + rect.width * 0.4 : y < rect.top + rect.height * 0.4;
+    return { kind: "card", block, zone: !final && early ? "feed" : "join" };
   }
   function dropText(from: Drag): string {
     const to = from.drop;
@@ -324,24 +330,28 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   // Вышли из «Изменить схему» — шаги отмены не нужны.
   useEffect(() => { if (!editing) setHistory([]); }, [editing]);
 
+  // Ручки перетаскивания — в режиме «Изменить схему», не на сенсорном экране (там «Выше/Ниже» и списки панели).
+  const canDrag = editing && !coarsePointer();
   const canvasCards: CanvasCard[] = gen.cards.map((card) => {
     const minutes = opsMinutes(card.ops, quantity);
     return {
       id: card.id, kind: card.kind, title: card.level ? `${card.level} · ${card.title}` : card.title, subtitle: subtitle(card) || undefined,
       meta: `${card.ops.length} оп.${minutes != null ? ` · ${formatMinutes(minutes)} мин/шт` : ""}${blockView && route.blocks.find((item) => item.key === card.id)?.kit ? " · комплект на изделие" : ""}`,
-      ...places.get(card.id)!, ...sizes.get(card.id)!,
+      ...places.get(card.id)!, ...sizes.get(card.id)!, ...(canDrag ? { grip: "Тяните блок на другой блок: на левый край — подать в него, на остальное — объединить" } : {}),
       art: cardArt(card), className: cardClass(card.id),
       body: <ol className="rc-ops" aria-label={`Операции: ${card.title}`}>
         {card.ops.map((op) => {
           const key = blockOf.get(op.position) ?? "";
-          const hint = [op.label, op.code ? `Карта ${op.code}` : "", op.codeNote ? `Карта заменена: ${op.codeNote}` : ""].filter(Boolean).join("\n");
+          const hint = [op.label, op.code ? `Карта ${op.code}` : "", op.codeNote ? `Карта заменена: ${op.codeNote}` : "",
+            canDrag ? "Тяните на другую операцию, блок или пустое место; щелчок — открыть блок" : ""].filter(Boolean).join("\n");
           const mark = rowClass(op.position);
           return <li key={op.position} data-op-row={op.position} className={mark || undefined}>
-            <button type="button" className={selected === key ? "rc-op is-selected" : "rc-op"} aria-pressed={selected === key} title={hint} onClick={() => select(key)}>
+            <button type="button" className={["rc-op", selected === key ? "is-selected" : "", canDrag ? "has-grip" : ""].filter(Boolean).join(" ")} aria-pressed={selected === key} title={hint} onClick={() => select(key)}>
+              {canDrag && <span className="rc-grip" aria-hidden="true" />}
               <span className="rc-op-no">{numberOf(op.position)}</span>
               <span className="rc-op-name">{op.label}</span>
               {op.codeNote && <span className="rc-op-note" title={`Карта заменена: ${op.codeNote}`}>заменена</span>}
-              <span className="rc-op-time">{op.minutes != null ? `${formatMinutes(op.minutes / (quantity > 0 ? quantity : 1))} мин` : "—"}</span>
+              <span className="rc-op-time">{op.minutes != null ? `${formatMinutes(op.minutes / (quantity > 0 ? quantity : 1))} мин` : ""}</span>
             </button>
           </li>;
         })}
@@ -428,9 +438,8 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="warning-inline">{notice}</div>}
     {open && <>
-      {editing && <p className="route-link-hint" role="status">Тяните операцию на другую операцию, на блок или на пустое место; блок — за карточку на другой блок. Ctrl+Z — отменить. Нажатие на операцию открывает её блок.</p>}
-      {!editing && preview?.node ? preview.node : <div ref={boxRef} className={["route-dnd", editing ? "is-editing" : "", drag ? "is-dragging" : "", drag?.drop?.kind === "canvas" ? "is-drop-canvas" : ""].filter(Boolean).join(" ")}
-        onPointerDown={startDrag} onClickCapture={(event) => { if (swallowClick.current) { swallowClick.current = false; event.preventDefault(); event.stopPropagation(); } }}><RouteCanvas cards={canvasCards} label="Карточки схемы" controls={false} fit="width" margin={GEN_SPACING.margin}
+      {!editing && preview?.node ? preview.node : <div ref={boxRef} className={["route-dnd", editing ? "is-editing" : "", flow === "right" ? "is-flow-right" : "", drag ? "is-dragging" : "", drag?.drop?.kind === "canvas" ? "is-drop-canvas" : ""].filter(Boolean).join(" ")}
+        onPointerDown={startDrag} onClickCapture={(event) => { if (swallowClick.current) { swallowClick.current = false; event.preventDefault(); event.stopPropagation(); } }}><RouteCanvas cards={canvasCards} label="Карточки схемы" controls={false} flow={flow} fit="width" margin={GEN_SPACING.margin}
         links={gen.links.map((link) => ({ id: link.id, from: link.from, to: link.to, qty: link.qty, label: `«${cardTitle.get(link.from)}» → «${cardTitle.get(link.to)}»` }))} /></div>}
       {drag && <div className="route-ghost" aria-hidden="true" style={{ left: drag.x + 14, top: drag.y + 14 }}>
         <strong>{drag.label}</strong><span className={drag.drop ? "" : "is-none"}>{dropText(drag)}</span></div>}

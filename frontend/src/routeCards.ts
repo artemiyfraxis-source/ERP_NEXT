@@ -72,6 +72,69 @@ export function layoutByDepth(ids: readonly string[], links: readonly LayoutLink
   return result;
 }
 
+/* ── Направление схемы: сверху вниз или слева направо (владелец 25.10: цепочка из трёх блоков занимала 40 % ширины) ── */
+
+/** «down» — ряд на уровень, связи сверху вниз; «right» — колонка на уровень, связи слева направо. Слева направо — та же
+    раскладка и те же связи, посчитанные в повёрнутых координатах (x ↔ y) и повёрнутые обратно. */
+export type Flow = "down" | "right";
+/** Зазор между колонками слева направо: в нём идёт стрелка и стоит число штук. */
+export const FLOW_GAP_X = 56;
+/** Уже этой ширины карточку не делаем: операции в ней перестают читаться. */
+export const FLOW_CARD_MIN = 240;
+
+const turnRect = (rect: Rect): Rect => ({ x: rect.y, y: rect.x, width: rect.height, height: rect.width });
+const turnPoint = (point: Point): Point => ({ x: point.y, y: point.x });
+
+/** Путь связи в повёрнутых координатах → путь в обычных: пары меняются местами, V ↔ H. */
+export function turnPath(d: string): string {
+  return d.replace(/([MLQCVH])([^MLQCVH]*)/g, (_all, command: string, rest: string) => {
+    const nums = rest.trim().split(/[\s,]+/).filter(Boolean);
+    if (command === "V") return `H${nums.join(" ")}`;
+    if (command === "H") return `V${nums.join(" ")}`;
+    const pairs: string[] = [];
+    for (let i = 0; i + 1 < nums.length; i += 2) pairs.push(`${nums[i + 1]},${nums[i]}`);
+    return `${command}${pairs.join(" ")}`;
+  });
+}
+
+/** Сколько уровней глубины в схеме. */
+export function levelCount(ids: readonly string[], links: readonly LayoutLink[]): number {
+  return Math.max(0, ...[...depthOrder(ids, links).depth.values()].map((value) => value + 1));
+}
+
+/** Куда растить схему: цепочка и узкие ветки (уровней не меньше, чем карточек в самом широком уровне) читаются слева направо — вся
+    ширина рамки; широкие (много параллельных ветвей) — рядами сверху вниз, как раньше. Слева направо — только если все колонки
+    помещаются в рамку не уже FLOW_CARD_MIN. */
+export function pickFlow(ids: readonly string[], links: readonly LayoutLink[], boxWidth: number, margin = V3_SPACING.margin): Flow {
+  if (!boxWidth || ids.length < 2) return "down";
+  const levels = levelCount(ids, links);
+  if (levels < widestRow(ids, links)) return "down";
+  const fit = Math.floor((boxWidth - 2 * margin + FLOW_GAP_X) / (FLOW_CARD_MIN + FLOW_GAP_X));
+  return levels <= fit ? "right" : "down";
+}
+
+/** layoutByDepth в выбранном направлении; зазоры spacing: gapX — между соседями уровня, gapY — между уровнями (в «right» уровни
+    разведены на FLOW_GAP_X). */
+export function layoutFlow(ids: readonly string[], links: readonly LayoutLink[], size: (id: string) => Size, spacing: Spacing, flow: Flow): Map<string, Point> {
+  if (flow === "down") {
+    // Ряды короче самого широкого встают по его середине: изделие внизу не прижато к левому краю пустой рамки.
+    const placed = layoutByDepth(ids, links, size, spacing);
+    const rows = new Map<number, string[]>();
+    for (const [id, point] of placed) rows.set(point.y, [...(rows.get(point.y) ?? []), id]);
+    const extent = (row: string[]) => Math.max(...row.map((id) => placed.get(id)!.x + size(id).width)) - spacing.margin;
+    const widest = Math.max(0, ...[...rows.values()].map(extent));
+    const centred = new Map(placed);
+    for (const row of rows.values()) {
+      const shift = Math.floor((widest - extent(row)) / 2);
+      row.forEach((id) => centred.set(id, { ...placed.get(id)!, x: placed.get(id)!.x + shift }));
+    }
+    return centred;
+  }
+  const turned = layoutByDepth(ids, links, (id) => ({ width: size(id).height, height: size(id).width }),
+    { gapX: spacing.gapY, gapY: FLOW_GAP_X, margin: spacing.margin });
+  return new Map([...turned].map(([id, point]) => [id, turnPoint(point)]));
+}
+
 /** Размер поля под карточками: правый и нижний край самой дальней карточки плюс поле. */
 export function contentSize(rects: readonly Rect[], margin = V3_SPACING.margin, minimum: Size = { width: 320, height: 200 }): Size {
   return {
@@ -122,7 +185,11 @@ function detourGeometry(sx: number, sy: number, tx: number, ty: number, obstacle
 /** Связь от низа карточки-входа к верху карточки, что её берёт. Цель ниже — ортогональная линия со скруглёнными
     углами: вниз, вдоль зазора над целью, вниз; строго под входом — прямая. Цель выше или рядом (карточку утащили) —
     плавная S-кривая. `mid` — где стоят число штук и кнопки «+» / «×». */
-export function linkGeometry(from: Rect, to: Rect, obstacles: readonly Rect[] = []): { d: string; mid: Point } {
+export function linkGeometry(from: Rect, to: Rect, obstacles: readonly Rect[] = [], flow: Flow = "down"): { d: string; mid: Point } {
+  if (flow === "right") {
+    const turned = linkGeometry(turnRect(from), turnRect(to), obstacles.map(turnRect));
+    return { d: turnPath(turned.d), mid: turnPoint(turned.mid) };
+  }
   const sx = from.x + from.width / 2, sy = from.y + from.height, tx = to.x + to.width / 2, ty = to.y;
   if (ty - sy >= 24) {
     const around = detourGeometry(sx, sy, tx, ty, obstacles);
