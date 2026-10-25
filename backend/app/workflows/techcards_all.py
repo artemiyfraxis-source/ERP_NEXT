@@ -67,7 +67,6 @@ from app.workflows.techcard_build import with_technology
 
 
 SHIPPED = "Отгружено"
-HOLD = "ХОЛД"
 # Слова формы генератора, которые в итоге без формы не понять.
 ERROR_HINTS = {
     "Выберите шаблон хотя бы для одной операции.":
@@ -112,16 +111,13 @@ def generation_scope(
     manual = {normalize_project_number(project) for project in MANUAL_TECHCARD_PROJECTS}
     targets = []
     for kitset in kitsets:
-        stage, blocker = stages.get(kitset.project, (None, ""))
+        stage, _blocker = stages.get(kitset.project, (None, ""))
         status = stage.status if stage is not None else ""
         if status == SHIPPED:
             report.skip("проект отгружен", kitset.project)
             continue
         if status in TERMINAL_STATUSES:
             report.skip(f"проект в статусе «{status}»", kitset.project)
-            continue
-        if blocker == HOLD:
-            report.skip("проект на ХОЛДе", kitset.project)
             continue
         if normalize_project_number(kitset.project) in manual:
             report.skip("ТК проекта ведутся вручную", kitset.project)

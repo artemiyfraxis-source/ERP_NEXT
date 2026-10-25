@@ -38,7 +38,7 @@ export type BatchBom = {
   name: string;
   run: string;
   part_qty: string;
-  components: Array<{ id: string; type: string; name: string; art: string; qty: number | string }>;
+  components: Array<{ id: string; type: string; name: string; art: string; title?: string; qty: number | string }>;
   calc_ops: CalcOp[];
 };
 
@@ -62,7 +62,7 @@ export function refsFromRecords(refs: BatchRefs): Refs {
 /** Данные формы `D` так, как их собирает TcGenerator из справочников и состава сборки. */
 export function generatorData(refs: Refs, bom: BatchBom): GenData {
   const components = bom.components.map((item): Comp => ({
-    id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", qty: item.qty,
+    id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", ...(item.title ? { title: item.title } : {}), qty: item.qty,
   }));
   return {
     ...refs,

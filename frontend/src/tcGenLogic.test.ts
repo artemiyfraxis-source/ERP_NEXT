@@ -811,9 +811,15 @@ it("heat-shrink over a connector: cut with other tubes, put on before this end's
 it("heat-shrink over a solder connector shrinks after its mount; toggle off gives no ops", () => {
   const D = { ...data([{ id: "w", type: "Провод", name: "ПВАМ 0,5", art: "ПВАМ 0,5", qty: 0.3 },
     { id: "x", type: "Соед", name: "XT60 папа", art: "XT60-M", qty: 2 }, TTK]), templates: shrinkTemplates };
-  const off = makeGen(D, initState(D)).getActiveOps();
+  // Клеевая ТТК — единственная трубка состава, разъём паяный: засев сам надевает её на корпус (776К. КБ2–КБ4).
+  const seeded = initState(D);
+  expect(seeded.endpoints.map((e) => e.shrinkOn)).toEqual([true, true]);
+  // Выключили руками — операций термоусадки нет, и повторный updateEndpoint её не включает.
+  const offState = updateEndpoint(D, updateEndpoint(D, seeded, "a1", { shrinkOn: false }), "b1", { shrinkOn: false });
+  const off = makeGen(D, offState).getActiveOps();
   expect(off.some((o) => /Shr/.test(o.opKey))).toBe(false);
-  const S = updateEndpoint(D, initState(D), "a1", { shrinkOn: true });
+  expect(updateEndpoint(D, offState, "a1", { label: "X1" }).endpoints.find((e) => e.id === "a1")!.shrinkOn).toBe(false);
+  const S = updateEndpoint(D, offState, "a1", { shrinkOn: true });
   const ops = makeGen(D, S).getActiveOps();
   const keys = ops.map((o) => o.opKey);
   expect(ops.find((o) => o.opKey === "cutShr1")?.tutSegs).toEqual([{ len: "20", count: 1 }]);
