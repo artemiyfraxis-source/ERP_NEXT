@@ -33,7 +33,7 @@ from .application import (
 from .cable_structure import parse_hookup, shown
 from .cables import DIAMETERS, CableKind, cable_mark, cable_rows, diameter_index
 from .domain import (
-    BASE_COLUMNS, CABLE_KIND_VALUES, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceKind, ReferenceValidationError,
+    BASE_COLUMNS, CABLE_DROPPED, CABLE_KIND_VALUES, COAX_DROPPED_COLUMNS, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceKind, ReferenceValidationError,
     StaleRecordError, TechOperationRecord, TechOperationTab, merge_country_pairs, normalized_cable_key,
     normalized_manufacturer_key, normalized_supplier_key,
 )
@@ -99,8 +99,8 @@ class _TechTable:
 
     БД.ПРОВ of one cable list (owner 20.10.2026: «у каждого своя структура»): only the rows of that list
     (`TechOperationRecord.cable_kind`) and only that list's columns — `CABLE_COLUMNS[list]`, the owner's columns of the
-    list, the cells its rows carry that are no other list's column, then the list's extras; a row created from the file
-    goes to that list. Without a list — every row and column of БД.ПРОВ (a new row's list by the rule)."""
+    list, the cells its rows carry that are no other list's column nor removed from the list (25.10.2026), then the list's
+    extras; a row created from the file goes to that list. Without a list — every row and column of БД.ПРОВ (a new row's list by the rule)."""
 
     titles: Mapping[str, str] = {}
 
@@ -178,7 +178,10 @@ class _TechTable:
     def fields(self, items: Sequence[Item]) -> list[str]:
         """Every field the tab's edit form edits: the sheet columns (the schema values the generator reads follow them
         on save), ПРОВ / МАТ — the base's columns first; a column only some rows have is still a column."""
-        keys = schema_keys(self.tab.value) | set(self.extras) | self.foreign
+        # the columns removed from a cable list / БД.КОАКС (23.10, 25.10.2026) are no column of the file: the row keeps
+        # their values, the file neither shows nor writes them
+        removed = CABLE_DROPPED[self.cable_kind] if self.cable_kind else             COAX_DROPPED_COLUMNS if self.tab == TechOperationTab.COAX else frozenset()
+        keys = schema_keys(self.tab.value) | set(self.extras) | self.foreign | removed
         richest = sorted(items, key=lambda item: -sum(1 for name in item.values if name not in keys))
         ordered: dict[str, None] = dict.fromkeys(self.own_columns if self.cable_kind else BASE_COLUMNS.get(self.tab, ()))
         for item in richest:

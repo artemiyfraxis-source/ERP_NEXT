@@ -14,7 +14,7 @@ from alembic.config import Config
 
 from app.modules.references.application import SetCableKindCommand, cable_catalog, set_cable_kind
 from app.modules.references.cables import CableKind
-from app.modules.references.domain import CABLE_COLUMNS, cable_fields
+from app.modules.references.domain import CABLE_COLUMNS, CABLE_WRITABLE, cable_fields
 from app.modules.references.load_mirror import ACTOR, load_mirror
 from app.workflows import etk_refresh  # noqa: F401  (its before_flush hook is live while the migration runs)
 from tests.references.test_cables import _mirror
@@ -149,8 +149,8 @@ def test_the_migration_stores_each_list_keeps_every_value_and_splits_the_own_col
     assert fields[ids["kspvg"]]["Категория"] == "Сигнальные" and fields[ids["kspvg"]]["Материал изоляции жилы"] == "ПВХ"
     assert fields[ids["wire_x"]] == {"Марка": "Проволока", "Тип провода": "", "Число жил": "", "Старое поле": "было"}
     # the list's columns as 0129 froze them (0130 turned the монтажные «Цвета» into one «Цвет»)
-    # (and the columns removed from the монтажные 23.10.2026 were still its columns then)
-    assert set(fields[ids["ul1061"]]) == (set(CABLE_COLUMNS["wire"]) - {"Цвет"}) | {"Цвета", "Полка", "Изоляция", "Экран", "Число жил", "Ток, А"}
+    # (and the columns removed from the монтажные 23.10 and 25.10.2026 were still its columns then)
+    assert set(fields[ids["ul1061"]]) == (set(CABLE_WRITABLE["wire"]) - {"Цвет", "Дата цены"}) | {"Цвета", "Полка", "Изоляция", "Экран", "Число жил", "Ток, А"}
     # the owner's columns: by the lists that fill them, none filled → all three
     assert own == sorted([
         ("mat:Ячейка", "Ячейка", 0), ("prov:coax:Материал диэлектрика", "Материал диэлектрика", 1),

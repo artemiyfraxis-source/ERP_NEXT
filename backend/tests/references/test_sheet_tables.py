@@ -82,7 +82,8 @@ def test_empty_tab_still_reports_columns_and_accepts_create(references_api):
         "tab": "prov", "fields": {name: "МГТФ" if name == "Марка" else "" for name in empty["columns"]},
     })
 
-    assert empty["records"] == [] and len(empty["columns"]) == 25  # 24 sheet columns + the монтажный «Цвет» (0130)
+    # 24 sheet columns + the монтажный «Цвет» (0130) + the coax «Частота до, ГГц» (25.10.2026)
+    assert empty["records"] == [] and len(empty["columns"]) == 26
     assert created.status_code == 201 and len(_rows(references_api, "prov")["records"]) == 1
 
 
