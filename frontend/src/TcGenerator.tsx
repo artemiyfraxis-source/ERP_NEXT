@@ -1072,6 +1072,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             onChange={(value) => update((current) => ({ ...current, coax: { ...current.coax, [coverKey]: value } }))} /></div>}
       </div>
       <div className={info.missing ? "coax-info tone-danger" : "coax-info"}>{info.text}</div>
+      {s?.parts && <div className="coax-info">Состав конца: {s.parts.map((part) => `${part.art}${part.qty > 1 ? ` ×${part.qty}` : ""}`).join(" · ")}</div>}
       {info.missing && <div className="coax-add">
         <span className="gfield-label">Нет в БД.КОАКС — введите размеры и добавьте</span>
         <div className="opt-grid">
@@ -1554,6 +1555,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <DrawingButton busy={drawBusy} exists={drawingExists} problem={configDrawingProblem(config)} onBuild={() => void buildDrawing(config)} /></div>
       <DrawingNoteView note={drawNote} index={card.item_index} onOpen={onOpenDrawing} />
       <div className="opt-grid">
+        {S.coax.cables && S.coax.cables > 1 && <Field label="Кабелей" className="short"><input aria-label="Кабелей в сборке" type="number" min={1} value={S.coax.cables}
+          onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, cables: Math.max(1, parseInt(event.target.value, 10) || 1) } }))} /></Field>}
         <Field label="Длина по чертежу"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value }, coaxLenFrom: undefined }))} /></Field>
         <div className="gfield span2"><span className="gfield-label">Экран (на сборку)</span>
           <Seg label={S.coax.sideB ? "Тип экрана, сторона А" : "Тип экрана"} value={S.coax.shield} options={COAX_SHIELD_OPTIONS}
