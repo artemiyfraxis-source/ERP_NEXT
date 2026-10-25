@@ -475,10 +475,13 @@ export const isCableByName_ = (c: Comp) => /^\s*(?:кабель|провод)(?!
   || /^\s*(?:[uf]\/?utp|пввс|пвам|мгтф|rg[\s-]?\d)/i.test(c.art || "");
 const normalizedComps_ = new WeakMap<Comp[], Comp[]>();
 /** Состав с исправленным типом: кабель, записанный как «Соед» и т.п., читается как «Провод» (кэш — те же объекты на каждый вызов). */
+const isZeroQty_ = (qty: Comp["qty"]) => String(qty ?? "").trim() !== "" && parseDecimal_(qty) === 0;
 function typedComps_(list: Comp[]): Comp[] {
   const cached = normalizedComps_.get(list);
   if (cached) return cached;
-  const out = list.map((c) => (isCableByName_(c) && !/провод|кабель|wire|cable/i.test(c.type || "") ? { ...c, type: "Провод" } : c));
+  // Строка, обнулённая в СПЯ (владелец 25.10: «расчёт не правим, правим СПЯ в ERP»), в сборку не идёт.
+  const out = list.filter((c) => !isZeroQty_(c.qty))
+    .map((c) => (isCableByName_(c) && !/провод|кабель|wire|cable/i.test(c.type || "") ? { ...c, type: "Провод" } : c));
   normalizedComps_.set(list, out);
   return out;
 }
