@@ -160,6 +160,9 @@ class CheckedConfig:
     warnings: tuple[str, ...]
     operations: int
     route: dict[str, Any] | None
+    # What the builder made of each operation (position, code, name, «Вход», комплектующие, «Выход»), so a draft author
+    # can check the norms without a local build.
+    details: tuple[dict[str, Any], ...] = ()
 
 
 def check_config(config: Mapping[str, Any], uow) -> CheckedConfig:
@@ -179,7 +182,23 @@ def check_config(config: Mapping[str, Any], uow) -> CheckedConfig:
     warnings = list(document.get("warnings") or [])
     if not cards:
         warnings.insert(0, "Библиотека операционных карт не загружена — карточки операций не проверены")
-    return CheckedConfig(tuple(warnings), len(document["operations"]), document.get("route"))
+    return CheckedConfig(tuple(warnings), len(document["operations"]), document.get("route"),
+                         tuple(_operation_detail(operation) for operation in document["operations"]))
+
+
+def _rows(rows: Any, keys: tuple[str, ...]) -> list[dict[str, str]]:
+    return [{key: str(row.get(key) or "") for key in keys} for row in rows or [] if isinstance(row, Mapping)]
+
+
+def _operation_detail(operation: Mapping[str, Any]) -> dict[str, Any]:
+    card = operation.get("card") if isinstance(operation.get("card"), Mapping) else {}
+    return {
+        "position": operation.get("position"), "code": str(operation.get("code") or ""),
+        "type": str(operation.get("type") or ""), "name": str(card.get("name") or operation.get("title") or ""),
+        "input": _rows(operation.get("semis"), ("name", "norm", "unit")),
+        "components": _rows(operation.get("components"), ("art", "name", "norm", "unit")),
+        "output": _rows(operation.get("result"), ("name", "norm", "unit")),
+    }
 
 
 # ── Черновик ─────────────────────────────────────────────────────────────────────────────────────────
