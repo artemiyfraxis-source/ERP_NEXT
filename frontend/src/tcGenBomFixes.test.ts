@@ -162,3 +162,33 @@ describe("оплётка XP-n / XS-n", () => {
     expect(run(b).S.wrap.enabled).toBe(false);
   });
 });
+
+describe("кабель с неверным типом в расчёте", () => {
+  const b = () => bom("Кабельная сборка LP-12", [
+    comp("k0", "Соед", "LP-12-C04PE-02-001", 1, "Разъём CNLINKO LP-12 вилка 4 конт."),
+    comp("k1", "Соед", "LP-12-C02PE-02-001", 2, "Разъём CNLINKO LP-12 вилка 2 конт."),
+    comp("k2", "Соед", "U/UTP 2x2x0,48", "27.2", "Кабель ParLan Patch U/UTP Cat5e 2x2x0,48"),
+    comp("k3", "ТУТ", "ТУТ 3,0/1,5", "0.1"), comp("k4", "ТТК", "ТТК 6/2", "0.1"),
+  ]);
+
+  it("725К. КБ2: «Соед | U/UTP 2x2x0,48» — кабель, а не разъём", () => {
+    const { D, S } = run(b());
+    const g = makeGen(D, S);
+    expect(g.wireComps_().map((c) => c.id)).toEqual(["k2"]);
+    expect(g.bomLists().conns.map((c) => c.id)).toEqual(["k0", "k1"]);
+    expect(S.wires.map((w) => w.compId)).toEqual(["k2"]);
+    expect(S.endpoints.every((e) => e.connId !== "k2")).toBe(true);
+  });
+
+  it("узнаётся и по названию «Кабель…» при нейтральном артикуле, и по марке при пустом названии", () => {
+    const byTitle = bom("X", [comp("k0", "Соед", "PL-5", 1, "Кабель ParLan"), comp("k1", "Соед", "XHP-2", 2)]);
+    expect(makeGen(run(byTitle).D, run(byTitle).S).wireComps_().map((c) => c.id)).toEqual(["k0"]);
+    const byArt = bom("X", [comp("k0", "Соед", "ПВВС 2x0,35", 1), comp("k1", "Соед", "XHP-2", 2)]);
+    expect(makeGen(run(byArt).D, run(byArt).S).wireComps_().map((c) => c.id)).toEqual(["k0"]);
+  });
+
+  it("настоящий разъём с названием «Разъём…» кабелем не становится", () => {
+    const { D, S } = run(b());
+    expect(makeGen(D, S).bomLists().conns.map((c) => c.art)).toEqual(["LP-12-C04PE-02-001", "LP-12-C02PE-02-001"]);
+  });
+});

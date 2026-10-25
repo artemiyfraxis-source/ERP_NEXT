@@ -385,6 +385,19 @@ export const DIODE_RE_ = /tvs|диод|\d[.,]\d\s*ke\d|\bsmbj\d/i;
 export const LUG_RE_ = /^\s*(?:нки|нви|нвки|ншви|нши|рпи|тмл)(?![а-яa-z])/i;
 /** Наконечник по артикулу/наименованию; название из справочника («наконечник втулочный») — запасной ход. */
 /** Оплётка по артикулу/наименованию/названию: «XP-3», «XS-5», «Оплетка XS-3»; в названии — ещё слово «оплётка». */
+/** Кабель/провод, записанный в расчёте другим типом (725К. КБ2: «Соед | U/UTP 2x2x0,48»): название из справочника начинается
+ *  с «Кабель»/«Провод» или артикул — явная марка кабеля. */
+export const isCableByName_ = (c: Comp) => /^\s*(?:кабель|провод)(?![а-яa-z])/i.test(c.title || "")
+  || /^\s*(?:[uf]\/?utp|пввс|пвам|мгтф|rg[\s-]?\d)/i.test(c.art || "");
+const normalizedComps_ = new WeakMap<Comp[], Comp[]>();
+/** Состав с исправленным типом: кабель, записанный как «Соед» и т.п., читается как «Провод» (кэш — те же объекты на каждый вызов). */
+function typedComps_(list: Comp[]): Comp[] {
+  const cached = normalizedComps_.get(list);
+  if (cached) return cached;
+  const out = list.map((c) => (isCableByName_(c) && !/провод|кабель|wire|cable/i.test(c.type || "") ? { ...c, type: "Провод" } : c));
+  normalizedComps_.set(list, out);
+  return out;
+}
 export const isBraidComp_ = (c: Comp) => [c.art, c.name, c.title].some((t) => /^\s*(?:оплетка\s*)?x[ps][\s-]*\d/i.test(t || ""))
   || /оплётк|оплетк/i.test(`${c.name || ""} ${c.title || ""}`);
 export const isLugComp_ = (c: Comp) => LUG_RE_.test(`${c.art || ""} ${c.name || ""}`) || (!!c.title && (LUG_RE_.test(c.title) || /^\s*наконечник/i.test(c.title)));
@@ -724,7 +737,7 @@ export function emptyState(): GenState {
 
 /** Генератор над данными D и состоянием S. Методы — функции TcGenInline с теми же правилами. */
 export function makeGen(D: GenData, S: GenState) {
-  const comps = () => D.components || [];
+  const comps = () => typedComps_(D.components || []);
   const getCompById = (id: string | null | undefined) => (id ? comps().find((c) => c.id === id) || null : null);
   const getByTypes = (types: string[]) => comps().filter((c) => {
     const lc = (c.type || "").toLowerCase();
