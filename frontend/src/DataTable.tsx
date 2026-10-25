@@ -5,7 +5,7 @@ import { matchesSearch, searchRows } from "./searchText";
 import { LoadMore } from "./LoadMore";
 import { useColumnViews } from "./ColumnViews";
 import {
-  CELL_PAD, CHUNK_ROWS, HEAD_HEIGHT, ROW_HEIGHT, SELECT_WIDTH, canvasMeasure, chunksOf, levelWidths, naturalWidths,
+  CELL_PAD, CHUNK_ROWS, HEAD_HEIGHT, ROW_HEIGHT, SELECT_WIDTH, canvasMeasure, captionFloors, chunksOf, levelWidths, naturalWidths,
   type LevelColumn, type LevelTable,
 } from "./blockLayout";
 
@@ -537,6 +537,8 @@ export function DataTable<T>({
     return true;
   }), (row) => [...columns.map((column) => column.value(row)), ...(searchText?.(row) ?? [])], query), [rows, columns, filters, query, searchText]);
   const counted = presetCountsFollowSearch ? searched : rows;
+  // the chips' counts: once per rows and chips, not on every render (a list in blocks renders as the window moves)
+  const presetCounts = useMemo(() => presets.map((item) => counted.filter(item.test).length), [counted, presets]);
 
   const filtered = useMemo(() => {
     const result = searched.filter((row) => !activePreset || activePreset.test(row));
@@ -779,8 +781,10 @@ export function DataTable<T>({
       // (a wrap width, `maxWidth`, does not cap it: a row is one line, a too wide list cuts its widest texts first)
       texts: rows.map((row) => String(column.value(row) ?? "")),
     }));
-    const natural = naturalWidths(measured, canvasMeasure(fonts.current));
-    const numeric = new Set(measured.filter((column) => column.numeric).map((column) => column.key));
+    const measure = canvasMeasure(fonts.current);
+    const natural = naturalWidths(measured, measure);
+    // numbers and the record's name (the first column) are never cut to fit: the other texts give way
+    const whole = new Set(measured.filter((column) => column.numeric || column.first).map((column) => column.key));
     const taken = (column: DataColumn<T>) => widths[column.key] ? widths[column.key] + CELL_PAD
       : typeof column.width === "number" ? column.width
         : column.grow ? (typeof column.minWidth === "number" ? column.minWidth : 240) : 0;
@@ -788,7 +792,7 @@ export function DataTable<T>({
       keys: own.filter((column) => natural.has(column.key)).map((column) => column.key),
       taken: (selectable ? SELECT_WIDTH : 0) + own.reduce((sum, column) => sum + (natural.has(column.key) ? 0 : taken(column)), 0),
     }));
-    const result = levelWidths(natural, numeric, tables, room);
+    const result = levelWidths(natural, whole, tables, room, captionFloors(measured, measure));
     const wide = new Map(tableColumns.map((own, index) => [own.map((column) => column.key).join(","), result.wide[index]]));
     return { widths: result.widths, wide };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `visibleSig`/`widthsSig` stand for `visible`/`widths`
@@ -837,13 +841,19 @@ export function DataTable<T>({
     for (const node of [...observed.current]) {
       if (!node.isConnected) { observer.current.unobserve(node); observed.current.delete(node); }
     }
-    // the shown pieces' heights: the empty space of a piece out of the window is as tall as the piece was
-    // (only pieces not measured yet: a read lays the page out)
-    for (const body of root.querySelectorAll<HTMLElement>("tbody[data-sig]:not(.dt-gap)")) {
-      if (!heights.current.has(body.dataset.sig!)) heights.current.set(body.dataset.sig!, body.offsetHeight);
-    }
+    // the shown pieces' heights: the empty space of a piece out of the window is as tall as the piece was. Read on the
+    // next frame, when the page is laid out for painting anyway (a read right after the change would lay it out twice);
+    // only pieces not measured yet.
+    const fresh = [...root.querySelectorAll<HTMLElement>("tbody[data-sig]:not(.dt-gap)")].filter((body) => !heights.current.has(body.dataset.sig!));
     const head = headHeight.current === HEAD_HEIGHT ? root.querySelector<HTMLElement>(":scope > .table-wrap > table > thead") : null;
-    if (head?.offsetHeight) headHeight.current = head.offsetHeight;
+    if (!fresh.length && !head) return;
+    const measure = () => {
+      for (const body of fresh) if (body.isConnected && body.offsetHeight > 0) heights.current.set(body.dataset.sig!, body.offsetHeight);
+      if (head?.isConnected && head.offsetHeight) headHeight.current = head.offsetHeight;
+    };
+    if (typeof requestAnimationFrame !== "function") { measure(); return; }
+    const frame = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(frame);
   });
 
   // --- Cells edited in place ---
@@ -1438,9 +1448,9 @@ export function DataTable<T>({
       {presets.length > 0 && (
         <div className="calendar-chips" role="group" aria-label="Быстрый отбор">
           {!allLast && <button type="button" className={`calendar-chip${preset ? "" : " active"}`} aria-pressed={!preset} onClick={() => setPreset("")}>Все · {counted.length}</button>}
-          {presets.map((item) => (
+          {presets.map((item, index) => (
             <button type="button" key={item.label} className={`calendar-chip${preset === item.label ? " active" : ""}`} aria-pressed={preset === item.label} onClick={() => setPreset(preset === item.label ? "" : item.label)}>
-              {item.label} · {counted.filter(item.test).length}
+              {item.label} · {presetCounts[index]}
             </button>
           ))}
           {allLast && <button type="button" className={`calendar-chip${preset ? "" : " active"}`} aria-pressed={!preset} onClick={() => setPreset("")}>Все · {counted.length}</button>}
@@ -1567,7 +1577,7 @@ export function DataTable<T>({
         <div className="table-footer">
           {!blocks && !(loading && !rows.length) && <span>Показано {shown.length} из {filtered.length}{filtered.length !== rows.length ? ` (всего ${rows.length})` : ""}</span>}
           {note && <span className={`dt-edit-note tone-${note.tone}`} role="status">{note.text}</span>}
-          {!note && !blocks && hasEditing && <span className="dt-edit-hint">{EDIT_HINT}</span>}
+          {!note && !blocks && hasEditing && !(loading && !rows.length) && <span className="dt-edit-hint">{EDIT_HINT}</span>}
         </div>
       )}
     </section>

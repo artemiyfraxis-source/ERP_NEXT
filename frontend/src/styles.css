@@ -1597,7 +1597,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* A clipped text («…», the whole on hover) takes the cell's width, not its own: it never widens the column. */
 .data-table.dt-blocks :is(.cable-clip, .db-clip) { max-width: none; }
 /* A caption takes two lines at most (the widths leave it room for them), the rest on hover. */
-.data-table.dt-blocks thead th .sort-head { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; text-align: inherit; overflow-wrap: anywhere; }
+.data-table.dt-blocks table.grid.wide > thead > tr > th .sort-head { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; text-align: inherit; }
 /* A block too wide even so: the wide tables move together (`--dt-x`, DataTable) by a bar on top of the block's header —
    it sticks with the header and never lies over a row (it used to be pinned to the screen bottom, over the last row);
    the key column stays in place. */

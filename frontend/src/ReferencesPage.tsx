@@ -131,7 +131,9 @@ function mergeTerminalColumns(columns: DataColumn<TechOperationRecord>[], fields
   };
   const merged: Record<string, DataColumn<TechOperationRecord>> = {};
   if (crimpFields.length > 0) merged[crimpFields[0]] = {
-    key: "__crimp", title: CRIMP_COLUMN_TITLE, value: (record) => crimpText(crimpValues(record)),
+    // the four columns of the crimp table (`.crimp-row`: 10ch 11ch 13ch 10ch and the gaps): its width is set, not
+    // measured from the text (the list in blocks measures texts, this cell draws a table)
+    key: "__crimp", title: CRIMP_COLUMN_TITLE, width: 384, value: (record) => crimpText(crimpValues(record)),
     render: (record) => <CrimpCell values={crimpValues(record)} />,
   };
   if (awgFrom || awgTo) merged[(awgFrom ?? awgTo) as string] = { key: "__awg", title: "AWG", value: awgText, render: (record) => awgText(record) || "—" };
@@ -259,6 +261,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   async function loadTech(next: TechOperationTab) {
     setError("");
     try {
+      // БД.КОАКС: the cables' D1–D3 are asked at once with the rows, not after them.
+      const coaxCables = next === "coax"
+        ? referencesApi.techOperations("kab_coax", "", 5000).catch(() => ({ records: [] as TechOperationRecord[] })) : null;
       // «Терминалы»: серии приходят вместе со строками — группы не перестраиваются на глазах.
       const [records, series] = await Promise.all([
         referencesApi.techOperations(next, "", 5000),
@@ -273,8 +278,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         void referencesApi.techOperations("op", "", 5000).then((ops) => setObOps(ops.records)).catch(() => setObOps([]));
       }
       if (next === "mat") void loadMaterialIndex();
-      if (next === "coax") {
-        const cables = await referencesApi.techOperations("kab_coax", "", 5000).catch(() => ({ records: [] as TechOperationRecord[] }));
+      if (coaxCables) {
+        const cables = await coaxCables;
         setCableDia(Object.fromEntries(cables.records.map((record) => [cableKey(Object.values(record.fields)[0] ?? ""), record.fields])));
       }
     } catch (reason) {
@@ -352,7 +357,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     if (isMaterialTab(def.id)) return matCounts?.[def.id] ?? null;
     if (isCableTab(def.id)) return (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
     if (def.id === "gauges") return cables?.gauges?.length ?? bases.gauges ?? null;
-    if (def.id === tab && techTab) return tech.records.length;
+    // the open tab counts its rows once they came (before — the summary's number, not «0»)
+    if (def.id === tab && techTab && techReady === techTab) return tech.records.length;
     return bases.tabs?.[def.id as TechOperationTab] ?? bases.bases.find((base) => base.id === def.base)?.count ?? null;
   }
 
@@ -604,7 +610,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
           <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
         </> : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
-      /> : techReady !== techTab || (matTab && !coverIds) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
+      // БД.КОАКС is ordered by its cable's Ø from «Кабели и провода»: it waits for them, the rows do not jump a second later
+      /> : techReady !== techTab || (matTab && !coverIds) || (coaxTab && cables === null) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
         records={tech.records}
         wireDiameter={wireDiameter}
         canEdit={canEdit}

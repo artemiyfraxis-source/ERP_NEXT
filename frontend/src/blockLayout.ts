@@ -17,6 +17,8 @@ export const LEVEL_MIN = 64;
     list that cannot fit even so cuts them at `CAP_READABLE` and scrolls sideways. */
 export const CAP_FLOOR = 96;
 export const CAP_READABLE = 150;
+/** A column is as wide as the longest of this share of its texts (the longer rest is cut with «…»). */
+export const TYPICAL_SHARE = 0.95;
 /** Room for a dot, a chip's padding or a link mark in a column the screen draws itself (`render`). */
 export const RENDER_ROOM = 16;
 /** The sort mark « ▲» after a caption. */
@@ -35,7 +37,7 @@ export function longestTexts(values: Iterable<string>, count = 6): string[] {
   const top: string[] = [];
   for (const raw of values) {
     const value = raw.trim();
-    if (!value) continue;
+    if (!value || top.includes(value)) continue;
     if (top.length < count) { top.push(value); top.sort((a, b) => b.length - a.length); continue; }
     if (value.length <= top[top.length - 1].length || top.includes(value)) continue;
     top[top.length - 1] = value;
@@ -69,17 +71,33 @@ export interface LevelColumn {
   rendered?: boolean;
 }
 
-/** The natural width of each column (text + padding): its widest text up to `max`, never narrower than its caption on
-    two lines. */
+/** The texts a column is measured by: the longest of the 95 % shortest (a rare long text — a note, a list of series — is
+    cut with «…» rather than widen the column for every row); all of them in a short list. */
+export function typicalTexts(values: string[], count = 6): string[] {
+  const filled = values.map((value) => value.trim()).filter(Boolean);
+  if (filled.length < 20) return longestTexts(filled, count);
+  const lengths = filled.map((value) => value.length).sort((a, b) => a - b);
+  const limit = lengths[Math.floor((lengths.length - 1) * TYPICAL_SHARE)];
+  return longestTexts(filled.filter((value) => value.length <= limit), count);
+}
+
+/** The natural width of each column (text + padding): its typical widest text up to `max` (numbers — their widest),
+    never narrower than its caption on two lines. */
 export function naturalWidths(columns: LevelColumn[], measure: Measure): Map<string, number> {
   const result = new Map<string, number>();
   for (const column of columns) {
     const kind = column.first ? "key" : "cell";
-    const text = Math.max(0, ...longestTexts(column.texts).map((value) => measure(value, kind)));
+    const texts = column.numeric ? longestTexts(column.texts) : typicalTexts(column.texts);
+    const text = Math.max(0, ...texts.map((value) => measure(value, kind)));
     const head = headWidth(column.title, measure) + SORT_MARK;
     result.set(column.key, Math.ceil(Math.max(head, Math.min(text + (column.rendered ? RENDER_ROOM : 0), column.max ?? LEVEL_MAX)) + CELL_PAD));
   }
   return result;
+}
+
+/** The narrowest a cut column gets: its caption's longest word (a caption breaks between words only). */
+export function captionFloors(columns: LevelColumn[], measure: Measure): Map<string, number> {
+  return new Map(columns.map((column) => [column.key, Math.ceil(Math.max(0, ...column.title.trim().split(/\s+/).map((word) => measure(word, "head"))) + SORT_MARK + CELL_PAD)]));
 }
 
 export interface LevelTable {
@@ -97,12 +115,16 @@ export interface Levelled {
 
 /** The blocks go level (one list, one set of widths): each column takes its natural width. When a table is wider than
     `room`, the widest text columns give way first — every text column is capped at one width, as high as lets the table
-    fit (a short column keeps its whole text, a long one is cut with «…»); numbers keep their width. A table that does
-    not fit even with the cap at `CAP_FLOOR` keeps the cap at `CAP_READABLE` and scrolls sideways. */
-export function levelWidths(natural: Map<string, number>, numeric: Set<string>, tables: LevelTable[], room: number): Levelled {
-  const texts = (table: LevelTable) => table.keys.filter((key) => !numeric.has(key)).map((key) => natural.get(key) ?? 0);
-  const numbers = (table: LevelTable) => table.keys.reduce((sum, key) => sum + (numeric.has(key) ? natural.get(key) ?? 0 : 0), 0);
-  const capped = (widths: number[], cap: number) => widths.reduce((sum, width) => sum + Math.min(width, cap), 0);
+    fit (a short column keeps its whole text, a long one is cut with «…»); the `whole` columns (numbers, the record's
+    name) keep their width. A table that does not fit even with the cap at `CAP_FLOOR` keeps the cap at `CAP_READABLE`
+    and scrolls sideways. */
+export function levelWidths(natural: Map<string, number>, whole: Set<string>, tables: LevelTable[], room: number,
+  floors: Map<string, number> = new Map()): Levelled {
+  // a cut column keeps at least its caption's longest word (`floors`): a caption is never broken inside a word
+  const cut = (key: string, cap: number) => { const width = natural.get(key) ?? 0; return Math.max(Math.min(width, cap), Math.min(width, floors.get(key) ?? 0)); };
+  const texts = (table: LevelTable) => table.keys.filter((key) => !whole.has(key));
+  const numbers = (table: LevelTable) => table.keys.reduce((sum, key) => sum + (whole.has(key) ? natural.get(key) ?? 0 : 0), 0);
+  const capped = (keys: string[], cap: number) => keys.reduce((sum, key) => sum + cut(key, cap), 0);
   let cap = Infinity;
   let tooWide = false;
   for (const table of tables) {
@@ -110,18 +132,18 @@ export function levelWidths(natural: Map<string, number>, numeric: Set<string>, 
     const space = room - table.taken - numbers(table);
     if (capped(own, Infinity) <= space) continue;
     if (capped(own, CAP_FLOOR) > space) { tooWide = true; continue; }
-    // the highest cap that fits: between the floor and the widest text, by halves
+    // the highest whole cap that fits: between the floor and the widest text, by halves
     let low = CAP_FLOOR;
-    let high = Math.max(...own);
+    let high = Math.ceil(Math.max(...own.map((key) => natural.get(key) ?? 0)));
     while (high - low > 1) {
-      const middle = (low + high) / 2;
+      const middle = Math.floor((low + high) / 2);
       if (capped(own, middle) <= space) low = middle; else high = middle;
     }
-    cap = Math.min(cap, Math.floor(low));
+    cap = Math.min(cap, low);
   }
   if (tooWide) cap = Math.min(cap, CAP_READABLE);
   const widths = new Map<string, number>();
-  for (const [key, width] of natural) widths.set(key, numeric.has(key) ? width : Math.min(width, cap));
+  for (const [key, width] of natural) widths.set(key, whole.has(key) ? width : cut(key, cap));
   const wide = tables.map((table) => {
     const width = table.taken + table.keys.reduce((sum, key) => sum + (widths.get(key) ?? 0), 0);
     return width > room + 1 ? Math.ceil(width) : null;
