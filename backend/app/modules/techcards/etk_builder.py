@@ -781,8 +781,14 @@ def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any], *, manual
             return []
         return [{"art": art, "name": str(coax.get(name_key) or ""), "norm": _format(norm), "unit": unit}]
 
+    parts = [item for item in _list(op.get("parts")) if isinstance(item, Mapping) and str(item.get("art") or "").strip()]
+    if parts:
+        # FAKRA/HFM (генератор 25.10): детали комплекта конца, что берёт операция, — списком в самой операции.
+        return [{"art": str(item["art"]).strip(), "name": str(item.get("name") or ""),
+                 "norm": _format(_decimal(item.get("qty")) * quantity), "unit": str(item.get("unit") or "Шт.")} for item in parts]
     if operation_type == "coaxCut":
-        return row("cableArt", "cableName", _decimal(coax.get("cableLength")) * quantity / 1000, "М.")
+        cables = max(_decimal(coax.get("cables")), Decimal(1))  # HFM: четыре одинаковых кабеля на сборку
+        return row("cableArt", "cableName", _decimal(coax.get("cableLength")) * quantity * cables / 1000, "М.")
     if operation_type == "coaxCutTut":
         if manual and _decimal(coax.get("tutLength")) > 0:
             return row("tutArt", "tutName", units * _decimal(coax.get("tutLength")) / 1000 * quantity, "М.")
@@ -1474,6 +1480,8 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
     machine = _coax_machine(op)
     if machine:
         fields["machine"] = machine
+    if operation_type.startswith("coax") and op.get("noTooling"):
+        fields["noTooling"] = True
     if operation_type == "insMark" and _kd_marks(_mark_items(op)):
         fields["marks"] = _mark_rows(op, config)
     wires = _wires(op, config)
@@ -1759,6 +1767,10 @@ def _resolve_card(
         })
     if isinstance(fields.get("machine"), Mapping):
         tooling = _machine_tooling(tooling, fields["machine"])
+    if fields.get("noTooling"):
+        # Оснастка операции не определена (владелец 25.10, FAKRA 708К): строк оснастки нет — ни карты, ни подсказок шагов.
+        return {"name": card.name, "safety": card.safety, "defects": _combined_defects(card.code, card.defects, cards_by_code or {}),
+                "steps": steps, "tooling": []}
     step_text =" ".join(step["text"] for step in steps)
     for pattern, name, inventory in STEP_TOOLS:
         if pattern.search(step_text) and not any(pattern.search(tool["name"]) for tool in tooling):

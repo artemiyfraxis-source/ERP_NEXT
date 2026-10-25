@@ -136,7 +136,58 @@ export function wrapFixText(slot: Pick<WrapSlot, "fix" | "points" | "step" | "se
   }
   return "";
 }
-export type CoaxSide = { art: string; name: string } | null;
+/** Вид конца FAKRA / HFM (Rosenberger, Amphenol): прямой герметичный, угловой, панельный (2FA1) и четверной HFM. */
+export type FakraKind = "straight" | "angled" | "bulkhead" | "hfm";
+/** Деталь конца: роль в наборе (main — центральный контакт с вставкой и гильзой, housing — корпус, seal — уплотнитель кабеля,
+ *  cap — крышка) и число на один конец. */
+export type FakraPart = { art: string; name: string; qty: number; role: "main" | "housing" | "seal" | "cap" };
+/** Конец коаксиальной сборки: разъём (главный артикул комплекта) и, для FAKRA/HFM, детали конца и его вид. */
+export type CoaxSide = { art: string; name: string; kind?: FakraKind; parts?: FakraPart[] } | null;
+/** Главные детали концов FAKRA / HFM по артикулу (регистр и дефисы не важны: состав пишет «59K13o»). Семейства
+ *  Rosenberger 59K…, 59Z…, AMK…/AMZ… и Amphenol 2FA1…; корпус, уплотнитель и крышка идут к концу своего вида. */
+export const FAKRA_MAIN_RE_: ReadonlyArray<readonly [RegExp, FakraKind]> = [
+  [/^59K13O/i, "straight"], [/^59K25H/i, "angled"], [/^2FA1-/i, "bulkhead"], [/^AMK11D/i, "hfm"],
+];
+const FAKRA_PART_RE_: ReadonlyArray<readonly [RegExp, FakraPart["role"], FakraKind]> = [
+  [/^59Z163-003/i, "housing", "straight"], [/^59K14B/i, "seal", "straight"], [/^59Z163-000/i, "cap", "straight"],
+  [/^59Z006/i, "housing", "angled"], [/^AMZ025/i, "housing", "hfm"],
+];
+export type FakraEnds = { ends: Array<NonNullable<CoaxSide>>; extra: number; orphans: string[] } | null;
+/** Концы FAKRA/HFM из строк «Разъём» состава: главная деталь (59K13O / 59K25H / 2FA1 / AMK11D) × количество = столько
+ *  концов; корпус, уплотнитель и крышка делятся поровну между концами своего вида. Порядок концов — как в составе; qty 2 —
+ *  оба конца. null — в составе нет главной детали (обычный коакс). */
+export function fakraEndsFromBom_(rows: Array<{ art: string; name: string; qty: number | string }>): FakraEnds {
+  const norm = (a: string) => String(a || "").trim();
+  const qtyOf = (r: { qty: number | string }) => Math.max(1, Math.round(Number(String(r.qty).replace(",", ".")) || 1));
+  const mains: Array<{ art: string; name: string; kind: FakraKind; qty: number }> = [];
+  for (const r of rows) {
+    const hit = FAKRA_MAIN_RE_.find(([re]) => re.test(norm(r.art)));
+    if (hit) mains.push({ art: norm(r.art), name: r.name || "", kind: hit[1], qty: qtyOf(r) });
+  }
+  if (!mains.length) return null;
+  // Чужая строка «Разъём» (КБ41 708К: TZTEK 818018737 и лента) — не сборка FAKRA: обычный путь генератора, без догадок.
+  if (rows.some((r) => !FAKRA_MAIN_RE_.some(([re]) => re.test(norm(r.art))) && !FAKRA_PART_RE_.some(([re]) => re.test(norm(r.art))))) return null;
+  const perKind = (k: FakraKind) => mains.filter((m) => m.kind === k).reduce((n, m) => n + m.qty, 0);
+  const parts: Array<FakraPart & { kind: FakraKind }> = [];
+  const orphans: string[] = [];
+  for (const r of rows) {
+    const hit = FAKRA_PART_RE_.find(([re]) => re.test(norm(r.art)));
+    if (!hit) continue;
+    const n = perKind(hit[2]);
+    if (!n) { orphans.push(norm(r.art)); continue; }
+    parts.push({ art: norm(r.art), name: r.name || "", qty: Math.max(1, Math.round(qtyOf(r) / n)), role: hit[1], kind: hit[2] });
+  }
+  const all: Array<NonNullable<CoaxSide>> = [];
+  for (const m of mains) {
+    for (let i = 0; i < m.qty; i++) {
+      all.push({ art: m.art, name: m.name, kind: m.kind, parts: [
+        { art: m.art, name: m.name, qty: 1, role: "main" },
+        ...parts.filter((p) => p.kind === m.kind).map(({ kind: _k, ...p }) => p),
+      ] });
+    }
+  }
+  return { ends: all.slice(0, 2), extra: Math.max(0, all.length - 2), orphans };
+}
 /** Способ сростка: опрессовка гильзой, пайка, ленточный обжим, ультразвуковая сварка (владелец 16.10). */
 export type SpliceMethod = "sleeve" | "solder" | "band" | "ultrasonic";
 /** Карта операции «Сростки» по способу (БД.ОП; УЗ сварка — US_WELD). */
@@ -244,6 +295,8 @@ export type GenState = {
   seal: { enabled: boolean; mat: string; places: string };
   tin: { enabled: boolean; wires: number[] | null; stripLen: string };
   coax: {
+    /** Кабелей в сборке с четверным разъёмом HFM (4 одинаковых кабеля на оба конца); нет — один. */
+    cables?: number;
     len: string; tutEnabled: boolean; tutLen: string; pinA: string; pinB: string; coverA: string; coverB: string;
     stripB: boolean; shield: string;
     /** Тип экрана стороны В (владелец 19.10: у разъёмов А и В он может быть разный); нет / пусто — как у А (`shield`). */
@@ -366,6 +419,8 @@ export type OpSpec = {
   pf?: string;
   /** Контроль КСВН коакса: сплошной или выборочный 1 из N (нет — карта до настройки). */
   vswrControl?: CoaxVswrControl;
+  /** Коакс FAKRA/HFM: детали комплекта, что берёт операция (в комплектующие ЭТК), и «оснастка не определена» — без строк оснастки. */
+  parts?: Array<{ art: string; name: string; qty: number; unit?: string }>; noTooling?: boolean;
   /** Резка проводов «Сложной сборки»: жилы партии — [строка «Кабели», жила], по ним стрелки к ПФ, что их берут. */
   cutUnits?: Array<[number, number]>;
   /** Монтаж оплётки ветви: оплётку отрезала «Резка оплётки» — материал у резки, здесь его нет. */
@@ -1789,6 +1844,19 @@ export function makeGen(D: GenData, S: GenState) {
   const coaxBomCable_ = () => { const c = coaxBomCableComp_(); return c ? (c.art || c.name || "") : ""; };
   const coaxBomTut_ = () => comps().find((x) => /тут/i.test(x.type || "")) || null;
   const coaxBomSleeve_ = () => comps().find((x) => /втулк/i.test(`${x.type || ""} ${x.name || ""}`)) || null;
+  // ── FAKRA / HFM (708К, владелец 25.10): конец — набор деталей (контакт с вставкой и гильзой, корпус, уплотнитель, крышка) ──
+  /** Концы FAKRA/HFM из состава (см. fakraEndsFromBom_); null — обычный коакс. */
+  const coaxFakra_ = (): FakraEnds => fakraEndsFromBom_(comps()
+    .filter((c) => /разъ[её]м|соед|conn/i.test(c.type || ""))
+    .map((c) => ({ art: c.art || c.name || "", name: c.name || "", qty: c.qty })));
+  const isFakra_ = () => !!S.coax.sideA?.kind;
+  const coaxCables_ = () => Math.max(1, Math.round(S.coax.cables || 1));
+  const coaxBomTtk_ = () => comps().find((x) => /ттк/i.test(`${x.type || ""} ${x.name || ""}`)) || null;
+  /** Меток «Маркировка» в составе (под ТУТ); нет — по КД 3 на изделие, как в 122663 (владелец 25.10: «Маркировка ×3»). */
+  const coaxFakraMarks_ = () => {
+    const n = comps().filter((x) => /маркировк/i.test(x.type || "")).reduce((sum, x) => sum + (Number(String(x.qty).replace(",", ".")) || 0), 0);
+    return n > 0 ? Math.round(n) : 3;
+  };
   function coaxCableDiaLookup_() {
     const t = (D.coaxCableDia && D.coaxCableDia.byCable) || {};
     return t[String(coaxBomCable_()).toLowerCase().replace(/[\s-]/g, "")] || null;
@@ -1820,6 +1888,7 @@ export function makeGen(D: GenData, S: GenState) {
     return side === "B" ? S.coax.shieldB || S.coax.shield : S.coax.shield;
   }
   function isCoaxAssembly_() {
+    if (coaxFakra_()) return true;
     if (S.coax.sideA && matchCoaxRec_(S.coax.sideA.art, "", "")) return true;
     if (S.coax.sideB && matchCoaxRec_(S.coax.sideB.art, "", "")) return true;
     const recWires = new Set((D.coaxRecords || []).map((r) => coaxNorm_(r.wire)).filter(Boolean));
@@ -1877,7 +1946,76 @@ export function makeGen(D: GenData, S: GenState) {
     return dia > 0 && dia <= COAX_SMALL_MACHINE_MAX_MM ? "small" : "big";
   }
   const coaxMachine_ = (): CoaxMachineKey => S.coax.machine || coaxMachineAuto_();
+  /** Операции сборки с концами FAKRA / HFM по документам изготовителя (Rosenberger MA_59V059 прямой герметичный, MA_59V065
+   *  угловой, MA_AMV003 HFM; Amphenol 2FA1 — пайка жилы в пин, ТТК на гильзе). Оснастка не определена (владелец 25.10) —
+   *  у операций разъёма `noTooling`: в ЭТК нет строк оснастки. Размеры разделки X/Y/Z — из БД.КОАКС по главной детали. */
+  function getActiveOpsFakra_(): OpSpec[] {
+    const ends = ([["A", S.coax.sideA], ["B", S.coax.sideB]] as Array<[Side, CoaxSide]>).filter((e): e is [Side, NonNullable<CoaxSide>] => !!e[1]);
+    const cables = coaxCables_();
+    const x = (n: number) => (n > 1 ? ` ×${n}` : "");
+    const sd = (side: Side) => (side === "B" ? "B" : "А");
+    const part = (end: NonNullable<CoaxSide>, role: FakraPart["role"]) => (end.parts || []).filter((p) => p.role === role);
+    const withParts = (list: FakraPart[]): Partial<OpSpec> => (list.length ? { parts: list.map((p) => ({ art: p.art, name: p.name, qty: p.qty })) } : {});
+    const tooling = { noTooling: true } as const;
+    const ops: OpSpec[] = [];
+    const tutOn = S.coax.tutEnabled && !!bomTut_();
+    const marks = coaxFakraMarks_();
+    ops.push({ type: "coaxCut", opKey: "coaxCut", label: `Резка кабеля${x(cables)}`, units: cables,
+      tmplHint: hasOperation_(COAX_CUT_CODE_) ? COAX_CUT_CODE_ : "CUT_WIRE_auto", tmplWant: COAX_CUT_CODE_ });
+    if (tutOn) {
+      const markCode = hasTemplateCode_(MARK_CUT_CODE_) ? MARK_CUT_CODE_ : "CUT_TUT_short";
+      ops.push({ type: "coaxCutTut", opKey: "coaxCutTut", label: `Печать меток и резка ТУТ под маркировку${x(marks)}`, units: marks, tmplHint: markCode, tmplWant: MARK_CUT_CODE_ });
+      ops.push({ type: "coaxInsTut", opKey: "coaxInsTut", label: `Монтаж ТУТ под маркировку${x(marks)}`, units: marks, tmplHint: "INS_TUT" });
+    }
+    // «Надеть» до разделки (MA_59V059: крышку, уплотнитель, гильзу): у каждого вида конца своё.
+    const putOn: Record<FakraKind, string> = { straight: "крышку, уплотнитель и гильзу", angled: "гильзу", bulkhead: "ТТК, гильзу и шайбу", hfm: "опорные гильзы" };
+    const kinds = [...new Set(ends.map(([, e]) => e.kind!))];
+    const onParts = new Map<string, { art: string; name: string; qty: number; unit?: string }>();
+    ends.forEach(([, end]) => [...part(end, "seal"), ...part(end, "cap")].forEach((p) => {
+      onParts.set(p.art, { art: p.art, name: p.name, qty: (onParts.get(p.art)?.qty || 0) + p.qty });
+    }));
+    const ttk = coaxBomTtk_();
+    if (ttk && kinds.includes("bulkhead")) onParts.set(ttk.art || ttk.name, { art: ttk.art || ttk.name, name: ttk.name || "", qty: Number(String(ttk.qty).replace(",", ".")) || 0, unit: "М." });
+    const putOnUnits = ends.reduce((n, [, e]) => n + (e.kind === "hfm" ? cables : 1), 0);
+    ops.push({ type: "coaxInsSleeve", opKey: "coaxInsSleeve", ...tooling, units: putOnUnits, tmplHint: "INS_SLEEVE_coax",
+      label: "Надеть на кабель: " + (kinds.length === 1 ? putOn[kinds[0]] + x(putOnUnits)
+        : ends.map(([side, e]) => `${sd(side)} — ${putOn[e.kind!]}`).join("; ")),
+      ...(onParts.size ? { parts: [...onParts.values()] } : {}) });
+    const pinCode = hasOperation_(COAX_PIN_CRIMP_CODE_) ? COAX_PIN_CRIMP_CODE_ : "PRS_SLEEVE_coax";
+    const heatTtk: OpSpec[] = [];
+    ends.forEach(([side, end]) => {
+      const n = end.kind === "hfm" ? cables : 1;
+      const main = withParts(part(end, "main")), housing = withParts(part(end, "housing"));
+      ops.push({ type: "coaxStrip", side, opKey: "coaxStrip" + side, label: `Разделка коаксиала${x(n)} (${sd(side)})`, units: n, tmplHint: "STRIP_COAX_auto", ...tooling });
+      if (end.kind === "bulkhead") {
+        ops.push({ type: "coaxPin", side, opKey: "coaxPin" + side, label: `Пайка жилы в центральный контакт (${sd(side)})`, tmplHint: "SDR_COAX_pin", ...main, ...tooling });
+        ops.push({ type: "coaxHousing", side, opKey: "coaxInsert" + side, label: `Вставка контакта в корпус (${sd(side)})`, tmplHint: "INS_housing_COAX", ...tooling });
+        ops.push({ type: "coaxShield", side, opKey: "coaxShield" + side, label: `Надвинуть гильзу и обжать (${sd(side)})`, tmplHint: "PRS_SLEEVE_coax", ...tooling });
+        heatTtk.push({ type: "coaxHeat", side, opKey: "coaxHeatTtk" + side, label: `Усадка ТТК на гильзе (${sd(side)})`, tmplHint: "HEAT_TTK_short" });
+        return;
+      }
+      ops.push({ type: "coaxPinCrimp", side, opKey: "coaxPinCrimp" + side, units: n, label: `Обжим центрального контакта${x(n)} (${sd(side)})`,
+        tmplHint: pinCode, tmplWant: COAX_PIN_CRIMP_CODE_, ...main, ...tooling });
+      const insertLabel = end.kind === "angled" ? "Вставка в корпус, контроль пина в окне"
+        : end.kind === "hfm" ? `Вставка контактов в корпус до щелчка${x(n)}` : "Вставка во вставку до щелчка, контроль заглубления контакта 0,18 мм";
+      ops.push({ type: "coaxHousing", side, opKey: "coaxInsert" + side, units: n, label: `${insertLabel} (${sd(side)})`, tmplHint: "INS_housing_COAX", ...tooling });
+      ops.push({ type: "coaxShield", side, opKey: "coaxShield" + side, units: n, tmplHint: "PRS_SLEEVE_coax", ...tooling,
+        label: `${end.kind === "angled" ? "Обжим гильзы" : "Надвинуть гильзу и обжать"}${x(n)} (${sd(side)})` });
+      if (end.kind === "angled") ops.push({ type: "coaxCapCrimp", side, opKey: "coaxCapCrimp" + side, label: `Запрессовать крышку (${sd(side)})`, cat: "Опрессовка крышки коакс", ...tooling });
+      const body = end.kind === "hfm" ? "Вторичная фиксация и CPA" : end.kind === "angled" ? "Корпус и вторичная фиксация" : "Вставка в корпус до щелчка";
+      ops.push({ type: "coaxHousing", side, opKey: "coaxBody" + side, label: `${body} (${sd(side)})`, tmplHint: "INS_housing_COAX", ...housing, ...tooling });
+      if (end.kind === "straight") ops.push({ type: "coaxCapScrew", side, opKey: "coaxSealCap" + side, label: `Уплотнитель и крышка (${sd(side)})`, tmplHint: "INS_CAP", ...tooling });
+    });
+    ops.push(...heatTtk);
+    if (tutOn) ops.push({ type: "coaxHeat", opKey: "coaxHeat", label: `Усадка ТУТ под маркировку${x(marks)}`, units: marks, tmplHint: "HEAT_TYT_short" });
+    // Контроль КСВН — режим вкладки по умолчанию («каждое изделие»), как у остальных сборок с двумя разъёмами.
+    const vswr = coaxVswrControl_(S.coax);
+    if (S.coax.sideB && vswr?.mode !== "none") ops.push({ type: "coaxVswr", opKey: "coaxVswr", tmplHint: "CTRL_VSWR_coax",
+      label: vswr?.mode === "sample" ? `Контроль КСВН — выборочно 1 из ${vswr.every}` : "Контроль КСВН", ...(vswr ? { vswrControl: vswr } : {}) });
+    return ops;
+  }
   function getActiveOpsCoax_(): OpSpec[] {
+    if (isFakra_()) return getActiveOpsFakra_();
     if (!S.coax.sideA) return [];
     const sideB = !!S.coax.sideB;
     const pinA = S.coax.pinA;
@@ -3086,8 +3224,9 @@ export function makeGen(D: GenData, S: GenState) {
     const sideB = !!S.coax.sideB;
     const recA = coaxRecForSide_("A");
     const recB = sideB ? coaxRecForSide_("B") : null;
-    const mkSide = (rec: CoaxRec | null, art: string, pinType: string, connName: string, shield: string) => (art ? {
-      article: art, connName: connName || "",
+    const fakra = (side: CoaxSide) => (side?.kind ? { kind: side.kind, parts: side.parts || [] } : {});
+    const mkSide = (rec: CoaxRec | null, art: string, pinType: string, connName: string, shield: string, ext: object = {}) => (art ? {
+      article: art, connName: connName || "", ...ext,
       type: rec ? rec.type : "", wire: rec ? rec.wire : "", mfr: rec ? rec.mfr : "", program: rec ? rec.program : "",
       ...coaxDia_(), l1: rec ? rec.l1 : "", l2: rec ? rec.l2 : "", l3: rec ? rec.l3 : "",
       lPlus: rec ? rec.lPlus : "", lMinus: rec ? rec.lMinus : "", pinType, shield,
@@ -3100,6 +3239,8 @@ export function makeGen(D: GenData, S: GenState) {
         ...(machine ? { machine: { model: machine.model, inventory: machine.inventory, name: machine.name } } : {}),
         ...(spec.stripSides ? { stripSides: spec.stripSides } : {}),
         ...(spec.clampSides ? { clampSides: spec.clampSides } : {}),
+        ...(spec.parts?.length ? { parts: spec.parts } : {}),
+        ...(spec.noTooling ? { noTooling: true } : {}),
         ...(spec.vswrControl ? { vswrControl: spec.vswrControl } : {}) };
     });
     const tut = coaxBomTut_(), cable = coaxBomCableComp_(), sleeve = coaxBomSleeve_();
@@ -3118,8 +3259,9 @@ export function makeGen(D: GenData, S: GenState) {
         cableArt: cable?.art || "", cableName: cable?.name || "",
         sleeveArt: sleeve?.art || "", sleeveName: sleeve?.name || "",
         shieldType: S.coax.shield,
-        sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : "", coaxShieldOf_("A")),
-        sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : "", coaxShieldOf_("B")),
+        sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : "", coaxShieldOf_("A"), fakra(S.coax.sideA)),
+        sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : "", coaxShieldOf_("B"), fakra(S.coax.sideB)),
+        ...(coaxCables_() > 1 ? { cables: coaxCables_() } : {}),
         ...(vswrControl ? { vswrControl } : {}),
         ...(vswrCustomer ? { vswrCustomer } : {}),
       },
@@ -3357,6 +3499,19 @@ export function makeGen(D: GenData, S: GenState) {
     const picked = Object.entries(S.colorHex || {}).filter(([name]) => used.has(name));
     return picked.length ? { colorHex: Object.fromEntries(picked) } : {};
   }
+  /** FAKRA/HFM: что генератор не смог сделать сам — в составе концов больше двух, детали без главной, операции без карты,
+   *  метки по умолчанию, длина кабеля HFM. Операция без карты в «Создать» не попадает (как у всей вкладки). */
+  function fakraWarnings_(): string[] {
+    const w: string[] = [];
+    const fk = coaxFakra_();
+    if (fk?.extra) w.push(`В составе ${fk.extra + 2} конца FAKRA/HFM, в карте два (А и В) — лишние строки состава (дубль?) не учтены.`);
+    (fk?.orphans || []).forEach((art) => w.push(`Деталь «${art}» без своего разъёма в составе — в операции не вошла.`));
+    getActiveOpsFakra_().filter((spec) => !pickTemplateForOp_(spec)).forEach((spec) => w.push(`Нет карты операции «${spec.label}» в библиотеке — операции не будет в «Создать».`));
+    if (S.coax.tutEnabled && bomTut_() && !comps().some((x) => /маркировк/i.test(x.type || ""))) w.push("В составе нет строки «Маркировка» — ТУТ под метки нарезан на 3 по КД, сверьте.");
+    if (coaxCables_() > 1) w.push(`Кабелей ${coaxCables_()}: длина одного — метраж состава, делённый на ${coaxCables_()}; сверьте с КД.`);
+    w.push("Оснастка операций разъёмов FAKRA/HFM не определена — строк оснастки в ЭТК нет.");
+    return w;
+  }
   function bomWarnings_(cfg: Record<string, unknown>) {
     const w: string[] = [];
     if (!cfg.assemblyName) w.push("Не указано наименование изделия — последний лист не переименуется.");
@@ -3378,6 +3533,7 @@ export function makeGen(D: GenData, S: GenState) {
       ([["A", cx.sideA], ["B", cx.sideB]] as const).forEach(([s, sd]) => {
         if (sd && sd.article && !sd.type) w.push("Сторона " + s + ": разъём «" + sd.article + "» не найден в БД.КОАКС — размеры/время не подтянутся.");
       });
+      if (isFakra_()) w.push(...fakraWarnings_());
     }
     return w;
   }
@@ -3409,7 +3565,7 @@ export function makeGen(D: GenData, S: GenState) {
     endpointOrdinal_, epPer_, epDoublePins_, epStripLen_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_, crimpCutBatchNote_, crimpCutBatchLines_, checkTerminalFit_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
-    twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_, coaxBomCableComp_,
+    twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxFakra_, coaxCables_, coaxFakraMarks_, getActiveOpsFakra_, coaxBomConnectors_, coaxBomCable_, coaxBomCableComp_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, coaxMachineAuto_, coaxMachine_, coaxShieldOf_, coaxCableOuterMm_, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
     harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, hsComp_, hsRowSkip_, hsTubeOptions_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
     defaultJacketShrinkComp_, cableJacketShrink_, jacketShrinkItems_, freeJacketShrinkComp_, housingOn_, housingDefault_, sleeveWarning_,
@@ -3524,9 +3680,12 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
   {
     const g = makeGen(D, S);
     const cs = g.coaxBomConnectors_();
-    const sideA = cs[0] ? { art: cs[0].art, name: cs[0].name } : null;
-    const sideB = cs.length >= 2 ? { art: cs[1].art, name: cs[1].name } : null;
-    S = { ...S, coax: { ...S.coax, sideA, sideB, tutEnabled: !!g.bomTut_(), stripB: false } };
+    // FAKRA/HFM: конец — набор деталей состава (владелец 25.10), стороны А и В — по количеству главной детали.
+    const fk = g.coaxFakra_();
+    const sideA: CoaxSide = fk ? fk.ends[0] ?? null : cs[0] ? { art: cs[0].art, name: cs[0].name } : null;
+    const sideB: CoaxSide = fk ? fk.ends[1] ?? null : cs.length >= 2 ? { art: cs[1].art, name: cs[1].name } : null;
+    S = { ...S, coax: { ...S.coax, sideA, sideB, tutEnabled: !!g.bomTut_(), stripB: false,
+      ...(fk && [sideA, sideB].some((e) => e?.kind === "hfm") ? { cables: 4 } : {}) } };
     const g2 = makeGen(D, S);
     if (!S.coax.len && g2.asmLenFromName_() > 0) {
       const lp = (s: CoaxSide) => {
@@ -3542,11 +3701,13 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
       const cable = g2.coaxBomCableComp_();
       const fromCalc = cable ? g2.calcCutLengths_([cable])[cable.id] || 0 : 0;
       const fromBom = cable ? Math.round((Number(String(cable.qty).replace(",", ".")) || 0) * 1000) : 0;
-      const mm = fromCalc || fromBom;
+      const cables = fk ? makeGen(D, S).coaxCables_() : 1;
+      const mm = fromCalc || Math.round(fromBom / cables);
       if (mm > 0) S = { ...S, coax: { ...S.coax, len: String(mm) }, coaxLenFrom: fromCalc ? "calc" : "bom" };
     }
     S = onCoaxConnChange(D, S, "A");
     if (sideB) S = onCoaxConnChange(D, S, "B");
+    if (fk) S = fakraSeed_(D, S);
   }
   S = autoFillAllWires(D, S);
   // maybeAutoEnableTwist
@@ -3663,6 +3824,22 @@ export function autoPickTerminals(D: GenData, S: GenState, pairs?: TerminalPairs
   return next;
 }
 
+/** FAKRA/HFM: тип пина и экрана по документу изготовителя (пин обжимается, пайка — только у 2FA1; экран — гильза), длина
+ *  отрезка ТУТ под метку — метраж ТУТ состава на число меток. Запись БД.КОАКС это не перекрывает: документ главнее. */
+export function fakraSeed_(D: GenData, S: GenState): GenState {
+  const g = makeGen(D, S);
+  let coax = { ...S.coax };
+  (["A", "B"] as Side[]).forEach((side) => {
+    const e = side === "A" ? S.coax.sideA : S.coax.sideB;
+    if (!e?.kind) return;
+    coax = { ...coax, [side === "A" ? "pinA" : "pinB"]: e.kind === "bulkhead" ? "пайка" : COAX_PIN_CRIMP, ...(side === "A" ? { shield: "обжим" } : { shieldB: "обжим" }),
+      [side === "A" ? "coverA" : "coverB"]: "" };
+  });
+  const tut = g.bomTut_();
+  const tutM = tut ? Number(String(tut.qty).replace(",", ".")) || 0 : 0;
+  if (!coax.tutLen && tutM > 0) coax = { ...coax, tutLen: String(Math.round(tutM * 1000 / g.coaxFakraMarks_())) };
+  return { ...S, coax };
+}
 export function onCoaxConnChange(D: GenData, S: GenState, side: Side): GenState {
   const s = side === "A" ? S.coax.sideA : S.coax.sideB;
   let coax = { ...S.coax };
