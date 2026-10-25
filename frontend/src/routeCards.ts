@@ -55,21 +55,90 @@ export function widestRow(ids: readonly string[], links: readonly LayoutLink[]):
     ряда (у генератора карточки разной высоты). Порядок — топологический с сохранением порядка списка; цикл не
     роняет раскладку — карточка цикла встаёт по порядку списка. */
 export function layoutByDepth(ids: readonly string[], links: readonly LayoutLink[], size: (id: string) => Size = () => V3_CARD,
-  spacing: Spacing = V3_SPACING): Map<string, Point> {
+  spacing: Spacing = V3_SPACING, maxPerRow: number = Infinity): Map<string, Point> {
   const { depth, order } = depthOrder(ids, links);
-  const rows = Math.max(0, ...[...depth.values()].map((value) => value + 1));
-  const rowHeight = Array.from({ length: rows }, () => 0);
-  for (const id of order) rowHeight[depth.get(id)!] = Math.max(rowHeight[depth.get(id)!], size(id).height);
-  const rowTop: number[] = [];
-  rowHeight.reduce((top, height, row) => { rowTop[row] = top; return top + height + spacing.gapY; }, spacing.margin);
-  const rowX = Array.from({ length: rows }, () => spacing.margin);
+  const levels = Math.max(0, ...[...depth.values()].map((value) => value + 1));
+  // Ряд глубины, в котором больше maxPerRow карточек, переносится на следующие строки (порядок списка сохраняется).
+  const rows: string[][] = [];
+  for (let level = 0; level < levels; level += 1) {
+    const own = order.filter((id) => depth.get(id) === level);
+    for (let from = 0; from < own.length; from += Math.max(1, maxPerRow)) rows.push(own.slice(from, from + Math.max(1, maxPerRow)));
+  }
   const result = new Map<string, Point>();
-  for (const id of order) {
-    const row = depth.get(id)!;
-    result.set(id, { x: rowX[row], y: rowTop[row] });
-    rowX[row] += size(id).width + spacing.gapX;
+  let top = spacing.margin;
+  for (const row of rows) {
+    let x = spacing.margin;
+    for (const id of row) {
+      result.set(id, { x, y: top });
+      x += size(id).width + spacing.gapX;
+    }
+    top += Math.max(...row.map((id) => size(id).height)) + spacing.gapY;
   }
   return result;
+}
+
+/* ── Направление схемы: сверху вниз или слева направо (владелец 25.10: цепочка из трёх блоков занимала 40 % ширины) ── */
+
+/** «down» — ряд на уровень, связи сверху вниз; «right» — колонка на уровень, связи слева направо. Слева направо — та же
+    раскладка и те же связи, посчитанные в повёрнутых координатах (x ↔ y) и повёрнутые обратно. */
+export type Flow = "down" | "right";
+/** Зазор между колонками слева направо: в нём идёт стрелка и стоит число штук. */
+export const FLOW_GAP_X = 56;
+/** Уже этой ширины карточку не делаем: операции в ней перестают читаться. */
+export const FLOW_CARD_MIN = 240;
+
+const turnRect = (rect: Rect): Rect => ({ x: rect.y, y: rect.x, width: rect.height, height: rect.width });
+const turnPoint = (point: Point): Point => ({ x: point.y, y: point.x });
+
+/** Путь связи в повёрнутых координатах → путь в обычных: пары меняются местами, V ↔ H. */
+export function turnPath(d: string): string {
+  return d.replace(/([MLQCVH])([^MLQCVH]*)/g, (_all, command: string, rest: string) => {
+    const nums = rest.trim().split(/[\s,]+/).filter(Boolean);
+    if (command === "V") return `H${nums.join(" ")}`;
+    if (command === "H") return `V${nums.join(" ")}`;
+    const pairs: string[] = [];
+    for (let i = 0; i + 1 < nums.length; i += 2) pairs.push(`${nums[i + 1]},${nums[i]}`);
+    return `${command}${pairs.join(" ")}`;
+  });
+}
+
+/** Сколько уровней глубины в схеме. */
+export function levelCount(ids: readonly string[], links: readonly LayoutLink[]): number {
+  return Math.max(0, ...[...depthOrder(ids, links).depth.values()].map((value) => value + 1));
+}
+
+/** Куда растить схему: цепочка и узкие ветки (уровней не меньше, чем карточек в самом широком уровне) читаются слева направо — вся
+    ширина рамки; широкие (много параллельных ветвей) — рядами сверху вниз, как раньше. Слева направо — только если все колонки
+    помещаются в рамку не уже FLOW_CARD_MIN. */
+export function pickFlow(ids: readonly string[], links: readonly LayoutLink[], boxWidth: number, margin = V3_SPACING.margin): Flow {
+  if (!boxWidth || ids.length < 2) return "down";
+  const levels = levelCount(ids, links);
+  if (levels < widestRow(ids, links)) return "down";
+  const fit = Math.floor((boxWidth - 2 * margin + FLOW_GAP_X) / (FLOW_CARD_MIN + FLOW_GAP_X));
+  return levels <= fit ? "right" : "down";
+}
+
+/** layoutByDepth в выбранном направлении; зазоры spacing: gapX — между соседями уровня, gapY — между уровнями (в «right» уровни
+    разведены на FLOW_GAP_X). */
+export function layoutFlow(ids: readonly string[], links: readonly LayoutLink[], size: (id: string) => Size, spacing: Spacing, flow: Flow,
+  maxPerRow: number = Infinity): Map<string, Point> {
+  if (flow === "down") {
+    // Ряды короче самого широкого встают по его середине: изделие внизу не прижато к левому краю пустой рамки.
+    const placed = layoutByDepth(ids, links, size, spacing, maxPerRow);
+    const rows = new Map<number, string[]>();
+    for (const [id, point] of placed) rows.set(point.y, [...(rows.get(point.y) ?? []), id]);
+    const extent = (row: string[]) => Math.max(...row.map((id) => placed.get(id)!.x + size(id).width)) - spacing.margin;
+    const widest = Math.max(0, ...[...rows.values()].map(extent));
+    const centred = new Map(placed);
+    for (const row of rows.values()) {
+      const shift = Math.floor((widest - extent(row)) / 2);
+      row.forEach((id) => centred.set(id, { ...placed.get(id)!, x: placed.get(id)!.x + shift }));
+    }
+    return centred;
+  }
+  const turned = layoutByDepth(ids, links, (id) => ({ width: size(id).height, height: size(id).width }),
+    { gapX: spacing.gapY, gapY: FLOW_GAP_X, margin: spacing.margin });
+  return new Map([...turned].map(([id, point]) => [id, turnPoint(point)]));
 }
 
 /** Размер поля под карточками: правый и нижний край самой дальней карточки плюс поле. */
@@ -82,29 +151,21 @@ export function contentSize(rects: readonly Rect[], margin = V3_SPACING.margin, 
 
 const r2 = (value: number) => Math.round(value * 10) / 10;
 
-const LANE_GAP = 14;
+const BUS_GAP = 10;
 const hitsRect = (x1: number, y1: number, x2: number, y2: number, rect: Rect) =>
   Math.max(x1, x2) > rect.x - 2 && Math.min(x1, x2) < rect.x + rect.width + 2
   && Math.max(y1, y2) > rect.y - 2 && Math.min(y1, y2) < rect.y + rect.height + 2;
 
-/** Связь, что шла бы прямо под чужой карточкой, обходит её сбоку («Обжатые провода → Готовый кабель» под «Сторона А
-    собрана» был не виден): вниз из входа, в сторону до полосы у края закрывающих карточек, вниз вдоль неё, к цели. */
-function detourGeometry(sx: number, sy: number, tx: number, ty: number, obstacles: readonly Rect[]): { d: string; mid: Point } | null {
+/** Связь, что шла бы прямо под чужой карточкой, идёт общей шиной по левому краю схемы (владелец 25.10: связи обходили
+    полсхемы): вниз из входа в зазор под его рядом, влево до полосы за самой левой карточкой, вниз вдоль неё до зазора над
+    целью, вправо и вниз в цель. Все такие связи делят одну полосу — шина, а не по обходу на каждую. */
+function detourGeometry(sx: number, sy: number, tx: number, ty: number, obstacles: readonly Rect[], minX: number, rowBottom: number): { d: string; mid: Point } | null {
   const my = ty - Math.min(32, (ty - sy) / 2);
   const crossed = (rect: Rect) => hitsRect(sx, sy, sx, my, rect) || hitsRect(sx, my, tx, my, rect) || hitsRect(tx, my, tx, ty, rect);
   const inSpan = obstacles.filter((rect) => rect.y < ty && rect.y + rect.height > sy);
-  let blockers = inSpan.filter(crossed);
-  if (blockers.length === 0) return null;
-  let lane = sx;
-  for (let pass = 0; pass < 6; pass += 1) {
-    const left = Math.min(...blockers.map((rect) => rect.x)) - LANE_GAP;
-    const right = Math.max(...blockers.map((rect) => rect.x + rect.width)) + LANE_GAP;
-    lane = left < LANE_GAP || Math.abs(sx - right) + Math.abs(tx - right) <= Math.abs(sx - left) + Math.abs(tx - left) ? right : left;
-    const more = inSpan.filter((rect) => !blockers.includes(rect) && hitsRect(lane, sy, lane, ty, rect));
-    if (more.length === 0) break;
-    blockers = [...blockers, ...more];
-  }
-  const y1 = sy + 12, y2 = ty - 12;
+  if (!inSpan.some(crossed)) return null;
+  const lane = Math.max(2, minX - BUS_GAP);
+  const y1 = Math.min(Math.max(sy + 12, rowBottom + 12), ty - 24), y2 = ty - 12;
   const points: Point[] = [{ x: sx, y: sy }, { x: sx, y: y1 }, { x: lane, y: y1 }, { x: lane, y: y2 }, { x: tx, y: y2 }, { x: tx, y: ty }];
   let d = `M${r2(sx)},${r2(sy)}`;
   for (let i = 1; i < points.length - 1; i += 1) {
@@ -116,16 +177,23 @@ function detourGeometry(sx: number, sy: number, tx: number, ty: number, obstacle
     d += ` L${r2(b.x + u.x * radius)},${r2(b.y + u.y * radius)} Q${r2(b.x)},${r2(b.y)} ${r2(b.x + v.x * radius)},${r2(b.y + v.y * radius)}`;
   }
   d += ` L${r2(tx)},${r2(ty)}`;
-  return { d, mid: { x: lane, y: (sy + ty) / 2 } };
+  return { d, mid: { x: (lane + tx) / 2, y: y2 } };
 }
 
 /** Связь от низа карточки-входа к верху карточки, что её берёт. Цель ниже — ортогональная линия со скруглёнными
     углами: вниз, вдоль зазора над целью, вниз; строго под входом — прямая. Цель выше или рядом (карточку утащили) —
     плавная S-кривая. `mid` — где стоят число штук и кнопки «+» / «×». */
-export function linkGeometry(from: Rect, to: Rect, obstacles: readonly Rect[] = []): { d: string; mid: Point } {
+export function linkGeometry(from: Rect, to: Rect, obstacles: readonly Rect[] = [], flow: Flow = "down"): { d: string; mid: Point } {
+  if (flow === "right") {
+    const turned = linkGeometry(turnRect(from), turnRect(to), obstacles.map(turnRect));
+    return { d: turnPath(turned.d), mid: turnPoint(turned.mid) };
+  }
   const sx = from.x + from.width / 2, sy = from.y + from.height, tx = to.x + to.width / 2, ty = to.y;
   if (ty - sy >= 24) {
-    const around = detourGeometry(sx, sy, tx, ty, obstacles);
+    const minX = Math.min(from.x, to.x, ...obstacles.map((rect) => rect.x));
+    // Низ ряда источника: карточки ряда стоят на одной верхней кромке, но разной высоты.
+    const rowBottom = Math.max(sy, ...obstacles.filter((rect) => Math.abs(rect.y - from.y) < 1).map((rect) => rect.y + rect.height));
+    const around = detourGeometry(sx, sy, tx, ty, obstacles, minX, rowBottom);
     if (around) return around;
     if (Math.abs(sx - tx) < 1) return { d: `M${r2(sx)},${r2(sy)} V${r2(ty)}`, mid: { x: sx, y: (sy + ty) / 2 } };
     const my = ty - Math.min(32, (ty - sy) / 2);
@@ -317,6 +385,34 @@ export function blockCards(route: Route, ops: readonly RouteOp[], title: (block:
   })).sort((a, b) => depth(a.id) - depth(b.id));
   const links = route.edges.map((edge) => ({ id: `${edge.from}>${edge.to}`, from: edge.from, to: edge.to, qty: edge.per_unit }));
   return { cards, links };
+}
+
+/* ── Текст карточек не обрезается: названия переносятся, высота карточки считается по числу строк (владелец 25.10) ── */
+
+/** Сколько строк займёт текст в колонке шириной `avail` px при средней ширине знака `charPx` (кириллица 12 px — 6,4; 14 px жирный — 8);
+    не больше `max` — дальше CSS обрежет многоточием. */
+export function textLines(text: string, avail: number, charPx: number, max: number): number {
+  return Math.max(1, Math.min(max, Math.ceil((text.length * charPx) / Math.max(40, avail))));
+}
+/** Ширина карточки без полей. */
+const innerWidth = (cardWidth: number) => cardWidth - 26;
+/** Ширина названия операции в строке: без номера, времени, ручки и зазоров. */
+export const opNameWidth = (cardWidth: number) => cardWidth - 140;
+export const OP_LINE = 15;
+/** Высота строки операции, px: одна строка — как прежде (22 / 40 на сенсорном), дальше по 15 px на строку. */
+export function opRowHeight(label: string, cardWidth: number, base: number): number {
+  return base + (textLines(label, opNameWidth(cardWidth), 6.4, 3) - 1) * OP_LINE;
+}
+/** Высота шапки сверх одной строки названия, подписи и мета-строки, px. */
+export function headExtra(title: string, subtitle: string, meta: string, cardWidth: number): number {
+  return (textLines(title, innerWidth(cardWidth), 8, 3) - 1) * 20 + (subtitle ? textLines(subtitle, innerWidth(cardWidth), 6.4, 2) * 16 : 0)
+    + (textLines(meta, innerWidth(cardWidth), 6.2, 2) - 1) * 18;
+}
+/** Высота списка входов с переносом строк: до `ART_ROWS` входов, у каждого до двух строк. */
+export function inputsHeightWrapped(items: readonly string[], cardWidth: number): number {
+  if (!items.length) return 0;
+  const shown = items.slice(0, ART_ROWS);
+  return shown.reduce((sum, item) => sum + textLines(item, innerWidth(cardWidth), 6.4, 2) * 16, 0) + (items.length > ART_ROWS ? 16 : 0) + 8;
 }
 
 /** Высота списка входов карточки ПФ, px: строка на вход (не больше ART_ROWS и строка «и ещё»). */

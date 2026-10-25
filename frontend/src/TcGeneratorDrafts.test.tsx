@@ -108,7 +108,7 @@ it("«Поправить вручную» opens the typical assembly in the manu
   expect(screen.getByRole("region", { name: "Блок «Резка с разделкой · опрессовка терминалов»" })).toBeInTheDocument();
   const first = screen.getByLabelText("Операция 1: Резка с разделкой");
   expect(within(first).getByLabelText("Название операции 1").tagName).toBe("B");
-  expect(first).toHaveTextContent("1 пров. · L 160 мм · зачистка А 5, Б 5 мм");
+  expect(first).toHaveTextContent("1 пров. · L 160 мм · зачистка А 5, В 5 мм");
   expect(first).not.toHaveTextContent("cutWireStrip");
   expect(screen.getByLabelText("Операция 2: Опрессовка терминалов")).toHaveTextContent("сторона А · 1 пров. · L 160 мм · терминал SXH-001T-P0.6 · разъём XHP-2");
 
