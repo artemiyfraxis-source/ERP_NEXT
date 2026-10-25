@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
 import { hasAccess } from "./navigation";
 import { EquipmentCards } from "./EquipmentCards";
@@ -23,9 +23,10 @@ import {
   MATERIAL_TABS, isMaterialTab, materialCounts, materialRows, type MaterialTab,
 } from "./materialSections";
 import { operationCardCount } from "./TechcardsPage";
-import { cleanHeader, fieldTitle, headerLabel, terFieldHint, valueLabel } from "./referenceLabels";
+import { cleanHeader, fieldTitle, headerKey, headerLabel, terFieldHint, valueLabel } from "./referenceLabels";
 import {
   failureText,
+  openReadVisit,
   referencesApi,
   techcardsApi,
   type BasesResult,
@@ -105,7 +106,6 @@ const TAB_STORAGE = "erp-db-tab";
 // Record fields are SUPPLYMAP DB_SCHEMA keys (TcOpsDb.gs, backend technology._TECH_SCHEMA); the sheet's own header
 // is what people know, so the column shows that. Unknown keys (БД.ПРОВ, БД.МАТ, СПР.КАБ) are headers already.
 
-const headerKey = (field: string) => cleanHeader(field).toLocaleLowerCase("ru-RU");
 
 function mergeTerminalColumns(columns: DataColumn<TechOperationRecord>[], fields: string[]): DataColumn<TechOperationRecord>[] {
   // Колонки бывают под заголовком листа («Высота обжима проводника , мм») или под ключом схемы (terCrimpHeight).
@@ -131,7 +131,9 @@ function mergeTerminalColumns(columns: DataColumn<TechOperationRecord>[], fields
   };
   const merged: Record<string, DataColumn<TechOperationRecord>> = {};
   if (crimpFields.length > 0) merged[crimpFields[0]] = {
-    key: "__crimp", title: CRIMP_COLUMN_TITLE, value: (record) => crimpText(crimpValues(record)),
+    // the four columns of the crimp table (`.crimp-row`: 10ch 11ch 13ch 10ch and the gaps): its width is set, not
+    // measured from the text (the list in blocks measures texts, this cell draws a table)
+    key: "__crimp", title: CRIMP_COLUMN_TITLE, width: 384, value: (record) => crimpText(crimpValues(record)),
     render: (record) => <CrimpCell values={crimpValues(record)} />,
   };
   if (awgFrom || awgTo) merged[(awgFrom ?? awgTo) as string] = { key: "__awg", title: "AWG", value: awgText, render: (record) => awgText(record) || "—" };
@@ -189,6 +191,9 @@ function savedTab(): string {
 }
 
 export function ReferencesPage(props: { principal: Principal; initialTab?: DbTab }) {
+  // One download of each list per visit (api.ts `visitRead`): the tab counts, the tab and the screens inside it share
+  // the reads; a write forgets them. A layout effect: it runs before the tabs' own effects ask for their lists.
+  useLayoutEffect(() => openReadVisit(), []);
   return <ColumnViewsProvider enabled={hasAccess(props.principal.permissions, "erpref")}><ReferencesPageBody {...props} /></ColumnViewsProvider>;
 }
 
@@ -207,6 +212,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   });
   const [maps, setMaps] = useState<ReferenceMaps>(EMPTY_MAPS);
   const [savedMaps, setSavedMaps] = useState("");
+  const [mapsFailed, setMapsFailed] = useState(false);
   const [tech, setTech] = useState<TechOperationResult>({ metadata: null, records: [] });
   const [cableDia, setCableDia] = useState<CableDia>({});
   const [obOps, setObOps] = useState<TechOperationRecord[]>([]);
@@ -255,6 +261,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   async function loadTech(next: TechOperationTab) {
     setError("");
     try {
+      // БД.КОАКС: the cables' D1–D3 are asked at once with the rows, not after them.
+      const coaxCables = next === "coax"
+        ? referencesApi.techOperations("kab_coax", "", 5000).catch(() => ({ records: [] as TechOperationRecord[] })) : null;
       // «Терминалы»: серии приходят вместе со строками — группы не перестраиваются на глазах.
       const [records, series] = await Promise.all([
         referencesApi.techOperations(next, "", 5000),
@@ -269,8 +278,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         void referencesApi.techOperations("op", "", 5000).then((ops) => setObOps(ops.records)).catch(() => setObOps([]));
       }
       if (next === "mat") void loadMaterialIndex();
-      if (next === "coax") {
-        const cables = await referencesApi.techOperations("kab_coax", "", 5000).catch(() => ({ records: [] as TechOperationRecord[] }));
+      if (coaxCables) {
+        const cables = await coaxCables;
         setCableDia(Object.fromEntries(cables.records.map((record) => [cableKey(Object.values(record.fields)[0] ?? ""), record.fields])));
       }
     } catch (reason) {
@@ -317,7 +326,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
 
   useEffect(() => {
     if (canRefs) {
-      referencesApi.maps().then(applyMaps).catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось загрузить справочники"));
+      referencesApi.maps().then(applyMaps).catch((reason) => { setMapsFailed(true); setError(reason instanceof Error ? reason.message : "Не удалось загрузить справочники"); });
       loadBases();
       if (!isMaterialTab(tab)) void loadMaterialIndex();
     }
@@ -340,14 +349,16 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function count(def: TabDef): number | null {
-    if (isMapTab(def.id)) return canRefs ? maps[def.id].length : null;
+    // no number until the maps came: «0» while loading read as an empty map
+    if (isMapTab(def.id)) return canRefs && savedMaps !== "" ? maps[def.id].length : null;
     if (def.id === "templates") return opCount;
     if (def.id === "connectors") return connectorCount;
     if (def.id === "cov") return coveringCount ?? matCounts?.cov ?? null;
     if (isMaterialTab(def.id)) return matCounts?.[def.id] ?? null;
     if (isCableTab(def.id)) return (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
     if (def.id === "gauges") return cables?.gauges?.length ?? bases.gauges ?? null;
-    if (def.id === tab && techTab) return tech.records.length;
+    // the open tab counts its rows once they came (before — the summary's number, not «0»)
+    if (def.id === tab && techTab && techReady === techTab) return tech.records.length;
     return bases.tabs?.[def.id as TechOperationTab] ?? bases.bases.find((base) => base.id === def.base)?.count ?? null;
   }
 
@@ -454,7 +465,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
       // Да/нет листа (TRUE/FALSE) — выбор, а не текст: правится в окне записи. Первая колонка — ручка строки: щелчок по ней
       // открывает запись (карточку контакта), поэтому она не правится в ячейке.
       const fixed = techTab ? NOT_IN_CELL[techTab] : undefined;
-      const inCell = own || (Boolean(fixed) && index > 0 && !fixed?.has(cleanHeader(field).toLocaleLowerCase("ru-RU"))
+      const inCell = own || (Boolean(fixed) && index > 0 && !fixed?.has(headerKey(field))
         && !(values.length > 0 && values.every((value) => BOOLEAN.test(value.trim()))));
       return {
         key: field, title: fieldTitle(field), value: shown, hint: techTab === "ter" ? terFieldHint(field) : undefined,
@@ -464,7 +475,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         edit: canEdit && inCell ? (own ? ownCellEdit<TechOperationRecord>(field, (record) => record) : fieldCellEdit<TechOperationRecord>(field, (record) => record)) : undefined,
         remove: own ? techRemoval.removeOf(field) : undefined,
         // «Группа» материалов — заголовок группы строк, колонкой не повторяется (она в «Колонках»).
-        hidden: !own && ((techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU"))) || (techTab === "mat" && field === "Группа")
+        hidden: !own && ((techTab === "ter" && TER_RARE.has(headerKey(field))) || (techTab === "mat" && field === "Группа")
           || (Boolean(matTab) && index > 0 && !filledInTab.has(field))),
         // An article of digits (Molex 39000038) is a code, not a number: no «39 000 038», as the warehouse writes it.
         numeric: !/артикул/i.test(fieldTitle(field)) && values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
@@ -553,7 +564,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     {tab === "connectors" && <ConnectorGallery canEdit={canEdit} />}
     {tab === "cov" && <CoveringsTable canEdit={canEdit} onCount={setCoveringCount} />}
 
-    {isMapTab(tab) && (() => {
+    {isMapTab(tab) && savedMaps === "" && !mapsFailed && <div className="empty">Загрузка…</div>}
+    {isMapTab(tab) && (savedMaps !== "" || mapsFailed) && (() => {
       const disabled = !canEditSuppliers;
       return <MapTable
         key={tab}
@@ -598,7 +610,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
           <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
         </> : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
-      /> : techReady !== techTab || (matTab && !coverIds) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
+      // БД.КОАКС is ordered by its cable's Ø from «Кабели и провода»: it waits for them, the rows do not jump a second later
+      /> : techReady !== techTab || (matTab && !coverIds) || (coaxTab && cables === null) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
         records={tech.records}
         wireDiameter={wireDiameter}
         canEdit={canEdit}
