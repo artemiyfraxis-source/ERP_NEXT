@@ -1188,7 +1188,7 @@ def with_coax_connectors(op: Mapping[str, Any], config: Mapping[str, Any]) -> Ma
         patched["coaxParts"] = {**parts, "ends": [
             {**_coax_strip_sizes(config, side), "side": "А" if side == "A" else "В", "pinType": str(_coax(config).get(f"side{side}", {}).get("pinType") or ""),
              "shield": coax_end_shield(_coax(config).get(f"side{side}") or {})}
-            for side in ("A", "B") if _coax(config).get(f"side{side}")]}
+            for side in ("A", "B") if _coax(config).get(f"side{side}") and op.get("side") in (side, "", None)]}
     return {**op, "fields": patched} if patched != dict(fields) else op
 
 
@@ -1855,6 +1855,10 @@ def _typed_operation(
         "times": _times(op),
         "fields": fields,
     }
+    label = str(op.get("label") or "").strip()
+    if label and operation["card"] is not None and operation["type"].startswith("coax"):
+        # FAKRA/HFM (генератор 25.10): у каждой операции своё название («Обжим центрального контакта (А)»), а не общее имя карты.
+        operation["card"]["name"] = label
     if op.get("type") == "insMark" and _kd_marks(_mark_items(op)):
         # Маркировка по КД: ход операции, дефекты, оборудование и время — по видам меток (etk_marking).
         apply_marking(operation, op, _mark_items(op), _part_quantity(config), warnings)

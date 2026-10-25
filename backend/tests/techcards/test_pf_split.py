@@ -562,3 +562,39 @@ def test_propose_answers_404_and_422(api):
     }).json()
     missing = api.post(f"/api/techcards/projects/{card['id']}/route/propose")
     assert missing.status_code == 422 and missing.json()["detail"] == "Электронная техкарта ещё не собрана"
+
+
+# 708К. КБ28 (owner 25.10): 2FA1 + straight FAKRA. The seal can't be slid over a stripped braid, so the cable is cut whole
+# («Нарезанный кабель») and each end is «put the parts on -> strip -> assemble» in its own block; the soldered pin of 2FA1
+# is the side's work too, not a «Провода со сростками» block between the sides.
+FAKRA_KB28 = [
+    RouteOp(1, "coaxCut", "CUT_COAX_auto", "Кабель", key="coaxCut"),
+    RouteOp(2, "coaxCutTut", "PRINT_MARK_TUBE", "Трубки", key="coaxCutTut"),
+    RouteOp(3, "coaxInsTut", "INS_TUT", "ТУТ", key="coaxInsTut"),
+    RouteOp(4, "coaxInsSleeve", "INS_SLEEVE_coax", "Надеть А", side="A", key="coaxInsSleeveA"),
+    RouteOp(5, "coaxStrip", "STRIP_COAX_auto", "Разделка А", side="A", key="coaxSideStripA"),
+    RouteOp(6, "coaxPin", "SDR_COAX_pin", "Пайка А", side="A", key="coaxPinA"),
+    RouteOp(7, "coaxHousing", "INS_housing_COAX", "Вставка А", side="A", key="coaxInsertA"),
+    RouteOp(8, "coaxShield", "PRS_SLEEVE_coax", "Гильза А", side="A", key="coaxShieldA"),
+    RouteOp(9, "coaxHeat", "HEAT_TTK_short", "ТТК А", side="A", key="coaxHeatTtkA"),
+    RouteOp(10, "coaxInsSleeve", "INS_SLEEVE_coax", "Надеть В", side="B", key="coaxInsSleeveB"),
+    RouteOp(11, "coaxStrip", "STRIP_COAX_auto", "Разделка В", side="B", key="coaxSideStripB"),
+    RouteOp(12, "coaxPinCrimp", "PRS_SLEEVE_coax", "Контакт В", side="B", key="coaxPinCrimpB"),
+    RouteOp(13, "coaxHousing", "INS_housing_COAX", "Вставка В", side="B", key="coaxInsertB"),
+    RouteOp(14, "coaxShield", "PRS_SLEEVE_coax", "Гильза В", side="B", key="coaxShieldB"),
+    RouteOp(15, "coaxHousing", "INS_housing_COAX", "Корпус В", side="B", key="coaxBodyB"),
+    RouteOp(16, "coaxCapScrew", "INS_CAP", "Крышка В", side="B", key="coaxSealCapB"),
+    RouteOp(17, "coaxHeat", "HEAT_TYT_short", "Усадка", key="coaxHeat"),
+    RouteOp(18, "coaxVswr", "CTRL_VSWR_coax", "КСВН", key="coaxVswr"),
+]
+
+
+def test_fakra_ends_are_built_in_their_own_blocks_and_the_cut_block_is_the_cut_only():
+    route = generator_split(FAKRA_KB28, "Кабельная сборка 2FA1 - FAKRA")
+
+    assert [(block.key, block.ops, block.name) for block in route.blocks] == [
+        ("wires", (1,), "Нарезанный кабель"), ("tubes", (2,), "Нарезанные трубки"),
+        ("A", (3, 4, 5, 6, 7, 8, 9), "Сторона А собрана"), ("B", (10, 11, 12, 13, 14, 15, 16), "Сторона В собрана"),
+        ("final", (17, 18), "Кабельная сборка 2FA1 - FAKRA"),
+    ]
+    assert sorted((edge.source, edge.target) for edge in route.edges) == [("A", "B"), ("B", "final"), ("tubes", "A"), ("wires", "A")]
