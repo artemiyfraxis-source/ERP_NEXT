@@ -34,7 +34,8 @@ def test_each_list_has_its_cleaned_set_of_columns():
         "Темп. до, °C", "Поставщик", "Ссылка на datasheet",
     )
     assert CABLE_COLUMNS["multi"] == (
-        "Марка", "Тип провода", "Стандарт", "Производители", "AWG", "Сечение, мм2", "Число жил", "Экран",
+        "Марка", "Тип провода", "Стандарт", "Производители", "AWG", "Сечение, мм2", "Число жил",
+        "Жила: проволок × диаметр, мм", "Экран",
         "Наружный диаметр, мм", "Напряжение, В", "Масса, г/м", "Темп. от, °C", "Темп. до, °C", "Поставщик",
         "Ссылка на datasheet",
     )
@@ -47,11 +48,11 @@ def test_each_list_has_its_cleaned_set_of_columns():
     )
     supply = {"Цена посл., ₽/м без НДС", "Закупок", "Дата цены", "Источник данных"}
     assert CABLE_DROPPED["wire"] == supply
-    assert CABLE_DROPPED["multi"] == supply | {"Цвета", "Жила: проволок × диаметр, мм", "Материал жилы"}
+    assert CABLE_DROPPED["multi"] == supply | {"Цвета"}  # the core columns stay (owner 25.10: 100 % / 97 % filled)
     assert CABLE_DROPPED["coax"] == supply | {"Цвета", "Напряжение, В"}
     # a removed column is still a cell an existing row takes a write to
     assert all(supply <= set(CABLE_WRITABLE[kind]) for kind in CABLE_WRITABLE)
-    assert {"Цвета", "Материал жилы"} <= set(CABLE_WRITABLE["multi"])
+    assert {"Цвета", "Жила: проволок × диаметр, мм"} <= set(CABLE_WRITABLE["multi"])
 
 
 def test_the_removed_columns_are_no_column_of_their_list():
@@ -111,7 +112,7 @@ def _seed_prov(client) -> dict[str, dict]:
         {"tab": "prov", "display_text": row["Марка"], "source_sheet": "БД.ПРОВ", "fields": row} for row in PROV_ROWS
     ]}).status_code == 200
     # the owner's own columns as on prod (registered before 25.10, when «+ Столбец» still took them): «Дата цены» in
-    # every list, «Материал жилы» of the многожильные (both removed), «Материал оболочки» and the coax bend radius (kept)
+    # every list (removed), «Материал жилы» of the многожильные, «Материал оболочки» and the coax bend radius (kept)
     _register_own({"wire": ("Дата цены", "Материал оболочки"), "multi": ("Дата цены", "Материал жилы"),
                    "coax": ("Дата цены", "Радиус изгиба неподвижно, мм")})
     return _prov_records(client)
@@ -143,7 +144,7 @@ def test_the_cable_lists_send_no_removed_column_but_the_rows_keep_the_values(ref
     assert not CABLE_DROPPED["wire"] & set(body["columns_by_kind"]["wire"])
     assert not CABLE_DROPPED["multi"] & set(body["columns_by_kind"]["multi"])
     assert body["custom_columns_by_kind"]["wire"] == ["Материал оболочки"]
-    assert body["custom_columns_by_kind"]["multi"] == []
+    assert body["custom_columns_by_kind"]["multi"] == ["Материал жилы"]
     assert "Материал оболочки" in body["columns_by_kind"]["wire"]
     assert body["removed_columns_by_kind"]["wire"] == list(CABLE_WRITABLE["wire"][len(CABLE_COLUMNS["wire"]):])
     # the coax cable list: «Стандарт», «Масса», the bend radius, «Частота до» stay; «Дата цены», «Источник данных» go

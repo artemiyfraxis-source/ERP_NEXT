@@ -52,7 +52,7 @@ describe("cable column order", () => {
       "Цена поставщика, ₽/м", "Дата цены", "Ссылка на datasheet", "Полка", "__reason", "__kind"].map(column);
     const multi = arrangeCableColumns("multi", all, (key) => key === "Полка");
     expect(keys(multi)).toEqual([
-      "cable", "Тип провода", "Стандарт", "Материал изоляции жилы", "Экран", "Материал экрана", "Полка", "Поставщик", "Цена поставщика, ₽/м",
+      "cable", "Тип провода", "Стандарт", "Материал жилы", "Материал изоляции жилы", "Экран", "Материал экрана", "Полка", "Поставщик", "Цена поставщика, ₽/м",
       "Ссылка на datasheet",
     ]);
     expect(multi.every((item) => !item.hidden)).toBe(true);
@@ -66,12 +66,14 @@ describe("cable column order", () => {
       "strands", "core", "Материал жилы", "Материал оболочки", "outer", "voltage", "temp", "Масса, г/м", "Поставщик", "Артикул поставщика",
       "Цена поставщика, ₽/м", "Ссылка", "Ссылка на datasheet"]);
     expect([...CABLE_DEFAULT_SHOWN.multi]).toEqual(["cable", "Тип провода", "Стандарт", "Производители", "Число жил", "Сечение, мм2", "AWG",
-      "Материал изоляции жилы", "Экран", "Материал экрана", "Материал оболочки", "Наружный диаметр, мм", "Напряжение, В", "Масса, г/м",
+      "Жила: проволок × диаметр, мм", "Материал жилы", "Материал изоляции жилы", "Экран", "Материал экрана", "Материал оболочки", "Наружный диаметр, мм", "Напряжение, В", "Масса, г/м",
       "Темп. от, °C", "Темп. до, °C", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Ссылка", "Ссылка на datasheet"]);
     expect(CABLE_DEFAULT_SHOWN.coax.has("Частота до, ГГц") && CABLE_DEFAULT_SHOWN.coax.has("D3") && CABLE_DEFAULT_SHOWN.coax.has("Стандарт")).toBe(true);
     for (const gone of ["__op", "__fc", "__span", "__range", "__card", "__kind", "__reason", "Напряжение, В", "Цвета", "Дата цены"]) {
       expect(CABLE_DEFAULT_SHOWN.coax.has(gone)).toBe(false);
     }
-    expect(CABLE_DEFAULT_SHOWN.multi.has("Материал жилы") || CABLE_DEFAULT_SHOWN.multi.has("Цвета")).toBe(false);
+    expect(CABLE_DEFAULT_SHOWN.multi.has("Цвета")).toBe(false);
+    // the core construction of a multicore cable stays (owner 25.10: 100 % / 97 % filled)
+    expect(CABLE_DEFAULT_SHOWN.multi.has("Материал жилы") && CABLE_DEFAULT_SHOWN.multi.has("Жила: проволок × диаметр, мм")).toBe(true);
   });
 });

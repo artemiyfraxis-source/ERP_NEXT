@@ -491,8 +491,8 @@ CABLE_MAX_GHZ_FIELD = "Частота до, ГГц"
 # column): nothing stays hidden — a column is shown or removed. Every list loses the service and stale supply columns
 # («Цена посл.», «Закупок», «Дата цены» — the price tooltip «Цена на <дата>» still reads it — and «Источник данных»);
 # the coax cables also «Цвета» and «Напряжение» (one frequency «Частота до» instead), the многожильные «Цвета» (the
-# jacket colour, 31 %) and the two core columns outside their «Только нужные» («Материал жилы», «Жила: проволок ×
-# диаметр»). «Стандарт» stays everywhere it was (the passport prints it). A removed column is no column of the list:
+# jacket colour, 31 %); their core columns «Жила: проволок × диаметр» (97 %) and «Материал жилы» (100 %) stay.
+# «Стандарт» stays everywhere it was (the passport prints it). A removed column is no column of the list:
 # not in the table, «Колонки», the create form, the file of «Скачать для правки» or `columns_by_kind`. Its values stay
 # in the records, and the readers (harness catalogue, the kind rule, item names, the price tooltip) read them as before;
 # an existing row still takes a write to it (`CABLE_WRITABLE`: the row's card and editor, `import_rows`, the prod-write
@@ -501,7 +501,7 @@ _SUPPLY_DROPPED = ("Цена посл., ₽/м без НДС", "Закупок",
 _PROV_DROPPED = {
     "coax": ("Цвета", "Напряжение, В", *_SUPPLY_DROPPED),
     "wire": _SUPPLY_DROPPED,
-    "multi": ("Цвета", "Жила: проволок × диаметр, мм", "Материал жилы", *_SUPPLY_DROPPED),
+    "multi": ("Цвета", *_SUPPLY_DROPPED),
 }
 CABLE_DROPPED: dict[str, frozenset[str]] = {kind: frozenset(names) for kind, names in _PROV_DROPPED.items()}
 CABLE_COLUMNS: dict[str, tuple[str, ...]] = {
