@@ -176,10 +176,21 @@ export interface Saved {
 }
 
 const MIN_WIDTH = 40;
+const EDIT_HINT = "Щелчок по ячейке и ввод — правка · Enter — записать · Esc — отмена · Tab — дальше · Ctrl+V — вставить столбец · Ctrl+D — заполнить вниз";
+/** A header the blocks level: a data column whose width the user did not drag, the screen did not set, and that does not
+    take the spare width (`grow`). */
+const levelFree = (head: HTMLTableCellElement) => Boolean(head.dataset.col)
+  && !(head.classList.contains("dt-w") || head.classList.contains("grow") || (head.style.width && head.dataset.level === undefined));
+/** Blocks: the widest natural width a column is measured at (a longer text wraps), the narrowest a text column gets. */
+const LEVEL_MAX = 360;
+const LEVEL_MIN = 72;
+const LEVEL_FACTOR = 0.55;
 const MAX_WIDTH = 900;
 const WIDTH_STEP = 16;
 /** Поля ячейки слева и справа (`.data-table th, td { padding: 6px 12px }`): ширина колонки = текст + они. */
 const CELL_PAD = 24;
+/** The row-select column (`.data-table table.selectable … td:first-child { width: 36px }`). */
+const SELECT_WIDTH = 36;
 const clampWidth = (value: number) => Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value)));
 
 /** Колонки в порядке пользователя; новые колонки (их нет в сохранённом порядке) — после соседки слева по описанию. */
@@ -680,27 +691,100 @@ export function DataTable<T>({
   const blockTotals = new Map<string, number>();
   if (blocks && grouping) for (const row of filtered) blockTotals.set(grouping(row), (blockTotals.get(grouping(row)) ?? 0) + 1);
   // The blocks' columns go level (one list, one set of widths): each column takes the widest of its natural widths in
-  // all the blocks. Measured after the rows change, not on every render (a cell click, the active cell).
-  const levelSig = blocks ? [groups.map(([name, groupRows]) => `${name}:${groupRows.length}`).join("|"), visible.map((column) => column.key).join(","),
-    JSON.stringify(widths), query, preset, JSON.stringify(filters), JSON.stringify(sort), limit].join("#") : "";
+  // all the blocks. Measured after the rows or the columns change, not on every render (a cell click, the active cell).
+  // Not on a search, a chip or a sort: the columns keep their widths while the user types (and a long list is not
+  // measured again on every key).
+  const levelSig = blocks ? [visible.map((column) => column.key).join(","), JSON.stringify(widths), shown.length > 0].join("#") : "";
+  /** Blocks fit the page width with no scroll box of their own (owner 25.10.2026: «почему пролистывание есть — это
+      неудобно»): every column takes the widest of its natural widths in all the blocks (the blocks go level); when the
+      columns are wider than the list, the text columns narrow in proportion and wrap, numbers keep their width. The header
+      row sticks under the list's toolbar while the page scrolls. */
+  const levelled = useRef<{ widths: Map<string, number>; round: number; room: number }>({ widths: new Map(), round: 0, room: 0 });
   function levelBlocks() {
     const root = rootRef.current;
     // a hidden list (a series opened over it) has no widths to measure: it is levelled when it shows again
     if (!blocks || !root || !root.getClientRects().length) return;
-    const all = [...root.querySelectorAll<HTMLTableCellElement>(":scope > .table-wrap > table > thead > tr > th[data-col]")];
-    for (const head of all) if (head.dataset.level !== undefined) { head.style.width = ""; delete head.dataset.level; }
-    // a width the user dragged or the screen set, and the column that takes the spare width, stay as they are
-    const heads = all.filter((head) => !(head.classList.contains("dt-w") || head.classList.contains("grow") || head.style.width));
-    const widest = new Map<string, number>();
-    for (const head of heads) widest.set(head.dataset.col!, Math.max(widest.get(head.dataset.col!) ?? 0, head.getBoundingClientRect().width));
-    for (const head of heads) {
-      const width = widest.get(head.dataset.col!) ?? 0;
-      if (width > 0) { head.style.width = `${Math.ceil(width)}px`; head.dataset.level = ""; }
+    const bar = root.querySelector<HTMLElement>(":scope > .table-toolbar");
+    const barStyle = bar ? window.getComputedStyle(bar) : null;
+    root.style.setProperty("--dt-head-top", bar && barStyle?.position === "sticky" ? `${(parseFloat(barStyle.top) || 0) + bar.offsetHeight}px` : "0px");
+    const tables = [...root.querySelectorAll<HTMLTableElement>(":scope > .table-wrap > table")];
+    const headsOf = (table: HTMLTableElement) => [...table.querySelectorAll<HTMLTableCellElement>(":scope > thead > tr > th")];
+    for (const table of tables) {
+      table.style.width = "";
+      for (const head of headsOf(table)) if (head.dataset.level !== undefined) { head.style.width = ""; delete head.dataset.level; }
     }
+    root.classList.add("dt-measuring");
+    const natural = new Map<string, number>();
+    const numeric = new Set<string>();
+    const fixed: number[] = [];
+    for (const table of tables) {
+      let taken = 0;
+      for (const head of headsOf(table)) {
+        const width = head.getBoundingClientRect().width;
+        if (levelFree(head)) {
+          natural.set(head.dataset.col!, Math.max(natural.get(head.dataset.col!) ?? 0, Math.min(width, LEVEL_MAX)));
+          if (head.classList.contains("num")) numeric.add(head.dataset.col!);
+        }
+        else if (!head.classList.contains("dt-fill")) taken += width;
+      }
+      fixed.push(taken);
+    }
+    root.classList.remove("dt-measuring");
+    let factor = 1;
+    tables.forEach((table, index) => {
+      const room = (table.parentElement?.clientWidth ?? 0) - fixed[index];
+      let numbers = 0;
+      let texts = 0;
+      for (const head of headsOf(table)) if (levelFree(head)) {
+        if (head.classList.contains("num")) numbers += natural.get(head.dataset.col!) ?? 0; else texts += natural.get(head.dataset.col!) ?? 0;
+      }
+      if (texts > 0 && numbers + texts > room) factor = Math.min(factor, Math.max(0, room - numbers) / texts);
+    });
+    // Text squeezed below about half its width reads worse than a list that scrolls sideways (coax: 19 columns on 16").
+    factor = Math.max(factor, LEVEL_FACTOR);
+    const next = new Map<string, number>();
+    for (const [key, width] of natural) {
+      if (width > 0) next.set(key, Math.floor(numeric.has(key) ? width : Math.max(Math.min(width, LEVEL_MIN), width * factor)));
+    }
+    levelled.current = { widths: next, round: levelled.current.round + 1, room: tables[0]?.parentElement?.clientWidth ?? 0 };
+    tables.forEach(applyLevel);
+  }
+  /** The levelled widths onto a table — all of them after a measure, or a block the search has just shown. */
+  function applyLevel(table: HTMLTableElement) {
+    const { widths: set, round } = levelled.current;
+    let sum = 0;
+    for (const head of table.querySelectorAll<HTMLTableCellElement>(":scope > thead > tr > th")) {
+      const width = head.dataset.col ? set.get(head.dataset.col) : undefined;
+      if (width && levelFree(head)) {
+        head.style.width = `${width}px`;
+        head.dataset.level = "";
+        sum += width;
+        continue;
+      }
+      if (head.dataset.level !== undefined) { head.style.width = ""; delete head.dataset.level; }
+      // the other columns from what is set on them, not from the layout (a read here would lay the page out once more)
+      if (head.classList.contains("dt-fill")) continue;
+      const dragged = head.dataset.col ? widths[head.dataset.col] : undefined;
+      sum += dragged ? dragged + CELL_PAD : head.dataset.col ? parseFloat(head.style.width) || 0 : SELECT_WIDTH;
+    }
+    // Only a list that cannot fit even so is as wide as its columns and scrolls sideways, in its own box.
+    const wrap = table.parentElement;
+    const wide = sum > levelled.current.room + 1;
+    table.style.width = wide ? `${Math.ceil(sum)}px` : "";
+    wrap?.classList.toggle("dt-scroll-x", wide);
+    table.dataset.levelRound = String(round);
   }
   const levelRef = useRef(levelBlocks);
   levelRef.current = levelBlocks;
   useLayoutEffect(() => { levelBlocks(); }, [blocks, levelSig, rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A block the search or a chip has just shown takes the widths the others have (no new measure).
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!blocks || !root || !levelled.current.widths.size) return;
+    for (const table of root.querySelectorAll<HTMLTableElement>(":scope > .table-wrap > table")) {
+      if (table.dataset.levelRound !== String(levelled.current.round)) applyLevel(table);
+    }
+  });
   // A new width of the list (the window, the list shown again) changes the natural widths: level once more.
   useEffect(() => {
     const root = rootRef.current;
@@ -1169,6 +1253,7 @@ export function DataTable<T>({
         )}
         <div className="toolbar-end">
           {toolbar}
+          {blocks && hasEditing && <span className="dt-help" tabIndex={0} role="note" aria-label={`Правка в таблице: ${EDIT_HINT}`} data-hint={EDIT_HINT}>?</span>}
           <button type="button" className="secondary small" aria-expanded={choosingColumns} onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
           {exportName && <button type="button" className="secondary small" onClick={download}>Excel</button>}
         </div>
@@ -1333,11 +1418,12 @@ export function DataTable<T>({
         </table>
         {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
       </div>}
-      {!compact && (
+      {/* Blocks: the counts are in the block headings and the keys under the toolbar's «?» — only an edit's result shows here. */}
+      {!compact && (!blocks || note) && (
         <div className="table-footer">
-          <span>Показано {shown.length} из {filtered.length}{filtered.length !== rows.length ? ` (всего ${rows.length})` : ""}</span>
+          {!blocks && <span>Показано {shown.length} из {filtered.length}{filtered.length !== rows.length ? ` (всего ${rows.length})` : ""}</span>}
           {note && <span className={`dt-edit-note tone-${note.tone}`} role="status">{note.text}</span>}
-          {!note && hasEditing && <span className="dt-edit-hint">Щелчок по ячейке и ввод — правка · Enter — записать · Esc — отмена · Tab — дальше · Ctrl+V — вставить столбец · Ctrl+D — заполнить вниз</span>}
+          {!note && !blocks && hasEditing && <span className="dt-edit-hint">{EDIT_HINT}</span>}
         </div>
       )}
     </section>

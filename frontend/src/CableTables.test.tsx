@@ -861,7 +861,9 @@ describe("«Монтажные провода» and the other cable lists across
     const data = { columns: COLUMNS, counts: { coax: 0, wire: 0, multi: many.length }, rows: many, gauges: [] } as unknown as Parameters<typeof CableTable>[0]["data"];
     const { unmount } = render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
     expect(blockRows()).toHaveLength(380);
-    expect(screen.getByText("Показано 380 из 380")).toBeInTheDocument();
+    // the counts are in the block headings (25.10: no «Показано N из M» under the blocks)
+    expect(blockLines().map((line) => line.split(" · ")[1])).toEqual(["190", "190"]);
+    expect(screen.queryByText(/^Показано/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Показать ещё" })).toBeNull();
     const sections = () => {
       const result: Array<{ name: string; diameters: string[] }> = [];

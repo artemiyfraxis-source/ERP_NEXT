@@ -1574,6 +1574,34 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table.dt-blocks .dt-block-fold { all: unset; cursor: pointer; }
 .data-table.dt-blocks .dt-block-fold:focus-visible { outline: var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
 .data-table.dt-blocks .dt-block-fold > span[aria-hidden] { display: inline-block; width: 14px; color: var(--muted-foreground); }
+/* No scroll box of its own: a block grows to its height and the page scrolls; its header sticks under the toolbar
+   (`--dt-head-top`, DataTable). The columns fit the width (DataTable levels them), text wraps; only a list that cannot
+   fit scrolls sideways (`dt-scroll-x`). `overflow: clip` keeps the rounded corners without a scroll container. */
+.data-table.dt-blocks { grid-template-columns: minmax(0, 1fr); }
+.data-table.dt-blocks > .table-wrap { max-height: none; overflow: clip; }
+.data-table.dt-blocks > .table-wrap.dt-scroll-x { overflow-x: auto; }
+.data-table.dt-blocks table.grid.wide { width: 100%; min-width: 0; }
+.data-table.dt-blocks thead th { top: var(--dt-head-top, 0px); }
+.data-table.dt-blocks > .table-wrap td:not(.num) { white-space: normal; }
+.data-table.dt-blocks table.grid.wide td.fit:not(.text) :where(*) { white-space: normal; }
+.data-table.dt-blocks table.grid.wide th.fit .sort-head { white-space: normal; text-align: inherit; }
+/* A clipped text («…», the whole on hover) takes the cell's width, not its own: it never widens the column. */
+.data-table.dt-blocks .cable-clip { width: 0; min-width: 100%; max-width: none; }
+/* Measuring the natural widths for a moment: every table at its content width, one line per cell. */
+.data-table.dt-blocks.dt-measuring table.grid.wide { width: max-content; }
+.data-table.dt-blocks.dt-measuring table.grid.wide .fit { width: auto; }
+/* the first rows of a block give its natural widths: a list of a thousand rows is not laid out twice */
+.data-table.dt-blocks.dt-measuring > .table-wrap > table > tbody > tr:nth-child(n+21) { display: none; }
+.data-table.dt-blocks.dt-measuring > .table-wrap td, .data-table.dt-blocks.dt-measuring > .table-wrap td :where(*) { white-space: nowrap; }
+/* a header wraps at a short width, so a number column is as wide as its numbers, not its caption */
+.data-table.dt-blocks.dt-measuring th .sort-head { max-width: 112px; white-space: normal; }
+.data-table.dt-blocks.dt-measuring th.num .sort-head { max-width: 64px; }
+.data-table.dt-blocks.dt-measuring .cable-clip { width: auto; min-width: 0; max-width: 260px; }
+/* The keys of the in-cell editing: a «?» at the toolbar, the hint on hover or focus. */
+.dt-help { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; cursor: help; }
+.dt-help:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.dt-help:hover::after, .dt-help:focus::after { content: attr(data-hint); position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: max-content; max-width: 360px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); font-size: 12px; font-weight: 400; line-height: 1.45; white-space: normal; box-shadow: 0 6px 16px rgba(0, 26, 24, .12); }
+@media (pointer: coarse) { .dt-help { width: 40px; height: 40px; } }
 /* Dense, spreadsheet-like reading (the owner is used to Google Sheets): compact rows, zebra, dark text, the header
    pinned while the rows scroll inside the card, columns as wide as their content, the first column as the row key. */
 .data-table .table-wrap { width: auto; max-height: calc(100dvh - 190px); overflow: auto; }

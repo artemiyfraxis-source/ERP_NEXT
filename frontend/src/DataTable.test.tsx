@@ -661,7 +661,7 @@ describe("groups as blocks (owner 25.10.2026: «визуал БД один», к
     rowKey={(row) => row.id} groupBy={(row) => row.series} blocks storageKey="blocks-test" exportName="Провода"
     presets={[{ label: "Без производителя", test: (row) => !row.maker }]} {...extra} />);
 
-  it("draws a heading with the count and its own table per group; one toolbar, one chip row, one footer", () => {
+  it("draws a heading with the count and its own table per group; one toolbar, one chip row, no footer", () => {
     show();
     expect(headings()).toEqual(["МГТФ 2", "НВ-4 2"]);
     expect(tables().map((table) => table.getAttribute("aria-label"))).toEqual(["МГТФ", "НВ-4"]);
@@ -671,7 +671,15 @@ describe("groups as blocks (owner 25.10.2026: «визуал БД один», к
     expect(screen.getAllByRole("button", { name: "Колонки" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Excel" })).toHaveLength(1);
     expect(screen.getAllByRole("group", { name: "Быстрый отбор" })).toHaveLength(1);
-    expect(screen.getByText("Показано 4 из 4")).toBeInTheDocument();
+    // the counts are in the headings; the keys of the in-cell editing — the toolbar's «?» (owner 25.10.2026)
+    expect(screen.queryByText(/^Показано/)).toBeNull();
+    expect(screen.queryByRole("note")).toBeNull(); // nothing to edit in this list
+  });
+
+  it("puts the editing keys under one «?» at the toolbar, not under every block", () => {
+    show({ columns: partColumns(async () => undefined) });
+    expect(screen.getAllByRole("note", { name: /^Правка в таблице: Щелчок по ячейке/ })).toHaveLength(1);
+    expect(screen.queryByText(/Ctrl\+D — заполнить вниз/)).toBeNull();
   });
 
   it("hides a block the search or a chip leaves empty; the counts follow", () => {
