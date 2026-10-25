@@ -54,7 +54,9 @@ export const end = (idx: number, unit: number, side: "A" | "B"): WireEnd => ({ i
 
 /** Технолог набирает жгут: разъёмы (терминал подбирается сам), кабели с длинами, контакты, сростки и хвосты. */
 export function harness(data: GenData): GenState {
+  // Оплётку XP-3 (и, с ней, жгутовую термоусадку) засев теперь включает сам; эти сценарии собирают их руками (fullHarness) — до этого их нет.
   let S = complexByHand(initState(data));
+  S = { ...S, wrap: { ...S.wrap, enabled: false, slots: S.wrap.slots.map((slot) => ({ ...slot, mat: "" })) }, hs: { ...S.hs, enabled: false } };
   // Сторона А: «5», I3, C, A6; сторона В: SCB01X3, SCB02X3.
   S = addEndpoint(addEndpoint(addEndpoint(addEndpoint(S, "A"), "A"), "A"), "B");
   const conn: Array<[string, string, string]> = [
