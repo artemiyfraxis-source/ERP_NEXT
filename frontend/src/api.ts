@@ -1768,11 +1768,14 @@ export interface CoveringRow {
   maker: string;
   series: string;
   series_family: string;
+  kind?: string;
   notes: string[];
 }
 export interface CoveringsResult {
   counts: Record<CoveringGroup, number>;
   titles: Record<CoveringGroup, string>;
+  /** Подгруппы ТУТ/ТТК по виду, в порядке экрана (только непустые). */
+  kinds?: Partial<Record<CoveringGroup, Array<{ id: string; title: string }>>>;
   rows: CoveringRow[];
 }
 
