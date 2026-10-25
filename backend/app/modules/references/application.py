@@ -22,7 +22,10 @@ from .cables import (
     DIAMETERS, CableKind, CableRow, auto_kind, cable_mark, cable_rows, clean_diameter, connectors_by_cable, diameter_index,
     NOT_HOOKUP_REASON, hookup_series, resolve_kind,
 )
-from .domain import CABLE_COLUMNS, CABLE_KIND_VALUES, cable_fields, custom_column_prefix
+from .domain import (
+    CABLE_COLUMNS, CABLE_DROPPED, CABLE_KIND_VALUES, CABLE_WRITABLE, COAX_DROPPED_COLUMNS, cable_fields, cable_list_own,
+    custom_column_prefix,
+)
 from .domain import WIRE_COLOR_FIELD, WIRE_ROW_OWN, check_wire_color, wire_color_rows, wire_identity
 from .domain import BASE_COLUMNS, CUSTOM_COLUMN_TABS, EDITABLE_TABS, MAX_COLUMN_NAME, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
 from .domain import StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent
@@ -294,9 +297,10 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     own_columns: list[str] | None = None  # the owner's columns: a row that came from a mirror reload may lack one
     for edit in edits:
         if edit.field not in record.fields and own_columns is None:
-            # БД.ПРОВ: the columns of the row's own list (another list's column is no cell of this row)
+            # БД.ПРОВ: the columns of the row's own list (another list's column is no cell of this row) and the ones
+            # removed from it 25.10.2026 (`CABLE_WRITABLE`: an existing row still takes them — provenance, journals)
             own_columns = [*custom_columns(record.tab, uow, record.cable_kind),
-                           *(CABLE_COLUMNS[record.cable_kind] if record.tab == TechOperationTab.WIRE else ())]
+                           *(CABLE_WRITABLE[record.cable_kind] if record.tab == TechOperationTab.WIRE else ())]
         known = (edit.field in record.fields or edit.field in stored or edit.field in (own_columns or ())
                  or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS)
                  or (record.tab == TechOperationTab.COAX and edit.field in _coax_card_columns()))
@@ -470,11 +474,18 @@ def _folded(name: str) -> str:
     return " ".join(str(name).casefold().split())
 
 
+def _dropped_columns(tab: TechOperationTab, cable_kind: str | None) -> frozenset[str]:
+    """The columns removed from a table (owner 25.10.2026): «+ Столбец» does not bring them back."""
+    if tab == TechOperationTab.WIRE and cable_kind in CABLE_DROPPED:
+        return CABLE_DROPPED[cable_kind]
+    return COAX_DROPPED_COLUMNS if tab == TechOperationTab.COAX else frozenset()
+
+
 def _taken_names(tab: TechOperationTab, records: Sequence[TechOperationRecord], uow: UnitOfWork,
                  cable_kind: str | None = None) -> set[str]:
     """Every name the tab (БД.ПРОВ: the cable list) already uses as a column or a schema value (folded), the owner's own
     columns included."""
-    base = CABLE_COLUMNS[cable_kind] if tab == TechOperationTab.WIRE else BASE_COLUMNS.get(tab, ())
+    base = CABLE_WRITABLE[cable_kind] if tab == TechOperationTab.WIRE else BASE_COLUMNS.get(tab, ())
     names = set(base) | set(schema_keys(tab.value)) | set(stored_schema_keys(tab.value))
     names |= {name for record in records for name in record.fields} | set(custom_columns(tab, uow, cable_kind))
     if tab == TechOperationTab.COAX:
@@ -514,6 +525,9 @@ def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
     _clean_cell(name)  # a formula is not a name
     with uow:
         kind, records = _column_records(command, uow)
+        if _folded(name) in {_folded(item) for item in _dropped_columns(command.tab, kind)}:
+            raise ReferenceValidationError(f"Столбец «{name}» убран из таблицы (владелец 25.10.2026) — его значения "
+                                           "остаются в записях и видны в карточке записи")
         if _folded(name) in _taken_names(command.tab, records, uow, kind):
             raise ReferenceValidationError(f"Столбец «{name}» уже есть в таблице")
         if not records:
@@ -744,8 +758,9 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
         if kind == CableKind.WIRE:
             _check_wire_row(fields, uow)
     else:
-        fields = _without_empty_cable_columns(
-            tab, {**{name: "" for name in custom_columns(tab, uow)}, **sync_schema_fields(tab.value, fields)})
+        # the owner's columns given empty — not those removed from the table (БД.КОАКС «Дата цены», 25.10.2026)
+        pad = [name for name in custom_columns(tab, uow) if name not in _dropped_columns(tab, None)]
+        fields = _without_empty_cable_columns(tab, {**{name: "" for name in pad}, **sync_schema_fields(tab.value, fields)})
     _check_terminal_card(tab, fields)
     if tab == TechOperationTab.OPERATION:
         _check_operation_code(None, fields, uow)
@@ -775,7 +790,8 @@ def _wire_fields(kind: CableKind, fields: Mapping[str, str], uow: UnitOfWork, *,
     """A БД.ПРОВ row's fields shaped to its list (`domain.cable_fields`): its columns are the list's and the owner's
     columns of the list. `pad_own` — the row gets the owner's columns of the list it lacks (empty), as a new record
     always did; `pad_all` — every column of the list (a loaded row, editable on screen in every cell)."""
-    sheet, own = CABLE_COLUMNS[kind.value], tuple(custom_columns(TechOperationTab.WIRE, uow, kind.value))
+    sheet = CABLE_COLUMNS[kind.value]
+    own = tuple(cable_list_own(kind.value, custom_columns(TechOperationTab.WIRE, uow, kind.value)))
     pad = (*sheet, *own) if pad_all else own if pad_own else ()
     return cable_fields((*sheet, *own), fields, pad)
 
@@ -927,9 +943,11 @@ class CableCatalog:
     usage: dict[UUID, int]  # gauge id → hook-up wires on it
     columns: list[str] = dc_field(default_factory=list)  # the owner's own БД.ПРОВ columns of every list, each once
     connectors: dict[str, list[TechOperationRecord]] = dc_field(default_factory=dict)  # cable key → БД.КОАКС rows
-    # cable list → its columns: the list's own (`CABLE_COLUMNS`), then the owner's columns of that list
+    # cable list → its columns: the list's own (`CABLE_COLUMNS`), then the owner's columns of that list; neither has
+    # the columns removed 25.10.2026 (`removed_by_kind` — shown and edited in the row's card only)
     columns_by_kind: dict[str, list[str]] = dc_field(default_factory=dict)
     custom_by_kind: dict[str, list[str]] = dc_field(default_factory=dict)  # cable list → the owner's columns of it
+    removed_by_kind: dict[str, list[str]] = dc_field(default_factory=dict)  # cable list → its removed columns
 
 
 def cable_catalog(uow: UnitOfWork) -> CableCatalog:
@@ -940,13 +958,18 @@ def cable_catalog(uow: UnitOfWork) -> CableCatalog:
         gauges = uow.cable_structure.gauges()
         hookups = {wire.mark_key: wire for wire in uow.cable_structure.hookups()}
         usage = uow.cable_structure.gauge_usage()
-        own_columns = custom_columns(TechOperationTab.WIRE, uow)
-        custom_by_kind = {kind: custom_columns(TechOperationTab.WIRE, uow, kind) for kind in CABLE_KIND_VALUES}
+        custom_by_kind = {kind: cable_list_own(kind, custom_columns(TechOperationTab.WIRE, uow, kind))
+                          for kind in CABLE_KIND_VALUES}
+        kept = {name for names in custom_by_kind.values() for name in names}
+        own_columns = [name for name in custom_columns(TechOperationTab.WIRE, uow) if name in kept]
         connectors = connectors_by_cable(uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000))
     rows = sorted(cable_rows(wires, diameters, cards), key=lambda row: (row.key, row.cable))
     columns_by_kind = {kind: [*CABLE_COLUMNS[kind], *(name for name in own if name not in CABLE_COLUMNS[kind])]
                        for kind, own in custom_by_kind.items()}
-    return CableCatalog(rows, gauges, hookups, usage, own_columns, connectors, columns_by_kind, custom_by_kind)
+    removed_by_kind = {kind: [name for name in CABLE_WRITABLE[kind] if name in CABLE_DROPPED[kind]]
+                       for kind in CABLE_KIND_VALUES}
+    return CableCatalog(rows, gauges, hookups, usage, own_columns, connectors, columns_by_kind, custom_by_kind,
+                        removed_by_kind)
 
 
 # --- «Сечения AWG ↔ мм²» ---

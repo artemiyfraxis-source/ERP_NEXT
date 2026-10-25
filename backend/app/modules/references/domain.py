@@ -457,7 +457,7 @@ MAX_ROW_EDITS = 200
 _PROV_COLUMNS = (
     "Марка", "Цвет", "Цвета", "Тип провода", "Стандарт", "Производители",
     "AWG", "Сечение, мм2", "Число жил", "Жила: проволок × диаметр, мм", "Изоляция", "Экран", "Наружный диаметр, мм",
-    "Волновое сопротивление, Ом", "Напряжение, В", "Ток, А",
+    "Волновое сопротивление, Ом", "Частота до, ГГц", "Напряжение, В", "Ток, А",
     "Масса, г/м", "Темп. от, °C", "Темп. до, °C",
     "Поставщик", "Цена посл., ₽/м без НДС", "Закупок",
     "Ссылка на datasheet", "Источник данных", "Категория",
@@ -479,17 +479,56 @@ _PROV_COLUMNS = (
 # every list however sparse (owner 19.10.2026).
 _PROV_NEVER = {
     "coax": ("AWG", "Ток, А", "Категория", "Цвет", "Сечение, мм2", "Число жил", "Изоляция", "Экран"),
-    "wire": ("Волновое сопротивление, Ом", "Категория", "Цвета", "Экран", "Число жил", "Изоляция", "Ток, А"),
-    "multi": ("Ток, А", "Цвет", "Категория", "Изоляция", "Волновое сопротивление, Ом"),
+    "wire": ("Волновое сопротивление, Ом", "Категория", "Цвета", "Экран", "Число жил", "Изоляция", "Ток, А",
+             "Частота до, ГГц"),
+    "multi": ("Ток, А", "Цвет", "Категория", "Изоляция", "Волновое сопротивление, Ом", "Частота до, ГГц"),
 }
+# «Частота до, ГГц» of a coax cable (owner 25.10.2026: one frequency field, as at the connectors): the rated maximum
+# operating frequency; empty — the card's `max_operating_ghz` stands in (the table and the VSWR norm read the same,
+# `coax_vswr.cable_max_ghz`). Never the cut-off.
+CABLE_MAX_GHZ_FIELD = "Частота до, ГГц"
+# Removed 25.10.2026 (owner, at the «Колонки» of each list: «всё, что без галочки, удаляй, они не нужны уже», then per
+# column): nothing stays hidden — a column is shown or removed. Every list loses the service and stale supply columns
+# («Цена посл.», «Закупок», «Дата цены» — the price tooltip «Цена на <дата>» still reads it — and «Источник данных»);
+# the coax cables also «Цвета» and «Напряжение» (one frequency «Частота до» instead), the многожильные «Цвета» (the
+# jacket colour, 31 %); their core columns «Жила: проволок × диаметр» (97 %) and «Материал жилы» (100 %) stay.
+# «Стандарт» stays everywhere it was (the passport prints it). A removed column is no column of the list:
+# not in the table, «Колонки», the create form, the file of «Скачать для правки» or `columns_by_kind`. Its values stay
+# in the records, and the readers (harness catalogue, the kind rule, item names, the price tooltip) read them as before;
+# an existing row still takes a write to it (`CABLE_WRITABLE`: the row's card and editor, `import_rows`, the prod-write
+# scripts), a new row — only to «Источник данных» (`CABLE_NEW_ROW_EXTRA`: provenance, appended by loads and journals).
+_SUPPLY_DROPPED = ("Цена посл., ₽/м без НДС", "Закупок", "Дата цены", "Источник данных")
+_PROV_DROPPED = {
+    "coax": ("Цвета", "Напряжение, В", *_SUPPLY_DROPPED),
+    "wire": _SUPPLY_DROPPED,
+    "multi": ("Цвета", *_SUPPLY_DROPPED),
+}
+CABLE_DROPPED: dict[str, frozenset[str]] = {kind: frozenset(names) for kind, names in _PROV_DROPPED.items()}
 CABLE_COLUMNS: dict[str, tuple[str, ...]] = {
-    kind: tuple(name for name in _PROV_COLUMNS if name not in _PROV_NEVER[kind]) for kind in CABLE_KIND_VALUES
+    kind: tuple(name for name in _PROV_COLUMNS if name not in _PROV_NEVER[kind] and name not in CABLE_DROPPED[kind])
+    for kind in CABLE_KIND_VALUES
 }
+# What a row of the list takes a write to: its columns and the removed ones (an existing row — edit, load, file).
+CABLE_WRITABLE: dict[str, tuple[str, ...]] = {
+    kind: (*CABLE_COLUMNS[kind], *_PROV_DROPPED[kind]) for kind in CABLE_KIND_VALUES
+}
+CABLE_NEW_ROW_EXTRA = ("Источник данных",)  # a removed column a new row of a load may still fill (provenance)
+
+
+def cable_list_own(kind: str, own: Iterable[str]) -> list[str]:
+    """The owner's own columns of a cable list less the removed ones (`CABLE_DROPPED`)."""
+    return [name for name in own if name not in CABLE_DROPPED[kind]]
+
 
 # БД.КОАКС sheet columns that are no column of the table any more (owner 23.10.2026: «если что-то заполняется на 3 % —
 # это мусор для БД»): «L+», «L-», «Программа» (0 %), «Габариты» (3,5 %), «Материал корпуса» (2 %). Values stay in the
 # records; the ETK generator reads L+ / L− / program from its own fields (`lPlus`, `lMinus`, `program`) as before.
-COAX_DROPPED_COLUMNS = frozenset({"L+", "L-", "L−", "Программа", "Габариты", "Материал корпуса"})
+# 25.10.2026 (owner, «Колонки» of the table: «всё, что без галочки, удаляй»): «Пол», «Исполнение», «Полярность»,
+# «Монтаж», «Дата цены», «Примечание», «Источник данных» — the card of a connector still shows them, the quick filters
+# «Штекеры / Гнёзда / Угловые» read «Пол» / «Исполнение» (or the type) as before, «Цена» keeps «Цена на <дата>».
+COAX_DROPPED_COLUMNS = frozenset({"L+", "L-", "L−", "Программа", "Габариты", "Материал корпуса",
+                                  "Пол", "Исполнение", "Полярность", "Монтаж", "Дата цены", "Примечание",
+                                  "Источник данных"})
 
 
 # --- «Монтажные провода»: one row per colour (owner 20.10.2026: «имелось ввиду каждый цвет своя строка») ---

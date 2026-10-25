@@ -44,6 +44,7 @@ from app.modules.production.domain import ProductionStatus
 from app.modules.references.coax_vswr import (
     SOURCE_CUSTOMER,
     CustomerNormError,
+    cable_standard,
     components_of,
     customer_norm,
     customer_of,
@@ -104,13 +105,13 @@ def coax_config(document: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
 
 
 class CoaxRefs:
-    """The БД.КОАКС rows and cable cards, read at most once per request and only when an old ETK needs them."""
+    """The БД.КОАКС rows, cable cards and БД.ПРОВ rows, read at most once per request and only when an old ETK needs them."""
 
     def __init__(self, factory: Callable[[], Any] | None) -> None:
         self._factory = factory
-        self._loaded: tuple[Any, Any] | None = None
+        self._loaded: tuple[Any, Any, Any] | None = None
 
-    def get(self) -> tuple[Any, Any] | None:
+    def get(self) -> tuple[Any, Any, Any] | None:
         if self._loaded is None and self._factory is not None:
             self._loaded = load_coax_refs(self._factory)
         return self._loaded
@@ -124,8 +125,8 @@ def computed_norm(document: Mapping[str, Any] | None, refs: CoaxRefs, now: datet
     loaded = refs.get()
     if loaded is None:
         return undefined_norm(NO_REFS_REASON)
-    rows, cards = loaded
-    norm = enrich_coax_vswr_norm({"coax": coax}, rows, cards)["coax"].get("vswrNorm")
+    rows, cards, wires = loaded
+    norm = enrich_coax_vswr_norm({"coax": coax}, rows, cards, wires)["coax"].get("vswrNorm")
     if not isinstance(norm, Mapping):
         return undefined_norm(NOT_COAX_REASON)
     computed = f"рассчитана по справочникам на {now:%d.%m.%Y} — {OLD_ETK_REASON}"
@@ -537,12 +538,16 @@ def serial_passport(
     task = _task(uow_factory, task_id)
     serial, rows = _serial_measurements(uow_factory, task, position)
     document, etk, current = _task_etk(techcards_factory, task)
-    etk_side = (task_norm(document, current, etk["current_revision"], CoaxRefs(refs_factory), now) if etk["techcard_id"]
+    refs = CoaxRefs(refs_factory)
+    etk_side = (task_norm(document, current, etk["current_revision"], refs, now) if etk["techcard_id"]
                 else undefined_norm(NO_ETK_REASON))
     latest = rows[-1] if rows else None
     # Норма паспорта — та, по которой судили последний замер (снимок); замера ещё нет — норма из ЭТК задания.
     norm = latest.norm if latest is not None else etk_side
     cable = etk_side.get("cable") if isinstance(etk_side.get("cable"), Mapping) else {}
+    # «Стандарт» кабеля из «Коаксиальных кабелей» (владелец 25.10: «RG-316 (MIL-DTL-17/113)»); нет — None, печать «—»
+    loaded = refs.get() if cable.get("name") else None
+    standard = cable_standard(loaded[2], str(cable.get("name"))) if loaded is not None else ""
     checks: list[dict[str, Any]] = []
     if latest is not None:
         with uow_factory() as uow:
@@ -564,7 +569,7 @@ def serial_passport(
             "task_id": str(task.id), "task_number": task.number, "project": task.project, "item": task.item,
             "name": task.name or etk["product_name"], "serial_number": serial.serial_number if serial else None,
             "position": position, "status": serial.status.value if serial else None,
-            "cable": {"name": cable.get("name"), "loss_db_m": cable.get("lossDbM")},
+            "cable": {"name": cable.get("name"), "loss_db_m": cable.get("lossDbM"), "standard": standard or None},
             "length_m": etk_side.get("lengthM"), "ends": _ends_result(etk_side),
         },
         "etk": etk,

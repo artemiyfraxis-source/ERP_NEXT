@@ -1339,7 +1339,7 @@ export interface PassportEnd { side: string | null; article: string | null; vswr
 export interface CableAssemblyPassport {
   product: {
     task_number: string; project: string; item: string; name: string; serial_number: string | null; position: number;
-    cable: { name: string | null; loss_db_m: number | null }; length_m: number | null; ends: PassportEnd[];
+    cable: { name: string | null; loss_db_m: number | null; standard?: string | null }; length_m: number | null; ends: PassportEnd[];
   };
   etk: { techcard_id: string | null; item_index: string; product_name: string; revision: number | null };
   norm: VswrNorm & { basis: string };
@@ -1728,6 +1728,8 @@ export interface CablesResult {
   columns_by_kind?: Partial<Record<CableKind, string[]>>;
   /** Столбцы владельца в каждом списке («+ Столбец»), в конце `columns_by_kind[список]`. */
   custom_columns_by_kind?: Partial<Record<CableKind, string[]>>;
+  /** Столбцы, убранные из списка 25.10.2026: в таблице их нет, карточка строки их показывает и правит. */
+  removed_columns_by_kind?: Partial<Record<CableKind, string[]>>;
   counts: Record<CableKind, number>;
   rows: CableRow[];
   gauges?: WireGauge[];

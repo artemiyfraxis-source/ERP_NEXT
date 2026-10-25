@@ -114,7 +114,8 @@ export function buildCoaxPassportHtml(passport: CableAssemblyPassport): string {
     ["Задание", product.task_number],
     ["Проект", `${product.project}${product.item ? ` / ${product.item}` : ""}`],
     ["ЭТК и ревизия", etkText],
-    ["Кабель", product.cable.name ? `${product.cable.name}${product.cable.loss_db_m !== null ? `, затухание ${num(product.cable.loss_db_m)} дБ/м` : ""}` : ""],
+    // «RG-316 (MIL-DTL-17/113)» — стандарт кабеля из «Коаксиальных кабелей» (владелец 25.10); не заполнен — «—», не догадка.
+    ["Кабель", product.cable.name ? `${product.cable.name} (${product.cable.standard?.trim() || DASH})${product.cable.loss_db_m !== null ? `, затухание ${num(product.cable.loss_db_m)} дБ/м` : ""}` : ""],
     ["Длина, м", product.length_m !== null ? num(product.length_m, 3) : ""],
   ];
   const normRows: [string, string][] = [

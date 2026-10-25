@@ -5,7 +5,7 @@ import pytest
 
 from app.modules.references.cable_structure import card_from_seed
 from app.modules.references.coax_vswr import (
-    attenuation_curve, cable_card, connector_cells, loss_db_m, parse_vswr, vswr_norm,
+    attenuation_curve, cable_card, cable_max_ghz, cable_standard, connector_cells, loss_db_m, parse_vswr, vswr_norm,
 )
 
 
@@ -100,3 +100,20 @@ def test_disagreeing_rows_give_the_worst_and_a_family_card_is_not_the_cable():
     cards = [_card("RG-58")]
     assert cable_card(cards, "RG 58") is cards[0]
     assert cable_card(cards, "RG-58 A/U") is None
+
+
+def test_the_cable_frequency_is_its_cell_in_the_cable_list_else_the_card():
+    """Owner 25.10.2026: one «Частота до, ГГц» of the cable — the table shows it and the norm band reads the same."""
+    rows = [_row("SMA-C174P", "1,3", "18"), _row("SMA-C316F", "1,3", "18")]
+    wires = [{"Марка": "RG-316", "Частота до, ГГц": "2,5"}, {"Марка": "RG-58", "Частота до, ГГц": "1"}]
+    assert cable_max_ghz(wires, _card(max_ghz=3), "RG316") == 2.5  # the cell beats the card
+    assert cable_max_ghz([{"Марка": "RG-316", "Частота до, ГГц": ""}], _card(max_ghz=3), "RG-316") == 3.0
+    assert cable_max_ghz([], None, "RG-316") is None  # no cell, no card: open, never the cut-off
+    assert vswr_norm(ENDS, rows, _card(max_ghz=3), "RG-316", 1000, wires)["bandMhz"] == [1.0, 2500.0]
+    assert vswr_norm(ENDS, rows, _card(max_ghz=3), "RG-316", 1000)["bandMhz"] == [1.0, 3000.0]
+
+
+def test_the_passport_standard_is_the_cell_of_the_cable_row_or_nothing():
+    wires = [{"Марка": "RG-316", "Стандарт": "MIL-DTL-17/113"}, {"Марка": "RG-58", "Стандарт": ""}]
+    assert cable_standard(wires, "RG316") == "MIL-DTL-17/113"
+    assert cable_standard(wires, "RG-58") == "" and cable_standard(wires, "RG-174") == ""

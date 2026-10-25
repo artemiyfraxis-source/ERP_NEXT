@@ -196,7 +196,7 @@ def _sheet_columns(tab: TechOperationTab | None, records: Sequence[TechOperation
     richest = max(records, key=lambda item: sum(1 for key in item.fields if key not in keys))
     sheet = [key for key in richest.fields if key not in keys]
     if tab == TechOperationTab.COAX:  # D1–D3 are the cable's («Коаксиальные кабели»), not a connector column; the
-        # columns dropped 23.10.2026 (`COAX_DROPPED_COLUMNS`) neither — their values stay in the records
+        # columns dropped 23.10 and 25.10.2026 (`COAX_DROPPED_COLUMNS`) neither — their values stay in the records
         sheet = [key for key in sheet if not is_coax_cable_column(key) and key not in COAX_DROPPED_COLUMNS]
     if tab == TechOperationTab.EQUIPMENT:  # the fields ERP adds to the sheet's columns (code, tool, links)
         sheet += [key for key in EXTRA_KEYS if key not in sheet]
@@ -215,6 +215,8 @@ def tech_operations(
         records = uow.tech_operations.list(tab=tab, query=q, limit=limit)
         metadata = uow.tech_operations.metadata()
         own = custom_columns(tab, uow) if tab is not None else []
+    if tab == TechOperationTab.COAX:  # an own column removed from the table 25.10.2026 («Дата цены») is no column
+        own = [name for name in own if name not in COAX_DROPPED_COLUMNS]
     return {
         "metadata": None if metadata is None else {
             **metadata,
@@ -468,7 +470,8 @@ def cables(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
     """«Кабели и провода»: БД.ПРОВ rows in the list each stores — коаксиальные / монтажные / многожильные; each list has
-    its own columns (`columns_by_kind`: the list's, then the owner's of it; `custom_columns_by_kind` — the owner's).
+    its own columns (`columns_by_kind`: the list's, then the owner's of it; `custom_columns_by_kind` — the owner's;
+    `removed_columns_by_kind` — removed 25.10.2026: no column, only the row's card shows and edits them).
     `columns` / `custom_columns` — of all lists together. A coax cable is joined with the D1·D2·D3 row the generator uses for its name and
     its card and the БД.КОАКС connectors made for it (`cables.compatible_connectors`); D-table cables and cards without
     a БД.ПРОВ row are coax rows of their own. A монтажный wire carries its
@@ -477,6 +480,7 @@ def cables(
     catalog = cable_catalog(uow_factory())
     return {"columns": list(BASE_COLUMNS[TechOperationTab.WIRE]) + catalog.columns, "custom_columns": catalog.columns,
             "columns_by_kind": catalog.columns_by_kind, "custom_columns_by_kind": catalog.custom_by_kind,
+            "removed_columns_by_kind": catalog.removed_by_kind,
             "counts": cable_counts(catalog.rows),
             "rows": [_cable_json(row, catalog) for row in catalog.rows],
             "gauges": [_gauge_json(gauge, catalog.usage.get(gauge.id, 0)) for gauge in catalog.gauges]}

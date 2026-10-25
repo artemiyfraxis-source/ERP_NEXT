@@ -205,6 +205,32 @@ def test_old_etk_with_a_coax_config_gets_a_computed_norm_and_an_automatic_verdic
     assert passport["norm"]["basis"].endswith("рассчитана по справочникам на 22.09.2026 — ЭТК выпущена до нормы КСВН")
 
 
+class _CableRefs(_FakeRefs):
+    """БД.КОАКС rows and the cable's БД.ПРОВ row, each list by its tab."""
+
+    class _ByTab:
+        def list(self, *, tab, **_kwargs):
+            rows = ({"Марка": "RG316", "Стандарт": "MIL-DTL-17/113", "Частота до, ГГц": "3"},)                 if tab.value == "prov" else ROWS
+            return [type("Record", (), {"fields": row})() for row in rows]
+
+    tech_operations = _ByTab()
+
+
+def test_the_cable_frequency_and_standard_come_from_the_coax_cable_list(production_api):  # noqa: F811
+    """Owner 25.10.2026: «Частота до, ГГц» of the cable — the one the table shows — bounds the norm band; the passport
+    prints the cable's «Стандарт»."""
+    client, _ = production_api
+    try:
+        _card_, task, _instrument_ = _old_coax_setup(client)
+        app.state.references_uow_factory = lambda: _CableRefs()
+        listed = client.get(f"/api/production/vswr/tasks/{task['id']}").json()
+        passport = client.get(f"/api/production/vswr/tasks/{task['id']}/serials/1/passport").json()
+    finally:
+        _drop_refs()
+    assert listed["norm"]["band_mhz"] == [1.0, 3000.0]  # the cable's 3 GHz, below the connectors' 6
+    assert passport["product"]["cable"]["standard"] == "MIL-DTL-17/113"
+
+
 def test_old_etk_computed_norm_takes_the_control_mode_from_the_config(production_api):  # noqa: F811
     client, _ = production_api
     config = {"coax": {**COAX_CONFIG["coax"], "vswrControl": {"mode": "sample", "every": 2}}}
@@ -300,7 +326,9 @@ def test_passport_collects_the_product_etk_norm_measurement_instrument_and_inspe
     assert passport.status_code == 200, passport.text
     body = passport.json()
     assert body["product"]["serial_number"] == f"{task['number']}-0001"
-    assert body["product"]["cable"] == {"name": "RG-316", "loss_db_m": 1.2} and body["product"]["length_m"] == 0.5
+    # no «Стандарт» of the cable in «Коаксиальные кабели»: none — the print says «—»
+    assert body["product"]["cable"] == {"name": "RG-316", "loss_db_m": 1.2, "standard": None}
+    assert body["product"]["length_m"] == 0.5
     assert [(end["side"], end["article"], end["vswr"], end["max_ghz"]) for end in body["product"]["ends"]] == [
         ("A", "SMA-J-1", 1.2, 6.0), ("B", "SMA-P-2", 1.25, 6.0)]
     assert body["etk"]["techcard_id"] == str(card.id) and body["etk"]["revision"] == 1

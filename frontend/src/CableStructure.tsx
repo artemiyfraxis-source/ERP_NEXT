@@ -28,11 +28,15 @@ export const CABLE_KIND_LABELS: Record<CableKind, string> = {
 
 /** The columns of one list (owner 20.10.2026: «у каждого своя структура»): the list's own БД.ПРОВ columns and the ones the
     owner added to it — never another list's. A server without the per-list sets (an old answer) gives the shared ones. */
-export function kindColumns(data: CablesResult, kind: CableKind): { columns: string[]; own: string[] } {
+export function kindColumns(data: CablesResult, kind: CableKind): { columns: string[]; own: string[]; removed: string[] } {
   const own = data.custom_columns_by_kind?.[kind] ?? (data.columns_by_kind ? [] : data.custom_columns ?? []);
   const columns = data.columns_by_kind?.[kind] ?? data.columns;
-  return { columns: [...new Set([...columns, ...own])], own };
+  return { columns: [...new Set([...columns, ...own])], own, removed: data.removed_columns_by_kind?.[kind] ?? [] };
 }
+
+/** The cells the card and editor of an EXISTING row show: the list's columns, then those removed from the list
+    25.10.2026 (no table column; the row keeps the value and takes edits to it). A new row — the list's columns only. */
+export const cardColumns = (columns: string[], removed: string[]): string[] => [...columns, ...removed.filter((name) => !columns.includes(name))];
 
 /** What a move keeps, said in the confirmation of the move. */
 export const moveText = (name: string, kind: CableKind) =>
@@ -70,28 +74,6 @@ export function parseTempRange(text: string): { min: string; max: string } {
   const max = bound(high);
   if (min && max && Number(min.replace(",", ".")) > Number(max.replace(",", "."))) throw new Error("Температура «от» больше «до»");
   return { min, max };
-}
-
-const KIND_ORDER: CableKind[] = ["coax", "wire", "multi"];
-/** «Вкладка» of a БД.ПРОВ row as a cell — the choice of the row window's «Вкладка» (`kindSelect`): the row moves to that
-    list by the same server path, «по правилу» marks where the rule would put it. Hidden in «Колонки» by default. */
-export function kindColumn(canEdit: boolean, onSaved: (message: string) => Promise<void> | void): DataColumn<CableRow> {
-  return {
-    key: "__kind", title: "Вкладка", hidden: true, value: (row) => CABLE_KIND_LABELS[row.kind],
-    edit: canEdit ? {
-      enabled: (row) => Boolean(row.record),
-      value: (row) => row.kind,
-      options: (row) => KIND_ORDER.map((kind) => ({
-        value: kind, label: `${CABLE_KIND_LABELS[kind]}${kind === row.auto_kind && row.manual ? " (по правилу)" : ""}`,
-      })),
-      save: async (row, value) => {
-        const kind = value as CableKind;
-        if (kind !== row.kind && !window.confirm(moveText(row.cable, kind))) throw new Error("Перенос отменён");
-        try { await referencesApi.moveCable(row.record!.id, kind); } catch (reason) { throw cellFailure(reason); }
-        await onSaved(`«${row.cable}» перенесён во вкладку «${CABLE_KIND_LABELS[kind]}», заполненные значения сохранены`);
-      },
-    } : undefined,
-  };
 }
 
 export const spanText = (card: CoaxCard): string =>
@@ -293,7 +275,8 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
         onClick={(event) => event.stopPropagation()}>открыть</a>
       : clip(href);
   };
-  const { columns: kindCols, own } = kindColumns(data, "wire");
+  const { columns: kindCols, own, removed } = kindColumns(data, "wire");
+  const rowCols = cardColumns(kindCols, removed);
   // Every value of a parsed wire is written from its cell the way the wire's window writes it: the whole structure with
   // the old values (the server refuses it when the wire changed meanwhile). The size is a pick from «Сечения AWG ↔ мм²»,
   // the temperature is typed as «−60 … +200». A wire not parsed yet is set up in its window.
@@ -338,9 +321,9 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     // differ by it: a dot and a name; typed as text («кр») it goes by the palette, the picker is in the window.
     { key: "color", title: "Цвет", value: (row) => field(row, COLOR), render: (row) => <WireColor name={field(row, COLOR)} />,
       edit: canEdit ? fieldCellEdit<CableRow>(COLOR, (row) => row.record, true, oneColor) : undefined },
-    // The series is the group header (owner 16.10: «серию исключить») — kept in «Колонки», hidden.
+    // The series is also the group header (owner 16.10); shown again since 25.10.2026 («Серия» groups a mark's colours).
     {
-      key: "series", title: "Серия", hidden: true, value: (row) => row.hookup?.series ?? "", edit: hookupEdit("series"),
+      key: "series", title: "Серия", value: (row) => row.hookup?.series ?? "", edit: hookupEdit("series"),
       render: (row) => row.hookup ? row.hookup.series : <span className="tone-warn" title={row.hookup_problem || "Жила не выбрана из таблицы сечений"}>не разобран</span>,
     },
     { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "", edit: gaugeEdit("awg") },
@@ -360,18 +343,14 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldCellEdit<CableRow>(name, (row) => row.record),
       remove: own.includes(name) ? removeColumn?.(name) : undefined,
     })),
-    kindColumn(canEdit, onSaved),
-    { key: "__reason", title: "Почему здесь", computed: true, value: (row) => row.reason },
   ];
-  // Group order (core → jacket → outer Ø, owner 23.10.2026) and the list's «Только нужные»; a column the owner just
-  // added is shown, «Почему здесь» — while the list has rows moved by hand.
-  const anyManual = rows.some((row) => row.manual);
-  const columns = arrangeCableColumns("wire", base,
-    (key) => (own.includes(key) && !knownCableColumn(key)) || (key === "__reason" && anyManual));
+  // Group order (core → jacket → outer Ø, owner 23.10.2026) and the list's columns only (25.10.2026: nothing hidden;
+  // «Вкладка» / «Почему здесь» are the row window's «Вкладка», not columns); a column the owner just added is shown.
+  const columns = arrangeCableColumns("wire", base, (key) => own.includes(key) && !knownCableColumn(key));
   const detail = (row: CableRow) => canEdit
     ? <HookupEditor key={`${row.id}:${JSON.stringify(row.hookup ?? null)}:${JSON.stringify(row.record?.fields ?? {})}:${row.kind}`}
-      row={row} columns={kindCols} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} hookupOf={hookupOf} />
-    : <HookupCard row={row} gauge={gaugeOf(row)} columns={kindCols} />;
+      row={row} columns={rowCols} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} hookupOf={hookupOf} />
+    : <HookupCard row={row} gauge={gaugeOf(row)} columns={rowCols} />;
   const unparsed = rows.filter((row) => !row.hookup).length;
   return <>
     {adding && <div className="panel db-edit">
@@ -384,9 +363,9 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       columns={columns}
       rowKey={(row) => row.id}
       rowLabel={(row) => row.cable}
-      // New keys with the group order of 23.10 (see CableTables): an older layout or shared set does not hide it.
-      storageKey="db:cables:wire-structured:2310"
-      sharedKey="prov:wire-structured:2310"
+      // New keys with the columns of 25.10 (see CableTables): an older layout or shared set does not hide one of them.
+      storageKey="db:cables:wire-structured:2510"
+      sharedKey="prov:wire-structured:2510"
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
       groupSort

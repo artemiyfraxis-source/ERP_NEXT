@@ -15,7 +15,7 @@ import { CoveringsTable } from "./Coverings";
 import { PageWindow } from "./PageWindow";
 import { TerminalCard, type TerminalRow } from "./TerminalCard";
 import { NO_SERIES, makerOrder, seriesCaption, sortBySeries, terminalGroups } from "./terminalSeries";
-import { CoaxConnectors } from "./CoaxConnectors";
+import { COAX_CARD_ONLY, CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
 import { ReferenceRoundtrip } from "./ReferenceRoundtrip";
 import {
@@ -400,9 +400,10 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const coaxTab = techTab === "coax";
   const cableOf = (record: TechOperationRecord) => cableDia[cableKey(record.fields["Провод"] ?? record.fields.coaxWire ?? "")];
   // Edit form: the sheet's columns only (the server moves the schema values derived from them); on БД.КОАКС without
-  // the cable's Ø — they are edited in «Коаксиальные кабели».
-  const editValues = (record: TechOperationRecord) => Object.fromEntries(fieldColumns
-    .filter((key) => key in record.fields && !(coaxTab && CABLE_DIAMETERS.includes(key)))
+  // the cable's Ø — they are edited in «Коаксиальные кабели» — but with the cells removed from the table 25.10.2026
+  // the row has (пол, исполнение, примечание, источник…: no column, still the row's own and editable).
+  const editValues = (record: TechOperationRecord) => Object.fromEntries([...fieldColumns, ...(coaxTab ? COAX_CARD_ONLY : [])]
+    .filter((key, index, all) => all.indexOf(key) === index && key in record.fields && !(coaxTab && CABLE_DIAMETERS.includes(key)))
     .map((key) => [key, record.fields[key]]));
   // «Материалы» по назначению: столбцы, пустые во всей вкладке (у стяжек — «Размер до», «Коэф. усадки»…), скрыты по
   // умолчанию — они остаются в «Колонках».
