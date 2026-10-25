@@ -4605,6 +4605,8 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .coverings { display: grid; gap: 16px; }
 .cov-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .cov-title { margin: 0 0 8px; font-size: 16px; font-weight: 500; }
+.cov-kind { margin: 0 0 12px; }
+.cov-subtitle { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
 .cov-other { display: grid; gap: 8px; justify-items: start; }
 .cov-other > .cov-group { justify-self: stretch; }
 /* БД.ОБ master–detail: the list stays on the left, the machine card opens as a PageWindow. */
