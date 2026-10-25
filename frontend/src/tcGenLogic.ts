@@ -112,7 +112,30 @@ export type CableJacketShrink = { A?: boolean; B?: boolean; mat: string; len: st
  *  ТТК), `len` пуст — 25 мм. */
 export type JacketShrink = { on: boolean; mat: string; len: string };
 export type WrapKind = "tape" | "braid" | "under";
-export type WrapSlot = { mat: string; kind: WrapKind; len: string };
+/** Слой ленты/оплётки/рукава ствола. `fix` (владелец 25.10, 663К.1 КБ14, 708К.5): «точками» — `points` точек с шагом `step` мм
+ *  (изолента, 8 точек с шагом 50), «спиралью» — по участкам `segs` («40, 40, 140, 40, 40»); нет поля — сплошная намотка на `len`. */
+export type WrapFix = "spots" | "spiral";
+export type WrapSlot = { mat: string; kind: WrapKind; len: string; fix?: WrapFix; points?: string; step?: string; segs?: string };
+/** Сумма участков «40, 40, 140» → 260; пусто или не числа — 0. */
+export function wrapSegsTotal(segs?: string): number {
+  return wrapSegParts(segs).map(Number).reduce((sum, n) => sum + n, 0);
+}
+/** Участки по порядку: разделители — запятая, точка с запятой, пробел, «+», «/»; дробная часть — через точку («70.5»). */
+export function wrapSegParts(segs?: string): string[] {
+  return (segs || "").split(/[^\d.]+/).filter((x) => /\d/.test(x));
+}
+/** Как закрепляется лента: «фиксация 8 точек с шагом 50 мм» / «спиралью по участкам 40 + 40 + 140 мм»; сплошная намотка — "". */
+export function wrapFixText(slot: Pick<WrapSlot, "fix" | "points" | "step" | "segs">): string {
+  if (slot.fix === "spots") {
+    const n = (slot.points || "").trim(), step = (slot.step || "").trim();
+    return `фиксация ${n ? `${n} ${/^\d+$/.test(n) ? pluralRu(+n, "точка", "точки", "точек") : "точек"}` : "точками"}${step ? ` с шагом ${step} мм` : ""}`;
+  }
+  if (slot.fix === "spiral") {
+    const parts = wrapSegParts(slot.segs);
+    return parts.length ? `спиралью по участкам ${parts.join(" + ")} мм` : "спиралью";
+  }
+  return "";
+}
 export type CoaxSide = { art: string; name: string } | null;
 /** Способ сростка: опрессовка гильзой, пайка, ленточный обжим, ультразвуковая сварка (владелец 16.10). */
 export type SpliceMethod = "sleeve" | "solder" | "band" | "ultrasonic";
@@ -179,6 +202,8 @@ export type GenState = {
   /** Сростки и свободные концы, нарисованные вручную (tcGenSplices.ts); нет ключа — их нет. */
   splices?: Splice[];
   tails?: WireEnd[];
+  /** «Примечание технолога» (владелец 25.10): отступления от чертежа и чего нет в составе; в черновике и в снимке формы собранной карты. */
+  note?: string;
   /** Свои цвета жил, придуманные технологом («болотный» → #6b7a3a): название → hex для схемы, чертежа и ЭТК; нет ключа — их нет. */
   colorHex?: Record<string, string>;
   endpoints: Endpoint[];
@@ -328,7 +353,7 @@ export type OpSpec = {
   strip?: { a: boolean; lenA: string; b: boolean; lenB: string; coreA?: string; coreB?: string }; stripCount?: number;
   tutArt?: string; tutName?: string; tutCount?: number; tutSegs?: Array<{ len: string; count: number }>;
   harness?: boolean; units?: number; twistPairs?: number[][]; wrapKind?: "tape" | "braid"; under?: boolean; wrapArt?: string; wrapName?: string;
-  wrapLen?: string; marks?: Array<{ art: string; name: string; qty: number } | MarkSpec>;
+  wrapLen?: string; wrapFix?: string; marks?: Array<{ art: string; name: string; qty: number } | MarkSpec>;
   sealArt?: string; sealName?: string; sealQty?: string; sealPlaces?: number; tin?: boolean;
   /** Коакс, резка с разделкой на станке: модель станка (COAX_MACHINES) и разделываемые концы. */
   machine?: string; stripSides?: Side[];
@@ -1146,11 +1171,11 @@ export function makeGen(D: GenData, S: GenState) {
   }
   // ── Способ сростка и гильзы ──
   const splMethod_ = (): SpliceMethod => S.spl.method || "solder";
-  /** Гильзы состава для сростков: строки «Др»/«Терминал» с «гильз», «НШВ» или «sleeve» в названии. */
+  /** Гильзы состава для сростков: строки «Др»/«Терминал» с «гильз», «НШВ», «ГС 2,5» (КВТ ГС) или «sleeve» в названии. */
   function spliceSleeveComps_() {
     // «НШВИ»/«НКИ»/«РПИ»… — наконечники свободных концов: гильзой сростка они становятся, только когда сростки есть.
     const hasSplices = spliceSizes_().length > 0;
-    return comps().filter((c) => /^\s*(?:др|терминал)/i.test(c.type || "") && /гильз|ншв|sleeve/i.test(`${c.name || ""} ${c.art || ""}`)
+    return comps().filter((c) => /^\s*(?:др|терминал)/i.test(c.type || "") && /гильз|ншв|sleeve|(?:^|[^а-яёa-z])гс[\s-]*\d/i.test(`${c.name || ""} ${c.art || ""}`)
       && (hasSplices || !isLugComp_(c)));
   }
   /** Места выбора гильзы: сростки схемы С1…Сn по одному; сростки без точки на схеме (числом, ответвления) — одним местом. */
@@ -2448,12 +2473,14 @@ export function makeGen(D: GenData, S: GenState) {
       const slot = S.wrap.slots[slotIndex];
       const comp = S.wrap.enabled ? getCompById(slot.mat) : null;
       if (!comp) return null;
-      const len = (slot.len || "").trim();
       const kind = slot.kind === "braid" ? "braid" : "tape";
+      const fix = kind === "tape" ? wrapFixText(slot) : "";
+      const segTotal = kind === "tape" && slot.fix === "spiral" ? wrapSegsTotal(slot.segs) : 0;
+      const len = (slot.len || "").trim() || (segTotal ? String(segTotal) : "");
       return { type: "insWrap", opKey: "insWrap" + n, tmplHint: kind === "braid" ? "INS_BRAID" : "INS_WRAP", cat: "Монтаж", wrapKind: kind,
         under: slot.kind === "under",
-        label: `Монтаж ${kind === "braid" ? "оплётки" : "ленты"} — ${comp.art || comp.name}${len ? ", " + len + " мм" : ""}`,
-        wrapArt: comp.art || comp.name || "", wrapName: comp.name || comp.art || "", wrapLen: len };
+        label: `Монтаж ${kind === "braid" ? "оплётки" : "ленты"} — ${comp.art || comp.name}${len ? ", " + len + " мм" : ""}${fix ? ", " + fix : ""}`,
+        wrapArt: comp.art || comp.name || "", wrapName: comp.name || comp.art || "", wrapLen: len, ...(fix ? { wrapFix: fix } : {}) };
     };
     const wrapOps = (isComplex_() ? [0, 1, 2, 3] : [0]).map(mkWrap).filter((o): o is OpSpec => !!o);
     const braidOps = wrapOps.filter((o) => o.wrapKind === "braid");
@@ -3255,6 +3282,7 @@ export function makeGen(D: GenData, S: GenState) {
       }
       if (spec.type === "insWrap") {
         op.wrapArt = spec.wrapArt; op.wrapName = spec.wrapName; op.wrapLen = spec.wrapLen; op.wrapKind = spec.wrapKind;
+        if (spec.wrapFix) op.wrapFix = spec.wrapFix;
         if (spec.wrapCut) op.wrapCut = true;
       }
       if (spec.type === "insMark") op.marks = spec.marks;
