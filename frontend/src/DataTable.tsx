@@ -124,6 +124,8 @@ export interface DataTableProps<T> {
   toolbar?: ReactNode;
   /** Поиск сразу по всем записям на сервере (строки на экране — только страница): «Найти» или Enter в том же поле. */
   onSearch?: (query: string) => void;
+  /** Подпись кнопки `onSearch` (по умолчанию «Найти»): «Проверить артикул». */
+  searchButton?: string;
   /** Что ещё строки ищет поиск, кроме колонок: скрытые опознаватели записи (полное имя, артикул BAG, синонимы). */
   searchText?: (row: T) => CellValue[];
   searchLabel?: string;
@@ -371,6 +373,7 @@ export function DataTable<T>({
   pageSize = 200,
   toolbar,
   onSearch,
+  searchButton = "Найти",
   searchText,
   searchLabel,
   searchPlaceholder,
@@ -664,9 +667,10 @@ export function DataTable<T>({
   // all the blocks. Measured after the rows change, not on every render (a cell click, the active cell).
   const levelSig = blocks ? [groups.map(([name, groupRows]) => `${name}:${groupRows.length}`).join("|"), visible.map((column) => column.key).join(","),
     JSON.stringify(widths), query, preset, JSON.stringify(filters), JSON.stringify(sort), limit].join("#") : "";
-  useLayoutEffect(() => {
+  function levelBlocks() {
     const root = rootRef.current;
-    if (!blocks || !root) return;
+    // a hidden list (a series opened over it) has no widths to measure: it is levelled when it shows again
+    if (!blocks || !root || !root.getClientRects().length) return;
     const all = [...root.querySelectorAll<HTMLTableCellElement>(":scope > .table-wrap > table > thead > tr > th[data-col]")];
     for (const head of all) if (head.dataset.level !== undefined) { head.style.width = ""; delete head.dataset.level; }
     // a width the user dragged or the screen set, and the column that takes the spare width, stay as they are
@@ -677,7 +681,23 @@ export function DataTable<T>({
       const width = widest.get(head.dataset.col!) ?? 0;
       if (width > 0) { head.style.width = `${Math.ceil(width)}px`; head.dataset.level = ""; }
     }
-  }, [blocks, levelSig, rows]);
+  }
+  const levelRef = useRef(levelBlocks);
+  levelRef.current = levelBlocks;
+  useLayoutEffect(() => { levelBlocks(); }, [blocks, levelSig, rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A new width of the list (the window, the list shown again) changes the natural widths: level once more.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!blocks || !root || typeof ResizeObserver === "undefined") return;
+    let width = root.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (root.clientWidth === width) return;
+      width = root.clientWidth;
+      levelRef.current();
+    });
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [blocks]);
 
   // --- Cells edited in place ---
   const lines = groups.flatMap(([name, groupRows]) => collapsibleGroups && collapsed.has(name) ? [] : groupRows);
@@ -1123,7 +1143,7 @@ export function DataTable<T>({
       {!compact && <div className="filters table-toolbar">
         {!hideSearch && <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
           <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? searchHint(visible)} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
-          {onSearch && <button type="submit" className="secondary small">Найти</button>}
+          {onSearch && <button type="submit" className="secondary small">{searchButton}</button>}
         </form>}
         {filterColumns.length > 0 && (
           <button type="button" className={activeFilters.length ? "secondary small filter-toggle active" : "secondary small filter-toggle"} aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>

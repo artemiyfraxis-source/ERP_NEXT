@@ -2705,6 +2705,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .conn-warn { color: var(--tone-danger); }
 .conn-muted { color: var(--muted-foreground); font-size: 12px; }
 .conn-cats { margin: 0; }
+/* «Разъёмы» таблицей (25.10.2026): маленькая модель серии у названия, строка не выше обычной. */
+.conn-row-title { display: inline-flex; align-items: center; gap: 8px; }
+.conn-row-pic { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 22px; flex: none; }
+.conn-row-pic svg { width: 40px; height: 22px; }
 .conn-sections { display: grid; gap: 14px; }
 .conn-section h3 { margin: 0 0 6px; font-size: 14px; }
 .conn-section h3 .muted { font-weight: 400; }

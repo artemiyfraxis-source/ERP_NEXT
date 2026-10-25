@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CrimpCell } from "./CrimpCell";
 import { cellFailure } from "./CustomColumn";
 import { DataTable, type DataColumn } from "./DataTable";
@@ -9,7 +9,7 @@ import {
 import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, type ConnectorHousing } from "./connectorArt";
 import { connectorModel } from "./connectorModel";
 import { connectorTopView } from "./connectorTopView";
-import { searchRows } from "./searchText";
+import { SortHint } from "./refSort";
 
 /* «База данных → Разъёмы» по сериям (владелец, 10.10.2026: «идти по сериям: серия GHR, внутри все доступные разъёмы
    и их модели»). Список серий → серия: все корпуса по каталогу производителя (модель + вид со стороны проводов),
@@ -207,31 +207,49 @@ function SeriesView({ series, match, onBack, canEdit, onSaved }: {
   </div>;
 }
 
-function SeriesCard({ series, onOpen }: { series: ConnectorSeries; onOpen: () => void }) {
-  const range = countsText(series.counts);
-  const bare = series.housing_count === 0;
-  const facts = bare
-    ? [series.terminals.length ? `${series.terminals.length} терминалов` : "", series.catalog.length ? `${series.catalog.length} артикулов` : ""]
-    : [series.pitch ? `${comma(series.pitch)} мм` : "", range ? `${range} конт.` : "", `${series.housing_count} корп.`];
-  return <button type="button" className="conn-series" onClick={onOpen} aria-label={`Серия ${series.title}`}>
-    <span className="conn-series-pic">{series.sample && <Thumb housing={series.sample.housing} />}</span>
-    <span className="conn-series-text">
-      <b>{series.title}</b>
-      <small>{facts.filter(Boolean).join(" · ") || "нет данных в базах"}</small>
-      {bare ? <small className="tone-warn">корпуса не добавлены</small>
-        : !series.checked ? <small className="conn-warn">нумерация не сверена</small>
-          : !series.range_checked ? <small className="tone-warn">диапазон не сверен</small>
-            : <small>по каталогу {series.maker}</small>}
-    </span>
-  </button>;
+/** Состояние серии одной строкой: чего в ней не хватает, иначе — по чьему каталогу ряд корпусов. */
+export function seriesState(series: ConnectorSeries): { text: string; tone: string } {
+  if (series.housing_count === 0) return { text: "корпуса не добавлены", tone: "tone-warn" };
+  if (!series.checked) return { text: "нумерация не сверена", tone: "conn-warn" };
+  if (!series.range_checked) return { text: "диапазон не сверен", tone: "tone-warn" };
+  return { text: `по каталогу ${series.maker}`, tone: "muted" };
 }
+
+const blank = <span className="cell-empty">—</span>;
+// «База данных → Разъёмы» таблицей в блоках по типу (владелец 25.10.2026: «визуал БД один»): строка — серия, щелчок
+// открывает её корпуса, вилки и терминалы. Картинка серии — маленькая модель у названия (однообразно у всех, 16.10).
+const SERIES_COLUMNS: DataColumn<ConnectorSeries>[] = [
+  { key: "title", title: "Серия", value: (item) => item.title,
+    render: (item) => <span className="conn-row-title"><span className="conn-row-pic" aria-hidden="true">{item.sample && <Thumb housing={item.sample.housing} />}</span><strong>{item.title}</strong></span> },
+  { key: "maker", title: "Производитель", value: (item) => item.maker },
+  { key: "pitch", title: "Шаг, мм", numeric: true, value: (item) => item.pitch ?? "", render: (item) => item.pitch == null ? blank : comma(item.pitch) },
+  { key: "counts", title: "Контактов", wrap: true, maxWidth: 200, value: (item) => countsText(item.counts), render: (item) => countsText(item.counts) || blank },
+  { key: "housings", title: "Корпусов", numeric: true, value: (item) => item.housing_count || "", render: (item) => item.housing_count || blank },
+  { key: "terminals", title: "Терминалов", numeric: true, value: (item) => item.terminals.length || "", render: (item) => item.terminals.length || blank },
+  { key: "catalog", title: "Артикулов", numeric: true, hidden: true, value: (item) => item.catalog.length || "", render: (item) => item.catalog.length || blank },
+  { key: "wire", title: "Провод", value: (item) => item.wire ? wireText(item.wire) : "", render: (item) => item.wire ? wireText(item.wire) : blank },
+  { key: "state", title: "Состояние", value: (item) => seriesState(item).text,
+    render: (item) => { const state = seriesState(item); return <span className={state.tone}>{state.text}</span>; } },
+];
+// Быстрые отборы — чего не хватает серии (как «Без Ø» у кабелей); чип без строк не показывается.
+const SERIES_PRESETS = [
+  { label: "Корпуса не добавлены", test: (item: ConnectorSeries) => item.housing_count === 0 },
+  { label: "Нумерация не сверена", test: (item: ConnectorSeries) => item.housing_count > 0 && !item.checked },
+  { label: "Диапазон не сверен", test: (item: ConnectorSeries) => item.housing_count > 0 && item.checked && !item.range_checked },
+];
+// Серия, производитель, артикулы корпусов, терминалов и каталога — по правилам поиска баз (searchText.ts): «ghr 04»,
+// «GHR-04V-S» и «ghr04vs» находят одну серию.
+const seriesSearch = (item: ConnectorSeries) => [
+  ...item.variants.flatMap((variant) => variant.housings.map((h) => h.article)),
+  ...item.terminals.map((t) => t.article),
+  ...item.catalog.map((c) => c.article),
+  ...(item.contacts ?? []).map((c) => c.article),
+];
 
 export function ConnectorGallery({ canEdit = false }: { canEdit?: boolean }) {
   const [series, setSeries] = useState<ConnectorSeries[] | null>(null);
   const [error, setError] = useState("");
-  const [article, setArticle] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
-  const [category, setCategory] = useState<string | null>(null);
   const [match, setMatch] = useState<ConnectorSeriesMatch | null>(null);
   const [unknown, setUnknown] = useState<{ article: string; housing: ConnectorFamily["housing"] | null } | null>(null);
 
@@ -239,34 +257,8 @@ export function ConnectorGallery({ canEdit = false }: { canEdit?: boolean }) {
     .catch((reason) => { setSeries((current) => current ?? []); setError(failureText(reason, "База разъёмов не загрузилась")); }), []);
   useEffect(() => { void reload(); }, [reload]);
 
-  // Серия, производитель, артикулы корпусов, терминалов и каталога — по правилам поиска баз (searchText.ts): «ghr 04»,
-  // «GHR-04V-S» и «ghr04vs» находят одну серию.
-  const shown = useMemo(() => searchRows(series ?? [], (item) => [
-    item.title, item.maker,
-    ...item.variants.flatMap((variant) => variant.housings.map((h) => h.article)),
-    ...item.terminals.map((t) => t.article),
-    ...item.catalog.map((c) => c.article),
-    ...(item.contacts ?? []).map((c) => c.article),
-  ], article), [series, article]);
-  // Sections in the order the server sends them (fixed category order); counts follow the search.
-  const sections = useMemo(() => {
-    // Inside a section the server sends the series by maker, then pitch; a maker label only where makers differ.
-    const out: Array<{ name: string; items: ConnectorSeries[]; makers: number }> = [];
-    for (const item of shown) {
-      const last = out.find((section) => section.name === item.category);
-      if (last) last.items.push(item); else out.push({ name: item.category, items: [item], makers: 0 });
-    }
-    for (const section of out) section.makers = new Set(section.items.map((item) => item.maker)).size;
-    return out;
-  }, [shown]);
-  const categories = useMemo(() => {
-    const names: string[] = [];
-    for (const item of series ?? []) if (!names.includes(item.category)) names.push(item.category);
-    return names;
-  }, [series]);
-
-  async function check() {
-    const value = article.trim();
+  async function check(query: string) {
+    const value = query.trim();
     setUnknown(null);
     if (!value) { setMatch(null); return; }
     try {
@@ -278,40 +270,40 @@ export function ConnectorGallery({ canEdit = false }: { canEdit?: boolean }) {
   }
 
   if (series === null) return <div className="empty">Загрузка…</div>;
-  const visible = sections.filter((section) => category === null || section.name === category);
   const open = series.find((item) => item.id === openId) ?? null;
   // A housing listed in two series (Mini-Fit Plus contacts go into Mini-Fit Jr. housings) is counted once.
   const housings = new Set(series.flatMap((item) => item.variants.flatMap((variant) => variant.housings.map((h) => h.article)))).size;
   return <div className="conn-base">
-    <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void check(); }}>
-      <input value={article} placeholder="Серия или артикул корпуса, например GHR-04V-S" aria-label="Артикул корпуса"
-        onChange={(event) => { setArticle(event.target.value); setUnknown(null); }} />
-      <button className="secondary small" type="submit">Проверить артикул</button>
-      <span className="muted">{series.length} серий · {housings} корпусов</span>
-    </form>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {unknown && (unknown.housing
       ? <div className="warning-inline">«{unknown.article}» — {connectorSummary(unknown.housing)}: серия без списка корпусов, рисунок по правилу семейства.
         <div className="conn-grid"><HousingCard item={{ article: unknown.article, n: unknown.housing.n || 0, housing: unknown.housing, headers: [] }} hit /></div></div>
       : <div className="warning-inline">«{unknown.article}» — серия не распознана: на схеме будет только название.</div>)}
-    {!open && <div className="seg-tabs conn-cats" role="group" aria-label="Тип разъёмов">
-      <button type="button" className={category === null ? "on" : ""} aria-pressed={category === null} onClick={() => setCategory(null)}>
-        Все<span className="ship-tab-count">{shown.length}</span></button>
-      {categories.map((name) => <button key={name} type="button" className={category === name ? "on" : ""} aria-pressed={category === name}
-        onClick={() => setCategory(name)}>{name}<span className="ship-tab-count">{shown.filter((item) => item.category === name).length}</span></button>)}
-    </div>}
-    {open
-      ? <SeriesView series={open} match={match} canEdit={canEdit} onSaved={reload} onBack={() => { setOpenId(null); setMatch(null); }} />
-      : <div className="conn-sections">{visible.length
-        ? visible.map((section) => <section key={section.name} className="conn-section">
-          <h3>{section.name} <span className="muted">{section.items.length}</span></h3>
-          <div className="conn-series-list">
-            {section.items.map((item, index) => <Fragment key={item.id}>
-              {section.makers > 1 && (index === 0 || section.items[index - 1].maker !== item.maker)
-                && <div className="conn-maker">{item.maker || "Без производителя"}</div>}
-              <SeriesCard series={item} onOpen={() => { setOpenId(item.id); setMatch(null); }} />
-            </Fragment>)}
-          </div></section>)
-        : <div className="empty">Серий по «{article.trim()}» нет — нажмите «Проверить артикул», чтобы узнать, как ERP нарисует корпус.</div>}</div>}
+    {open && <SeriesView series={open} match={match} canEdit={canEdit} onSaved={reload} onBack={() => { setOpenId(null); setMatch(null); }} />}
+    {/* The list stays mounted under an opened series: its search and scroll are there on «← Все серии». */}
+    <div hidden={Boolean(open)}>
+      <DataTable
+        label="Разъёмы"
+        rows={series}
+        columns={SERIES_COLUMNS}
+        rowKey={(item) => item.id}
+        rowLabel={(item) => item.title}
+        // Блок — тип разъёмов в порядке сервера (провод — плата, провод — провод…), внутри — производитель, шаг.
+        groupBy={(item) => item.category}
+        blocks
+        storageKey="db:connectors:2510"
+        exportName="Разъёмы"
+        presets={SERIES_PRESETS.filter((preset) => series.some(preset.test))}
+        searchText={seriesSearch}
+        searchLabel="Серия или артикул корпуса"
+        searchPlaceholder="Серия или артикул корпуса, например GHR-04V-S"
+        onSearch={(query) => void check(query)}
+        searchButton="Проверить артикул"
+        onRowClick={(item) => { setOpenId(item.id); setMatch(null); setUnknown(null); }}
+        rowTitle={(item) => `Открыть серию ${item.title}`}
+        emptyText="Серий не найдено — «Проверить артикул» покажет, как ERP нарисует корпус."
+        toolbar={<><SortHint text="тип, затем производитель и шаг" /><span className="muted sort-hint">{series.length} серий · {housings} корпусов</span></>}
+      />
+    </div>
   </div>;
 }

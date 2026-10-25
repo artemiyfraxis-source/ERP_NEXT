@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectorGallery, countsText, wireText } from "./ConnectorGallery";
 import type { ConnectorSeries } from "./api";
 import { connectorModel, hasModel } from "./connectorModel";
+import { blockLines, listHeads } from "./test/blocks";
 
 /* «База данных → Разъёмы» по сериям (владелец 10.10.2026): список серий → серия со всеми корпусами, вилками на плату,
    терминалами; «Проверить артикул» открывает серию и подсвечивает корпус. */
@@ -61,56 +62,56 @@ function mockApi() {
 
 afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
 
+// The series list is a table in blocks by type (25.10.2026): a row per series, a click opens it.
+const rowOf = (title: string) => screen.getByText(title, { selector: "td.key strong" }).closest("tr") as HTMLElement;
+const seriesRow = async (title: string) => (await screen.findByText(title, { selector: "td.key strong" })).closest("tr") as HTMLElement;
+const cellOf = (row: HTMLElement, header: string) => row.querySelectorAll("td")[listHeads().findIndex((head) => head.textContent === header)];
+
 describe("ConnectorGallery — разъёмы по сериям", () => {
   it("lists series, not housings, with their contact range and check state", async () => {
     mockApi();
     render(<ConnectorGallery />);
-    const card = await screen.findByRole("button", { name: "Серия JST GH" });
-    expect(card).toHaveTextContent("1,25 мм · 2–4 конт. · 3 корп.");
-    expect(card).toHaveTextContent("по каталогу JST");
-    expect(screen.getByRole("button", { name: "Серия Molex Mini-Fit Jr." })).toHaveTextContent("диапазон не сверен");
+    const row = await seriesRow("JST GH");
+    expect(listHeads().map((head) => head.textContent)).toEqual(["Серия", "Производитель", "Шаг, мм", "Контактов", "Корпусов", "Терминалов", "Провод", "Состояние"]);
+    expect(["Шаг, мм", "Контактов", "Корпусов", "Состояние"].map((header) => cellOf(row, header).textContent))
+      .toEqual(["1,25", "2–4", "3", "по каталогу JST"]);
+    expect(cellOf(rowOf("Molex Mini-Fit Jr."), "Состояние")).toHaveTextContent("диапазон не сверен");
     expect(screen.getByText("3 серий · 4 корпусов")).toBeInTheDocument();
     expect(screen.queryByText("GHR-03V-S")).toBeNull();
   });
 
-  it("groups the series into sections by type with a count, and a chip filters to one section", async () => {
+  it("puts the series in a block per type with a count; the search goes through every block, also by a terminal article", async () => {
     mockApi();
     render(<ConnectorGallery />);
-    await screen.findByRole("button", { name: "Серия JST GH" });
-    expect(screen.getByRole("heading", { name: /^Провод — плата\s*2$/, level: 3 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /^Автомобильные\s*1$/, level: 3 })).toBeInTheDocument();
-    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings[0]).toMatch(/^Провод — плата/);
-    const chips = within(screen.getByRole("group", { name: "Тип разъёмов" }));
-    expect(chips.getByRole("button", { name: /^Все\s*3$/ })).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(chips.getByRole("button", { name: /^Автомобильные\s*1$/ }));
-    expect(screen.queryByRole("button", { name: "Серия JST GH" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Серия TE MQS" })).toBeInTheDocument();
-    // The search still looks through every type, also by a terminal article.
-    fireEvent.click(chips.getByRole("button", { name: /^Все\s*3$/ }));
-    fireEvent.change(screen.getByLabelText("Артикул корпуса"), { target: { value: "929939" } });
-    expect(screen.getByRole("button", { name: "Серия TE MQS" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Серия JST GH" })).toBeNull();
-    expect(chips.getByRole("button", { name: /^Провод — плата\s*0$/ })).toBeInTheDocument();
+    await seriesRow("JST GH");
+    expect(blockLines()).toEqual(["Провод — плата · 2", "Автомобильные · 1"]);
+    // the quick filters say what a series lacks
+    fireEvent.click(screen.getByRole("button", { name: /^Корпуса не добавлены · 1/ }));
+    expect(blockLines()).toEqual(["Автомобильные · 1"]);
+    fireEvent.click(screen.getByRole("button", { name: /^Все · 3/ }));
+    fireEvent.change(screen.getByLabelText("Серия или артикул корпуса"), { target: { value: "929939" } });
+    expect(blockLines()).toEqual(["Автомобильные · 1"]); // an empty block is not shown
+    expect(screen.queryByText("JST GH", { selector: "td.key strong" })).toBeNull();
   });
 
   it("shows a series without housings as «корпуса не добавлены» with its terminals", async () => {
     mockApi();
     render(<ConnectorGallery />);
-    const card = await screen.findByRole("button", { name: "Серия TE MQS" });
-    expect(card).toHaveTextContent("1 терминалов");
-    expect(card).toHaveTextContent("корпуса не добавлены");
+    const card = await seriesRow("TE MQS");
+    expect(cellOf(card, "Терминалов")).toHaveTextContent(/^1$/);
+    expect(cellOf(card, "Состояние")).toHaveTextContent("корпуса не добавлены");
     fireEvent.click(card);
     expect(screen.getByRole("heading", { name: "TE MQS", level: 2 })).toBeInTheDocument();
-    expect(screen.getByText("корпуса не добавлены")).toBeInTheDocument();
-    expect(screen.getByText("929939-3")).toBeInTheDocument();
+    const view = document.querySelector(".conn-series-view") as HTMLElement;
+    expect(within(view).getByText("корпуса не добавлены")).toBeInTheDocument();
+    expect(within(view).getByText("929939-3")).toBeInTheDocument();
     expect(screen.queryByText("нумерация не сверена с чертежом")).toBeNull();
   });
 
   it("opens a series with every housing, its board headers, terminals, wire range and the maker drawing", async () => {
     mockApi();
     render(<ConnectorGallery />);
-    fireEvent.click(await screen.findByRole("button", { name: "Серия JST GH" }));
+    fireEvent.click(await seriesRow("JST GH"));
     expect(screen.getByRole("heading", { name: "JST GH", level: 2 })).toBeInTheDocument();
     for (const article of ["GHR-02V-S", "GHR-03V-S", "GHR-04V-S"]) expect(screen.getByText(article)).toBeInTheDocument();
     expect(screen.getByText("BM04B-GHS-TBT")).toBeInTheDocument();
@@ -122,13 +123,13 @@ describe("ConnectorGallery — разъёмы по сериям", () => {
     expect(rows).toEqual(["26 AWG0,62", "28 AWG0,70", "26 AWG1,35–1,50", "26 AWG15 Н", "28 AWG12 Н"]);
     expect(screen.getAllByRole("img", { name: /^Вид сверху GHR/ })).toHaveLength(3);
     fireEvent.click(screen.getByRole("button", { name: "← Все серии" }));
-    expect(await screen.findByRole("button", { name: "Серия JST GH" })).toBeInTheDocument();
+    expect(await seriesRow("JST GH")).toBeInTheDocument();
   });
 
   it("draws a housing without a drawing template the same way: top view and the numbered face", async () => {
     mockApi();
     render(<ConnectorGallery />);
-    fireEvent.click(await screen.findByRole("button", { name: "Серия Molex Mini-Fit Jr." }));
+    fireEvent.click(await seriesRow("Molex Mini-Fit Jr."));
     const card = screen.getByText("39012080").closest(".conn-housing") as HTMLElement;
     expect(within(card).getByRole("img", { name: "Вид сверху 39012080" })).toBeInTheDocument();
     expect(within(card).getByRole("img", { name: "Вид со стороны проводов" })).toBeInTheDocument();
@@ -138,16 +139,16 @@ describe("ConnectorGallery — разъёмы по сериям", () => {
   it("«Проверить артикул» opens the series and marks the housing", async () => {
     mockApi();
     render(<ConnectorGallery />);
-    await screen.findByRole("button", { name: "Серия JST GH" });
-    fireEvent.change(screen.getByLabelText("Артикул корпуса"), { target: { value: "GHR-03V-S" } });
+    await seriesRow("JST GH");
+    fireEvent.change(screen.getByLabelText("Серия или артикул корпуса"), { target: { value: "GHR-03V-S" } });
     fireEvent.click(screen.getByRole("button", { name: "Проверить артикул" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "JST GH", level: 2 })).toBeInTheDocument());
     expect(screen.getByText("GHR-03V-S").closest(".conn-housing")).toHaveClass("conn-hit");
     expect(screen.getByText("GHR-02V-S").closest(".conn-housing")).not.toHaveClass("conn-hit");
 
     fireEvent.click(screen.getByRole("button", { name: "← Все серии" }));
-    fireEvent.change(screen.getByLabelText("Артикул корпуса"), { target: { value: "XYZ-1" } });
-    expect(screen.getByText(/Серий по «XYZ-1» нет/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Серия или артикул корпуса"), { target: { value: "XYZ-1" } });
+    expect(screen.getByText(/Серий не найдено/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Проверить артикул" }));
     expect(await screen.findByText("«XYZ-1» — серия не распознана: на схеме будет только название.")).toBeInTheDocument();
   });
@@ -155,10 +156,10 @@ describe("ConnectorGallery — разъёмы по сериям", () => {
   it("filters the series list by the typed series or article", async () => {
     mockApi();
     render(<ConnectorGallery />);
-    await screen.findByRole("button", { name: "Серия JST GH" });
-    fireEvent.change(screen.getByLabelText("Артикул корпуса"), { target: { value: "3901" } });
-    expect(screen.queryByRole("button", { name: "Серия JST GH" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Серия Molex Mini-Fit Jr." })).toBeInTheDocument();
+    await seriesRow("JST GH");
+    fireEvent.change(screen.getByLabelText("Серия или артикул корпуса"), { target: { value: "3901" } });
+    expect(screen.queryByText("JST GH", { selector: "td.key strong" })).toBeNull();
+    expect(rowOf("Molex Mini-Fit Jr.")).toBeInTheDocument();
   });
 });
 
@@ -204,13 +205,13 @@ describe("ConnectorGallery — каталоги производителей (12
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(
       JSON.stringify({ series: [GH, MINIFIT, DF1B], match: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
     render(<ConnectorGallery />);
-    await screen.findByRole("button", { name: "Серия Hirose DF1B" });
-    const makers = [...document.querySelectorAll(".conn-maker")].map((node) => node.textContent);
-    expect(makers).toEqual(["JST", "Molex", "Hirose"]);
+    await seriesRow("Hirose DF1B");
+    // the maker is a column of the table (25.10.2026), in the server's order inside the block
+    expect(["JST GH", "Molex Mini-Fit Jr.", "Hirose DF1B"].map((title) => cellOf(rowOf(title), "Производитель").textContent)).toEqual(["JST", "Molex", "Hirose"]);
     // GH and DF1B share the article list of the fixture: a housing in two series is counted once
     expect(screen.getByText("3 серий · 4 корпусов")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Серия Hirose DF1B" }));
+    fireEvent.click(rowOf("Hirose DF1B"));
     const doc = await screen.findByRole("link", { name: "Hirose DF1B, каталог 01.07.2020" });
     expect(doc).toHaveAttribute("href", "https://datasheet.lcsc.com/df1b.pdf");
     expect(screen.queryByRole("link", { name: "Чертёж производителя (PDF)" })).toBeNull();
@@ -253,7 +254,7 @@ describe("ConnectorGallery — терминалы правятся в табли
   it("writes a crimp cell to the БД.ТЕР record with its old value, then reads the card again", async () => {
     const calls = setup();
     render(<ConnectorGallery canEdit />);
-    fireEvent.click(await screen.findByRole("button", { name: "Серия JST GH" }));
+    fireEvent.click(await seriesRow("JST GH"));
     type(cellOf("Обжим по жиле, мм"), "26 AWG: 0,60; 28 AWG: 0,68");
     await waitFor(() => expect(calls.find((call) => call.method === "PATCH")).toMatchObject({
       path: "/api/references/tech-operations/rec-1",
@@ -265,7 +266,7 @@ describe("ConnectorGallery — терминалы правятся в табли
   it("splits the AWG range into «от AWG» and «до AWG»", async () => {
     const calls = setup();
     render(<ConnectorGallery canEdit />);
-    fireEvent.click(await screen.findByRole("button", { name: "Серия JST GH" }));
+    fireEvent.click(await seriesRow("JST GH"));
     type(cellOf("AWG"), "28–24");
     await waitFor(() => expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({
       edits: [{ field: "awgFrom", old: "30", value: "28" }, { field: "awgTo", old: "26", value: "24" }],
@@ -275,7 +276,7 @@ describe("ConnectorGallery — терминалы правятся в табли
   it("keeps the article and the whole table read-only without the right to edit", async () => {
     setup();
     render(<ConnectorGallery />);
-    fireEvent.click(await screen.findByRole("button", { name: "Серия JST GH" }));
+    fireEvent.click(await seriesRow("JST GH"));
     fireEvent.click(cellOf("AWG"));
     fireEvent.keyDown(cellOf("AWG"), { key: "Enter" });
     expect(within(cellOf("AWG")).queryByRole("textbox")).toBeNull();
@@ -284,7 +285,7 @@ describe("ConnectorGallery — терминалы правятся в табли
   it("does not open the article for editing", async () => {
     setup();
     render(<ConnectorGallery canEdit />);
-    fireEvent.click(await screen.findByRole("button", { name: "Серия JST GH" }));
+    fireEvent.click(await seriesRow("JST GH"));
     fireEvent.click(cellOf("Артикул контакта"));
     fireEvent.keyDown(cellOf("Артикул контакта"), { key: "Enter" });
     expect(within(cellOf("Артикул контакта")).queryByRole("textbox")).toBeNull();
