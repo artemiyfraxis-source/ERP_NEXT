@@ -4510,6 +4510,15 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .rc-op-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-op-note { padding: 0 6px; border-radius: 999px; background: var(--chip-warning-bg); color: var(--chip-warning-fg); font-size: 11px; line-height: 16px; }
 .rc-op-time { color: var(--muted-foreground); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* «Схема полуфабрикатов» и «Ручная сборка»: названия не обрезаются — переносятся (до трёх строк), высота карточки считается по
+   числу строк (routeCards.opRowHeight / headExtra). Холст маршрута позиции с чертежа (HarnessRouteView) остаётся прежним. */
+.route-dnd .rc-title, .ma-canvas .rc-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; white-space: normal; overflow-wrap: anywhere; }
+.route-dnd .rc-sub, .route-dnd .rc-meta, .ma-canvas .rc-sub { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
+.route-dnd .rc-inputs li { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; }
+.route-dnd .rc-op, .ma-canvas .rc-op { height: auto; min-height: 22px; padding-top: 3px; padding-bottom: 3px; text-align: left; }
+.route-dnd .rc-op-name, .ma-canvas .rc-op-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; white-space: normal; overflow-wrap: anywhere; line-height: 15px; }
+.route-dnd .rc-op-no, .route-dnd .rc-op-time, .ma-canvas .rc-op-no, .ma-canvas .rc-op-time { line-height: 15px; }
+@media (pointer: coarse) { .route-dnd .rc-op, .ma-canvas .rc-op { min-height: 40px; } }
 /* Ручка перетаскивания: точки 2 × 3, видна только в «Изменить схему». У операции — первая колонка строки. */
 .rc-grip { flex: none; width: 9px; height: 14px; color: var(--muted-foreground); opacity: .7; background: radial-gradient(circle, currentColor 1.1px, transparent 1.4px) 0 0 / 5px 5px; }
 .rc-card-head .rc-grip { height: 12px; }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   blockCards, crimpWires, cutEnds, depthOrder, genArtHeight, genCardHeight, genCards, inputsHeight, layoutByDepth, linkGeometry, opStages, opsMinutes,
-  schemeArt, widestRow, EMPTY_ART, FLOW_GAP_X, layoutFlow, levelCount, pickFlow, turnPath,
+  schemeArt, widestRow, EMPTY_ART, FLOW_GAP_X, headExtra, inputsHeightWrapped, layoutFlow, levelCount, opRowHeight, pickFlow, textLines, turnPath,
 } from "./routeCards";
 import { blockTitle, deriveRoute, parseRoute, routeLevels, routeProblem, type RouteOp } from "./routeLogic";
 import type { PinoutEnd, PinUnit } from "./pinoutCheck";
@@ -48,10 +48,12 @@ describe("связь карточек", () => {
     expect(side.mid).toEqual({ x: 250, y: 168 });
   });
   it("goes around a card standing right on the way, so the link stays visible", () => {
-    const blocker = { x: -50, y: 150, width: 300, height: 80 };
+    // Обход — общей шиной по левому краю схемы: вниз под ряд источника, влево за самую левую карточку, вниз, вправо над целью.
+    const blocker = { x: 40, y: 150, width: 120, height: 80 };
     const around = linkGeometry(card(0, 0), card(0, 400), [blocker]);
-    expect(around.d).toContain("L264,382");
-    expect(around.mid.x).toBeGreaterThan(250);
+    expect(around.d).toContain("L2,382");
+    expect(around.d.endsWith("L100,400")).toBe(true);
+    expect(around.mid).toEqual({ x: 51, y: 388 });
     expect(linkGeometry(card(0, 0), card(0, 400), [{ x: 600, y: 150, width: 100, height: 80 }]).d).toBe("M100,100 V400");
   });
   it("bends smoothly when the target was dragged above its input", () => {
@@ -340,5 +342,40 @@ describe("схема слева направо (владелец 25.10: цепо
     const bend = linkGeometry(from, { ...to, y: 150 }, [], "right");
     expect(bend.d.startsWith("M200,50H")).toBe(true);
     expect(bend.d.endsWith("H300")).toBe(true);
+  });
+});
+
+describe("широкий ряд и перенос текста (владелец 25.10: названия обрезались, 8 заготовок в одной строке)", () => {
+  const size = () => ({ width: 200, height: 100 });
+  const spacing = { gapX: 10, gapY: 20, margin: 4 };
+  it("wraps a row wider than maxPerRow onto the next lines, list order kept, levels below start under the last line", () => {
+    const ids = ["a", "b", "c", "d", "e", "final"];
+    const links = ["a", "b", "c", "d", "e"].map((from) => ({ from, to: "final" }));
+    const places = layoutByDepth(ids, links, size, spacing, 3);
+    expect([places.get("a")!.x, places.get("b")!.x, places.get("c")!.x]).toEqual([4, 214, 424]);
+    expect([places.get("d")!, places.get("e")!]).toEqual([{ x: 4, y: 124 }, { x: 214, y: 124 }]);
+    expect(places.get("final")).toEqual({ x: 4, y: 244 });
+    // Без ограничения — прежняя раскладка одним рядом.
+    expect(layoutByDepth(ids, links, size, spacing).get("e")).toEqual({ x: 4 + 4 * 210, y: 4 });
+  });
+
+  it("counts text lines and grows rows and head by them; one line keeps the old height", () => {
+    expect(textLines("Резка", 200, 6.4, 3)).toBe(1);
+    expect(textLines("x".repeat(100), 200, 6.4, 3)).toBe(3);
+    expect(textLines("x".repeat(1000), 200, 6.4, 3)).toBe(3);
+    expect(opRowHeight("Резка", 280, 22)).toBe(22);
+    expect(opRowHeight("Надеть оплётку X1 «5» — XP-3, 120 мм, на кабель и на разъём", 280, 22)).toBeGreaterThan(22);
+    expect(headExtra("Ветвь X1", "", "1 оп.", 280)).toBe(0);
+    expect(headExtra("Резка + обжим SYM, зачистка — X1, X2, X3, X4", "", "1 оп.", 260)).toBeGreaterThan(0);
+    expect(inputsHeightWrapped([], 280)).toBe(0);
+    expect(inputsHeightWrapped(["ТТК 8/2 — 1 шт"], 280)).toBe(24);
+  });
+
+  it("routes a link that skips a row along the left bus, below its own row", () => {
+    const from = { x: 20, y: 20, width: 200, height: 100 }, to = { x: 20, y: 400, width: 200, height: 100 };
+    const blocker = { x: 20, y: 200, width: 200, height: 100 };
+    const bus = linkGeometry(from, to, [blocker]);
+    expect(bus.d).toContain("L10,");
+    expect(bus.mid.y).toBe(388);
   });
 });

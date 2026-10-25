@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { formatMinutes } from "./etkRoute";
 import { PerUnit } from "./RouteDiagram";
 import { FacesThumb, FinalThumb, RouteCanvas, TubeThumbs, WireThumbs, type CanvasCard } from "./RouteCanvas";
-import { CRIMP_STAGES, EMPTY_ART, GEN_CARD, GEN_SPACING, blockCards, crimpWires, genArtHeight, genCardHeight, genCards, inputsHeight, layoutFlow, levelCount, opsMinutes, pickFlow, widestRow, FLOW_GAP_X, type CardKind, type GenArt, type GenStage } from "./routeCards";
+import { CRIMP_STAGES, EMPTY_ART, GEN_CARD, GEN_SPACING, blockCards, crimpWires, genArtHeight, genCardHeight, genCards, headExtra, inputsHeightWrapped, layoutFlow, levelCount, opRowHeight, opsMinutes, pickFlow, widestRow, FLOW_GAP_X, type CardKind, type GenArt, type GenStage } from "./routeCards";
 import { pluralRu } from "./tcGenLogic";
 import {
   addEdge,
@@ -39,6 +39,9 @@ type Drag = { kind: "op" | "block"; key: string; position: number; label: string
 /** Шаг истории: схема до правки (null — автоматическая) и, если правка переставила операции ЭТК, их порядок. */
 type HistoryStep = { prev: Route | null; order: number[] | null; sig: string };
 const DRAG_THRESHOLD = 4;
+/** Меньше этой ширины карточку не делаем: ряд шире — переносится на следующую строку. Поля слева шире общих — под шину связей. */
+const CARD_READABLE = 260;
+const SCHEME_SPACING = { ...GEN_SPACING, margin: 20 };
 
 const coarsePointer = () => { try { return !!window.matchMedia?.("(pointer: coarse)").matches; } catch { return false; } };
 
@@ -171,14 +174,25 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   // Цепочка и узкие ветки — слева направо на всю ширину рамки (владелец 25.10), широкие — рядами сверху вниз.
   const cardIds = gen.cards.map((card) => card.id);
   const flow = pickFlow(cardIds, gen.links, boxWidth, GEN_SPACING.margin);
-  const columns = flow === "right" ? levelCount(cardIds, gen.links) : widestRow(cardIds, gen.links);
-  const columnGap = flow === "right" ? FLOW_GAP_X : GEN_SPACING.gapX;
-  const cardWidth = boxWidth ? Math.max(220, Math.min(flow === "right" ? 600 : 400, Math.floor((boxWidth - 2 * GEN_SPACING.margin - columnGap * (columns - 1)) / columns))) : GEN_CARD.width;
-  const artHeight = (card: ViewCard) => (blockView ? inputsHeight(card.inputs?.length ?? 0) : asBlocks ? 0 : genArtHeight(card.id as GenStage, art, card.final));
+  // Широкий ряд (много параллельных ПФ) переносится на несколько строк карточек читаемой ширины, а не сжимается в одну.
+  const fitColumns = boxWidth ? Math.max(1, Math.floor((boxWidth - 2 * SCHEME_SPACING.margin + SCHEME_SPACING.gapX) / (CARD_READABLE + SCHEME_SPACING.gapX))) : 99;
+  const perRow = flow === "right" ? Infinity : fitColumns;
+  const columns = flow === "right" ? levelCount(cardIds, gen.links) : Math.min(widestRow(cardIds, gen.links), fitColumns);
+  const columnGap = flow === "right" ? FLOW_GAP_X : SCHEME_SPACING.gapX;
+  const cardWidth = boxWidth ? Math.max(CARD_READABLE - 20, Math.min(flow === "right" ? 600 : 400, Math.floor((boxWidth - 2 * SCHEME_SPACING.margin - columnGap * (columns - 1)) / columns))) : GEN_CARD.width;
+  const artHeight = (card: ViewCard) => (blockView ? inputsHeightWrapped(card.inputs ?? [], cardWidth) : asBlocks ? 0 : genArtHeight(card.id as GenStage, art, card.final));
+  const titleOf = (card: ViewCard) => (card.level ? `${card.level} · ${card.title}` : card.title);
+  const metaOf = (card: ViewCard) => {
+    const minutes = opsMinutes(card.ops, quantity);
+    return `${card.ops.length} оп.${minutes != null ? ` · ${formatMinutes(minutes)} мин/шт` : ""}${blockView && route.blocks.find((item) => item.key === card.id)?.kit ? " · комплект на изделие" : ""}`;
+  };
+  // Названия не обрезаются: операции и заголовок переносятся, высота карточки — по числу строк.
   const sizes = new Map(gen.cards.map((card) => [card.id, {
-    width: cardWidth, height: genCardHeight(card.ops.length, artHeight(card), opRow) + (subtitle(card) ? 16 : 0),
+    width: cardWidth,
+    height: genCardHeight(0, artHeight(card), opRow) + card.ops.reduce((sum, op) => sum + opRowHeight(op.label, cardWidth, opRow), 0)
+      + headExtra(titleOf(card), subtitle(card), metaOf(card), cardWidth),
   }]));
-  const places = layoutFlow(cardIds, gen.links, (id) => sizes.get(id)!, GEN_SPACING, flow);
+  const places = layoutFlow(cardIds, gen.links, (id) => sizes.get(id)!, SCHEME_SPACING, flow, perRow);
   const cardArt = (card: ViewCard): ReactNode => {
     if (blockView) {
       const inputs = card.inputs ?? [];
@@ -333,10 +347,9 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   // Ручки перетаскивания — в режиме «Изменить схему», не на сенсорном экране (там «Выше/Ниже» и списки панели).
   const canDrag = editing && !coarsePointer();
   const canvasCards: CanvasCard[] = gen.cards.map((card) => {
-    const minutes = opsMinutes(card.ops, quantity);
     return {
-      id: card.id, kind: card.kind, title: card.level ? `${card.level} · ${card.title}` : card.title, subtitle: subtitle(card) || undefined,
-      meta: `${card.ops.length} оп.${minutes != null ? ` · ${formatMinutes(minutes)} мин/шт` : ""}${blockView && route.blocks.find((item) => item.key === card.id)?.kit ? " · комплект на изделие" : ""}`,
+      id: card.id, kind: card.kind, title: titleOf(card), subtitle: subtitle(card) || undefined,
+      meta: metaOf(card),
       ...places.get(card.id)!, ...sizes.get(card.id)!, ...(canDrag ? { grip: "Тяните блок на другой блок: на левый край — подать в него, на остальное — объединить" } : {}),
       art: cardArt(card), className: cardClass(card.id),
       body: <ol className="rc-ops" aria-label={`Операции: ${card.title}`}>
