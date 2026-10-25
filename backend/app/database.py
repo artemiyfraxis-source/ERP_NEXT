@@ -1,6 +1,7 @@
 """Shared database wiring; domain modules keep ownership of their tables."""
 
 from collections.abc import Callable
+import os
 
 from fastapi import FastAPI
 from sqlalchemy import Engine, create_engine
@@ -44,10 +45,30 @@ from .workflows.supplier_directory import ReferencesSupplierDirectory
 from .shared.warehouse_location import set_rack_layout_loader
 
 
+# Connections per process: pool + overflow. Production runs ERP_API_WORKERS API processes, each with its own pool, so
+# PostgreSQL's max_connections must cover workers × (pool + overflow) + the outbox worker + the CLIs
+# (deploy/docker-compose.yml; tests/test_deploy_capacity.py holds the sum). Unset → SQLAlchemy's 5 + 10.
+POOL_ENV = {"ERP_DB_POOL_SIZE": "pool_size", "ERP_DB_MAX_OVERFLOW": "max_overflow"}
+
+
+def pool_options() -> dict[str, int]:
+    options: dict[str, int] = {}
+    for env, option in POOL_ENV.items():
+        raw = os.getenv(env, "").strip()
+        if not raw:
+            continue
+        if not raw.isdigit() or (option == "pool_size" and int(raw) < 1):
+            raise RuntimeError(f"{env}={raw!r}: нужно целое число (размер пула соединений с базой)")
+        options[option] = int(raw)
+    return options
+
+
 def build_engine(database_url: str) -> Engine:
-    options = {"pool_pre_ping": True}
+    options: dict = {"pool_pre_ping": True}
     if database_url.startswith("sqlite"):
         options["connect_args"] = {"check_same_thread": False}
+    else:
+        options.update(pool_options())
     return create_engine(database_url, **options)
 
 

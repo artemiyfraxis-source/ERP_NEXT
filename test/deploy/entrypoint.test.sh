@@ -81,6 +81,31 @@ check "exit 0" [ "$rc" = 0 ]
 check "migrates first" called "alembic upgrade head"
 check "then starts uvicorn" called "uvicorn app.main:app"
 
+case_name="one process unless ERP_API_WORKERS says otherwise"
+run_entrypoint ERP_DATABASE_URL="$(db_url "$work/head.db")"
+check "no --workers" not_called "--workers"
+check "no restart limit" not_called "--limit-max-requests"
+
+case_name="ERP_API_WORKERS=8"
+run_entrypoint ERP_API_WORKERS=8 ERP_DATABASE_URL="$(db_url "$work/head.db")"
+check "exit 0" [ "$rc" = 0 ]
+check "eight workers" called "--workers 8"
+check "restart after 10000 requests with jitter" called "--limit-max-requests 10000 --limit-max-requests-jitter 1000"
+check "patient health ping and graceful stop" called "--timeout-worker-healthcheck 30 --timeout-graceful-shutdown 20"
+check "proxy headers kept" called "--proxy-headers"
+
+case_name="ERP_API_WORKERS=4 ERP_API_MAX_REQUESTS=500"
+run_entrypoint ERP_API_WORKERS=4 ERP_API_MAX_REQUESTS=500 ERP_DATABASE_URL="$(db_url "$work/head.db")"
+check "four workers, 500 requests, jitter 50" called "--workers 4 --limit-max-requests 500 --limit-max-requests-jitter 50"
+
+for bad in abc 0 -2 "4 --reload"; do
+  case_name="ERP_API_WORKERS=$bad"
+  run_entrypoint ERP_API_WORKERS="$bad" ERP_DATABASE_URL="$(db_url "$work/head.db")"
+  check "refuses" [ "$rc" != 0 ]
+  check "uvicorn not started" not_called "uvicorn"
+  check "Russian error" says "нужно целое число от 1"
+done
+
 case_name="no database url"
 run_entrypoint ERP_DATABASE_URL=
 check "refuses" [ "$rc" != 0 ]
