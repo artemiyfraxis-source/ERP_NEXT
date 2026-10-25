@@ -163,24 +163,39 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
   if (!data) return <div className="empty">Загрузка…</div>;
 
   const raw: RawEdit = (field) => canEdit ? fieldCellEdit<CoveringRow>(field, (row) => records.get(row.id)) : undefined;
+  const table = (group: CoveringGroup, rows: CoveringRow[], all: CoveringRow[], label: string, storageKey: string) => <DataTable
+    label={label}
+    rows={rows}
+    columns={columnsFor(group, all, raw)}
+    rowKey={(row) => row.id}
+    rowLabel={(row) => row.name}
+    presets={presetsFor(group, all)}
+    onEdited={load}
+    storageKey={storageKey}
+    hideSearch
+    exportName={label}
+    renderDetail={canEdit ? (row) => <GroupChooser key={`${row.id}:${row.group_source}`} row={row} busy={busy} onChange={(value) => void move(row, value)} /> : undefined}
+    emptyText={words.length ? "Ничего не найдено" : "В этом разделе пока пусто"}
+  />;
   const section = (group: CoveringGroup) => {
     const rows = visible.filter((row) => row.group === group);
+    const all = data.rows.filter((row) => row.group === group);
+    const kinds = data.kinds?.[group] ?? [];
+    // ТУТ/ТТК: подгруппы по виду (`shrink_kind` на сервере), каждая — своя таблица; поиск скрывает пустые.
+    if (kinds.length > 1) return <section className="cov-group" key={group} aria-label={data.titles[group]}>
+      <h2 className="cov-title">{data.titles[group]} <span className="page-count">{data.counts[group]}</span></h2>
+      {kinds.map((kind) => {
+        const kindRows = rows.filter((row) => row.kind === kind.id);
+        if (words.length && !kindRows.length) return null;
+        return <div className="cov-kind" key={kind.id} role="group" aria-label={kind.title}>
+          <h3 className="cov-subtitle">{kind.title} <span className="page-count">{all.filter((row) => row.kind === kind.id).length}</span></h3>
+          {table(group, kindRows, all, kind.title, `db:coverings:${group}:${kind.id}:1`)}
+        </div>;
+      })}
+    </section>;
     return <section className="cov-group" key={group} aria-label={data.titles[group]}>
       <h2 className="cov-title">{data.titles[group]} <span className="page-count">{data.counts[group]}</span></h2>
-      <DataTable
-        label={data.titles[group]}
-        rows={rows}
-        columns={columnsFor(group, data.rows.filter((row) => row.group === group), raw)}
-        rowKey={(row) => row.id}
-        rowLabel={(row) => row.name}
-        presets={presetsFor(group, data.rows.filter((row) => row.group === group))}
-        onEdited={load}
-        storageKey={`db:coverings:${group}:2`}
-        hideSearch
-        exportName={data.titles[group]}
-        renderDetail={canEdit ? (row) => <GroupChooser key={`${row.id}:${row.group_source}`} row={row} busy={busy} onChange={(value) => void move(row, value)} /> : undefined}
-        emptyText={words.length ? "Ничего не найдено" : "В этом разделе пока пусто"}
-      />
+      {table(group, rows, all, data.titles[group], `db:coverings:${group}:2`)}
     </section>;
   };
   return <div className="coverings">
@@ -189,7 +204,7 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
       <form className="table-search" role="search" onSubmit={(event) => event.preventDefault()}>
         <input type="search" className="search" aria-label="Поиск по оболочкам" placeholder="Наименование, серия, производитель, материал" value={query} onChange={(event) => setQuery(event.target.value)} />
       </form>
-      <span className="muted">Сортировка: размер, затем наименование</span>
+      <span className="muted">Сортировка: вид (в ТУТ и ТТК), размер, затем наименование</span>
     </div>
     {SHOWN.map(section)}
     {data.counts.other > 0 && section("other")}
