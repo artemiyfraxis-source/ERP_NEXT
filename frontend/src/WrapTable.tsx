@@ -39,7 +39,7 @@ export function WrapTable({ slots, visible, materials, branches, allOwn, summary
     <span className="wt-where">Ветви</span>
     {branches.map((b) => <label className="wt-branch" key={b.id}>
       <span>{b.name}</span>
-      <UnitInput unit="мм" aria-label={`Оплётка ветви ${b.key}, отрезок`} value={b.own} placeholder={b.placeholder || "по КД"} onChange={(event) => onBranchLen(b.id, event.target.value)} />
+      <UnitInput unit="мм" autoComplete="off" aria-label={`Оплётка ветви ${b.key}, отрезок`} value={b.own} placeholder={b.placeholder || "по КД"} onChange={(event) => onBranchLen(b.id, event.target.value)} />
     </label>)}
     <small className="wt-hint">«0» — ветвь без оплётки</small>
   </div>;
@@ -52,7 +52,7 @@ export function WrapTable({ slots, visible, materials, branches, allOwn, summary
         <div className="wt-row">
           <span className="wt-n">{i + 1}</span>
           <select aria-label={`Материал ${i + 1}`} value={slot.mat} onChange={(event) => onMat(i, event.target.value)}>
-            <option value="">{i ? "— ещё материал, необязательно —" : "— не выбран —"}</option>
+            <option value="">{i ? "— ещё слой —" : "— не выбран —"}</option>
             {materials.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
           {filled ? <select aria-label="Как надеть" title="Лента поверх — последней операцией; под оплётку — первым слоем; оплётка и рукав — до обжима контактов" value={slot.kind} onChange={(event) => onKind(i, event.target.value as WrapKind)}>
@@ -60,17 +60,17 @@ export function WrapTable({ slots, visible, materials, branches, allOwn, summary
           {filled ? <span className="wt-where">{braid ? (branches.length ? `ветви: ${branches.length}` : "ветви") : "весь ствол"}</span> : <span />}
           {filled ? (braid && branches.length && allOwn
             ? <span className="wt-by" title="Длина — по отрезкам ветвей">по ветвям</span>
-            : <UnitInput unit="мм" aria-label="Длина на изделие" value={slot.len} placeholder="по КД" onChange={(event) => onLen(i, event.target.value)} />) : <span />}
+            : <UnitInput unit="мм" autoComplete="off" aria-label="Длина на изделие" value={slot.len} placeholder="по КД" onChange={(event) => onLen(i, event.target.value)} />) : <span />}
         </div>
         {filled && !braid && <div className="wt-fix">
           <select aria-label={`Закрепление слоя ${i + 1}`} value={slot.fix || ""} onChange={(event) => onFix(i, { fix: (event.target.value || undefined) as WrapFix | undefined })}>
             {FIXES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
           {slot.fix === "spots" && <>
-            <UnitInput unit="шт" aria-label={`Точек фиксации слоя ${i + 1}`} inputMode="numeric" value={slot.points || ""} placeholder="8" onChange={(event) => onFix(i, { points: event.target.value })} />
-            <UnitInput unit="мм" aria-label={`Шаг точек слоя ${i + 1}`} inputMode="numeric" value={slot.step || ""} placeholder="шаг" onChange={(event) => onFix(i, { step: event.target.value })} />
+            <UnitInput unit="шт" autoComplete="off" aria-label={`Точек фиксации слоя ${i + 1}`} inputMode="numeric" value={slot.points || ""} placeholder="8" onChange={(event) => onFix(i, { points: event.target.value })} />
+            <UnitInput unit="мм" autoComplete="off" aria-label={`Шаг точек слоя ${i + 1}`} inputMode="numeric" value={slot.step || ""} placeholder="шаг" onChange={(event) => onFix(i, { step: event.target.value })} />
           </>}
           {slot.fix === "spiral" && <>
-            <input className="wt-segs" aria-label={`Участки спирали слоя ${i + 1}, мм`} value={slot.segs || ""} placeholder="40, 40, 140, 40, 40" onChange={(event) => onFix(i, { segs: event.target.value })} />
+            <input className="wt-segs" autoComplete="off" spellCheck={false} aria-label={`Участки спирали слоя ${i + 1}, мм`} value={slot.segs || ""} placeholder="40, 40, 140…" onChange={(event) => onFix(i, { segs: event.target.value })} />
             <small className="wt-hint">{wrapSegsTotal(slot.segs) ? `всего ${wrapSegsTotal(slot.segs)} мм` : "длины участков по порядку, мм"}</small>
           </>}
           {slot.fix && wrapFixText(slot) && <small className="wt-hint" title="Так операция называется в маршруте">{wrapFixText(slot)}</small>}

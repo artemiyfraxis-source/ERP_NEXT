@@ -70,25 +70,25 @@ export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, s
   };
   return <div className="pt" aria-label="Распиновка и сростки" role="group">
     <div className="pt-head">
-      <span className="pt-summary">{summary}</span>
+      <span className="pt-summary" role="status" aria-live="polite">{summary}</span>
     </div>
     <div className="pt-conns" role="group" aria-label="Разъёмы по чертежу">
       {conns.map((c) => <label className="pt-conn" key={c.id}>
         <b className="ep-badge">{c.key}</b>
-        <input aria-label={`Обозначение разъёма ${c.key}`} value={c.designation} placeholder="XS1, XP1…" onChange={(event) => onLabel(c.id, event.target.value)} />
+        <input aria-label={`Обозначение разъёма ${c.key}`} autoComplete="off" spellCheck={false} value={c.designation} placeholder="XS1, XP1…" onChange={(event) => onLabel(c.id, event.target.value)} />
         <span className="pt-conn-art" title={c.conn}>{c.conn || "разъём не выбран"}</span>
       </label>)}
     </div>
     <div className="pt-scroll">
       <table className="pt-table">
-        <thead><tr><th className="pt-num">№</th><th>Провод</th><th className="pt-len">Длина, мм</th><th>Конец А</th><th>Конец В</th></tr></thead>
+        <thead><tr><th scope="col" className="pt-num">№</th><th scope="col">Провод</th><th scope="col" className="pt-len">Длина, мм</th><th scope="col">Конец А</th><th scope="col">Конец В</th></tr></thead>
         <tbody>
           {rows.map((row) => [
             <tr key={row.key} className={`${row.first ? "pt-first" : ""}${row.problems.length ? " has-problem" : ""}`}>
               <td className="pt-num">{row.num}</td>
               <td className="pt-wire"><div className="pt-wire-in"><Swatch color={row.color} stripe={row.stripe} /><span className="pt-wire-name" title={`${row.name}${row.colorName ? ` · ${row.colorName}` : ""}`}>{row.name || "провод"}{row.colorName && <small>{row.colorName}</small>}</span></div></td>
               <td className="pt-len">{row.first
-                ? <input type="number" min={0} inputMode="numeric" aria-label={`Длина провода № ${row.num}`} value={row.length || ""} placeholder="—" onChange={(event) => onLength(row.idx, Number(event.target.value) || 0)} />
+                ? <input type="number" min={0} inputMode="numeric" autoComplete="off" aria-label={`Длина провода № ${row.num}`} value={row.length || ""} placeholder="—" onChange={(event) => onLength(row.idx, Number(event.target.value) || 0)} />
                 : <span className="pt-same" title="Длина общая для жил одного кабеля">″</span>}</td>
               <td>{select(row, "A")}</td>
               <td>{select(row, "B")}</td>

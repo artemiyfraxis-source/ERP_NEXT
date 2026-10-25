@@ -4,7 +4,7 @@
 .tcgen .wt-head { font-size: 12px; color: var(--muted-foreground); padding: 0 0 2px; border-bottom: 1px solid var(--border); }
 .tcgen .wt-layer { display: grid; gap: 4px; padding: 4px 0; border-bottom: 1px solid var(--border); }
 .tcgen .wt-n { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
-.tcgen .wt select, .tcgen .wt input { height: 28px; font-size: 13px; min-width: 0; width: 100%; }
+.tcgen .wt select, .tcgen .wt input { height: 28px; font-size: 13px; min-width: 0; width: 100%; font-variant-numeric: tabular-nums; }
 .tcgen .wt-where { font-size: 12.5px; color: var(--muted-foreground); }
 .tcgen .wt-by { font-size: 12.5px; color: var(--muted-foreground); text-align: right; padding-right: 8px; }
 .tcgen .wt-fix, .tcgen .wt-branches { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding-left: 32px; }
