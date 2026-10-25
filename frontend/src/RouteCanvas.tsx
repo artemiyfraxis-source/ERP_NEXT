@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { connectorFace, connectorFaceUnits } from "./connectorArt";
 import { renderWireSvg } from "./harness/wire-blank-artwork";
-import { ART_ROWS, CARD_KIND_LABEL, contentSize, fullHex, linkGeometry, type CardKind, type FaceThumb, type Rect, type Size, type TubeThumb, type WireThumb } from "./routeCards";
+import { ART_ROWS, CARD_KIND_LABEL, contentSize, fullHex, linkGeometry, type CardKind, type Flow, type FaceThumb, type Rect, type Size, type TubeThumb, type WireThumb } from "./routeCards";
 import { formatPerUnit } from "./routeLogic";
 import "./RouteCanvas.css";
 
@@ -23,6 +23,8 @@ export type CanvasCard = Rect & {
   warning?: string;
   /** Свой класс карточки (подсветка цели при перетаскивании операции). */
   className?: string;
+  /** Ручка перетаскивания в шапке карточки: подсказка при наведении. */
+  grip?: string;
 };
 export type CanvasLink = {
   id: string; from: string; to: string;
@@ -62,7 +64,7 @@ function isControl(target: EventTarget | null): boolean {
 }
 
 export function RouteCanvas({ cards, links, label, selected = null, onSelect, onMove, onInsert, onRemoveLink, onRemoveCard, onAutoLayout,
-  tools, fit = "width", controls = true, height, margin = 32 }: {
+  tools, fit = "width", controls = true, height, margin = 32, flow = "down" }: {
   cards: CanvasCard[];
   links: CanvasLink[];
   /** Подпись холста для чтения с экрана: «Карточки маршрута». */
@@ -89,6 +91,8 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
   /** Высота окна холста; без неё окно по высоте содержимого. */
   height?: number | string;
   margin?: number;
+  /** Куда идут связи: сверху вниз или слева направо (раскладка карточек — снаружи, routeCards.layoutFlow). */
+  flow?: Flow;
 }) {
   const viewRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<Size | null>(null);
@@ -131,7 +135,7 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
 
   const byId = new Map(shown.map((card) => [card.id, card]));
   // Связь обходит чужие карточки на пути, а не идёт под ними.
-  const geometry = (link: CanvasLink) => linkGeometry(byId.get(link.from)!, byId.get(link.to)!, shown.filter((card) => card.id !== link.from && card.id !== link.to));
+  const geometry = (link: CanvasLink) => linkGeometry(byId.get(link.from)!, byId.get(link.to)!, shown.filter((card) => card.id !== link.from && card.id !== link.to), flow);
   const step = (delta: number) => setManualZoom(clamp(Math.round((zoom + delta) * 10) / 10, ZOOM_MIN, ZOOM_MAX));
 
   function pointerDown(card: CanvasCard, event: ReactPointerEvent<HTMLElement>) {
@@ -226,6 +230,7 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
             onPointerDown={(event) => pointerDown(card, event)} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { drag.current = null; setPreview(null); }}
             onKeyDown={(event) => cardKey(card, event)}>
             <header className="rc-card-head">
+              {card.grip && <span className="rc-grip" title={card.grip} aria-hidden="true" />}
               <span className="rc-kind">{CARD_KIND_LABEL[card.kind]}</span>
               {onRemoveCard && <button type="button" className="rc-card-x" title="Удалить карточку" aria-label={`Удалить карточку «${card.title}»`} onClick={() => onRemoveCard(card.id)}>×</button>}
             </header>

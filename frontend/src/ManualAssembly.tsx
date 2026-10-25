@@ -4,7 +4,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { formatMinutes, pluralBlocks } from "./etkRoute";
 import { PerUnit } from "./RouteDiagram";
 import { RouteCanvas, type CanvasCard } from "./RouteCanvas";
-import { CARD_KIND_LABEL, GEN_CARD, GEN_SPACING, layoutByDepth, widestRow, type Size } from "./routeCards";
+import { CARD_KIND_LABEL, FLOW_GAP_X, GEN_CARD, GEN_SPACING, layoutFlow, levelCount, pickFlow, widestRow, type Size } from "./routeCards";
 import type { RouteBlock, RouteEdge, RouteOp } from "./routeLogic";
 import {
   addBlock,
@@ -361,9 +361,12 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
   // Карточки блоков — по порядку схемы, рядами по входам (как «Маршрут КБn»); высота — по числу операций.
   const coarse = coarsePointer();
   const opRow = coarse ? 40 : GEN_CARD.opRow;
-  const columns = widestRow(order, state.edges);
+  // Цепочка и узкие ветки — слева направо на всю ширину (владелец 25.10), широкие — рядами сверху вниз.
+  const flow = pickFlow(order, state.edges, boxWidth, SPACING.margin);
+  const columns = flow === "right" ? levelCount(order, state.edges) : widestRow(order, state.edges);
+  const columnGap = flow === "right" ? FLOW_GAP_X : SPACING.gapX;
   const cardWidth = boxWidth
-    ? Math.max(CARD_MIN, Math.min(CARD_MAX, Math.floor((boxWidth - 2 * SPACING.margin - SPACING.gapX * (columns - 1)) / columns)))
+    ? Math.max(CARD_MIN, Math.min(flow === "right" ? 600 : CARD_MAX, Math.floor((boxWidth - 2 * SPACING.margin - columnGap * (columns - 1)) / columns)))
     : GEN_CARD.width;
   const product = finalName.trim();
   const subtitleOf = (item: RouteBlock) => (item.final && product && title(item) !== product ? `итог: ${product}` : "");
@@ -372,7 +375,7 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
     const rows = ownByKey.get(key)?.ops.length ?? 0;
     return [key, { width: cardWidth, height: GEN_CARD.head + (subtitleOf(item) ? SUB_ROW : 0) + rows * opRow + (coarse ? FOOT_COARSE : FOOT) + GEN_CARD.pad }];
   }));
-  const places = layoutByDepth(order, state.edges, (key) => sizes.get(key)!, SPACING);
+  const places = layoutFlow(order, state.edges, (key) => sizes.get(key)!, SPACING, flow);
   const cards: CanvasCard[] = order.map((key) => {
     const item = byKey.get(key)!;
     const meta = ownByKey.get(key)!;
@@ -430,9 +433,8 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
     {kd?.proposal && <KdProposalBar proposal={kd.proposal} />}
     <div className={paneOpen ? "manual-body has-pane" : "manual-body"}>
     <div className="manual-diagram">
-    <p className="route-link-hint manual-keys">Карточка или операция — открыть блок · «+» на стрелке — блок между · ↑/↓ — соседний блок, Alt+↑/↓ — сдвинуть</p>
-    <div className="ma-canvas" ref={boxRef}>
-      <RouteCanvas cards={cards} links={links} label="Блоки схемы" controls={false} fit="width" margin={SPACING.margin}
+    <div className="ma-canvas" ref={boxRef} title="↑/↓ — соседний блок, Alt+↑/↓ — сдвинуть выбранный блок, «+» на стрелке — блок между">
+      <RouteCanvas cards={cards} links={links} label="Блоки схемы" controls={false} fit="width" margin={SPACING.margin} flow={flow}
         selected={paneOpen ? block.key : null} onSelect={(key) => { if (key) select(key); else setPaneOpen(false); }}
         onInsert={insertOn}
         onRemoveLink={(id) => { const edge = state.edges.find((item) => `${item.from}>${item.to}` === id); if (edge) edgeEdit((current) => removeInput(current, edge.from, edge.to, finalName)); }} />

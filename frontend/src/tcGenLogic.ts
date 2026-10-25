@@ -405,6 +405,8 @@ function typedComps_(list: Comp[]): Comp[] {
 export const isBraidComp_ = (c: Comp) => [c.art, c.name, c.title].some((t) => /^\s*(?:оплетка\s*)?x[ps][\s-]*\d/i.test(t || ""))
   || /оплётк|оплетк/i.test(`${c.name || ""} ${c.title || ""}`);
 export const isLugComp_ = (c: Comp) => LUG_RE_.test(`${c.art || ""} ${c.name || ""}`) || (!!c.title && (LUG_RE_.test(c.title) || /^\s*наконечник/i.test(c.title)));
+/** Наконечник, выбранный на конце как «разъём» (под пайку): «ПМ6-6», «НКИ…», «Наконечник…» — пайка наконечника, не разъёма. */
+export const isLugConn_ = (c: Comp) => isLugComp_(c) || /^\s*пм\s*\d/i.test(`${c.art || ""} ${c.name || ""}`);
 export const FOLD_STRIP_MM_ = "10";
 const JACKETED_RE_ = /\b\d+\s*P(?:R|AIR)?\b|\b\d+\s*C\s*[*xх×]|\b[SFU]?\/?[SFU]TP\b|\bUSB\b|витая\s*пара|экранир/i;
 /** Многожильный кабель в оболочке по стилю UL AWM (владелец 14.10: «UL2575 26AWG» без записи в БД.ПРОВ генератор резал
@@ -2332,7 +2334,7 @@ export function makeGen(D: GenData, S: GenState) {
         own.forEach((o) => { if (/^strip(Cable|Cores)/.test(o.opKey)) solderStrips.add(o.opKey); });
         ops.push(...own);
         ops.push({ type: "solderConn", opKey: endpointOpKey_(side, ord, "solder"), side, ord, epId: ep.id,
-          label: `Пайка разъёма ${tag} — ${conn.art || conn.name}`, tmplHint: ep.sdrTmpl || detectSolderConn_(conn.art, conn.title) || undefined });
+          label: `Пайка ${isLugConn_(conn) ? "наконечника" : "разъёма"} ${tag} — ${conn.art || conn.name}`, tmplHint: ep.sdrTmpl || detectSolderConn_(conn.art, conn.title) || undefined });
       } else {
         ops.push(...cableOps("под обжим"));
         // Терминалы, которые обжал станок при резке (своей партией), второй раз вручную не обжимаются.
@@ -2657,6 +2659,10 @@ export function makeGen(D: GenData, S: GenState) {
     // ── Ветви стороны А ──
     const branches = endpointsOnSide_("A").filter((ep) => !!ep.connId && (!!shrinkOf_(ep) || braidEp_(ep) || twistAt.has(`ep:${ep.id}`)
       || markTubes.some((t) => markEp(t) === ep)));
+    // Свой ПФ — только когда под трубку сходятся ветви или сростки. У простой сборки (концы с разъёмами или наконечниками, ветвей
+    // и сростков нет) трубку надевают до пайки и обжима концов, усадка — после, без отдельного полуфабриката (владелец 25.10,
+    // 663К.3 КБ1: «ТУТ на месте Б» шёл ПФ раньше наконечников).
+    const hsPf = hsOn && (branches.length > 0 || groups.length > 0);
     // Пара на разъёме без ветви (терминал без корпуса) — свивка в изделии.
     [...twistAt.keys()].forEach((at) => {
       if (!at.startsWith("ep:") || branches.some((ep) => `ep:${ep.id}` === at)) return;
@@ -2757,7 +2763,7 @@ export function makeGen(D: GenData, S: GenState) {
     const tubeOf = (c: Comp) => ({ art: c.art || c.name || "", name: c.name || c.art || "", glue: isGlueSleeve_(c) });
     sleeves.conn.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: 1, to: blockOfEp(x.ep) }));
     sleeves.jacket.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: x.count, to: FINAL }));
-    sleeves.harness.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: x.cnt, to: hsOn ? HS : FINAL }));
+    sleeves.harness.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: x.cnt, to: hsPf ? HS : FINAL }));
     const splTube = spliceTube_();
     if (splTube) groups.forEach((g) => tubes.push({ ...tubeOf(splTube.comp), len: splTube.len, count: g.splices.length + g.rest, to: g.key }));
     generic.filter((o) => o.opKey === "cutCap" || o.opKey === "cutTut").forEach((o) => (o.tutSegs || []).forEach((seg) => tubes.push({
@@ -2866,7 +2872,7 @@ export function makeGen(D: GenData, S: GenState) {
     // ── 4. ТУТ на месте Б (владелец 17.10): сростки, ветви прямо на сторону В и трубки на жгут → надеть по КД → усадка ──
     const heatHs = kept.find((o) => o.opKey === "heatHs");
     const hsOps: OpSpec[] = [];
-    if (hsOn) {
+    if (hsPf) {
       const pieces = sleeves.harness.reduce((n, s) => n + s.cnt, 0);
       hsOps.push({ type: "insTut", opKey: "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true, tutCount: pieces,
         label: `Надеть трубки: ${sleeves.harness.map((s) => `${artOf(s.comp)} на жгут — ${s.cnt} шт`).join("; ")}` });
@@ -2881,15 +2887,18 @@ export function makeGen(D: GenData, S: GenState) {
     sleeves.conn.filter((x) => !branchOf(x.ep)).forEach((x) => { finalOn.push(`${tube(x.comp)} поверх разъёма ${x.tag}`); finalPieces += 1; });
     const finalMarks = markTubes.filter((t) => markBlock(t) === FINAL);
     finalMarks.forEach((t) => { finalOn.push(`маркировка «${t.spec.text || t.spec.target}»`); finalPieces += t.spec.qty; });
+    // Простая сборка: трубки на жгут надеваются здесь же, до пайки концов (усадка — после, ниже).
+    if (hsOn && !hsPf) sleeves.harness.filter((s) => s.cnt > 0).forEach((s) => { finalOn.push(`${artOf(s.comp)} на жгут — ${s.cnt} шт`); finalPieces += s.cnt; });
     const tubesOn = finalOn.length;
     sleeves.housings.filter((ep) => !branchOf(ep)).forEach((ep) => { const c = getCompById(ep.connId); finalOn.push(`детали корпуса ${endKey_(ep)}${c ? ` (${artOf(c)})` : ""}`); });
     const finalOps: OpSpec[] = [...kept.filter((o) => blockOf(o) === FINAL && prepKeys(o))];
     // При ПФ «ТУТ на месте Б» трубки изделия — своим ключом и подписью «перед разъёмами»: ключ ЭТК «на жгут» уже занят.
-    if (finalOn.length) finalOps.push({ type: "insTut", opKey: hsOn ? "insSleevesB" : "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true,
-      tutCount: finalPieces || 1, ...(hsOn ? { branch: "перед разъёмами" } : {}),
+    if (finalOn.length) finalOps.push({ type: "insTut", opKey: hsPf ? "insSleevesB" : "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true,
+      tutCount: finalPieces || 1, ...(hsPf ? { branch: "перед разъёмами" } : {}),
       label: `${tubesOn ? "Надеть трубки" : "Надеть детали корпуса"}: ${finalOn.join("; ")}` });
-    if (heatHs && !hsOn) finalOps.push(heatHs);
     finalOps.push(...kept.filter((o) => blockOf(o) === FINAL && !prepKeys(o) && o !== heatHs));
+    // Усадка термоусадки на жгуте — после пайки и обжима концов (раньше шла сразу за надеванием).
+    if (heatHs && !hsPf) finalOps.push(heatHs);
     const markHeat = finalMarks.filter((t) => t.shrink).reduce((n, t) => n + t.spec.qty, 0);
     if (markHeat) finalOps.push({ type: "heatTut", opKey: "heatMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, tutCount: markHeat,
       label: `Усадка маркировки — ${markHeat} шт` });
