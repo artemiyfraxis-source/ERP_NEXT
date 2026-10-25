@@ -56,13 +56,13 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); 
 
 const heads = () => screen.getAllByRole("columnheader").map((head) => head.textContent ?? "").filter(Boolean);
 
-it("puts «ETHERNET» right after «Многожильные кабели» with its own count", async () => {
+it("puts «Кабели Ethernet» right after «Многожильные кабели» with its own count", async () => {
   render(<ReferencesPage principal={admin} initialTab="cab_multi" />);
   const nav = screen.getByRole("navigation", { name: "Вкладки базы данных" });
   const group = [...nav.querySelectorAll(".db-tab-group")].find((item) => item.querySelector(".db-tab-group-title")?.textContent === "Кабели и провода")!;
   expect([...group.querySelectorAll("button")].map((button) => button.firstChild?.textContent))
-    .toEqual(["Коаксиальные кабели", "Монтажные провода", "Многожильные кабели", "ETHERNET"]);
-  const chip = within(nav).getByRole("button", { name: /^ETHERNET/ });
+    .toEqual(["Коаксиальные кабели", "Монтажные провода", "Многожильные кабели", "Кабели Ethernet"]);
+  const chip = within(nav).getByRole("button", { name: /^Кабели Ethernet/ });
   expect(await within(chip).findByText(/^2$/)).toBeInTheDocument();
   // the многожильные keep their columns and lose the LAN rows
   expect(await screen.findByText("КДВВГ 4х0,50")).toBeInTheDocument();
@@ -74,7 +74,7 @@ it("puts «ETHERNET» right after «Многожильные кабели» with
 it("shows the ETHERNET list with all its columns in the group order, grouped by screen and category", async () => {
   render(<ReferencesPage principal={admin} initialTab="cab_multi" />);
   await screen.findByText("КДВВГ 4х0,50");
-  fireEvent.click(screen.getByRole("button", { name: /^ETHERNET/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Кабели Ethernet/ }));
   expect(await screen.findByText("ParLan U/UTP Cat5e PVC 4х2х0,52")).toBeInTheDocument();
   expect(screen.queryByText("КДВВГ 4х0,50")).toBeNull();
   expect(heads()).toEqual([

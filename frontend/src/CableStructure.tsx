@@ -23,7 +23,7 @@ import { arrangeCableColumns, knownCableColumn } from "./cableColumnOrder";
    outer Ø, voltage, temperature) and the coax card a tester reads at the VNA. Backend: references/cable_structure.py. */
 
 export const CABLE_KIND_LABELS: Record<CableKind, string> = {
-  coax: "Коаксиальные кабели", wire: "Монтажные провода", multi: "Многожильные кабели", lan: "ETHERNET",
+  coax: "Коаксиальные кабели", wire: "Монтажные провода", multi: "Многожильные кабели", lan: "Кабели Ethernet",
 };
 
 /** The columns of one list (owner 20.10.2026: «у каждого своя структура»): the list's own БД.ПРОВ columns and the ones the

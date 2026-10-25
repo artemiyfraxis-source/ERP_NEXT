@@ -171,7 +171,7 @@ def test_the_downgrade_keeps_a_value_changed_after_the_move():
 
 def test_the_check_and_the_lists_know_the_lan_kind():
     assert "lan" in CABLE_KIND_VALUES and "'lan'" in CABLE_KIND_CHECK
-    assert CABLE_KIND_LABELS[CableKind.LAN] == "ETHERNET"
+    assert CABLE_KIND_LABELS[CableKind.LAN] == "Кабели Ethernet"
     assert "'lan'" in MIGRATION.read_text(encoding="utf-8")
 
 
