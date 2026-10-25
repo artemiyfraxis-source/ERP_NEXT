@@ -82,7 +82,7 @@ def test_rows_join_the_generator_diameter_row_and_keep_diameter_only_cables():
     result = cable_rows(wires, diameters)
     by_cable = {row.cable: row for row in result}
 
-    assert cable_counts(result) == {"coax": 5, "wire": 3, "multi": 2}
+    assert cable_counts(result) == {"coax": 5, "wire": 3, "multi": 2, "lan": 0}
     assert by_cable["RG316"].dia.fields["D3"] == "1,95"  # «RG316» ↔ «RG-316»: the generator's key
     assert by_cable["RG-58 A/U"].dia is None and by_cable["RG-58 A/U"].dia_hint.fields["Кабель"] == "RG58"
     assert by_cable["RG58"].record is None and by_cable["RG58"].dia.fields["D1"] == "1"  # only in the D-table
@@ -218,12 +218,12 @@ def test_api_lists_moves_and_edits_cables(tmp_path, sessions, cables_api):  # no
     load_mirror(_mirror(tmp_path), SqlAlchemyReferencesUnitOfWork(sessions), dry_run=False, now=NOW)
 
     listed = cables_api.get("/api/references/cables").json()
-    assert listed["counts"] == {"coax": 5, "wire": 3, "multi": 2}
+    assert listed["counts"] == {"coax": 5, "wire": 3, "multi": 2, "lan": 0}
     assert listed["columns"][:4] == ["Марка", "Цвет", "Цвета", "Тип провода"]
     by_kind = listed["columns_by_kind"]
     assert "AWG" not in by_kind["coax"] and "Волновое сопротивление, Ом" in by_kind["coax"]
     assert "Волновое сопротивление, Ом" not in by_kind["wire"] and "Ток, А" not in by_kind["wire"] and "AWG" in by_kind["wire"]
-    assert "Ток, А" not in by_kind["multi"] and listed["custom_columns_by_kind"] == {"coax": [], "wire": [], "multi": []}
+    assert "Ток, А" not in by_kind["multi"] and listed["custom_columns_by_kind"] == {"coax": [], "wire": [], "multi": [], "lan": []}
     rg316 = next(row for row in listed["rows"] if row["cable"] == "RG316")
     assert rg316["kind"] == "coax" and rg316["dia"]["cable"] == "RG-316" and rg316["record"]["fields"]["Волновое сопротивление, Ом"] == "50"
     rg58 = next(row for row in listed["rows"] if row["cable"] == "RG58")
@@ -250,7 +250,7 @@ def test_api_lists_moves_and_edits_cables(tmp_path, sessions, cables_api):  # no
     assert cables_api.put(f"/api/references/cables/{rg58['dia']['id']}/kind", json={"kind": "wire"}).status_code == 404
     assert cables_api.put(f"/api/references/cables/{pvam['id']}/kind", json={"kind": "кабель"}).status_code == 422
     after = cables_api.get("/api/references/cables").json()
-    assert after["counts"] == {"coax": 6, "wire": 2, "multi": 2}
+    assert after["counts"] == {"coax": 6, "wire": 2, "multi": 2, "lan": 0}
 
     # the move is not a supplier/country map row, and saving the maps does not drop it
     maps = cables_api.get("/api/references/maps").json()
@@ -259,7 +259,7 @@ def test_api_lists_moves_and_edits_cables(tmp_path, sessions, cables_api):  # no
     assert cables_api.get("/api/references/cables").json()["counts"]["coax"] == 6
 
     bases = cables_api.get("/api/references/bases").json()
-    assert bases["cables"] == {"coax": 6, "wire": 2, "multi": 2}
+    assert bases["cables"] == {"coax": 6, "wire": 2, "multi": 2, "lan": 0}
     assert bases["tabs"]["kab_awg"] == 1 and bases["tabs"]["kab_coax"] == 4 and bases["tabs"]["prov"] == len(PROV_ROWS)
 
 

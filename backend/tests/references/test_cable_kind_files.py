@@ -66,7 +66,8 @@ def test_the_file_of_a_list_carries_only_that_list(references_api, kind):
 
     # that list's sheet columns, its own column, then its extras under the screen's titles — nothing else
     assert header == [*CABLE_COLUMNS[kind], OWN[kind], *EXTRAS[kind]]
-    others = {name for other, columns in CABLE_COLUMNS.items() if other != kind for name in columns} - set(CABLE_COLUMNS[kind])
+    # (the list's own column may be another list's sheet column: «Материал изоляции жилы» is one of ETHERNET, 25.10.2026)
+    others = {name for other, columns in CABLE_COLUMNS.items() if other != kind for name in columns} - set(CABLE_COLUMNS[kind]) - {OWN[kind]}
     assert not others & set(header)
     assert not {name for other, name in OWN.items() if other != kind} & set(header)
     assert not any(title.startswith(("hookup_", "D1,")) for title in header)
@@ -242,4 +243,5 @@ def test_the_schema_of_the_prov_load_names_the_kind_field_and_the_columns_of_eac
 
     assert schema["kind_field"] == "Вид кабеля" and "Вид кабеля" in schema["fields"]
     assert set(OWN.values()) <= set(schema["fields"])
-    assert schema["columns_by_kind"] == {kind: [*CABLE_COLUMNS[kind], OWN[kind]] for kind in CABLE_COLUMNS}
+    # ETHERNET (25.10.2026) has no own column here
+    assert schema["columns_by_kind"] == {kind: [*CABLE_COLUMNS[kind], *([OWN[kind]] if kind in OWN else [])] for kind in CABLE_COLUMNS}
