@@ -17,6 +17,7 @@ import { canonicalColor, colorBackground, parseColors } from "./wireColors";
 import { ColorPicker, MakersInput } from "./WireFieldWidgets";
 import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 import { arrangeCableColumns, knownCableColumn } from "./cableColumnOrder";
+import { CABLE_SORT_HINT, SortHint, compareNames, compareNumbers } from "./refSort";
 
 /* Structured cable reference (owner 10.10.2026: «наведи порядок в базах коаксиалов, монтажных проводов и сечений»):
    «Сечения AWG ↔ мм²» (one row per conductor size), «Монтажные провода» (series + conductor as a size row + insulation,
@@ -104,6 +105,8 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
   onError: (message: string) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  // Owner 25.10.2026: «размер, затем наименование» — the section as a number, no section — last, then AWG.
+  const ordered = useMemo(() => [...gauges].sort((a, b) => compareNumbers(a.section_mm2, b.section_mm2) || compareNames(a.awg, b.awg)), [gauges]);
   const columns: DataColumn<WireGauge>[] = [
     { key: "awg", title: "AWG", value: (gauge) => gauge.awg, render: (gauge) => gauge.awg ? <strong>{gauge.awg}</strong> : <span className="muted">только ГОСТ</span> },
     { key: "section", title: "Сечение, мм²", numeric: true, value: (gauge) => gauge.section_mm2, render: (gauge) => num(gauge.section_mm2) },
@@ -124,7 +127,7 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
     </div>}
     <DataTable
       label="Сечения AWG ↔ мм²"
-      rows={gauges}
+      rows={ordered}
       columns={columns}
       rowKey={(gauge) => gauge.id}
       storageKey="db:gauges"
@@ -135,7 +138,7 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
       presets={gauges.some((gauge) => gauge.conductor_d_mm === null) ? [{ label: "Без Ø жилы", test: (gauge) => gauge.conductor_d_mm === null }] : undefined}
       onEdited={() => onSaved("")}
       emptyText="Таблица сечений пуста — добавьте сечение."
-      toolbar={canEdit && !adding ? <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Сечение</button> : undefined}
+      toolbar={<><SortHint text="сечение, затем AWG" />{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Сечение</button>}</>}
     />
   </>;
 }
@@ -228,9 +231,9 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   const rows = useMemo(() => data.rows.filter((row) => row.kind === "wire").sort((a, b) =>
     (a.hookup ? 0 : 1) - (b.hookup ? 0 : 1)
     || (a.hookup?.series ?? "").localeCompare(b.hookup?.series ?? "", "ru")
-    || (byId.get(a.hookup?.gauge_id ?? "")?.section_mm2 ?? 0) - (byId.get(b.hookup?.gauge_id ?? "")?.section_mm2 ?? 0)
-    || a.cable.localeCompare(b.cable, "ru", { numeric: true })
-    || (a.record?.fields[COLOR] ?? "").localeCompare(b.record?.fields[COLOR] ?? "", "ru")), [data.rows, byId]);
+    || compareNumbers(byId.get(a.hookup?.gauge_id ?? "")?.section_mm2, byId.get(b.hookup?.gauge_id ?? "")?.section_mm2)
+    || compareNames(a.cable, b.cable)
+    || compareNames(a.record?.fields[COLOR], b.record?.fields[COLOR])), [data.rows, byId]);
   const makerNames = useMemo(() => makerSuggestions(data.rows.map((item) => item.record?.fields[MAKERS] ?? "")), [data.rows]);
   const seriesColors = (series: string) => [...new Set(rows.filter((item) => item.hookup?.series === series.trim())
     .flatMap((item) => parseColors(item.record?.fields[COLOR] ?? "")))].join(", ");
@@ -354,7 +357,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       ].filter((preset) => rows.some(preset.test))}
       onEdited={() => onSaved("")}
       emptyText="Монтажных проводов нет — добавьте провод."
-      toolbar={<>{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Провод</button>}</>}
+      toolbar={<><SortHint text={CABLE_SORT_HINT.wire} />{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Провод</button>}</>}
     />
   </>;
 }

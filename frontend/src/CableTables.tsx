@@ -13,8 +13,9 @@ import {
   type CoaxParam,
   type TechOperationRecord,
 } from "./api";
-import { CATEGORIES, CATEGORY_CELL, cableCategory, cableFamily, compareByFamily } from "./cableCategory";
-import { coaxGroupOf, coaxOtherNames, sortCoax } from "./coaxFamilies";
+import { CATEGORIES, CATEGORY_CELL, cableCategory, cableFamily, compareFamilyGroups } from "./cableCategory";
+import { CABLE_SORT_HINT, SortHint, compareNames, compareNumbers, ethernetCategoryRank, firstNumber } from "./refSort";
+import { coaxGroupOf, coaxOtherNames, compareCoaxGroups } from "./coaxFamilies";
 import { coaxArticle, coaxSeries, coaxSupplier, coaxType, seriesRank } from "./CoaxConnectors";
 import { cellFailure, fieldCellEdit, ownCellEdit } from "./CustomColumn";
 import { MakersInput } from "./WireFieldWidgets";
@@ -126,7 +127,26 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
   // as numbers inside.
   const rows = useMemo(() => {
     const own = data.rows.filter((row) => row.kind === kind);
-    return kind === "multi" || kind === "lan" ? own.sort((a, b) => compareByFamily(cells(a), cells(b))) : kind === "coax" ? sortCoax(own) : own;
+    // Owner 25.10.2026: «размер, затем наименование» везде; the groups keep their order, the rows inside a group follow it.
+    const fieldOf = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
+    if (kind === "multi") return own.sort((a, b) => compareFamilyGroups(cells(a), cells(b))
+      || compareNumbers(firstNumber(fieldOf(a, "Сечение, мм2")), firstNumber(fieldOf(b, "Сечение, мм2")))
+      || compareNumbers(firstNumber(fieldOf(a, "Число жил")), firstNumber(fieldOf(b, "Число жил")))
+      || compareNames(a.cable, b.cable));
+    if (kind === "lan") {
+      const category = (row: CableRow) => ethernetCategoryRank(fieldOf(row, CATEGORY_CELL)) ?? ethernetCategoryRank(row.cable) ?? ethernetCategoryRank(fieldOf(row, "Тип провода"));
+      return own.sort((a, b) => compareFamilyGroups(cells(a), cells(b))
+        || compareNumbers(category(a), category(b))
+        || compareNumbers(firstNumber(fieldOf(a, "Число пар")), firstNumber(fieldOf(b, "Число пар")))
+        || compareNames(a.cable, b.cable));
+    }
+    if (kind === "coax") {
+      const groups = compareCoaxGroups(own);
+      return own.sort((a, b) => groups(a, b)
+        || compareNumbers(firstNumber(fieldOf(a, "Наружный диаметр, мм")), firstNumber(fieldOf(b, "Наружный диаметр, мм")))
+        || compareNames(a.cable, b.cable));
+    }
+    return own;
   }, [data.rows, kind]);
   const coaxGroup = useMemo(() => coaxGroupOf(rows), [rows]);
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
@@ -272,7 +292,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }]
         : rows.some((row) => !field(row, "Наружный диаметр, мм").trim()) ? [{ label: "Без Ø", test: (row) => !field(row, "Наружный диаметр, мм").trim() }] : undefined}
       emptyText={kind === "coax" ? "Коаксиальных кабелей нет — загрузите зеркало БД.ПРОВ и СПР.КАБ или добавьте запись." : "Записей нет."}
-      toolbar={<>{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
+      toolbar={<><SortHint text={CABLE_SORT_HINT[kind]} />{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
     />
   </>;
 }

@@ -346,7 +346,7 @@ it("lists coax cables like a catalogue: series groups in order, base mark before
   const lmrGroup = screen.getByRole("button", { name: /Прочие · 2/ });
   expect(rg.compareDocumentPosition(lmrGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const marks = screen.getAllByRole("row").map((line) => line.querySelector("td.key")?.textContent).filter(Boolean);
-  expect(marks).toEqual(["RG58", "RG-58 A/U", "LMR-195", "RG316"]); // RG58 = RG-58: the base mark, then its A/U
+  expect(marks).toEqual(["RG-58 A/U", "RG58", "LMR-195", "RG316"]); // owner 25.10: by outer diameter, a row without one (the D-row RG58) last in its group
   expect(rg).toHaveAttribute("aria-expanded", "true");
   fireEvent.click(rg);
   expect(rg).toHaveAttribute("aria-expanded", "false");

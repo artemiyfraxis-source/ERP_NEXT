@@ -147,6 +147,12 @@ export function cableFamily(fields: Record<string, string>): CableFamily {
   return { family: cableSeries(mark).replace(/-\d[\w-]*$/, "") || mark, manual: false, rank: FAMILY_RULES.length };
 }
 
+/** Only the group order of two cables (family by its rank, an unknown one by name): rows inside a group are ordered by the caller. */
+export function compareFamilyGroups(a: Record<string, string>, b: Record<string, string>): number {
+  const [fa, fb] = [cableFamily(a), cableFamily(b)];
+  return fa.rank - fb.rank || fa.family.localeCompare(fb.family, "ru", { numeric: true, sensitivity: "base" });
+}
+
 /** «Многожильные»: family by its rank (an unknown family — after the known ones, by name), then cores, then section. */
 export function compareByFamily(a: Record<string, string>, b: Record<string, string>): number {
   const [fa, fb] = [cableFamily(a), cableFamily(b)];
