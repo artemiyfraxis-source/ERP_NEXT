@@ -146,6 +146,8 @@ def test_tapes_sort_by_width_and_cambric_by_diameter():
 def test_series_family_drops_the_catalogue_number():
     parsed = cv.parse(row("ТУТнг 4/2 красная", "ТУТ", **{"Серия": "ТУТнг (65994)"}), cv.TUT)
     assert (parsed.series, parsed.series_family) == ("ТУТнг (65994)", "ТУТнг")
+    rexant = cv.parse(row("ТУТ 3,0/1,5 черная", "ТУТ", **{"Серия": "ТУТ (20-3006)"}), cv.TUT)
+    assert rexant.series_family == "ТУТ"  # a Rexant article (20-3006) is a catalogue number too
     assert cv.parse(row("ТТК Flex", "ТТК", **{"Серия": 'ТТК "Flex" (85208)'}), cv.TTK).series_family == 'ТТК "Flex"'
     assert cv.parse(row("Оплётка XT", "оплётка", **{"Серия": "XT (85371)"}), cv.BRAID).series_family == "XT"
     assert cv.parse(row("Оплётка GTRPA-10", "оплётка", **{"Серия": "GTRPA-10"}), cv.BRAID).series_family == "GTRPA"

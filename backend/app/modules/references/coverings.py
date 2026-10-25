@@ -95,7 +95,7 @@ def shrink_kind(name: str, series: str, material: str, ratio: str) -> str:
         for kind, pattern in (("hf", _HF), ("ngls", _LS), ("ng", _NG)):
             if pattern.search(text):
                 return kind
-    own = re.sub(r"\s*\(\d{4,}\)\s*$", "", series).strip().casefold()
+    own = re.sub(r"\s*\((?:\d{4,}|\d{2}-\d{4})\)\s*$", "", series).strip().casefold()
     if not own or _CATALOGUE_SERIES.fullmatch(own) or own.startswith(("тут", "ттк")):
         return "plain"
     return "brand"
@@ -172,7 +172,7 @@ class Parsed:
     maker: str = ""
     series: str = ""
     kind: str = ""                      # ТУТ/ТТК: see shrink_kind
-    series_family: str = ""             # the series without a catalogue number: «ТУТнг (65994)» → «ТУТнг»
+    series_family: str = ""             # the series without a catalogue number: «ТУТнг (65994)», «ТУТ (20-3006)» → «ТУТнг», «ТУТ»
     notes: list[str] = field(default_factory=list)  # which values were taken from the text, not from a column
 
 
@@ -217,7 +217,7 @@ def parse(fields: Mapping[str, Any], group: str) -> Parsed:
     material = _text(fields, "Материал")
     parsed = Parsed(material=material, material_short=_short_material(material), color=_colour(fields),
                     maker=_text(fields, "Производитель"), series=_text(fields, "Серия"))
-    parsed.series_family = re.sub(r"\s*\(\d{4,}\)\s*$", "", parsed.series)
+    parsed.series_family = re.sub(r"\s*\((?:\d{4,}|\d{2}-\d{4})\)\s*$", "", parsed.series)
     if group == BRAID:  # the braid's model carries its size: GTRPA-10, XP-6 → GTRPA, XP
         parsed.series_family = re.sub(rf"-{_NUM}$", "", parsed.series_family)
     _temperature(fields, parsed)
