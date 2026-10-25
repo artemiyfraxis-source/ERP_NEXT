@@ -639,3 +639,112 @@ it("a column new since the saved layout follows its own default; columns the use
   expect(heads.some((text) => text.startsWith("Г новая"))).toBe(true);
   expect(JSON.parse(window.localStorage.getItem("erp-table:known-test") ?? "{}").known).toEqual(["a", "b", "c", "d"]);
 });
+
+describe("groups as blocks (owner 25.10.2026: «визуал БД один», как «Оболочки»)", () => {
+  interface Part { id: string; name: string; series: string; size: number; maker: string; note: string }
+  const parts: Part[] = [
+    { id: "a", name: "МГТФ 0,12", series: "МГТФ", size: 0.12, maker: "Камкабель", note: "" },
+    { id: "b", name: "МГТФ 0,35", series: "МГТФ", size: 0.35, maker: "Камкабель", note: "" },
+    { id: "c", name: "НВ-4 0,5", series: "НВ-4", size: 0.5, maker: "", note: "" },
+    { id: "d", name: "НВ-4 0,2", series: "НВ-4", size: 0.2, maker: "Спецкабель", note: "" },
+  ];
+  const partColumns = (save?: (row: Part, value: string) => Promise<unknown>): DataColumn<Part>[] => [
+    { key: "name", title: "Марка", value: (row) => row.name },
+    { key: "size", title: "Сечение", value: (row) => row.size, numeric: true },
+    { key: "maker", title: "Производитель", value: (row) => row.maker, edit: save ? { save } : undefined },
+    { key: "note", title: "Примечание", value: (row) => row.note },
+  ];
+  const tables = () => [...document.querySelectorAll<HTMLTableElement>(".data-table.dt-blocks > .table-wrap > table")];
+  const headings = () => [...document.querySelectorAll(".dt-block-title")].map((node) => node.textContent);
+  const marks = (table: HTMLTableElement) => [...table.querySelectorAll("tbody tr")].map((row) => row.querySelector("td")?.textContent);
+  const show = (extra: Partial<Parameters<typeof DataTable<Part>>[0]> = {}) => render(<DataTable label="Провода" rows={parts} columns={partColumns()}
+    rowKey={(row) => row.id} groupBy={(row) => row.series} blocks storageKey="blocks-test" exportName="Провода"
+    presets={[{ label: "Без производителя", test: (row) => !row.maker }]} {...extra} />);
+
+  it("draws a heading with the count and its own table per group; one toolbar, one chip row, one footer", () => {
+    show();
+    expect(headings()).toEqual(["МГТФ 2", "НВ-4 2"]);
+    expect(tables().map((table) => table.getAttribute("aria-label"))).toEqual(["МГТФ", "НВ-4"]);
+    expect(tables().map(marks)).toEqual([["МГТФ 0,12", "МГТФ 0,35"], ["НВ-4 0,5", "НВ-4 0,2"]]);
+    tables().forEach((table) => expect(within(table).getAllByRole("columnheader").map((head) => head.textContent)).toEqual(["Марка", "Сечение", "Производитель", "Примечание"]));
+    expect(screen.getAllByRole("searchbox")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Колонки" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Excel" })).toHaveLength(1);
+    expect(screen.getAllByRole("group", { name: "Быстрый отбор" })).toHaveLength(1);
+    expect(screen.getByText("Показано 4 из 4")).toBeInTheDocument();
+  });
+
+  it("hides a block the search or a chip leaves empty; the counts follow", () => {
+    show();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "0,35" } });
+    expect(headings()).toEqual(["МГТФ 1"]);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Без производителя · 1/ }));
+    expect(headings()).toEqual(["НВ-4 1"]);
+    fireEvent.click(screen.getByRole("button", { name: /^Без производителя/ }));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "нет такого" } });
+    expect(headings()).toEqual([]);
+    expect(screen.getByText("Ничего не найдено.")).toBeInTheDocument();
+  });
+
+  it("applies «Колонки» to every block", () => {
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Показывать колонки" })).getByRole("checkbox", { name: "Примечание" }));
+    tables().forEach((table) => expect(within(table).queryByRole("columnheader", { name: "Примечание" })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Ниже: Марка" }));
+    tables().forEach((table) => expect(within(table).getAllByRole("columnheader")[0]).toHaveTextContent("Сечение"));
+  });
+
+  it("sorts inside every block by a header click in any of them; the blocks stay in place", () => {
+    show();
+    fireEvent.click(within(tables()[1]).getByRole("button", { name: "Сечение" }));
+    expect(headings()).toEqual(["МГТФ 2", "НВ-4 2"]);
+    expect(tables().map(marks)).toEqual([["МГТФ 0,12", "МГТФ 0,35"], ["НВ-4 0,2", "НВ-4 0,5"]]);
+    fireEvent.click(within(tables()[0]).getByRole("button", { name: /Сечение/ }));
+    expect(tables().map(marks)).toEqual([["МГТФ 0,35", "МГТФ 0,12"], ["НВ-4 0,5", "НВ-4 0,2"]]);
+    tables().forEach((table) => expect(within(table).getByRole("columnheader", { name: /Сечение/ })).toHaveAttribute("aria-sort", "descending"));
+  });
+
+  it("sorts a list shown in pages as a whole inside each block, before the page is cut", () => {
+    show({ pageSize: 3 });
+    fireEvent.click(within(tables()[0]).getByRole("button", { name: "Сечение" }));
+    expect(tables().map(marks)).toEqual([["МГТФ 0,12", "МГТФ 0,35"], ["НВ-4 0,2"]]);
+    expect(headings()).toEqual(["МГТФ 2", "НВ-4 2"]); // the count is the block's, not the page's
+  });
+
+  it("edits a cell inside a block; Tab and Enter go on into the next block", async () => {
+    const save = vi.fn(async () => undefined);
+    const onEdited = vi.fn();
+    render(<DataTable label="Провода" rows={parts} columns={partColumns(save)} rowKey={(row) => row.id} groupBy={(row) => row.series} blocks onEdited={onEdited} />);
+    const cell = (table: number, row: number) => tables()[table].querySelectorAll("tbody tr")[row].querySelectorAll("td")[2] as HTMLElement;
+    fireEvent.click(cell(0, 1));
+    expect(cell(0, 1)).toHaveClass("dt-active");
+    fireEvent.keyDown(cell(0, 1), { key: "ArrowDown" });
+    expect(cell(1, 0)).toHaveClass("dt-active"); // the next block's first row
+    fireEvent.keyDown(cell(1, 0), { key: "Enter" });
+    const input = within(cell(1, 0)).getByRole("textbox");
+    fireEvent.change(input, { target: { value: "Кабэкс" } });
+    await act(async () => { fireEvent.keyDown(input, { key: "Enter" }); });
+    expect(save).toHaveBeenCalledWith(parts[2], "Кабэкс");
+    expect(onEdited).toHaveBeenCalled();
+    expect(cell(1, 1)).toHaveClass("dt-active");
+  });
+
+  it("puts sub-blocks under their section heading and shows each block its own columns", () => {
+    render(<DataTable label="Оболочки" rows={parts} columns={partColumns()} rowKey={(row) => row.id} groupBy={(row) => row.series} blocks
+      blockSection={(name) => name === "МГТФ" ? undefined : "Провода НВ"} blockColumns={(name) => name === "НВ-4" ? ["name", "maker"] : undefined} />);
+    expect(screen.getByRole("heading", { level: 2, name: "МГТФ 2" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Провода НВ 2" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: "НВ-4 2" })).toBeInTheDocument();
+    expect(within(tables()[0]).getAllByRole("columnheader")).toHaveLength(4);
+    expect(within(tables()[1]).getAllByRole("columnheader").map((head) => head.textContent)).toEqual(["Марка", "Производитель"]);
+    expect(tables()[1].querySelector("tbody tr")!.querySelectorAll("td:not(.dt-fill)")).toHaveLength(2);
+  });
+
+  it("is one block titled by the list when the list has no groups", () => {
+    render(<DataTable label="Сечения AWG ↔ мм²" rows={parts} columns={partColumns()} rowKey={(row) => row.id} blocks />);
+    expect(headings()).toEqual(["Сечения AWG ↔ мм² 4"]);
+    expect(tables()).toHaveLength(1);
+  });
+});

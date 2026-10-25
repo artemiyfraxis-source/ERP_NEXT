@@ -148,6 +148,12 @@ export interface DataTableProps<T> {
       для всех блоков (колонки блоков идут вровень), щелчок по заголовку сортирует внутри каждого блока, пустой блок
       не показывается. Без `groupBy` — один блок с подписью таблицы (`label`). */
   blocks?: boolean;
+  /** Блоки с `blocks`: раздел над блоком (заголовок раздела со счётчиком, блоки под ним — подгруппы: ТУТ → виды трубки);
+      без раздела блок стоит сам по себе. */
+  blockSection?: (name: string) => string | undefined;
+  /** Блоки с `blocks`: ключи колонок, которые есть у блока (у оплётки нет «Ø до усадки»); без них — все колонки. Выбор
+      «Колонок» общий: блок показывает выбранные из своих. */
+  blockColumns?: (name: string) => string[] | undefined;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
@@ -383,6 +389,8 @@ export function DataTable<T>({
   onEdited,
   groupSort: groupSortProp = false,
   blocks = false,
+  blockSection,
+  blockColumns,
 }: DataTableProps<T>) {
   // Blocks always sort inside every group (the groups keep the screen's order); a list without groups is one block.
   const groupSort = groupSortProp || blocks;
@@ -647,6 +655,14 @@ export function DataTable<T>({
   const sized = !fixedLayout;
   const filler = sized && !visible.some((column) => column.grow);
   const span = visible.length + (selectable ? 1 : 0) + (filler ? 1 : 0);
+  // A block shows the chosen columns that are its own (`blockColumns`); a row — those of its block.
+  const ownKeys = new Map<string, Set<string> | null>();
+  const keysOf = (name: string) => {
+    if (!ownKeys.has(name)) { const keys = blocks ? blockColumns?.(name) : undefined; ownKeys.set(name, keys ? new Set(keys) : null); }
+    return ownKeys.get(name)!;
+  };
+  const columnsOf = (name: string) => { const keys = keysOf(name); return keys ? visible.filter((column) => keys.has(column.key)) : visible; };
+  const rowHas = (row: T, key: string) => !blocks || !blockColumns || !grouping || (keysOf(grouping(row))?.has(key) ?? true);
   const filterValues = (column: DataColumn<T>) =>
     [...new Set(rows.map((row) => String(column.value(row) ?? "")))].sort((a, b) => compareCells(a, b));
 
@@ -703,7 +719,7 @@ export function DataTable<T>({
   const lines = groups.flatMap(([name, groupRows]) => collapsibleGroups && collapsed.has(name) ? [] : groupRows);
   const byKey = new Map(rows.map((row) => [rowKey(row), row]));
   const editable = (column: DataColumn<T> | undefined, row: T | undefined): column is DataColumn<T> & { edit: DataCellEdit<T> } =>
-    Boolean(column?.edit && row && (column.edit.enabled?.(row) ?? true));
+    Boolean(column?.edit && row && rowHas(row, column.key) && (column.edit.enabled?.(row) ?? true));
   const textOf = (column: DataColumn<T>, row: T) => column.edit?.value ? column.edit.value(row) : String(column.value(row) ?? "");
   // A choice cell copies what it shows (the size «22», not the size row's id); a paste finds the option again.
   const copyOf = (column: DataColumn<T>, row: T) => column.edit?.options ? String(column.value(row) ?? "") : textOf(column, row);
@@ -1031,6 +1047,7 @@ export function DataTable<T>({
 
   function renderRow(row: T) {
     const key = rowKey(row);
+    const cells = blocks && blockColumns && grouping ? columnsOf(grouping(row)) : visible;
     const open = expanded === key;
     const activate = onRowClick ? () => onRowClick(row) : renderDetail ? () => setExpanded(open ? null : key) : undefined;
     return (
@@ -1051,11 +1068,11 @@ export function DataTable<T>({
               <label className="sel-hit"><input type="checkbox" aria-label={rowLabel ? `Выбрать: ${rowLabel(row)}` : `Выбрать ${key}`} checked={selected.has(key)} onChange={() => undefined} onClick={(event) => toggleRow(key, event.currentTarget.checked, event.shiftKey)} /></label>
             </td>
           )}
-          {visible.map((column, index) => renderCell(row, column, index))}
+          {cells.map((column, index) => renderCell(row, column, index))}
           {filler && <td className="dt-fill" aria-hidden="true" />}
         </tr>
         {open && renderDetail && (
-          <tr className="detail"><td colSpan={span}><div className="detail-body">{renderDetail(row)}</div></td></tr>
+          <tr className="detail"><td colSpan={span - visible.length + cells.length}><div className="detail-body">{renderDetail(row)}</div></td></tr>
         )}
       </Fragment>
     );
@@ -1070,14 +1087,14 @@ export function DataTable<T>({
   }
   const tableClass = ["grid wide", selectable ? "selectable" : "", sized ? "sized" : "", hasEditing ? "dt-edit-grid" : ""].filter(Boolean).join(" ");
   /** The header row: one per table — the whole list, or a block (`block`: its title and rows for «select all»). */
-  function headOf(block: { title: string; rows: T[] } | null) {
+  function headOf(block: { title: string; rows: T[] } | null, heads: DataColumn<T>[] = visible) {
     return (
       <thead>
         <tr>
           {selectable && <th><label className="sel-hit">{block === null
             ? <input type="checkbox" aria-label="Выбрать все показанные" checked={allShownSelected} onChange={(event) => toggleAll(event.target.checked)} />
             : <input type="checkbox" aria-label={`Выбрать все: ${block.title}`} checked={block.rows.length > 0 && block.rows.every((row) => selected.has(rowKey(row)))} onChange={(event) => toggleGroup(block.rows, event.target.checked)} />}</label></th>}
-          {visible.map((column, index) => {
+          {heads.map((column, index) => {
             const direction = sort?.key === column.key ? sort.direction : 0;
             const width = widths[column.key];
             const dragged = dragKey.current;
@@ -1250,13 +1267,20 @@ export function DataTable<T>({
           const folded = Boolean(collapsibleGroups && collapsed.has(name));
           const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
           const caption = <>{title} <span className="page-count">{blockTotals.get(name) ?? groupRows.length}</span>{picked > 0 && <span className="group-picked">выбрано {picked}</span>}</>;
+          // A section over its blocks (ТУТ over the kinds of tube): its heading before its first block, with all their rows.
+          const section = blockSection?.(name);
+          const opens = section !== undefined && (index === 0 || blockSection?.(groups[index - 1][0]) !== section);
+          const sectionTotal = opens ? groups.filter(([other]) => blockSection?.(other) === section).reduce((sum, [other, rows]) => sum + (blockTotals.get(other) ?? rows.length), 0) : 0;
+          const Heading = section !== undefined ? "h3" : "h2";
+          const heads = columnsOf(name);
           return <Fragment key={`block:${name}`}>
-            <h2 className="dt-block-title">{collapsibleGroups
+            {opens && <h2 className="dt-block-title dt-section-title">{section} <span className="page-count">{sectionTotal}</span></h2>}
+            <Heading className={section !== undefined ? "dt-block-title dt-sub-title" : "dt-block-title"}>{collapsibleGroups
               ? <button type="button" className="dt-block-fold" aria-expanded={!folded} onClick={() => toggleCollapsed(name)}><span aria-hidden="true">{folded ? "▸" : "▾"}</span> {caption}</button>
-              : caption}</h2>
+              : caption}</Heading>
             {!folded && <div className="table-wrap">
               <table ref={index === 0 ? tableRef : undefined} className={tableClass} aria-label={typeof title === "string" ? title : name}>
-                {headOf({ title: typeof title === "string" ? title : name, rows: groupRows })}
+                {headOf({ title: typeof title === "string" ? title : name, rows: groupRows }, heads)}
                 <tbody>{groupRows.map(renderRow)}</tbody>
               </table>
             </div>}

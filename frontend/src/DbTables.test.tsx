@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { ReferencesPage, type DbTab } from "./ReferencesPage";
 import type { Principal, TechOperationRecord } from "./api";
+import { blockLines } from "./test/blocks";
 
 /* «База данных» по всей базе (владелец 14.10: «пройдись по базе в целом, улучши её»): правка ячеек по месту тем же
    путём, что окно записи (со старым значением), «+ Столбец» и «Удалить столбец», быстрые отборы «Без …», порядок по
@@ -115,7 +116,7 @@ it("Терминалы: grouped by connector series (catalogue, else the row's �
   mockDb();
   render(<ReferencesPage principal={admin} initialTab="ter" />);
   await screen.findByText("39000038");
-  const groups = screen.getAllByRole("row").filter((row) => row.classList.contains("group-row")).map((row) => row.textContent);
+  const groups = blockLines();
   expect(groups).toEqual(["Molex Micro-Fit 3.0 · 1", "Molex Mini-Fit Jr. · 1", "КВТ НВИ · 1"]);
 
   fireEvent.click(screen.getByRole("button", { name: /^Без высоты обжима · 2/ }));
@@ -175,7 +176,7 @@ it("«Расходники» — only solders and fluxes (owner 17.10): other gr
   const calls = mockDb();
   render(<ReferencesPage principal={admin} initialTab={"mat_fix" as DbTab} />); // the old key opens «Расходники»
   await screen.findByText("Припой ПОС61 1,0 мм");
-  const groups = screen.getAllByRole("row").filter((row) => row.classList.contains("group-row")).map((row) => row.textContent);
+  const groups = blockLines();
   expect(groups).toEqual(["припой/флюс · 2"]);
   for (const elsewhere of ["ТУТ 2/1", "Изолента", "Клей БФ-4", "Уплотнитель MCP", "Стяжка 3x60", "Нечто без группы", "Нечто новое"]) expect(screen.queryByText(elsewhere)).toBeNull();
 
