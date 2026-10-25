@@ -115,7 +115,7 @@ class _TechTable:
         if self.tab == TechOperationTab.WIRE and kind:
             if kind not in CABLE_KIND_VALUES:
                 raise RoundtripError(f"Списка «{kind}» в «Кабелях и проводах» нет — скачайте таблицу заново из "
-                                     "коаксиальных, монтажных или многожильных")
+                                     "коаксиальных, монтажных, многожильных или ETHERNET")
             self.cable_kind = kind
             self.extras = COAX_TITLES if kind == "coax" else HOOKUP_TITLES if kind == "wire" else {}
             self.titles = self.extras
@@ -396,7 +396,7 @@ def _folded(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
 
 
-CABLE_KINDS = {"coax": "Коаксиальные кабели", "wire": "Монтажные провода", "multi": "Многожильные кабели"}
+CABLE_KINDS = {"coax": "Коаксиальные кабели", "wire": "Монтажные провода", "multi": "Многожильные кабели", "lan": "ETHERNET"}
 
 
 def _tables() -> dict[str, Callable[[], _Table]]:

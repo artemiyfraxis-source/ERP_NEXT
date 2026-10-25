@@ -40,9 +40,10 @@ class ReferenceKind(str, Enum):
 
 # The three maps of «Соответствия» / ГОСТ→AWG; a maps save never touches the other kinds.
 MAP_KINDS = (ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY, ReferenceKind.GOST_AWG)
-# «Прочие кабели» is gone (owner 20.10.2026): every БД.ПРОВ row is коаксиальный, монтажный or многожильный.
-CABLE_KIND_VALUES = ("coax", "wire", "multi")
-CABLE_KIND_REASON = "Список кабеля: коаксиальные, монтажные или многожильные"
+# «Прочие кабели» is gone (owner 20.10.2026): every БД.ПРОВ row is коаксиальный, монтажный, многожильный or — since
+# 25.10.2026 (migration 0150) — an ETHERNET cable («lan»).
+CABLE_KIND_VALUES = ("coax", "wire", "multi", "lan")
+CABLE_KIND_REASON = "Список кабеля: коаксиальные, монтажные, многожильные или ETHERNET"
 
 
 class TechOperationTab(str, Enum):
@@ -502,11 +503,28 @@ _PROV_DROPPED = {
     "coax": ("Цвета", "Напряжение, В", *_SUPPLY_DROPPED),
     "wire": _SUPPLY_DROPPED,
     "multi": ("Цвета", *_SUPPLY_DROPPED),
+    # the многожильные cells an ETHERNET row brings and the list does not show: the row's card shows and edits them
+    "lan": ("Число жил", "Материал экрана", "Напряжение, В", "Масса, г/м", "Темп. от, °C", "Темп. до, °C", "Цвета",
+            *_SUPPLY_DROPPED),
 }
+# «ETHERNET» (owner 25.10.2026: «интернетные вынести вообще в другую вкладку — новая вкладка, новая БД»): the LAN
+# cables have their own columns, all of them shown (group order — frontend `cableColumnOrder.ts`): identification,
+# category (Cat5e…), the screen code (U/UTP, F/UTP…), pairs, the core, materials, laying (inside / outside), outer Ø,
+# supply. «Категория», «Экран», «Число пар», «Прокладка» are read from the type, the mark and «Число жил» where empty
+# (`cables.lan_fill`, migration 0150). By the owner's rule (≤ 5 % filled — no column) the list has no «Волновое
+# сопротивление» (1,7 % on prod, and 100 Ом for every row) and no «Ссылка» (0 %); the supply and material columns,
+# the owner's own columns of the многожильные, are the list's own here.
+_LAN_COLUMNS = (
+    "Марка", "Тип провода", "Категория", "Стандарт", "Производители",
+    "AWG", "Сечение, мм2", "Число пар", "Жила: проволок × диаметр, мм", "Материал жилы", "Материал изоляции жилы", "Экран",
+    "Материал оболочки", "Прокладка", "Наружный диаметр, мм",
+    "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Ссылка на datasheet",
+)
 CABLE_DROPPED: dict[str, frozenset[str]] = {kind: frozenset(names) for kind, names in _PROV_DROPPED.items()}
 CABLE_COLUMNS: dict[str, tuple[str, ...]] = {
-    kind: tuple(name for name in _PROV_COLUMNS if name not in _PROV_NEVER[kind] and name not in CABLE_DROPPED[kind])
-    for kind in CABLE_KIND_VALUES
+    **{kind: tuple(name for name in _PROV_COLUMNS if name not in _PROV_NEVER[kind] and name not in CABLE_DROPPED[kind])
+       for kind in CABLE_KIND_VALUES if kind != "lan"},
+    "lan": _LAN_COLUMNS,
 }
 # What a row of the list takes a write to: its columns and the removed ones (an existing row — edit, load, file).
 CABLE_WRITABLE: dict[str, tuple[str, ...]] = {
@@ -606,7 +624,7 @@ def cable_fields(columns: Iterable[str], fields: Mapping[str, str], pad: Iterabl
 
 # Column schema of the sheet-header bases (SUPPLYMAP DbMirror.gs DB_MIRROR_NEW_). Fields of these bases are keyed by
 # the sheet header, so an empty tab can still offer a «+ Запись» form. op/ob/ter/coax fields are internal keys.
-# БД.ПРОВ: the columns of all three cable lists (each list's own — `CABLE_COLUMNS`).
+# БД.ПРОВ: the sheet columns of the cable lists (each list's own — `CABLE_COLUMNS`).
 BASE_COLUMNS = {
     TechOperationTab.WIRE: _PROV_COLUMNS,
     TechOperationTab.MATERIAL: (

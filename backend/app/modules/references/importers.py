@@ -798,7 +798,7 @@ _KIND_WORDS = {
     **{_label.casefold(): kind for kind, _label in CABLE_KIND_LABELS.items()},
     **{_label.split()[0].casefold(): kind for kind, _label in CABLE_KIND_LABELS.items()},
 }
-KIND_REASON = "«Вид кабеля»: Коаксиальные, Монтажные или Многожильные (coax / wire / multi)"
+KIND_REASON = "«Вид кабеля»: Коаксиальные, Монтажные, Многожильные или ETHERNET (coax / wire / multi / lan)"
 
 
 def cable_kind_value(value: str) -> CableKind:
@@ -1065,6 +1065,8 @@ class _TechTarget(_Target):
                     self._kind_of = _kind_rule(self.uow)
                 kind = self._kind_of(fields, str(fields.get(self.table.key_fields[0]) or ""))
                 extra = (*extra, TYPE_FIELD)  # the type the rule chose the list by («монтажный») is kept with the row
+            if kind == CableKind.LAN:  # «Число жил» («8 (4 пары)») gives an ETHERNET row its «Число пар»; kept in the row
+                extra = (*extra, CORES_FIELD)
             # a new row: the list's columns and the provenance «Источник данных» (removed from the list 25.10.2026)
             if foreign := _foreign_cells(fields, (*self._columns_of(kind), *extra), {}):
                 raise RowRefused(_foreign_reason(foreign, kind))
