@@ -4,6 +4,7 @@ import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
 import type { TechOperationRecord } from "./api";
 import { fieldCellEdit, ownCellEdit } from "./CustomColumn";
 import { coaxShieldKind_ } from "./tcGenLogic";
+import { SortHint, compareNames, compareNumbers, firstNumber } from "./refSort";
 import "./coaxConnectors.css";
 
 /* «База данных → Коаксиальные разъёмы» (owner 13.10.2026): БД.КОАКС — разъёмы базы и 311 разъёмов gsm-repiteri.ru —
@@ -107,8 +108,14 @@ export function coaxTypeGroup(fields: Fields): string {
 
 // Серия (порядок цеха) → обычная полярность раньше RP → female, male → прямые, проходные, фланцевые, угловые → полный тип →
 // артикул → кабель.
-function sortRows(records: TechOperationRecord[]) {
+function sortRows(records: TechOperationRecord[], wireDiameter?: (wire: string) => number | null) {
   const genderRank = (fields: Fields) => { const at = GENDER_WORDS.indexOf(genderWord(fields)); return at < 0 ? GENDER_WORDS.length : at; };
+  const diameters = new Map<string, number | null>();
+  const diameterOf = (fields: Fields): number | null => {
+    const wire = coaxWire(fields);
+    if (!diameters.has(wire)) diameters.set(wire, wireDiameter?.(wire) ?? firstNumber(/[⌀Ø]\s*(\d+(?:[.,]\d+)?)/.exec(wire)?.[1]));
+    return diameters.get(wire) ?? null;
+  };
   return [...records].sort((a, b) => {
     const sa = coaxSeries(a.fields);
     const sb = coaxSeries(b.fields);
@@ -117,6 +124,9 @@ function sortRows(records: TechOperationRecord[]) {
       || genderRank(a.fields) - genderRank(b.fields)
       || variantRank(a.fields) - variantRank(b.fields)
       || coaxType(a.fields).localeCompare(coaxType(b.fields), "ru")
+      // Owner 25.10.2026, «размер, затем наименование»: Ø of the cable (its card in «Коаксиальные кабели»), no Ø — the cable's name.
+      || compareNumbers(diameterOf(a.fields), diameterOf(b.fields))
+      || (diameterOf(a.fields) === null && diameterOf(b.fields) === null ? compareNames(coaxWire(a.fields), coaxWire(b.fields)) : 0)
       || coaxArticle(a.fields).localeCompare(coaxArticle(b.fields), "ru", { numeric: true })
       || coaxWire(a.fields).localeCompare(coaxWire(b.fields), "ru", { numeric: true });
   });
@@ -159,7 +169,7 @@ export const hasHex = (fields: Record<string, string>) => {
   return kind === "" || kind === "обжим";
 };
 
-export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns = [], onEdited, removeColumn }: {
+export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns = [], onEdited, removeColumn, wireDiameter }: {
   records: TechOperationRecord[];
   canEdit: boolean;
   onEdit: (record: TechOperationRecord) => void;
@@ -169,8 +179,10 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
   onEdited?: () => Promise<unknown> | void;
   /** «Удалить столбец» своего столбца (окно подтверждения — у страницы). */
   removeColumn?: (name: string) => (() => void) | undefined;
+  /** Наружный диаметр кабеля разъёма, мм (из «Коаксиальные кабели»); нет — разъёмы идут по имени кабеля. */
+  wireDiameter?: (wire: string) => number | null;
 }) {
-  const rows = useMemo(() => sortRows(records), [records]);
+  const rows = useMemo(() => sortRows(records, wireDiameter), [records, wireDiameter]);
   const [selectedId, setSelectedId] = useState("");
   const selected = rows.find((record) => record.id === selectedId) ?? null;
 
@@ -253,7 +265,7 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
         emptyText="Разъёмов нет — загрузите их или добавьте «+ Запись»."
         pageSize={1000}
         onEdited={onEdited}
-        toolbar={toolbar}
+        toolbar={<><SortHint text="серия, затем Ø кабеля и артикул" />{toolbar}</>}
       />
     </div>
     {selected && <CoaxCard

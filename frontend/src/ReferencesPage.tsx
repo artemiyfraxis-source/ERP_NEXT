@@ -14,6 +14,7 @@ import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
 import { PageWindow } from "./PageWindow";
 import { TerminalCard, type TerminalRow } from "./TerminalCard";
+import { SortHint, firstNumber } from "./refSort";
 import { NO_SERIES, makerOrder, seriesCaption, sortBySeries, terminalGroups } from "./terminalSeries";
 import { COAX_CARD_ONLY, CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
@@ -335,7 +336,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     setEditing(null);
     setNotice("");
     if (techTab) void loadTech(techTab);
-    if ((cableKind || tab === "gauges") && cables === null) void loadCables();
+    if ((cableKind || tab === "gauges" || tab === "coax") && cables === null) void loadCables();
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function count(def: TabDef): number | null {
@@ -400,6 +401,12 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const columnButton = principal.permissions.erpref === "edit" && cableKind
     ? <AddColumnButton tab="prov" cableKind={cableKind} onAdded={(name) => cablesSaved(`Столбец «${name}» добавлен`)} /> : undefined;
   const coaxTab = techTab === "coax";
+  // The connector's cable Ø (its row in «Коаксиальные кабели») — the connectors' default order is by it.
+  const wireDiameter = useMemo(() => {
+    const byKey = new Map((cables?.rows ?? []).filter((row) => row.kind === "coax")
+      .map((row) => [cableKey(row.cable), firstNumber(row.record?.fields["Наружный диаметр, мм"])] as const));
+    return (wire: string) => byKey.get(cableKey(wire)) ?? null;
+  }, [cables]);
   const cableOf = (record: TechOperationRecord) => cableDia[cableKey(record.fields["Провод"] ?? record.fields.coaxWire ?? "")];
   // Edit form: the sheet's columns only (the server moves the schema values derived from them); on БД.КОАКС without
   // the cable's Ø — they are edited in «Коаксиальные кабели» — but with the cells removed from the table 25.10.2026
@@ -487,6 +494,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     const gb = String(b.fields["Группа"] ?? "").trim();
     return Number(!ga) - Number(!gb) || natural(ga, gb) || natural(String(a.fields["Наименование"] ?? a.display_text), String(b.fields["Наименование"] ?? b.display_text));
   }), [tech.records, techTab, matTab, coverIds, terGroups, terSeries]);
+  // The default order of the list over its table (owner 25.10.2026: «размер, затем наименование» везде).
+  const sortHint = techTab === "ter" ? "серия, затем сечение провода и артикул" : techTab === "mat" ? "группа, затем наименование" : "";
   const techPresets: DataPreset<TechOperationRecord>[] = presetFields
     .filter((item): item is [string, string] => Boolean(item[1]))
     .map(([label, field]) => ({ label, test: emptyIn(field) }))
@@ -591,6 +600,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
       /> : techReady !== techTab || (matTab && !coverIds) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
         records={tech.records}
+        wireDiameter={wireDiameter}
         canEdit={canEdit}
         onEdit={startEdit}
         ownColumns={tech.custom_columns}
@@ -620,10 +630,10 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         onRowClick={techTab === "ter" ? (record) => openTerminal(record.id) : canEdit ? startEdit : undefined}
         rowTitle={techTab === "ter" ? (record) => `Открыть карточку: ${record.display_text}` : canEdit ? (record) => `Править: ${record.display_text}` : undefined}
         rowClassName={techTab === "ter" ? (record) => (record.id === terminal?.id ? "eq-selected" : "") : undefined}
-        toolbar={canEdit && !editing ? <>
+        toolbar={<>{sortHint && <SortHint text={sortHint} />}{canEdit && !editing ? <>
           <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button>
           {OWN_COLUMN_TABS.includes(techTab) && <AddColumnButton tab={techTab} onAdded={async (name) => { await loadTech(techTab); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />}
-        </> : undefined}
+        </> : null}</>}
       /></div>{terminal && <TerminalCard record={terminal} canEdit={canEdit} onEdit={startEdit} onClose={() => openTerminal("")} />}</div>}
       {techRemoval.dialog}
       {coaxTab && <p className="page-sub">У разъёма — подходящий кабель, разделка L1–L3 и HEX обжима; D1–D3 и Ø — у кабеля, во вкладке «Коаксиальные кабели».</p>}
@@ -696,7 +706,7 @@ function MapTable({ tab, rows, disabled, onChange, toolbar }: {
       storageKey={`db:${tab}`}
       exportName={`${keyLabel} - ${valueLabel}`}
       emptyText="Нет записей"
-      toolbar={toolbar}
+      toolbar={<><SortHint text={keyLabel.toLocaleLowerCase("ru-RU")} />{toolbar}</>}
     />
     {!disabled && <p className="page-sub">Сохраняются все карты соответствий разом; пустые строки отбрасываются.</p>}
   </>;
