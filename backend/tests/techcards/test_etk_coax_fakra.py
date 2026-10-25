@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from app.modules.techcards.etk_builder import build_etk
+from app.modules.techcards.etk_builder import build_etk, with_coax_connectors
 from app.modules.techcards.operation_cards import parse_operation_library
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,3 +40,19 @@ def test_operation_without_tooling_has_no_tool_lines_but_keeps_its_steps():
     assert with_tools["card"]["tooling"]
     assert without["card"]["tooling"] == []
     assert [step["text"] for step in without["card"]["steps"]] == [step["text"] for step in with_tools["card"]["steps"]]
+
+
+def test_fakra_operation_shows_its_own_title_instead_of_the_card_name():
+    own = _etk([{"type": "coaxPinCrimp", "side": "A", "code": "PRS_SLEEVE_coax", "label": "Обжим центрального контакта (А)"}])[0]
+    plain = _etk([{"type": "coaxPinCrimp", "side": "A", "code": "PRS_SLEEVE_coax"}])[0]
+    assert own["card"]["name"] == "Обжим центрального контакта (А)"
+    assert plain["card"]["name"] != own["card"]["name"]
+
+
+def test_put_on_of_one_end_sketches_only_that_end():
+    put_on = _etk([{"type": "coaxInsSleeve", "side": "B", "units": 1, "code": "INS_SLEEVE_coax"}])[0]
+    config = {"coax": {"sideA": {"article": "59K13o-1M4A4"}, "sideB": {"article": "59K13o-1M4A4"}}}
+    ends = with_coax_connectors(put_on, config)["fields"]["coaxParts"]["ends"]
+    assert [end["side"] for end in ends] == ["В"]
+    both = with_coax_connectors({**put_on, "side": ""}, config)["fields"]["coaxParts"]["ends"]
+    assert [end["side"] for end in both] == ["А", "В"]

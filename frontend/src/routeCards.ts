@@ -221,6 +221,12 @@ const TUBE_CUTS = new Set(["cutTut", "coaxCutTut"]);
 /** Разделка коаксиала отдельной операцией готовит нарезанный кабель (владелец 14.10: «зачистка идёт до всего остального»),
     а не сторону: резка, разделка А, разделка В — один полуфабрикат с резкой. */
 const COAX_STRIPS = new Set(["coaxStrip"]);
+/** Разделка конца FAKRA/HFM (opKey `coaxSideStrip…`, владелец 25.10): кабель режется целым, а конец — «надеть детали, разделать,
+    собрать» — собирается в блоке своей стороны (уплотнитель не надеть на разделанную оплётку). Не «Нарезанный кабель». */
+const SIDE_STRIP_KEY = "coaxSideStrip";
+const isCableStrip = (op: RouteOp) => COAX_STRIPS.has(op.type) && !op.key.startsWith(SIDE_STRIP_KEY);
+/** Стороны, чья разделка — часть сборки стороны: центральный контакт такого конца собирается там же (не «Кабель с контактом»). */
+const sideOwnedSides = (ops: readonly RouteOp[]) => new Set(ops.filter((op) => op.key.startsWith(SIDE_STRIP_KEY)).map((op) => op.side));
 /** Резка коаксиала с разделкой на роторном станке (CUT_COAX+1strip / +2strip). */
 const COAX_CUT_STRIP = /^CUT_COAX\+\d*STRIP/;
 /** Обжим концов руками: терминалы и наконечники (и двойной обжим — та же операция), сростки. */
@@ -242,7 +248,7 @@ function wireEndPrep(op: RouteOp): boolean {
 function cutStage(op: RouteOp): GenStage | null {
   const code = op.code.toUpperCase();
   if (TUBE_CUTS.has(op.type) || code.startsWith("CUT_TUT")) return "tubes";
-  return WIRE_CUTS.has(op.type) || COAX_STRIPS.has(op.type) || code.startsWith("CUT_") ? "wires" : null;
+  return WIRE_CUTS.has(op.type) || isCableStrip(op) || code.startsWith("CUT_") ? "wires" : null;
 }
 
 /** Полуфабрикат каждой операции (по номеру в ЭТК): резка проводов и кабеля и разделка коаксиала — «Нарезанные провода»
@@ -257,7 +263,8 @@ function cutStage(op: RouteOp): GenStage | null {
 export function opStages(ops: readonly RouteOp[]): Map<number, GenStage> {
   const sorted = [...ops].sort((a, b) => a.position - b.position);
   const assembly = (op: RouteOp) => !!op.side && !cutStage(op) && !wireEndPrep(op) && !CONTACT_SOLDERS.has(op.type);
-  const pins = new Set(sorted.filter((op) => CONTACT_SOLDERS.has(op.type) && op.side
+  const owned = sideOwnedSides(sorted);
+  const pins = new Set(sorted.filter((op) => CONTACT_SOLDERS.has(op.type) && op.side && !owned.has(op.side)
     && sorted.some((other) => other.position > op.position && other.side === op.side && assembly(other))).map((op) => op.position));
   const endPrep = (op: RouteOp) => wireEndPrep(op) || pins.has(op.position);
   const sided = sorted.filter((op) => op.side && !cutStage(op) && !endPrep(op)).map((op) => op.position);
@@ -293,8 +300,8 @@ export type GenLink = { id: string; from: GenStage; to: GenStage; qty: number | 
 
 function genTitle(stage: GenStage, final: boolean, ops: RouteOp[]): string {
   if (stage === "wires") {
-    if (ops.length && ops.every((op) => op.type === "coaxCut" || COAX_STRIPS.has(op.type))) {
-      const stripped = ops.some((op) => COAX_STRIPS.has(op.type) || COAX_CUT_STRIP.test(op.code.toUpperCase()));
+    if (ops.length && ops.every((op) => op.type === "coaxCut" || isCableStrip(op))) {
+      const stripped = ops.some((op) => isCableStrip(op) || COAX_CUT_STRIP.test(op.code.toUpperCase()));
       return stripped ? "Нарезанный и разделанный кабель" : "Нарезанный кабель";
     }
     return ops.some((op) => op.type === "cutWireCrimp") ? "Нарезанные и обжатые провода" : "Нарезанные провода";
