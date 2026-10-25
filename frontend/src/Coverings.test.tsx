@@ -131,3 +131,23 @@ it("has «Без Ø» and «Без производителя» chips in every g
   expect(within(section("Оплётки") as HTMLElement).getByRole("button", { name: /^Без производителя · 1/ })).toBeInTheDocument();
   expect(within(section("Оплётки") as HTMLElement).queryByRole("button", { name: /^Без Ø/ })).toBeNull(); // пустой отбор не показывается
 });
+
+it("splits ТУТ into a table per kind, in the server's order, and search hides the empty ones", async () => {
+  const rows = [
+    row({ id: "p1", name: "ТУТ 10/5 черная", kind: "plain", before_mm: 10, after_mm: 5 }),
+    row({ id: "n1", name: "ТУТнг 4/2 черная", kind: "ng", before_mm: 4, after_mm: 2 }),
+    row({ id: "r1", name: "ТУТ(3:1)нг-LS 6/2 черная", kind: "r3", before_mm: 6, after_mm: 2, ratio: "3:1" }),
+  ];
+  vi.spyOn(referencesApi, "coverings").mockResolvedValue({
+    ...DATA, counts: { ...DATA.counts, tut: 3, ttk: 0 }, rows,
+    kinds: { tut: [{ id: "plain", title: "ТУТ — обычная (2:1)" }, { id: "ng", title: "ТУТнг — не распространяющая горение" }, { id: "r3", title: "ТУТ 3:1 и более" }] },
+  });
+  render(<CoveringsTable canEdit={false} />);
+  await screen.findByText("ТУТ 10/5 черная");
+  const tut = section("ТУТ — термоусадочная трубка") as HTMLElement;
+  expect([...tut.querySelectorAll(".cov-subtitle")].map((item) => item.textContent)).toEqual([
+    "ТУТ — обычная (2:1) 1", "ТУТнг — не распространяющая горение 1", "ТУТ 3:1 и более 1"]);
+  expect(within(tut.querySelector('[aria-label="ТУТнг — не распространяющая горение"]') as HTMLElement).getByText("ТУТнг 4/2 черная")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Поиск по оболочкам"), { target: { value: "3:1" } });
+  expect(tut.querySelectorAll(".cov-subtitle")).toHaveLength(1);
+});
