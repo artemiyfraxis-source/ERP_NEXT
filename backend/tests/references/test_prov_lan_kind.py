@@ -198,6 +198,7 @@ def test_the_rule_reads_the_mark_alone_and_a_manual_move_wins():
 def test_the_parsers_read_category_screen_pairs_and_laying():
     assert lan_category("витая пара S/FTP Cat6A (LAN)") == "Cat6A" and lan_category("Cat.5e") == "Cat5e"
     assert lan_category("категория 6") == "Cat6" and lan_category("КДВВГ 4х0,50") == ""
+    assert lan_category("U/UTP 4х2х0,52мм Сat 5e") == "Cat5e"  # a Cyrillic «С» typed for the Latin one
     assert lan_screen("SFTP/SF-UTP Cat5e") == "SF/UTP" and lan_screen("SSTP-4P") == "S/FTP"
     assert lan_screen("FTP-4P-Cat.5e") == "F/UTP" and lan_screen("U/FTP Cat6A") == "U/FTP" and lan_screen("ТПП") == ""
     assert lan_pairs("8 (4 пары)") == "4" and lan_pairs("6 (2 пар + 2 силовые)") == "2" and lan_pairs("8") == "4"

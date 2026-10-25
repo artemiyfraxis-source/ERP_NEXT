@@ -68,7 +68,7 @@ def diameter_index(records: Iterable[TechOperationRecord]) -> dict[str, TechOper
 # КСПВ, ШТЛЭн), a control cable (КДВВГ, LiYCY, DIN 47100 PAAR-TRONIC) — names none of them and stays многожильный.
 # Migration 0150 holds a literal copy of this rule (`ETHERNET`).
 ETHERNET = re.compile(
-    r"ethernet|profinet|ethercat|\bLAN\b|\bcat(?:egory)?\.?\s?(?:5e?|6a?|7a?|8)(?![0-9])|категори[яи]\s?(?:5e?|6a?|7a?|8)(?![0-9])"
+    r"ethernet|profinet|ethercat|\bLAN\b|\b[cс]at(?:egory)?\.?\s?(?:5e?|6a?|7a?|8)(?![0-9])|категори[яи]\s?(?:5e?|6a?|7a?|8)(?![0-9])"
     r"|(?<![A-Za-z])(?:[USF]{1,2}/[UF]TP|SFTP|SSTP|FTP|UTP)(?![A-Za-z])",
     re.IGNORECASE,
 )
@@ -76,7 +76,7 @@ LAN_CATEGORY_FIELD = "Категория"
 LAN_SCREEN_FIELD = "Экран"
 LAN_PAIRS_FIELD = "Число пар"
 LAN_LAYING_FIELD = "Прокладка"
-_LAN_CATEGORY = re.compile(r"\bcat(?:egory)?\.?\s?(5e|5|6a|6|7a|7|8)(?![0-9])|категори[яи]\s?(5e|5|6a|6|7a|7|8)(?![0-9])", re.IGNORECASE)
+_LAN_CATEGORY = re.compile(r"\b[cс]at(?:egory)?\.?\s?(5e|5|6a|6|7a|7|8)(?![0-9])|категори[яи]\s?(5e|5|6a|6|7a|7|8)(?![0-9])", re.IGNORECASE)
 _LAN_SCREEN = re.compile(r"(?<![A-Za-z])(SF/UTP|S/FTP|F/FTP|U/FTP|F/UTP|U/UTP|S/UTP|SFTP|SSTP|FTP|UTP)(?![A-Za-z])", re.IGNORECASE)
 # The shop's short codes in ISO/IEC 11801 terms (Cabeus SFTP = SF/UTP, SSTP = S/FTP).
 _LAN_SCREEN_CODES = {"SFTP": "SF/UTP", "SSTP": "S/FTP", "FTP": "F/UTP", "UTP": "U/UTP"}

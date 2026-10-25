@@ -53,11 +53,11 @@ CHECK_NEW = (
 )
 # Literal copies of app.modules.references.cables (ETHERNET, the parsers) and domain._LAN_COLUMNS on 25.10.2026.
 ETHERNET = re.compile(
-    r"ethernet|profinet|ethercat|\bLAN\b|\bcat(?:egory)?\.?\s?(?:5e?|6a?|7a?|8)(?![0-9])|категори[яи]\s?(?:5e?|6a?|7a?|8)(?![0-9])"
+    r"ethernet|profinet|ethercat|\bLAN\b|\b[cс]at(?:egory)?\.?\s?(?:5e?|6a?|7a?|8)(?![0-9])|категори[яи]\s?(?:5e?|6a?|7a?|8)(?![0-9])"
     r"|(?<![A-Za-z])(?:[USF]{1,2}/[UF]TP|SFTP|SSTP|FTP|UTP)(?![A-Za-z])",
     re.IGNORECASE,
 )
-CATEGORY = re.compile(r"\bcat(?:egory)?\.?\s?(5e|5|6a|6|7a|7|8)(?![0-9])|категори[яи]\s?(5e|5|6a|6|7a|7|8)(?![0-9])", re.IGNORECASE)
+CATEGORY = re.compile(r"\b[cс]at(?:egory)?\.?\s?(5e|5|6a|6|7a|7|8)(?![0-9])|категори[яи]\s?(5e|5|6a|6|7a|7|8)(?![0-9])", re.IGNORECASE)
 SCREEN = re.compile(r"(?<![A-Za-z])(SF/UTP|S/FTP|F/FTP|U/FTP|F/UTP|U/UTP|S/UTP|SFTP|SSTP|FTP|UTP)(?![A-Za-z])", re.IGNORECASE)
 SCREEN_CODES = {"SFTP": "SF/UTP", "SSTP": "S/FTP", "FTP": "F/UTP", "UTP": "U/UTP"}
 PAIRS = re.compile(r"\(\s*(\d+)\s*пар")
