@@ -33,7 +33,8 @@ def _peer(request: Request) -> str:
 
 
 class _Limiter:
-    """N writes per hour per device address — the log endpoints are open to anyone on the network."""
+    """N writes per hour per device address — the log endpoints are open to anyone on the network. Per API process
+    (ERP_API_WORKERS): a brake on a flood, not an accounting — the journals cap their own size (device_logs)."""
 
     def __init__(self, per_hour: int):
         self.per_hour = per_hour

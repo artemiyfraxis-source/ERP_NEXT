@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated
@@ -40,7 +39,8 @@ from .domain import RECEIPT_SCAN_PATH
 from .receipts_api import ScanSources, _checked, multipart_file, scan_answer, scan_sources
 from .receipts_application import SCAN_FILE_LIMIT, scan_file, store_job_scan
 from .scan_jobs import (
-    DONE, FAILED, ScanJob, ScanJobClosed, cancel_job, claim, create_job, fail_job, get_job, save_result, stored_result,
+    DONE, FAILED, ScanJob, ScanJobClosed, cancel_job, claim, create_job, fail_job, get_job, recognition_lock,
+    save_result, stored_result,
 )
 
 SCAN_SCOPE = "scan:upload"
@@ -76,36 +76,23 @@ def _queue(operation):
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
-# One recognition per job at a time in this process: the screen polls while the first answer is being made.
-_guard = threading.Lock()
-_running: dict[UUID, threading.Lock] = {}
-
-
-def _job_lock(job_id: UUID) -> threading.Lock:
-    with _guard:
-        return _running.setdefault(job_id, threading.Lock())
-
-
 def job_result(uow_factory: Callable[[], UnitOfWork], sources: ScanSources, job: ScanJob) -> dict | None:
     """The done job's answer: the stored one, else made now (and stored once). Blocking — run it off the event loop."""
     if job.status != DONE or job.file_id is None:
         return None
     if job.result:
         return json.loads(job.result)
-    try:
-        with _job_lock(job.id):
-            stored = stored_result(uow_factory(), job.id)  # made by another request while this one waited
-            if stored:
-                return json.loads(stored)
-            found = scan_file(uow_factory(), job.file_id)
-            content = found[1] if found else b""
-            link = f"{RECEIPT_SCAN_PATH}{job.file_id}"
-            answer = scan_answer(sources, link, content, sniffed_type(content))
-            save_result(uow_factory(), job.id, json.dumps(answer, ensure_ascii=False))
-            return answer
-    finally:
-        with _guard:
-            _running.pop(job.id, None)
+    # One recognition per job at a time in every API process: the screen polls while the first answer is being made.
+    with recognition_lock(uow_factory(), job.id):
+        stored = stored_result(uow_factory(), job.id)  # made by another request while this one waited
+        if stored:
+            return json.loads(stored)
+        found = scan_file(uow_factory(), job.file_id)
+        content = found[1] if found else b""
+        link = f"{RECEIPT_SCAN_PATH}{job.file_id}"
+        answer = scan_answer(sources, link, content, sniffed_type(content))
+        save_result(uow_factory(), job.id, json.dumps(answer, ensure_ascii=False))
+        return answer
 
 
 def _recognise_after_upload(uow_factory, sources: ScanSources, job_id: UUID, now: datetime) -> None:
