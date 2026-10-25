@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { selectRange } from "./bulk";
 import { EMPTY, displayCell, formatNumber } from "./format";
 import { matchesSearch, searchRows } from "./searchText";
@@ -124,6 +124,8 @@ export interface DataTableProps<T> {
   toolbar?: ReactNode;
   /** Поиск сразу по всем записям на сервере (строки на экране — только страница): «Найти» или Enter в том же поле. */
   onSearch?: (query: string) => void;
+  /** Подпись кнопки `onSearch` (по умолчанию «Найти»): «Проверить артикул». */
+  searchButton?: string;
   /** Что ещё строки ищет поиск, кроме колонок: скрытые опознаватели записи (полное имя, артикул BAG, синонимы). */
   searchText?: (row: T) => CellValue[];
   searchLabel?: string;
@@ -141,6 +143,17 @@ export interface DataTableProps<T> {
   /** Сортировка внутри групп (owner 16.10.2026: «у каждой группы своя, и это во всех кабелях»; 19.10: «сделай просто
       вверху столбцов сортировку»): щелчок по заголовку сортирует строки в каждой группе, порядок групп не меняется. */
   groupSort?: boolean;
+  /** Группы — отдельными блоками (владелец 25.10.2026, как «Оболочки»: «чтобы визуал БД был один»): у каждой группы
+      заголовок со счётчиком и своя таблица с шапкой; поиск, чипы, «Колонки», «Excel», порядок и ширины колонок — общие
+      для всех блоков (колонки блоков идут вровень), щелчок по заголовку сортирует внутри каждого блока, пустой блок
+      не показывается. Без `groupBy` — один блок с подписью таблицы (`label`). */
+  blocks?: boolean;
+  /** Блоки с `blocks`: раздел над блоком (заголовок раздела со счётчиком, блоки под ним — подгруппы: ТУТ → виды трубки);
+      без раздела блок стоит сам по себе. */
+  blockSection?: (name: string) => string | undefined;
+  /** Блоки с `blocks`: ключи колонок, которые есть у блока (у оплётки нет «Ø до усадки»); без них — все колонки. Выбор
+      «Колонок» общий: блок показывает выбранные из своих. */
+  blockColumns?: (name: string) => string[] | undefined;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
@@ -163,10 +176,23 @@ export interface Saved {
 }
 
 const MIN_WIDTH = 40;
+const EDIT_HINT = "Щелчок по ячейке и ввод — правка · Enter — записать · Esc — отмена · Tab — дальше · Ctrl+V — вставить столбец · Ctrl+D — заполнить вниз";
+/** A header the blocks level: a data column whose width the user did not drag, the screen did not set, and that does not
+    take the spare width (`grow`). */
+const levelFree = (head: HTMLTableCellElement) => Boolean(head.dataset.col)
+  && !(head.classList.contains("dt-w") || head.classList.contains("grow") || (head.style.width && head.dataset.level === undefined));
+/** Blocks: the widest natural width a column is measured at (a longer text wraps), the narrowest a text column gets. */
+const LEVEL_MAX = 360;
+const LEVEL_MIN = 64;
+const LEVEL_FACTOR = 0.3;
+const LEVEL_SLACK = 1.04;
+const LEVEL_READABLE = 0.55;
 const MAX_WIDTH = 900;
 const WIDTH_STEP = 16;
 /** Поля ячейки слева и справа (`.data-table th, td { padding: 6px 12px }`): ширина колонки = текст + они. */
 const CELL_PAD = 24;
+/** The row-select column (`.data-table table.selectable … td:first-child { width: 36px }`). */
+const SELECT_WIDTH = 36;
 const clampWidth = (value: number) => Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value)));
 
 /** Колонки в порядке пользователя; новые колонки (их нет в сохранённом порядке) — после соседки слева по описанию. */
@@ -366,6 +392,7 @@ export function DataTable<T>({
   pageSize = 200,
   toolbar,
   onSearch,
+  searchButton = "Найти",
   searchText,
   searchLabel,
   searchPlaceholder,
@@ -373,8 +400,14 @@ export function DataTable<T>({
   hideSearch = false,
   phoneCards = true,
   onEdited,
-  groupSort = false,
+  groupSort: groupSortProp = false,
+  blocks = false,
+  blockSection,
+  blockColumns,
 }: DataTableProps<T>) {
+  // Blocks always sort inside every group (the groups keep the screen's order); a list without groups is one block.
+  const groupSort = groupSortProp || blocks;
+  const grouping = groupBy ?? (blocks ? () => label : undefined);
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -432,23 +465,25 @@ export function DataTable<T>({
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const dragKey = useRef<string | null>(null);
   // An opened row's card stays inside the visible part of a table wider than the screen (its cell spans
-  // every column): the card is pinned to the left edge and as wide as the scroll box, not the table.
-  const wrapRef = useRef<HTMLDivElement>(null);
+  // every column): the card is pinned to the left edge and as wide as the scroll box, not the table. The scroll boxes
+  // (one, or one per block) are as wide as the whole table: its width is set on the root and inherited.
   // Columns size by their content and the spare width goes to a `grow` column or to an empty last column — in the
   // automatic table layout. A screen that pins its widths with `table-layout: fixed` keeps them: no `fit`, no filler.
   const tableRef = useRef<HTMLTableElement>(null);
+  // The whole table (all blocks): the active cell and a column's header are looked up in it.
+  const rootRef = useRef<HTMLElement>(null);
   const [fixedLayout, setFixedLayout] = useState(false);
   useLayoutEffect(() => {
     const table = tableRef.current;
     if (table && typeof window.getComputedStyle === "function") setFixedLayout(window.getComputedStyle(table).tableLayout === "fixed");
   }, []);
   useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap || typeof ResizeObserver === "undefined") return;
-    const sync = () => wrap.style.setProperty("--detail-width", `${wrap.clientWidth}px`);
+    const root = rootRef.current;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    const sync = () => root.style.setProperty("--detail-width", `${root.clientWidth}px`);
     sync();
     const observer = new ResizeObserver(sync);
-    observer.observe(wrap);
+    observer.observe(root);
     return () => observer.disconnect();
   }, []);
 
@@ -484,15 +519,21 @@ export function DataTable<T>({
 
   const filtered = useMemo(() => {
     const result = searched.filter((row) => !activePreset || activePreset.test(row));
-    // With a sort inside groups the rows keep the screen's order here (it places the groups); the groups sort below.
-    if (sort && !groupSort) {
-      const column = columns.find((item) => item.key === sort.key);
-      if (column) {
-        result.sort((a, b) => sort.direction * compareCells(column.value(a), column.value(b), column.numeric));
-      }
-    }
-    return result;
-  }, [searched, columns, sort, activePreset, groupSort]);
+    const column = sort ? columns.find((item) => item.key === sort.key) : undefined;
+    if (!sort || !column) return result;
+    if (!groupSort) return result.sort((a, b) => sort.direction * compareCells(column.value(a), column.value(b), column.numeric));
+    if (!grouping) return result;
+    // A sort inside groups: the groups stay in the screen's order (of their first row), the rows sort inside each —
+    // before the page is cut, so a list shown in pages is sorted as a whole.
+    const rank = new Map<string, number>();
+    return result.map((row, index) => {
+      const name = grouping(row);
+      if (!rank.has(name)) rank.set(name, rank.size);
+      return { row, group: rank.get(name)!, index };
+    }).sort((a, b) => a.group - b.group || directed(column.value(a.row), column.value(b.row), sort.direction, column.numeric) || a.index - b.index)
+      .map((item) => item.row);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `grouping` is `groupBy`, or the list's one block
+  }, [searched, columns, sort, activePreset, groupSort, groupBy, blocks, label]);
 
   const shown = filtered.slice(0, limit);
   const keys = new Set(rows.map(rowKey));
@@ -578,7 +619,7 @@ export function DataTable<T>({
   /** Ширина текста колонки сейчас: перетянутая или измеренная по заголовку на экране. */
   function widthNow(key: string) {
     if (widths[key]) return widths[key];
-    const head = [...(tableRef.current?.querySelectorAll<HTMLElement>("th[data-col]") ?? [])].find((item) => item.dataset.col === key);
+    const head = [...(rootRef.current?.querySelectorAll<HTMLElement>("th[data-col]") ?? [])].find((item) => item.dataset.col === key);
     const measured = (head?.getBoundingClientRect().width ?? 0) - CELL_PAD;
     return measured > 0 ? measured : 120;
   }
@@ -627,29 +668,160 @@ export function DataTable<T>({
   const sized = !fixedLayout;
   const filler = sized && !visible.some((column) => column.grow);
   const span = visible.length + (selectable ? 1 : 0) + (filler ? 1 : 0);
+  // A block shows the chosen columns that are its own (`blockColumns`); a row — those of its block.
+  const ownKeys = new Map<string, Set<string> | null>();
+  const keysOf = (name: string) => {
+    if (!ownKeys.has(name)) { const keys = blocks ? blockColumns?.(name) : undefined; ownKeys.set(name, keys ? new Set(keys) : null); }
+    return ownKeys.get(name)!;
+  };
+  const columnsOf = (name: string) => { const keys = keysOf(name); return keys ? visible.filter((column) => keys.has(column.key)) : visible; };
+  const rowHas = (row: T, key: string) => !blocks || !blockColumns || !grouping || (keysOf(grouping(row))?.has(key) ?? true);
   const filterValues = (column: DataColumn<T>) =>
     [...new Set(rows.map((row) => String(column.value(row) ?? "")))].sort((a, b) => compareCells(a, b));
 
   const groups: Array<[string, T[]]> = [];
-  if (groupBy) {
+  if (grouping) {
     const byName = new Map<string, T[]>();
     for (const row of shown) {
-      const name = groupBy(row);
+      const name = grouping(row);
       if (!byName.has(name)) { byName.set(name, []); groups.push([name, byName.get(name)!]); }
       byName.get(name)!.push(row);
     }
-    // The header's sort orders the rows inside every group; the groups stay where they are.
-    const column = groupSort && sort ? columns.find((item) => item.key === sort.key) : undefined;
-    if (column && sort) {
-      for (const [, groupRows] of groups) groupRows.sort((a, b) => directed(column.value(a), column.value(b), sort.direction, column.numeric));
-    }
+    // The header's sort with `groupSort` orders the rows inside every group (`filtered`); the groups stay where they are.
   } else groups.push(["", shown]);
+  // A block's count is of all its rows that passed the search, filters and chip (a long list shows them in pages).
+  const blockTotals = new Map<string, number>();
+  if (blocks && grouping) for (const row of filtered) blockTotals.set(grouping(row), (blockTotals.get(grouping(row)) ?? 0) + 1);
+  // The blocks' columns go level (one list, one set of widths): each column takes the widest of its natural widths in
+  // all the blocks. Measured after the rows or the columns change, not on every render (a cell click, the active cell).
+  // Not on a search, a chip or a sort: the columns keep their widths while the user types (and a long list is not
+  // measured again on every key).
+  const levelSig = blocks ? [visible.map((column) => column.key).join(","), JSON.stringify(widths), shown.length > 0].join("#") : "";
+  /** Blocks fit the page width with no scroll box of their own (owner 25.10.2026: «почему пролистывание есть — это
+      неудобно»): every column takes the widest of its natural widths in all the blocks (the blocks go level); when the
+      columns are wider than the list, the text columns narrow in proportion and wrap, numbers keep their width. The header
+      row sticks under the list's toolbar while the page scrolls. */
+  const levelled = useRef<{ widths: Map<string, number>; round: number; room: number }>({ widths: new Map(), round: 0, room: 0 });
+  function levelBlocks() {
+    const root = rootRef.current;
+    // a hidden list (a series opened over it) has no widths to measure: it is levelled when it shows again
+    if (!blocks || !root || !root.getClientRects().length) return;
+    const bar = root.querySelector<HTMLElement>(":scope > .table-toolbar");
+    const barStyle = bar ? window.getComputedStyle(bar) : null;
+    root.style.setProperty("--dt-head-top", bar && barStyle?.position === "sticky" ? `${(parseFloat(barStyle.top) || 0) + bar.offsetHeight}px` : "0px");
+    const tables = [...root.querySelectorAll<HTMLTableElement>(":scope > .table-wrap > table")];
+    const headsOf = (table: HTMLTableElement) => [...table.querySelectorAll<HTMLTableCellElement>(":scope > thead > tr > th")];
+    for (const table of tables) {
+      table.style.width = "";
+      for (const head of headsOf(table)) if (head.dataset.level !== undefined) { head.style.width = ""; delete head.dataset.level; }
+    }
+    root.classList.add("dt-measuring");
+    const natural = new Map<string, number>();
+    const numeric = new Set<string>();
+    const fixed: number[] = [];
+    for (const table of tables) {
+      let taken = 0;
+      for (const head of headsOf(table)) {
+        const width = head.getBoundingClientRect().width;
+        if (levelFree(head)) {
+          natural.set(head.dataset.col!, Math.max(natural.get(head.dataset.col!) ?? 0, Math.min(width, LEVEL_MAX)));
+          if (head.classList.contains("num")) numeric.add(head.dataset.col!);
+        }
+        else if (!head.classList.contains("dt-fill")) taken += width;
+      }
+      fixed.push(taken);
+    }
+    root.classList.remove("dt-measuring");
+    let factor = 1;
+    tables.forEach((table, index) => {
+      const room = (table.parentElement?.clientWidth ?? 0) - fixed[index];
+      let numbers = 0;
+      let texts = 0;
+      for (const head of headsOf(table)) if (levelFree(head)) {
+        if (head.classList.contains("num")) numbers += natural.get(head.dataset.col!) ?? 0; else texts += natural.get(head.dataset.col!) ?? 0;
+      }
+      if (texts > 0 && numbers + texts > room) factor = Math.min(factor, Math.max(0, room - numbers) / texts);
+    });
+    const widthsAt = (at: number) => {
+      const result = new Map<string, number>();
+      for (const [key, width] of natural) {
+        if (width > 0) result.set(key, Math.floor(numeric.has(key) ? width : Math.max(Math.min(width, LEVEL_MIN), width * at)));
+      }
+      return result;
+    };
+    // Text narrows down to a third of its width to fit; a list that cannot fit even so (coax: 19 columns on 16") scrolls
+    // sideways anyway — its text keeps more than half its width, it reads better.
+    let next = widthsAt(Math.max(factor, LEVEL_FACTOR));
+    const tooWide = tables.some((table, index) => [...headsOf(table)].reduce((sum, head) =>
+      sum + (levelFree(head) ? next.get(head.dataset.col!) ?? 0 : 0), fixed[index]) > (table.parentElement?.clientWidth ?? 0) * LEVEL_SLACK);
+    if (tooWide) next = widthsAt(Math.max(factor, LEVEL_READABLE));
+    levelled.current = { widths: next, round: levelled.current.round + 1, room: tables[0]?.parentElement?.clientWidth ?? 0 };
+    tables.forEach(applyLevel);
+  }
+  /** The levelled widths onto a table — all of them after a measure, or a block the search has just shown. */
+  function applyLevel(table: HTMLTableElement) {
+    const { widths: set, round } = levelled.current;
+    let sum = 0;
+    for (const head of table.querySelectorAll<HTMLTableCellElement>(":scope > thead > tr > th")) {
+      const width = head.dataset.col ? set.get(head.dataset.col) : undefined;
+      if (width && levelFree(head)) {
+        head.style.width = `${width}px`;
+        head.dataset.level = "";
+        sum += width;
+        continue;
+      }
+      if (head.dataset.level !== undefined) { head.style.width = ""; delete head.dataset.level; }
+      // the other columns from what is set on them, not from the layout (a read here would lay the page out once more)
+      if (head.classList.contains("dt-fill")) continue;
+      const dragged = head.dataset.col ? widths[head.dataset.col] : undefined;
+      sum += dragged ? dragged + CELL_PAD : head.dataset.col ? parseFloat(head.style.width) || 0 : SELECT_WIDTH;
+    }
+    // Only a list that cannot fit even so is as wide as its columns and scrolls sideways, in its own box.
+    const wrap = table.parentElement;
+    // (a few per cent over — the rounding and the narrowest text width — the table squeezes in by itself)
+    const wide = sum > levelled.current.room * LEVEL_SLACK;
+    table.style.width = wide ? `${Math.ceil(sum)}px` : "";
+    wrap?.classList.toggle("dt-scroll-x", wide);
+    // A wide block moves sideways by its own bar, pinned to the bottom of the screen: the block itself is no scroll box,
+    // so its header still sticks under the toolbar while the page scrolls (owner 25.10.2026).
+    const bar = wrap?.nextElementSibling as HTMLElement | null;
+    if (bar?.classList.contains("dt-hscroll")) {
+      bar.hidden = !wide;
+      (bar.firstElementChild as HTMLElement).style.width = wide ? `${Math.ceil(sum)}px` : "";
+      if (wide) bar.scrollLeft = parseFloat(rootRef.current?.style.getPropertyValue("--dt-x") || "0") || 0;
+    }
+    table.dataset.levelRound = String(round);
+  }
+  const levelRef = useRef(levelBlocks);
+  levelRef.current = levelBlocks;
+  useLayoutEffect(() => { levelBlocks(); }, [blocks, levelSig, rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A block the search or a chip has just shown takes the widths the others have (no new measure).
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!blocks || !root || !levelled.current.widths.size) return;
+    for (const table of root.querySelectorAll<HTMLTableElement>(":scope > .table-wrap > table")) {
+      if (table.dataset.levelRound !== String(levelled.current.round)) applyLevel(table);
+    }
+  });
+  // A new width of the list (the window, the list shown again) changes the natural widths: level once more.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!blocks || !root || typeof ResizeObserver === "undefined") return;
+    let width = root.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (root.clientWidth === width) return;
+      width = root.clientWidth;
+      levelRef.current();
+    });
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [blocks]);
 
   // --- Cells edited in place ---
   const lines = groups.flatMap(([name, groupRows]) => collapsibleGroups && collapsed.has(name) ? [] : groupRows);
   const byKey = new Map(rows.map((row) => [rowKey(row), row]));
   const editable = (column: DataColumn<T> | undefined, row: T | undefined): column is DataColumn<T> & { edit: DataCellEdit<T> } =>
-    Boolean(column?.edit && row && (column.edit.enabled?.(row) ?? true));
+    Boolean(column?.edit && row && rowHas(row, column.key) && (column.edit.enabled?.(row) ?? true));
   const textOf = (column: DataColumn<T>, row: T) => column.edit?.value ? column.edit.value(row) : String(column.value(row) ?? "");
   // A choice cell copies what it shows (the size «22», not the size row's id); a paste finds the option again.
   const copyOf = (column: DataColumn<T>, row: T) => column.edit?.options ? String(column.value(row) ?? "") : textOf(column, row);
@@ -870,9 +1042,20 @@ export function DataTable<T>({
   // Keyboard focus follows the active cell (not while its editor is open: the editor has it).
   useEffect(() => {
     if (!active || (editing && sameCell(editing, active))) return;
-    const cell = [...(tableRef.current?.querySelectorAll<HTMLElement>("td[data-col]") ?? [])]
+    const cell = [...(rootRef.current?.querySelectorAll<HTMLElement>("td[data-col]") ?? [])]
       .find((item) => item.dataset.col === active.col && item.dataset.row === active.row);
-    if (cell && document.activeElement !== cell) cell.focus();
+    if (cell && document.activeElement !== cell) cell.focus({ preventScroll: Boolean(cell.closest(".dt-scroll-x")) });
+    // In a wide block the active cell comes into view through the block's bar (the block itself does not scroll).
+    const wrap = cell?.closest<HTMLElement>(".dt-scroll-x");
+    const bar = wrap?.nextElementSibling as HTMLElement | null;
+    if (cell && wrap && bar?.classList.contains("dt-hscroll")) {
+      const key = wrap.querySelector<HTMLElement>("thead th.key, thead th:first-child")?.offsetWidth ?? 0;
+      const left = cell.offsetLeft - key;
+      const right = cell.offsetLeft + cell.offsetWidth - wrap.clientWidth;
+      if (left < bar.scrollLeft) bar.scrollLeft = Math.max(0, left);
+      else if (right > bar.scrollLeft) bar.scrollLeft = right;
+      cell.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    }
   }, [active, editing]);
 
   const inRange = new Set(rangeFrom !== null ? rangeRows().map(rowKey) : []);
@@ -977,6 +1160,7 @@ export function DataTable<T>({
 
   function renderRow(row: T) {
     const key = rowKey(row);
+    const cells = blocks && blockColumns && grouping ? columnsOf(grouping(row)) : visible;
     const open = expanded === key;
     const activate = onRowClick ? () => onRowClick(row) : renderDetail ? () => setExpanded(open ? null : key) : undefined;
     return (
@@ -997,13 +1181,102 @@ export function DataTable<T>({
               <label className="sel-hit"><input type="checkbox" aria-label={rowLabel ? `Выбрать: ${rowLabel(row)}` : `Выбрать ${key}`} checked={selected.has(key)} onChange={() => undefined} onClick={(event) => toggleRow(key, event.currentTarget.checked, event.shiftKey)} /></label>
             </td>
           )}
-          {visible.map((column, index) => renderCell(row, column, index))}
+          {cells.map((column, index) => renderCell(row, column, index))}
           {filler && <td className="dt-fill" aria-hidden="true" />}
         </tr>
         {open && renderDetail && (
-          <tr className="detail"><td colSpan={span}><div className="detail-body">{renderDetail(row)}</div></td></tr>
+          <tr className="detail"><td colSpan={span - visible.length + cells.length}><div className="detail-body">{renderDetail(row)}</div></td></tr>
         )}
       </Fragment>
+    );
+  }
+
+  /** A wide block's bar moves the tables of every wide block together — their columns are level (`--dt-x` on the list);
+      the key column stays in place. */
+  function sideScroll(event: ReactUIEvent<HTMLDivElement>) {
+    const x = event.currentTarget.scrollLeft;
+    rootRef.current?.style.setProperty("--dt-x", `${x}px`);
+    for (const bar of rootRef.current?.querySelectorAll<HTMLElement>(":scope > .dt-hscroll") ?? []) {
+      if (bar !== event.currentTarget && !bar.hidden && bar.scrollLeft !== x) bar.scrollLeft = x;
+    }
+  }
+  /** A sideways wheel or a trackpad swipe over a wide block moves its bar. */
+  function sideWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    const bar = event.currentTarget.nextElementSibling as HTMLElement | null;
+    if (!bar?.classList.contains("dt-hscroll") || bar.hidden) return;
+    const delta = event.deltaX || (event.shiftKey ? event.deltaY : 0);
+    if (delta) bar.scrollLeft += delta;
+  }
+  function toggleCollapsed(name: string) {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (!next.delete(name)) next.add(name);
+      return next;
+    });
+  }
+  const tableClass = ["grid wide", selectable ? "selectable" : "", sized ? "sized" : "", hasEditing ? "dt-edit-grid" : ""].filter(Boolean).join(" ");
+  /** The header row: one per table — the whole list, or a block (`block`: its title and rows for «select all»). */
+  function headOf(block: { title: string; rows: T[] } | null, heads: DataColumn<T>[] = visible) {
+    return (
+      <thead>
+        <tr>
+          {selectable && <th><label className="sel-hit">{block === null
+            ? <input type="checkbox" aria-label="Выбрать все показанные" checked={allShownSelected} onChange={(event) => toggleAll(event.target.checked)} />
+            : <input type="checkbox" aria-label={`Выбрать все: ${block.title}`} checked={block.rows.length > 0 && block.rows.every((row) => selected.has(rowKey(row)))} onChange={(event) => toggleGroup(block.rows, event.target.checked)} />}</label></th>}
+          {heads.map((column, index) => {
+            const direction = sort?.key === column.key ? sort.direction : 0;
+            const width = widths[column.key];
+            const dragged = dragKey.current;
+            const drop = dropTarget === column.key && dragged
+              ? visible.findIndex((item) => item.key === dragged) < index ? "dt-drop-after" : "dt-drop-before" : "";
+            return (
+              <th
+                key={column.key}
+                data-col={column.key}
+                className={[columnClass(width ? { ...column, width } : column, index, sized), width ? "dt-w" : "", drop].filter(Boolean).join(" ") || undefined}
+                style={width ? { "--dt-w": `${width}px` } as CSSProperties : column.width ? { width: column.width } : undefined}
+                title={column.hint ?? (column.computed && hasEditing ? "Считается — в таблице не правится"
+                  : groupSort ? "Сортировка — внутри каждой группы" : undefined)}
+                aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}
+                draggable
+                onDragStart={(event) => {
+                  if ((event.target as HTMLElement).closest?.(".dt-resize")) { event.preventDefault(); return; }
+                  dragKey.current = column.key;
+                  if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", column.title); }
+                }}
+                onDragOver={(event) => {
+                  if (!dragKey.current || dragKey.current === column.key) return;
+                  event.preventDefault();
+                  if (dropTarget !== column.key) setDropTarget(column.key);
+                }}
+                onDragLeave={() => setDropTarget((current) => current === column.key ? null : current)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const moved = dragKey.current;
+                  dragKey.current = null;
+                  setDropTarget(null);
+                  if (moved && moved !== column.key) moveColumn(moved, column.key);
+                }}
+                onDragEnd={() => { dragKey.current = null; setDropTarget(null); }}
+              >
+                <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
+                  {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
+                </button>
+                <span
+                  className="dt-resize"
+                  aria-hidden="true"
+                  title="Тянуть — ширина, двойной щелчок — по содержимому"
+                  draggable={false}
+                  onPointerDown={(event) => startResize(event, column.key)}
+                  onDoubleClick={() => setWidth(column.key, null)}
+                  onClick={(event) => event.stopPropagation()}
+                />
+              </th>
+            );
+          })}
+          {filler && <th className="dt-fill" aria-hidden="true" />}
+        </tr>
+      </thead>
     );
   }
 
@@ -1012,11 +1285,11 @@ export function DataTable<T>({
   const activeFilters = filterColumns.filter((column) => (filters[column.key] ?? "") !== "");
 
   return (
-    <section className={phoneCards ? "data-table dt-cards" : "data-table"} aria-label={label}>
+    <section ref={rootRef} className={[phoneCards ? "data-table dt-cards" : "data-table", blocks ? "dt-blocks" : ""].filter(Boolean).join(" ")} aria-label={label}>
       {!compact && <div className="filters table-toolbar">
         {!hideSearch && <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
           <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? searchHint(visible)} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
-          {onSearch && <button type="submit" className="secondary small">Найти</button>}
+          {onSearch && <button type="submit" className="secondary small">{searchButton}</button>}
         </form>}
         {filterColumns.length > 0 && (
           <button type="button" className={activeFilters.length ? "secondary small filter-toggle active" : "secondary small filter-toggle"} aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>
@@ -1025,6 +1298,7 @@ export function DataTable<T>({
         )}
         <div className="toolbar-end">
           {toolbar}
+          {blocks && hasEditing && <span className="dt-help" tabIndex={0} role="note" aria-label={`Правка в таблице: ${EDIT_HINT}`} data-hint={EDIT_HINT}>?</span>}
           <button type="button" className="secondary small" aria-expanded={choosingColumns} onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
           {exportName && <button type="button" className="secondary small" onClick={download}>Excel</button>}
         </div>
@@ -1117,69 +1391,46 @@ export function DataTable<T>({
           <button type="button" className="secondary small" onClick={() => setSelected(new Set())}>Снять выбор</button>
         </div>
       )}
-      <div className="table-wrap" ref={wrapRef}>
-        <table ref={tableRef} className={["grid wide", selectable ? "selectable" : "", sized ? "sized" : "", hasEditing ? "dt-edit-grid" : ""].filter(Boolean).join(" ")}>
-          <thead>
-            <tr>
-              {selectable && <th><label className="sel-hit"><input type="checkbox" aria-label="Выбрать все показанные" checked={allShownSelected} onChange={(event) => toggleAll(event.target.checked)} /></label></th>}
-              {visible.map((column, index) => {
-                const direction = sort?.key === column.key ? sort.direction : 0;
-                const width = widths[column.key];
-                const dragged = dragKey.current;
-                const drop = dropTarget === column.key && dragged
-                  ? visible.findIndex((item) => item.key === dragged) < index ? "dt-drop-after" : "dt-drop-before" : "";
-                return (
-                  <th
-                    key={column.key}
-                    data-col={column.key}
-                    className={[columnClass(width ? { ...column, width } : column, index, sized), width ? "dt-w" : "", drop].filter(Boolean).join(" ") || undefined}
-                    style={width ? { "--dt-w": `${width}px` } as CSSProperties : column.width ? { width: column.width } : undefined}
-                    title={column.hint ?? (column.computed && hasEditing ? "Считается — в таблице не правится"
-                      : groupSort ? "Сортировка — внутри каждой группы" : undefined)}
-                    aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}
-                    draggable
-                    onDragStart={(event) => {
-                      if ((event.target as HTMLElement).closest?.(".dt-resize")) { event.preventDefault(); return; }
-                      dragKey.current = column.key;
-                      if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", column.title); }
-                    }}
-                    onDragOver={(event) => {
-                      if (!dragKey.current || dragKey.current === column.key) return;
-                      event.preventDefault();
-                      if (dropTarget !== column.key) setDropTarget(column.key);
-                    }}
-                    onDragLeave={() => setDropTarget((current) => current === column.key ? null : current)}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      const moved = dragKey.current;
-                      dragKey.current = null;
-                      setDropTarget(null);
-                      if (moved && moved !== column.key) moveColumn(moved, column.key);
-                    }}
-                    onDragEnd={() => { dragKey.current = null; setDropTarget(null); }}
-                  >
-                    <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
-                      {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
-                    </button>
-                    <span
-                      className="dt-resize"
-                      aria-hidden="true"
-                      title="Тянуть — ширина, двойной щелчок — по содержимому"
-                      draggable={false}
-                      onPointerDown={(event) => startResize(event, column.key)}
-                      onDoubleClick={() => setWidth(column.key, null)}
-                      onClick={(event) => event.stopPropagation()}
-                    />
-                  </th>
-                );
-              })}
-              {filler && <th className="dt-fill" aria-hidden="true" />}
-            </tr>
-          </thead>
+      {blocks ? <>
+        {groups.map(([name, groupRows], index) => {
+          const title = (groupLabel ? groupLabel(name, groupRows) : name) || "—";
+          const folded = Boolean(collapsibleGroups && collapsed.has(name));
+          const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
+          const caption = <>{title} <span className="page-count">{blockTotals.get(name) ?? groupRows.length}</span>{picked > 0 && <span className="group-picked">выбрано {picked}</span>}</>;
+          // A section over its blocks (ТУТ over the kinds of tube): its heading before its first block, with all their rows.
+          const section = blockSection?.(name);
+          const opens = section !== undefined && (index === 0 || blockSection?.(groups[index - 1][0]) !== section);
+          const sectionTotal = opens ? groups.filter(([other]) => blockSection?.(other) === section).reduce((sum, [other, rows]) => sum + (blockTotals.get(other) ?? rows.length), 0) : 0;
+          const Heading = section !== undefined ? "h3" : "h2";
+          const heads = columnsOf(name);
+          return <Fragment key={`block:${name}`}>
+            {opens && <h2 className="dt-block-title dt-section-title">{section} <span className="page-count">{sectionTotal}</span></h2>}
+            <Heading className={section !== undefined ? "dt-block-title dt-sub-title" : "dt-block-title"}>{collapsibleGroups
+              ? <button type="button" className="dt-block-fold" aria-expanded={!folded} onClick={() => toggleCollapsed(name)}><span aria-hidden="true">{folded ? "▸" : "▾"}</span> {caption}</button>
+              : caption}</Heading>
+            {!folded && <div className="table-wrap" onWheel={sideWheel}>
+              <table ref={index === 0 ? tableRef : undefined} className={tableClass} aria-label={typeof title === "string" ? title : name}>
+                {headOf({ title: typeof title === "string" ? title : name, rows: groupRows }, heads)}
+                <tbody>{groupRows.map(renderRow)}</tbody>
+              </table>
+            </div>}
+            {!folded && <div className="dt-hscroll" hidden aria-hidden="true" onScroll={sideScroll}><div /></div>}
+          </Fragment>;
+        })}
+        {!shown.length && <div className="table-wrap">
+          <table ref={tableRef} className={tableClass}>
+            {headOf(null)}
+            <tbody><tr><td colSpan={span} className="empty">{emptyText}</td></tr></tbody>
+          </table>
+        </div>}
+        {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
+      </> : <div className="table-wrap">
+        <table ref={tableRef} className={tableClass}>
+          {headOf(null)}
           <tbody>
             {groups.map(([name, groupRows]) => (
               <Fragment key={`group:${name}`}>
-                {groupBy && (
+                {grouping && (
                   <tr className="group-row">
                     <td colSpan={span}>
                       {selectable && (() => {
@@ -1199,11 +1450,7 @@ export function DataTable<T>({
                         const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
                         const title = <><strong>{(groupLabel ? groupLabel(name, groupRows) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
                         return collapsibleGroups
-                          ? <button type="button" aria-expanded={!collapsed.has(name)} onClick={() => setCollapsed((current) => {
-                            const next = new Set(current);
-                            if (!next.delete(name)) next.add(name);
-                            return next;
-                          })} style={{ all: "unset", cursor: "pointer" }}>{collapsed.has(name) ? "▸" : "▾"} {title}</button>
+                          ? <button type="button" aria-expanded={!collapsed.has(name)} onClick={() => toggleCollapsed(name)} style={{ all: "unset", cursor: "pointer" }}>{collapsed.has(name) ? "▸" : "▾"} {title}</button>
                           : title;
                       })()}
                     </td>
@@ -1216,12 +1463,13 @@ export function DataTable<T>({
           </tbody>
         </table>
         {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
-      </div>
-      {!compact && (
+      </div>}
+      {/* Blocks: the counts are in the block headings and the keys under the toolbar's «?» — only an edit's result shows here. */}
+      {!compact && (!blocks || note) && (
         <div className="table-footer">
-          <span>Показано {shown.length} из {filtered.length}{filtered.length !== rows.length ? ` (всего ${rows.length})` : ""}</span>
+          {!blocks && <span>Показано {shown.length} из {filtered.length}{filtered.length !== rows.length ? ` (всего ${rows.length})` : ""}</span>}
           {note && <span className={`dt-edit-note tone-${note.tone}`} role="status">{note.text}</span>}
-          {!note && hasEditing && <span className="dt-edit-hint">Щелчок по ячейке и ввод — правка · Enter — записать · Esc — отмена · Tab — дальше · Ctrl+V — вставить столбец · Ctrl+D — заполнить вниз</span>}
+          {!note && !blocks && hasEditing && <span className="dt-edit-hint">{EDIT_HINT}</span>}
         </div>
       )}
     </section>

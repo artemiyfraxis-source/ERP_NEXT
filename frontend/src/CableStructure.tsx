@@ -131,6 +131,8 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
       columns={columns}
       rowKey={(gauge) => gauge.id}
       storageKey="db:gauges"
+      // No groups: one block titled by the list, as every list of «База данных» (owner 25.10.2026).
+      blocks
       sharedKey="gauges"
       exportName="Сечения AWG - мм2"
       renderDetail={canEdit ? (gauge) => <GaugeEditor key={`${gauge.id}:${gaugeOption(gauge)}`} gauge={gauge} onSaved={onSaved} onError={onError} /> : undefined}
@@ -347,6 +349,8 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
       groupSort
+      // A series is its own block (owner 25.10.2026: «визуал БД один», as «Оболочки»).
+      blocks
       pageSize={Infinity}
       exportName="Монтажные провода"
       renderDetail={detail}

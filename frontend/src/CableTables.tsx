@@ -287,7 +287,9 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       collapsibleGroups={kind === "coax"}
       groupBy={kind === "multi" || kind === "lan" ? (row) => cableFamily(cells(row)).family : kind === "coax" ? coaxGroup : undefined}
       // Each group sorts its own rows (owner 16.10: «у каждой группы своя»); every row of the list at once, no page.
+      // A group is its own block with a heading and a table (owner 25.10.2026: «визуал БД один», as «Оболочки»).
       groupSort
+      blocks
       pageSize={Infinity}
       presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }]
         : rows.some((row) => !field(row, "Наружный диаметр, мм").trim()) ? [{ label: "Без Ø", test: (row) => !field(row, "Наружный диаметр, мм").trim() }] : undefined}
