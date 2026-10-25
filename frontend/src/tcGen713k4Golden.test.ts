@@ -34,7 +34,9 @@ it("rebuilds prod rev 17 from its form snapshot: the same 44 operations, labels 
   expect(cfg.ops.map(pick)).toEqual(golden.expected.ops.map(pick));
   // Код карты операции: у прода — из БД.ОП (opNum), здесь — из заголовка выбранной карты библиотеки.
   const code = (id: string) => String(data.templates.find((t) => t.id === id)?.title ?? "").split("|")[0].trim();
-  expect(cfg.ops.map((o) => code(o.templateId))).toEqual(golden.expected.ops.map((o) => o.opNum));
+  // Карта маркировочной трубки переименована 25.10 (INS_MARK_TUBE_AUTO → PRINT_MARK_TUBE, id шаблона тот же): снимок прода хранит прежний код.
+  const renamed = (num: string) => (num === "INS_MARK_TUBE_AUTO" ? "PRINT_MARK_TUBE" : num);
+  expect(cfg.ops.map((o) => code(o.templateId))).toEqual(golden.expected.ops.map((o) => renamed(o.opNum)));
 });
 
 it("the X5/X6 cut batch keeps every wire's length: 180 мм ×3 and 200 мм ×1 on the ETK sketch", () => {

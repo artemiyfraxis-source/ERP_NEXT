@@ -137,7 +137,9 @@ export const tailStripMm = (S: Pick<GenState, "tailTin">) => (S.tailTin?.strip |
  *  лужение хвоста (БД.ОП, ОБ.098). */
 export const TAIL_CUT_CODE_ = "CUT_WIRE+2strip+tin";
 /** Печать и резка маркировочной трубки на маркираторе ZCUT-RT660 (ОБ.102). */
-export const MARK_CUT_CODE_ = "INS_MARK_TUBE_AUTO";
+export const MARK_CUT_CODE_ = "PRINT_MARK_TUBE";
+/** Прежний код той же карты (до 25.10.2026): библиотека, где переименование ещё не записано, и сохранённые конфиги. */
+export const MARK_CUT_CODE_OLD_ = "INS_MARK_TUBE_AUTO";
 /** Резка оплётки (линейных материалов). */
 export const BRAID_CUT_CODE_ = "CUT_NEYLON";
 export type CoaxStripMode = "machine" | "separate";
@@ -382,7 +384,7 @@ export const SHRINK_LEN_MM_ = "20";
 export const JACKET_SHRINK_LEN_MM_ = "25";
 /** Паяльные разъёмы с корпусом (кожух, хвостовик, гайка): D-Sub/DH/СНП, круглые, коаксиальные — «Сборка корпуса после
  *  пайки» у них включена по умолчанию. */
-const HOUSING_CONN_RE_ = /\bd[-\s]?sub\b|\bdb[-\s]?\d|\bde[-\s]?9\b|\bdh[-\s]?\d|\bdhr\b|снп|gx[\s-]*\d|\blp[\s-]*\d|lemo|\bm(?:8|12|16)\b|2рм|онц|снц|\bрс[\s-]*\d|xlr|\bdin\b|кругл|circular|\bbnc\b|\bsma\b|\btnc\b|\bn[-\s]?type\b|\bfme\b|\buhf\b|pl[-\s]?259/i;
+const HOUSING_CONN_RE_ = /\bd[-\s]?sub\b|\bdb[-\s]?\d|\bde[-\s]?9\b|\bdh[-\s]?\d|\bdhr\b|снп|gx[\s-]*\d|\blp[\s-]*\d|\bsa\d{3,4}\s*\/|lemo|\bm(?:8|12|16)\b|2рм|онц|снц|\bрс[\s-]*\d|xlr|\bdin\b|кругл|circular|\bbnc\b|\bsma\b|\btnc\b|\bn[-\s]?type\b|\bfme\b|\buhf\b|pl[-\s]?259/i;
 export const DIODE_RE_ = /tvs|диод|\d[.,]\d\s*ke\d|\bsmbj\d/i;
 export const LUG_RE_ = /^\s*(?:нки|нви|нвки|ншви|нши|рпи|тмл)(?![а-яa-z])/i;
 /** Наконечник по артикулу/наименованию; название из справочника («наконечник втулочный») — запасной ход. */
@@ -495,8 +497,8 @@ const OP_CATEGORY_MAP: Record<string, string> = {
 const SOLDER_CONN_MAP: Array<[RegExp, string]> = [
   [/^\s*(?:плата|печатная плата|pcb)(?![a-zа-я])/i, "SDR_PCB"],
   [/xt[\s-]*90/i, "SDR_XT90"], [/xt[\s-]*60/i, "SDR_XT60"], [/xt[\s-]*30/i, "SDR_XT30"],
-  [/qs[\s-]*8/i, "SDR_XT90"],
-  [/gx[\s-]*12|lp[\s-]*12|^\s*sa\d{3,4}\s*\//i, "SDR_GX12"], [/gx[\s-]*16|lp[\s-]*16/i, "SDR_GX16"],
+  [/qs[\s-]*8|\bas[\s-]*150|xt[\s-]*150/i, "SDR_QS8"],
+  [/\bsa\d{3,4}\s*\//i, "SDR_SA"], [/gx[\s-]*12|lp[\s-]*12/i, "SDR_GX12"], [/gx[\s-]*16|lp[\s-]*16/i, "SDR_GX16"],
   [/lemo/i, "SDR_LEMO"], [/mr[\s-]*10/i, "SDR_MR10"], [/\brca\b/i, "SDR_RCA"],
   [/usb[\s-]*c.*3[.,]2|type[\s-]*c.*3[.,]2/i, "SDR_USB_C_3.2"], [/usb[\s-]*c|type[\s-]*c/i, "SDR_USB_C_2.0"],
   [/usb[\s-]*a.*3[.,]2/i, "SDR_USB_A_3.2"], [/usb[\s-]*a/i, "SDR_USB_A_2.0"],
@@ -1026,6 +1028,7 @@ export function makeGen(D: GenData, S: GenState) {
     const conn = e.connId ? getCompById(e.connId) : null, h = housingComp_();
     const s = `${h ? `${h.art || ""} ${h.name || ""}` : ""} ${conn ? `${conn.art || ""} ${conn.name || ""}` : ""}`;
     return /usb/i.test(s) ? "INS_housing_USB" : /gx|\blp[\s-]*\d/i.test(s) ? "INS_housing_GX"
+      : /\bsa\d{3,4}\s*\//i.test(s) ? "INS_housing_SA"
       : /\bd[-\s]?sub\b|\bdb[-\s]?\d|\bde[-\s]?9\b|\bdh[-\s]?\d|\bdhr\b|снп/i.test(s) ? "INS_housing_DB/DH/СНП" : "";
   }
   function lugTmplHint_(art: string) {
@@ -2510,10 +2513,10 @@ export function makeGen(D: GenData, S: GenState) {
     const one = parts.every((p) => p.art === parts[0].art) ? parts[0] : null;
     const atConn = tubes.every((t) => t.spec.placeKind === "conn");
     const heat = tubes.filter((t) => t.shrink).reduce((n, t) => n + t.spec.qty, 0);
-    // Печать и резка на маркираторе ZCUT-RT660 (INS_MARK_TUBE_AUTO); нет карты в библиотеке — резка трубки, как раньше.
-    const printed = hasTemplateCode_(MARK_CUT_CODE_);
+    // Печать и резка на маркираторе ZCUT-RT660 (PRINT_MARK_TUBE); нет карты в библиотеке — резка трубки, как раньше.
+    const markCode = [MARK_CUT_CODE_, MARK_CUT_CODE_OLD_].find(hasTemplateCode_), printed = !!markCode;
     return {
-      cut: { type: "cutTut", opKey: "cutMark", tmplHint: printed ? MARK_CUT_CODE_ : "CUT_TUT_short", tmplWant: MARK_CUT_CODE_, cat: "Резка", markTube: true,
+      cut: { type: "cutTut", opKey: "cutMark", tmplHint: markCode || "CUT_TUT_short", tmplWant: markCode || MARK_CUT_CODE_, cat: "Резка", markTube: true,
         label: `${printed ? "Печать и резка" : "Резка"} маркировки — ${sizes}`,
         tutArt: one ? one.art : "", tutName: one ? one.name : "", tutCount: count, tutSegs: segs, tutParts: parts },
       on: { type: "insTut", opKey: "onMark", tmplHint: "INS_TUT", cat: "Монтаж", markTube: true, tutCount: count,
@@ -2995,7 +2998,7 @@ export function makeGen(D: GenData, S: GenState) {
    *  cutWire1…N идут по порядку партий, и при перегруппировке тот же ключ достаётся резке другого вида. */
   function templateIdFor(spec: OpSpec) {
     // Залипший (не ручной) шаблон с другим кодом, чем просит правило генератора, тоже пересчитывается, если карта с
-    // нужным кодом есть: 713К.4 КБ1 (17.10) — резка маркировки ушла на INS_MARK_TUBE_AUTO, а у ключа cutMark остался
+    // нужным кодом есть: 713К.4 КБ1 (17.10) — резка маркировки ушла на PRINT_MARK_TUBE, а у ключа cutMark остался
     // CUT_TUT_short (резка трубок: не тот станок, не те дефекты).
     const stuck = S.selectedTemplates[spec.opKey];
     const want = (spec.tmplWant || spec.tmplHint || "").trim();
