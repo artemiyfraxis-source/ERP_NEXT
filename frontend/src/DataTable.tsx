@@ -141,6 +141,11 @@ export interface DataTableProps<T> {
   /** Сортировка внутри групп (owner 16.10.2026: «у каждой группы своя, и это во всех кабелях»; 19.10: «сделай просто
       вверху столбцов сортировку»): щелчок по заголовку сортирует строки в каждой группе, порядок групп не меняется. */
   groupSort?: boolean;
+  /** Группы — отдельными блоками (владелец 25.10.2026, как «Оболочки»: «чтобы визуал БД был один»): у каждой группы
+      заголовок со счётчиком и своя таблица с шапкой; поиск, чипы, «Колонки», «Excel», порядок и ширины колонок — общие
+      для всех блоков (колонки блоков идут вровень), щелчок по заголовку сортирует внутри каждого блока, пустой блок
+      не показывается. Без `groupBy` — один блок с подписью таблицы (`label`). */
+  blocks?: boolean;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
@@ -373,8 +378,12 @@ export function DataTable<T>({
   hideSearch = false,
   phoneCards = true,
   onEdited,
-  groupSort = false,
+  groupSort: groupSortProp = false,
+  blocks = false,
 }: DataTableProps<T>) {
+  // Blocks always sort inside every group (the groups keep the screen's order); a list without groups is one block.
+  const groupSort = groupSortProp || blocks;
+  const grouping = groupBy ?? (blocks ? () => label : undefined);
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -432,23 +441,25 @@ export function DataTable<T>({
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const dragKey = useRef<string | null>(null);
   // An opened row's card stays inside the visible part of a table wider than the screen (its cell spans
-  // every column): the card is pinned to the left edge and as wide as the scroll box, not the table.
-  const wrapRef = useRef<HTMLDivElement>(null);
+  // every column): the card is pinned to the left edge and as wide as the scroll box, not the table. The scroll boxes
+  // (one, or one per block) are as wide as the whole table: its width is set on the root and inherited.
   // Columns size by their content and the spare width goes to a `grow` column or to an empty last column — in the
   // automatic table layout. A screen that pins its widths with `table-layout: fixed` keeps them: no `fit`, no filler.
   const tableRef = useRef<HTMLTableElement>(null);
+  // The whole table (all blocks): the active cell and a column's header are looked up in it.
+  const rootRef = useRef<HTMLElement>(null);
   const [fixedLayout, setFixedLayout] = useState(false);
   useLayoutEffect(() => {
     const table = tableRef.current;
     if (table && typeof window.getComputedStyle === "function") setFixedLayout(window.getComputedStyle(table).tableLayout === "fixed");
   }, []);
   useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap || typeof ResizeObserver === "undefined") return;
-    const sync = () => wrap.style.setProperty("--detail-width", `${wrap.clientWidth}px`);
+    const root = rootRef.current;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    const sync = () => root.style.setProperty("--detail-width", `${root.clientWidth}px`);
     sync();
     const observer = new ResizeObserver(sync);
-    observer.observe(wrap);
+    observer.observe(root);
     return () => observer.disconnect();
   }, []);
 
@@ -484,15 +495,21 @@ export function DataTable<T>({
 
   const filtered = useMemo(() => {
     const result = searched.filter((row) => !activePreset || activePreset.test(row));
-    // With a sort inside groups the rows keep the screen's order here (it places the groups); the groups sort below.
-    if (sort && !groupSort) {
-      const column = columns.find((item) => item.key === sort.key);
-      if (column) {
-        result.sort((a, b) => sort.direction * compareCells(column.value(a), column.value(b), column.numeric));
-      }
-    }
-    return result;
-  }, [searched, columns, sort, activePreset, groupSort]);
+    const column = sort ? columns.find((item) => item.key === sort.key) : undefined;
+    if (!sort || !column) return result;
+    if (!groupSort) return result.sort((a, b) => sort.direction * compareCells(column.value(a), column.value(b), column.numeric));
+    if (!grouping) return result;
+    // A sort inside groups: the groups stay in the screen's order (of their first row), the rows sort inside each —
+    // before the page is cut, so a list shown in pages is sorted as a whole.
+    const rank = new Map<string, number>();
+    return result.map((row, index) => {
+      const name = grouping(row);
+      if (!rank.has(name)) rank.set(name, rank.size);
+      return { row, group: rank.get(name)!, index };
+    }).sort((a, b) => a.group - b.group || directed(column.value(a.row), column.value(b.row), sort.direction, column.numeric) || a.index - b.index)
+      .map((item) => item.row);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `grouping` is `groupBy`, or the list's one block
+  }, [searched, columns, sort, activePreset, groupSort, groupBy, blocks, label]);
 
   const shown = filtered.slice(0, limit);
   const keys = new Set(rows.map(rowKey));
@@ -578,7 +595,7 @@ export function DataTable<T>({
   /** Ширина текста колонки сейчас: перетянутая или измеренная по заголовку на экране. */
   function widthNow(key: string) {
     if (widths[key]) return widths[key];
-    const head = [...(tableRef.current?.querySelectorAll<HTMLElement>("th[data-col]") ?? [])].find((item) => item.dataset.col === key);
+    const head = [...(rootRef.current?.querySelectorAll<HTMLElement>("th[data-col]") ?? [])].find((item) => item.dataset.col === key);
     const measured = (head?.getBoundingClientRect().width ?? 0) - CELL_PAD;
     return measured > 0 ? measured : 120;
   }
@@ -631,19 +648,36 @@ export function DataTable<T>({
     [...new Set(rows.map((row) => String(column.value(row) ?? "")))].sort((a, b) => compareCells(a, b));
 
   const groups: Array<[string, T[]]> = [];
-  if (groupBy) {
+  if (grouping) {
     const byName = new Map<string, T[]>();
     for (const row of shown) {
-      const name = groupBy(row);
+      const name = grouping(row);
       if (!byName.has(name)) { byName.set(name, []); groups.push([name, byName.get(name)!]); }
       byName.get(name)!.push(row);
     }
-    // The header's sort orders the rows inside every group; the groups stay where they are.
-    const column = groupSort && sort ? columns.find((item) => item.key === sort.key) : undefined;
-    if (column && sort) {
-      for (const [, groupRows] of groups) groupRows.sort((a, b) => directed(column.value(a), column.value(b), sort.direction, column.numeric));
-    }
+    // The header's sort with `groupSort` orders the rows inside every group (`filtered`); the groups stay where they are.
   } else groups.push(["", shown]);
+  // A block's count is of all its rows that passed the search, filters and chip (a long list shows them in pages).
+  const blockTotals = new Map<string, number>();
+  if (blocks && grouping) for (const row of filtered) blockTotals.set(grouping(row), (blockTotals.get(grouping(row)) ?? 0) + 1);
+  // The blocks' columns go level (one list, one set of widths): each column takes the widest of its natural widths in
+  // all the blocks. Measured after the rows change, not on every render (a cell click, the active cell).
+  const levelSig = blocks ? [groups.map(([name, groupRows]) => `${name}:${groupRows.length}`).join("|"), visible.map((column) => column.key).join(","),
+    JSON.stringify(widths), query, preset, JSON.stringify(filters), JSON.stringify(sort), limit].join("#") : "";
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!blocks || !root) return;
+    const all = [...root.querySelectorAll<HTMLTableCellElement>(":scope > .table-wrap > table > thead > tr > th[data-col]")];
+    for (const head of all) if (head.dataset.level !== undefined) { head.style.width = ""; delete head.dataset.level; }
+    // a width the user dragged or the screen set, and the column that takes the spare width, stay as they are
+    const heads = all.filter((head) => !(head.classList.contains("dt-w") || head.classList.contains("grow") || head.style.width));
+    const widest = new Map<string, number>();
+    for (const head of heads) widest.set(head.dataset.col!, Math.max(widest.get(head.dataset.col!) ?? 0, head.getBoundingClientRect().width));
+    for (const head of heads) {
+      const width = widest.get(head.dataset.col!) ?? 0;
+      if (width > 0) { head.style.width = `${Math.ceil(width)}px`; head.dataset.level = ""; }
+    }
+  }, [blocks, levelSig, rows]);
 
   // --- Cells edited in place ---
   const lines = groups.flatMap(([name, groupRows]) => collapsibleGroups && collapsed.has(name) ? [] : groupRows);
@@ -870,7 +904,7 @@ export function DataTable<T>({
   // Keyboard focus follows the active cell (not while its editor is open: the editor has it).
   useEffect(() => {
     if (!active || (editing && sameCell(editing, active))) return;
-    const cell = [...(tableRef.current?.querySelectorAll<HTMLElement>("td[data-col]") ?? [])]
+    const cell = [...(rootRef.current?.querySelectorAll<HTMLElement>("td[data-col]") ?? [])]
       .find((item) => item.dataset.col === active.col && item.dataset.row === active.row);
     if (cell && document.activeElement !== cell) cell.focus();
   }, [active, editing]);
@@ -1007,12 +1041,85 @@ export function DataTable<T>({
     );
   }
 
+  function toggleCollapsed(name: string) {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (!next.delete(name)) next.add(name);
+      return next;
+    });
+  }
+  const tableClass = ["grid wide", selectable ? "selectable" : "", sized ? "sized" : "", hasEditing ? "dt-edit-grid" : ""].filter(Boolean).join(" ");
+  /** The header row: one per table — the whole list, or a block (`block`: its title and rows for «select all»). */
+  function headOf(block: { title: string; rows: T[] } | null) {
+    return (
+      <thead>
+        <tr>
+          {selectable && <th><label className="sel-hit">{block === null
+            ? <input type="checkbox" aria-label="Выбрать все показанные" checked={allShownSelected} onChange={(event) => toggleAll(event.target.checked)} />
+            : <input type="checkbox" aria-label={`Выбрать все: ${block.title}`} checked={block.rows.length > 0 && block.rows.every((row) => selected.has(rowKey(row)))} onChange={(event) => toggleGroup(block.rows, event.target.checked)} />}</label></th>}
+          {visible.map((column, index) => {
+            const direction = sort?.key === column.key ? sort.direction : 0;
+            const width = widths[column.key];
+            const dragged = dragKey.current;
+            const drop = dropTarget === column.key && dragged
+              ? visible.findIndex((item) => item.key === dragged) < index ? "dt-drop-after" : "dt-drop-before" : "";
+            return (
+              <th
+                key={column.key}
+                data-col={column.key}
+                className={[columnClass(width ? { ...column, width } : column, index, sized), width ? "dt-w" : "", drop].filter(Boolean).join(" ") || undefined}
+                style={width ? { "--dt-w": `${width}px` } as CSSProperties : column.width ? { width: column.width } : undefined}
+                title={column.hint ?? (column.computed && hasEditing ? "Считается — в таблице не правится"
+                  : groupSort ? "Сортировка — внутри каждой группы" : undefined)}
+                aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}
+                draggable
+                onDragStart={(event) => {
+                  if ((event.target as HTMLElement).closest?.(".dt-resize")) { event.preventDefault(); return; }
+                  dragKey.current = column.key;
+                  if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", column.title); }
+                }}
+                onDragOver={(event) => {
+                  if (!dragKey.current || dragKey.current === column.key) return;
+                  event.preventDefault();
+                  if (dropTarget !== column.key) setDropTarget(column.key);
+                }}
+                onDragLeave={() => setDropTarget((current) => current === column.key ? null : current)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const moved = dragKey.current;
+                  dragKey.current = null;
+                  setDropTarget(null);
+                  if (moved && moved !== column.key) moveColumn(moved, column.key);
+                }}
+                onDragEnd={() => { dragKey.current = null; setDropTarget(null); }}
+              >
+                <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
+                  {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
+                </button>
+                <span
+                  className="dt-resize"
+                  aria-hidden="true"
+                  title="Тянуть — ширина, двойной щелчок — по содержимому"
+                  draggable={false}
+                  onPointerDown={(event) => startResize(event, column.key)}
+                  onDoubleClick={() => setWidth(column.key, null)}
+                  onClick={(event) => event.stopPropagation()}
+                />
+              </th>
+            );
+          })}
+          {filler && <th className="dt-fill" aria-hidden="true" />}
+        </tr>
+      </thead>
+    );
+  }
+
   const filterColumns = arranged.filter((column) => column.filter);
   // A filter is on when a value is chosen; "" means «все».
   const activeFilters = filterColumns.filter((column) => (filters[column.key] ?? "") !== "");
 
   return (
-    <section className={phoneCards ? "data-table dt-cards" : "data-table"} aria-label={label}>
+    <section ref={rootRef} className={[phoneCards ? "data-table dt-cards" : "data-table", blocks ? "dt-blocks" : ""].filter(Boolean).join(" ")} aria-label={label}>
       {!compact && <div className="filters table-toolbar">
         {!hideSearch && <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
           <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? searchHint(visible)} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
@@ -1117,69 +1224,38 @@ export function DataTable<T>({
           <button type="button" className="secondary small" onClick={() => setSelected(new Set())}>Снять выбор</button>
         </div>
       )}
-      <div className="table-wrap" ref={wrapRef}>
-        <table ref={tableRef} className={["grid wide", selectable ? "selectable" : "", sized ? "sized" : "", hasEditing ? "dt-edit-grid" : ""].filter(Boolean).join(" ")}>
-          <thead>
-            <tr>
-              {selectable && <th><label className="sel-hit"><input type="checkbox" aria-label="Выбрать все показанные" checked={allShownSelected} onChange={(event) => toggleAll(event.target.checked)} /></label></th>}
-              {visible.map((column, index) => {
-                const direction = sort?.key === column.key ? sort.direction : 0;
-                const width = widths[column.key];
-                const dragged = dragKey.current;
-                const drop = dropTarget === column.key && dragged
-                  ? visible.findIndex((item) => item.key === dragged) < index ? "dt-drop-after" : "dt-drop-before" : "";
-                return (
-                  <th
-                    key={column.key}
-                    data-col={column.key}
-                    className={[columnClass(width ? { ...column, width } : column, index, sized), width ? "dt-w" : "", drop].filter(Boolean).join(" ") || undefined}
-                    style={width ? { "--dt-w": `${width}px` } as CSSProperties : column.width ? { width: column.width } : undefined}
-                    title={column.hint ?? (column.computed && hasEditing ? "Считается — в таблице не правится"
-                      : groupSort ? "Сортировка — внутри каждой группы" : undefined)}
-                    aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}
-                    draggable
-                    onDragStart={(event) => {
-                      if ((event.target as HTMLElement).closest?.(".dt-resize")) { event.preventDefault(); return; }
-                      dragKey.current = column.key;
-                      if (event.dataTransfer) { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", column.title); }
-                    }}
-                    onDragOver={(event) => {
-                      if (!dragKey.current || dragKey.current === column.key) return;
-                      event.preventDefault();
-                      if (dropTarget !== column.key) setDropTarget(column.key);
-                    }}
-                    onDragLeave={() => setDropTarget((current) => current === column.key ? null : current)}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      const moved = dragKey.current;
-                      dragKey.current = null;
-                      setDropTarget(null);
-                      if (moved && moved !== column.key) moveColumn(moved, column.key);
-                    }}
-                    onDragEnd={() => { dragKey.current = null; setDropTarget(null); }}
-                  >
-                    <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
-                      {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
-                    </button>
-                    <span
-                      className="dt-resize"
-                      aria-hidden="true"
-                      title="Тянуть — ширина, двойной щелчок — по содержимому"
-                      draggable={false}
-                      onPointerDown={(event) => startResize(event, column.key)}
-                      onDoubleClick={() => setWidth(column.key, null)}
-                      onClick={(event) => event.stopPropagation()}
-                    />
-                  </th>
-                );
-              })}
-              {filler && <th className="dt-fill" aria-hidden="true" />}
-            </tr>
-          </thead>
+      {blocks ? <>
+        {groups.map(([name, groupRows], index) => {
+          const title = (groupLabel ? groupLabel(name, groupRows) : name) || "—";
+          const folded = Boolean(collapsibleGroups && collapsed.has(name));
+          const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
+          const caption = <>{title} <span className="page-count">{blockTotals.get(name) ?? groupRows.length}</span>{picked > 0 && <span className="group-picked">выбрано {picked}</span>}</>;
+          return <Fragment key={`block:${name}`}>
+            <h2 className="dt-block-title">{collapsibleGroups
+              ? <button type="button" className="dt-block-fold" aria-expanded={!folded} onClick={() => toggleCollapsed(name)}><span aria-hidden="true">{folded ? "▸" : "▾"}</span> {caption}</button>
+              : caption}</h2>
+            {!folded && <div className="table-wrap">
+              <table ref={index === 0 ? tableRef : undefined} className={tableClass} aria-label={typeof title === "string" ? title : name}>
+                {headOf({ title: typeof title === "string" ? title : name, rows: groupRows })}
+                <tbody>{groupRows.map(renderRow)}</tbody>
+              </table>
+            </div>}
+          </Fragment>;
+        })}
+        {!shown.length && <div className="table-wrap">
+          <table ref={tableRef} className={tableClass}>
+            {headOf(null)}
+            <tbody><tr><td colSpan={span} className="empty">{emptyText}</td></tr></tbody>
+          </table>
+        </div>}
+        {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
+      </> : <div className="table-wrap">
+        <table ref={tableRef} className={tableClass}>
+          {headOf(null)}
           <tbody>
             {groups.map(([name, groupRows]) => (
               <Fragment key={`group:${name}`}>
-                {groupBy && (
+                {grouping && (
                   <tr className="group-row">
                     <td colSpan={span}>
                       {selectable && (() => {
@@ -1199,11 +1275,7 @@ export function DataTable<T>({
                         const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
                         const title = <><strong>{(groupLabel ? groupLabel(name, groupRows) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
                         return collapsibleGroups
-                          ? <button type="button" aria-expanded={!collapsed.has(name)} onClick={() => setCollapsed((current) => {
-                            const next = new Set(current);
-                            if (!next.delete(name)) next.add(name);
-                            return next;
-                          })} style={{ all: "unset", cursor: "pointer" }}>{collapsed.has(name) ? "▸" : "▾"} {title}</button>
+                          ? <button type="button" aria-expanded={!collapsed.has(name)} onClick={() => toggleCollapsed(name)} style={{ all: "unset", cursor: "pointer" }}>{collapsed.has(name) ? "▸" : "▾"} {title}</button>
                           : title;
                       })()}
                     </td>
@@ -1216,7 +1288,7 @@ export function DataTable<T>({
           </tbody>
         </table>
         {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
-      </div>
+      </div>}
       {!compact && (
         <div className="table-footer">
           <span>Показано {shown.length} из {filtered.length}{filtered.length !== rows.length ? ` (всего ${rows.length})` : ""}</span>

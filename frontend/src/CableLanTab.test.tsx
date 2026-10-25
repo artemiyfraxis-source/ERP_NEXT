@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import type { CableRow, Principal } from "./api";
+import { blockLines, listHeads } from "./test/blocks";
 
 /* «Кабели и провода» → «ETHERNET» (владелец 25.10.2026: «интернетные вынести вообще в другую вкладку — новая вкладка,
    новая БД», «не витая пара»): своя вкладка после «Многожильных», свои столбцы — все видны, группы «экран категория». */
@@ -54,7 +55,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); });
 
-const heads = () => screen.getAllByRole("columnheader").map((head) => head.textContent ?? "").filter(Boolean);
+const heads = () => listHeads().map((head) => head.textContent ?? "").filter(Boolean);
 
 it("puts «Кабели Ethernet» right after «Многожильные кабели» with its own count", async () => {
   render(<ReferencesPage principal={admin} initialTab="cab_multi" />);
@@ -82,8 +83,8 @@ it("shows the ETHERNET list with all its columns in the group order, grouped by 
     "Жила: проволок × диаметр, мм", "Материал жилы", "Материал изоляции жилы", "Экран", "Материал оболочки", "Прокладка",
     "Наружный диаметр, мм", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Ссылка на datasheet",
   ]);
-  expect(screen.getByText("U/UTP Cat5e")).toBeInTheDocument();
-  expect(screen.getByText("F/UTP Cat6")).toBeInTheDocument();
+  // a block per screen and category (25.10), each with its count
+  expect(blockLines()).toEqual(["U/UTP Cat5e · 1", "F/UTP Cat6 · 1"]);
   // «Категория» is the cable's Cat, a plain cell — not the shop category choice of the многожильные
   expect(screen.queryByRole("combobox", { name: /Категория/ })).toBeNull();
   expect(screen.getAllByText("Cat5e").length).toBeGreaterThan(0);

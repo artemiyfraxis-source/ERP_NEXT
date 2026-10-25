@@ -95,9 +95,9 @@ const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "w
 // D1 · D2 · D3» → коаксиальные кабели; «Материалы» (15.10.2026) → «Оболочки», куда ушла бóльшая часть строк.
 // «Прочие кабели» закрыты 20.10.2026: сохранённая вкладка ведёт в многожильные.
 const TAB_ALIASES: Partial<Record<string, DbTab>> = { cab_other: "cab_multi", prov: "cab_wire", kab_coax: "cab_coax", kab_awg: "cab_wire", mat: "cov", mat_fix: "mat_use", mat_seal: "mat_use", mat_sleeve: "mat_use" };
-const MAP_TABS: Record<MapTab, { keyLabel: string; valueLabel: string }> = {
-  suppliers: { keyLabel: "Домен или ссылка", valueLabel: "Поставщик" },
-  countries: { keyLabel: "Изготовитель", valueLabel: "Страна" },
+const MAP_TABS: Record<MapTab, { title: string; keyLabel: string; valueLabel: string }> = {
+  suppliers: { title: "Домен → поставщик", keyLabel: "Домен или ссылка", valueLabel: "Поставщик" },
+  countries: { title: "Изготовитель → страна", keyLabel: "Изготовитель", valueLabel: "Страна" },
 };
 // СПР.КАБ — только просмотр (как в портале SUPPLYMAP): таблица как на листе, без правки и «+ Запись».
 const VIEW_ONLY_TABS: DbTab[] = ["kab_coax"];
@@ -618,6 +618,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         presets={techPresets}
         groupBy={techGroup}
         groupLabel={techGroupLabel}
+        // Группа — свой блок с заголовком и таблицей (владелец 25.10.2026: «визуал БД один», как «Оболочки»).
+        blocks
         searchText={recordSearchText}
         onEdited={() => loadTech(techTab)}
         rowKey={(record) => record.id}
@@ -681,7 +683,7 @@ function MapTable({ tab, rows, disabled, onChange, toolbar }: {
   onChange: (update: (rows: ReferencePair[]) => ReferencePair[]) => void;
   toolbar: ReactNode;
 }) {
-  const { keyLabel, valueLabel } = MAP_TABS[tab];
+  const { title, keyLabel, valueLabel } = MAP_TABS[tab];
   const indexed = useMemo(() => rows.map((row, index): MapRow => ({ ...row, index }))
     .sort((a, b) => Number(!a.key.trim()) - Number(!b.key.trim()) || natural(a.key, b.key) || a.index - b.index), [rows]);
   const cell = (field: keyof ReferencePair) => disabled ? undefined : {
@@ -697,13 +699,15 @@ function MapTable({ tab, rows, disabled, onChange, toolbar }: {
   ];
   return <>
     <DataTable
-      label={`${keyLabel} → ${valueLabel}`}
+      label={title}
       rows={indexed}
       columns={columns}
       rowKey={(row) => String(row.index)}
       rowLabel={(row) => `строка ${row.index + 1}`}
       phoneCards={disabled}
       storageKey={`db:${tab}`}
+      // Один блок с названием карты, как у остальных списков «Базы данных» (владелец 25.10.2026).
+      blocks
       exportName={`${keyLabel} - ${valueLabel}`}
       emptyText="Нет записей"
       toolbar={<><SortHint text={keyLabel.toLocaleLowerCase("ru-RU")} />{toolbar}</>}

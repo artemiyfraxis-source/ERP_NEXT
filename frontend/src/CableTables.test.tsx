@@ -4,6 +4,7 @@ import { ReferencesPage } from "./ReferencesPage";
 import { HookupWireTable, parseTempRange } from "./CableStructure";
 import { CableTable, coaxMaxGhz } from "./CableTables";
 import { CATEGORIES } from "./cableCategory";
+import { blockHeadings, blockLine, blockLines, blockRows, blockTables, listHead, listHeads } from "./test/blocks";
 import type { CableRow, Principal } from "./api";
 
 /* «База данных» → «Кабели и провода» (owner 04.10.2026): coax / hookup / multi-core cables, D1–D3 edited in the coax tab,
@@ -157,16 +158,16 @@ it("shows each cable in its own list with the parameters of that list", async ()
 
   // coax: D1–D3 of the generator's row next to the cable's own parameters; a D-table-only cable is a row too
   expect(await screen.findByText("RG316")).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "D1 жила, мм" })).toBeInTheDocument();
+  expect(listHead().getByRole("columnheader", { name: "D1 жила, мм" })).toBeInTheDocument();
   expect(screen.getByText("0,5")).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "D3 оплётка, мм" })).toBeInTheDocument(); // D1–D3 are «нужные» (owner 23.10)
+  expect(listHead().getByRole("columnheader", { name: "D3 оплётка, мм" })).toBeInTheDocument(); // D1–D3 are «нужные» (owner 23.10)
   expect(screen.getAllByText("RG58").length).toBeGreaterThan(0);
-  expect(screen.getByRole("columnheader", { name: "Волновое сопротивление, Ом" })).toBeInTheDocument();
+  expect(listHead().getByRole("columnheader", { name: "Волновое сопротивление, Ом" })).toBeInTheDocument();
   expect(screen.queryByText("UL1061 22AWG")).toBeNull();
   expect(screen.queryByText("КСПВГ 4x0,20")).toBeNull();
 
   // one frequency column «Частота до, ГГц» (owner 25.10); the cut-off and the VNA span are the card's, no other one anywhere
-  expect(screen.getByRole("columnheader", { name: "Частота до, ГГц" })).toBeInTheDocument();
+  expect(listHead().getByRole("columnheader", { name: "Частота до, ГГц" })).toBeInTheDocument();
   for (const name of ["Рабочая частота, ГГц", "Диапазон частот", "Диапазон VNA", "Частота среза, ГГц", "Карточка", "Вкладка", "Почему здесь"]) {
     expect(screen.queryByRole("columnheader", { name })).toBeNull();
   }
@@ -181,7 +182,7 @@ it("shows each cable in its own list with the parameters of that list", async ()
     return row.querySelectorAll("td")[index];
   };
   // «Серия» — the group header and a column again (owner 25.10: it groups the colours of a mark)
-  expect(screen.getByRole("columnheader", { name: "Серия" })).toBeInTheDocument();
+  expect(listHead().getByRole("columnheader", { name: "Серия" })).toBeInTheDocument();
   expect(cell("UL1061 22AWG", "Сечение, мм²")).toHaveTextContent(/^0,35$/); // the size row, not the БД.ПРОВ 0,33
   expect(cell("UL1061 22AWG", "Ø жилы, мм")).toHaveTextContent(/^0,64$/);
   expect(cell("UL1061 22AWG", "Температура, °C")).toHaveTextContent("−10 … +80");
@@ -191,7 +192,7 @@ it("shows each cable in its own list with the parameters of that list", async ()
   fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
   expect(await screen.findByText("КСПВГ 4x0,20")).toBeInTheDocument();
   expect(screen.getByText("КСПВГ")).toBeInTheDocument(); // owner 15.10.2026: one group per mark, not «КСПВ / КСПВГ»
-  expect(screen.getByRole("columnheader", { name: "Число жил" })).toBeInTheDocument();
+  expect(listHead().getByRole("columnheader", { name: "Число жил" })).toBeInTheDocument();
 
   // «Прочие кабели» are closed (20.10.2026): no chip, three lists only
   expect(screen.queryByRole("button", { name: /^Прочие кабели/ })).toBeNull();
@@ -216,7 +217,7 @@ describe("coax column order (owner 23.10: «сделай сортировку н
       ? json({ columns, custom_columns: own, counts: { coax: 3, wire: 3, multi: 1 }, rows: ROWS, gauges: GAUGES })
       : answer(input, init));
   };
-  const heads = () => screen.getAllByRole("columnheader").map((head) => head.textContent ?? "").filter(Boolean);
+  const heads = () => listHeads().map((head) => head.textContent ?? "").filter(Boolean);
 
   it("shows the list's «Только нужные» by default, in the group order", async () => {
     withColumns([...BASE, ...OWN], OWN);
@@ -341,9 +342,10 @@ it("lists coax cables like a catalogue: series groups in order, base mark before
     record: wire("w-lmr", { "Марка": "LMR-195" }), dia: null, dia_hint: null };
   mockApi([], [lmr, ...ROWS]);
   render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
-  const rg = await screen.findByRole("button", { name: /RG58 · 2/ });
+  // a block per family (25.10): its heading folds the block
+  const rg = await screen.findByRole("button", { name: /^RG58 2$/ });
   // owner 19.10: a group per mark family (RG58 = RG-58 and its A/U); single-row families of a head with no mate go to «Прочие», last
-  const lmrGroup = screen.getByRole("button", { name: /Прочие · 2/ });
+  const lmrGroup = screen.getByRole("button", { name: /^Прочие 2$/ });
   expect(rg.compareDocumentPosition(lmrGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const marks = screen.getAllByRole("row").map((line) => line.querySelector("td.key")?.textContent).filter(Boolean);
   expect(marks).toEqual(["RG-58 A/U", "RG58", "LMR-195", "RG316"]); // owner 25.10: by outer diameter, a row without one (the D-row RG58) last in its group
@@ -585,7 +587,7 @@ it("groups the hook-up wires by series with the series name only in the header, 
 
   // «Серия» is a column again (owner 25.10: it groups the colours of a mark); the jacket material right before
   // «Ø наружный» (owner 23.10: core → jacket → outer Ø)
-  const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+  const heads = listHeads().map((head) => head.textContent);
   expect(heads[heads.indexOf("Ø наружный, мм") - 1]).toBe("Материал оболочки");
   // the монтажные columns (owner 23.10 + 25.10) in the group order, nothing hidden; the structure's «Изоляция» is no column
   expect(heads).toEqual(["Марка провода", "Цвет", "Серия", "AWG", "Сечение, мм²", "Структура жилы", "Ø жилы, мм", "Материал оболочки",
@@ -596,14 +598,14 @@ it("groups the hook-up wires by series with the series name only in the header, 
   expect(heads[heads.indexOf("Поставщик") + 1]).toBe("Ссылка");
   expect(screen.getAllByRole("link", { name: /^Открыть страницу ПуГВ/ })[0]).toHaveAttribute("href", "https://snabcable.ru/mounting/mgtf-mgtfe/pv-3-pugv/");
   // the header is the series name only; voltage and temperature are in every row (owner 25.10)
-  expect(document.querySelector("tr.group-row")?.textContent).toBe("ПуГВ · 5");
+  expect(blockLines()).toEqual(["ПуГВ · 5"]);
   expect(screen.queryByText(/450 В|−50 … \+65 °C/)).toBeNull();
-  const body = [...document.querySelectorAll("tbody tr:not(.group-row)")] as HTMLElement[];
+  const body = blockRows();
   const cellText = (tr: HTMLElement, header: string) => tr.querySelectorAll("td")[heads.indexOf(header)]?.textContent;
   expect(body.map((tr) => cellText(tr, "Температура, °C"))).toEqual(Array(5).fill("−50 … +65"));
   expect(body.map((tr) => cellText(tr, "Напряжение, В"))).toEqual(Array(5).fill("450"));
   // 2,5 · 4 · 10 · 16, not the text order 10 · 16 · 2,5 · 4
-  const marks = [...document.querySelectorAll("tbody tr:not(.group-row) strong")].map((node) => node.textContent);
+  const marks = blockRows().map((tr) => tr.querySelector("strong")?.textContent);
   expect(marks).toEqual(["ПуГВ 2,5", "ПуГВ 2,5", "ПуГВ 4", "ПуГВ 10", "ПуГВ 16"]);
   // each colour its own row (owner 20.10: «каждый цвет своя строка»): «Цвет» — a dot and the name; no colour — a dash;
   // the multicore list «Цвета» is no column here
@@ -724,7 +726,7 @@ describe("«+ Столбец» (owner 14.10: «добавить свои сто�
     fireEvent.change(within(dialog).getByLabelText("Название столбца"), { target: { value: "Полка" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Добавить столбец" }));
 
-    expect(await screen.findByRole("columnheader", { name: "Полка" })).toBeInTheDocument();
+    expect((await screen.findAllByRole("columnheader", { name: "Полка" }))[0]).toBeInTheDocument();
     expect(calls.find((call) => call.method === "POST")?.body).toEqual({ tab: "prov", name: "Полка", cable_kind: "coax" });
     expect(screen.queryByRole("dialog", { name: "Новый столбец" })).toBeNull();
 
@@ -858,24 +860,24 @@ describe("«Монтажные провода» and the other cable lists across
     });
     const data = { columns: COLUMNS, counts: { coax: 0, wire: 0, multi: many.length }, rows: many, gauges: [] } as unknown as Parameters<typeof CableTable>[0]["data"];
     const { unmount } = render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
-    expect(document.querySelectorAll("tbody tr:not(.group-row)")).toHaveLength(380);
+    expect(blockRows()).toHaveLength(380);
     expect(screen.getByText("Показано 380 из 380")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Показать ещё" })).toBeNull();
     const sections = () => {
       const result: Array<{ name: string; diameters: string[] }> = [];
-      const head = screen.getAllByRole("columnheader").findIndex((cell) => cell.textContent?.startsWith("Наружный диаметр, мм"));
-      for (const line of document.querySelectorAll("tbody tr")) {
-        if (line.classList.contains("group-row")) result.push({ name: line.querySelector("strong")?.textContent ?? "", diameters: [] });
-        else result[result.length - 1].diameters.push(line.querySelectorAll("td")[head].textContent ?? "");
-      }
+      // a block per group (25.10): its heading and its own table
+      const head = listHeads().findIndex((cell) => cell.textContent?.startsWith("Наружный диаметр, мм"));
+      blockTables().forEach((table, index) => result.push({ name: blockLine(blockHeadings()[index]).split(" · ")[0],
+        diameters: [...table.querySelectorAll("tbody tr")].map((line) => line.querySelectorAll("td")[head].textContent ?? "") }));
       return result;
     };
     const before = sections();
     expect(before).toHaveLength(2);
     expect(before.map((group) => group.diameters.length)).toEqual([190, 190]); // both groups open to the end
-    const head = screen.getByRole("button", { name: "Наружный диаметр, мм" });
-    fireEvent.click(head);
-    fireEvent.click(screen.getByRole("button", { name: /Наружный диаметр, мм/ }));
+    // a click on the header of any block sorts the rows of every block (25.10: a table per block, one sort)
+    fireEvent.click(within(blockTables()[1]).getByRole("button", { name: "Наружный диаметр, мм" }));
+    fireEvent.click(within(blockTables()[0]).getByRole("button", { name: /Наружный диаметр, мм/ }));
+    expect(blockTables().map((table) => within(table).getByRole("columnheader", { name: /Наружный диаметр, мм/ }).getAttribute("aria-sort"))).toEqual(["descending", "descending"]);
     const after = sections();
     expect(after.map((group) => group.name)).toEqual(before.map((group) => group.name));
     const down = (values: string[]) => [...values].sort((a, b) => Number(b) - Number(a));
@@ -1058,7 +1060,7 @@ describe("columns of each cable list (БД.ПРОВ cable_kind)", () => {
     withKinds();
     const first = render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
-    expect(screen.getByRole("columnheader", { name: "Полка коакса" })).toBeInTheDocument(); // a new own column is shown
+    expect(listHead().getByRole("columnheader", { name: "Полка коакса" })).toBeInTheDocument(); // a new own column is shown
     fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
     expect(screen.queryByRole("checkbox", { name: "Диапазон VNA" })).toBeNull();
     fireEvent.click(screen.getByRole("checkbox", { name: "Поставщик" })); // switched off by the user
@@ -1068,7 +1070,7 @@ describe("columns of each cable list (БД.ПРОВ cable_kind)", () => {
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
     expect(screen.queryByRole("columnheader", { name: "Поставщик" })).toBeNull();
-    expect(screen.getByRole("columnheader", { name: "Частота до, ГГц" })).toBeInTheDocument();
+    expect(listHead().getByRole("columnheader", { name: "Частота до, ГГц" })).toBeInTheDocument();
   });
 });
 

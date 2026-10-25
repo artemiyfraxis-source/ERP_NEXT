@@ -1563,6 +1563,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table tr.group-row input[type="checkbox"] { width: auto; display: inline-block; margin: 0 8px 0 2px; padding: 0; vertical-align: middle; }
 .data-table tr.group-row .group-picked { color: var(--primary); font-weight: 600; }
 .data-table .calendar-chips { margin-bottom: 0; }
+/* «База данных»: группы списка — блоками (DataTable `blocks`, владелец 25.10.2026, как «Оболочки»): заголовок группы со
+   счётчиком над своей таблицей; панель, чипы и подвал — одни на список. */
+.data-table.dt-blocks > .dt-block-title { margin: 14px 0 -2px; font-size: 16px; font-weight: 500; line-height: 1.3; }
+.data-table.dt-blocks > .dt-block-title .page-count { margin-left: 6px; vertical-align: 1px; }
+.data-table.dt-blocks > .dt-block-title .group-picked { margin-left: 10px; color: var(--primary); font-size: 13px; font-weight: 600; }
+.data-table.dt-blocks .dt-block-fold { all: unset; cursor: pointer; }
+.data-table.dt-blocks .dt-block-fold:focus-visible { outline: var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
+.data-table.dt-blocks .dt-block-fold > span[aria-hidden] { display: inline-block; width: 14px; color: var(--muted-foreground); }
 /* Dense, spreadsheet-like reading (the owner is used to Google Sheets): compact rows, zebra, dark text, the header
    pinned while the rows scroll inside the card, columns as wide as their content, the first column as the row key. */
 .data-table .table-wrap { width: auto; max-height: calc(100dvh - 190px); overflow: auto; }
