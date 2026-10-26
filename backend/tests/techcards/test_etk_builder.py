@@ -580,6 +580,22 @@ def test_jacketed_cable_strip_carries_the_core_strip_for_the_cut_and_the_connect
     assert ops[2]["fields"]["strip"] == {"a": True, "b": True, "lenA": "5", "lenB": "5"}
 
 
+def test_usb_core_strip_of_776k_kb2_reaches_the_etk_per_end():
+    # 776К. КБ2 (владелец 26.10): зачистка жил USB-кабеля под пайку 3–4 мм — своя операция у каждого конца, длина в её поле strip.
+    wire = {"name": "CCCU-4G", "art": "CCCU-4G", "qty": 1, "length": 100}
+    config = {"assemblyName": "Кабельная сборка USB-AM to MicroUSB-m 100mm", "partQty": 10, "wires": [wire], "ops": [
+        {"type": "cutWireStrip", "opNum": "CUT_COAX+2strip", "wires": [wire], "strip": {"a": True, "lenA": "15", "b": True, "lenB": "10"}},
+        {"type": "stripCable", "opNum": "STRIP_CABLE_usb_2.0", "side": "A", "tutCount": 4,
+         "strip": {"a": True, "lenA": "", "b": False, "lenB": "", "coreA": "3–4"}},
+        {"type": "stripCable", "opNum": "STRIP_CABLE_usb_2.0", "side": "B", "tutCount": 4,
+         "strip": {"a": False, "lenA": "", "b": True, "lenB": "", "coreB": "3–4"}},
+    ]}
+    ops = build_etk(config, CARDS, operation_library_commit="x")["operations"]
+    assert ops[0]["fields"]["strip"] == {"a": True, "b": True, "lenA": "15", "lenB": "10"}
+    assert ops[1]["fields"]["strip"] == {"a": True, "b": False, "lenA": "", "lenB": "", "coreA": "3–4"}
+    assert ops[2]["fields"]["strip"] == {"a": False, "b": True, "lenA": "", "lenB": "", "coreB": "3–4"}
+
+
 def test_tinned_free_end_of_the_cut_crimp_takes_the_tin_strip_length():
     # 719К.2 КБ1: лужёный конец В без своей длины у операции («B ?») — длина зачистки под лужение из конфигурации.
     def strip_of(config: dict) -> dict:

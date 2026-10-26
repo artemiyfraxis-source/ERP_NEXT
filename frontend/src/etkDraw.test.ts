@@ -45,6 +45,14 @@ describe("etkParams (шапка: Сторона А | Общие | Сторона
     expect(svg).toContain("B 20 мм, жилы ?");
   });
 
+  it("USB core strip on its own operation: only the «Зачистка жил» line, no empty jacket line (owner 26.10)", () => {
+    const op = (side: "A" | "B", strip: Record<string, unknown>) => etkParams({ type: "stripCable", code: "STRIP_CABLE_usb_2.0", side, fields: { strip } });
+    const a = op("A", { a: true, lenA: "", b: false, lenB: "", coreA: "3–4" });
+    expect(a.sides.map((side) => [side.title, find(side.items)])).toEqual([["Сторона А", { "Зачистка жил": "3–4 мм" }]]);
+    const b = op("B", { a: false, lenA: "", b: true, lenB: "", coreB: "3–4" });
+    expect(b.sides.map((side) => [side.title, find(side.items)])).toEqual([["Сторона В", { "Зачистка жил": "3–4 мм" }]]);
+  });
+
   it("one-side crimp: side В has only the strip length, a free end without strip has no column", () => {
     const fields = { applicator: "A19", strip: { a: true, b: true, lenA: "1,2", lenB: "3" },
       crimpEnds: [{ ends: ["A"], art: "SSH-003T-P0.2-H", wire: "W", section: "28 AWG", applicator: "A19", crimpHeight: "0,43 – 0,47", pullForce: "", strip: "1,2" }] };

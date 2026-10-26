@@ -965,8 +965,10 @@ function sideItems(operation: Row, end: "A" | "B"): EtkParam[] {
   const coreKey = key === "a" ? "coreA" : "coreB";
   if (strip[key] && coreKey in strip) {
     // Кабель в оболочке (владелец 15.10): разделка оболочки и зачистка жил под обжим или пайку — двумя строками.
-    out.push(["Разделка оболочки", withUnit(str(key === "a" ? strip.lenA : strip.lenB), "мм")],
-      ["Зачистка жил", withUnit(str(strip[coreKey]), "мм")]);
+    // Оболочку у операции не снимают (длины нет — зачистка жил отдельной операцией, USB) — только строка жил.
+    const jacket = str(key === "a" ? strip.lenA : strip.lenB).trim();
+    if (jacket || !str(strip[coreKey]).trim()) out.push(["Разделка оболочки", withUnit(jacket, "мм")]);
+    out.push(["Зачистка жил", withUnit(str(strip[coreKey]), "мм")]);
   } else if (/^cutWire/.test(str(operation.type))) {
     const cut = etkCutEnds(operation)[key];
     if (cut.kind !== "none") out.push(["Зачистка", `${withUnit(entryStrip || cut.len, "мм")}${cut.kind === "tin" ? " (лужение)" : ""}`]);

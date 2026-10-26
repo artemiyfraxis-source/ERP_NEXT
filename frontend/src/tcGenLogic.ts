@@ -3593,6 +3593,12 @@ export function makeGen(D: GenData, S: GenState) {
           ?? spliceSleeves_().items.map((x) => ({ art: x.comp.art || x.comp.name || "", name: x.comp.name || x.comp.art || "", count: x.count }));
       }
       if (spec.opKey === "stripTail") op.strip = spec.strip;
+      // Зачистка жил USB-кабеля под пайку (владелец 26.10, «3–4 мм»): длина доходит до ЭТК строкой «Зачистка жил» своей стороны
+      // (поле `coreA`/`coreB`, как у кабеля в оболочке); длины оболочки у этой операции нет — её снимает резка.
+      if (spec.strip && /^stripCores/.test(spec.opKey) && /^STRIP_CABLE_usb/.test(spec.tmplHint || "")) {
+        const s = spec.strip;
+        op.strip = { a: s.a, lenA: "", b: s.b, lenB: "", ...(s.a ? { coreA: s.lenA } : {}), ...(s.b ? { coreB: s.lenB } : {}) };
+      }
       // Лужение хвостов: провода хвостов (номера в `wires` карты) и число концов.
       if (spec.type === "tin" && spec.units) {
         const set = new Set(spec.wireIdxs || []);
