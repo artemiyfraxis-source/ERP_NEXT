@@ -19,13 +19,14 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, warehouse_edit_principal, warehouse_view_principal
 from app.shared.stored_files import file_response
+from app.workflows.receipt_upd_registry import push_after_accept
 from app.workflows.stock_receipt import expected_in_receiving
 
 from .api import StockItemInput, _result, receipt_brief, warehouse_uow_factory
@@ -188,11 +189,13 @@ def accept_line(
     receipt_id: UUID,
     payload: AcceptPayload,
     request: Request,
+    background: BackgroundTasks,
     principal: Annotated[Principal, Depends(warehouse_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
-    """«Принять»: the line goes on stock as one lot, `labels` copies of its label go to the print queue."""
+    """«Принять»: the line goes on stock as one lot, `labels` copies of its label go to the print queue; after the
+    answer the delivery's УПД file goes to purchasing's «Реестр УПД» (`receipt_upd_registry`, never fails the lot)."""
     receiving, procurement = _factory(request, "receiving_uow_factory"), _factory(request, "procurement_uow_factory")
 
     def expected(receipt: WarehouseReceipt, article: str):
@@ -208,6 +211,8 @@ def accept_line(
         uow_factory(),
         expected,
     ))
+    background.add_task(push_after_accept, uow_factory, _factory(request, "purchasing_uow_factory"), receipt_id,
+                        principal.actor, now)
     return {
         "lot": _lot(accepted.lot, accepted.receipt),
         "label_job_id": str(accepted.label_job_id) if accepted.label_job_id else None,

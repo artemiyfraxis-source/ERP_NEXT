@@ -22,12 +22,17 @@ export const UPD_STATUS_TONES: Record<UpdStatus, Tone> = {
 /** The buyer works with these first; duplicates live apart. */
 export const UPD_STATUS_ORDER: UpdStatus[] = ["needs_review", "waiting", "parsed", "verified", "not_purchase"];
 
-export type UpdOrigin = "google" | "edo";
-export const UPD_ORIGIN_LABELS: Record<UpdOrigin, string> = { edo: "ЭДО", google: "Бумажный" };
+export type UpdOrigin = "google" | "edo" | "scan";
+export const UPD_ORIGIN_LABELS: Record<UpdOrigin, string> = { edo: "ЭДО", google: "Бумажный", scan: "Скан склада" };
 export const UPD_ORIGIN_HINTS: Record<UpdOrigin, string> = {
   edo: "электронный документ из Диадока (XML), подписан в ЭДО",
   google: "скан или PDF, распознан разборщиком Google — оригинал на бумаге",
+  scan: "скан УПД, принятого на складе: шапка — как её сохранил кладовщик, строки — распознавание модели",
 };
+/** «Источник» filter of the registry: the buttons in this order, plural words. */
+export const UPD_ORIGIN_FILTERS: { key: "" | UpdOrigin; label: string }[] = [
+  { key: "", label: "Все" }, { key: "edo", label: "ЭДО" }, { key: "google", label: "Бумажные" }, { key: "scan", label: "Скан склада" },
+];
 export type UpdBuyerKind = "ours" | "other" | "unknown";
 /** Our organisation: documents for any other INN are bought for someone else. */
 export const OUR_INN = "5040191181";

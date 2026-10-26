@@ -113,8 +113,8 @@ def list_documents(
 ) -> dict:
     if status is not None and status not in STATUSES:
         raise HTTPException(status_code=422, detail="Неизвестный статус документа")
-    if origin is not None and origin not in ("edo", "google"):
-        raise HTTPException(status_code=422, detail="Источник: edo или google")
+    if origin is not None and origin not in ("edo", "google", "scan"):
+        raise HTTPException(status_code=422, detail="Источник: edo, google или scan")
     if buyer is not None and not _BUYER.match(buyer):
         raise HTTPException(status_code=422, detail="Покупатель: ours, other, unknown или ИНН")
     if kind is not None and kind not in repo.KIND_GROUPS:

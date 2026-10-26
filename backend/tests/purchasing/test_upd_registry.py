@@ -158,7 +158,7 @@ def test_list_filters_counts_and_order(env):
     assert [card["id"] for card in listing["items"]] == ["file-other-005", "file-krox-0002", "file-dart-0001", "file-new-00003"]
     assert listing["counts"] == {"waiting": 1, "parsed": 2, "needs_review": 1, "verified": 0, "duplicate": 1,
                                  "not_purchase": 0}
-    assert listing["origins"] == {"edo": 0, "google": 4}
+    assert listing["origins"] == {"edo": 0, "google": 4, "scan": 0}
     assert listing["buyers"] == [{"key": "ours", "count": 3}, {"key": "7726465440", "count": 1}]
     assert listing["sum_gross"] == 50_000 + 1_473_000 * 3
     dart = by_id(listing)["file-dart-0001"]

@@ -304,7 +304,7 @@ def list_documents(session: Session, wanted: ListFilter) -> dict[str, Any]:
     registry = load_registry(session)
     cards = [registry.card(row) for row in registry.docs]
     in_force = [card for card in cards if card["status"] != "duplicate"]
-    origins = {origin: sum(1 for card in in_force if card["origin"] == origin) for origin in ("edo", "google")}
+    origins = {origin: sum(1 for card in in_force if card["origin"] == origin) for origin in ("edo", "google", "scan")}
     buyers: dict[str, int] = {}
     for card in in_force:
         if not wanted.origin or card["origin"] == wanted.origin:
