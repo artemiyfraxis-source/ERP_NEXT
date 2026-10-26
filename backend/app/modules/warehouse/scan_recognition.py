@@ -21,6 +21,7 @@ from uuid import UUID
 from fastapi import Request
 
 from app.shared.file_types import sniffed_type
+from app.workflows.edo_receipt import EdoDelivery
 from app.workflows.stock_receipt import known_articles, upd_document
 
 from . import receipt_llm
@@ -35,7 +36,7 @@ from .receipts_application import (
 )
 from .scan_jobs import DONE, ScanJob, recognition_try_lock, save_result, stored_result
 from .scan_reading import ScanReading, merge_readings, read_scan, reading_from_json, reading_json
-from .upd_lines import line_answer, snap_articles
+from .upd_lines import line_answer, line_from_item, snap_articles
 
 OCR_LINES = "Строки прочитаны со скана ({count}) — сверьте артикулы и количество"
 FAILED = "УПД не удалось распознать — заполните вручную"
@@ -101,6 +102,20 @@ def scan_answer(sources: ScanSources, link: str, reading: ScanReading) -> dict:
     if document is None and reading.warning:
         note = f"{note}. {reading.warning}" if note else reading.warning
     return {"scan_file": link, "recognised": recognised_dict(found), "lines": lines, "note": note}
+
+
+def edo_answer(sources: ScanSources, link: str, delivery: EdoDelivery) -> dict:
+    """The same answer for an ЭДО УПД: the header and the rows are in the file — no model, no OCR. Only an invoice
+    «Счёт …» of the basis is the delivery's invoice, as for a scan."""
+    basis = parse_upd_text(delivery.basis)
+    found = RecognisedUpd(
+        supplier=delivery.supplier[:255], inn=delivery.inn, upd_number=delivery.number[:64], upd_date=delivery.day,
+        invoice_number=basis.invoice_number, invoice_date=basis.invoice_date,
+    )
+    rows = [line_from_item(item.name, item.code, item.unit, item.okei, item.quantity) for item in delivery.items]
+    rows = snap_articles(rows, known_articles(sources.warehouse, sources.purchasing, sources.references))
+    return {"scan_file": link, "recognised": recognised_dict(found), "lines": [line_answer(row) for row in rows],
+            "note": delivery.note}
 
 
 def llm_config(uow_factory: Callable[[], UnitOfWork]) -> receipt_llm.LlmConfig:

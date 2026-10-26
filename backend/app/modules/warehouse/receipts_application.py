@@ -220,6 +220,22 @@ def store_scan(uow: UnitOfWork, file_name: str, content: bytes, actor: Actor, no
     return job
 
 
+def store_edo_file(uow: UnitOfWork, file_name: str, kind: str, content: bytes, actor: Actor,
+                   now: datetime) -> scan_jobs.ScanJob:
+    """«Файл…» with an ЭДО УПД (XML or ZIP): kept as it came — the delivery's document, never converted — with a done
+    scan job; its answer is stored at once by the caller (the file is read exactly, no model)."""
+    if len(content) > SCAN_FILE_LIMIT:
+        raise WarehouseValidationError("Файл УПД больше 20 МБ")
+    suffix = ".zip" if kind == "application/zip" else ".xml"
+    file_id = uuid4()
+    with uow:
+        uow.receipts.add_file(file_id, str(file_name or "").strip() or f"УПД{suffix}", kind, content, actor.name, now)
+        uow.session.flush()  # the file row before the job points at it
+        job = scan_jobs.add_done_job(uow.session, file_id=file_id, requested_by=actor.name, now=now)
+        uow.commit()
+    return job
+
+
 def store_job_scan(uow: UnitOfWork, job_id: UUID, file_name: str, content: bytes, now: datetime) -> str:
     """The scanner agent's file for a claimed job: kept like a hand-uploaded scan (in the name of the storekeeper who
     pressed the button) and the job done, one transaction; returns the file's link. A file ERP does not keep fails the

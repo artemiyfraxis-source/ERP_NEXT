@@ -336,6 +336,16 @@ def item_line(name: str, quantity: Decimal | None, unit: str, *, supplier_code: 
     )
 
 
+def line_from_item(name: str, code: str, unit_word: str, okei: str, quantity: Decimal) -> UpdLine:
+    """A row of an ЭДО УПД, read like a scanned one (`item_line`): the article from the name, else the seller's code
+    when it looks like a maker article («00-00042353» is only the seller's own number). `source` says it came from
+    the file."""
+    code = str(code or "").strip()
+    line = item_line(name, quantity, _unit(unit_word, okei), supplier_code=code)
+    article = line.article or (code[:64] if _is_code(code) else "")
+    return replace(line, article=article, source="файл ЭДО")
+
+
 def quantity_of(text: str | None) -> Decimal | None:
     """«3», «3.000», «1 000,000» → the number; unreadable or not above zero — None."""
     value = _number(str(text or "")) if str(text or "").strip() else None
