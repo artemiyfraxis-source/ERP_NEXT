@@ -32,7 +32,8 @@
 .tcgen .pt-splices { display: grid; gap: 4px; }
 .tcgen .pt-splices-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .tcgen .pt-none { margin: 0; color: var(--muted-foreground); font-size: 12.5px; }
-.tcgen .pt-splice { display: grid; grid-template-columns: 32px 64px minmax(0, 1fr) 28px; gap: 4px 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.tcgen .pt-splice { display: grid; grid-template-columns: 96px 64px minmax(0, 1fr) 28px; gap: 4px 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.tcgen .pt-splice-name { width: 100%; height: 26px; padding: 0 6px; font-weight: 600; }
 .tcgen .pt-splice-count { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .tcgen .pt-splice-ends { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
 .tcgen .pt-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px 0 8px; height: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); font-variant-numeric: tabular-nums; }

@@ -110,6 +110,7 @@ import { CardSelect, CheckMark, Chip, Field, Seg, ShieldSelect, Toggle, UnitInpu
 import { TER_L_MINUS_HINT, TER_L_PLUS_HINT } from "./referenceLabels";
 import { lMinusMissing, lMinusSuggestion, terChanges, terEditProblem, terLost, terNewFields, terSaved, terSavedText, withTerRecord } from "./terDbSave";
 import { MarkTable, markTotal } from "./GenMarkTable";
+import { WireMarks } from "./GenWireMarks";
 import { DrawingButton, DrawingNoteView, configDrawingProblem } from "./GenDrawing";
 import { TwistGroups } from "./GenTwistGroups";
 import { PinoutAsk, PinoutBoard, PinoutChip, PinoutEditor, usePinHousings } from "./PinoutDiagram";
@@ -123,7 +124,7 @@ import {
 import { setCustomColors } from "./wireColors";
 import { GEN_STATE_KEY, genSnapshot, restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
-import { assignPinJoined, joinSplice, leaveJoin, setTail } from "./tcGenSplices";
+import { assignPinJoined, joinSplice, leaveJoin, renameSplice, setTail } from "./tcGenSplices";
 import { PinoutTable } from "./PinoutTable";
 import { WrapTable } from "./WrapTable";
 import { applyEnd, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
@@ -1141,6 +1142,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.hsComp_(row.compId), skip: gen.hsRowSkip_(row) }));
   const hsOptions = gen.hsTubeOptions_();
   const marks = gen.markComps_();
+  const wireMarkList = gen.wireMarkList_();
   const kdMarks = S.markRows.filter((row) => row.text.trim() || row.target.trim());
   const typical = S.tab !== "coax" && !manualTab;
   const epsA = gen.endpointsOnSide_("A"), epsB = gen.endpointsOnSide_("B");
@@ -1489,6 +1491,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onLength={(idx, mm) => update((current) => updateWire(current, idx, { length: mm }))}
         onLabel={(epId, label) => update((current) => updateEndpoint(D, current, epId, { label }))}
         onSplit={(end) => update((current) => leaveJoin(D, current, end))}
+        onRenameSplice={(id, name) => update((current) => renameSplice(current, id, name))}
         onRemoveSplice={(id) => update((current) => (current.splices || []).find((sp) => sp.id === id)?.ends.reduce((acc, end) => leaveJoin(D, acc, end), current) ?? current)} />
     </section>}
     {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
@@ -1532,6 +1535,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         rows={S.markRows} onChange={(markRows) => update({ markRows })} kitMarks={marks} comps={D.components} productDesignation={card.item_index} mats={D.markMats || []}
         targets={markTargets(gen.markConnectors_(), active.map((w) => compLabel(w.compId)))}
         onByConnectors={marksByConnectors} onFromDrawing={() => void marksFromDrawing()} drawingBusy={markDrawing.busy} note={markDrawing.note} />
+      {complex && <WireMarks cfg={S.wireMarks} onChange={(wireMarks) => update({ wireMarks })} rows={wireMarkList.rows} skipped={wireMarkList.skipped}
+        note={wireMarkList.rows.length ? gen.wireMarkCrimpNote_(wireMarkList.rows) : ""} tubes={gen.wireMarkTubeOptions_()} autoTube={gen.wireMarkTube_(wireMarkList.rows)} />}
     </section>
     {complex && <section className="gsec full gen-note" aria-label="Примечание технолога">
       <label className="gfield"><span className="gfield-label">Примечание технолога<small>отступления от чертежа, чего нет в составе — остаётся в черновике и в собранной карте</small></span>

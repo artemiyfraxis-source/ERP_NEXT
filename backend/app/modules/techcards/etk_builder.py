@@ -197,10 +197,16 @@ SPLICE_DONE = {
 # Marking tubes of a complex harness (generator, owner 16.10, 713К.4 КБ1 «Маркировка "5" 4/2мм»): cut with the other
 # tubes (`tutParts` — pieces per kit article), put on before the connectors are mounted, shrunk with the other shrinks.
 MARK_TUBE_SUFFIX = "маркировка"
+WIRE_MARK_SUFFIX = "маркировка проводов"
 
 
 def _mark_tube(op: Mapping[str, Any]) -> bool:
     return bool(op.get("markTube")) and op.get("type") in {"cutTut", "insTut", "heatTut"}
+
+
+def _wire_marks(op: Mapping[str, Any]) -> bool:
+    """Маркировка проводов «откуда → куда» (generator, owner 26.10): its own cut/put-on/shrink, texts in `markTexts`."""
+    return bool(op.get("wireMarks")) and _mark_tube(op)
 
 
 def _tut_parts(op: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -265,6 +271,8 @@ def _suffix(op: Mapping[str, Any]) -> str:
         crimp = "обжим + лужение" if op.get("tin") else "обжим А и В" if _endpoint_b(op) else "обжим"
         # Партии обжима при резке (генератор, 16.10): у каждой свой терминал — иначе ключи ЭТК совпали бы.
         return f"{crimp} {_cut_terminal(op)}".strip() if op.get("crimpBatch") else crimp
+    if _wire_marks(op):
+        return WIRE_MARK_SUFFIX
     if _mark_tube(op):
         return MARK_TUBE_SUFFIX
     if _braid_cut(op):
@@ -415,7 +423,9 @@ def _harness_step(
             parts = _tut_parts(op)
             listed = "; ".join(
                 f"{part['art']} — {_format(part['count'])} шт" + (f" по {part['len']} мм" if part["len"] else "") for part in parts)
-            return (f"Маркировка нарезана: {listed}" if listed else "Маркировка нарезана"), []
+            texts = [str(text).strip() for text in _list(op.get("markTexts")) if str(text).strip()] if _wire_marks(op) else []
+            head = f"Маркировка нарезана: {listed}" if listed else "Маркировка нарезана"
+            return (f"{head}. Надписи: {'; '.join(texts)}" if texts else head), []
         return base, _with_fact(facts, "mark", "маркировка надета" if operation_type == "insTut" else "маркировка усажена")
     if _braid_cut(op):
         material = str(op.get("tutArt") or "")
@@ -723,6 +733,10 @@ def _components(
         metres = _cut_tube_metres(op, quantity)
         if metres:
             return metres
+    if operation_type == "cutTut" and _wire_marks(op) and (parts := _tut_parts(op)) and all(_decimal(part["len"]) > 0 for part in parts):
+        # Маркировка проводов: трубка в комплектации в метрах — отрезков × длина на партию.
+        return [{"art": part["art"], "name": part["name"], "norm": _format(part["count"] * _decimal(part["len"]) / 1000 * quantity),
+                 "unit": "М."} for part in parts]
     if operation_type == "cutTut" and _tut_parts(op):
         # Резка трубок нескольких позиций состава (маркировка «5», «I3»…): каждая — своей строкой, отрезков на партию.
         return [{"art": part["art"], "name": part["name"], "norm": _format(part["count"] * quantity), "unit": "Шт."} for part in _tut_parts(op)]
@@ -2683,6 +2697,11 @@ def _kit_rows(op: Mapping[str, Any], config: Mapping[str, Any], result: str) -> 
     length («ТТК 8/2мм, черная — 15 мм», 3 × batch) instead of one long sentence."""
     quantity = _part_quantity(config)
     parts = _tut_parts(op)
+    texts = [str(text).strip() for text in _list(op.get("markTexts")) if str(text).strip()] if _wire_marks(op) else []
+    if texts and parts:
+        # Маркировка проводов: каждая напечатанная метка — своя строка комплекта («XS1.1 to X2.2 — 15 мм»): оператор печатает по списку.
+        length = f" — {parts[0]['len']} мм" if parts[0]["len"] else ""
+        return [_row(f"{text}{length}", _format(quantity)) for text in texts]
     if parts:
         return [_row(f"{part['art']} — {part['len']} мм" if part["len"] else part["art"], _format(part["count"] * quantity))
                 for part in parts]
