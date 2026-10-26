@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, expect, it, vi } from "vitest";
 import type { Principal } from "./api";
 import { EquipmentPage } from "./EquipmentPage";
-import { FALLBACK_SCALE, LabelDesigner, PREVIEW_DELAY_MS, newElement, snap, textShown, textStored, type TemplateElement } from "./LabelDesigner";
+import { FALLBACK_SCALE, LabelDesigner, PREVIEW_DELAY_MS, newElement, snap, textShown, textStored, type TemplateElement, textBoxHeight } from "./LabelDesigner";
 import { ProductionIntakePage } from "./ProductionIntakePage";
 import { WarehousePage } from "./WarehousePage";
 
@@ -126,7 +126,7 @@ it("edits properties and «Сохранить» sends the template with its vers
   expect(await screen.findByText("Шаблон сохранён")).toBeInTheDocument();
   const put = calls.find((call) => call.method === "PUT")!;
   expect(put.path).toBe("/api/stock/labels/templates/lot/58x40");
-  expect(put.body).toEqual({ template: { elements: [{ ...GRN, font_mm: 6.5, align: "center", bold: false, fit: "ellipsis", max_lines: 4 }] }, version: 3 });
+  expect(put.body).toEqual({ template: { elements: [{ ...GRN, font_mm: 6.5, h_mm: 38, align: "center", bold: false, fit: "ellipsis", max_lines: 4 }] }, version: 3 });
   expect(screen.getByRole("button", { name: "Сохранить" })).toBeDisabled();
 
   // The next save carries the version the server returned.
@@ -277,4 +277,19 @@ it("«Оборудование» keeps the ТСД card; the label printer is gon
   expect(await screen.findByRole("region", { name: "ТСД" })).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Печать этикеток ГРН" })).not.toBeInTheDocument();
   expect(calls.some((call) => call.path.startsWith("/api/stock/labels"))).toBe(false);
+});
+
+it("grows a text box to hold its «Строк», and says when a box is too low for them", async () => {
+  expect(textBoxHeight(2, 2)).toBe(7.3);
+  await designer();
+  fireEvent.click(screen.getByRole("button", { name: "Поле: ГРН" }));
+  // ГРН: 5 мм high at 4 мм capitals — one line; two lines need 14,0 мм and the box grows to them.
+  fireEvent.change(props().getByLabelText("Строк"), { target: { value: "2" } });
+  expect(props().getByLabelText("Высота, мм")).toHaveValue("14");
+  expect(props().queryByRole("status")).not.toBeInTheDocument();
+  // A box made lower by hand says how many lines it holds and grows back on «Подогнать высоту».
+  fireEvent.change(props().getByLabelText("Высота, мм"), { target: { value: "8" } });
+  expect(props().getByRole("status")).toHaveTextContent("В высоту 8 мм помещается строк: 1 из 2");
+  fireEvent.click(props().getByRole("button", { name: "Подогнать высоту" }));
+  expect(props().getByLabelText("Высота, мм")).toHaveValue("14");
 });
