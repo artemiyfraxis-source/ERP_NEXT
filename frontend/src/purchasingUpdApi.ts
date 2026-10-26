@@ -26,7 +26,7 @@ export type UpdOrigin = "google" | "edo" | "scan";
 export const UPD_ORIGIN_LABELS: Record<UpdOrigin, string> = { edo: "ЭДО", google: "Бумажный", scan: "Скан склада" };
 export const UPD_ORIGIN_HINTS: Record<UpdOrigin, string> = {
   edo: "электронный документ из Диадока (XML), подписан в ЭДО",
-  google: "скан или PDF, распознан разборщиком Google — оригинал на бумаге",
+  google: "скан или PDF, прочитан разборщиком (Google в Roller_Buyer или модель ERP) — оригинал на бумаге",
   scan: "скан УПД, принятого на складе: шапка — как её сохранил кладовщик, строки — распознавание модели",
 };
 /** «Источник» filter of the registry: the buttons in this order, plural words. */
@@ -100,6 +100,10 @@ export const EDO_STATUS_LABELS: Record<EdoStatus, string> = {
 };
 export interface EdoFileResult { name: string; status: EdoStatus; document_id?: string; number?: string; seller_name?: string; message?: string }
 export interface EdoImportResult { files: EdoFileResult[]; dry_run: boolean }
+export type PdfStatus = "created" | "unchanged" | "error";
+export const PDF_STATUS_LABELS: Record<PdfStatus, string> = { created: "в очереди на разбор", unchanged: "уже был", error: "не принят" };
+export interface PdfFileResult { name: string; status: PdfStatus; document_id?: string; message?: string }
+export interface PdfImportResult { files: PdfFileResult[]; queued: string[]; model_ready: boolean }
 
 export interface UpdSeller {
   inn: string; name: string; documents: number; total_gross: number; last_date: string | null; needs_review: number;
@@ -153,6 +157,10 @@ export const purchasingUpdApi = {
    *  is not a hung request. */
   importEdo: (file: { file_name: string; content_base64: string }, dryRun: boolean) =>
     api<EdoImportResult>(`${BASE}/import-edo`, { ...json("POST", { files: [file], dry_run: dryRun }), timeoutMs: null }),
+  /** PDFs into the registry «В очереди»: the server's model reads them in the background. */
+  importPdf: (file: { file_name: string; content_base64: string }) =>
+    api<PdfImportResult>(`${BASE}/import-pdf`, { ...json("POST", { files: [file] }), timeoutMs: null }),
+  reparse: (id: string) => api<UpdDetail>(`${doc(id)}/reparse`, json("POST", {})),
   sellers: () => api<UpdSellers>(`${BASE}/sellers`),
   importSellers: (dryRun: boolean, inns?: string[]) =>
     api<SellersImportResult>(`${BASE}/sellers/import`, { ...json("POST", { dry_run: dryRun, inns: inns ?? null }), safe: dryRun }),

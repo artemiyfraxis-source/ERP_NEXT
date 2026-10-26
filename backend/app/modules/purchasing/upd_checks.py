@@ -32,7 +32,7 @@ def registry_status(parser_status: str, verified_at: Any, twin_of: str | None) -
         return "not_purchase"
     if verified_at:
         return "verified"
-    if parser_status == "В очереди":
+    if parser_status in ("В очереди", "Разбирается"):  # the registry's PDF parser (upd_pdf) has not answered yet
         return "waiting"
     if parser_status == "Разобран":
         return "parsed"
