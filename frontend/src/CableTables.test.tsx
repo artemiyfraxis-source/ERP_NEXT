@@ -205,7 +205,7 @@ describe("coax column order (owner 23.10: «сделай сортировку н
   // the coax list's columns (owner 23.10 «Только нужные» + 25.10 per column), in the group order: each diameter next to its
   // layer, one frequency «Частота до», the card's parameters a column even before the БД.ПРОВ has one
   const VISIBLE = [
-    "Марка кабеля", "Тип провода", "Стандарт", "Производители", "D1 жила, мм", "Материал жилы", "Материал диэлектрика", "D2 диэлектрик, мм",
+    "Марка кабеля", "Стандарт", "Производители", "D1 жила, мм", "Материал жилы", "Материал диэлектрика", "D2 диэлектрик, мм",
     "Материал экрана", "D3 оплётка, мм", "Материал оболочки", "Наружный диаметр, мм", "Волновое сопротивление, Ом", "Погонная ёмкость, пФ/м",
     "Частота до, ГГц", "Радиус изгиба неподвижно, мм", "Радиус изгиба многократно, мм", "Масса, г/м",
     "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м",
@@ -691,7 +691,7 @@ describe("coax cells edited right in the table (owner 14.10: «ещё бы ка�
     expect(cellOf("RG316", "Марка кабеля")).not.toHaveClass("dt-editable");
     expect(cellOf("RG316", "Масса, г/м")).not.toHaveClass("dt-editable"); // the БД.ПРОВ row has no such cell: its window adds it
     expect(cellOf("RG316", "Поставщик")).not.toHaveClass("dt-editable");
-    expect(cellOf("RG58", "Тип провода")).not.toHaveClass("dt-editable"); // a D-table-only cable has no БД.ПРОВ row
+    expect(cellOf("RG58", "Волновое сопротивление, Ом")).not.toHaveClass("dt-editable"); // a D-table-only cable has no БД.ПРОВ row
     expect(cellOf("RG58", "Частота до, ГГц")).not.toHaveClass("dt-editable");
     expect(cellOf("RG58", "D1 жила, мм")).toHaveClass("dt-editable");
     unmount();

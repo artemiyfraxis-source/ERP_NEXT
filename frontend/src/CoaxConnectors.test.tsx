@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { CoaxConnectors, coaxAngle, hasHex, coaxGender, coaxSeries, seriesRank, coaxSupplier, coaxTypeGroup } from "./CoaxConnectors";
 import type { TechOperationRecord } from "./api";
@@ -21,6 +22,25 @@ const RECORDS = [
 ];
 
 afterEach(() => { window.localStorage.clear(); });
+
+/** The series open folded (owner 26.10.2026); the tests below look inside them. */
+function unfolded(ui: ReactElement) {
+  const view = render(ui);
+  const all = screen.queryByRole("button", { name: "Развернуть все" });
+  if (all) fireEvent.click(all);
+  else document.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach((heading) => fireEvent.click(heading));
+  return view;
+}
+
+it("opens with every series folded, like the cables; a heading opens its series (владелец 26.10)", () => {
+  render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} />);
+  const n = screen.getByRole("button", { name: /^N-male 2$/ });
+  expect(n).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("RG-316")).toBeNull();
+  fireEvent.click(n);
+  expect(n).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getAllByText("RG-316").length).toBeGreaterThan(0);
+});
 
 it("reads the series, gender and angle from the card columns or from the type", () => {
   expect(coaxSeries({ "Тип/Серия": "RP-SMA-male R/A" })).toBe("SMA");
@@ -47,7 +67,7 @@ it("reads the series, gender and angle from the card columns or from the type", 
 });
 
 it("groups the connectors by type in the shop's series order with the stripping lengths, HEX right after L3 and no D1–D3", () => {
-  render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} />);
+  unfolded(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} />);
   const groups = blockLines();
   expect(groups).toEqual(["RP-SMA-male R/A · 1", "N-male · 2", "Без серии · 1"]);
   const n316 = screen.getAllByRole("row").find((row) => row.textContent?.includes("RG-316"))!;
@@ -68,7 +88,7 @@ it("groups the connectors by type in the shop's series order with the stripping 
 });
 
 it("shows every column of the table by group — nothing hidden, the owner's own before the supply (владелец 25.10)", () => {
-  render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} ownColumns={["Своё поле"]} />);
+  unfolded(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} ownColumns={["Своё поле"]} />);
   const heads = listHeads().map((head) => head.textContent);
   expect(heads).toEqual([
     "Артикул", "Тип", "Кабель",
@@ -88,7 +108,7 @@ it("shows every column of the table by group — nothing hidden, the owner's own
 });
 
 it("has no unchecked column the owner removed 25.10 (пол, исполнение, полярность, монтаж, дата цены, примечание, источник) nor L+ / L−, program, size, body material", () => {
-  render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} ownColumns={["Дата цены", "Примечание"]} />);
+  unfolded(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} ownColumns={["Дата цены", "Примечание"]} />);
   fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
   const offered = within(screen.getByRole("group", { name: "Показывать колонки" })).getAllByRole("checkbox").map((box) => box.parentElement?.textContent ?? "");
   for (const gone of ["Пол", "Исполнение", "Полярность", "Монтаж", "Дата цены", "Примечание", "Источник данных",
@@ -103,7 +123,7 @@ it("keeps the quick filters on the fields: «Штекеры» / «Гнёзда»
     record("f", { Артикул: "N-F", "Тип/Серия": "N", Провод: "RG-58", Пол: "гнездо" }),
     record("ra", { Артикул: "SMA-RA", "Тип/Серия": "SMA-male", Провод: "RG-174", Исполнение: "угловой" }),
   ];
-  render(<CoaxConnectors records={rows} canEdit onEdit={() => undefined} />);
+  unfolded(<CoaxConnectors records={rows} canEdit onEdit={() => undefined} />);
   const shown = () => blockRows().map((row) => row.querySelector("strong")?.textContent);
   fireEvent.click(screen.getByRole("button", { name: /^Гнёзда/ }));
   expect(shown()).toEqual(["N-F"]);
@@ -119,7 +139,7 @@ it("shows the contact depth as a short number with its source as a hint; the lon
   const source = "radiolab.ru, SMA series connectors, габаритно-присоединительные размеры, розетка (мама): H + I + J";
   const rows = [record("f1", { Артикул: "S-211/5D", "Тип/Серия": "SMA-female", Провод: "5D-FB",
     "Заглубление контакта, мм": "1,88…2,41", "Заглубление контакта, источник": source })];
-  render(<CoaxConnectors records={rows} canEdit onEdit={() => undefined}
+  unfolded(<CoaxConnectors records={rows} canEdit onEdit={() => undefined}
     ownColumns={["Заглубление контакта, мм", "Заглубление контакта, источник"]} />);
   const heads = listHeads().map((head) => head.textContent);
   expect(heads.filter((head) => head?.startsWith("Заглубление"))).toEqual(["Заглубление, мм"]);
@@ -129,7 +149,7 @@ it("shows the contact depth as a short number with its source as a hint; the lon
 
 it("opens the connector's card on a row click: what the technologist still has to fill, the link, the other cables", () => {
   const onEdit = vi.fn();
-  render(<CoaxConnectors records={RECORDS} canEdit onEdit={onEdit} />);
+  unfolded(<CoaxConnectors records={RECORDS} canEdit onEdit={onEdit} />);
   expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(screen.getAllByRole("row").find((row) => row.textContent?.includes("RG-174") && row.textContent.includes("N-111L"))!);
   let card = screen.getByRole("dialog", { name: "Карточка разъёма N-111L" });
@@ -152,7 +172,7 @@ it("opens the connector's card on a row click: what the technologist still has t
 });
 
 it("closes the card with the close button and with Esc", () => {
-  render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} />);
+  unfolded(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} />);
   fireEvent.click(screen.getByText("SMA-C174P"));
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Закрыть карточку" }));
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -167,7 +187,7 @@ it("shows the manufacturer and the supplier columns; the supplier is a field or 
   expect(coaxSupplier({ "Источник данных": "gsm-repiteri.ru, 12.10.2026" })).toBe("gsm-repiteri.ru");
   expect(coaxSupplier({ "Источник данных": "зеркало БД.КОАКС" })).toBe("");
   const records = [...RECORDS, record("m1", { Артикул: "MCX-1", Провод: "RG-316", Производитель: "Amphenol" })];
-  render(<CoaxConnectors records={records} canEdit onEdit={() => undefined} />);
+  unfolded(<CoaxConnectors records={records} canEdit onEdit={() => undefined} />);
   expect(listHead().getByRole("columnheader", { name: "Производитель" })).toBeInTheDocument();
   expect(listHead().getByRole("columnheader", { name: "Поставщик" })).toBeInTheDocument();
   const mcx = screen.getAllByRole("row").find((row) => row.textContent?.includes("MCX-1"))!;
@@ -177,7 +197,7 @@ it("shows the manufacturer and the supplier columns; the supplier is a field or 
 });
 
 it("shows the card without the edit button to a viewer", () => {
-  render(<CoaxConnectors records={RECORDS} canEdit={false} onEdit={() => undefined} />);
+  unfolded(<CoaxConnectors records={RECORDS} canEdit={false} onEdit={() => undefined} />);
   fireEvent.click(screen.getByText("SMA-C174P"));
   const card = screen.getByRole("dialog", { name: "Карточка разъёма SMA-C174P" });
   expect(within(card).getByText("угловой")).toBeInTheDocument();
@@ -187,7 +207,7 @@ it("shows the card without the edit button to a viewer", () => {
 it("shows the owner's own columns at once and edits their cells with the old value", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(RECORDS[0]), { status: 200, headers: { "Content-Type": "application/json" } }));
   const edited = vi.fn();
-  render(<CoaxConnectors records={RECORDS.map((item) => ({ ...item, fields: { ...item.fields, Полка: item.id === "n1" ? "А-1" : "" } }))} canEdit onEdit={() => undefined} ownColumns={["Полка"]} onEdited={edited} />);
+  unfolded(<CoaxConnectors records={RECORDS.map((item) => ({ ...item, fields: { ...item.fields, Полка: item.id === "n1" ? "А-1" : "" } }))} canEdit onEdit={() => undefined} ownColumns={["Полка"]} onEdited={edited} />);
   expect(listHead().getByRole("columnheader", { name: "Полка" })).toBeInTheDocument();
   const cell = screen.getByText("А-1").closest("td") as HTMLElement;
   fireEvent.click(cell);
@@ -205,7 +225,7 @@ it("shows the owner's own columns at once and edits their cells with the old val
 it("edits the plain cells right in the table with the sheet column's old value; the article, cable and supplier stay in the window", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(RECORDS[0]), { status: 200, headers: { "Content-Type": "application/json" } }));
   const edited = vi.fn();
-  render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} onEdited={edited} />);
+  unfolded(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} onEdited={edited} />);
   const heads = listHeads().map((head) => head.textContent);
   const n316 = screen.getAllByRole("row").find((row) => row.textContent?.includes("N-111L") && row.textContent.includes("RG-316"))!;
   const cellOf = (name: string) => within(n316).getAllByRole("cell")[heads.indexOf(name)] as HTMLElement;
@@ -227,7 +247,7 @@ it("edits the plain cells right in the table with the sheet column's old value; 
 });
 
 it("has no editable cells for a viewer and a «Без L1–L3» chip like «Без D1–D3» of the cables", () => {
-  render(<CoaxConnectors records={RECORDS} canEdit={false} onEdit={() => undefined} />);
+  unfolded(<CoaxConnectors records={RECORDS} canEdit={false} onEdit={() => undefined} />);
   expect(document.querySelector("td.dt-editable")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /^Без L1–L3/ }));
   expect(screen.queryByText("RG-316")).toBeNull();
@@ -236,7 +256,7 @@ it("has no editable cells for a viewer and a «Без L1–L3» chip like «Бе
 
 it("offers «Удалить» for an own column in «Колонки»", () => {
   const remove = vi.fn();
-  render(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} ownColumns={["Полка"]} removeColumn={() => remove} />);
+  unfolded(<CoaxConnectors records={RECORDS} canEdit onEdit={() => undefined} ownColumns={["Полка"]} removeColumn={() => remove} />);
   fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
   expect(screen.getAllByRole("button", { name: /^Удалить столбец/ })).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
@@ -254,7 +274,7 @@ it("orders the type groups as the owner asked (19.10): series, then the plain po
   expect(coaxTypeGroup({})).toBe("Без серии");
   const rows = ["N-female", "RP-SMA-female", "SMA-male R/A", "SMA-male", "SMA-female R/A", "RP-SMA-male", "SMA-female flange", "SMA-female", "SMA-female bulkhead"]
     .map((type, index) => record(`r${index}`, { Артикул: `A${index}`, "Тип/Серия": type, Провод: "RG-58" }));
-  render(<CoaxConnectors records={rows} canEdit={false} onEdit={() => undefined} />);
+  unfolded(<CoaxConnectors records={rows} canEdit={false} onEdit={() => undefined} />);
   const groups = blockLines();
   expect(groups).toEqual(["SMA-female · 1", "SMA-female bulkhead · 1", "SMA-female flange · 1", "SMA-female R/A · 1", "SMA-male · 1", "SMA-male R/A · 1", "RP-SMA-female · 1", "RP-SMA-male · 1", "N-female · 1"]);
   const types = blockRows().map((row) => within(row).getAllByRole("cell")[1].textContent);
@@ -264,7 +284,7 @@ it("orders the type groups as the owner asked (19.10): series, then the plain po
 it("a header click sorts inside every type group; the order of the groups stays (owner 19.10)", () => {
   const rows = [["SMA-female", "B1", "RG-58"], ["SMA-female", "A1", "RG-316"], ["F-male", "F1", "RG-6"], ["F-male", "F2", "RG-11"]]
     .map(([type, art, wire], index) => record(`g${index}`, { Артикул: art, "Тип/Серия": type, Провод: wire }));
-  render(<CoaxConnectors records={rows} canEdit={false} onEdit={() => undefined} />);
+  unfolded(<CoaxConnectors records={rows} canEdit={false} onEdit={() => undefined} />);
   // a block per type group (25.10): «[name]», then the cable of each row of its table
   const order = () => blockTables().flatMap((table, index) => [`[${blockLines()[index].split(" · ")[0]}]`,
     ...[...table.querySelectorAll("tbody tr")].map((row) => within(row as HTMLElement).getAllByRole("cell")[2].textContent ?? "")]);
