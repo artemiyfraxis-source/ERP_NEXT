@@ -6,6 +6,7 @@
  * POST /api/techcards/projects/{id}/build. Отдельной логики здесь нет: правила живут в tcGenLogic.ts.
  */
 import {
+  cableRecFromFields,
   coaxDiaFromRecords,
   coaxFromFields,
   initState,
@@ -13,6 +14,7 @@ import {
   opFromFields,
   terFromFields,
   wireDiaFromRecords,
+  type CableRec,
   type CalcOp,
   type Comp,
   type GenData,
@@ -30,6 +32,8 @@ export type BatchRefs = {
   coax: Fields[];
   wire_dia: Fields[];
   kab_coax: Fields[];
+  /** БД.ПРОВ как её читает форма: список кабелей записи (`cable_kind`) и поля — монтажный/многожильный/LAN/коаксиал. */
+  prov?: Array<{ cable_kind?: string; fields: Fields }>;
 };
 
 /** Состав сборки — ответ GET /api/techcards/kitsets/{project}/bom/{index}. */
@@ -45,7 +49,7 @@ export type BatchBom = {
 export type BatchInput = { refs: BatchRefs; items: Array<{ key: string; bom: BatchBom }> };
 export type BatchResult = { key: string; config: Record<string, unknown> | null; error: string; warnings: string[] };
 
-type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia">;
+type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "cableRecords">;
 
 /** loadRefs (TcGenerator.tsx) над уже прочитанными записями. */
 export function refsFromRecords(refs: BatchRefs): Refs {
@@ -56,6 +60,7 @@ export function refsFromRecords(refs: BatchRefs): Refs {
     coaxRecords: refs.coax.map(coaxFromFields),
     wireDia: wireDiaFromRecords(refs.wire_dia),
     coaxCableDia: coaxDiaFromRecords(refs.kab_coax),
+    cableRecords: (refs.prov || []).map((record) => cableRecFromFields(record.fields || {}, record.cable_kind)).filter((record): record is CableRec => !!record),
   };
 }
 

@@ -282,3 +282,74 @@ describe("USB 2.0 — одна операция пайки, распиновка
     expect(S.endpoints.map((e) => e.sdrTmpl)).toEqual(["SDR_USB_A_2.0", "SDR_USB_A_2.0"]);
   });
 });
+
+describe("кабель или провод — по списку БД.ПРОВ, разделка USB по концам (владелец 26.10)", () => {
+  const CCCU = { cable_kind: "multi", fields: { "Марка": "CCCU-4G", "Число жил": "4", "Цвета": "", "Экран": "нет" } };
+  const withProv = (...prov: NonNullable<BatchRefs["prov"]>): BatchRefs => ({ ...REFS, prov });
+  const A_PLUG = comp("k0", "Соед", "DS1107-W", 1, "USB-A вилка под пайку");
+  const kb2 = () => bom("Кабельная сборка USB-AM to MicroUSB-m 100mm", [A_PLUG,
+    comp("k1", "Соед", "microUSB 5BM", 1, "Корпус micro-USB B 5 конт."), comp("k2", "Провод", "CCCU-4G", "0.11"), comp("k3", "ТТК", "ТТК 12/4мм, черная", "0.06")]);
+  const kb3 = () => bom("Кабельная сборка USB-AM to USB-C 180mm", [A_PLUG,
+    comp("k1", "Соед", "USB3.1 TYPE-C 24PM-035", 1, "Корпус USB Type-C 24 конт., двухрядный"), comp("k2", "Провод", "CCCU-4G", "0.19"), comp("k3", "ТТК", "ТТК 12/4мм, черная", "0.06")]);
+  const kb4 = () => bom("Кабельная сборка USB-AM to USB-AF 180mm", [A_PLUG,
+    comp("k1", "Соед", "USB-FA", 1, "Корпус USB-A 2.0 4 конт."), comp("k2", "Провод", "CCCU-4G", "0.19"), comp("k3", "ТТК", "ТТК 12/4мм, черная", "0.06")]);
+  const opsOf = (b: BatchBom, refs: BatchRefs) => { const { D, S } = run(b, refs); return { S, ops: makeGen(D, S).getActiveOps() }; };
+
+  it("без БД.ПРОВ CCCU-4G — одиночный провод (как в выпущенных ЭТК): резка с зачисткой 5/5", () => {
+    const { ops } = opsOf(kb2(), REFS);
+    expect(ops[0]).toMatchObject({ type: "cutWireStrip", tmplHint: "CUT_WIRE+2strip", strip: { lenA: "5", lenB: "5" } });
+  });
+
+  it("776К. КБ2: CCCU-4G — многожильный из БД.ПРОВ: оболочка А 15 / В (micro) 10 мм, жилы 3–4 мм, карта USB 2.0", () => {
+    const { S, ops } = opsOf(kb2(), withProv(CCCU));
+    expect(S.endpoints.map((e) => [e.jacket, e.solderStrip])).toEqual([["15", "3–4"], ["10", "3–4"]]);
+    expect(ops[0]).toMatchObject({ type: "cutWireStrip", tmplHint: "CUT_COAX+2strip", strip: { a: true, lenA: "15", b: true, lenB: "10" } });
+    expect(ops[0].label).toContain("оболочка А 15 мм, В 10 мм");
+    const cores = ops.filter((o) => o.opKey.startsWith("stripCores"));
+    expect(cores.map((o) => [o.side, o.tmplHint, o.strip])).toEqual([
+      ["A", "STRIP_CABLE_usb_2.0", { a: true, lenA: "3–4", b: false, lenB: "" }],
+      ["B", "STRIP_CABLE_usb_2.0", { a: false, lenA: "", b: true, lenB: "3–4" }],
+    ]);
+  });
+
+  it("776К. КБ4: USB-A розетка (USB-FA) — оболочка 10 мм; А-вилка 15 мм", () => {
+    const { S, ops } = opsOf(kb4(), withProv(CCCU));
+    expect(S.endpoints.map((e) => e.jacket)).toEqual(["15", "10"]);
+    expect(ops[0]).toMatchObject({ strip: { lenA: "15", lenB: "10" } });
+  });
+
+  it("776К. КБ3: USB-C — прежний умолчательный размер (20 мм) и 5 мм под пайку, вилка А — 15 мм", () => {
+    const { S, ops } = opsOf(kb3(), withProv(CCCU));
+    expect(S.endpoints.map((e) => [e.jacket, e.solderStrip])).toEqual([["15", "3–4"], [undefined, ""]]);
+    expect(ops[0]).toMatchObject({ strip: { lenA: "15", lenB: "20" } });
+    expect(ops.find((o) => o.opKey === "stripCoresB1")!.strip).toMatchObject({ lenB: "5" });
+  });
+
+  it("свой размер у конца технолога не затирается засевом", () => {
+    const { D, S } = run(kb2(), withProv(CCCU));
+    const hand = updateEndpoint(D, S, S.endpoints[0].id, { jacket: "12" });
+    expect(makeGen(D, hand).getActiveOps()[0].strip).toMatchObject({ lenA: "12", lenB: "10" });
+  });
+
+  it("список БД.ПРОВ «монтажный» важнее названия: «4x0,5» при cable_kind=wire — одна жила", () => {
+    const b = bom("X", [comp("k0", "Соед", "XHP-2", 2), comp("k1", "Терминал", "SXH-001T-P0.6", 4), comp("k2", "Провод", "ПВАМ 4x0,5", "0.3")]);
+    const wire = { cable_kind: "wire", fields: { "Марка": "ПВАМ 4x0,5", "Число жил": "1" } };
+    const cores = (refs: BatchRefs) => { const { D, S } = run(b, refs); return makeGen(D, S).wireCores_(S.wires[0]); };
+    expect(cores(REFS)).toBe(4);
+    expect(cores(withProv(wire))).toBe(1);
+  });
+
+  it("«×» и «x» в марке — одно: ПВВС 4×0,35 из БД найден по ПВВС 4x0,35", () => {
+    const b = bom("X", [comp("k0", "Соед", "XHP-4", 2), comp("k1", "Терминал", "SXH-001T-P0.6", 8), comp("k2", "Провод", "ПВВС 4x0,35", "0.45")]);
+    const { D, S } = run(b, withProv({ cable_kind: "multi", fields: { "Марка": "ПВВС 4×0,35", "Число жил": "4", "Цвета": "" } }));
+    const g = makeGen(D, S);
+    expect(g.cableRecOf_(g.getCompById("k2"))?.kind).toBe("multi");
+  });
+
+  it("USB-кабель 3.x берёт карту STRIP_CABLE_usb_3.2", () => {
+    const b = bom("Кабельная сборка USB 3.0", [A_PLUG, comp("k1", "Соед", "USB-FA", 1, "Корпус USB-A 3.0"),
+      comp("k2", "Провод", "USB 3.0 кабель 4C", "0.2")]);
+    const { ops } = opsOf(b, withProv({ cable_kind: "multi", fields: { "Марка": "USB 3.0 кабель 4C", "Число жил": "4" } }));
+    expect(ops.find((o) => o.opKey === "stripCoresA1")!.tmplHint).toBe("STRIP_CABLE_usb_3.2");
+  });
+});

@@ -285,6 +285,14 @@ def test_the_batch_generator_gets_the_view_instead_of_the_old_table(real_base):
     assert generator_refs(_Techcards, None)["wire_dia"] == []
 
 
+def test_the_batch_generator_gets_prov_with_the_cable_list_of_each_row(real_base):
+    # Owner 26.10: wire / multicore is decided by the БД.ПРОВ list (`cable_kind`), so the batch reads it like the form.
+    refs = generator_refs(_Techcards, real_base.factory)
+    assert refs["prov"], "the real base holds БД.ПРОВ rows"
+    assert all(set(row) == {"cable_kind", "fields"} and row["cable_kind"] in {"wire", "multi", "lan", "coax"} for row in refs["prov"])
+    assert generator_refs(_Techcards, None)["prov"] == []
+
+
 def test_the_etk_build_takes_gost_awg_from_the_sizes_table_else_the_stored_map(real_base, monkeypatch):
     seen = []
     monkeypatch.setattr(techcard_build, "enrich_terminal_norms",
