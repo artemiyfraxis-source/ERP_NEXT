@@ -529,35 +529,49 @@ def accept_delivery_endpoint(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
 ) -> dict:
     """«Провести поставку»: one УПД, its positions inspected, placed and handed to the warehouse at once."""
-    result = _run(
-        lambda: accept_delivery(
-            AcceptDeliveryCommand(
-                lines=tuple(
-                    DeliveryLineInput(
-                        line_id=item.id,
-                        expected_version=item.version,
-                        document_quantity=item.document_quantity,
-                        fact_quantity=item.fact_quantity,
-                        storage_location=(item.storage_location or "").strip() or None,
-                        deviation=item.deviation,
-                        deviation_quantity=item.deviation_quantity,
-                        expiry_date=item.expiry_date,
-                        series=item.series.strip(),
-                        manual_grn_prefix=item.manual_grn_prefix,
-                    )
-                    for item in payload.lines
-                ),
-                document_number=payload.document_number,
-                document_date=payload.document_date,
-                shipping_document_url=payload.shipping_document_url,
-                warehouse=payload.warehouse,
-                actor=principal.actor,
-                now=now,
-            ),
-            uow_factory(),
-        )
+    result = run_receiving(lambda: accept_delivery(delivery_command(payload, principal, now), uow_factory()))
+    return delivery_view(result)
+
+
+def delivery_command(payload: DeliveryPayload, principal: Principal, now: datetime, **extra) -> AcceptDeliveryCommand:
+    """The command of «Провести поставку» from its payload; `extra` — what the caller sets besides (the УПД file,
+    the verified supplier aliases of «Принять по УПД»)."""
+    fields = {
+        "document_number": payload.document_number,
+        "document_date": payload.document_date,
+        "shipping_document_url": payload.shipping_document_url,
+        "warehouse": payload.warehouse,
+        **extra,
+    }
+    return AcceptDeliveryCommand(
+        lines=tuple(
+            DeliveryLineInput(
+                line_id=item.id,
+                expected_version=item.version,
+                document_quantity=item.document_quantity,
+                fact_quantity=item.fact_quantity,
+                storage_location=(item.storage_location or "").strip() or None,
+                deviation=item.deviation,
+                deviation_quantity=item.deviation_quantity,
+                expiry_date=item.expiry_date,
+                series=item.series.strip(),
+                manual_grn_prefix=item.manual_grn_prefix,
+            )
+            for item in payload.lines
+        ),
+        actor=principal.actor,
+        now=now,
+        **fields,
     )
+
+
+def delivery_view(result) -> dict:
     return {"delivery_id": str(result.delivery_id), "lines": [_result(line) for line in result.lines]}
+
+
+# The receiving answers and error mapping for the workflows that call receiving on its own routes («Принять по УПД»).
+line_view = _result
+run_receiving = _run
 
 
 @router.post("/{line_id}/unpack")

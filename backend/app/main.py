@@ -69,6 +69,7 @@ from .modules.purchasing import api_suppliers as purchasing_suppliers_api
 from .workflows import finished_goods_api
 from .workflows import production_intake_api
 from .workflows import coax_vswr_api
+from .workflows import receiving_by_upd_api
 from .modules.purchasing import api_upd as purchasing_upd_api
 
 app = FastAPI(
@@ -121,6 +122,7 @@ app.include_router(identity_api.router)
 app.include_router(requests_api.router)
 app.include_router(procurement_api.router)
 app.include_router(procurement_requests_api.router)
+app.include_router(receiving_by_upd_api.router)  # before receiving's /{line_id}/… routes
 app.include_router(receiving_api.router)
 app.include_router(warehouse_api.router)
 app.include_router(warehouse_labels_api.router)
