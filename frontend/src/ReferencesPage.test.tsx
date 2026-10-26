@@ -262,6 +262,7 @@ it("shows no D1–D3 at the connectors (they are the cable's) and keeps them out
   });
 
   render(<ReferencesPage principal={admin} initialTab="coax" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^Без серии 2$/ })); // серии открываются свёрнутыми (26.10)
   expect(await screen.findByText("BNC-C58P")).toBeInTheDocument();
   expect(screen.queryByText(/2,95/)).toBeNull(); // D кабеля в таблице разъёмов нет (владелец 17.10)
   expect(screen.queryByRole("columnheader", { name: /D1/ })).toBeNull();

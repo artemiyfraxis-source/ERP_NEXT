@@ -43,14 +43,14 @@ def test_each_list_has_its_cleaned_set_of_columns():
     # «Коаксиальные кабели»: «Стандарт» (the passport), construction, bend, temperature, mass, makers, the datasheet stay;
     # one frequency «Частота до, ГГц»
     assert CABLE_COLUMNS["coax"] == (
-        "Марка", "Тип провода", "Стандарт", "Производители", "Жила: проволок × диаметр, мм",
+        "Марка", "Стандарт", "Производители", "Жила: проволок × диаметр, мм",
         "Наружный диаметр, мм", "Волновое сопротивление, Ом", "Частота до, ГГц", "Масса, г/м", "Темп. от, °C",
         "Темп. до, °C", "Поставщик", "Ссылка на datasheet",
     )
     supply = {"Цена посл., ₽/м без НДС", "Закупок", "Дата цены", "Источник данных"}
     assert CABLE_DROPPED["wire"] == supply
     assert CABLE_DROPPED["multi"] == supply | {"Цвета"}  # the core columns stay (owner 25.10: 100 % / 97 % filled)
-    assert CABLE_DROPPED["coax"] == supply | {"Цвета", "Напряжение, В"}
+    assert CABLE_DROPPED["coax"] == supply | {"Цвета", "Напряжение, В", "Тип провода"}
     # a removed column is still a cell an existing row takes a write to
     assert all(supply <= set(CABLE_WRITABLE[kind]) for kind in CABLE_WRITABLE)
     assert {"Цвета", "Жила: проволок × диаметр, мм"} <= set(CABLE_WRITABLE["multi"])

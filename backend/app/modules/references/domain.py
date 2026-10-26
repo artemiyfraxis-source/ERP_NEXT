@@ -500,7 +500,9 @@ CABLE_MAX_GHZ_FIELD = "Частота до, ГГц"
 # scripts), a new row — only to «Источник данных» (`CABLE_NEW_ROW_EXTRA`: provenance, appended by loads and journals).
 _SUPPLY_DROPPED = ("Цена посл., ₽/м без НДС", "Закупок", "Дата цены", "Источник данных")
 _PROV_DROPPED = {
-    "coax": ("Цвета", "Напряжение, В", *_SUPPLY_DROPPED),
+    # 26.10.2026 the coax cables also «Тип провода» (owner: «тип провода в коаксиальных тоже удали» — it says «коаксиальный»
+    # for the whole list; the kind rule still reads it)
+    "coax": ("Цвета", "Напряжение, В", "Тип провода", *_SUPPLY_DROPPED),
     "wire": _SUPPLY_DROPPED,
     "multi": ("Цвета", *_SUPPLY_DROPPED),
     # the многожильные cells an ETHERNET row brings and the list does not show: the row's card shows and edits them

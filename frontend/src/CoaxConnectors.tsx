@@ -261,6 +261,9 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
         groupSort
         // Серия — свой блок с заголовком и таблицей (владелец 25.10.2026: «визуал БД один», как «Оболочки»).
         blocks
+        // Серии открываются свёрнутыми, как кабели (владелец 26.10.2026); поиск и фильтр раскрывают все.
+        collapsibleGroups
+        foldedByDefault
         onRowClick={(record) => setSelectedId(record.id === selectedId ? "" : record.id)}
         rowTitle={(record) => `Карточка: ${coaxArticle(record.fields)} · ${coaxWire(record.fields)}`}
         rowClassName={(record) => (record.id === selectedId ? "coax-row-active" : "")}
