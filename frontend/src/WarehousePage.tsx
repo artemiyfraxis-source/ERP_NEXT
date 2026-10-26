@@ -32,10 +32,11 @@ import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
 import { StockLinkDialog } from "./StockLinkDialog";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
-  chooserColumns, ColumnChooser, columnTitle, COLUMN_HINTS, defaultLayout, documentsLayout, moveColumn, readLayouts,
-  shownColumns as visibleColumns, writeLayouts,
+  agreeing, chooserColumns, ColumnChooser, columnTitle, COLUMN_HINTS, defaultLayout, documentsLayout, moveColumn, readLayout, readLayouts,
+  readLocalLayouts, shownColumns as visibleColumns, STOCK_VIEWS, TABLE_KINDS, writeLayouts,
   type ColumnKey, type ColumnLayout, type TableKind,
 } from "./WarehouseColumns";
+import { loadPersonalViews, migrateLocalView, resetPersonalView, savePersonalView } from "./personalViews";
 
 /** Номенклатура на партиях (a failing read = no chip, no action). */
 const LotItems = createContext<{ items: Record<string, ItemBrief>; reload: () => void }>({ items: {}, reload: () => undefined });
@@ -137,19 +138,51 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     return sum > 0 && units.length === 1 ? `в резерве ${sum} ${units[0]} · свободно ${free} ${units[0]}` : "";
   }, [flat, cursor, lots, totals]);
   const groupedLots = useMemo(() => warehouseGroups(lots, groupBy, sort, totals, !cursor), [lots, groupBy, sort, totals, cursor]);
-  // «Колонки»: each table has its own order and set of columns, the viewer changes both (remembered in this browser).
-  // The name is always there; the column the rows are grouped by is the group header already, not repeated in every row.
+  // «Колонки»: each table has its own order and set of columns, the viewer changes both. The layout is the person's own,
+  // kept on the server (it follows them to another PC); this browser's copy opens the screen at once and stands in
+  // while the server is out of reach. The name is always there; the column the rows are grouped by is the group header
+  // already, not repeated in every row.
   const [layouts, setLayouts] = useState(readLayouts);
+  // What this browser kept before this page wrote its own copy (a table never changed here is absent).
+  const [localAtStart] = useState(readLocalLayouts);
+  // Tables the viewer changed before the server answered keep that change.
+  const touchedKinds = useRef(new Set<TableKind>());
+  useEffect(() => {
+    let live = true;
+    void loadPersonalViews().then((views) => {
+      if (!live || !views) return;
+      const local = localAtStart;
+      const fromServer: Partial<Record<TableKind, ColumnLayout>> = {};
+      for (const tableKind of TABLE_KINDS) {
+        if (touchedKinds.current.has(tableKind)) continue;
+        const saved = views[STOCK_VIEWS[tableKind]];
+        if (saved && typeof saved === "object") fromServer[tableKind] = readLayout(tableKind, saved);
+        else migrateLocalView(STOCK_VIEWS[tableKind], ownLayout(tableKind, local[tableKind]));
+      }
+      if (Object.keys(fromServer).length) setLayouts((current) => ({ ...current, ...fromServer }));
+    });
+    return () => { live = false; };
+  }, []);
   const kind: TableKind = flat ? "flat" : "grouped";
   const layout = layouts[kind];
   const groupColumn = !flat && (groupBy === "series" || groupBy === "type") ? groupBy : null;
   const shownColumns = visibleColumns(layout, groupColumn);
-  // Document columns switched on widen the lot table (it scrolls in its frame) instead of squeezing the name.
-  const docsLayout = flat ? documentsLayout(shownColumns) : null;
+  // Document columns switched on widen the table (it scrolls in its frame) instead of squeezing the name.
+  const docsLayout = documentsLayout(shownColumns);
   const chooserKeys = chooserColumns(layout, groupColumn);
   // The leftmost column stays in view when the table is scrolled sideways.
   const pinned = shownColumns[0];
-  const changeLayout = (change: (current: ColumnLayout) => ColumnLayout) => setLayouts((current) => ({ ...current, [kind]: change(current[kind]) }));
+  const changeLayout = (change: (current: ColumnLayout) => ColumnLayout) => {
+    const next = change(layouts[kind]);
+    touchedKinds.current.add(kind);
+    setLayouts((current) => ({ ...current, [kind]: next }));
+    savePersonalView(STOCK_VIEWS[kind], next);
+  };
+  const resetLayout = () => {
+    touchedKinds.current.add(kind);
+    setLayouts((current) => ({ ...current, [kind]: defaultLayout(kind) }));
+    resetPersonalView(STOCK_VIEWS[kind]);
+  };
   useEffect(() => writeLayouts(layouts), [layouts]);
   // The opened lot cards stay inside the visible part of a table wider than the screen: pinned to the left edge and
   // as wide as the scroll box, not the table (the same as DataTable's detail row).
@@ -339,7 +372,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
             flat={flat}
             onToggle={(key, shown) => changeLayout((current) => ({ ...current, hidden: shown ? current.hidden.filter((item) => item !== key) : [...current.hidden, key] }))}
             onMove={(key, step) => changeLayout((current) => ({ ...current, order: moveColumn(current.order, key, step, chooserKeys) }))}
-            onReset={() => changeLayout(() => defaultLayout(kind))}
+            onReset={resetLayout}
           />
         </div>
       </div>
@@ -382,10 +415,14 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
           <tbody>{lots.map((lot) => <tr key={lot.id}>{shownColumns.map((key) => flatCell(key, lot, key === pinned, lotItems[lot.id], purposeText))}</tr>)}</tbody>
         </table>
       </div> : <div className="table-wrap" ref={wrapRef}>
-        <table className="grid wide compact stock-table">
-          <colgroup>{shownColumns.map((key) => <col key={key} className={`stock-col-${key}`} />)}</colgroup>
+        <table className="grid wide compact stock-table" style={docsLayout ? { minWidth: docsLayout.minWidth } : undefined}>
+          <colgroup>{shownColumns.map((key) => <col key={key} className={`stock-col-${key}`}
+            style={docsLayout?.widths[key] ? { width: docsLayout.widths[key] } : undefined} />)}</colgroup>
+          {/* The server orders the whole filter by the columns it knows; the maker and the documents are not among them. */}
           <thead><tr>{shownColumns.map((key) => <th key={key} className={classes(columnClass(key), key === pinned && "stock-pin")} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : undefined}>
-            <button type="button" className="th-sort" title={COLUMN_HINTS[key]} onClick={() => setSort((current) => ({ key: key as SortKey, desc: current.key === key ? !current.desc : false }))}>{columnTitle(key, false)}{sort.key === key ? (sort.desc ? " ▼" : " ▲") : ""}</button>
+            {isSortKey(key)
+              ? <button type="button" className="th-sort" title={COLUMN_HINTS[key]} onClick={() => setSort((current) => ({ key, desc: current.key === key ? !current.desc : false }))}>{columnTitle(key, false)}{sort.key === key ? (sort.desc ? " ▼" : " ▲") : ""}</button>
+              : <span title={COLUMN_HINTS[key]}>{columnTitle(key, false)}</span>}
           </th>)}</tr></thead>
           <tbody>{groupedLots.map((group) => <ArticleGroup
             key={group.key}
@@ -417,6 +454,15 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     </section>
     </LotItems.Provider>
   );
+}
+
+/** A layout this browser kept that differs from the table's default (every visit used to write the default too). */
+function ownLayout(kind: TableKind, stored: unknown): ColumnLayout | null {
+  if (!stored || typeof stored !== "object") return null;
+  const layout = readLayout(kind, stored);
+  const fallback = defaultLayout(kind);
+  const same = layout.order.join() === fallback.order.join() && [...layout.hidden].sort().join() === [...fallback.hidden].sort().join();
+  return same ? null : layout;
 }
 
 /** Lots with the same id once, in the order they came. */
@@ -465,7 +511,10 @@ function shelf(location: string) {
   return location.replace(/\s+/g, "").toUpperCase().match(/^(\d+[A-ZА-Я])/)?.[1] ?? location;
 }
 
-type SortKey = Exclude<ColumnKey, "purpose">;
+/** The columns the grouped table is ordered by (the server's `sort`). */
+const SORT_KEYS = ["type", "grn", "balance", "reserved", "available", "lots", "place", "series", "article", "name", "warehouse"] as const;
+type SortKey = typeof SORT_KEYS[number];
+const isSortKey = (key: ColumnKey): key is SortKey => (SORT_KEYS as readonly string[]).includes(key);
 
 function columnClass(key: ColumnKey) {
   return key === "name" ? "stock-name" : key === "balance" || key === "lots" || key === "available" || key === "reserved" ? "num" : undefined;
@@ -646,7 +695,8 @@ function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: It
     case "warehouse": return cutCell(key, lot.warehouse, pinned);
     case "purpose": return cutCell(key, purposeText(lot.purpose) || "—", pinned);
     case "series": return cutCell(key, lot.series || "—", pinned);
-    case "type": return cutCell(key, lot.item_type || "—", pinned);
+    case "type": return typeCell(key, lot.item_type, pinned);
+    case "maker": return dimCell(key, lot.manufacturer ?? "", pinned);
     case "upd_name": return cutCell(key, lot.upd_name || "", pinned);
     case "invoice_name": return cutCell(key, lot.invoice_name || "", pinned);
     case "invoice_number": return cutCell(key, lot.receipt?.invoice_number || "", pinned);
@@ -683,7 +733,7 @@ function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, togg
       return <td key={key} className={classes("stock-name", pinned && "stock-pin")}><button className="link-button table-link" title={name} aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(); }}>{name}</button>{chip && itemMark(name, chip, "Позиция номенклатуры")}</td>;
     }
     case "article": return cutCell(key, item.article || "—", pinned);
-    case "grn": return cutCell(key, distinct(item.lots, "grn"), pinned, "stock-grn");
+    case "grn": return grnCell(key, item.lots, pinned);
     case "balance": {
       if (!item.totals) return <td key={key} className={classes("num", pinned && "stock-pin")} title="Итог считается">…</td>;
       const unit = item.totals.units.join(" · ");
@@ -701,11 +751,56 @@ function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, togg
     }
     case "lots": return <td key={key} className={classes("num", pinned && "stock-pin")}>{item.totals ? item.totals.lots : "…"}</td>;
     case "place": return <td key={key} className={classes("cut", pinned && "stock-pin")} title={distinct(item.lots, "storage_location") || undefined}>{places(item.lots)}</td>;
-    case "warehouse": return cutCell(key, distinct(item.lots, "warehouse"), pinned);
-    case "series": return cutCell(key, distinct(item.lots, "series"), pinned);
-    case "type": return cutCell(key, distinct(item.lots, "item_type"), pinned);
+    case "warehouse": return dimCell(key, distinct(item.lots, "warehouse"), pinned);
+    case "series": return dimCell(key, distinct(item.lots, "series"), pinned);
+    case "type": return typeCell(key, distinct(item.lots, "item_type"), pinned);
+    case "maker": return agreeCell(key, item.lots.map((lot) => lot.manufacturer ?? ""), pinned);
+    case "upd_name": return agreeCell(key, item.lots.map((lot) => lot.upd_name ?? ""), pinned);
+    case "invoice_name": return agreeCell(key, item.lots.map((lot) => lot.invoice_name ?? ""), pinned);
+    case "invoice_number": return agreeCell(key, item.lots.map((lot) => lot.receipt?.invoice_number ?? ""), pinned);
+    case "invoice_date": return agreeCell(key, item.lots.map((lot) => shortDate(lot.receipt?.invoice_date)), pinned, "num");
+    case "upd_number": return agreeCell(key, item.lots.map((lot) => lot.receipt?.upd_number ?? ""), pinned);
+    case "upd_date": return agreeCell(key, item.lots.map((lot) => shortDate(lot.receipt?.upd_date)), pinned, "num");
+    case "prd_number": return agreeCell(key, item.lots.map((lot) => lot.receipt?.prd_number ?? ""), pinned);
+    case "prd_date": return agreeCell(key, item.lots.map((lot) => shortDate(lot.receipt?.prd_date)), pinned, "num");
+    case "upd_file": {
+      // One file — «открыть»; the lots of several deliveries — a numbered link per file.
+      const files = [...new Map(item.lots.filter((lot) => lot.receipt?.scan_file).map((lot) => [lot.receipt!.scan_file!, lot.grn])).entries()];
+      return <td key={key} className={classes(pinned && "stock-pin", !files.length && "stock-dim")} onClick={(event) => event.stopPropagation()}>
+        {!files.length ? "—" : files.length === 1
+          ? <a href={files[0][0]} target="_blank" rel="noreferrer" aria-label={`Файл УПД партии ${files[0][1]}`}>открыть</a>
+          : files.map(([file, grn], index) => <Fragment key={file}>{index > 0 && " "}<a href={file} target="_blank" rel="noreferrer" title={`Файл УПД партии ${grn}`} aria-label={`Файл УПД партии ${grn}`}>{index + 1}</a></Fragment>)}
+      </td>;
+    }
     default: return null;
   }
+}
+
+/** A text cell with a dim «—» when empty. */
+function dimCell(key: ColumnKey, text: string, pinned: boolean) {
+  return text ? cutCell(key, text, pinned) : <td key={key} className={classes("cut stock-dim", pinned && "stock-pin")}>—</td>;
+}
+
+/** «Тип» wraps to two lines («Коаксиальный / соединитель») instead of being cut to «Коаксиальный с…». */
+function typeCell(key: ColumnKey, text: string, pinned: boolean) {
+  if (!text) return <td key={key} className={classes("stock-dim", pinned && "stock-pin")}>—</td>;
+  return <td key={key} className={classes("stock-wrap", pinned && "stock-pin")} title={text}><span className="stock-clamp">{text}</span></td>;
+}
+
+/** A position's value from its lots: the one they agree on, else «N разн.» with every value in the tooltip. */
+function agreeCell(key: ColumnKey, values: string[], pinned: boolean, className = "") {
+  const shown = agreeing(values);
+  if (!shown.text) return <td key={key} className={classes("cut stock-dim", className, pinned && "stock-pin")}>—</td>;
+  return <td key={key} className={classes("cut", className, shown.many && "stock-dim", pinned && "stock-pin")} title={shown.title}>{shown.text}</td>;
+}
+
+/** ГРН of a position: the first one in full, «+N» for the rest; every ГРН in the tooltip. */
+function grnCell(key: ColumnKey, lots: WarehouseLot[], pinned: boolean) {
+  const grns = [...new Set(lots.map((lot) => lot.grn).filter(Boolean))];
+  if (!grns.length) return <td key={key} className={classes("cut stock-dim", pinned && "stock-pin")}>—</td>;
+  return <td key={key} className={classes("cut stock-grn", pinned && "stock-pin")} title={grns.join("\n")}>
+    {grns[0]}{grns.length > 1 && <span className="stock-more"> +{grns.length - 1}</span>}
+  </td>;
 }
 
 function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled, mutate, onMove, history, readOnly, canLink }: {
@@ -1298,19 +1393,25 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
 
   return (
     <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
-      <div className="lot-card-main">
-        <div><span className="lot-card-big">{lot.available} {lot.unit}</span><small>свободно · остаток {lot.balance}{Number(lot.reserved) > 0 ? ` · резерв ${lot.reserved}` : ""}</small></div>
-        <div><span className="lot-card-big">{lot.storage_location || "без места"}</span><small>{lot.warehouse}</small></div>
+      {/* A wide card (owner 26.10: «пора увеличить ширину карточки»): quantity and place, the lot's lines beside them,
+          the actions in one row under them. */}
+      <div className="lot-card-head">
+        <div className="lot-card-main">
+          <div><span className="lot-card-big">{lot.available} {lot.unit}</span><small>свободно · остаток {lot.balance}{Number(lot.reserved) > 0 ? ` · резерв ${lot.reserved}` : ""}</small></div>
+          <div><span className="lot-card-big">{lot.storage_location || "без места"}</span><small>{lot.warehouse}</small></div>
+        </div>
+        <div className="lot-card-info">
+          <p className="lot-card-meta">
+            <span>ГРН {lot.grn}{lot.package ? ` / ${lot.package}` : ""}</span>
+            {lot.purpose && <span>{purposeText(lot.purpose)}</span>}
+            {writtenOff && <span>списано {lot.written_off}</span>}
+            {Number(lot.reserved) > 0 && lot.reserve_note && <span title={lot.reserve_note}>{lot.reserve_note.replace(/^резерв: /, "")}</span>}
+          </p>
+          {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
+          {receiptLine(lot.receipt) && <p className="lot-card-meta"><small className="muted">{receiptLine(lot.receipt)}</small></p>}
+          {brief && <p className="lot-card-meta"><small className="muted lot-item-chip" title={`Связь: ${VIA_LABELS[brief.via]}`}>Позиция: {brief.name}</small></p>}
+        </div>
       </div>
-      <p className="lot-card-meta">
-        <span>ГРН {lot.grn}{lot.package ? ` / ${lot.package}` : ""}</span>
-        {lot.purpose && <span>{purposeText(lot.purpose)}</span>}
-        {writtenOff && <span>списано {lot.written_off}</span>}
-        {Number(lot.reserved) > 0 && lot.reserve_note && <span title={lot.reserve_note}>{lot.reserve_note.replace(/^резерв: /, "")}</span>}
-      </p>
-      {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
-      {receiptLine(lot.receipt) && <p className="lot-card-meta"><small className="muted">{receiptLine(lot.receipt)}</small></p>}
-      {brief && <p className="lot-card-meta"><small className="muted lot-item-chip" title={`Связь: ${VIA_LABELS[brief.via]}`}>Позиция: {brief.name}</small></p>}
       <div className="lot-card-actions">
         {!readOnly && <>
           <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
@@ -1322,8 +1423,8 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
         {!readOnly && <button className="secondary small" disabled={disabled} onClick={() => setDialog("item")}>Позиция номенклатуры…</button>}
         {canLink && <button className="secondary small" title="Привязать к записи базы или создать запись" onClick={() => setDialog("link")}>В базу данных…</button>}
         {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
+        {!readOnly && <UndoLast lot={lot} disabled={disabled} mutate={mutate} />}
       </div>
-      {!readOnly && <UndoLast lot={lot} disabled={disabled} mutate={mutate} />}
       {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}

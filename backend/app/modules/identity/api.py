@@ -10,8 +10,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, authenticated_principal
+from app.shared.http_auth import Principal, authenticated_principal, refuse_api_tokens
 from app.shared.http_auth import access_admin_principal, staffdir_principal
+from .ui_settings import UiSettingsError, reset_ui_setting, save_ui_setting, ui_settings
 
 from .application import (
     API_TOKEN_MAX_DAYS,
@@ -336,6 +337,52 @@ def change_password_route(
     except AuthenticationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except IdentityValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+class UiSettingInput(BaseModel):
+    value: dict
+
+
+_NO_TOKEN_LAYOUTS = refuse_api_tokens("У токена API нет своих настроек экранов.")
+
+
+@router.get("/ui-settings", dependencies=[Depends(_NO_TOKEN_LAYOUTS)])
+def ui_settings_route(
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """The caller's own screen layouts (owner 26.10.2026: «настройка показываемых столбцов у каждого своя»)."""
+    return {"views": ui_settings(principal.actor.id, uow_factory())}
+
+
+@router.put("/ui-settings/{view}", dependencies=[Depends(_NO_TOKEN_LAYOUTS)])
+def save_ui_setting_route(
+    view: str,
+    payload: UiSettingInput,
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """Saves the caller's layout of one view; nobody's else is reachable (the person is the session's, not a parameter)."""
+    try:
+        value = save_ui_setting(principal.actor.id, view, payload.value, now, uow_factory())
+    except UiSettingsError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {"view": view, "value": value}
+
+
+@router.delete("/ui-settings/{view}", status_code=204, dependencies=[Depends(_NO_TOKEN_LAYOUTS)])
+def reset_ui_setting_route(
+    view: str,
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> None:
+    """«По умолчанию»: drops the caller's layout of the view."""
+    try:
+        reset_ui_setting(principal.actor.id, view, now, uow_factory())
+    except UiSettingsError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 

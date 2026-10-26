@@ -2503,6 +2503,14 @@ export const identityApi = {
   /** «Вернуться к себе»: the own principal again. */
   stopViewAs: () => api<Principal>("/api/auth/view-as", { method: "DELETE", safe: true }),
   profile:() => api<OwnProfile>("/api/auth/profile"),
+  /** The signed-in person's own screen layouts (columns, order, widths) by view, e.g. «stock.grouped». */
+  uiSettings: () => api<{ views: Record<string, unknown> }>("/api/auth/ui-settings"),
+  saveUiSetting: (view: string, value: object) =>
+    api<{ view: string; value: unknown }>(`/api/auth/ui-settings/${encodeURIComponent(view)}`, {
+      method: "PUT", body: JSON.stringify({ value }), safe: true }),
+  /** «По умолчанию»: the person's layout of the view is dropped. */
+  resetUiSetting: (view: string) =>
+    api<void>(`/api/auth/ui-settings/${encodeURIComponent(view)}`, { method: "DELETE", safe: true }),
   changePassword: (current: string, next: string) =>
     api<void>("/api/auth/password", { method: "POST", body: JSON.stringify({ current, new: next }) }),
 };

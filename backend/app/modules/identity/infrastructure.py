@@ -414,6 +414,25 @@ class IdentitySettingRow(Base):
     value: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
+class IdentityUiSettingRow(Base):
+    """A person's own layout of one screen view (0154): columns, order, widths as JSON text (ui_settings.py)."""
+
+    __tablename__ = "identity_ui_settings"
+    __table_args__ = (
+        CheckConstraint("length(view) >= 1", name="ck_identity_ui_settings_view"),
+        CheckConstraint("length(value) <= 16384", name="ck_identity_ui_settings_value_size"),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="CASCADE", name="fk_identity_ui_settings_user_id"),
+        primary_key=True,
+    )
+    view: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class IdentityLoginThrottleRow(Base):
     __tablename__ = "identity_login_throttles"
 
@@ -893,6 +912,23 @@ class SqlAlchemyIdentityRepository:
             self.session.add(IdentitySettingRow(key=key, value=value))
         else:
             row.value = value
+
+    def ui_settings(self, user_id: UUID) -> dict[str, str]:
+        """{view: JSON text} of one person's own screen layouts."""
+        rows = self.session.scalars(select(IdentityUiSettingRow).where(IdentityUiSettingRow.user_id == user_id))
+        return {row.view: row.value for row in rows}
+
+    def set_ui_setting(self, user_id: UUID, view: str, value: str | None, now) -> None:
+        """Writes (or with None removes) one view of one person; nobody else's row is reachable from here."""
+        row = self.session.get(IdentityUiSettingRow, (user_id, view))
+        if value is None:
+            if row is not None:
+                self.session.delete(row)
+        elif row is None:
+            self.session.add(IdentityUiSettingRow(user_id=user_id, view=view, value=value, updated_at=now))
+        else:
+            row.value = value
+            row.updated_at = now
 
     def set_view_as(self, session_id: UUID, target_id: UUID | None, until) -> bool:
         result = self.session.execute(

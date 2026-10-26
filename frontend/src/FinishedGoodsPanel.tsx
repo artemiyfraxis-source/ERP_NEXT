@@ -81,7 +81,7 @@ export function FinishedGoodsPanel() {
       <ShippingLink tab="stock">на складе</ShippingLink>
       <ShippingLink tab="shipments">отправки</ShippingLink>
     </p>
-    <DataTable label="Готовая продукция" storageKey="stock-finished-goods" rows={rows} columns={columns} rowKey={(row) => row.good.id}
+    <DataTable label="Готовая продукция" storageKey="stock-finished-goods" personalKey="stock.goods" rows={rows} columns={columns} rowKey={(row) => row.good.id}
       groupBy={(row) => row.good.project}
       groupLabel={(project) => {
         const total = byProject[project];

@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
 import type { WarehouseLot } from "./api";
 import { capturePrintFrames } from "./testPrintFrames";
+import { forgetPersonalViews } from "./personalViews";
 
 const lot: WarehouseLot = {
   id: "40000000-0000-0000-0000-000000000001",
@@ -32,7 +33,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); forgetPersonalViews(); });
 
 /** The reference tools of the page sit behind «Ещё ▾». */
 async function openMore() {
@@ -361,7 +362,7 @@ it("shows the first server page at once and joins the next page on «Показ�
   const gate = new Promise<void>((resolve) => { release = resolve; });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && !path.startsWith("/api/purchasing")) paths.push(path);
+    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && !path.startsWith("/api/purchasing") && !path.startsWith("/api/auth/ui-settings")) paths.push(path);
     if (path.split("?")[0] === "/api/stock" && !path.includes("after=")) return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
     if (path === "/api/stock?after=cursor-1&sort=article&group=series") { await gate; return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null }); }
     throw new Error(`Unexpected request: ${path}`);
@@ -387,7 +388,7 @@ it("«Загрузить всё» reads every remaining page", async () => {
   const paths: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && !path.startsWith("/api/purchasing")) paths.push(path);
+    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && !path.startsWith("/api/purchasing") && !path.startsWith("/api/auth/ui-settings")) paths.push(path);
     if (path.split("?")[0] === "/api/stock" && !path.includes("after=")) return json({ lots: [lot], total: 3, truncated: 2, next_cursor: "c1" });
     if (path === "/api/stock?after=c1&sort=article&group=series") return json({ lots: [page2], total: 3, truncated: 1, next_cursor: "c2" });
     if (path === "/api/stock?after=c2&sort=article&group=series") return json({ lots: [third], total: 3, truncated: 0, next_cursor: null });
@@ -665,7 +666,8 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   expect(screen.getByRole("button", { name: "Обновить" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Таблица склада" })).toBeInTheDocument();
   // The page only reads.
-  expect(requested.every((call) => call === "GET /api/stock?sort=article&group=series" || call.startsWith("GET /api/stock/totals") || call.startsWith("GET /api/purchasing/items/for-lots"))).toBe(true);
+  expect(requested.every((call) => call === "GET /api/stock?sort=article&group=series" || call.startsWith("GET /api/stock/totals") || call.startsWith("GET /api/purchasing/items/for-lots")
+    || call === "GET /api/auth/ui-settings")).toBe(true); // the page only reads (its own layout included)
 });
 
 it("«История» is on a lot for the storekeeper too, not for a view-only user (owner 12.10.2026)", async () => {
@@ -835,7 +837,8 @@ it("↑/↓ in «Колонки» move a column one step; the order is remembere
   const chooser = openChooser();
   // The first one cannot go up, the last one cannot go down.
   expect(chooser.getByRole("button", { name: "Выше: Тип" })).toBeDisabled();
-  expect(chooser.getByRole("button", { name: "Ниже: Склад" })).toBeDisabled();
+  // The maker and the documents (off until asked for, owner 26.10) close the list.
+  expect(chooser.getByRole("button", { name: "Ниже: Файл УПД" })).toBeDisabled();
 
   fireEvent.click(chooser.getByRole("button", { name: "Ниже: Тип" }));
   expect(headerNames()).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
@@ -843,7 +846,8 @@ it("↑/↓ in «Колонки» move a column one step; the order is remembere
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   expect(headerNames()).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
   // The list of the chooser follows the table, with the name in its place.
-  expect(chooser.getAllByRole("listitem").map((item) => item.textContent?.replace(/[↑↓]/g, ""))).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Остаток", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
+  expect(chooser.getAllByRole("listitem").map((item) => item.textContent?.replace(/[↑↓]/g, ""))).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Остаток", "Партий", "Места", "Склад", "Артикул", "Наименование",
+    "Производитель", "Наим. по УПД", "Наим. по счёту", "№ счёта", "Дата счёта", "№ УПД", "Дата УПД", "№ ПРД", "Дата ПРД", "Файл УПД"]);
   unmount();
 
   render(<WarehousePage />);
