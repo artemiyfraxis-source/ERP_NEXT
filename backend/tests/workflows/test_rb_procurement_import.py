@@ -566,6 +566,29 @@ def test_an_order_rb_saw_shipped_without_a_payment_day_is_paid_on_its_kaiten_pay
         assert line.status == "В пути" and paid[line.id] == date(2026, 10, 15)
 
 
+def test_files_only_attaches_quote_files_and_touches_nothing_else(erp, snapshot, tmp_path):
+    # Owner 26.10: RB kept living after the move — a fresh snapshot must give the quote PDFs, not new lines or cancels.
+    path, data = snapshot
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    _reference(erp, (path, empty))
+    _flow(erp, (path, empty))
+    before = _counts(erp)
+    with erp() as session:
+        lines_before = {row.id: row.version for row in session.scalars(select(ProcurementLineRow))}
+        importer = ProcurementFlowImporter(session, Snapshot(open_snapshot(path)), data, BUYER, NOW)
+        report = importer.attach_quote_files()
+        session.commit()
+    assert report.counts["КП: файл добавлен к ранее перенесённому"] == 1 and not report.skipped
+    after = _counts(erp)
+    changed = {table for table in after if after[table] != before[table]}
+    assert changed == {"purchasing_document_files"}, changed
+    with erp() as session:
+        quote = session.get(QuoteRow, _id("quote", 1))
+        assert session.get(DocumentFileRow, quote.file_id).content == b"%PDF-1.4 quote one"
+        assert {row.id: row.version for row in session.scalars(select(ProcurementLineRow))} == lines_before
+
+
 def test_buyer_is_found_by_login_without_regard_to_case(erp):
     from app.workflows.rb_procurement_import import buyer_actor
 

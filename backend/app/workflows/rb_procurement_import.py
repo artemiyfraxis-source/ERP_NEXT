@@ -507,6 +507,22 @@ class ProcurementFlowImporter:
         self.report.tables = {name: (before.get(name, 0), after.get(name, 0)) for name in after}
         return self.report
 
+    def attach_quote_files(self) -> Report:
+        """`--files-only`: the PDFs of the quotes already moved to ERP and nothing else — no request, line, request for
+        quotes, order or cancellation from RB's newer state (owner 26.10: RB kept living after the move)."""
+        before = self.table_counts()
+        for quote_id, rb in sorted(self.rb.quotes.items()):
+            row = self.session.get(QuoteRow, _id("quote", quote_id))
+            if row is None or row.file_id is not None or not rb["file_name"]:
+                continue
+            row.file_id = self.quote_file(rb["file_name"])
+            if row.file_id is not None:
+                self.report.add("КП: файл добавлен к ранее перенесённому")
+        self.session.flush()
+        after = self.table_counts()
+        self.report.tables = {name: (before.get(name, 0), after.get(name, 0)) for name in after}
+        return self.report
+
     def table_counts(self) -> dict[str, int]:
         present = set(inspect(self.session.connection()).get_table_names())
         return {table.name: int(self.session.scalar(select(func.count()).select_from(table)) or 0)
@@ -1295,6 +1311,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir", type=Path, default=None,
                         help="DATA_DIR Roller_Buyer (только чтение); без него файлы пропускаются и считаются «без файла»")
     parser.add_argument("--buyer", required=True, help="логин закупщика ERP, чьи это строки")
+    parser.add_argument("--files-only", action="store_true",
+                        help="только приложить файлы к уже перенесённым КП (нужен --data-dir); заявки, строки и заказы не трогаются")
     parser.add_argument("--apply", action="store_true", help="записать (без флага — пробный прогон с откатом)")
     args = parser.parse_args(argv)
     from app.database import build_engine
@@ -1309,7 +1327,8 @@ def main(argv: list[str] | None = None) -> int:
     with Session(bind=engine, expire_on_commit=False) as session:
         buyer = buyer_actor(session, args.buyer)
         data_dir = args.data_dir or Path(tempfile.mkdtemp(prefix="rb-no-files-"))
-        report = ProcurementFlowImporter(session, rb, data_dir, buyer, now).run()
+        importer = ProcurementFlowImporter(session, rb, data_dir, buyer, now)
+        report = importer.attach_quote_files() if args.files_only else importer.run()
         if args.apply:
             session.commit()
         else:
