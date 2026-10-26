@@ -255,11 +255,12 @@ it("resumes a recent supply: its accepted lots come back as read-only rows", asy
 
 it("scans a УПД: fills the empty header fields, appends the lines and shows the note", async () => {
   mockApi({
-    "POST /api/stock/receipts/scan": () => json({
+    "POST /api/stock/receipts/scan": () => json({ id: "f1", status: "done", error: "", result: null, recognising: true, scan_file: "scan-1.pdf" }),
+    "GET /api/stock/receipts/scan-jobs/f1": () => json({ id: "f1", status: "done", error: "", recognising: false, scan_file: "scan-1.pdf", result: {
       scan_file: "scan-1.pdf", note: "Распознано: 1 строка. Проверьте.",
       recognised: { supplier: "ООО Скан", inn: "", upd_number: "17", upd_date: "03.10.2026", invoice_number: "", invoice_date: "" },
       lines: [{ article: "Z-1", name: "Зет", quantity: "4", unit: "шт" }],
-    }),
+    } }),
   });
   await openSupply();
   fireEvent.change(screen.getByLabelText("№ счёта"), { target: { value: "С-1" } });
@@ -293,6 +294,22 @@ it("scans from the scanner: waits for the PC, then fills the header like a file 
   expect(cellOf("Артикул")).toHaveValue("S-1");
   expect(calls.some((call) => call.method === "POST" && call.path === "/api/stock/receipts/scan-jobs")).toBe(true);
   expect(screen.getByRole("button", { name: "+ Страница" })).toBeEnabled();
+});
+
+it("a scan in, its answer not yet: «Распознаю УПД…» until the background reading is stored", async () => {
+  let polls = 0;
+  mockApi({
+    "POST /api/stock/receipts/scan-jobs": () => json({ id: "r1", status: "pending" }),
+    "GET /api/stock/receipts/scan-jobs/r1": () => json(++polls < 2
+      ? { id: "r1", status: "done", error: "", result: null, recognising: true, scan_file: "r.pdf" }
+      : { id: "r1", status: "done", error: "", recognising: false, scan_file: "r.pdf", result: answer("r.pdf", "R-1") }),
+  });
+  await openSupply();
+  fireEvent.click(screen.getByRole("button", { name: "Сканировать" }));
+  expect(await screen.findByText("Распознаю УПД…", { exact: false })).toBeInTheDocument();
+  expect(await screen.findByText("Распознано.", {}, { timeout: 4000 })).toBeInTheDocument();
+  expect(cellOf("Артикул")).toHaveValue("R-1");
+  expect(screen.queryByText(/Распознаю УПД/)).toBeNull();
 });
 
 it("shows the scanner error in red and frees the buttons", async () => {
@@ -340,6 +357,8 @@ it("starts with one blank row, adds the next when the article is typed, and offe
 });
 
 
+const job = (id: string, result: unknown) => ({ id, status: "done", error: "", recognising: false, result });
+
 const answer = (scan_file: string, article: string) => ({
   scan_file, note: "Распознано.",
   recognised: { supplier: "ООО Скан", inn: "", upd_number: "17", upd_date: "", invoice_number: "", invoice_date: "" },
@@ -353,7 +372,7 @@ function scannerPages(files: string[]) {
     "GET /api/stock/receipts/scan-jobs/p1": () => json({ id: "p1", status: "done", error: "", result: answer(files[0], "A-1") }),
     "GET /api/stock/receipts/scan-jobs/p2": () => json({ id: "p2", status: "done", error: "", result: answer(files[1], "A-2") }),
     "GET /api/stock/receipts/scan-jobs/p3": () => json({ id: "p3", status: "done", error: "", result: answer(files[2], "A-3") }),
-    "POST /api/stock/receipts/scan-merge": () => json(answer("merged.pdf", "A-2")),
+    "POST /api/stock/receipts/scan-merge": () => json(job("m1", answer("merged.pdf", "A-2"))),
   });
 }
 
@@ -387,8 +406,8 @@ it("«Сканировать заново» drops the pages and the scan", async
 it("several files are uploaded one by one and merged once", async () => {
   let uploaded = 0;
   const calls = mockApi({
-    "POST /api/stock/receipts/scan": () => json(answer(`f${++uploaded}.pdf`, `F-${uploaded}`)),
-    "POST /api/stock/receipts/scan-merge": () => json(answer("merged.pdf", "F-1")),
+    "POST /api/stock/receipts/scan": () => json(job(`f${++uploaded}`, answer(`f${uploaded}.pdf`, `F-${uploaded}`))),
+    "POST /api/stock/receipts/scan-merge": () => json(job("m1", answer("merged.pdf", "F-1"))),
   });
   await openSupply();
   const files = ["a", "b", "c"].map((name) => new File(["x"], `${name}.pdf`, { type: "application/pdf" }));

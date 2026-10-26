@@ -1,12 +1,20 @@
-"""«Отсканировать УПД» со сканера склада — HTTP contract (owner 23.10.2026; the queue itself — `scan_jobs.py`).
+"""«Отсканировать УПД» — HTTP contract (owner 23.10.2026; the queue itself — `scan_jobs.py`, the reading —
+`scan_recognition.py`).
 
 The storekeeper's screen (warehouse edit, as `POST /api/stock/receipts`):
 - `POST /api/stock/receipts/scan-jobs` (no body) → `{id, status}` — a pending job for the agent of the warehouse PC;
-- `GET /api/stock/receipts/scan-jobs/{id}` → `{id, status, error, result}`; `result` is exactly the answer of
-  `POST /api/stock/receipts/scan` (`{scan_file, recognised, lines, note}`) once the job is done, else null. A job
-  pending over 120 s or claimed over 180 s reads (and stays) failed «Сканер не ответил — проверьте агент на ПК склада».
+- `GET /api/stock/receipts/scan-jobs/{id}` → `{id, status, error, result, recognising, scan_file}`; `result` — the
+  answer `{scan_file, recognised, lines, note}` (`scan_recognition.scan_answer`) once it is made, else null;
+  `recognising` — the scan is in, its answer is being made in the background (a model reads 8–100 s, never inside
+  this GET: a poll that finds nothing running restarts it as a background task). A job pending over 120 s or claimed
+  over 180 s reads (and stays) failed «Сканер не ответил — проверьте агент на ПК склада».
 - `DELETE /api/stock/receipts/scan-jobs/{id}` → `{id, status}` — an open job becomes failed «Отменено», a finished
   one is answered as it is.
+- `POST /api/stock/receipts/scan` (multipart `file`: PDF, JPG, PNG ≤ 20 MB, «Файл…») → the job view: the file is
+  stored with a job that is done from the start, its answer is made in the background; the screen polls the job.
+- `POST /api/stock/receipts/scan-merge` `{files: [2..20 scan links]}` («+ Страница») → the job view of ONE merged PDF;
+  its answer combines the readings kept with the sheets — made at once when every sheet is read, else in the
+  background.
 
 The agent of the warehouse PC calls with `Authorization: Bearer <API token with the scope scan:upload>` (one token
 may carry `labels:print` and `scan:upload` together); a person's session is refused (403):
@@ -14,40 +22,37 @@ may carry `labels:print` and `scan:upload` together); a person's session is refu
 - `POST /api/stock/scan/agent/jobs/{id}/result` — multipart field `file` (PDF / JPG / PNG ≤ 20 MB) → the file is
   stored, the job done; or JSON `{"error": "…"}` → the job failed with that reason. Answer `{ok: true, id, status}`;
   404 — no such job, 409 — its result is already in or it was never handed out (a retry: drop the job), 422 — no file
-  or a file ERP does not keep (the job is failed with that reason). Recognition (OCR included) runs after the answer,
-  so the agent never waits for it; the screen's poll waits for it instead and the answer is stored once."""
+  or a file ERP does not keep (the job is failed with that reason). Recognition runs after the answer, so the agent
+  never waits for it; the screen's poll waits for it instead and the answer is stored once."""
 
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Security
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.shared.clock import moscow_now
-from app.shared.file_types import sniffed_type
 from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, warehouse_edit_principal
 
 from .api import warehouse_uow_factory
 from .application import UnitOfWork
-from .domain import RECEIPT_SCAN_PATH
-from .receipts_api import ScanSources, _checked, multipart_file, scan_answer, scan_sources
-from .receipts_application import SCAN_FILE_LIMIT, scan_file, store_job_scan
-from .scan_jobs import (
-    DONE, FAILED, ScanJob, ScanJobClosed, cancel_job, claim, create_job, fail_job, get_job, recognition_lock,
-    save_result, stored_result,
-)
+from .receipts_api import _checked, multipart_file
+from .receipts_application import SCAN_FILE_LIMIT, merge_scans, store_job_scan, store_scan
+from .scan_jobs import DONE, FAILED, ScanJob, ScanJobClosed, cancel_job, claim, create_job, fail_job, get_job
+from .scan_recognition import ScanSources, job_view, readings_kept, recognise_job, scan_sources
 
 SCAN_SCOPE = "scan:upload"
 SCAN_AGENT_ONLY = "Очередь сканирования забирает только агент склада (токен API «scan:upload»)."
+TOO_BIG = "Скан УПД больше 20 МБ"
+NO_FILE = "Файл не передан: нужен multipart с полем «file»"
 router = APIRouter(prefix="/api/stock", tags=["warehouse"])
 UowFactory = Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)]
-log = logging.getLogger(__name__)
 
 
 def scan_agent_principal(
@@ -76,30 +81,11 @@ def _queue(operation):
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
-def job_result(uow_factory: Callable[[], UnitOfWork], sources: ScanSources, job: ScanJob) -> dict | None:
-    """The done job's answer: the stored one, else made now (and stored once). Blocking — run it off the event loop."""
-    if job.status != DONE or job.file_id is None:
-        return None
-    if job.result:
-        return json.loads(job.result)
-    # One recognition per job at a time in every API process: the screen polls while the first answer is being made.
-    with recognition_lock(uow_factory(), job.id):
-        stored = stored_result(uow_factory(), job.id)  # made by another request while this one waited
-        if stored:
-            return json.loads(stored)
-        found = scan_file(uow_factory(), job.file_id)
-        content = found[1] if found else b""
-        link = f"{RECEIPT_SCAN_PATH}{job.file_id}"
-        answer = scan_answer(sources, link, content, sniffed_type(content))
-        save_result(uow_factory(), job.id, json.dumps(answer, ensure_ascii=False))
-        return answer
-
-
-def _recognise_after_upload(uow_factory, sources: ScanSources, job_id: UUID, now: datetime) -> None:
-    try:
-        job_result(uow_factory, sources, get_job(uow_factory(), job_id, now=now))
-    except Exception:  # noqa: BLE001 — the screen's poll makes the answer itself when this one fails
-        log.exception("Распознавание скана УПД по заданию %s не удалось", job_id)
+def _recognise_later(background: BackgroundTasks, uow_factory, sources: ScanSources, job: ScanJob,
+                     pages: list[UUID] | None = None) -> None:
+    """After the answer is sent: the job's reading (`recognise_job` holds a database lock — one per job in every process)."""
+    if job.status == DONE and not job.result:
+        background.add_task(recognise_job, uow_factory, sources, job, pages)
 
 
 @router.post("/receipts/scan-jobs")
@@ -115,13 +101,14 @@ def new_scan_job(
 def scan_job(
     job_id: UUID,
     request: Request,
+    background: BackgroundTasks,
     _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
     job = _queue(lambda: get_job(uow_factory(), job_id, now=now))
-    result = job_result(uow_factory, scan_sources(request, uow_factory), job)
-    return {**_brief(job), "error": job.error, "result": result}
+    _recognise_later(background, uow_factory, scan_sources(request, uow_factory), job)
+    return job_view(job)
 
 
 @router.delete("/receipts/scan-jobs/{job_id}")
@@ -132,6 +119,57 @@ def cancel_scan_job(
     uow_factory: UowFactory,
 ) -> dict:
     return _brief(_queue(lambda: cancel_job(uow_factory(), job_id, now=now)))
+
+
+@router.post("/receipts/scan")
+async def scan_receipt_document(
+    request: Request,
+    background: BackgroundTasks,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: UowFactory,
+) -> dict:
+    """«Файл…»: the scan is stored (as PDF) with a done job; its answer is made after this one is sent."""
+    body = await request.body()
+    if len(body) > SCAN_FILE_LIMIT + 64 * 1024:
+        raise HTTPException(status_code=422, detail=TOO_BIG)
+    upload = multipart_file(request.headers.get("content-type", ""), body)
+    if upload is None:
+        raise HTTPException(status_code=422, detail=NO_FILE)
+    file_name, content = upload
+    job = await run_in_threadpool(
+        lambda: _checked(lambda: store_scan(uow_factory(), file_name, content, principal.actor, now)))
+    _recognise_later(background, uow_factory, scan_sources(request, uow_factory), job)
+    return job_view(job)
+
+
+class ScanMergeInput(BaseModel):
+    files: list[str]
+
+
+def _merge(request: Request, background: BackgroundTasks, links: list[str], principal: Principal, now: datetime,
+           uow_factory) -> dict:
+    merged = _checked(lambda: merge_scans(uow_factory(), links, principal.actor, now))
+    sources = scan_sources(request, uow_factory)
+    if readings_kept(uow_factory, merged.pages):
+        recognise_job(uow_factory, sources, merged.job, merged.pages)  # no file is read: the sheets' readings combined
+        return job_view(_queue(lambda: get_job(uow_factory(), merged.job.id, now=now)))
+    _recognise_later(background, uow_factory, sources, merged.job, merged.pages)
+    return job_view(merged.job)
+
+
+@router.post("/receipts/scan-merge")
+async def merge_receipt_scans(
+    payload: ScanMergeInput,
+    request: Request,
+    background: BackgroundTasks,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: UowFactory,
+) -> dict:
+    """A УПД of several sheets: the stored scans (links, page order) are glued into one PDF and stored with a done job;
+    answers the job view, its `result` already in when every sheet was read before."""
+    return await run_in_threadpool(_merge, request, background, payload.files, principal, now, uow_factory)
 
 
 @router.post("/scan/agent/claim")
@@ -168,17 +206,16 @@ async def scan_agent_result(
     if "multipart/form-data" in content_type.lower():
         if len(body) > SCAN_FILE_LIMIT + 64 * 1024:
             await run_in_threadpool(
-                lambda: _queue(lambda: fail_job(uow_factory(), job_id, error="Скан УПД больше 20 МБ", now=now)))
-            raise HTTPException(status_code=422, detail="Скан УПД больше 20 МБ")
+                lambda: _queue(lambda: fail_job(uow_factory(), job_id, error=TOO_BIG, now=now)))
+            raise HTTPException(status_code=422, detail=TOO_BIG)
         upload = multipart_file(content_type, body)
         if upload is None:
-            raise HTTPException(status_code=422, detail="Файл не передан: нужен multipart с полем «file»")
+            raise HTTPException(status_code=422, detail=NO_FILE)
         file_name, content = upload
         await run_in_threadpool(
             lambda: _queue(lambda: _checked(lambda: store_job_scan(uow_factory(), job_id, file_name, content, now))))
-        background.add_task(
-            _recognise_after_upload, uow_factory, scan_sources(request, uow_factory), job_id, now,
-        )
+        job = await run_in_threadpool(lambda: get_job(uow_factory(), job_id, now=now))
+        _recognise_later(background, uow_factory, scan_sources(request, uow_factory), job)
         return {"ok": True, "id": str(job_id), "status": DONE}
     error = _error_text(body)
     if error is None:

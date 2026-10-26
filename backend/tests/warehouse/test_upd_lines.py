@@ -8,21 +8,22 @@ from pathlib import Path
 import pytest
 
 from app.modules.warehouse.upd_lines import (
-    UpdLine, find_pack, line_answer, name_article, parse_upd_lines, snap_articles, snap_key,
+    UpdLine, find_pack, item_line, line_answer, name_article, parse_upd_lines, quantity_of, snap_articles, snap_key,
+    unit_of,
 )
 
 ROWS = (Path(__file__).parent / "fixtures" / "upd-1788-ocr-rows.txt").read_text(encoding="utf-8")
 
 
-def test_the_real_scan_gives_six_lines_in_metres_with_their_articles():
+def test_the_real_scan_gives_six_lines_with_their_articles_tape_in_pieces():
     lines = parse_upd_lines(ROWS)
     assert [(line.article, line_answer(line)["quantity"], line.unit) for line in lines] == [
         ("МТ-2К 6,4/3,2 белая", "300", "м"),
         ("МТ-2К 4,8/2,4 белая", "300", "м"),
         ("МТ-2К 3,2/1,6 белая", "600", "м"),
         ("МТ-2К 2,4/1,2 белая", "600", "м"),
-        ("Тр-I090EW", "32", "м"),
-        ("Тр-I120EW", "32", "м"),
+        ("Тр-I090EW", "2", "шт"),  # owner 26.10: tape stays in rolls / шт, «9мм*16м» is a size, not a pack
+        ("Тр-I120EW", "2", "шт"),
     ]
     first = line_answer(lines[0])
     assert first == {
@@ -35,8 +36,8 @@ def test_the_real_scan_gives_six_lines_in_metres_with_their_articles():
         "00-00042353", "00-00042352", "00-00042427", "00-00024027", "00-00026162", "00-00026163"]
     assert lines[3].name == "Маркировочная трубка термоусаживаемая МТ-2К 2,4/1,2 мм белая (в рулоне 200 м)"  # «- i акциза» gone
     assert lines[5].name == "Тр-I120EW Самоклеющаяся лента, 12мм*16м, белая"  # the customs number and «акциза 070» gone
-    assert (lines[4].packs, lines[4].pack, lines[4].invoice_quantity, lines[4].invoice_unit) == (
-        Decimal(2), "16 м", Decimal(2), "шт")
+    assert (lines[4].packs, lines[4].pack, lines[4].invoice_quantity, lines[4].invoice_unit) == (None, "", Decimal(2), "шт")
+    assert [line.number for line in lines] == ["1", "2", "3", "4", "5", "6"]
 
 
 def test_rows_stop_at_the_footer_and_take_a_form_without_the_supplier_code():
@@ -139,3 +140,35 @@ def test_snap_takes_the_known_spelling_by_key_first_source_wins():
     assert snap_articles(lines, []) == lines
     assert snap_key("SHR-O2V") == snap_key("SHR-02V")  # O next to a digit is a zero
     assert snap_key("ТВ-40 4 белая") != snap_key("ТВ-40 4 бе1ая")  # a word keeps its letters
+
+
+def test_a_pack_said_in_words_multiplies_a_size_form_does_not():
+    """Owner 26.10: «в рулоне 100 м» × 3 рулона = 300 м; «Тр-I090EW … 9мм*16м» 2 шт stays 2 шт."""
+    roll = item_line("Трубка МТ-2К 6,4/3,2мм белая (в рулоне 100 м)", Decimal(3), "шт")
+    assert (roll.quantity, roll.unit, roll.packs, roll.pack, roll.pack_kind) == (Decimal(300), "м", Decimal(3), "100 м",
+                                                                               "рул.")
+    tape = item_line("Тр-1090EW Самоклеющаяся лента, 9мм*16м, белая", Decimal(2), "шт", supplier_code="00-26162")
+    assert (tape.article, tape.quantity, tape.unit, tape.packs, tape.pack) == ("Тр-I090EW", Decimal(2), "шт", None, "")
+    assert tape.supplier_code == "00-26162"
+    coil = item_line("Кабель UTP 4x2x0,5 в бухте 305 м", Decimal(305), "м")
+    assert (coil.quantity, coil.unit, coil.packs) == (Decimal(305), "м", Decimal(1))
+    hashes = item_line("SXH-001T-P0.6##6000", Decimal(2), "шт")
+    assert (hashes.quantity, hashes.unit) == (Decimal(12000), "шт")
+    unread = item_line("Разъём XHP-4", None, "шт")
+    assert (unread.quantity, line_answer(unread)["quantity"]) == (None, "")
+
+
+@pytest.mark.parametrize(("text", "unit"), [
+    ("шт", "шт"), ("шт.", "шт"), ("м", "м"), ("упак", "упак"), ("796", "шт"), ("006", "м"), ("", "шт"),
+    ("компл.", "компл"), ("бобина", "бобина"),
+])
+def test_the_unit_a_model_read(text, unit):
+    assert unit_of(text) == unit
+
+
+@pytest.mark.parametrize(("text", "value"), [
+    ("3", Decimal(3)), ("3.000", Decimal("3.000")), ("1 000,000", Decimal("1000.000")), ("", None), ("—", None),
+    ("0", None),
+])
+def test_the_quantity_a_model_read(text, value):
+    assert quantity_of(text) == value

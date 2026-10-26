@@ -23,9 +23,9 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.database import build_engine, pool_options
-from app.modules.warehouse import scan_jobs_api
+from app.modules.warehouse import scan_recognition
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork, WarehouseReceiptFileRow
-from app.modules.warehouse.scan_jobs import DONE, ScanJob, ScanJobRow
+from app.modules.warehouse.scan_jobs import DONE, ScanJob, ScanJobRow, stored_result
 from app.shared import device_logs
 from app.shared.advisory_lock import advisory_lock, lock_key
 from app.shared.persistence import Base
@@ -110,8 +110,8 @@ def test_a_waiting_process_gets_the_lock_once_the_holder_leaves(two_processes):
 
 
 def test_a_scan_is_recognised_once_when_the_upload_and_the_poll_land_in_two_processes(two_processes, monkeypatch):
-    """The upload's background task runs in one API process, the screen's poll in another: OCR runs once, both get
-    the same answer, the answer is stored."""
+    """The upload's background task runs in one API process, the screen's poll restarts the reading in another: the
+    model (a paid call) reads once — the second process finds the lock taken and leaves; the answer is stored once."""
     first, second = two_processes
     file_id, job_id = uuid4(), uuid4()
     with first.begin() as connection:
@@ -123,23 +123,24 @@ def test_a_scan_is_recognised_once_when_the_upload_and_the_poll_land_in_two_proc
             file_id=file_id, error="", result=""))
     calls: list[int] = []
 
-    def slow_answer(_sources, link, _content, _kind):
+    def slow_reading(_uow_factory, _file_id, _config):
         calls.append(1)
-        time.sleep(0.4)  # OCR takes seconds: the other process arrives meanwhile
-        return {"scan_file": link, "recognised": {}, "lines": [], "note": f"ответ {len(calls)}"}
+        time.sleep(0.4)  # a model reads for seconds: the other process arrives meanwhile
+        return None
 
-    monkeypatch.setattr(scan_jobs_api, "scan_answer", slow_answer)
+    monkeypatch.setattr(scan_recognition, "file_reading", slow_reading)
+    monkeypatch.setattr(scan_recognition, "scan_answer",
+                        lambda _sources, link, _reading: {"scan_file": link, "recognised": {}, "lines": [], "note": "ответ"})
     factories = [
         (lambda sessions=sessionmaker(bind=engine, expire_on_commit=False): SqlAlchemyWarehouseUnitOfWork(sessions))
         for engine in (first, second)
     ]
     job = ScanJob(id=job_id, status=DONE, error="", file_id=file_id, result="", requested_by="Кладовщик")
-    answers: list[dict | None] = [None, None]
     start = threading.Barrier(2, timeout=10)
 
     def process(index: int) -> None:
         start.wait()
-        answers[index] = scan_jobs_api.job_result(factories[index], scan_jobs_api.ScanSources(), job)
+        scan_recognition.recognise_job(factories[index], scan_recognition.ScanSources(), job)
 
     threads = [threading.Thread(target=process, args=(index,)) for index in range(2)]
     for thread in threads:
@@ -147,13 +148,7 @@ def test_a_scan_is_recognised_once_when_the_upload_and_the_poll_land_in_two_proc
     for thread in threads:
         thread.join(10)
     assert len(calls) == 1
-    assert answers[0] is not None and answers[0] == answers[1]
-    assert answers[0]["note"] == "ответ 1"
-    with second.connect() as connection:
-        stored = connection.execute(select(ScanJobRow.result).where(ScanJobRow.id == job_id)).scalar_one()
-    assert json.loads(stored)["note"] == "ответ 1"
-
-
+    assert json.loads(stored_result(factories[1](), job_id))["note"] == "ответ"
 def test_each_api_process_takes_its_pool_size_from_the_environment(monkeypatch):
     monkeypatch.setenv("ERP_DB_POOL_SIZE", "7")
     monkeypatch.setenv("ERP_DB_MAX_OVERFLOW", "3")

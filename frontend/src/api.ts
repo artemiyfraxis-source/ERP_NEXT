@@ -482,6 +482,33 @@ export interface WarehouseScanJob {
   status: WarehouseScanJobStatus;
   error?: string;
   result?: WarehouseReceiptScan | null;
+  /** done, the УПД is being read in the background (a model takes 8–100 s) */
+  recognising?: boolean;
+  scan_file?: string;
+}
+
+/** «Распознавание УПД» (administrator): the key is write-only — only `key_hint` «sk-ib…AgnD» comes back. */
+export interface UpdLlmSettings {
+  base_url: string;
+  model: string;
+  fallback_model: string;
+  effort: string;
+  key_set: boolean;
+  key_hint: string;
+  env: string[];
+  defaults: { base_url: string; model: string; fallback_model: string; effort: string };
+  efforts: string[];
+  updated_at: string | null;
+  updated_by: string;
+}
+
+export interface UpdLlmSettingsInput {
+  base_url: string;
+  model: string;
+  fallback_model: string;
+  effort: string;
+  api_key?: string;
+  clear_key?: boolean;
 }
 
 export interface WarehouseReceiptScan {
@@ -3186,11 +3213,14 @@ export const warehouseApi = {
   scanReceipt: (file: File) => {
     const form = new FormData();
     form.append("file", file);
-    return api<WarehouseReceiptScan>("/api/stock/receipts/scan", { method: "POST", body: form });
+    return api<WarehouseScanJob>("/api/stock/receipts/scan", { method: "POST", body: form });
   },
   /** Скан со сканера ПК склада: задание, опрос, отмена. */
   mergeScans: (files: string[]) =>
-    api<WarehouseReceiptScan>("/api/stock/receipts/scan-merge", { method: "POST", body: JSON.stringify({ files }) }),
+    api<WarehouseScanJob>("/api/stock/receipts/scan-merge", { method: "POST", body: JSON.stringify({ files }) }),
+  updLlmSettings: () => api<UpdLlmSettings>("/api/stock/receipts/llm-settings"),
+  saveUpdLlmSettings: (fields: UpdLlmSettingsInput) =>
+    api<UpdLlmSettings>("/api/stock/receipts/llm-settings", { method: "PUT", body: JSON.stringify(fields) }),
   startScanJob: () => api<WarehouseScanJob>("/api/stock/receipts/scan-jobs", { method: "POST" }),
   scanJob: (id: string) => api<WarehouseScanJob>(`/api/stock/receipts/scan-jobs/${encodeURIComponent(id)}`),
   cancelScanJob: (id: string) => api<WarehouseScanJob>(`/api/stock/receipts/scan-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),

@@ -728,12 +728,12 @@ it("keeps the daily actions in the row and the reference tools behind «Ещё �
   expect(menu.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Стеллажи", "Типы", "Выгрузить", "Загрузить правки"]);
 });
 
-it("«Ещё ▾» holds «Журнал склада» too for the administrator", async () => {
+it("«Ещё ▾» holds «Журнал склада» and «Распознавание УПД» too for the administrator", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total: 1, truncated: 0, next_cursor: null }));
 
   render(<WarehousePage admin />);
   const menu = await openMore();
-  expect(menu.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Стеллажи", "Типы", "Выгрузить", "Загрузить правки", "Журнал склада"]);
+  expect(menu.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Стеллажи", "Типы", "Выгрузить", "Загрузить правки", "Журнал склада", "Распознавание УПД"]);
 });
 
 it("a menu item runs its action and closes the menu; Escape and a tap outside close it as well", async () => {

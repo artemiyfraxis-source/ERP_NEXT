@@ -4,6 +4,7 @@ import { urlParam } from "./navigation";
 import { SuggestInput } from "./SuggestInput";
 import { LotLabel, labelsApi } from "./LabelPrint";
 import { PrintSetupButton } from "./PrintSetupWindow";
+import { UpdRecognitionWindow } from "./UpdRecognitionWindow";
 import { usePurposeLabel } from "./purposeLabels";
 import { VIA_LABELS, purchasingItemsApi, type ItemBrief, type ItemRow } from "./purchasingItemsApi";
 import { useLatestSearch } from "./useLatestSearch";
@@ -103,6 +104,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "article", desc: false });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [panel, setPanel] = useState<"" | "types" | "import" | "journal" | "racks">("");
+  const [updSetup, setUpdSetup] = useState(false);
   // Type suggestions (SK-14): the dictionary + the canonical types already on the stock.
   const [typeChoices, setTypeChoices] = useState<string[]>([]);
   // WH-6: печатный «Лист перемещения на склад» для принятых партий без места — тот же механизм,
@@ -294,8 +296,12 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
               } },
               { label: "Загрузить правки", run: () => setPanel((value) => value === "import" ? "" : "import") },
             ]),
-            ...(admin ? [{ label: "Журнал склада", run: () => setPanel((value) => value === "journal" ? "" : "journal") }] : []),
+            ...(admin ? [
+              { label: "Журнал склада", run: () => setPanel((value) => value === "journal" ? "" : "journal") },
+              { label: "Распознавание УПД", run: () => setUpdSetup(true) },
+            ] : []),
           ]} />
+          {updSetup && <UpdRecognitionWindow close={() => setUpdSetup(false)} />}
           <PrintSetupButton kind="lot" readOnly={readOnly} />
           {!readOnly && <button className="primary" disabled={loading || Boolean(busy)} onClick={() => { if (adding) closeReceipt(); else setAdding(true); }}>+ Внести позиции</button>}
         </div>
