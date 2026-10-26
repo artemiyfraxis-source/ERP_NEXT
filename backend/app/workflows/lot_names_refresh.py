@@ -6,18 +6,25 @@ whatever the old warehouse wrote: often the article itself as the name, no type,
 
 * «Наим. по УПД» (`upd_name`) — where empty, the lot's current article («за наименование УПД взять сейчас артикул»);
   a filled one is never overwritten.
-* «Наименование» — replaced ONLY when it is not a human name: empty, the article itself (`word_search.article_key`:
-  case, separators, Latin/Cyrillic twins, Molex leading zeros aside), an «article@MAKER» / «article##6000» leftover,
-  or the article with the maker («JST XHP-4»). «BNC-male RG-174», «Клемма JST XH 2.54 мм, 4 pin, розетка» stay.
-* «Тип» — only where empty, and only a value of the stock's type dictionary (`receipt_llm.item_type_of`).
+* «Наименование» — replaced ONLY when it is not a human name: empty, LITERALLY the article (spaces trimmed and
+  collapsed; case and separators count — «SMA-female RG-58» for «SMA-Female RG-58» is the house style, owner after the
+  prod dry run 26.10), an «article@MAKER» / «article##6000» leftover, or the article with the maker («JST XHP-4»).
+  «BNC-male RG-174», «Клемма JST XH 2.54 мм, 4 pin, розетка» stay.
+* «Тип» — only where empty, and only a value of the stock's type dictionary (`receipt_llm.item_type_of`). Lugs and
+  ferrules (НШВ, НШВИ, НКИ, РПИ, ПМ…) get «Наконечник» — also over «Терминал» or an old «наконечник кольцевой /
+  втулочный», source «правило: наконечник» (owner 26.10.2026); crimp contacts of connectors stay «Терминал».
 * «Производитель» — only where empty (`normalize_maker`).
 
 Sources, as «Поставка» → article info fills a typed article (catalog > model > nothing, owner 26.10.2026): another lot
-of the same article (a human name, a type, a maker — the newest first), the maker written in the article
-(«XHP-4@JST»), the reference DB (`infer_article_identity`: series rules, БД.ТЕР, БД.КОАКС; then БД.ПРОВ / БД.МАТ names
-of `item_names.ReferenceNames`; БД.ТЕР makers; the maker a connector family's title names), the purchasing
-nomenclature; what is still missing — the model, ONE text call per batch of articles (`receipt_llm` settings: env, else «Склад» → «Распознавание УПД»). No key — the model
-part is skipped and said so. Article, quantities, places, ГРН and receipt links are never touched; no row is added.
+of the same article (our name — not a printed УПД line, not one with the article inside; a type, a maker — the newest
+first), the maker written in the article («XHP-4@JST»), the reference DB (`infer_article_identity`: series rules,
+connector families, БД.ТЕР, БД.КОАКС; then БД.ПРОВ / БД.МАТ names of `item_names.ReferenceNames`; БД.ТЕР makers; the
+maker a connector family's title names), then the purchasing nomenclature (a name with the article inside or without a
+series word is skipped); what is still missing — the model, ONE text call per batch of articles (`receipt_llm`
+settings: env, else «Склад» → «Распознавание УПД»), told the house style with real names of the stock as examples
+(`style_examples`); a vague answer (no series / mark word, the article inside, a pin count the article contradicts) is
+dropped — better empty than vague. No key — the model part is skipped and said so. Article, quantities, places, ГРН and
+receipt links are never touched; no row is added.
 
     deploy/erp.sh cli python -m app.workflows.lot_names_refresh --csv /app/data/import/lot-names.csv   # пробный прогон
     deploy/erp.sh cli python -m app.workflows.lot_names_refresh --apply --from /app/data/import/lot-names.csv
@@ -56,7 +63,7 @@ from app.modules.references.domain import TechOperationTab
 from app.modules.techcards.connector_housings import housing_of
 from app.modules.warehouse import receipt_llm
 from app.modules.warehouse.domain import UPD_NAME_LIMIT, StockLot
-from app.modules.warehouse.item_types import ITEM_TYPES_CANON, canonical_item_type
+from app.modules.warehouse.item_types import ITEM_TYPES_CANON, canonical_item_type, type_key
 from app.modules.warehouse.word_search import article_key
 from app.shared.article_maker import normalize_maker, split_article_maker
 from app.shared.clock import moscow_now
@@ -77,7 +84,39 @@ JOURNAL_COLUMNS = {"name": "НАИМЕНОВАНИЕ", "item_type": "ТИП", "m
 LIMITS = {"name": 1024, "item_type": 255, "manufacturer": 255, "upd_name": UPD_NAME_LIMIT}
 FILL_ONLY = ("item_type", "manufacturer", "upd_name")  # never overwritten: written only into an empty field
 CSV_COLUMNS = ("id", "склад", "ГРН", "пакет", "артикул", "поле", "было", "стало", "источник")
-DB, MODEL, ARTICLE = "база", "модель", "артикул"
+DB, MODEL, ARTICLE, RULE = "база", "модель", "артикул", "правило"
+
+# Lugs and ferrules are their own stock type «Наконечник», not «Терминал» (owner 26.10.2026: «тип наконечник, а не
+# терминал»); «Терминал» stays for the crimp contacts of connectors (JST, Molex…). The type is written even where the
+# lot holds «Терминал» or an old «наконечник кольцевой/втулочный» — the one overwrite of a filled type this tool does.
+# «Наконечник» is accepted here even before the stock dictionary lists it, so the order of the merges does not matter.
+LUG_TYPE = "Наконечник"
+LUG_SOURCE = f"{RULE}: наконечник"
+LUG_REPLACEABLE = frozenset({"терминал", "наконечник кольцевой", "наконечник втулочный", "наконечник"})
+# НШВ(И), НШКИ, НШП — ferrules; НКИ, НВИ, НИ, НК — ring / fork lugs; РПИ, РП — insulated disconnects and lugs; ПМ —
+# pin lugs; ТМЛ — copper tube lugs. Latin: RV / SV / RNB / SNB rings and forks, FDD / MDD disconnects, E0508 ferrules.
+_LUG_MARK = re.compile(
+    r"^(?:НШВИ?|НШКИ|НШП|НКИ|НВИ|НИ|НК|РПИ|РП|ПМ|ТМЛ)(?=[\s\-(.,]|\d|$)"
+    r"|^(?:RV|SV|RNB|SNB|FDD|MDD|FDFD|DBV)\s?-?\d"
+    r"|^E\d{4}(?:\b|-)",
+    re.IGNORECASE,
+)
+_LUG_WORD = re.compile(r"\bнаконечник", re.IGNORECASE)
+
+
+def is_lug(lot: StockLot) -> bool:
+    """A lug or ferrule by its mark at the start of the article (or of the name), the word «наконечник» in the name, or
+    an old «наконечник …» type."""
+    texts = (_plain(split_article_maker(lot.article).article), _plain(lot.name))
+    if any(_LUG_MARK.match(text) for text in texts if text):
+        return True
+    return bool(_LUG_WORD.search(_plain(lot.name)) or type_key(lot.item_type).startswith("наконечник"))
+
+
+def lug_type_change(lot: StockLot) -> bool:
+    """The lug rule rewrites the type: empty, «Терминал» or an old lug spelling → «Наконечник»; another type stays."""
+    current = type_key(lot.item_type)
+    return is_lug(lot) and lot.item_type != LUG_TYPE and (not current or current in LUG_REPLACEABLE)
 
 # The maker a connector family's title starts with («JST XH», «Molex Micro-Fit 3.0»): the family IS that maker's.
 HOUSING_MAKERS = frozenset({"molex", "jst", "hirose", "connfly", "te", "jae", "amass", "hsuan", "weipu", "cnlinko",
@@ -94,29 +133,76 @@ MODEL_BUDGET = 1800.0  # seconds for every call of a run: a CLI, not a request
 _EDGE = re.compile(r"^[\s(\[«\"',;:]+|[\s)\]»\"',;:.]+$")
 
 
-def _article_keys(article: str) -> set[str]:
-    bare = split_article_maker(article).article
-    return {key for key in (article_key(article), article_key(bare)) if key}
+def _plain(value: object) -> str:
+    return " ".join(str(value or "").split())
 
 
 def name_is_article(name: object, article: object, maker: object = "") -> bool:
-    """True when «Наименование» is not a human name: empty, the article (as `article_key` sees it), an
-    «article@MAKER» / «article##6000» leftover, or the article with the maker's word(s) around it."""
-    text = " ".join(str(name or "").split())
+    """True when «Наименование» is not a human name: empty, LITERALLY the article (spaces trimmed and collapsed —
+    case and separators count: «SMA-female RG-58» for the article «SMA-Female RG-58» is the house style, owner
+    26.10.2026), an «article@MAKER» / «article##6000» leftover, or the article with the maker's word(s) around it."""
+    text = _plain(name)
     if not text:
         return True
-    keys = _article_keys(str(article or ""))
-    if not keys:
+    article = _plain(article)
+    forms = {form for form in (article, _plain(split_article_maker(article).article)) if form}
+    if not forms:
         return False
     split = split_article_maker(text)
-    if article_key(text) in keys or article_key(split.article) in keys:
+    if text in forms or _plain(split.article) in forms:
         return True
     makers = {normalize_maker(value) for value in (maker, split.maker, split_article_maker(article).maker)} - {""}
     if not makers:
         return False
     words = [_EDGE.sub("", word) for word in re.split(r"[\s,;]+", split.article)]
     rest = [word for word in words if word and normalize_maker(word) not in makers]
-    return len(rest) < len(words) and bool(rest) and article_key(" ".join(rest)) in keys
+    return len(rest) < len(words) and bool(rest) and " ".join(rest) in forms
+
+
+def embeds_article(name: object, article: object) -> bool:
+    """«Соединитель I-DS1071-01-SCB02x10 (CONNFLY, BLD2)»: a name that carries the article inside is a supplier's
+    line, not our name (`article_key`, so separators and case aside). Only a code counts — no Cyrillic, at least 5
+    characters: «ПВАМ 0,35 красный» or «ТУТ 6/3 черный» is a description, and «Провод ПВАМ 0,35 мм² красный» our name."""
+    bare = split_article_maker(_plain(article)).article
+    key = article_key(bare)
+    return len(key) >= 5 and not re.search(r"[А-Яа-яЁё]", bare) and key in article_key(name)
+
+
+# The words that are no series: «Соединитель 20pin», «SMA male», «R/A».
+_NOT_SERIES = frozenset({"pin", "male", "female", "r/a", "awg", "mm", "smd", "dip", "pcb"})
+_UPPER_MARK = re.compile(r"^[А-ЯЁ][А-ЯЁ0-9\-/.]+$")
+
+
+def has_series_word(name: object, makers: Iterable[str] = ()) -> bool:
+    """A name says WHAT it is only with a series or mark word: Latin letters («XH», «RG-58», «C-Grid») or a Cyrillic
+    mark in capitals («ПВАМ», «ТУТ», «НВ-4»), a maker's name not counted. «Соединитель Molex», «Электрический
+    соединитель», «Соединитель, 20 контактов», «Кабель постоянного тока» have none."""
+    known = {normalize_maker(maker) for maker in makers if maker} | {item.upper() for item in HOUSING_MAKERS}
+    for raw in re.split(r"[\s,;()«»\"]+", _plain(name)):
+        word = raw.strip(".:")
+        if not word or normalize_maker(word) in known or re.sub(r"^\d+", "", word).casefold() in _NOT_SERIES:
+            continue
+        if re.search(r"[A-Za-z]", word) or _UPPER_MARK.match(word):
+            return True
+    return False
+
+
+# Pins written in the article: JST «02SUR-32S», «04SR-3S» (the leading digits); «XHP-4», «PHR-2», «PLS-40» (letters, dash,
+# the count — nothing after it).
+_PINS_LEADING = re.compile(r"^0?(\d{1,2})[A-Z]{2,}", re.IGNORECASE)
+_PINS_TRAILING = re.compile(r"^[A-Z]{2,5}-(\d{1,2})$", re.IGNORECASE)
+_PINS_IN_NAME = re.compile(r"(\d{1,3})\s*(?:pin|-?\s*конт)", re.IGNORECASE)
+
+
+def article_pins(article: object) -> int | None:
+    text = _plain(split_article_maker(_plain(article)).article)
+    found = _PINS_LEADING.match(text) or _PINS_TRAILING.match(text)
+    return int(found[1]) if found and int(found[1]) > 0 else None
+
+
+def name_pins(name: object) -> int | None:
+    found = _PINS_IN_NAME.search(_plain(name))
+    return int(found[1]) if found else None
 
 
 # ── Sources ────────────────────────────────────────────────────────────────────────────────────────
@@ -183,11 +269,32 @@ class Catalog:
         item = self.purchasing(article) if self.purchasing is not None else None
         if item:
             for name in ("name", "item_type", "manufacturer"):
-                put(name, item.get(name), f"{DB}: номенклатура закупок")
+                value = item.get(name)
+                # A nomenclature name is the buyer's or the supplier's line: «Соединитель I-DS1071-01-SCB02x10 (CONNFLY,
+                # BLD2)» carries the article, «Кабель постоянного тока» says nothing — neither is our name.
+                if name == "name" and (embeds_article(value, article)
+                                       or not has_series_word(value, [item.get("manufacturer") or ""])):
+                    continue
+                put(name, value, f"{DB}: номенклатура закупок")
         return found
 
 
 Model = Callable[[list[dict]], list[dict] | None]
+
+
+def model_name(value: object, article: str, makers: Iterable[object] = ()) -> str:
+    """The model's short name, or «» when it is unsure in disguise (owner 26.10.2026: better empty than vague): the
+    article itself or with it inside, no series / mark word («Соединитель Molex», «Электрический соединитель»), or a
+    pin count other than the one the article encodes (02SUR-32S is a 2-pin SUR housing, not 32)."""
+    name = _plain(value)
+    if not name or name_is_article(name, article) or embeds_article(name, article):
+        return ""
+    if not has_series_word(name, [str(maker or "") for maker in makers]):
+        return ""
+    pins, said = article_pins(article), name_pins(name)
+    if pins is not None and said is not None and pins != said:
+        return ""
+    return name
 
 
 # ── The plan ───────────────────────────────────────────────────────────────────────────────────────
@@ -227,7 +334,9 @@ def _sibling(lots: Sequence[StockLot], name: str, types: Sequence[str]) -> Found
         value = " ".join(str(getattr(lot, name) or "").split())
         if not value:
             continue
-        if name == "name" and name_is_article(value, lot.article, lot.manufacturer):
+        # Only our names travel to the other lots: not the article, not a printed УПД line kept as the name.
+        if name == "name" and (name_is_article(value, lot.article, lot.manufacturer)
+                               or embeds_article(value, lot.article) or value == _plain(lot.upd_name)):
             continue
         if name == "item_type":
             value = receipt_llm.item_type_of(canonical_item_type(value), types)
@@ -279,7 +388,7 @@ def plan_changes(
         article = split_article_maker(_newest_first(group)[0].article).article
         needs = {
             "name": any(name_is_article(lot.name, lot.article, lot.manufacturer) for lot in group),
-            "item_type": any(not lot.item_type.strip() for lot in group),
+            "item_type": any(not lot.item_type.strip() and not is_lug(lot) for lot in group),
             "manufacturer": any(not lot.manufacturer.strip() for lot in group),
         }
         if not any(needs.values()):
@@ -308,8 +417,8 @@ def plan_changes(
                 continue
             answered += 1
             known = wanted[key]
-            short = " ".join(str(answer.get("short_name") or "").split())
-            if "name" not in known and short and not name_is_article(short, row["article"], row["maker"]):
+            short = model_name(answer.get("short_name"), row["article"], [row["maker"], answer.get("manufacturer")])
+            if "name" not in known and short:
                 known["name"] = Found(short[:LIMITS["name"]], MODEL)
             kind = receipt_llm.item_type_of(answer.get("item_type"), types)
             if "item_type" not in known and kind:
@@ -330,9 +439,12 @@ def plan_changes(
 
         if name_is_article(lot.name, lot.article, lot.manufacturer) and "name" in known:
             change("name", known["name"].value, known["name"].source)
-        for name in ("item_type", "manufacturer"):
-            if not str(getattr(lot, name) or "").strip() and name in known:
-                change(name, known[name].value, known[name].source)
+        if lug_type_change(lot):
+            change("item_type", LUG_TYPE, LUG_SOURCE)
+        elif not lot.item_type.strip() and not is_lug(lot) and "item_type" in known:
+            change("item_type", known["item_type"].value, known["item_type"].source)
+        if not lot.manufacturer.strip() and "manufacturer" in known:
+            change("manufacturer", known["manufacturer"].value, known["manufacturer"].source)
         if not lot.upd_name.strip():
             change("upd_name", " ".join(lot.article.split())[:LIMITS["upd_name"]], ARTICLE)
     return Plan(lots=len(lots), changes=tuple(changes), model_note=note)
@@ -341,7 +453,63 @@ def plan_changes(
 # ── The model ──────────────────────────────────────────────────────────────────────────────────────
 
 
-def describe_prompt(rows: Sequence[Mapping[str, str]], types: Sequence[str] = ITEM_TYPES_CANON) -> str:
+# The house style of «Наименование» (owner 26.10.2026), what the model is told to follow.
+STYLE_RULES = (
+    "Формат наименования — как на нашем складе, коротко, без артикула, без производителя (кроме названия серии), "
+    "без слов «Соединитель», «Разъём», «электрический»:\n"
+    "- соединитель (корпус, разъём, колодка): «<серия> <N>pin (однорядный|двухрядный)»; «розетка»/«вилка» и "
+    "«угловая на плату» — только если уверен: «XH розетка 4pin (однорядный)», «C-Grid III 10pin (двухрядный)», "
+    "«CNLINKO LP-12 2pin»;\n"
+    "- коаксиальный соединитель: «<серия>-<male|female>[ R/A] <кабель>»: «SMA-female RG-58», «BNC-male RG-174», "
+    "«2.92mm-male RG-405»;\n"
+    "- контакт (терминал): «Контакт <серия> <Female|Male>»: «Контакт XH Female»;\n"
+    "- провод: «Провод <марка> <сечение> мм² <цвет>»: «Провод ПВАМ 0,35 мм² красный»;\n"
+    "- термоусадочная трубка: «Трубка <марка> <D/d> <цвет>».\n"
+    "Число контактов бери из артикула, где оно в нём закодировано (02SUR-32S — 2 контакта, серия SUR; XHP-4 — 4). "
+    "Не знаешь серию (и у соединителя — число контактов) — short_name пустая строка: лучше пусто, чем общее "
+    "«Соединитель Molex» или «Соединитель, 20 контактов»."
+)
+STYLE_PER_TYPE = 6
+STYLE_TOTAL = 40
+STYLE_LENGTH = 48
+
+
+def style_examples(lots: Iterable[StockLot], types: Sequence[str] = ITEM_TYPES_CANON) -> dict[str, list[str]]:
+    """Real human names of the stock by dictionary type — the pattern the model follows: not the article, not with the
+    article inside, not a printed УПД line, short; the most used first. At most STYLE_PER_TYPE per type, STYLE_TOTAL."""
+    counts: dict[str, dict[str, int]] = {}
+    for lot in lots:
+        name = _plain(lot.name)
+        kind = receipt_llm.item_type_of(canonical_item_type(lot.item_type), types)
+        if (not kind or not name or len(name) > STYLE_LENGTH or name == _plain(lot.upd_name)
+                or (is_lug(lot) and kind != LUG_TYPE)  # a lug filed as «Терминал» is no example of a terminal
+                or name_is_article(name, lot.article, lot.manufacturer) or embeds_article(name, lot.article)
+                or not has_series_word(name, [lot.manufacturer])):
+            continue
+        counts.setdefault(kind, {})
+        counts[kind][name] = counts[kind].get(name, 0) + 1
+    examples: dict[str, list[str]] = {}
+    left = STYLE_TOTAL
+    for kind in types:
+        names = sorted(counts.get(kind, {}).items(), key=lambda item: (-item[1], len(item[0]), item[0]))
+        chosen = [name for name, _ in names[:min(STYLE_PER_TYPE, left)]]
+        if chosen:
+            examples[kind] = chosen
+            left -= len(chosen)
+    return examples
+
+
+def lot_fields(types: Sequence[str]) -> str:
+    listed = "; ".join(f"«{item}»" for item in types if str(item).strip()) or "—"
+    return (
+        '"maker": "производитель, если знаешь; иначе пусто", '
+        f'"item_type": "ровно одно из: {listed}; если не уверен — пусто", '
+        '"short_name": "наше наименование по формату ниже; не уверен — пусто"'
+    )
+
+
+def describe_prompt(rows: Sequence[Mapping[str, str]], types: Sequence[str] = ITEM_TYPES_CANON,
+                    examples: Mapping[str, Sequence[str]] | None = None) -> str:
     lines = []
     for index, row in enumerate(rows, start=1):
         parts = [f"артикул: {row.get('article', '')}"]
@@ -350,18 +518,21 @@ def describe_prompt(rows: Sequence[Mapping[str, str]], types: Sequence[str] = IT
             if str(row.get(name) or "").strip():
                 parts.append(f"{label}: {row[name]}")
         lines.append(f"{index}. " + "; ".join(parts))
+    shown = "\n".join(f"- {kind}: " + "; ".join(f"«{name}»" for name in names)
+                      for kind, names in (examples or {}).items() if names)
     return (
         "Это позиции склада производства жгутов и кабельных сборок: артикул производителя и что о позиции известно. "
-        'Для каждой строки верни ТОЛЬКО JSON без пояснений: {"lines": [{"n": номер строки, '
-        + receipt_llm.item_fields(types) + "}]} "
-        "Все строки, в их порядке. Наименование составь по артикулу и известным данным, если знаешь эту деталь "
-        "(вид изделия, серия, число контактов, сечение, пол); не знаешь — пусто, не выдумывай.\n" + "\n".join(lines)
+        'Для каждой строки верни ТОЛЬКО JSON без пояснений: {"lines": [{"n": номер строки, ' + lot_fields(types)
+        + "}]} Все строки, в их порядке; не выдумывай.\n" + STYLE_RULES + "\n"
+        + (f"Так названы позиции на нашем складе сейчас — пиши в том же стиле:\n{shown}\n" if shown else "")
+        + "Позиции:\n" + "\n".join(lines)
     )
 
 
 def _model_batch(config: receipt_llm.LlmConfig, rows: Sequence[Mapping[str, str]], types: Sequence[str],
-                 deadline: float, clock: Callable[[], float]) -> list[dict] | None:
-    messages = [{"role": "user", "content": describe_prompt(rows, types)}]
+                 examples: Mapping[str, Sequence[str]], deadline: float,
+                 clock: Callable[[], float]) -> list[dict] | None:
+    messages = [{"role": "user", "content": describe_prompt(rows, types, examples)}]
     options: dict[str, object] = {"temperature": 0, "response_format": {"type": "json_object"},
                                   "reasoning_effort": "low"}
     for model in config.models():
@@ -383,14 +554,18 @@ def _model_batch(config: receipt_llm.LlmConfig, rows: Sequence[Mapping[str, str]
 
 
 def model_reader(config: receipt_llm.LlmConfig, types: Sequence[str],
+                 examples: Mapping[str, Sequence[str]] | None = None,
                  clock: Callable[[], float] = time.monotonic) -> Model:
-    """The text model over the articles, MODEL_BATCH per call, MODEL_PARALLEL calls at once, MODEL_BUDGET for the run.
-    A batch no model answered gives {} rows (nothing is filled from it)."""
+    """The text model over the articles, MODEL_BATCH per call, MODEL_PARALLEL calls at once, MODEL_BUDGET for the run;
+    every call carries the house style and `examples` (`style_examples`). A batch no model answered gives {} rows."""
+    examples = dict(examples or {})
+
     def read(rows: list[dict]) -> list[dict]:
         deadline = clock() + MODEL_BUDGET
         batches = [rows[start:start + MODEL_BATCH] for start in range(0, len(rows), MODEL_BATCH)]
         with ThreadPoolExecutor(max_workers=MODEL_PARALLEL, thread_name_prefix="lot-names") as pool:
-            answers = list(pool.map(lambda batch: _model_batch(config, batch, types, deadline, clock), batches))
+            answers = list(pool.map(
+                lambda batch: _model_batch(config, batch, types, examples, deadline, clock), batches))
         return [item for batch, answer in zip(batches, answers) for item in (answer or [{} for _ in batch])]
 
     return read
@@ -412,7 +587,7 @@ def format_report(plan: Plan) -> str:
     lots = len({item.lot_id for item in plan.changes})
     by_field = ", ".join(f"{label} {sum(item.field == name for item in plan.changes)}" for name, label in FIELDS.items())
     by_source = ", ".join(f"{kind} {sum(_source_kind(item.source) == kind for item in plan.changes)}"
-                          for kind in (DB, MODEL, ARTICLE))
+                          for kind in (DB, MODEL, ARTICLE, RULE))
     lines.append(f"Итого: партий просмотрено {plan.lots}, меняется {lots}; изменений {len(plan.changes)} "
                  f"({by_field}); источник: {by_source}")
     if plan.model_note:
@@ -473,7 +648,9 @@ class ApplyResult:
 def _checked(change: Change, types: Sequence[str]) -> tuple[str, str]:
     """(value to write, '') or ('', why not): the dictionary type, the field width, a name never emptied."""
     value = " ".join(change.now.split()) if change.field != "upd_name" else change.now.strip()
-    if change.field == "item_type" and value:
+    if change.field == "item_type" and type_key(value) == type_key(LUG_TYPE):
+        value = LUG_TYPE  # the lug rule's type, whether the dictionary lists it yet or not
+    elif change.field == "item_type" and value:
         value = receipt_llm.item_type_of(canonical_item_type(value), types)
         if not value:
             return "", f"тип «{change.now}» не из справочника типов склада"
@@ -519,7 +696,9 @@ def apply_changes(
                         if why:
                             skipped.append(Skipped(item, why))
                             continue
-                        if item.field in FILL_ONLY and current.strip():
+                        lug = (item.field == "item_type" and target == LUG_TYPE
+                               and type_key(current) in LUG_REPLACEABLE - {type_key(LUG_TYPE)})
+                        if item.field in FILL_ONLY and current.strip() and not lug:
                             if current == target:
                                 already += 1
                             else:
@@ -621,18 +800,18 @@ def main(argv: list[str] | None = None) -> int:
         purchasing = build_purchasing_uow_factory(engine)
         catalog = Catalog(reference_records(build_references_uow_factory(engine)),
                           lambda article: purchasing_item(purchasing, article))
+        with warehouse() as uow:
+            lots = uow.warehouse.every()
         model: Model | None = None
         if args.no_model:
             print("Модель не спрашиваем (--no-model): только база.", file=sys.stderr)
         else:
             config = llm_config(warehouse)
             if config.ready:
-                model = model_reader(config, types)
+                model = model_reader(config, types, style_examples(lots, types))
             else:
                 print("Ключ модели не задан (ERP_UPD_LLM_API_KEY или «Склад» → «Распознавание УПД»): "
                       "модельная часть пропущена, только база.", file=sys.stderr)
-        with warehouse() as uow:
-            lots = uow.warehouse.every()
         plan = plan_changes(lots, catalog, types, model)
     finally:
         engine.dispose()

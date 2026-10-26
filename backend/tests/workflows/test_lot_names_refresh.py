@@ -43,9 +43,14 @@ def _lot(grn: str, article: str, name: str, **extra) -> StockLot:
 @pytest.mark.parametrize(("name", "article", "maker", "expected"), [
     ("", "XHP-4", "", True),
     ("XHP-4", "XHP-4", "", True),
-    ("xhp 4", "XHP-4", "", True),  # case and separators
-    ("ХНР-4", "XHP-4", "", True),  # Cyrillic twins
-    ("0430250600", "43025-0600", "", True),  # Molex leading zero
+    ("PLS-4", "PLS-4", "", True),
+    ("  PLS-4 ", "PLS-4", "", True),  # spaces trimmed
+    ("SMA  Female", "SMA Female", "", True),  # and collapsed
+    # Only LITERALLY the article (owner after the prod dry run 26.10): case or separators differ — the house style.
+    ("SMA-female RG-58", "SMA-Female RG-58", "", False),
+    ("MCX-male R/A RG-316/RG-174", "MCX-Male R/A RG-316/RG-174", "", False),
+    ("xhp 4", "XHP-4", "", False),
+    ("0430250600", "43025-0600", "", False),
     ("XHP-4@JST", "XHP-4", "", True),  # «article@MAKER» leftover
     ("XHP-4##6000", "XHP-4", "", True),
     ("JST XHP-4", "XHP-4", "JST", True),  # article + maker
@@ -71,9 +76,9 @@ def test_plan_fills_only_what_the_rules_allow():
         _lot("G2", "BNC-M174", "BNC-male RG-174", item_type="Коаксиальный соединитель"),  # human name, type kept
         _lot("G3", "TEST-1", "Своё наименование", item_type="Кабель", manufacturer="MOLEX", upd_name="Как в УПД"),
         _lot("G4", "PBS10B", ""),  # the reference type «Кнопка» is not in the dictionary
-        _lot("G5", "TEST-2", "test 2"),  # known to the purchasing nomenclature only
+        _lot("G5", "TEST-2", "TEST-2"),  # known to the purchasing nomenclature only
     ]
-    item = {"name": "Датчик холла", "item_type": "микросхема", "manufacturer": "Allegro"}
+    item = {"name": "Датчик холла A1324", "item_type": "микросхема", "manufacturer": "Allegro"}
     plan = plan_changes(lots, Catalog(purchasing=lambda article: item if article == "TEST-2" else None))
     by = _by(plan)
     assert by[("G1", "name")] == ("XHP-4", "XH 4pin (однорядный)", "база: семейство корпуса")
@@ -85,7 +90,7 @@ def test_plan_fills_only_what_the_rules_allow():
     assert not any(grn == "G3" for grn, _ in by)  # everything filled: nothing to do
     assert by[("G4", "name")][1] == "Кнопка PBS-10B без фиксации"
     assert ("G4", "item_type") not in by  # «Кнопка» is no stock type: left for the storekeeper
-    assert by[("G5", "name")] == ("test 2", "Датчик холла", "база: номенклатура закупок")
+    assert by[("G5", "name")] == ("TEST-2", "Датчик холла A1324", "база: номенклатура закупок")
     assert by[("G5", "item_type")][1] == "Микросхема"  # spelled as the dictionary has it
     assert by[("G5", "manufacturer")][1] == "ALLEGRO"
     assert "модель не спрашивали" in plan.model_note
@@ -137,6 +142,115 @@ def test_the_model_type_must_be_a_dictionary_type_and_its_name_a_human_one():
     model = FakeModel({"short_name": "ZZ-500", "item_type": "Кнопка", "manufacturer": ""})
     by = _by(plan_changes([_lot("G1", "ZZ-500", "")], Catalog(), model=model))
     assert set(by) == {("G1", "upd_name")}
+
+
+# ── after the prod dry run (owner 26.10.2026) ──────────────────────────────────────────────────────
+
+
+def test_a_name_differing_from_the_article_by_case_or_separators_is_kept():
+    answers = {"PLS-4": "PLS 4pin (однорядный)"}
+
+    def model(rows):
+        return [{"short_name": answers.get(row["article"], "SMA гнездовой для RG-58"),
+                 "item_type": "Коаксиальный соединитель", "manufacturer": ""} for row in rows]
+
+    lots = [
+        _lot("G1", "SMA-Female RG-58", "SMA-female RG-58"),
+        _lot("G2", "MCX-Male R/A RG-316/RG-174", "MCX-male R/A RG-316/RG-174", item_type="Коаксиальный соединитель"),
+        _lot("G3", "PLS-4", "PLS-4", item_type="Соединитель", manufacturer="CONNFLY"),
+    ]
+    by = _by(plan_changes(lots, Catalog(), model=model))
+    assert ("G1", "name") not in by and ("G2", "name") not in by  # the house style stays
+    assert by[("G1", "item_type")][1] == "Коаксиальный соединитель"  # what was empty is still filled
+    assert by[("G3", "name")] == ("PLS-4", "PLS 4pin (однорядный)", "модель")  # literally the article: replaced
+
+
+@pytest.mark.parametrize(("answer", "article", "kept"), [
+    ("Соединитель Molex", "5025780600", False),
+    ("Электрический соединитель", "QQ-9000", False),
+    ("Соединитель, 20 контактов", "QQ-9000", False),
+    ("Соединитель CONNFLY", "QQ-9000", False),
+    ("Кабель постоянного тока", "QQ-9000", False),
+    ("SUR 32pin (однорядный)", "02SUR-32S", False),  # the article says 2 pins
+    ("Соединитель JST SUR, 32-контактный", "02SUR-32S", False),
+    ("SUR 2pin (однорядный)", "02SUR-32S", True),
+    ("BLD 10pin (двухрядный)", "I-DS1071-01-SCB02x10", True),
+    ("Колодка I-DS1071-01-SCB02x10 (BLD)", "I-DS1071-01-SCB02x10", False),  # the article inside
+    ("Провод ПВАМ 0,35 мм² красный", "ПВАМ 0,35 красный", True),  # a Cyrillic mark is a series word
+    ("Трубка ТУТ 6/3 чёрный", "ТУТ 6/3 ч", True),
+    ("SMA-female RG-58", "SMA-KWE", True),
+])
+def test_a_vague_model_name_is_dropped(answer, article, kept):
+    assert flow.model_name(answer, article, ["MOLEX", "JST"]) == (answer if kept else "")
+
+
+def test_a_vague_model_answer_leaves_the_name_as_it_was():
+    model = FakeModel({"short_name": "Соединитель Molex", "item_type": "Соединитель", "manufacturer": "Molex"})
+    by = _by(plan_changes([_lot("G1", "QQ-9000", "QQ-9000")], Catalog(), model=model))
+    assert ("G1", "name") not in by
+    assert by[("G1", "item_type")][1:] == ("Соединитель", "модель")  # type and maker answers are kept
+    assert by[("G1", "manufacturer")][1:] == ("MOLEX", "модель")
+
+
+def test_the_family_goes_before_the_nomenclature_and_a_nomenclature_name_with_the_article_is_skipped():
+    names = {
+        "XHP-4": "Корпус разъёма JST XHP 4 конт.",
+        "I-DS1071-01-SCB02x10": "Соединитель I-DS1071-01-SCB02x10 (CONNFLY, BLD2)",
+        "I-DS1071-01-SCB02x8": "Соединитель I-DS1071-01-SCB02x8 (CONNFLY, BLD2)",
+    }
+    catalog = Catalog(purchasing=lambda article: {"name": names.get(article, ""), "manufacturer": "CONNFLY"})
+    lots =[_lot("G1", "XHP-4", "XHP-4"), _lot("G2", "I-DS1071-01-SCB02x10", "I-DS1071-01-SCB02x10"),
+            _lot("G3", "I-DS1071-01-SCB02x8", "I-DS1071-01-SCB02x8")]
+    answers = {"I-DS1071-01-SCB02x10": "BLD 10pin (двухрядный)", "I-DS1071-01-SCB02x8": "BLD 8pin (двухрядный)"}
+
+    def styled(rows):
+        return [{"short_name": answers.get(row["article"], ""), "item_type": "Соединитель", "manufacturer": ""}
+                for row in rows]
+
+    by = _by(plan_changes(lots, catalog, model=styled))
+    assert by[("G1", "name")][1:] == ("XH 4pin (однорядный)", "база: семейство корпуса")
+    # Both BLD siblings in ONE style — the model's, told the house style; the nomenclature lines are not names.
+    assert by[("G2", "name")][1:] == ("BLD 10pin (двухрядный)", "модель")
+    assert by[("G3", "name")][1:] == ("BLD 8pin (двухрядный)", "модель")
+
+
+def test_style_examples_are_the_stocks_own_human_names_by_type():
+    lots = [
+        _lot("G1", "XHP-4", "XH розетка 4pin (однорядный)", item_type="Соединитель"),
+        _lot("G2", "XHP-4", "XH розетка 4pin (однорядный)", item_type="Соединитель"),
+        _lot("G3", "BNC-M174", "BNC-male RG-174", item_type="Коаксиальный соединитель"),
+        _lot("G4", "SXH-001T-P0.6", "Контакт XH Female", item_type="Терминал"),
+        _lot("G5", "PLS-4", "PLS-4", item_type="Соединитель"),  # the article: no example
+        _lot("G6", "ZZ-1000", "Вилка ZZ-1000 на кабель", item_type="Соединитель"),  # the article inside
+        _lot("G7", "QQ-2", "Колодка QQ 2 конт. ООО Ромашка", item_type="Соединитель",
+             upd_name="Колодка QQ 2 конт. ООО Ромашка"),  # a printed УПД line
+        _lot("G8", "QQ-3", "Электрический соединитель", item_type="Соединитель"),  # no series word
+        _lot("G9", "QQ-4", "Нечто", item_type="Кнопка"),  # no stock type
+    ]
+    examples = flow.style_examples(lots)
+    assert examples == {
+        "Коаксиальный соединитель": ["BNC-male RG-174"],
+        "Соединитель": ["XH розетка 4pin (однорядный)"],
+        "Терминал": ["Контакт XH Female"],
+    }
+    prompt = flow.describe_prompt([{"article": "02SUR-32S"}], examples=examples)
+    assert "«XH розетка 4pin (однорядный)»" in prompt and "«Контакт XH Female»" in prompt
+    assert "<серия>-<male|female>[ R/A] <кабель>" in prompt and "Провод <марка> <сечение> мм² <цвет>" in prompt
+    assert "02SUR-32S — 2 контакта" in prompt
+
+
+def test_every_model_call_carries_the_house_style_and_the_examples(monkeypatch):
+    sent: list[str] = []
+
+    def complete(config, model, messages, options, timeout):
+        sent.append(messages[0]["content"])
+        return {"choices": [{"message": {"content": '{"lines": [{"n": 1, "short_name": "SUR 2pin (однорядный)"}]}'}}]}
+
+    monkeypatch.setattr(flow.receipt_llm, "complete", complete)
+    config = flow.receipt_llm.LlmConfig(api_key="sk-test-key-0000000000")
+    read = flow.model_reader(config, list(flow.ITEM_TYPES_CANON), {"Соединитель": ["XH розетка 4pin (однорядный)"]})
+    assert read([{"article": "02SUR-32S"}])[0]["short_name"] == "SUR 2pin (однорядный)"
+    assert len(sent) == 1 and "«XH розетка 4pin (однорядный)»" in sent[0] and flow.STYLE_RULES in sent[0]
 
 
 # ── apply from the reviewed CSV ───────────────────────────────────────────────────────────────────
@@ -272,7 +386,7 @@ def test_cli_dry_run_writes_the_csv_and_apply_never_calls_the_model(tmp_path, mo
     monkeypatch.setenv("ERP_DATABASE_URL", f"sqlite:///{database}")
     monkeypatch.setenv("ERP_UPD_LLM_API_KEY", "sk-test-key-0000000000")
     model = FakeModel({"short_name": "Колодка ZZ", "item_type": "Соединитель", "manufacturer": ""})
-    monkeypatch.setattr(flow, "model_reader", lambda config, types: model)
+    monkeypatch.setattr(flow, "model_reader", lambda config, types, examples=None: model)
     path = tmp_path / "out.csv"
 
     assert flow.main(["--csv", str(path)]) == 0
@@ -305,3 +419,61 @@ def test_without_a_key_the_model_part_is_skipped_with_a_message(tmp_path, monkey
     monkeypatch.delenv("ERP_UPD_LLM_API_KEY", raising=False)
     assert flow.main([]) == 0
     assert "модельная часть пропущена" in capsys.readouterr().err
+
+
+# ── lugs are «Наконечник», not «Терминал» (owner 26.10.2026) ───────────────────────────────────────
+
+
+@pytest.mark.parametrize(("article", "name", "lug"), [
+    ("НШВИ 0,5-8", "НШВИ 0,5-8", True),
+    ("НШВ 1,5-8", "", True),
+    ("НКИ 1,5-4", "НКИ 1,5-4", True),
+    ("РПИ-П 1,5-4", "", True),
+    ("ПМ 1,5", "", True),
+    ("ТМЛ 16-8-6", "", True),
+    ("RV1.25-4", "", True),
+    ("E0508", "", True),
+    ("QQ-1", "Наконечник кольцевой 4 мм", True),
+    ("SXH-001T-P0.6", "Контакт XH Female", False),  # a connector's crimp contact stays «Терминал»
+    ("SYM-001T-P0.6", "SYM-001T-P0.6", False),
+    ("НВ-4 0,2 белый", "Провод НВ-4 0,20 мм² белый", False),  # НВ-4 is a wire, not НВИ
+    ("ПМВ 0,5", "", False),
+])
+def test_lugs_are_told_by_their_mark(article, name, lug):
+    assert flow.is_lug(_lot("G1", article, name)) is lug
+
+
+def test_lugs_get_the_lug_type_even_over_terminal_and_old_spellings():
+    lots = [
+        _lot("G1", "НШВИ 0,5-8", "НШВИ 0,5-8"),
+        _lot("G2", "НКИ 1,5-4", "Наконечник НКИ 1,5-4", item_type="Терминал"),
+        _lot("G3", "РПИ-К 1,5-4", "РПИ-К 1,5-4", item_type="наконечник кольцевой"),
+        _lot("G4", "НШВ 1,5-8", "НШВ 1,5-8", item_type="Наконечник втулочный"),
+        _lot("G5", "SXH-001T-P0.6", "Контакт XH Female", item_type="Терминал"),  # a contact: untouched
+        _lot("G6", "НШВИ 1,0-8", "НШВИ 1,0-8", item_type="Наконечник"),  # already right
+        _lot("G7", "НШВИ 2,5-8", "НШВИ 2,5-8", item_type="Лента"),  # another filled type is not ours to change
+    ]
+    model = FakeModel({"short_name": "", "item_type": "Терминал", "manufacturer": ""})
+    by = _by(plan_changes(lots, Catalog(), model=model))
+    for grn, was in (("G1", ""), ("G2", "Терминал"), ("G3", "наконечник кольцевой"), ("G4", "Наконечник втулочный")):
+        assert by[(grn, "item_type")] == (was, "Наконечник", "правило: наконечник")
+    assert ("G5", "item_type") not in by and ("G6", "item_type") not in by and ("G7", "item_type") not in by
+
+
+def test_the_lug_type_is_applied_over_terminal_though_the_dictionary_lacks_it(stock):
+    factory, sessions = stock
+    with factory() as uow:
+        uow.warehouse.add(_lot("L1", "НКИ 1,5-4", "НКИ 1,5-4", item_type="Терминал"))
+        uow.warehouse.add(_lot("L2", "SXH-001T-P0.6", "Контакт XH Female", item_type="Терминал"))
+        uow.commit()
+    lots = _lots(factory)
+    plan = plan_changes([lots["L1"], lots["L2"]], Catalog())
+    types = [kind for kind in flow.ITEM_TYPES_CANON if kind != "Наконечник"]  # the dictionary before its PR
+    forced = flow.Change(lots["L2"].id, "ЦАР", "L2", "", "SXH-001T-P0.6", "item_type", "", "Соединитель", "модель")
+    result = apply_changes([*plan.changes, forced], factory, ACTOR, NOW, types)
+    after = _lots(factory)
+    assert after["L1"].item_type == "Наконечник"
+    assert after["L2"].item_type == "Терминал"  # the fill-only guard holds for everything but the lug rule
+    assert [item.change.grn for item in result.skipped] == ["L2"]
+    apply_changes(plan.changes, factory, ACTOR, NOW, types, revert=True)
+    assert _lots(factory)["L1"].item_type == "Терминал"
