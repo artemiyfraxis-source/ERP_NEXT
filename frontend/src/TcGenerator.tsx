@@ -124,7 +124,7 @@ import {
 import { setCustomColors } from "./wireColors";
 import { GEN_STATE_KEY, genSnapshot, restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
-import { assignPinJoined, joinSplice, leaveJoin, setTail } from "./tcGenSplices";
+import { assignPinJoined, joinSplice, leaveJoin, renameSplice, setTail } from "./tcGenSplices";
 import { PinoutTable } from "./PinoutTable";
 import { WrapTable } from "./WrapTable";
 import { applyEnd, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
@@ -1491,6 +1491,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onLength={(idx, mm) => update((current) => updateWire(current, idx, { length: mm }))}
         onLabel={(epId, label) => update((current) => updateEndpoint(D, current, epId, { label }))}
         onSplit={(end) => update((current) => leaveJoin(D, current, end))}
+        onRenameSplice={(id, name) => update((current) => renameSplice(current, id, name))}
         onRemoveSplice={(id) => update((current) => (current.splices || []).find((sp) => sp.id === id)?.ends.reduce((acc, end) => leaveJoin(D, acc, end), current) ?? current)} />
     </section>}
     {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">

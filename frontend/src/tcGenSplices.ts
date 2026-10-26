@@ -9,12 +9,19 @@
  * генератора как «Сростки» по числу проводов в каждом (S.spl), хвост — как свободный конец (заделка/зачистка концов).
  */
 import { assignPin, syncRoutes, type PinoutEnd, type PinUnit } from "./pinoutCheck";
-import { endJoined, formatCorePins_, makeGen, NO_WIRES, parseCorePins_, type GenData, type GenState, type Side, type Splice, type WireEnd } from "./tcGenLogic";
+import { endJoined, formatCorePins_, makeGen, NO_WIRES, parseCorePins_, spliceName, type GenData, type GenState, type Side, type Splice, type WireEnd } from "./tcGenLogic";
 
 const same = (a: WireEnd, b: WireEnd) => a.idx === b.idx && a.unit === b.unit && a.side === b.side;
 
 /** «С1», «С2» — по порядку сростков. */
-export const spliceLabel = (S: Pick<GenState, "splices">, id: string) => `С${(S.splices || []).findIndex((s) => s.id === id) + 1}`;
+export const spliceLabel = (S: Pick<GenState, "splices">, id: string) => {
+  const sp = (S.splices || []).find((s) => s.id === id);
+  return sp ? spliceName(S, sp) : "С?";
+};
+
+/** Своё название сростка («Spl1»); пустое возвращает «С1», «С2» по порядку. */
+export const renameSplice = (S: GenState, id: string, name: string): GenState =>
+  ({ ...S, splices: (S.splices || []).map((s) => (s.id === id ? { ...s, name: name.trim() ? name : undefined } : s)) });
 
 /** Сросток, в котором стоит конец, или null. */
 export const spliceOf = (S: Pick<GenState, "splices">, end: WireEnd): Splice | null => (S.splices || []).find((s) => s.ends.some((e) => same(e, end))) || null;

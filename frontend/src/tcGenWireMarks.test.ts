@@ -2,7 +2,9 @@
 import { expect, it } from "vitest";
 import { complexByHand, initState, makeGen, toggleLengthMode, updateEndpoint, type GenState } from "./tcGenLogic";
 import { pickWireMarkTube, tubeBeforeShrink } from "./tcGenWireMarks";
-import { assignPinJoined, joinSplice, setTail } from "./tcGenSplices";
+import { assignPinJoined, joinSplice, renameSplice, setTail, spliceLabel } from "./tcGenSplices";
+import { pinConns, pinRows, spliceLines } from "./tcGenPinTable";
+import { pinoutEnds, pinUnits } from "./pinoutCheck";
 import { DSA, end, fullHarness, id } from "./tcGenRealHarness.fixture";
 
 /*
@@ -95,4 +97,28 @@ it("kit marks with a ready inscription are not offered as the wire tube; БД.М
   expect(g.wireMarkTubeOptions_()).toEqual(["ТУТ 3/1мм белая"]);
   const cut = g.getActiveOps().find((o) => o.opKey === "cutWireMark")!;
   expect([cut.tutArt, cut.tutParts?.[0].count]).toEqual(["ТУТ 3/1мм белая", 4]);
+});
+
+it("a splice name from the drawing (Spl1) flows into the marks, the pinout table, the splice operations and the PF blocks; an old draft keeps «С1»", () => {
+  const old = threeWires();
+  expect(old.splices![0].name).toBeUndefined();
+  expect(makeGen(DSA, on(old)).wireMarkList_().rows[1].textA).toBe("XS1.2 to С1");
+  const named = renameSplice(old, old.splices![0].id, "Spl1");
+  expect(makeGen(DSA, on(named)).wireMarkList_().rows[1].textA).toBe("XS1.2 to Spl1");
+  expect(spliceLabel(named, named.splices![0].id)).toBe("Spl1");
+  expect(spliceLabel(renameSplice(named, named.splices![0].id, "  "), named.splices![0].id)).toBe("С1");
+  const conns = pinConns(pinoutEnds(makeGen(DSA, named), named), named, {});
+  const rows = pinRows(conns, pinUnits(makeGen(DSA, named), named), named, pinoutEnds(makeGen(DSA, named), named));
+  expect(rows[1].cells.B.text).toBe("Spl1");
+  expect(spliceLines(named, pinUnits(makeGen(DSA, named), named), conns)[0]).toMatchObject({ label: "Spl1", name: "Spl1" });
+
+  const full = fullHarness(DSA);
+  const ids = full.splices!.map((sp) => sp.id);
+  const renamed = renameSplice(renameSplice(full, ids[0], "Spl1"), ids[1], "Spl2");
+  const g = makeGen(DSA, renamed);
+  const labels = g.getActiveOps().map((o) => o.label);
+  expect(labels).toContain("Сростки Spl1, Spl2 — 2 шт по 4 провода");
+  expect(labels.some((l) => /С1|С2/.test(l) && /Сростк|сростк/.test(l))).toBe(false);
+  expect(g.pfGraph()!.blocks.map((b) => b.name)).toContain("Пайка Spl1, Spl2");
+  expect(makeGen(DSA, full).getActiveOps().map((o) => o.label)).toContain("Сростки С1, С2 — 2 шт по 4 провода");
 });

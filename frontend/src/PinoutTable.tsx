@@ -21,7 +21,7 @@ export type SleeveControl = {
   onChange: (spliceId: string, compId: string) => void;
 };
 
-export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, sleeve, methodControl, onEnd, onLength, onLabel, onSplit, onRemoveSplice }: {
+export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, sleeve, methodControl, onEnd, onLength, onLabel, onSplit, onRemoveSplice, onRenameSplice }: {
   summary: string;
   rows: PinRow[];
   conns: PinConn[];
@@ -37,6 +37,8 @@ export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, s
   onLabel: (epId: string, label: string) => void;
   onSplit: (end: WireEnd) => void;
   onRemoveSplice: (id: string) => void;
+  /** Своё название сростка по чертежу («Spl1»); пустое — по порядку («С1»). */
+  onRenameSplice: (id: string, name: string) => void;
 }) {
   const select = (row: PinRow, side: Side) => {
     const cell = row.cells[side];
@@ -102,7 +104,8 @@ export function PinoutTable({ summary, rows, conns, units, splices, spliceIds, s
       <div className="pt-splices-head"><b>Сростки</b>{methodControl}</div>
       {!splices.length && <p className="pt-none">Сростков нет. Выберите «+ Новый сросток» у конца провода, затем «Сросток С1» у остальных концов — они соединятся.</p>}
       {splices.map((line) => <div className="pt-splice" key={line.id}>
-        <b className="pt-splice-name">{line.label}</b>
+        <input className="pt-splice-name" aria-label={`Название сростка ${line.label}`} title="Название сростка по чертежу (Spl1); пусто — по порядку" value={line.name} placeholder={line.label}
+          onChange={(event) => onRenameSplice(line.id, event.target.value)} />
         <span className="pt-splice-count">{line.ends.length} {plural(line.ends.length, "конец", "конца", "концов")}</span>
         {sleeve ? <select className="pt-sleeve" aria-label={`Гильза ${line.label}`} value={sleeve.valueOf(line.id)} onChange={(event) => sleeve.onChange(line.id, event.target.value)}>
           <option value="">— гильза не выбрана —</option>

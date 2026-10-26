@@ -115,7 +115,7 @@ export function applyEnd(D: GenData, S: GenState, conns: PinConn[], units: PinUn
 }
 
 /** Сростки таблицы: «С1», его концы (подписи «№ 3 · конец В»), число концов, замечание. */
-export type SpliceLine = { id: string; label: string; ends: Array<{ end: WireEnd; num: string; text: string; where: string }>; problem: string };
+export type SpliceLine = { id: string; label: string; /** Своё название (пусто — «С1» по порядку). */ name: string; ends: Array<{ end: WireEnd; num: string; text: string; where: string }>; problem: string };
 export function spliceLines(S: Pick<GenState, "splices">, units: PinUnit[], conns: PinConn[]): SpliceLine[] {
   return (S.splices || []).map((sp) => {
     const ends = sp.ends.map((end) => {
@@ -124,7 +124,7 @@ export function spliceLines(S: Pick<GenState, "splices">, units: PinUnit[], conn
       const to = u ? conns.filter((c) => c.side === other && u.at[c.id] != null).map((c) => `${connName(c)}·${u.at[c.id]}`) : [];
       return { end, num: u?.num ?? "?", text: `${u?.name || "провод"}${u?.colorName ? ` · ${u.colorName}` : ""}`, where: to.length ? `→ ${to.join(", ")}` : "" };
     });
-    return { id: sp.id, label: spliceLabel(S, sp.id), ends, problem: sp.ends.length < 2 ? "В сростке меньше двух концов" : "" };
+    return { id: sp.id, label: spliceLabel(S, sp.id), name: sp.name ?? "", ends, problem: sp.ends.length < 2 ? "В сростке меньше двух концов" : "" };
   });
 }
 

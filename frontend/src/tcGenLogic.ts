@@ -237,7 +237,11 @@ export type Branch = { main: number; extra: number; mode: "splice" | "double"; f
 export type WireEnd = { idx: number; unit: number; side: Side };
 /** Сросток (обжимная гильза, владелец 13.10): концы проводов, соединённые в одной точке, — провод 0,5 с разъёма и три
  *  провода 0,2 к разъёмам и в хвост. Концы в сростке не идут на контакты разъёмов своей стороны. */
-export type Splice = { id: string; ends: WireEnd[] };
+export type Splice = { id: string; ends: WireEnd[];
+  /** Название сростка по чертежу («Spl1», владелец 26.10, 708К.5); нет поля или пусто — «С1», «С2» по порядку. */
+  name?: string };
+/** Название сростка везде, где он показан: своё из чертежа, иначе «С» и номер по порядку. */
+export const spliceName = (S: Pick<GenState, "splices">, sp: Splice) => (sp.name ?? "").trim() || `С${(S.splices || []).indexOf(sp) + 1}`;
 /** Конец в сростке или свободный конец («хвост» без разъёма) — на этой стороне провод не ждёт контакта. */
 export function endJoined(S: Pick<GenState, "splices" | "tails">, idx: number, unit: number, side: Side): "splice" | "tail" | null {
   const hit = (e: WireEnd) => e.idx === idx && e.unit === unit && e.side === side;
@@ -1237,7 +1241,7 @@ export function makeGen(D: GenData, S: GenState) {
     if (!sizes.length) return [];
     const all = S.splices || [];
     const drawn = all.filter((s) => s.ends.length >= 2).slice(0, sizes.length);
-    const slots = drawn.map((s) => ({ key: s.id, label: `С${all.indexOf(s) + 1}`, count: 1, wires: s.ends.length }));
+    const slots = drawn.map((s) => ({ key: s.id, label: spliceName(S, s), count: 1, wires: s.ends.length }));
     const rest = sizes.length - drawn.length;
     if (rest > 0) slots.push({ key: SPLICE_REST_, label: drawn.length ? "остальные" : "все сростки", count: rest, wires: 0 });
     return slots;
@@ -1247,7 +1251,7 @@ export function makeGen(D: GenData, S: GenState) {
   function spliceRows_(withLone = false): Array<{ id: string; label: string; size: number; wires: Array<{ art: string; from: string; end: WireEnd }> }> {
     const all = S.splices || [];
     return all.filter((sp) => withLone || sp.ends.length >= 2).map((sp) => ({
-      id: sp.id, label: `С${all.indexOf(sp) + 1}`, size: sp.ends.length,
+      id: sp.id, label: spliceName(S, sp), size: sp.ends.length,
       wires: sp.ends.map((e) => {
         const w = activeWires_().find((x) => x.idx === e.idx);
         const c = w ? getCompById(w.compId) : null;
@@ -1260,7 +1264,7 @@ export function makeGen(D: GenData, S: GenState) {
           return { art, from: `${(ep.label || "").trim() || endKey_(ep)}${pin != null ? ` конт. ${pin}` : ""}`, end: e };
         }
         const next = all.find((x) => x !== sp && x.ends.some((y) => y.idx === e.idx && y.unit === e.unit && y.side === other));
-        if (next) return { art, from: `к С${all.indexOf(next) + 1}`, end: e };
+        if (next) return { art, from: `к ${spliceName(S, next)}`, end: e };
         return { art, from: endJoined(S, e.idx, e.unit, other) === "tail" ? "к хвосту" : "", end: e };
       }),
     }));
@@ -2695,7 +2699,7 @@ export function makeGen(D: GenData, S: GenState) {
   function wireMarkEnd_(w: WireEntry, k: number, side: Side): { text: string } | { why: string } {
     const join = endJoined(S, w.idx, k, side);
     if (join === "tail") return { why: `свободный конец ${sideRu_(side)}` };
-    if (join === "splice") return { text: `С${(S.splices || []).findIndex((sp) => sp.ends.some((e) => e.idx === w.idx && e.unit === k && e.side === side)) + 1}` };
+    if (join === "splice") { const sp = (S.splices || []).find((x) => x.ends.some((e) => e.idx === w.idx && e.unit === k && e.side === side)); return { text: sp ? spliceName(S, sp) : "С?" }; }
     const ep = unitEndpoint_(w, k, side);
     const pin = ep ? corePinsOf_(ep, w.idx)[k] : null;
     return ep && pin != null ? { text: `${xDesig_(ep)}.${pin}` } : { why: `конец ${sideRu_(side)} не задан` };
@@ -2842,7 +2846,7 @@ export function makeGen(D: GenData, S: GenState) {
     type Group = { key: string; splices: Splice[]; rest: number; names: string; name: string };
     const groups: Group[] = groupKeys.map((key, i) => {
       const splices = drawn.filter((s) => keyOf.get(s.id) === key);
-      const names = splices.map((s) => `С${all.indexOf(s) + 1}`).join(", ");
+      const names = splices.map((s) => spliceName(S, s)).join(", ");
       return { key: `pf-spl${i + 1}`, splices, rest: 0, names, name: `${verb} ${names}` };
     });
     if (rest > 0) groups.push({ key: `pf-spl${groups.length + 1}`, splices: [], rest, names: "", name: drawn.length ? `${verb} остальных сростков` : `${verb} сростков` });
