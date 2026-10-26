@@ -122,3 +122,13 @@ it("a splice name from the drawing (Spl1) flows into the marks, the pinout table
   expect(g.pfGraph()!.blocks.map((b) => b.name)).toContain("Пайка Spl1, Spl2");
   expect(makeGen(DSA, full).getActiveOps().map((o) => o.label)).toContain("Сростки С1, С2 — 2 шт по 4 провода");
 });
+
+it("трубка метки: размер без «мм» из справочника материалов, печать — на светлой (708К.5, 26.10)", () => {
+  expect(tubeBeforeShrink("ТУТ 2/1 белая")).toBe(2);
+  expect(tubeBeforeShrink("ТТК 4,8/1,6 прозрачная")).toBe(4.8);
+  expect(tubeBeforeShrink("Лента 19мм x 15мм")).toBeNull();
+  const mat = ["ТТК 19/6,5мм, черная", "ТУТ 2/1 черная", "ТУТ 2/1 белая", "ТУТ 3/1,5 белая", "ТУТ 8/4 белая"];
+  expect(pickWireMarkTube(mat, 1.4)).toBe("ТУТ 2/1 белая");
+  expect(pickWireMarkTube(["ТУТ 2/1 черная", "ТУТ 3/1,5 черная"], 1.4)).toBe("ТУТ 2/1 черная");
+});
+
