@@ -1811,6 +1811,9 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
         unmatched_items: [{ name: "Доставка", quantity: "1", price_with_vat: "500" }],
         unmatched_lines: ["REQ-3"],
         totals: { sum: "700", vat: "144", sum_with_vat: "844" },
+        seller_name: "ООО \"Б\"",
+        seller_inn: "7701234567",
+        seller_warning: "Продавец в счёте — ООО \"Б\" (ИНН 7701234567), а заказ у «ООО А» — проверьте, тот ли это счёт",
       }));
     }
     if (path === "/api/procurement/orders/PO-001/apply-document" && init?.method === "POST") {
@@ -1835,7 +1838,9 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
   expect(within(dialog).getByText("Выберите файл счёта")).toBeInTheDocument();
 
   fireEvent.change(within(dialog).getByLabelText("Файл счёта"), { target: { files: [new File(["%PDF"], "счёт.pdf", { type: "application/pdf" })] } });
-  expect(await within(dialog).findByText(/Счёт № 58\.pdf · распознано: № 58 от 14\.09\.2026 · найдено строк 2 из 3/)).toBeInTheDocument();
+  expect(await within(dialog).findByText(/Счёт № 58\.pdf · распознано: № 58 от 14\.09\.2026 · продавец ООО "Б", ИНН 7701234567 · найдено строк 2 из 3/)).toBeInTheDocument();
+  // Продавец не поставщик заказа — предупреждение, кнопка не блокируется.
+  expect(within(dialog).getByText(/^Продавец в счёте — ООО "Б" \(ИНН 7701234567\), а заказ у «ООО А»/)).toHaveClass("warning-inline");
   expect(recognizeBody?.kind).toBe("invoice");
   expect(recognizeBody?.file_name).toBe("счёт.pdf");
   expect(recognizeBody?.content_base64).toBeTruthy();

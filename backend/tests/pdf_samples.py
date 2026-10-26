@@ -78,3 +78,20 @@ def flate_bomb_pdf(unpacked: int = 64 * 1024 * 1024) -> bytes:
         b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
         b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(data) + data + b"\nendstream",
     ])
+
+
+def fpdf_pages_pdf(pages: list[list[tuple[float, float, str]]]) -> bytes:
+    """A real PDF (fpdf2, DejaVu Sans 9 pt, with an xref table) of text pieces at (x, y from the top, text) in mm —
+    each piece one text string, as 1С prints the cells of a table."""
+    from pathlib import Path
+
+    from fpdf import FPDF
+
+    pdf = FPDF(format="A4")
+    pdf.add_font("DejaVu", "", str(Path(__file__).resolve().parents[1] / "app" / "assets" / "fonts" / "DejaVuSans.ttf"))
+    pdf.set_font("DejaVu", size=9)
+    for pieces in pages:
+        pdf.add_page()
+        for x, y, text in pieces:
+            pdf.text(x, y, text)
+    return bytes(pdf.output())

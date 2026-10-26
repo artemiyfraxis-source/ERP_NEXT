@@ -175,22 +175,25 @@ export type PastePreview = {
   rows: ImportedQuoteLine[];
   width?: number; column_labels?: Record<PasteColumn, string>;
 };
-/** The quote's header read from its text: «№», «действует до», the seller's INN and the directory supplier behind it. */
+/** The quote's header read from its text or by the model: «№», date, «действует до», the seller's INN and name as
+ *  printed, the directory supplier behind them, and whether he is the supplier chosen for the quote (null — unknown). */
 export type ImportHeader = {
   number: string; valid_until: string | null; inn: string; supplier_id: string | null; supplier_name: string | null;
-  in_request: boolean;
+  in_request: boolean; document_name?: string; date?: string | null; supplier_matches?: boolean | null;
 };
 
 /** «КП из PDF и текста»: a proposed line; `price` is per unit asked (a pack quote is already converted, see `pack_note`). */
 export type ImportedQuoteLine = {
   source_name: string; source_article: string; qty: string | null; unit: string; price: string | null;
   vat_rate: string | null; lead_days: number | null; in_stock: boolean; declined: boolean; analog: boolean;
-  analog_note: string; rfq_line_id: string | null; matched_by: "alias" | "article" | "name" | null;
+  analog_note: string; rfq_line_id: string | null; matched_by: "model" | "alias" | "article" | "name" | null;
   pack: string | null; moq: string | null; pack_note: string;
 };
 export type QuoteImport = {
   source: "paste" | "file"; vat_included: boolean; default_vat_rate: string; lines: ImportedQuoteLine[];
   unmatched: ImportedQuoteLine[]; unread: string[]; header?: ImportHeader;
+  /** «text» — read from the text / text layer; «model» — a scan or photo read by the vision model */
+  reader?: "text" | "model"; model?: string;
 };
 
 export type DecisionInput = {

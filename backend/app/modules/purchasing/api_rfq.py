@@ -18,16 +18,18 @@ from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal, section_allowed
 from app.workflows.purchasing_kaiten_order import KaitenOrderBridge
 from app.workflows.purchasing_procurement_bridge import ProcurementLinesBridge
+from app.workflows.purchasing_quote_scan import WarehouseScanPages
 from app.workflows.purchasing_rfq_stats import PurchaseStatsBridge
 
 from . import quote_import
+from . import quote_scan
 from . import rfq as service
 from . import rfq_pool
 from . import rfq_batch
 from . import rfq_invoice_requests
 from . import rfq_kaiten
 from . import rfq_withdraw
-from .deps import procurement_uow_factory, purchasing_uow_factory
+from .deps import procurement_uow_factory, purchasing_uow_factory, warehouse_uow_factory
 
 
 def rfq_option(request: Request, principal: Annotated[Principal, Depends(procurement_view_principal)]) -> None:
@@ -194,7 +196,7 @@ class ImportInput(BaseModel):
     supplier_id: UUID | None = None
     text: str | None = Field(default=None, max_length=500_000)
     file_name: str | None = Field(default=None, max_length=300)
-    content_base64: str | None = Field(default=None, max_length=28_000_000)  # a 20 MB PDF in base64
+    content_base64: str | None = Field(default=None, max_length=28_000_000)  # a 20 MB PDF / photo in base64
 
 
 class WithdrawInput(BaseModel):
@@ -416,17 +418,27 @@ def rfq_paste_quote(rfq_id: UUID, payload: PasteInput, principal: Edit, uow: Uow
         uow(), principal.actor, rfq_id, payload.text, payload.supplier_id, payload.columns, payload.vat_included))
 
 
+def quote_scan_pages(request: Request) -> quote_scan.ScanPages:
+    """The warehouse's УПД model and page pictures, for a quote that came as a scan or a photo."""
+    return WarehouseScanPages(warehouse_uow_factory(request))
+
+
+ScanPages = Annotated[quote_scan.ScanPages, Depends(quote_scan_pages)]
+
+
 @router.post("/{rfq_id}/quotes/import")
-def rfq_import_quote(rfq_id: UUID, payload: ImportInput, principal: Edit, now: Now, uow: Uow) -> dict:
-    """«КП из PDF и текста»: proposed quote lines for the form; nothing is saved."""
+def rfq_import_quote(rfq_id: UUID, payload: ImportInput, principal: Edit, now: Now, uow: Uow, pages: ScanPages) -> dict:
+    """«КП из PDF и текста»: proposed quote lines for the form; nothing is saved. A file: its text layer, else (a scan,
+    a photo, a text layer with no row read) the vision model (`quote_scan`)."""
     if bool(payload.text) == bool(payload.content_base64):
         raise HTTPException(status_code=422, detail="Вставьте текст КП или приложите PDF")
     if payload.content_base64:
-        text = _run(lambda: quote_import.text_of_pdf(decode_upload(payload.content_base64 or "", "Файл повреждён")))
-    else:
-        text = payload.text or ""
-    return _run(lambda: quote_import.parse_quote(
-        uow(), principal.actor, rfq_id, text, payload.supplier_id, "file" if payload.content_base64 else "paste", now.date()))
+        content = _run(lambda: decode_upload(payload.content_base64 or "", "Файл повреждён"))
+        return _run(lambda: quote_scan.import_file(
+            uow(), principal.actor, rfq_id, content, payload.supplier_id, now.date(), pages))
+    return {**_run(lambda: quote_import.parse_quote(
+        uow(), principal.actor, rfq_id, payload.text or "", payload.supplier_id, "paste", now.date())),
+        "reader": "text", "model": ""}
 
 
 @router.post("/{rfq_id}/decisions", status_code=201)

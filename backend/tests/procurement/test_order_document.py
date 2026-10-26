@@ -8,11 +8,11 @@ from app.modules.procurement.application import consume_procurement_requested
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
 from app.shared.events import OutboxMessage
 from app.shared.persistence import AuditEventRow
-from tests.pdf_samples import identity_pdf
+from tests.pdf_samples import fpdf_pages_pdf, identity_pdf
 from tests.procurement.test_api import (  # noqa: F401 — fixtures
     MOSCOW, message, procurement_api, rates,
 )
-from tests.procurement.test_document_items import ELITAN_INVOICE, KP_NET
+from tests.procurement.test_document_items import ELITAN_INVOICE, ELITAN_LAYOUT_PDF, KP_NET
 
 ELITAN_PDF = identity_pdf(ELITAN_INVOICE.split("\n"))
 KP_PDF = identity_pdf(KP_NET.split("\n"))
@@ -100,6 +100,53 @@ def test_invoice_is_recognised_matched_by_part_numbers_and_lines_stay_untouched(
     assert client.get(body["file"]["url"]).content == ELITAN_PDF
     (event,) = events(sessions, "procurement.document_file_uploaded")
     assert (event.details["kind"], event.details["items"], event.details["order_reference"]) == ("invoice", "3", number)
+
+
+def test_invoice_pdf_with_a_text_layer_gives_number_date_seller_inn_total_and_lines(procurement_api):
+    """Roller_Buyer's reader (26.10): the header and the table of a real PDF by word positions."""
+    client, _, sessions = procurement_api
+    number, lines = order(client, sessions, PARTS)
+
+    response = recognize(client, number, ELITAN_LAYOUT_PDF)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["invoice_number"], body["invoice_date"], body["seller_name"], body["seller_inn"]) == (
+        "684803Z", "2026-10-02", 'ООО "Элитан Трейд"', "1831096455",
+    )
+    assert body["seller_warning"] == ""  # the order's supplier «ООО Элитан Трейд» is the seller
+    assert body["totals"] == {"sum": "2100", "vat": "462", "sum_with_vat": "2562"}
+    ids = list(lines)
+    assert [(row["line_id"], row["price_with_vat"], row["quantity"], row["sum"], row["confidence"]) for row in body["lines"]] == [
+        (ids[0], "3.66", "200", "732", "article"),
+        (ids[1], "12.2", "50", "610", "article"),
+        (ids[2], "1.22", "1000", "1220", "article"),
+    ]
+    assert body["file"]["name"] == f"Счёт № 684803Z от 02.10.2026 ООО Элитан Трейд RND.002 {number}.pdf"
+
+    applied = client.post(f"/api/procurement/orders/{number}/apply-document", json={
+        "kind": "invoice", "file_url": body["file"]["url"], "expected_arrival": "2026-10-12", "lines": apply_rows(body),
+    })
+    assert applied.status_code == 200, applied.text
+    assert {(line["invoice_number"], line["invoice_date"]) for line in applied.json()["lines"]} == {("684803Z", "2026-10-02")}
+
+
+def test_seller_other_than_the_order_supplier_is_a_warning_not_a_refusal(procurement_api):
+    client, _, sessions = procurement_api
+    number, _ = order(client, sessions, PARTS)
+    other = fpdf_pages_pdf([[
+        (12, 30, "Счет на оплату № 501 от 03.10.2026"),
+        (12, 40, 'Поставщик: ООО "Чужой Склад", ИНН 7701234567, КПП 770101001'),
+        (12, 50, "Одна тысяча рублей 00 копеек"),
+    ]])
+
+    body = recognize(client, number, other).json()
+
+    assert (body["seller_name"], body["seller_inn"]) == ('ООО "Чужой Склад"', "7701234567")
+    assert body["seller_warning"] == (
+        'Продавец в счёте — ООО "Чужой Склад" (ИНН 7701234567), а заказ у «ООО Элитан Трейд» — проверьте, тот ли это счёт'
+    )
+    assert body["file"]["url"].startswith("/api/procurement/files/")
 
 
 def test_applied_invoice_prices_every_row_and_moves_the_order_to_payment_atomically(procurement_api):

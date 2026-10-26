@@ -95,9 +95,10 @@ it("a PDF: the header fills «Номер КП» and «Действует до»,
   const onSaved = vi.fn();
   render(<QuoteEntry matrix={matrix} supplierId="s1" onClose={() => undefined} onSaved={onSaved} />);
   const file = new File(["%PDF-1.4 test"], "КП Альфа.pdf", { type: "application/pdf" });
-  fireEvent.change(screen.getByLabelText("PDF с КП"), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText("PDF или фото КП"), { target: { files: [file] } });
   const review = await screen.findByRole("region", { name: "Проверка импорта" });
-  expect(within(review).getByText(/ИНН в документе: 7701234567 \(ООО Альфа\)/)).toBeInTheDocument();
+  expect(within(review).getByText(/поставщик в документе: ООО Альфа, ИНН 7701234567/)).toBeInTheDocument();
+  expect(within(review).getByText("Прочитано по тексту")).toBeInTheDocument();
   fireEvent.click(within(review).getByRole("button", { name: "Перенести в КП" }));
   expect(screen.getByLabelText("Номер КП")).toHaveValue("КП-123/45");
   expect(screen.getByText("Файл «КП Альфа.pdf» сохранится вместе с КП.")).toBeInTheDocument();
@@ -144,6 +145,40 @@ it("a dropped file that is neither PDF nor text is not sent", () => {
   render(<QuoteEntry matrix={matrix} supplierId="s1" onClose={() => undefined} onSaved={() => undefined} />);
   const file = new File(["PK"], "КП.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   fireEvent.drop(screen.getByRole("group", { name: "Файл КП" }), { dataTransfer: { files: [file], getData: () => "" } });
-  expect(screen.getByRole("alert")).toHaveTextContent("Перетащите PDF или текстовый файл");
+  expect(screen.getByRole("alert")).toHaveTextContent("Перетащите PDF, фото (JPG, PNG) или текстовый файл");
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it("a photo of a quote is sent, read by the model: the reader, the date and another supplier in the document are shown", async () => {
+  const posts: any[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") {
+      posts.push({ path, body: JSON.parse(String(init.body)) });
+      if (path.endsWith("/quotes/import")) {
+        return json({
+          source: "file", reader: "model", model: "main", vat_included: false, default_vat_rate: "22", unread: [],
+          lines: [row({ source_name: "Розетка 2 конт.", rfq_line_id: "a", matched_by: "model", price: "12" })],
+          unmatched: [row({ source_name: "Доставка курьером", price: "500" })],
+          header: { number: "77", date: "2026-10-20", valid_until: null, inn: "", document_name: "ООО «Гамма»", supplier_id: null,
+            supplier_name: null, in_request: false, supplier_matches: false },
+        });
+      }
+      return json({ id: "q1" }, 201);
+    }
+    return json({});
+  });
+  render(<QuoteEntry matrix={matrix} supplierId="s1" onClose={() => undefined} onSaved={() => undefined} />);
+  const photo = new File(["\xff\xd8\xff photo"], "КП фото.jpg", { type: "image/jpeg" });
+  fireEvent.drop(screen.getByRole("group", { name: "Файл КП" }), { dataTransfer: { files: [photo], getData: () => "" } });
+  const review = await screen.findByRole("region", { name: "Проверка импорта" });
+  expect(posts[0]).toMatchObject({ path: "/api/purchasing/rfqs/r1/quotes/import", body: { file_name: "КП фото.jpg" } });
+  expect(within(review).getByText("Распознано моделью")).toBeInTheDocument();
+  expect(within(review).getByText(/поставщик в документе: ООО «Гамма» · № 77 от 20\.10\.2026/)).toBeInTheDocument();
+  expect(within(review).getByRole("status")).toHaveTextContent("В документе другой поставщик, чем выбран для КП: «ООО «Гамма»»");
+  expect(within(review).getByText("по модели")).toBeInTheDocument();
+  fireEvent.change(within(review).getByLabelText("Позиция для «Доставка курьером»"), { target: { value: "skip" } });
+  fireEvent.click(within(review).getByRole("button", { name: "Перенести в КП" }));
+  expect(screen.getByLabelText("Цена Разъём")).toHaveValue("12");
+  expect(screen.getByText(/В документе поставщик «ООО «Гамма»», а КП вносится от «ООО Альфа»/)).toBeInTheDocument();
 });

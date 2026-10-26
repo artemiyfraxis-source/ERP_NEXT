@@ -8,13 +8,15 @@ from app.modules.procurement.document_items import (
     NO_TABLE,
     UNREADABLE,
     XLS,
+    SupplierDocument,
     document_currency,
     parse_document_grid,
     parse_document_text,
     read_supplier_document,
+    seller_mismatch,
     unit_key,
 )
-from tests.pdf_samples import identity_pdf
+from tests.pdf_samples import fpdf_pages_pdf, identity_pdf
 
 ELITAN_INVOICE = """ООО "Элитан Трейд"
 ИНН 7700000000 КПП 770001001
@@ -299,3 +301,101 @@ def test_grid_without_header_gives_a_hint():
     document = parse_document_grid([["Акт сверки"], ["Сальдо", "0"]])
 
     assert (document.items, document.hint) == ((), NO_TABLE)
+
+
+# --- a real PDF read by word positions (Roller_Buyer's reader, 26.10) ---------------------------------------------
+
+_COLUMNS = (12, 20, 120, 140, 155, 180)  # № | Товары | Кол-во | Ед. | Цена | Сумма (mm)
+
+
+def _table_row(y: float, *cells: str) -> list[tuple[float, float, str]]:
+    return [(x, y, text) for x, text in zip(_COLUMNS, cells) if text]
+
+
+ELITAN_LAYOUT_PDF = fpdf_pages_pdf([[
+    (12, 20, 'ООО "Элитан Трейд"'), (12, 26, "ИНН 1831096455 КПП 183101001"),
+    (12, 40, "Счет на оплату № 684803Z от 02 октября 2026 г."),
+    (12, 50, 'Поставщик (Исполнитель): ООО "Элитан Трейд", ИНН 1831096455, КПП 183101001, 426028, Ижевск'),
+    (12, 56, 'Покупатель (Заказчик): ООО "ЗЭП "ФРАКСИС", ИНН 5040191181'),
+    *_table_row(70, "№", "Товары (работы, услуги)", "Кол-во", "Ед.", "Цена", "Сумма"),
+    *_table_row(78, "1", "Корпус разъёма SHR-02V-S-B (JST)", "200", "шт", "3,66", "732,00"),
+    *_table_row(86, "2", "Разъём Molex 51047-1000 Picoblade 10 pin", "50", "шт", "12,20", "610,00"),
+    *_table_row(94, "3", "Контакт обжимной SSHL-002T-P0.2", "1 000", "шт", "1,22", "1 220,00"),
+    (150, 104, "Итого:"), (180, 104, "2 562,00"),
+    (130, 110, "В том числе НДС (22%):"), (180, 110, "462,00"),
+    (12, 120, "Всего наименований 3, на сумму 2 562,00 руб."),
+    (12, 126, "Две тысячи пятьсот шестьдесят два рубля 00 копеек"),
+]])
+
+
+def test_pdf_table_is_read_by_word_positions_with_the_seller_and_the_total_in_words():
+    document = read_supplier_document("счёт.pdf", ELITAN_LAYOUT_PDF)
+
+    assert document.reader == "pdf_table"
+    assert (document.number, document.date, document.seller_name, document.seller_inn) == (
+        "684803Z", "02.10.2026", 'ООО "Элитан Трейд"', "1831096455",
+    )
+    assert [(item.name, item.quantity, item.unit, item.price_with_vat, item.price, item.sum) for item in document.items] == [
+        ("Корпус разъёма SHR-02V-S-B (JST)", Decimal(200), "шт", Decimal("3.66"), Decimal(3), Decimal("732.00")),
+        ("Разъём Molex 51047-1000 Picoblade 10 pin", Decimal(50), "шт", Decimal("12.2"), Decimal(10), Decimal("610.00")),
+        # «1 000» and «1 220,00» are one cell each: the thousands are not split into two numbers.
+        ("Контакт обжимной SSHL-002T-P0.2", Decimal(1000), "шт", Decimal("1.22"), Decimal(1), Decimal("1220.00")),
+    ]
+    assert (document.vat_mode, document.vat_rate) == ("included", Decimal(22))
+    assert document.totals.sum_with_vat == Decimal("2562.00") and document.totals.vat == Decimal("462.00")
+
+
+def test_net_prices_with_vat_columns_right_of_the_sum_and_the_table_running_on_the_next_page():
+    columns = (12, 20, 110, 125, 140, 160, 175, 190)  # № | Наименование | Кол-во | Ед. | Цена | Сумма | НДС | Всего
+
+    def row(y, *cells):
+        return [(x, y, text) for x, text in zip(columns, cells) if text]
+
+    header = row(60, "№", "Наименование", "Кол-во", "Ед.", "Цена", "Сумма", "НДС", "Всего")
+    pdf = fpdf_pages_pdf([
+        [
+            (12, 30, "СЧЕТ - ДОГОВОР № 57148683 от 29.01.2026"),
+            (12, 40, 'Продавец : ЗАО " МПО Электромонтаж ", ИНН 7719079370, КПП 773301001'),
+            *header,
+            *row(70, "1", "Трубка термоусаживаемая 20/10 белая", "75", "м", "10,20", "765,00", "153,00", "918,00"),
+        ],
+        [
+            *header,
+            *row(70, "2", "Доставка товара", "1", "усл", "415,83", "415,83", "83,17", "499,00"),
+            (100, 80, "Итого:"), (160, 80, "1 180,83"), (175, 80, "236,17"), (190, 80, "1 417,00"),
+            (12, 90, "Всего: Одна тысяча четыреста семнадцать рублей 00 копеек"),
+        ],
+    ])
+
+    document = read_supplier_document("счёт.pdf", pdf)
+
+    assert (document.reader, document.number, document.seller_name) == ("pdf_table", "57148683", 'ЗАО "МПО Электромонтаж"')
+    assert [(item.name, item.price, item.price_with_vat, item.sum, item.vat_rate) for item in document.items] == [
+        ("Трубка термоусаживаемая 20/10 белая", Decimal("10.2"), Decimal("12.24"), Decimal("918.00"), Decimal(20)),
+        ("Доставка товара", Decimal("415.83"), Decimal("499"), Decimal("499.00"), Decimal(20)),
+    ]
+    assert document.totals.sum_with_vat == Decimal("1417.00")
+
+
+def test_seller_against_the_order_supplier():
+    elitan = SupplierDocument(seller_name='ООО "Элитан Трейд"', seller_inn="1831096455")
+    assert seller_mismatch("Элитан-Трейд", elitan) == ""
+    assert seller_mismatch("Общество с ограниченной ответственностью «Элитан Трейд»", elitan) == ""
+    assert seller_mismatch("chipdip.ru", elitan) == ""  # a site is not a legal name: nothing to compare
+    assert seller_mismatch("https://www.elitan.ru/", elitan) == ""
+    assert seller_mismatch("", elitan) == ""
+    assert seller_mismatch("ООО Платан", SupplierDocument()) == ""
+    assert seller_mismatch("ООО Платан", elitan).startswith('Продавец в счёте — ООО "Элитан Трейд" (ИНН 1831096455)')
+
+
+def test_pdf_without_a_positions_table_keeps_erp_text_reading():
+    pdf = fpdf_pages_pdf([[(12, 20 + 6 * index, line) for index, line in enumerate(KP_NET.split("\n"))]])
+
+    document = read_supplier_document("кп.pdf", pdf, "kp")
+
+    # Each line is one piece of text: no columns to read by position — ERP's reading of the rows by arithmetic.
+    assert document.reader == "text"
+    assert [item.name for item in document.items] == [
+        "Провод ПуГВ 1х0,75 красный", "Провод ПуГВ 1х0,75 черный", "Трубка термоусадочная ТУТ 6/3 черная",
+    ]
+    assert (document.number, document.seller_name) == ("145", 'ООО "Кабель-Профи"')

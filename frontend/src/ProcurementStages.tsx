@@ -873,6 +873,7 @@ export function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, 
         {result && (
           <p className="hint doc-note">
             {result.file.name} · распознано: № {result.invoice_number || "—"}{result.invoice_date ? ` от ${formatDay(result.invoice_date)}` : ""}
+            {result.seller_name ? ` · продавец ${result.seller_name}${result.seller_inn ? `, ИНН ${result.seller_inn}` : ""}` : ""}
             {" · "}найдено строк {lines.filter((line) => matches.get(line.id)?.confidence).length} из {lines.length} — проверьте цены
           </p>
         )}
@@ -937,6 +938,7 @@ export function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, 
             </tfoot>
           </table>
         </div>
+        {result?.seller_warning && <div className="warning-inline" role="status">{result.seller_warning}</div>}
         {result?.hint && <div className="warning-inline" role="status">{result.hint}</div>}
         {priceWarning && <div className="warning-inline" role="status">{priceWarning}</div>}
         {result && result.unmatched_items.length > 0 && (

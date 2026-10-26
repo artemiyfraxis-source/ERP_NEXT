@@ -9,8 +9,9 @@ import {
   type RfqLine,
 } from "./purchasingRfqApi";
 
-/** Quote import (Roller_Buyer QuoteImport, without an LLM): rows pasted from Excel — the columns guessed from the header
- *  and re-mapped by the buyer, «цены с НДС» ticked or not — or the text / PDF text layer of a quote. Every imported row
+/** Quote import (Roller_Buyer QuoteImport): rows pasted from Excel — the columns guessed from the header
+ *  and re-mapped by the buyer, «цены с НДС» ticked or not — or the text / PDF text layer of a quote; a scan or a photo
+ *  (JPG, PNG) is read by the vision model on the server (26.10), the review says which reader it was. Every imported row
  *  ends matched to a request line or explicitly skipped — nothing is dropped silently — and only then fills the form.
  *  The header found in the text («№», «действует до», the seller's ИНН) comes along; a PDF is kept with the quote.
  *  A PDF (or a text file, or text) dragged onto the drop zone goes the same way (Витя via the owner, 23.10). */
@@ -19,7 +20,10 @@ export const COLUMN_KEYS: PasteColumn[] = ["name", "article", "qty", "unit", "pr
 const COLUMN_LABELS: Record<PasteColumn, string> = {
   name: "Наименование", article: "Артикул", qty: "Кол-во", unit: "Ед.", price: "Цена", vat: "НДС", lead: "Срок",
 };
-const MATCH_LABELS: Record<string, string> = { alias: "как в прошлый раз", article: "по артикулу", name: "по названию" };
+const MATCH_LABELS: Record<string, string> = {
+  model: "по модели", alias: "как в прошлый раз", article: "по артикулу", name: "по названию",
+};
+const PHOTO_TYPES = ["image/jpeg", "image/png"];
 
 export type Choice = string | "skip" | null;
 
@@ -39,8 +43,20 @@ export type ImportResult = {
 
 type Review = {
   rows: ImportedQuoteLine[]; choices: Choice[]; vatIncluded: boolean; source: "paste" | "file"; header: ImportHeader | null;
-  file: { name: string; base64: string } | null; unread: string[];
+  file: { name: string; base64: string } | null; unread: string[]; reader: "text" | "model";
 };
+
+const day = (iso: string) => iso.split("-").reverse().join(".");
+
+/** « · поставщик в документе: ООО Альфа, ИНН 7701234567» — the name as printed (else the directory's) and the INN. */
+export function supplierText(header: ImportHeader | null): string {
+  if (!header) return "";
+  const name = header.document_name || header.supplier_name || "";
+  if (!name && !header.inn) return "";
+  const inn = header.inn ? `${name ? ", " : ""}ИНН ${header.inn}` : "";
+  const unknown = header.inn && !header.supplier_id ? " — в справочнике нет" : "";
+  return ` · поставщик в документе: ${name}${inn}${unknown}`;
+}
 
 const wordingOf = (row: ImportedQuoteLine) => `${row.source_article} ${row.source_name}`.trim();
 
@@ -83,7 +99,7 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
       setPaste(result);
       setVatIncluded(result.vat_included);
       setReview({ rows: result.rows, choices: result.rows.map((row) => row.rfq_line_id), vatIncluded: result.vat_included,
-        source: "paste", header: null, file: null, unread: [] });
+        source: "paste", header: null, file: null, unread: [], reader: "text" });
     } catch (reason) {
       setError(failureText(reason, "Вставка не разобрана"));
     } finally {
@@ -99,7 +115,7 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
       const rows = [...result.lines, ...result.unmatched];
       setReview({
         rows, choices: rows.map((row) => row.rfq_line_id), vatIncluded: result.vat_included, source: result.source,
-        header: result.header ?? null, unread: result.unread,
+        header: result.header ?? null, unread: result.unread, reader: result.reader ?? "text",
         file: "content_base64" in input ? { name: input.file_name, base64: input.content_base64 } : null,
       });
     } catch (reason) {
@@ -112,7 +128,7 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
   function readFile(file: File | undefined) {
     if (!file) return;
     if (file.size > 20 * 1024 * 1024) {
-      setError("PDF больше 20 МБ — сожмите файл или вставьте текст");
+      setError("Файл больше 20 МБ — сожмите его или вставьте текст");
       return;
     }
     const reader = new FileReader();
@@ -138,16 +154,17 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
     }
   }
 
-  /** A file dropped on the zone or picked: a PDF is read as a PDF, a text file as text; nothing else is read. */
+  /** A file dropped on the zone or picked: a PDF or a photo goes to the server (its text layer, else the model), a text
+   *  file is read as text; nothing else is read. */
   function takeFile(file: File | undefined) {
     if (!file) return;
     const name = file.name.toLowerCase();
-    if (file.type === "application/pdf" || name.endsWith(".pdf")) {
+    if (file.type === "application/pdf" || name.endsWith(".pdf") || PHOTO_TYPES.includes(file.type) || /\.(jpe?g|png)$/.test(name)) {
       readFile(file);
     } else if (file.type.startsWith("text/") || /\.(txt|csv|tsv)$/.test(name)) {
       void file.text().then(takeText, () => setError("Файл не прочитан"));
     } else {
-      setError("Перетащите PDF или текстовый файл. Таблицу из Excel скопируйте и вставьте через «Вставить из Excel».");
+      setError("Перетащите PDF, фото (JPG, PNG) или текстовый файл. Таблицу из Excel скопируйте и вставьте через «Вставить из Excel».");
     }
   }
 
@@ -184,10 +201,15 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(false); }}
         onDrop={(event) => { event.preventDefault(); setOver(false); if (!busy) drop(event.dataTransfer); }}
       >
-        {importEnabled && <span aria-live="polite"><strong>{busy ? "Разбираю КП…" : "Перетащите сюда PDF с КП"}</strong> — до 20 МБ, файл сохранится вместе с КП</span>}
+        {importEnabled && (
+          <span aria-live="polite">
+            <strong>{busy ? "Разбираю КП…" : "Перетащите сюда PDF, скан или фото КП"}</strong>
+            {busy ? " — скан читает модель, до минуты" : " — до 20 МБ, сохранится с КП"}
+          </span>
+        )}
         {importEnabled && (
           <label className="secondary small rfq-drop-pick">Выбрать файл
-            <input type="file" accept="application/pdf,.pdf,text/plain,.txt" aria-label="PDF с КП" disabled={busy} onChange={(event) => { takeFile(event.target.files?.[0]); event.target.value = ""; }} />
+            <input type="file" accept="application/pdf,.pdf,image/jpeg,image/png,.jpg,.jpeg,.png,text/plain,.txt" aria-label="PDF или фото КП" disabled={busy} onChange={(event) => { takeFile(event.target.files?.[0]); event.target.value = ""; }} />
           </label>
         )}
         <button type="button" className="secondary small" aria-expanded={mode === "paste"} onClick={() => setMode(mode === "paste" ? "none" : "paste")}>Вставить из Excel</button>
@@ -237,15 +259,26 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
       {review && (
         <div className="quote-import-review" role="region" aria-label="Проверка импорта">
           <div className="muted">
+            {review.source === "file" && (
+              <span className={`quote-import-reader ${review.reader === "model" ? "tone-info" : "tone-neutral"}`}>
+                {review.reader === "model" ? "Распознано моделью" : "Прочитано по тексту"}
+              </span>
+            )}
             Разобрано строк: {review.rows.length}{review.vatIncluded ? " · цены с НДС" : " · цены без НДС"}
-            {review.header?.inn ? ` · ИНН в документе: ${review.header.inn}${review.header.supplier_name ? ` (${review.header.supplier_name})` : " — в справочнике нет"}` : ""}
-            {review.header?.number ? ` · № ${review.header.number}` : ""}
-            {review.header?.valid_until ? ` · действует до ${review.header.valid_until.split("-").reverse().join(".")}` : ""}
+            {supplierText(review.header)}
+            {review.header?.number ? ` · № ${review.header.number}` : ""}
+            {review.header?.date ? ` от ${day(review.header.date)}` : ""}
+            {review.header?.valid_until ? ` · действует до ${day(review.header.valid_until)}` : ""}
             {review.file ? ` · файл ${review.file.name}` : ""}
           </div>
+          {review.header?.supplier_matches === false && (
+            <div className="warning-inline" role="status">
+              В документе другой поставщик, чем выбран для КП{review.header.document_name ? `: «${review.header.document_name}»` : ""} — проверьте, тот ли это документ.
+            </div>
+          )}
           <div className="inwork-scroll" style={{ maxHeight: "34vh" }}>
             <table className="inwork-table">
-              <thead><tr><th>Строка предложения</th><th>Кол-во</th><th>Цена</th><th>Срок</th><th>Позиция запроса</th></tr></thead>
+              <thead><tr><th>Строка предложения</th><th>Кол-во</th><th>Цена</th><th>Срок</th><th>Позиция запроса</th><th>Сопоставлено</th></tr></thead>
               <tbody>
                 {review.rows.map((row, index) => {
                   const choice = review.choices[index];
@@ -267,7 +300,9 @@ export function RfqQuoteImport({ rfqId, supplierId, lines, importEnabled, onAppl
                             <option key={line.id} value={line.id} disabled={taken.has(line.id) && choice !== line.id}>{line.name}</option>
                           ))}
                         </select>
-                        {row.matched_by && choice === row.rfq_line_id ? <small className="muted"> {MATCH_LABELS[row.matched_by]}</small> : null}
+                      </td>
+                      <td className="muted" style={{ whiteSpace: "nowrap" }}>
+                        {row.matched_by && choice === row.rfq_line_id ? MATCH_LABELS[row.matched_by] : choice && choice !== "skip" ? "вручную" : ""}
                       </td>
                     </tr>
                   );

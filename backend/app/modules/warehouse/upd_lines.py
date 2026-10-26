@@ -413,11 +413,14 @@ def snap_articles(lines: list[UpdLine], known: Iterable[tuple[str, str]]) -> lis
 def line_answer(line: UpdLine) -> dict:
     """The line as «Отсканировать УПД» answers it: `name` — our name (the model's short one, else the printed one),
     `upd_name` — the name as printed, `item_type` / `manufacturer` — what the model said («» — nothing). The screen
-    lets a known lot or the reference DB replace name, type and maker until the storekeeper edits them."""
+    lets a known lot or the reference DB replace name, type and maker until the storekeeper edits them.
+    `invoice_quantity` / `invoice_unit` — the figures as invoiced (before the pack): «Принять по УПД» compares them
+    with an order written in the invoice's unit."""
     return {
         "article": line.article, "name": line.short_name or line.name, "upd_name": line.name,
         "item_type": line.item_type, "manufacturer": line.manufacturer,
         "quantity": number_text(line.quantity), "unit": line.unit,
+        "invoice_quantity": number_text(line.invoice_quantity), "invoice_unit": line.invoice_unit,
         "packs": number_text(line.packs), "pack": line.pack, "pack_kind": line.pack_kind,
         "supplier_code": line.supplier_code, "source": line.source,
     }

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.workflows.article_key import code_key
 from app.shared.events import AuditEvent
+from app.shared.file_types import sniffed_type
 from app.shared.identity import Actor
 
 from . import settings as purchasing_settings
@@ -1140,11 +1141,12 @@ QUOTE_PDF_LIMIT = 20 * 1024 * 1024
 
 
 def _stored_pdf(session: Session, name: str | None, content: bytes, now: datetime) -> DocumentFileRow:
-    """The quote's PDF in the ERP's document files: one row per distinct content (the same file twice is kept once)."""
+    """The quote's PDF — or its photo (JPG / PNG, read by the model since 26.10.2026) — in the ERP's document files: one
+    row per distinct content (the same file twice is kept once)."""
     if len(content) > QUOTE_PDF_LIMIT:
-        raise Refused("PDF больше 20 МБ")
-    if b"%PDF" not in content[:1024]:
-        raise Refused("К КП прикладывается только PDF")
+        raise Refused("Файл КП больше 20 МБ")
+    if sniffed_type(content) not in ("application/pdf", "image/jpeg", "image/png"):
+        raise Refused("К КП прикладывается только PDF или фото (JPG, PNG)")
     digest = hashlib.sha256(content).hexdigest()
     found = session.scalar(select(DocumentFileRow).where(DocumentFileRow.sha256 == digest))
     if found is not None:

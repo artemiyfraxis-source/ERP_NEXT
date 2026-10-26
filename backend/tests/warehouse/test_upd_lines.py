@@ -31,7 +31,8 @@ def test_the_real_scan_gives_six_lines_with_their_articles_tape_in_pieces():
         "name": "Маркировочная трубка термоусаживаемая МТ-2К 6,4/3,2мм белая (в рулоне 100 м)",
         "upd_name": "Маркировочная трубка термоусаживаемая МТ-2К 6,4/3,2мм белая (в рулоне 100 м)",
         "item_type": "", "manufacturer": "",  # tesseract rows: no model, our name is the printed one
-        "quantity": "300", "unit": "м", "packs": "3", "pack": "100 м", "pack_kind": "рул.",
+        "quantity": "300", "unit": "м", "invoice_quantity": "3", "invoice_unit": "шт",  # as invoiced: 3 rolls «шт»
+        "packs": "3", "pack": "100 м", "pack_kind": "рул.",
         "supplier_code": "00-00042353", "source": "скан УПД",
     }
     assert [line.supplier_code for line in lines] == [

@@ -329,11 +329,14 @@ def test_the_header_is_read_by_regex_our_own_inn_skipped():
     head = read_header("ООО Альфа ИНН 7701234567 КПП 770101001\nПокупатель: ЗЭП ФРАКСИС ИНН 5040191181\n"
                        "Коммерческое предложение № КП-123/45 от 14.10.2026\nПредложение действительно до 30.10.2026",
                        date(2026, 10, 14))
-    assert head == {"number": "КП-123/45", "valid_until": "2026-10-30", "inn": "7701234567"}
+    assert head == {"number": "КП-123/45", "valid_until": "2026-10-30", "inn": "7701234567",
+                    "document_name": "ООО Альфа", "date": "2026-10-14"}
     bill = read_header("Счет на оплату № 1990 от 14.10.26\nИНН/КПП: 5040191181/504001001\nПоставщик ИНН 772800000000\n"
                        "Цены действительны в течение 10 рабочих дней", date(2026, 10, 14))
-    assert bill == {"number": "1990", "valid_until": "2026-10-28", "inn": "772800000000"}
-    assert read_header("просто текст", date(2026, 10, 14)) == {"number": "", "valid_until": None, "inn": ""}
+    assert bill == {"number": "1990", "valid_until": "2026-10-28", "inn": "772800000000", "document_name": "",
+                    "date": "2026-10-14"}
+    assert read_header("просто текст", date(2026, 10, 14)) == {"number": "", "valid_until": None, "inn": "",
+                                                             "document_name": "", "date": None}
 
 
 def test_excel_paste_takes_the_buyers_columns_and_vat_and_remembered_wordings(rfq_api):

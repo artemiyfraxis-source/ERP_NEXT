@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
+from app.shared.invoice_header import parse_invoice_title
 from app.shared.pdf_text import PdfLimitExceeded, pdf_text
 
 # SUPPLYMAP sets no limit (Drive takes anything); ERP keeps the file in the database — 20 MB, as УПД.
@@ -132,6 +133,11 @@ def recognise_invoice(content: bytes) -> tuple[InvoiceInfo, str]:
     except PdfLimitExceeded:
         return InvoiceInfo(), TOO_HEAVY_HINT
     info = parse_invoice_text(text)
+    # Roller_Buyer's title reader (26.10) when it finds both: «Счет-оферта 696419Z от 31.10.2025», «СЧЕТ - ДОГОВОР № …».
+    number, day = parse_invoice_title(re.sub(r"\s+", " ", normalize_invoice_text(text)))
+    if number and day:
+        year, month, dom = day.split("-")
+        info = InvoiceInfo(number=number, date=f"{dom}.{month}.{year}")
     if not text.strip():
         return info, "Текст из файла не читается (скан или картинка) — № и дату счёта впишите вручную."
     if not info.number and not info.date:
