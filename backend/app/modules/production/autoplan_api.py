@@ -19,7 +19,7 @@ from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_edit_principal
 
-from .api import production_uow_factory, techcards_uow_factory
+from .api import closed_kbs, production_uow_factory, techcards_uow_factory
 from .application import ConcurrentProductionUpdate, UnitOfWork
 from .autoplan import equipment_units
 from .autoplan_application import (
@@ -81,7 +81,7 @@ def references_uow_factory(request: Request) -> Callable[[], Any] | None:
     return factory if callable(factory) else None
 
 
-def _techcards(factory: Callable[[], TechcardsUnitOfWork] | None) -> tuple[dict[tuple[str, str], CardSnapshot], list[ReadyCard]]:
+def _techcards(factory: Callable[[], TechcardsUnitOfWork] | None, closed: frozenset[str] = frozenset()) -> tuple[dict[tuple[str, str], CardSnapshot], list[ReadyCard]]:
     """Текущая выданная техкарта каждой позиции (проект, индекс; у нескольких — последняя выданная) и КБ к запуску —
     тот же список, что «Создать задание» на доске мастера (/api/production/launchable)."""
     if factory is None:
@@ -93,7 +93,7 @@ def _techcards(factory: Callable[[], TechcardsUnitOfWork] | None) -> tuple[dict[
     rows.sort(key=lambda item: (item.issued_at or item.updated_at, item.updated_at, str(item.id)))
     for card in rows:
         result[card_key(card.project, card.item_index)] = CardSnapshot(card.id, card.version, card.document)
-    return result, ready_cards(rows, kitsets)
+    return result, ready_cards(rows, kitsets, closed)
 
 
 def _units(factory: Callable[[], Any] | None) -> dict[str, int]:
@@ -125,8 +125,9 @@ def context(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+    closed: Annotated[frozenset[str], Depends(closed_kbs)],
 ) -> dict:
-    cards, ready = _techcards(techcards_factory)
+    cards, ready = _techcards(techcards_factory, closed)
     return _handle(lambda: autoplan_context(_command(payload, principal, now), uow_factory(), cards, ready))
 
 
@@ -138,8 +139,9 @@ def preview(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
     references_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
+    closed: Annotated[frozenset[str], Depends(closed_kbs)],
 ) -> dict:
-    (cards, ready), units = _techcards(techcards_factory), _units(references_factory)
+    (cards, ready), units = _techcards(techcards_factory, closed), _units(references_factory)
     return _handle(lambda: describe(preview_autoplan(_command(payload, principal, now), uow_factory(), cards, units, ready)))
 
 
@@ -151,8 +153,9 @@ def apply(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
     references_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
+    closed: Annotated[frozenset[str], Depends(closed_kbs)],
 ) -> dict:
-    (cards, ready), units = _techcards(techcards_factory), _units(references_factory)
+    (cards, ready), units = _techcards(techcards_factory, closed), _units(references_factory)
 
     def execute() -> dict:
         applied = apply_autoplan(ApplyAutoplanCommand(

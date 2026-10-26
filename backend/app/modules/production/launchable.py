@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, replace
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
 from datetime import date
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Collection, Iterable, Mapping, Sequence
 from uuid import UUID
 
 from app.modules.techcards.etk_builder import norms_include_setup, operation_norms
@@ -577,15 +577,18 @@ def kb_runs(issued_cards: Iterable[Any], kitsets: Iterable[Any]) -> dict[str, in
     return {key: quantity for key, text in texts.items() if (quantity := run_quantity(text)) is not None}
 
 
-def ready_cards(cards: Iterable[Any], kitsets: Iterable[Any]) -> list[ReadyCard]:
+def ready_cards(cards: Iterable[Any], kitsets: Iterable[Any], closed: Collection[str] = ()) -> list[ReadyCard]:
     """Выданные техкарты с маршрутом, по (проект, индекс). Тираж и заказчик — из карточки набора (prodLaunchable_ читает
-    «Наборы»); нет набора — партия ЭТК. Один список и для «Создать задание» на доске мастера, и для автоплана."""
+    «Наборы»); нет набора — партия ЭТК. Один список и для «Создать задание» на доске мастера, и для автоплана. `closed` — ключи kit_stage_key КБ, которые уже приняты складом /
+    упакованы / отгружены или из закрытого проекта: к запуску не предлагаются."""
     kit_rows = {
         kit_stage_key(kitset.project, assembly.index): (kitset.customer, assembly.run)
         for kitset in kitsets for assembly in kitset.assemblies
     }
     result: list[ReadyCard] = []
     for card in cards:
+        if kit_stage_key(card.project, card.item_index) in closed:
+            continue
         route = launch_route(card.document)
         if not route.steps:
             continue

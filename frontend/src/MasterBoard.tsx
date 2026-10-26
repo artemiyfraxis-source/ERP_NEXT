@@ -588,7 +588,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     const run = Number(item.run);
     return Number.isInteger(run) && run > 0 ? launched < run : !launched;
   });
-  const projects = Array.from(new Set([...live.map((task) => task.project), ...waiting.map((item) => item.project)]));
+  // Проект без незавершённых заданий и без КБ к запуску (всё выполнено или отгружено) карточки не получает (владелец 26.10);
+  // с незавершёнными заданиями показывается при любом статусе проекта — расхождение данных мастер должен видеть.
+  const projects = Array.from(new Set([
+    ...live.filter((task) => task.status !== "Выполнено").map((task) => task.project), ...waiting.map((item) => item.project),
+  ]));
   // Два срока (РП-1): дедлайн проекта — из плана; срок задания — самый ранний у незавершённых заданий проекта.
   const planOf = (project: string) => projectDeadlines[project.toLowerCase()];
   const taskDeadlineOf = (project: string) => live.filter((task) => task.project === project && task.status !== "Выполнено")

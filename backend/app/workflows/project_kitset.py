@@ -47,6 +47,7 @@ from app.workflows.item_names import ReferenceNames, StockNames, reference_recor
 from app.modules.production.domain import ProductionTask
 from app.modules.production.traceability import ProductionBox
 from app.modules.production.plan import (
+    kit_stage_key,
     KIT_STAGES,
     PLAN_KINDS,
     PLAN_STAGE_AUTO,
@@ -608,6 +609,30 @@ def kitset_stages(kitsets: Iterable[Kitset], facts: KitsetFacts) -> dict[str, tu
         blocker = entry.blocker.type if entry is not None and entry.blocker is not None else ""
         result[kitset.project] = (stage, blocker)
     return result
+
+
+# Владелец 26.10: «почему на доске мастера до сих пор есть отгруженные». КБ с этими этапами (или проект в этих
+# статусах / «Отменён») к запуску не предлагаются — ни на доске мастера, ни в автоплане.
+CLOSED_KB_STAGES = ("Принято складом", "Упаковано", "Отгружено")
+
+
+def closed_kb_keys(techcards, production=None, fulfillment=None, shipping=None) -> frozenset[str]:
+    """Ключи `kit_stage_key` КБ, которые запускать уже нечего: этап КБ «Принято складом» / «Упаковано» / «Отгружено»,
+    либо проект в одном из этих статусов или в терминальном («Отменён»). Тот же этап, что на экране проекта."""
+    if techcards is None:
+        return frozenset()
+    with techcards() as uow:
+        kitsets = tuple(uow.kitsets.list()) if hasattr(uow, "kitsets") else ()
+    if not kitsets:
+        return frozenset()
+    stages = kitset_stages(kitsets, kitset_facts(techcards, production, fulfillment, shipping))
+    closed = (*CLOSED_KB_STAGES, *TERMINAL_STATUSES)
+    keys: set[str] = set()
+    for project, (stage, _blocker) in stages.items():
+        for kit in stage.kits:
+            if stage.status in closed or kit.status in closed:
+                keys.add(kit_stage_key(project, kit.item_index))
+    return frozenset(keys)
 
 
 PROJECT_BLOCK = "block"
@@ -1755,6 +1780,6 @@ __all__ = [
     "ChangeProjectStageCommand", "ProjectStageChange", "ProjectStageState", "change_project_stage",
     "load_project_stage_state", "preview_project_stage", "project_stage_state", "stage_change_payload",
     "TC_REVIEW_VALUES", "attach_document", "calc_ops_from_grid", "cards_state", "delete_kitset", "detach_document",
-    "assembly_calc_ops", "bom_names", "generator_bom", "issue_from_kitset", "kitset_issue_state", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
+    "assembly_calc_ops", "bom_names", "generator_bom", "issue_from_kitset", "kitset_issue_state", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "closed_kb_keys", "CLOSED_KB_STAGES", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
     "supply_rows", "ProjectTails", "TailEntry", "TAIL_JOURNAL", "TAIL_SECTIONS", "purge_project_tails", "request_matches_project", "KitsetRequestsCommand", "KitsetRequestsResult", "create_kitset_requests", "requests_calc_reader",
 ]
