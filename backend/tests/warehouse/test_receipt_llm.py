@@ -448,3 +448,18 @@ def test_a_reading_that_crashes_stores_an_answer_that_asks_to_fill_by_hand(stand
     job = admin.post("/api/stock/receipts/scan", headers=_csrf(admin), files={"file": ("1.png", _png(), "image/png")})
     result = admin.get(f"/api/stock/receipts/scan-jobs/{job.json()['id']}").json()["result"]
     assert result["note"] == scan_recognition.FAILED and result["lines"] == []
+
+
+def test_a_reading_with_a_gap_in_row_numbers_is_read_once_more_and_the_fuller_one_wins(api):
+    """26.10, УПД № 6116: the model once glued rows 6 and 7 («1…6» of 7); the second reading had all of them."""
+    glued = {"lines": [{"n": str(n), "name": f"Провод {n}", "quantity": "500.000"} for n in (1, 2, 3, 4, 5, 7)]}
+    full = {"lines": [{"n": str(n), "name": f"Провод {n}", "quantity": "500.000"} for n in range(1, 8)]}
+    fake = api(_reply(glued), _reply(full))
+    answer = receipt_llm.read_page(CONFIG, b"jpeg", 1, _deadline(), _clock)
+    assert answer.data == full and len(fake.requests) == 2
+    assert receipt_llm.numbering_gap(glued) and not receipt_llm.numbering_gap(full)
+
+
+def test_a_second_gappy_reading_keeps_the_first_and_stops():
+    assert not receipt_llm.numbering_gap({"lines": [{"n": "8"}]}), "a continuation sheet starts anywhere"
+    assert not receipt_llm.numbering_gap({"lines": [{"n": ""}, {"n": "2"}]})
