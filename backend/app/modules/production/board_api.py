@@ -16,7 +16,7 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal
 from app.shared.project_number import normalize_project_number
 
-from .api import _box_result, _number, _result, production_uow_factory, techcards_uow_factory
+from .api import _box_result, _number, _result, closed_kbs, production_uow_factory, techcards_uow_factory
 from .application import UnitOfWork
 from .autoplan_api import _handle, _techcards, references_uow_factory
 from .board import (
@@ -133,12 +133,13 @@ def board(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
     references_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
+    closed: Annotated[frozenset[str], Depends(closed_kbs)],
     project: Annotated[str, Query(max_length=200)] = "",
 ) -> dict:
     """Запущенные задания (не отданные площадке) и будущие задания КБ с выданной техкартой на остаток тиража (quantity;
     launched — уже запущено по КБ) — из выданной сейчас ревизии; у каждой операции группа оборудования. КБ без тиража или с маршрутом, который не собрался, —
     в skipped с причиной. project — номер проекта; пусто — все."""
-    cards, ready = _techcards(techcards_factory)
+    cards, ready = _techcards(techcards_factory, closed)
     wanted = normalize_project_number(project) if project.strip() else ""
 
     def mine(value: str) -> bool:

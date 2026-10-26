@@ -179,3 +179,28 @@ describe("«Уже сделано» — ввод готовых мастером
     expect(calls[0].body).toEqual({ good_quantity: 150, operator_id: "p1", fill_inputs: true });
   });
 });
+
+describe("экран мастера: отгруженные проекты не висят карточками (владелец 26.10)", () => {
+  function mountWith(list: ProductionTask[]) {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [], statuses: [] }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    return render(<MasterBoard tasks={list} operators={[]} skills={[]} absences={[]} canEdit={false} busy="" mutate={async () => {}} openTask={() => {}} />);
+  }
+
+  it("проект только с выполненными/отменёнными заданиями и без КБ к запуску карточки не получает", () => {
+    mountWith([
+      task("1", "SHIPPED", [op({ id: "d1", position: 1, stage: "Сдача", state: "выполнена" })], { status: "Выполнено" }),
+      task("2", "SHIPPED", [op({ id: "d2", position: 1, stage: "Резка" })], { status: "Отменено" }),
+      task("3", "ACTIVE", [op({ id: "a1", position: 1, stage: "Резка" })]),
+    ]);
+    expect(screen.queryByText("SHIPPED")).toBeNull();
+    expect(screen.getByText("ACTIVE")).toBeInTheDocument();
+  });
+
+  it("проект с незавершённым заданием показывается, даже если рядом есть выполненное", () => {
+    mountWith([
+      task("1", "MIXED", [op({ id: "d1", position: 1, stage: "Сдача", state: "выполнена" })], { status: "Выполнено" }),
+      task("2", "MIXED", [op({ id: "m1", position: 1, stage: "Резка" })]),
+    ]);
+    expect(screen.getByText("MIXED")).toBeInTheDocument();
+  });
+});

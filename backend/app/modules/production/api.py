@@ -14,6 +14,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item, pinned_card, saved_harness
 from app.workflows.etk_lots import IssuedKitLots
+from app.workflows.project_kitset import closed_kb_keys
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.identity import Actor
@@ -283,6 +284,19 @@ def production_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
 def techcards_uow_factory(request: Request) -> Callable[[], TechcardsUnitOfWork] | None:
     factory = getattr(request.app.state, "techcards_uow_factory", None)
     return factory if callable(factory) else None
+
+
+def closed_kbs(request: Request) -> frozenset[str]:
+    """КБ, уже принятые складом / упакованные / отгруженные (или из закрытого проекта): к запуску не предлагаются."""
+    state = request.app.state
+    techcards = getattr(state, "techcards_uow_factory", None)
+    if not callable(techcards):
+        return frozenset()
+    return closed_kb_keys(
+        techcards, *(getattr(state, name, None) if callable(getattr(state, name, None)) else None for name in (
+            "production_uow_factory", "fulfillment_uow_factory", "shipping_uow_factory",
+        )),
+    )
 
 
 def etk_issued_lots(request: Request) -> IssuedLots | None:
@@ -1428,6 +1442,7 @@ def launchable(
     _principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+    closed: Annotated[frozenset[str], Depends(closed_kbs)],
 ) -> dict:
     """prodLaunchable_: kit positions with an issued techcard, with the run and what is already launched."""
     if techcards_factory is None:
@@ -1440,17 +1455,17 @@ def launchable(
         "deadline": card.deadline.isoformat() if card.deadline else None,
         "launched": launched.get(card.key, 0), "operations": len(card.route.steps),
         "warnings": list(card.route.warnings),
-    } for card in _ready(techcards_factory)]
+    } for card in _ready(techcards_factory, closed)]
     items.sort(key=lambda value: (value["project"], value["index"]))
     return {"items": items}
 
 
-def _ready(techcards_factory: Callable[[], TechcardsUnitOfWork]):
-    """КБ с выданной техкартой, тиражом из набора и маршрутом (ready_cards)."""
+def _ready(techcards_factory: Callable[[], TechcardsUnitOfWork], closed: frozenset[str] = frozenset()):
+    """КБ с выданной техкартой, тиражом из набора и маршрутом (ready_cards); closed — КБ после склада, не к запуску."""
     with techcards_factory() as techcards:
         cards = [card for card in techcards.techcards.list() if card.status is TechcardStatus.ISSUED]
         kitsets = tuple(techcards.kitsets.list()) if hasattr(techcards, "kitsets") else ()
-    return ready_cards(cards, kitsets)
+    return ready_cards(cards, kitsets, closed)
 
 
 @router.get("/operators")

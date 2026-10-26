@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_edit_principal
 
-from .api import production_uow_factory, techcards_uow_factory
+from .api import closed_kbs, production_uow_factory, techcards_uow_factory
 from .application import UnitOfWork
 from .autoplan_api import PreviewPayload, _command, _handle, _techcards, _units, references_uow_factory
 from .ship_plan_application import describe_ship_plan, ship_plan
@@ -33,8 +33,9 @@ def preview_ship_plan(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
     references_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
+    closed: Annotated[frozenset[str], Depends(closed_kbs)],
 ) -> dict:
-    (cards, ready), units = _techcards(techcards_factory), _units(references_factory)
+    (cards, ready), units = _techcards(techcards_factory, closed), _units(references_factory)
     return _handle(lambda: describe_ship_plan(
         ship_plan(_command(payload, principal, now), payload.ship_date, uow_factory(), cards, units, ready),
     ))
