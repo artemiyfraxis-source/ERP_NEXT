@@ -107,6 +107,9 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   const [scanError, setScanError] = useState("");
   const [scanPages, setScanPagesState] = useState<string[]>([]);
   const scanPagesRef = useRef<string[]>([]);
+  // How many lines of the merged answer the form already has: «+ Страница» adds only the next sheet's lines, the
+  // merged answer repeats the earlier ones (26.10: the second sheet came back as 7 doubles + 1 new line).
+  const scanLinesRef = useRef(0);
   const scanJobId = useRef<string | null>(null);
   const scanAborted = useRef(false);
   const [accepting, setAccepting] = useState<number | null>(null);
@@ -259,6 +262,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
 
   function setScanPages(pages: string[]) {
     scanPagesRef.current = pages;
+    if (!pages.length) scanLinesRef.current = 0;
     setScanPagesState(pages);
   }
 
@@ -269,11 +273,14 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     if (pages.length < 2) {
       setScanPages(pages);
       applyScanResult(results[0]);
+      scanLinesRef.current = (results[0].lines ?? []).length;
       return;
     }
     const merged = await answerOf(await warehouseApi.mergeScans(pages));
     setScanPages(pages);
-    applyScanResult(merged);
+    const all = merged.lines ?? [];
+    applyScanResult({ ...merged, lines: all.slice(Math.min(scanLinesRef.current, all.length)) });
+    scanLinesRef.current = all.length;
   }
 
   /** The answer of a done job: the server reads the УПД after the scan is in, «Распознаю УПД…» meanwhile. */
