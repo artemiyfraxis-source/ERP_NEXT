@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
-import { ApiError, warehouseApi, type WarehouseLot, type WarehouseReceipt as ReceiptDoc, type WarehouseReceiptScan } from "./api";
+import { ApiError, warehouseApi, type WarehouseLot, type WarehouseReceipt as ReceiptDoc, type WarehouseReceiptScan, type WarehouseScanJob } from "./api";
 import { labelsApi } from "./LabelPrint";
 import { PageWindow } from "./PageWindow";
 import { SuggestInput } from "./SuggestInput";
@@ -87,6 +87,11 @@ function AcceptDialog({ line, warehouse, onClose, onAccept }: {
 
 const SCAN_POLL_MS = 1500;
 const SCAN_WAIT_MS = 130_000;
+/** A model reads a УПД page in 8–100 s, its fallback longer: the answer is waited for up to 4 minutes. */
+const RECOGNISE_WAIT_MS = 240_000;
+
+/** The scan stopped before its answer: the storekeeper cancelled, or it did not come in time. */
+class ScanStopped extends Error {}
 
 /** «Внести позиции»: the supply header and a paste grid; every row is accepted on its own with «Принять». */
 export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }: Props) {
@@ -98,7 +103,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(false);
-  const [scanStatus, setScanStatus] = useState<"" | "pending" | "claimed">("");
+  const [scanStatus, setScanStatus] = useState<"" | "pending" | "claimed" | "recognising">("");
   const [scanError, setScanError] = useState("");
   const [scanPages, setScanPagesState] = useState<string[]>([]);
   const scanPagesRef = useRef<string[]>([]);
@@ -266,9 +271,33 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
       applyScanResult(results[0]);
       return;
     }
-    const merged = await warehouseApi.mergeScans(pages);
+    const merged = await answerOf(await warehouseApi.mergeScans(pages));
     setScanPages(pages);
     applyScanResult(merged);
+  }
+
+  /** The answer of a done job: the server reads the УПД after the scan is in, «Распознаю УПД…» meanwhile. */
+  async function answerOf(first: WarehouseScanJob): Promise<WarehouseReceiptScan> {
+    let current = first;
+    const deadline = Date.now() + RECOGNISE_WAIT_MS;
+    for (;;) {
+      if (scanAborted.current) throw new ScanStopped("");
+      if (current.result) return current.result;
+      if (current.status === "failed") throw new Error(current.error || "Не удалось распознать УПД");
+      setScanStatus("recognising");
+      if (Date.now() >= deadline) {
+        if (current.scan_file) setScanFile(current.scan_file);
+        throw new ScanStopped("УПД не распознан за 4 мин — заполните вручную, скан прикреплён");
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, SCAN_POLL_MS));
+      if (scanAborted.current) throw new ScanStopped("");
+      current = await warehouseApi.scanJob(current.id);
+    }
+  }
+
+  function scanFailed(reason: unknown, fallback: string) {
+    if (scanAborted.current) return;
+    setScanError(reason instanceof Error && reason.message ? reason.message : fallback);
   }
 
   function applyScanResult(result: WarehouseReceiptScan) {
@@ -283,13 +312,16 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   async function scan(files: File[]) {
     setScanning(true);
     setError("");
+    setScanError("");
+    scanAborted.current = false;
     try {
       const results: WarehouseReceiptScan[] = [];
-      for (const file of files) results.push(await warehouseApi.scanReceipt(file));
+      for (const file of files) results.push(await answerOf(await warehouseApi.scanReceipt(file)));
       await takePages(results);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Не удалось разобрать УПД");
+      scanFailed(reason, "Не удалось разобрать УПД");
     } finally {
+      setScanStatus("");
       setScanning(false);
       if (fileInput.current) fileInput.current.value = "";
     }
@@ -311,7 +343,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
       let current = job;
       for (;;) {
         if (scanAborted.current) return;
-        if (current.status === "done" && current.result) { await takePages([current.result]); return; }
+        if (current.status === "done") { await takePages([await answerOf(current)]); return; }
         if (current.status === "failed") { setScanError(current.error || "Сканер не ответил"); return; }
         setScanStatus(current.status === "claimed" ? "claimed" : "pending");
         if (Date.now() >= deadline) {
@@ -324,7 +356,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
         current = await warehouseApi.scanJob(job.id);
       }
     } catch (reason) {
-      if (!scanAborted.current) setScanError(reason instanceof Error ? reason.message : "Не удалось отсканировать УПД");
+      scanFailed(reason, "Не удалось отсканировать УПД");
     } finally {
       scanJobId.current = null;
       setScanStatus("");
@@ -489,7 +521,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
         </div>
         {scanStatus || scanError ? (
           <p className={`wr-scan-status${scanError ? " error" : ""}`} role="status">
-            {scanError || (scanStatus === "claimed" ? "Сканирует…" : "Положите УПД на стекло сканера — ждём ПК склада…")}
+            {scanError || (scanStatus === "recognising" ? "Распознаю УПД…" : scanStatus === "claimed" ? "Сканирует…" : "Положите УПД на стекло сканера — ждём ПК склада…")}
             {scanStatus ? <> <a href="#" onClick={(event) => { event.preventDefault(); cancelScan(); }}>Отменить</a></> : null}
           </p>
         ) : null}

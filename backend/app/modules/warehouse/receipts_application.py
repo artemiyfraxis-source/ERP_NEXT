@@ -207,14 +207,17 @@ def as_pdf(name: str, kind: str, content: bytes) -> tuple[str, str, bytes]:
     return str(PurePath(name).with_suffix(".pdf")), "application/pdf", buffer.getvalue()
 
 
-def store_scan(uow: UnitOfWork, file_name: str, content: bytes, actor: Actor, now: datetime) -> tuple[str, str]:
-    """The УПД scan kept in the database (as PDF); returns its link (the header's `scan_file`) and what it is."""
+def store_scan(uow: UnitOfWork, file_name: str, content: bytes, actor: Actor, now: datetime) -> scan_jobs.ScanJob:
+    """«Файл…»: the УПД scan kept in the database (as PDF) with a done scan job pointing at it, one transaction — the
+    job is the screen's handle while the file is being read (a model takes 8–100 s, longer than a request may)."""
     name, kind, content = as_pdf(*checked_scan(file_name, content), content)
     file_id = uuid4()
     with uow:
         uow.receipts.add_file(file_id, name, kind, content, actor.name, now)
+        uow.session.flush()  # the file row before the job points at it
+        job = scan_jobs.add_done_job(uow.session, file_id=file_id, requested_by=actor.name, now=now)
         uow.commit()
-    return f"{RECEIPT_SCAN_PATH}{file_id}", kind
+    return job
 
 
 def store_job_scan(uow: UnitOfWork, job_id: UUID, file_name: str, content: bytes, now: datetime) -> str:
@@ -241,23 +244,36 @@ def store_job_scan(uow: UnitOfWork, job_id: UUID, file_name: str, content: bytes
 SCAN_PAGES_MAX = 20
 
 
-def merge_scans(uow: UnitOfWork, links: Sequence[str], actor: Actor, now: datetime) -> tuple[str, bytes]:
+@dataclass(frozen=True)
+class MergedScan:
+    job: scan_jobs.ScanJob  # done, pointing at the merged file
+    pages: list[UUID]  # the files of the sheets, in page order
+
+
+def scan_file_id(link: str) -> UUID | None:
+    """The file of a scan link («/api/stock/receipts/files/<id>»); None — not one."""
+    link = str(link)
+    tail = link[len(RECEIPT_SCAN_PATH):] if link.startswith(RECEIPT_SCAN_PATH) else ""
+    try:
+        return UUID(tail)
+    except ValueError:
+        return None
+
+
+def merge_scans(uow: UnitOfWork, links: Sequence[str], actor: Actor, now: datetime) -> MergedScan:
     """A multi-page УПД scanned sheet by sheet (the flatbed has no feeder): the stored scans, in page order, become ONE
-    PDF kept as a new file «УПД.pdf»; returns its link and the bytes. Foreign link / unreadable file / over 20 MB —
-    WarehouseValidationError."""
+    PDF kept as a new file «УПД.pdf» with a done scan job on it (one transaction). Foreign link / unreadable file /
+    over 20 MB — WarehouseValidationError."""
     from pypdf import PdfReader, PdfWriter  # only a merge needs it
     from pypdf.errors import PyPdfError
 
     if not 2 <= len(links) <= SCAN_PAGES_MAX:
         raise WarehouseValidationError(f"Склеить можно от 2 до {SCAN_PAGES_MAX} страниц")
     writer = PdfWriter()
+    pages: list[UUID] = []
     for link in links:
-        link = str(link)
-        tail = link[len(RECEIPT_SCAN_PATH):] if link.startswith(RECEIPT_SCAN_PATH) else ""
-        try:
-            found = scan_file(uow, UUID(tail))
-        except ValueError:
-            found = None
+        page_id = scan_file_id(link)
+        found = scan_file(uow, page_id) if page_id is not None else None
         if found is None:
             raise WarehouseValidationError("Скан не найден — загрузите страницу заново")
         name, content = found
@@ -270,6 +286,7 @@ def merge_scans(uow: UnitOfWork, links: Sequence[str], actor: Actor, now: dateti
                 writer.add_page(page)
         except (PyPdfError, ValueError, OSError):
             raise WarehouseValidationError("Страницу скана не удалось прочитать — загрузите её заново") from None
+        pages.append(page_id)
     buffer = BytesIO()
     writer.write(buffer)
     merged = buffer.getvalue()
@@ -278,13 +295,55 @@ def merge_scans(uow: UnitOfWork, links: Sequence[str], actor: Actor, now: dateti
     file_id = uuid4()
     with uow:
         uow.receipts.add_file(file_id, "УПД.pdf", "application/pdf", merged, actor.name, now)
+        uow.session.flush()
+        job = scan_jobs.add_done_job(uow.session, file_id=file_id, requested_by=actor.name, now=now)
         uow.commit()
-    return f"{RECEIPT_SCAN_PATH}{file_id}", merged
+    return MergedScan(job=job, pages=pages)
 
 
 def scan_file(uow: UnitOfWork, file_id: UUID) -> tuple[str, bytes] | None:
     with uow:
         return uow.receipts.file(file_id)
+
+
+def scan_recognition(uow: UnitOfWork, file_id: UUID) -> str:
+    """The reading kept with the scan file ('' — not read yet)."""
+    with uow:
+        return uow.receipts.recognition(file_id)
+
+
+def keep_scan_recognition(uow: UnitOfWork, file_id: UUID, recognition: str) -> None:
+    with uow:
+        uow.receipts.keep_recognition(file_id, recognition)
+        uow.commit()
+
+
+UPD_LLM_EDITABLE = ("base_url", "model", "fallback_model", "effort")
+
+
+def upd_llm_settings(uow: UnitOfWork) -> dict:
+    """The saved «Распознавание УПД» settings ({} — never saved), the key included: server side only."""
+    with uow:
+        return uow.upd_llm_settings.load()
+
+
+def save_upd_llm_settings(uow: UnitOfWork, values: dict, actor: Actor, now: datetime) -> dict:
+    """`values`: the editable fields, and `api_key` only when it changes ('' — removed). The journal gets who changed
+    what, never the key."""
+    with uow:
+        before = uow.upd_llm_settings.load()
+        uow.upd_llm_settings.save(values, now, actor.name)
+        changed = [name for name in UPD_LLM_EDITABLE if name in values and values[name] != before.get(name, "")]
+        parts = [f"{name} = {values[name] or 'по умолчанию'}" for name in changed]
+        if "api_key" in values and values["api_key"] != before.get("api_key", ""):
+            parts.append("ключ API заменён" if values["api_key"] else "ключ API удалён")
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=UUID(int=0), event_type="warehouse.upd_llm_settings_saved", actor=actor,
+            occurred_at=now, details={"message": "; ".join(parts) or "без изменений"},
+        ))
+        saved = uow.upd_llm_settings.load()
+        uow.commit()
+    return saved
 
 
 @dataclass(frozen=True)

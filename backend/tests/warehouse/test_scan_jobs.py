@@ -160,7 +160,8 @@ def test_the_ci_seeder_fills_the_scan_queue_once_it_stands_one_revision_back(tmp
 def test_button_agent_file_and_the_answer_of_a_hand_uploaded_scan(queue):
     admin, agent, clock, sessions = queue
     job_id = _new_job(admin)
-    assert _job(admin, job_id) == {"id": job_id, "status": "pending", "error": "", "result": None}
+    assert _job(admin, job_id) == {"id": job_id, "status": "pending", "error": "", "result": None,
+                                   "recognising": False, "scan_file": ""}
 
     assert _claim(agent) == job_id
     assert _claim(agent) is None, "a claimed job is not handed out twice"
@@ -182,8 +183,11 @@ def test_button_agent_file_and_the_answer_of_a_hand_uploaded_scan(queue):
     assert result["scan_file"].startswith("/api/stock/receipts/files/")
     served = admin.get(result["scan_file"])
     assert served.status_code == 200 and served.headers["content-type"] == "application/pdf"
+    assert (done["recognising"], done["scan_file"]) == (False, result["scan_file"])
     by_hand = admin.post("/api/stock/receipts/scan", headers=_csrf(admin),
                          files={"file": ("упд.pdf", identity_pdf(UPD_TEXT), "application/pdf")}).json()
+    assert (by_hand["status"], by_hand["result"], by_hand["recognising"]) == ("done", None, True), "read after the answer"
+    by_hand = _job(admin, by_hand["id"])["result"]
     assert set(result) == set(by_hand) and result["recognised"] == by_hand["recognised"]
 
     with sessions() as session:
@@ -197,6 +201,7 @@ def test_button_agent_file_and_the_answer_of_a_hand_uploaded_scan(queue):
     assert again.status_code == 409 and again.json()["detail"] == "Задание сканирования уже закрыто"
     with sessions() as session:
         assert len(session.scalars(select(WarehouseReceiptFileRow)).all()) == 2, "the retry stored nothing"
+        assert json.loads(stored.recognition)["found"]["upd_number"] == "123", "the reading is kept with the file"
 
 
 def test_a_flatbed_jpeg_of_nine_megabytes_reaches_the_queue(queue):
@@ -232,7 +237,8 @@ def test_the_agent_reports_why_it_could_not_scan(queue):
     assert _job(admin, job_id)["status"] == "claimed", "a request that says nothing changes nothing"
     reported = service.post(_result(job_id), json={"error": "  Сканер \n занят "}, headers=agent)
     assert reported.status_code == 200 and reported.json()["status"] == "failed"
-    assert _job(admin, job_id) == {"id": job_id, "status": "failed", "error": "Сканер занят", "result": None}
+    assert _job(admin, job_id) == {"id": job_id, "status": "failed", "error": "Сканер занят", "result": None,
+                                   "recognising": False, "scan_file": ""}
     assert service.post(_result(job_id), json={"error": "x"}, headers=agent).status_code == 409
 
     silent = _new_job(admin)
@@ -256,7 +262,8 @@ def test_a_job_nobody_answers_fails_on_its_own(queue):
     clock.now += PENDING_TIMEOUT - timedelta(seconds=1)
     assert _job(admin, waiting)["status"] == "pending"
     clock.now += timedelta(seconds=2)
-    assert _job(admin, waiting) == {"id": waiting, "status": "failed", "error": NO_ANSWER, "result": None}
+    assert _job(admin, waiting) == {"id": waiting, "status": "failed", "error": NO_ANSWER, "result": None,
+                                    "recognising": False, "scan_file": ""}
     assert NO_ANSWER == "Сканер не ответил — проверьте агент на ПК склада"
     with sessions() as session:
         assert session.get(ScanJobRow, UUID(waiting)).status == "failed", "persisted"

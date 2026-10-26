@@ -11,9 +11,10 @@ text layer too, and an item row of a УПД is recognisable by its own shape —
 * The name wraps onto the next lines; they are glued until the next row, a blank line or the end of the table.
   What other columns leave on those lines is dropped: «— акциза» / «|| акциза 923» (the «без акциза» column, the end
   of a customs number), a customs number «10620010/220426/5063», lone OCR marks.
-* The pack in the name — «(в рулоне 100 м)», «в бухте 305 м», «9мм*16м» (length after the width), «упаковка 6000 шт»,
-  «уп. 100 шт», «100 шт/уп», «##6000» — turns invoiced pieces into what lies on the shelf: 3 шт × 100 м = 300 м.
-  An invoice already in the pack's unit (305 м of a cable «в бухте 305 м») is not multiplied.
+* The pack the name says in words — «(в рулоне 100 м)», «в бухте 305 м», «упаковка 6000 шт», «уп. 100 шт»,
+  «100 шт/уп», «##6000» — turns invoiced pieces into what lies on the shelf: 3 шт × 100 м = 300 м. An invoice already
+  in the pack's unit (305 м of a cable «в бухте 305 м») is not multiplied. A size form «9мм*16м» is no pack (owner
+  26.10: tape stays in rolls / шт, «Тр-I090EW» 2 шт stays 2 шт): it only keeps the roll length out of the article.
 * The article is the maker / series code of the name («МТ-2К», «Тр-I090EW») with OCR fixes (W read as «\\М/» or
   «\\\\/», I as 1 when the digits after it spell the tape width, Cyrillic look-alikes in a Latin part, O / l between
   digits); a series code (fewer than 3 digits) takes the size and colour of the name: «МТ-2К 6,4/3,2 белая».
@@ -110,9 +111,9 @@ class UpdLine:
 
     article: str
     name: str
-    quantity: Decimal
+    quantity: Decimal | None  # None — the quantity could not be read (the row stays, the storekeeper types it)
     unit: str
-    invoice_quantity: Decimal
+    invoice_quantity: Decimal | None
     invoice_unit: str
     packs: Decimal | None = None
     pack: str = ""
@@ -120,6 +121,7 @@ class UpdLine:
     supplier_code: str = ""
     source: str = SOURCE
     colour: str = ""  # the colour word the article took from the name — the snap tries the article without it too
+    number: str = ""  # «№ п/п» of the row (the page merge tells a repeated sheet from a new row by it)
 
 
 def number_text(value: Decimal | None) -> str:
@@ -144,6 +146,18 @@ def _unit(word: str | None, okei: str | None) -> str:
         if word.startswith(stem):
             return unit
     return OKEI.get(okei or "", "шт")
+
+
+def unit_of(text: str | None) -> str:
+    """The unit a model read off the УПД («шт», «м», «упак.», «796») as the warehouse writes it; an unknown word stays
+    as printed, nothing — «шт»."""
+    word = " ".join(str(text or "").split()).strip(" .")
+    if not word:
+        return "шт"
+    if word in OKEI:
+        return OKEI[word]
+    folded = word.casefold()
+    return next((unit for stem, unit in _UNIT_WORDS if folded.startswith(stem)), word[:16])
 
 
 def _row(line: str):
@@ -197,11 +211,11 @@ def find_pack(name: str) -> _Pack | None:
     return None
 
 
-def _apply_pack(quantity: Decimal, unit: str, pack: _Pack | None) -> tuple[Decimal, str, Decimal | None]:
+def _apply_pack(quantity: Decimal | None, unit: str, pack: _Pack | None) -> tuple[Decimal | None, str, Decimal | None]:
     """(quantity, unit, packs) on the shelf. Pieces / rolls / packs of a pack in another unit are multiplied; pieces of
     a pack in pieces only when fewer were invoiced than one pack holds (2 шт «упаковка 6000 шт» → 12000 шт, 150 шт «уп.
     100 шт» stay 150); metres of a pack in metres stay, their count of packs shown when whole."""
-    if pack is None:
+    if pack is None or quantity is None:
         return quantity, unit, None
     if unit in _PACKAGED and (pack.unit != unit or (unit == "шт" and pack.explicit and quantity < pack.size)):
         return quantity * pack.size, pack.unit, quantity
@@ -300,16 +314,32 @@ def parse_upd_lines(text: str) -> list[UpdLine]:
             index += 1
             if _LETTER.search(line):
                 parts.append(_wrapped_part(line))
-        article, name, colour = name_article(_glue(parts))
-        unit = _unit(row["unit"], row.groupdict().get("okei"))
-        pack = find_pack(name)
-        total, total_unit, packs = _apply_pack(quantity, unit, pack)
-        found.append(UpdLine(
-            article=article, name=name, quantity=total, unit=total_unit, invoice_quantity=quantity, invoice_unit=unit,
-            packs=packs, pack=f"{number_text(pack.size)} {pack.unit}" if pack else "", pack_kind=pack.kind if pack else "",
-            supplier_code=row["code"] or "", colour=colour,
+        found.append(item_line(
+            _glue(parts), quantity, _unit(row["unit"], row.groupdict().get("okei")), supplier_code=row["code"] or "",
+            number=row["no"],
         ))
     return found
+
+
+def item_line(name: str, quantity: Decimal | None, unit: str, *, supplier_code: str = "", number: str = "") -> UpdLine:
+    """One item row from its printed name, invoiced quantity and unit (OCR rows and a model's rows alike): the
+    article read off the name, the pack said in words applied (`find_pack`; a size form «9мм*16м» is not a pack)."""
+    article, name, colour = name_article(" ".join(str(name or "").split()))
+    pack = find_pack(name)
+    if pack is not None and not pack.explicit:
+        pack = None
+    total, total_unit, packs = _apply_pack(quantity, unit, pack)
+    return UpdLine(
+        article=article, name=name, quantity=total, unit=total_unit, invoice_quantity=quantity, invoice_unit=unit,
+        packs=packs, pack=f"{number_text(pack.size)} {pack.unit}" if pack else "", pack_kind=pack.kind if pack else "",
+        supplier_code=str(supplier_code or "").strip()[:64], colour=colour, number=str(number or "").strip()[:16],
+    )
+
+
+def quantity_of(text: str | None) -> Decimal | None:
+    """«3», «3.000», «1 000,000» → the number; unreadable or not above zero — None."""
+    value = _number(str(text or "")) if str(text or "").strip() else None
+    return value if value is not None and value > 0 else None
 
 
 def snap_key(text: str) -> str:

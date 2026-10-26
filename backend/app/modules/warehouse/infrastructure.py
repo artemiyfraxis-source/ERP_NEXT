@@ -72,6 +72,8 @@ class WarehouseReceiptFileRow(Base):
     content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # What the file was read as (scan_reading JSON, 0150); '' — not read yet.
+    recognition: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
 
 
 _RECEIPT_FIELDS = tuple(column.name for column in WarehouseReceiptRow.__table__.columns)
@@ -154,6 +156,18 @@ class SqlAlchemyWarehouseReceipts:
     def file(self, file_id: UUID) -> tuple[str, bytes] | None:
         row = self.session.get(WarehouseReceiptFileRow, file_id)
         return (row.file_name, row.content) if row is not None else None
+
+    def recognition(self, file_id: UUID) -> str:
+        """The kept reading of the file ('' — none, or no such file)."""
+        return self.session.scalar(
+            select(WarehouseReceiptFileRow.recognition).where(WarehouseReceiptFileRow.id == file_id)
+        ) or ""
+
+    def keep_recognition(self, file_id: UUID, recognition: str) -> None:
+        self.session.execute(
+            update(WarehouseReceiptFileRow).where(WarehouseReceiptFileRow.id == file_id)
+            .values(recognition=recognition).execution_options(synchronize_session=False)
+        )
 
 
 class StockLotRow(Base):
@@ -793,6 +807,58 @@ class SqlAlchemyLabelSettings:
         row.updated_by = updated_by
 
 
+class WarehouseUpdLlmSettingsRow(Base):
+    """«Распознавание УПД»: the model API the administrator saved, one row per installation (migration 0150).
+    `api_key` never leaves the server (the API answers it masked)."""
+
+    __tablename__ = "warehouse_upd_llm_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_warehouse_upd_llm_settings_single_row"),
+        CheckConstraint("effort IN ('', 'minimal', 'low', 'medium', 'high')", name="ck_warehouse_upd_llm_settings_effort"),
+        CheckConstraint(
+            "base_url = '' OR base_url LIKE 'http://%' OR base_url LIKE 'https://%'",
+            name="ck_warehouse_upd_llm_settings_base_url",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    base_url: Mapped[str] = mapped_column(String(512), nullable=False, default="", server_default="")
+    model: Mapped[str] = mapped_column(String(128), nullable=False, default="", server_default="")
+    fallback_model: Mapped[str] = mapped_column(String(128), nullable=False, default="", server_default="")
+    effort: Mapped[str] = mapped_column(String(16), nullable=False, default="", server_default="")
+    api_key: Mapped[str] = mapped_column(String(512), nullable=False, default="", server_default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+
+
+UPD_LLM_FIELDS = ("base_url", "model", "fallback_model", "effort", "api_key")
+
+
+class SqlAlchemyUpdLlmSettings:
+    """The saved «Распознавание УПД» settings as {field: value} plus `updated_at` / `updated_by`; no row — {}."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def load(self) -> dict:
+        row = self.session.get(WarehouseUpdLlmSettingsRow, 1)
+        if row is None:
+            return {}
+        return {**{name: getattr(row, name) or "" for name in UPD_LLM_FIELDS},
+                "updated_at": row.updated_at, "updated_by": row.updated_by}
+
+    def save(self, values: dict, updated_at: datetime, updated_by: str) -> None:
+        row = self.session.get(WarehouseUpdLlmSettingsRow, 1)
+        if row is None:
+            row = WarehouseUpdLlmSettingsRow(id=1, **{name: "" for name in UPD_LLM_FIELDS})
+            self.session.add(row)
+        for name in UPD_LLM_FIELDS:
+            if name in values:
+                setattr(row, name, values[name])
+        row.updated_at = updated_at
+        row.updated_by = updated_by[:255]
+
+
 class SqlAlchemyWarehouseUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
@@ -808,6 +874,7 @@ class SqlAlchemyWarehouseUnitOfWork:
         self.journal = SqlAlchemyWarehouseJournalReader(self.session)
         self.item_types = SqlAlchemyItemTypeDictionary(self.session)
         self.label_settings = SqlAlchemyLabelSettings(self.session)
+        self.upd_llm_settings = SqlAlchemyUpdLlmSettings(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self

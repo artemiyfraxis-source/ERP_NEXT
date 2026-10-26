@@ -11,7 +11,9 @@ Status machine, held by CHECK constraints (migration 0145) and by the conditiona
        └──────── cancel / no answer ──▶ failed
 A pending job older than 120 s or a claimed one older than 180 s is failed «Сканер не ответил…» the first time
 anyone looks at the queue (the screen's poll, the agent's claim): nobody waits for a scan the storekeeper gave up on.
-done and failed are final. `result` keeps the recognition answer of a done job once it is made (OCR takes seconds);
+done and failed are final. A hand-uploaded or merged scan gets a job that is done from the start (`add_done_job`),
+the handle the screen polls while the file is read. `result` keeps the recognition answer of a done job once it is
+made in the background (a model takes 8–100 s);
 finished jobs older than 30 days are purged on claim (their files stay: the delivery may link them)."""
 
 from __future__ import annotations
@@ -130,6 +132,16 @@ def create_job(uow, *, requested_by: str, now: datetime) -> ScanJob:
                          error="", result="")
         session.add(row)
         uow.commit()
+    return _job(row)
+
+
+def add_done_job(session: Session, *, file_id: UUID, requested_by: str, now: datetime) -> ScanJob:
+    """Inside the transaction that stored a hand-uploaded (or merged) scan: a job that is done from the start — no
+    agent takes it; the screen polls it for the reading like a scanner job (26.10: a model reads for 8–100 s)."""
+    row = ScanJobRow(id=uuid4(), status=DONE, requested_by=requested_by[:255] or "—", created_at=now, claimed_at=now,
+                     finished_at=now, file_id=file_id, error="", result="")
+    session.add(row)
+    session.flush()
     return _job(row)
 
 

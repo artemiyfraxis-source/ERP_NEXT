@@ -362,12 +362,19 @@ UPD_TEXT = [
 ]
 
 
+def _scan(client, name: str, content: bytes, kind: str) -> dict:
+    """«Файл…»: the scan is stored with a done job, read after the answer (26.10); the poll gives the result."""
+    job = client.post("/api/stock/receipts/scan", files={"file": (name, content, kind)})
+    assert job.status_code == 200, job.text
+    assert job.json()["status"] == "done" and job.json()["scan_file"].startswith("/api/stock/receipts/files/")
+    polled = client.get(f"/api/stock/receipts/scan-jobs/{job.json()['id']}").json()
+    assert polled["recognising"] is False
+    return polled["result"]
+
+
 def test_scan_of_a_pdf_with_text_is_stored_and_recognised(stand):
     client, _ = stand
-    response = client.post("/api/stock/receipts/scan",
-                           files={"file": ("упд.pdf", identity_pdf(UPD_TEXT), "application/pdf")})
-    assert response.status_code == 200, response.text
-    body = response.json()
+    body = _scan(client, "упд.pdf", identity_pdf(UPD_TEXT), "application/pdf")
     assert body["recognised"] == {
         "supplier": "ООО «Ромашка Электро»", "inn": "7701234567", "upd_number": "123", "upd_date": "2026-10-20",
         "invoice_number": "СЧ-45", "invoice_date": "2026-10-01",
@@ -382,7 +389,7 @@ def test_scan_of_a_pdf_with_text_is_stored_and_recognised(stand):
 def test_scan_of_a_picture_is_stored_and_asks_to_type_the_header(stand, monkeypatch):
     client, _ = stand
     monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: "")  # OCR read nothing on the picture
-    body = client.post("/api/stock/receipts/scan", files={"file": ("photo.png", PNG, "image/png")}).json()
+    body = _scan(client, "photo.png", PNG, "image/png")
     assert body["note"] == NO_TEXT == "Текст не распознан — заполните вручную"
     assert body["recognised"]["upd_number"] == "" and body["recognised"]["upd_date"] is None
 
@@ -409,8 +416,7 @@ def test_scan_takes_header_and_lines_of_the_upd_purchasing_already_holds(stand):
                                    article=article, unit="шт", quantity=quantity))
         session.commit()
 
-    body = client.post("/api/stock/receipts/scan",
-                       files={"file": ("упд.pdf", identity_pdf(UPD_TEXT[:1]), "application/pdf")}).json()
+    body = _scan(client, "упд.pdf", identity_pdf(UPD_TEXT[:1]), "application/pdf")
 
     assert body["recognised"]["supplier"] == "ООО \"Ромашка Электро\""
     assert body["recognised"]["upd_date"] == "2026-10-21"
@@ -425,7 +431,8 @@ OCR_ROWS = (Path(__file__).parent / "fixtures" / "upd-1788-ocr-rows.txt").read_t
 
 
 def test_scan_without_a_registry_upd_reads_the_rows_off_the_scan_and_snaps_known_articles(stand, monkeypatch):
-    """Owner 23.10, the first real scan: the article from the name, the roll length × the rolls."""
+    """Owner 23.10, the first real scan: the article from the name, the roll length × the rolls (26.10: a tape's
+    «9мм*16м» is its size — it stays 2 шт)."""
     client, sessions = stand
     monkeypatch.setattr(app.state, "references_uow_factory", None, raising=False)
     monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: "\n".join([*UPD_TEXT, OCR_ROWS]))
@@ -434,7 +441,7 @@ def test_scan_without_a_registry_upd_reads_the_rows_off_the_scan_and_snaps_known
                             manufacturer="", category="other", item_type="", unit="м", created_at=NOW))
         session.commit()
 
-    body = client.post("/api/stock/receipts/scan", files={"file": ("скан.png", PNG, "image/png")}).json()
+    body = _scan(client, "скан.png", PNG, "image/png")
 
     assert body["recognised"]["upd_number"] == "123"
     assert body["note"] == "Строки прочитаны со скана (6) — сверьте артикулы и количество"
@@ -443,8 +450,8 @@ def test_scan_without_a_registry_upd_reads_the_rows_off_the_scan_and_snaps_known
         ("МТ-2К 4,8/2,4 белая", "300", "м", "3", "100 м"),
         ("МТ-2К 3,2/1,6 белая", "600", "м", "3", "200 м"),
         ("МТ-2К 2,4/1,2 белая", "600", "м", "3", "200 м"),
-        ("Тр-I090EW", "32", "м", "2", "16 м"),
-        ("TP-I120EW", "32", "м", "2", "16 м"),
+        ("Тр-I090EW", "2", "шт", "", ""),
+        ("TP-I120EW", "2", "шт", "", ""),
     ]
     assert body["lines"][5]["source"] == "скан УПД, артикул из номенклатуры закупок"
     assert body["lines"][0]["supplier_code"] == "00-00042353" and body["lines"][0]["pack_kind"] == "рул."
@@ -454,7 +461,7 @@ def test_scan_rows_come_even_when_the_header_is_not_read(stand, monkeypatch):
     client, _ = stand
     monkeypatch.setattr(app.state, "references_uow_factory", None, raising=False)
     monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: OCR_ROWS)
-    body = client.post("/api/stock/receipts/scan", files={"file": ("скан.png", PNG, "image/png")}).json()
+    body = _scan(client, "скан.png", PNG, "image/png")
     assert len(body["lines"]) == 6
     assert body["note"] == "Шапка не распознана — заполните вручную. Строки прочитаны со скана (6) — сверьте артикулы и количество"
 
@@ -510,13 +517,14 @@ def test_scan_merge_glues_stored_sheets_into_one_pdf(stand, monkeypatch):
 
     client, _ = stand
     monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: "")
-    first = client.post("/api/stock/receipts/scan",
-                        files={"file": ("упд.pdf", _jpeg("PDF"), "application/pdf")}).json()
-    second = client.post("/api/stock/receipts/scan", files={"file": ("лист2.jpg", _jpeg(), "image/jpeg")}).json()
+    first = _scan(client, "упд.pdf", _jpeg("PDF"), "application/pdf")
+    second = _scan(client, "лист2.jpg", _jpeg(), "image/jpeg")
     response = client.post("/api/stock/receipts/scan-merge", json={"files": [first["scan_file"], second["scan_file"]]})
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert set(body) == {"scan_file", "recognised", "lines", "note"}
+    job = response.json()
+    assert (job["status"], job["recognising"]) == ("done", False), "the sheets' readings combined at once"
+    body = job["result"]
+    assert set(body) == {"scan_file", "recognised", "lines", "note"} and body["scan_file"] == job["scan_file"]
     assert body["scan_file"] not in (first["scan_file"], second["scan_file"])
     served = client.get(body["scan_file"])
     assert served.headers["content-type"] == "application/pdf"
@@ -525,8 +533,7 @@ def test_scan_merge_glues_stored_sheets_into_one_pdf(stand, monkeypatch):
 
 def test_scan_merge_refuses_a_foreign_link_and_a_wrong_count(stand):
     client, _ = stand
-    one = client.post("/api/stock/receipts/scan",
-                      files={"file": ("упд.pdf", _jpeg("PDF"), "application/pdf")}).json()["scan_file"]
+    one = _scan(client, "упд.pdf", _jpeg("PDF"), "application/pdf")["scan_file"]
     ghost = f"/api/stock/receipts/files/{uuid4()}"
     for links in ([one, ghost], [one, "http://evil/x"], [one], [one] * 21):
         response = client.post("/api/stock/receipts/scan-merge", json={"files": links})
