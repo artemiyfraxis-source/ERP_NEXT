@@ -1919,6 +1919,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks col.c-qty { width: 50px; }
 .tcgen .gen-marks col.c-len { width: 58px; }
 .tcgen .gen-marks col.c-x { width: 32px; }
+.tcgen .gen-wmarks-params { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(110px, 1fr) minmax(110px, 1fr); gap: 6px 12px; max-width: 760px; }
+.tcgen .gen-wmarks-params select, .tcgen .gen-wmarks-params input { width: 100%; height: 28px; }
+.tcgen .gen-wmarks .gtable-wrap { max-width: 760px; }
+.tcgen .gen-wmarks .gtable { min-width: 0; }
+.tcgen .gen-wmarks .gtable td:first-child { padding-top: 3px; vertical-align: middle; }
+.tcgen .gen-wmarks col.c-n { width: 52px; }
+.tcgen .gen-marks col.c-wm { width: auto; }
+@media (max-width: 700px) { .tcgen .gen-wmarks-params { grid-template-columns: 1fr 1fr; } .tcgen .gen-wmarks-params label:first-child { grid-column: 1 / -1; } }
 .tcgen .gen-marks .gtable td:last-child { padding-left: 2px; padding-right: 2px; }
 @container (min-width: 900px) {
   .tcgen .gen-marks .gtable th { padding: 6px 8px; }

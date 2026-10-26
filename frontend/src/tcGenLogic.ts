@@ -7,7 +7,8 @@
  * Выход — тот же config, что форма отправляла portalTechmapGenerate, и его принимает
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
-import { markLabel, markSpecs, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
+import { markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
+import { pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkRow, wireMarkTexts, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
 
@@ -281,6 +282,8 @@ export type GenState = {
     method?: SpliceMethod; sleeves?: Record<string, string>; band?: string };
   hs: { enabled: boolean; manual: boolean; rows: HsRow[] };
   mark: boolean;
+  /** «Маркировка проводов: откуда → куда» «Сложной сборки» (владелец 26.10, tcGenWireMarks); нет поля — выключена. */
+  wireMarks?: WireMarkCfg;
   /** Метки по КД (tcGenMarks); пусто — в маркировку идут бирки из состава, как раньше. */
   markRows: MarkRow[];
   freeStrip: { enabled: boolean; len: string };
@@ -414,7 +417,10 @@ export type OpSpec = {
    *  ×2, одна жила — к SYM, другая — к SHF); все разъёмы стороны, что обжимает партия; терминалы партии для формы. */
   wireUnits?: Record<number, number>; crimpEpIds?: string[]; crimpEpIdsB?: string[]; crimpTerms?: string;
   /** Метка-трубка из состава: резка, надевание и усадка маркировки; `tutParts` — отрезки по позициям состава. */
-  markTube?: boolean; tutParts?: Array<{ art: string; name: string; count: number; len: string }>;
+  markTube?: boolean;
+  /** Маркировка проводов «откуда → куда» (tcGenWireMarks): печать, надевание и усадка; `markTexts` — надписи по порядку печати. */
+  wireMarks?: boolean; markTexts?: string[]; markDist?: string;
+  tutParts?: Array<{ art: string; name: string; count: number; len: string }>;
   /** «Сложная сборка» (владелец 16.10): ПФ схемы генератора, в который входит операция (ключ блока `build_config.route`). */
   pf?: string;
   /** Контроль КСВН коакса: сплошной или выборочный 1 из N (нет — карта до настройки). */
@@ -2649,6 +2655,7 @@ export function makeGen(D: GenData, S: GenState) {
       if (moved.length) at -= 1;
       ops.splice(at, 0, ...cuts, ...ons, ...slid, ...moved);
     }
+    ops.push(...wireMarkOps_());
     return isComplex_() ? complexGraph_(ops) : ops;
   }
   /** Метки-трубки из состава «Сложной сборки» (владелец 16.10, 713К.4 КБ1 «Маркировка "5" 4/2мм», длина 10–15 мм по КД —
@@ -2679,6 +2686,80 @@ export function makeGen(D: GenData, S: GenState) {
       heat: heat ? { type: "heatTut", opKey: "heatMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, tutCount: heat,
         label: `Усадка маркировки — ${heat} шт` } : null,
     };
+  }
+  // ── Маркировка проводов «откуда → куда» (владелец 26.10, 708К.5 п.8) ──
+  const wireMarksOn_ = () => isComplex_() && !!S.wireMarks?.enabled;
+  /** Обозначение разъёма в метке: то, что задал технолог («XS1»), иначе X1, X2… подряд — сторона А, потом В, как в схеме ПФ. */
+  const xDesig_ = (ep: Endpoint) => (ep.label || "").trim() || `X${[...endpointsOnSide_("A"), ...endpointsOnSide_("B")].findIndex((e) => e.id === ep.id) + 1}`;
+  /** Конец жилы для метки: «X1.1» (разъём и контакт), «С2» (сросток); свободный конец и не заданный — причина, метки нет. */
+  function wireMarkEnd_(w: WireEntry, k: number, side: Side): { text: string } | { why: string } {
+    const join = endJoined(S, w.idx, k, side);
+    if (join === "tail") return { why: `свободный конец ${sideRu_(side)}` };
+    if (join === "splice") return { text: `С${(S.splices || []).findIndex((sp) => sp.ends.some((e) => e.idx === w.idx && e.unit === k && e.side === side)) + 1}` };
+    const ep = unitEndpoint_(w, k, side);
+    const pin = ep ? corePinsOf_(ep, w.idx)[k] : null;
+    return ep && pin != null ? { text: `${xDesig_(ep)}.${pin}` } : { why: `конец ${sideRu_(side)} не задан` };
+  }
+  /** Провода с известными обоими концами (по две метки на каждый) и пропущенные с причиной. */
+  function wireMarkList_(): { rows: WireMarkRow[]; skipped: WireMarkSkip[] } {
+    const rows: WireMarkRow[] = [], skipped: WireMarkSkip[] = [];
+    if (!wireMarksOn_()) return { rows, skipped };
+    activeWires_().forEach((w, pos) => {
+      const n = unitCount_(w);
+      for (let k = 0; k < n; k++) {
+        const key = wireMarkKey(w.idx, k), num = n > 1 ? `${pos + 1}.${k + 1}` : `${pos + 1}`;
+        const a = wireMarkEnd_(w, k, "A"), b = wireMarkEnd_(w, k, "B");
+        if ("text" in a && "text" in b) rows.push(wireMarkRow(key, w.idx, k, num, a.text, b.text, S.wireMarks?.texts));
+        else skipped.push({ key, num, reason: [a, b].flatMap((x) => ("why" in x ? [x.why] : [])).join(", ") });
+      }
+    });
+    return { rows, skipped };
+  }
+  /** Трубки под маркировку проводов: позиции состава, затем БД.МАТ (без повторов). */
+  function wireMarkTubeOptions_(): string[] {
+    // Позиции состава с готовой надписью («Маркировка "5" 4/2мм») — трубки под один разъём, а не под провода: не берём.
+    const kit = markComps_().filter((c) => markIsTube(`${c.name || ""} ${c.art || ""}`) && !/["«"][^"»"]+["»"]/.test(c.name || c.art || "")).map((c) => c.art || c.name || "");
+    return [...new Set([...kit, ...(D.markMats || []).filter((m) => markIsTube(m.name)).map((m) => m.name)].filter(Boolean))];
+  }
+  /** Выбранная трубка; не выбрана — по Ø изоляции самого толстого из маркируемых проводов. */
+  function wireMarkTube_(rows: WireMarkRow[]): string {
+    const chosen = (S.wireMarks?.mat || "").trim();
+    if (chosen) return chosen;
+    const idxs = new Set(rows.map((r) => r.idx));
+    const dia = Math.max(0, ...activeWires_().filter((w) => idxs.has(w.idx)).map((w) => { const c = getCompById(w.compId); return c ? (Number(lookupWireDia_(c.art)) || Number(lookupWireDia_(c.name)) || 0) : 0; }));
+    return pickWireMarkTube(wireMarkTubeOptions_(), dia);
+  }
+  /** Провода, у которых конец обжимается на станке при резке: трубка маркировки на готовый терминал не налезет. Номера через запятую. */
+  function wireMarkCrimpNote_(rows: WireMarkRow[]): string {
+    const active = activeWires_();
+    const nums = rows.filter((r) => { const w = active.find((x) => x.idx === r.idx); return !!w && (["A", "B"] as Side[]).some((side) => epCrimpAtCut_(unitEndpoint_(w, r.unit, side))); }).map((r) => r.num);
+    const list = nums.length > 6 ? `${nums.slice(0, 6).join(", ")} и ещё ${nums.length - 6}` : nums.join(", ");
+    return nums.length ? `У ${nums.length} ${nums.length === 1 ? "провода" : "проводов"} конец обжимается при резке (№ ${list}) — трубка маркировки на готовый терминал не наденется` : "";
+  }
+  /** Печать и резка → надеть на провода (до терминалов) → усадка; нет известных концов — ничего. */
+  function wireMarkOps_(): OpSpec[] {
+    const { rows } = wireMarkList_();
+    if (!rows.length) return [];
+    const cfg = S.wireMarks!;
+    const tube = wireMarkTube_(rows);
+    const nk = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
+    const comp = tube ? comps().find((c) => nk(c.art || "") === nk(tube) || nk(c.name || "") === nk(tube)) : undefined;
+    const art = comp ? comp.art || comp.name || tube : tube, name = comp ? comp.name || comp.art || tube : tube;
+    const len = (cfg.len || "").trim() || WIRE_MARK_LEN_MM, dist = (cfg.dist || "").trim() || WIRE_MARK_DIST_MM;
+    const count = rows.length * 2, texts = wireMarkTexts(rows);
+    const markCode = [MARK_CUT_CODE_, MARK_CUT_CODE_OLD_].find(hasTemplateCode_);
+    const common = { markTube: true, wireMarks: true, markDist: dist };
+    const out: OpSpec[] = [
+      { ...common, type: "cutTut", opKey: "cutWireMark", tmplHint: markCode || "CUT_TUT_short", tmplWant: markCode || MARK_CUT_CODE_, cat: "Резка", markTexts: texts,
+        label: `${markCode ? "Печать и резка" : "Резка"} маркировки проводов — ${count} шт × ${len.replace(".", ",")} мм`,
+        tutArt: art, tutName: name, tutCount: count, tutSegs: [{ len, count }], tutParts: [{ art, name, count, len }] },
+      { ...common, type: "insTut", opKey: "onWireMark", tmplHint: "INS_TUT", cat: "Монтаж", tutCount: count,
+        label: `Надеть маркировку на провода — ${count} шт, ${dist.replace(".", ",")} мм от конца` },
+    ];
+    if (markTubeShrinks(`${name} ${art}`)) {
+      out.push({ ...common, type: "heatTut", opKey: "heatWireMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", tutCount: count, label: `Усадка маркировки проводов — ${count} шт` });
+    }
+    return out;
   }
   // ── Схема ПФ «Сложной сборки» (владелец 16.10, 713К.4 КБ1: «остальное сам додумай») ──
   /** Слоты оплётки формы (вид «оплётка», материал выбран). */
@@ -2723,7 +2804,7 @@ export function makeGen(D: GenData, S: GenState) {
     const artOf = (c: Comp | null) => (c ? c.art || c.name || "" : "");
     const short = (art: string) => { const m = /^(.*?\d+(?:[.,]\d+)?\s*\/\s*\d+(?:[.,]\d+)?)/.exec(art); return m ? m[1].replace(/\s+/g, " ").trim() : art; };
     const mm = (len: string) => (len ? `${len.replace(".", ",")} мм` : "? мм");
-    const FINAL = "pf-final", TUBES = "pf-tubes", BRAID = "pf-braid", MARK = "pf-mark", HS = "pf-hs";
+    const FINAL = "pf-final", TUBES = "pf-tubes", BRAID = "pf-braid", MARK = "pf-mark", HS = "pf-hs", WMP = "pf-wmprint", WM = "pf-wiremark";
     const epKey = (ep: Endpoint) => `pf-${ep.side}${endpointOrdinal_(ep)}`;
     // Разъёмы по КД — X1, X2… подряд: сначала сторона А, потом В (владелец 16.10, 713К.4: ветви X1–X4, «А и В — X4→X6»).
     const xOrder = [...endpointsOnSide_("A"), ...endpointsOnSide_("B")];
@@ -2841,7 +2922,7 @@ export function makeGen(D: GenData, S: GenState) {
     const solderEp = S.endpoints.find((e) => e.method === "solder" && !e.tutOff && !!e.connId) || null;
     const finalTwist = twistAt.get(FINAL) || 0;
     const rebuilt = (o: OpSpec) => o.type === "cutTut"
-      || ["insSleeves", "onMark", "heatMark", "insSpl", "heatSpl", "splice", "stripSpl"].includes(o.opKey)
+      || ["insSleeves", "onMark", "heatMark", "onWireMark", "heatWireMark", "insSpl", "heatSpl", "splice", "stripSpl"].includes(o.opKey)
       || (o.opKey === "twist" && !finalTwist)
       || (o.type === "insWrap" && o.wrapKind === "braid")
       || (o.type === "heatTut" && /^heatShr/.test(o.opKey) && !!branchOf(epOfOp(o)));
@@ -2900,12 +2981,23 @@ export function makeGen(D: GenData, S: GenState) {
       return ep ? blockOfEp(ep) : null;
     };
     const flows: Array<{ from: string; to: string; art: string }> = [];
+    // Маркировка проводов (26.10): провод с метками идёт из резки в свой ПФ «Провода с маркировкой», оттуда — дальше по цепочке.
+    const wmCut = generic.find((o) => o.opKey === "cutWireMark");
+    const wmOps = generic.filter((o) => o.opKey === "onWireMark" || o.opKey === "heatWireMark");
+    const wmKeys = new Set(wmCut ? wireMarkList_().rows.map((r) => r.key) : []);
     cutOps.forEach((op) => (op.cutUnits || []).forEach(([idx, k]) => {
       const w = wireOf(idx);
       if (!w) return;
       const chain = [...new Set([endBlock(w, k, "A"), endBlock(w, k, "B")].filter((x): x is string => !!x))].sort((a, b) => level(a) - level(b));
       if (!chain.length) chain.push(FINAL);
-      flows.push({ from: `pf-${op.opKey}`, to: chain[0], art: artOf(getCompById(w.compId)) || "провод" });
+      const art = artOf(getCompById(w.compId)) || "провод";
+      if (wmKeys.has(wireMarkKey(idx, k))) {
+        flows.push({ from: `pf-${op.opKey}`, to: WM, art });
+        link(WM, chain[0], art, 1);
+        chain.slice(1).forEach((to, i) => link(chain[i], to, names.get(chain[i]) || ""));
+        return;
+      }
+      flows.push({ from: `pf-${op.opKey}`, to: chain[0], art });
       chain.slice(1).forEach((to, i) => link(chain[i], to, names.get(chain[i]) || ""));
     }));
     flows.forEach((f) => link(f.from, f.to, f.art, 1));
@@ -2958,6 +3050,11 @@ export function makeGen(D: GenData, S: GenState) {
     if (markCut) {
       sources.push({ ...markCut, pf: MARK });
       markTubes.forEach((t) => link(MARK, markBlock(t), `Маркировка ${markTitle(t)}`, t.spec.qty));
+    }
+
+    if (wmCut) {
+      sources.push({ ...wmCut, pf: WMP });
+      link(WMP, WM, "Маркировка проводов", wmCut.tutCount || 0);
     }
 
     // ── 2. Ветви ──
@@ -3057,13 +3154,13 @@ export function makeGen(D: GenData, S: GenState) {
       label: `Усадка маркировки — ${markHeat} шт` });
 
     // Ветвь, которая никуда не ведёт, и любой ПФ без выхода — в изделие.
-    const ordered = [...sources, ...branchOps, ...groupOps, ...hsOps.map((o) => ({ ...o, pf: HS })), ...finalOps.map((o) => ({ ...o, pf: FINAL }))];
+    const ordered = [...sources, ...wmOps.map((o) => ({ ...o, pf: WM })), ...branchOps, ...groupOps, ...hsOps.map((o) => ({ ...o, pf: HS })), ...finalOps.map((o) => ({ ...o, pf: FINAL }))];
     const used = new Set(ordered.map((o) => o.pf!));
     if (used.has(HS)) names.set(HS, "ТУТ на месте Б");
     used.forEach((key) => { if (key !== FINAL && ![...edgeItems.keys()].some((id) => id.startsWith(`${key}>`))) link(key, FINAL, names.get(key) || ""); });
     // Ветви и группы сростков идут в изделие через ПФ «ТУТ на месте Б»: трубка на жгут надевается на собранный ствол.
     if (used.has(HS)) {
-      const kits = new Set([TUBES, BRAID, MARK, ...cutOps.map((o) => `pf-${o.opKey}`)]);
+      const kits = new Set([TUBES, BRAID, MARK, WMP, ...cutOps.map((o) => `pf-${o.opKey}`)]);
       [...edgeItems.entries()].forEach(([id, items]) => {
         const [from, to] = id.split(">");
         if (to !== FINAL || from === HS || kits.has(from)) return;
@@ -3075,6 +3172,7 @@ export function makeGen(D: GenData, S: GenState) {
     // Короткие разные имена ПФ (владелец 16.10): «Резка + обжим SYM, зачистка — X1, X2», «Резка хвостов + лужение»,
     // «Резка трубок», «Резка оплётки», «Маркировка», ветви, группы сростков; изделие — наименование сборки.
     names.set(TUBES, "Резка трубок"); names.set(BRAID, "Резка оплётки"); names.set(MARK, "Маркировка");
+    names.set(WMP, "Маркировка проводов"); names.set(WM, "Провода с маркировкой");
     names.set(FINAL, findKey(/наименование/i).trim() || "Изделие");
     const taken = new Map<string, number>();
     cutOps.forEach((o) => {
@@ -3085,7 +3183,7 @@ export function makeGen(D: GenData, S: GenState) {
     });
     const blocks: PfBlock[] = [...used].map((key) => ({
       key, name: names.get(key) || "",
-      ...(key === TUBES || key === BRAID || key === MARK || cutOps.some((o) => `pf-${o.opKey}` === key) ? { kit: true } : {}),
+      ...(key === TUBES || key === BRAID || key === MARK || key === WMP || cutOps.some((o) => `pf-${o.opKey}` === key) ? { kit: true } : {}),
       ...(key === FINAL ? { final: true } : {}),
     }));
     if (!used.has(FINAL)) blocks.push({ key: FINAL, name: names.get(FINAL) || "", final: true });
@@ -3408,6 +3506,7 @@ export function makeGen(D: GenData, S: GenState) {
         if (/^(?:insSpl|heatSpl)\d*$/.test(spec.opKey) && welded) op.spliceWeld = true;
         if (spec.tutSegs) op.tutSegs = spec.tutSegs;
         if (spec.markTube) op.markTube = true;
+        if (spec.wireMarks) { op.wireMarks = true; if (spec.markTexts) op.markTexts = spec.markTexts; if (spec.markDist) op.markDist = spec.markDist; }
         // Резка оплётки ветвей (CUT_NEYLON): отрезки — по `tutParts`, материал в метрах — у этой операции.
         if (spec.type === "cutTut" && spec.wrapKind) op.wrapKind = spec.wrapKind;
         if (spec.tutParts) op.tutParts = spec.tutParts;
@@ -3557,7 +3656,7 @@ export function makeGen(D: GenData, S: GenState) {
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxFakra_, coaxCables_, coaxFakraMarks_, getActiveOpsFakra_, coaxBomConnectors_, coaxBomCable_, coaxBomCableComp_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, coaxMachineAuto_, coaxMachine_, coaxShieldOf_, coaxCableOuterMm_, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
-    harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, hsComp_, hsRowSkip_, hsTubeOptions_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
+    wireMarkList_, wireMarkTubeOptions_, wireMarkTube_, wireMarkCrimpNote_, harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, hsComp_, hsRowSkip_, hsTubeOptions_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
     defaultJacketShrinkComp_, cableJacketShrink_, jacketShrinkItems_, freeJacketShrinkComp_, housingOn_, housingDefault_, sleeveWarning_,
     /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
     markConnectors_: () => (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side).filter((e) => e.connId).map((e) => {
