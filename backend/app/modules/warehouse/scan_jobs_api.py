@@ -12,6 +12,8 @@ The storekeeper's screen (warehouse edit, as `POST /api/stock/receipts`):
   one is answered as it is.
 - `POST /api/stock/receipts/scan` (multipart `file`: PDF, JPG, PNG ≤ 20 MB, «Файл…») → the job view: the file is
   stored with a job that is done from the start, its answer is made in the background; the screen polls the job.
+  An ЭДО УПД (Diadoc XML or a ZIP of them, owner 26.10.2026) is kept as it came and read exactly — the job view comes
+  with `result` already in; not a УПД / счёт-фактура — 422 «Это не УПД в формате ФНС — …».
 - `POST /api/stock/receipts/scan-merge` `{files: [2..20 scan links]}` («+ Страница») → the job view of ONE merged PDF;
   its answer combines the readings kept with the sheets — made at once when every sheet is read, else in the
   background.
@@ -39,13 +41,15 @@ from starlette.concurrency import run_in_threadpool
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, warehouse_edit_principal
+from app.workflows.edo_receipt import EdoRejected, file_kind, is_edo_upload, read_delivery
 
 from .api import warehouse_uow_factory
 from .application import UnitOfWork
+from .domain import RECEIPT_SCAN_PATH
 from .receipts_api import _checked, multipart_file
-from .receipts_application import SCAN_FILE_LIMIT, merge_scans, store_job_scan, store_scan
-from .scan_jobs import DONE, FAILED, ScanJob, ScanJobClosed, cancel_job, claim, create_job, fail_job, get_job
-from .scan_recognition import ScanSources, job_view, readings_kept, recognise_job, scan_sources
+from .receipts_application import SCAN_FILE_LIMIT, merge_scans, store_edo_file, store_job_scan, store_scan
+from .scan_jobs import DONE, FAILED, ScanJob, ScanJobClosed, cancel_job, claim, create_job, fail_job, get_job, save_result
+from .scan_recognition import ScanSources, edo_answer, job_view, readings_kept, recognise_job, scan_sources
 
 SCAN_SCOPE = "scan:upload"
 SCAN_AGENT_ONLY = "Очередь сканирования забирает только агент склада (токен API «scan:upload»)."
@@ -137,10 +141,24 @@ async def scan_receipt_document(
     if upload is None:
         raise HTTPException(status_code=422, detail=NO_FILE)
     file_name, content = upload
+    if is_edo_upload(file_name, content):
+        return await run_in_threadpool(_edo, request, file_name, content, principal, now, uow_factory)
     job = await run_in_threadpool(
         lambda: _checked(lambda: store_scan(uow_factory(), file_name, content, principal.actor, now)))
     _recognise_later(background, uow_factory, scan_sources(request, uow_factory), job)
     return job_view(job)
+
+
+def _edo(request: Request, file_name: str, content: bytes, principal: Principal, now: datetime, uow_factory) -> dict:
+    """An ЭДО УПД: read exactly from the file, kept as it came, the answer stored with its job at once."""
+    try:
+        delivery = read_delivery(file_name, content)
+    except EdoRejected as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+    job = _checked(lambda: store_edo_file(uow_factory(), file_name, file_kind(content), content, principal.actor, now))
+    answer = edo_answer(scan_sources(request, uow_factory), f"{RECEIPT_SCAN_PATH}{job.file_id}", delivery)
+    save_result(uow_factory(), job.id, json.dumps(answer, ensure_ascii=False))
+    return job_view(_queue(lambda: get_job(uow_factory(), job.id, now=now)))
 
 
 class ScanMergeInput(BaseModel):

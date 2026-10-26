@@ -406,6 +406,35 @@ it("«Сканировать заново» drops the pages and the scan", async
   expect(calls.some((call) => call.path === "/api/stock/receipts/scan-merge")).toBe(false);
 });
 
+it("an ЭДО XML is posted as is, fills header and lines and is shown as a file, not a scan", async () => {
+  const calls = mockApi({
+    "POST /api/stock/receipts/scan": () => json({ id: "e1", status: "done", error: "", recognising: false, scan_file: "edo-1.xml", result: {
+      scan_file: "edo-1.xml", note: "Электронный УПД (ЭДО) — данные из файла",
+      recognised: { supplier: "ООО Ромашка", inn: "7701000019", upd_number: "РЭ-1", upd_date: "2026-09-15", invoice_number: "", invoice_date: "" },
+      lines: [{ article: "RT-2", name: "Разъём РТ-2", quantity: "100", unit: "шт", supplier_code: "RT-2@TEST" }],
+    } }),
+  });
+  await openSupply();
+  expect(screen.getByLabelText("Файл УПД")).toHaveAttribute("accept", expect.stringContaining(".xml"));
+  fireEvent.change(screen.getByLabelText("Файл УПД"), { target: { files: [new File(["<xml/>"], "upd.xml", { type: "text/xml" })] } });
+
+  expect(await screen.findByText("Электронный УПД (ЭДО) — данные из файла")).toBeInTheDocument();
+  expect(screen.getByLabelText("Поставщик")).toHaveValue("ООО Ромашка");
+  expect(screen.getByLabelText("№ УПД")).toHaveValue("РЭ-1");
+  expect(cellOf("Артикул")).toHaveValue("RT-2");
+  expect(screen.getByText(/Файл ЭДО:/)).toBeInTheDocument();
+  expect(screen.queryByText("+ Страница")).not.toBeInTheDocument();
+  expect(calls.filter((call) => call.path === "/api/stock/receipts/scan-merge")).toHaveLength(0);
+});
+
+it("an ЭДО file does not go together with other files", async () => {
+  mockApi({});
+  await openSupply();
+  const files = [new File(["x"], "a.xml", { type: "text/xml" }), new File(["x"], "b.pdf", { type: "application/pdf" })];
+  fireEvent.change(screen.getByLabelText("Файл УПД"), { target: { files } });
+  expect(await screen.findByText("Файл ЭДО — целый документ: выберите один файл")).toBeInTheDocument();
+});
+
 it("several files are uploaded one by one and merged once", async () => {
   let uploaded = 0;
   const calls = mockApi({

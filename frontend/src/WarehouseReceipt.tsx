@@ -86,6 +86,7 @@ function AcceptDialog({ line, warehouse, onClose, onAccept }: {
 }
 
 const SCAN_POLL_MS = 1500;
+const isEdoFile = (file: File) => /\.(xml|zip)$/i.test(file.name) || /^(application|text)\/(xml|zip)$/.test(file.type);
 const SCAN_WAIT_MS = 130_000;
 /** A model reads a УПД page in 8–100 s, its fallback longer: the answer is waited for up to 4 minutes. */
 const RECOGNISE_WAIT_MS = 240_000;
@@ -106,6 +107,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   const [scanStatus, setScanStatus] = useState<"" | "pending" | "claimed" | "recognising">("");
   const [scanError, setScanError] = useState("");
   const [scanPages, setScanPagesState] = useState<string[]>([]);
+  const [scanEdo, setScanEdo] = useState(false);
   const scanPagesRef = useRef<string[]>([]);
   // How many lines of the merged answer the form already has: «+ Страница» adds only the next sheet's lines, the
   // merged answer repeats the earlier ones (26.10: the second sheet came back as 7 doubles + 1 new line).
@@ -269,6 +271,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   /** A sheet (or several) came: the first one is the scan itself, the next ones are glued to the earlier pages into
    *  ONE PDF by the server, and the merged document's answer is what fills the form. */
   async function takePages(results: WarehouseReceiptScan[]) {
+    setScanEdo(false);
     const pages = [...scanPagesRef.current, ...results.map((result) => result.scan_file)];
     if (pages.length < 2) {
       setScanPages(pages);
@@ -322,6 +325,15 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     setScanError("");
     scanAborted.current = false;
     try {
+      if (files.some(isEdoFile)) {
+        // ЭДО-файл (XML / ZIP из Диадока) — целый документ: он заменяет страницы скана, а не склеивается с ними.
+        if (files.length > 1) throw new Error("Файл ЭДО — целый документ: выберите один файл");
+        const result = await answerOf(await warehouseApi.scanReceipt(files[0]));
+        setScanPages([]);
+        setScanEdo(true);
+        applyScanResult(result);
+        return;
+      }
       const results: WarehouseReceiptScan[] = [];
       for (const file of files) results.push(await answerOf(await warehouseApi.scanReceipt(file)));
       await takePages(results);
@@ -336,7 +348,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
 
   /** «Сканировать»: задание уходит на ПК склада, ответ опрашиваем каждые 1,5 с, не дольше 130 с. */
   async function scanFromScanner(fresh = false) {
-    if (fresh) { setScanPages([]); setScanFile(""); }
+    if (fresh) { setScanPages([]); setScanFile(""); setScanEdo(false); }
     setScanning(true);
     setError("");
     setScanError("");
@@ -389,7 +401,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
       setHeader(headerFromReceipt(saved));
       setScanFile(saved.scan_file ?? "");
       setScanPages([]);
-      setScanPages([]);
+      setScanEdo(false);
       setLines(withTrailingBlank(lots.map(lineFromLot).slice(0, RECEIPT_LIMIT)));
       setNote(`Поставка продолжена: принято позиций — ${lots.length}`);
     } catch (reason) {
@@ -522,7 +534,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
               <button type="button" className="secondary" disabled={scanning} onClick={() => void scanFromScanner()}>Сканировать</button>
             )}
             <button type="button" className="secondary" disabled={scanning} onClick={() => fileInput.current?.click()}>{scanning && !scanStatus ? "Разбираем УПД…" : "Файл…"}</button>
-            <input ref={fileInput} type="file" hidden multiple aria-label="Файл УПД" accept=".pdf,image/*" {...(phone ? { capture: "environment" as const } : {})}
+            <input ref={fileInput} type="file" hidden multiple aria-label="Файл УПД" accept=".pdf,.xml,.zip,image/*,application/xml,text/xml,application/zip" {...(phone ? { capture: "environment" as const } : {})}
               onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void scan(files); }} />
           </div>
         </div>
@@ -534,7 +546,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
         ) : null}
         {scanFile ? (
           <p className="wr-scan-status">
-            Скан: {scanPages.length > 0 ? `${scanPages.length} стр. · ` : ""}<a href={scanFile} target="_blank" rel="noreferrer">открыть</a>
+            {scanEdo ? "Файл ЭДО" : "Скан"}: {scanPages.length > 0 ? `${scanPages.length} стр. · ` : ""}<a href={scanFile} target="_blank" rel="noreferrer">открыть</a>
           </p>
         ) : null}
         <p className="rg-hint">
