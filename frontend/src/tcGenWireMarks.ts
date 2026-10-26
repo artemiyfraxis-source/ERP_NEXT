@@ -44,8 +44,11 @@ export function wireMarkRow(key: string, idx: number, unit: number, num: string,
 /** Все надписи на печать: по два на провод — конец А, затем конец В. */
 export const wireMarkTexts = (rows: WireMarkRow[]): string[] => rows.flatMap((row) => [row.textA, row.textB]);
 
-const TUBE_SIZE = /(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)\s*мм/i;
-/** Диаметр трубки до усадки, мм, из «4/2мм»; нет размера — null. */
+// «4/2мм», «ТУТ 2/1 белая», «ТТК 4,8/1,6»: в справочнике материалов «мм» после размера обычно нет (708К.5, 26.10).
+const TUBE_SIZE = /(?:^|[^\d.,])(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)(?![\d.,]*\d)/;
+/** Светлая трубка — на ней видна печать маркиратора; тёмная — нет. */
+const LIGHT_TUBE = /бел|прозрач|ж[её]лт/i;
+/** Диаметр трубки до усадки, мм, из «4/2мм» / «2/1»; нет размера — null. */
 export function tubeBeforeShrink(name: string): number | null {
   const m = TUBE_SIZE.exec(name);
   return m ? Number(m[1].replace(",", ".")) : null;
@@ -57,5 +60,8 @@ export function pickWireMarkTube(names: string[], dia: number): string {
   if (!names.length) return "";
   const sized = names.map((name) => ({ name, d: tubeBeforeShrink(name) })).filter((x): x is { name: string; d: number } => x.d !== null).sort((a, b) => a.d - b.d);
   if (!sized.length || !(dia > 0)) return names[0];
-  return (sized.find((x) => x.d >= dia + 0.5) || sized[sized.length - 1]).name;
+  const fits = sized.filter((x) => x.d >= dia + 0.5);
+  if (!fits.length) return sized[sized.length - 1].name;
+  // Печать видна только на светлой трубке: из подходящих по размеру — меньшая светлая, иначе меньшая любая.
+  return (fits.find((x) => LIGHT_TUBE.test(x.name)) || fits[0]).name;
 }
