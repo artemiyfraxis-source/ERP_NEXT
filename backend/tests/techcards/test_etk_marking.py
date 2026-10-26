@@ -39,9 +39,12 @@ def _mark(material: str, text: str, qty: int = 1, target: str = "Провод W1
             "placeKind": "kd", "placeMm": ""}
 
 
-def _build(marks: list[dict], *, references: bool = True) -> tuple[dict, list[str]]:
+def _build(marks: list[dict], *, references: bool = True, phase: str = "") -> tuple[dict, list[str]]:
     config = deepcopy(FIXTURES["files"]["kit-708К.2-КБ1.json"]["payload"]["config"])  # партия 38 шт.
-    next(item for item in config["ops"] if item["type"] == "insMark")["marks"] = marks
+    mark_op = next(item for item in config["ops"] if item["type"] == "insMark")
+    mark_op["marks"] = marks
+    if phase:
+        mark_op["markPhase"] = phase
     if references:
         config = enrich_marking(config, _mirror_equipment(), _mirror_operations())
     document = build_etk(config, CARDS)
@@ -226,3 +229,22 @@ def test_tube_cut_step_names_a_numbered_inscription_by_its_template():
     op, _warnings = _build([_tube("Термотрубка", "X1", 25), _tube("Термотрубка", "W1/{№:3}", 20)])
     cut = next(step["text"] for step in op["card"]["steps"] if "арезать" in step["text"])
     assert "X1 — 25 мм, W1/{№} — 20 мм" in cut
+
+
+def test_flag_marks_of_a_complex_build_split_into_print_and_install_ops():
+    """«Сложная сборка» (владелец 26.10, 708К.5): печать хлястиков — в ПФ «Маркировка», монтаж — своя операция на месте метки."""
+    marks = [_mark("Хлястик", "XS1", target="Разъём XS1")]
+    whole, _ = _build(marks)
+    printed, _ = _build(marks, phase="print")
+    put_on, _ = _build(marks, phase="install")
+    step = lambda op: [item["text"] for item in op["card"]["steps"]]  # noqa: E731
+    assert len(step(whole)) == 4
+    assert [text.split(" ")[0] for text in step(printed)] == ["Напечатать"]
+    assert [text.split(" ")[0] for text in step(put_on)] == ["Установить", "Зафиксировать", "Проверить"]
+    assert step(printed) + step(put_on) == step(whole)
+    # Материал уходит на печать; монтаж его не берёт. Печать несёт станок хлястиков и свою норму, монтаж — ни того, ни другого.
+    assert [item["art"] for item in printed["components"]] == ["Хлястик"]
+    assert put_on["components"] == []
+    assert [name for name, _ in _equipment(printed)] and not [name for name, _ in _equipment(put_on) if "лястик" in name]
+    assert any("Печать хлястиков" in row["name"] for row in printed["time"])
+    assert not any("Печать хлястиков" in row["name"] for row in put_on["time"])

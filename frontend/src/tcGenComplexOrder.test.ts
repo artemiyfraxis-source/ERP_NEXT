@@ -142,18 +142,22 @@ it("the build config carries the graph as a generated route: every op in one blo
   expect(route.edges.every((e) => e.per_unit === 1)).toBe(true);
 });
 
-it("connectors without tubes, braid, marking or a pair of their own are no branches: they are mounted in the product", () => {
-  // Тот же жгут без трубок, оплётки и маркировки: ПФ — партии резки → группы сростков → изделие (все разъёмы).
+it("connectors without tubes, braid, marking or a pair of their own are no branches: each is its own «Разъём X собран» (26.10), the product keeps the rest", () => {
+  // Тот же жгут без трубок, оплётки и маркировки: ПФ — партии резки → разъёмы (каждый свой ПФ) → группы сростков → изделие.
   const S = harness(DSA);
   const route = routeOf(S);
   const opKeys = keys(S);
-  expect(route.blocks.map((b) => b.key)).toEqual(["pf-cutWire", "pf-cutWire1", "pf-cutWire2", "pf-cutWire3", "pf-cutWire4", "pf-spl1", "pf-spl2", "pf-final"]);
-  expect(route.blocks.find((b) => b.final)!.ops.map((p) => opKeys[p - 1]))
-    .toEqual(["insTermA1", "insTermA2", "insTermA3", "insTermA4", "insMark", "insTermB1", "insTermB2"]);
-  // Провода с разъёмами на обоих концах — прямо в изделие; провода в сростки — в свою группу.
+  expect(route.blocks.map((b) => b.key)).toEqual(["pf-cutWire", "pf-cutWire1", "pf-cutWire2", "pf-cutWire3", "pf-cutWire4",
+    "pf-A1", "pf-A2", "pf-A3", "pf-A4", "pf-B1", "pf-B2", "pf-spl1", "pf-spl2", "pf-final"]);
+  expect(route.blocks.filter((b) => /^pf-[AB]\d/.test(b.key)).map((b) => b.name)).toEqual([
+    "Разъём X1 «5» собран", "Разъём X2 «I3» собран", "Разъём X3 «C» собран", "Разъём X4 «A6» собран", "Разъём X5 собран", "Разъём X6 собран"]);
+  expect(route.blocks.filter((b) => /^pf-[AB]\d/.test(b.key)).map((b) => b.ops.map((p) => opKeys[p - 1])))
+    .toEqual([["insTermA1"], ["insTermA2"], ["insTermA3"], ["insTermA4"], ["insTermB1"], ["insTermB2"]]);
+  expect(route.blocks.find((b) => b.final)!.ops.map((p) => opKeys[p - 1])).toEqual(["insMark"]);
+  // Провод с разъёмом на каждом конце — из блока в блок; провод в сросток — из блока разъёма в группу, из группы в изделие.
   const pairs = route.edges.map((e) => `${e.from}>${e.to}`);
-  expect(pairs).toEqual(expect.arrayContaining(["pf-cutWire4>pf-final", "pf-cutWire1>pf-spl1", "pf-spl1>pf-final", "pf-spl2>pf-final"]));
-  expect(pairs.filter((p) => p.startsWith("pf-cutWire>"))).toEqual(["pf-cutWire>pf-spl1", "pf-cutWire>pf-spl2"]);
+  expect(pairs).toEqual(expect.arrayContaining(["pf-cutWire4>pf-A4", "pf-A4>pf-B2", "pf-cutWire1>pf-B1", "pf-B1>pf-spl1", "pf-spl1>pf-final", "pf-spl2>pf-final"]));
+  expect(pairs.filter((p) => p.startsWith("pf-cutWire>"))).toEqual(["pf-cutWire>pf-A1", "pf-cutWire>pf-A2"]);
   // Без трубки на сростки — у группы только сам сросток.
   expect(route.blocks.find((b) => b.key === "pf-spl1")!.ops.map((p) => opKeys[p - 1])).toEqual(["splice1"]);
 });
@@ -215,7 +219,7 @@ it("the technologist's own order still wins; the route follows the new positions
   expect(a1.ops.map((p) => order[p - 1])).toEqual(["insTermA1", "onTubesA1", "braidA1", "onMarkA1", "heatShrA1", "heatMarkA1"]);
 });
 
-it("marking tubes from the kit: printed and cut on PRINT_MARK_TUBE, put on and shrunk with their branch; tags stay in «Маркировка»", () => {
+it("marking tubes from the kit: printed and cut on PRINT_MARK_TUBE, put on and shrunk with their branch; tags are printed in «Маркировка» and put on at their place", () => {
   const S0 = fullHarness();
   const S = { ...S0, markRows: [...S0.markRows, newMarkRow({ target: "Изделие КБ1", text: "КБ1", material: "Хлястик", place: "item" })] };
   const gen = makeGen(DSA, S);
@@ -225,9 +229,10 @@ it("marking tubes from the kit: printed and cut on PRINT_MARK_TUBE, put on and s
       { art: "Маркировка \"C\" 4/2мм", count: 1, len: "15" }, { art: "Маркировка \"A6\" 4/2мм", count: 1, len: "15" }].map((p) => ({ ...p, name: p.art })) });
   expect(gen.templateIdFor(ops.find((o) => o.opKey === "cutMark")!)).toBe("ins-mark-tube-auto-печать-и-резка-маркировочной-трубки");
   expect(ops.some((o) => o.opKey === "onMark" || o.opKey === "heatMark")).toBe(false);
-  // Хлястик — операция «Маркировка» в изделии, как раньше; трубок в ней нет.
-  const mark = ops.find((o) => o.type === "insMark")!;
-  expect(mark).toMatchObject({ label: "Маркировка — КБ1", pf: "pf-final" });
+  // Хлястик (26.10): печать — в ПФ «Маркировка», навешивание — отдельной операцией в изделии; трубок в них нет.
+  expect(ops.find((o) => o.opKey === "printMarks")).toMatchObject({ label: "Печать маркировки — «КБ1»", pf: "pf-mark", markPhase: "print" });
+  const mark = ops.find((o) => o.opKey === "insMark")!;
+  expect(mark).toMatchObject({ label: "Монтаж маркировки на изделие — «КБ1»", pf: "pf-final", markPhase: "install" });
   expect(mark.marks).toHaveLength(1);
   const cfg = gen.buildConfig() as { ops: Array<Record<string, unknown>> };
   // Каждая ветвь надевает и усаживает свою маркировку своими операциями (после ТТК).
@@ -239,7 +244,7 @@ it("marking tubes from the kit: printed and cut on PRINT_MARK_TUBE, put on and s
   expect(labels(noLen)).toContain("Печать и резка маркировки — «5» ? мм, «I3» 15 мм, «C» 15 мм, «A6» 15 мм");
   const printed = { ...S0, markRows: [newMarkRow({ target: "Разъём 5", text: "5", material: "Термотрубка", place: "conn", len: "15" })] };
   expect(keys(printed)).not.toContain("cutMark");
-  expect(keys(printed)).toContain("insMark");
+  expect(keys(printed)).toEqual(expect.arrayContaining(["printMarks", "insMarkA1"]));
   // Без карты маркиратора в библиотеке — резка трубки, как раньше.
   const noCard: GenData = { ...DSA, templates: DSA.templates.filter((t) => !t.title.startsWith("PRINT_MARK_TUBE")) };
   expect(labels(S0, noCard)).toContain("Резка маркировки — «5» 15 мм, «I3» 15 мм, «C» 15 мм, «A6» 15 мм");
