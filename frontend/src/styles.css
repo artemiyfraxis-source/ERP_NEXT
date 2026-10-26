@@ -1843,6 +1843,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .opt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 10px; align-items: end; }
 .tcgen .opt-grid > .span2 { grid-column: span 2; }
 .tcgen .opt-grid > .span-all { grid-column: 1 / -1; }
+.tcgen .shield-field .gfield-label { justify-content: space-between; }
+.tcgen .glink { border: 0; padding: 0; background: none; color: var(--primary); font-size: 11.5px; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.tcgen .glink:hover { color: var(--foreground); }
+.tcgen .glink:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
 .tcgen .opt-note { margin: 0; padding: 2px 0; color: var(--muted-foreground); font-size: 12px; }
 /* «Термоусадка на жгут»: строка на трубку — название, отрезок, штук, убрать; занятая трубка засева — серым с причиной. */
 .tcgen .hs-rows { display: grid; gap: 4px; max-width: 560px; }
@@ -2394,6 +2398,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .tcgen input:not([type="checkbox"]):not([type="radio"]), .tcgen select, .tcgen .gpick-face { height: 40px; }
   .tcgen .gpick-face { padding-top: 11px; }
   .tcgen .gseg button { align-items: center; min-height: 40px; padding: 7px 14px; }
+  .tcgen .glink { min-height: 40px; padding: 0 4px; font-size: 13px; }
   .tcgen .gsw { align-items: center; min-height: 40px; }
   .tcgen .gsw input { margin-top: 0; }
   .tcgen .gchip { min-height: 40px; align-items: center; }
