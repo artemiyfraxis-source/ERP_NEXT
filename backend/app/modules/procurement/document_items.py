@@ -9,6 +9,11 @@ A PDF text layer has no columns: cells of one baseline come joined by single spa
 or two cells. A row is therefore read by arithmetic — the quantity, the unit and the money numbers whose
 КОЛ-ВО × ЦЕНА = СУММА — and the name is what is left. Whether the prices include НДС comes from the headers
 («Цена с НДС», «без НДС»), the totals («в т.ч. НДС», «НДС сверху», «Всего к оплате») and the row arithmetic.
+
+Since 26.10.2026 a PDF goes to Roller_Buyer's invoice reader first (Витя's, ported to `app.shared.invoice_header` /
+`invoice_lines` / `pdf_layout`): the header — №, date, the seller and its INN, the total in words — and the table read
+by word positions, where a cell is one piece of text and «1 220,00» is never split. The reading above stays for a PDF
+in which that reader finds no table, and for the grids.
 """
 
 from __future__ import annotations
@@ -16,10 +21,13 @@ from __future__ import annotations
 import io
 import re
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from xml.etree import ElementTree
 
+from app.shared.invoice_header import parse_invoice_text as read_invoice_header
+from app.shared.invoice_lines import InvoiceLine, InvoiceTable, parse_invoice_table
+from app.shared.pdf_layout import PdfLayout, pdf_layout
 from app.shared.pdf_text import PdfLimitExceeded, pdf_text
 
 from .invoice_file import normalize_invoice_text, parse_invoice_text
@@ -72,6 +80,12 @@ class SupplierDocument:
     number: str = ""
     date: str = ""  # «dd.mm.yyyy»
     hint: str = ""
+    # The seller as the PDF names it (Roller_Buyer's reader): «ООО "Элитан Трейд"», its INN; '' when not found.
+    seller_name: str = ""
+    seller_inn: str = ""
+    # «pdf_table» — the items came from the PDF table by word positions (Roller_Buyer's reader); «text» — from ERP's
+    # reading of the text layer; «grid» — .xlsx / .csv / .docx.
+    reader: str = ""
 
 
 @dataclass
@@ -129,9 +143,12 @@ def read_supplier_document(file_name: str, content: bytes, kind: str = "invoice"
             text = pdf_text(content)
         except PdfLimitExceeded:
             return SupplierDocument(hint=TOO_HEAVY)
+        layout = pdf_layout(content)
+        if not text.strip():
+            text = layout.text  # pypdf opens what the small reader does not (an empty user password)
         if not text.strip():
             return SupplierDocument(hint=UNREADABLE)
-        return parse_document_text(text, kind)
+        return parse_document_pdf(text, layout, kind)
     if content[:2] == b"PK":
         try:
             archive = zipfile.ZipFile(io.BytesIO(content))
@@ -384,6 +401,14 @@ def _assign(quantity: Decimal, values: list[Decimal], rate: Decimal | None) -> t
             return score + 2, raw
     price, total = values[i], values[j]
     others = [value for index, value in enumerate(values) if index not in (i, j)]
+    return score + _vat_columns(raw, quantity, price, total, others, rate), raw
+
+
+def _vat_columns(
+    raw: _Raw, quantity: Decimal, price: Decimal, total: Decimal, others: list[Decimal], rate: Decimal | None,
+) -> int:
+    """The row's other numbers as its НДС columns: a sum with НДС or the НДС amount tells whether `price` / `total` are
+    net or gross; neither — their kind is left to the document (`_vat_mode`). The bonus is the reading's extra score."""
     candidates = [rate] if rate is not None else list(KNOWN_RATES)
     for candidate in candidates:
         if candidate is None or candidate == 0:
@@ -391,16 +416,16 @@ def _assign(quantity: Decimal, values: list[Decimal], rate: Decimal | None) -> t
         for other in others:
             if _close(other, total * (1 + candidate / 100), quantity):
                 raw.price_net, raw.sum_net, raw.sum_gross, raw.vat_rate = price, total, other, candidate
-                return score + 2, raw
+                return 2
             if _close(other, total * candidate / 100):
                 raw.price_net, raw.sum_net, raw.vat_rate = price, total, candidate
                 raw.sum_gross = total + other
-                return score + 1, raw
+                return 1
             if _close(other, total * candidate / (100 + candidate)):
                 raw.price_gross, raw.sum_gross, raw.vat_rate = price, total, candidate
-                return score + 1, raw
+                return 1
     raw.price, raw.sum = price, total
-    return score, raw
+    return 0
 
 
 def _qty_options(tokens: list[_Token], unit: int) -> list[tuple[int, Decimal]]:
@@ -535,7 +560,11 @@ def _layout(header: str) -> _Layout:
     return layout
 
 
-def parse_document_text(text: str, kind: str = "invoice") -> SupplierDocument:
+def parse_document_text(
+    text: str, kind: str = "invoice", *, table: InvoiceTable | None = None, invoice_total: Decimal | None = None,
+) -> SupplierDocument:
+    """ERP's reading of the text layer: numbered rows read by arithmetic. With `table` (Roller_Buyer's reader found
+    rows by word positions) its rows are taken instead and the text gives the totals."""
     lines = [line.strip() for line in normalize_invoice_text(text).replace("­", "").split("\n") if line.strip()]
     header_at = next((index for index, line in enumerate(lines) if _is_header(line)), None)
     start = header_at + 1 if header_at is not None else 0
@@ -574,10 +603,85 @@ def parse_document_text(text: str, kind: str = "invoice") -> SupplierDocument:
         current.append(line)
     if current is not None:
         rows.append(" ".join(current))
+    tail = lines[table_end:] if rows else lines
+    if table is not None and table.lines:
+        layout = _layout(" ".join(word.s for word in table.header))
+        raws = [_table_raw(line, extra) for line, extra in zip(table.lines, table.after_sum or [()] * len(table.lines))]
+        return _finish(
+            raws, layout, tail, "\n".join(lines), kind, found_table=True, invoice_total=invoice_total, reader="pdf_table",
+        )
     layout = _layout(" ".join(header))
     raws = [raw for raw in (_read_row(row, layout) for row in rows) if raw is not None]
-    tail = lines[table_end:] if rows else lines
     return _finish(raws, layout, tail, "\n".join(lines), kind, found_table=bool(header) or bool(raws))
+
+
+def parse_document_pdf(text: str, layout: PdfLayout, kind: str = "invoice") -> SupplierDocument:
+    """A PDF with a text layer: Roller_Buyer's reader first — the header (№, date, seller, INN, the total in words) and
+    the table by word positions; ERP's reading of the text when it finds no table. Whether the prices carry НДС is
+    decided the ERP way (row columns, headers, totals), the invoice's total in words first."""
+    header = read_invoice_header(layout.text if layout.text.strip() else text)
+    total = Decimal(header.total) / 100 if header.total is not None else None
+    table = parse_invoice_table(layout.pages) if layout.pages else None
+    document = parse_document_text(text, kind, table=table, invoice_total=total)
+    number = document.number
+    if kind == "invoice" and header.number:
+        number = header.number
+    elif not number and header.number:
+        number = header.number
+    day = document.date
+    if header.date and (kind == "invoice" or not day):
+        year, month, dom = header.date.split("-")
+        day = f"{dom}.{month}.{year}"
+    return replace(
+        document, number=number, date=day, seller_name=header.seller_name or "", seller_inn=header.seller_inn or "",
+    )
+
+
+_LEGAL_FORMS = re.compile(
+    r"общество с ограниченной ответственностью|(?:непубличное |закрытое |публичное |открытое )?акционерное общество"
+    r"|индивидуальный предприниматель|\b(?:ооо|ао|зао|пао|оао|нао|ип|тоо|тд|нпп|нпф|пкф)\b",
+)
+
+
+def _org_key(name: str) -> str:
+    """«ООО "Элитан Трейд"» = «Элитан Трейд» = «ООО Элитан-Трейд»: letters and digits without the legal form."""
+    key = _LEGAL_FORMS.sub(" ", str(name or "").lower().replace("ё", "е"))
+    return re.sub(r"[^0-9a-zа-я]", "", key)
+
+
+def seller_mismatch(order_supplier: str, document: SupplierDocument) -> str:
+    """A warning when the seller the PDF names is not the order's supplier (never a refusal — the buyer decides). No
+    warning when either name is unknown or the order's supplier is a site («chipdip.ru»): a site is not a legal name."""
+    supplier = str(order_supplier or "").strip()
+    if not document.seller_name or not supplier or re.fullmatch(r"(?:[a-z]+://)?[^\s/]+\.[^\s/]+(?:/\S*)?", supplier, re.I):
+        return ""
+    ours, theirs = _org_key(supplier), _org_key(document.seller_name)
+    if len(ours) < 3 or len(theirs) < 3 or ours in theirs or theirs in ours:
+        return ""
+    inn = f" (ИНН {document.seller_inn})" if document.seller_inn else ""
+    return f"Продавец в счёте — {document.seller_name}{inn}, а заказ у «{supplier}» — проверьте, тот ли это счёт"
+
+
+def _table_raw(line: InvoiceLine, after_sum: tuple[float, ...]) -> _Raw:
+    """A row of Roller_Buyer's table: quantity, price and sum as printed; the numbers right of the sum say whether
+    they carry НДС (`_vat_columns`)."""
+    quantity = _decimal(repr(line.qty)) if line.qty is not None else None
+    price = Decimal(line.price) / 100 if line.price is not None else None
+    total = Decimal(line.sum) / 100 if line.sum is not None else None
+    raw = _Raw(name=line.name, article=line.article, quantity=quantity, unit=line.unit)
+    if quantity and price is not None and total is not None:
+        others = [value for value in (_decimal(repr(number)) for number in after_sum) if value is not None and value > 0]
+        _vat_columns(raw, quantity, price, total, others, None)
+    else:
+        raw.price, raw.sum = price, total
+    raw.source = " ".join(part for part in (
+        str(line.seq), line.article, line.name, _plain(quantity), line.unit, _plain(price), _plain(total),
+    ) if part)
+    return raw
+
+
+def _plain(value: Decimal | None) -> str:
+    return format(value.normalize(), "f") if value is not None else ""
 
 
 # --- the table in a grid (.xlsx / .csv / .docx) --------------------------------------------------------------------
@@ -650,7 +754,7 @@ def parse_document_grid(grid: list[list[str]], kind: str = "invoice") -> Supplie
     lines = [" ".join(cell for cell in map(str, row) if cell and str(cell).strip()) for row in grid]
     if head is None:
         text = "\n".join(lines)
-        return _finish([], _Layout(text=""), lines, text, kind, found_table=False)
+        return _finish([], _Layout(text=""), lines, text, kind, found_table=False, reader="grid")
     header_text = " ".join(_cell(grid[i], col) for i in range(max(0, head - 1), head + 1) for col in range(len(grid[i])))
     layout = _layout(header_text)
     layout.columns = columns
@@ -668,7 +772,7 @@ def parse_document_grid(grid: list[list[str]], kind: str = "invoice") -> Supplie
         raw = _grid_row(row, columns)
         if raw is not None:
             raws.append(raw)
-    return _finish(raws, layout, lines[end:], "\n".join(lines), kind, found_table=True)
+    return _finish(raws, layout, lines[end:], "\n".join(lines), kind, found_table=True, reader="grid")
 
 
 def _grid_number(row: list[str], columns: dict[str, int], key: str) -> Decimal | None:
@@ -793,7 +897,10 @@ def _kp_number(text: str) -> str:
 
 def _finish(
     raws: list[_Raw], layout: _Layout, tail: list[str], text: str, kind: str, *, found_table: bool,
+    invoice_total: Decimal | None = None, reader: str = "text",
 ) -> SupplierDocument:
+    """`invoice_total` — the invoice's total in words (Roller_Buyer's header): what is paid, so it decides first
+    whether the rows' prices carry НДС, and it is the document's sum with НДС."""
     totals = _totals(tail)
     low = _norm(text)
     rate_match = _RATE_IN_TEXT.search(text)
@@ -806,22 +913,51 @@ def _finish(
         mode, rate = "none", Decimal(0)
     else:
         rate = rate if rate is not None else DEFAULT_VAT
-        mode = _vat_mode(raws, layout, totals, low, rate)
+        mode = _mode_by_total(raws, invoice_total, rate) or _vat_mode(raws, layout, totals, low, rate)
     items = tuple(_resolve(raw, mode, rate) for raw in raws)
     info = parse_invoice_text(text)
     number = info.number if kind == "invoice" else (_kp_number(text) or info.number)
     scope = "\n".join([layout.text, *tail, *(line for line in text.split("\n") if re.search(r"валют|курс", line, re.I))])
     hint = "" if items else NO_TABLE
+    document_totals = _document_totals(items, totals, mode, rate)
+    if invoice_total is not None and mode == "none":
+        document_totals = DocumentTotals(sum=invoice_total, vat=Decimal("0.00"), sum_with_vat=invoice_total)
+    elif invoice_total is not None and document_totals.sum_with_vat != invoice_total:
+        vat = totals.vat_included if totals.vat_included is not None else totals.vat
+        if vat is None or vat * 2 > invoice_total:
+            vat = _round_like(invoice_total * rate / (100 + rate))
+        document_totals = DocumentTotals(sum=invoice_total - vat, vat=vat, sum_with_vat=invoice_total)
     return SupplierDocument(
         items=items,
-        totals=_document_totals(items, totals, mode, rate),
+        totals=document_totals,
         currency=document_currency(scope, text),
         vat_mode=mode,
         vat_rate=rate,
         number=number,
         date=info.date,
         hint=hint,
+        reader=reader,
     )
+
+
+def _mode_by_total(raws: list[_Raw], total: Decimal | None, rate: Decimal) -> str | None:
+    """The rows' sum against what the invoice says is paid: equal — the prices carry НДС; equal once НДС is added —
+    they do not. None when the total is unknown or neither fits."""
+    if total is None:
+        return None
+    known = sum((raw.sum_gross for raw in raws if raw.sum_gross is not None), Decimal(0))
+    unknown = sum(
+        (raw.sum if raw.sum is not None else (raw.price or 0) * (raw.quantity or 0)
+         for raw in raws if raw.sum_gross is None and (raw.price is not None or raw.sum is not None)),
+        Decimal(0),
+    )
+    if not unknown:
+        return None
+    if _close(known + unknown, total):
+        return "included"
+    if _close(known + unknown * (1 + rate / 100), total):
+        return "on_top"
+    return None
 
 
 def _vat_mode(raws: list[_Raw], layout: _Layout, totals: _Totals, low: str, rate: Decimal) -> str:

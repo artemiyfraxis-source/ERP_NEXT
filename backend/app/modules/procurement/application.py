@@ -61,7 +61,7 @@ from .domain import (
 from .request_pdf import render_request_pdf
 from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate_day
 from .invoice_file import invoice_date as invoice_day
-from .document_items import SupplierDocument, read_supplier_document
+from .document_items import SupplierDocument, read_supplier_document, seller_mismatch
 from .document_match import DocumentMatch, OrderLineCandidate, match_document_items
 from .stock_port import StockLotView, StockReservationError, StockReservationPort
 
@@ -3128,6 +3128,8 @@ class RecognisedOrderDocument:
     matches: list[DocumentMatch]
     unmatched_items: list[int]
     unmatched_lines: list[ProcurementLine]
+    # The PDF's seller is not the order's supplier: shown to the buyer, nothing is refused.
+    seller_warning: str = ""
 
 
 @dataclass(frozen=True)
@@ -3248,6 +3250,7 @@ def recognise_order_document(command: RecogniseOrderDocumentCommand, uow: UnitOf
         matches=matches,
         unmatched_items=free_items,
         unmatched_lines=[by_key[key] for key in free_keys],
+        seller_warning=seller_mismatch(first.supplier or "", document),
     )
 
 
