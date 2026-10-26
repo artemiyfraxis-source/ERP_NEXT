@@ -60,7 +60,7 @@ export function markIsTube(material: string): boolean {
 /** Трубка метки усаживается: термоусадочная (ТУТ, ТТК, «4/2мм»), не ПВХ-кембрик. */
 export function markTubeShrinks(material: string): boolean {
   const text = String(material || "");
-  return !/хляст|флаж|флаш/i.test(text) && (/термо|\bтут|\bттк|усаж|tms-?sce/i.test(text) || TUBE_SIZE_RE.test(text));
+  return !/хляст|флаж|флаш/i.test(text) && (/термо|(?<![а-яёa-z])тут|(?<![а-яёa-z])ттк|усаж|tms-?sce/i.test(text) || TUBE_SIZE_RE.test(text));
 }
 
 /** Длина из поля: «25», «25,5» → число > 0; диапазон по КД «10–15» — верхнее значение; пусто или мусор → undefined. */
