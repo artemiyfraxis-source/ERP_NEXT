@@ -179,3 +179,11 @@ def test_the_dictionary_needs_warehouse_edit(warehouse_api, method, path, body):
     response = getattr(client, method)(path, **({"json": body} if body is not None else {}))
 
     assert response.status_code == 403
+
+
+def test_lugs_are_their_own_type_not_terminals():
+    # owner 26.10.2026: «тип наконечник, а не терминал»
+    from app.modules.warehouse.item_types import canonical_item_type
+    assert "Наконечник" in ITEM_TYPES_CANON and "Терминал" in ITEM_TYPES_CANON
+    assert canonical_item_type("наконечник кольцевой") == "Наконечник"
+    assert canonical_item_type(" Наконечник втулочный ") == "Наконечник"
