@@ -1,0 +1,19 @@
+/* «Лента, оплётка, рукава»: слои жгута одной плотной таблицей, закрепление и отрезки по ветвям под слоем. */
+.tcgen .wt { display: grid; gap: 4px; min-width: 0; }
+.tcgen .wt-head, .tcgen .wt-row { display: grid; grid-template-columns: 24px minmax(120px, 1.2fr) minmax(150px, 1.4fr) 84px 108px; gap: 4px 8px; align-items: center; }
+.tcgen .wt-head { font-size: 12px; color: var(--muted-foreground); padding: 0 0 2px; border-bottom: 1px solid var(--border); }
+.tcgen .wt-layer { display: grid; gap: 4px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.tcgen .wt-n { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .wt select, .tcgen .wt input { height: 28px; font-size: 13px; min-width: 0; width: 100%; font-variant-numeric: tabular-nums; }
+.tcgen .wt-where { font-size: 12.5px; color: var(--muted-foreground); }
+.tcgen .wt-by { font-size: 12.5px; color: var(--muted-foreground); text-align: right; padding-right: 8px; }
+.tcgen .wt-fix, .tcgen .wt-branches { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding-left: 32px; }
+.tcgen .wt-fix select { width: 190px; }
+.tcgen .wt-fix .gunit, .tcgen .wt-branch .gunit { width: 96px; }
+.tcgen .wt-segs { width: 220px; }
+.tcgen .wt-branch { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 600; }
+.tcgen .wt-hint { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tcgen .wt-summary { margin: 0; padding-left: 32px; }
+@media (pointer: coarse) {
+  .tcgen .wt select, .tcgen .wt input { height: 40px; }
+}

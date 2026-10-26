@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { COAX_SHIELD_OPTIONS, coaxFromFields, coaxVswrCustProblem, coaxVswrCustStricter, coaxVswrCustomer_, componentsVswrMax, withCoaxVswrFromConfig, coaxShieldKind_, coaxRecordFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type CoaxVswrCustForm, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 import { genCards } from "./routeCards";
 import { deriveRoute, type RouteOp } from "./routeLogic";
@@ -268,43 +268,25 @@ describe("коакс: резка с разделкой на роторном с�
     const types = (D: GenData, S: GenState) => opsOf(D, S).map((op) => `${op.type}${op.side || ""}`);
 
     it("normalizes the spellings of «Тип экрана»", () => {
-      expect(["прижим", "Прижимной", "зажимной", "clamp", "обжимной", "Обжим втулки", "пайка", "паяный", "RG-178: пайка", "накручивание", "", undefined]
-        .map((value) => coaxShieldKind_(value))).toEqual(["прижим", "прижим", "прижим", "прижим", "обжим", "обжим", "пайка", "пайка", "пайка", "накрутка", "", ""]);
+      expect(["прижим", "Прижимной", "зажимной", "clamp", "обжимной", "Обжим втулки", "пайка", "паяный", "RG-178: пайка", "", undefined]
+        .map((value) => coaxShieldKind_(value))).toEqual(["прижим", "прижим", "прижим", "прижим", "обжим", "обжим", "пайка", "пайка", "пайка", "", ""]);
     });
 
-    it("knows compression, twist-on and Push-On (19.10): own kinds, «самообжим» is not a crimp", () => {
-      expect(["компрессия", "компрессионный", "накрутка", "накручивающийся", "резьбовой", "самообжим", "Push-On (самообжим)", "обжим"]
-        .map((value) => coaxShieldKind_(value))).toEqual(["компрессия", "компрессия", "накрутка", "накрутка", "накрутка", "самообжим", "самообжим", "обжим"]);
+    it("owner 26.10: накрутка / компрессия / Push-On / корпусом are the same as «прижим»; the select offers three kinds", () => {
+      expect(["компрессия", "компрессионный", "накрутка", "накручивающийся", "резьбовой", "самообжим", "Push-On (самообжим)", "корпус", "корпусом", "обжим корпуса", "Корпусом (без гильзы)", "обжим"]
+        .map((value) => coaxShieldKind_(value))).toEqual([...Array(11).fill("прижим"), "обжим"]);
+      expect(COAX_SHIELD_OPTIONS.map(([key]) => key)).toEqual(["обжим", "пайка", "прижим"]);
     });
 
-    it("knows the body shield (MHF, U.FL, 19.10): «корпус» / «корпусом» / «обжим корпуса», no sleeve, no ferrule press, own housing note", () => {
-      expect(["корпус", "корпусом", "обжим корпуса", "Корпусом (без гильзы)", "обжим"].map((value) => coaxShieldKind_(value)))
-        .toEqual(["корпус", "корпус", "корпус", "корпус", "обжим"]);
-      const body = clampData("корпус", "корпусом");
-      const ops = opsOf(body, initState(body));
-      expect(ops.some((op) => op.type === "coaxShield" || op.type === "coaxInsSleeve")).toBe(false);
-      expect(ops.find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса (А) — экран зажимается корпусом разъёма, без гильзы");
-      const mixed = clampData("корпус", "обжим");
-      expect(opsOf(mixed, initState(mixed)).find((op) => op.type === "coaxShield")).toMatchObject({ units: 1 });
-      expect(COAX_SHIELD_OPTIONS).toContainEqual(["корпус", "Корпусом (без гильзы)"]);
-    });
-
-    it("twist-on and Push-On sides have no shield op and no sleeve; compression is a crimp op with the tool in the label and no HEX", () => {
-      const twist = clampData("накрутка", "обжим");
-      const ops = opsOf(twist, initState(twist));
-      expect(ops.find((op) => op.type === "coaxShield")).toMatchObject({ units: 1, label: "Опрессовка втулки экрана" });
-      expect(ops.find((op) => op.type === "coaxInsSleeve")).toMatchObject({ units: 1, label: "Монтаж втулки экрана" });
-      expect(ops.find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса (А) — накручивается на кабель, экран зажимает разъём");
-      const bare = clampData("самообжим", "накрутка");
-      const bareOps = opsOf(bare, initState(bare));
-      expect(bareOps.some((op) => op.type === "coaxShield" || op.type === "coaxInsSleeve")).toBe(false);
-      expect(bareOps.find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса (А) — Push-On, без инструмента");
-      const compress = clampData("компрессия", "компрессия");
-      const compressOps = opsOf(compress, initState(compress));
-      expect(compressOps.find((op) => op.type === "coaxShield")).toMatchObject({
-        units: 2, label: "Опрессовка втулки экрана ×2 — компрессия: А, B (компрессионный инструмент, без HEX)", tmplHint: "PRS_SLEEVE_coax" });
-      const cfg = makeGen(compress, initState(compress)).buildConfig() as Record<string, any>;
-      expect([cfg.coax.sideA.shield, cfg.coax.sideB.shield]).toEqual(["компрессия", "компрессия"]);
+    it("a saved draft with a legacy shield value opens as «прижим» and builds like a clamp", () => {
+      const D = clampData("обжим", "обжим");
+      const S = initState(D);
+      const legacy = { ...S, coax: { ...S.coax, shield: "накрутка", shieldB: "корпус" } };
+      const gen = makeGen(D, legacy);
+      expect([gen.coaxShieldOf_("A"), gen.coaxShieldOf_("B")]).toEqual(["прижим", "прижим"]);
+      const cfg = gen.buildConfig() as Record<string, any>;
+      expect([cfg.coax.sideA.shield, cfg.coax.sideB.shield]).toEqual(["прижим", "прижим"]);
+      expect(opsOf(D, legacy).find((op) => op.type === "coaxHousing" && op.side === "A")?.label).toBe("Монтаж корпуса с прижимом (А)");
     });
 
     it("takes the shield of each side from its БД.КОАКС connector, a manual choice overrides", () => {
@@ -811,9 +793,15 @@ it("heat-shrink over a connector: cut with other tubes, put on before this end's
 it("heat-shrink over a solder connector shrinks after its mount; toggle off gives no ops", () => {
   const D = { ...data([{ id: "w", type: "Провод", name: "ПВАМ 0,5", art: "ПВАМ 0,5", qty: 0.3 },
     { id: "x", type: "Соед", name: "XT60 папа", art: "XT60-M", qty: 2 }, TTK]), templates: shrinkTemplates };
-  const off = makeGen(D, initState(D)).getActiveOps();
+  // Клеевая ТТК — единственная трубка состава, разъём паяный: засев сам надевает её на корпус (776К. КБ2–КБ4).
+  const seeded = initState(D);
+  expect(seeded.endpoints.map((e) => e.shrinkOn)).toEqual([true, true]);
+  // Выключили руками — операций термоусадки нет, и повторный updateEndpoint её не включает.
+  const offState = updateEndpoint(D, updateEndpoint(D, seeded, "a1", { shrinkOn: false }), "b1", { shrinkOn: false });
+  const off = makeGen(D, offState).getActiveOps();
   expect(off.some((o) => /Shr/.test(o.opKey))).toBe(false);
-  const S = updateEndpoint(D, initState(D), "a1", { shrinkOn: true });
+  expect(updateEndpoint(D, offState, "a1", { label: "X1" }).endpoints.find((e) => e.id === "a1")!.shrinkOn).toBe(false);
+  const S = updateEndpoint(D, offState, "a1", { shrinkOn: true });
   const ops = makeGen(D, S).getActiveOps();
   const keys = ops.map((o) => o.opKey);
   expect(ops.find((o) => o.opKey === "cutShr1")?.tutSegs).toEqual([{ len: "20", count: 1 }]);

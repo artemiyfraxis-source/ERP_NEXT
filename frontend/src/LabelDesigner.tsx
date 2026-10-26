@@ -37,6 +37,18 @@ export const PREVIEW_DELAY_MS = 500;
 export const FALLBACK_SCALE = 8;
 const CANVAS_MAX_H = 480;
 const STEP = 0.5;
+// A line of text takes 1.676 × the capitals' height plus whole-dot rounding (backend labels/defaults.py `_height`).
+const CAP_TO_PITCH = 1.676;
+const SLACK_PER_LINE = 0.25;
+/** The box height (mm) that holds `lines` lines of capitals `font_mm` high — the server breaks a text into as many lines as
+    the box's height holds, «Строк» at most. */
+export function textBoxHeight(font_mm: number, lines: number): number {
+  return Math.ceil((lines * (CAP_TO_PITCH * font_mm + SLACK_PER_LINE) + 0.05) * 10 - 1e-6) / 10;
+}
+/** How many lines a box `h_mm` high holds at `font_mm`. */
+function linesHeld(font_mm: number, h_mm: number): number {
+  return Math.max(0, Math.floor((h_mm - 0.05 + 1e-6) / (CAP_TO_PITCH * font_mm + SLACK_PER_LINE)));
+}
 const STALE = "Шаблон изменили — обновите";
 
 export const formatSize = (format: LabelFormat): [number, number] => {
@@ -373,6 +385,16 @@ function ElementProps({ element, fields, size: [width, height], readOnly, onChan
   if (!element) return <aside className="ld-props" aria-label="Свойства элемента"><p className="muted ld-empty">Выберите элемент на макете или в списке.</p></aside>;
   const hasText = element.kind === "field" || element.kind === "text";
   const hasField = element.kind === "field" || element.kind === "qr" || element.kind === "code128";
+  // A text wraps only into the lines its box holds: a bigger size or more lines grow the box down (to the label's edge),
+  // so «Строк» 2 really gives two lines (owner 26.10.2026: «не работает перенос внутри блока, если не влезает»).
+  const room = Math.round((height - element.y_mm) * 10) / 10;
+  const tall = (font_mm: number, lines: number) => Math.min(textBoxHeight(font_mm, lines), room);
+  const grow = (patch: Partial<TemplateElement>) => {
+    const need = tall(patch.font_mm ?? element.font_mm, patch.max_lines ?? element.max_lines);
+    onChange(need > element.h_mm ? { ...patch, h_mm: need } : patch);
+  };
+  const held = hasText ? linesHeld(element.font_mm, element.h_mm) : 0;
+  const short = hasText && held < element.max_lines;
   return <aside className="ld-props" aria-label="Свойства элемента">
     <h3>{KIND_NAMES[element.kind]}</h3>
     <fieldset disabled={readOnly} className="ld-grid">
@@ -395,8 +417,15 @@ function ElementProps({ element, fields, size: [width, height], readOnly, onChan
       <NumField label="Ширина, мм" value={element.w_mm} min={STEP} max={width} onChange={(w_mm) => onChange({ w_mm })} />
       <NumField label="Высота, мм" value={element.h_mm} min={STEP / 5} max={height} onChange={(h_mm) => onChange({ h_mm })} />
       {hasText && <>
-        <NumField label="Кегль, мм" value={element.font_mm} min={1} max={20} onChange={(font_mm) => onChange({ font_mm })} />
-        <NumField label="Строк" value={element.max_lines} min={1} max={4} onChange={(lines) => onChange({ max_lines: Math.round(lines) })} />
+        <NumField label="Кегль, мм" value={element.font_mm} min={1} max={20} onChange={(font_mm) => grow({ font_mm })} />
+        <NumField label="Строк" value={element.max_lines} min={1} max={4} onChange={(lines) => grow({ max_lines: Math.round(lines) })} />
+        {short && <p className="wide ld-short tone-warn" role="status">
+          {held === 0 ? "В эту высоту не помещается ни одна строка" : `В высоту ${decimal(element.h_mm)} мм помещается строк: ${held} из ${element.max_lines}`}
+          {tall(element.font_mm, element.max_lines) > element.h_mm
+            ? <> · <button type="button" className="link-button" onClick={() => onChange({ h_mm: tall(element.font_mm, element.max_lines) })}>Подогнать высоту</button></>
+            : null}
+          {textBoxHeight(element.font_mm, element.max_lines) > room && <> · до низа этикетки места мало — уменьшите кегль или поднимите блок</>}
+        </p>}
         <label>Выравнивание<select value={element.align} onChange={(event) => onChange({ align: event.target.value as TemplateElement["align"] })}>
           {ALIGNS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
         <label>Не влезает<select value={element.fit} onChange={(event) => onChange({ fit: event.target.value as TemplateElement["fit"] })}>

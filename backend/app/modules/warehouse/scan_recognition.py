@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
@@ -34,7 +33,7 @@ from .receipts_application import (
     scan_recognition,
     upd_llm_settings,
 )
-from .scan_jobs import DONE, ScanJob, save_result, stored_result
+from .scan_jobs import DONE, ScanJob, recognition_try_lock, save_result, stored_result
 from .scan_reading import ScanReading, merge_readings, read_scan, reading_from_json, reading_json
 from .upd_lines import line_answer, snap_articles
 
@@ -126,28 +125,16 @@ def readings_kept(uow_factory: Callable[[], UnitOfWork], files: list[UUID]) -> b
     return all(reading_from_json(scan_recognition(uow_factory(), file_id)) is not None for file_id in files)
 
 
-# One recognition per job at a time in this process: the screen's poll restarts one only when none runs.
-_guard = threading.Lock()
-_running: set[UUID] = set()
-
-
-def recognising(job_id: UUID) -> bool:
-    with _guard:
-        return job_id in _running
-
-
 def recognise_job(uow_factory: Callable[[], UnitOfWork], sources: ScanSources, job: ScanJob,
                   pages: list[UUID] | None = None) -> None:
     """The background task: the done job's file read (or, for a merge, its sheets' kept readings combined), the
     answer stored once. Any failure stores an answer that asks to fill the delivery by hand — the poll never hangs."""
     if job.status != DONE or job.file_id is None or job.result:
         return
-    with _guard:
-        if job.id in _running:
-            return
-        _running.add(job.id)
-    try:
-        if stored_result(uow_factory(), job.id):
+    # One reading per job in every API process (ERP_API_WORKERS > 1): the upload's task and the screen's poll may land
+    # in different processes, and a model call is paid — a second one that finds the lock taken just leaves.
+    with recognition_try_lock(uow_factory(), job.id) as got:
+        if not got or stored_result(uow_factory(), job.id):
             return
         link = f"{RECEIPT_SCAN_PATH}{job.file_id}"
         settings: list[receipt_llm.LlmConfig] = []
@@ -168,9 +155,6 @@ def recognise_job(uow_factory: Callable[[], UnitOfWork], sources: ScanSources, j
             log.exception("Распознавание скана УПД по заданию %s не удалось", job.id)
             answer = {"scan_file": link, "recognised": recognised_dict(RecognisedUpd()), "lines": [], "note": FAILED}
         save_result(uow_factory(), job.id, json.dumps(answer, ensure_ascii=False))
-    finally:
-        with _guard:
-            _running.discard(job.id)
 
 
 def job_view(job: ScanJob) -> dict:

@@ -41,3 +41,9 @@ leaving a gutted directory.
   duplicate was dropped. Right before dispatching workers, and again before integrating, run `git fetch` +
   `git log origin/main -15` + `gh pr list`. Look for the topic's words and the migration number.
 - Related: [[erp-merge-gotchas]], [[owner-working-rules]].
+- 24.10: a peer session switched the shared main checkout to its branch right after I created mine; my merges landed on
+  its branch (shipped inside its PR #681), later ones on local `main`, and a plain `git push` went straight to
+  `origin/main` with no PR. I also took the URL `gh pr create` printed for my draft — it was the peer's #681 — and
+  overwrote its body (restored from the GraphQL `userContentEdits` history). Before every merge/commit/push in the main
+  checkout run `git branch --show-current`; push with an explicit `git push origin <branch>`; check a PR's
+  `headRefName` before editing, readying or watching it. Better: orchestrate from my own worktree, not the main checkout.

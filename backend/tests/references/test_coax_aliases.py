@@ -374,12 +374,18 @@ def test_api_import_loads_names_and_coax_dia_serves_alias_rows(sessions, api):  
     rows = api.get("/api/references/coax-dia").json()["records"]
     by_name = {row["fields"]["Кабель"]: row["fields"] for row in rows}
     assert by_name["1951"]["D1"] == by_name["RG-316"]["D1"]
-    listed = api.get("/api/references/cables").json()["rows"]
-    # one request: every coax row carries its БД.КОАКС connectors, only the cells the card shows
-    fdfb = next(row for row in listed if row["cable"] == "5D-FB")["connectors"]
-    assert fdfb and {item["fields"]["coaxWire"] for item in fdfb} == {"5D-FB"}
-    assert all(set(item["fields"]) <= set(CONNECTOR_FIELDS) and item["fields"].get("coaxType") for item in fdfb)
-    assert all("connectors" not in row for row in listed if row["kind"] != "coax")
+    body = api.get("/api/references/cables").json()
+    listed, cells = body["rows"], body["connector_cells"]
+    # one request: every coax row names its БД.КОАКС connectors, each connector's cells (only those the card shows)
+    # come once for the whole list (26.10.2026: they repeated per cable — 5.5 of 11 MB)
+    fdfb = [cells[key] for key in next(row for row in listed if row["cable"] == "5D-FB")["connector_ids"]]
+    assert fdfb and {fields["coaxWire"] for fields in fdfb} == {"5D-FB"}
+    assert all(set(fields) <= set(CONNECTOR_FIELDS) and fields.get("coaxType") for fields in fdfb)
+    assert all("connector_ids" not in row and "connectors" not in row for row in listed if row["kind"] != "coax")
+    shared = [key for row in listed for key in row.get("connector_ids", [])]
+    assert set(shared) == set(cells)  # each connector once, every one of them named by a row
+    # «Источник данных» — only the site the supplier is named by, not the research log after it
+    assert all("," not in fields.get("Источник данных", "") for fields in cells.values())
     card = next(row for row in listed if row["cable"] == "RG316")["card"]
     assert card["full_name"] == "Кабель RG-316 50 Ом"
     assert {"alias": "1951", "kind": "supplier_article", "supplier": "ГСМ Репитеры"}.items() <= next(

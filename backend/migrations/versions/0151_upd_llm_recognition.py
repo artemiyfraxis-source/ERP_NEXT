@@ -18,8 +18,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0150_upd_llm_recognition"
-down_revision: str | None = "0149_receiving_defect_quantity"
+revision: str = "0151_upd_llm_recognition"
+down_revision: str | None = "0150_prov_lan_kind"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

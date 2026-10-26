@@ -9,7 +9,8 @@
     КСВmax = (1 + Γmax) / (1 − Γmax)
 
 A(f) — затухание кабеля, дБ/м (карточка кабеля «Коаксиальные кабели», точки затухания, лог-лог интерполяция), L — длина,
-м. Полоса — от 1 МГц до меньшей из «Частота до, ГГц» разъёмов и рабочей частоты кабеля. Норма берётся в начале полосы,
+м. Полоса — от 1 МГц до меньшей из «Частота до, ГГц» разъёмов и кабеля (у кабеля — его ячейка «Частота до, ГГц» в
+«Коаксиальных кабелях», пустая — рабочая частота карточки; то же значение показывает таблица, владелец 25.10.2026). Норма берётся в начале полосы,
 где затухание меньше всего и отражение Б почти не гасится, — строгая; S21 = A(f_max) · L — справочно. Нет КСВ у любого
 разъёма — норма не определена, с причиной, без подстановки значения."""
 
@@ -21,7 +22,7 @@ from copy import deepcopy
 from typing import Any, Iterable, Mapping, Sequence
 
 from .cable_structure import CoaxAttenuation, CoaxCard, card_for
-from .domain import cable_key
+from .domain import CABLE_MAX_GHZ_FIELD, cable_key
 
 VSWR_COLUMN = "КСВ"
 MAX_GHZ_COLUMN = "Частота до, ГГц"
@@ -108,14 +109,40 @@ def cable_card(cards: Iterable[CoaxCard], name: str) -> CoaxCard | None:
     return card if exact else None
 
 
+def cable_max_ghz(wire_rows: Iterable[Mapping[str, Any]], card: CoaxCard | None, name: str) -> float | None:
+    """«Частота до, ГГц» of the cable as «Коаксиальные кабели» shows it (owner 25.10.2026: one frequency field, as at the
+    connectors): the БД.ПРОВ cell of the cable's row (by its name or its card's), else the rated maximum operating
+    frequency of its exact card; never the cut-off."""
+    keys = {cable_key(name)} | ({card.name_key} if card is not None else set())
+    keys.discard("")
+    for row in wire_rows:
+        if cable_key(row.get("Марка")) in keys:
+            value = parse_max_ghz(row.get(CABLE_MAX_GHZ_FIELD))
+            if value is not None and value > 0:
+                return value
+    if card is not None and card.max_operating_ghz is not None and card.max_operating_ghz > 0:
+        return float(card.max_operating_ghz)
+    return None
+
+
+def cable_standard(wire_rows: Iterable[Mapping[str, Any]], name: str) -> str:
+    """«Стандарт» of the cable's БД.ПРОВ row (owner 25.10.2026: the passport prints «RG-316 (MIL-DTL-17/113)»); '' — no
+    row or the cell is empty (the passport prints «—», never a guess)."""
+    key = cable_key(name)
+    if not key:
+        return ""
+    return next((str(row.get("Стандарт") or "").strip() for row in wire_rows
+                 if cable_key(row.get("Марка")) == key and str(row.get("Стандарт") or "").strip()), "")
+
+
 def vswr_norm(
     ends: Sequence[tuple[str, str]], rows: Iterable[Mapping[str, Any]], card: CoaxCard | None, cable_name: str,
-    length_mm: object,
+    length_mm: object, wire_rows: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """The norm of an assembly with connectors `ends` [("A", article), ("B", article)] on the cable `card` (None —
     no card: no loss, no frequency limit) of `length_mm`. Returns the ETK contract `coaxVswrNorm`:
     {status, reason, vswrMax, bandMhz: [from, to|None], s21Db, lengthM, cable: {name, lossDbM}, ends: [{side, article,
-    vswrText, vswr, maxGhz}]}."""
+    vswrText, vswr, maxGhz}]}. `wire_rows` — БД.ПРОВ rows: the cable's «Частота до, ГГц» (`cable_max_ghz`)."""
     rows = list(rows)
     found = []
     for side, article in ends:
@@ -123,8 +150,9 @@ def vswr_norm(
         found.append({"side": side, "article": article, "vswrText": text, "vswr": vswr, "maxGhz": max_ghz})
     curve = attenuation_curve(card.attenuation) if card is not None else ()
     limits = [end["maxGhz"] for end in found if end["maxGhz"] is not None]
-    if card is not None and card.max_operating_ghz is not None and card.max_operating_ghz > 0:
-        limits.append(float(card.max_operating_ghz))
+    cable_ghz = cable_max_ghz(wire_rows, card, cable_name)
+    if cable_ghz is not None:
+        limits.append(cable_ghz)
     band_to = min(limits) * 1000 if limits else None
     length = parse_number(length_mm)
     length_m = round(length / 1000, 4) if length else None
@@ -154,7 +182,7 @@ def vswr_norm(
         return norm
     norm.update(status=STATUS_OK, vswrMax=round(vswr_of(gamma), 2))
     if band_to is None:
-        norm["reason"] = "верхняя граница полосы не определена — нет «Частота до» у разъёмов и рабочей частоты кабеля"
+        norm["reason"] = "верхняя граница полосы не определена — нет «Частота до» у разъёмов и кабеля"
     return norm
 
 

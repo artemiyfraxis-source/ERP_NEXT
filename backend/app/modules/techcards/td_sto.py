@@ -8,7 +8,7 @@
   4.4.5, обжим гильзы (PRS_SLEEVE_coax) — 4.3, как велит область 4.8;
 - 4.4 «Лужение и пайка» — по подразделам: SDR_tin → 4.4.1, SDR_W_W → 4.4.4, SDR_COAX_* → 4.4.5, прочая пайка → 4.4
   (общие дефекты 4.4.2 и особенности разъёмов 4.4.3 печатаются вместе);
-- маркировка (INS_MARK*, INS_ПМЛ, LASER_MARK, PRINT_MARK) → 4.6; корпуса, терминалы, фиксаторы, RJ (INS_housing*,
+- маркировка (INS_MARK*, INS_ПМЛ, LASER_MARK, PRINT_MARK*) → 4.6; корпуса, терминалы, фиксаторы, RJ (INS_housing*,
   INS_terminal*, INS_lock, INS_RJ*) → 4.7; стяжки и гофра (INS_стяжки, INS_гофра*), раскладка на плазе (Раскладка),
   ручная сборка жгута (Handjob) и смотка в бухту (TWIST_BAY) → 4.9; скрутка экрана на станке снятия оболочки
   (TWST_SHILED) — разделка экрана → 4.2; изоляция (HEAT_*, INS_TUT,
@@ -36,7 +36,7 @@ _RULES: tuple[tuple[re.Pattern[str], str], ...] = tuple((re.compile(pattern), se
     (r"^SDR_W_W$", "4.4.4"),
     (r"^SDR_COAX", "4.4.5"),
     (r"^SDR_", "4.4"),
-    (r"^(INS_MARK|INS_ПМЛ$|LASER_MARK$|PRINT_MARK$)", "4.6"),
+    (r"^(INS_MARK|INS_ПМЛ$|LASER_MARK$|PRINT_MARK)", "4.6"),
     (r"^(INS_housing|INS_terminal|INS_lock$|INS_RJ)", "4.7"),
     (r"^(INS_стяжки$|INS_гофра|Раскладка$|Handjob$|TWIST_BAY$)", "4.9"),
     (r"^TWST_SHILED$", "4.2"),

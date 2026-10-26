@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { DataTable, type DataCellEdit, type DataColumn, type DataPreset } from "./DataTable";
+import { DataTable, type CellValue, type DataCellEdit, type DataColumn, type DataPreset } from "./DataTable";
 import { fieldCellEdit } from "./CustomColumn";
-import { searchRows, searchWords } from "./searchText";
+import { SortHint } from "./refSort";
 import { failureText, referencesApi, type CoveringGroup, type CoveringRow, type CoveringsResult, type TechOperationRecord } from "./api";
 
 /* «База данных» → «Оболочки» (owner 12.10.2026, 15.10.2026): термоусадка без клея и с клеем, кембрик, гофра, оплётки,
@@ -33,56 +33,59 @@ const clip = (text: string) => text ? <span className="cable-clip" title={text}>
 
 type RawEdit = (field: string) => DataCellEdit<CoveringRow> | undefined;
 
-function columnsFor(group: CoveringGroup, rows: CoveringRow[], raw: RawEdit): DataColumn<CoveringRow>[] {
-  const name: DataColumn<CoveringRow> = {
-    key: "name", title: "Наименование",
-    value: (row) => row.name,
-    render: (row) => <><strong>{row.name}</strong>{row.group_source === "вручную" && <small className="muted" title="Раздел задан вручную"> · вручную</small>}</>,
-  };
-  const material: DataColumn<CoveringRow> = {
-    key: "material", title: "Материал", value: (row) => row.material, edit: raw("Материал"),
-    render: (row) => row.material ? <span className="cable-clip" title={row.material}>{row.material_short && !row.material.toLocaleLowerCase("ru-RU").startsWith(row.material_short.toLocaleLowerCase("ru-RU")) ?`${row.material_short} · ${row.material}` : row.material}</span> : dash,
-  };
-  const temp: DataColumn<CoveringRow> = {
-    key: "temp", title: "Температура, °C", value: (row) => tempText(row.temp_min_c, row.temp_max_c), render: (row) => orDash(tempText(row.temp_min_c, row.temp_max_c)),
-  };
-  const colour: DataColumn<CoveringRow> = { key: "color", title: "Цвет", value: (row) => row.color, render: (row) => orDash(row.color), edit: raw("Цвет") };
-  const maker: DataColumn<CoveringRow> = { key: "maker", title: "Производитель", value: (row) => row.maker, render: (row) => clip(row.maker), edit: raw("Производитель") };
-  const series: DataColumn<CoveringRow> = { key: "series", title: "Серия", value: (row) => row.series, render: (row) => clip(row.series), edit: raw("Серия") };
-  const link: DataColumn<CoveringRow> = {
-    key: "datasheet", title: "Ссылка", value: (row) => row.datasheet, edit: raw("Ссылка на datasheet"),
-    render: (row) => row.datasheet ? <a href={row.datasheet} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>datasheet</a> : dash,
-  };
+/** Все колонки оболочек — одна таблица в блоках (владелец 25.10.2026: «визуал БД один»); у каждого раздела — свои из них
+    (`GROUP_KEYS`), в одном порядке для всех: размеры раздела, серия, материал, температура, цвет, производитель, ссылка. */
+function coveringColumns(raw: RawEdit): DataColumn<CoveringRow>[] {
   const number = (key: string, title: string, pick: (row: CoveringRow) => number | null, field?: string): DataColumn<CoveringRow> =>
     ({ key, title, numeric: true, value: (row) => pick(row), render: (row) => pick(row) === null ? dash : mm(pick(row)), edit: field ? raw(field) : undefined });
-  const filled = (pick: (row: CoveringRow) => unknown) => rows.some((row) => pick(row) !== null && pick(row) !== "");
-  if (group === "tut" || group === "ttk") return [
-    name,
+  return [
+    {
+      key: "name", title: "Наименование",
+      value: (row) => row.name,
+      render: (row) => <><strong>{row.name}</strong>{row.group_source === "вручную" && <small className="muted" title="Раздел задан вручную"> · вручную</small>}</>,
+    },
     number("before", "Ø до усадки, мм", (row) => row.before_mm, BEFORE),
     number("after", "Ø после, мм", (row) => row.after_mm, AFTER),
     { key: "ratio", title: "Усадка", value: (row) => row.ratio, render: (row) => orDash(row.ratio), edit: raw("Коэф. усадки") },
-    { ...number("wall", "Стенка, мм", (row) => row.wall_mm), hidden: !filled((row) => row.wall_mm) },
-    ...(group === "ttk" ? [{ key: "adhesive", title: "Клей", value: (row: CoveringRow) => row.adhesive, render: (row: CoveringRow) => orDash(row.adhesive) }] : []),
-    series, material, temp, colour, maker, link,
-  ];
-  if (group === "cambric") return [name, number("before", "Ø, мм", (row) => row.before_mm, BEFORE), series, material, temp, colour, maker, link];
-  if (group === "tape") return [name, number("width", "Ширина, мм", (row) => row.width_mm ?? null), series, material, temp, colour, maker, link];
-  if (group === "braid") return [
-    name,
-    number("nominal", "Ø номинал, мм", (row) => row.nominal_mm),
-    { key: "range", title: "Диапазон Ø, мм", value: (row) => row.min_mm, numeric: true, render: (row) => orDash(rangeText(row.min_mm, row.max_mm)) },
-    material,
-    { key: "density", title: "Плотность", value: (row) => row.density, render: (row) => orDash(row.density), hidden: !filled((row) => row.density) },
-    series, temp, colour, maker, link,
-  ];
-  if (group === "corrugated") return [
-    name,
+    number("wall", "Стенка, мм", (row) => row.wall_mm),
+    { key: "adhesive", title: "Клей", value: (row) => row.adhesive, render: (row) => orDash(row.adhesive) },
+    number("dia", "Ø, мм", (row) => row.before_mm, BEFORE),
     number("inner", "Ø внутр., мм", (row) => row.inner_mm, BEFORE),
     number("outer", "Ø наружн., мм", (row) => row.outer_mm, AFTER),
     { key: "split", title: "Разрезная", value: (row) => row.split === null ? "" : row.split ? "да" : "нет", render: (row) => row.split === null ? dash : row.split ? "да" : "нет" },
-    series, material, temp, colour, maker, link,
+    number("nominal", "Ø номинал, мм", (row) => row.nominal_mm),
+    { key: "range", title: "Диапазон Ø, мм", value: (row) => row.min_mm, numeric: true, render: (row) => orDash(rangeText(row.min_mm, row.max_mm)) },
+    number("width", "Ширина, мм", (row) => row.width_mm ?? null),
+    { key: "series", title: "Серия", value: (row) => row.series, render: (row) => clip(row.series), edit: raw("Серия") },
+    {
+      key: "material", title: "Материал", value: (row) => row.material, edit: raw("Материал"),
+      render: (row) => row.material ? <span className="cable-clip" title={row.material}>{row.material_short && !row.material.toLocaleLowerCase("ru-RU").startsWith(row.material_short.toLocaleLowerCase("ru-RU")) ? `${row.material_short} · ${row.material}` : row.material}</span> : dash,
+    },
+    { key: "density", title: "Плотность", value: (row) => row.density, render: (row) => orDash(row.density) },
+    { key: "temp", title: "Температура, °C", value: (row) => tempText(row.temp_min_c, row.temp_max_c), render: (row) => orDash(tempText(row.temp_min_c, row.temp_max_c)) },
+    { key: "color", title: "Цвет", value: (row) => row.color, render: (row) => orDash(row.color), edit: raw("Цвет") },
+    { key: "maker", title: "Производитель", value: (row) => row.maker, render: (row) => clip(row.maker), edit: raw("Производитель") },
+    {
+      key: "datasheet", title: "Ссылка", value: (row) => row.datasheet, edit: raw("Ссылка на datasheet"),
+      render: (row) => row.datasheet ? <a href={row.datasheet} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>datasheet</a> : dash,
+    },
   ];
-  return [name, series, maker, material, temp, colour, link];
+}
+
+const COMMON = ["series", "material", "temp", "color", "maker", "datasheet"];
+// The fields of each kind; «Стенка» and «Плотность» only where some row of the kind has them.
+const GROUP_KEYS: Record<CoveringGroup, string[]> = {
+  tut: ["name", "before", "after", "ratio", "wall", ...COMMON],
+  ttk: ["name", "before", "after", "ratio", "wall", "adhesive", ...COMMON],
+  cambric: ["name", "dia", ...COMMON],
+  corrugated: ["name", "inner", "outer", "split", ...COMMON],
+  braid: ["name", "nominal", "range", "density", ...COMMON],
+  tape: ["name", "width", ...COMMON],
+  other: ["name", ...COMMON],
+};
+const SPARSE: Record<string, (row: CoveringRow) => unknown> = { wall: (row) => row.wall_mm, density: (row) => row.density };
+export function groupKeys(group: CoveringGroup, rows: CoveringRow[]): string[] {
+  return GROUP_KEYS[group].filter((key) => !SPARSE[key] || rows.some((row) => row.group === group && SPARSE[key](row) !== null && SPARSE[key](row) !== ""));
 }
 
 const BEFORE = "Размер до, мм";
@@ -92,9 +95,9 @@ const sizeOf: Record<CoveringGroup, (row: CoveringRow) => number | null> = {
   tut: (row) => row.before_mm, ttk: (row) => row.before_mm, cambric: (row) => row.before_mm, other: (row) => row.before_mm,
   braid: (row) => row.nominal_mm ?? row.min_mm, corrugated: (row) => row.inner_mm, tape: (row) => row.width_mm ?? null,
 };
-// Чип без строк не показывается: пустой отбор — шум.
-const presetsFor = (group: CoveringGroup, rows: CoveringRow[]): DataPreset<CoveringRow>[] => ([
-  { label: group === "tape" ? "Без ширины" : "Без Ø", test: (row) => sizeOf[group](row) === null },
+// Чипы — над всеми разделами; чип без строк не показывается: пустой отбор — шум. «Без размера» — Ø или ширина ленты.
+const presetsFor = (rows: CoveringRow[]): DataPreset<CoveringRow>[] => ([
+  { label: "Без размера", test: (row) => sizeOf[row.group](row) === null },
   { label: "Без производителя", test: (row) => !row.maker.trim() },
 ] as DataPreset<CoveringRow>[]).filter((preset) => rows.some(preset.test));
 
@@ -112,9 +115,10 @@ function GroupChooser({ row, busy, onChange }: { row: CoveringRow; busy: boolean
 }
 
 /** Значения строки оболочки для поиска: все поля, кроме служебных (id, раздел). */
-function coveringText(row: CoveringRow): unknown[] {
+function coveringText(row: CoveringRow): CellValue[] {
+  const cell = (value: unknown): CellValue => typeof value === "string" || typeof value === "number" || value === null || value === undefined ? value : String(value);
   return Object.entries(row).flatMap(([key, value]) => key === "id" || key === "group" || key === "auto_group" ? []
-    : Array.isArray(value) ? value : value !== null && typeof value === "object" ? [] : [value]);
+    : Array.isArray(value) ? value.map(cell) : value !== null && typeof value === "object" ? [] : [cell(value)]);
 }
 
 export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount?: (count: number) => void }) {
@@ -123,7 +127,6 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
   const [records, setRecords] = useState<Map<string, TechOperationRecord>>(new Map());
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [query, setQuery] = useState("");
 
   async function load() {
     try {
@@ -154,44 +157,54 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
     }
   }
 
-  const words = searchWords(query);
-  // Поиск — по всем значениям строки (наименование, серия, производитель, материал, цвет, размеры, примечания), по
-  // правилам searchText.ts: «тут 3.0» находит «ТУТ 3,0/1,5».
-  const visible = useMemo(() => searchRows(data?.rows ?? [], coveringText, query), [data, query]);
+  // The blocks: a kind (ТУТ, ТТК…) in the owner's order, ТУТ/ТТК by the server's sub-kinds (`shrink_kind`) under their
+  // kind's heading; inside — the server's order (size, then name). An unknown sub-kind goes last in its kind.
+  const order = useMemo(() => {
+    if (!data) return { rows: [] as CoveringRow[], block: (_row: CoveringRow) => "" };
+    const groups: CoveringGroup[] = [...SHOWN, "other"];
+    const kindsOf = (group: CoveringGroup) => (data.kinds?.[group] ?? []).length > 1 ? data.kinds![group]! : [];
+    const kindAt = (row: CoveringRow) => { const kinds = kindsOf(row.group); const at = kinds.findIndex((kind) => kind.id === row.kind); return at < 0 ? kinds.length : at; };
+    const rows = data.rows.map((row, index) => ({ row, index }))
+      .sort((a, b) => groups.indexOf(a.row.group) - groups.indexOf(b.row.group) || kindAt(a.row) - kindAt(b.row) || a.index - b.index)
+      .map((item) => item.row);
+    const block = (row: CoveringRow) => kindsOf(row.group).length ? `${row.group}:${row.kind ?? ""}` : row.group;
+    return { rows, block };
+  }, [data]);
 
   if (error && !data) return <div className="error-banner" role="alert">{error}</div>;
   if (!data) return <div className="empty">Загрузка…</div>;
 
   const raw: RawEdit = (field) => canEdit ? fieldCellEdit<CoveringRow>(field, (row) => records.get(row.id)) : undefined;
-  const section = (group: CoveringGroup) => {
-    const rows = visible.filter((row) => row.group === group);
-    return <section className="cov-group" key={group} aria-label={data.titles[group]}>
-      <h2 className="cov-title">{data.titles[group]} <span className="page-count">{data.counts[group]}</span></h2>
-      <DataTable
-        label={data.titles[group]}
-        rows={rows}
-        columns={columnsFor(group, data.rows.filter((row) => row.group === group), raw)}
-        rowKey={(row) => row.id}
-        rowLabel={(row) => row.name}
-        presets={presetsFor(group, data.rows.filter((row) => row.group === group))}
-        onEdited={load}
-        storageKey={`db:coverings:${group}:2`}
-        hideSearch
-        exportName={data.titles[group]}
-        renderDetail={canEdit ? (row) => <GroupChooser key={`${row.id}:${row.group_source}`} row={row} busy={busy} onChange={(value) => void move(row, value)} /> : undefined}
-        emptyText={words.length ? "Ничего не найдено" : "В этом разделе пока пусто"}
-      />
-    </section>;
+  const groupOf = (block: string) => block.split(":")[0] as CoveringGroup;
+  const kindTitle = (block: string) => {
+    const [group, kind] = block.split(":");
+    return data.kinds?.[group as CoveringGroup]?.find((item) => item.id === kind)?.title ?? "Другие";
   };
   return <div className="coverings">
     {error && <div className="error-banner" role="alert">{error}</div>}
-    <div className="cov-toolbar">
-      <form className="table-search" role="search" onSubmit={(event) => event.preventDefault()}>
-        <input type="search" className="search" aria-label="Поиск по оболочкам" placeholder="Наименование, серия, производитель, материал" value={query} onChange={(event) => setQuery(event.target.value)} />
-      </form>
-      <span className="muted">Сортировка: размер, затем наименование</span>
-    </div>
-    {SHOWN.map(section)}
-    {data.counts.other > 0 && section("other")}
+    <DataTable
+      label="Оболочки"
+      rows={order.rows}
+      columns={coveringColumns(raw)}
+      rowKey={(row) => row.id}
+      rowLabel={(row) => row.name}
+      groupBy={order.block}
+      groupLabel={(block) => block.includes(":") ? kindTitle(block) : data.titles[groupOf(block)]}
+      blocks
+      blockSection={(block) => block.includes(":") ? data.titles[groupOf(block)] : undefined}
+      blockColumns={(block) => groupKeys(groupOf(block), data.rows)}
+      presets={presetsFor(data.rows)}
+      onEdited={load}
+      storageKey="db:coverings:2510"
+      exportName="Оболочки"
+      // Поиск — по всем значениям строки (наименование, серия, производитель, материал, цвет, размеры, примечания), по
+      // правилам searchText.ts: «тут 3.0» находит «ТУТ 3,0/1,5».
+      searchText={coveringText}
+      searchLabel="Поиск по оболочкам"
+      searchPlaceholder="Наименование, серия, производитель, материал"
+      renderDetail={canEdit ? (row) => <GroupChooser key={`${row.id}:${row.group_source}`} row={row} busy={busy} onChange={(value) => void move(row, value)} /> : undefined}
+      emptyText="Ничего не найдено"
+      toolbar={<SortHint text="вид (в ТУТ и ТТК), размер, затем наименование" />}
+    />
   </div>;
 }

@@ -62,6 +62,45 @@ MATERIAL_SHORT = (("полипропилен", "ПП"), ("полиамид", "П
                   ("полиолефин", "полиолефин"), ("стекловолок", "стекловолокно"))
 
 
+# Kinds inside ТУТ / ТТК (owner 25.10.2026: «рассортировка по ТУТ, ТУТнг…»). The order here is the order on the screen.
+KIND_ORDER = ("plain", "ng", "ngls", "hf", "r3", "r4", "brand")
+KIND_TITLES = {
+    TUT: {"plain": "ТУТ — обычная (2:1)", "ng": "ТУТнг — не распространяющая горение",
+          "ngls": "ТУТнг-LS — низкое дымо- и газовыделение", "hf": "ТУТ(HF) — безгалогенная",
+          "r3": "ТУТ 3:1 и более", "r4": "ТУТ 4:1 и более", "brand": "Прочие серии"},
+    TTK: {"plain": "ТТК — усадка не указана", "ng": "ТТКнг — не распространяющая горение",
+          "ngls": "ТТКнг-LS — низкое дымо- и газовыделение", "hf": "ТТК(HF) — безгалогенная",
+          "r3": "ТТК 3:1", "r4": "ТТК 4:1 и более", "brand": "Прочие серии"},
+}
+_HF = re.compile(r"(?<![a-z])hf(?![a-z])|безгалоген", re.IGNORECASE)
+_LS = re.compile(r"нг[\s-]*ls|(?<![a-z])ls(?![a-z])|дымо", re.IGNORECASE)
+_NG = re.compile(r"(?:(?<![а-яё])|(?<=тут)|(?<=ттк)|(?<=\)))нг(?![а-яё])", re.IGNORECASE)
+_CATALOGUE_SERIES = re.compile(r"\d{2}-\d{4}")
+
+
+def shrink_kind(name: str, series: str, material: str, ratio: str) -> str:
+    """The kind of a shrink tube (one place for the rule; new imports land in a sub-group by themselves).
+    1) the shrink ratio: 3:1 and more is chosen by ratio, whatever the flame class (so «ТУТ(3:1)нг-LS» is `r3`);
+    2) the flame/halogen class from series + material, else from the name: HF, нг-LS, нг (the series wins over the
+       name: КВТ's «ТУТнг 4/2» of series ТУТнг-LS is нг-LS);
+    3) no marker: a ТУТ/ТТК series, a Rexant catalogue number or no series — «обычная»; any other brand series
+       (ТСТ, HTS-14…) — «Прочие серии»."""
+    match = re.match(r"\s*(\d+)", ratio or "")
+    times = int(match.group(1)) if match else 0
+    if times >= 4:
+        return "r4"
+    if times == 3:
+        return "r3"
+    for text in (f"{series} {material}", name):
+        for kind, pattern in (("hf", _HF), ("ngls", _LS), ("ng", _NG)):
+            if pattern.search(text):
+                return kind
+    own = re.sub(r"\s*\((?:\d{4,}|\d{2}-\d{4})\)\s*$", "", series).strip().casefold()
+    if not own or _CATALOGUE_SERIES.fullmatch(own) or own.startswith(("тут", "ттк")):
+        return "plain"
+    return "brand"
+
+
 def _text(fields: Mapping[str, Any], *keys: str) -> str:
     for key in keys:
         value = str(fields.get(key) or "").strip()
@@ -132,7 +171,8 @@ class Parsed:
     color: str = ""
     maker: str = ""
     series: str = ""
-    series_family: str = ""             # the series without a catalogue number: «ТУТнг (65994)» → «ТУТнг»
+    kind: str = ""                      # ТУТ/ТТК: see shrink_kind
+    series_family: str = ""             # the series without a catalogue number: «ТУТнг (65994)», «ТУТ (20-3006)» → «ТУТнг», «ТУТ»
     notes: list[str] = field(default_factory=list)  # which values were taken from the text, not from a column
 
 
@@ -177,7 +217,7 @@ def parse(fields: Mapping[str, Any], group: str) -> Parsed:
     material = _text(fields, "Материал")
     parsed = Parsed(material=material, material_short=_short_material(material), color=_colour(fields),
                     maker=_text(fields, "Производитель"), series=_text(fields, "Серия"))
-    parsed.series_family = re.sub(r"\s*\(\d{4,}\)\s*$", "", parsed.series)
+    parsed.series_family = re.sub(r"\s*\((?:\d{4,}|\d{2}-\d{4})\)\s*$", "", parsed.series)
     if group == BRAID:  # the braid's model carries its size: GTRPA-10, XP-6 → GTRPA, XP
         parsed.series_family = re.sub(rf"-{_NUM}$", "", parsed.series_family)
     _temperature(fields, parsed)
@@ -193,6 +233,7 @@ def parse(fields: Mapping[str, Any], group: str) -> Parsed:
             if ratio:
                 parsed.notes.append("усадка из названия")
         parsed.ratio = ratio
+        parsed.kind = shrink_kind(name, parsed.series, material, ratio)
         glued = _text(fields, "Клеевой слой").casefold()
         parsed.adhesive = "да" if glued in ("да", "yes", "true", "+") or group == TTK else "нет" if glued in ("нет", "no", "false", "-") else ""
         wall = _WALL.search(f"{name} {material}")
@@ -257,10 +298,11 @@ def _natural(text: str) -> list[tuple[int, Any]]:
 
 
 def sort_key(group: str, parsed: Parsed, name: str):
-    """Size as a number (Ø, a tape's width; unknown last), then the name with numbers as numbers (owner 15.10.2026: the
-    series is a column, not the order)."""
+    """Kind inside ТУТ/ТТК, then size as a number (Ø, a tape's width; unknown last), then the name with numbers as
+    numbers (owner 15.10.2026: the series is a column, not the order)."""
     size = diameter(parsed, group)
-    return (size is None, size or 0.0, _natural(name))
+    kind = KIND_ORDER.index(parsed.kind) if parsed.kind in KIND_ORDER else 0
+    return (kind, size is None, size or 0.0, _natural(name))
 
 
 def build(records: list[tuple[str, Mapping[str, Any]]]) -> dict[str, Any]:
@@ -279,4 +321,6 @@ def build(records: list[tuple[str, Mapping[str, Any]]]) -> dict[str, Any]:
         }))
     rows.sort(key=lambda item: (GROUP_ORDER.index(item[0]),) + sort_key(item[0], item[1], item[2]["name"]))
     counts = {group: sum(1 for item in rows if item[0] == group) for group in GROUP_ORDER}
-    return {"counts": counts, "titles": GROUP_TITLES, "rows": [item[2] for item in rows]}
+    kinds = {group: [{"id": kind, "title": KIND_TITLES[group][kind]} for kind in KIND_ORDER
+                     if any(item[0] == group and item[1].kind == kind for item in rows)] for group in KIND_TITLES}
+    return {"counts": counts, "titles": GROUP_TITLES, "kinds": kinds, "rows": [item[2] for item in rows]}

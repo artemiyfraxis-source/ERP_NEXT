@@ -4,6 +4,7 @@ import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
 import type { TechOperationRecord } from "./api";
 import { fieldCellEdit, ownCellEdit } from "./CustomColumn";
 import { coaxShieldKind_ } from "./tcGenLogic";
+import { SortHint, compareNames, compareNumbers, firstNumber } from "./refSort";
 import "./coaxConnectors.css";
 
 /* «База данных → Коаксиальные разъёмы» (owner 13.10.2026): БД.КОАКС — разъёмы базы и 311 разъёмов gsm-repiteri.ru —
@@ -107,8 +108,14 @@ export function coaxTypeGroup(fields: Fields): string {
 
 // Серия (порядок цеха) → обычная полярность раньше RP → female, male → прямые, проходные, фланцевые, угловые → полный тип →
 // артикул → кабель.
-function sortRows(records: TechOperationRecord[]) {
+function sortRows(records: TechOperationRecord[], wireDiameter?: (wire: string) => number | null) {
   const genderRank = (fields: Fields) => { const at = GENDER_WORDS.indexOf(genderWord(fields)); return at < 0 ? GENDER_WORDS.length : at; };
+  const diameters = new Map<string, number | null>();
+  const diameterOf = (fields: Fields): number | null => {
+    const wire = coaxWire(fields);
+    if (!diameters.has(wire)) diameters.set(wire, wireDiameter?.(wire) ?? firstNumber(/[⌀Ø]\s*(\d+(?:[.,]\d+)?)/.exec(wire)?.[1]));
+    return diameters.get(wire) ?? null;
+  };
   return [...records].sort((a, b) => {
     const sa = coaxSeries(a.fields);
     const sb = coaxSeries(b.fields);
@@ -117,6 +124,9 @@ function sortRows(records: TechOperationRecord[]) {
       || genderRank(a.fields) - genderRank(b.fields)
       || variantRank(a.fields) - variantRank(b.fields)
       || coaxType(a.fields).localeCompare(coaxType(b.fields), "ru")
+      // Owner 25.10.2026, «размер, затем наименование»: Ø of the cable (its card in «Коаксиальные кабели»), no Ø — the cable's name.
+      || compareNumbers(diameterOf(a.fields), diameterOf(b.fields))
+      || (diameterOf(a.fields) === null && diameterOf(b.fields) === null ? compareNames(coaxWire(a.fields), coaxWire(b.fields)) : 0)
       || coaxArticle(a.fields).localeCompare(coaxArticle(b.fields), "ru", { numeric: true })
       || coaxWire(a.fields).localeCompare(coaxWire(b.fields), "ru", { numeric: true });
   });
@@ -147,13 +157,19 @@ function SiteLink({ href }: { href: string }) {
   return <a href={href} target="_blank" rel="noreferrer" title={href} onClick={(event) => event.stopPropagation()}>{host}</a>;
 }
 
+/** Столбцы, убранные из таблицы 25.10.2026 (владелец: «всё, что без галочки, удаляй»; сервер `COAX_DROPPED_COLUMNS`):
+    в таблице, «Колонках» и форме новой записи их нет; карточка разъёма их показывает, «Править запись» у существующей
+    строки — правит, быстрые фильтры «Штекеры / Гнёзда / Угловые» читают «Пол» / «Исполнение» (или тип), цена — «Цена на
+    <дата>» в подсказке. */
+export const COAX_CARD_ONLY = ["Пол", "Исполнение", "Полярность", "Монтаж", "Дата цены", "Примечание", "Источник данных"];
+
 /** HEX обжима есть только у обжимного экрана; тип не задан — поле открыто (его ещё надо заполнить), у прижимного, паяного, корпусного (MHF, U.FL) — нет. */
 export const hasHex = (fields: Record<string, string>) => {
   const kind = coaxShieldKind_(pick(fields, "Тип экрана", "shieldType"));
   return kind === "" || kind === "обжим";
 };
 
-export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns = [], onEdited, removeColumn }: {
+export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns = [], onEdited, removeColumn, wireDiameter }: {
   records: TechOperationRecord[];
   canEdit: boolean;
   onEdit: (record: TechOperationRecord) => void;
@@ -163,8 +179,10 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
   onEdited?: () => Promise<unknown> | void;
   /** «Удалить столбец» своего столбца (окно подтверждения — у страницы). */
   removeColumn?: (name: string) => (() => void) | undefined;
+  /** Наружный диаметр кабеля разъёма, мм (из «Коаксиальные кабели»); нет — разъёмы идут по имени кабеля. */
+  wireDiameter?: (wire: string) => number | null;
 }) {
-  const rows = useMemo(() => sortRows(records), [records]);
+  const rows = useMemo(() => sortRows(records, wireDiameter), [records, wireDiameter]);
   const [selectedId, setSelectedId] = useState("");
   const selected = rows.find((record) => record.id === selectedId) ?? null;
 
@@ -178,10 +196,11 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
   const length = (name: "L1" | "L2" | "L3"): DataColumn<TechOperationRecord> => ({
     key: name, title: name, hint: `Разделка ${name}, мм`, numeric: true, value: text(name, name.toLowerCase()), edit: cell(name),
   });
-  // Порядок групп (владелец 23.10.2026: «своя инфа в своём месте»): разъём (артикул, тип, кабель, пол, исполнение,
-  // полярность, монтаж) | разделка и обжим (пин, экран, L1–L3, HEX, заглубление) | электрика (частота, КСВ, Ом) |
-  // производитель | поставка | служебное. L+ / L−, «Программа», «Габариты», «Материал корпуса» — не столбцы базы
-  // (заполнены на 0–3,5 %); значения остаются в записях, генератор читает L+ / L− из своих полей.
+  // Порядок групп (владелец 23.10.2026: «своя инфа в своём месте»): разъём (артикул, тип, кабель) | разделка и обжим
+  // (пин, экран, L1–L3, HEX, заглубление) | электрика (частота, КСВ, Ом) | производитель | поставка | наименование.
+  // Скрытых столбцов нет (25.10.2026): пол, исполнение, полярность, монтаж, дата цены, примечание и источник — в
+  // карточке (`COAX_CARD_ONLY`). L+ / L−, «Программа», «Габариты», «Материал корпуса» — не столбцы базы (23.10, 0–3,5 %);
+  // значения остаются в записях, генератор читает L+ / L− из своих полей.
   // Источник заглубления в таблице не нужен вовсе (владелец 19.10: «источник заглубления я всё ещё вижу») — только
   // подсказкой на значении; любой «свой» столбец «Заглубление контакта…» отсекается, как бы он ни был записан.
   const own = ownColumns.filter((name) => !BUILT_IN.has(name.trim().toLowerCase()) && !/^заглублени/i.test(name.trim()));
@@ -190,11 +209,6 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
     { key: "article", title: "Артикул", value: (record) => coaxArticle(record.fields), render: (record) => <strong>{coaxArticle(record.fields) || "—"}</strong>, wrap: true, maxWidth: 170 },
     { key: "type", title: "Тип", value: (record) => coaxType(record.fields), wrap: true, maxWidth: 130, filter: true, edit: cell("Тип/Серия") },
     { key: "wire", title: "Кабель", value: (record) => coaxWire(record.fields), wrap: true, maxWidth: 100 },
-    { key: "gender", title: "Пол", value: (record) => coaxGender(record.fields), hidden: true },
-    { key: "angle", title: "Исполнение", value: (record) => coaxAngle(record.fields) },
-    { key: "polarity", title: "Полярность", value: text("Полярность"), hidden: true, edit: cell("Полярность") },
-    // Монтаж — в карточке и в «Колонках»; карточка открывается окном, таблица занимает всю ширину.
-    { key: "mount", title: "Монтаж", value: text("Монтаж"), hidden: true, edit: cell("Монтаж") },
     { key: "pin", title: "Тип пина", value: text("Тип пина", "pinType"), wrap: true, maxWidth: 80, edit: cell("Тип пина") },
     { key: "shield", title: "Тип экрана", value: text("Тип экрана", "shieldType"), edit: cell("Тип экрана") },
     // Разделка — тремя колонками: каждую длину можно вписать прямо в таблицу; HEX обжима втулки — сразу за ними.
@@ -228,10 +242,7 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
       render: (record) => pick(record.fields, "Цена, ₽")
         ? <span title={pick(record.fields, "Дата цены") ? `Цена на ${pick(record.fields, "Дата цены")}` : undefined}>{pick(record.fields, "Цена, ₽")}</span> : "—",
     },
-    { key: "priceDate", title: "Дата цены", value: text("Дата цены"), hidden: true, edit: cell("Дата цены") },
-    { key: "name", title: "Наименование", value: text("Наименование"), hidden: true, edit: cell("Наименование") },
-    { key: "note", title: "Примечание", value: text("Примечание"), hidden: true, wrap: true, maxWidth: 200, edit: cell("Примечание") },
-    { key: "source", title: "Источник данных", value: text("Источник данных"), hidden: true, edit: cell("Источник данных") },
+    { key: "name", title: "Наименование", value: text("Наименование"), wrap: true, maxWidth: 220, edit: cell("Наименование") },
   ];
 
   return <div className="coax-db">
@@ -241,21 +252,22 @@ export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns =
         rows={rows}
         columns={columns}
         rowKey={(record) => record.id}
-        // Новый ключ — порядок групп 23.10 («Ом» рядом с КСВ, заглубление за HEX): раскладка, сохранённая до него, его
-        // не прячет. Общего набора у таблицы нет.
-        storageKey="db:coax-connectors-2310"
+        // Новый ключ — столбцы 25.10 (скрытых нет): раскладка, сохранённая до него, ни один не прячет. Общего набора нет.
+        storageKey="db:coax-connectors-2510"
         exportName="Коаксиальные разъёмы"
         presets={PRESETS}
         groupBy={(record) => coaxTypeGroup(record.fields)}
         // Щелчок по заголовку сортирует внутри каждой группы, порядок групп (SMA-female, SMA-male…) не меняется (владелец 19.10).
         groupSort
+        // Серия — свой блок с заголовком и таблицей (владелец 25.10.2026: «визуал БД один», как «Оболочки»).
+        blocks
         onRowClick={(record) => setSelectedId(record.id === selectedId ? "" : record.id)}
         rowTitle={(record) => `Карточка: ${coaxArticle(record.fields)} · ${coaxWire(record.fields)}`}
         rowClassName={(record) => (record.id === selectedId ? "coax-row-active" : "")}
         emptyText="Разъёмов нет — загрузите их или добавьте «+ Запись»."
         pageSize={1000}
         onEdited={onEdited}
-        toolbar={toolbar}
+        toolbar={<><SortHint text="серия, затем Ø кабеля и артикул" />{toolbar}</>}
       />
     </div>
     {selected && <CoaxCard

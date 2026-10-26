@@ -28,6 +28,7 @@ services:
       ERP_DATABASE_URL: postgresql+psycopg://erp:rehearsal@db:5432/erp
       ERP_COOKIE_SECURE: "0"
       ERP_AUTO_MIGRATE: "0"
+      ERP_API_WORKERS: "1"   # one process and PostgreSQL's defaults: a throwaway check, not the production sizing
       TZ: Europe/Moscow
     networks: [rehearsal]
 

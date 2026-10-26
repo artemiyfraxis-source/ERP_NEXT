@@ -14,7 +14,7 @@ const ITEM_HEIGHT = 32;
 /** Меню строки «⋯»: действия над одной строкой таблицы, когда сама строка кликается и ведёт в главное место
  *  (аудит дизайна 10.10, М-1). Список вынесен в body и позиционируется по кнопке, поэтому прокрутка таблицы его не
  *  обрезает; Esc, клик мимо и прокрутка закрывают; открытое меню ставит фокус на первое действие. */
-export function RowActionMenu({ label, items, disabled }: { label: string; items: RowAction[]; disabled?: boolean }) {
+export function RowActionMenu({ label, items, disabled, caption }: { label: string; items: RowAction[]; disabled?: boolean; /** Надпись на кнопке вместо «⋯» (например «Ещё»). */ caption?: string }) {
   const [place, setPlace] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
   const root = useRef<HTMLSpanElement>(null);
   const popup = useRef<HTMLDivElement>(null);
@@ -56,7 +56,7 @@ export function RowActionMenu({ label, items, disabled }: { label: string; items
   }
 
   return <span className="row-action-menu" ref={root} onClick={(event) => event.stopPropagation()}>
-    <button type="button" ref={opener} className="row-action-open" aria-label={label} aria-expanded={Boolean(place)} aria-haspopup="menu" disabled={disabled} onClick={toggle}>⋯</button>
+    <button type="button" ref={opener} className={caption ? "row-action-open captioned" : "row-action-open"} aria-label={label} aria-expanded={Boolean(place)} aria-haspopup="menu" disabled={disabled} onClick={toggle}>{caption ?? "⋯"}</button>
     {place && createPortal(
       <div className="row-action-popup" role="menu" ref={popup} style={{ position: "fixed", ...place }}>
         {items.map((item) => <button key={item.label} type="button" role="menuitem" className={item.danger ? "danger" : undefined} disabled={item.disabled}

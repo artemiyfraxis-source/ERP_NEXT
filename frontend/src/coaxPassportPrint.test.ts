@@ -98,3 +98,10 @@ it("a customer norm prints as the acceptance norm with its basis and the compone
   expect(html).toContain("700 … 2 700");
   expect(html).toContain("<th>Норма по комплектующим (справочно)</th><td>КСВН не более 2,06</td>");
 });
+
+it("prints the cable with its standard, «—» when the cable list has none — never a guess (владелец 25.10)", () => {
+  const withStandard = passport();
+  withStandard.product.cable = { name: "RG-316", loss_db_m: 0.9, standard: "MIL-DTL-17/113" };
+  expect(flat(buildCoaxPassportHtml(withStandard))).toContain("RG-316 (MIL-DTL-17/113), затухание 0,9 дБ/м");
+  expect(flat(buildCoaxPassportHtml(passport()))).toContain("RG-316 (—), затухание 0,9 дБ/м");
+});

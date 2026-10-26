@@ -40,9 +40,10 @@ class ReferenceKind(str, Enum):
 
 # The three maps of «Соответствия» / ГОСТ→AWG; a maps save never touches the other kinds.
 MAP_KINDS = (ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY, ReferenceKind.GOST_AWG)
-# «Прочие кабели» is gone (owner 20.10.2026): every БД.ПРОВ row is коаксиальный, монтажный or многожильный.
-CABLE_KIND_VALUES = ("coax", "wire", "multi")
-CABLE_KIND_REASON = "Список кабеля: коаксиальные, монтажные или многожильные"
+# «Прочие кабели» is gone (owner 20.10.2026): every БД.ПРОВ row is коаксиальный, монтажный, многожильный or — since
+# 25.10.2026 (migration 0150) — an ETHERNET cable («lan»).
+CABLE_KIND_VALUES = ("coax", "wire", "multi", "lan")
+CABLE_KIND_REASON = "Список кабеля: коаксиальные, монтажные, многожильные или кабели Ethernet"
 
 
 class TechOperationTab(str, Enum):
@@ -457,7 +458,7 @@ MAX_ROW_EDITS = 200
 _PROV_COLUMNS = (
     "Марка", "Цвет", "Цвета", "Тип провода", "Стандарт", "Производители",
     "AWG", "Сечение, мм2", "Число жил", "Жила: проволок × диаметр, мм", "Изоляция", "Экран", "Наружный диаметр, мм",
-    "Волновое сопротивление, Ом", "Напряжение, В", "Ток, А",
+    "Волновое сопротивление, Ом", "Частота до, ГГц", "Напряжение, В", "Ток, А",
     "Масса, г/м", "Темп. от, °C", "Темп. до, °C",
     "Поставщик", "Цена посл., ₽/м без НДС", "Закупок",
     "Ссылка на datasheet", "Источник данных", "Категория",
@@ -479,17 +480,73 @@ _PROV_COLUMNS = (
 # every list however sparse (owner 19.10.2026).
 _PROV_NEVER = {
     "coax": ("AWG", "Ток, А", "Категория", "Цвет", "Сечение, мм2", "Число жил", "Изоляция", "Экран"),
-    "wire": ("Волновое сопротивление, Ом", "Категория", "Цвета", "Экран", "Число жил", "Изоляция", "Ток, А"),
-    "multi": ("Ток, А", "Цвет", "Категория", "Изоляция", "Волновое сопротивление, Ом"),
+    "wire": ("Волновое сопротивление, Ом", "Категория", "Цвета", "Экран", "Число жил", "Изоляция", "Ток, А",
+             "Частота до, ГГц"),
+    "multi": ("Ток, А", "Цвет", "Категория", "Изоляция", "Волновое сопротивление, Ом", "Частота до, ГГц"),
 }
+# «Частота до, ГГц» of a coax cable (owner 25.10.2026: one frequency field, as at the connectors): the rated maximum
+# operating frequency; empty — the card's `max_operating_ghz` stands in (the table and the VSWR norm read the same,
+# `coax_vswr.cable_max_ghz`). Never the cut-off.
+CABLE_MAX_GHZ_FIELD = "Частота до, ГГц"
+# Removed 25.10.2026 (owner, at the «Колонки» of each list: «всё, что без галочки, удаляй, они не нужны уже», then per
+# column): nothing stays hidden — a column is shown or removed. Every list loses the service and stale supply columns
+# («Цена посл.», «Закупок», «Дата цены» — the price tooltip «Цена на <дата>» still reads it — and «Источник данных»);
+# the coax cables also «Цвета» and «Напряжение» (one frequency «Частота до» instead), the многожильные «Цвета» (the
+# jacket colour, 31 %); their core columns «Жила: проволок × диаметр» (97 %) and «Материал жилы» (100 %) stay.
+# «Стандарт» stays everywhere it was (the passport prints it). A removed column is no column of the list:
+# not in the table, «Колонки», the create form, the file of «Скачать для правки» or `columns_by_kind`. Its values stay
+# in the records, and the readers (harness catalogue, the kind rule, item names, the price tooltip) read them as before;
+# an existing row still takes a write to it (`CABLE_WRITABLE`: the row's card and editor, `import_rows`, the prod-write
+# scripts), a new row — only to «Источник данных» (`CABLE_NEW_ROW_EXTRA`: provenance, appended by loads and journals).
+_SUPPLY_DROPPED = ("Цена посл., ₽/м без НДС", "Закупок", "Дата цены", "Источник данных")
+_PROV_DROPPED = {
+    "coax": ("Цвета", "Напряжение, В", *_SUPPLY_DROPPED),
+    "wire": _SUPPLY_DROPPED,
+    "multi": ("Цвета", *_SUPPLY_DROPPED),
+    # the многожильные cells an ETHERNET row brings and the list does not show: the row's card shows and edits them
+    "lan": ("Число жил", "Материал экрана", "Напряжение, В", "Масса, г/м", "Темп. от, °C", "Темп. до, °C", "Цвета",
+            *_SUPPLY_DROPPED),
+}
+# «ETHERNET» (owner 25.10.2026: «интернетные вынести вообще в другую вкладку — новая вкладка, новая БД»): the LAN
+# cables have their own columns, all of them shown (group order — frontend `cableColumnOrder.ts`): identification,
+# category (Cat5e…), the screen code (U/UTP, F/UTP…), pairs, the core, materials, laying (inside / outside), outer Ø,
+# supply. «Категория», «Экран», «Число пар», «Прокладка» are read from the type, the mark and «Число жил» where empty
+# (`cables.lan_fill`, migration 0150). By the owner's rule (≤ 5 % filled — no column) the list has no «Волновое
+# сопротивление» (1,7 % on prod, and 100 Ом for every row) and no «Ссылка» (0 %); the supply and material columns,
+# the owner's own columns of the многожильные, are the list's own here.
+_LAN_COLUMNS = (
+    "Марка", "Тип провода", "Категория", "Стандарт", "Производители",
+    "AWG", "Сечение, мм2", "Число пар", "Жила: проволок × диаметр, мм", "Материал жилы", "Материал изоляции жилы", "Экран",
+    "Материал оболочки", "Прокладка", "Наружный диаметр, мм",
+    "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Ссылка на datasheet",
+)
+CABLE_DROPPED: dict[str, frozenset[str]] = {kind: frozenset(names) for kind, names in _PROV_DROPPED.items()}
 CABLE_COLUMNS: dict[str, tuple[str, ...]] = {
-    kind: tuple(name for name in _PROV_COLUMNS if name not in _PROV_NEVER[kind]) for kind in CABLE_KIND_VALUES
+    **{kind: tuple(name for name in _PROV_COLUMNS if name not in _PROV_NEVER[kind] and name not in CABLE_DROPPED[kind])
+       for kind in CABLE_KIND_VALUES if kind != "lan"},
+    "lan": _LAN_COLUMNS,
 }
+# What a row of the list takes a write to: its columns and the removed ones (an existing row — edit, load, file).
+CABLE_WRITABLE: dict[str, tuple[str, ...]] = {
+    kind: (*CABLE_COLUMNS[kind], *_PROV_DROPPED[kind]) for kind in CABLE_KIND_VALUES
+}
+CABLE_NEW_ROW_EXTRA = ("Источник данных",)  # a removed column a new row of a load may still fill (provenance)
+
+
+def cable_list_own(kind: str, own: Iterable[str]) -> list[str]:
+    """The owner's own columns of a cable list less the removed ones (`CABLE_DROPPED`)."""
+    return [name for name in own if name not in CABLE_DROPPED[kind]]
+
 
 # БД.КОАКС sheet columns that are no column of the table any more (owner 23.10.2026: «если что-то заполняется на 3 % —
 # это мусор для БД»): «L+», «L-», «Программа» (0 %), «Габариты» (3,5 %), «Материал корпуса» (2 %). Values stay in the
 # records; the ETK generator reads L+ / L− / program from its own fields (`lPlus`, `lMinus`, `program`) as before.
-COAX_DROPPED_COLUMNS = frozenset({"L+", "L-", "L−", "Программа", "Габариты", "Материал корпуса"})
+# 25.10.2026 (owner, «Колонки» of the table: «всё, что без галочки, удаляй»): «Пол», «Исполнение», «Полярность»,
+# «Монтаж», «Дата цены», «Примечание», «Источник данных» — the card of a connector still shows them, the quick filters
+# «Штекеры / Гнёзда / Угловые» read «Пол» / «Исполнение» (or the type) as before, «Цена» keeps «Цена на <дата>».
+COAX_DROPPED_COLUMNS = frozenset({"L+", "L-", "L−", "Программа", "Габариты", "Материал корпуса",
+                                  "Пол", "Исполнение", "Полярность", "Монтаж", "Дата цены", "Примечание",
+                                  "Источник данных"})
 
 
 # --- «Монтажные провода»: one row per colour (owner 20.10.2026: «имелось ввиду каждый цвет своя строка») ---
@@ -567,7 +624,7 @@ def cable_fields(columns: Iterable[str], fields: Mapping[str, str], pad: Iterabl
 
 # Column schema of the sheet-header bases (SUPPLYMAP DbMirror.gs DB_MIRROR_NEW_). Fields of these bases are keyed by
 # the sheet header, so an empty tab can still offer a «+ Запись» form. op/ob/ter/coax fields are internal keys.
-# БД.ПРОВ: the columns of all three cable lists (each list's own — `CABLE_COLUMNS`).
+# БД.ПРОВ: the sheet columns of the cable lists (each list's own — `CABLE_COLUMNS`).
 BASE_COLUMNS = {
     TechOperationTab.WIRE: _PROV_COLUMNS,
     TechOperationTab.MATERIAL: (

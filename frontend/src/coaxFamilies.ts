@@ -121,6 +121,12 @@ export function compareCoaxRows(rows: CableRow[]): (a: CableRow, b: CableRow) =>
   return (a, b) => compareSlots(slot(a.cable), slot(b.cable)) || compareInGroup(a.cable, b.cable);
 }
 
+/** Only the group order of two rows (the mark family): the rows inside a group are ordered by the caller. */
+export function compareCoaxGroups(rows: CableRow[]): (a: CableRow, b: CableRow) => number {
+  const slot = layout(rows);
+  return (a, b) => compareSlots(slot(a.cable), slot(b.cable));
+}
+
 /** Rows in catalogue order, without touching the input. */
 export function sortCoax(rows: CableRow[]): CableRow[] {
   return [...rows].sort(compareCoaxRows(rows));

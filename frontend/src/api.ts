@@ -1366,7 +1366,7 @@ export interface PassportEnd { side: string | null; article: string | null; vswr
 export interface CableAssemblyPassport {
   product: {
     task_number: string; project: string; item: string; name: string; serial_number: string | null; position: number;
-    cable: { name: string | null; loss_db_m: number | null }; length_m: number | null; ends: PassportEnd[];
+    cable: { name: string | null; loss_db_m: number | null; standard?: string | null }; length_m: number | null; ends: PassportEnd[];
   };
   etk: { techcard_id: string | null; item_index: string; product_name: string; revision: number | null };
   norm: VswrNorm & { basis: string };
@@ -1637,7 +1637,7 @@ export interface ReferenceBase {
 export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
-export type CableKind = "coax" | "wire" | "multi";
+export type CableKind = "coax" | "wire" | "multi" | "lan";
 /** Столбец общего набора таблицы: ключ и виден ли он всем. */
 export interface SharedColumn { key: string; visible: boolean }
 
@@ -1737,8 +1737,10 @@ export interface CableRow {
   card?: CoaxCard | null;
   card_exact?: boolean;
   /** Coax: the БД.КОАКС rows made for this cable (by its mark, the exact card's name and aliases), only the cells the
-      card shows — «Совместимые разъёмы» (owner 19.10.2026). */
+      card shows — «Совместимые разъёмы» (owner 19.10.2026). The server sends each connector once (`connector_cells`)
+      and the row its ids (`connector_ids`); `referencesApi.cables` puts them back on the row. */
   connectors?: Array<{ id: string; fields: Record<string, string> }>;
+  connector_ids?: string[];
   /** The connectors are the family card's («5D-FB» for «5D-FB CCA PE AL PE»): its name; "" — the row's own. */
   connectors_family?: string;
   /** Монтажный wire: its structure, or — not structured yet — why, and what the БД.ПРОВ row suggests. */
@@ -1755,9 +1757,26 @@ export interface CablesResult {
   columns_by_kind?: Partial<Record<CableKind, string[]>>;
   /** Столбцы владельца в каждом списке («+ Столбец»), в конце `columns_by_kind[список]`. */
   custom_columns_by_kind?: Partial<Record<CableKind, string[]>>;
+  /** Столбцы, убранные из списка 25.10.2026: в таблице их нет, карточка строки их показывает и правит. */
+  removed_columns_by_kind?: Partial<Record<CableKind, string[]>>;
   counts: Record<CableKind, number>;
   rows: CableRow[];
   gauges?: WireGauge[];
+  /** «Совместимые разъёмы» of every coax row, each connector once: id → the cells the card shows. */
+  connector_cells?: Record<string, Record<string, string>>;
+}
+
+/** The coax rows' connectors from the shared `connector_cells` (one object per connector, shared by the rows). */
+export function withConnectors(result: CablesResult): CablesResult {
+  const cells = result.connector_cells;
+  if (!cells) return result;
+  const shared = new Map<string, { id: string; fields: Record<string, string> }>();
+  const of = (id: string) => {
+    let item = shared.get(id);
+    if (!item) { item = { id, fields: cells[id] ?? {} }; shared.set(id, item); }
+    return item;
+  };
+  return { ...result, rows: result.rows.map((row) => row.connector_ids ? { ...row, connectors: row.connector_ids.map(of) } : row) };
 }
 
 /** «Оболочки»: БД.МАТ rows that cover a harness, grouped and parsed by the server (`coverings.py`). */
@@ -1793,11 +1812,14 @@ export interface CoveringRow {
   maker: string;
   series: string;
   series_family: string;
+  kind?: string;
   notes: string[];
 }
 export interface CoveringsResult {
   counts: Record<CoveringGroup, number>;
   titles: Record<CoveringGroup, string>;
+  /** Подгруппы ТУТ/ТТК по виду, в порядке экрана (только непустые). */
+  kinds?: Partial<Record<CoveringGroup, Array<{ id: string; title: string }>>>;
   rows: CoveringRow[];
 }
 
@@ -2344,8 +2366,40 @@ export type ApiInit = RequestInit & { timeoutMs?: number | null; safe?: boolean;
 
 const READ_METHODS = ["GET", "HEAD", "OPTIONS", "TRACE"];
 
+/* «База данных» reads each list once per visit (26.10.2026, «БД как-то глючит»: the tab counts, the tab itself and its
+   embedded screens fetched the same lists two or three times, a switch back re-downloaded them). While a visit is open
+   (`openReadVisit`, ReferencesPage), a `visitRead` of a path already asked for returns the same promise; any write
+   through `api` forgets them all, so the list a screen re-reads after an edit or an import comes fresh. Outside a visit
+   `visitRead` is a plain read. */
+const visitReads = new Map<string, Promise<unknown>>();
+let openVisits = 0;
+
+/** Opens a visit (reads shared until it closes); the returned function closes it. */
+export function openReadVisit(): () => void {
+  openVisits += 1;
+  let open = true;
+  return () => {
+    if (!open) return;
+    open = false;
+    openVisits -= 1;
+    if (openVisits === 0) visitReads.clear();
+  };
+}
+
+/** A read shared inside an open visit: `load` runs once per path (a failed read is asked again next time). */
+export function visitRead<T>(path: string, load: () => Promise<T> = () => api<T>(path)): Promise<T> {
+  if (openVisits === 0) return load();
+  const known = visitReads.get(path);
+  if (known) return known as Promise<T>;
+  const pending = load();
+  visitReads.set(path, pending);
+  pending.catch(() => { if (visitReads.get(path) === pending) visitReads.delete(path); });
+  return pending;
+}
+
 export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
   const { timeoutMs, safe, blob, signal: outer, ...request } = init;
+  if (!(safe ?? READ_METHODS.includes((request.method ?? "GET").toUpperCase()))) visitReads.clear();
   const headers = new Headers(request.headers);
   // FormData (a file upload) sets its own multipart boundary — the header is left to the browser.
   if (request.body && !(request.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
@@ -2401,6 +2455,8 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     if (outer && onAbort) outer.removeEventListener("abort", onAbort);
+    // a read shared while the write ran may hold the old state
+    if (!reading) visitReads.clear();
   }
 }
 
@@ -3710,9 +3766,10 @@ export const shippingApi = {
 };
 
 export const referencesApi = {
-  bases: () => api<BasesResult>("/api/references/bases"),
-  cables: () => api<CablesResult>("/api/references/cables"),
-  coverings: () => api<CoveringsResult>("/api/references/coverings"),
+  // The lists of «База данных» are visit reads (`visitRead`): one download per visit, fresh after a write.
+  bases: () => visitRead<BasesResult>("/api/references/bases"),
+  cables: () => visitRead("/api/references/cables", () => api<CablesResult>("/api/references/cables").then(withConnectors)),
+  coverings: () => visitRead<CoveringsResult>("/api/references/coverings"),
   setCoveringGroup: (recordId: string, group: string) =>
     api<TechOperationRecord>(`/api/references/coverings/${recordId}/group`, { method: "PUT", body: JSON.stringify({ group }) }),
   moveCable: (recordId: string, kind: CableKind) =>
@@ -3724,7 +3781,7 @@ export const referencesApi = {
   saveGauge: (gaugeId: string | null, payload: { awg: string; section_mm2: string; conductor_d_mm: string; strands: string }) =>
     api<WireGauge>(gaugeId ? `/api/references/wire-gauges/${gaugeId}` : "/api/references/wire-gauges", { method: gaugeId ? "PUT" : "POST", body: JSON.stringify(payload) }),
   deleteGauge: (gaugeId: string) => api<void>(`/api/references/wire-gauges/${gaugeId}`, { method: "DELETE" }),
-  maps: () => api<ReferenceMaps>("/api/references/maps"),
+  maps: () => visitRead<ReferenceMaps>("/api/references/maps"),
   saveMaps: (maps: ReferenceMaps) => api<ReferenceMaps>("/api/references/maps", {
     method: "PUT",
     body: JSON.stringify(maps),
@@ -3733,7 +3790,7 @@ export const referencesApi = {
     const params = new URLSearchParams({ tab });
     if (query.trim()) params.set("q", query.trim());
     if (limit) params.set("limit", String(limit));
-    return api<TechOperationResult>(`/api/references/tech-operations?${params}`);
+    return visitRead<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
   wireDia: () => api<WireDiaResult>("/api/references/wire-dia"),
   /** СПР.КАБ · коаксиал для генератора ЭТК: строки D1·D2·D3 и по строке на каждое другое имя кабеля (полное название,
@@ -3763,7 +3820,7 @@ export const referencesApi = {
   duplicateRecord: (id: string) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}/duplicate`, { method: "POST" }),
   crimps: (id: string) => api<CrimpOverview>(`/api/references/tech-operations/${id}/crimps`),
-  crimpCodes: () => api<CrimpCodes>("/api/references/tech-operations/crimp-codes"),
+  crimpCodes: () => visitRead<CrimpCodes>("/api/references/tech-operations/crimp-codes"),
   crimpTerminal: (toolId: string, terminalId: string, add: boolean) =>
     api<CrimpTerminal>(`/api/references/tech-operations/${toolId}/crimps/terminals/${terminalId}`, { method: add ? "POST" : "DELETE" }),
   crimpTarget: (toolId: string, target: CrimpTarget, add: boolean) =>
@@ -3793,7 +3850,7 @@ export const techcardsApi = {
   list: () => api<{ items: ProjectTechcard[] }>("/api/techcards/projects"),
   /** Одна карточка ТК по id — генератор и вкладка «ТК КБn» не тянут весь список со всеми ЭТК. */
   get: (cardId: string) => api<ProjectTechcard>(`/api/techcards/projects/${encodeURIComponent(cardId)}`),
-  templates: () => api<{ items: OperationCardSummary[] }>("/api/techcards/templates"),
+  templates: () => visitRead<{ items: OperationCardSummary[] }>("/api/techcards/templates"),
   template: (templateId: string) =>
     api<OperationCardDetail>(`/api/techcards/templates/${encodeURIComponent(templateId)}`),
   saveTemplate: (templateId: string, record: OperationRecordEdit) =>
@@ -3893,9 +3950,9 @@ export const techcardsApi = {
   stdFigureUrl: (figure: Pick<StdFigure, "id" | "sha256">) =>
     `/api/techcards/std-figures/${encodeURIComponent(figure.id)}/image?v=${encodeURIComponent(figure.sha256.slice(0, 12))}`,
   /** База разъёмов: семейства корпусов с образцом артикула и раскладкой контактов. */
-  connectorFamilies: (article = "") => api<{ items: ConnectorFamily[]; match: ConnectorFamily["housing"] | null; series_count?: number }>(
+  connectorFamilies: (article = "") => visitRead<{ items: ConnectorFamily[]; match: ConnectorFamily["housing"] | null; series_count?: number }>(
     `/api/techcards/connector-families${article ? `?article=${encodeURIComponent(article)}` : ""}`),
-  connectorSeries: (article = "") => api<{ series: ConnectorSeries[]; match: ConnectorSeriesMatch | null }>(
+  connectorSeries: (article = "") => visitRead<{ series: ConnectorSeries[]; match: ConnectorSeriesMatch | null }>(
     `/api/techcards/connector-series${article ? `?article=${encodeURIComponent(article)}` : ""}`),
   discardDraft: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/etk`, {

@@ -17,22 +17,27 @@ import { canonicalColor, colorBackground, parseColors } from "./wireColors";
 import { ColorPicker, MakersInput } from "./WireFieldWidgets";
 import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 import { arrangeCableColumns, knownCableColumn } from "./cableColumnOrder";
+import { CABLE_SORT_HINT, SortHint, compareNames, compareNumbers } from "./refSort";
 
 /* Structured cable reference (owner 10.10.2026: «наведи порядок в базах коаксиалов, монтажных проводов и сечений»):
    «Сечения AWG ↔ мм²» (one row per conductor size), «Монтажные провода» (series + conductor as a size row + insulation,
    outer Ø, voltage, temperature) and the coax card a tester reads at the VNA. Backend: references/cable_structure.py. */
 
 export const CABLE_KIND_LABELS: Record<CableKind, string> = {
-  coax: "Коаксиальные кабели", wire: "Монтажные провода", multi: "Многожильные кабели",
+  coax: "Коаксиальные кабели", wire: "Монтажные провода", multi: "Многожильные кабели", lan: "Кабели Ethernet",
 };
 
 /** The columns of one list (owner 20.10.2026: «у каждого своя структура»): the list's own БД.ПРОВ columns and the ones the
     owner added to it — never another list's. A server without the per-list sets (an old answer) gives the shared ones. */
-export function kindColumns(data: CablesResult, kind: CableKind): { columns: string[]; own: string[] } {
+export function kindColumns(data: CablesResult, kind: CableKind): { columns: string[]; own: string[]; removed: string[] } {
   const own = data.custom_columns_by_kind?.[kind] ?? (data.columns_by_kind ? [] : data.custom_columns ?? []);
   const columns = data.columns_by_kind?.[kind] ?? data.columns;
-  return { columns: [...new Set([...columns, ...own])], own };
+  return { columns: [...new Set([...columns, ...own])], own, removed: data.removed_columns_by_kind?.[kind] ?? [] };
 }
+
+/** The cells the card and editor of an EXISTING row show: the list's columns, then those removed from the list
+    25.10.2026 (no table column; the row keeps the value and takes edits to it). A new row — the list's columns only. */
+export const cardColumns = (columns: string[], removed: string[]): string[] => [...columns, ...removed.filter((name) => !columns.includes(name))];
 
 /** What a move keeps, said in the confirmation of the move. */
 export const moveText = (name: string, kind: CableKind) =>
@@ -72,28 +77,6 @@ export function parseTempRange(text: string): { min: string; max: string } {
   return { min, max };
 }
 
-const KIND_ORDER: CableKind[] = ["coax", "wire", "multi"];
-/** «Вкладка» of a БД.ПРОВ row as a cell — the choice of the row window's «Вкладка» (`kindSelect`): the row moves to that
-    list by the same server path, «по правилу» marks where the rule would put it. Hidden in «Колонки» by default. */
-export function kindColumn(canEdit: boolean, onSaved: (message: string) => Promise<void> | void): DataColumn<CableRow> {
-  return {
-    key: "__kind", title: "Вкладка", hidden: true, value: (row) => CABLE_KIND_LABELS[row.kind],
-    edit: canEdit ? {
-      enabled: (row) => Boolean(row.record),
-      value: (row) => row.kind,
-      options: (row) => KIND_ORDER.map((kind) => ({
-        value: kind, label: `${CABLE_KIND_LABELS[kind]}${kind === row.auto_kind && row.manual ? " (по правилу)" : ""}`,
-      })),
-      save: async (row, value) => {
-        const kind = value as CableKind;
-        if (kind !== row.kind && !window.confirm(moveText(row.cable, kind))) throw new Error("Перенос отменён");
-        try { await referencesApi.moveCable(row.record!.id, kind); } catch (reason) { throw cellFailure(reason); }
-        await onSaved(`«${row.cable}» перенесён во вкладку «${CABLE_KIND_LABELS[kind]}», заполненные значения сохранены`);
-      },
-    } : undefined,
-  };
-}
-
 export const spanText = (card: CoaxCard): string =>
   card.span_to_ghz === null ? "" : `${freq(card.span_from_mhz)} – ${num(card.span_to_ghz)} ГГц`;
 
@@ -122,6 +105,8 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
   onError: (message: string) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  // Owner 25.10.2026: «размер, затем наименование» — the section as a number, no section — last, then AWG.
+  const ordered = useMemo(() => [...gauges].sort((a, b) => compareNumbers(a.section_mm2, b.section_mm2) || compareNames(a.awg, b.awg)), [gauges]);
   const columns: DataColumn<WireGauge>[] = [
     { key: "awg", title: "AWG", value: (gauge) => gauge.awg, render: (gauge) => gauge.awg ? <strong>{gauge.awg}</strong> : <span className="muted">только ГОСТ</span> },
     { key: "section", title: "Сечение, мм²", numeric: true, value: (gauge) => gauge.section_mm2, render: (gauge) => num(gauge.section_mm2) },
@@ -142,10 +127,12 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
     </div>}
     <DataTable
       label="Сечения AWG ↔ мм²"
-      rows={gauges}
+      rows={ordered}
       columns={columns}
       rowKey={(gauge) => gauge.id}
       storageKey="db:gauges"
+      // No groups: one block titled by the list, as every list of «База данных» (owner 25.10.2026).
+      blocks
       sharedKey="gauges"
       exportName="Сечения AWG - мм2"
       renderDetail={canEdit ? (gauge) => <GaugeEditor key={`${gauge.id}:${gaugeOption(gauge)}`} gauge={gauge} onSaved={onSaved} onError={onError} /> : undefined}
@@ -153,7 +140,7 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
       presets={gauges.some((gauge) => gauge.conductor_d_mm === null) ? [{ label: "Без Ø жилы", test: (gauge) => gauge.conductor_d_mm === null }] : undefined}
       onEdited={() => onSaved("")}
       emptyText="Таблица сечений пуста — добавьте сечение."
-      toolbar={canEdit && !adding ? <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Сечение</button> : undefined}
+      toolbar={<><SortHint text="сечение, затем AWG" />{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Сечение</button>}</>}
     />
   </>;
 }
@@ -227,7 +214,6 @@ const LINK = "Ссылка";
 const COAX_ONLY = new Set(["Погонная ёмкость, пФ/м", "Радиус изгиба неподвижно, мм", "Радиус изгиба многократно, мм"]);
 const CORE_MATERIAL = "Материал жилы";
 const JACKET_MATERIAL = "Материал оболочки";
-type Shared = { jacket?: string; voltage?: string; temp?: string };
 
 export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar, removeColumn }: {
   data: CablesResult;
@@ -247,38 +233,15 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   const rows = useMemo(() => data.rows.filter((row) => row.kind === "wire").sort((a, b) =>
     (a.hookup ? 0 : 1) - (b.hookup ? 0 : 1)
     || (a.hookup?.series ?? "").localeCompare(b.hookup?.series ?? "", "ru")
-    || (byId.get(a.hookup?.gauge_id ?? "")?.section_mm2 ?? 0) - (byId.get(b.hookup?.gauge_id ?? "")?.section_mm2 ?? 0)
-    || a.cable.localeCompare(b.cable, "ru", { numeric: true })
-    || (a.record?.fields[COLOR] ?? "").localeCompare(b.record?.fields[COLOR] ?? "", "ru")), [data.rows, byId]);
-  // What every size of a series shares goes into the group header and is not repeated per row (a series of 2+ sizes only).
-  const shared = useMemo(() => {
-    const bySeries = new Map<string, CableRow[]>();
-    for (const row of rows) if (row.hookup) bySeries.set(row.hookup.series, [...(bySeries.get(row.hookup.series) ?? []), row]);
-    const result = new Map<string, Shared>();
-    for (const [series, list] of bySeries) {
-      if (list.length < 2) continue;
-      const same = (pick: (wire: HookupWire, row: CableRow) => string) => {
-        const values = new Set(list.map((row) => pick(row.hookup as HookupWire, row).trim()));
-        const [only] = [...values];
-        return values.size === 1 && only ? only : undefined;
-      };
-      result.set(series, {
-        jacket: same((_wire, row) => row.record?.fields[JACKET_MATERIAL] ?? ""),
-        voltage: same((wire) => wire.voltage_v === null ? "" : String(wire.voltage_v)),
-        temp: same((wire) => range(wire.temp_min_c, wire.temp_max_c)),
-      });
-    }
-    return result;
-  }, [rows]);
-  const sharedOf = (row: CableRow) => row.hookup ? shared.get(row.hookup.series) : undefined;
+    || compareNumbers(byId.get(a.hookup?.gauge_id ?? "")?.section_mm2, byId.get(b.hookup?.gauge_id ?? "")?.section_mm2)
+    || compareNames(a.cable, b.cable)
+    || compareNames(a.record?.fields[COLOR], b.record?.fields[COLOR])), [data.rows, byId]);
   const makerNames = useMemo(() => makerSuggestions(data.rows.map((item) => item.record?.fields[MAKERS] ?? "")), [data.rows]);
   const seriesColors = (series: string) => [...new Set(rows.filter((item) => item.hookup?.series === series.trim())
     .flatMap((item) => parseColors(item.record?.fields[COLOR] ?? "")))].join(", ");
-  // The table itself appends « · N» — the number of sizes in the group.
-  const groupLabel = (name: string) => {
-    const own = name === UNPARSED ? undefined : shared.get(name);
-    return [name, own?.jacket, own?.voltage && `${own.voltage} В`, own?.temp && `${own.temp} °C`].filter(Boolean).join(" · ");
-  };
+  // The group header is the series name only (the table appends « · N»): voltage, temperature and jacket are in the
+  // rows (owner 25.10.2026: «у группировки есть параметры, а в таблице нет — наоборот надо»).
+  const groupLabel = (name: string) => name;
   const gaugeOf = (row: CableRow) => row.hookup ? byId.get(row.hookup.gauge_id) ?? null : null;
   // The structure is the mark's: a new colour of a structured mark takes it (`HookupEditor`).
   const hookupOf = (mark: string) => rows.find((item) => item.hookup && markKey(item.cable) === markKey(mark))?.hookup ?? null;
@@ -293,7 +256,8 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
         onClick={(event) => event.stopPropagation()}>открыть</a>
       : clip(href);
   };
-  const { columns: kindCols, own } = kindColumns(data, "wire");
+  const { columns: kindCols, own, removed } = kindColumns(data, "wire");
+  const rowCols = cardColumns(kindCols, removed);
   // Every value of a parsed wire is written from its cell the way the wire's window writes it: the whole structure with
   // the old values (the server refuses it when the wire changed meanwhile). The size is a pick from «Сечения AWG ↔ мм²»,
   // the temperature is typed as «−60 … +200». A wire not parsed yet is set up in its window.
@@ -338,9 +302,9 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     // differ by it: a dot and a name; typed as text («кр») it goes by the palette, the picker is in the window.
     { key: "color", title: "Цвет", value: (row) => field(row, COLOR), render: (row) => <WireColor name={field(row, COLOR)} />,
       edit: canEdit ? fieldCellEdit<CableRow>(COLOR, (row) => row.record, true, oneColor) : undefined },
-    // The series is the group header (owner 16.10: «серию исключить») — kept in «Колонки», hidden.
+    // The series is also the group header (owner 16.10); shown again since 25.10.2026 («Серия» groups a mark's colours).
     {
-      key: "series", title: "Серия", hidden: true, value: (row) => row.hookup?.series ?? "", edit: hookupEdit("series"),
+      key: "series", title: "Серия", value: (row) => row.hookup?.series ?? "", edit: hookupEdit("series"),
       render: (row) => row.hookup ? row.hookup.series : <span className="tone-warn" title={row.hookup_problem || "Жила не выбрана из таблицы сечений"}>не разобран</span>,
     },
     { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "", edit: gaugeEdit("awg") },
@@ -350,28 +314,23 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "strands", title: "Структура жилы", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
       edit: canEdit ? fieldCellEdit<CableRow>(STRANDS, (row) => row.record) : undefined },
     { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm), edit: hookupEdit("outer_d_mm") },
-    { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
-    { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", edit: tempEdit },
+    { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
+    { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", edit: tempEdit },
     ...kindCols.filter((name) => name !== MARK && name !== CORE_COLORS && name !== COLOR && name !== STRANDS && !MIRRORED.includes(name) && !COAX_ONLY.has(name)).map((name): DataColumn<CableRow> => ({
       key: name, title: name, value: (row) => field(row, name),
-      // The series' common jacket material is in the group header (owner 15.10: «Изоляция» — a rudiment).
-      render: (row) => name === JACKET_MATERIAL && sharedOf(row)?.jacket ? null : name === LINK ? supplierLink(row) : clip(field(row, name)),
+      render: (row) => name === LINK ? supplierLink(row) : clip(field(row, name)),
       // «Тип провода» is free text as in the window; the list a wire is in — the «Вкладка» cell.
       edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldCellEdit<CableRow>(name, (row) => row.record),
       remove: own.includes(name) ? removeColumn?.(name) : undefined,
     })),
-    kindColumn(canEdit, onSaved),
-    { key: "__reason", title: "Почему здесь", computed: true, value: (row) => row.reason },
   ];
-  // Group order (core → jacket → outer Ø, owner 23.10.2026) and the list's «Только нужные»; a column the owner just
-  // added is shown, «Почему здесь» — while the list has rows moved by hand.
-  const anyManual = rows.some((row) => row.manual);
-  const columns = arrangeCableColumns("wire", base,
-    (key) => (own.includes(key) && !knownCableColumn(key)) || (key === "__reason" && anyManual));
+  // Group order (core → jacket → outer Ø, owner 23.10.2026) and the list's columns only (25.10.2026: nothing hidden;
+  // «Вкладка» / «Почему здесь» are the row window's «Вкладка», not columns); a column the owner just added is shown.
+  const columns = arrangeCableColumns("wire", base, (key) => own.includes(key) && !knownCableColumn(key));
   const detail = (row: CableRow) => canEdit
     ? <HookupEditor key={`${row.id}:${JSON.stringify(row.hookup ?? null)}:${JSON.stringify(row.record?.fields ?? {})}:${row.kind}`}
-      row={row} columns={kindCols} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} hookupOf={hookupOf} />
-    : <HookupCard row={row} gauge={gaugeOf(row)} columns={kindCols} />;
+      row={row} columns={rowCols} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} hookupOf={hookupOf} />
+    : <HookupCard row={row} gauge={gaugeOf(row)} columns={rowCols} />;
   const unparsed = rows.filter((row) => !row.hookup).length;
   return <>
     {adding && <div className="panel db-edit">
@@ -384,12 +343,17 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       columns={columns}
       rowKey={(row) => row.id}
       rowLabel={(row) => row.cable}
-      // New keys with the group order of 23.10 (see CableTables): an older layout or shared set does not hide it.
-      storageKey="db:cables:wire-structured:2310"
-      sharedKey="prov:wire-structured:2310"
+      // New keys with the columns of 25.10 (see CableTables): an older layout or shared set does not hide one of them.
+      storageKey="db:cables:wire-structured:2510"
+      sharedKey="prov:wire-structured:2510"
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
       groupSort
+      // Series open folded, a click opens one (owner 26.10.2026, as the other cable lists).
+      collapsibleGroups
+      foldedByDefault
+      // A series is its own block (owner 25.10.2026: «визуал БД один», as «Оболочки»).
+      blocks
       pageSize={Infinity}
       exportName="Монтажные провода"
       renderDetail={detail}
@@ -400,7 +364,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       ].filter((preset) => rows.some(preset.test))}
       onEdited={() => onSaved("")}
       emptyText="Монтажных проводов нет — добавьте провод."
-      toolbar={<>{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Провод</button>}</>}
+      toolbar={<><SortHint text={CABLE_SORT_HINT.wire} />{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Провод</button>}</>}
     />
   </>;
 }

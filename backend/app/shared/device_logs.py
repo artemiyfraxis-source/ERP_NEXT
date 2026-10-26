@@ -1,15 +1,25 @@
 """Журналы с устройств: «Проверка сканера» с ТСД и ошибки браузера устройства (белый экран до входа).
 
 Папка — ERP_DEVICE_LOG_DIR (в Docker это /app/data/import/devices); не задана — папка во временном каталоге системы.
-Файлы: scanner-log.txt, client-errors.log. Старые журналы стенда не переносятся."""
+Файлы: scanner-log.txt, client-errors.log. Старые журналы стенда не переносятся.
+Пишут все процессы API (ERP_API_WORKERS > 1): дозапись и обрезку держит замок на файл (flock на <журнал>.lock),
+иначе обрезка в одном процессе стирала бы строку, дописанную другим. На Windows (локальная ERP, один процесс) — замок
+процесса."""
 
 from __future__ import annotations
 
 import os
 import tempfile
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows: the local ERP runs one API process
+    fcntl = None  # type: ignore[assignment]
 
 LOG_DIR_ENV = "ERP_DEVICE_LOG_DIR"
 SCANNER_LOG_LIMIT = 512 * 1024
@@ -22,9 +32,24 @@ def log_dir() -> Path:
     return Path(raw) if raw else Path(tempfile.gettempdir()) / "erp-devices"
 
 
-def _append(path: Path, text: str, limit: int) -> None:
+@contextmanager
+def _locked(path: Path) -> Iterator[None]:
+    """This process's threads and, on Linux, every other API process writing the same journal."""
     with _write_lock:
         path.parent.mkdir(parents=True, exist_ok=True)
+        if fcntl is None:
+            yield
+            return
+        with open(path.with_name(path.name + ".lock"), "a") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+def _append(path: Path, text: str, limit: int) -> None:
+    with _locked(path):
         try:
             size = path.stat().st_size
         except OSError:

@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { CableTable } from "./CableTables";
 import { cableCategory, cableFamily, cableGroup, cableSeries, compareByFamily, compareCables, screenSplit } from "./cableCategory";
 import type { CablesResult } from "./api";
+import { render, blockLines, listHead, listHeads } from "./test/blocks";
 
 it.each([
   ["Cat5e F/UTP 4PR 24AWG", "Витая пара / Ethernet"], ["Паритет ParLan U/UTP Cat5e", "Витая пара / Ethernet"], ["SFTP Cat6a", "Витая пара / Ethernet"],
@@ -92,11 +93,11 @@ it("renders «Многожильные кабели» in groups of the mark fami
     rows: [row("LiYCY 4x0,5", { "Материал экрана": "медь лужёная" }), row("U/UTP Cat5e 4x2x0,52", { "Экран": "нет" }), row("КДЭВГ 9х0,14", { "Материал экрана": "алюминий" })],
   } as unknown as CablesResult;
   render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
-  const groups = screen.getAllByRole("row").filter((item) => item.classList.contains("group-row")).map((item) => item.textContent);
+  const groups = blockLines();
   expect(groups).toEqual(["КДЭВГ · 1", "LiYCY · 1", "U/UTP Cat5e · 1"]);
-  expect(screen.getByRole("columnheader", { name: "Материал экрана" })).toBeInTheDocument();
+  expect(listHead().getByRole("columnheader", { name: "Материал экрана" })).toBeInTheDocument();
   // owner 23.10: «Экран» says the screen type (нет / общий — фольга / попарный) and stands next to «Материал экрана»
-  const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+  const heads = listHeads().map((head) => head.textContent);
   expect(heads.indexOf("Материал экрана")).toBe(heads.indexOf("Экран") + 1);
   expect(screen.queryByText("Разобрать позже")).toBeNull();
 });

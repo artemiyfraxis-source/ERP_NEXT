@@ -463,3 +463,11 @@ def test_generator_bom_title_reads_like_the_kd_not_the_supplier_page():
     assert rows[0]["name"] == site  # the generator keeps recognising parts by `name`
     # Without resolvers the answer is what it was.
     assert "title" not in generator_bom(kitset, kitset.assembly("КБ1"), [])["components"][0]
+
+
+def test_generator_bom_skips_a_row_zeroed_in_the_spec():
+    """Владелец 25.10: строку расчёта не удаляют, а обнуляют в СПЯ и добавляют нужную — генератор берёт только её."""
+    kitset = _replaced_wire_kitset()
+    zeroed, _ = kitset.with_edits([{"index": "КБ1", "art": "GHR-04V-S", "per": "0", "scrap": "0"}], who="Т", now=NOW)
+    rows = generator_bom(zeroed, zeroed.assembly("КБ1"), [])["components"]
+    assert [(c["id"], c["art"]) for c in rows] == [("kit-0", "Силиконовый 28AWG черный")]

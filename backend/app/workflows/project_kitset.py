@@ -297,6 +297,10 @@ def generator_bom(
     заголовок сайта) для показа; `name` остаётся прежним — по нему генератор узнаёт деталь (провод, ТУТ, колодка…)."""
     components = []
     for position, component in enumerate(assembly.components):
+        # Строку расчёта в ERP не удаляют, а обнуляют (владелец 25.10: «расчёт не правим, правим СПЯ в ERP»):
+        # расход 0 — строка не применяется, в генератор она не идёт; номера kit-N остальных строк не сдвигаются.
+        if not component.per_unit:
+            continue
         # Строку технолога вводят артикулом к применению: её название — не замена провода сметчиком.
         use = {"art": component.article, "kd": ""} if component.manual else kit_article(component.article, component.name)
         name = use["art"] if use["kd"] else (component.name or component.article)
@@ -307,7 +311,7 @@ def generator_bom(
         components.append({
             "id": f"kit-{position}", "type": component.type, "name": name,
             **({"title": shown.name or name, "title_source": shown.source, "title_hint": shown.hint} if shown else {}),
-            "art": use["art"], "kd": use["kd"], "qty": kit_number_payload(component.per_unit or Decimal("1")),
+            "art": use["art"], "kd": use["kd"], "qty": kit_number_payload(component.per_unit),
             "scrap": kit_number_payload(component.scrap_pct / 100),
             **({"manual": True} if component.manual else {}),
         })

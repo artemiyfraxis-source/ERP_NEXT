@@ -215,12 +215,12 @@ it("the technologist's own order still wins; the route follows the new positions
   expect(a1.ops.map((p) => order[p - 1])).toEqual(["insTermA1", "onTubesA1", "braidA1", "onMarkA1", "heatShrA1", "heatMarkA1"]);
 });
 
-it("marking tubes from the kit: printed and cut on INS_MARK_TUBE_AUTO, put on and shrunk with their branch; tags stay in «Маркировка»", () => {
+it("marking tubes from the kit: printed and cut on PRINT_MARK_TUBE, put on and shrunk with their branch; tags stay in «Маркировка»", () => {
   const S0 = fullHarness();
   const S = { ...S0, markRows: [...S0.markRows, newMarkRow({ target: "Изделие КБ1", text: "КБ1", material: "Хлястик", place: "item" })] };
   const gen = makeGen(DSA, S);
   const ops = gen.getActiveOps();
-  expect(ops.find((o) => o.opKey === "cutMark")).toMatchObject({ type: "cutTut", tmplHint: "INS_MARK_TUBE_AUTO", tutCount: 4, tutSegs: [{ len: "15", count: 4 }],
+  expect(ops.find((o) => o.opKey === "cutMark")).toMatchObject({ type: "cutTut", tmplHint: "PRINT_MARK_TUBE", tutCount: 4, tutSegs: [{ len: "15", count: 4 }],
     tutParts: [{ art: "Маркировка \"5\" 4/2мм", count: 1, len: "15" }, { art: "Маркировка \"I3\" 4/2мм", count: 1, len: "15" },
       { art: "Маркировка \"C\" 4/2мм", count: 1, len: "15" }, { art: "Маркировка \"A6\" 4/2мм", count: 1, len: "15" }].map((p) => ({ ...p, name: p.art })) });
   expect(gen.templateIdFor(ops.find((o) => o.opKey === "cutMark")!)).toBe("ins-mark-tube-auto-печать-и-резка-маркировочной-трубки");
@@ -241,8 +241,13 @@ it("marking tubes from the kit: printed and cut on INS_MARK_TUBE_AUTO, put on an
   expect(keys(printed)).not.toContain("cutMark");
   expect(keys(printed)).toContain("insMark");
   // Без карты маркиратора в библиотеке — резка трубки, как раньше.
-  const noCard: GenData = { ...DSA, templates: DSA.templates.filter((t) => !t.title.startsWith("INS_MARK_TUBE_AUTO")) };
+  const noCard: GenData = { ...DSA, templates: DSA.templates.filter((t) => !t.title.startsWith("PRINT_MARK_TUBE")) };
   expect(labels(S0, noCard)).toContain("Резка маркировки — «5» 15 мм, «I3» 15 мм, «C» 15 мм, «A6» 15 мм");
+  // Библиотека, где переименование 25.10 ещё не записано: карта под прежним кодом работает как раньше (тот же templateId).
+  const oldCode: GenData = { ...DSA, templates: DSA.templates.map((t) => (t.title.startsWith("PRINT_MARK_TUBE") ? { ...t, title: t.title.replace("PRINT_MARK_TUBE", "INS_MARK_TUBE_AUTO") } : t)) };
+  const oldOps = makeGen(oldCode, S0).getActiveOps();
+  expect(oldOps.find((o) => o.opKey === "cutMark")).toMatchObject({ tmplHint: "INS_MARK_TUBE_AUTO", label: expect.stringMatching(/^Печать и резка маркировки/) });
+  expect(makeGen(oldCode, S0).templateIdFor(oldOps.find((o) => o.opKey === "cutMark")!)).toBe("ins-mark-tube-auto-печать-и-резка-маркировочной-трубки");
 });
 
 it("marking tubes split only on «Сложная сборка»: on «Межплатная» every mark stays in the one «Маркировка» operation", () => {

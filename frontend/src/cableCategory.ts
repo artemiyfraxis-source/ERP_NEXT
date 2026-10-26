@@ -17,7 +17,7 @@ const RULES: Array<[CableCategory, RegExp]> = [
   ["Коаксиальные / комбинированные", /\bsdi\b|\brgb\b|коакс|\brg-?\s?\d|\blmr-?\s?\d/i],
   ["Коммуникационные многожильные", /ul\s?2464|\bcccu?\b/i],
   ["Контрольные / управления", /liycy|liy\b|unitronic|кдвв|квв|кввг|paar|flexicore|контрол|управлен/i],
-  ["Силовые", /ввг|h0[57]\s?(rn|vv)|\bnym\b|nyy|силов|шввп|\bпвс\b|нг\s?\(a\)/i],
+  ["Силовые", /ввг|h0[57]\s?(rn|vv)|\bnym\b|nyy|силов|шввп|(?<![а-яёa-z])пвс(?![а-яёa-z])|нг\s?\(a\)/i],
 ];
 
 export const isCategory = (value: string): value is CableCategory => (CATEGORIES as readonly string[]).includes(value);
@@ -145,6 +145,12 @@ export function cableFamily(fields: Record<string, string>): CableFamily {
     };
   }
   return { family: cableSeries(mark).replace(/-\d[\w-]*$/, "") || mark, manual: false, rank: FAMILY_RULES.length };
+}
+
+/** Only the group order of two cables (family by its rank, an unknown one by name): rows inside a group are ordered by the caller. */
+export function compareFamilyGroups(a: Record<string, string>, b: Record<string, string>): number {
+  const [fa, fb] = [cableFamily(a), cableFamily(b)];
+  return fa.rank - fb.rank || fa.family.localeCompare(fb.family, "ru", { numeric: true, sensitivity: "base" });
 }
 
 /** «Многожильные»: family by its rank (an unknown family — after the known ones, by name), then cores, then section. */

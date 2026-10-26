@@ -200,7 +200,7 @@ def test_every_known_operation_family_has_an_sto_section():
         "PRS_TERMINAL_auto": "4.3", "PRS_SLEEVE_coax": "4.3", "PRS_НШВИ": "4.3", "SDR_tin": "4.4.1", "SDR_W_W": "4.4.4",
         "SDR_COAX_pin_R/A": "4.4.5", "SDR_GX12": "4.4", "HEAT_TYT_short": "4.5", "INS_TUT": "4.5", "INS_SLEEVE_coax": "4.5",
         "INS_WRAP": "4.5", "INS_BRAID": "4.5", "INS_NEYLON": "4.5", "INS_CAP": "4.5", "INS_END_CAP": "4.5",
-        "INS_tape": "4.5", "INS_TAPE_AUTO": "4.5", "INS_MARK": "4.6", "INS_MARK_TUBE_AUTO": "4.6", "INS_ПМЛ": "4.6",
+        "INS_tape": "4.5", "INS_TAPE_AUTO": "4.5", "INS_MARK": "4.6", "PRINT_MARK_TUBE": "4.6", "INS_ПМЛ": "4.6",
         "LASER_MARK": "4.6", "PRINT_MARK": "4.6", "INS_housing_GX": "4.7", "INS_housing_DB/DH/СНП": "4.7",
         "INS_terminal_2,54-6,3": "4.7", "INS_lock": "4.7", "INS_RJ_cat6/7": "4.7", "INS_housing_COAX": "4.8",
         "INS_housing_COAX_clamp": "4.8", "PRS_CAP_COAX": "4.8", "INS_стяжки": "4.9",

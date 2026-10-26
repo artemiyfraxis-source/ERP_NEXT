@@ -78,7 +78,7 @@ def _plan(state, project: str, **fields) -> None:
     ), state.production_uow_factory())
 
 
-def test_generate_builds_and_issues_only_where_a_techcard_is_missing_and_skips_shipped_and_hold(state):
+def test_generate_builds_and_issues_only_where_a_techcard_is_missing_and_skips_shipped_but_not_hold(state):
     _plan(state, "709К.1", kind="block", blocker="ХОЛД", text="ждём заказчика")
     _plan(state, "710К.1", kind="stage", item_index="КБ2", value="Отгружено")
     asked = []
@@ -89,17 +89,17 @@ def test_generate_builds_and_issues_only_where_a_techcard_is_missing_and_skips_s
         return {"items": [{"key": item["key"], "config": CONFIG, "error": "", "warnings": []} for item in payload["items"]]}
 
     report = generate(state, generator, None, actor=ACTOR, now=NOW, apply=True)
-    assert asked == ["КБ1", "КБ2", "КБ1"]  # 709К.1 на ХОЛДе, 710К.1 КБ2 отгружена
-    assert [line.split(" — ")[0] for line in report.done] == ["708К.4 КБ1", "708К.4 КБ2", "710К.1 КБ1"]
-    assert report.skipped == {"проект на ХОЛДе": ["709К.1"], "КБ отгружена": ["710К.1 КБ2"]}
+    assert asked == ["КБ1", "КБ2", "КБ1", "КБ2", "КБ1"]  # 709К.1 на ХОЛДе — в работе, 710К.1 КБ2 отгружена
+    assert [line.split(" — ")[0] for line in report.done] == ["708К.4 КБ1", "708К.4 КБ2", "709К.1 КБ1", "709К.1 КБ2", "710К.1 КБ1"]
+    assert report.skipped == {"КБ отгружена": ["710К.1 КБ2"]}
     # Как кнопка «Создать»: собранная ЭТК сразу выдана — её правят по операциям.
     built = _cards(state)[("710К.1", "КБ1")]
     assert (built.status, built.revision) == (TechcardStatus.ISSUED, 1)
     assert built.document["operations"] and built.product_name == "Жгут питания"
 
     again = generate(state, generator, None, actor=ACTOR, now=NOW, apply=True)
-    assert again.done == [] and asked == ["КБ1", "КБ2", "КБ1"]
-    assert again.skipped["ЭТК уже выдана"] == ["708К.4 КБ1", "708К.4 КБ2", "710К.1 КБ1"]
+    assert again.done == [] and asked == ["КБ1", "КБ2", "КБ1", "КБ2", "КБ1"]
+    assert again.skipped["ЭТК уже выдана"] == ["708К.4 КБ1", "708К.4 КБ2", "709К.1 КБ1", "709К.1 КБ2", "710К.1 КБ1"]
 
 
 def test_only_limits_generation_to_the_loaded_project(state):

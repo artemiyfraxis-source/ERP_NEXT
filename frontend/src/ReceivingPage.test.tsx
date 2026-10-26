@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReceivingPage } from "./ReceivingPage";
 import type { ReceivingLine } from "./api";
@@ -49,7 +49,7 @@ const isQueue = (path: string) => path === "/api/receiving" || path.startsWith("
 beforeEach(() => { localStorage.setItem("erp-table:receiving-v3", JSON.stringify({ hidden: [], sort: null, preset: "" })); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); });
 
-/** Очередь — таблица; форма строки открывается кликом по строке. */
+/** Очередь — таблица; карточка строки (ВК, размещение, акты) открывается окном по клику на строку. */
 async function openRow(legacyId = "SM-20260921-01") {
   fireEvent.click(await screen.findByText(legacyId));
 }
@@ -335,6 +335,84 @@ it("opens a new incoming-control revision only for a line with a held act", asyn
   expect(confirm).toHaveBeenCalledOnce();
   expect(await screen.findByText(/Архив ВК: акты этой строки/)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Провести новый ВК" })).toBeNull();
+});
+
+it("a row click opens the ВК as a window; Esc closes it, typed data asks before closing", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (isQueue(String(input))) return json({ lines: [line], next_cursor: null });
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(<ReceivingPage />);
+  await openRow();
+  const dialog = await screen.findByRole("dialog", { name: "Входной контроль SM-20260921-01" });
+  expect(within(dialog).getByRole("button", { name: "Провести входной контроль" })).toBeInTheDocument();
+  expect(document.querySelector("tr.detail")).toBeNull(); // no inline row under the queue any more
+
+  // A miss beside a form window keeps it — the typed data would be lost.
+  fireEvent.mouseDown(dialog.parentElement!);
+  expect(screen.getByRole("dialog", { name: "Входной контроль SM-20260921-01" })).toBe(dialog);
+
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+
+  await openRow();
+  const again = await screen.findByRole("dialog", { name: "Входной контроль SM-20260921-01" });
+  fireEvent.change(within(again).getByLabelText("Серия изготовителя"), { target: { value: "LOT-1" } });
+  fireEvent.keyDown(again, { key: "Escape" });
+  const ask = screen.getByRole("dialog", { name: "Несохранённый входной контроль" });
+  fireEvent.click(within(ask).getByRole("button", { name: "Вернуться к строке" }));
+  expect(screen.queryByRole("dialog", { name: "Несохранённый входной контроль" })).toBeNull();
+  expect(within(again).getByLabelText("Серия изготовителя")).toHaveValue("LOT-1");
+
+  fireEvent.click(within(again).getByRole("button", { name: "Закрыть" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Несохранённый входной контроль" })).getByRole("button", { name: "Закрыть без сохранения" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("the ВК window shows the server error inside it and closes freely once the ВК went through", async () => {
+  let fail = true;
+  let current = line;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (isQueue(path)) return json({ lines: [current], next_cursor: null });
+    if (path.endsWith("/inspect") && init?.method === "POST") {
+      if (fail) return new Response(JSON.stringify({ detail: "Строка изменена другим пользователем" }), { status: 409, headers: { "Content-Type": "application/json" } });
+      current = { ...line, status: "Принято", verdict: "Годен", grn: "PPM.26.0000009", version: 3 };
+      return json({ line: current });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ReceivingPage />);
+  await openRow();
+  const dialog = await screen.findByRole("dialog", { name: "Входной контроль SM-20260921-01" });
+  fireEvent.change(within(dialog).getByLabelText("Серия изготовителя"), { target: { value: "LOT-1" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Провести входной контроль" }));
+  expect(await within(dialog).findByText("Строка изменена другим пользователем")).toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Серия изготовителя")).toHaveValue("LOT-1"); // kept for a retry
+
+  fail = false;
+  fireEvent.click(within(dialog).getByRole("button", { name: "Провести входной контроль" }));
+  const done = await screen.findByRole("dialog", { name: "Строка приёмки SM-20260921-01" });
+  expect(await within(done).findByText("Присвоены ГРН: SM-20260921-01 — PPM.26.0000009")).toBeInTheDocument();
+  expect(within(done).getByRole("button", { name: "Передать на склад" })).toBeInTheDocument();
+  fireEvent.keyDown(done, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByText("Присвоены ГРН: SM-20260921-01 — PPM.26.0000009")).toBeInTheDocument(); // the result stays on the page
+});
+
+it("ID-6: a view-only user opens the line as a read-only window that a click beside closes", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (isQueue(String(input))) return json({ lines: [{ ...line, nonconformities: ["Механическое повреждение / брак"], defect_quantity: "2" }], next_cursor: null });
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(<ReceivingPage readOnly />);
+  await openRow();
+  const dialog = await screen.findByRole("dialog", { name: "Строка приёмки SM-20260921-01" });
+  expect(within(dialog).getByText("Механическое повреждение / брак: 2 шт")).toBeInTheDocument();
+  expect(within(dialog).queryByRole("textbox")).toBeNull();
+  expect(within(dialog).queryByRole("button", { name: "Провести входной контроль" })).toBeNull();
+  fireEvent.mouseDown(dialog.parentElement!);
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it("ID-6: view mode shows the queue without inspection, placement or a new ВК", async () => {

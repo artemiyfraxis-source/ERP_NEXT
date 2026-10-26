@@ -1,4 +1,5 @@
 import type { InputHTMLAttributes, ReactNode } from "react";
+import { COAX_SHIELD_OPTIONS } from "./tcGenLogic";
 
 /* Элементы формы генератора техкарт (владелец 04.10: «дизайн генератора топорный»): сегменты вместо радиокнопок
    браузера, переключатели и чипы вместо флажков, единица измерения внутри поля, выбор карточки операции — по-русски. */
@@ -11,6 +12,13 @@ export function Seg<T extends string>({ label, value, options, onChange }: {
     {options.map(([key, text, hint]) => <button key={key} type="button" role="radio" aria-checked={value === key} className={value === key ? "on" : ""}
       onClick={() => { if (value !== key) onChange(key); }}>{text}{hint ? <small>{hint}</small> : null}</button>)}
   </div>;
+}
+
+/** Тип экрана коакс-разъёма: семь вариантов не помещаются сегментами — компактный список приложения. */
+export function ShieldSelect({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+    {COAX_SHIELD_OPTIONS.map(([key, text]) => <option key={key} value={key}>{text}</option>)}
+  </select>;
 }
 
 /** Обработка «вкл/выкл»: переключатель с подписью и серой подсказкой; включённая раскрывает свои поля под собой. */

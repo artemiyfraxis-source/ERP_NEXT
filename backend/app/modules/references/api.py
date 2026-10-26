@@ -196,7 +196,7 @@ def _sheet_columns(tab: TechOperationTab | None, records: Sequence[TechOperation
     richest = max(records, key=lambda item: sum(1 for key in item.fields if key not in keys))
     sheet = [key for key in richest.fields if key not in keys]
     if tab == TechOperationTab.COAX:  # D1–D3 are the cable's («Коаксиальные кабели»), not a connector column; the
-        # columns dropped 23.10.2026 (`COAX_DROPPED_COLUMNS`) neither — their values stay in the records
+        # columns dropped 23.10 and 25.10.2026 (`COAX_DROPPED_COLUMNS`) neither — their values stay in the records
         sheet = [key for key in sheet if not is_coax_cable_column(key) and key not in COAX_DROPPED_COLUMNS]
     if tab == TechOperationTab.EQUIPMENT:  # the fields ERP adds to the sheet's columns (code, tool, links)
         sheet += [key for key in EXTRA_KEYS if key not in sheet]
@@ -215,6 +215,8 @@ def tech_operations(
         records = uow.tech_operations.list(tab=tab, query=q, limit=limit)
         metadata = uow.tech_operations.metadata()
         own = custom_columns(tab, uow) if tab is not None else []
+    if tab == TechOperationTab.COAX:  # an own column removed from the table 25.10.2026 («Дата цены») is no column
+        own = [name for name in own if name not in COAX_DROPPED_COLUMNS]
     return {
         "metadata": None if metadata is None else {
             **metadata,
@@ -432,7 +434,19 @@ def _card_json(card: CoaxCard | None) -> dict | None:
     }
 
 
-def _cable_json(row: CableRow, catalog: CableCatalog | None = None) -> dict:
+def _connector_cells(record) -> dict:
+    """The cells «Совместимые разъёмы» shows of a БД.КОАКС row; of «Источник данных» — only its first part, the site
+    the supplier is named by (the rest is the research log: 1.4 MB over the list, 26.10.2026)."""
+    cells = {name: record.fields[name] for name in CONNECTOR_FIELDS if record.fields.get(name)}
+    if "Источник данных" in cells:
+        cells["Источник данных"] = cells["Источник данных"].split(",")[0].strip()
+    return cells
+
+
+def _cable_json(row: CableRow, catalog: CableCatalog | None = None, cells: dict[str, dict] | None = None) -> dict:
+    """A row of «Кабели и провода». With `cells` (the list), a coax row names its connectors by id (`connector_ids`) and
+    each connector's cells go once into `cells` — 127 coax rows share 881 connectors 4 475 times (26.10.2026: 5.5 of the
+    list's 11 MB); without it (one row) the connectors come with the row (`connectors`)."""
     result = {
         "id": str(row.record.id) if row.record else f"dia:{row.dia.id}" if row.dia else f"card:{row.card.id}",
         "kind": row.kind.value, "auto_kind": row.auto.value, "reason": row.reason, "manual": row.manual,
@@ -442,10 +456,13 @@ def _cable_json(row: CableRow, catalog: CableCatalog | None = None) -> dict:
     }
     if catalog is not None and row.kind == CableKind.COAX:
         connectors, family = compatible_connectors(row, catalog.connectors)
-        result["connectors"] = [
-            {"id": str(record.id), "fields": {name: record.fields[name] for name in CONNECTOR_FIELDS if record.fields.get(name)}}
-            for record in connectors
-        ]
+        if cells is None:
+            result["connectors"] = [{"id": str(record.id), "fields": _connector_cells(record)} for record in connectors]
+        else:
+            result["connector_ids"] = [str(record.id) for record in connectors]
+            for record in connectors:
+                if str(record.id) not in cells:
+                    cells[str(record.id)] = _connector_cells(record)
         result["connectors_family"] = family
     if catalog is not None and row.kind == CableKind.WIRE:
         wire = catalog.hookups.get(row.key)
@@ -468,17 +485,23 @@ def cables(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
     """«Кабели и провода»: БД.ПРОВ rows in the list each stores — коаксиальные / монтажные / многожильные; each list has
-    its own columns (`columns_by_kind`: the list's, then the owner's of it; `custom_columns_by_kind` — the owner's).
+    its own columns (`columns_by_kind`: the list's, then the owner's of it; `custom_columns_by_kind` — the owner's;
+    `removed_columns_by_kind` — removed 25.10.2026: no column, only the row's card shows and edits them).
     `columns` / `custom_columns` — of all lists together. A coax cable is joined with the D1·D2·D3 row the generator uses for its name and
     its card and the БД.КОАКС connectors made for it (`cables.compatible_connectors`); D-table cables and cards without
     a БД.ПРОВ row are coax rows of their own. A монтажный wire carries its
     structure (series, size row, …) or, not structured yet, what its БД.ПРОВ row suggests. `gauges` — «Сечения AWG ↔
-    мм²» with the number of wires on each size."""
+    мм²» with the number of wires on each size. `connector_cells` — every coax row's connectors once (id → cells),
+    the rows name theirs in `connector_ids`."""
     catalog = cable_catalog(uow_factory())
+    cells: dict[str, dict] = {}
+    rows = [_cable_json(row, catalog, cells) for row in catalog.rows]
     return {"columns": list(BASE_COLUMNS[TechOperationTab.WIRE]) + catalog.columns, "custom_columns": catalog.columns,
             "columns_by_kind": catalog.columns_by_kind, "custom_columns_by_kind": catalog.custom_by_kind,
+            "removed_columns_by_kind": catalog.removed_by_kind,
             "counts": cable_counts(catalog.rows),
-            "rows": [_cable_json(row, catalog) for row in catalog.rows],
+            "rows": rows,
+            "connector_cells": cells,
             "gauges": [_gauge_json(gauge, catalog.usage.get(gauge.id, 0)) for gauge in catalog.gauges]}
 
 

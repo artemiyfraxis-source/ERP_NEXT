@@ -78,7 +78,6 @@ import {
   COAX_MACHINES,
   COAX_PIN_COLLET,
   COAX_PIN_CRIMP,
-  COAX_SHIELD_OPTIONS,
   type CableRec,
   type Comp,
   type Endpoint,
@@ -107,10 +106,11 @@ import {
 import { ComplexCables } from "./ComplexCables";
 import { KitComponentAdd } from "./KitComponentAdd";
 import { CableCoreColors } from "./CableCoreColors";
-import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
+import { CardSelect, CheckMark, Chip, Field, Seg, ShieldSelect, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { TER_L_MINUS_HINT, TER_L_PLUS_HINT } from "./referenceLabels";
 import { lMinusMissing, lMinusSuggestion, terChanges, terEditProblem, terLost, terNewFields, terSaved, terSavedText, withTerRecord } from "./terDbSave";
 import { MarkTable, markTotal } from "./GenMarkTable";
+import { WireMarks } from "./GenWireMarks";
 import { DrawingButton, DrawingNoteView, configDrawingProblem } from "./GenDrawing";
 import { TwistGroups } from "./GenTwistGroups";
 import { PinoutAsk, PinoutBoard, PinoutChip, PinoutEditor, usePinHousings } from "./PinoutDiagram";
@@ -124,7 +124,10 @@ import {
 import { setCustomColors } from "./wireColors";
 import { GEN_STATE_KEY, genSnapshot, restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
-import { assignPinJoined, joinSplice, leaveJoin, setTail } from "./tcGenSplices";
+import { assignPinJoined, joinSplice, leaveJoin, renameSplice, setTail } from "./tcGenSplices";
+import { PinoutTable } from "./PinoutTable";
+import { WrapTable } from "./WrapTable";
+import { applyEnd, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
 import { useTerminalPairs } from "./useTerminalPairs";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
@@ -273,7 +276,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const manualIds = useMemo(() => new Set((kit?.components || []).filter((item) => item.manual).map((item) => item.id)), [kit]);
   const kitTitles = useMemo(() => new Map((kit?.components || []).map((item) => [item.id, { title: item.title || "", hint: item.title_hint || "" }])), [kit]);
   const components = useMemo<Comp[]>(() => (kit?.components || []).map((item) => ({
-    id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", kd: item.kd || "", qty: item.qty,
+    id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", ...(item.title ? { title: item.title } : {}), kd: item.kd || "", qty: item.qty,
   })), [kit]);
   // tcLoadBomFromKit: «Кол-во» — тираж сборки, партию генератор берёт отсюда.
   const assemblyInfo = useMemo<Record<string, string>>(() => ({
@@ -408,6 +411,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // вкладках), по нему кнопка «Построить» или «Обновить».
   const [kdDrawing, setKdDrawing] = useState<{ key: string; exists: boolean } | null>(null);
   const [drawBusy, setDrawBusy] = useState(false);
+  const [shieldSplit, setShieldSplit] = useState(false);
   const [drawResult, setDrawResult] = useState<{ key: string; text: string; error: boolean; warnings: string[] } | null>(null);
   useEffect(() => {
     if (kdDrawing?.key === harnessKey) return;
@@ -1027,12 +1031,6 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <Field label="Длина" className="mid"><UnitInput unit="мм" value={ep.shrinkLen ?? ""} placeholder={SHRINK_LEN_MM_} onChange={(event) => set({ shrinkLen: event.target.value })} /></Field>
         </>}
       </div>}
-      {/* Отрезок оплётки ветви (владелец 16.10, 713К.4: X1 120, X2 110 мм) — не длина проводов; «0» — ветвь без оплётки. */}
-      {complex && conn && ep.side === "A" && S.wrap.enabled && S.wrap.slots.some((slot) => slot.kind === "braid" && slot.mat) && <div className="ep-ter" aria-label={`Оплётка ветви ${name}`}>
-        <Field label="Оплётка ветви, отрезок" className="mid" hint={ep.braidLen?.trim() === "0" ? "без оплётки" : ep.braidLen?.trim() ? undefined : "поровну от длины на изделие"}>
-          <UnitInput unit="мм" aria-label={`Оплётка ветви ${name}, отрезок`} value={ep.braidLen ?? ""} placeholder={gen.braidLenDefault_() || "по КД"}
-            onChange={(event) => set({ braidLen: event.target.value })} /></Field>
-      </div>}
       {/* Размер ветви на схеме жгута по КД (владелец 18.10): только чертёж, длины резки и операции не меняет. */}
       {complex && conn && <div className="ep-ter" aria-label={`Ветвь по КД ${name}`}>
         <Field label="Ветвь по КД" className="mid" hint={ep.kdBranch?.trim() ? undefined : "по длинам проводов"}>
@@ -1075,6 +1073,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             onChange={(value) => update((current) => ({ ...current, coax: { ...current.coax, [coverKey]: value } }))} /></div>}
       </div>
       <div className={info.missing ? "coax-info tone-danger" : "coax-info"}>{info.text}</div>
+      {s?.parts && <div className="coax-info">Состав конца: {s.parts.map((part) => `${part.art}${part.qty > 1 ? ` ×${part.qty}` : ""}`).join(" · ")}</div>}
       {info.missing && <div className="coax-add">
         <span className="gfield-label">Нет в БД.КОАКС — введите размеры и добавьте</span>
         <div className="opt-grid">
@@ -1136,9 +1135,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const spliceEndText = (end: WireEnd) => { const u = spliceUnitOf(end); return `${u ? `№ ${u.num} ${u.name || "провод"}${u.colorName ? ` · ${u.colorName}` : ""}` : "провод"} — конец ${sideRu_(end.side)}`; };
   const freeSpliceEnds = complex ? pinUnitList.filter((u) => !u.shield).flatMap((u) => (["A", "B"] as const).map((side) => ({ idx: u.idx, unit: u.unit, side })))
     .filter((end) => !(S.splices || []).some((sp) => sp.ends.some((e) => e.idx === end.idx && e.unit === end.unit && e.side === end.side))) : [];
+  // «Распиновка и сростки» (владелец 25.10): таблица жил — оба конца в одной строке.
+  const ptConns = complex ? pinConns(pinEnds, S, pinCounts) : [];
+  const ptRows = complex ? pinRows(ptConns, pinUnitList, S, pinEnds).map((row) => ({ ...row, length: Number(S.wires.find((w) => w.idx === row.idx)?.length) || 0 })) : [];
+  const ptSplices = complex ? spliceLines(S, pinUnitList, ptConns) : [];
   const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.hsComp_(row.compId), skip: gen.hsRowSkip_(row) }));
   const hsOptions = gen.hsTubeOptions_();
   const marks = gen.markComps_();
+  const wireMarkList = gen.wireMarkList_();
   const kdMarks = S.markRows.filter((row) => row.text.trim() || row.target.trim());
   const typical = S.tab !== "coax" && !manualTab;
   const epsA = gen.endpointsOnSide_("A"), epsB = gen.endpointsOnSide_("B");
@@ -1147,6 +1151,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const anyCores = S.wires.length > 0;
   /** Ветви с оплёткой «Сложной сборки»: позиционное обозначение разъёма и его собственный отрезок (пусто — поровну). */
   const braidCuts = complex ? S.endpoints.filter(gen.braidEp_).map((ep) => ({ name: ep.label || sideRu_(ep.side) + gen.endpointOrdinal_(ep), own: (ep.braidLen || "").trim().replace(",", ".") })) : [];
+  const braidBranches = complex && S.wrap.enabled ? S.endpoints.filter((ep) => gen.braidEp_(ep) || (ep.side === "A" && !!ep.connId && (ep.braidLen ?? "").trim() === "0")).map((ep) => ({ id: ep.id, key: sideRu_(ep.side) + gen.endpointOrdinal_(ep), name: ep.label || sideRu_(ep.side) + gen.endpointOrdinal_(ep), own: ep.braidLen ?? "", placeholder: gen.braidLenDefault_() })) : [];
+  const braidSummary = (() => {
+    const first = S.wrap.slots.find((slot) => slot.kind === "braid" && slot.mat);
+    if (!braidCuts.length || !first) return "";
+    const cuts = braidCuts.map((c) => ({ ...c, len: parseDecimal_(c.own || gen.braidLenDefault_(first.len)) }));
+    const total = cuts.reduce((sum, c) => sum + c.len, 0);
+    return `Отрезки по ветвям: ${cuts.map((c) => `${c.name} ${c.len || "—"}`).join(" · ")} мм${total ? `, всего ${total} мм` : ""}.`;
+  })();
   const wireCols = `wire-row${S.advancedLength ? " adv" : ""}${anyCores ? " cores" : ""}`;
   const warning = typical ? gen.complexWarning() : "";
   const opsCount = manualTab ? manual.ops.length : ops.length;
@@ -1268,6 +1280,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     twistToggle,
     complex && <Toggle key="spl" checked={S.spl.enabled} title="Сростки" hint="соединение проводов в стволе"
       onChange={(on) => update((current) => ({ ...current, spl: { ...current.spl, enabled: on } }))}>
+      {/* Способ и гильзы — в таблице «Распиновка и сростки» (владелец 25.10); здесь они, пока таблицы нет. */}
+      {!ptRows.length && <>
       <Seg<SpliceMethod> label="Способ сростка" value={splMethod} options={SPLICE_METHODS}
         onChange={(method) => update((current) => setSplMethod(current, method))} />
       {splMethod === "sleeve" && (sleeveComps.length ? spliceSlots.length > 0 && <div className="opt-grid">
@@ -1277,10 +1291,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             (id) => update((current) => ({ ...current, spl: { ...current.spl, sleeves: { ...(current.spl.sleeves || {}), [slot.key]: id } } })),
             `Гильза ${slot.label}`, "— не выбрана —")}</Field>)}
       </div> : <span className="opt-note tone-warn">В составе нет гильз (НШВ) — добавьте их в состав</span>)}
+      </>}
       {splMethod === "band" && <div className="opt-grid">
         <Field label="Материал обжима из состава" hint="необязательно" className="span2">{selectComps(sleeveComps, S.spl.band || "",
           (id) => update((current) => ({ ...current, spl: { ...current.spl, band: id } })), "Материал ленточного обжима")}</Field>
       </div>}
+      <details className="spl-list" open={!ptRows.length}><summary>Состав сростков списком</summary>
       <p className="opt-note">Сросток — узел, где концы нескольких проводов соединяются в один (С1, С2…). Выберите, какие концы входят в каждый; контакты разъёма у этих концов снимаются.</p>
       <div className="spl-edit" role="list" aria-label="Сростки">
         {spliceRows.map((row) => <div className="spl-edit-row" role="listitem" key={row.id}>
@@ -1301,6 +1317,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           {freeSpliceEnds.map((end) => <option key={spliceEndKey(end)} value={spliceEndKey(end)}>{spliceEndText(end)}</option>)}
         </select>
       </div>
+      </details>
       {!spliceRows.length && <details className="spl-count" open={S.spl.count !== "1" || S.spl.wires !== "3"}>
         <summary>Задать числом, без привязки к проводам</summary>
         <div className="opt-grid">
@@ -1340,37 +1357,25 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </Toggle>,
     <Toggle key="wrap" checked={S.wrap.enabled} title="Лента / оплётка на жгут" hint="что надеть на жгут и в каком порядке"
       onChange={(on) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, enabled: on } }))}>
-      {/* Второй–четвёртый материал — по одному, следующий появляется, когда выбран предыдущий (владелец 18.10). */}
-      {S.wrap.slots.map((slot, i) => (i === 0 || (complex && !!(slot.mat || S.wrap.slots[i - 1].mat))) && <div className="opt-grid" key={WRAP_SLOTS_[i] || "1"}>
-        <Field label={["Слой 1 — материал из состава", "Слой 2 — ещё материал", "Слой 3 — ещё материал", "Слой 4 — ещё материал"][i]} hint={i ? "необязательно" : undefined} className="span2">
-          {selectComps(wrapOpts, slot.mat, (id) => update((current) => {
-            const c = makeGen(D, current).getCompById(id);
-            const g = makeGen(D, current);
-            const slots = current.wrap.slots.map((s, j) => (j === i ? { mat: id, kind: c ? g.guessWrapKind_(c) : s.kind, len: g.prefillWrapLen_(c) } : s));
-            return syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots } });
-          }), `Материал ${i + 1}`)}</Field>
-        {(i === 0 || slot.mat) && <Field label="Как надеть" className="span2"><select value={slot.kind} onChange={(event) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, kind: event.target.value as WrapKind } : s)) } }))}>
-          {WRAP_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>}
-        {(() => {
-          const lenField = (hint?: string) => <Field label="Длина на изделие" hint={hint}><UnitInput unit="мм" value={slot.len} placeholder="по КД"
-            onChange={(event) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, len: event.target.value } : s)) } }))} /></Field>;
-          if (!slot.mat) return null;
-          if (!braidCuts.length || slot.kind !== "braid") return lenField();
-          // Оплётка на «Сложной сборке» режется отрезком на ветвь (разъём стороны А). «Длина на изделие» лишь делится поровну на ветви
-          // без своего отрезка — когда отрезки заданы у всех, поле ни на что не влияет и не показывается (владелец 18.10: «почему 460»).
-          const cuts = braidCuts.map((c) => ({ ...c, len: parseDecimal_(c.own || gen.braidLenDefault_(slot.len)) }));
-          const total = cuts.reduce((sum, c) => sum + c.len, 0);
-          const allOwn = braidCuts.every((c) => c.own);
-          return <>
-            {!allOwn && lenField("поровну на ветви без своего отрезка")}
-            <p className="opt-note span-all">{`Отрезки по ветвям: ${cuts.map((c) => `${c.name} ${c.len || "—"}`).join(" · ")} мм${total ? `, всего ${total} мм` : ""}.`}
-              <br />Свой отрезок задаётся в разъёме стороны А — «Оплётка ветви, отрезок».</p>
-          </>;
-        })()}
-      </div>)}
-      {wrapPlan.length > 0 && <ol className="wrap-plan" aria-label="Порядок в маршруте">
-        {wrapPlan.map((line) => <li key={line}>{line}</li>)}
-      </ol>}
+      <WrapTable slots={S.wrap.slots} visible={Math.max(1, ...S.wrap.slots.map((_, i) => (i === 0 || (complex && !!S.wrap.slots[i - 1].mat) ? i + 1 : 0)).slice(0, complex ? 4 : 1))}
+        materials={wrapOpts.map((c) => ({ id: c.id, label: c.art || c.name }))} plan={wrapPlan}
+        branches={braidBranches} allOwn={braidCuts.length > 0 && braidCuts.every((c) => c.own)}
+        summary={braidSummary}
+        onMat={(i, id) => update((current) => {
+          const g = makeGen(D, current);
+          const c = g.getCompById(id);
+          const slots = current.wrap.slots.map((s, j) => (j === i ? { mat: id, kind: c ? g.guessWrapKind_(c) : s.kind, len: g.prefillWrapLen_(c) } : s));
+          return syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots } });
+        })}
+        onKind={(i, kind) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, kind } : s)) } }))}
+        onLen={(i, len) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, len } : s)) } }))}
+        onFix={(i, patch) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => {
+          if (j !== i) return s;
+          const next = { ...s, ...patch };
+          if (!next.fix) { delete next.fix; delete next.points; delete next.step; delete next.segs; }
+          return next;
+        }) } }))}
+        onBranchLen={(epId, braidLen) => update((current) => updateEndpoint(D, current, epId, { braidLen }))} />
       <p className="opt-note">{complex && braidCuts.length ? "Оплётка режется отрезками на ветви разъёмов стороны А, лента идёт по всему стволу." : "Материал надевается на весь жгут; длина — на одно изделие."}</p>
     </Toggle>,
   ].filter(Boolean);
@@ -1470,6 +1475,25 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     })()}
     {sideSection("A")}
     {sideSection("B")}
+    {complex && ptRows.length > 0 && <section className="gsec full ep-pintable" aria-label="Распиновка и сростки">
+      <div className="gsec-head"><h3>Распиновка и сростки</h3><PinoutChip ends={pinEnds} /></div>
+      <PinoutTable summary={pinSummary(ptRows, S)} rows={ptRows} conns={ptConns} units={pinUnitList} splices={ptSplices}
+        spliceIds={ptSplices.map((line) => ({ id: line.id, label: line.label }))}
+        methodControl={<Seg<SpliceMethod> label="Способ сростка" value={splMethod} options={SPLICE_METHODS} onChange={(method) => update((current) => setSplMethod(current, method))} />}
+        sleeve={splMethod === "sleeve" && sleeveComps.length ? { options: sleeveComps.map((c) => ({ id: c.id, label: c.art || c.name })),
+          valueOf: (id) => S.spl.sleeves?.[id] ?? gen.spliceSleeveOf_(id)?.id ?? "",
+          onChange: (id, compId) => update((current) => ({ ...current, spl: { ...current.spl, sleeves: { ...(current.spl.sleeves || {}), [id]: compId } } })) } : null}
+        onEnd={(row, side, value) => update((current) => {
+          const g = makeGen(D, current);
+          const ends = pinoutEnds(g, current);
+          return applyEnd(D, current, pinConns(ends, current, pinCounts), pinUnits(g, current), row, side, value);
+        })}
+        onLength={(idx, mm) => update((current) => updateWire(current, idx, { length: mm }))}
+        onLabel={(epId, label) => update((current) => updateEndpoint(D, current, epId, { label }))}
+        onSplit={(end) => update((current) => leaveJoin(D, current, end))}
+        onRenameSplice={(id, name) => update((current) => renameSplice(current, id, name))}
+        onRemoveSplice={(id) => update((current) => (current.splices || []).find((sp) => sp.id === id)?.ends.reduce((acc, end) => leaveJoin(D, acc, end), current) ?? current)} />
+    </section>}
     {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
       <div className="gsec-head"><h3>Соединения по распиновке</h3><PinoutChip ends={pinEnds} />
         <button type="button" className="secondary small" disabled={drawBusy || (!links.list.length && !(S.splices || []).length)}
@@ -1511,7 +1535,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         rows={S.markRows} onChange={(markRows) => update({ markRows })} kitMarks={marks} comps={D.components} productDesignation={card.item_index} mats={D.markMats || []}
         targets={markTargets(gen.markConnectors_(), active.map((w) => compLabel(w.compId)))}
         onByConnectors={marksByConnectors} onFromDrawing={() => void marksFromDrawing()} drawingBusy={markDrawing.busy} note={markDrawing.note} />
+      {complex && <WireMarks cfg={S.wireMarks} onChange={(wireMarks) => update({ wireMarks })} rows={wireMarkList.rows} skipped={wireMarkList.skipped}
+        note={wireMarkList.rows.length ? gen.wireMarkCrimpNote_(wireMarkList.rows) : ""} tubes={gen.wireMarkTubeOptions_()} autoTube={gen.wireMarkTube_(wireMarkList.rows)} />}
     </section>
+    {complex && <section className="gsec full gen-note" aria-label="Примечание технолога">
+      <label className="gfield"><span className="gfield-label">Примечание технолога<small>отступления от чертежа, чего нет в составе — остаётся в черновике и в собранной карте</small></span>
+        <textarea rows={2} value={S.note ?? ""} placeholder="напр. провод 89 не вошёл — нет в составе" onChange={(event) => update({ note: event.target.value })} /></label>
+    </section>}
   </>;
 
   // Норма заказчика (КД) коакса: справочная норма по комплектующим — из схемы ПФ (то, что соберёт «Создать»), а пока
@@ -1524,18 +1554,31 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     ...current, coax: { ...current.coax, vswrCust: { ...(current.coax.vswrCust ?? { max: "", from: "", to: "", basis: "" }), ...patch } },
   }));
 
+  // Экран: пока у А и В он одинаковый — один выбор; «разные для А и В» раскрывает второй (локально, в черновик не пишется).
+  const shieldMerged = !S.coax.sideB || (!shieldSplit && gen.coaxShieldOf_("B") === gen.coaxShieldOf_("A"));
   const coaxSections = <>
     <section className="gsec" aria-label="Коакс-кабель">
       <div className="gsec-head"><h3>Коакс-кабель</h3>
         <DrawingButton busy={drawBusy} exists={drawingExists} problem={configDrawingProblem(config)} onBuild={() => void buildDrawing(config)} /></div>
       <DrawingNoteView note={drawNote} index={card.item_index} onOpen={onOpenDrawing} />
       <div className="opt-grid">
-        <Field label="Длина по чертежу"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value } }))} /></Field>
-        <div className="gfield span2"><span className="gfield-label">Экран (на сборку)</span>
-          <Seg label={S.coax.sideB ? "Тип экрана, сторона А" : "Тип экрана"} value={S.coax.shield} options={COAX_SHIELD_OPTIONS}
-            onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield } }))} />
-          {S.coax.sideB && <Seg label="Тип экрана, сторона В" value={gen.coaxShieldOf_("B")} options={COAX_SHIELD_OPTIONS}
-            onChange={(shieldB) => update((current) => ({ ...current, coax: { ...current.coax, shieldB } }))} />}</div>
+        {S.coax.cables && S.coax.cables > 1 && <Field label="Кабелей" className="short"><input aria-label="Кабелей в сборке" type="number" min={1} value={S.coax.cables}
+          onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, cables: Math.max(1, parseInt(event.target.value, 10) || 1) } }))} /></Field>}
+        <Field label="Длина по чертежу"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value }, coaxLenFrom: undefined }))} /></Field>
+        {shieldMerged
+          ? <div className="gfield span2 shield-field"><span className="gfield-label"><span>Экран (обе стороны)</span>
+              <button type="button" className="glink" onClick={() => setShieldSplit(true)}>разные для А и В</button></span>
+            <ShieldSelect label="Экран, обе стороны" value={gen.coaxShieldOf_("A")}
+              onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield, ...(current.coax.shieldB ? { shieldB: shield } : {}) } }))} /></div>
+          : <>
+            <div className="gfield span2 shield-field"><span className="gfield-label">{S.coax.sideB ? "Экран, сторона А" : "Экран"}</span>
+              <ShieldSelect label={S.coax.sideB ? "Экран, сторона А" : "Экран"} value={gen.coaxShieldOf_("A")}
+                onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield } }))} /></div>
+            {S.coax.sideB && <div className="gfield span2 shield-field"><span className="gfield-label"><span>Экран, сторона В</span>
+              {gen.coaxShieldOf_("B") === gen.coaxShieldOf_("A") && <button type="button" className="glink" onClick={() => setShieldSplit(false)}>как у А</button>}</span>
+              <ShieldSelect label="Экран, сторона В" value={gen.coaxShieldOf_("B")}
+                onChange={(shieldB) => update((current) => ({ ...current, coax: { ...current.coax, shieldB } }))} /></div>}
+          </>}
         <div className="gfield span-all"><span className="gfield-label">Разделка</span>
           <Seg label="Разделка" value={S.coax.stripMode} options={[["machine", "Резка с разделкой на станке"], ["separate", "Резка, затем разделка А и В"]]}
             onChange={(stripMode) => update((current) => ({ ...current, coax: { ...current.coax, stripMode } }))} /></div>

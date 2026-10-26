@@ -18,6 +18,8 @@ finished jobs older than 30 days are purged on claim (their files stay: the deli
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
@@ -25,6 +27,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, Uuid, and_, delete, or_, select, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from app.shared.advisory_lock import advisory_lock, lock_key
 from app.shared.persistence import Base
 
 PENDING_TIMEOUT = timedelta(seconds=120)
@@ -243,6 +246,26 @@ def fail_job(uow, job_id: UUID, *, error: str, now: datetime) -> None:
             .execution_options(synchronize_session=False)
         )
         uow.commit()
+
+
+@contextmanager
+def recognition_lock(uow, job_id: UUID) -> Iterator[None]:
+    """One recognition of the job at a time across every API process (ERP_API_WORKERS > 1): the upload's background
+    task and the screen's poll may land in different processes, and OCR takes seconds. The second one waits, then
+    finds the stored answer (`stored_result`)."""
+    with uow:
+        bind = _session(uow).get_bind()
+    with advisory_lock(bind, lock_key("warehouse-scan-recognition", job_id)):
+        yield
+
+
+@contextmanager
+def recognition_try_lock(uow, job_id: UUID) -> Iterator[bool]:
+    """The same lock as `recognition_lock` without waiting: False — another process is reading this job now."""
+    with uow:
+        bind = _session(uow).get_bind()
+    with advisory_lock(bind, lock_key("warehouse-scan-recognition", job_id), wait=False) as got:
+        yield got
 
 
 def stored_result(uow, job_id: UUID) -> str:

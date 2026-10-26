@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9962f786-8b96-40dd-9ab8-a1bd25a560cf
-  modified: 2026-10-23T19:22:26.445Z
+  modified: 2026-10-23T20:53:40.714Z
 ---
 
 23.10.2026: Vasily (colleague) — «620 стандарт, только ГОСТ, на максималках по отдельным темам»; tech cards should get
@@ -36,4 +36,14 @@ for internal shop use. Done: 215 crops for the 112 gost/ipc rows in `ERP-norms\f
 norm/defect/ref, kind gost/ipc, caption, page, bbox); scripts `maps\fig_crop.py` + `maps\fig_trim.py` (IPC = exact
 embedded-image bbox; ГОСТ scans = table cell around the bbox centre + hand FIX list). Never commit crops to the public
 repo — they go to the server DB. IPC figures: internal ETK screen and shop printouts only, never the customer ТД kit.
-Whole-book IPC translation is still out; a Russian digest in our own words is fine. Branch `etk-std-figures`.
+Whole-book IPC translation is still out; a Russian digest in our own words is fine.
+
+23.10 night, merged to main (not released yet): #677 std figures in ETK (table 0148, API /api/techcards/std-figures,
+`scripts/figures/upload_standard_figures.py`, token scope `figures:write`), own SVGs for 53 rows; #679 БД.ОП cleanup
+(15 rows deleted on prod already); #680 10 new templates + US_WELD/IDC/crimp-height by ГОСТ, СТО ред. 3 (351 rows).
+Owner: «гост важнее» → 20 rows switched IPC→ГОСТ 2358x/23594/61191-4 (norm 64 ГОСТ / 48 IPC). Extra standards:
+`ERP-norms\ГОСТ-доп\` (gost-extra.md, 2 searches), coax interfaces `maps\coax-interfaces.md` (IEC 61169-x + MIL-STD-348B
+2014; Change 4 needs VPN), IPC digest `ERP-norms\IPC\Конспект IPC-WHMA-A-620E.md`. ГОСТ Р 51914 exists only as closed РВ.
+After release, in order: upload figures (`--apply`), rehearse `docs/data/operation-templates-2026-10-23/tpl-rehearse.sh`
+on a prod copy, write templates (every issued ETK gets one auto revision). Open owner question: SMA female depth
+1,88…2,41 (shop) vs 1,88…2,23 (MIL-STD-348B рис. 310-2). Brain TASKS has the checklist.

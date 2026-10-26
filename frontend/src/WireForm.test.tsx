@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { render } from "./test/blocks";
 import { afterEach, expect, it, vi } from "vitest";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { canonicalColor, normalizeColors, parseColors } from "./wireColors";

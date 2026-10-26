@@ -260,6 +260,23 @@ def test_dry_run_stores_nothing_and_returns_the_builders_warnings(drafts_api):
     assert _count(sessions, AssemblyDraftRow) == 0 and _count(sessions, AuditEventRow) == audit_before
 
 
+def test_dry_run_returns_the_built_operations_with_their_input_and_output(drafts_api):
+    _sessions, _clock, admin = drafts_api
+    token = _token(admin, "assembly")
+    config = deepcopy(CONFIG)
+    config["ops"][0]["components"] = [{"art": "МГТФ 0,35", "name": "Провод МГТФ", "qty": "0,6", "unit": "М."}]
+    for dry_run in (True, False):
+        body = _draft(TestClient(app), token, dry_run=dry_run, build_config=config).json()
+        assert body["operations"] == 2  # the count stays as it was
+        cut, solder = body["operation_details"]
+        assert (cut["position"], cut["code"], cut["name"]) == (1, "CUT_WIRE", "Резка")
+        assert cut["components"] == [{"art": "МГТФ 0,35", "name": "Провод МГТФ", "norm": "6", "unit": "М."}]
+        assert cut["output"] == [{"name": "Полуфабрикат после «Резка»", "norm": "10", "unit": "Шт."}]
+        assert cut["input"] == []
+        assert solder["input"] == [{"name": "Полуфабрикат после «Резка»", "norm": "10", "unit": "Шт."}]
+        assert solder["output"][0]["name"] == "Жгут питания" and solder["output"][0]["norm"] == "10"
+
+
 def test_draft_needs_a_known_position_a_drawing_of_it_and_a_known_source(drafts_api):
     _sessions, _clock, admin = drafts_api
     token = _token(admin, "assembly")

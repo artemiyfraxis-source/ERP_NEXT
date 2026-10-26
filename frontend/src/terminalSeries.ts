@@ -1,5 +1,6 @@
 import type { ConnectorSeries } from "./api";
 import type { TerminalRow } from "./TerminalCard";
+import { awgToMm2, compareNumbers, firstNumber } from "./refSort";
 import { searchKey } from "./searchText";
 
 /* «База данных → Терминалы» по сериям (владелец 16.10.2026: «в терминалах надо сделать группировку по серии, а не по
@@ -124,7 +125,16 @@ const natural = (a: string, b: string) => a.localeCompare(b, "en", { numeric: tr
 export const makerOrder = (series: ConnectorSeries[]): string[] => [...new Set(series.map((item) => item.maker).filter(Boolean))];
 
 /** Порядок строк (владелец 16.10: «реши» — JST, Molex, TE первыми): группы по производителю в порядке каталога, затем
- *  остальные производители и сборные группы, внутри производителя — по имени серии; «Без серии» в конце; внутри — по артикулу. */
+ *  остальные производители и сборные группы, внутри производителя — по имени серии; «Без серии» в конце; внутри — по
+ *  наименьшему сечению провода контакта, затем по артикулу (владелец 25.10.2026: «размер, затем наименование»). */
+/** The smallest wire cross-section of the contact's range, mm² (its `мм²` pair; else the thinnest AWG of its range). */
+export function terminalMinSection(row: TerminalRow): number | null {
+  const sections = [row.card?.mm2_from, row.card?.mm2_to].map(firstNumber).filter((value): value is number => value !== null);
+  if (sections.length) return Math.min(...sections);
+  const gauges = [row.card?.awg_from, row.card?.awg_to].map(firstNumber).filter((value): value is number => value !== null);
+  return gauges.length ? awgToMm2(Math.max(...gauges)) : null;
+}
+
 export function sortBySeries(rows: TerminalRow[], groups: Map<string, TerminalGroup>, makers: string[] = []): TerminalRow[] {
   const name = (row: TerminalRow) => groups.get(row.id)?.name ?? NO_SERIES;
   const rank = (row: TerminalRow) => {
@@ -134,6 +144,7 @@ export function sortBySeries(rows: TerminalRow[], groups: Map<string, TerminalGr
   return [...rows].sort((a, b) => Number(name(a) === NO_SERIES) - Number(name(b) === NO_SERIES)
     || rank(a) - rank(b)
     || natural(name(a), name(b))
+    || compareNumbers(terminalMinSection(a), terminalMinSection(b))
     || Number(!terminalArticle(a)) - Number(!terminalArticle(b))
     || natural(terminalArticle(a), terminalArticle(b)));
 }

@@ -52,8 +52,8 @@ def test_bundled_coax_cut_card_speaks_of_coax_not_of_wire_twists():
 
 
 def test_bundled_mark_tube_card_is_found_by_its_code_and_names_the_printer():
-    """Печать и резка маркировочной трубки (владелец 16.10): ОБ.102 ZCUT-RT660, строка БД.ОП INS_MARK_TUBE_AUTO уже есть."""
-    card = _card("INS_MARK_TUBE_AUTO")
+    """Печать и резка маркировочной трубки (владелец 16.10): ОБ.102 ZCUT-RT660, строка БД.ОП PRINT_MARK_TUBE (до 25.10 — INS_MARK_TUBE_AUTO; id шаблона прежний)."""
+    card = _card("PRINT_MARK_TUBE")
     assert (card.source_id, card.category) == (MARK_TUBE_ID, "Монтаж маркировки")
     assert [(tool.name, tool.inventory_number) for tool in card.tooling if tool.section == "Оборудование"] == [
         ("ZCUT-RT660 | Маркиратор проводов трубчатый", "ОБ.102")]

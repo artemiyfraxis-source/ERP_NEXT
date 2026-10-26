@@ -146,6 +146,8 @@ def test_tapes_sort_by_width_and_cambric_by_diameter():
 def test_series_family_drops_the_catalogue_number():
     parsed = cv.parse(row("ТУТнг 4/2 красная", "ТУТ", **{"Серия": "ТУТнг (65994)"}), cv.TUT)
     assert (parsed.series, parsed.series_family) == ("ТУТнг (65994)", "ТУТнг")
+    rexant = cv.parse(row("ТУТ 3,0/1,5 черная", "ТУТ", **{"Серия": "ТУТ (20-3006)"}), cv.TUT)
+    assert rexant.series_family == "ТУТ"  # a Rexant article (20-3006) is a catalogue number too
     assert cv.parse(row("ТТК Flex", "ТТК", **{"Серия": 'ТТК "Flex" (85208)'}), cv.TTK).series_family == 'ТТК "Flex"'
     assert cv.parse(row("Оплётка XT", "оплётка", **{"Серия": "XT (85371)"}), cv.BRAID).series_family == "XT"
     assert cv.parse(row("Оплётка GTRPA-10", "оплётка", **{"Серия": "GTRPA-10"}), cv.BRAID).series_family == "GTRPA"
@@ -209,3 +211,45 @@ def test_manual_group_refuses_a_non_material(uow):  # noqa: F811
         [terminal] = uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=1)
     with pytest.raises(ReferenceValidationError):
         set_covering_group(SetCoveringGroupCommand(record_id=terminal.id, group="ТУТ", actor=ACTOR, now=NOW), uow)
+
+
+@pytest.mark.parametrize(("name", "series", "material", "ratio", "kind"), [
+    # the owner's screenshot of ТУТ (25.10.2026)
+    ("ТУТ 3,0/1,5 черная", "20-3006", "полиолефин", "2:1", "plain"),
+    ("ТУТ 10/5 черная", "", "", "2:1", "plain"),
+    ("ТУТнг 2,5/1,25 черная", "ТУТнг", "полиолефин", "2:1", "ng"),
+    ("ТУТнг 4/2 красная", "ТУТнг (65994)", "полиолефин нг", "2:1", "ng"),
+    ("ТУТнг 4/2 черная", "ТУТнг-LS", "полиолефин нг-LS (низкое дымо- и газовыделение)", "2:1", "ngls"),
+    ("ТУТнг-LS 8/4 черная", "ТУТнг-LS (60089)", "полиолефин нг, низкое дымо- и газовыделение", "2:1", "ngls"),
+    ("ТУТнг 1,0/0,5 черная", "ТУТнг-LS(2:1) 20-1006", "полиолефин", "2:1", "ngls"),
+    ("ТУТ(HF) 4/2 белая", "ТУТ(HF)", "ПЭВД, безгалогенная (HF)", "2:1", "hf"),
+    ("ТУТ(HF) 4/2 прозрачная", "ТУТ-HF (83266)", "полиолефин HF (безгалогенный)", "2:1", "hf"),
+    ("ТУТ(3:1)нг-LS 6/2 черная", "ТУТ(3:1)нг-LS", "полиолефин нг-LS (низкое дымо- и газовыделение)", "3:1", "r3"),
+    ("ТСТ Raychman 0,8/0,4 черная", "ТСТ", "сшитый полиолефин", "2:1", "brand"),
+    ("ТУТ HTS-16 16/8 черная", "HTS-16", "полиолефин", "2:1", "brand"),
+    # ТТК
+    ("ТТК 6/2 черная", "ТТК(3:1)", "полиолефин нг", "3:1", "r3"),
+    ("ТТК 8/2 черная", "ТТК(4:1)", "полиолефин нг", "4:1", "r4"),
+    ("ТТК CFM 8/2 чёрная", "CFM", "полиолефин", "4:1", "r4"),
+    ("ТТК 19/6,5мм, черная", "", "", "", "plain"),
+])
+def test_shrink_kind_of_every_name_in_the_owner_screenshot(name, series, material, ratio, kind):
+    assert cv.shrink_kind(name, series, material, ratio) == kind
+
+
+def test_shrink_tubes_are_ordered_by_kind_then_size_then_name():
+    def tube(name, series, material, ratio="2:1"):
+        return (name, row(name, "ТУТ", **{"Серия": series, "Материал": material, "Коэф. усадки": ratio}))
+    names = [("1", tube("ТУТ(3:1)нг-LS 6/2", "ТУТ(3:1)нг-LS", "полиолефин нг-LS", "3:1")), ("2", tube("ТСТ 0,8/0,4", "ТСТ", "полиолефин")),
+             ("3", tube("ТУТ(HF) 4/2", "ТУТ(HF)", "безгалогенная (HF)")), ("4", tube("ТУТнг 12/6", "ТУТнг", "полиолефин нг")),
+             ("5", tube("ТУТ 10/5", "", "")), ("6", tube("ТУТнг 2/1", "ТУТнг", "полиолефин нг")),
+             ("7", tube("ТУТнг 4/2", "ТУТнг-LS", "полиолефин нг-LS")), ("8", tube("ТУТ 2/1", "", ""))]
+    built = cv.build([(record_id, fields) for record_id, (_, fields) in names])
+    assert [item["id"] for item in built["rows"]] == ["8", "5", "6", "4", "7", "3", "1", "2"]
+    assert [kind["id"] for kind in built["kinds"][cv.TUT]] == ["plain", "ng", "ngls", "hf", "r3", "brand"]
+    assert built["kinds"][cv.TTK] == []
+
+
+def test_kind_uses_the_ratio_found_in_the_series_text():
+    parsed = cv.parse(row("ТУТ(3:1)нг-LS 20/6 черная", "ТУТ", **{"Серия": "ТУТ(3:1)нг-LS (85089)", "Материал": "полиолефин нг-LS"}), cv.TUT)
+    assert parsed.kind == "r3"

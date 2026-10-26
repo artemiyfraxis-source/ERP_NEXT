@@ -138,13 +138,16 @@ def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: b
     )
 
 
-def load_coax_refs(references_factory: Callable[[], ReferencesUnitOfWork]) -> tuple[tuple[Mapping[str, Any], ...], tuple[CoaxCard, ...]]:
-    """The current БД.КОАКС rows and «Коаксиальные кабели» cards — the inputs of `enrich_coax_vswr_norm` — read without
-    the technology snapshot (the ОТК computes the norm of an old ETK from the references as they are now)."""
+def load_coax_refs(references_factory: Callable[[], ReferencesUnitOfWork]) -> tuple[
+        tuple[Mapping[str, Any], ...], tuple[CoaxCard, ...], tuple[Mapping[str, Any], ...]]:
+    """The current БД.КОАКС rows, «Коаксиальные кабели» cards and БД.ПРОВ rows (the cable's «Частота до, ГГц») — the
+    inputs of `enrich_coax_vswr_norm` — read without the technology snapshot (the ОТК computes the norm of an old ETK
+    from the references as they are now)."""
     with references_factory() as uow:
         rows = _rows(uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000))
         cards = tuple(uow.cable_structure.cards())
-    return rows, cards
+        wires = _rows(uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=10_000))
+    return rows, cards, wires
 
 
 def refs_stamp(refs: Refs) -> str:
@@ -173,7 +176,7 @@ def with_technology(
     enriched = enrich_coax_hex(enriched, refs.coax_rows)
     enriched = enrich_coax_depth(enriched, refs.coax_rows)
     enriched = enrich_coax_diameters(enriched, refs.dia_rows)
-    enriched = enrich_coax_vswr_norm(enriched, refs.coax_rows, refs.coax_cards)
+    enriched = enrich_coax_vswr_norm(enriched, refs.coax_rows, refs.coax_cards, refs.wire_rows)
     return enriched, dict(refs.snapshot)
 
 
@@ -509,10 +512,12 @@ def coax_customer_problem(config: Mapping[str, Any]) -> str | None:
 
 def enrich_coax_vswr_norm(
     config: Mapping[str, Any], coax_rows: Iterable[Mapping[str, Any]], cards: Iterable[CoaxCard],
+    wire_rows: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Copy of the config whose coax assembly carries `coax.vswrNorm` — the VSWR acceptance norm from its components
-    (owner 22.10.2026, `coax_vswr.vswr_norm`): «КСВ» / «Частота до, ГГц» of both connectors (БД.КОАКС), the loss and
-    rated frequency of the cable card (`cableArt`, else `cableName`), `cableLength`. Only an assembly with a connector
+    (owner 22.10.2026, `coax_vswr.vswr_norm`): «КСВ» / «Частота до, ГГц» of both connectors (БД.КОАКС), the loss of the
+    cable card (`cableArt`, else `cableName`), the cable's «Частота до, ГГц» (its БД.ПРОВ row in `wire_rows`, else the
+    card's rated frequency), `cableLength`. Only an assembly with a connector
     on both ends has one; the key is dropped first and rebuilt, so a norm the references no longer give disappears.
     The generator's «Контроль КСВН» (`coax.vswrControl`) rides in the norm as `control: {mode, every}`; an assembly
     built before the setting has no `control` and its norm is as it was."""
@@ -527,7 +532,7 @@ def enrich_coax_vswr_norm(
         return enriched
     cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
     coax["vswrNorm"] = vswr_norm(ends, coax_rows, cable_card(cards, cable) if cable else None, cable,
-                                 coax.get("cableLength"))
+                                 coax.get("cableLength"), wire_rows)
     # «Норма заказчика (КД)» технолога (владелец 23.10) — норма приёмки, по комплектующим — справочно. Сборка её
     # проверяет на входе (422), здесь нечитаемая не встречается; встретилась (старый конфиг) — норма по комплектующим.
     try:

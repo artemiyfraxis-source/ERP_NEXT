@@ -45,7 +45,7 @@ from .application import UnitOfWork
 from .receipts_api import _checked, multipart_file
 from .receipts_application import SCAN_FILE_LIMIT, merge_scans, store_job_scan, store_scan
 from .scan_jobs import DONE, FAILED, ScanJob, ScanJobClosed, cancel_job, claim, create_job, fail_job, get_job
-from .scan_recognition import ScanSources, job_view, readings_kept, recognise_job, recognising, scan_sources
+from .scan_recognition import ScanSources, job_view, readings_kept, recognise_job, scan_sources
 
 SCAN_SCOPE = "scan:upload"
 SCAN_AGENT_ONLY = "Очередь сканирования забирает только агент склада (токен API «scan:upload»)."
@@ -83,8 +83,8 @@ def _queue(operation):
 
 def _recognise_later(background: BackgroundTasks, uow_factory, sources: ScanSources, job: ScanJob,
                      pages: list[UUID] | None = None) -> None:
-    """After the answer is sent: the job's reading (`recognise_job` runs one per job in this process)."""
-    if job.status == DONE and not job.result and not recognising(job.id):
+    """After the answer is sent: the job's reading (`recognise_job` holds a database lock — one per job in every process)."""
+    if job.status == DONE and not job.result:
         background.add_task(recognise_job, uow_factory, sources, job, pages)
 
 

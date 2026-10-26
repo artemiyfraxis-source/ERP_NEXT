@@ -70,7 +70,8 @@ from .cable_structure import (
 from .cables import CABLE_KIND_LABELS, CableKind, cable_mark, diameter_index, hookup_series, left_hookups
 from .wire_makers import STANDARD_FIELD
 from .domain import (
-    BASE_COLUMNS, CABLE_COLUMNS, CABLE_KIND_VALUES, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceEntry,
+    BASE_COLUMNS, CABLE_COLUMNS, CABLE_DROPPED, CABLE_KIND_VALUES, CABLE_NEW_ROW_EXTRA, CABLE_WRITABLE,
+    COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceEntry, cable_list_own,
     ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, WIRE_COLOR_FIELD, WIRE_ROW_OWN,
     cable_key, color_key,
     normalized_manufacturer_key, normalized_section_key, normalized_supplier_key, split_colors, validate_entries,
@@ -795,9 +796,10 @@ KIND_FIELD = "Вид кабеля"
 _KIND_WORDS = {
     **{kind.value: kind for kind in CableKind},
     **{_label.casefold(): kind for kind, _label in CABLE_KIND_LABELS.items()},
-    **{_label.split()[0].casefold(): kind for kind, _label in CABLE_KIND_LABELS.items()},
+    **{_label.split()[0].casefold(): kind for kind, _label in CABLE_KIND_LABELS.items() if _label.split()[0] != "Кабели"},
+    "ethernet": CableKind.LAN,  # the list's name until 25.10.2026 and its own word («Кабели Ethernet»)
 }
-KIND_REASON = "«Вид кабеля»: Коаксиальные, Монтажные или Многожильные (coax / wire / multi)"
+KIND_REASON = "«Вид кабеля»: Коаксиальные, Монтажные, Многожильные или Ethernet (coax / wire / multi / lan)"
 
 
 def cable_kind_value(value: str) -> CableKind:
@@ -808,8 +810,9 @@ def cable_kind_value(value: str) -> CableKind:
 
 
 def cable_list_columns(uow: UnitOfWork, kind: str) -> tuple[str, ...]:
-    """The columns of one cable list of БД.ПРОВ: the list's (`CABLE_COLUMNS`), then the owner's columns of it."""
-    own = custom_columns(TechOperationTab.WIRE, uow, kind)
+    """The columns of one cable list of БД.ПРОВ: the list's (`CABLE_COLUMNS`), then the owner's columns of it — without
+    the ones removed 25.10.2026 (`CABLE_DROPPED`)."""
+    own = cable_list_own(kind, custom_columns(TechOperationTab.WIRE, uow, kind))
     return tuple(dict.fromkeys((*CABLE_COLUMNS[kind], *own)))
 
 
@@ -821,8 +824,11 @@ def _foreign_cells(fields: Mapping[str, Any], columns: Sequence[str], carried: M
 
 
 def _foreign_reason(names: Sequence[str], kind: CableKind) -> str:
+    removed = [name for name in names if name in CABLE_DROPPED[kind.value]]
+    hint = ("убрано из списка 25.10.2026 — пишется только в существующую строку" if len(removed) == len(names)
+            else "столбец своего списка добавляют кнопкой «+ Столбец»")
     return (", ".join(f"«{name}»" for name in names) + f" — не столбец списка «{CABLE_KIND_LABELS[kind]}»: "
-            "строку не записываю (столбец своего списка добавляют кнопкой «+ Столбец»)")
+            f"строку не записываю ({hint})")
 
 
 def _prov_forms(values: tuple[str, ...]) -> tuple[tuple[str, object], ...]:
@@ -1052,13 +1058,18 @@ class _TechTarget(_Target):
         if self.table.tab == TechOperationTab.WIRE:  # БД.ПРОВ: the row's list (given, else the rule) and its columns
             fields = dict(fields)
             given = fields.pop(KIND_FIELD, "")
+            extra = CABLE_NEW_ROW_EXTRA
             if given:
                 kind = CableKind(given)
             else:
                 if self._kind_of is None:
                     self._kind_of = _kind_rule(self.uow)
                 kind = self._kind_of(fields, str(fields.get(self.table.key_fields[0]) or ""))
-            if foreign := _foreign_cells(fields, self._columns_of(kind), {}):
+                extra = (*extra, TYPE_FIELD)  # the type the rule chose the list by («монтажный») is kept with the row
+            if kind == CableKind.LAN:  # «Число жил» («8 (4 пары)») gives an ETHERNET row its «Число пар»; kept in the row
+                extra = (*extra, CORES_FIELD)
+            # a new row: the list's columns and the provenance «Источник данных» (removed from the list 25.10.2026)
+            if foreign := _foreign_cells(fields, (*self._columns_of(kind), *extra), {}):
                 raise RowRefused(_foreign_reason(foreign, kind))
             stored = _wire_fields(kind, fields, self.uow, pad_all=True)
             if kind == CableKind.WIRE:  # one colour; no other row of this mark and colour (`_prov_forms` found none)
@@ -1095,7 +1106,8 @@ class _TechTarget(_Target):
                 raise RowRefused(f"строка в списке «{current}» — перенос в другой список делают на экране "
                                  "«Кабели и провода»")
             kind = CableKind(record.cable_kind)
-            if foreign := _foreign_cells(changes, self._columns_of(kind), record.fields):
+            # an existing row: also the columns removed from its list 25.10.2026 (provenance, journals, prod scripts)
+            if foreign := _foreign_cells(changes, (*self._columns_of(kind), *CABLE_WRITABLE[kind.value]), record.fields):
                 raise RowRefused(_foreign_reason(foreign, kind))
         fields = self._schema({**record.fields, **changes}, set(changes))
         display = (schema_display_text(self.table.tab.value, fields) if self.table.sheet_columns else "") \

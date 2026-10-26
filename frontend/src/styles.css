@@ -1563,6 +1563,61 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table tr.group-row input[type="checkbox"] { width: auto; display: inline-block; margin: 0 8px 0 2px; padding: 0; vertical-align: middle; }
 .data-table tr.group-row .group-picked { color: var(--primary); font-weight: 600; }
 .data-table .calendar-chips { margin-bottom: 0; }
+/* «База данных»: группы списка — блоками (DataTable `blocks`, владелец 25.10.2026, как «Оболочки»): заголовок группы со
+   счётчиком над своей таблицей; панель, чипы и подвал — одни на список. */
+.data-table.dt-blocks > .dt-block-title { margin: 14px 0 -2px; font-size: 16px; font-weight: 500; line-height: 1.3; }
+.data-table.dt-blocks > .dt-block-title .page-count { margin-left: 6px; vertical-align: 1px; }
+/* Раздел над подгруппами (ТУТ → виды трубки): подгруппа — заголовок поменьше, ближе к своей таблице. */
+.data-table.dt-blocks > .dt-sub-title { margin: 4px 0 -4px; font-size: 14px; font-weight: 600; }
+.data-table.dt-blocks > .dt-section-title + .dt-sub-title { margin-top: -2px; }
+.data-table.dt-blocks > .dt-block-title .group-picked { margin-left: 10px; color: var(--primary); font-size: 13px; font-weight: 600; }
+.data-table.dt-blocks .dt-block-fold { all: unset; cursor: pointer; }
+.data-table.dt-blocks .dt-block-fold:focus-visible { outline: var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
+.data-table.dt-blocks .dt-block-fold > span[aria-hidden] { display: inline-block; width: 14px; color: var(--muted-foreground); }
+/* No scroll box of its own: a block grows to its height and the page scrolls; its header sticks under the toolbar
+   (`--dt-head-top`, DataTable). The columns fit the width (DataTable levels them from the data, `table-layout: fixed`),
+   one line per row (26.10.2026: «8 строк на экран» — a long text is cut with «…», the whole on hover); only a list that
+   cannot fit scrolls sideways (`dt-scroll-x`). `overflow: clip` keeps the rounded corners without a scroll container.
+   Nothing that sticks has a shadow, the key column does not stick sideways (the block does not scroll): scrolling the
+   page repaints no sticky cell («когда листаешь, фпс падает»). */
+.data-table.dt-blocks { grid-template-columns: minmax(0, 1fr); }
+.data-table.dt-blocks > .table-wrap { max-height: none; overflow: clip; }
+.data-table.dt-blocks table.grid.wide { width: 100%; min-width: 0; }
+.data-table.dt-blocks table.dt-fixed { table-layout: fixed; }
+/* The header row sticks as one (the `thead`, not each of its cells: one sticky box per table to move on a scroll). */
+.data-table.dt-blocks > .table-wrap > table > thead { position: sticky; top: var(--dt-head-top, 0px); z-index: 2; }
+.data-table.dt-blocks > .table-wrap > table > thead > tr > th { position: relative; top: auto; box-shadow: none; }
+.data-table.dt-blocks table:not(.selectable) td.key { position: static; box-shadow: none; border-right: 1px solid var(--border); }
+.data-table.dt-blocks table:not(.selectable) thead th:first-child { left: auto; box-shadow: none; border-right: 1px solid var(--border); }
+.data-table.dt-blocks > .table-wrap > table > tbody > tr:not(.detail) > td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.data-table.dt-blocks > .table-wrap > table > tbody > tr:not(.detail) > td :where(*) { white-space: nowrap; }
+.data-table.dt-blocks > .table-wrap > table > tbody > tr:not(.detail) > td.dt-editing { overflow: visible; }
+.data-table.dt-blocks > .table-wrap .cell-wrap { min-width: 0; max-width: none; overflow: hidden; text-overflow: ellipsis; }
+.data-table.dt-blocks table.dt-fixed > tbody > tr > td > :is(div, span, strong):only-child { overflow: hidden; text-overflow: ellipsis; }
+/* A clipped text («…», the whole on hover) takes the cell's width, not its own: it never widens the column. */
+.data-table.dt-blocks :is(.cable-clip, .db-clip) { max-width: none; }
+/* A caption takes two lines at most (the widths leave it room for them), the rest on hover. */
+.data-table.dt-blocks table.grid.wide > thead > tr > th .sort-head { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; text-align: inherit; }
+/* A block too wide even so: the wide tables move together (`--dt-x`, DataTable) by a bar on top of the block's header —
+   it sticks with the header and never lies over a row (it used to be pinned to the screen bottom, over the last row);
+   the key column stays in place. */
+.data-table.dt-blocks > .table-wrap.dt-scroll-x > table { transform: translateX(calc(-1 * var(--dt-x, 0px))); }
+.data-table.dt-blocks > .table-wrap.dt-scroll-x > table:not(.selectable) :is(td, th).key { transform: translateX(var(--dt-x, 0px)); }
+.data-table.dt-blocks > .table-wrap > .dt-hscroll { position: sticky; top: var(--dt-head-top, 0px); z-index: 4; height: 12px; overflow-x: auto; overflow-y: hidden; background: var(--table-head); }
+.data-table.dt-blocks > .table-wrap > .dt-hscroll > div { height: 1px; }
+.data-table.dt-blocks > .table-wrap.dt-scroll-x > table > thead { top: calc(var(--dt-head-top, 0px) + 12px); }
+@media (pointer: coarse) {
+  .data-table.dt-blocks > .table-wrap > .dt-hscroll { height: 24px; }
+  .data-table.dt-blocks > .table-wrap.dt-scroll-x > table > thead { top: calc(var(--dt-head-top, 0px) + 24px); }
+}
+/* Rows out of the window: empty space of their height (DataTable puts the rows near the screen in the page). */
+.data-table.dt-blocks .dt-window-gap { box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.data-table.dt-blocks > .table-wrap > table > tbody.dt-gap > tr > td, .data-table.dt-blocks > .table-wrap > table > tbody.dt-gap > tr:hover > td { padding: 0; border: 0; background: var(--card); }
+/* The keys of the in-cell editing: a «?» at the toolbar, the hint on hover or focus. */
+.dt-help { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; cursor: help; }
+.dt-help:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.dt-help:hover::after, .dt-help:focus::after { content: attr(data-hint); position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: max-content; max-width: 360px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); font-size: 12px; font-weight: 400; line-height: 1.45; white-space: normal; box-shadow: 0 6px 16px rgba(0, 26, 24, .12); }
+@media (pointer: coarse) { .dt-help { width: 40px; height: 40px; } }
 /* Dense, spreadsheet-like reading (the owner is used to Google Sheets): compact rows, zebra, dark text, the header
    pinned while the rows scroll inside the card, columns as wide as their content, the first column as the row key. */
 .data-table .table-wrap { width: auto; max-height: calc(100dvh - 190px); overflow: auto; }
@@ -1693,6 +1748,18 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .receiving-card .file-button { display: inline-flex; align-items: center; cursor: pointer; }
 .receiving-card .batches th, .receiving-card .batches td { padding:4px 6px; text-align:left; font-size:13px; }
 .receiving-card .batches input { width:100%; min-width:80px; }
+.receiving-card-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+/* Поля ВК выравниваются по верху строки: поле с кнопкой «Файл» не сдвигает соседние вниз; галочка — слева от подписи. */
+.receiving-card .facts-grid { align-items: start; }
+.receiving-card .facts-grid > label.check-field { display: flex; align-items: center; gap: 8px; align-self: stretch; }
+.receiving-card .facts-grid > label.check-field input { flex-shrink: 0; }
+/* Окно строки приёмки: шапка с «Закрыть» и кнопка «Провести входной контроль» видны при прокрутке длинной формы ВК. */
+.page-window > .receiving-card > .procurement-title:first-child { position: sticky; top: 0; z-index: 2; margin: -18px -18px 0; padding: 14px 18px 12px; background: var(--card); border-bottom: 1px solid var(--border); }
+.page-window > .receiving-card > .procurement-title + .error-banner, .page-window > .receiving-card > .procurement-title + .success-banner { margin: 12px 0 0; }
+.page-window > .receiving-card form > .header-actions:last-child { position: sticky; bottom: 0; z-index: 2; margin: 0 -18px; padding: 12px 18px; background: var(--card); border-top: 1px solid var(--border); }
+.receiving-confirm { display: grid; gap: 12px; }
+.receiving-confirm h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.receiving-confirm p { margin: 0; }
 
 
 
@@ -1776,6 +1843,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .opt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 10px; align-items: end; }
 .tcgen .opt-grid > .span2 { grid-column: span 2; }
 .tcgen .opt-grid > .span-all { grid-column: 1 / -1; }
+.tcgen .shield-field .gfield-label { justify-content: space-between; }
+.tcgen .glink { border: 0; padding: 0; background: none; color: var(--primary); font-size: 11.5px; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.tcgen .glink:hover { color: var(--foreground); }
+.tcgen .glink:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
 .tcgen .opt-note { margin: 0; padding: 2px 0; color: var(--muted-foreground); font-size: 12px; }
 /* «Термоусадка на жгут»: строка на трубку — название, отрезок, штук, убрать; занятая трубка засева — серым с причиной. */
 .tcgen .hs-rows { display: grid; gap: 4px; max-width: 560px; }
@@ -1848,6 +1919,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks col.c-qty { width: 50px; }
 .tcgen .gen-marks col.c-len { width: 58px; }
 .tcgen .gen-marks col.c-x { width: 32px; }
+.tcgen .gen-wmarks-params { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(110px, 1fr) minmax(110px, 1fr); gap: 6px 12px; max-width: 760px; }
+.tcgen .gen-wmarks-params select, .tcgen .gen-wmarks-params input { width: 100%; height: 28px; }
+.tcgen .gen-wmarks .gtable-wrap { max-width: 760px; }
+.tcgen .gen-wmarks .gtable { min-width: 0; }
+.tcgen .gen-wmarks .gtable td:first-child { padding-top: 3px; vertical-align: middle; }
+.tcgen .gen-wmarks col.c-n { width: 52px; }
+.tcgen .gen-marks col.c-wm { width: auto; }
+@media (max-width: 700px) { .tcgen .gen-wmarks-params { grid-template-columns: 1fr 1fr; } .tcgen .gen-wmarks-params label:first-child { grid-column: 1 / -1; } }
 .tcgen .gen-marks .gtable td:last-child { padding-left: 2px; padding-right: 2px; }
 @container (min-width: 900px) {
   .tcgen .gen-marks .gtable th { padding: 6px 8px; }
@@ -2260,7 +2339,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .manual-assembly { container-type: inline-size; }
 .tcgen .manual-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px 20px; align-items: start; }
 .tcgen .manual-diagram { display: grid; gap: 8px; min-width: 0; }
-.tcgen .manual-keys { margin: 0; background: transparent; padding: 0; color: var(--muted-foreground); }
 @container (min-width: 1100px) {
   .tcgen .manual-body.has-pane { grid-template-columns: minmax(0, 1fr) minmax(520px, 1.1fr); }
   .tcgen .manual-body.has-pane .manual-block { padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
@@ -2328,6 +2406,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .tcgen input:not([type="checkbox"]):not([type="radio"]), .tcgen select, .tcgen .gpick-face { height: 40px; }
   .tcgen .gpick-face { padding-top: 11px; }
   .tcgen .gseg button { align-items: center; min-height: 40px; padding: 7px 14px; }
+  .tcgen .glink { min-height: 40px; padding: 0 4px; font-size: 13px; }
   .tcgen .gsw { align-items: center; min-height: 40px; }
   .tcgen .gsw input { margin-top: 0; }
   .tcgen .gchip { min-height: 40px; align-items: center; }
@@ -2685,26 +2764,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .conn-base svg { display: block; max-width: 100%; height: auto; }
 .conn-warn { color: var(--tone-danger); }
 .conn-muted { color: var(--muted-foreground); font-size: 12px; }
-.conn-cats { margin: 0; }
-.conn-sections { display: grid; gap: 14px; }
-.conn-section h3 { margin: 0 0 6px; font-size: 14px; }
-.conn-section h3 .muted { font-weight: 400; }
-.conn-series-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
-.conn-maker { grid-column: 1 / -1; margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--muted-foreground); border-bottom: 1px solid var(--border); padding-bottom: 2px; }
-.conn-maker:first-child { margin-top: 0; }
+/* «Разъёмы» таблицей (25.10.2026): маленькая модель серии у названия, строка не выше обычной. */
+.conn-row-title { display: inline-flex; align-items: center; gap: 8px; }
+.conn-row-pic { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 22px; flex: none; }
+.conn-row-pic svg { width: 40px; height: 22px; }
 .conn-sources { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 13px; }
 .conn-sources a { color: var(--primary); }
 .conn-jump { border: 0; cursor: pointer; font-family: inherit; }
 .conn-jump:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-.conn-series { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; min-height: 72px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); text-align: left; cursor: pointer; }
-.conn-series:hover, .conn-series:focus-visible { border-color: var(--primary); background: var(--accent); }
-.conn-series-pic { display: flex; align-items: center; justify-content: center; height: 56px; }
-.conn-series-pic svg { max-height: 56px; width: auto; }
-.conn-series-text { display: grid; gap: 1px; min-width: 0; }
-.conn-series-text b { font-size: 14px; }
-.conn-series-text small { font-size: 12px; color: var(--muted-foreground); }
-.conn-series-text small.conn-warn { color: var(--tone-danger); }
-.conn-series-text small.tone-warn { color: var(--tone-warn); }
 .conn-series-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
 .conn-series-head h2 { margin: 0; font-size: 18px; }
 .conn-series-head a { color: var(--primary); font-weight: 600; }
@@ -4499,6 +4566,21 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .rc-op-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-op-note { padding: 0 6px; border-radius: 999px; background: var(--chip-warning-bg); color: var(--chip-warning-fg); font-size: 11px; line-height: 16px; }
 .rc-op-time { color: var(--muted-foreground); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* «Схема полуфабрикатов» и «Ручная сборка»: названия не обрезаются — переносятся (до трёх строк), высота карточки считается по
+   числу строк (routeCards.opRowHeight / headExtra). Холст маршрута позиции с чертежа (HarnessRouteView) остаётся прежним. */
+.route-dnd .rc-title, .ma-canvas .rc-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; white-space: normal; overflow-wrap: anywhere; }
+.route-dnd .rc-sub, .route-dnd .rc-meta, .ma-canvas .rc-sub { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
+.route-dnd .rc-inputs li { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; }
+.route-dnd .rc-op, .ma-canvas .rc-op { height: auto; min-height: 22px; padding-top: 3px; padding-bottom: 3px; text-align: left; }
+.route-dnd .rc-op-name, .ma-canvas .rc-op-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; white-space: normal; overflow-wrap: anywhere; line-height: 15px; }
+.route-dnd .rc-op-no, .route-dnd .rc-op-time, .ma-canvas .rc-op-no, .ma-canvas .rc-op-time { line-height: 15px; }
+@media (pointer: coarse) { .route-dnd .rc-op, .ma-canvas .rc-op { min-height: 40px; } }
+/* Ручка перетаскивания: точки 2 × 3, видна только в «Изменить схему». У операции — первая колонка строки. */
+.rc-grip { flex: none; width: 9px; height: 14px; color: var(--muted-foreground); opacity: .7; background: radial-gradient(circle, currentColor 1.1px, transparent 1.4px) 0 0 / 5px 5px; }
+.rc-card-head .rc-grip { height: 12px; }
+.rc-op.has-grip { grid-template-columns: 9px 20px minmax(0, 1fr) auto auto; }
+.rc-op.has-grip:hover .rc-grip { opacity: 1; color: var(--primary); }
+.rc-op-time:empty { display: none; }
 @media (pointer: coarse) {
   .rc-link-btn { width: 40px; height: 40px; }
   .rc-card-x { width: 40px; height: 40px; }
@@ -4514,6 +4596,7 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .route-dnd .rc-card.is-drop-into, .route-dnd .rc-card.is-drop-join, .route-dnd .rc-card.is-drop-feed { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent); }
 .route-dnd .rc-card.is-drop-join { background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
 .route-dnd .rc-card.is-drop-feed { box-shadow: inset 0 6px 0 var(--primary), 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent); }
+.route-dnd.is-flow-right .rc-card.is-drop-feed { box-shadow: inset 6px 0 0 var(--primary), 0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent); }
 .route-dnd .rc-ops li.is-drop-before, .route-dnd .rc-ops li.is-drop-after { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 .route-dnd .rc-ops li.is-drop-before { box-shadow: inset 0 3px 0 var(--primary); }
 .route-dnd .rc-ops li.is-drop-after { box-shadow: inset 0 -3px 0 var(--primary); }
@@ -4574,12 +4657,8 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
   .hr-panel { max-height: none; }
 }
 @media (pointer: coarse) { .hr-x { width: 40px; height: 40px; } .hr-found button { min-height: 40px; } }
-/* «Оболочки»: a table per kind under its own heading; «Прочее» collapsed at the bottom */
+/* «Оболочки»: the error over the one table of the kinds in blocks (DataTable `blocks`) */
 .coverings { display: grid; gap: 16px; }
-.cov-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
-.cov-title { margin: 0 0 8px; font-size: 16px; font-weight: 500; }
-.cov-other { display: grid; gap: 8px; justify-items: start; }
-.cov-other > .cov-group { justify-self: stretch; }
 /* БД.ОБ master–detail: the list stays on the left, the machine card opens as a PageWindow. */
 .eq-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
 .eq-list { min-width: 0; }
@@ -5029,4 +5108,12 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .procurement-stage .buy-grid tbody tr:nth-last-child(-n+2) .row-actions-more { top: auto; bottom: calc(100% - 2px); }
 @media (pointer: coarse) {
   .procurement-stage .row-actions-more { position: static; width: auto; max-width: 100%; background: transparent; box-shadow: none; padding: 0; border: 0; }
+  /* Касание: второстепенные действия строки — в меню «Ещё» рядом с кнопками, строка не выше самой кнопки. */
+  .procurement-stage .data-table td.menu { min-width: 236px; }
+  .procurement-stage .buy-grid col.c-menu { width: 236px; }
+  .procurement-stage td .row-actions:has(> .row-action-menu) { flex-direction: row; align-items: center; gap: 4px; }
+  .procurement-stage .row-action-open.captioned { min-width: 0; height: 40px; padding: 0 10px; border-color: var(--border); background: var(--card); color: var(--foreground); font-size: 12px; font-weight: 600; white-space: nowrap; }
 }
+
+/* «Сортировка: размер, затем наименование» над таблицей списка «Базы данных» (владелец 25.10.2026). */
+.sort-hint { font-size: 13px; white-space: nowrap; align-self: center; }

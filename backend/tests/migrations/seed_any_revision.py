@@ -193,7 +193,7 @@ _SHAPED_VALUES: dict[tuple[str, str], Any] = {
     # One saved label template per kind × format, UNIQUE (0143_warehouse_label_templates): row i takes its own pair.
     ("warehouse_label_templates", "kind"): lambda i: _LABEL_TEMPLATE_KINDS[i // len(_LABEL_FORMATS)],
     ("warehouse_label_templates", "format"): lambda i: _LABEL_FORMATS[i % len(_LABEL_FORMATS)],
-    # The model API address is '' or http(s):// (0150_upd_llm_recognition); the key is made up.
+    # The model API address is '' or http(s):// (0151_upd_llm_recognition); the key is made up.
     ("warehouse_upd_llm_settings", "base_url"): lambda i: "https://llm.example.test/v1",
 }
 # Shaped values win over a CHECK's first `IN (…)` value; a table with a UNIQUE of shaped pairs gets no more rows than
