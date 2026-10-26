@@ -115,15 +115,15 @@ export function QuoteEntry({ matrix, supplierId: wanted, onClose, onSaved }: {
     const notes = [...result.notes];
     if (header?.number) setQuoteNumber(header.number);
     if (header?.valid_until) setValidUntil(header.valid_until);
-    if (header?.inn && header.supplier_id !== supplierId) {
-      const inRequest = matrix.suppliers.find((item) => item.supplier_id === header.supplier_id);
-      if (inRequest) {
-        setSupplierId(inRequest.supplier_id);
-        notes.unshift(`Поставщик выбран по ИНН в документе: «${inRequest.name}».`);
-      } else {
-        const label = `${header.supplier_name ?? "продавец"}, ИНН ${header.inn}`;
-        notes.unshift(`В документе поставщик: ${label}. ${header.supplier_id === null ? "В справочнике его нет — добавьте в «Поставщики»" : "В этом запросе его нет — добавьте его в запрос («Добавить поставщика»)"} или проверьте, тот ли это документ.`);
-      }
+    const inRequest = header?.supplier_id ? matrix.suppliers.find((item) => item.supplier_id === header.supplier_id) : undefined;
+    if (header && inRequest && header.supplier_id !== supplierId) {
+      setSupplierId(inRequest.supplier_id);
+      notes.unshift(`Поставщик выбран по ${header.inn ? "ИНН" : "названию"} в документе: «${inRequest.name}».`);
+    } else if (header?.inn && header.supplier_id !== supplierId) {
+      const label = `${header.supplier_name ?? (header.document_name || "продавец")}, ИНН ${header.inn}`;
+      notes.unshift(`В документе поставщик: ${label}. ${header.supplier_id === null ? "В справочнике его нет — добавьте в «Поставщики»" : "В этом запросе его нет — добавьте его в запрос («Добавить поставщика»)"} или проверьте, тот ли это документ.`);
+    } else if (header?.supplier_matches === false && header.document_name) {
+      notes.unshift(`В документе поставщик «${header.document_name}», а КП вносится от «${supplier?.name ?? "выбранного"}» — проверьте, тот ли это документ.`);
     }
     setImportNotes(notes);
     setImportFile(result.file);

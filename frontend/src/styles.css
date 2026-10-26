@@ -4807,6 +4807,11 @@ a.today-row:hover, .today-group:hover, .today-group.open { background: color-mix
 .quote-import-columns select { width: auto; max-width: 200px; }
 .quote-import-review { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); font-size: 13px; }
 .quote-import-undecided td { background: var(--warn-soft); }
+/* «Распознано моделью» / «Прочитано по тексту»: which reader filled the review, a chip before the summary. */
+.quote-import-reader {
+  display: inline-block; margin-right: 8px; padding: 1px 8px; border: 1px solid currentColor; border-radius: 999px;
+  font-size: 12px; font-weight: 600; background: var(--card);
+}
 .quote-import-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .quote-import-file { display: inline-flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted-foreground); }
 .quote-import-notes { margin: 0; padding: 8px 12px 8px 28px; border-radius: 6px; font-size: 13px; background: var(--panel-soft); border: 1px solid var(--border); }
