@@ -2801,6 +2801,11 @@ export interface OrderDocumentRecognition {
   kind: OrderDocumentKind;
   invoice_number: string | null;
   invoice_date: string | null;
+  /** Продавец и его ИНН, как их называет PDF счёта; пусто — не найдены. */
+  seller_name?: string;
+  seller_inn?: string;
+  /** Продавец в счёте не поставщик заказа — предупреждение, не запрет. */
+  seller_warning?: string;
   currency: string | null;
   /** false — цены не читаются автоматически (скан без текста, валюта); `hint` говорит, что делать. */
   auto?: boolean;
