@@ -172,12 +172,13 @@ def calc_ops_for(kitset: Kitset, indexes: list[str], reader: SheetsReader | None
 def generator_refs(techcards_factory: Callable[[], Any], references_factory: Callable[[], Any] | None) -> dict:
     """Справочники генератора как их читает форма (`loadRefs`): шаблоны техкарт, БД.ОП/ТЕР/КОАКС, СПР.КАБ · коаксиал
     со строкой на каждое другое имя кабеля (`coax_dia_rows`, GET /api/references/coax-dia) и «Ø изоляции по маркам» из
-    базы монтажных проводов (`wire_dia`, GET /api/references/wire-dia)."""
+    базы монтажных проводов (`wire_dia`, GET /api/references/wire-dia) и БД.ПРОВ со списком кабелей (`prov`)."""
     with techcards_factory() as uow:
         templates = [{"id": card.source_id, "title": card.title, "category": card.category}
                      for card in uow.operation_cards.list()]
     tabs: dict[str, list] = {tab: [] for tab in ("op", "ter", "coax", "kab_coax")}
     wire_dia: list[dict[str, str]] = []
+    prov: list[dict] = []
     if references_factory is not None:
         with references_factory() as uow:
             for tab in tabs:
@@ -186,7 +187,10 @@ def generator_refs(techcards_factory: Callable[[], Any], references_factory: Cal
                              else [item.fields for item in records])
             tabs["kab_coax"] = coax_dia_rows(uow)
             wire_dia = read_wire_dia(uow)
-    return {"templates": templates, **tabs, "wire_dia": wire_dia}
+            # БД.ПРОВ с её списком кабелей (`cable_kind`): монтажный/многожильный/LAN/коаксиал решает форма так же, как в браузере.
+            prov = [{"cable_kind": item.cable_kind, "fields": item.fields}
+                    for item in uow.tech_operations.list(tab=TechOperationTab("prov"), query="", limit=5000)]
+    return {"templates": templates, **tabs, "wire_dia": wire_dia, "prov": prov}
 
 
 def node_generator(script: Path = GENERATOR_SCRIPT, node: str | None = None) -> Callable[[dict], dict]:

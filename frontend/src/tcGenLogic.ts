@@ -7,6 +7,7 @@
  * Выход — тот же config, что форма отправляла portalTechmapGenerate, и его принимает
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
+import { matchCableRec } from "./cableMatch";
 import { markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
 import { pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkRow, wireMarkTexts, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
@@ -69,7 +70,7 @@ export type Tab = "inter" | "complex" | "coax" | "manual";
 export type Endpoint = {
   id: string; side: Side; connId: string; method: "crimp" | "solder"; methodAuto: boolean;
   sdrTmpl: string | null; termId: string; wireIdxs: number[]; otp: boolean; double: boolean;
-  label: string; solderStrip: string; tutLen: string; stripLen?: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
+  label: string; solderStrip: string; tutLen: string; stripLen?: string; /** Разделка оболочки кабеля у этого разъёма, мм (главнее «Разделки» строки «Кабели»). */ jacket?: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
   /** Двойной обжим в отдельных контактах (владелец 14.10: «с одного контакта два провода»): контакты, где два провода в одном
    *  терминале. Весь разъём двойным обжимом — `double`. */
   doublePins?: number[];
@@ -509,6 +510,18 @@ const JACKETED_RE_ = /\b\d+\s*P(?:R|AIR)?\b|\b\d+\s*C\s*[*xх×]|\b[SFU]?\/?[SFU
  *  1000-е, 3000-е и 10000-е (UL1007, UL1061, UL3239, UL10368) — одиночный провод. */
 export const UL_MULTICORE_RE_ = /\bUL\s*-?\s*2\d{3}\d?(?!\d)/i;
 const DEFAULT_LEN_MM_ = "5";
+/** Зачистка жил USB-кабеля под пайку (владелец 26.10): 3–4 мм. */
+export const USB_CORE_STRIP_ = "3–4";
+/** Разделка оболочки USB-кабеля по разъёму конца (владелец 26.10): вилка USB-A — 15 мм, micro-USB и розетка USB-A — 10 мм.
+ *  USB-C и разъём без признака пола — null: остаётся прежний умолчательный размер. */
+export function usbJacketMm_(art: string, title?: string): string | null {
+  const s = `${art || ""} ${title || ""}`;
+  if (/micro[\s-]*usb|usb[\s-]*micro/i.test(s)) return "10";
+  if (/usb[\s-]*c\b|type[\s-]*c/i.test(s) || !/usb|ds1107/i.test(s)) return null;
+  if (/розетк|female|\busb[\s-]*(?:af|fa)\b|\b(?:af|fa)\b|usb[\s-]*a[\s-]*f\b/i.test(s)) return "10";
+  if (/вилк|male|штекер|\busb[\s-]*am\b|ds1107/i.test(s)) return "15";
+  return null;
+}
 const RJ_STRIP_MM_ = "40";
 const SEAL_RE_ = /герметик|силагерм|компаунд|sealant/i;
 const PROTECT_TUBE_RE_ = /тсп[\s-]*\d|стеклотруб/i;
@@ -778,15 +791,19 @@ export function parsePinList_(value: unknown): number[] {
 }
 
 /** Запись провода из БД.ПРОВ, нужная генератору: марка, число жил, цвета жил по порядку и экран. */
-export type CableRec = { mark: string; cores: number; colors: string[]; screen: string };
+export type CableRec = { mark: string; cores: number; colors: string[]; screen: string; kind?: CableKind_; /** «Цвет» строки (монтажные — строка на цвет). */ color?: string; /** «Артикул поставщика» — запасное имя для поиска. */ supplierCodes?: string[] };
+/** Список БД.ПРОВ, в котором лежит запись (`cable_kind` API): монтажный, многожильный, LAN, коаксиал. */
+export type CableKind_ = "wire" | "multi" | "lan" | "coax";
+const CABLE_KINDS_ = ["wire", "multi", "lan", "coax"];
 /** Строка БД.ПРОВ (поля по шапке листа) → CableRec; без марки — null. */
-export function cableRecFromFields(f: Record<string, string>): CableRec | null {
+export function cableRecFromFields(f: Record<string, string>, kind?: string | null): CableRec | null {
   const field = (name: string) => String(Object.entries(f).find(([key]) => key.trim().toLowerCase() === name.toLowerCase())?.[1] ?? "").trim();
   const mark = field("Марка");
   if (!mark) return null;
   const cores = parseInt(field("Число жил"), 10);
   const colors = field("Цвета").split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
-  return { mark, cores: cores > 0 ? cores : 0, colors, screen: field("Экран") };
+  const codes = field("Артикул поставщика").split(/[;,]+/).map((x) => x.replace(/^[^:]*:\s*/, "").trim()).filter(Boolean);
+  return { mark, cores: cores > 0 ? cores : 0, colors, screen: field("Экран"), ...(field("Цвет") ? { color: field("Цвет") } : {}), ...(codes.length ? { supplierCodes: codes } : {}), ...(kind && CABLE_KINDS_.includes(kind) ? { kind: kind as CableKind_ } : {}) };
 }
 /** Экранирован ли кабель по записи БД.ПРОВ: «Экран» заполнен и не «нет»/«—». */
 export const cableScreened_ = (rec: CableRec | null) => !!rec && !!rec.screen && !/^(?:нет|без|-|—|–|0)$/i.test(rec.screen.trim());
@@ -845,6 +862,8 @@ export function makeGen(D: GenData, S: GenState) {
 
   /** Длина зачистки обжимного конца (владелец 14.10: «под каждый разъём длину зачистки; если записана — из БД»): введённая у
    *  разъёма (`stripLen`) главнее длины терминала из БД.ТЕР; нет ни той ни другой — «—». */
+  /** Разделка оболочки у разъёма: своя у конца (USB — 15/10 мм), иначе «Разделка» кабеля, иначе 20 мм. */
+  const epJacketMm_ = (e: Endpoint, w: WireEntry) => (e.jacket || "").trim() || w.jacket || JACKET_STRIP_MM_;
   function epStripLen_(e: Endpoint | null | undefined): string {
     if (!e) return "—";
     const own = (e.stripLen || "").trim();
@@ -947,14 +966,7 @@ export function makeGen(D: GenData, S: GenState) {
   function cableRecOf_(c: Comp | null): CableRec | null {
     if (!c || !(D.cableRecords || []).length) return null;
     if (cableRecCache_.has(c.id)) return cableRecCache_.get(c.id)!;
-    const recs = D.cableRecords || [];
-    const keys = [c.art, c.name].map((s) => normalizeArt_(s || "")).filter(Boolean);
-    let found = recs.find((r) => keys.includes(normalizeArt_(r.mark))) || null;
-    if (!found) {
-      const text = keys.join("|");
-      found = recs.filter((r) => { const m = normalizeArt_(r.mark); return m.length >= 4 && text.includes(m); })
-        .sort((a, b) => normalizeArt_(b.mark).length - normalizeArt_(a.mark).length)[0] || null;
-    }
+    const found = matchCableRec(D.cableRecords || [], [c.art, c.name]);
     cableRecCache_.set(c.id, found);
     return found;
   }
@@ -964,9 +976,12 @@ export function makeGen(D: GenData, S: GenState) {
     if (w.cores) return w.cores;
     const c = w.compId ? getCompById(w.compId) : null;
     if (!c) return 1;
+    // Список БД.ПРОВ решает: монтажный — одна жила, многожильный/LAN — «Число жил» записи (владелец 26.10).
+    const rec = cableRecOf_(c);
+    if (rec?.kind === "wire") return 1;
+    if ((rec?.kind === "multi" || rec?.kind === "lan") && rec.cores > 1) return rec.cores;
     const byName = cableCoresFromName_(`${c.name || ""} ${c.art || ""}`);
     if (byName > 1) return byName;
-    const rec = cableRecOf_(c);
     return rec && rec.cores > 1 ? rec.cores : byName;
   }
   const wireScreened_ = (w: WireEntry) => {
@@ -980,6 +995,9 @@ export function makeGen(D: GenData, S: GenState) {
   function isJacketedCable_(w: WireEntry) {
     if (wireCores_(w) > 1) return true;
     const c = w.compId ? getCompById(w.compId) : null;
+    const kind = cableRecOf_(c)?.kind;
+    if (kind === "multi" || kind === "lan") return true;
+    if (kind === "wire") return false;
     return !!c && (JACKETED_RE_.test(`${c.name || ""} ${c.art || ""}`) || isUlMulticore_(c));
   }
   /** Жил в строке «Кабели» всего: кабелей × жил (провод без оболочки — одна жила на штуку). */
@@ -2318,7 +2336,7 @@ export function makeGen(D: GenData, S: GenState) {
           // операция у разъёма (coreStripOp_). RJ — без зачистки жил (врезной контакт), складывание жилы — по своему
           // правилу ниже.
           else if (S.rotor && isJacketedCable_(w) && (e.method === "solder" || (!isRjEndpoint_(e) && !(e.fold && isComplex_())))) {
-            len = w.jacket || JACKET_STRIP_MM_;
+            len = epJacketMm_(e, w);
           }
           // «Без зачистки (ОТП)» — конец приходит на обжим уже зачищенным: его зачищает резка (владелец 14.10: «обжим с одной
           // и ОТП с другой» → «резка с обжимом А и зачисткой В»). Без ОТП конец под ручной обжим резка не трогает — его
@@ -2328,7 +2346,7 @@ export function makeGen(D: GenData, S: GenState) {
           else if (e.method === "crimp" && e.fold && isComplex_()) len = FOLD_STRIP_MM_;
           else if (e.method === "crimp" && isRjEndpoint_(e)) len = RJ_STRIP_MM_;
           // Без ротора кабель разделывают у разъёма («Разделка кабеля под обжим»), при резке его конец не трогают.
-          else if (e.method === "crimp" && isJacketedCable_(w)) len = S.rotor ? w.jacket || JACKET_STRIP_MM_ : null;
+          else if (e.method === "crimp" && isJacketedCable_(w)) len = S.rotor ? epJacketMm_(e, w) : null;
           else if (e.method === "crimp" && (e.double || epDoublePins_(e).length > 0)) {
             len = epStripLen_(e);
           }
@@ -2436,7 +2454,7 @@ export function makeGen(D: GenData, S: GenState) {
           // Разделка у разъёма — оболочка и зачистка жил под обжим или пайку (владелец 15.10: «жилы у многожильного не
           // могут разделываться на станке, они либо разделываются отдельно перед обжимом, либо на ОТП»): с «Без зачистки
           // (ОТП)» жилы зачищает ОТП при обжиме — здесь только оболочка; у RJ жилы не зачищают — врезной контакт.
-          const jacket = mine[0].w.jacket || JACKET_STRIP_MM_;
+          const jacket = epJacketMm_(ep, mine[0].w);
           const core = isRjEndpoint_(ep) || (ep.method === "crimp" && ep.otp) ? ""
             : ep.method === "solder" ? (ep.solderStrip || "").trim() || DEFAULT_LEN_MM_ : epStripLen_(ep);
           const key = side === "A" ? "a" : "b";
@@ -2483,11 +2501,16 @@ export function makeGen(D: GenData, S: GenState) {
           len = epStripLen_(ep);
         }
         const routed = routedWireIdxs_(ep);
-        const n = activeWires_().filter((w) => isJacketedCable_(w) && routed.includes(w.idx)).reduce((s, w) => s + endUnits_(ep, w), 0);
+        const jacketed = activeWires_().filter((w) => isJacketedCable_(w) && routed.includes(w.idx));
+        const n = jacketed.reduce((s, w) => s + endUnits_(ep, w), 0);
         if (!n) return null;
         const mm = len === "—" ? "" : len;
+        // USB под пайку — своя карта «Разделка» (STRIP_CABLE_usb_2.0 / _3.2: кабель, подготовленный под пайку), остальные — STRIP_WIRE.
+        const usbCable = stripCableTmpl_(getCompById(jacketed[0].compId));
+        const usbCard = ep.method === "solder" && /^SDR_USB_/.test(ep.sdrTmpl || "")
+          ? (/_3\.2$/.test(ep.sdrTmpl || "") || usbCable === "STRIP_CABLE_usb_3.2" ? "STRIP_CABLE_usb_3.2" : "STRIP_CABLE_usb_2.0") : "";
         const key = side === "A" ? "a" : "b";
-        return { type: "stripCable", opKey: "stripCores" + side + ord, side, ord, tmplHint: "STRIP_WIRE", cat: "Разделка", tutCount: n,
+        return { type: "stripCable", opKey: "stripCores" + side + ord, side, ord, tmplHint: /^STRIP_CABLE_usb/.test(usbCard) ? usbCard : "STRIP_WIRE", cat: "Разделка", tutCount: n,
           label: `Зачистка жил ${how} ${tag} (${mm ? mm.replace(".", ",") : "?"} мм) — ${n} шт`,
           strip: { a: key === "a", lenA: key === "a" ? mm : "", b: key === "b", lenB: key === "b" ? mm : "" } };
       };
@@ -3838,6 +3861,7 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
     if (fk) S = fakraSeed_(D, S);
   }
   S = autoFillAllWires(D, S);
+  S = seedUsbStrip_(D, S);
   // maybeAutoEnableTwist
   {
     const auto = makeGen(D, S).autoDetectTwistPairs();
@@ -3851,6 +3875,25 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
   if (S.tab === "complex") S = autoPickTerminals(D, S);
   S = applyCalcTin_(D, S);
   return seedJacketShrink_(D, S);
+}
+
+/** Разделка USB-кабеля по концам (владелец 26.10): у паяного USB-разъёма на кабеле в оболочке — оболочка по типу разъёма
+ *  (вилка USB-A 15 мм, micro-USB и розетка 10 мм), жилы под пайку 3–4 мм. Только засев пустых полей. */
+export function seedUsbStrip_(D: GenData, S: GenState): GenState {
+  const g = makeGen(D, S);
+  const jacketed = g.activeWires_().filter((w) => g.isJacketedCable_(w)).map((w) => w.idx);
+  if (!jacketed.length) return S;
+  let changed = false;
+  const endpoints = S.endpoints.map((e) => {
+    const conn = e.method === "solder" && e.connId ? g.getCompById(e.connId) : null;
+    if (!conn || !/^SDR_USB_/.test(e.sdrTmpl || "") || !g.routedWireIdxs_(e).some((i) => jacketed.includes(i))) return e;
+    const jacket = e.jacket || usbJacketMm_(conn.art, conn.title);
+    if (!jacket) return e; // USB-C и разъём без признака пола — прежние размеры
+    const next = { ...e, jacket, solderStrip: e.solderStrip || USB_CORE_STRIP_ };
+    if (next.jacket !== e.jacket || next.solderStrip !== e.solderStrip) changed = true;
+    return next;
+  });
+  return changed ? { ...S, endpoints } : S;
 }
 
 /** «Термоусадка на срез оболочки» новой формы (владелец 15.10): в составе есть ТУТ/ТТК, не занятая другим делом, —

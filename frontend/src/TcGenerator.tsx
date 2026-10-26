@@ -197,7 +197,7 @@ async function readRefs(): Promise<Refs> {
     wireDia: wireDiaFromRecords((wireDia?.records || []).map((record) => record.fields)),
     coaxCableDia: coaxDiaFromRecords((kabCoax?.records || []).map((record) => record.fields)),
     markMats: markMatsFromRecords((mat?.records || []).map((record) => record.fields)),
-    cableRecords: (prov?.records || []).map((record) => cableRecFromFields(record.fields || {})).filter((record): record is CableRec => !!record),
+    cableRecords: (prov?.records || []).map((record) => cableRecFromFields(record.fields || {}, record.cable_kind)).filter((record): record is CableRec => !!record),
   };
 }
 
@@ -1017,6 +1017,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           ? <>Паяльный разъём · карточка <span className="code">{ep.sdrTmpl}</span></>
           : "Тип не распознан — карточку пайки выберите в операциях"}</div>
         <div className="ep-ter">
+          {gen.activeWires_().some((w) => gen.isJacketedCable_(w) && gen.routedWireIdxs_(ep).includes(w.idx)) &&
+            <Field label="Разделка оболочки" className="mid"><UnitInput unit="мм" value={ep.jacket ?? ""} placeholder={JACKET_STRIP_MM_} onChange={(event) => set({ jacket: event.target.value })} /></Field>}
           <Field label="Зачистка" className="mid"><UnitInput unit="мм" value={ep.solderStrip} placeholder="5" onChange={(event) => set({ solderStrip: event.target.value })} /></Field>
           <Field label="Припуск на пайку" className="mid"><UnitInput unit="мм" value={ep.solderAllow ?? ""} placeholder="0" onChange={(event) => set({ solderAllow: event.target.value })} /></Field>
           {!ep.tutOff && <Field label="Длина ТУТ" className="mid"><UnitInput unit="мм" value={ep.tutLen} placeholder="20" onChange={(event) => set({ tutLen: event.target.value })} /></Field>}

@@ -1857,6 +1857,8 @@ export interface TechOperationRecord {
   tab: TechOperationTab;
   display_text: string;
   source_sheet: string;
+  /** БД.ПРОВ: список кабелей записи — монтажный (wire), многожильный (multi), LAN (lan), коаксиал (coax). */
+  cable_kind?: string;
   fields: Record<string, string>;
 }
 
