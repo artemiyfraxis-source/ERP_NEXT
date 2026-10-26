@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Nightly pg_dump at BACKUP_HOUR (server time): /backups/daily keeps KEEP_DAILY dumps, Sunday's copy goes to
-# /backups/weekly (KEEP_WEEKLY), the copy of the 1st of a month goes to /backups/monthly (KEEP_MONTHLY, 36:
-# traceability records are kept 3 years — SUPPLYMAP OwnerTick.gs BACKUP_KEEP_MONTHS, owner 14.09.2026). Files (УПД, счета, КД-реестр) live in the database, so the dump is the whole ERP.
+# Nightly pg_dump at BACKUP_HOUR (server time): /backups/daily keeps KEEP_DAILY dumps (7 — owner 26.10.2026: «бекап
+# недельной давности»; how long records live — УПД/счета 3 years, техкарты/документация 5 — is the database's job, not
+# the backups'). Sunday's copy goes to /backups/weekly and the 1st's to /backups/monthly only when KEEP_WEEKLY /
+# KEEP_MONTHLY > 0 (both 0 by default; 0 also clears what those folders hold). Files (УПД, счета, КД-реестр) live in the
+# database, so the dump is the whole ERP.
 # Daytime dumps (owner, 10.10.2026: lose at most 3 hours of shop work, copies stay on the server): at every hour of
 # BACKUP_INTRADAY_HOURS (9 12 15 18 21) into /backups/intraday, the newest KEEP_INTRADAY (15, about three days) kept;
 # no weekly/monthly copies from them. An empty BACKUP_INTRADAY_HOURS turns them off.
@@ -25,7 +27,7 @@
 # BACKUP_RETRY_MINUTES (60) until the next scheduled one; on start, a stale or missing last success means a dump now.
 set -u
 root=${BACKUP_ROOT:-/backups}
-KEEP_DAILY=${KEEP_DAILY:-14}; KEEP_WEEKLY=${KEEP_WEEKLY:-8}; KEEP_MONTHLY=${KEEP_MONTHLY:-36}
+KEEP_DAILY=${KEEP_DAILY:-7}; KEEP_WEEKLY=${KEEP_WEEKLY:-0}; KEEP_MONTHLY=${KEEP_MONTHLY:-0}
 KEEP_PRE_UPDATE=${KEEP_PRE_UPDATE:-10}; KEEP_PRE_RESTORE=${KEEP_PRE_RESTORE:-10}
 KEEP_INTRADAY=${KEEP_INTRADAY:-15}
 INTRADAY_HOURS=${BACKUP_INTRADAY_HOURS-9 12 15 18 21}
@@ -157,8 +159,8 @@ daily_locked() {
   local code=0
   write_dump "$root/daily" "erp_$(date +%Y-%m-%d_%H%M%S)" 0 || code=1
   if [ "$code" = 0 ]; then
-    [ "$(date +%u)" = 7 ] && { copy_once weekly || log "ВНИМАНИЕ: воскресная копия не записана" >&2; }
-    [ "$(date +%d)" = 01 ] && { copy_once monthly || log "ВНИМАНИЕ: копия за 1-е число не записана" >&2; }
+    [ "$KEEP_WEEKLY" -gt 0 ] && [ "$(date +%u)" = 7 ]       && { copy_once weekly || log "ВНИМАНИЕ: воскресная копия не записана" >&2; }
+    [ "$KEEP_MONTHLY" -gt 0 ] && [ "$(date +%d)" = 01 ]       && { copy_once monthly || log "ВНИМАНИЕ: копия за 1-е число не записана" >&2; }
     keep_newest "$root/daily" "$KEEP_DAILY"
     keep_newest "$root/weekly" "$KEEP_WEEKLY"
     keep_newest "$root/monthly" "$KEEP_MONTHLY"

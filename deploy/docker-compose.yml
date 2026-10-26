@@ -131,9 +131,9 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
       TZ: Europe/Moscow
       BACKUP_HOUR: ${BACKUP_HOUR:-3}
-      KEEP_DAILY: ${KEEP_DAILY:-14}
-      KEEP_WEEKLY: ${KEEP_WEEKLY:-8}
-      KEEP_MONTHLY: ${KEEP_MONTHLY:-36}
+      KEEP_DAILY: ${KEEP_DAILY:-7}
+      KEEP_WEEKLY: ${KEEP_WEEKLY:-0}
+      KEEP_MONTHLY: ${KEEP_MONTHLY:-0}
       # Daytime dumps into backups/intraday (owner, 10.10.2026): at most 3 hours of work lost.
       BACKUP_INTRADAY_HOURS: ${BACKUP_INTRADAY_HOURS-9 12 15 18 21}
       KEEP_INTRADAY: ${KEEP_INTRADAY:-15}

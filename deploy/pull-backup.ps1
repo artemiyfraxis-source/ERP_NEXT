@@ -1,6 +1,7 @@
 ﻿<#
 Копия базы вне сервера (владелец, 10.10.2026): этот ПК по Tailscale забирает с сервера свежие копии базы.
-Берёт самую новую копию из backups/daily (и, если ещё нет, из weekly и monthly): .dump + .sha256 -> <Dest>\<вид>\.
+Берёт самую новую копию из backups/daily: .dump + .sha256 -> <Dest>\daily\; хранит KeepDaily (7) самых новых — бэкап
+недельной давности (владелец, 26.10.2026); недельных и месячных копий больше нет, папки weekly и monthly очищаются.
 Файл сначала качается под именем .part, сверяется SHA-256 с .sha256 с сервера и только потом получает своё имя;
 при расхождении .part удаляется, скрипт завершается с ненулевым кодом. Ключи и пароли в репозитории не хранятся:
 ключ ssh лежит у владельца в ~\.ssh\erp_server.
@@ -13,7 +14,7 @@ param(
     [string]$User = 'erp',
     [string]$Key = (Join-Path $HOME '.ssh\erp_server'),
     [string]$Dest = (Join-Path $HOME 'Documents\ERP-backups'),
-    [int]$KeepDaily = 14
+    [int]$KeepDaily = 7
 )
 
 $ErrorActionPreference = 'Stop'
@@ -96,11 +97,10 @@ function Pull-One([string]$Kind) {
     }
 }
 
-foreach ($kind in @('daily', 'weekly', 'monthly')) {
-    try { Pull-One $kind } catch { $Failed = $true; [void]$Results.Add("$kind=ОШИБКА $($_.Exception.Message)") }
-}
+try { Pull-One 'daily' } catch { $Failed = $true; [void]$Results.Add("daily=ОШИБКА $($_.Exception.Message)") }
 
-# Ротация: в daily остаются KeepDaily самых новых копий (weekly и monthly не трогаем). Только после успешной загрузки.
+# Ротация: в daily остаются KeepDaily самых новых копий, weekly и monthly (прежние недельные/месячные) очищаются.
+# Только после успешной загрузки.
 if (-not $Failed -and $KeepDaily -gt 0) {
     try {
         $dumps = @(Get-ChildItem -Path (Join-Path $Dest 'daily') -Filter 'erp_*.dump' -File | Sort-Object Name -Descending)
@@ -109,6 +109,11 @@ if (-not $Failed -and $KeepDaily -gt 0) {
             Remove-Item -Force $f.FullName, ($f.FullName + '.sha256') -ErrorAction SilentlyContinue
         }
         if ($old.Count -gt 0) { [void]$Results.Add("ротация daily: удалено $($old.Count)") }
+        foreach ($kind in @('weekly', 'monthly')) {
+            $gone = @(Get-ChildItem -Path (Join-Path $Dest $kind) -Filter 'erp_*.dump*' -File -ErrorAction SilentlyContinue)
+            foreach ($f in $gone) { Remove-Item -Force $f.FullName -ErrorAction SilentlyContinue }
+            if ($gone.Count -gt 0) { [void]$Results.Add("${kind}: удалено $($gone.Count) файлов") }
+        }
     } catch { $Failed = $true; [void]$Results.Add("ротация=ОШИБКА $($_.Exception.Message)") }
 }
 
