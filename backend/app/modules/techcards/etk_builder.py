@@ -751,7 +751,8 @@ def _components(
     if operation_type == "insMark":
         marks = _mark_items(op)
         if _kd_marks(marks):
-            return _mark_materials(marks, quantity)
+            # Монтаж метки «Сложной сборки» (markPhase install): материал ушёл на печать в ПФ «Маркировка».
+            return [] if op.get("markPhase") == "install" else _mark_materials(marks, quantity)
         return [{"art": str(item.get("art") or item.get("name") or ""), "name": str(item.get("name") or ""), "norm": _format(_number(item.get("qty"), Decimal(1)) * quantity), "unit": "Шт."} for item in op.get("marks") or []]
     endpoint = _endpoint(op)
     kind = _kind(op)

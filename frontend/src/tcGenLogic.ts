@@ -424,6 +424,8 @@ export type OpSpec = {
   markTube?: boolean;
   /** Маркировка проводов «откуда → куда» (tcGenWireMarks): печать, надевание и усадка; `markTexts` — надписи по порядку печати. */
   wireMarks?: boolean; markTexts?: string[]; markDist?: string;
+  /** Метки по КД «Сложной сборки» (26.10): `print` — печать в ПФ «Маркировка», `install` — монтаж на месте метки (ЭТК делит ход по фазам). */
+  markPhase?: "print" | "install";
   tutParts?: Array<{ art: string; name: string; count: number; len: string }>;
   /** «Сложная сборка» (владелец 16.10): ПФ схемы генератора, в который входит операция (ключ блока `build_config.route`). */
   pf?: string;
@@ -2886,21 +2888,32 @@ export function makeGen(D: GenData, S: GenState) {
 
     // ── Маркировка-трубки: к разъёму по «Что маркируем» («Разъём 5 (SMR-02V-B)») ──
     const markTubes = S.mark ? markTubeSplit(S.markRows || [], comps()).tubes : [];
-    const markEp = (t: MarkTube) => {
-      const target = t.spec.target.trim();
+    const epOfTarget = (raw: string) => {
+      const target = raw.trim();
       return S.endpoints.find((ep) => { const name = (ep.label || "").trim() || endKey_(ep); return target === `Разъём ${name}` || target.startsWith(`Разъём ${name} (`); }) || null;
     };
+    const markEp = (t: MarkTube) => epOfTarget(t.spec.target);
     const sleeves = sleeveItems_();
     // Термоусадка на жгут — свой ПФ «ТУТ на месте Б» перед разъёмами стороны В (владелец 17.10); нет её — нет и ПФ.
     const hsOn = sleeves.harness.some((x) => x.cnt > 0);
 
     // ── Ветви стороны А ──
-    const branches = endpointsOnSide_("A").filter((ep) => !!ep.connId && (!!shrinkOf_(ep) || braidEp_(ep) || twistAt.has(`ep:${ep.id}`)
+    const branchEps = endpointsOnSide_("A").filter((ep) => !!ep.connId && (!!shrinkOf_(ep) || braidEp_(ep) || twistAt.has(`ep:${ep.id}`)
       || markTubes.some((t) => markEp(t) === ep)));
+    // Разъёмы без ветвей (владелец 26.10, 708К.5 КБ1: «слишком много операций в куче»): у жгута со сростками и двумя и более разъёмами
+    // каждый разъём — свой ПФ «Разъём X собран» (обжим, монтаж, своя усадка и метки), как ветвь; в изделии остаётся сборка: метки на
+    // изделии, лента или оплётка на ствол, контроль. Не трогаем жгут с ветвями (схема уже по ветвям), с термоусадкой на жгут (трубку
+    // надевают на ствол до разъёмов — они остаются за ней в изделии), со свивкой в изделии и с хвостами/жилами под разделку (их порядок
+    // до монтажа разъёмов задан раньше: tcGenTwistOrder, tcGenMulticoreCrimpOrder).
+    const connEps = [...endpointsOnSide_("A"), ...endpointsOnSide_("B")].filter((ep) => !!ep.connId);
+    const bareTwist = [...twistAt.keys()].some((at) => at === FINAL || (at.startsWith("ep:") && !connEps.some((ep) => `ep:${ep.id}` === at)));
+    const connBlocks = !branchEps.length && !hsOn && groups.length > 0 && connEps.length >= 2 && !bareTwist
+      && !generic.some((o) => o.opKey === "stripTail" || o.opKey === "tinTail" || o.type === "foldCore" || (o.type === "endCap" && !o.side)) ? connEps : [];
+    const branches = connBlocks.length ? connBlocks : branchEps;
     // Свой ПФ — только когда под трубку сходятся ветви или сростки. У простой сборки (концы с разъёмами или наконечниками, ветвей
     // и сростков нет) трубку надевают до пайки и обжима концов, усадка — после, без отдельного полуфабриката (владелец 25.10,
     // 663К.3 КБ1: «ТУТ на месте Б» шёл ПФ раньше наконечников).
-    const hsPf = hsOn && (branches.length > 0 || groups.length > 0);
+    const hsPf = hsOn && (branchEps.length > 0 || groups.length > 0);
     // Пара на разъёме без ветви (терминал без корпуса) — свивка в изделии.
     [...twistAt.keys()].forEach((at) => {
       if (!at.startsWith("ep:") || branches.some((ep) => `ep:${ep.id}` === at)) return;
@@ -2925,7 +2938,19 @@ export function makeGen(D: GenData, S: GenState) {
     const epOfOp = (o: OpSpec) => (o.epId ? epById_(o.epId) : o.side && o.ord ? endpointsOnSide_(o.side)[o.ord - 1] || null : null);
     const solderEp = S.endpoints.find((e) => e.method === "solder" && !e.tutOff && !!e.connId) || null;
     const finalTwist = twistAt.get(FINAL) || 0;
-    const rebuilt = (o: OpSpec) => o.type === "cutTut"
+    // Метки по КД, что не трубки из состава (хлястики, бирки): печать — в ПФ «Маркировка», монтаж — своей операцией на месте метки
+    // (владелец 26.10, 708К.5: «а где одевание» — метки печатались, но нигде не навешивались).
+    const insMarkKd = generic.find((o) => o.opKey === "insMark" && (o.marks || []).some((m) => "target" in m && (m.text || m.target))) || null;
+    const restMarks = ((insMarkKd?.marks || []) as MarkSpec[]);
+    const markInstalls = (blockKey: string, blockName: string): OpSpec[] => {
+      const own = restMarks.filter((m) => blockOfEp(epOfTarget(m.target)) === blockKey);
+      if (!own.length) return [];
+      const hint = ["INS_MARK", "INS_MARK_HARNESS"].find(hasTemplateCode_);
+      return [{ type: "insMark", opKey: blockKey === FINAL ? "insMark" : `insMark${blockKey.slice(3)}`, cat: hint ? "Монтаж маркировки" : "Монтаж", ...(hint ? { tmplHint: hint } : {}),
+        markPhase: "install", marks: own, branch: blockKey === FINAL ? "на изделие" : blockName,
+        label: `Монтаж маркировки ${blockKey === FINAL ? "на изделие" : blockName} — ${own.map((m) => `«${m.text || m.target}»`).join(", ")}` }];
+    };
+    const rebuilt = (o: OpSpec) => o === insMarkKd || o.type === "cutTut"
       || ["insSleeves", "onMark", "heatMark", "onWireMark", "heatWireMark", "insSpl", "heatSpl", "splice", "stripSpl"].includes(o.opKey)
       || (o.opKey === "twist" && !finalTwist)
       || (o.type === "insWrap" && o.wrapKind === "braid")
@@ -2975,7 +3000,7 @@ export function makeGen(D: GenData, S: GenState) {
     };
     const level = (key: string) => (key === FINAL ? 4 : key.startsWith("pf-spl") ? 3 : 2);
     const names = new Map<string, string>();
-    branches.forEach((ep) => names.set(epKey(ep), `Ветвь ${xTag(ep)}, сторона ${sideRu_(ep.side)}`));
+    branches.forEach((ep) => names.set(epKey(ep), connBlocks.length ? `Разъём ${xTag(ep)} собран` : `Ветвь ${xTag(ep)}, сторона ${sideRu_(ep.side)}`));
     groups.forEach((g) => names.set(g.key, g.name));
     const endBlock = (w: WireEntry, k: number, side: Side): string | null => {
       const join = isComplex_() ? endJoined(S, w.idx, k, side) : null;
@@ -3056,6 +3081,14 @@ export function makeGen(D: GenData, S: GenState) {
       markTubes.forEach((t) => link(MARK, markBlock(t), `Маркировка ${markTitle(t)}`, t.spec.qty));
     }
 
+    if (restMarks.length) {
+      const printHint = ["INS_MARK_AUTO"].find(hasTemplateCode_);
+      sources.push({ type: "insMark", opKey: "printMarks", cat: printHint ? "Монтаж маркировки" : "Монтаж", ...(printHint ? { tmplHint: printHint } : {}),
+        markPhase: "print", marks: restMarks, branch: "печать", pf: MARK,
+        label: `Печать маркировки — ${restMarks.map((m) => `«${m.text || m.target}»`).join(", ")}` });
+      restMarks.forEach((m) => link(MARK, blockOfEp(epOfTarget(m.target)), `Маркировка «${m.text || m.target}»`, m.qty));
+    }
+
     if (wmCut) {
       sources.push({ ...wmCut, pf: WMP });
       link(WMP, WM, "Маркировка проводов", wmCut.tutCount || 0);
@@ -3105,6 +3138,7 @@ export function makeGen(D: GenData, S: GenState) {
         out.push({ type: "heatTut", opKey: `heatMark${side}${ord}`, tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, side, ord,
           tutCount: shrunk.reduce((n, t) => n + t.spec.qty, 0), branch: name, label: `Усадка маркировки ${name} — ${shrunk.map(markTitle).join(", ")}` });
       }
+      out.push(...markInstalls(key, name));
       return out.map((o) => ({ ...o, pf: key }));
     });
 
@@ -3153,6 +3187,7 @@ export function makeGen(D: GenData, S: GenState) {
     finalOps.push(...kept.filter((o) => blockOf(o) === FINAL && !prepKeys(o) && o !== heatHs));
     // Усадка термоусадки на жгуте — после пайки и обжима концов (раньше шла сразу за надеванием).
     if (heatHs && !hsPf) finalOps.push(heatHs);
+    finalOps.push(...markInstalls(FINAL, ""));
     const markHeat = finalMarks.filter((t) => t.shrink).reduce((n, t) => n + t.spec.qty, 0);
     if (markHeat) finalOps.push({ type: "heatTut", opKey: "heatMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, tutCount: markHeat,
       label: `Усадка маркировки — ${markHeat} шт` });
@@ -3520,7 +3555,7 @@ export function makeGen(D: GenData, S: GenState) {
         if (spec.wrapFix) op.wrapFix = spec.wrapFix;
         if (spec.wrapCut) op.wrapCut = true;
       }
-      if (spec.type === "insMark") op.marks = spec.marks;
+      if (spec.type === "insMark") { op.marks = spec.marks; if (spec.markPhase) op.markPhase = spec.markPhase; }
       if (spec.tin) op.tin = true;
       if (spec.type === "splice" || spec.type === "insHousing") op.units = spec.units || 1;
       // Свивка ветви или группы сростков — своих пар (без числа — все пары формы, как раньше).

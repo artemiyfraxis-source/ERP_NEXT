@@ -164,15 +164,31 @@ def _sizes(marks: Sequence[Mapping[str, Any]]) -> tuple[str, str]:
     return ": " + ", ".join(parts), tolerance
 
 
+# «Сложная сборка» (владелец 26.10, 708К.5): печать меток — в ПФ-комплекте «Маркировка» (`markPhase` = print), монтаж —
+# своей операцией на месте метки (install). Первые шаги блока вида — печать (и нарезка трубок), остальное — монтаж и контроль.
+PRINT_STEPS = {"flag": 1, "tag": 1, "ring": 1, "heat": 2, "pvc": 2}
+_PRINT_EQUIPMENT = frozenset({"printer", "cutter"})
+_PRINT_TIME = frozenset({"flagPrint", "tubePrint", "tubeCut"})
+
+
+def _phase(op: Mapping[str, Any]) -> str:
+    phase = str(op.get("markPhase") or "")
+    return phase if phase in {"print", "install"} else ""
+
+
 def _steps(counts: Mapping[str, Decimal], op: Mapping[str, Any], batch: Decimal,
            marks: Sequence[Mapping[str, Any]] = ()) -> list[dict[str, str]]:
     mixed = len(counts) > 1
     steps: list[dict[str, str]] = []
+    phase = _phase(op)
     for kind, per_item in counts.items():
         block = _BY_ID[kind]
         names = {slot: _step_name(op, key) for slot, key in _TYPE_EQUIPMENT.get(kind, {}).items()}
         sizes, length_tolerance = _sizes([item for item in marks if mark_kind(str(item.get("name") or item.get("art") or "")) == kind])
-        for step in block["steps"]:
+        cut = PRINT_STEPS.get(kind, 0)
+        for index, step in enumerate(block["steps"]):
+            if (phase == "print" and index >= cut) or (phase == "install" and index < cut):
+                continue
             text = str(step["text"]).format(count=f"{_format(per_item * batch)} шт.", sizes=sizes, **{
                 slot: names.get(slot, "") for slot in ("printer", "cutter", "heater")})
             steps.append({
@@ -195,7 +211,10 @@ def _tooling(tooling: Sequence[Mapping[str, Any]], counts: Mapping[str, Decimal]
     """Оснастка карты + оборудование видов в «Оборудование»: станок хлястиков, принтер и резка трубок, усадка только
     у термоусадочной. Нет в справочнике — название по умолчанию с пометкой."""
     result = [dict(tool) for tool in tooling]
-    keys = list(dict.fromkeys(key for kind in counts for key in _TYPE_EQUIPMENT.get(kind, {}).values()))
+    phase = _phase(op)
+    keys = list(dict.fromkeys(
+        key for kind in counts for slot, key in _TYPE_EQUIPMENT.get(kind, {}).items()
+        if not phase or (slot in _PRINT_EQUIPMENT) == (phase == "print")))
     for key in keys:
         found = _equipment(op, key)
         name = _tool_name(str(found["name"])) if found else EQUIPMENT_DEFAULTS[key]
@@ -217,7 +236,10 @@ def _time_rows(counts: Mapping[str, Decimal], op: Mapping[str, Any], batch: Deci
         return []
     norms = kit.get("norms") if isinstance(kit.get("norms"), Mapping) else {}
     rows: list[dict[str, str]] = []
+    phase = _phase(op)
     for key, label, kinds in TIME_ROWS:
+        if phase and (key in _PRINT_TIME) != (phase == "print"):
+            continue
         pieces = sum((count for kind, count in counts.items() if kind in kinds), Decimal(0))
         if not pieces:
             continue
