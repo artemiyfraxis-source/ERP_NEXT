@@ -1,8 +1,8 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import type { CableRow, Principal } from "./api";
-import { blockLines, listHeads } from "./test/blocks";
+import { render, blockLines, listHeads } from "./test/blocks";
 
 /* «Кабели и провода» → «ETHERNET» (владелец 25.10.2026: «интернетные вынести вообще в другую вкладку — новая вкладка,
    новая БД», «не витая пара»): своя вкладка после «Многожильных», свои столбцы — все видны, группы «экран категория». */

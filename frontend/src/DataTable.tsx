@@ -112,6 +112,9 @@ export interface DataTableProps<T> {
   groupLabel?: (name: string, rows: T[]) => ReactNode;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
   collapsibleGroups?: boolean;
+  /** Группы открываются свёрнутыми (длинные справочники: заголовки групп, строки по клику); поиск, фильтр колонки
+      или чип раскрывают все группы, пока они стоят. */
+  foldedByDefault?: boolean;
   bulkActions?: DataBulkAction<T>[];
   /** Раскрытая строка: форма, карточка, история. */
   renderDetail?: (row: T) => ReactNode;
@@ -403,6 +406,7 @@ export function DataTable<T>({
   groupBy,
   groupLabel,
   collapsibleGroups,
+  foldedByDefault = false,
   bulkActions = [],
   renderDetail,
   rowClassName,
@@ -433,7 +437,9 @@ export function DataTable<T>({
   const grouping = groupBy ?? (blocks ? () => label : undefined);
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  // Groups the user flipped from the default (folded or open); the default is open, or folded with foldedByDefault
+  // while nothing narrows the list.
+  const [flipped, setFlipped] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<Sort>(saved.sort ?? null);
@@ -559,6 +565,13 @@ export function DataTable<T>({
       .map((item) => item.row);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `grouping` is `groupBy`, or the list's one block
   }, [searched, columns, sort, activePreset, groupSort, groupBy, blocks, label]);
+
+  // A search, a column filter or a chip opens every group of a folded-by-default list (the rows found are seen at once);
+  // the user's flips start over whenever that changes.
+  const narrowed = Boolean(query.trim() || activePreset || Object.values(filters).some((value) => value.trim()));
+  const foldAll = Boolean(collapsibleGroups && foldedByDefault && !narrowed);
+  useEffect(() => setFlipped(new Set()), [foldAll]);
+  const isFolded = (name: string) => Boolean(collapsibleGroups) && foldAll !== flipped.has(name);
 
   // Blocks put only the rows near the screen in the page (below), so they show the whole list — no pages, nothing cut.
   // Without IntersectionObserver (an old browser, tests) the list goes in pages as before.
@@ -892,7 +905,7 @@ export function DataTable<T>({
   });
 
   // --- Cells edited in place ---
-  const lines = groups.flatMap(([name, groupRows]) => collapsibleGroups && collapsed.has(name) ? [] : groupRows);
+  const lines = groups.flatMap(([name, groupRows]) => isFolded(name) ? [] : groupRows);
   const byKey = new Map(rows.map((row) => [rowKey(row), row]));
   const editable = (column: DataColumn<T> | undefined, row: T | undefined): column is DataColumn<T> & { edit: DataCellEdit<T> } =>
     Boolean(column?.edit && row && rowHas(row, column.key) && (column.edit.enabled?.(row) ?? true));
@@ -1282,7 +1295,7 @@ export function DataTable<T>({
     if (delta) bar.scrollLeft += delta;
   }
   function toggleCollapsed(name: string) {
-    setCollapsed((current) => {
+    setFlipped((current) => {
       const next = new Set(current);
       if (!next.delete(name)) next.add(name);
       return next;
@@ -1409,6 +1422,13 @@ export function DataTable<T>({
         )}
         <div className="toolbar-end">
           {toolbar}
+          {collapsibleGroups && foldedByDefault && groups.length > 1 && (() => {
+            const allOpen = groups.every(([name]) => !isFolded(name));
+            const names = groups.map(([name]) => name);
+            // «open all» / «fold all» as flips from the default of the moment (folded, or open while searching)
+            return <button type="button" className="secondary small" aria-pressed={allOpen}
+              onClick={() => setFlipped(new Set(allOpen !== foldAll ? names : []))}>{allOpen ? "Свернуть все" : "Развернуть все"}</button>;
+          })()}
           {blocks && hasEditing && <span className="dt-help" tabIndex={0} role="note" aria-label={`Правка в таблице: ${EDIT_HINT}`} data-hint={EDIT_HINT}>?</span>}
           <button type="button" className="secondary small" aria-expanded={choosingColumns} onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
           {exportName && <button type="button" className="secondary small" onClick={download}>Excel</button>}
@@ -1507,7 +1527,7 @@ export function DataTable<T>({
           const startAt = rowsBefore;
           rowsBefore += groupRows.length;
           const title = (groupLabel ? groupLabel(name, groupRows) : name) || "—";
-          const folded = Boolean(collapsibleGroups && collapsed.has(name));
+          const folded = isFolded(name);
           const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
           const caption = <>{title} <span className="page-count">{blockTotals.get(name) ?? groupRows.length}</span>{picked > 0 && <span className="group-picked">выбрано {picked}</span>}</>;
           // A section over its blocks (ТУТ over the kinds of tube): its heading before its first block, with all their rows.
@@ -1599,13 +1619,13 @@ export function DataTable<T>({
                         const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
                         const title = <><strong>{(groupLabel ? groupLabel(name, groupRows) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
                         return collapsibleGroups
-                          ? <button type="button" aria-expanded={!collapsed.has(name)} onClick={() => toggleCollapsed(name)} style={{ all: "unset", cursor: "pointer" }}>{collapsed.has(name) ? "▸" : "▾"} {title}</button>
+                          ? <button type="button" aria-expanded={!isFolded(name)} onClick={() => toggleCollapsed(name)} style={{ all: "unset", cursor: "pointer" }}>{isFolded(name) ? "▸" : "▾"} {title}</button>
                           : title;
                       })()}
                     </td>
                   </tr>
                 )}
-                {!(collapsibleGroups && collapsed.has(name)) && groupRows.map(renderRow)}
+                {!isFolded(name) && groupRows.map(renderRow)}
               </Fragment>
             ))}
             {!shown.length && <tr><td colSpan={span} className="empty">{loading ? "Загрузка…" : emptyText}</td></tr>}

@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { CableTable } from "./CableTables";
 import { cableCategory, cableFamily, cableGroup, cableSeries, compareByFamily, compareCables, screenSplit } from "./cableCategory";
 import type { CablesResult } from "./api";
-import { blockLines, listHead, listHeads } from "./test/blocks";
+import { render, blockLines, listHead, listHeads } from "./test/blocks";
 
 it.each([
   ["Cat5e F/UTP 4PR 24AWG", "Витая пара / Ethernet"], ["Паритет ParLan U/UTP Cat5e", "Витая пара / Ethernet"], ["SFTP Cat6a", "Витая пара / Ethernet"],
