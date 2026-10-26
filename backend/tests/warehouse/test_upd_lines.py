@@ -175,3 +175,15 @@ def test_the_unit_a_model_read(text, unit):
 ])
 def test_the_quantity_a_model_read(text, value):
     assert quantity_of(text) == value
+
+
+def test_packs_of_a_name_that_counts_pieces_multiply_only_in_packs():
+    # 26.10.2026, УПД ВсеИнструменты № 3789518: 7 упак «…, 100 шт» — Алексей принял 700 шт
+    name = "Vell Наконечник штыревой втулочный, НШВ 6,0-12, 100 шт (VLnhv-6.0-12(100)) 1396474"
+    packs = item_line(name, Decimal(7), "упак")
+    assert (packs.quantity, packs.unit, packs.packs, packs.invoice_quantity, packs.invoice_unit) == (
+        Decimal(700), "шт", Decimal(7), Decimal(7), "упак")
+    pieces = item_line(name, Decimal(700), "шт")
+    assert (pieces.quantity, pieces.unit, pieces.packs) == (Decimal(700), "шт", None)
+    one = item_line("Набор отвёрток, 1 шт", Decimal(2), "упак")
+    assert (one.quantity, one.unit) == (Decimal(2), "упак")

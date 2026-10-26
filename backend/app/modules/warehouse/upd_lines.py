@@ -216,6 +216,19 @@ def find_pack(name: str) -> _Pack | None:
     return None
 
 
+# «…, 100 шт (VLnhv-6.0-12(100))» invoiced in «упак»: the pieces a pack holds, said without «упаковка»
+_PIECES = re.compile(r"(?<![\d.,])(?P<n>\d[\d ]*?)\s*шт\.?(?![а-яёa-z])", re.I)
+
+
+def _pieces_in_pack(name: str) -> _Pack | None:
+    """Packs of a name that counts pieces (26.10.2026: 7 упак «НШВ 6,0-12, 100 шт» are 700 шт on the shelf)."""
+    found = _PIECES.search(name)
+    size = _number(found["n"]) if found else None
+    if found is None or not size or size <= 1:
+        return None
+    return _Pack(size=size, unit="шт", kind="уп.", explicit=True, span=found.span())
+
+
 def _apply_pack(quantity: Decimal | None, unit: str, pack: _Pack | None) -> tuple[Decimal | None, str, Decimal | None]:
     """(quantity, unit, packs) on the shelf. Pieces / rolls / packs of a pack in another unit are multiplied; pieces of
     a pack in pieces only when fewer were invoiced than one pack holds (2 шт «упаковка 6000 шт» → 12000 шт, 150 шт «уп.
@@ -341,6 +354,8 @@ def item_line(name: str, quantity: Decimal | None, unit: str, *, supplier_code: 
     pack = find_pack(name)
     if pack is not None and not pack.explicit:
         pack = None
+    if pack is None and unit == "упак":
+        pack = _pieces_in_pack(name)
     total, total_unit, packs = _apply_pack(quantity, unit, pack)
     return UpdLine(
         article=article, name=name, quantity=total, unit=total_unit, invoice_quantity=quantity, invoice_unit=unit,

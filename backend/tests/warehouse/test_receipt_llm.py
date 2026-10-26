@@ -539,3 +539,9 @@ def test_a_reading_with_a_gap_in_row_numbers_is_read_once_more_and_the_fuller_on
 def test_a_second_gappy_reading_keeps_the_first_and_stops():
     assert not receipt_llm.numbering_gap({"lines": [{"n": "8"}]}), "a continuation sheet starts anywhere"
     assert not receipt_llm.numbering_gap({"lines": [{"n": ""}, {"n": "2"}]})
+
+
+def test_the_prompt_tells_lugs_from_terminals_and_a_seller_pack_code_from_an_article():
+    prompt = receipt_llm.page_prompt()
+    assert "«Наконечник» — НШВ" in prompt and "«Терминал» — обжимной контакт" in prompt
+    assert "«VLnhv-6.0-12(100)» — не артикул" in prompt and "без количества в упаковке" in prompt
