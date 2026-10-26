@@ -206,3 +206,12 @@ def test_the_mirror_export_fills_rows_stored_before_the_card_and_its_second_appl
                    for record in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=100_000)]
     [found] = matching_terminal_records(records, "39000039")  # the BAG article of the Mini-Fit Jr. contact
     assert found.article == "39000038" and found.gender == "Female"
+
+
+def test_jst_reel_suffix_n_finds_the_same_contact():
+    """JST «(N)» — пометка катушки, контакт тот же (394К.10: SYM-001T-P0.6(N) → SYM-001T-P0.6)."""
+    card = TerminalRecord.from_fields({"terArticle": "SYM-001T-P0.6", "awgFrom": "28", "awgTo": "22"})
+    other = TerminalRecord.from_fields({"terArticle": "SYM-001T-P0.6A", "awgFrom": "28", "awgTo": "22"})
+    assert matching_terminal_records((other, card), "SYM-001T-P0.6(N)") == (card,)
+    assert matching_terminal_records((other, card), "SYM-001T-P0.6 (n)") == (card,)
+    assert matching_terminal_records((other, card), "SYM-001T-P0.6N") == ()
