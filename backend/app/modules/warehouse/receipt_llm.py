@@ -225,9 +225,21 @@ class PageAnswer:
     error: str = ""
 
 
+def _row_numbers(data: Mapping) -> list[int]:
+    rows = data.get("lines") if isinstance(data.get("lines"), list) else []
+    return sorted({int(n) for row in rows if isinstance(row, Mapping) and str(n := row.get("n", "")).strip().isdigit()})
+
+
+def numbering_gap(data: Mapping) -> bool:
+    """«1, 2, …, 5, 7» — a row of the table is missing: the model glued two rows (seen on the first real scans, 26.10)."""
+    numbers = _row_numbers(data)
+    return len(numbers) >= 2 and numbers[-1] - numbers[0] + 1 > len(numbers)
+
+
 def read_page(config: LlmConfig, jpeg: bytes, page: int, deadline: float,
-              clock: Callable[[], float] = time.monotonic) -> PageAnswer:
-    """One page through the main model (one retry on 5xx / timeout), then the fallback model."""
+              clock: Callable[[], float] = time.monotonic, gap_retry: bool = True) -> PageAnswer:
+    """One page through the main model (one retry on 5xx / timeout), then the fallback model. A reading whose row
+    numbers have a gap is read once more; the reading with more rows wins."""
     messages = [{"role": "user", "content": [
         {"type": "text", "text": PROMPT},
         {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}},
@@ -256,6 +268,12 @@ def read_page(config: LlmConfig, jpeg: bytes, page: int, deadline: float,
             log.info("УПД: модель %s, стр. %d — %.1f с, токенов %s (вход %s, выход %s)", model, page,
                      clock() - started, usage.get("total_tokens", "?"), usage.get("prompt_tokens", "?"),
                      usage.get("completion_tokens", "?"))
+            if gap_retry and numbering_gap(data):
+                log.info("УПД: модель %s, стр. %d — пропуск в номерах строк %s, читаю ещё раз", model, page,
+                         _row_numbers(data))
+                again = read_page(config, jpeg, page, deadline, clock, gap_retry=False)
+                if again.data is not None and len(_row_numbers(again.data)) > len(_row_numbers(data)):
+                    return again
             return PageAnswer(page, data, model=model)
     return PageAnswer(page, None, error="; ".join(errors))
 

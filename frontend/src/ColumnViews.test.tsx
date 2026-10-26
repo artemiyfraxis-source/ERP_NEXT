@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ColumnViewsProvider } from "./ColumnViews";
 import { useColumnRemoval } from "./CustomColumn";
 import { DataTable, type DataColumn } from "./DataTable";
@@ -22,7 +22,10 @@ const SHARED: SharedColumn[] = [
   { key: "name", visible: true }, { key: "status", visible: true }, { key: "qty", visible: true }, { key: "supplier", visible: false },
 ];
 
-afterEach(() => { window.localStorage.clear(); vi.restoreAllMocks(); });
+// The table saves its column choice after render: unmount first, then wipe, and start every test clean — a save that
+// landed after the previous test's wipe made «opens with the table's own columns» fail now and then (26.10).
+beforeEach(() => { window.localStorage.clear(); });
+afterEach(() => { cleanup(); window.localStorage.clear(); vi.restoreAllMocks(); });
 
 function mount(views: Record<string, SharedColumn[]>, canEdit: boolean) {
   vi.spyOn(referencesApi, "columnViews").mockResolvedValue({ views, can_edit: canEdit });
