@@ -587,6 +587,8 @@ const SOLDER_CONN_MAP: Array<[RegExp, string]> = [
   [/qs[\s-]*8|\bas[\s-]*150|xt[\s-]*150/i, "SDR_QS8"],
   [/\bsa\d{3,4}\s*\//i, "SDR_SA"], [/gx[\s-]*12|lp[\s-]*12/i, "SDR_GX12"], [/gx[\s-]*16|lp[\s-]*16/i, "SDR_GX16"],
   [/lemo/i, "SDR_LEMO"], [/mr[\s-]*10/i, "SDR_MR10"], [/\brca\b/i, "SDR_RCA"],
+  // micro-USB паяется той же картой, что USB-A 2.0: операция одна, распиновка — по КД (владелец 26.10).
+  [/micro[\s-]*usb|usb[\s-]*micro/i, "SDR_USB_A_2.0"],
   [/usb[\s-]*c.*3[.,]2|type[\s-]*c.*3[.,]2/i, "SDR_USB_C_3.2"], [/usb[\s-]*c|type[\s-]*c/i, "SDR_USB_C_2.0"],
   [/usb[\s-]*a.*3[.,]2/i, "SDR_USB_A_3.2"], [/usb[\s-]*a/i, "SDR_USB_A_2.0"],
   [/aux|jack\s*3[.,]5|3[.,]5\s*mm/i, "SDR_AUX"],
