@@ -1,5 +1,5 @@
-"""The registry's PDF parser rules (purchasing.upd_parse): the cases of Roller_Buyer's google/upd-parser/test/core.test.mjs,
-which this module ports, plus the registry values."""
+"""The document reader's CLOSING rules (app.shared.doc_reader.closing, re-exported by purchasing.upd_parse): the cases
+of Roller_Buyer's google/upd-parser/test/core.test.mjs, which it ports, plus the registry values."""
 
 from __future__ import annotations
 
@@ -140,8 +140,8 @@ def test_duplicate_lines_are_flagged_and_numbers_stay_unique():
     assert [line.seq for line in doc.lines] == [1, 2, 3]  # the registry keeps one line per number
 
 
-def test_every_kind_of_the_schema_has_a_label():
-    assert sorted(p.response_schema()["properties"]["docKind"]["enum"]) == sorted(p.KIND_LABELS)
+def test_every_kind_of_the_prompt_has_a_label():
+    assert all(f"• {kind} — " in p.prompt("") for kind in p.KIND_LABELS)
     assert (p.KIND_LABELS["ACT"], p.KIND_LABELS["TORG12"]) == ("Акт", "Товарная накладная")
 
 

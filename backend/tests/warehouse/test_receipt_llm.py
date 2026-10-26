@@ -1,14 +1,19 @@
-"""A paper УПД read by a vision model over an OpenAI-compatible API (owner 26.10.2026: «давай сразу апи»).
+"""A paper УПД read by a vision model over an OpenAI-compatible API (owner 26.10.2026: «давай сразу апи») — since
+26.10.2026 by the ERP's one document reader (`app.shared.doc_reader`: Roller_Buyer's prompt and checks on this
+transport), whose answer per page is the CLOSING task's (docKind, number, sellerName, basis, paymentDoc, lines with
+seq / article / qty / unit / money and the warehouse fields).
 
-The HTTP calls go to a fake `urlopen`; the scans are blank pictures, the model's answers made up (no real ИНН, no
-prices). Tesseract stays the fallback, the key is set by the administrator and never leaves the server."""
+The HTTP calls go to a fake `urlopen`; the scans are blank pictures, the model's answers made up (no real ИНН).
+Tesseract stays the fallback, the key is set by the administrator and never leaves the server."""
 
+import base64
 import io
 import json
 import logging
 import subprocess
 import threading
 import urllib.error
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -20,30 +25,36 @@ from app.main import app
 from app.modules.warehouse import receipt_llm, receipt_ocr
 from app.modules.warehouse.receipt_scan import NO_TEXT, PARTLY, RecognisedUpd, parse_upd_text, prd_refs
 from app.modules.warehouse.scan_reading import (
-    MODEL_FAILED, ScanReading, merge_readings, read_scan, reading_from_json, reading_json,
+    MODEL_FAILED, PAGES_FAILED, ScanReading, merge_readings, model_view, read_scan, reading_from_json, reading_json,
 )
 from app.modules.warehouse.upd_lines import item_line, line_answer
+from app.shared.doc_reader import pages as doc_pages
+from app.shared.doc_reader import transport
+from app.shared.doc_reader.closing import closing_doc
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.access_levels import principal_as
+from tests.pdf_samples import identity_pdf
 from tests.identity.test_api_tokens import _csrf, _login, tokens_api  # noqa: F401  (fixture)
 
 KEY = "sk-test-0123456789-secret-AbCd"
 SETTINGS = "/api/stock/receipts/llm-settings"
 CONFIG = receipt_llm.LlmConfig(base_url="https://llm.example.test/v1", api_key=KEY)
 PAGE_1 = {
-    "supplier": "ООО «Пример Кабель»", "inn": "7701234567", "upd_number": "А-17", "upd_date": "2026-10-20",
-    "invoice_number": "45", "invoice_date": "2026-10-01",
+    "docKind": "UPD", "number": "А-17", "date": "2026-10-20", "sellerName": "ООО «Пример Кабель»",
+    "sellerInn": "7701234567", "basis": "Счет № 45 от 01.10.2026; Договор поставки № 7 от 01.01.2026",
+    "paymentDoc": None,
     "lines": [
-        {"n": "1", "supplier_code": "00-0001", "name": "Маркировочная трубка МТ-2К 6,4/3,2мм белая (в рулоне 100 м)",
-         "unit": "шт", "quantity": "3.000"},
-        {"n": "2", "supplier_code": "00-0002", "name": "Тр-1090EW Самоклеющаяся лента, 9мм*16м, белая",
-         "unit": "шт", "quantity": "2"},
+        {"seq": 1, "article": "00-0001", "name": "Маркировочная трубка МТ-2К 6,4/3,2мм белая (в рулоне 100 м)",
+         "unitCode": "796", "unit": "шт", "qty": 3, "price": 500, "net": 1500, "vatRate": "22%", "vat": 330,
+         "gross": 1830},
+        {"seq": 2, "article": "00-0002", "name": "Тр-1090EW Самоклеющаяся лента, 9мм*16м, белая", "unit": "шт",
+         "qty": 2, "price": 100, "net": 200, "vatRate": "22%", "vat": 44, "gross": 244},
     ],
 }
 PAGE_2 = {
-    "supplier": "", "inn": "", "upd_number": "", "upd_date": "", "invoice_number": "", "invoice_date": "",
-    "lines": [{"n": "3", "supplier_code": "00-0003", "name": "Кабель UTP 4x2x0,5 в бухте 305 м", "unit": "м",
-               "quantity": "305"}],
+    "docKind": "UPD", "number": None, "date": None, "sellerName": None, "sellerInn": None, "totalGross": 2440,
+    "lines": [{"seq": 3, "article": "00-0003", "name": "Кабель UTP 4x2x0,5 в бухте 305 м", "unit": "м", "qty": 305,
+               "price": 1, "net": 305, "vatRate": "22%", "vat": 61, "gross": 366}],
 }
 
 
@@ -113,7 +124,8 @@ def test_a_page_goes_with_the_prompt_the_key_and_the_measured_parameters(api):
     assert (body["model"], body["temperature"], body["reasoning_effort"]) == ("gpt-5.6-luna", 0, "medium")
     assert body["response_format"] == {"type": "json_object"} and sent["timeout"] == 120
     text, picture = body["messages"][0]["content"]
-    assert text["text"] == receipt_llm.PROMPT and "Цифры переписывай посимвольно" in text["text"]
+    assert text["text"] == receipt_llm.PROMPT and "переписывай посимвольно" in text["text"]
+    assert "ОДНА страница документа" in text["text"] and "paymentDoc" in text["text"], "the reader's page task"
     assert picture["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
 
@@ -131,7 +143,7 @@ def test_the_answer_is_read_in_fences_with_chatter_and_in_parts(content):
 
 def test_5xx_is_retried_once_then_the_fallback_model_reads_the_page(api, monkeypatch):
     fake = api(502, TimeoutError("timed out"), _reply(PAGE_1, fenced=True))
-    logger, records = logging.getLogger(receipt_llm.__name__), []
+    logger, records = logging.getLogger(transport.__name__), []  # the call moved to the shared reader
     handler = logging.Handler(logging.INFO)
     handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[method-assign]
     monkeypatch.setattr(logger, "disabled", False)  # another test's logging config may have switched it off
@@ -185,7 +197,7 @@ def test_pages_go_in_parallel_and_come_back_in_page_order(api):
     api(page, page, page)
     answers = receipt_llm.read_pages(CONFIG, [b"1", b"2", b"1"])
     assert [answer.page for answer in answers] == [1, 2, 3]
-    assert [answer.data["lines"][0]["n"] for answer in answers] == ["1", "3", "1"]
+    assert [answer.data["lines"][0]["seq"] for answer in answers] == [1, 3, 1]
 
 
 def test_config_env_wins_field_by_field_and_the_key_has_no_default():
@@ -205,7 +217,7 @@ def test_config_env_wins_field_by_field_and_the_key_has_no_default():
 
 
 def test_model_rows_become_warehouse_lines_pack_only_when_said_in_words():
-    lines = receipt_llm.page_lines(PAGE_1) + receipt_llm.page_lines(PAGE_2)
+    lines = receipt_llm.reading_lines(closing_doc([PAGE_1, PAGE_2]))
     assert [(line.article, line.quantity, line.unit, line.packs, line.supplier_code, line.number) for line in lines] == [
         ("МТ-2К 6,4/3,2 белая", Decimal(300), "м", Decimal(3), "00-0001", "1"),  # 3 рулона × 100 м
         ("Тр-I090EW", Decimal(2), "шт", None, "00-0002", "2"),  # «9мм*16м» is the tape's size: 2 шт stay 2 шт
@@ -213,23 +225,26 @@ def test_model_rows_become_warehouse_lines_pack_only_when_said_in_words():
     ]
     assert lines[0].name == "Маркировочная трубка МТ-2К 6,4/3,2мм белая (в рулоне 100 м)", "the name as printed"
     assert lines[1].name.startswith("Тр-I090EW "), "the OCR I↔1 fix of the code stays"
-    odd = receipt_llm.page_lines({"lines": [{"name": "", "supplier_code": ""}, "x", {"name": "Хомут", "quantity": ""}]})
+    odd = receipt_llm.reading_lines(closing_doc([{"lines": [
+        {"name": "", "article": ""}, "x", {"name": "Хомут", "qty": None, "unitCode": ""}]}]))
     assert [(line.name, line.quantity, line.unit) for line in odd] == [("Хомут", None, "шт")]
 
 
-def test_the_header_of_a_page():
-    found = receipt_llm.page_header({**PAGE_1, "inn": "77 0123 4567", "upd_date": "20.10.2026", "invoice_date": ""})
+def test_the_header_of_a_reading_invoice_only_from_the_basis_prd_only_from_the_payment_line():
+    found = receipt_llm.reading_header(closing_doc([{**PAGE_1, "sellerInn": "77 0123 4567", "date": "20.10.2026"}]))
     assert found == RecognisedUpd(supplier="ООО «Пример Кабель»", inn="7701234567", upd_number="А-17",
-                                  upd_date=date(2026, 10, 20), invoice_number="45", invoice_date=None)
-    assert receipt_llm.page_header({"inn": "123", "upd_date": "вчера"}) == RecognisedUpd()
+                                  upd_date=date(2026, 10, 20), invoice_number="45", invoice_date=date(2026, 10, 1))
+    contract = receipt_llm.reading_header(closing_doc([{**PAGE_1, "basis": "Договор поставки № 7 от 01.01.2026"}]))
+    assert (contract.invoice_number, contract.invoice_date) == ("", None), "a contract is not the delivery's invoice"
+    assert receipt_llm.reading_header(closing_doc([{"sellerInn": "123", "date": "вчера"}])) == RecognisedUpd()
 
 
 def test_pages_merge_header_first_lines_in_order_a_repeated_sheet_once():
-    one = ScanReading(receipt_llm.page_header(PAGE_1), tuple(receipt_llm.page_lines(PAGE_1)), engine="gpt-5.6-luna")
-    two = ScanReading(receipt_llm.page_header(PAGE_2), tuple(receipt_llm.page_lines(PAGE_2)), engine="gpt-5.6-luna")
+    one, two = model_view([PAGE_1], engine="gpt-5.6-luna"), model_view([PAGE_2], engine="gpt-5.6-luna")
     merged = merge_readings([one, two, two])
     assert merged.found.upd_number == "А-17" and merged.note == ""
     assert [line.number for line in merged.lines] == ["1", "2", "3"]
+    assert merged.pages == (PAGE_1, PAGE_2, PAGE_2), "the sheets' pages kept for the registry"
     late = merge_readings([two, one])
     assert late.found.supplier == "ООО «Пример Кабель»", "the header from the first page that has it"
     same_name = item_line("Хомут", Decimal(1), "шт", number="7")
@@ -237,26 +252,29 @@ def test_pages_merge_header_first_lines_in_order_a_repeated_sheet_once():
     assert len(merge_readings([ScanReading(RecognisedUpd(), (same_name, other_row))]).lines) == 2
     assert merge_readings([]).note == NO_TEXT
     assert merge_readings([ScanReading(RecognisedUpd(supplier="ООО Альфа"))]).note == PARTLY
+    tesseract = ScanReading(RecognisedUpd(supplier="ООО Альфа"), (other_row,), engine="tesseract")
+    mixed = merge_readings([one, tesseract])
+    assert mixed.pages == () and len(mixed.lines) == 3, "a sheet without the model's pages: merged as before"
 
 
 def test_a_reading_is_kept_as_json_and_read_back():
-    reading = ScanReading(receipt_llm.page_header(PAGE_1), tuple(receipt_llm.page_lines(PAGE_1)), "", "w", "m")
-    assert reading_from_json(reading_json(reading)) == reading
+    reading = replace(model_view([PAGE_1, None]), warning="w", engine="m")
+    assert reading_from_json(reading_json(reading)) == reading and reading.pages == (PAGE_1, None)
     assert reading_from_json("") is None and reading_from_json("{broken") is None
     assert reading_from_json(json.dumps({"found": {}, "lines": [{"unknown": 1}]})) is None
 
 
 # --- what the model makes of a name (owner 26.10.2026: «и тип, и артикул, и наименование наше») ---------------------
 
-TYPED = {"lines": [
-    {"n": "1", "supplier_code": "00-0001", "name": "Контакт обжимной SXH-001T-P0.6 (JST) упаковка 6000 шт",
-     "unit": "шт", "quantity": "1", "article": "SXH-001T-P0.6", "maker": "Jst", "item_type": " терминал ",
-     "short_name": "Контакт обжимной JST SXH, 0,08–0,2 мм²"},
-    {"n": "2", "supplier_code": "00-0002", "name": "Маркировочная трубка МТ-2К 6,4/3,2мм белая (в рулоне 100 м)",
-     "unit": "шт", "quantity": "3", "article": "МТ-2К", "maker": "", "item_type": "Трубка какая-то",
-     "short_name": "Трубка маркировочная 6,4/3,2 мм, белая"},
-    {"n": "3", "supplier_code": "", "name": "Хомут нейлоновый 2,5х100 белый", "unit": "упак", "quantity": "2",
-     "article": "HV-100", "maker": "", "item_type": "", "short_name": ""},
+TYPED = {"docKind": "UPD", "lines": [
+    {"seq": 1, "article": "00-0001", "name": "Контакт обжимной SXH-001T-P0.6 (JST) упаковка 6000 шт",
+     "unit": "шт", "qty": 1, "makerArticle": "SXH-001T-P0.6", "maker": "Jst", "itemType": " терминал ",
+     "shortName": "Контакт обжимной JST SXH, 0,08–0,2 мм²"},
+    {"seq": 2, "article": "00-0002", "name": "Маркировочная трубка МТ-2К 6,4/3,2мм белая (в рулоне 100 м)",
+     "unit": "шт", "qty": 3, "makerArticle": "МТ-2К", "maker": None, "itemType": "Трубка какая-то",
+     "shortName": "Трубка маркировочная 6,4/3,2 мм, белая"},
+    {"seq": 3, "article": None, "name": "Хомут нейлоновый 2,5х100 белый", "unit": "упак", "qty": 2,
+     "makerArticle": "HV-100", "maker": None, "itemType": None, "shortName": None},
 ]}
 
 
@@ -264,15 +282,15 @@ def test_the_prompt_asks_for_article_maker_type_from_the_stock_dictionary_and_ou
     fake = api(_reply(PAGE_1))
     receipt_llm.read_page(CONFIG, b"jpeg", 1, _deadline(), _clock, types=["Кабель", "Лента"])
     text = fake.requests[0]["body"]["messages"][0]["content"][0]["text"]
-    for field in ('"article"', '"maker"', '"item_type"', '"short_name"', '"prd_number"', '"prd_date"'):
+    for field in ("makerArticle", "maker", "itemType", "shortName", "paymentDoc", "basis", "totalGross", "vatRate"):
         assert field in text
     assert "ровно одно из: «Кабель»; «Лента»" in text and "Термоусадочная" not in text
-    assert "К платёжно-расчётному документу" in text
+    assert "К платёжно-расчётному документу" in text and "Основание передачи" in text
     assert "«Термоусадочная трубка»" in receipt_llm.PROMPT, "the canonical list by default"
 
 
 def test_the_model_fields_of_a_row_type_only_from_the_dictionary_maker_normalised_article_first():
-    first, second, third = receipt_llm.page_lines(TYPED, ["Терминал", "Кабель"])
+    first, second, third = receipt_llm.reading_lines(closing_doc([TYPED]), ["Терминал", "Кабель"])
     assert (first.article, first.short_name, first.item_type, first.manufacturer) == (
         "SXH-001T-P0.6", "Контакт обжимной JST SXH, 0,08–0,2 мм²", "Терминал", "JST")
     assert first.name.startswith("Контакт обжимной SXH-001T-P0.6"), "the printed name stays"
@@ -293,21 +311,22 @@ def test_a_reading_without_the_new_fields_still_loads_and_answers_the_printed_na
                       "invoice_unit": "шт"}], "note": "", "warning": "", "engine": "gpt"}
     reading = reading_from_json(json.dumps(old))
     assert reading is not None and reading.found.prd_number == "" and reading.found.prd_date is None
+    assert reading.pages == () and not reading.complete, "a reading kept before the document reader: no pages"
     [line] = reading.lines
     assert (line.short_name, line.item_type, line.manufacturer) == ("", "", "")
     assert line_answer(line)["name"] == line_answer(line)["upd_name"] == "Разъём A-1"
-    lines = receipt_llm.page_lines(PAGE_1)
+    lines = receipt_llm.reading_lines(closing_doc([PAGE_1]))
     assert all(line.short_name == line.item_type == line.manufacturer == "" for line in lines)
-    typed = ScanReading(receipt_llm.page_header({**PAGE_1, "prd_number": "№ 916, №917", "prd_date": "2026-10-19"}),
-                        tuple(receipt_llm.page_lines(TYPED)))
+    typed = model_view([{**PAGE_1, "paymentDoc": "№ 916 от 19.10.2026, № 917 от 20.10.2026"}, TYPED])
     assert reading_from_json(reading_json(typed)) == typed
 
 
 def test_the_payment_document_of_the_header():
-    found = receipt_llm.page_header({**PAGE_1, "prd_number": "№ 916, №917", "prd_date": "19.10.2026"})
+    found = receipt_llm.reading_header(closing_doc([{**PAGE_1, "paymentDoc": "№ 916 от 19.10.2026, №917 от 20.10.2026"}]))
     assert (found.prd_number, found.prd_date) == ("916, 917", date(2026, 10, 19))
     assert (found.invoice_number, found.invoice_date) == ("45", date(2026, 10, 1)), "the invoice stays apart"
-    assert receipt_llm.page_header(PAGE_1).prd_number == ""
+    assert receipt_llm.reading_header(closing_doc([PAGE_1])).prd_number == ""
+    assert receipt_llm.payment_refs("916 от 19.10.2026") == ("916", date(2026, 10, 19)), "«№» left out"
 
 
 def test_the_payment_document_by_rules_when_no_model_read_the_page():
@@ -365,6 +384,55 @@ def test_without_a_key_the_scan_is_read_by_tesseract_as_before(api, monkeypatch)
     assert reading.found.supplier == "ООО Альфа" and reading.note == PARTLY and fake.requests == []
 
 
+ELECTRONIC = [
+    "Счет-фактура № А-17 от 20.10.2026 (1)", "Продавец: ООО «Пример Кабель» (2)",
+    "ИНН/КПП продавца: 7701234567/770101001 (2б)", "Основание передачи: Счёт № 45 от 01.10.2026",
+] + ["Маркировочная трубка термоусадочная белая в рулоне сто метров"] * 5
+
+
+def test_an_electronic_pdf_is_one_text_call_of_the_reader_no_pictures(api, monkeypatch):
+    monkeypatch.setattr(receipt_ocr, "page_images", lambda *args: pytest.fail("an electronic PDF needs no pictures"))
+    fake = api(_reply({**PAGE_1, "lines": PAGE_1["lines"] + PAGE_2["lines"], "totalGross": 2440}))
+    reading = read_scan(identity_pdf(ELECTRONIC), "application/pdf", CONFIG)
+    [sent] = fake.requests
+    prompt = sent["body"]["messages"][0]["content"]
+    assert isinstance(prompt, str) and "Основание передачи: Счёт № 45 от 01.10.2026" in prompt
+    assert "makerArticle" in prompt, "the warehouse fields are asked of a text reading too"
+    assert reading.engine == "gpt-5.6-luna, текст PDF" and reading.found.invoice_number == "45"
+    assert [line.supplier_code for line in reading.lines] == ["00-0001", "00-0002", "00-0003"]
+    assert len(reading.pages) == 1 and reading.complete
+
+
+def test_a_text_layer_the_model_did_not_read_falls_back_to_its_rules(api):
+    api(500, 500, 500)
+    reading = read_scan(identity_pdf(ELECTRONIC), "application/pdf", CONFIG)
+    assert (reading.found.upd_number, reading.engine, reading.warning) == ("А-17", "текст PDF", MODEL_FAILED)
+    assert reading.pages == ()
+    without_key = read_scan(identity_pdf(ELECTRONIC), "application/pdf", receipt_llm.LlmConfig())
+    assert (without_key.found.upd_number, without_key.warning, without_key.pages) == ("А-17", "", ()), "as before"
+
+
+def test_a_page_no_model_read_is_read_by_tesseract_next_to_the_model_pages(api, monkeypatch, tmp_path):
+    two = [tmp_path / "page-1.png", tmp_path / "page-2.png"]
+    for page in two:
+        page.write_bytes(_png())
+    monkeypatch.setattr(receipt_ocr, "page_images", lambda content, kind, folder: two)
+    monkeypatch.setattr(receipt_ocr, "page_turn", lambda image: 0)
+    monkeypatch.setattr(receipt_ocr, "page_text", lambda image: "1 Хомут нейлоновый 2,5х100 796 шт 5,000 10,00")
+    monkeypatch.setattr(receipt_llm, "page_jpeg", lambda image, turn: image.name.encode())
+
+    def by_page(body):  # the pages go in parallel: told apart by their picture, not by the order of the calls
+        url = body["messages"][0]["content"][1]["image_url"]["url"]
+        return _reply(PAGE_1) if url.endswith(base64.b64encode(b"page-1.png").decode()) else 401
+
+    api(by_page, by_page, by_page)
+    reading = read_scan(b"%PDF-1.4 scan", "application/pdf", CONFIG)
+    assert reading.found.upd_number == "А-17" and reading.warning == PAGES_FAILED.format(pages="2")
+    assert [line.supplier_code for line in reading.lines][:2] == ["00-0001", "00-0002"] and len(reading.lines) == 3
+    assert reading.pages == (PAGE_1, None) and not reading.complete, "the registry learns which page is missing"
+    assert reading.engine == "gpt-5.6-luna · tesseract"
+
+
 def test_orientation_by_tesseract_osd_else_by_the_words_read(monkeypatch, tmp_path):
     from PIL import Image
 
@@ -400,7 +468,7 @@ def stand(tokens_api, monkeypatch):  # noqa: F811
     monkeypatch.setattr(receipt_ocr, "page_turn", lambda image: 0)
     monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: "")
     monkeypatch.setattr(receipt_ocr, "page_text", lambda image: "")
-    monkeypatch.setattr(receipt_ocr, "_pdf_pages", _one_page)  # pdftoppm (the server image has it)
+    monkeypatch.setattr(doc_pages, "_pdf_pages", _one_page)  # pdftoppm (the server image has it)
     return _login("admin"), tokens_api[0]
 
 

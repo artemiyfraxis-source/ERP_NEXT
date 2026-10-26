@@ -1,12 +1,12 @@
-"""The registry's PDF parser at work: a queued PDF read by the model, the answer written into the УПД registry.
+"""The registry's PDF parser at work: a queued PDF read by the ERP's document reader, the answer written into the УПД
+registry.
 
-Purchasing owns the task and the checks (`purchasing.upd_parse`) and the writes (`purchasing.upd_pdf`); the model
-API is the warehouse's «Распознавание УПД» (`warehouse.receipt_llm`: env `ERP_UPD_LLM_*` over the saved settings, the
-same key, model and fallback model), and so are the page pictures (`warehouse.receipt_ocr`: pdftoppm, the upright
-turn). This port is the one place that joins them.
-
-Unlike the warehouse's page-by-page reading, the whole document goes in ONE call — all page pictures (≤ 10) plus the
-PDF's text layer when it has one — because the totals on the last page are checked against the lines of every page.
+The reader is the one the warehouse reads its scans with (`app.shared.doc_reader`, Витя 26.10.2026: one parser for the
+whole ERP): an electronic PDF (a real text layer) in ONE text-only call, a scan page by page in parallel (upright
+grayscale pictures, the numbering-gap reread), the pages merged and only then checked (`closing.closing_doc`). The
+model settings are the warehouse's «Распознавание УПД» (env `ERP_UPD_LLM_*` over the saved settings: the same key,
+model and fallback model) — this port is the one place purchasing reaches them. Purchasing owns the writes
+(`purchasing.upd_pdf`) and the registry's columns (`purchasing.upd_parse`).
 
     ERP_DATABASE_URL=… python -m app.workflows.upd_pdf_parse --benchmark [--limit N]   # writes nothing
     ERP_DATABASE_URL=… python -m app.workflows.upd_pdf_parse --queued [--apply]
@@ -19,17 +19,13 @@ print, writing nothing; with it the readings replace the stored ones. Every read
 from __future__ import annotations
 
 import argparse
-import base64
 import logging
 import os
 import re
 import sys
-import tempfile
-import time
 from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
-from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import select
@@ -37,16 +33,17 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.modules.purchasing import upd_parse, upd_pdf
 from app.modules.purchasing.infrastructure import DocumentFileRow, UpdDocumentRow, UpdLineRow
-from app.modules.warehouse import receipt_llm, receipt_ocr
 from app.modules.warehouse.scan_recognition import llm_config as warehouse_llm_config
 from app.shared.clock import moscow_now
+from app.shared.doc_reader import pages as doc_pages
+from app.shared.doc_reader import reader as doc_reader
+from app.shared.doc_reader.transport import LlmConfig, LlmError, llm_config as config_of
 from app.shared.identity import Actor
-from app.shared.pdf_text import PdfLimitExceeded, pdf_text
 
 log = logging.getLogger(__name__)
 
-CALL_TIMEOUT = 300.0  # one call reads the whole document; a background task, no proxy minute to keep
-MIN_TEXT_LETTERS = 200  # fewer Cyrillic letters — a scan without a real text layer
+CALL_TIMEOUT = 300.0  # one text call reads the whole document; a background task, no proxy minute to keep
+BUDGET = 900.0  # seconds for one document, all its pages
 NO_KEY = "не задан ключ модели: «Склад» → «Распознавание УПД» (или ERP_UPD_LLM_API_KEY)"
 NO_PAGES = "нет ни изображений страниц (pdftoppm), ни текстового слоя — разобрать нечем"
 PARSER_ACTOR = Actor(id=UUID(int=0), name="Разборщик УПД", department="Система")
@@ -56,82 +53,39 @@ class ParseFailed(RuntimeError):
     pass
 
 
-def llm_config(warehouse: Callable | None) -> receipt_llm.LlmConfig:
+def llm_config(warehouse: Callable | None) -> LlmConfig:
     """The warehouse's model settings; no warehouse module on this server — the env alone."""
-    return warehouse_llm_config(warehouse) if warehouse is not None else receipt_llm.llm_config({})
+    return warehouse_llm_config(warehouse) if warehouse is not None else config_of({})
 
 
 def text_layer(content: bytes) -> str:
     """The PDF's own text when it is a real one (an electronic document, not a scan); '' otherwise."""
-    try:
-        text = pdf_text(content)
-    except PdfLimitExceeded:
-        return ""
-    except Exception:  # noqa: BLE001 — a broken text layer only means «read the pictures»
-        return ""
-    return text if len(re.findall("[А-Яа-яЁё]", text or "")) >= MIN_TEXT_LETTERS else ""
+    return doc_reader.text_layer(content)
 
 
 def page_pictures(content: bytes) -> list[bytes]:
     """The pages as the model reads them best (upright grayscale JPEGs); [] — no pdftoppm on this server."""
-    with tempfile.TemporaryDirectory(prefix="erp-upd-pdf-") as temporary:
-        try:
-            images = receipt_ocr.page_images(content, "application/pdf", Path(temporary))
-        except receipt_ocr.OcrUnavailable:
-            return []
-        return [receipt_llm.page_jpeg(image, receipt_ocr.page_turn(image)) for image in images]
+    return doc_pages.page_pictures(content, doc_pages.PDF)
 
 
-def ask_model(config: receipt_llm.LlmConfig, task: str, pictures: list[bytes],
-              timeout: float = CALL_TIMEOUT) -> tuple[dict, str]:
-    """One call with every page → (the model's JSON, the model that answered). The main model gets one retry on a
-    5xx / timeout, then the fallback model once; an optional parameter a relay refuses is dropped (`complete`)."""
-    content: list[dict] = [{"type": "text", "text": task}]
-    content += [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(p).decode()}}
-                for p in pictures]
-    messages = [{"role": "user", "content": content}]
-    options: dict[str, object] = {
-        "temperature": 0,
-        "response_format": {"type": "json_schema",
-                            "json_schema": {"name": "upd", "schema": upd_parse.response_schema()}},
-    }
-    if config.effort:
-        options["reasoning_effort"] = config.effort
-    errors: list[str] = []
-    for model, tries in zip(config.models(), (2, 1)):
-        for _attempt in range(tries):
-            started = time.monotonic()
-            try:
-                answer = receipt_llm.complete(config, model, messages, options, timeout)
-                data = receipt_llm.parse_answer(receipt_llm.message_text(answer))
-            except receipt_llm.LlmError as error:
-                log.warning("УПД PDF: модель %s — %s (%.1f с)", model, error, time.monotonic() - started)
-                errors.append(f"{model}: {error}")
-                if error.retry:
-                    continue
-                break
-            usage = answer.get("usage") if isinstance(answer.get("usage"), dict) else {}
-            log.info("УПД PDF: модель %s, страниц %d — %.1f с, токенов %s", model, len(pictures),
-                     time.monotonic() - started, usage.get("total_tokens", "?"))
-            return data, model
-    raise ParseFailed("; ".join(errors) or "модель не ответила")
-
-
-def read_pdf(content: bytes, file_name: str, tag: str, config: receipt_llm.LlmConfig) -> tuple[upd_parse.ParsedDoc, str]:
-    """One PDF → (the normalized document, the model that read it)."""
+def read_pdf(content: bytes, file_name: str, tag: str, config: LlmConfig) -> tuple[upd_parse.ParsedDoc, str]:
+    """One PDF → (the normalized document, the model(s) that read it). A page no model read is named in the remarks;
+    nothing read at all — ParseFailed with the models' answers."""
     if not config.ready:
         raise ParseFailed(NO_KEY)
-    pictures, text = page_pictures(content), text_layer(content)
-    if not pictures and not text:
+    reading = doc_reader.read_closing(config, text=text_layer(content), pictures=lambda: page_pictures(content),
+                                      tag=tag, budget=BUDGET, call_timeout=CALL_TIMEOUT)
+    if not reading.pages:
         raise ParseFailed(NO_PAGES)
-    data, model = ask_model(config, upd_parse.prompt(tag, text), pictures)
-    return upd_parse.normalize(data, tag, file_name), model
+    if not reading.read:
+        raise ParseFailed("; ".join(reading.errors) or "модель не ответила")
+    return reading.doc(tag, file_name), reading.model
 
 
-Reader = Callable[[bytes, str, str, receipt_llm.LlmConfig], tuple[upd_parse.ParsedDoc, str]]
+Reader = Callable[[bytes, str, str, LlmConfig], tuple[upd_parse.ParsedDoc, str]]
 
 
-def parse_document(purchasing: Callable, document_id: str, config: receipt_llm.LlmConfig, actor: Actor = PARSER_ACTOR,
+def parse_document(purchasing: Callable, document_id: str, config: LlmConfig, actor: Actor = PARSER_ACTOR,
                    now: Callable[[], datetime] = moscow_now, reader: Reader | None = None) -> str:
     """Claim → read → write. Returns the verdict, «skipped» (not queued / taken by another process) or «error»."""
     uow = purchasing()
@@ -144,7 +98,7 @@ def parse_document(purchasing: Callable, document_id: str, config: receipt_llm.L
         doc, model = (reader or read_pdf)(claimed.content, claimed.file_name, claimed.tag, config)
     except Exception as error:  # noqa: BLE001 — the document must leave «Разбирается» whatever happened
         log.exception("Разбор PDF %s не удался", document_id)
-        message = str(error) if isinstance(error, (ParseFailed, receipt_llm.LlmError)) else "внутренняя ошибка разбора"
+        message = str(error) if isinstance(error, (ParseFailed, LlmError)) else "внутренняя ошибка разбора"
         uow = purchasing()
         with uow:
             upd_pdf.store_failure(uow, document_id, message, now())
@@ -167,7 +121,7 @@ def parse_documents(purchasing: Callable, warehouse: Callable | None, document_i
         config = llm_config(warehouse)
     except Exception:  # noqa: BLE001 — settings unreadable: every document says so instead of hanging queued
         log.exception("Настройки распознавания УПД не прочитаны")
-        config = receipt_llm.LlmConfig()
+        config = LlmConfig()
     for document_id in document_ids:
         results[parse_document(purchasing, document_id, config, actor)] += 1
     return results
@@ -230,7 +184,7 @@ def _file(session, document_id: str):
     return row, content
 
 
-def benchmark(sessions, config: receipt_llm.LlmConfig, limit: int | None, out=None) -> dict:
+def benchmark(sessions, config: LlmConfig, limit: int | None, out=None) -> dict:
     """Every PDF with an EDO twin, read anew; errors of the stored and of the new reading against the XML."""
     out = out or sys.stdout
     with sessions() as session:
@@ -251,7 +205,7 @@ def benchmark(sessions, config: receipt_llm.LlmConfig, limit: int | None, out=No
             row, content = _file(session, pdf_id)
             try:
                 doc, model = read_pdf(content, row.file_name, upd_pdf.tag_code(row), config)
-            except (ParseFailed, receipt_llm.LlmError) as error:
+            except (ParseFailed, LlmError) as error:
                 failed += 1
                 print(f"{number}/{len(pairs)} {row.file_name}: не прочитан — {error}", file=out)
                 continue
@@ -314,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 try:
                     doc, model = read_pdf(content, row.file_name, upd_pdf.tag_code(row), config)
-                except (ParseFailed, receipt_llm.LlmError) as error:
+                except (ParseFailed, LlmError) as error:
                     print(f"{number}. {row.file_name}: не прочитан — {error}")
                     continue
                 print(f"{number}. {row.file_name} ({model}): {doc.status}; № {doc.number or '—'} от {doc.doc_date or '—'}, "

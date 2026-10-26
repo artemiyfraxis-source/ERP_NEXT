@@ -1,9 +1,11 @@
 """The registry's PDF parser at work: upload → queue → one claim → the answer written, the buyer's word kept
-(purchasing.upd_pdf, app.workflows.upd_pdf_parse, /api/purchasing/upd/import-pdf and /{id}/reparse)."""
+(purchasing.upd_pdf, app.workflows.upd_pdf_parse, /api/purchasing/upd/import-pdf and /{id}/reparse). The reading is
+the ERP's one document reader (app.shared.doc_reader): an electronic PDF in one text call, a scan page by page."""
 
 from __future__ import annotations
 
 import base64
+import json
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -17,8 +19,9 @@ from app.main import app
 from app.modules.purchasing import upd_parse, upd_pdf
 from app.modules.purchasing import upd_registry as repo
 from app.modules.purchasing.infrastructure import SqlAlchemyPurchasingUnitOfWork, UpdDocumentRow, UpdLineRow
-from app.modules.warehouse import receipt_llm
 from app.shared.clock import moscow_now
+from app.shared.doc_reader import transport
+from app.shared.doc_reader.transport import LlmConfig, LlmError
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, create_schema
 from app.workflows import upd_pdf_parse as flow
@@ -27,7 +30,7 @@ from tests.factories import Actor
 BASE = "/api/purchasing/upd"
 NOW = datetime(2026, 10, 26, 12, 0)
 PDF = b"%PDF-1.4\n% a scanned UPD\n"
-READY = receipt_llm.LlmConfig(api_key="test-key")
+READY = LlmConfig(api_key="test-key")
 ANSWER = {
     "docKind": "UPD", "number": "№ 916", "date": "19.10.2026", "sellerName": "ООО «Сафетин»", "sellerInn": "7707083893",
     "basis": "Счет на оплату № 77 от 15.10.2026", "paymentDoc": "№ 916 от 19.10.2026", "totalGross": 1220,
@@ -78,7 +81,7 @@ def upload(client, *files: tuple[str, bytes]) -> dict:
 
 def test_upload_without_a_model_key_queues_the_documents(env, monkeypatch):
     client, sessions = env
-    monkeypatch.setattr(flow, "llm_config", lambda warehouse: receipt_llm.LlmConfig())
+    monkeypatch.setattr(flow, "llm_config", lambda warehouse: LlmConfig())
     result = upload(client, ("Сафетин 1 220.pdf", PDF), ("Сафетин копия.pdf", PDF), ("письмо.txt", b"hello"))
     assert [item["status"] for item in result["files"]] == ["created", "unchanged", "error"]
     assert result["model_ready"] is False
@@ -114,7 +117,7 @@ def test_upload_with_a_key_parses_in_the_background(env, monkeypatch):
 
 def test_a_pdf_imported_from_roller_buyer_is_not_uploaded_twice(env, monkeypatch):
     client, sessions = env
-    monkeypatch.setattr(flow, "llm_config", lambda warehouse: receipt_llm.LlmConfig())
+    monkeypatch.setattr(flow, "llm_config", lambda warehouse: LlmConfig())
     with sessions() as session:
         session.add(UpdDocumentRow(id="1-2BEdkWE", origin="google", file_name="Дарт 500.pdf", status="Разобран",
                                    md5=__import__("hashlib").md5(PDF).hexdigest(), synced_at=NOW, created_at=NOW))
@@ -171,7 +174,7 @@ def test_reparse_refusals(env, monkeypatch):
         session.add(UpdDocumentRow(id="1-nofile", origin="google", file_name="b.pdf", status="Разобран", synced_at=NOW,
                                    created_at=NOW))
         session.commit()
-    monkeypatch.setattr(flow, "llm_config", lambda warehouse: receipt_llm.LlmConfig())
+    monkeypatch.setattr(flow, "llm_config", lambda warehouse: LlmConfig())
     assert client.post(f"{BASE}/1-nofile/reparse").status_code == 409  # no key
     monkeypatch.setattr(flow, "llm_config", lambda warehouse: READY)
     assert client.post(f"{BASE}/edo-1/reparse").status_code == 409
@@ -190,7 +193,7 @@ def test_a_failed_parse_says_why_and_leaves_the_previous_reading(env):
         session.commit()
 
     def broken(*_):
-        raise receipt_llm.LlmError("HTTP 401: invalid key")
+        raise LlmError("HTTP 401: invalid key")
 
     assert flow.parse_document(make, "1-drive", READY, reader=broken) == "error"
     with sessions() as session:
@@ -201,42 +204,75 @@ def test_a_failed_parse_says_why_and_leaves_the_previous_reading(env):
     assert repo.registry_status("Разбирается", None, None) == "waiting"
 
 
-def test_read_pdf_sends_every_page_and_the_text_layer_in_one_call(monkeypatch):
-    sent: list[dict] = []
-
+def _complete(sent: list, answer=ANSWER, refuse: str = ""):
     def complete(config, model, messages, options, timeout):
-        sent.append({"model": model, "messages": messages, "options": options})
-        return {"choices": [{"message": {"content": "```json\n" + __import__("json").dumps(ANSWER) + "\n```"}}]}
+        sent.append({"model": model, "messages": messages, "options": options, "timeout": timeout})
+        if model == refuse:
+            raise LlmError("HTTP 400: bad image", status=400)
+        data = answer(messages) if callable(answer) else answer
+        return {"choices": [{"message": {"content": "```json\n" + json.dumps(data, ensure_ascii=False) + "\n```"}}]}
+
+    return complete
+
+
+def test_an_electronic_pdf_is_read_in_one_text_call_without_pictures(monkeypatch):
+    sent: list[dict] = []
+    monkeypatch.setattr(flow, "page_pictures", lambda content: pytest.fail("an electronic PDF needs no pictures"))
+    monkeypatch.setattr(flow, "text_layer", lambda content: "Счет-фактура № 916   от 19.10.2026\nПродавец: ООО «Сафетин»")
+    monkeypatch.setattr(transport, "complete", _complete(sent))
+    doc, model = flow.read_pdf(PDF, "Сафетин 1 220.pdf", "", LlmConfig(api_key="k", model="strong"))
+    assert (model, doc.status, doc.number, doc.total_gross) == ("strong", "Разобран", "916", 1220)
+    [call] = sent
+    prompt = call["messages"][0]["content"]
+    assert isinstance(prompt, str) and "Счет-фактура № 916 от 19.10.2026\nПродавец" in prompt, "one line per baseline"
+    assert "изображений нет" in prompt and call["options"]["response_format"] == {"type": "json_object"}
+    assert call["timeout"] == flow.CALL_TIMEOUT
+
+
+def test_a_scan_is_read_page_by_page_and_checked_as_one_document(monkeypatch):
+    sent: list[dict] = []
+    first = {**ANSWER, "totalGross": None, "lines": ANSWER["lines"]}
+    last = {"docKind": "UPD", "number": None, "totalGross": 2440, "lines": [{**ANSWER["lines"][0], "seq": 2, "name": "Разъём XLR ACG-3M-BK"}]}
+
+    def by_page(messages):
+        return first if messages[0]["content"][1]["image_url"]["url"].endswith(",cGFnZS0x") else last
 
     monkeypatch.setattr(flow, "page_pictures", lambda content: [b"page-1", b"page-2"])
-    monkeypatch.setattr(flow, "text_layer", lambda content: "Счет-фактура № 916 от 19.10.2026")
-    monkeypatch.setattr(receipt_llm, "complete", complete)
-    doc, model = flow.read_pdf(PDF, "Сафетин 1 220.pdf", "", receipt_llm.LlmConfig(api_key="k", model="strong"))
-    assert (model, doc.status, doc.number) == ("strong", "Разобран", "916")
-    parts = sent[0]["messages"][0]["content"]
-    assert [part["type"] for part in parts] == ["text", "image_url", "image_url"]
-    assert "Счет-фактура № 916" in parts[0]["text"]
-    assert sent[0]["options"]["response_format"]["type"] == "json_schema"
+    monkeypatch.setattr(flow, "text_layer", lambda content: "")
+    monkeypatch.setattr(transport, "complete", _complete(sent, by_page))
+    doc, model = flow.read_pdf(PDF, "Сафетин 2 440.pdf", "", LlmConfig(api_key="k", model="strong"))
+    assert len(sent) == 2 and all("ОДНА страница" in call["messages"][0]["content"][0]["text"] for call in sent)
+    assert (doc.number, doc.total_gross, [line.seq for line in doc.lines], doc.issues) == ("916", 2440, [1, 2], [])
+    assert model == "strong"
 
 
 def test_read_pdf_falls_back_to_the_second_model_and_refuses_without_a_key(monkeypatch):
-    models: list[str] = []
-
-    def complete(config, model, messages, options, timeout):
-        models.append(model)
-        if model == "main":
-            raise receipt_llm.LlmError("HTTP 400: bad image", status=400)
-        return {"choices": [{"message": {"content": __import__("json").dumps(ANSWER)}}]}
-
+    sent: list[dict] = []
     monkeypatch.setattr(flow, "page_pictures", lambda content: [b"page"])
     monkeypatch.setattr(flow, "text_layer", lambda content: "")
-    monkeypatch.setattr(receipt_llm, "complete", complete)
-    _, model = flow.read_pdf(PDF, "a.pdf", "", receipt_llm.LlmConfig(api_key="k", model="main", fallback_model="spare"))
-    assert (models, model) == (["main", "spare"], "spare")
+    monkeypatch.setattr(transport, "complete", _complete(sent, refuse="main"))
+    _, model = flow.read_pdf(PDF, "a.pdf", "", LlmConfig(api_key="k", model="main", fallback_model="spare"))
+    assert ([call["model"] for call in sent], model) == (["main", "spare"], "spare")
     with pytest.raises(flow.ParseFailed, match="ключ"):
-        flow.read_pdf(PDF, "a.pdf", "", receipt_llm.LlmConfig())
+        flow.read_pdf(PDF, "a.pdf", "", LlmConfig())
     monkeypatch.setattr(flow, "page_pictures", lambda content: [])
     with pytest.raises(flow.ParseFailed, match="pdftoppm"):
+        flow.read_pdf(PDF, "a.pdf", "", READY)
+
+
+def test_a_page_no_model_read_is_named_and_nothing_read_fails(monkeypatch):
+    def complete(config, model, messages, options, timeout):
+        if messages[0]["content"][1]["image_url"]["url"].endswith(",cGFnZS0y"):
+            raise LlmError("HTTP 401: invalid key", status=401)
+        return {"choices": [{"message": {"content": json.dumps(ANSWER)}}]}
+
+    monkeypatch.setattr(flow, "page_pictures", lambda content: [b"page-1", b"page-2"])
+    monkeypatch.setattr(flow, "text_layer", lambda content: "")
+    monkeypatch.setattr(transport, "complete", complete)
+    doc, _ = flow.read_pdf(PDF, "a.pdf", "", READY)
+    assert doc.issues[0] == "модель не прочитала стр. 2 — их строк в разборе нет" and doc.status == "Требует проверки"
+    monkeypatch.setattr(flow, "page_pictures", lambda content: [b"page-2"])
+    with pytest.raises(flow.ParseFailed, match="HTTP 401"):
         flow.read_pdf(PDF, "a.pdf", "", READY)
 
 
