@@ -112,6 +112,9 @@ export interface DataTableProps<T> {
   groupLabel?: (name: string, rows: T[]) => ReactNode;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
   collapsibleGroups?: boolean;
+  /** Группы открываются свёрнутыми (длинные справочники: заголовки групп, строки по клику); поиск, фильтр колонки
+      или чип раскрывают все группы, пока они стоят. */
+  foldedByDefault?: boolean;
   bulkActions?: DataBulkAction<T>[];
   /** Раскрытая строка: форма, карточка, история. */
   renderDetail?: (row: T) => ReactNode;
@@ -189,6 +192,8 @@ const WIDTH_STEP = 16;
 const WINDOW_MARGIN = "1000px 0px";
 /** Blocks: rows put in the page before the window knows where the list is (about two screens). */
 const FIRST_ROWS = 80;
+/** Blocks: the window's key of a whole block («near the screen»), beside its pieces' keys. */
+const blockKey = (name: string) => `\u0002block\u0001${name}`;
 /** The box the page scrolls in (`main.workspace`), or null — the window. */
 function scrollParent(node: HTMLElement): HTMLElement | null {
   for (let item = node.parentElement; item; item = item.parentElement) {
@@ -401,6 +406,7 @@ export function DataTable<T>({
   groupBy,
   groupLabel,
   collapsibleGroups,
+  foldedByDefault = false,
   bulkActions = [],
   renderDetail,
   rowClassName,
@@ -431,7 +437,9 @@ export function DataTable<T>({
   const grouping = groupBy ?? (blocks ? () => label : undefined);
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  // Groups the user flipped from the default (folded or open); the default is open, or folded with foldedByDefault
+  // while nothing narrows the list.
+  const [flipped, setFlipped] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<Sort>(saved.sort ?? null);
@@ -557,6 +565,13 @@ export function DataTable<T>({
       .map((item) => item.row);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `grouping` is `groupBy`, or the list's one block
   }, [searched, columns, sort, activePreset, groupSort, groupBy, blocks, label]);
+
+  // A search, a column filter or a chip opens every group of a folded-by-default list (the rows found are seen at once);
+  // the user's flips start over whenever that changes.
+  const narrowed = Boolean(query.trim() || activePreset || Object.values(filters).some((value) => value.trim()));
+  const foldAll = Boolean(collapsibleGroups && foldedByDefault && !narrowed);
+  useEffect(() => setFlipped(new Set()), [foldAll]);
+  const isFolded = (name: string) => Boolean(collapsibleGroups) && foldAll !== flipped.has(name);
 
   // Blocks put only the rows near the screen in the page (below), so they show the whole list — no pages, nothing cut.
   // Without IntersectionObserver (an old browser, tests) the list goes in pages as before.
@@ -802,6 +817,8 @@ export function DataTable<T>({
      whole block) far from the screen is empty space of its height (measured once it was shown). An IntersectionObserver
      on the scroll box tells which pieces are near — no work on the scroll itself. */
   const [near, setNear] = useState<ReadonlySet<string> | null>(null);
+  // a block no taller than this is one piece (all its rows or none)
+  const screenHeight = typeof window !== "undefined" && window.innerHeight > 0 ? window.innerHeight : 900;
   const heights = useRef(new Map<string, number>());
   const headHeight = useRef(HEAD_HEIGHT);
   const gaps = useRef(new Map<string, { keys: string[]; tops: number[]; heights: number[] }>());
@@ -809,6 +826,30 @@ export function DataTable<T>({
   const observer = useRef<IntersectionObserver | null>(null);
   const observed = useRef(new Set<Element>());
   useEffect(() => () => { observer.current?.disconnect(); observer.current = null; observed.current.clear(); }, []);
+  // Belt and braces: when a scroll or a resize settles, a block that is on the screen but still empty space (whatever
+  // the observer said — zoom, fractional pixels) is marked near. One read of a few boxes, not on every scroll event.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!windowed || !root) return;
+    const box = scrollParent(root);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = () => {
+      const view = box ? box.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      const missing = [...root.querySelectorAll<HTMLElement>(".dt-window-gap[data-window]")].filter((gap) => {
+        const rect = gap.getBoundingClientRect();
+        return rect.height > 0 && rect.bottom > view.top && rect.top < view.bottom;
+      }).map((gap) => blockKey(gap.dataset.window!));
+      if (missing.length) setNear((current) => missing.every((key) => current?.has(key)) ? current : new Set([...(current ?? []), ...missing]));
+    };
+    // one timer per pause, not one per scroll event: it checks again until the page stood still for 150 ms
+    let last = 0;
+    const wait = () => { timer = setTimeout(() => { if (performance.now() - last < 150) wait(); else { timer = undefined; check(); } }, 150); };
+    const settle = () => { last = performance.now(); if (timer === undefined) wait(); };
+    const target: HTMLElement | Window = box ?? window;
+    target.addEventListener("scroll", settle, { passive: true });
+    window.addEventListener("resize", settle, { passive: true });
+    return () => { clearTimeout(timer); target.removeEventListener("scroll", settle); window.removeEventListener("resize", settle); };
+  }, [windowed]);
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!windowed || !root) return;
@@ -821,14 +862,21 @@ export function DataTable<T>({
             if (entry.isIntersecting) next.add(node.dataset.chunk); else next.delete(node.dataset.chunk);
             continue;
           }
-          // a whole block far away: the pieces of it that the screen (with its margin) now reaches
-          const layout = gaps.current.get(node.dataset.window ?? "");
+          // A whole block (its box: the table or the empty space standing for it). The observer speaks only when the box
+          // starts or stops crossing the screen's margin, so «the block is near» is kept as such: a block that came in by
+          // its header alone (no piece reached — a wheel moves the page a few pixels at a time) used to be asked never
+          // again and stayed an empty box on the screen (26.10.2026, «Коаксиальные кабели»). A near block always shows rows.
+          const name = node.dataset.window;
+          if (name === undefined) continue;
+          if (entry.isIntersecting) next.add(blockKey(name)); else next.delete(blockKey(name));
+          // the pieces of a far block that the screen (with its margin) now reaches
+          const layout = gaps.current.get(name);
           if (!layout) continue;
           const bounds = entry.rootBounds;
           layout.keys.forEach((key, index) => {
             const top = entry.boundingClientRect.top + headHeight.current + layout.tops[index];
-            const reached = entry.isIntersecting && (!bounds || (top + layout.heights[index] >= bounds.top && top <= bounds.bottom));
-            if (reached) next.add(key); else next.delete(key);
+            if (entry.isIntersecting && (!bounds || (top + layout.heights[index] >= bounds.top && top <= bounds.bottom))) next.add(key);
+            if (!entry.isIntersecting) next.delete(key);
           });
         }
         const same = current !== null && next.size === current.size && [...next].every((key) => current.has(key));
@@ -857,7 +905,7 @@ export function DataTable<T>({
   });
 
   // --- Cells edited in place ---
-  const lines = groups.flatMap(([name, groupRows]) => collapsibleGroups && collapsed.has(name) ? [] : groupRows);
+  const lines = groups.flatMap(([name, groupRows]) => isFolded(name) ? [] : groupRows);
   const byKey = new Map(rows.map((row) => [rowKey(row), row]));
   const editable = (column: DataColumn<T> | undefined, row: T | undefined): column is DataColumn<T> & { edit: DataCellEdit<T> } =>
     Boolean(column?.edit && row && rowHas(row, column.key) && (column.edit.enabled?.(row) ?? true));
@@ -1247,7 +1295,7 @@ export function DataTable<T>({
     if (delta) bar.scrollLeft += delta;
   }
   function toggleCollapsed(name: string) {
-    setCollapsed((current) => {
+    setFlipped((current) => {
       const next = new Set(current);
       if (!next.delete(name)) next.add(name);
       return next;
@@ -1374,6 +1422,13 @@ export function DataTable<T>({
         )}
         <div className="toolbar-end">
           {toolbar}
+          {collapsibleGroups && foldedByDefault && groups.length > 1 && (() => {
+            const allOpen = groups.every(([name]) => !isFolded(name));
+            const names = groups.map(([name]) => name);
+            // «open all» / «fold all» as flips from the default of the moment (folded, or open while searching)
+            return <button type="button" className="secondary small" aria-pressed={allOpen}
+              onClick={() => setFlipped(new Set(allOpen !== foldAll ? names : []))}>{allOpen ? "Свернуть все" : "Развернуть все"}</button>;
+          })()}
           {blocks && hasEditing && <span className="dt-help" tabIndex={0} role="note" aria-label={`Правка в таблице: ${EDIT_HINT}`} data-hint={EDIT_HINT}>?</span>}
           <button type="button" className="secondary small" aria-expanded={choosingColumns} onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
           {exportName && <button type="button" className="secondary small" onClick={download}>Excel</button>}
@@ -1472,7 +1527,7 @@ export function DataTable<T>({
           const startAt = rowsBefore;
           rowsBefore += groupRows.length;
           const title = (groupLabel ? groupLabel(name, groupRows) : name) || "—";
-          const folded = Boolean(collapsibleGroups && collapsed.has(name));
+          const folded = isFolded(name);
           const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
           const caption = <>{title} <span className="page-count">{blockTotals.get(name) ?? groupRows.length}</span>{picked > 0 && <span className="group-picked">выбрано {picked}</span>}</>;
           // A section over its blocks (ТУТ over the kinds of tube): its heading before its first block, with all their rows.
@@ -1483,13 +1538,18 @@ export function DataTable<T>({
           const heads = columnsOf(name);
           const wide = levelled?.wide.get(heads.map((column) => column.key).join(",")) ?? null;
           // The pieces of the block in the window; the row being edited, opened or active is always in the page.
-          const pieces = chunksOf(groupRows);
+          // a block no taller than the screen is one piece: all its rows or none, never a part of them
+          const pieces = chunksOf(groupRows, groupRows.length * ROW_HEIGHT <= screenHeight ? Math.max(groupRows.length, 1) : CHUNK_ROWS);
           const keyOf = (at: number) => `${name}\u0001${at}`;
           const sigOf = (part: T[]) => `${rowKey(part[0])}\u0001${part.length}`;
           const heightOf = (part: T[]) => heights.current.get(sigOf(part)) ?? part.length * ROW_HEIGHT;
           const live = pieces.map((part, at) => !windowed
             || (near ? near.has(keyOf(at)) : startAt + at * CHUNK_ROWS < FIRST_ROWS)
             || part.some((row) => pinned.has(rowKey(row))));
+          // A near block with no piece reached (it crosses the margin by its header alone) shows its first piece — a small
+          // block (one piece) all its rows: the box on the screen is never an empty one; the other pieces of a long block
+          // then come and go by their own observation (a whole long block at once would stall the scroll).
+          if (windowed && near?.has(blockKey(name)) && !live.some(Boolean)) live[0] = true;
           if (windowed && !folded && !live.some(Boolean)) {
             const tops: number[] = [];
             pieces.reduce((top, part) => { tops.push(top); return top + heightOf(part); }, 0);
@@ -1504,7 +1564,8 @@ export function DataTable<T>({
               : caption}</Heading>
             {asGap && <div className="dt-window-gap" data-window={name} aria-hidden="true"
               style={{ height: headHeight.current + pieces.reduce((sum, part) => sum + heightOf(part), 0) }} />}
-            {!folded && !asGap && <div className={wide ? "table-wrap dt-scroll-x" : "table-wrap"} onWheel={wide ? sideWheel : undefined}>
+            {!folded && !asGap && <div className={wide ? "table-wrap dt-scroll-x" : "table-wrap"} onWheel={wide ? sideWheel : undefined}
+              data-window={windowed ? name : undefined}>
               {/* A wide block moves sideways by its bar on top of its header: it sticks with the header and never covers
                   a row (owner 26.10.2026; it used to be pinned to the screen bottom, over the last row). */}
               {wide && <div className="dt-hscroll" aria-hidden="true" onScroll={sideScroll} ref={placeBar}>
@@ -1558,13 +1619,13 @@ export function DataTable<T>({
                         const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
                         const title = <><strong>{(groupLabel ? groupLabel(name, groupRows) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
                         return collapsibleGroups
-                          ? <button type="button" aria-expanded={!collapsed.has(name)} onClick={() => toggleCollapsed(name)} style={{ all: "unset", cursor: "pointer" }}>{collapsed.has(name) ? "▸" : "▾"} {title}</button>
+                          ? <button type="button" aria-expanded={!isFolded(name)} onClick={() => toggleCollapsed(name)} style={{ all: "unset", cursor: "pointer" }}>{isFolded(name) ? "▸" : "▾"} {title}</button>
                           : title;
                       })()}
                     </td>
                   </tr>
                 )}
-                {!(collapsibleGroups && collapsed.has(name)) && groupRows.map(renderRow)}
+                {!isFolded(name) && groupRows.map(renderRow)}
               </Fragment>
             ))}
             {!shown.length && <tr><td colSpan={span} className="empty">{loading ? "Загрузка…" : emptyText}</td></tr>}

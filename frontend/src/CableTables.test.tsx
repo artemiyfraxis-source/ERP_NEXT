@@ -1,10 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import { HookupWireTable, parseTempRange } from "./CableStructure";
 import { CableTable, coaxMaxGhz } from "./CableTables";
 import { CATEGORIES } from "./cableCategory";
-import { blockHeadings, blockLine, blockLines, blockRows, blockTables, listHead, listHeads } from "./test/blocks";
+import { plainRender, render, blockHeadings, blockLine, blockLines, blockRows, blockTables, listHead, listHeads } from "./test/blocks";
 import type { CableRow, Principal } from "./api";
 
 /* «База данных» → «Кабели и провода» (owner 04.10.2026): coax / hookup / multi-core cables, D1–D3 edited in the coax tab,
@@ -337,16 +337,19 @@ describe("coax column order (owner 23.10: «сделай сортировку н
   });
 });
 
-it("lists coax cables like a catalogue: series groups in order, base mark before its variants, groups collapse", async () => {
+it("lists coax cables like a catalogue: series groups in order, base mark before its variants, groups start folded and collapse", async () => {
   const lmr: CableRow = { id: "w-lmr", kind: "coax", auto_kind: "coax", reason: "тип «коаксиальный»", manual: false, cable: "LMR-195",
     record: wire("w-lmr", { "Марка": "LMR-195" }), dia: null, dia_hint: null };
   mockApi([], [lmr, ...ROWS]);
-  render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
-  // a block per family (25.10): its heading folds the block
+  plainRender(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+  // a block per family (25.10): its heading folds the block; owner 26.10: the groups start folded
   const rg = await screen.findByRole("button", { name: /^RG58 2$/ });
   // owner 19.10: a group per mark family (RG58 = RG-58 and its A/U); single-row families of a head with no mate go to «Прочие», last
   const lmrGroup = screen.getByRole("button", { name: /^Прочие 2$/ });
   expect(rg.compareDocumentPosition(lmrGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(rg).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("RG-58 A/U")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
   const marks = screen.getAllByRole("row").map((line) => line.querySelector("td.key")?.textContent).filter(Boolean);
   expect(marks).toEqual(["RG-58 A/U", "RG58", "LMR-195", "RG316"]); // owner 25.10: by outer diameter, a row without one (the D-row RG58) last in its group
   expect(rg).toHaveAttribute("aria-expanded", "true");
@@ -354,6 +357,8 @@ it("lists coax cables like a catalogue: series groups in order, base mark before
   expect(rg).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByText("RG-58 A/U")).toBeNull();
   expect(screen.getByText("LMR-195")).toBeInTheDocument();
+  fireEvent.click(rg);
+  expect(screen.getByText("RG-58 A/U")).toBeInTheDocument();
 });
 
 it("opens a coax card a tester reads at the VNA: markers, the source's loss, compatible connectors — nothing else", async () => {

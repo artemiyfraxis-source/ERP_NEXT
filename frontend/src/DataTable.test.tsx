@@ -756,3 +756,25 @@ describe("groups as blocks (owner 25.10.2026: «визуал БД один», к
     expect(tables()).toHaveLength(1);
   });
 });
+
+it("opens groups folded by default, a click opens one, a search opens them all", () => {
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Склад" groupBy={(row) => row.supplier} blocks collapsibleGroups foldedByDefault />);
+  expect(screen.queryByText("Разъём Molex")).toBeNull();
+  const fold = screen.getByRole("button", { name: /Кабель-Торг/ });
+  expect(fold.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(fold);
+  expect(screen.getByText("Разъём Molex")).toBeTruthy();
+  expect(screen.queryByText("Разъём JST XH")).toBeNull();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "разъём" } });
+  expect(screen.getByText("Разъём JST XH")).toBeTruthy();
+  expect(screen.getByText("Разъём Molex")).toBeTruthy();
+});
+
+it("opens and folds every group of a folded list at once", () => {
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Склад" groupBy={(row) => row.supplier} blocks collapsibleGroups foldedByDefault />);
+  fireEvent.click(screen.getByRole("button", { name: "Развернуть все" }));
+  expect(screen.getByText("Разъём JST XH")).toBeTruthy();
+  expect(screen.getByText("Разъём Molex")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Свернуть все" }));
+  expect(screen.queryByText("Разъём Molex")).toBeNull();
+});

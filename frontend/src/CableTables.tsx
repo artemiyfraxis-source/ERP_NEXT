@@ -284,7 +284,9 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={kind === "coax" ? undefined : detail}
       onRowClick={kind === "coax" ? (row) => setOpenId(row.id) : undefined}
-      collapsibleGroups={kind === "coax"}
+      // Groups open folded (owner 26.10.2026: «всё свёрнуто… при необходимости будем открывать нужное»).
+      collapsibleGroups={kind === "coax" || kind === "multi" || kind === "lan"}
+      foldedByDefault
       groupBy={kind === "multi" || kind === "lan" ? (row) => cableFamily(cells(row)).family : kind === "coax" ? coaxGroup : undefined}
       // Each group sorts its own rows (owner 16.10: «у каждой группы своя»); every row of the list at once, no page.
       // A group is its own block with a heading and a table (owner 25.10.2026: «визуал БД один», as «Оболочки»).

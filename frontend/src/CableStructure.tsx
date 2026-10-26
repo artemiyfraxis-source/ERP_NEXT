@@ -349,6 +349,9 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
       groupSort
+      // Series open folded, a click opens one (owner 26.10.2026, as the other cable lists).
+      collapsibleGroups
+      foldedByDefault
       // A series is its own block (owner 25.10.2026: «визуал БД один», as «Оболочки»).
       blocks
       pageSize={Infinity}
