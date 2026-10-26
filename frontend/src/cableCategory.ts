@@ -17,7 +17,7 @@ const RULES: Array<[CableCategory, RegExp]> = [
   ["Коаксиальные / комбинированные", /\bsdi\b|\brgb\b|коакс|\brg-?\s?\d|\blmr-?\s?\d/i],
   ["Коммуникационные многожильные", /ul\s?2464|\bcccu?\b/i],
   ["Контрольные / управления", /liycy|liy\b|unitronic|кдвв|квв|кввг|paar|flexicore|контрол|управлен/i],
-  ["Силовые", /ввг|h0[57]\s?(rn|vv)|\bnym\b|nyy|силов|шввп|\bпвс\b|нг\s?\(a\)/i],
+  ["Силовые", /ввг|h0[57]\s?(rn|vv)|\bnym\b|nyy|силов|шввп|(?<![а-яёa-z])пвс(?![а-яёa-z])|нг\s?\(a\)/i],
 ];
 
 export const isCategory = (value: string): value is CableCategory => (CATEGORIES as readonly string[]).includes(value);

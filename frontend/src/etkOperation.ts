@@ -225,7 +225,7 @@ export function etkToleranceLines(raw: unknown): ToleranceLine[] {
 /** Ссылка на стандарт или КД («IPC/WHMA-A-620F (Раздел 13)», «ГОСТ 23592-96», «Согласно КД») — не размер: цифры в
  *  ней не выделяются. */
 export function etkToleranceIsReference(value: string): boolean {
-  return /IPC|WHMA|ГОСТ|ОСТ\b|\bКД\b|Раздел|ТУ\b/i.test(value);
+  return /IPC|WHMA|ГОСТ|ОСТ(?![а-яёa-z])|(?<![а-яёa-z])КД(?![а-яёa-z])|Раздел|ТУ(?![а-яёa-z])/i.test(value);
 }
 
 /** Значение допуска кусками: числа с единицей и знаком (± 10 °C, 2–3 мм, ≤ 2,0 сек) — `strong`, остальное — текст. */
