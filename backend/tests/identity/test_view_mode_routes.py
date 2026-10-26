@@ -29,6 +29,7 @@ EDIT_ONLY_READS = {
     "/api/procurement/{line_id}/stock-candidates",  # «Закрыть со склада»
     "/api/receiving/putaway-sheet",  # the storekeeper's move list
     "/api/receiving/supplier-return",  # «Возврат поставщику» form
+    "/api/receiving/upd/scan-jobs/{job_id}",  # the poll of «Принять по УПД» the receiver queued (26.10)
 }
 GATE_OF = {dependency: GATE_BY_KEY[key] for key, dependency in DEPENDENCIES.items() if dependency is not None}
 

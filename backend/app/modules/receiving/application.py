@@ -753,7 +753,8 @@ def unpack_receiving(command: UnpackCommand, uow: UnitOfWork) -> list[ReceivingL
 # without a cap (owner, 29.09: ≤ 20 МБ, as the shipment УПД). Types as the portal's file picker.
 RECEIVING_FILE_LIMIT = 20 * 1024 * 1024
 RECEIVING_FILE_KINDS = {"upd": "УПД", "quality": "Документ качества"}
-RECEIVING_FILE_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+# An ЭДО УПД (Diadoc XML or a ZIP of them) is kept as it came when a delivery is accepted by its УПД.
+RECEIVING_FILE_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".xml", ".zip"}
 
 
 @dataclass(frozen=True)
@@ -1003,6 +1004,9 @@ class AcceptDeliveryCommand:
     now: datetime
     shipping_document_url: str | None = None
     warehouse: str | None = None
+    # «Принять по УПД»: supplier texts (casefolded) the caller has shown to be ONE purchasing supplier — by its INN or
+    # aliases («Элитан» and «ООО «Элитан»» on two orders). Empty — one exact supplier text, as before.
+    supplier_aliases: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -1095,7 +1099,7 @@ def accept_delivery(command: AcceptDeliveryCommand, uow: UnitOfWork) -> Delivery
         if len(warehouses) > 1:
             raise ReceivingValidationError(f"В одной поставке позиции разных складов: {', '.join(warehouses)}")
         suppliers = {current.supplier.strip().casefold(): current.supplier.strip() for current in loaded}
-        if len(suppliers) > 1:
+        if len(suppliers) > 1 and not set(suppliers) <= command.supplier_aliases:
             raise ReceivingValidationError(
                 f"В одной поставке позиции разных поставщиков: {', '.join(sorted(suppliers.values()))}"
             )

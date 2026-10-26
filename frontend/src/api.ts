@@ -537,6 +537,8 @@ export interface WarehouseReceiptScan {
     article: string; name: string; quantity: string; unit: string;
     upd_name?: string | null; item_type?: string | null; manufacturer?: string | null;
     packs?: string | null; pack?: string | null; pack_kind?: string | null; supplier_code?: string | null; source?: string | null;
+    /** as invoiced, before the pack («3» «рул») — «Принять по УПД» compares an order written in that unit */
+    invoice_quantity?: string | null; invoice_unit?: string | null;
   }>;
   note: string;
 }
@@ -3097,6 +3099,53 @@ export interface DeliveryPayload {
   warehouse?: string;
 }
 
+/** «Принять по УПД»: how a waiting line was found — по счёту / по артикулу / по названию / слабое. */
+export type UpdConfidence = "invoice" | "article" | "name" | "weak" | "";
+
+export interface UpdProposalLine {
+  line: ReceivingLine;
+  ticked: boolean;
+  /** «По УПД» from the share-out; "" — the line is not on this УПД */
+  document_quantity: string;
+  confidence: UpdConfidence;
+  by_invoice: boolean;
+  /** the УПД rows (indexes into `rows`) this line takes, with their share */
+  rows: { index: number; quantity: string }[];
+  warnings: string[];
+}
+
+export interface UpdProposalRow {
+  index: number;
+  article: string;
+  name: string;
+  upd_name: string;
+  quantity: string;
+  unit: string;
+  invoice_quantity: string;
+  invoice_unit: string;
+  /** receiving line ids the row went to */
+  lines: string[];
+  confidence: UpdConfidence;
+}
+
+/** The recognised УПД laid over the waiting list: the delivery pre-filled. */
+export interface UpdProposal {
+  supplier: string;
+  warehouse: string;
+  other_warehouses: { warehouse: string; matched: number }[];
+  invoice_numbers: string[];
+  lines: UpdProposalLine[];
+  rows: UpdProposalRow[];
+  unmatched: number[];
+  matched: number;
+  orders: string[];
+}
+
+export interface UpdAcceptPayload extends DeliveryPayload {
+  scan_file: string;
+  recognised: WarehouseReceiptScan["recognised"];
+}
+
 export const receivingApi = {
   /** `preset` (open / to_stock / done / archive / all) and the repeatable `status` filter on the server. */
   list: (options: string | ReceivingQuery = {}) => {
@@ -3115,6 +3164,39 @@ export const receivingApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  /** «Принять по УПД»: скан со сканера ПК склада, файл, «+ Страница» — та же очередь и то же распознавание, что
+   *  у «Склад → Поставка», под правом «Приёмка». */
+  updScan: {
+    startScanJob: () => api<WarehouseScanJob>("/api/receiving/upd/scan-jobs", { method: "POST" }),
+    scanJob: (id: string) => api<WarehouseScanJob>(`/api/receiving/upd/scan-jobs/${encodeURIComponent(id)}`),
+    cancelScanJob: (id: string) => api<WarehouseScanJob>(`/api/receiving/upd/scan-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    scanFile: (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api<WarehouseScanJob>("/api/receiving/upd/scan", { method: "POST", body: form });
+    },
+    mergeScans: (files: string[]) =>
+      api<WarehouseScanJob>("/api/receiving/upd/scan-merge", { method: "POST", body: JSON.stringify({ files }) }),
+  },
+  /** Распознанный УПД поверх листа ожидания: какая это поставка, с отмеченными строками и «По УПД». */
+  updProposal: (scan: Pick<WarehouseReceiptScan, "recognised" | "lines">, options: { warehouse?: string; supplier?: string } = {}) =>
+    api<UpdProposal>("/api/receiving/upd/proposal", {
+      method: "POST",
+      body: JSON.stringify({
+        recognised: scan.recognised,
+        lines: scan.lines.map((item) => ({
+          article: item.article ?? "", name: item.name ?? "", upd_name: item.upd_name ?? "", quantity: item.quantity ?? "",
+          unit: item.unit ?? "", invoice_quantity: item.invoice_quantity ?? "", invoice_unit: item.invoice_unit ?? "",
+          supplier_code: item.supplier_code ?? "",
+        })),
+        ...(options.warehouse ? { warehouse: options.warehouse } : {}),
+        ...(options.supplier ? { supplier: options.supplier } : {}),
+      }),
+    }),
+  /** «Провести поставку» по УПД: скан становится УПД принятых строк и уходит в «Реестр УПД». */
+  acceptByUpd: (payload: UpdAcceptPayload) =>
+    api<{ delivery_id: string; lines: ReceivingLine[]; upd_file: string; registry: { status: string } | null }>(
+      "/api/receiving/upd/accept", { method: "POST", body: JSON.stringify(payload) }),
   /** WH-6: «Принято» без места на складе — печатный бланк через тот же механизм, что FF-8 (print.ts). */
   putawaySheet: () => api<{ sheet: PrintSheet }>("/api/receiving/putaway-sheet"),
   inspect: (lineId: string, payload: Record<string, unknown>) =>

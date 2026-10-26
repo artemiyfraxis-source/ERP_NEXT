@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
-import { ApiError, warehouseApi, type WarehouseLot, type WarehouseReceipt as ReceiptDoc, type WarehouseReceiptScan, type WarehouseScanJob } from "./api";
+import { ApiError, receivingApi, warehouseApi, type WarehouseLot, type WarehouseReceipt as ReceiptDoc, type WarehouseReceiptScan, type WarehouseScanJob } from "./api";
 import { labelsApi } from "./LabelPrint";
 import { PageWindow } from "./PageWindow";
+import { UpdDeliveryWindow, pluralLines, type UpdDelivery } from "./ReceivingDelivery";
+import { expectedBanner } from "./receivingByUpdLogic";
 import { SuggestInput } from "./SuggestInput";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import {
@@ -115,6 +117,9 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   const scanJobId = useRef<string | null>(null);
   const scanAborted = useRef(false);
   const [accepting, setAccepting] = useState<number | null>(null);
+  // The scanned УПД matches lines awaited in «Приёмка»: they are accepted there (ВК, ГРН, закрытие заказа), not here.
+  const [expected, setExpected] = useState<{ delivery: UpdDelivery; text: string } | null>(null);
+  const [inReceiving, setInReceiving] = useState<UpdDelivery | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -277,6 +282,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
       setScanPages(pages);
       applyScanResult(results[0]);
       scanLinesRef.current = (results[0].lines ?? []).length;
+      checkExpected(results[0], pages.length, false);
       return;
     }
     const merged = await answerOf(await warehouseApi.mergeScans(pages));
@@ -284,6 +290,27 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     const all = merged.lines ?? [];
     applyScanResult({ ...merged, lines: all.slice(Math.min(scanLinesRef.current, all.length)) });
     scanLinesRef.current = all.length;
+    checkExpected(merged, pages.length, false);
+  }
+
+  /** «Эти позиции ожидаются в Приёмке»: the whole document laid over the waiting list (a storekeeper without the
+   *  «Приёмка» right gets 403 — no banner; the double-count guard of «Принять» still holds). */
+  function checkExpected(answer: WarehouseReceiptScan, pages: number, edo: boolean) {
+    setExpected(null);
+    void receivingApi.updProposal(answer, { warehouse: headerRef.current.warehouse }).then((proposal) => {
+      const text = expectedBanner(proposal);
+      if (text) setExpected({ delivery: { scan: answer, proposal, pages, edo }, text });
+    }).catch(() => undefined);
+  }
+
+  /** Accepted in «Приёмка»: the grid rows of those УПД rows leave the form, so nothing is counted twice. */
+  function acceptedInReceiving(accepted: string[], delivery: UpdDelivery) {
+    const taken = new Set(accepted);
+    const names = new Set(delivery.proposal.rows.filter((row) => row.lines.some((id) => taken.has(id)))
+      .map((row) => norm(row.upd_name || row.name)).filter(Boolean));
+    setLines((current) => withTrailingBlank(current.filter((line) => line.accepted || !names.has(norm(line.upd_name || line.name)))));
+    setExpected(null);
+    setNote(`Принято в Приёмке: ${pluralLines(accepted.length)} — их строки убраны из таблицы`);
   }
 
   /** The answer of a done job: the server reads the УПД after the scan is in, «Распознаю УПД…» meanwhile. */
@@ -332,6 +359,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
         setScanPages([]);
         setScanEdo(true);
         applyScanResult(result);
+        checkExpected(result, 1, true);
         return;
       }
       const results: WarehouseReceiptScan[] = [];
@@ -348,7 +376,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
 
   /** «Сканировать»: задание уходит на ПК склада, ответ опрашиваем каждые 1,5 с, не дольше 130 с. */
   async function scanFromScanner(fresh = false) {
-    if (fresh) { setScanPages([]); setScanFile(""); setScanEdo(false); }
+    if (fresh) { setScanPages([]); setScanFile(""); setScanEdo(false); setExpected(null); }
     setScanning(true);
     setError("");
     setScanError("");
@@ -548,6 +576,12 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
             {scanStatus ? <> <a href="#" onClick={(event) => { event.preventDefault(); cancelScan(); }}>Отменить</a></> : null}
           </p>
         ) : null}
+        {expected && (
+          <p className="warning-inline wr-expected" role="status">
+            {expected.text}{" "}
+            <button type="button" className="primary small" onClick={() => setInReceiving(expected.delivery)}>Принять в Приёмке</button>
+          </p>
+        )}
         {scanFile ? (
           <p className="wr-scan-status">
             {scanEdo ? "Файл ЭДО" : "Скан"}: {scanPages.length > 0 ? `${scanPages.length} стр. · ` : ""}<a href={scanFile} target="_blank" rel="noreferrer">открыть</a>
@@ -617,6 +651,8 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
         onClose={() => setAccepting(null)}
         onAccept={(place, labels, confirm) => accept(accepting, place, labels, confirm)}
       />}
+      {inReceiving && <UpdDeliveryWindow start={inReceiving} onClose={() => setInReceiving(null)}
+        onDone={(done) => acceptedInReceiving(done.map((line) => line.id), inReceiving)} />}
     </PageWindow>
   );
 }

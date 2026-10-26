@@ -137,6 +137,26 @@ def push_receipt(
     receipt, file, lots = facts
     if lots == 0:
         return {"receipt_id": str(receipt_id), "status": "skipped", "reason": "ни одна строка поставки не принята"}
+    return {"receipt_id": str(receipt_id), **push_file(warehouse_factory, purchasing_factory, receipt, file, actor, now,
+                                                      apply=apply)}
+
+
+def stored_file(warehouse_factory: Callable, file_id: UUID) -> ReceiptFile | None:
+    """A stored УПД file of the warehouse (without the bytes)."""
+    with warehouse_factory() as uow:
+        found = uow.session.execute(
+            select(WarehouseReceiptFileRow.id, WarehouseReceiptFileRow.file_name, WarehouseReceiptFileRow.content_type,
+                   WarehouseReceiptFileRow.recognition).where(WarehouseReceiptFileRow.id == file_id)
+        ).first()
+    return ReceiptFile(found.id, found.file_name, found.content_type, found.recognition or "") if found else None
+
+
+def push_file(
+    warehouse_factory: Callable, purchasing_factory: Callable, receipt: Mapping[str, Any], file: ReceiptFile,
+    actor: Actor, now: datetime, *, apply: bool = True,
+) -> dict[str, Any]:
+    """One stored УПД file into the registry under the header `receipt` (the columns of a «Поставка», or what
+    «Принять по УПД» confirmed): `{file, origin, status, …}`."""
     with purchasing_factory() as uow:
         if file.content_type in EDO_KINDS:
             report = upd_registry.import_edo(uow, [(file.file_name, _content(warehouse_factory, file.id)())], actor, now)
@@ -155,8 +175,7 @@ def push_receipt(
             )
         if apply and result["status"] != "error":
             uow.commit()
-    return {"receipt_id": str(receipt_id), "file": str(file.id), "origin": "edo" if file.content_type in EDO_KINDS
-            else "scan", **result}
+    return {"file": str(file.id), "origin": "edo" if file.content_type in EDO_KINDS else "scan", **result}
 
 
 def push_after_accept(
