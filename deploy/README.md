@@ -27,7 +27,7 @@ Let's Encrypt), ночные копии базы. Файлы (УПД, счета
 | `config/admin.txt`, `config/staff-pins.txt` | вход администратора и PIN сотрудников (после `load-real-data.sh base`) |
 | `supplymap/` | снимок SUPPLYMAP для импорта сотрудников и справочников |
 | `import/` | снимки Google для импорта склада |
-| `backups/daily`, `backups/weekly`, `backups/monthly` | `pg_dump` в 03:00 МСК: 14 ежедневных + 8 воскресных + 36 за 1-е число (прослеживаемость хранится 3 года); имена `erp_<дата>_<ЧЧММСС>.dump` (занято — `-2`, `-3`…), рядом у каждой `.sha256` |
+| `backups/daily` | `pg_dump` в 03:00 МСК: 7 ежедневных — бэкап недельной давности (владелец, 26.10.2026; сроки хранения записей — УПД/счета 3 года, техкарты/документация 5 лет — держит сама база); недельные/месячные (`backups/weekly`, `backups/monthly`) — только если задать `KEEP_WEEKLY`/`KEEP_MONTHLY` > 0; имена `erp_<дата>_<ЧЧММСС>.dump` (занято — `-2`, `-3`…), рядом у каждой `.sha256` |
 | `backups/intraday` | `pg_dump` днём в 9, 12, 15, 18, 21 МСК (`BACKUP_INTRADAY_HOURS`): хранятся 15 последних (около трёх дней), тот же формат и `.sha256`; восстанавливаются тем же `restore.sh` |
 | `backups/pre-update` | копия перед каждым обновлением `erp_<дата_время>.dump` (+ `-final.dump` прямо перед миграцией), рядом `.sha256`; хранятся 10 последних |
 | `backups/pre-restore` | копия базы, которую заменил `restore.sh`, `erp_<дата_время>.dump` + `.sha256`; хранятся 10 последних |
@@ -204,15 +204,14 @@ API больше не накатывает миграции при старте 
 
 ### Копия вне сервера (владелец, 10.10.2026)
 ПК владельца раз в день сам забирает копии с сервера по Tailscale (`pull-backup.ps1`, Windows PowerShell 5.1; нужны
-`ssh`/`scp` Windows и ключ `~\.ssh\erp_server`): самую новую из `backups/daily`, а также из `weekly` и `monthly`, если
-такой ещё нет. Файл качается под именем `.part`, SHA-256 сверяется с `.sha256` с сервера; при расхождении `.part`
+`ssh`/`scp` Windows и ключ `~\.ssh\erp_server`): самую новую из `backups/daily`, если такой ещё нет. Файл качается под именем `.part`, SHA-256 сверяется с `.sha256` с сервера; при расхождении `.part`
 удаляется и скрипт завершается с ошибкой — под своим именем остаётся только проверенный файл.
 - Один раз зарегистрировать задачу «ERP — копия базы с сервера» (каждый день в 10:00; если ПК был выключен —
   запустится при включении): `powershell -NoProfile -ExecutionPolicy Bypass -File deploy\register-pull-backup.ps1`.
   Повторный запуск заменяет задачу. Разово руками: `... -File deploy\pull-backup.ps1`.
-- Параметры: `-Server` (100.96.49.68 или `$env:ERP_BACKUP_SERVER`), `-User` (erp), `-Key`, `-Dest`, `-KeepDaily` (14).
-- Куда падает: `%USERPROFILE%\Documents\ERP-backups\{daily,weekly,monthly}\erp_<дата_время>.dump` + `.sha256`; в `daily`
-  остаются 14 новых, `weekly` и `monthly` не чистятся. Журнал — `pull-backup.log` там же, одна строка за запуск
+- Параметры: `-Server` (100.96.49.68 или `$env:ERP_BACKUP_SERVER`), `-User` (erp), `-Key`, `-Dest`, `-KeepDaily` (7).
+- Куда падает: `%USERPROFILE%\Documents\ERP-backups\daily\erp_<дата_время>.dump` + `.sha256`; остаются 7 новых,
+  прежние `weekly` и `monthly` очищаются. Журнал — `pull-backup.log` там же, одна строка за запуск
   (`ОК` или `СБОЙ` с причиной); при сбое код выхода 1.
 - Восстановление из этой копии: вернуть `.dump` и `.dump.sha256` на сервер (`scp -i ~\.ssh\erp_server <файлы>
   erp@100.96.49.68:/tmp/`), положить их в `/opt/erp/backups/daily/` (`sudo cp`) и дальше как в «Ручное восстановление»:

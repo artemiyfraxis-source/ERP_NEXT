@@ -67,14 +67,26 @@ check "status has its size and sha256" [ "$(status last_success_size_bytes)" -gt
 check "no partial files" no_parts
 check "healthy" bash -c "PATH='$work/bin:$stubs:$PATH' BACKUP_ROOT='$root' bash '$repo/deploy/backup-loop.sh' --health >/dev/null"
 
-case_name="sunday and the 1st"
+case_name="sunday and the 1st, when weekly/monthly copies are kept"
 setup weekly
-export STUB_WEEKDAY=7 STUB_MONTHDAY=01
+export STUB_WEEKDAY=7 STUB_MONTHDAY=01 KEEP_WEEKLY=8 KEEP_MONTHLY=36
 run --now
 run --now
 check "exit 0" [ "$rc" = 0 ]
 check "one weekly copy a day, with .sha256" [ "$(count weekly)" = 1 ] && sha_ok weekly
 check "one monthly copy a day, with .sha256" [ "$(count monthly)" = 1 ] && sha_ok monthly
+unset KEEP_WEEKLY KEEP_MONTHLY
+
+case_name="default: a week of daily dumps, no weekly or monthly (owner 26.10)"
+setup week
+export STUB_WEEKDAY=7 STUB_MONTHDAY=01
+mkdir -p "$root/weekly" "$root/monthly"
+: > "$root/weekly/erp_2026-01-04_030000.dump"; : > "$root/weekly/erp_2026-01-04_030000.dump.sha256"
+: > "$root/monthly/erp_2026-01-01_030000.dump"; : > "$root/monthly/erp_2026-01-01_030000.dump.sha256"
+for _ in 1 2 3 4 5 6 7 8 9; do run --now; done
+check "exit 0" [ "$rc" = 0 ]
+check "seven daily dumps kept" [ "$(count daily)" = 7 ] && sha_ok daily
+check "no weekly/monthly copies, the old ones cleared" [ "$(count weekly)" = 0 ] && [ "$(count monthly)" = 0 ]   && [ -z "$(ls -A "$root/weekly" "$root/monthly")" ]
 
 case_name="pg_dump fails"
 setup dumpfail

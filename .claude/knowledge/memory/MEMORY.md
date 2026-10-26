@@ -3,6 +3,7 @@
 - [Owner request queue](owner-request-queue.md) — owner piles requests mid-turn: numbered visible queue, dispatch each via orchestrator at once
 - [Owner goals 05.10](owner-goals-1005.md) — goal 1: minimal chain закупка→приёмка→выдача; goal 2: debug production; receiving answers
 - [Live data protocol](live-data-protocol.md) — no migration to prod without backup → rehearsal on a copy → row-count/integrity check; update.sh + rehearse.sh do it since 05.10
+- [Records retention](records-retention.md) — owner 26.10: УПД/счета 3 years, техкарты/документация 5 years in the DB; backups only a week (7 daily, no weekly/monthly)
 - [Vasily code permission](vasily-code-permission.md) — TECHMAP-GRAPHER code may be ported/copied with attribution (author OK via owner, 06.10)
 - [Screens rules](erp-screens-rules.md) — every UI change: skill erp-screens + design-critique, demo run-demo.sh + shoot.mjs
 - [Edit in windows](edit-in-windows.md) — every record card / edit form opens as a modal PageWindow, never a side panel
