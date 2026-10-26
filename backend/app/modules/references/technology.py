@@ -311,6 +311,13 @@ def matching_terminal_records(
                                                          for value in articles(item)))
         if matches:
             return matches
+    # JST «SYM-001T-P0.6(N)»: «(N)» — внутренняя пометка JST об изменении количества на катушке, контакт тот же
+    # (в документации JST артикул без суффикса; 394К.10, 26.10.2026).
+    reel_free = _normalized_article(re.sub(r"\(\s*n\s*\)\s*$", "", str(article or "").strip(), flags=re.IGNORECASE))
+    if len(reel_free) >= 3 and reel_free != normalized:
+        matches = tuple(item for item in records if any(_normalized_article(value) == reel_free for value in articles(item)))
+        if matches:
+            return matches
     words = str(article or "").strip().split()
     without_manufacturer = _normalized_article(" ".join(words[1:])) if len(words) > 1 else ""
     if len(without_manufacturer) >= 3:
