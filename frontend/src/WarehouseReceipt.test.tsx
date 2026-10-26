@@ -359,10 +359,10 @@ it("starts with one blank row, adds the next when the article is typed, and offe
 
 const job = (id: string, result: unknown) => ({ id, status: "done", error: "", recognising: false, result });
 
-const answer = (scan_file: string, article: string) => ({
+const answer = (scan_file: string, ...articles: string[]) => ({
   scan_file, note: "Распознано.",
   recognised: { supplier: "ООО Скан", inn: "", upd_number: "17", upd_date: "", invoice_number: "", invoice_date: "" },
-  lines: [{ article, name: "Н", quantity: "1", unit: "шт" }],
+  lines: articles.map((article) => ({ article, name: "Н", quantity: "1", unit: "шт" })),
 });
 
 function scannerPages(files: string[]) {
@@ -372,7 +372,8 @@ function scannerPages(files: string[]) {
     "GET /api/stock/receipts/scan-jobs/p1": () => json({ id: "p1", status: "done", error: "", result: answer(files[0], "A-1") }),
     "GET /api/stock/receipts/scan-jobs/p2": () => json({ id: "p2", status: "done", error: "", result: answer(files[1], "A-2") }),
     "GET /api/stock/receipts/scan-jobs/p3": () => json({ id: "p3", status: "done", error: "", result: answer(files[2], "A-3") }),
-    "POST /api/stock/receipts/scan-merge": () => json(job("m1", answer("merged.pdf", "A-2"))),
+    // The merged answer holds every sheet's lines, the first sheet's again too (as the server answers).
+    "POST /api/stock/receipts/scan-merge": () => json(job("m1", answer("merged.pdf", "A-1", "A-2"))),
   });
 }
 
@@ -390,6 +391,8 @@ it("a second sheet is merged with the first one: scan-merge gets both links, the
   expect(screen.getByRole("link", { name: "открыть" })).toHaveAttribute("href", "merged.pdf");
   expect(cellOf("Артикул", 1)).toHaveValue("A-1");
   expect(cellOf("Артикул", 2)).toHaveValue("A-2");
+  // 26.10: the first sheet's lines are not added twice — only the new sheet's line follows (+ the trailing blank row).
+  expect(screen.getAllByLabelText(/^Артикул, строка/)).toHaveLength(3);
 });
 
 it("«Сканировать заново» drops the pages and the scan", async () => {
