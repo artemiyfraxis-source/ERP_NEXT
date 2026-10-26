@@ -4,6 +4,7 @@ import { EMPTY, displayCell, formatNumber } from "./format";
 import { matchesSearch, searchRows } from "./searchText";
 import { LoadMore } from "./LoadMore";
 import { useColumnViews } from "./ColumnViews";
+import { loadPersonalViews, migrateLocalView, resetPersonalView, savePersonalView } from "./personalViews";
 import {
   CELL_PAD, CHUNK_ROWS, HEAD_HEIGHT, ROW_HEIGHT, SELECT_WIDTH, canvasMeasure, captionFloors, chunksOf, levelWidths, naturalWidths,
   type LevelColumn, type LevelTable,
@@ -95,6 +96,10 @@ export interface DataTableProps<T> {
   rowKey: (row: T) => string;
   /** Ключ для запоминания колонок, отбора и сортировки у пользователя (localStorage). */
   storageKey?: string;
+  /** Личный вид на сервере (personalViews.ts, вместе со `storageKey`): колонки, порядок, ширины, сортировка идут за
+      человеком на любой компьютер; localStorage — копия на случай без связи, прежняя настройка браузера переезжает
+      на сервер один раз; «Сбросить вид» снимает личный вид. */
+  personalKey?: string;
   /** Ключ общего набора столбцов (сервер, один на всех): «Сохранить для всех» в «Колонках» пишет его, «Только нужные»
       возвращает к нему. Первая колонка — опознаватель записи (Марка, Артикул) — всегда видна. Без `ColumnViewsProvider` — нет. */
   sharedKey?: string;
@@ -184,6 +189,8 @@ export interface Saved {
   sharedSig?: string;
 }
 
+/** `personalKey`: the next written layout is the base (just read from the server, or just reset), not a change. */
+const RESET_BASE = "\u0000reset";
 const MIN_WIDTH = 40;
 const EDIT_HINT = "Щелчок по ячейке и ввод — правка · Enter — записать · Esc — отмена · Tab — дальше · Ctrl+V — вставить столбец · Ctrl+D — заполнить вниз";
 const MAX_WIDTH = 900;
@@ -397,6 +404,7 @@ export function DataTable<T>({
   columns,
   rowKey,
   storageKey,
+  personalKey,
   sharedKey,
   label = "Таблица",
   presets = [],
@@ -445,15 +453,16 @@ export function DataTable<T>({
   const [sort, setSort] = useState<Sort>(saved.sort ?? null);
   const [preset, setPreset] = useState(saved.preset || defaultPreset);
   const defaultHidden = () => columns.filter((column) => column.hidden).map((column) => column.key);
-  const [hidden, setHidden] = useState<string[]>(() => {
-    if (!saved.hidden) return defaultHidden();
-    if (!saved.known) return saved.hidden;
+  const hiddenFrom = (stored: Saved) => {
+    if (!stored.hidden) return defaultHidden();
+    if (!stored.known) return stored.hidden;
     // Новая колонка (её не было при сохранении) — по своему умолчанию; остальные — как оставил пользователь.
-    const known = new Set(saved.known);
+    const known = new Set(stored.known);
     const fresh = columns.filter((column) => !known.has(column.key));
-    return [...saved.hidden.filter((key) => !fresh.some((column) => column.key === key)),
+    return [...stored.hidden.filter((key) => !fresh.some((column) => column.key === key)),
       ...fresh.filter((column) => column.hidden).map((column) => column.key)];
-  });
+  };
+  const [hidden, setHidden] = useState<string[]>(() => hiddenFrom(saved));
   const [order, setOrder] = useState<string[] | undefined>(saved.order);
   // Общий набор столбцов: пока сервер его не отдал или его нет — всё как раньше. Новый набор (другая подпись) один раз
   // заменяет личные скрытие и порядок у каждого; дальше пользователь может подстроить под себя.
@@ -516,16 +525,55 @@ export function DataTable<T>({
     return () => observer.disconnect();
   }, []);
 
+  // The person's layout on the server (`personalKey`): it replaces this browser's copy once it comes; a browser with a
+  // layout and a server without one sends it up once. Until it is read nothing is sent; after that only a change the
+  // person makes is (`personalBase` — the layout as read, RESET_BASE — take the next one as read).
+  const [personalReady, setPersonalReady] = useState(false);
+  const [personalTick, setPersonalTick] = useState(0);
+  const personalBase = useRef<string | null>(null);
+  useEffect(() => {
+    if (!personalKey || !storageKey) return;
+    let live = true;
+    void loadPersonalViews().then((views) => {
+      if (!live || !views) return;
+      const server = views[personalKey];
+      if (server && typeof server === "object") {
+        const stored = cleanSaved(server);
+        setHidden(hiddenFrom(stored));
+        setOrder(stored.order);
+        setWidths(stored.widths ?? {});
+        setTitles(stored.titles ?? {});
+        if (stored.sort !== undefined) setSort(stored.sort);
+        if (stored.preset !== undefined) setPreset(stored.preset || defaultPreset);
+      } else {
+        // What this browser kept before this page wrote its copy, if it is more than the table's default.
+        const own = saved.order || saved.widths || saved.titles || saved.sort
+          || (saved.hidden && [...hiddenFrom(saved)].sort().join() !== [...defaultHidden()].sort().join());
+        migrateLocalView(personalKey, own ? saved : null);
+      }
+      personalBase.current = RESET_BASE;
+      setPersonalReady(true);
+    });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [personalKey, storageKey]);
   // A screen may keep its own fields under the same key (the «В работе» sheet's groups): they are written back as found.
   useEffect(() => {
     const { order: _order, widths: _widths, titles: _titles, ...kept } = readSaved(storageKey);
-    writeSaved(storageKey, {
+    const next: Saved = {
     ...kept, hidden, ...(seenSig ? { sharedSig: seenSig } : {}), known: [...new Set([...(kept.known ?? []), ...columns.map((column) => column.key)])], sort, preset,
     ...(order ? { order } : {}),
     ...(Object.keys(widths).length ? { widths } : {}),
     ...(Object.keys(titles).length ? { titles } : {}),
-    });
-  }, [storageKey, hidden, sort, preset, order, widths, titles, columns, seenSig]);
+    };
+    writeSaved(storageKey, next);
+    if (!personalKey || !personalReady) return;
+    const text = JSON.stringify(next);
+    if (personalBase.current === RESET_BASE) { personalBase.current = text; return; }
+    if (text === personalBase.current) return;
+    personalBase.current = null; // changed: from now on every change is sent (an identical one is not resent)
+    savePersonalView(personalKey, next);
+  }, [storageKey, hidden, sort, preset, order, widths, titles, columns, seenSig, personalKey, personalReady, personalTick]);
 
   // The user's order and captions: everything below (headers, search hint, filters, Excel) reads these columns.
   const ordered = useMemo(() => orderColumns(columns, order), [columns, order]);
@@ -686,6 +734,11 @@ export function DataTable<T>({
     setWidths({});
     setTitles({});
     setHidden(defaultHidden());
+    if (personalKey && personalReady) {
+      resetPersonalView(personalKey);
+      personalBase.current = RESET_BASE;
+      setPersonalTick((value) => value + 1); // the layout after the reset is the new base, even when nothing moved
+    }
   }
   /** «Только нужные»: общий набор, а пока его нет — умолчание таблицы. */
   function onlyNeeded() {

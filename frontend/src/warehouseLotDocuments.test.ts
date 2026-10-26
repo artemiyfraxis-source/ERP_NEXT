@@ -90,11 +90,12 @@ const STORAGE_KEY = "erp-table:stock-columns:v3";
 beforeEach(() => window.localStorage.clear());
 afterEach(() => window.localStorage.clear());
 
-it("the document columns are in the lot table, off by default, and not in the article table", () => {
-  const flat = defaultLayout("flat");
-  expect(flat.order).toEqual(expect.arrayContaining(DOCUMENT_COLUMNS));
-  expect(shownColumns(flat, null).some((key) => DOCUMENT_COLUMNS.includes(key as never))).toBe(false);
-  expect(defaultLayout("grouped").order.some((key) => DOCUMENT_COLUMNS.includes(key as never))).toBe(false);
+it("the document columns are in both tables, off by default (owner 26.10: the positions table got them too)", () => {
+  for (const kind of ["flat", "grouped"] as const) {
+    const layout = defaultLayout(kind);
+    expect(layout.order).toEqual(expect.arrayContaining([...DOCUMENT_COLUMNS, "maker"]));
+    expect(shownColumns(layout, null).some((key) => [...DOCUMENT_COLUMNS, "maker"].includes(key as never))).toBe(false);
+  }
   expect(DOCUMENT_COLUMNS.map((key) => COLUMN_TITLES[key])).toEqual([
     "Наим. по УПД", "Наим. по счёту", "№ счёта", "Дата счёта", "№ УПД", "Дата УПД", "№ ПРД", "Дата ПРД", "Файл УПД",
   ]);

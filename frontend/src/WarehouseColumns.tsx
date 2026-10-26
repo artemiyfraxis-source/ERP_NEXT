@@ -2,9 +2,10 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent }
 
 /** The columns of the two stock tables: «Остатки по позициям» (one row per article) and «Таблица склада» (one row per lot). */
 export type ColumnKey = "type" | "grn" | "balance" | "lots" | "place" | "series" | "article" | "name" | "warehouse" | "available" | "reserved" | "purpose"
-  | DocumentColumn;
+  | "maker" | DocumentColumn;
 /** The documents of a lot (owner 26.10.2026: «должно быть, но скрыто»): the names the УПД and the invoice give it, and
- *  the numbers, dates and file of its delivery. Only in «Таблица склада» (one row per lot), off until switched on.
+ *  the numbers, dates and file of its delivery. In both tables, off until switched on; a position of the grouped table
+ *  shows the value its lots agree on, else «N разн.» (owner 26.10: «добавить сами столбцы»).
  *  «Файл счёта» has no source yet (purchasing's paid invoice ↔ delivery comes later) — no empty column for it. */
 export type DocumentColumn = "upd_name" | "invoice_name" | "invoice_number" | "invoice_date" | "upd_number" | "upd_date" | "prd_number" | "prd_date" | "upd_file";
 export const DOCUMENT_COLUMNS: DocumentColumn[] = ["upd_name", "invoice_name", "invoice_number", "invoice_date", "upd_number", "upd_date", "prd_number", "prd_date", "upd_file"];
@@ -18,8 +19,8 @@ export const DOCUMENT_WIDTHS: Record<DocumentColumn, number> = {
 // With document columns on, every column but the name gets a fixed width (the % widths of styles.css would grow with
 // the wider table and squeeze the name); the name takes the rest, at least NAME_MIN.
 const FIXED_WIDTHS: Partial<Record<ColumnKey, number>> = {
-  type: 126, grn: 150, balance: 98, lots: 76, available: 96, reserved: 92, place: 110, series: 140, article: 200,
-  warehouse: 92, purpose: 104, ...DOCUMENT_WIDTHS,
+  type: 150, grn: 168, balance: 98, lots: 76, available: 96, reserved: 92, place: 110, series: 140, article: 200,
+  warehouse: 92, purpose: 104, maker: 150, ...DOCUMENT_WIDTHS,
 };
 const NAME_MIN = 320;
 
@@ -39,16 +40,24 @@ export type ColumnLayouts = Record<TableKind, ColumnLayout>;
 // the same order with «Партий» left out. Since 22.10 the quantity read first is «Свободно» (balance minus reserve): the
 // raw «Остаток» is optional (it stays in the tooltip of «Свободно» and in the group header).
 const DEFAULT_ORDER: Record<TableKind, ColumnKey[]> = {
-  grouped: ["type", "grn", "available", "reserved", "balance", "lots", "place", "series", "article", "name", "warehouse"],
-  flat: ["type", "grn", "available", "reserved", "balance", "place", "series", "article", "name", "purpose", "warehouse", ...DOCUMENT_COLUMNS],
+  grouped: ["type", "grn", "available", "reserved", "balance", "lots", "place", "series", "article", "name", "warehouse", "maker", ...DOCUMENT_COLUMNS],
+  flat: ["type", "grn", "available", "reserved", "balance", "place", "series", "article", "name", "purpose", "warehouse", "maker", ...DOCUMENT_COLUMNS],
 };
 // «Назначение» (the project a lot is kept for) is the least needed column of the lot table; «Остаток» is off in both
-// tables: «Свободно» + «Резерв» already say it, and reading the raw balance misleads (owner, 22.10).
-const DEFAULT_HIDDEN: Record<TableKind, ColumnKey[]> = { grouped: ["balance"], flat: ["balance", "purpose", ...DOCUMENT_COLUMNS] };
+// tables: «Свободно» + «Резерв» already say it, and reading the raw balance misleads (owner, 22.10). «Производитель» and
+// the documents are there for whoever switches them on in «Колонки» (owner 26.10).
+const DEFAULT_HIDDEN: Record<TableKind, ColumnKey[]> = {
+  grouped: ["balance", "maker", ...DOCUMENT_COLUMNS],
+  flat: ["balance", "purpose", "maker", ...DOCUMENT_COLUMNS],
+};
+
+/** The person's layout of each table on the server (personalViews.ts): one view per table of «Материалы и комплектующие». */
+export const STOCK_VIEWS: Record<TableKind, string> = { grouped: "stock.grouped", flat: "stock.flat" };
+export const TABLE_KINDS: TableKind[] = ["grouped", "flat"];
 
 export const COLUMN_TITLES: Record<ColumnKey, string> = {
   name: "Наименование", article: "Артикул", grn: "ГРН", balance: "Остаток", lots: "Партий", available: "Свободно", reserved: "Резерв",
-  place: "Места", warehouse: "Склад", purpose: "Назначение", series: "Серия", type: "Тип",
+  place: "Места", warehouse: "Склад", purpose: "Назначение", series: "Серия", type: "Тип", maker: "Производитель",
   upd_name: "Наим. по УПД", invoice_name: "Наим. по счёту", invoice_number: "№ счёта", invoice_date: "Дата счёта",
   upd_number: "№ УПД", upd_date: "Дата УПД", prd_number: "№ ПРД", prd_date: "Дата ПРД", upd_file: "Файл УПД",
 };
@@ -59,6 +68,16 @@ export const COLUMN_HINTS: Partial<Record<ColumnKey, string>> = {
   upd_name: "строка товара, как напечатана в УПД", invoice_name: "строка товара в оплаченном счёте",
   prd_number: "платёжно-расчётный документ из УПД", upd_file: "скан или файл ЭДО поставки",
 };
+
+/** A position (several lots) in one cell: the value every lot that has one agrees on, else «N разн.» with the values in
+ *  the tooltip; an empty text — no lot has a value. Lots without a value don't count as a difference (an old lot has
+ *  no УПД name; the others still say what it is). */
+export function agreeing(values: string[]): { text: string; title?: string; many: boolean } {
+  const found = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  if (!found.length) return { text: "", many: false };
+  if (found.length === 1) return { text: found[0], title: found[0], many: false };
+  return { text: `${found.length} разн.`, title: `У партий разные значения:\n${found.join("\n")}`, many: true };
+}
 
 /** «Таблица склада» lists lots one by one, so «Места» is one «Место» there. */
 export function columnTitle(key: ColumnKey, flat: boolean) {
@@ -94,7 +113,8 @@ export function moveColumn(order: ColumnKey[], key: ColumnKey, step: -1 | 1, amo
 // A new key: the old saved sets (`erp-table:stock-columns`, hidden columns only, name first) do not fit the new order.
 const STORAGE_KEY = "erp-table:stock-columns:v3";
 
-function readLayout(kind: TableKind, saved: unknown): ColumnLayout {
+/** A saved layout of any earlier version (this browser's or the server's) fitted to the columns of today. */
+export function readLayout(kind: TableKind, saved: unknown): ColumnLayout {
   const fallback = defaultLayout(kind);
   if (!saved || typeof saved !== "object") return fallback;
   const { order, hidden } = saved as Partial<Record<keyof ColumnLayout, unknown>>;
@@ -118,12 +138,18 @@ function readLayout(kind: TableKind, saved: unknown): ColumnLayout {
   };
 }
 
-export function readLayouts(): ColumnLayouts {
-  let saved: Partial<Record<TableKind, unknown>> = {};
+/** What this browser kept, table by table, as stored (a table never changed here is absent). */
+export function readLocalLayouts(): Partial<Record<TableKind, unknown>> {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null");
-    if (parsed && typeof parsed === "object") saved = parsed;
-  } catch { /* storage unavailable or damaged: the default */ }
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {}; // storage unavailable or damaged: the default
+  }
+}
+
+export function readLayouts(): ColumnLayouts {
+  const saved = readLocalLayouts();
   return { grouped: readLayout("grouped", saved.grouped), flat: readLayout("flat", saved.flat) };
 }
 

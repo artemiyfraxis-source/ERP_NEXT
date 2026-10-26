@@ -2596,7 +2596,13 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .stock-table td.stock-name .table-link:hover { color: var(--primary); }
 .stock-table .num { min-width: 0; }
 .stock-col-article { width: 15%; }
-.stock-col-grn { width: 150px; }
+.stock-col-grn { width: 168px; }
+/* «+1» after the first ГРН of a position of several lots; all of them in the tooltip. */
+.stock-table .stock-more { color: var(--muted-foreground); font-weight: 400; }
+/* «Тип» wraps to two lines («Коаксиальный / соединитель») instead of being cut. */
+.stock-page .stock-table > tbody > tr > td.stock-wrap { white-space: normal; }
+.stock-table .stock-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.25; }
+.stock-col-maker { width: 150px; }
 .stock-col-balance { width: 98px; }
 .stock-col-lots { width: 76px; }
 .stock-col-available { width: 96px; }
@@ -2606,7 +2612,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .stock-col-warehouse { width: 92px; }
 .stock-col-purpose { width: 104px; }
 .stock-col-series { width: 12%; }
-.stock-col-type { width: 126px; }
+.stock-col-type { width: 150px; }
 .stock-table td.stock-pin, .stock-table th.stock-pin { position: sticky; left: 0; z-index: 1; box-shadow: inset -1px 0 var(--border); }
 .stock-table > thead > tr > th.stock-pin { z-index: 3; }
 .stock-table > tbody > tr.stock-group-row > td { background: var(--bg-teal-10); color: var(--fg-teal-1); text-transform: none; letter-spacing: 0; font-size: 12.5px; }
@@ -2619,9 +2625,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* Tablet: the bar with «☰» takes a row; no hover there, so a long name wraps to two lines instead of hiding in a tooltip. */
 @media (max-width: 1280px), (pointer: coarse) and (max-width: 1600px) { .stock-page > .table-wrap { max-height: max(360px, calc(100dvh - 224px)); } }
 @media (pointer: coarse) { .stock-table td.stock-name .table-link { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; } }
-.lot-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
-.lot-card { display: grid; gap: 8px; align-content: start; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--card); white-space: normal; }
+/* Wide lot cards (owner 26.10: «пора увеличить ширину карточки»): one per row on 16", two on 27"; the figures and the
+   lot's lines side by side, the actions in one row under them. */
+.lot-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 940px), 1fr)); gap: 12px; }
+.lot-card { display: grid; gap: 8px; align-content: start; border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; background: var(--card); white-space: normal; }
 .lot-card.busy { opacity: .6; }
+.lot-card-head { display: flex; flex-wrap: wrap; align-items: start; gap: 8px 32px; }
+.lot-card-info { display: grid; gap: 4px; flex: 1 1 320px; min-width: 0; padding-top: 2px; }
+.lot-card-actions .scan-undo { flex-basis: 100%; }
 .lot-card-main { display: grid; grid-template-columns: minmax(110px, max-content) minmax(110px, max-content); gap: 12px 40px; }
 .lot-card-main > div { display: grid; gap: 2px; }
 .lot-card-big { font-size: 20px; font-weight: 700; line-height: 1.2; }
