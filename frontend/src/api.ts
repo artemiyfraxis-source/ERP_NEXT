@@ -427,6 +427,10 @@ export interface WarehouseLot {
   certificate?: string;
   /** The supply («Поставка») the lot was accepted with; null for lots entered before it existed. */
   receipt?: WarehouseReceiptRef | null;
+  /** The item row as the УПД prints it (the lot's own name is ours); hidden column «Наим. по УПД». */
+  upd_name?: string;
+  /** The row as the paid invoice names it (from purchasing, later); hidden column «Наим. по счёту». */
+  invoice_name?: string;
 }
 
 export interface WarehouseReceiptRef {
@@ -436,6 +440,11 @@ export interface WarehouseReceiptRef {
   invoice_date: string | null;
   upd_number: string;
   upd_date: string | null;
+  /** «К платёжно-расчётному документу № … от …»: numbers joined by «, », the first date. */
+  prd_number?: string;
+  prd_date?: string | null;
+  /** The stored УПД (scan or ЭДО file) of the delivery. */
+  scan_file?: string;
 }
 
 /** The supply document of «+ Внести позиции»: header fields; `scan_file` is the stored scan of the УПД. */
@@ -448,6 +457,8 @@ export interface WarehouseReceiptFields {
   upd_date: string | null;
   purpose: string;
   scan_file?: string;
+  prd_number?: string;
+  prd_date?: string | null;
 }
 
 export interface WarehouseReceipt extends WarehouseReceiptRef, Omit<WarehouseReceiptFields, "scan_file"> {
@@ -473,6 +484,8 @@ export interface WarehouseReceiptAccept {
   storage_location: string;
   labels: number;
   confirm_expected: boolean;
+  /** the item row as the УПД prints it (kept on the lot, read-only) */
+  upd_name: string;
 }
 
 export type WarehouseScanJobStatus = "pending" | "claimed" | "done" | "failed";
@@ -513,10 +526,16 @@ export interface UpdLlmSettingsInput {
 
 export interface WarehouseReceiptScan {
   scan_file: string;
-  recognised: { supplier: string; inn: string; upd_number: string; upd_date: string; invoice_number: string; invoice_date: string };
-  /** Lines read off a scan carry how they came: packs × pack («3» × «100 м», «рул.»), the supplier's code, the source. */
+  recognised: {
+    supplier: string; inn: string; upd_number: string; upd_date: string; invoice_number: string; invoice_date: string;
+    prd_number?: string | null; prd_date?: string | null;
+  };
+  /** Lines read off a scan carry how they came: packs × pack («3» × «100 м», «рул.»), the supplier's code, the source.
+   *  `name` — our name (a model's short one, else as printed), `upd_name` — as printed; `item_type` / `manufacturer` —
+   *  what the model said. */
   lines: Array<{
     article: string; name: string; quantity: string; unit: string;
+    upd_name?: string | null; item_type?: string | null; manufacturer?: string | null;
     packs?: string | null; pack?: string | null; pack_kind?: string | null; supplier_code?: string | null; source?: string | null;
   }>;
   note: string;

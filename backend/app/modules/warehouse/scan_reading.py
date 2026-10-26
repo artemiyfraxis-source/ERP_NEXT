@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -19,12 +20,13 @@ from pathlib import Path
 from app.shared.pdf_text import PdfLimitExceeded, pdf_text
 
 from . import receipt_llm, receipt_ocr
+from .item_types import ITEM_TYPES_CANON
 from .receipt_scan import NO_TEXT, PARTLY, RECOGNISED_KINDS, RecognisedUpd, parse_upd_text, recognise_upd_text
 from .upd_lines import UpdLine, parse_upd_lines
 
 MODEL_FAILED = "Модель распознавания не ответила — скан прочитан запасным способом, сверьте строки"
 PAGES_FAILED = "Модель не прочитала стр. {pages} — они прочитаны запасным способом, сверьте их строки"
-_HEADER = ("supplier", "inn", "upd_number", "upd_date", "invoice_number", "invoice_date")
+_HEADER = ("supplier", "inn", "upd_number", "upd_date", "invoice_number", "invoice_date", "prd_number", "prd_date")
 
 
 @dataclass(frozen=True)
@@ -51,7 +53,8 @@ def _text_layer(content: bytes) -> ScanReading | None:
     return None if found.empty else ScanReading(found, tuple(parse_upd_lines(text)), header_note(found), "", "текст PDF")
 
 
-def _model_reading(content: bytes, kind: str, config: receipt_llm.LlmConfig) -> ScanReading | None:
+def _model_reading(content: bytes, kind: str, config: receipt_llm.LlmConfig,
+                   types: Sequence[str] = ITEM_TYPES_CANON) -> ScanReading | None:
     """The pages through the model; a page it did not read — tesseract. None — no page pictures (no pdftoppm)."""
     with tempfile.TemporaryDirectory(prefix="erp-upd-") as temporary:
         try:
@@ -61,12 +64,12 @@ def _model_reading(content: bytes, kind: str, config: receipt_llm.LlmConfig) -> 
         if not images:
             return None
         jpegs = [receipt_llm.page_jpeg(image, receipt_ocr.page_turn(image)) for image in images]
-        answers = receipt_llm.read_pages(config, jpegs)
+        answers = receipt_llm.read_pages(config, jpegs, types=types)
         pages, failed = [], []
         for image, answer in zip(images, answers):
             if answer.data is not None:
                 found = receipt_llm.page_header(answer.data)
-                pages.append(ScanReading(found, tuple(receipt_llm.page_lines(answer.data)), engine=answer.model))
+                pages.append(ScanReading(found, tuple(receipt_llm.page_lines(answer.data, types)), engine=answer.model))
                 continue
             failed.append(str(answer.page))
             text = receipt_ocr.page_text(image)
@@ -78,7 +81,8 @@ def _model_reading(content: bytes, kind: str, config: receipt_llm.LlmConfig) -> 
     return replace(merged, warning=warning)
 
 
-def read_scan(content: bytes, kind: str | None, config: receipt_llm.LlmConfig | None) -> ScanReading:
+def read_scan(content: bytes, kind: str | None, config: receipt_llm.LlmConfig | None,
+              types: Sequence[str] = ITEM_TYPES_CANON) -> ScanReading:
     """The reading of one file (PDF / JPG / PNG): text layer → model → tesseract."""
     if kind not in RECOGNISED_KINDS:
         return ScanReading(RecognisedUpd(), note=NO_TEXT)
@@ -86,7 +90,7 @@ def read_scan(content: bytes, kind: str | None, config: receipt_llm.LlmConfig | 
         return reading
     warning = ""
     if config is not None and config.ready:
-        reading = _model_reading(content, kind, config)
+        reading = _model_reading(content, kind, config, types)
         if reading is not None:
             return reading
         warning = MODEL_FAILED

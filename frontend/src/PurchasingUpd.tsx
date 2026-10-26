@@ -4,7 +4,7 @@ import { formatDate } from "./format";
 import { urlParam } from "./navigation";
 import { PurchasingUpdCard } from "./PurchasingUpdCard";
 import {
-  EDO_STATUS_LABELS, EMPTY_FILTERS, UPD_ORIGIN_HINTS, UPD_ORIGIN_LABELS, UPD_STATUS_LABELS, UPD_STATUS_ORDER, UPD_STATUS_TONES,
+  EDO_STATUS_LABELS, EMPTY_FILTERS, UPD_ORIGIN_FILTERS, UPD_ORIGIN_HINTS, UPD_ORIGIN_LABELS, UPD_STATUS_LABELS, UPD_STATUS_ORDER, UPD_STATUS_TONES,
   UPD_KIND_GROUPS, buyerLabel, fileToBase64, purchasingUpdApi as updApi, rub,
   type EdoFileResult, type SellersImportResult, type UpdCard, type UpdFilters, type UpdList, type UpdSellers,
 } from "./purchasingUpdApi";
@@ -89,10 +89,10 @@ export function PurchasingUpd({ readOnly = false, focusId, extraBlocks }: {
       </div>
       <div className="upd-filters">
         <span className="seg-tabs upd-origin" role="group" aria-label="Источник">
-          {(["", "edo", "google"] as const).map((origin) => (
+          {UPD_ORIGIN_FILTERS.map(({ key: origin, label }) => (
             <button key={origin || "all"} type="button" className={filters.origin === origin ? "on" : undefined} aria-pressed={filters.origin === origin}
               title={origin ? UPD_ORIGIN_HINTS[origin] : undefined} onClick={() => set({ origin })}>
-              {origin === "" ? "Все" : origin === "edo" ? "ЭДО" : "Бумажные"}{origin && list ? ` ${list.origins[origin]}` : ""}
+              {label}{origin && list ? ` ${list.origins[origin] ?? 0}` : ""}
             </button>
           ))}
         </span>

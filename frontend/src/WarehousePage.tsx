@@ -27,12 +27,13 @@ import { countLabel } from "./format";
 import { BUSY_TITLE } from "./WarehousePlaceHint";
 import { UndoLast, WarehouseScanResults, type ScanRequest } from "./WarehouseScan";
 import { WarehouseReceipt } from "./WarehouseReceipt";
-import { receiptLine } from "./warehouseReceiptLogic";
+import { lotDocuments, receiptLine, shortDate } from "./warehouseReceiptLogic";
 import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
 import { StockLinkDialog } from "./StockLinkDialog";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
-  chooserColumns, ColumnChooser, columnTitle, COLUMN_HINTS, defaultLayout, moveColumn, readLayouts, shownColumns as visibleColumns, writeLayouts,
+  chooserColumns, ColumnChooser, columnTitle, COLUMN_HINTS, defaultLayout, documentsLayout, moveColumn, readLayouts,
+  shownColumns as visibleColumns, writeLayouts,
   type ColumnKey, type ColumnLayout, type TableKind,
 } from "./WarehouseColumns";
 
@@ -143,6 +144,8 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   const layout = layouts[kind];
   const groupColumn = !flat && (groupBy === "series" || groupBy === "type") ? groupBy : null;
   const shownColumns = visibleColumns(layout, groupColumn);
+  // Document columns switched on widen the lot table (it scrolls in its frame) instead of squeezing the name.
+  const docsLayout = flat ? documentsLayout(shownColumns) : null;
   const chooserKeys = chooserColumns(layout, groupColumn);
   // The leftmost column stays in view when the table is scrolled sideways.
   const pinned = shownColumns[0];
@@ -371,8 +374,10 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
         onClose={() => setMoveOpen(false)}
       />}
       {flat ? <div className="table-wrap" ref={wrapRef}>
-        <table className="grid wide compact stock-table" aria-label="Таблица склада">
-          <colgroup>{shownColumns.map((key) => <col key={key} className={`stock-col-${key}`} />)}</colgroup>
+        <table className="grid wide compact stock-table" aria-label="Таблица склада"
+          style={docsLayout ? { minWidth: docsLayout.minWidth } : undefined}>
+          <colgroup>{shownColumns.map((key) => <col key={key} className={`stock-col-${key}`}
+            style={docsLayout?.widths[key] ? { width: docsLayout.widths[key] } : undefined} />)}</colgroup>
           <thead><tr>{shownColumns.map((key) => <th key={key} className={classes(columnClass(key), key === pinned && "stock-pin")} title={COLUMN_HINTS[key]}>{columnTitle(key, true)}</th>)}</tr></thead>
           <tbody>{lots.map((lot) => <tr key={lot.id}>{shownColumns.map((key) => flatCell(key, lot, key === pinned, lotItems[lot.id], purposeText))}</tr>)}</tbody>
         </table>
@@ -642,6 +647,17 @@ function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: It
     case "purpose": return cutCell(key, purposeText(lot.purpose) || "—", pinned);
     case "series": return cutCell(key, lot.series || "—", pinned);
     case "type": return cutCell(key, lot.item_type || "—", pinned);
+    case "upd_name": return cutCell(key, lot.upd_name || "", pinned);
+    case "invoice_name": return cutCell(key, lot.invoice_name || "", pinned);
+    case "invoice_number": return cutCell(key, lot.receipt?.invoice_number || "", pinned);
+    case "invoice_date": return cutCell(key, shortDate(lot.receipt?.invoice_date), pinned, "num");
+    case "upd_number": return cutCell(key, lot.receipt?.upd_number || "", pinned);
+    case "upd_date": return cutCell(key, shortDate(lot.receipt?.upd_date), pinned, "num");
+    case "prd_number": return cutCell(key, lot.receipt?.prd_number || "", pinned);
+    case "prd_date": return cutCell(key, shortDate(lot.receipt?.prd_date), pinned, "num");
+    case "upd_file": return <td key={key} className={classes(pinned && "stock-pin")}>
+      {lot.receipt?.scan_file ? <a href={lot.receipt.scan_file} target="_blank" rel="noreferrer" aria-label={`Файл УПД партии ${lot.grn}`}>открыть</a> : null}
+    </td>;
     default: return null;
   }
 }
@@ -1183,7 +1199,8 @@ function LotEditDialog({ lot, disabled, mutate, onClose }: {
   };
 
   return <LotDialog title="Правка" lot={lot} wide={editingRow} onClose={onClose}>
-    {editingRow ? <LotRowEditForm lot={lot} disabled={disabled} mutate={mutate} onClose={() => setEditingRow(false)} onSaved={onClose} /> : <>
+    <LotDocuments lot={lot} />
+    {editingRow ?<LotRowEditForm lot={lot} disabled={disabled} mutate={mutate} onClose={() => setEditingRow(false)} onSaved={onClose} /> : <>
       <form className="dialog-form" aria-label="Карточка партии" onSubmit={(event) => {
         event.preventDefault();
         run(() => warehouseApi.editIdentity(lot.id, lot.version, article.trim(), name.trim(), series.trim()));
@@ -1211,6 +1228,20 @@ function LotEditDialog({ lot, disabled, mutate, onClose }: {
       </div>
     </>}
   </LotDialog>;
+}
+
+/** «Документы» of a lot, read-only: the УПД, invoice and payment document of its delivery, the names they give it, the
+ *  stored УПД. Nothing known — nothing shown (old lots entered before «Поставка»). */
+function LotDocuments({ lot }: { lot: WarehouseLot }) {
+  const rows = lotDocuments(lot);
+  if (!rows.length) return null;
+  return <section className="lot-docs" aria-label="Документы">
+    <h3>Документы</h3>
+    <dl>{rows.map((row) => <Fragment key={row.label}>
+      <dt>{row.label}</dt>
+      <dd>{row.href ? <a href={row.href} target="_blank" rel="noreferrer">{row.value}</a> : row.value}</dd>
+    </Fragment>)}</dl>
+  </section>;
 }
 
 /** «История» партии (SUPPLYMAP openStock05Log(grn)): the stock journal of this ГРН and package, newest first. */

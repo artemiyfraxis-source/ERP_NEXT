@@ -17,10 +17,13 @@ export type ReceiptHeader = {
   invoice_date: string;
   upd_number: string;
   upd_date: string;
+  /** «К платёжно-расчётному документу № … от …» — the payment, not the invoice (owner 26.10.2026) */
+  prd_number: string;
+  prd_date: string;
   purpose: string;
 };
 export type HeaderKey = keyof ReceiptHeader;
-const HEADER_KEYS: HeaderKey[] = ["supplier", "invoice_number", "invoice_date", "upd_number", "upd_date"];
+const HEADER_KEYS: HeaderKey[] = ["supplier", "invoice_number", "invoice_date", "upd_number", "upd_date", "prd_number", "prd_date"];
 
 export type LineKey =
   | "article" | "quantity" | "unit" | "item_type" | "manufacturer" | "series" | "name" | "purpose"
@@ -36,9 +39,17 @@ export type AcceptedInfo = {
   labelError: string;
 };
 
+/** The cells a УПД scan fills from what the model made of the printed name: a known lot or the reference DB replaces
+ *  them until the storekeeper edits them (owner 26.10.2026: catalog > model > nothing). */
+export const MODEL_KEYS: LineKey[] = ["name", "item_type", "manufacturer"];
+
 export type ReceiptLine = Record<LineKey, string> & {
   /** cells filled by the article lookup and not touched since — shown muted */
   auto: LineKey[];
+  /** cells filled from the УПД scan (our name, type, maker) that the article lookup may still replace — shown muted */
+  model: LineKey[];
+  /** the item row as the УПД prints it — kept on the lot («Наим. по УПД»), the title of «Наименование» */
+  upd_name: string;
   /** where the lookup took them from (the row's title) */
   source: string;
   /** how a scanned УПД line came: «3 рул. × 100 м · скан УПД» (the row's title too) */
@@ -68,7 +79,7 @@ export const GRID_COLUMNS: Array<{ key: LineKey; label: string; required: boolea
 export const PASTE_ORDER: LineKey[] = GRID_COLUMNS.map((column) => column.key);
 
 type PasteKey = LineKey | HeaderKey;
-const DATE_KEYS: ReadonlySet<PasteKey> = new Set<PasteKey>(["invoice_date", "upd_date", "expiry_date"]);
+const DATE_KEYS: ReadonlySet<PasteKey> = new Set<PasteKey>(["invoice_date", "upd_date", "prd_date", "expiry_date"]);
 
 /* Header names of the owner's old receipt sheets («арт ПОСТАВЩИКА», «приход») and of the grid itself. */
 export const RECEIPT_FIELDS: Array<PasteField<PasteKey>> = [
@@ -88,6 +99,8 @@ export const RECEIPT_FIELDS: Array<PasteField<PasteKey>> = [
   { key: "invoice_date", label: "Дата счёта", aliases: ["Дата счета"] },
   { key: "upd_number", label: "№ УПД", aliases: ["Номер УПД"] },
   { key: "upd_date", label: "Дата УПД", aliases: [] },
+  { key: "prd_number", label: "№ ПРД", aliases: ["Номер ПРД", "№ платёжки", "№ платежки"] },
+  { key: "prd_date", label: "Дата ПРД", aliases: ["Дата платёжки", "Дата платежки"] },
 ];
 
 const MESSAGES = {
@@ -96,11 +109,11 @@ const MESSAGES = {
 };
 
 export function emptyHeader(): ReceiptHeader {
-  return { warehouse: "ЦАР", supplier: "", invoice_number: "", invoice_date: "", upd_number: "", upd_date: "", purpose: "" };
+  return { warehouse: "ЦАР", supplier: "", invoice_number: "", invoice_date: "", upd_number: "", upd_date: "", prd_number: "", prd_date: "", purpose: "" };
 }
 
 export function emptyLine(): ReceiptLine {
-  const line = { auto: [], source: "", scan: "", places: [], expected: "", accepted: null, error: "" } as unknown as ReceiptLine;
+  const line = { auto: [], model: [], upd_name: "", source: "", scan: "", places: [], expected: "", accepted: null, error: "" } as unknown as ReceiptLine;
   for (const key of PASTE_ORDER) line[key] = "";
   return line;
 }
@@ -186,7 +199,10 @@ export function applyReceiptPaste(
     if (was.accepted) return was;
     const changed = PASTE_ORDER.filter((key) => line[key] !== was[key]);
     if (!changed.length) return was;
-    const next = { ...was, ...Object.fromEntries(changed.map((key) => [key, line[key]])), auto: was.auto.filter((key) => !changed.includes(key)), error: "" };
+    const next = {
+      ...was, ...Object.fromEntries(changed.map((key) => [key, line[key]])), auto: was.auto.filter((key) => !changed.includes(key)),
+      model: was.model.filter((key) => !changed.includes(key)), error: "",
+    };
     return changed.includes("article") ? splitArticleCell(next) : next;
   }).map((line, index) => (lines[index] ? line : splitArticleCell(line)));
   return { lines: positions, header: {}, filled: result.filled, dropped: result.dropped, mode: "cells", unknown: [] };
@@ -216,17 +232,26 @@ export function applyScan(header: ReceiptHeader, lines: ReceiptLine[], scan: War
     invoice_date: dateToIso(text(found.invoice_date)),
     upd_number: text(found.upd_number),
     upd_date: dateToIso(text(found.upd_date)),
+    prd_number: text(found.prd_number),
+    prd_date: dateToIso(text(found.prd_date)),
   });
   const rows = (scan.lines ?? []).map((line) => ({
     article: text(line.article), name: text(line.name), unit: text(line.unit), quantity: cellValue("quantity", text(line.quantity)),
+    item_type: text(line.item_type), manufacturer: text(line.manufacturer),
   }));
   const result = appendParsedRows<LineKey, ReceiptLine>(lines, rows, { limit: RECEIPT_LIMIT, seed: emptyLine(), isBlank: isBlankLine });
   const first = result.positions.length - result.filled;
   const split = result.positions.map((line, index) => {
     if (line === lines[index]) return line;
     const scanned = (scan.lines ?? [])[index - first];
-    const hint = scanned ? scanHint(scanned) : "";
-    return splitArticleCell(hint ? { ...line, scan: hint } : line);
+    if (!scanned) return splitArticleCell(line);
+    const hint = scanHint(scanned);
+    // The printed УПД line is kept apart; our name / type / maker from the scan stay replaceable by the catalog.
+    const marked: ReceiptLine = {
+      ...line, scan: hint || line.scan, upd_name: text(scanned.upd_name) || text(scanned.name),
+      model: MODEL_KEYS.filter((key) => line[key].trim()),
+    };
+    return splitArticleCell(marked);
   });
   return { header: nextHeader, lines: split, added: result.filled };
 }
@@ -256,6 +281,8 @@ export function headerFields(header: ReceiptHeader, scanFile: string): Warehouse
     invoice_date: header.invoice_date || null,
     upd_number: header.upd_number.trim(),
     upd_date: header.upd_date || null,
+    prd_number: header.prd_number.trim(),
+    prd_date: header.prd_date || null,
     purpose: header.purpose.trim() || DEFAULT_PURPOSE,
     ...(scanFile ? { scan_file: scanFile } : {}),
   };
@@ -286,16 +313,23 @@ export function buildAccept(line: ReceiptLine, header: ReceiptHeader, place: str
     storage_location: place.trim(),
     labels,
     confirm_expected: confirmExpected,
+    upd_name: line.upd_name.trim(),
   };
 }
 
-/** Fills EMPTY cells only; what it fills is `auto` (muted until edited). Returns the same line when nothing changed. */
+/** Fills EMPTY cells — and the cells the УПД scan filled from the model (`model`), the catalog knows better; what it
+ *  fills is `auto` (muted until edited). Returns the same line when nothing changed. */
 export function fillEmpty(line: ReceiptLine, values: Partial<Record<LineKey, string | null | undefined>>, source: string): ReceiptLine {
   let next = line;
   for (const key of PASTE_ORDER) {
     const value = values[key];
-    if (!value || line[key].trim() || line.accepted) continue;
-    next = { ...next, [key]: value, auto: [...next.auto, key], source };
+    const replaceable = line.model.includes(key);
+    if (!value || (line[key].trim() && !replaceable) || line.accepted) continue;
+    if (replaceable && line[key] === value) continue;
+    next = {
+      ...next, [key]: value, auto: [...next.auto.filter((item) => item !== key), key], source,
+      model: next.model.filter((item) => item !== key),
+    };
   }
   return next;
 }
@@ -396,7 +430,7 @@ export function splitArticleCell(line: ReceiptLine): ReceiptLine {
 
 /** An editing of a cell: it is the user's own text now. */
 export function editCell(line: ReceiptLine, key: LineKey, value: string): ReceiptLine {
-  return { ...line, [key]: value, auto: line.auto.filter((item) => item !== key), error: "" };
+  return { ...line, [key]: value, auto: line.auto.filter((item) => item !== key), model: line.model.filter((item) => item !== key), error: "" };
 }
 
 /** A lot already accepted with this supply, shown as a read-only row («Продолжить поставку»). */
@@ -406,6 +440,7 @@ export function lineFromLot(lot: WarehouseLot): ReceiptLine {
     article: text(lot.article), quantity: text(lot.inbound), unit: text(lot.unit), item_type: text(lot.item_type),
     manufacturer: text(lot.manufacturer), series: text(lot.series), name: text(lot.name), purpose: text(lot.purpose),
     expiry_date: text(lot.expiry_date), datasheet: text(lot.datasheet), certificate: text(lot.certificate),
+    upd_name: text(lot.upd_name),
     accepted: { lotId: lot.id, grn: lot.grn, place: lot.storage_location, labels: 0, labelError: "" },
   };
 }
@@ -413,7 +448,8 @@ export function lineFromLot(lot: WarehouseLot): ReceiptLine {
 export function headerFromReceipt(receipt: WarehouseReceipt): ReceiptHeader {
   return {
     warehouse: receipt.warehouse, supplier: text(receipt.supplier), invoice_number: text(receipt.invoice_number),
-    invoice_date: text(receipt.invoice_date), upd_number: text(receipt.upd_number), upd_date: text(receipt.upd_date), purpose: text(receipt.purpose),
+    invoice_date: text(receipt.invoice_date), upd_number: text(receipt.upd_number), upd_date: text(receipt.upd_date),
+    prd_number: text(receipt.prd_number), prd_date: text(receipt.prd_date), purpose: text(receipt.purpose),
   };
 }
 
@@ -437,6 +473,30 @@ export function receiptLine(receipt: WarehouseLot["receipt"]): string {
     receipt.supplier,
     doc("УПД", receipt.upd_number, receipt.upd_date),
     doc("счёт", receipt.invoice_number, receipt.invoice_date),
+    doc("ПРД", text(receipt.prd_number), receipt.prd_date ?? null),
   ].filter(Boolean);
   return parts.length ? `Приход: ${parts.join(" · ")}` : "";
+}
+
+/** «№ 17 от 20.10.2026», «№ 17», «от 20.10.2026» or «». */
+function docRef(number: string, date: string | null | undefined): string {
+  return [number ? `№ ${number}` : "", date ? `от ${shortDate(date)}` : ""].filter(Boolean).join(" ");
+}
+
+export type LotDocument = { label: string; value: string; href?: string };
+
+/** «Документы» of a lot card (owner 26.10.2026: «должно быть, но скрыто»): the УПД, the invoice, the payment document
+ *  of its delivery, the names the documents give the item. Only what is known; read-only. */
+export function lotDocuments(lot: WarehouseLot): LotDocument[] {
+  const receipt = lot.receipt;
+  const rows: LotDocument[] = [
+    { label: "УПД", value: receipt ? docRef(text(receipt.upd_number), receipt.upd_date) : "" },
+    { label: "Счёт", value: receipt ? docRef(text(receipt.invoice_number), receipt.invoice_date) : "" },
+    { label: "ПРД", value: receipt ? docRef(text(receipt.prd_number), receipt.prd_date) : "" },
+    { label: "Наим. по УПД", value: text(lot.upd_name) },
+    { label: "Наим. по счёту", value: text(lot.invoice_name) },
+  ];
+  const file = text(receipt?.scan_file);
+  if (file) rows.push({ label: "Файл УПД", value: "открыть", href: file });
+  return rows.filter((row) => row.value);
 }

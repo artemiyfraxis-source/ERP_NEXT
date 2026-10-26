@@ -122,6 +122,11 @@ class UpdLine:
     source: str = SOURCE
     colour: str = ""  # the colour word the article took from the name — the snap tries the article without it too
     number: str = ""  # «№ п/п» of the row (the page merge tells a repeated sheet from a new row by it)
+    # What a model made of the printed name (owner 26.10.2026): our short name (type + main parameters), the item type
+    # of the stock dictionary, the maker. `name` stays the name as printed (it goes to the lot's «Наим. по УПД»).
+    short_name: str = ""
+    item_type: str = ""
+    manufacturer: str = ""
 
 
 def number_text(value: Decimal | None) -> str:
@@ -321,10 +326,18 @@ def parse_upd_lines(text: str) -> list[UpdLine]:
     return found
 
 
-def item_line(name: str, quantity: Decimal | None, unit: str, *, supplier_code: str = "", number: str = "") -> UpdLine:
+def item_line(name: str, quantity: Decimal | None, unit: str, *, supplier_code: str = "", number: str = "",
+              article: str = "", short_name: str = "", item_type: str = "", manufacturer: str = "") -> UpdLine:
     """One item row from its printed name, invoiced quantity and unit (OCR rows and a model's rows alike): the
-    article read off the name, the pack said in words applied (`find_pack`; a size form «9мм*16м» is not a pack)."""
-    article, name, colour = name_article(" ".join(str(name or "").split()))
+    article read off the name, the pack said in words applied (`find_pack`; a size form «9мм*16м» is not a pack).
+    A model's `article` wins over the one the rules read, unless the rules read the same code and added the size and
+    colour of a series code to it («МТ-2К» → «МТ-2К 6,4/3,2 белая»)."""
+    read, name, colour = name_article(" ".join(str(name or "").split()))
+    article = " ".join(str(article or "").split())[:255]
+    if not article or (read and snap_key(read).startswith(snap_key(article))):
+        article = read
+    else:
+        colour = ""
     pack = find_pack(name)
     if pack is not None and not pack.explicit:
         pack = None
@@ -333,15 +346,17 @@ def item_line(name: str, quantity: Decimal | None, unit: str, *, supplier_code: 
         article=article, name=name, quantity=total, unit=total_unit, invoice_quantity=quantity, invoice_unit=unit,
         packs=packs, pack=f"{number_text(pack.size)} {pack.unit}" if pack else "", pack_kind=pack.kind if pack else "",
         supplier_code=str(supplier_code or "").strip()[:64], colour=colour, number=str(number or "").strip()[:16],
+        short_name=" ".join(str(short_name or "").split())[:255], item_type=str(item_type or "").strip()[:255],
+        manufacturer=str(manufacturer or "").strip()[:255],
     )
 
 
-def line_from_item(name: str, code: str, unit_word: str, okei: str, quantity: Decimal) -> UpdLine:
+def line_from_item(name: str, code: str, unit_word: str, okei: str, quantity: Decimal, **model: str) -> UpdLine:
     """A row of an ЭДО УПД, read like a scanned one (`item_line`): the article from the name, else the seller's code
     when it looks like a maker article («00-00042353» is only the seller's own number). `source` says it came from
-    the file."""
+    the file. `model` — what a model made of the name (article, short_name, item_type, manufacturer), when asked."""
     code = str(code or "").strip()
-    line = item_line(name, quantity, _unit(unit_word, okei), supplier_code=code)
+    line = item_line(name, quantity, _unit(unit_word, okei), supplier_code=code, **model)
     article = line.article or (code[:64] if _is_code(code) else "")
     return replace(line, article=article, source="файл ЭДО")
 
@@ -381,9 +396,13 @@ def snap_articles(lines: list[UpdLine], known: Iterable[tuple[str, str]]) -> lis
 
 
 def line_answer(line: UpdLine) -> dict:
-    """The line as «Отсканировать УПД» answers it."""
+    """The line as «Отсканировать УПД» answers it: `name` — our name (the model's short one, else the printed one),
+    `upd_name` — the name as printed, `item_type` / `manufacturer` — what the model said («» — nothing). The screen
+    lets a known lot or the reference DB replace name, type and maker until the storekeeper edits them."""
     return {
-        "article": line.article, "name": line.name, "quantity": number_text(line.quantity), "unit": line.unit,
+        "article": line.article, "name": line.short_name or line.name, "upd_name": line.name,
+        "item_type": line.item_type, "manufacturer": line.manufacturer,
+        "quantity": number_text(line.quantity), "unit": line.unit,
         "packs": number_text(line.packs), "pack": line.pack, "pack_kind": line.pack_kind,
         "supplier_code": line.supplier_code, "source": line.source,
     }

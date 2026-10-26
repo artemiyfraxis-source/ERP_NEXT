@@ -63,7 +63,7 @@ export type ReceivingLine = {
 export type ReceivingSummary = { lines: number; grns: string[]; statuses: { status: string; count: number }[]; items?: ReceivingLine[] };
 
 export type ChainUpd = {
-  id: string; file_name: string; number: string; date: string | null; kind: string; origin: "google" | "edo"; status: string;
+  id: string; file_name: string; number: string; date: string | null; kind: string; origin: "google" | "edo" | "scan"; status: string;
   seller_name: string; seller_inn: string; supplier_id: string | null; total_gross: number | null; services_only: boolean;
   method: LinkMethod; basis: string; payment_doc: string; buyer_kind: "ours" | "other" | "unknown"; buyer_org_inn: string | null;
   /** null — no receiving on this stand. */
@@ -112,7 +112,7 @@ export type SearchKind = "all" | "upd" | "invoice";
 export type SearchLine = { seq: number; name: string; article: string; qty: number | string | null; unit: string; price: number | null; sum: number | null };
 export type SearchHit = {
   kind: "upd" | "invoice"; id: string; doc_kind: string; number: string | null; date: string | null; seller_name: string | null;
-  seller_inn: string | null; origin: "google" | "edo" | null; total: number | null; file_id: string | null; title: string | null;
+  seller_inn: string | null; origin: "google" | "edo" | "scan" | null; total: number | null; file_id: string | null; title: string | null;
   lines: SearchLine[]; snippet: string | null; matched: "lines" | "header" | "amount" | "text" | "title";
 };
 export type SearchResult = { hits: SearchHit[]; found: number };
@@ -156,4 +156,4 @@ export function docLabel(u: { kind: string; number: string; date: string | null 
   return `${u.kind || "Документ"} № ${u.number || "—"}${u.date ? ` от ${dayText(u.date)}` : ""}`;
 }
 
-export const ORIGIN_LABELS: Record<"google" | "edo", string> = { google: "бумажный", edo: "ЭДО" };
+export const ORIGIN_LABELS: Record<"google" | "edo" | "scan", string> = { google: "бумажный", edo: "ЭДО", scan: "скан склада" };

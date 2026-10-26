@@ -464,10 +464,12 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
 
   function control(row: number, key: LineKey, line: ReceiptLine) {
     const label = GRID_COLUMNS.find((column) => column.key === key)!.label;
-    const muted = line.auto.includes(key);
+    const muted = line.auto.includes(key) || line.model.includes(key);
     const common = {
       "data-cell": `${row}:${key}`,
       "aria-label": `${label}, строка ${row + 1}`,
+      // The printed УПД line stays on the lot («Наим. по УПД»); the storekeeper sees it on the name cell only.
+      title: key === "name" && line.upd_name ? `По УПД: ${line.upd_name}` : undefined,
       "aria-invalid": line.error ? true : undefined,
       className: [line.error ? "rg-bad" : "", muted ? "wr-auto" : ""].filter(Boolean).join(" ") || undefined,
       onKeyDown: (event: KeyboardEvent) => onKeyDown(event, row, key),
@@ -521,6 +523,8 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
           </label>
           {headerField("invoice_number", "№ счёта")}
           {headerField("invoice_date", "Дата счёта", "date")}
+          {headerField("prd_number", "№ ПРД")}
+          {headerField("prd_date", "Дата ПРД", "date")}
           {headerField("upd_number", "№ УПД")}
           {headerField("upd_date", "Дата УПД", "date")}
           {headerField("purpose", "Назначение")}
@@ -570,7 +574,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
                       title={lineTitle(line)}>
                       <td className="rg-no wr-stick wr-stick-no">{row + 1}</td>
                       {GRID_COLUMNS.map((column) => <td key={column.key} className={`wr-col-${column.key}${column.key === "article" ? " wr-stick wr-stick-article" : ""}`}>
-                        {done ? <span className="wr-ro" title={line[column.key]}>{column.key === "expiry_date" ? shortDate(line[column.key]) : line[column.key]}</span> : control(row, column.key, line)}
+                        {done ? <span className="wr-ro" title={column.key === "name" && line.upd_name ? `${line.name}\nПо УПД: ${line.upd_name}` : line[column.key]}>{column.key === "expiry_date" ? shortDate(line[column.key]) : line[column.key]}</span> : control(row, column.key, line)}
                       </td>)}
                       <td className="wr-col-act wr-stick wr-stick-act">
                         {done

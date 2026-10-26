@@ -99,6 +99,9 @@ def database(tmp_path, monkeypatch):
         # 0144: «Приход на склад» — the lot's delivery.
         Base.metadata.tables["warehouse_receipts"].create(connection)
         connection.execute(text("ALTER TABLE warehouse_lots ADD COLUMN receipt_id CHAR(32)"))
+        # 0152: the names the УПД and the invoice give a lot.
+        connection.execute(text("ALTER TABLE warehouse_lots ADD COLUMN upd_name TEXT NOT NULL DEFAULT ''"))
+        connection.execute(text("ALTER TABLE warehouse_lots ADD COLUMN invoice_name TEXT NOT NULL DEFAULT ''"))
         # 0089: the project / КБ / kind of a request and the year's number counter.
         connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN project_key VARCHAR(128)"))
         connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN item_index VARCHAR(64)"))

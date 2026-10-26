@@ -382,7 +382,7 @@ class DecisionRow(Base):
 # (BigInteger) as there; unit prices of UPD lines in rubles as printed. Files live in the database like every other
 # ERP upload (app/shared/stored_files.py), one row per distinct content.
 
-UPD_ORIGINS = ("google", "edo")
+UPD_ORIGINS = ("google", "edo", "scan")
 UPD_LINE_SOURCES = ("google", "manual")
 INVOICE_STATUSES = ("to_pay", "paid", "return", "other")
 INVOICE_FILE_KINDS = ("invoice", "payment", "other")
@@ -403,13 +403,13 @@ class DocumentFileRow(Base):
 
 
 class UpdDocumentRow(Base):
-    """One closing document: a PDF read by the Google parser (key = Drive file id) or an EDO XML (key «edo-<sha1 of
-    ИдФайл>»). Parser fields are the parser's word; the buyer's corrections live in manual_header / manual lines and
+    """One closing document: a PDF read by the Google parser (key = Drive file id), an EDO XML (key «edo-<sha1 of
+    ИдФайл>») or a scan taken in at the warehouse (key «wh-<warehouse file uuid>», 0153). Parser fields are the parser's word; the buyer's corrections live in manual_header / manual lines and
     win on read. twin_of — the same document came twice (PDF and XML, XML resent): the copy points at the one in force."""
 
     __tablename__ = "purchasing_upd_documents"
     __table_args__ = (
-        CheckConstraint("origin IN ('google', 'edo')", name="ck_purchasing_upd_documents_origin"),
+        CheckConstraint("origin IN ('google', 'edo', 'scan')", name="ck_purchasing_upd_documents_origin"),
         CheckConstraint("twin_of IS NULL OR twin_of <> id", name="ck_purchasing_upd_documents_twin"),
         Index("ix_purchasing_upd_documents_supplier", "supplier_id"),
         Index("ix_purchasing_upd_documents_seller_inn", "seller_inn"),

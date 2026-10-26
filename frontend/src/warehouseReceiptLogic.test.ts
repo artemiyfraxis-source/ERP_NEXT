@@ -64,7 +64,7 @@ it("builds the accept body: unit and purpose fall back, labels and confirmation 
   const body = buildAccept(filled({ article: " A ", quantity: "2,5", expiry_date: "" }), emptyHeader(), " 1F4 ", 3, true);
   expect(body).toEqual({
     article: "A", quantity: "2.5", unit: "шт", item_type: "", manufacturer: "", series: "", name: "", purpose: "Склад",
-    expiry_date: null, datasheet: "", certificate: "", storage_location: "1F4", labels: 3, confirm_expected: true,
+    expiry_date: null, datasheet: "", certificate: "", storage_location: "1F4", labels: 3, confirm_expected: true, upd_name: "",
   });
 });
 

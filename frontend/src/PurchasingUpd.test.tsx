@@ -275,3 +275,26 @@ it("checks match the server's rules", () => {
   expect(Number.isNaN(inputToKop("abc"))).toBe(true);
   expect(rub(null)).toBe("—");
 });
+
+it("shows a warehouse scan as «Скан склада» and filters the registry by it", async () => {
+  const calls: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    calls.push(path);
+    if (path.startsWith("/api/purchasing/upd")) {
+      return json({
+        ...listing([card({ id: "wh-5b1f", file_name: "УПД.pdf", origin: "scan", status: "needs_review", parser_status: "Требует проверки" })]),
+        origins: { edo: 1, google: 2, scan: 1 },
+      });
+    }
+    return json({});
+  });
+  render(<PurchasingUpd />);
+  const table = await screen.findByRole("list", { name: "Реестр УПД" });
+  const chip = within(table).getByText("Скан склада");
+  expect(chip.getAttribute("title")).toContain("принятого на складе");
+  const button = screen.getByRole("button", { name: "Скан склада 1" });
+  expect(button.getAttribute("title")).toContain("распознавание модели");
+  fireEvent.click(button);
+  await waitFor(() => expect(calls.some((path) => new URLSearchParams(path.split("?")[1] ?? "").get("origin") === "scan")).toBe(true));
+});

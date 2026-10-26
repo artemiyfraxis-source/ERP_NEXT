@@ -6,7 +6,8 @@ runs as a background task (`recognise_job`), and the screen polls the job until 
 keeps its own reading (`scan_reading`), so a merge of sheets combines the kept readings and reads nothing again.
 
 The answer — `{scan_file, recognised: {supplier, inn, upd_number, upd_date, invoice_number, invoice_date}, lines:
-[{article, name, quantity, unit, packs, pack, pack_kind, supplier_code, source}], note}`: the УПД purchasing holds
+[{article, name, upd_name, item_type, manufacturer, quantity, unit, packs, pack, pack_kind, supplier_code, source}],
+note}` (`name` — our short name when a model gave one, `upd_name` — as printed): the УПД purchasing holds
 under the recognised number first (header and lines from it), else the rows read off the scan, their articles snapped
 to known ones (stock, purchasing, reference DB)."""
 
@@ -28,6 +29,7 @@ from . import receipt_llm
 from .application import UnitOfWork
 from .domain import RECEIPT_SCAN_PATH
 from .receipt_scan import NO_TEXT, RecognisedUpd, parse_upd_text
+from .reference_fields import item_types
 from .receipts_application import (
     keep_scan_recognition,
     scan_file,
@@ -71,6 +73,8 @@ def recognised_dict(found: RecognisedUpd) -> dict:
         "upd_date": found.upd_date.isoformat() if found.upd_date else None,
         "invoice_number": found.invoice_number,
         "invoice_date": found.invoice_date.isoformat() if found.invoice_date else None,
+        "prd_number": found.prd_number,
+        "prd_date": found.prd_date.isoformat() if found.prd_date else None,
     }
 
 
@@ -90,8 +94,9 @@ def scan_answer(sources: ScanSources, link: str, reading: ScanReading) -> dict:
             upd_date=document["upd_date"] or found.upd_date,
             invoice_number=found.invoice_number or basis.invoice_number,
             invoice_date=found.invoice_date or basis.invoice_date,
+            prd_number=found.prd_number, prd_date=found.prd_date,
         )
-        lines = document["lines"]
+        lines =[{**line, "upd_name": line.get("name", "")} for line in document["lines"]]
         note = "Найден УПД в документах закупки — шапка и строки взяты из него"
     if not lines and reading.lines:
         read = snap_articles(list(reading.lines), known_articles(sources.warehouse, sources.purchasing,
@@ -104,15 +109,28 @@ def scan_answer(sources: ScanSources, link: str, reading: ScanReading) -> dict:
     return {"scan_file": link, "recognised": recognised_dict(found), "lines": lines, "note": note}
 
 
-def edo_answer(sources: ScanSources, link: str, delivery: EdoDelivery) -> dict:
-    """The same answer for an ЭДО УПД: the header and the rows are in the file — no model, no OCR. Only an invoice
-    «Счёт …» of the basis is the delivery's invoice, as for a scan."""
+def edo_answer(sources: ScanSources, link: str, delivery: EdoDelivery,
+               names: Callable[[list[str]], list[dict] | None] | None = None) -> dict:
+    """The same answer for an ЭДО УПД: the header and the rows are in the file — no OCR. Only an invoice «Счёт …» of
+    the basis is the delivery's invoice, as for a scan; the ПРД is the file's СвПРД. `names` — a text-only model call
+    over the names (`receipt_llm.name_fields`) for the article, our short name, the type and the maker; it failing or
+    not configured — the lines come as the file gives them."""
     basis = parse_upd_text(delivery.basis)
     found = RecognisedUpd(
         supplier=delivery.supplier[:255], inn=delivery.inn, upd_number=delivery.number[:64], upd_date=delivery.day,
         invoice_number=basis.invoice_number, invoice_date=basis.invoice_date,
+        prd_number=delivery.prd_number, prd_date=delivery.prd_date,
     )
-    rows = [line_from_item(item.name, item.code, item.unit, item.okei, item.quantity) for item in delivery.items]
+    fields: list[dict] | None = None
+    if names is not None and delivery.items:
+        try:
+            fields = names([item.name for item in delivery.items])
+        except Exception:  # noqa: BLE001 — the model is a help: the file's lines stand without it
+            log.exception("УПД ЭДО: наименования не разобраны моделью")
+    if not fields or len(fields) != len(delivery.items):
+        fields = [{} for _ in delivery.items]
+    rows = [line_from_item(item.name, item.code, item.unit, item.okei, item.quantity, **extra)
+            for item, extra in zip(delivery.items, fields)]
     rows = snap_articles(rows, known_articles(sources.warehouse, sources.purchasing, sources.references))
     return {"scan_file": link, "recognised": recognised_dict(found), "lines": [line_answer(row) for row in rows],
             "note": delivery.note}
@@ -123,6 +141,15 @@ def llm_config(uow_factory: Callable[[], UnitOfWork]) -> receipt_llm.LlmConfig:
     return receipt_llm.llm_config(upd_llm_settings(uow_factory()))
 
 
+def edo_names(uow_factory: Callable[[], UnitOfWork]) -> Callable[[list[str]], list[dict] | None]:
+    """The text-only model call over an ЭДО file's names, with this server's model settings and item types."""
+    def read(names: list[str]) -> list[dict] | None:
+        config = llm_config(uow_factory)
+        return receipt_llm.name_fields(config, names, item_types(uow_factory())) if config.ready else None
+
+    return read
+
+
 def file_reading(uow_factory: Callable[[], UnitOfWork], file_id: UUID,
                  config: Callable[[], receipt_llm.LlmConfig]) -> ScanReading:
     """The kept reading of a stored scan, else read now (model / tesseract) and kept. Blocking: seconds to minutes."""
@@ -131,7 +158,7 @@ def file_reading(uow_factory: Callable[[], UnitOfWork], file_id: UUID,
         return kept
     found = scan_file(uow_factory(), file_id)
     content = found[1] if found else b""
-    reading = read_scan(content, sniffed_type(content), config())
+    reading = read_scan(content, sniffed_type(content), config(), item_types(uow_factory()))
     keep_scan_recognition(uow_factory(), file_id, reading_json(reading))
     return reading
 

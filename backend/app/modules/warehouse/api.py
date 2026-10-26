@@ -266,11 +266,13 @@ def _result(lot: StockLot) -> dict:
         "storage_conditions": lot.storage_conditions,
         "datasheet": lot.datasheet,
         "certificate": lot.certificate,
+        "upd_name": lot.upd_name,
+        "invoice_name": lot.invoice_name,
     }
 
 
 def receipt_brief(receipt: WarehouseReceipt | None) -> dict | None:
-    """The delivery a lot came with, as the lot list shows it."""
+    """The delivery a lot came with, as the lot list shows it (its document columns read the receipt, not the lot)."""
     if receipt is None:
         return None
     return {
@@ -280,6 +282,9 @@ def receipt_brief(receipt: WarehouseReceipt | None) -> dict | None:
         "invoice_date": receipt.invoice_date.isoformat() if receipt.invoice_date else None,
         "upd_number": receipt.upd_number,
         "upd_date": receipt.upd_date.isoformat() if receipt.upd_date else None,
+        "prd_number": receipt.prd_number,
+        "prd_date": receipt.prd_date.isoformat() if receipt.prd_date else None,
+        "scan_file": receipt.scan_file,
     }
 
 

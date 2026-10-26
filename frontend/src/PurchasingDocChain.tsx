@@ -135,7 +135,7 @@ function ChainTile({ chain, receivingAvailable, open, onToggle }: { chain: DocCh
           <>
             <div>{chain.upds.length === 1 ? docLabel(chain.upds[0]) : `${chain.upds.length} док.`} · {rub(chain.closed_gross)}</div>
             <div className="doc-origins">
-              {(["edo", "google"] as const).filter((o) => chain.upds.some((u) => u.origin === o)).map((o) => (
+              {(["edo", "google", "scan"] as const).filter((o) => chain.upds.some((u) => u.origin === o)).map((o) => (
                 <StatusChip key={o} tone={o === "edo" ? "info" : "neutral"}>{ORIGIN_LABELS[o]}</StatusChip>
               ))}
             </div>
