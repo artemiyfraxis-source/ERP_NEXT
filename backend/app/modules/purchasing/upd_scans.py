@@ -57,6 +57,7 @@ class ScanDocument:
     engine: str = ""  # who read the lines: «текст PDF», the model, «tesseract»
     warning: str = ""  # how the reading fell back
     lines: tuple[ScanLine, ...] = field(default_factory=tuple)
+    payment_doc: str = ""  # the ПРД as an ЭДО document names it: «№ 916 от 19.10.2026»
 
 
 def document_id(file_key: str) -> str:
@@ -90,7 +91,7 @@ def _values(doc: ScanDocument, inn: str, md5: str, file_id, now: datetime) -> di
         "status": STATUS, "kind": KIND, "tag": "", "issues": "; ".join(issues),
         "model": _cut(f"Склад: {doc.engine}" if doc.engine else "Склад", 64), "number": _cut(doc.number, 128),
         "doc_date": doc.day, "seller_name": _cut(doc.seller_name, 512), "seller_inn": _cut(inn, 32),
-        "seller_kpp": "", "buyer_inn": "", "basis": doc.basis, "payment_doc": "", "total_net": None,
+        "seller_kpp": "", "buyer_inn": "", "basis": doc.basis, "payment_doc": doc.payment_doc, "total_net": None,
         "total_vat": None, "total_gross": None, "file_amount": None, "line_count": len(doc.lines), "dup_of": None,
         "drive_url": "", "parser_updated": version(doc), "synced_at": now,
     }

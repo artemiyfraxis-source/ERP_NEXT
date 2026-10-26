@@ -20,8 +20,8 @@ from alembic import op
 
 
 revision: str = "0153_upd_scan_origin"
-# Parent on main at the time of writing; re-parented onto 0152 (the parallel «Поставка» migration) at merge.
-down_revision: str | None = "0151_upd_llm_recognition"
+# After 0152 (the parallel «Поставка» migration: lot names by УПД, ПРД of the delivery).
+down_revision: str | None = "0152_lot_document_names"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

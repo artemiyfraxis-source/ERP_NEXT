@@ -68,6 +68,8 @@ def scan_document(receipt: Mapping[str, Any], file: ReceiptFile, reading: ScanRe
     supplier = str(receipt.get("supplier") or "").strip()
     invoice = str(receipt.get("invoice_number") or "").strip()
     basis = f"Счёт № {invoice}" + (f" от {_day(receipt.get('invoice_date'))}" if receipt.get("invoice_date") else "")
+    prd = str(receipt.get("prd_number") or "").strip()
+    payment_doc = f"№ {prd}" + (f" от {_day(receipt.get('prd_date'))}" if receipt.get("prd_date") else "") if prd else ""
     found = reading.found if reading is not None else None
     inn = ""
     if found is not None and found.inn and (
@@ -87,7 +89,7 @@ def scan_document(receipt: Mapping[str, Any], file: ReceiptFile, reading: ScanRe
         file_key=str(file.id), file_name=file.file_name, folder=f"Склад {receipt.get('warehouse') or ''}".strip(),
         number=str(receipt.get("upd_number") or "").strip(), day=receipt.get("upd_date"), seller_name=supplier,
         seller_inn=inn, basis=basis if invoice else "", engine=reading.engine if reading is not None else "",
-        warning=reading.warning if reading is not None else "", lines=lines,
+        warning=reading.warning if reading is not None else "", lines=lines, payment_doc=payment_doc,
     )
 
 

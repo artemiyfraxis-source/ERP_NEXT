@@ -124,6 +124,17 @@ def test_migration_lets_the_scan_origin_in_and_its_downgrade_removes_only_scans(
             connection.execute(insert, ("wh-2", "scan"))
 
 
+def test_the_delivery_prd_goes_into_the_registry_as_the_payment_document(stand):  # noqa: F811
+    client, sessions = stand
+    link = _file(sessions)
+    receipt = _receipt(client, scan_file=link, prd_number="916", prd_date="2026-10-19")
+    _accept(client, receipt["id"])
+    assert _doc(sessions, _scan_id(link)).payment_doc == "№ 916 от 19.10.2026"
+    plain = _file(sessions)
+    _accept(client, _receipt(client, scan_file=plain)["id"])
+    assert _doc(sessions, _scan_id(plain)).payment_doc == ""
+
+
 def test_an_accepted_scan_lands_in_the_registry_as_a_scan_document_needing_a_check(stand):  # noqa: F811
     client, sessions = stand
     link = _file(sessions)
