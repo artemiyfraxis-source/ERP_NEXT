@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
@@ -28,8 +29,15 @@ from app.shared.stored_files import file_response
 from app.workflows.stock_receipt import expected_in_receiving
 
 from .api import StockItemInput, _result, receipt_brief, warehouse_uow_factory
-from .application import UnitOfWork
-from .domain import ReceiptConflict, ReceiptHeader, WarehouseReceipt, WarehouseValidationError, receipt_date
+from .application import ManualStockItem, UnitOfWork
+from .domain import (
+    UPD_NAME_LIMIT,
+    ReceiptConflict,
+    ReceiptHeader,
+    WarehouseReceipt,
+    WarehouseValidationError,
+    receipt_date,
+)
 from .receipts_application import (
     AcceptLineCommand,
     ExpectedInReceiving,
@@ -56,12 +64,15 @@ class ReceiptPayload(BaseModel):
     upd_date: str | None = Field(default=None, max_length=64)
     purpose: str = Field(default="", max_length=1024)
     scan_file: str = Field(default="", max_length=1024)
+    prd_number: str = Field(default="", max_length=1024)
+    prd_date: str | None = Field(default=None, max_length=64)
 
     def header(self) -> ReceiptHeader:
         return ReceiptHeader(
             warehouse=self.warehouse, supplier=self.supplier, invoice_number=self.invoice_number,
             invoice_date=receipt_date(self.invoice_date, "Дата счёта"), upd_number=self.upd_number,
             upd_date=receipt_date(self.upd_date, "Дата УПД"), purpose=self.purpose, scan_file=self.scan_file,
+            prd_number=self.prd_number, prd_date=receipt_date(self.prd_date, "Дата ПРД"),
         )
 
 
@@ -74,6 +85,10 @@ class AcceptPayload(StockItemInput):
 
     labels: int = Field(default=1)
     confirm_expected: bool = False
+    upd_name: str = Field(default="", max_length=UPD_NAME_LIMIT)  # the item row as the УПД prints it
+
+    def manual_item(self, warehouse: str = "") -> ManualStockItem:
+        return replace(super().manual_item(warehouse), upd_name=self.upd_name)
 
 
 def receipt_dict(receipt: WarehouseReceipt, lots_count: int) -> dict:

@@ -5,8 +5,9 @@ rows. Pure: bytes in, a delivery read out — no database."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from app.modules.purchasing.edo_xml import EdoDoc, Unsupported, UploadRejected, parse_edo_xml, unpack_edo_upload
@@ -38,6 +39,33 @@ class EdoDelivery:
     basis: str  # «Счёт на оплату № 901 от 10.09.2026; …» as the XML names the grounds
     items: list[EdoItem]
     note: str
+    # СвПРД — «К платёжно-расчётному документу» (owner 26.10.2026): the numbers joined by «, », the first one's date.
+    prd_number: str = ""
+    prd_date: date | None = None
+
+
+# «№ 916 от 19.10.2026, № 917 от 20.10.2026» — `EdoHeader.payment_doc` (edo_xml.edo_doc_ref of each СвПРД).
+_PRD_SPLIT = re.compile(r"\s*,\s*(?=№|от\s)")
+_PRD = re.compile(r"(?:№\s*(?P<number>.*?))?\s*(?:\bот\s+(?P<day>\d{2}\.\d{2}\.\d{4}))?")
+PRD_NUMBER_LIMIT = 255
+
+
+def payment_docs(text: str) -> tuple[str, date | None]:
+    """`payment_doc` → («916, 917», 19.10.2026): every number, the first date."""
+    numbers: list[str] = []
+    first: date | None = None
+    for part in _PRD_SPLIT.split(str(text or "").strip()):
+        found = _PRD.fullmatch(part.strip())
+        if found is None:
+            continue
+        if found["number"] and found["number"].strip() not in numbers:
+            numbers.append(found["number"].strip())
+        if first is None and found["day"]:
+            try:
+                first = datetime.strptime(found["day"], "%d.%m.%Y").date()
+            except ValueError:
+                pass
+    return ", ".join(numbers)[:PRD_NUMBER_LIMIT], first
 
 
 def is_edo_upload(file_name: str, content: bytes) -> bool:
@@ -78,7 +106,8 @@ def read_delivery(file_name: str, content: bytes) -> EdoDelivery:
         for line in docs[0].lines if not line.is_service and line.quantity is not None and line.quantity > 0
     ]
     day = date.fromisoformat(head.date) if head.date else None
+    prd_number, prd_date = payment_docs(head.payment_doc)
     return EdoDelivery(
         supplier=head.seller_name, inn=head.seller_inn, number=head.number, day=day, basis=head.basis, items=items,
-        note=note,
+        note=note, prd_number=prd_number, prd_date=prd_date,
     )

@@ -18,11 +18,11 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.modules.warehouse import receipt_llm, receipt_ocr
-from app.modules.warehouse.receipt_scan import NO_TEXT, PARTLY, RecognisedUpd
+from app.modules.warehouse.receipt_scan import NO_TEXT, PARTLY, RecognisedUpd, parse_upd_text, prd_refs
 from app.modules.warehouse.scan_reading import (
     MODEL_FAILED, ScanReading, merge_readings, read_scan, reading_from_json, reading_json,
 )
-from app.modules.warehouse.upd_lines import item_line
+from app.modules.warehouse.upd_lines import item_line, line_answer
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.access_levels import principal_as
 from tests.identity.test_api_tokens import _csrf, _login, tokens_api  # noqa: F401  (fixture)
@@ -244,6 +244,82 @@ def test_a_reading_is_kept_as_json_and_read_back():
     assert reading_from_json(reading_json(reading)) == reading
     assert reading_from_json("") is None and reading_from_json("{broken") is None
     assert reading_from_json(json.dumps({"found": {}, "lines": [{"unknown": 1}]})) is None
+
+
+# --- what the model makes of a name (owner 26.10.2026: «и тип, и артикул, и наименование наше») ---------------------
+
+TYPED = {"lines": [
+    {"n": "1", "supplier_code": "00-0001", "name": "Контакт обжимной SXH-001T-P0.6 (JST) упаковка 6000 шт",
+     "unit": "шт", "quantity": "1", "article": "SXH-001T-P0.6", "maker": "Jst", "item_type": " терминал ",
+     "short_name": "Контакт обжимной JST SXH, 0,08–0,2 мм²"},
+    {"n": "2", "supplier_code": "00-0002", "name": "Маркировочная трубка МТ-2К 6,4/3,2мм белая (в рулоне 100 м)",
+     "unit": "шт", "quantity": "3", "article": "МТ-2К", "maker": "", "item_type": "Трубка какая-то",
+     "short_name": "Трубка маркировочная 6,4/3,2 мм, белая"},
+    {"n": "3", "supplier_code": "", "name": "Хомут нейлоновый 2,5х100 белый", "unit": "упак", "quantity": "2",
+     "article": "HV-100", "maker": "", "item_type": "", "short_name": ""},
+]}
+
+
+def test_the_prompt_asks_for_article_maker_type_from_the_stock_dictionary_and_our_short_name(api):
+    fake = api(_reply(PAGE_1))
+    receipt_llm.read_page(CONFIG, b"jpeg", 1, _deadline(), _clock, types=["Кабель", "Лента"])
+    text = fake.requests[0]["body"]["messages"][0]["content"][0]["text"]
+    for field in ('"article"', '"maker"', '"item_type"', '"short_name"', '"prd_number"', '"prd_date"'):
+        assert field in text
+    assert "ровно одно из: «Кабель»; «Лента»" in text and "Термоусадочная" not in text
+    assert "К платёжно-расчётному документу" in text
+    assert "«Термоусадочная трубка»" in receipt_llm.PROMPT, "the canonical list by default"
+
+
+def test_the_model_fields_of_a_row_type_only_from_the_dictionary_maker_normalised_article_first():
+    first, second, third = receipt_llm.page_lines(TYPED, ["Терминал", "Кабель"])
+    assert (first.article, first.short_name, first.item_type, first.manufacturer) == (
+        "SXH-001T-P0.6", "Контакт обжимной JST SXH, 0,08–0,2 мм²", "Терминал", "JST")
+    assert first.name.startswith("Контакт обжимной SXH-001T-P0.6"), "the printed name stays"
+    # The rules read the same series code and added its size and colour: theirs wins.
+    assert (second.article, second.item_type, second.quantity, second.unit) == (
+        "МТ-2К 6,4/3,2 белая", "", Decimal(300), "м")
+    # The model named a code the rules did not read: the model's.
+    assert (third.article, third.short_name) == ("HV-100", "")
+    answer = line_answer(first)
+    assert (answer["name"], answer["upd_name"], answer["item_type"], answer["manufacturer"]) == (
+        "Контакт обжимной JST SXH, 0,08–0,2 мм²", TYPED["lines"][0]["name"], "Терминал", "JST")
+    assert line_answer(third)["name"] == "Хомут нейлоновый 2,5х100 белый", "no short name — the printed one"
+
+
+def test_a_reading_without_the_new_fields_still_loads_and_answers_the_printed_name():
+    old = {"found": {"supplier": "ООО Альфа", "upd_number": "5", "upd_date": "2026-10-20"},
+           "lines": [{"article": "A-1", "name": "Разъём A-1", "quantity": "2", "unit": "шт", "invoice_quantity": "2",
+                      "invoice_unit": "шт"}], "note": "", "warning": "", "engine": "gpt"}
+    reading = reading_from_json(json.dumps(old))
+    assert reading is not None and reading.found.prd_number == "" and reading.found.prd_date is None
+    [line] = reading.lines
+    assert (line.short_name, line.item_type, line.manufacturer) == ("", "", "")
+    assert line_answer(line)["name"] == line_answer(line)["upd_name"] == "Разъём A-1"
+    lines = receipt_llm.page_lines(PAGE_1)
+    assert all(line.short_name == line.item_type == line.manufacturer == "" for line in lines)
+    typed = ScanReading(receipt_llm.page_header({**PAGE_1, "prd_number": "№ 916, №917", "prd_date": "2026-10-19"}),
+                        tuple(receipt_llm.page_lines(TYPED)))
+    assert reading_from_json(reading_json(typed)) == typed
+
+
+def test_the_payment_document_of_the_header():
+    found = receipt_llm.page_header({**PAGE_1, "prd_number": "№ 916, №917", "prd_date": "19.10.2026"})
+    assert (found.prd_number, found.prd_date) == ("916, 917", date(2026, 10, 19))
+    assert (found.invoice_number, found.invoice_date) == ("45", date(2026, 10, 1)), "the invoice stays apart"
+    assert receipt_llm.page_header(PAGE_1).prd_number == ""
+
+
+def test_the_payment_document_by_rules_when_no_model_read_the_page():
+    text = "\n".join([
+        "Счет-фактура № 7 от 20.10.2026 (1)", "Основание передачи: Счёт № С-1 от 01.10.2026",
+        "К платежно-расчетному документу N° 916 от 19 .10.2026, № 917 от 20.10.2026 (5)",
+    ])
+    found = parse_upd_text(text)
+    assert (found.prd_number, found.prd_date, found.invoice_number) == ("916, 917", date(2026, 10, 19), "С-1")
+    blank = parse_upd_text("К платёжно-расчётному документу № ______ от ________ (5)")
+    assert (blank.prd_number, blank.prd_date) == ("", None)
+    assert prd_refs("№ 12/А") == ("12/А", None)
 
 
 # --- the whole file: upright pages, model, fallback ---------------------------------------------------------------

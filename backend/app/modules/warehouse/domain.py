@@ -108,6 +108,7 @@ LOT_ROW_FIELDS = {
     "reserved": "РЕЗЕРВ",
 }
 LOT_ROW_QUANTITIES = ("inbound", "written_off", "reserved")
+UPD_NAME_LIMIT = 2000  # a УПД item row, glued from its wrapped lines
 
 
 def _shown(value) -> str:
@@ -163,6 +164,10 @@ class StockLot:
     certificate: str = ""
     # The receipt document («Приход на склад») the lot was entered with; None — before it existed or not by hand.
     receipt_id: UUID | None = None
+    # The names of the documents (owner 26.10.2026: «должно быть, но скрыто»): the item row as the УПД prints it
+    # (the lot's own «Наименование» is ours), and as the paid invoice names it (from purchasing, later). Read-only.
+    upd_name: str = ""
+    invoice_name: str = ""
 
     @classmethod
     def create(
@@ -189,6 +194,7 @@ class StockLot:
         datasheet: str = "",
         certificate: str = "",
         receipt_id: UUID | None = None,
+        upd_name: str = "",
     ) -> StockLot:
         """location_as_is — old data: an empty place or an old address is kept as it was."""
         if str(warehouse).strip() not in WAREHOUSES:
@@ -234,6 +240,7 @@ class StockLot:
             datasheet=_detail("datasheet", datasheet),
             certificate=_detail("certificate", certificate),
             receipt_id=receipt_id,
+            upd_name=" ".join(str(upd_name or "").split())[:UPD_NAME_LIMIT],
         )
 
     @property
@@ -557,9 +564,10 @@ class WriteOffEntry:
         )
 
 # «Приход на склад» (поставка): the header texts → their longest value and the name the screen shows.
-RECEIPT_TEXT_LIMITS = {"supplier": 255, "invoice_number": 64, "upd_number": 64, "purpose": 128, "scan_file": 512}
+RECEIPT_TEXT_LIMITS = {"supplier": 255, "invoice_number": 64, "upd_number": 64, "purpose": 128, "scan_file": 512,
+                       "prd_number": 255}
 _RECEIPT_TEXT_LABELS = {"supplier": "Поставщик", "invoice_number": "№ счёта", "upd_number": "№ УПД",
-                        "purpose": "Назначение", "scan_file": "Скан УПД"}
+                        "purpose": "Назначение", "scan_file": "Скан УПД", "prd_number": "№ ПРД"}
 RECEIPT_SCAN_PATH = "/api/stock/receipts/files/"
 _SCAN_FILE = re.compile(re.escape(RECEIPT_SCAN_PATH) + r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -592,6 +600,9 @@ class ReceiptHeader:
     upd_date: date | None = None
     purpose: str = ""
     scan_file: str = ""
+    # «К платёжно-расчётному документу № … от …» (owner 26.10.2026) — the payment, not the invoice.
+    prd_number: str = ""
+    prd_date: date | None = None
 
     def checked(self) -> ReceiptHeader:
         warehouse = str(self.warehouse or "").strip()
@@ -629,6 +640,8 @@ class WarehouseReceipt:
     created_at: datetime
     created_by: str
     updated_at: datetime
+    prd_number: str = ""
+    prd_date: date | None = None
 
     @classmethod
     def create(cls, header: ReceiptHeader, *, now: datetime, created_by: str) -> WarehouseReceipt:
@@ -637,7 +650,8 @@ class WarehouseReceipt:
             id=uuid4(), version=1, warehouse=header.warehouse, supplier=header.supplier,
             invoice_number=header.invoice_number, invoice_date=header.invoice_date, upd_number=header.upd_number,
             upd_date=header.upd_date, purpose=header.purpose, scan_file=header.scan_file, created_at=now,
-            created_by=str(created_by or "").strip(), updated_at=now,
+            created_by=str(created_by or "").strip(), updated_at=now, prd_number=header.prd_number,
+            prd_date=header.prd_date,
         )
 
     def edited(self, header: ReceiptHeader, *, now: datetime, has_lots: bool) -> WarehouseReceipt:
@@ -651,4 +665,5 @@ class WarehouseReceipt:
             self, version=self.version + 1, warehouse=header.warehouse, supplier=header.supplier,
             invoice_number=header.invoice_number, invoice_date=header.invoice_date, upd_number=header.upd_number,
             upd_date=header.upd_date, purpose=header.purpose, scan_file=header.scan_file, updated_at=now,
+            prd_number=header.prd_number, prd_date=header.prd_date,
         )

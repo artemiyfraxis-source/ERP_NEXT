@@ -43,6 +43,10 @@ _INVOICE = (
     re.compile(r"Основани[ея][^\n]{0,80}?" + _INVOICE_TAIL, re.I),
     re.compile(_INVOICE_TAIL, re.I),
 )
+# «К платёжно-расчётному документу № 916 от 19.10.2026, № 917 от 20.10.2026» (строка 5 of the УПД).
+_PRD_LINE = re.compile(r"плат[её]жно\s*-?\s*расч[её]тному\s+документу([^\n]*)", re.I)
+_PRD_REF = re.compile(_NO + r"\s*" + _NUMBER + r"(?:" + _OT + _DATE + ")?", re.I)
+PRD_NUMBER_LIMIT = 255
 _SELLER = re.compile(r"Продавец\s*:?\s*([^\n]+)", re.I)
 _SELLER_INN = re.compile(r"ИН[НH]\s*/\s*КПП\s+продавца\s*:?\s*(\d{12}|\d{10})(?!\d)", re.I)
 _ANY_INN = re.compile(r"ИН[НH]\s*:?\s*(\d{12}|\d{10})(?!\d)", re.I)
@@ -62,6 +66,10 @@ class RecognisedUpd:
     upd_date: date | None = None
     invoice_number: str = ""
     invoice_date: date | None = None
+    # «К платёжно-расчётному документу № 916 от 19.10.2026» (owner 26.10.2026) — not the invoice; several ПРД — their
+    # numbers joined by «, », the first one's date.
+    prd_number: str = ""
+    prd_date: date | None = None
 
     @property
     def empty(self) -> bool:
@@ -95,8 +103,26 @@ def _supplier(raw: str) -> str:
     return "" if not name or name.upper().startswith(("ИНН", "ИНH")) else name[:255]
 
 
+def prd_refs(text: str | None) -> tuple[str, date | None]:
+    """«№ 916 от 19.10.2026, № 917 от 20.10.2026» → («916, 917», 19.10.2026): the numbers that have a digit (a blank
+    form's «№ ____» is none), the first date."""
+    numbers: list[str] = []
+    first: date | None = None
+    for found in _PRD_REF.finditer(_DASHES.sub("-", _SPACES.sub(" ", str(text or "")))):
+        number = found[1].strip("_-/")
+        if not re.search(r"\d", number):
+            continue
+        if number not in numbers:
+            numbers.append(number)
+        if first is None and found[2]:
+            first = scan_day(found[2])
+    return ", ".join(numbers)[:PRD_NUMBER_LIMIT], first
+
+
 def parse_upd_text(text: str) -> RecognisedUpd:
     text = _DASHES.sub("-", _SPACES.sub(" ", str(text or "")))
+    prd_line = _PRD_LINE.search(text)
+    prd_number, prd_date = prd_refs(prd_line[1]) if prd_line else ("", None)
     upd = next((match for pattern in _UPD if (match := pattern.search(text))), None)
     invoice = next((match for pattern in _INVOICE if (match := pattern.search(text))), None)
     seller = _SELLER.search(text)
@@ -110,6 +136,7 @@ def parse_upd_text(text: str) -> RecognisedUpd:
         upd_date=scan_day(upd[2]) if upd else None,
         invoice_number=invoice[1][:64] if invoice else "",
         invoice_date=scan_day(invoice[2]) if invoice and invoice[2] else None,
+        prd_number=prd_number, prd_date=prd_date,
     )
 
 

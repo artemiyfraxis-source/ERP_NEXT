@@ -196,7 +196,8 @@ def test_accept_puts_one_lot_of_the_delivery_and_one_label_job_with_a_copy_per_b
         "OLD.26.0000001", "ЦАР", "10", "591К.3", "2A1")
     assert lot["source_receiving_ids"] == [f"manual:{receipt['id']}"]
     assert lot["receipt"] == {"id": receipt["id"], "supplier": "ООО «Ромашка Электро»", "invoice_number": "СЧ-45",
-                              "invoice_date": "2026-10-01", "upd_number": "123", "upd_date": "2026-10-20"}
+                              "invoice_date": "2026-10-01", "upd_number": "123", "upd_date": "2026-10-20",
+                              "prd_number": "", "prd_date": None, "scan_file": ""}
     assert body["label_error"] == ""
     with sessions() as session:
         [job] = session.scalars(select(LabelJobRow)).all()
@@ -359,6 +360,7 @@ UPD_TEXT = [
     "Продавец: ООО «Ромашка Электро» (2)",
     "ИНН/КПП продавца: 7701234567/770101001 (2б)",
     "Основание передачи: Счёт № СЧ-45 от 01.10.2026",
+    "К платёжно-расчётному документу № 916 от 19.10.2026, № 917 от 20.10.2026 (5)",
 ]
 
 
@@ -378,6 +380,7 @@ def test_scan_of_a_pdf_with_text_is_stored_and_recognised(stand):
     assert body["recognised"] == {
         "supplier": "ООО «Ромашка Электро»", "inn": "7701234567", "upd_number": "123", "upd_date": "2026-10-20",
         "invoice_number": "СЧ-45", "invoice_date": "2026-10-01",
+        "prd_number": "916, 917", "prd_date": "2026-10-19",  # the payment document, not the invoice
     }
     assert body["lines"] == [] and body["note"] == ""
     assert body["scan_file"].startswith("/api/stock/receipts/files/")
@@ -422,8 +425,8 @@ def test_scan_takes_header_and_lines_of_the_upd_purchasing_already_holds(stand):
     assert body["recognised"]["upd_date"] == "2026-10-21"
     assert body["recognised"]["invoice_number"] == "СЧ-45"
     assert body["lines"] == [
-        {"article": "CON-001", "name": "Разъём 0", "quantity": "10", "unit": "шт"},
-        {"article": "CON-002", "name": "Разъём 1", "quantity": "2.5", "unit": "шт"},
+        {"article": "CON-001", "name": "Разъём 0", "quantity": "10", "unit": "шт", "upd_name": "Разъём 0"},
+        {"article": "CON-002", "name": "Разъём 1", "quantity": "2.5", "unit": "шт", "upd_name": "Разъём 1"},
     ]
 
 

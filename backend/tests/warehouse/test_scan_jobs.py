@@ -177,7 +177,7 @@ def test_button_agent_file_and_the_answer_of_a_hand_uploaded_scan(queue):
     result = done["result"]
     assert result["recognised"] == {
         "supplier": "ООО «Ромашка Электро»", "inn": "7701234567", "upd_number": "123", "upd_date": "2026-10-20",
-        "invoice_number": "СЧ-45", "invoice_date": "2026-10-01",
+        "invoice_number": "СЧ-45", "invoice_date": "2026-10-01", "prd_number": "", "prd_date": None,
     }
     assert result["lines"] == [] and result["note"] == ""
     assert result["scan_file"].startswith("/api/stock/receipts/files/")

@@ -157,7 +157,7 @@ it("sends the supply header before the first acceptance and the labels count wit
   const posts = calls.filter((call) => call.method === "POST").map((call) => call.path);
   expect(posts).toEqual(["/api/stock/receipts", "/api/stock/receipts/r1/accept"]);
   expect(calls.find((call) => call.path === "/api/stock/receipts" && call.method === "POST")!.body).toEqual({
-    warehouse: "ЦАР", supplier: "ООО Ромашка", invoice_number: "", invoice_date: "2026-10-02", upd_number: "", upd_date: null, purpose: "Склад",
+    warehouse: "ЦАР", supplier: "ООО Ромашка", invoice_number: "", invoice_date: "2026-10-02", upd_number: "", upd_date: null, prd_number: "", prd_date: null, purpose: "Склад",
   });
   expect(calls.find((call) => call.path.endsWith("/accept"))!.body).toMatchObject({
     article: "GHR-04V-S", quantity: "10", unit: "шт", purpose: "Склад", storage_location: "1F4", labels: 3, confirm_expected: false,
@@ -272,6 +272,46 @@ it("scans a УПД: fills the empty header fields, appends the lines and shows t
   expect(screen.getByLabelText("№ счёта")).toHaveValue("С-1");
   expect(cellOf("Артикул")).toHaveValue("Z-1");
   expect(cellOf("Наименование")).toHaveValue("Зет");
+});
+
+it("a scanned line: the catalog name replaces the model's, the printed УПД line stays on the cell and goes with «Принять»", async () => {
+  const printed = "Контакт обжимной SXH-001T-P0.6 (JST) упаковка 6000 шт, код 00-00042353";
+  const calls = mockApi({
+    "POST /api/stock/receipts/scan": () => json({ id: "f2", status: "done", error: "", result: {
+      scan_file: "scan-3.pdf", note: "",
+      recognised: { supplier: "ООО Скан", inn: "", upd_number: "17", upd_date: "2026-10-20", invoice_number: "45", invoice_date: "2026-10-01", prd_number: "916, 917", prd_date: "2026-10-19" },
+      lines: [
+        { article: "SXH-001T-P0.6", name: "Контакт обжимной JST SXH, 0,08–0,2 мм²", upd_name: printed, item_type: "Терминал", manufacturer: "JST", quantity: "6000", unit: "шт" },
+        { article: "Z-9", name: "Хомут 2,5×100", upd_name: "Хомут нейлоновый 2,5х100 белый", item_type: "", manufacturer: "", quantity: "2", unit: "упак" },
+      ],
+    }, recognising: false, scan_file: "scan-3.pdf" }),
+    "GET /api/stock/article-info": (call) => call.path.includes("q=SXH-001T-P0.6")
+      ? json({ info: { name: "Контакт SXH-001T-P0.6", item_type: "Контакт", source: "партия OLD.26.0000001" }, places: [], expected: null })
+      : json({ info: null, places: [], expected: null }),
+  });
+  await openSupply();
+  fireEvent.change(screen.getByLabelText("Файл УПД"), { target: { files: [new File(["x"], "upd.pdf", { type: "application/pdf" })] } });
+
+  await waitFor(() => expect(cellOf("Наименование")).toHaveValue("Контакт SXH-001T-P0.6"));
+  expect(cellOf("Тип")).toHaveValue("Контакт");
+  expect(cellOf("Производитель")).toHaveValue("JST");
+  expect(cellOf("Наименование")).toHaveAttribute("title", `По УПД: ${printed}`);
+  expect(cellOf("Наименование", 2)).toHaveValue("Хомут 2,5×100"); // nothing in the catalog: the model's name stays
+  expect(screen.getByLabelText("№ ПРД")).toHaveValue("916, 917");
+  expect(screen.getByLabelText("Дата ПРД")).toHaveValue("2026-10-19");
+  expect(screen.getByLabelText("№ счёта")).toHaveValue("45");
+
+  fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
+  fireEvent.change(dialog.getByLabelText("Место хранения"), { target: { value: "1F4" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Принять" }));
+  await screen.findByText(/Принято · ГРН/);
+  expect(calls.find((call) => call.method === "POST" && call.path === "/api/stock/receipts")!.body).toMatchObject({
+    invoice_number: "45", prd_number: "916, 917", prd_date: "2026-10-19", scan_file: "scan-3.pdf",
+  });
+  expect(calls.find((call) => call.path.endsWith("/accept"))!.body).toMatchObject({
+    name: "Контакт SXH-001T-P0.6", item_type: "Контакт", manufacturer: "JST", upd_name: printed,
+  });
 });
 
 it("scans from the scanner: waits for the PC, then fills the header like a file upload", async () => {

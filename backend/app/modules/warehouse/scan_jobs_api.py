@@ -49,7 +49,15 @@ from .domain import RECEIPT_SCAN_PATH
 from .receipts_api import _checked, multipart_file
 from .receipts_application import SCAN_FILE_LIMIT, merge_scans, store_edo_file, store_job_scan, store_scan
 from .scan_jobs import DONE, FAILED, ScanJob, ScanJobClosed, cancel_job, claim, create_job, fail_job, get_job, save_result
-from .scan_recognition import ScanSources, edo_answer, job_view, readings_kept, recognise_job, scan_sources
+from .scan_recognition import (
+    ScanSources,
+    edo_answer,
+    edo_names,
+    job_view,
+    readings_kept,
+    recognise_job,
+    scan_sources,
+)
 
 SCAN_SCOPE = "scan:upload"
 SCAN_AGENT_ONLY = "Очередь сканирования забирает только агент склада (токен API «scan:upload»)."
@@ -156,7 +164,8 @@ def _edo(request: Request, file_name: str, content: bytes, principal: Principal,
     except EdoRejected as error:
         raise HTTPException(status_code=422, detail=str(error)) from None
     job = _checked(lambda: store_edo_file(uow_factory(), file_name, file_kind(content), content, principal.actor, now))
-    answer = edo_answer(scan_sources(request, uow_factory), f"{RECEIPT_SCAN_PATH}{job.file_id}", delivery)
+    answer = edo_answer(scan_sources(request, uow_factory), f"{RECEIPT_SCAN_PATH}{job.file_id}", delivery,
+                        edo_names(uow_factory))
     save_result(uow_factory(), job.id, json.dumps(answer, ensure_ascii=False))
     return job_view(_queue(lambda: get_job(uow_factory(), job.id, now=now)))
 

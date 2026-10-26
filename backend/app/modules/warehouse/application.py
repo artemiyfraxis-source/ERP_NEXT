@@ -213,6 +213,7 @@ class ManualStockItem:
     storage_conditions: str = ""
     datasheet: str = ""
     certificate: str = ""
+    upd_name: str = ""  # a delivery line: the item row as the УПД prints it (the lot's «Наим. по УПД»)
 
 
 @dataclass(frozen=True)
@@ -504,6 +505,7 @@ def manual_lot(item: ManualStockItem, receipt: WarehouseReceipt | None = None) -
         storage_conditions=item.storage_conditions,
         datasheet=item.datasheet,
         certificate=item.certificate,
+        upd_name=item.upd_name if receipt is not None else "",
     )
 
 

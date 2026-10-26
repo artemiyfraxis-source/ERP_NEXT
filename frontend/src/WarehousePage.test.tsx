@@ -1189,3 +1189,49 @@ it("shows the supply a lot came with on its card, leaving empty parts out", asyn
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
   expect(await screen.findByText("Приход: ООО Ромашка · УПД от 01.10.2026 · счёт С-7 от 02.10.2026")).toBeInTheDocument();
 });
+
+// Owner 26.10.2026: «склад увеличиваем: там должно быть, но скрыто — наименование по счёту, по УПД, даты, файлы, номера».
+const documented: WarehouseLot = {
+  ...lot, name: "Контакт обжимной JST SXH", upd_name: "Контакт обжимной SXH-001T-P0.6 (JST) упаковка 6000 шт", invoice_name: "",
+  receipt: {
+    id: "r1", supplier: "ООО Пример", invoice_number: "45", invoice_date: "2026-10-01", upd_number: "17", upd_date: "2026-10-20",
+    prd_number: "916", prd_date: "2026-10-19", scan_file: "/api/stock/receipts/files/f1",
+  },
+};
+
+it("the lot table hides the document columns until switched on in «Колонки»; they read the lot's delivery", async () => {
+  mockStock([documented]);
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Таблица склада" }));
+  await screen.findByRole("table", { name: "Таблица склада" });
+  expect(screen.queryByRole("columnheader", { name: "Наим. по УПД" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "№ ПРД" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Файл счёта" })).not.toBeInTheDocument();
+
+  const chooser = openChooser();
+  for (const name of ["Наим. по УПД", "№ счёта", "Дата УПД", "№ ПРД", "Дата ПРД", "Файл УПД"]) {
+    const box = chooser.getByRole("checkbox", { name });
+    expect(box).not.toBeChecked();
+    fireEvent.click(box);
+  }
+  const table = within(screen.getByRole("table", { name: "Таблица склада" }));
+  expect(await table.findByText("Контакт обжимной SXH-001T-P0.6 (JST) упаковка 6000 шт")).toBeInTheDocument();
+  expect(table.getByText("45")).toBeInTheDocument();
+  expect(table.getByText("20.10.2026")).toBeInTheDocument();
+  expect(table.getByText("916")).toBeInTheDocument();
+  expect(table.getByText("19.10.2026")).toBeInTheDocument();
+  expect(table.getByRole("link", { name: `Файл УПД партии ${lot.grn}` })).toHaveAttribute("href", "/api/stock/receipts/files/f1");
+});
+
+it("the lot's «Правка» shows its documents read-only", async () => {
+  mockStock([documented]);
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
+  const docs = within(await screen.findByRole("region", { name: "Документы" }));
+  expect(docs.getByText("№ 17 от 20.10.2026")).toBeInTheDocument();
+  expect(docs.getByText("№ 916 от 19.10.2026")).toBeInTheDocument();
+  expect(docs.getByText("Контакт обжимной SXH-001T-P0.6 (JST) упаковка 6000 шт")).toBeInTheDocument();
+  expect(docs.getByRole("link", { name: "открыть" })).toHaveAttribute("href", "/api/stock/receipts/files/f1");
+  expect(docs.queryByRole("textbox")).toBeNull();
+});

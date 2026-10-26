@@ -54,6 +54,10 @@ class WarehouseReceiptRow(Base):
                                          server_default="")
     scan_file: Mapped[str] = mapped_column(String(RECEIPT_TEXT_LIMITS["scan_file"]), nullable=False, default="",
                                            server_default="")
+    # Migration 0152: «К платёжно-расчётному документу № … от …» — the numbers joined by «, », the first date.
+    prd_number: Mapped[str] = mapped_column(String(RECEIPT_TEXT_LIMITS["prd_number"]), nullable=False, default="",
+                                            server_default="")
+    prd_date: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -205,6 +209,9 @@ class StockLotRow(Base):
         ForeignKey("warehouse_receipts.id", ondelete="RESTRICT", name="fk_warehouse_lots_receipt_id"),
         index=True,
     )
+    # Migration 0152: the item row as the УПД prints it and as the paid invoice names it (read-only, '' — unknown).
+    upd_name: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    invoice_name: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -418,6 +425,8 @@ def _row(lot: StockLot) -> StockLotRow:
         datasheet=lot.datasheet,
         certificate=lot.certificate,
         receipt_id=lot.receipt_id,
+        upd_name=lot.upd_name,
+        invoice_name=lot.invoice_name,
     )
 
 
@@ -460,6 +469,8 @@ def _domain(row: StockLotRow) -> StockLot:
         datasheet=row.datasheet,
         certificate=row.certificate,
         receipt_id=row.receipt_id,
+        upd_name=row.upd_name,
+        invoice_name=row.invoice_name,
     )
 
 

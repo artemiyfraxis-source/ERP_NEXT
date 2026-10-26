@@ -60,7 +60,9 @@ def expected_text(found) -> str:
 def _audit(uow, receipt: WarehouseReceipt, event_type: str, actor: Actor, now: datetime) -> None:
     uow.audit.add(AuditEvent(
         id=uuid4(), aggregate_id=receipt.id, event_type=event_type, actor=actor, occurred_at=now,
-        details={**receipt_audit(receipt), "warehouse": receipt.warehouse, "purpose": receipt.purpose},
+        details={**receipt_audit(receipt), "warehouse": receipt.warehouse, "purpose": receipt.purpose,
+                 "prd_number": receipt.prd_number,
+                 "prd_date": receipt.prd_date.isoformat() if receipt.prd_date else ""},
     ))
 
 

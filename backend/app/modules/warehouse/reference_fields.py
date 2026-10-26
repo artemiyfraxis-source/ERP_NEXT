@@ -50,6 +50,12 @@ def _dictionary_types(uow: UnitOfWork) -> list[str]:
     return uow.item_types.saved() or list(ITEM_TYPES_CANON)
 
 
+def item_types(uow: UnitOfWork) -> list[str]:
+    """The dictionary alone (no stock tail): what a УПД model may name as a line's type."""
+    with uow:
+        return _dictionary_types(uow)
+
+
 def item_type_dictionary(uow: UnitOfWork) -> ItemTypeDictionary:
     with uow:
         types = _dictionary_types(uow)

@@ -554,7 +554,7 @@ details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 
 /* «Внести позиции»: поставка — шапка и таблица позиций (строки как в заявке, .rg-*), «Принять» — окно места и этикеток. */
 .wr-form { padding: 18px; }
 .wr-resume { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; white-space: nowrap; }
-.wr-head { display: grid; grid-template-columns: 90px minmax(180px, 1.6fr) repeat(4, minmax(110px, 1fr)) minmax(100px, .8fr) auto; gap: 8px 12px; align-items: end; margin-bottom: 8px; }
+.wr-head { display: grid; grid-template-columns: 90px minmax(180px, 1.6fr) repeat(6, minmax(110px, 1fr)) minmax(100px, .8fr) auto; gap: 8px 12px; align-items: end; margin-bottom: 8px; }
 .wr-head label { gap: 4px; }
 .wr-head input, .wr-head select { height: 30px; padding: 4px 9px; font-size: 13px; }
 .wr-scan { display: flex; align-items: end; gap: 6px; }
@@ -595,6 +595,8 @@ details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 
 .wr-places { margin: 0; font-size: 13px; color: var(--muted-foreground); }
 .wr-chip { margin-left: 8px; padding: 2px 4px; font-weight: 600; }
 .wr-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+/* The tablet (~1400 px) and smaller laptops: the ten header cells in two even rows of five, no field over the next one. */
+@media (max-width: 1450px) { .wr-head { grid-template-columns: repeat(5, minmax(0, 1fr)); } .wr-head input, .wr-head select { min-width: 0; width: 100%; } }
 @media (max-width: 1100px) { .wr-head { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (pointer: coarse) { .wr-head input, .wr-head select, .wr-table input, .wr-table select { height: 40px; } .wr-ro { line-height: 40px; } .wr-table .wr-stick-act .rg-link { padding: 10px 6px; } }
 /* «Переместить» (SUPPLYMAP wh05Move): a modal over the stock list, opened from a lot card or the toolbar. */
@@ -2658,6 +2660,13 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .kit-tiles .t-h { font-size: 15px; }
 .kit-tiles .t-sub { font-size: 12px; }
 .lot-card-passport { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.4; }
+/* «Документы» of a lot in its «Правка» window: read-only label | value rows. */
+.lot-docs { margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--accent); }
+.lot-docs h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.lot-docs dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0; font-size: 13px; }
+.lot-docs dt { color: var(--muted-foreground); }
+.lot-docs dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.lot-docs a, .stock-table td a { color: var(--primary); }
 .lot-card-actions .active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
 /* Партии открываются кликом по любому месту строки, не только по наименованию. */
 .stock-article-row { cursor: pointer; }
