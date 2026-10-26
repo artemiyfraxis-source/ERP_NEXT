@@ -312,6 +312,25 @@ describe("кабель или провод — по списку БД.ПРОВ, 
     ]);
   });
 
+  it("776К. КБ2: зачистка жил 3–4 мм доходит до конфига — по стороне А и по стороне В (форма и batch собирают тот же buildConfig)", () => {
+    const { cfg } = built(kb2(), withProv(CCCU));
+    const cores = (cfg.ops as Array<Record<string, unknown>>).filter((o) => /^stripCores/.test(String(o.opKey)));
+    expect(cores.map((o) => [o.opKey, o.opNum || o.templateId, o.strip])).toEqual([
+      ["stripCoresA1", expect.anything(), { a: true, lenA: "", b: false, lenB: "", coreA: "3–4" }],
+      ["stripCoresB1", expect.anything(), { a: false, lenA: "", b: true, lenB: "", coreB: "3–4" }],
+    ]);
+    // резка по-прежнему несёт оболочку 15/10
+    expect((cfg.ops as Array<Record<string, any>>)[0].strip).toMatchObject({ lenA: "15", lenB: "10" });
+  });
+
+  it("жилы обычного многожильного (не USB) в конфиг не меняются — без strip у операции жил", () => {
+    const b = bom("X", [comp("k0", "Соед", "XHP-4", 2), comp("k1", "Терминал", "SXH-001T-P0.6", 8), comp("k2", "Провод", "ПВВС 4x0,35", "0.45")]);
+    const { cfg } = built(b, withProv({ cable_kind: "multi", fields: { "Марка": "ПВВС 4×0,35", "Число жил": "4" } }));
+    const cores = (cfg.ops as Array<Record<string, unknown>>).filter((o) => /^stripCores/.test(String(o.opKey)));
+    expect(cores.length).toBe(2);
+    expect(cores.every((o) => !("strip" in o))).toBe(true);
+  });
+
   it("776К. КБ4: USB-A розетка (USB-FA) — оболочка 10 мм; А-вилка 15 мм", () => {
     const { S, ops } = opsOf(kb4(), withProv(CCCU));
     expect(S.endpoints.map((e) => e.jacket)).toEqual(["15", "10"]);
