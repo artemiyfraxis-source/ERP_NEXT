@@ -359,3 +359,34 @@ it("adds a technologist's component to the kit without reseeding the form and re
   await waitFor(() => expect(remove).toHaveBeenCalledWith("ТТК 4,8/1,6мм"));
   await waitFor(() => expect(within(sheet).queryByText("добавил технолог")).toBeNull());
 });
+
+it("coax shield is a select per side: one «обе стороны» while A and B match, split on demand, state shape unchanged", async () => {
+  mockApi();
+  render(<TcGenerator card={{ ...card, product_name: "Сборка RG316 150mm" }} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Сборка RG316 150mm", [
+    { type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
+    { type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
+    { type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
+  ])} />);
+
+  const both = await screen.findByRole("combobox", { name: "Экран, обе стороны" });
+  expect(screen.queryByRole("radiogroup", { name: /экран/i })).toBeNull();
+  expect(within(both).getAllByRole("option")).toHaveLength(3);
+  expect(within(both).getAllByRole("option").map((option) => option.textContent)).toEqual(["Обжим втулки", "Пайка экрана", "Прижимной (зажим)"]);
+  expect(both).toHaveValue("обжим");
+  expect(screen.queryByRole("combobox", { name: "Экран, сторона А" })).toBeNull();
+
+  fireEvent.change(both, { target: { value: "пайка" } });
+  expect(screen.getByRole("combobox", { name: "Экран, обе стороны" })).toHaveValue("пайка");
+
+  fireEvent.click(screen.getByRole("button", { name: "разные для А и В" }));
+  expect(screen.getByRole("combobox", { name: "Экран, сторона А" })).toHaveValue("пайка");
+  fireEvent.change(screen.getByRole("combobox", { name: "Экран, сторона В" }), { target: { value: "прижим" } });
+  expect(screen.getByRole("combobox", { name: "Экран, сторона А" })).toHaveValue("пайка");
+  expect(screen.getByRole("combobox", { name: "Экран, сторона В" })).toHaveValue("прижим");
+  expect(screen.queryByRole("button", { name: "как у А" })).toBeNull();
+
+  // Вернули В к А — появляется «как у А», по клику снова один выбор.
+  fireEvent.change(screen.getByRole("combobox", { name: "Экран, сторона В" }), { target: { value: "пайка" } });
+  fireEvent.click(screen.getByRole("button", { name: "как у А" }));
+  expect(screen.getByRole("combobox", { name: "Экран, обе стороны" })).toHaveValue("пайка");
+});

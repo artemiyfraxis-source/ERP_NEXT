@@ -263,3 +263,22 @@ describe("строка, обнулённая в СПЯ, в сборку не и�
     expect(makeGen(D, S).bomLists().conns.map((c) => c.id)).toContain("k0");
   });
 });
+
+describe("USB 2.0 — одна операция пайки, распиновка по КД (владелец 26.10)", () => {
+  it("776К. КБ2: micro-USB паяется картой USB-A 2.0, а не монтажом терминалов", () => {
+    const { S } = run(bom("Кабельная сборка USB-AM to MicroUSB-m 100mm", [
+      comp("k0", "Соед", "DS1107-W", 1, "USB-A вилка под пайку"),
+      comp("k1", "Соед", "microUSB 5BM", 1, "Корпус micro-USB B 5 конт."),
+      comp("k2", "Провод", "CCCU-4G", "0.11"), comp("k3", "ТТК", "ТТК 12/4мм, черная", "0.06"),
+    ]));
+    expect(S.endpoints.map((e) => [e.method, e.sdrTmpl])).toEqual([["solder", "SDR_USB_A_2.0"], ["solder", "SDR_USB_A_2.0"]]);
+  });
+
+  it("776К. КБ4: USB-A розетка (USB-FA, «Корпус USB-A 2.0») паяется той же картой", () => {
+    const { S } = run(bom("Кабельная сборка USB-AM to USB-AF 180mm", [
+      comp("k0", "Соед", "DS1107-W", 1, "USB-A вилка под пайку"), comp("k1", "Соед", "USB-FA", 1, "Корпус USB-A 2.0 4 конт."),
+      comp("k2", "Провод", "CCCU-4G", "0.19"),
+    ]));
+    expect(S.endpoints.map((e) => e.sdrTmpl)).toEqual(["SDR_USB_A_2.0", "SDR_USB_A_2.0"]);
+  });
+});
