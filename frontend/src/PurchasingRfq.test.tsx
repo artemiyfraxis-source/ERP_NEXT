@@ -313,7 +313,7 @@ it("«Внести КП» opens a list under the matrix with the request's suppl
   expect(table.compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const picker = within(entry).getByLabelText("Поставщик КП");
   expect(within(picker).getAllByRole("option").map((option) => option.textContent)).toEqual(["ООО Альфа ★ — КП есть", "ООО Бета — КП есть"]);
-  expect(within(entry).getByRole("group", { name: "Файл КП" })).toHaveTextContent("Перетащите сюда PDF с КП");
+  expect(within(entry).getByRole("group", { name: "Файл КП" })).toHaveTextContent("Перетащите сюда PDF, скан или фото КП");
   fireEvent.click(screen.getByRole("button", { name: "Свернуть КП" }));
   expect(screen.queryByRole("region", { name: "Внести КП" })).not.toBeInTheDocument();
 });

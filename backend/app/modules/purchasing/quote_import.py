@@ -32,7 +32,7 @@ from app.workflows.article_key import code_key
 from . import items as items_repo
 from . import rfq as rfq_service
 from .infrastructure import ItemAliasRow, RfqLineRow, RfqSupplierRow, SupplierRow
-from .upd_sellers import OWN_INNS
+from .upd_sellers import OWN_INNS, seller_name_key
 
 log = logging.getLogger(__name__)
 
@@ -435,6 +435,17 @@ _VALID_DAYS = re.compile(
     r"(?:действительн\w*|действует|срок\s+действия(?:\s+\w+){0,2})[^\n\d]{0,24}?(?:в\s+течени[еи]\s*)?(\d{1,3})\s*"
     r"(?:(раб\w*)\s+)?(?:календарн\w*\s+)?(?:дн|день|дня|дней)", re.I)
 _INN = re.compile(r"ИНН(?:\s*/\s*КПП)?\s*:?\s*(\d{10}|\d{12})(?!\d)", re.I)
+_MONTHS = ("январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр")
+_WORD_DATE = r"(\d{1,2})\s+(январ[ья]|феврал[ья]|марта?|апрел[ья]|ма[йя]|июн[ья]|июл[ья]|августа?|сентябр[ья]|октябр[ья]|ноябр[ья]|декабр[ья])\s+(\d{4})"
+_FROM_DATE = re.compile(r"^\s*(?:г\.\s*)?от\s*:?\s*(?:" + _DATE + "|" + _WORD_DATE + ")", re.I)
+_DATED = re.compile(r"дата\s*(?:кп|предложения|документа|сч[её]та)?\s*:?\s*(?:" + _DATE + "|" + _WORD_DATE + ")", re.I)
+# The seller in words: «Поставщик: ООО "Альфа"», «Продавец», «Исполнитель»; the buyer's block is never taken.
+_SELLER_WORD = re.compile(r"(?:поставщик|продавец|исполнитель)\s*:\s*(.{3,160})", re.I)
+_ORG = re.compile(
+    r"((?:общество с ограниченной ответственностью|акционерное общество|индивидуальный предприниматель|"
+    r"(?<![а-яё])(?:ООО|АО|ЗАО|ПАО|ОАО|ИП)(?![а-яё]))\s*[«\"„“']?[^\n,«»\"„“]{2,80}[»\"“']?)", re.I)
+_BUYER_LINE = re.compile(r"покупател|заказчик|плательщик|грузополучател|кому\b|фраксис", re.I)
+_NAME_END = re.compile(r"\s*(?:,|;|\s{2,}|\bИНН\b|\bКПП\b|\bОГРН\b|\bтел\b|\bадрес\b).*$", re.I)
 
 
 def _date(day: str, month: str, year: str) -> date | None:
@@ -444,14 +455,55 @@ def _date(day: str, month: str, year: str) -> date | None:
         return None
 
 
+def _found_date(groups: Sequence[str | None]) -> date | None:
+    """A date matched as «14.10.2026» (groups 1–3) or «14 октября 2026» (groups 4–6)."""
+    if groups[0]:
+        return _date(groups[0], groups[1] or "", groups[2] or "")
+    word = (groups[4] or "").lower()
+    month = next((index for index, stem in enumerate(_MONTHS, start=1) if word.startswith(stem)), 0)
+    return _date(groups[3] or "", str(month), groups[5] or "") if month else None
+
+
+def _clean_name(raw: str) -> str:
+    name = _NAME_END.sub("", " ".join(raw.split())).strip(" .:-–—")
+    return name[:255] if re.search(r"[A-Za-zА-Яа-яЁё]{2}", name) else ""
+
+
+def _seller_name(head: str, inn: str) -> str:
+    """The seller's name as the document prints it: after «Поставщик:» / «Продавец:» / «Исполнитель:», else the
+    organisation on the line of the seller's INN, else the first organisation outside the buyer's block. '' — none."""
+    for found in _SELLER_WORD.finditer(head):
+        if not _BUYER_LINE.search(found.group(1)) and (name := _clean_name(found.group(1))):
+            return name
+    lines = head.split("\n")
+    if inn:
+        for index, line in enumerate(lines):
+            if inn in line and not _BUYER_LINE.search(line):
+                for near in (line, lines[index - 1] if index else ""):
+                    org = _ORG.search(near)
+                    if org and not _BUYER_LINE.search(near) and (name := _clean_name(org.group(1))):
+                        return name
+    for line in lines[:60]:
+        org = _ORG.search(line)
+        if org and not _BUYER_LINE.search(line) and (name := _clean_name(org.group(1))):
+            return name
+    return ""
+
+
 def read_header(text: str, today: date) -> dict:
-    """«КП № 123/45 от …», «Предложение действительно до 30.10.2026» / «… в течение 10 дней», the seller's ИНН (ours
-    is skipped: it stands in the buyer's block). What is not found stays empty."""
+    """«КП № 123/45 от 14.10.2026», «Предложение действительно до 30.10.2026» / «… в течение 10 дней» (counted from the
+    quote's date, else from today), the seller's ИНН (ours is skipped: it stands in the buyer's block) and name as
+    printed. What is not found stays empty."""
     head = text[:20_000]
     number = ""
+    quote_date: date | None = None
     found = _HEADER_NUMBER.search(head)
     if found:
         number = found.group(1).strip(" .,;")
+        after = _FROM_DATE.match(head[found.end():found.end() + 60])
+        quote_date = _found_date(after.groups()) if after else None
+    if quote_date is None and (dated_line := _DATED.search(head)):
+        quote_date = _found_date(dated_line.groups())
     valid_until: date | None = None
     dated = _VALID_DATE.search(head)
     if dated:
@@ -460,18 +512,35 @@ def read_header(text: str, today: date) -> dict:
         days = _VALID_DAYS.search(head)
         if days:
             count = int(days.group(1))
-            valid_until = today + timedelta(days=round(count * 1.4) if days.group(2) else count)
+            valid_until = (quote_date or today) + timedelta(days=round(count * 1.4) if days.group(2) else count)
     inn = next((value for value in _INN.findall(head) if value not in OWN_INNS), "")
-    return {"number": number[:64], "valid_until": valid_until.isoformat() if valid_until else None, "inn": inn}
+    return {"number": number[:64], "valid_until": valid_until.isoformat() if valid_until else None, "inn": inn,
+            "document_name": _seller_name(head, inn), "date": quote_date.isoformat() if quote_date else None}
 
 
-def _header_supplier(session: Any, header: dict, rfq_id: UUID) -> dict:
-    """The directory supplier with the document's INN, and whether he is in the request."""
+def _header_supplier(session: Any, header: dict, rfq_id: UUID, chosen: UUID | None = None) -> dict:
+    """The directory supplier of the document — by its INN, else by its name among the request's suppliers — whether
+    he is in the request, and whether he is the supplier the buyer chose (`supplier_matches`: None — nothing to tell)."""
     supplier = session.scalar(select(SupplierRow).where(SupplierRow.inn == header["inn"])) if header["inn"] else None
+    named = seller_name_key(header.get("document_name"))
+    if supplier is None and named:
+        in_rfq = session.scalars(select(SupplierRow).join(RfqSupplierRow, RfqSupplierRow.supplier_id == SupplierRow.id)
+                                 .where(RfqSupplierRow.rfq_id == rfq_id))
+        supplier = next((row for row in in_rfq if seller_name_key(row.name) == named), None)
     in_request = supplier is not None and session.scalar(select(RfqSupplierRow.id).where(
         RfqSupplierRow.rfq_id == rfq_id, RfqSupplierRow.supplier_id == supplier.id)) is not None
+    matches: bool | None = None
+    if chosen is not None and supplier is not None:
+        matches = supplier.id == chosen
+    elif chosen is not None and (header["inn"] or named):
+        own = session.get(SupplierRow, chosen)
+        if own is not None and header["inn"] and own.inn:
+            matches = own.inn == header["inn"]
+        elif own is not None and named and seller_name_key(own.name):
+            mine = seller_name_key(own.name)
+            matches = named in mine or mine in named
     return {**header, "supplier_id": str(supplier.id) if supplier else None, "supplier_name": supplier.name if supplier else None,
-            "in_request": in_request}
+            "in_request": in_request, "supplier_matches": matches}
 
 
 # ── matching ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -545,7 +614,8 @@ def _layout_text(content: bytes) -> str:
     return "\n".join(pages)[:MAX_PDF_TEXT]
 
 
-def text_of_pdf(content: bytes) -> str:
+def text_layer(content: bytes) -> str:
+    """The PDF's text layer, laid out ('' — none: a scan or a protected file)."""
     if len(content) > PDF_LIMIT:
         raise Refused("PDF больше 20 МБ — сожмите файл или вставьте текст")
     if b"%PDF" not in content[:1024]:
@@ -555,8 +625,11 @@ def text_of_pdf(content: bytes) -> str:
     except PdfLimitExceeded as error:
         raise Refused("PDF слишком сложный для чтения — вставьте текст КП или введите строки вручную") from error
     text = _layout_text(content)
-    if not text.strip():
-        text = plain
+    return text if text.strip() else plain
+
+
+def text_of_pdf(content: bytes) -> str:
+    text = text_layer(content)
     if not text.strip():
         raise Refused("В PDF нет текстового слоя (скан или защищённый файл) — вставьте текст КП или введите строки вручную")
     return text
@@ -663,7 +736,7 @@ def parse_quote(uow: Any, actor: Actor, rfq_id: UUID, text: str, supplier_id: UU
     lines = apply_packs(match_lines(lines[:500], targets, aliases), targets)
     matched = [line for line in lines if line.rfq_line_id]
     with uow:
-        header = _header_supplier(uow.session, read_header(text, today or date.today()), rfq_id)
+        header = _header_supplier(uow.session, read_header(text, today or date.today()), rfq_id, supplier_id)
     return {
         "header": header,
         "source": source, "vat_included": not without_vat, "default_vat_rate": rfq_service.num(default_vat),
