@@ -7,6 +7,7 @@ deliveries taken in before."""
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -32,7 +33,7 @@ from app.modules.warehouse.infrastructure import (
     WarehouseReceiptFileRow,
 )
 from app.modules.warehouse.receipt_scan import RecognisedUpd
-from app.modules.warehouse.scan_reading import ScanReading, reading_json
+from app.modules.warehouse.scan_reading import ScanReading, model_view, reading_json
 from app.modules.warehouse.upd_lines import UpdLine
 from app.shared.persistence import AuditEventRow
 from app.workflows import receipt_upd_registry as flow
@@ -238,6 +239,66 @@ def test_a_scan_of_a_upd_the_registry_holds_from_edo_becomes_its_twin(stand):  #
     scan = _doc(sessions, _scan_id(link))
     assert scan.seller_inn == "7701000019" and scan.twin_of == EDO_ID
     assert _doc(sessions, EDO_ID).twin_of is None
+
+
+# The document reader's answer for a scan (app.shared.doc_reader, 26.10.2026): one reading gives the delivery its rows
+# and the registry its money, basis and payments.
+RAW = {
+    "docKind": "UPD", "number": "123", "date": "2026-10-20", "sellerName": "ООО «Ромашка Электро»",
+    "sellerInn": "7707083893", "sellerKpp": "770701001", "buyerInn": "5040191181",
+    "basis": "Счет № СЧ-45 от 01.10.2026; Договор поставки № 7 от 01.01.2026",
+    "paymentDoc": "№ 916 от 19.10.2026, № 917 от 20.10.2026", "totalNet": 1500, "totalVat": 330, "totalGross": 1830,
+    "lines": [
+        {"seq": 1, "article": "RS-1", "name": "Разъём CON-001", "unitCode": "796", "unit": "шт", "qty": 10,
+         "price": 100, "net": 1000, "vatRate": "22%", "vat": 220, "gross": 1220},
+        {"seq": 2, "article": "W-05", "name": "Провод 0,5 мм2 (в рулоне 100 м)", "unit": "рул", "qty": 5,
+         "price": 100, "net": 500, "vatRate": "22%", "vat": 110, "gross": 610},
+    ],
+}
+MODEL_READING = model_view([RAW], engine="gpt-test")
+
+
+def test_a_scan_read_by_the_document_reader_lands_with_its_money_basis_payments_and_verdict(stand):  # noqa: F811
+    client, sessions = stand
+    link = _file(sessions, reading=MODEL_READING)
+    receipt = _receipt(client, scan_file=link, prd_number="916, 917", prd_date="2026-10-19")
+    _accept(client, receipt["id"])
+    doc = _doc(sessions, _scan_id(link))
+    assert (doc.origin, doc.kind, doc.status, doc.issues) == ("scan", "УПД", "Разобран", "")
+    assert (doc.total_net, doc.total_vat, doc.total_gross) == (150_000, 33_000, 183_000)
+    assert (doc.seller_inn, doc.seller_kpp, doc.buyer_inn) == ("7707083893", "770701001", "5040191181")
+    assert doc.basis == RAW["basis"], "the invoice the scan gave is kept: the reading's whole basis"
+    assert doc.payment_doc == "№ 916 от 19.10.2026, № 917 от 20.10.2026", "every payment with its date"
+    assert doc.model == "Склад: gpt-test" and doc.line_count == 2
+    rows = [(line.seq, line.name, line.article, line.quantity, line.unit, line.price, line.net, line.vat, line.gross,
+             line.vat_rate) for line in _lines(sessions, doc.id)]
+    assert rows == [
+        (1, "Разъём CON-001", "RS-1", Decimal("10"), "шт", Decimal("100"), 100_000, 22_000, 122_000, "22"),
+        (2, "Провод 0,5 мм2 (в рулоне 100 м)", "W-05", Decimal("5"), "рул", Decimal("100"), 50_000, 11_000, 61_000,
+         "22"),
+    ], "the invoiced quantity and unit, as the registry keeps a УПД (the warehouse put 500 м on stock)"
+    with sessions() as session:
+        listing = repo.list_documents(session, repo.ListFilter(origin="scan"))
+    assert listing["items"][0]["status"] == "parsed"
+
+
+def test_the_storekeepers_header_wins_and_the_checks_run_on_it(stand):  # noqa: F811
+    client, sessions = stand
+    short = model_view([{**RAW, "totalGross": 2000}, None], engine="gpt-test")
+    link = _file(sessions, reading=replace(short, warning="Модель не прочитала стр. 2 — они прочитаны запасным способом"))
+    receipt = _receipt(client, scan_file=link, upd_number="123/1", invoice_number="СЧ-46", prd_number="",
+                       supplier="ООО «Василёк»")
+    _accept(client, receipt["id"])
+    doc = _doc(sessions, _scan_id(link))
+    assert (doc.number, doc.seller_name, doc.basis, doc.payment_doc) == (
+        "123/1", "ООО «Василёк»", "Счёт № СЧ-46 от 01.10.2026", ""), "what the storekeeper typed"
+    assert (doc.seller_inn, doc.seller_kpp) == ("", ""), "another seller than the scan names: neither ИНН nor КПП"
+    assert doc.status == "Требует проверки" and doc.total_gross == 200_000
+    for issue in ("модель не прочитала стр. 2 — их строк в разборе нет", "сумма строк 1830 ≠ итог документа 2000",
+                  "нет ИНН продавца"):
+        assert issue in doc.issues, issue
+    assert "запасным способом" not in doc.issues, "the warehouse's fallback note is not repeated"
+    assert "нет номера документа" not in doc.issues
 
 
 def test_the_inn_is_not_taken_from_a_scan_naming_another_seller():
