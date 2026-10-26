@@ -78,7 +78,6 @@ import {
   COAX_MACHINES,
   COAX_PIN_COLLET,
   COAX_PIN_CRIMP,
-  COAX_SHIELD_OPTIONS,
   type CableRec,
   type Comp,
   type Endpoint,
@@ -107,7 +106,7 @@ import {
 import { ComplexCables } from "./ComplexCables";
 import { KitComponentAdd } from "./KitComponentAdd";
 import { CableCoreColors } from "./CableCoreColors";
-import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
+import { CardSelect, CheckMark, Chip, Field, Seg, ShieldSelect, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { TER_L_MINUS_HINT, TER_L_PLUS_HINT } from "./referenceLabels";
 import { lMinusMissing, lMinusSuggestion, terChanges, terEditProblem, terLost, terNewFields, terSaved, terSavedText, withTerRecord } from "./terDbSave";
 import { MarkTable, markTotal } from "./GenMarkTable";
@@ -411,6 +410,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // вкладках), по нему кнопка «Построить» или «Обновить».
   const [kdDrawing, setKdDrawing] = useState<{ key: string; exists: boolean } | null>(null);
   const [drawBusy, setDrawBusy] = useState(false);
+  const [shieldSplit, setShieldSplit] = useState(false);
   const [drawResult, setDrawResult] = useState<{ key: string; text: string; error: boolean; warnings: string[] } | null>(null);
   useEffect(() => {
     if (kdDrawing?.key === harnessKey) return;
@@ -1549,6 +1549,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     ...current, coax: { ...current.coax, vswrCust: { ...(current.coax.vswrCust ?? { max: "", from: "", to: "", basis: "" }), ...patch } },
   }));
 
+  // Экран: пока у А и В он одинаковый — один выбор; «разные для А и В» раскрывает второй (локально, в черновик не пишется).
+  const shieldMerged = !S.coax.sideB || (!shieldSplit && gen.coaxShieldOf_("B") === gen.coaxShieldOf_("A"));
   const coaxSections = <>
     <section className="gsec" aria-label="Коакс-кабель">
       <div className="gsec-head"><h3>Коакс-кабель</h3>
@@ -1558,11 +1560,20 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {S.coax.cables && S.coax.cables > 1 && <Field label="Кабелей" className="short"><input aria-label="Кабелей в сборке" type="number" min={1} value={S.coax.cables}
           onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, cables: Math.max(1, parseInt(event.target.value, 10) || 1) } }))} /></Field>}
         <Field label="Длина по чертежу"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value }, coaxLenFrom: undefined }))} /></Field>
-        <div className="gfield span2"><span className="gfield-label">Экран (на сборку)</span>
-          <Seg label={S.coax.sideB ? "Тип экрана, сторона А" : "Тип экрана"} value={S.coax.shield} options={COAX_SHIELD_OPTIONS}
-            onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield } }))} />
-          {S.coax.sideB && <Seg label="Тип экрана, сторона В" value={gen.coaxShieldOf_("B")} options={COAX_SHIELD_OPTIONS}
-            onChange={(shieldB) => update((current) => ({ ...current, coax: { ...current.coax, shieldB } }))} />}</div>
+        {shieldMerged
+          ? <div className="gfield span2 shield-field"><span className="gfield-label"><span>Экран (обе стороны)</span>
+              <button type="button" className="glink" onClick={() => setShieldSplit(true)}>разные для А и В</button></span>
+            <ShieldSelect label="Экран, обе стороны" value={gen.coaxShieldOf_("A")}
+              onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield, ...(current.coax.shieldB ? { shieldB: shield } : {}) } }))} /></div>
+          : <>
+            <div className="gfield span2 shield-field"><span className="gfield-label">{S.coax.sideB ? "Экран, сторона А" : "Экран"}</span>
+              <ShieldSelect label={S.coax.sideB ? "Экран, сторона А" : "Экран"} value={gen.coaxShieldOf_("A")}
+                onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield } }))} /></div>
+            {S.coax.sideB && <div className="gfield span2 shield-field"><span className="gfield-label"><span>Экран, сторона В</span>
+              {gen.coaxShieldOf_("B") === gen.coaxShieldOf_("A") && <button type="button" className="glink" onClick={() => setShieldSplit(false)}>как у А</button>}</span>
+              <ShieldSelect label="Экран, сторона В" value={gen.coaxShieldOf_("B")}
+                onChange={(shieldB) => update((current) => ({ ...current, coax: { ...current.coax, shieldB } }))} /></div>}
+          </>}
         <div className="gfield span-all"><span className="gfield-label">Разделка</span>
           <Seg label="Разделка" value={S.coax.stripMode} options={[["machine", "Резка с разделкой на станке"], ["separate", "Резка, затем разделка А и В"]]}
             onChange={(stripMode) => update((current) => ({ ...current, coax: { ...current.coax, stripMode } }))} /></div>
