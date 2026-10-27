@@ -506,13 +506,15 @@ class UpdLineRow(Base):
 
 
 class InvoiceRow(Base):
-    """A supplier's invoice mirrored from a Kaiten card of «Закупки» (one card = one invoice + payment orders). The
-    header is read from the invoice PDF's text layer; lines are the positions of its table."""
+    """A supplier's invoice: mirrored from a Kaiten card of «Закупки» (source «kaiten», one card = one invoice + payment
+    orders) or uploaded to an order in ERP procurement (source «procurement», 0155, external_id = the stored file's uuid,
+    `purchasing.invoice_uploads`). The header is read from the invoice PDF's text layer; lines are the positions of its
+    table."""
 
     __tablename__ = "purchasing_invoices"
     __table_args__ = (
         UniqueConstraint("source", "external_id", name="uq_purchasing_invoices_source_external"),
-        CheckConstraint("source IN ('kaiten')", name="ck_purchasing_invoices_source"),
+        CheckConstraint("source IN ('kaiten', 'procurement')", name="ck_purchasing_invoices_source"),
         CheckConstraint("status IN ('to_pay', 'paid', 'return', 'other')", name="ck_purchasing_invoices_status"),
         Index("ix_purchasing_invoices_supplier", "supplier_id"),
         Index("ix_purchasing_invoices_date", "doc_date"),
