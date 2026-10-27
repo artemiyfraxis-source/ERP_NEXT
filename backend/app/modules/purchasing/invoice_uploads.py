@@ -3,7 +3,7 @@
 
 Until now the registry held only the Kaiten cards mirrored by `rb_import`; new invoices come in through procurement — the
 buyer uploads the supplier's invoice to an order. An uploaded file becomes a registry invoice of source «procurement»
-(migration 0155): the header and positions as the shared reader gives them (`app.shared.invoice_reading`, Roller_Buyer's
+(migration 0156): the header and positions as the shared reader gives them (`app.shared.invoice_reading`, Roller_Buyer's
 parser), the text for the document search, the PDF copied into `purchasing_document_files` (modules don't share tables).
 The document chain (invoice ↔ UPD by number and sum) then works for it as for a Kaiten card.
 
@@ -188,7 +188,7 @@ def record_uploaded_invoice(uow, doc: UploadedInvoiceDocument, content: bytes, a
     values = _values(doc, supplier.id if supplier is not None else None)
     link = session.scalar(select(InvoiceUploadRow).where(InvoiceUploadRow.file_key == _cut(doc.file_key, 64)))
     row = session.get(InvoiceRow, link.invoice_id) if link is not None else None
-    if row is None:  # a file of before 0155's upload links: Витя's first rows were keyed by the file alone
+    if row is None:  # a file of before 0156's upload links: Витя's first rows were keyed by the file alone
         row = session.scalar(select(InvoiceRow).where(InvoiceRow.source == SOURCE, InvoiceRow.external_id == doc.file_key))
         if row is not None:
             _link(session, row, doc, True, now)

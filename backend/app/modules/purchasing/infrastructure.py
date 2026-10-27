@@ -507,7 +507,7 @@ class UpdLineRow(Base):
 
 class InvoiceRow(Base):
     """A supplier's invoice: mirrored from a Kaiten card of «Закупки» (source «kaiten», one card = one invoice + payment
-    orders) or uploaded to an order in ERP procurement (source «procurement», 0155, external_id = the stored file's uuid,
+    orders) or uploaded to an order in ERP procurement (source «procurement», 0156, external_id = the stored file's uuid,
     `purchasing.invoice_uploads`). The header is read from the invoice PDF's text layer; lines are the positions of its
     table."""
 
@@ -574,7 +574,7 @@ class InvoiceFileRow(Base):
 
 
 class InvoiceUploadRow(Base):
-    """One invoice file uploaded to an order in procurement (0155) and the registry invoice it stands for: the row it
+    """One invoice file uploaded to an order in procurement (0156) and the registry invoice it stands for: the row it
     created, or the row of the same invoice it was attached to (a Kaiten card, an earlier upload — `invoice_uploads`).
     A file stands for one invoice only (UNIQUE file_key); the invoice's status follows the procurement lines carrying
     its files (`app.workflows.procurement_invoice_registry`)."""

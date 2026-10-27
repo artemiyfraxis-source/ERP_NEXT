@@ -336,7 +336,7 @@ def test_migration_adds_the_statuses_and_the_upload_links_and_downgrades_cleanly
     path = tmp_path / "erp.db"
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{path.as_posix()}")
-    command.upgrade(config, "0155_invoice_procurement_source")
+    command.upgrade(config, "0156_invoice_procurement_source")
     insert = ("INSERT INTO purchasing_invoices (id, source, external_id, title, board_title, column_title, status, "
               "card_created, card_updated, vat_free, payment_numbers, parse_issues, text, lines, synced_at) "
               "VALUES (?, ?, ?, 't', '', '', ?, '2026-10-27', '2026-10-27', 0, '', '', '', '[]', '2026-10-27')")
@@ -362,4 +362,4 @@ def test_migration_adds_the_statuses_and_the_upload_links_and_downgrades_cleanly
         assert "purchasing_invoice_uploads" not in tables
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(insert, ("00000000000000000000000000000005", "kaiten", "card-3", "replaced"))
-    command.upgrade(config, "0155_invoice_procurement_source")  # and up again
+    command.upgrade(config, "0156_invoice_procurement_source")  # and up again

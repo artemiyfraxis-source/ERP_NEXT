@@ -192,7 +192,7 @@ def test_migration_lets_the_procurement_source_in_and_its_downgrade_removes_only
     path = tmp_path / "erp.db"
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{path.as_posix()}")
-    command.upgrade(config, "0155_invoice_procurement_source")
+    command.upgrade(config, "0156_invoice_procurement_source")
     insert = ("INSERT INTO purchasing_invoices (id, source, external_id, title, board_title, column_title, status, "
               "card_created, card_updated, vat_free, payment_numbers, parse_issues, text, lines, synced_at) "
               "VALUES (?, ?, ?, 't', '', '', 'to_pay', '2026-10-27', '2026-10-27', 0, '', '', '', '[]', '2026-10-27')")
