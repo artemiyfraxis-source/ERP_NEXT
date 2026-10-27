@@ -3,7 +3,8 @@
 A model reads a page in 8–100 s — longer than a request may last behind the proxy (502). So nothing is recognised
 inside a request: the scan (from the scanner agent, «Файл…» or a merge of sheets) gets a done scan job, the reading
 runs as a background task (`recognise_job`), and the screen polls the job until its `result` is stored. Each file
-keeps its own reading (`scan_reading`), so a merge of sheets combines the kept readings and reads nothing again.
+keeps its own reading (`scan_reading`, since 26.10.2026 by the ERP's document reader, `app.shared.doc_reader`), so a
+merge of sheets combines the kept readings — re-merged and re-checked as one document — and reads nothing again.
 
 The answer — `{scan_file, recognised: {supplier, inn, upd_number, upd_date, invoice_number, invoice_date}, lines:
 [{article, name, upd_name, item_type, manufacturer, quantity, unit, packs, pack, pack_kind, supplier_code, source}],
@@ -188,7 +189,8 @@ def recognise_job(uow_factory: Callable[[], UnitOfWork], sources: ScanSources, j
 
         try:
             if pages:
-                reading = merge_readings([file_reading(uow_factory, page, config) for page in pages])
+                readings = [file_reading(uow_factory, page, config) for page in pages]
+                reading = merge_readings(readings, item_types(uow_factory()))
                 keep_scan_recognition(uow_factory(), job.file_id, reading_json(reading))
             else:
                 reading = file_reading(uow_factory, job.file_id, config)

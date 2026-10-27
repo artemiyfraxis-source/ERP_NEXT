@@ -4,9 +4,9 @@ import { formatDate } from "./format";
 import { urlParam } from "./navigation";
 import { PurchasingUpdCard } from "./PurchasingUpdCard";
 import {
-  EDO_STATUS_LABELS, EMPTY_FILTERS, UPD_ORIGIN_FILTERS, UPD_ORIGIN_HINTS, UPD_ORIGIN_LABELS, UPD_STATUS_LABELS, UPD_STATUS_ORDER, UPD_STATUS_TONES,
+  EDO_STATUS_LABELS, EMPTY_FILTERS, PDF_STATUS_LABELS, UPD_ORIGIN_FILTERS, UPD_ORIGIN_HINTS, UPD_ORIGIN_LABELS, UPD_STATUS_LABELS, UPD_STATUS_ORDER, UPD_STATUS_TONES,
   UPD_KIND_GROUPS, buyerLabel, fileToBase64, purchasingUpdApi as updApi, rub,
-  type EdoFileResult, type SellersImportResult, type UpdCard, type UpdFilters, type UpdList, type UpdSellers,
+  type EdoFileResult, type PdfFileResult, type SellersImportResult, type UpdCard, type UpdFilters, type UpdList, type UpdSellers,
 } from "./purchasingUpdApi";
 import { StatusChip } from "./StatusChip";
 import "./purchasingDocs.css";
@@ -31,6 +31,7 @@ export function PurchasingUpd({ readOnly = false, focusId, extraBlocks }: {
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState<string | null>(focusId ?? null);
   const [uploading, setUploading] = useState(false);
+  const [pdfUploading, setPdfUploading] = useState(false);
   const [sellersOpen, setSellersOpen] = useState(false);
   const [reload, setReload] = useState(0);
   const refresh = useCallback(() => setReload((n) => n + 1), []);
@@ -67,11 +68,12 @@ export function PurchasingUpd({ readOnly = false, focusId, extraBlocks }: {
   };
   return (
     <section className="panel table-panel upd-registry">
-      <div className="panel-heading"><h2>Реестр УПД</h2><span>закрывающие документы: PDF, распознанные Google, и XML из ЭДО</span></div>
+      <div className="panel-heading"><h2>Реестр УПД</h2><span>закрывающие документы: PDF, прочитанные разборщиком, и XML из ЭДО</span></div>
       <div className="inline-action purchasing-toolbar">
         <input type="search" aria-label="Поиск по реестру УПД" placeholder="Продавец, №, ИНН, имя файла" value={filters.q}
           onChange={(event) => set({ q: event.target.value })} />
         {!readOnly && <button type="button" className="secondary" onClick={() => setSellersOpen(true)}>Продавцы без поставщика</button>}
+        {!readOnly && <button type="button" className="secondary" onClick={() => setPdfUploading(true)}>Загрузить PDF</button>}
         {!readOnly && <button type="button" className="primary" onClick={() => setUploading(true)}>Загрузить из ЭДО</button>}
       </div>
       <div className="pdoc-tabs">
@@ -159,6 +161,7 @@ export function PurchasingUpd({ readOnly = false, focusId, extraBlocks }: {
         </div>
       )}
       {uploading && <EdoUploadDialog onClose={() => setUploading(false)} onApplied={refresh} />}
+      {pdfUploading && <PdfUploadDialog onClose={() => setPdfUploading(false)} onApplied={refresh} />}
       {sellersOpen && <SellersDialog onClose={() => setSellersOpen(false)} onApplied={refresh} />}
     </section>
   );
@@ -290,6 +293,71 @@ function EdoUploadDialog({ onClose, onApplied }: { onClose: () => void; onApplie
         <div className="move-actions">
           <button type="button" className="secondary" onClick={onClose} disabled={stage === "applying"}>Закрыть</button>
           {stage === "checked" && <button type="button" className="primary" disabled={writable === 0} onClick={() => void apply()}>Загрузить в реестр</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** «Загрузить PDF»: scans and electronic PDFs go into the registry «В очереди»; the server's model reads each one
+ *  (money included) in the background, the cards fill in as it answers. */
+function PdfUploadDialog({ onClose, onApplied }: { onClose: () => void; onApplied: () => void }) {
+  const [rows, setRows] = useState<PdfFileResult[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [modelReady, setModelReady] = useState(true);
+
+  // One file per request, one after another: each body stays under the server's ceiling.
+  async function send(files: File[]) {
+    setRows([]);
+    setBusy(true);
+    const out: PdfFileResult[] = [];
+    for (const file of files) {
+      try {
+        const answer = await updApi.importPdf({ file_name: file.name, content_base64: await fileToBase64(file) });
+        out.push(...answer.files);
+        if (!answer.model_ready) setModelReady(false);
+      } catch (reason) {
+        out.push({ name: file.name, status: "error", message: failureText(reason, "Файл не принят") });
+      }
+      setRows([...out]);
+    }
+    setBusy(false);
+    onApplied();
+  }
+
+  return (
+    <div className="dialog-overlay" role="presentation">
+      <div className="panel move-dialog wide" role="dialog" aria-label="Загрузить PDF">
+        <h2>Загрузить PDF</h2>
+        <p className="page-sub">
+          УПД, счёт-фактура, ТОРГ-12, акт или М-15 — скан или электронный PDF. Документ встаёт в очередь, разборщик читает
+          его на сервере (шапку, строки, цены и суммы) и проверяет арифметику; результат появится в карточке через минуту-две.
+          Метка в имени файла главнее мнения модели: «М15» — накладная М-15, «ТН» — ТОРГ-12 вместе со счётом-фактурой.
+        </p>
+        <label className="upd-file-pick">Файлы
+          <input type="file" aria-label="Файлы PDF" accept=".pdf,application/pdf" multiple disabled={busy}
+            onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void send(files); }} />
+        </label>
+        {busy && <div className="empty" role="status">Загружаю…</div>}
+        {!modelReady && <div className="error-banner" role="alert">Ключ модели не задан («Склад» → «Распознавание УПД»): документы ждут в очереди.</div>}
+        {rows.length > 0 && (
+          <div className="table-wrap history-table">
+            <table className="grid" aria-label="Загруженные PDF">
+              <thead><tr><th className="grow">Файл</th><th>Итог</th><th>Пояснение</th></tr></thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr key={`${row.name}-${index}`}>
+                    <td className="text">{row.name}</td>
+                    <td><StatusChip tone={row.status === "error" ? "danger" : row.status === "unchanged" ? "neutral" : "success"}>{PDF_STATUS_LABELS[row.status]}</StatusChip></td>
+                    <td className="text">{row.message ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="move-actions">
+          <button type="button" className="secondary" onClick={onClose} disabled={busy}>Закрыть</button>
         </div>
       </div>
     </div>

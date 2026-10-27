@@ -14,6 +14,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.shared.inn import inn_valid  # the same check as the document reader (app.shared.doc_reader)
+
 from .infrastructure import QuoteRow, RfqSupplierRow, SupplierNameRow, SupplierRow
 
 CATEGORIES: dict[str, str] = {
@@ -58,21 +60,6 @@ def supplier_key(name: str) -> str:
     if not kept:
         kept = words
     return " ".join(kept) if kept else " ".join(folded.split())
-
-
-def inn_valid(inn: str) -> bool:
-    if not inn.isascii() or not inn.isdigit():
-        return False
-    digits = [int(char) for char in inn]
-
-    def check(weights: list[int]) -> int:
-        return sum(w * d for w, d in zip(weights, digits)) % 11 % 10
-
-    if len(digits) == 10:
-        return check([2, 4, 10, 3, 5, 9, 4, 6, 8]) == digits[9]
-    if len(digits) == 12:
-        return check([7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) == digits[10] and check([3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]) == digits[11]
-    return False
 
 
 def normalize_inn(value: Any) -> str | None:

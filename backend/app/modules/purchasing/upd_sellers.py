@@ -17,10 +17,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
-from .suppliers import inn_valid
-
-# Our company (ООО «ЭЗП «ФРАКСИС»): never a seller.
-OWN_INNS: frozenset[str] = frozenset({"5040191181"})
+from app.shared.inn import OWN_INNS, inn_valid  # OWN_INNS: our company (ООО «ЭЗП «ФРАКСИС»), never a seller
 
 HEADER_FIELDS = (
     "number", "date", "seller_name", "seller_inn", "seller_kpp", "buyer_inn", "total_net", "total_vat", "total_gross",

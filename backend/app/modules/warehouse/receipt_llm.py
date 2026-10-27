@@ -1,47 +1,68 @@
-"""A paper УПД read by a vision model over an OpenAI-compatible API (owner 26.10.2026: «давай сразу апи»).
+"""A paper УПД read by a vision model over an OpenAI-compatible API (owner 26.10.2026: «давай сразу апи») — since
+26.10.2026 through the ERP's one document reader (`app.shared.doc_reader`, Витя: «Наш парсер идёт не рядом с парсером
+Артемия, а они становятся одним целым»): Roller_Buyer's УПД prompt, kinds, money and checks on Артемий's transport.
 
-Measured on two real scans: `gpt-5.6-luna` (reasoning «medium», temperature 0), ONE upright grayscale JPEG per page
-(long side 2400 px, quality 85) — ~6k tokens, ~8 s, every line right; `gemini-3.8-flash` — ~100 s, as accurate. An
-upside-down page made the model invent lines, so every page is turned upright first (`receipt_ocr.page_turn`).
+Measured by Артемий on two real scans (his own prompt): `gpt-5.6-luna` (reasoning «medium», temperature 0), ONE upright
+grayscale JPEG per page (long side 2400 px, quality 85) — ~6k tokens, ~8 s, every line right; `gemini-3.8-flash` —
+~100 s, as accurate. An upside-down page made the model invent lines, so every page is turned upright first.
 
-* The client (config, call, JSON, page JPEG) lives in `app.shared.vision_llm` since 26.10 — a quote scan in
-  purchasing reads through it too; its names are imported here unchanged.
-* Config: env `ERP_UPD_LLM_BASE_URL`, `ERP_UPD_LLM_API_KEY`, `ERP_UPD_LLM_MODEL`, `ERP_UPD_LLM_FALLBACK_MODEL`,
-  `ERP_UPD_LLM_EFFORT` win field by field over the setting the administrator saves on «Склад» → «Распознавание УПД»
-  (`warehouse_upd_llm_settings`), then the defaults below. No key — no model reading (tesseract, as before).
-* A call: POST `{base}/chat/completions`, stdlib urllib, 120 s. 5xx / 429 / timeout → one retry; then the fallback
-  model once; a page neither model read goes to tesseract (`receipt_ocr.page_text`). A 400 naming an optional
-  parameter (`response_format`, `temperature`, `reasoning_effort`, `max_tokens`) drops it and asks again — relays
-  differ in what they take. The whole document has DOCUMENT_BUDGET seconds, so the screen's 4-minute wait holds.
-* Pages go in parallel (≤ PARALLEL); the answers merge in page order (`scan_reading.merge_readings`).
-* The key is never logged nor answered: errors are cleaned of it; the log has model, seconds and tokens per page."""
+What lives where now:
+* the call, its config (env `ERP_UPD_LLM_*` over the saved «Распознавание УПД», then the defaults), retries, the
+  fallback model and the key kept out of logs — `doc_reader.transport`, re-exported here (`receipt_llm_api` and the
+  tests use these names); `app.shared.vision_llm` (the КП scan in purchasing) is a thin layer over the same
+  transport — one client, one config;
+* page pictures and their upright turn — `doc_reader.pages` (`page_jpeg` re-exported);
+* the page-by-page reading (≤ PARALLEL at once, the numbering-gap reread) — `doc_reader.reader`; `read_page` /
+  `read_pages` below ask it with the CLOSING prompt and the stock's item types;
+* what the warehouse takes of a reading — `reading_header` (supplier, ИНН, № / date, the invoice of «Основание», the
+  ПРД) and `reading_lines` (name, quantity, unit, the codes, maker, type, our short name, packs) — here;
+* an ЭДО file's names (`name_fields`) — here, unchanged: the file gives the rows exactly, the model only says what they
+  are. The whole scan has DOCUMENT_BUDGET seconds, so the screen's 4-minute wait holds."""
 
 from __future__ import annotations
 
-import base64
 import logging
 import re
 import time
-import urllib.request  # noqa: F401 — the client moved to app.shared.vision_llm; tests patch urlopen through here
+import urllib.request  # noqa: F401 — the calls go through urllib.request.urlopen (tests patch it from here)
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 
 from app.shared.article_maker import normalize_maker
-from app.shared.vision_llm import (  # noqa: F401 — the УПД path's public names, kept where callers import them
-    CALL_TIMEOUT, CHECK_TIMEOUT, DEFAULT_BASE_URL, DEFAULT_EFFORT, DEFAULT_FALLBACK_MODEL, DEFAULT_MODEL, EFFORTS, ENV,
-    ERROR_TEXT, JPEG_QUALITY, LONG_SIDE, OPTIONAL, LlmConfig, LlmError, check, complete, env_fields, key_hint,
-    llm_config, message_text, page_jpeg, parse_answer,
+from app.shared.doc_reader import closing
+from app.shared.doc_reader import reader as doc_reader
+from app.shared.doc_reader.pages import JPEG_QUALITY, LONG_SIDE, page_jpeg  # noqa: F401 — re-exported
+from app.shared.doc_reader.reader import PARALLEL, PageAnswer, numbering_gap  # noqa: F401 — re-exported
+from app.shared.doc_reader.transport import (  # noqa: F401 — re-exported: the warehouse's settings screen uses them
+    CALL_TIMEOUT,
+    CHECK_TIMEOUT,
+    DEFAULT_BASE_URL,
+    DEFAULT_EFFORT,
+    DEFAULT_FALLBACK_MODEL,
+    DEFAULT_MODEL,
+    EFFORTS,
+    ENV,
+    ERROR_TEXT,
+    OPTIONAL,
+    LlmConfig,
+    LlmError,
+    check,
+    complete,
+    env_fields,
+    key_hint,
+    llm_config,
+    message_text,
+    parse_answer,
 )
 
 from .item_types import ITEM_TYPES_CANON, type_key
-from .receipt_scan import PRD_NUMBER_LIMIT, RecognisedUpd, scan_day
+from .receipt_scan import PRD_NUMBER_LIMIT, RecognisedUpd, parse_upd_text, prd_refs, scan_day
 from .upd_lines import UpdLine, item_line, quantity_of, unit_of
 
 DOCUMENT_BUDGET = 200.0  # seconds for all pages; what is left after it goes to tesseract
 NAMES_BUDGET = 40.0  # an ЭДО file's names are read inside the upload request: under the proxy's minute
-PARALLEL = 4
+
 ITEM_FIELDS = (
     '"article": "артикул производителя, если он есть в наименовании или коде; у типовых изделий без заводского '
     'номера (наконечники НШВ/НКИ/РПИ, трубка ТУТ, провод ПВАМ) — их марка из наименования, например «НШВ 6,0-12»; '
@@ -53,142 +74,66 @@ ITEM_FIELDS = (
     'и кодов продавца, без количества в упаковке, например «Контакт обжимной JST SXH, 0,08–0,2 мм²»"'
 )
 
+log = logging.getLogger(__name__)
+
 
 def item_fields(types: Sequence[str]) -> str:
     """The per-row fields of what the model makes of a name (owner 26.10.2026: «и тип, и артикул, и наименование
-    наше»): `item_type` only from the stock's own dictionary."""
+    наше»): `item_type` only from the stock's own dictionary. (The ЭДО names call; a scan asks the same in the reader's
+    words, `closing.prompt(types=…)`.)"""
     listed = "; ".join(f"«{item}»" for item in types if str(item).strip()) or "—"
     return ITEM_FIELDS.replace("{types}", listed)
 
 
 def page_prompt(types: Sequence[str] = ITEM_TYPES_CANON) -> str:
-    return (
-        "Это скан листа российского УПД (универсального передаточного документа) или его продолжения. "
-        "Верни ТОЛЬКО JSON без пояснений: "
-        '{"supplier": "продавец (строка «Продавец»), как напечатан", '
-        '"inn": "ИНН продавца (10 или 12 цифр)", '
-        '"upd_number": "номер счёта-фактуры/УПД из первой строки документа", '
-        '"upd_date": "YYYY-MM-DD", '
-        '"invoice_number": "№ счёта ТОЛЬКО из строки «Основание передачи (сдачи) / получения (приёмки)»; '
-        'если там не счёт — пусто", '
-        '"invoice_date": "YYYY-MM-DD или пусто", '
-        '"prd_number": "№ ТОЛЬКО из строки «К платёжно-расчётному документу № … от …»; несколько — через «, »; '
-        'пусто, если не заполнено", '
-        '"prd_date": "YYYY-MM-DD первого документа из этой же строки или пусто", '
-        '"lines":[{"n": "№ п/п", "supplier_code": "код товара (колонка А)", '
-        '"name": "наименование полностью, как напечатано, с переносами склеенными", '
-        '"unit": "условное обозначение единицы (колонка 2а)", '
-        '"quantity": "количество (колонка 3), число с точкой", '
-        + item_fields(types) + "}]} "
-        "Все строки таблицы товаров, без пропусков и без выдумок; нечитаемое — пустая строка. "
-        "Если на листе нет шапки или таблицы — соответствующие поля пустые. "
-        "Цифры переписывай посимвольно."
-    )
+    """The task of one scanned page: the CLOSING prompt (all kinds, money, basis, payments) with the warehouse fields."""
+    return closing.prompt("", types=types, page=True)
 
 
 PROMPT = page_prompt()
-
-log = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class PageAnswer:
-    page: int  # 1-based
-    data: dict | None  # the model's JSON; None — no model read the page
-    model: str = ""
-    error: str = ""
-
-
-def _row_numbers(data: Mapping) -> list[int]:
-    rows = data.get("lines") if isinstance(data.get("lines"), list) else []
-    return sorted({int(n) for row in rows if isinstance(row, Mapping) and str(n := row.get("n", "")).strip().isdigit()})
-
-
-def numbering_gap(data: Mapping) -> bool:
-    """«1, 2, …, 5, 7» — a row of the table is missing: the model glued two rows (seen on the first real scans, 26.10)."""
-    numbers = _row_numbers(data)
-    return len(numbers) >= 2 and numbers[-1] - numbers[0] + 1 > len(numbers)
 
 
 def read_page(config: LlmConfig, jpeg: bytes, page: int, deadline: float,
               clock: Callable[[], float] = time.monotonic, gap_retry: bool = True,
               types: Sequence[str] = ITEM_TYPES_CANON) -> PageAnswer:
-    """One page through the main model (one retry on 5xx / timeout), then the fallback model. A reading whose row
-    numbers have a gap is read once more; the reading with more rows wins. `types` — the stock's item types."""
-    messages = [{"role": "user", "content": [
-        {"type": "text", "text": page_prompt(types)},
-        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}},
-    ]}]
-    options: dict[str, object] = {"temperature": 0, "response_format": {"type": "json_object"}}
-    if config.effort:
-        options["reasoning_effort"] = config.effort
-    errors: list[str] = []
-    for model, tries in zip(config.models(), (2, 1)):
-        for _attempt in range(tries):
-            remaining = deadline - clock()
-            if remaining < 5:
-                errors.append("время на распознавание вышло")
-                return PageAnswer(page, None, error="; ".join(errors))
-            started = clock()
-            try:
-                answer = complete(config, model, messages, options, min(CALL_TIMEOUT, remaining))
-                data = parse_answer(message_text(answer))
-            except LlmError as error:
-                log.warning("УПД: модель %s, стр. %d — %s (%.1f с)", model, page, error, clock() - started)
-                errors.append(f"{model}: {error}")
-                if error.retry:
-                    continue
-                break
-            usage = answer.get("usage") if isinstance(answer.get("usage"), dict) else {}
-            log.info("УПД: модель %s, стр. %d — %.1f с, токенов %s (вход %s, выход %s)", model, page,
-                     clock() - started, usage.get("total_tokens", "?"), usage.get("prompt_tokens", "?"),
-                     usage.get("completion_tokens", "?"))
-            if gap_retry and numbering_gap(data):
-                log.info("УПД: модель %s, стр. %d — пропуск в номерах строк %s, читаю ещё раз", model, page,
-                         _row_numbers(data))
-                again = read_page(config, jpeg, page, deadline, clock, gap_retry=False, types=types)
-                if again.data is not None and len(_row_numbers(again.data)) > len(_row_numbers(data)):
-                    return again
-            return PageAnswer(page, data, model=model)
-    return PageAnswer(page, None, error="; ".join(errors))
+    """One scanned page through the document reader (main model with one retry, then the fallback; a gap in the row
+    numbers is read once more). `types` — the stock's item types."""
+    return doc_reader.read_page(config, jpeg, page, deadline, clock, gap_retry, prompt=page_prompt(types))
 
 
 def read_pages(config: LlmConfig, jpegs: list[bytes], clock: Callable[[], float] = time.monotonic,
                types: Sequence[str] = ITEM_TYPES_CANON) -> list[PageAnswer]:
     """Every page at once (≤ PARALLEL calls), answers in page order."""
-    if not jpegs:
-        return []
-    deadline = clock() + DOCUMENT_BUDGET
-    with ThreadPoolExecutor(max_workers=min(PARALLEL, len(jpegs)), thread_name_prefix="upd-llm") as pool:
-        return list(pool.map(lambda pair: read_page(config, pair[1], pair[0], deadline, clock, types=types),
-                             enumerate(jpegs, start=1)))
+    return doc_reader.read_pages(config, jpegs, prompt=page_prompt(types), clock=clock, budget=DOCUMENT_BUDGET)
 
 
 def _text(value, limit: int) -> str:
     return " ".join(str(value or "").split())[:limit] if not isinstance(value, (dict, list)) else ""
 
 
-def _day(value) -> date | None:
-    text = _text(value, 32)
-    try:
-        return date.fromisoformat(text) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else scan_day(text)
-    except ValueError:
-        return None
+def payment_refs(text: str | None) -> tuple[str, date | None]:
+    """The ПРД of the reading's paymentDoc («№ 916 от 19.10.2026, № 917 от 20.10.2026») → («916, 917», 19.10.2026);
+    a model that left out «№» — the parts before «от»."""
+    number, day = prd_refs(text)
+    if number or not str(text or "").strip():
+        return number, day
+    parts = [re.split(r"\s+от\s+", part.strip(), maxsplit=1) for part in re.split(r"[,;]", str(text))]
+    numbers = [bits[0].replace("№", "").strip() for bits in parts if bits and re.search(r"\d", bits[0])]
+    first = next((found for bits in parts if len(bits) == 2 and (found := scan_day(bits[1]))), None)
+    return ", ".join(dict.fromkeys(numbers))[:PRD_NUMBER_LIMIT], first
 
 
-def _prd_number(value) -> str:
-    """«№ 916, №917» → «916, 917»: the numbers alone, joined by «, »."""
-    parts = [part.replace("№", "").strip() for part in re.split(r"[,;]", _text(value, 512))]
-    return ", ".join(part for part in parts if part)[:PRD_NUMBER_LIMIT]
-
-
-def page_header(data: Mapping) -> RecognisedUpd:
-    inn = re.sub(r"\D", "", _text(data.get("inn"), 32))
+def reading_header(doc: closing.ParsedDoc) -> RecognisedUpd:
+    """The delivery's header from a reading: the seller and its ИНН, № and date; the invoice only from the basis
+    («Основание передачи…»: a «Счёт № … от …», not a contract), the ПРД only from paymentDoc («К платёжно-расчётному
+    документу») — Артемий's rules, as his own prompt asked them."""
+    inn = re.sub(r"\D", "", doc.seller_inn)
+    basis = parse_upd_text(doc.basis)
+    prd_number, prd_date = payment_refs(doc.payment_doc)
     return RecognisedUpd(
-        supplier=_text(data.get("supplier"), 255), inn=inn if len(inn) in (10, 12) else "",
-        upd_number=_text(data.get("upd_number"), 64), upd_date=_day(data.get("upd_date")),
-        invoice_number=_text(data.get("invoice_number"), 64), invoice_date=_day(data.get("invoice_date")),
-        prd_number=_prd_number(data.get("prd_number")), prd_date=_day(data.get("prd_date")),
+        supplier=_text(doc.seller_name, 255), inn=inn if len(inn) in (10, 12) else "",
+        upd_number=_text(doc.number, 64), upd_date=doc.doc_date,
+        invoice_number=basis.invoice_number, invoice_date=basis.invoice_date, prd_number=prd_number, prd_date=prd_date,
     )
 
 
@@ -200,29 +145,30 @@ def item_type_of(value, types: Sequence[str]) -> str:
 
 
 def row_fields(row: Mapping, types: Sequence[str]) -> dict:
-    """What the model made of one row's name: article, our short name, item type, maker. A reading kept before these
-    fields existed has none of them — all «»."""
+    """What the model made of one ЭДО row's name: article, our short name, item type, maker."""
     return {
         "article": _text(row.get("article"), 255), "short_name": _text(row.get("short_name"), 255),
         "item_type": item_type_of(row.get("item_type"), types), "manufacturer": normalize_maker(_text(row.get("maker"), 64)),
     }
 
 
-def page_lines(data: Mapping, types: Sequence[str] = ITEM_TYPES_CANON) -> list[UpdLine]:
-    """The model's rows as warehouse lines: the name as printed, the article (the model's, else read off the name),
-    the pack said in words (`upd_lines.item_line`), our short name, type and maker, the supplier's code kept; a row
-    without a name and a code is dropped."""
-    rows = data.get("lines")
+def _quantity(value: float | None) -> Decimal | None:
+    return quantity_of(format(Decimal(repr(value)), "f")) if value is not None else None
+
+
+def reading_lines(doc: closing.ParsedDoc, types: Sequence[str] = ITEM_TYPES_CANON) -> list[UpdLine]:
+    """The reading's rows as warehouse lines: the name as printed, the seller's code (column «А»), the maker's article
+    (the model's, else read off the name), the pack said in words (`upd_lines.item_line`), our short name, the type
+    (only one of the stock dictionary) and the maker; a row without a name and a code is dropped."""
     lines = []
-    for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, dict):
-            continue
-        name, code = _text(row.get("name"), 1000), _text(row.get("supplier_code"), 64)
+    for row in doc.lines:
+        name, code = _text(row.name, 1000), _text(row.article, 64)
         if not (name or code):
             continue
         lines.append(item_line(
-            name, quantity_of(_text(row.get("quantity"), 32)), unit_of(_text(row.get("unit"), 32)),
-            supplier_code=code, number=_text(row.get("n"), 16), **row_fields(row, types),
+            name, _quantity(row.qty), unit_of(row.unit or row.unit_code), supplier_code=code, number=str(row.seq),
+            article=_text(row.maker_article, 255), short_name=_text(row.short_name, 255),
+            item_type=item_type_of(row.item_type, types), manufacturer=normalize_maker(_text(row.maker, 64)),
         ))
     return lines
 
