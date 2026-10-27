@@ -113,3 +113,15 @@ and compare with what your reader gave (lines, quantities, packs, invoice from �
 - `json_object` vs `json_schema`: kept your measured `json_object`.
 
 Roller_Buyer keeps its Google parser while it is used; nothing there changes.
+
+## State on 27.10.2026 — main moved on (19 commits), one conflict
+A dry-run merge of this branch into main (7ebf8298) conflicts in ONE file: `backend/app/modules/warehouse/receipt_llm.py`.
+Cause: main gained 66674f9d «Внести КП: скан и фото КП читает модель (как УПД со скана)» and 4854e5ea / 4233565b
+(«упак» + «N шт», «Принять по УПД») that edit `receipt_llm.py` while this branch moved its transport into
+`app/shared/doc_reader/transport.py` (+ `pages.py`) and left re-exports. Resolve by keeping main's new КП / receiving
+logic and taking the transport from `doc_reader` (call `doc_reader.transport.complete / ask / parse_answer`,
+`doc_reader.pages.page_jpeg / page_images / page_turn`); `receipt_upd_registry.py` and `test_receipt_llm.py`
+auto-merge but rerun their tests. The КП-scan reading you added may stay on its own prompt — Витя's decision 26.10:
+quotes and invoices are read by text parsers, the model only where you already use it (scans/photos); problem
+documents are entered by hand. Invoices: see PR #732 (vitya/invoice-parser) — it builds on your f6bc855e
+(`invoice_header`, `invoice_lines` untouched; `pdf_layout` internals rewritten to pdf.js rules, 673/673 parity with RB).
