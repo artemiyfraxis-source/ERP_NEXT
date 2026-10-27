@@ -141,7 +141,7 @@ def test_uploaded_invoice_lands_in_the_registry_with_header_lines_text_and_file(
     assert body["checks"][0] == {"kind": "seller", "level": "ok", "text": "ИНН 7701234560 — поставщик заказа «ООО Поставка»"}
 
 
-def test_the_same_file_again_changes_nothing_and_a_new_upload_is_a_new_invoice(wired):
+def test_the_same_file_again_changes_nothing_and_a_new_upload_of_it_joins_its_row(wired):
     client, line, sessions = wired
     number = _invoiced_line(client, line)
     first = _upload(client, line.id).json()
@@ -154,9 +154,9 @@ def test_the_same_file_again_changes_nothing_and_a_new_upload_is_a_new_invoice(w
         app.state.purchasing_uow_factory, UUID(row.external_id), first["file_name"], uploaded_at, INVOICE_PDF, None,
         number, "ООО Поставка", actor, datetime(2026, 10, 27, 10, 0),
     )
-    assert again == {"file": row.external_id, "status": "unchanged", "invoice_id": str(row.id)}
-    _upload(client, line.id)
-    assert len(_registry(sessions)) == 2
+    assert again == {"file": row.external_id, "status": "unchanged", "invoice_id": str(row.id), "source": "procurement"}
+    _upload(client, line.id)  # the same invoice uploaded again: one invoice, one row (owner's session 27.10)
+    assert [item.id for item in _registry(sessions)] == [row.id]
 
 
 def test_a_failing_registry_never_fails_the_upload(wired, monkeypatch):

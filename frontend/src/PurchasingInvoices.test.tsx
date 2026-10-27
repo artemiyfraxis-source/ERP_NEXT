@@ -105,3 +105,41 @@ it("the card: header, positions, payment orders, files to open in a new tab, the
   fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+it("an invoice uploaded in procurement: «Заменён» / «Отменён» with the reason, the payment from procurement", async () => {
+  const uploaded = { ...base, id: "up1", number: "777", status: "replaced", payments: [], invoice_file_id: null };
+  const listed = {
+    ...row, ...uploaded, source: "procurement", payment_numbers: "", payment_date: null, payment_sum: null, payment_matches: null,
+    files: [], chain: null,
+  };
+  const paidCard = {
+    ...card, ...uploaded, id: "up2", number: "12", status: "paid", source: "procurement", payment_numbers: "",
+    payment_date: "2026-10-21", payment_sum: 24400, payment_matches: true, files: [], chain: null,
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = decodeURIComponent(String(input));
+    if (path === "/api/purchasing/invoices/up1") return json({ ...card, ...uploaded, source: "procurement", files: [], chain: null });
+    if (path === "/api/purchasing/invoices/up2") return json(paidCard);
+    return json({
+      items: [listed, { ...listed, id: "up2", number: "12", status: "paid" }], total: 2, page: 1, page_size: 100,
+      counts: { to_pay: 0, paid: 1, return: 0, other: 0, cancelled: 0, replaced: 1 }, sum: 24400,
+    });
+  });
+  render(<PurchasingInvoices />);
+  const list = await screen.findByRole("list", { name: "Счета" });
+  const tile = within(list).getAllByRole("listitem")[0];
+  expect(tile.textContent).toContain("Заменён");
+  expect(tile.textContent).toContain("загружен в закупке");
+  expect(screen.getByRole("button", { name: "Заменён 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Отменён 0" })).toBeInTheDocument();
+
+  fireEvent.click(within(tile).getByRole("button", { name: "777" }));
+  const dialog = await screen.findByRole("dialog", { name: "Карточка счёта" });
+  expect(await within(dialog).findByText("К заказу загружен более новый счёт — этот в цепочке документов не участвует.")).toBeInTheDocument();
+  expect(within(dialog).getByText("Загружен в закупке")).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+
+  fireEvent.click(within(within(list).getAllByRole("listitem")[1]).getByRole("button", { name: "12" }));
+  const paid = await screen.findByRole("dialog", { name: "Карточка счёта" });
+  expect(await within(paid).findByText("Оплачено в закупке 21.10.2026 · 244,00 ₽")).toBeInTheDocument();
+});

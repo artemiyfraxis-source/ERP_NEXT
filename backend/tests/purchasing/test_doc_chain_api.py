@@ -381,7 +381,7 @@ def test_invoice_list_filters_counts_and_the_closing_column(env):
 
     body = client.get("/api/purchasing/invoices").json()
     assert [i["id"] for i in body["items"]] == [str(returned), str(to_pay), str(paid)]
-    assert body["counts"] == {"to_pay": 1, "paid": 1, "return": 1, "other": 0}
+    assert body["counts"] == {"to_pay": 1, "paid": 1, "return": 1, "other": 0, "cancelled": 0, "replaced": 0}
     first = next(i for i in body["items"] if i["id"] == str(paid))
     assert (first["payment_numbers"], first["payment_date"], first["payment_sum"], first["payment_matches"]) == ("880", "2025-09-16", 481500, True)
     assert first["line_count"] == 1

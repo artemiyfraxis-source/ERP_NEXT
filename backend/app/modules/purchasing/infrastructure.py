@@ -515,7 +515,13 @@ class InvoiceRow(Base):
     __table_args__ = (
         UniqueConstraint("source", "external_id", name="uq_purchasing_invoices_source_external"),
         CheckConstraint("source IN ('kaiten', 'procurement')", name="ck_purchasing_invoices_source"),
-        CheckConstraint("status IN ('to_pay', 'paid', 'return', 'other')", name="ck_purchasing_invoices_status"),
+        CheckConstraint(
+            "status IN ('to_pay', 'paid', 'return', 'other', 'cancelled', 'replaced')", name="ck_purchasing_invoices_status",
+        ),
+        # Only an invoice uploaded in procurement is cancelled or replaced there; a Kaiten card keeps Kaiten's status.
+        CheckConstraint(
+            "source = 'procurement' OR status NOT IN ('cancelled', 'replaced')", name="ck_purchasing_invoices_void_source",
+        ),
         Index("ix_purchasing_invoices_supplier", "supplier_id"),
         Index("ix_purchasing_invoices_date", "doc_date"),
     )
@@ -565,6 +571,34 @@ class InvoiceFileRow(Base):
     seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # None — the file was not downloaded.
     file_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_document_files.id", ondelete="SET NULL"))
+
+
+class InvoiceUploadRow(Base):
+    """One invoice file uploaded to an order in procurement (0155) and the registry invoice it stands for: the row it
+    created, or the row of the same invoice it was attached to (a Kaiten card, an earlier upload — `invoice_uploads`).
+    A file stands for one invoice only (UNIQUE file_key); the invoice's status follows the procurement lines carrying
+    its files (`app.workflows.procurement_invoice_registry`)."""
+
+    __tablename__ = "purchasing_invoice_uploads"
+    __table_args__ = (
+        UniqueConstraint("file_key", name="uq_purchasing_invoice_uploads_file"),
+        CheckConstraint("length(file_key) > 0", name="ck_purchasing_invoice_uploads_file"),
+        Index("ix_purchasing_invoice_uploads_invoice", "invoice_id"),
+        Index("ix_purchasing_invoice_uploads_order", "order_number"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    invoice_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_invoices.id", ondelete="CASCADE"), nullable=False)
+    # procurement_files.id of the uploaded file (another module's table: no FK)
+    file_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # the procurement line the file was uploaded for (None — dropped on the whole order) and its order
+    line_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    order_number: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    file_name: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # True — this upload made the registry row; False — attached to an invoice the registry already had.
+    created_row: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class UpdInvoiceLinkRow(Base):

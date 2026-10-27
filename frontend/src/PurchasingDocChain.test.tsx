@@ -122,13 +122,13 @@ function procurementServer() {
   });
 }
 
-it("«Первичная документация» shows «Счета Kaiten», «Цепочка документов», «Поиск по документам»", async () => {
+it("«Первичная документация» shows «Счета», «Цепочка документов», «Поиск по документам»", async () => {
   procurementServer();
   render(<PrimaryDocsPage />);
   const tabs = await screen.findByRole("tablist", { name: "Первичная документация" });
-  await waitFor(() => expect(within(tabs).getByRole("tab", { name: "Счета Kaiten" })).toBeInTheDocument());
+  await waitFor(() => expect(within(tabs).getByRole("tab", { name: "Счета" })).toBeInTheDocument());
   expect(within(tabs).getByRole("tab", { name: "Цепочка документов" })).toBeInTheDocument();
   expect(within(tabs).getByRole("tab", { name: "Поиск по документам" })).toBeInTheDocument();
-  fireEvent.click(within(tabs).getByRole("tab", { name: "Счета Kaiten" }));
-  expect(await screen.findByText("Счетов ещё нет: их загружает перенос из Kaiten.")).toBeInTheDocument();
+  fireEvent.click(within(tabs).getByRole("tab", { name: "Счета" }));
+  expect(await screen.findByText("Счетов ещё нет: они приходят из Kaiten и со счетами, загруженными в закупке.")).toBeInTheDocument();
 });

@@ -12,7 +12,7 @@ import { UpdInvoicesBlock } from "./UpdInvoicesBlock";
    через MOVED_TABS. */
 type DocsTab = "upd" | "invoices" | "chain" | "docsearch";
 const TABS: ReadonlyArray<[DocsTab, string]> = [
-  ["upd", "УПД"], ["invoices", "Счета Kaiten"], ["chain", "Цепочка документов"], ["docsearch", "Поиск по документам"],
+  ["upd", "УПД"], ["invoices", "Счета"], ["chain", "Цепочка документов"], ["docsearch", "Поиск по документам"],
 ];
 
 export function PrimaryDocsPage({ readOnly = false }: { readOnly?: boolean }) {

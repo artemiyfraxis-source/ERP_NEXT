@@ -2342,7 +2342,7 @@ describe("«Снабжение»: tabs, «Статистика» and «Не пе
     const main = screen.getByRole("tablist", { name: "Разделы закупки" });
     expect(within(main).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Сегодня", "Заявки", "Запросы КП", "Закупка", "Счета и поставки", "Статистика"]);
-    for (const gone of ["Поставщики", "Номенклатура", "Каталог закупок", "Настройки", "УПД", "Счета Kaiten", "Цепочка документов", "Поиск по документам"]) {
+    for (const gone of ["Поставщики", "Номенклатура", "Каталог закупок", "Настройки", "УПД", "Счета", "Цепочка документов", "Поиск по документам"]) {
       expect(screen.queryByRole("tab", { name: gone })).not.toBeInTheDocument();
     }
     expect(screen.queryByRole("tablist", { name: "Статистика" })).not.toBeInTheDocument();

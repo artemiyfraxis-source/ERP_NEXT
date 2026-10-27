@@ -136,7 +136,7 @@ def _pricebook(session: Session, lines: Sequence[ViewLine]) -> dict[UUID, int]:
 def _kaiten(session: Session) -> list[KaitenInvoice] | None:
     rows = session.execute(
         select(InvoiceRow.title, InvoiceRow.seller_name, InvoiceRow.total, InvoiceRow.card_created)
-        .where(InvoiceRow.status == "to_pay")
+        .where(InvoiceRow.status == "to_pay", InvoiceRow.source == "kaiten")
     )
     # Kaiten stamps cards in UTC: a card made at 01:30 MSK belongs to that local day, not the previous one.
     return [KaitenInvoice(title=title, seller=seller, total=total, created_on=_day(created)) for title, seller, total, created in rows]

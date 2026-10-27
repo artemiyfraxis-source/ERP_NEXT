@@ -387,10 +387,17 @@ def _round(value: float) -> int:
     return math.floor(value + 0.5)
 
 
+# An invoice uploaded in procurement whose lines were cancelled or which a newer invoice replaced (0155) is no live
+# invoice: it closes nothing and has no chain; it stays listed in «Счета» with its status.
+VOID_STATUSES = frozenset({"cancelled", "replaced"})
+
+
 def compute_world(facts: Facts, today: str) -> World:
     invoices = {i.id: i for i in facts.invoices}
     upds = {u.id: u for u in facts.upds}
     decisions = facts.decisions
+    live = [i for i in facts.invoices if i.status not in VOID_STATUSES]
+    live_ids = {i.id for i in live}
     result = match_documents(
         [
             MatchUpd(u.id, u.seller_inn, u.seller_name, u.supplier_id, u.date, u.total_gross, u.basis, u.payment_doc)
@@ -401,9 +408,12 @@ def compute_world(facts: Facts, today: str) -> World:
                 i.id, i.seller_inn, i.seller_name, i.supplier_id, i.number, i.date, i.total,
                 tuple(MatchPayment(p.number, p.date, p.sum) for p in i.payments),
             )
-            for i in facts.invoices
+            for i in live
         ],
-        [MatchDecision(upd_id, invoice_id, d) for (upd_id, invoice_id), d in decisions.items() if upd_id in upds],
+        [
+            MatchDecision(upd_id, invoice_id, d) for (upd_id, invoice_id), d in decisions.items()
+            if upd_id in upds and invoice_id in live_ids
+        ],
     )
 
     links_by_invoice: dict[UUID, list] = {}
@@ -434,7 +444,7 @@ def compute_world(facts: Facts, today: str) -> World:
 
     chains: list[Chain] = []
     chain_of_invoice: dict[UUID, Chain] = {}
-    for inv in facts.invoices:
+    for inv in live:
         linked = [(upds[link.upd_id], link.method) for link in links_by_invoice.get(inv.id, [])]
         checks: list[Check] = []
         # The buyer's lines decide; a ТОРГ-12 of the same number and date as its счёт-фактура is one shipment.
