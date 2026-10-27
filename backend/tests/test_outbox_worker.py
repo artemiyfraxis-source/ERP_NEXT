@@ -314,11 +314,11 @@ def test_every_job_group_stamps_its_heartbeat(queue_db, monkeypatch):
     monkeypatch.setattr(outbox_worker, "quarantine_overdue_waiting", lambda now, uow: [])
     monkeypatch.setattr(outbox_worker, "notify_initiators", lambda now, uow: 0)
     for name in ("daily_overdue_digest", "quarantine_escalations", "alert_on_dead_letters", "feed_triggers",
-                 "close_followed_up", "leave_calendar_tick"):
+                 "close_followed_up", "leave_calendar_tick", "invoice_status_tick"):
         monkeypatch.setattr(outbox_worker, name, lambda now, sessions: 0)
     monkeypatch.setattr(outbox_worker, "kitset_names_tick", lambda now, sessions: 0)
     monkeypatch.setattr(outbox_worker, "procurement_autofill_tick", lambda sessions, cap: 0)
-    for gate in ("_last_error_alert", "_last_arbiter_close", "_last_leave_calendar"):
+    for gate in ("_last_error_alert", "_last_arbiter_close", "_last_leave_calendar", "_last_invoice_status"):
         monkeypatch.setattr(outbox_worker, gate, float("-inf"))
 
     outbox_worker.run_timers(sessions)

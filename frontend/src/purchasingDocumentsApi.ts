@@ -4,14 +4,19 @@ import type { Tone } from "./statusTone";
 /** «Счета», «Цепочка документов», «Поиск по документам»: /api/purchasing/invoices,
  *  /doc-chain, /upd/{id}/invoices, /doc-search. Money arrives in kopecks; the UI shows roubles. */
 
-export type InvoiceStatus = "to_pay" | "paid" | "return" | "other";
+/** cancelled / replaced — только у счёта, загруженного в закупке: строки отменены / его место занял новый счёт. */
+export type InvoiceStatus = "to_pay" | "paid" | "return" | "other" | "cancelled" | "replaced";
 export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
   to_pay: "В оплату",
   paid: "Оплачен",
   return: "Возврат",
   other: "Другое",
+  cancelled: "Отменён",
+  replaced: "Заменён",
 };
-export const INVOICE_STATUS_TONE: Record<InvoiceStatus, Tone> = { to_pay: "warning", paid: "success", return: "neutral", other: "neutral" };
+export const INVOICE_STATUS_TONE: Record<InvoiceStatus, Tone> = {
+  to_pay: "warning", paid: "success", return: "neutral", other: "neutral", cancelled: "neutral", replaced: "neutral",
+};
 
 export type ChainState = "closed" | "partial" | "over" | "waiting" | "missing" | "unpaid" | "return" | "orphan";
 export const CHAIN_STATES: readonly ChainState[] = ["closed", "partial", "over", "waiting", "missing", "unpaid", "return", "orphan"];
