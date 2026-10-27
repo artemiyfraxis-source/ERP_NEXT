@@ -6,6 +6,8 @@ import {
   manualRatePrompt,
   procurementApi,
   type ApplyOrderDocumentInput,
+  type InvoiceCheck,
+  type InvoiceReading,
   type InvoiceUpload,
   type KpRowInput,
   type ManualRatePrompt,
@@ -924,16 +926,19 @@ function InvoiceFileUpload({ lineId, disabled, onUploaded }: {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
+  const [read, setRead] = useState<InvoiceUpload | null>(null);
 
   async function upload(file: File) {
     setBusy(true);
     setNote("");
     setError("");
+    setRead(null);
     try {
       const result = await procurementApi.uploadInvoiceFile(lineId, {
         name: file.name, type: file.type || "application/octet-stream", base64: await readBase64(file),
       });
       onUploaded(result);
+      setRead(result);
       setNote(result.hint
         ? `${result.file_name} · ${result.hint}`
         : `${result.file_name} · распознано: № ${result.invoice_number || "—"}, дата ${result.invoice_date || "—"} — проверьте`);
@@ -951,8 +956,52 @@ function InvoiceFileUpload({ lineId, disabled, onUploaded }: {
       </label>
       {busy && <small className="hint">Загружаем счёт…</small>}
       {note && <small className="hint">{note}</small>}
+      {read?.reading && !read.reading.scan && <InvoiceReadingSummary reading={read.reading} checks={read.checks ?? []} />}
       {error && <small className="danger-text" role="alert">{error}</small>}
     </>
+  );
+}
+
+const invoiceRub = (kopecks: number) =>
+  `${(kopecks / 100).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`;
+
+// Разбор счёта как в Roller_Buyer: продавец, сумма, позиции и что сверить с заказом — подсказка, форму не меняет.
+function InvoiceReadingSummary({ reading, checks }: { reading: InvoiceReading; checks: InvoiceCheck[] }) {
+  const facts = [
+    reading.seller_name || reading.seller_inn
+      ? `продавец ${reading.seller_name ?? "не прочитан"}${reading.seller_inn ? `, ИНН ${reading.seller_inn}` : ""}`
+      : "",
+    reading.total !== null
+      ? `сумма ${invoiceRub(reading.total)}${reading.vat_free ? " без НДС" : reading.vat !== null ? `, НДС ${invoiceRub(reading.vat)}` : ""}`
+      : "",
+  ].filter(Boolean);
+  return (
+    <div className="invoice-reading">
+      {facts.length > 0 && <small className="hint">По счёту: {facts.join(" · ")}</small>}
+      {reading.issues.length > 0 && <small className="hint">Не прочитано: {reading.issues.join("; ")}</small>}
+      {checks.map((check) => check.level === "warning"
+        ? <div key={check.text} className="warning-inline" role="status">{check.text}</div>
+        : <small key={check.text} className="hint">{check.text}</small>)}
+      {reading.lines.length > 0 && (
+        <details>
+          <summary>Позиции счёта ({reading.lines.length})</summary>
+          <table className="invoice-reading-lines">
+            <thead><tr><th>№</th><th>Наименование</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead>
+            <tbody>
+              {reading.lines.map((item) => (
+                <tr key={item.seq}>
+                  <td>{item.seq}</td>
+                  <td>{item.name}{item.article ? <small> · {item.article}</small> : null}</td>
+                  <td>{item.qty ?? "—"} {item.unit}</td>
+                  <td>{item.price !== null ? invoiceRub(item.price) : "—"}</td>
+                  <td>{item.sum !== null ? invoiceRub(item.sum) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+    </div>
   );
 }
 

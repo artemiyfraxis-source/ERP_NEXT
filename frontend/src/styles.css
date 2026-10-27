@@ -5154,3 +5154,11 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 
 /* «Сортировка: размер, затем наименование» над таблицей списка «Базы данных» (владелец 25.10.2026). */
 .sort-hint { font-size: 13px; white-space: nowrap; align-self: center; }
+
+/* Разбор счёта при загрузке к заказу: подсказки и таблица позиций под полем файла. */
+.invoice-reading { display: grid; gap: 4px; margin-top: 4px; }
+.invoice-reading .hint { margin: 0; }
+.invoice-reading details summary { cursor: pointer; font-size: 12px; color: var(--muted-foreground); }
+.invoice-reading-lines { width: 100%; font-size: 12px; border-collapse: collapse; }
+.invoice-reading-lines th, .invoice-reading-lines td { padding: 2px 6px; text-align: left; vertical-align: top; }
+.invoice-reading-lines td:nth-child(n + 3) { white-space: nowrap; }

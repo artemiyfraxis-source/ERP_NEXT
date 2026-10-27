@@ -1,4 +1,5 @@
-"""«Счета»: the invoice registry mirrored from Kaiten (space «Закупки»), read-only.
+"""«Счета»: the invoice registry mirrored from Kaiten (space «Закупки»), read-only, and the invoices uploaded to orders in
+ERP procurement (source «procurement», `invoice_uploads`).
 
 One card = one invoice with its PDF and our payment orders (ported from Roller_Buyer kaiten.ts / routes/invoices.ts,
 no network here — the importer fills the tables). The header was read from the PDF's text layer; the payments come
@@ -90,8 +91,8 @@ class InvoiceQuery:
 def list_invoices(session: Session, world: World, query: InvoiceQuery) -> dict:
     rows = {
         row.id: row for row in session.execute(select(
-            InvoiceRow.id, InvoiceRow.column_title, InvoiceRow.card_created, InvoiceRow.vat, InvoiceRow.vat_free,
-            InvoiceRow.parse_issues, InvoiceRow.lines,
+            InvoiceRow.id, InvoiceRow.source, InvoiceRow.column_title, InvoiceRow.card_created, InvoiceRow.vat,
+            InvoiceRow.vat_free, InvoiceRow.parse_issues, InvoiceRow.lines,
         ))
     }
     files = load_invoice_files(session)
@@ -136,6 +137,7 @@ def list_invoices(session: Session, world: World, query: InvoiceQuery) -> dict:
         paid = payment_summary(inv.payments)
         return {
             **inv.as_json(),
+            "source": row.source if row is not None else "kaiten",
             "column_title": row.column_title if row is not None else "",
             "card_created": row.card_created.isoformat() if row is not None and row.card_created else None,
             "vat": row.vat if row is not None else None, "vat_free": bool(row.vat_free) if row is not None else False,
@@ -164,7 +166,7 @@ def invoice_card(session: Session, world: World, invoice_id: UUID) -> tuple[dict
     paid = payment_summary(inv.payments)
     return {
         **inv.as_json(),
-        "board_title": row.board_title, "column_title": row.column_title,
+        "source": row.source, "board_title": row.board_title, "column_title": row.column_title,
         "card_created": row.card_created.isoformat() if row.card_created else None,
         "vat": row.vat, "vat_free": row.vat_free, "parse_issues": row.parse_issues, "lines": row.lines or [],
         "payment_numbers": paid.numbers, "payment_date": paid.date, "payment_sum": paid.sum,
@@ -199,7 +201,10 @@ def invoice_pdf(session: Session, invoice_id: UUID, number: str | None = None) -
 
 
 def invoice_title(row: InvoiceRow) -> str:
-    """«Счёт Kaiten № … от …» — how an order shows the registry's invoice it stands on."""
+    """«Счёт Kaiten № … от …» (an invoice uploaded in procurement: «Счёт № … от …») — how an order shows the registry's
+    invoice it stands on."""
+    if row.source != "kaiten":
+        return "Счёт" + (f" № {row.number}" if row.number else "") + (f" от {row.doc_date:%d.%m.%Y}" if row.doc_date else "")
     number = f" № {row.number}" if row.number else f" (карточка {row.external_id})"
     return f"Счёт Kaiten{number}" + (f" от {row.doc_date:%d.%m.%Y}" if row.doc_date else "")
 
