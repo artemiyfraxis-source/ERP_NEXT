@@ -74,7 +74,7 @@ it("a position shows the value its lots agree on, else «N разн.» with ever
 it("the positions table offers the maker and the documents in «Колонки», off until switched on", async () => {
   mockServer([lot, other, untyped]);
   render(<WarehousePage />);
-  await screen.findByText("SMA-KWE-RG402");
+  await screen.findAllByText("SMA-KWE-RG402");
   const chooser = openChooser();
   for (const title of ["Производитель", "Наим. по УПД", "Наим. по счёту", "№ счёта", "Дата счёта", "№ УПД", "Дата УПД", "№ ПРД", "Дата ПРД", "Файл УПД"]) {
     expect(chooser.getByLabelText(title)).not.toBeChecked();
@@ -87,14 +87,14 @@ it("the positions table offers the maker and the documents in «Колонки»
   fireEvent.click(chooser.getByLabelText("Файл УПД"));
   expect(headerNames()).toEqual(expect.arrayContaining(["Производитель", "Наим. по УПД", "№ УПД", "Файл УПД"]));
 
-  const position = row("SMA-KWE-RG402");
-  const maker = within(position).getByText("2 разн.", { selector: "td:nth-child(10)" });
-  expect(maker).toHaveAttribute("title", "У партий разные значения:\nAmphenol RF\nRosenberger");
-  // All lots agree on the УПД number: the number itself.
-  expect(within(position).getByText("125")).toBeInTheDocument();
-  // Two files — one link per file.
-  expect(within(position).getByRole("link", { name: "Файл УПД партии OLD.26.0000069" })).toHaveAttribute("href", "/files/upd-1.pdf");
-  expect(within(position).getByRole("link", { name: "Файл УПД партии OLD.26.0000070" })).toHaveAttribute("href", "/files/upd-2.pdf");
+  // A row is one lot (owner 27.10.2026): each lot of SMA-KWE-RG402 shows its own maker, УПД and file.
+  const first = row("OLD.26.0000069");
+  const second = row("OLD.26.0000070");
+  expect(within(first).getByText("Amphenol RF")).toBeInTheDocument();
+  expect(within(second).getByText("Rosenberger")).toBeInTheDocument();
+  expect(within(first).getByText("125")).toBeInTheDocument();
+  expect(within(first).getByRole("link", { name: "Файл УПД партии OLD.26.0000069" })).toHaveAttribute("href", "/files/upd-1.pdf");
+  expect(within(second).getByRole("link", { name: "Файл УПД партии OLD.26.0000070" })).toHaveAttribute("href", "/files/upd-2.pdf");
   // A lot without a maker: a dim dash.
   const cap = row("CAP-1");
   expect(within(cap).getAllByText("—").some((cell) => cell.classList.contains("stock-dim"))).toBe(true);
@@ -102,16 +102,15 @@ it("the positions table offers the maker and the documents in «Колонки»
   expect(screen.queryByRole("button", { name: /^Производитель/ })).not.toBeInTheDocument();
 });
 
-it("several lots: the first ГРН and «+1», all in the tooltip; «Тип» wraps instead of «…»; an empty type is «—»", async () => {
+it("a lot per row: its own ГРН, no «+1»; «Тип» wraps instead of «…»; an empty type is «—»", async () => {
   mockServer([lot, other, untyped]);
   render(<WarehousePage />);
-  await screen.findByText("SMA-KWE-RG402");
+  await screen.findAllByText("SMA-KWE-RG402");
   fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "" } });
   await waitFor(() => expect(screen.getByRole("columnheader", { name: "Тип" })).toBeInTheDocument());
-  const position = row("SMA-KWE-RG402");
+  const position = row("OLD.26.0000069");
   const grn = within(position).getByText("OLD.26.0000069").closest("td")!;
-  expect(grn).toHaveTextContent("OLD.26.0000069 +1");
-  expect(grn).toHaveAttribute("title", "OLD.26.0000069\nOLD.26.0000070");
+  expect(grn).toHaveTextContent(/^OLD\.26\.0000069$/);
   const type = within(position).getByText("Коаксиальный соединитель");
   expect(type).toHaveClass("stock-clamp");
   expect(type.closest("td")).toHaveClass("stock-wrap");
