@@ -9,12 +9,16 @@ model and fallback model) — this port is the one place purchasing reaches them
 (`purchasing.upd_pdf`) and the registry's columns (`purchasing.upd_parse`).
 
     ERP_DATABASE_URL=… python -m app.workflows.upd_pdf_parse --benchmark [--limit N]   # writes nothing
+    ERP_DATABASE_URL=… python -m app.workflows.upd_pdf_parse --benchmark-scans N [--budget S]   # writes nothing
     ERP_DATABASE_URL=… python -m app.workflows.upd_pdf_parse --queued [--apply]
     ERP_DATABASE_URL=… python -m app.workflows.upd_pdf_parse --ids <id,id> | --all [--limit N] [--apply]
 
 `--benchmark` reads every PDF whose document also came as an EDO XML and counts, field by field, where the stored
-reading (Roller_Buyer's Google parser) and the new one differ from the XML. Without `--apply` the others read and
-print, writing nothing; with it the readings replace the stored ones. Every reading is a paid model call."""
+reading (Roller_Buyer's Google parser) and the new one differ from the XML. `--benchmark-scans N` re-reads the last N
+warehouse scans (`warehouse_receipt_files` with a stored reading) as «Отсканировать УПД» reads them and prints, per
+file, what differs from the stored reading (`warehouse.scan_benchmark`). Without `--apply` the others read and print,
+writing nothing; with it the readings replace the stored ones. The read-only modes run in a read-only session (on
+PostgreSQL a READ ONLY transaction; any flush or commit refused; rolled back). Every reading is a paid model call."""
 
 from __future__ import annotations
 
@@ -24,15 +28,18 @@ import os
 import re
 import sys
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import event, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.modules.purchasing import upd_parse, upd_pdf
 from app.modules.purchasing.infrastructure import DocumentFileRow, UpdDocumentRow, UpdLineRow
+from app.modules.warehouse import scan_benchmark
+from app.modules.warehouse.reference_fields import item_types
 from app.modules.warehouse.scan_recognition import llm_config as warehouse_llm_config
 from app.shared.clock import moscow_now
 from app.shared.doc_reader import pages as doc_pages
@@ -129,6 +136,30 @@ def parse_documents(purchasing: Callable, warehouse: Callable | None, document_i
 
 # ---- command line -------------------------------------------------------------------------------------------------
 
+class ReadOnly(RuntimeError):
+    pass
+
+
+def _refuse(*_args) -> None:
+    raise ReadOnly("пробный прогон: запись в базу запрещена")
+
+
+@contextmanager
+def read_only(sessions) -> Iterator[Session]:
+    """A session that cannot write: a READ ONLY transaction on PostgreSQL, every flush and commit refused, rolled back
+    and closed at the end."""
+    session = sessions()
+    event.listen(session, "before_flush", _refuse)
+    event.listen(session, "before_commit", _refuse)
+    try:
+        if session.get_bind().dialect.name == "postgresql":
+            session.execute(text("SET TRANSACTION READ ONLY"))
+        yield session
+    finally:
+        session.rollback()
+        session.close()
+
+
 _FOLD = str.maketrans({"ё": "е", "Ё": "Е"})
 
 
@@ -187,7 +218,7 @@ def _file(session, document_id: str):
 def benchmark(sessions, config: LlmConfig, limit: int | None, out=None) -> dict:
     """Every PDF with an EDO twin, read anew; errors of the stored and of the new reading against the XML."""
     out = out or sys.stdout
-    with sessions() as session:
+    with read_only(sessions) as session:
         docs = {row.id: row for row in session.scalars(select(UpdDocumentRow))}
         pairs = []
         for row in docs.values():
@@ -220,15 +251,29 @@ def benchmark(sessions, config: LlmConfig, limit: int | None, out=None) -> dict:
     return {"pairs": len(pairs), "failed": failed, "stored": dict(stored), "fresh": dict(fresh)}
 
 
+def benchmark_scans(sessions, warehouse: Callable, config: LlmConfig, limit: int, budget: float | None = None,
+                    out=None, reader: scan_benchmark.Reader | None = None) -> dict:
+    """The last `limit` warehouse scans read anew and compared with their stored readings (read-only)."""
+    types = item_types(warehouse())
+    with read_only(sessions) as session:  # the files are loaded, the session closed: no transaction held while reading
+        scans = scan_benchmark.recent_scans(session, limit)
+    return scan_benchmark.run(scans, reader or scan_benchmark.reader_of(config, types), model=config.model,
+                              budget=budget, out=out)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Разборщик PDF реестра УПД: очередь, повторный разбор, сравнение с ЭДО")
     what = parser.add_mutually_exclusive_group(required=True)
     what.add_argument("--benchmark", action="store_true", help="сравнить с XML из ЭДО (ничего не пишет)")
+    what.add_argument("--benchmark-scans", type=int, metavar="N",
+                      help="перечитать N последних сканов склада и сравнить с сохранённым чтением (ничего не пишет)")
     what.add_argument("--queued", action="store_true", help="документы «В очереди»")
     what.add_argument("--all", action="store_true", help="все PDF реестра заново")
     what.add_argument("--ids", help="ключи документов через запятую")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--apply", action="store_true", help="записать (без флага — прочитать и показать)")
+    parser.add_argument("--budget", type=float, default=None,
+                        help="--benchmark-scans: не начинать новый файл после стольких секунд прогона")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -247,8 +292,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.benchmark:
         benchmark(sessions, config, args.limit)
         return 0
+    if args.benchmark_scans:
+        benchmark_scans(sessions, build_warehouse_uow_factory(engine), config, args.benchmark_scans, args.budget)
+        return 0
 
-    with sessions() as session:
+    with read_only(sessions) as session:
         if args.ids:
             ids = [part.strip() for part in args.ids.split(",") if part.strip()]
         elif args.queued:
@@ -260,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Документов: {len(ids)}, модель {config.model} (запасная {config.fallback_model or '—'})"
           + ("" if args.apply else " — пробный прогон, ничего не пишется"))
     if not args.apply:
-        with sessions() as session:
+        with read_only(sessions) as session:
             for number, document_id in enumerate(ids, start=1):
                 row, content = _file(session, document_id)
                 if row is None or content is None:
