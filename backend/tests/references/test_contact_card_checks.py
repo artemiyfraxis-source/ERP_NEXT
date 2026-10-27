@@ -67,9 +67,11 @@ def sessions():
 
 
 def _insert(session: Session, tab: str, fields: dict) -> None:
+    # a БД.ТЕР row is always in one list (CHECK of migration 0155): «Терминалы» here
     session.execute(text(
-        "INSERT INTO tech_operation_records (id, tab, display_text, normalized_search, source_sheet, sort_key, fields)"
-        " VALUES (:id, :tab, 'x', 'x', '', 'x', :fields)"), {"id": uuid4().hex, "tab": tab, "fields": json.dumps(fields)})
+        "INSERT INTO tech_operation_records (id, tab, display_text, normalized_search, source_sheet, sort_key, fields,"
+        " ter_kind) VALUES (:id, :tab, 'x', 'x', '', 'x', :fields, :kind)"),
+        {"id": uuid4().hex, "tab": tab, "fields": json.dumps(fields), "kind": "contact" if tab == "ter" else None})
 
 
 @pytest.mark.parametrize("fields", [

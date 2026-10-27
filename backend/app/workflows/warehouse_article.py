@@ -7,6 +7,7 @@ import re
 from typing import Any, Iterable, Mapping
 
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
+from app.modules.references.lugs import LUG, ter_kind_of
 from app.modules.techcards.connector_housings import housing_of, normalize_article
 from app.shared.article_maker import split_article_maker
 
@@ -76,6 +77,9 @@ COAX_DESCRIPTION = re.compile(
     re.IGNORECASE,
 )
 RG_IN_TEXT = re.compile(r"RG[\s-]?(\d{1,3})(?!\d|[.,]\d|X)", re.IGNORECASE)
+
+
+LUG_ITEM_TYPE = "Наконечник"  # the stock type of a БД.ТЕР lug (warehouse ITEM_TYPES_CANON, owner 26.10.2026)
 
 
 @dataclass(frozen=True)
@@ -283,15 +287,21 @@ def infer_article_identity(
         return None
 
     records = tuple(records)
-    terminals = tuple(item.fields for item in records if item.tab is TechOperationTab.TERMINAL)
+    terminal_records = tuple(item for item in records if item.tab is TechOperationTab.TERMINAL)
+    terminals = tuple(item.fields for item in terminal_records)
     coax = tuple(item.fields for item in records if item.tab is TechOperationTab.COAX)
 
-    terminal = next((
-        fields for fields in terminals
-        if _article_key(_field(fields, "terArticle", "article")) == key
+    found = next((
+        item for item in terminal_records
+        if _article_key(_field(item.fields, "terArticle", "article")) == key
     ), None)
+    terminal = found.fields if found is not None else None
     if terminal is not None:
         product = _field(terminal, "terComponent", "product")
+        # «Наконечники» (owner 26.10.2026: «тип наконечник, а не терминал»): a lug row of БД.ТЕР is stocked as
+        # «Наконечник» — the row's own list, else the rule
+        if product and (getattr(found, "ter_kind", None) or ter_kind_of(terminal)) == LUG:
+            return ArticleIdentity(product, f"Наконечник {product}", LUG_ITEM_TYPE, "БД.ТЕР")
         if product:
             contact = _field(terminal, "terType", "contact")
             name = f"Контакт {product}{f' {contact}' if contact else ''}"

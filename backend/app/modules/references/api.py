@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated, Any, Sequence
+from typing import Annotated, Any, Literal, Sequence
 
 from uuid import UUID
 
@@ -23,6 +23,8 @@ from .application import (
     SaveColumnViewCommand, ViewColumn, column_views, save_column_view,
     replace_maps, replace_snapshot, set_cable_kind, add_column, custom_columns, remove_column, set_coax_diameters, set_covering_group, coverings_catalog,
 )
+from .application import SetTerKindCommand, set_ter_kind
+from .lugs import LUG, TER_KIND_LABELS, lug_columns, ter_kind_of
 from .crimps import change_target, change_terminal, crimp_codes, crimp_overview
 from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
 from .application import LinkStockCommand, link_stock_article, stock_links
@@ -96,6 +98,11 @@ class RecordCreatePayload(BaseModel):
     tab: str = Field(min_length=1, max_length=32)
     fields: dict[str, str] = Field(max_length=100)
     cable_kind: CableKind | None = None  # БД.ПРОВ: the cable list the row is created in (none — by the rule)
+    ter_kind: Literal["contact", "lug"] | None = None  # БД.ТЕР: «Терминалы» / «Наконечники» (none — by the rule)
+
+
+class TerKindPayload(BaseModel):
+    kind: Literal["contact", "lug"]
 
 
 class TerminalResolutionPayload(BaseModel):
@@ -210,13 +217,25 @@ def tech_operations(
     tab: TechOperationTab | None = None,
     q: Annotated[str, Query(max_length=255)] = "",
     limit: Annotated[int, Query(ge=1, le=5000)] = 200,
+    ter_kind: Literal["contact", "lug"] | None = None,
 ) -> dict:
+    """`ter_kind` (БД.ТЕР only): the rows of one list — «Терминалы» (contact) or «Наконечники» (lug) — with that list's
+    columns; without it every БД.ТЕР row (the readers that look a contact or a lug up by its article)."""
+    if ter_kind is not None and tab != TechOperationTab.TERMINAL:
+        raise HTTPException(status_code=422, detail="Список «Терминалы / Наконечники» бывает только у БД.ТЕР")
     with uow_factory() as uow:
-        records = uow.tech_operations.list(tab=tab, query=q, limit=limit)
+        records = uow.tech_operations.list(tab=tab, query=q, limit=limit if ter_kind is None else 100_000)
         metadata = uow.tech_operations.metadata()
         own = custom_columns(tab, uow) if tab is not None else []
+    if ter_kind is not None:
+        records = [item for item in records if item.ter_kind == ter_kind][:limit]
     if tab == TechOperationTab.COAX:  # an own column removed from the table 25.10.2026 («Дата цены») is no column
         own = [name for name in own if name not in COAX_DROPPED_COLUMNS]
+    # «Наконечники» (owner 26.10.2026): only the columns lugs fill (`lugs.LUG_COLUMN_SLOTS`); the owner's own БД.ТЕР
+    # columns stay with «Терминалы».
+    columns = lug_columns(_sheet_columns(tab, records)) if ter_kind == LUG else _columns(tab, records, own)
+    if ter_kind == LUG:
+        own = []
     return {
         "metadata": None if metadata is None else {
             **metadata,
@@ -224,11 +243,13 @@ def tech_operations(
             "imported_at": metadata["imported_at"].isoformat(),
         },
         # Known sheet schema first (so an empty tab still has a create form), else the first row's keys.
-        "columns": _columns(tab, records, own),
+        "columns": columns,
         "custom_columns": own,
         "records": [{
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet, **({"cable_kind": item.cable_kind} if item.cable_kind else {}),
+            # БД.ТЕР: the list of the row and the one the rule gives (they differ after a move by hand)
+            **({"ter_kind": item.ter_kind, "ter_rule": ter_kind_of(item.fields)} if item.ter_kind else {}),
             "fields": normalize_terminal_fields(item.fields) if item.tab == TechOperationTab.TERMINAL else item.fields,
             # «Терминалы»: the contact card by protocol v5.2, read from the record as the generator reads it.
             **({"card": terminal_card(item.fields)} if item.tab == TechOperationTab.TERMINAL else {}),
@@ -343,7 +364,8 @@ _BASE_TABS = {
 def _record_json(item) -> dict:
     return {"id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet, "fields": item.fields,
-            **({"cable_kind": item.cable_kind} if item.cable_kind else {})}
+            **({"cable_kind": item.cable_kind} if item.cable_kind else {}),
+            **({"ter_kind": item.ter_kind, "ter_rule": ter_kind_of(item.fields)} if item.ter_kind else {})}
 
 
 def _run_edit(operation):
@@ -361,6 +383,7 @@ def bases(
     templates live in «Шаблоны техкарт», so their count is not known here (null)."""
     with uow_factory() as uow:
         counts = uow.tech_operations.counts()
+        ter_counts = uow.tech_operations.ter_counts()
         gauges = len(uow.cable_structure.gauges())
     return {
         "bases": [
@@ -374,6 +397,8 @@ def bases(
         # Tab chips of «База данных»: every stored tab, and the three cable lists («Кабели и провода»).
         "tabs": {tab.value: counts.get(tab, 0) for tab in TechOperationTab},
         "cables": cable_counts(list_cables(uow_factory())),
+        # БД.ТЕР by list: «Терминалы» (contact) and «Наконечники» (lug)
+        "ter_kinds": {kind: ter_counts.get(kind, 0) for kind in TER_KIND_LABELS},
         "gauges": gauges,
     }
 
@@ -795,9 +820,25 @@ def create_tech_record(
     except ValueError as error: raise HTTPException(status_code=422, detail="Неизвестная база") from error
     if payload.cable_kind is not None and tab != TechOperationTab.WIRE:
         raise HTTPException(status_code=422, detail="Список кабеля бывает только у строки БД.ПРОВ")
+    if payload.ter_kind is not None and tab != TechOperationTab.TERMINAL:
+        raise HTTPException(status_code=422, detail="Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
     record = _run_edit(lambda: create_record(CreateRecordCommand(
         tab=tab, fields=payload.fields, actor=principal.actor, now=now, cable_kind=payload.cable_kind,
+        ter_kind=payload.ter_kind,
     ), uow_factory()))
+    return _record_json(record)
+
+
+@router.put("/tech-operations/{record_id}/ter-kind")
+def move_terminal(
+    record_id: UUID,
+    payload: TerKindPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """«Терминалы» ↔ «Наконечники»: a БД.ТЕР row moved by hand (its fields stay)."""
+    record = _run_edit(lambda: set_ter_kind(SetTerKindCommand(record_id, payload.kind, principal.actor, now), uow_factory()))
     return _record_json(record)
 
 

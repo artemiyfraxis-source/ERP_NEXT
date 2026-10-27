@@ -71,7 +71,8 @@ it("downloads the tab with the screen's Russian titles", async () => {
 
   await waitFor(() => expect(click).toHaveBeenCalled());
   const exported = calls.find((call) => call.path.endsWith("/file/export"));
-  expect(exported?.body).toEqual({ titles: { terStep: "Шаг", "Шаг разьема": "Шаг разъёма" }, kind: "" });
+  // «Терминалы» — список «contact» БД.ТЕР (наконечники — свой файл, 26.10.2026)
+  expect(exported?.body).toEqual({ titles: { terStep: "Шаг", "Шаг разьема": "Шаг разъёма" }, kind: "contact" });
   expect(created).toHaveBeenCalled();
 });
 

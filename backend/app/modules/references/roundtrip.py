@@ -39,6 +39,7 @@ from .domain import (
 )
 from .equipment import EXTRA_KEYS, TARGETS_KEY
 from .importers import _MapTarget, cable_list_columns
+from .lugs import LUG, TER_KIND_LABELS, TER_KIND_VALUES, lug_columns
 from .technology import OPERATION_TD_KEYS, schema_columns, schema_keys
 from .xlsx_file import Cell, ReadSheet, Sheet, XlsxError, read_xlsx, write_xlsx
 
@@ -110,6 +111,7 @@ class _TechTable:
         self.cable_kind = ""  # БД.ПРОВ: the cable list of the file ('' — all lists together)
         self.own_columns: tuple[str, ...] = ()  # БД.ПРОВ of a list: its columns, read in `items`
         self.foreign: frozenset[str] = frozenset()  # БД.ПРОВ of a list: the columns of the other lists only
+        self.ter_kind = ""  # БД.ТЕР: «contact» («Терминалы») / «lug» («Наконечники»); '' — every row
 
     def for_kind(self, kind: str) -> "_TechTable":
         if self.tab == TechOperationTab.WIRE and kind:
@@ -119,6 +121,11 @@ class _TechTable:
             self.cable_kind = kind
             self.extras = COAX_TITLES if kind == "coax" else HOOKUP_TITLES if kind == "wire" else {}
             self.titles = self.extras
+        if self.tab == TechOperationTab.TERMINAL and kind:
+            if kind not in TER_KIND_VALUES:
+                raise RoundtripError(f"Списка «{kind}» в БД.ТЕР нет — скачайте таблицу заново из «Терминалов» или "
+                                     "«Наконечников»")
+            self.ter_kind = kind
         return self
 
     def _extra_values(self, uow: UnitOfWork, records: Sequence[TechOperationRecord]) -> dict[str, dict[str, str]]:
@@ -144,6 +151,8 @@ class _TechTable:
         records = list(uow.tech_operations.list(tab=self.tab, query="", limit=100_000))
         if self.cable_kind:  # БД.ПРОВ of one list: its rows only (an ID of another list's row is «not found»)
             records = [record for record in records if record.cable_kind == self.cable_kind]
+        if self.ter_kind:  # БД.ТЕР of one list: its rows only (an ID of the other list's row is «not found»)
+            records = [record for record in records if record.ter_kind == self.ter_kind]
         return records
 
     def kind_ids(self, uow: UnitOfWork, kind: str) -> set[str] | None:
@@ -153,7 +162,7 @@ class _TechTable:
             return None
         if kind not in self.kinds:
             raise RoundtripError("Неизвестный список: " + kind)
-        if self.tab == TechOperationTab.WIRE:
+        if self.tab in (TechOperationTab.WIRE, TechOperationTab.TERMINAL):
             return None
         from .coverings import build  # «Оболочки»: the БД.МАТ rows that cover a harness
         with uow:
@@ -201,6 +210,8 @@ class _TechTable:
             mapped = {key for item in items for key in schema_columns(self.tab.value, item.values)}
             ordered.update(dict.fromkeys(key for key in OPERATION_TD_KEYS if key not in mapped))
         ordered.update(dict.fromkeys(self.extras))
+        if self.ter_kind == LUG:  # «Наконечники»: the list's own columns only (`lugs.LUG_COLUMN_SLOTS`)
+            return lug_columns(list(ordered))
         return list(ordered)
 
     def update(self, uow, item, changes, actor, now):
@@ -269,7 +280,7 @@ class _TechTable:
         own = {name: value for name, value in values.items() if name not in self.extras}
         extra = {name: value for name, value in values.items() if name in self.extras}
         kind = CableKind(self.cable_kind) if self.cable_kind else None
-        record = _create_in(self.tab, _clean_new_fields(self.tab, own), uow, kind)
+        record = _create_in(self.tab, _clean_new_fields(self.tab, own), uow, kind, self.ter_kind or None)
         _audit("references.tech_record_created", actor, now, {
             "record_id": str(record.id), "tab": record.tab.value, "via": VIA,
             **({"cable_kind": record.cable_kind} if record.cable_kind else {}),
@@ -403,7 +414,7 @@ def _tables() -> dict[str, Callable[[], _Table]]:
     return {
         "ob": lambda: _TechTable(TechOperationTab.EQUIPMENT, "Оборудование"),
         "op": lambda: _TechTable(TechOperationTab.OPERATION, "Операции (БД.ОП)"),
-        "ter": lambda: _TechTable(TechOperationTab.TERMINAL, "Терминалы"),
+        "ter": lambda: _TechTable(TechOperationTab.TERMINAL, "Терминалы", TER_KIND_LABELS),
         "coax": lambda: _TechTable(TechOperationTab.COAX, "Коаксиальные разъёмы"),
         "prov": lambda: _TechTable(TechOperationTab.WIRE, "Кабели и провода", CABLE_KINDS),
         "mat": lambda: _TechTable(TechOperationTab.MATERIAL, "Материалы", {"cov": "Оболочки"}),
