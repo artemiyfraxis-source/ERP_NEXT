@@ -10,6 +10,8 @@ from enum import Enum
 from typing import Iterable, Mapping
 from uuid import UUID, uuid4
 
+from .lugs import TER_KIND_REASON, TER_KIND_VALUES, ter_kind_of
+
 
 class ReferenceValidationError(ValueError):
     pass
@@ -411,22 +413,29 @@ class TechOperationRecord:
     # БД.ПРОВ: the cable list of the row (CABLE_KIND_VALUES); None on every other tab — `check_cable_kind`, and the
     # CHECK ck_tech_operation_records_cable_kind in the database.
     cable_kind: str | None = None
+    # БД.ТЕР: the list of the row — «contact» («Терминалы») or «lug» («Наконечники», owner 26.10.2026; `lugs.py`); None on
+    # every other tab — `check_ter_kind`, and the CHECK ck_tech_operation_records_ter_kind in the database. A БД.ТЕР
+    # record built without it takes the list by the rule (`create`, and the repository on save).
+    ter_kind: str | None = None
 
     @classmethod
     def create(
         cls, *, tab: TechOperationTab, display_text: str, search_text: str,
         source_sheet: str, sort_key: str, fields: dict[str, str], mirror_key: str = "", edited_in_erp: bool = False,
-        cable_kind: str | None = None,
+        cable_kind: str | None = None, ter_kind: str | None = None,
     ) -> TechOperationRecord:
         display = str(display_text or "").strip()
         if not display:
             raise ReferenceValidationError("Отображаемое значение техоперации обязательно")
         check_cable_kind(tab, cable_kind)
         clean_fields = {str(key): str(value or "").strip() for key, value in fields.items() if str(key).strip()}
+        if tab == TechOperationTab.TERMINAL and ter_kind is None:
+            ter_kind = ter_kind_of(clean_fields)
+        check_ter_kind(tab, ter_kind)
         search = " ".join(f"{display} {search_text or ''} {' '.join(clean_fields.values())}".casefold().split())
         return cls(
             uuid4(), tab, display, search, str(source_sheet or "").strip(),
-            str(sort_key or display).strip(), clean_fields, mirror_key, edited_in_erp, cable_kind,
+            str(sort_key or display).strip(), clean_fields, mirror_key, edited_in_erp, cable_kind, ter_kind,
         )
 
 
@@ -436,6 +445,14 @@ def check_cable_kind(tab: TechOperationTab, cable_kind: str | None) -> None:
         raise ReferenceValidationError(CABLE_KIND_REASON)
     if tab != TechOperationTab.WIRE and cable_kind is not None:
         raise ReferenceValidationError("Список кабеля бывает только у строки БД.ПРОВ")
+
+
+def check_ter_kind(tab: TechOperationTab, ter_kind: str | None) -> None:
+    """A БД.ТЕР row is in exactly one list («Терминалы» or «Наконечники»); a row of any other tab is in none."""
+    if tab == TechOperationTab.TERMINAL and ter_kind not in TER_KIND_VALUES:
+        raise ReferenceValidationError(TER_KIND_REASON)
+    if tab != TechOperationTab.TERMINAL and ter_kind is not None:
+        raise ReferenceValidationError("Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
 
 
 def validate_entries(entries: tuple[ReferenceEntry, ...]) -> None:

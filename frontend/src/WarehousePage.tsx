@@ -18,7 +18,6 @@ import {
   type WarehouseLotPassport,
   type WarehouseRackLayout,
   type WarehouseRowEdit,
-  type WarehouseTotal,
   type WarehouseTotals,
 } from "./api";
 import { createPortal } from "react-dom";
@@ -598,7 +597,6 @@ function warehouseGroups(
   complete = false,
 ): WarehouseGroup[] {
   const byGroup = new Map<string, WarehouseTotals["groups"][number]>((totals?.groups ?? []).map((item) => [item.group, item]));
-  const byArticle = new Map<string, WarehouseTotal>((totals?.articles ?? []).map((item) => [`${item.group}\u0000${item.article}`, item]));
   const groupMap = new Map<string, WarehouseLot[]>();
   for (const lot of lots) {
     const value = groupBy === "type" ? lot.item_type
@@ -623,16 +621,15 @@ function warehouseGroups(
         totals: groupTotal ? { ...groupTotal } : complete ? { ...loadedTotals(groupLots), articles: articleMap.size } : null,
         key: `${groupBy}:${groupKey}`,
         label: !groupBy ? "" : groupKey || ({ type: "Без типа", place: "Без места", name: "Без наименования", series: "Без серии", grn: "Без ГРН" })[groupBy],
-        articles: [...articleMap.entries()]
-          .map(([key, articleLots]) => {
-            const found = byArticle.get(`${groupKey}\u0000${key}`);
-            return {
-              key: `${groupBy}:${groupKey}:${key}`,
-              article: articleLots[0].article || articleLots[0].name,
-              lots: articleLots,
-              totals: found ?? (complete ? loadedTotals(articleLots) : null),
-            };
-          })
+        // A row is one lot (owner 27.10.2026: lots of one article differ in ГРН, place and documents — «объединять
+        // одинаковый артикул неправильно»); the group heading still counts the articles.
+        articles: groupLots
+          .map((lot) => ({
+            key: `${groupBy}:${groupKey}:${articleKey(lot)}:${lot.id}`,
+            article: lot.article || lot.name,
+            lots: [lot],
+            totals: loadedTotals([lot]),
+          }))
           .sort((left, right) => compareArticles(left, right, sort)),
       };
     });

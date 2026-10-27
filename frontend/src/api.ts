@@ -1667,6 +1667,8 @@ export interface BasesResult {
   /** Records per stored tab and per cable list — the counts on the tab chips. */
   tabs?: Partial<Record<TechOperationTab, number>>;
   cables?: Record<CableKind, number>;
+  /** БД.ТЕР rows per list: «Терминалы» (contact), «Наконечники» (lug). */
+  ter_kinds?: Record<TerKind, number>;
   /** Rows of «Сечения AWG ↔ мм²». */
   gauges?: number;
 }
@@ -1861,8 +1863,14 @@ export interface TechOperationRecord {
   source_sheet: string;
   /** БД.ПРОВ: список кабелей записи — монтажный (wire), многожильный (multi), LAN (lan), коаксиал (coax). */
   cable_kind?: string;
+  /** БД.ТЕР: список строки — «Терминалы» (contact) или «Наконечники» (lug); `ter_rule` — какой даёт правило. */
+  ter_kind?: TerKind;
+  ter_rule?: TerKind;
   fields: Record<string, string>;
 }
+
+/** БД.ТЕР: «Терминалы» — обжимные контакты разъёмов, «Наконечники» — НШВИ, НКИ, РПИ… (backend `references/lugs.py`). */
+export type TerKind = "contact" | "lug";
 
 /** GET /api/references/wire-dia — «Ø изоляции по маркам» из базы монтажных проводов: строка на размер «Сечения AWG ↔
  *  мм²», поля по порядку «По старой таблице» · AWG · ГОСТ · Ø жилы · Ø наружный по каждой из 12 серий («—» — нет).
@@ -3937,12 +3945,17 @@ export const referencesApi = {
     method: "PUT",
     body: JSON.stringify(maps),
   }),
-  techOperations: (tab: TechOperationTab, query = "", limit?: number) => {
+  /** `terKind` (БД.ТЕР): строки одного списка и его столбцы; без него — все строки БД.ТЕР. */
+  techOperations: (tab: TechOperationTab, query = "", limit?: number, terKind?: TerKind) => {
     const params = new URLSearchParams({ tab });
     if (query.trim()) params.set("q", query.trim());
     if (limit) params.set("limit", String(limit));
+    if (terKind) params.set("ter_kind", terKind);
     return visitRead<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
+  /** БД.ТЕР: перенести строку в «Терминалы» / «Наконечники» (поля строки не меняются). */
+  moveTerminal: (recordId: string, kind: TerKind) =>
+    api<TechOperationRecord>(`/api/references/tech-operations/${recordId}/ter-kind`, { method: "PUT", body: JSON.stringify({ kind }) }),
   wireDia: () => api<WireDiaResult>("/api/references/wire-dia"),
   /** СПР.КАБ · коаксиал для генератора ЭТК: строки D1·D2·D3 и по строке на каждое другое имя кабеля (полное название,
    *  артикул поставщика, другое написание марки) с D1–D3 этого кабеля. */
@@ -3964,8 +3977,8 @@ export const referencesApi = {
     api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns/remove", {
       method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}) }) }),
   /** БД.ПРОВ: `cableKind` — список, в котором создаётся строка (без него — по правилу). */
-  createRecord: (tab: TechOperationTab, fields: Record<string, string>, cableKind?: CableKind) =>
-    api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields, ...(cableKind ? { cable_kind: cableKind } : {}) }) }),
+  createRecord: (tab: TechOperationTab, fields: Record<string, string>, cableKind?: CableKind, terKind?: TerKind) =>
+    api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields, ...(cableKind ? { cable_kind: cableKind } : {}), ...(terKind ? { ter_kind: terKind } : {}) }) }),
   equipmentNumber: (type: string) =>
     api<{ inventory: string; row: string }>(`/api/references/tech-operations/equipment-number?${new URLSearchParams({ type })}`),
   duplicateRecord: (id: string) =>
