@@ -74,8 +74,9 @@ def _text_layer(content: bytes) -> ScanReading | None:
 
 def model_view(pages: Sequence[dict | None], types: Sequence[str] = ITEM_TYPES_CANON, engine: str = "") -> ScanReading:
     """The warehouse's part of the reader's pages: the document merged and checked, its header and rows for the
-    delivery screen; the pages kept."""
-    doc = closing.closing_doc(pages)
+    delivery screen; the pages kept. The rows are kept whatever kind the model gave the document (OTHER too): the
+    storekeeper sees what was read."""
+    doc = closing.closing_doc(pages, keep_lines=True)
     found = receipt_llm.reading_header(doc)
     return ScanReading(found, tuple(receipt_llm.reading_lines(doc, types)), header_note(found), "", engine, tuple(pages))
 
@@ -100,6 +101,8 @@ def _model_reading(content: bytes, kind: str, config: receipt_llm.LlmConfig,
             return None
         if not reading.pages or (reading.source == "text" and not reading.read):
             return None
+        pages = _with_ocr_inns(reading.pages, images) if reading.source == "pages" else reading.pages
+        reading = replace(reading, pages=pages)
         fallback = []
         for number in reading.failed:
             page_text = receipt_ocr.page_text(images[number - 1])
@@ -113,6 +116,17 @@ def _model_reading(content: bytes, kind: str, config: receipt_llm.LlmConfig,
     # The model's pages first (merged as one document), then what tesseract read of the others.
     merged = merge_readings([replace(view, pages=()), *fallback], types)
     return replace(merged, warning=PAGES_FAILED.format(pages=", ".join(map(str, reading.failed))), pages=view.pages)
+
+
+def _with_ocr_inns(pages: tuple[dict | None, ...], images: Sequence[Path]) -> tuple[dict | None, ...]:
+    """A page whose seller ИНН fails its check digits (the model read «5256004951» off «5256084961», 27.10)
+    gets the valid ИНН tesseract reads on the same picture (`closing.TEXT_INNS`) — what the misread one is put right
+    by when it is a slip of one of them. Only those pages are read again: tesseract takes seconds a page."""
+    return tuple(
+        doc_reader.with_text_inns(page, receipt_ocr.page_text(images[number - 1]))
+        if number <= len(images) and doc_reader.misread_inn(page, ("sellerInn",)) else page
+        for number, page in enumerate(pages, start=1)
+    )
 
 
 def read_scan(content: bytes, kind: str | None, config: receipt_llm.LlmConfig | None,

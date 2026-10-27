@@ -36,7 +36,7 @@ CLAIM = "/api/stock/scan/agent/claim"
 UPD_TEXT = [
     "Счет-фактура № 123 от 20.10.2026 (1)",
     "Продавец: ООО «Ромашка Электро» (2)",
-    "ИНН/КПП продавца: 7701234567/770101001 (2б)",
+    "ИНН/КПП продавца: 7701234560/770101001 (2б)",
     "Основание передачи: Счёт № СЧ-45 от 01.10.2026",
 ]
 PNG = bytes.fromhex(
@@ -176,7 +176,7 @@ def test_button_agent_file_and_the_answer_of_a_hand_uploaded_scan(queue):
     assert (done["status"], done["error"]) == ("done", "")
     result = done["result"]
     assert result["recognised"] == {
-        "supplier": "ООО «Ромашка Электро»", "inn": "7701234567", "upd_number": "123", "upd_date": "2026-10-20",
+        "supplier": "ООО «Ромашка Электро»", "inn": "7701234560", "upd_number": "123", "upd_date": "2026-10-20",
         "invoice_number": "СЧ-45", "invoice_date": "2026-10-01", "prd_number": "", "prd_date": None,
     }
     assert result["lines"] == [] and result["note"] == ""
@@ -438,7 +438,7 @@ def test_real_tesseract_reads_a_printed_upd_header(monkeypatch):
     _page_picture(UPD_TEXT).save(buffer, format="PNG")
     found, _note = recognise_upd(buffer.getvalue(), "image/png")
     assert (found.upd_number, found.upd_date) == ("123", date(2026, 10, 20))
-    assert found.inn == "7701234567"
+    assert found.inn == "7701234560"
 
 
 @pytest.mark.skipif(shutil.which("tesseract") is None or shutil.which("pdftoppm") is None,

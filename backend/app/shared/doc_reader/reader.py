@@ -7,6 +7,9 @@
   full field list; a reading whose row numbers have a gap is read once more and the fuller one wins (Артемий's
   `read_page`, 26.10: the model once glued two rows). The answers come back in page order; the caller merges and
   checks them (`closing.closing_doc`).
+* A seller's or buyer's ИНН failing its check digits gets the valid ИНН of the document's own text beside it
+  (`with_text_inns`: the text layer here, tesseract's page in the warehouse) — `closing` puts the misread one right
+  by them (27.10.2026: the model read «5256004951» off «5256084961»).
 * A page neither model read stays None: the warehouse reads it by tesseract, the registry names it in the remarks.
 
 The whole document has `budget` seconds (the warehouse screen waits four minutes; the registry reads in the
@@ -22,6 +25,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+from app.shared.inn import inn_valid, inns_in_text
 from app.shared.pdf_text import PdfLimitExceeded, pdf_text
 
 from . import closing
@@ -113,6 +117,24 @@ def read_text(config: LlmConfig, prompt: str, *, clock: Callable[[], float] = ti
     return PageAnswer(1, answer.data, model=answer.model, error=answer.error)
 
 
+def misread_inn(data: Mapping | None, keys: Sequence[str] = ("sellerInn", "buyerInn")) -> bool:
+    """A page's answer whose seller (or buyer) ИНН fails its check digits."""
+    if not isinstance(data, Mapping):
+        return False
+    read = (re.sub(r"\D", "", str(data.get(key) or "")) for key in keys)
+    return any(inn and not inn_valid(inn) for inn in read)
+
+
+def with_text_inns(data: dict | None, text: str) -> dict | None:
+    """A page's answer whose seller or buyer ИНН fails its check digits, with the valid ИНН of the page's own text
+    (`closing.TEXT_INNS`: a text layer, tesseract's reading): what the misread one is put right by. Otherwise — or
+    nothing valid in the text — the answer as it is."""
+    if not misread_inn(data):
+        return data
+    found = inns_in_text(text)
+    return {**data, closing.TEXT_INNS: found} if found else data
+
+
 @dataclass(frozen=True)
 class ClosingReading:
     """What the reader made of one file: the model's JSON per page (one entry for a text reading), None — a page no
@@ -147,7 +169,8 @@ def read_closing(config: LlmConfig, *, text: str, pictures: Callable[[], list[by
     if text:
         answer = read_text(config, closing.prompt(tag, text, types=types), clock=clock, budget=budget,
                            call_timeout=call_timeout)
-        return ClosingReading((answer.data,), "text", (answer.model,), (answer.error,) if answer.error else ())
+        return ClosingReading((with_text_inns(answer.data, text),), "text", (answer.model,),
+                              (answer.error,) if answer.error else ())
     jpegs = pictures()
     if not jpegs:
         return ClosingReading()

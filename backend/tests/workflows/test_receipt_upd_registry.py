@@ -46,7 +46,7 @@ UPD_XML = (FIXTURES / "upd-503.xml").read_bytes()
 EDO_ID = edo_document_id(parse_edo_xml(UPD_XML.decode("cp1251"), "upd.xml").id_file)
 PDF = b"%PDF-1.4\n% scan of a paper UPD\n"
 READING = ScanReading(
-    RecognisedUpd(supplier="ООО «Ромашка Электро»", inn="7701234567", upd_number="123", upd_date=date(2026, 10, 20),
+    RecognisedUpd(supplier="ООО «Ромашка Электро»", inn="7701234560", upd_number="123", upd_date=date(2026, 10, 20),
                   invoice_number="СЧ-45", invoice_date=date(2026, 10, 1)),
     (
         UpdLine(article="CON-001", name="Разъём CON-001", quantity=Decimal("10"), unit="шт",
@@ -144,7 +144,7 @@ def test_an_accepted_scan_lands_in_the_registry_as_a_scan_document_needing_a_che
     doc = _doc(sessions, _scan_id(link))
     assert doc is not None and doc.origin == "scan" and doc.kind == "УПД"
     assert (doc.number, doc.doc_date, doc.seller_name, doc.seller_inn) == (
-        "123", date(2026, 10, 20), "ООО «Ромашка Электро»", "7701234567")
+        "123", date(2026, 10, 20), "ООО «Ромашка Электро»", "7701234560")
     assert doc.basis == "Счёт № СЧ-45 от 01.10.2026" and doc.folder == "Склад ЦАР" and doc.model == "Склад: gpt-test"
     assert doc.status == "Требует проверки" and doc.line_count == 2
     assert [(line.seq, line.name, line.article, line.quantity, line.unit) for line in _lines(sessions, doc.id)] == [
@@ -190,7 +190,7 @@ def test_the_buyers_saved_version_is_never_overwritten_and_the_change_is_flagged
     receipt = _receipt(client, scan_file=link)
     _accept(client, receipt["id"])
     document_id = _scan_id(link)
-    header = {"number": "123", "date": "2026-10-20", "seller_name": "ООО Ромашка", "seller_inn": "7701234567",
+    header = {"number": "123", "date": "2026-10-20", "seller_name": "ООО Ромашка", "seller_inn": "7701234560",
               "seller_kpp": "", "buyer_inn": "", "total_net": 100_00, "total_vat": 22_00, "total_gross": 122_00}
     uow = SqlAlchemyPurchasingUnitOfWork(sessions)
     with uow:
@@ -307,7 +307,7 @@ def test_the_inn_is_not_taken_from_a_scan_naming_another_seller():
     file = flow.ReceiptFile(uuid4(), "УПД.pdf", "application/pdf", "")
     doc = flow.scan_document(receipt, file, READING)
     assert doc.seller_inn == "" and doc.basis == "" and doc.folder == "Склад ЖУК"
-    assert flow.scan_document({**receipt, "supplier": "Ромашка Электро"}, file, READING).seller_inn == "7701234567"
+    assert flow.scan_document({**receipt, "supplier": "Ромашка Электро"}, file, READING).seller_inn == "7701234560"
     assert flow.scan_document(receipt, file, None).lines == ()
 
 
