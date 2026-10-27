@@ -19,6 +19,7 @@ from .cable_structure import (
     ALIAS_KINDS, LAYERS, PARAMS, CoaxAlias, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, CoaxNames,
     HookupWire, WireGauge, same_card,
 )
+from .lugs import ter_kind_of
 from .search_text import search_rows, search_words
 from .domain import (
     EDITABLE_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent,
@@ -77,6 +78,19 @@ CABLE_KIND_CHECK = (
     "(tab = 'prov' AND cable_kind IS NOT NULL AND cable_kind IN ('coax', 'wire', 'multi', 'lan'))"
     " OR (tab <> 'prov' AND cable_kind IS NULL)"
 )
+# A БД.ТЕР row is in exactly one list — «Терминалы» (contact) or «Наконечники» (lug), a row of another tab in none
+# (migration 0155 holds a literal copy).
+TER_KIND_CHECK = (
+    "(tab = 'ter' AND ter_kind IS NOT NULL AND ter_kind IN ('contact', 'lug'))"
+    " OR (tab <> 'ter' AND ter_kind IS NULL)"
+)
+
+
+def _ter_kind(record: TechOperationRecord) -> str | None:
+    """The stored list of a БД.ТЕР record: its own, else by the rule (a record built without one); None elsewhere."""
+    if record.tab != TechOperationTab.TERMINAL:
+        return None
+    return record.ter_kind or ter_kind_of(record.fields)
 
 
 class TechOperationRecordRow(Base):
@@ -86,11 +100,14 @@ class TechOperationRecordRow(Base):
         *(CheckConstraint(sql, name=name).ddl_if(dialect=dialect)
           for dialect in ("sqlite", "postgresql") for name, sql in terminal_card_checks(dialect).items()),
         CheckConstraint(CABLE_KIND_CHECK, name="ck_tech_operation_records_cable_kind"),
+        CheckConstraint(TER_KIND_CHECK, name="ck_tech_operation_records_ter_kind"),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     tab: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     # БД.ПРОВ: the cable list of the row (migration 0129); NULL on every other tab.
     cable_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # БД.ТЕР: «Терминалы» (contact) or «Наконечники» (lug) — migration 0155; NULL on every other tab.
+    ter_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
     display_text: Mapped[str] = mapped_column(String(2000), nullable=False)
     normalized_search: Mapped[str] = mapped_column(Text(), nullable=False)
     source_sheet: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -126,7 +143,7 @@ class SqlAlchemyTechOperationRepository:
     def __init__(self, session: Session): self.session = session
     @staticmethod
     def _domain(row: TechOperationRecordRow) -> TechOperationRecord:
-        return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search, row.source_sheet, row.sort_key, row.fields, row.mirror_key, row.edited_in_erp, row.cable_kind)
+        return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search, row.source_sheet, row.sort_key, row.fields, row.mirror_key, row.edited_in_erp, row.cable_kind, row.ter_kind)
     def list(self, *, tab: TechOperationTab | None, query: str, limit: int) -> list[TechOperationRecord]:
         statement = select(TechOperationRecordRow)
         if tab is not None: statement = statement.where(TechOperationRecordRow.tab == tab.value)
@@ -143,6 +160,12 @@ class SqlAlchemyTechOperationRepository:
     def counts(self) -> dict[TechOperationTab, int]:
         rows = self.session.execute(select(TechOperationRecordRow.tab, func.count()).group_by(TechOperationRecordRow.tab))
         return {TechOperationTab(tab): count for tab, count in rows}
+    def ter_counts(self) -> dict[str, int]:
+        """БД.ТЕР rows per list («Терминалы» / «Наконечники») — the counts on the two chips."""
+        rows = self.session.execute(select(TechOperationRecordRow.ter_kind, func.count())
+                                    .where(TechOperationRecordRow.tab == TechOperationTab.TERMINAL.value)
+                                    .group_by(TechOperationRecordRow.ter_kind))
+        return {str(kind): count for kind, count in rows if kind}
     def get(self, record_id: UUID) -> TechOperationRecord | None:
         row = self.session.get(TechOperationRecordRow, record_id)
         return None if row is None else self._domain(row)
@@ -157,6 +180,7 @@ class SqlAlchemyTechOperationRepository:
         row.sort_key = record.sort_key; row.fields = dict(record.fields)
         row.mirror_key = record.mirror_key; row.edited_in_erp = record.edited_in_erp
         row.cable_kind = record.cable_kind
+        row.ter_kind = _ter_kind(record)
     def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = (), preserve_erp_edits: bool = False) -> dict[str, int]:
         """Replaces the records of every tab not in `keep_tabs`. With `preserve_erp_edits` the rows edited/created in
         ERP stay untouched and a mirror record whose `mirror_key` belongs to an edited row is not inserted again;
@@ -181,7 +205,7 @@ class SqlAlchemyTechOperationRepository:
             id=record.id, tab=record.tab.value, display_text=record.display_text,
             normalized_search=record.normalized_search, source_sheet=record.source_sheet,
             sort_key=record.sort_key, fields=record.fields, mirror_key=record.mirror_key, edited_in_erp=False,
-            cable_kind=record.cable_kind,
+            cable_kind=record.cable_kind, ter_kind=_ter_kind(record),
         ) for record in records)
         meta = self.session.get(TechOperationSnapshotRow, "current")
         if meta is None: meta = TechOperationSnapshotRow(name="current"); self.session.add(meta)

@@ -29,6 +29,7 @@ from .domain import (
 from .domain import WIRE_COLOR_FIELD, WIRE_ROW_OWN, check_wire_color, wire_color_rows, wire_identity
 from .domain import BASE_COLUMNS, CUSTOM_COLUMN_TABS, EDITABLE_TABS, MAX_COLUMN_NAME, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
 from .domain import StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent
+from .lugs import TER_KIND_REASON, TER_KIND_VALUES, ter_kind_of
 from .equipment import (
     BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
     prepare_equipment,
@@ -47,6 +48,7 @@ class ReferenceRepository(Protocol):
 class TechOperationRepository(Protocol):
     def list(self, *, tab: TechOperationTab | None, query: str, limit: int) -> Sequence[TechOperationRecord]: ...
     def counts(self) -> dict[TechOperationTab, int]: ...
+    def ter_counts(self) -> dict[str, int]: ...
     def get(self, record_id: UUID) -> TechOperationRecord | None: ...
     def save(self, record: TechOperationRecord) -> None: ...
     def delete(self, record_id: UUID) -> None: ...
@@ -252,6 +254,7 @@ class CreateRecordCommand:
     actor: Actor
     now: datetime
     cable_kind: CableKind | None = None  # БД.ПРОВ: the list the row is created in (None — by the rule, `resolve_kind`)
+    ter_kind: str | None = None  # БД.ТЕР: «contact» / «lug» — the list the row is created in (None — by the rule)
 
 
 def _search_text(record: TechOperationRecord) -> str:
@@ -740,9 +743,12 @@ def _clean_new_fields(tab: TechOperationTab, values: dict[str, str]) -> dict[str
 
 
 def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
-               cable_kind: CableKind | None = None) -> TechOperationRecord:
+               cable_kind: CableKind | None = None, ter_kind: str | None = None) -> TechOperationRecord:
     """A new record inside an open unit of work (nothing committed); `fields` cleaned by `_clean_new_fields`. A БД.ПРОВ
-    row goes to `cable_kind` (None — by the rule) and takes the columns of that list."""
+    row goes to `cable_kind` (None — by the rule) and takes the columns of that list; a БД.ТЕР row to `ter_kind`
+    («Терминалы» / «Наконечники»; None — by the rule, `lugs.ter_kind_of`)."""
+    if ter_kind is not None and tab != TechOperationTab.TERMINAL:
+        raise ReferenceValidationError("Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
     if tab == TechOperationTab.EQUIPMENT:
         # Number, row and code are checked and given under this same transaction as the save.
         fields = prepare_equipment(fields, _equipment_rows(uow), creating=True)
@@ -769,6 +775,7 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
     record = TechOperationRecord.create(
         tab=tab, display_text=display, search_text="", source_sheet="",
         sort_key=display, fields=fields, edited_in_erp=True, cable_kind=kind.value if kind else None,
+        ter_kind=ter_kind,
     )
     uow.tech_operations.save(record)
     return record
@@ -805,12 +812,42 @@ def _wire_fields(kind: CableKind, fields: Mapping[str, str], uow: UnitOfWork, *,
 def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
     fields = _clean_new_fields(command.tab, command.fields)
     with uow:
-        record = _create_in(command.tab, fields, uow, command.cable_kind)
+        record = _create_in(command.tab, fields, uow, command.cable_kind, command.ter_kind)
         _audit("references.tech_record_created", command.actor, command.now, {
             "record_id": str(record.id), "tab": record.tab.value,
+            **({"ter_kind": record.ter_kind} if record.ter_kind else {}),
         }, uow)
         uow.commit()
     return record
+
+
+@dataclass(frozen=True)
+class SetTerKindCommand:
+    record_id: UUID
+    kind: str  # lugs.TER_KIND_VALUES
+    actor: Actor
+    now: datetime
+
+
+def set_ter_kind(command: SetTerKindCommand, uow: UnitOfWork) -> TechOperationRecord:
+    """Moves a БД.ТЕР row between «Терминалы» and «Наконечники» by hand (the rule misjudged it). The row's fields stay as
+    they are — only its list changes; the row is marked edited in ERP, so a mirror reload keeps the move."""
+    if command.kind not in TER_KIND_VALUES:
+        raise ReferenceValidationError(TER_KIND_REASON)
+    with uow:
+        record = _editable(command.record_id, uow)
+        if record.tab != TechOperationTab.TERMINAL:
+            raise ReferenceValidationError("Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
+        before = record.ter_kind
+        moved = replace(record, ter_kind=command.kind, edited_in_erp=True)
+        if before != command.kind:
+            uow.tech_operations.save(moved)
+            _audit("references.ter_kind_set", command.actor, command.now, {
+                "record_id": str(record.id), "title": record.display_text, "from": before, "to": command.kind,
+                "rule": ter_kind_of(record.fields),
+            }, uow)
+            uow.commit()
+    return moved
 
 
 # --- «Склад → база данных»: a stock article tied to, or made into, a record; each event is journaled (T14) ---

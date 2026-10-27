@@ -37,7 +37,7 @@ from app.modules.techcards.connector_housings import housing_of
 from app.modules.techcards.etk_parts import kit_article
 from app.modules.techcards.kitset_names import clean_site_title
 from app.shared.article_match import compact
-from app.workflows.warehouse_article import infer_article_identity
+from app.workflows.warehouse_article import LUG_ITEM_TYPE, infer_article_identity
 
 REF, SPEC, STOCK, SITE = "ref", "spec", "stock", "site"
 
@@ -143,6 +143,10 @@ class ReferenceNames:
         identity = infer_article_identity(article, self._identity_records)
         if identity is None or not identity.name:
             return ""
+        if identity.item_type == LUG_ITEM_TYPE:  # a lug of БД.ТЕР (owner 26.10.2026): «Наконечник КВТ НШВИ»
+            maker = self._makers.get(compact(article), "")
+            series = identity.series if not maker or maker.casefold() in identity.series.casefold() else f"{maker} {identity.series}"
+            return f"{LUG_ITEM_TYPE} {series}"
         if identity.item_type == "Терминал":
             maker = self._makers.get(compact(article), "")
             sex = next((word for key, word in _CONTACT_SEX.items() if key in identity.name.casefold()), "")

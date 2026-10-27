@@ -456,6 +456,7 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("PUT", "/api/references/cables/{record_id}/hookup"),
         ("PUT", "/api/references/cables/{record_id}/kind"),
         ("PUT", "/api/references/coverings/{record_id}/group"),
+        ("PUT", "/api/references/tech-operations/{record_id}/ter-kind"),
         ("PUT", "/api/references/wire-gauges/{gauge_id}"),
     ]
     refs = [(method, path, "refs:read") for method, path in reads]

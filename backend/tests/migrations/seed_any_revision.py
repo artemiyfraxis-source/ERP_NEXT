@@ -129,6 +129,9 @@ def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any
         if _database_assigns(table, column, dialect):
             continue
         name = column.name
+        if (table.name, name) in _OVER_CHECK:
+            row[name] = _OVER_CHECK[(table.name, name)]
+            continue
         if checks.get((table.name, name), "") is None:  # `col IS NULL OR …` wins over a parent to point at
             row[name] = None
             continue
@@ -176,6 +179,12 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("production_vswr_measurements", "verdict_manual"): True,
     # A scan job's recognition answer exists only once it is done; the seeder's job is pending (0145_warehouse_scan_jobs).
     ("warehouse_scan_jobs", "result"): "",
+}
+# Values the column-by-column fill would leave empty by a CHECK's «other value → NULL» branch, although the row takes
+# the one value that needs them: a seeded tech record is `tab = 'ter'` (the first literal of the БД.ТЕР card CHECKs,
+# 0115), and a БД.ТЕР row is always in a list (0155_ter_lug_kind).
+_OVER_CHECK: dict[tuple[str, str], Any] = {
+    ("tech_operation_records", "ter_kind"): "contact",
 }
 # Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
 # label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).

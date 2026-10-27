@@ -15,7 +15,9 @@ const TARGETS: Record<string, { table: string; kind?: string }> = {
   templates: { table: "op" },
   ob: { table: "ob" },
   coax: { table: "coax" },
-  ter: { table: "ter" },
+  // БД.ТЕР двумя списками (26.10.2026): «Терминалы» — обжимные контакты, «Наконечники» — НШВИ, НКИ, РПИ…
+  ter: { table: "ter", kind: "contact" },
+  lug: { table: "ter", kind: "lug" },
   cab_coax: { table: "prov", kind: "coax" },
   cab_wire: { table: "prov", kind: "wire" },
   cab_multi: { table: "prov", kind: "multi" },

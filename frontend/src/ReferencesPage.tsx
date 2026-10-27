@@ -39,7 +39,9 @@ import {
   type TechOperationRecord,
   type TechOperationResult,
   type TechOperationTab,
+  type TerKind,
 } from "./api";
+import { LUG_SORT_HINT, lugFamily, lugRows, mergeLugColumns } from "./lugList";
 
 /* «База данных» (owner, 29.09.2026): one section with sheet-like tabs instead of «Справочник» + «Шаблоны техкарт».
    Every tab is the shared DataTable — search, column filters, sort, column chooser, Excel — so the shop's
@@ -47,7 +49,7 @@ import {
 
 type MapTab = "suppliers" | "countries";
 type CableTab = "cab_coax" | "cab_wire" | "cab_multi" | "cab_lan";
-export type DbTab = "templates" | "connectors" | "gauges" | "cov" | TechOperationTab | MapTab | CableTab | MaterialTab;
+export type DbTab = "templates" | "connectors" | "gauges" | "cov" | "lug" | TechOperationTab | MapTab | CableTab | MaterialTab;
 type TabDef = { id: DbTab; label: string; base?: string };
 
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
@@ -64,6 +66,8 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "connectors", label: "Разъёмы" },
     { id: "coax", label: "Коаксиальные разъёмы", base: "coax" },
     { id: "ter", label: "Терминалы", base: "ter" },
+    // Owner 26.10.2026: «тип наконечник, а не терминал… в другую БД — наконечники»: строки БД.ТЕР со списком «lug».
+    { id: "lug", label: "Наконечники" },
     // Owner 15.10.2026: «Материалы» расформированы — уплотнители, заглушки, гильзы и втулки идут на концы проводов.
   ] },
   // Owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки»; 10.10.2026: сечения — отдельной
@@ -156,6 +160,18 @@ function mergeTerminalColumns(columns: DataColumn<TechOperationRecord>[], fields
 const TER_RARE = new Set(["тип разъема", "пневма автомат", "отр", "диаметр изоляции от, мм", "диаметр изоляции до, мм", "материал контакта", "ссылка на datasheet на сайте производителя", "источник высоты обжима"]);
 // Длинные списки серий («I-DS1071-01-SCB01, I-DS1071-01-SCB02») и наименования — узкой колонкой с «…», целиком в подсказке.
 const TER_NARROW = new Set(["наименование", "серия"]);
+// «Наконечники»: материал («Медь / гальваническое лужение») — узкой колонкой с «…»; семейство — заголовок блока.
+const LUG_NARROW = new Set(["материал контакта", "termaterial"]);
+const LUG_FAMILY_KEYS = new Set(["product name", "tercomponent"]);
+
+/** Ссылка на даташит в ячейке — «открыть» (как у кабелей); не ссылка — текст как есть. */
+function DatasheetLink({ href, name }: { href: string; name: string }) {
+  const link = href.trim();
+  if (!link) return <span className="cell-empty">—</span>;
+  return /^https?:\/\//i.test(link)
+    ? <a href={link} target="_blank" rel="noreferrer" title={link} aria-label={`Открыть даташит ${name}`} onClick={(event) => event.stopPropagation()}>открыть</a>
+    : <span className="db-clip" title={link}>{link}</span>;
+}
 // БД.КОАКС (owner 29.09.2026): Ø belong to the cable (СПР.КАБ · коаксиал), the connector row keeps only lengths;
 // D1–D3 come from СПР.КАБ by «Провод», as the sheet's D1 formula does. Same key as the generator's coaxCableDiaLookup_.
 const CABLE_DIAMETERS = ["D1", "D2", "D3"];
@@ -239,10 +255,17 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [stockLog, setStockLog] = useState(false);
-  const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
+  // `terKind` — список строки БД.ТЕР в окне правки («Терминалы» / «Наконечники»): смена переносит строку.
+  const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string>; terKind?: TerKind } | null>(null);
   const matTab = isMaterialTab(tab) ? tab : null;
-  const techTab: TechOperationTab | null = matTab ? "mat"
+  const techTab: TechOperationTab | null = matTab ? "mat" : tab === "lug" ? "ter"
     : !isMapTab(tab) && !isCableTab(tab) && !isMaterialTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" ? tab : null;
+  // БД.ТЕР двумя списками: «Терминалы» — обжимные контакты (contact), «Наконечники» — lug.
+  const terKind: TerKind | null = tab === "lug" ? "lug" : tab === "ter" ? "contact" : null;
+  const lugTab = terKind === "lug";
+  const contactTab = terKind === "contact";
+  // Ключ загруженного списка: вкладка БД и, у БД.ТЕР, её список («ter:lug»).
+  const techKey = techTab ? `${techTab}${terKind ? `:${terKind}` : ""}` : "";
   const cableKind = isCableTab(tab) ? CABLE_TABS[tab] : null;
   const viewOnly = VIEW_ONLY_TABS.includes(tab);
   // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
@@ -258,7 +281,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     setSavedMaps(JSON.stringify({ suppliers: next.suppliers, countries: next.countries, gost_awg: next.gost_awg }));
   }
 
-  async function loadTech(next: TechOperationTab) {
+  async function loadTech(next: TechOperationTab, kind: TerKind | null = next === "ter" ? terKind : null) {
     setError("");
     try {
       // БД.КОАКС: the cables' D1–D3 are asked at once with the rows, not after them.
@@ -266,8 +289,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         ? referencesApi.techOperations("kab_coax", "", 5000).catch(() => ({ records: [] as TechOperationRecord[] })) : null;
       // «Терминалы»: серии приходят вместе со строками — группы не перестраиваются на глазах.
       const [records, series] = await Promise.all([
-        referencesApi.techOperations(next, "", 5000),
-        next === "ter" ? techcardsApi.connectorSeries().then((result) => result.series, () => [] as ConnectorSeries[]) : Promise.resolve(null),
+        referencesApi.techOperations(next, "", 5000, kind ?? undefined),
+        next === "ter" && kind !== "lug" ? techcardsApi.connectorSeries().then((result) => result.series, () => [] as ConnectorSeries[]) : Promise.resolve(null),
       ]);
       setTech(records);
       if (series) setTerSeries(series);
@@ -286,7 +309,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
       setTech({ metadata: null, records: [] });
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить базу техопераций");
     } finally {
-      setTechReady(next);
+      setTechReady(`${next}${kind ? `:${kind}` : ""}`);
     }
   }
 
@@ -358,7 +381,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     if (isCableTab(def.id)) return (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
     if (def.id === "gauges") return cables?.gauges?.length ?? bases.gauges ?? null;
     // the open tab counts its rows once they came (before — the summary's number, not «0»)
-    if (def.id === tab && techTab && techReady === techTab) return tech.records.length;
+    if (def.id === tab && techTab && techReady === techKey) return tech.records.length;
+    if (def.id === "lug") return bases.ter_kinds?.lug ?? null;
+    if (def.id === "ter" && bases.ter_kinds) return bases.ter_kinds.contact;
     return bases.tabs?.[def.id as TechOperationTab] ?? bases.bases.find((base) => base.id === def.base)?.count ?? null;
   }
 
@@ -379,17 +404,24 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     if (!editing || busy || !techTab) return;
     setBusy(true); setError(""); setNotice("");
     try {
+      let moved: TerKind | null = null;
       if (editing.id === null) {
-        await referencesApi.createRecord(techTab, editing.values);
+        await referencesApi.createRecord(techTab, editing.values, undefined, terKind ?? undefined);
       } else {
         const original = tech.records.find((record) => record.id === editing.id);
         const edits = Object.entries(editing.values)
           .filter(([field, value]) => original && original.fields[field] !== value)
           .map(([field, value]) => ({ field, old: original?.fields[field] ?? "", value }));
         if (edits.length) await referencesApi.editRecord(editing.id, edits);
+        // «Список»: строка БД.ТЕР перенесена в «Терминалы» / «Наконечники» (поля не меняются)
+        if (editing.terKind && original?.ter_kind && editing.terKind !== original.ter_kind) {
+          await referencesApi.moveTerminal(editing.id, editing.terKind);
+          moved = editing.terKind;
+        }
       }
       setEditing(null);
-      setNotice("Запись сохранена");
+      setNotice(moved ? `Запись перенесена в «${TER_KIND_LABELS[moved]}»` : "Запись сохранена");
+      if (moved) { openTerminal(""); loadBases(); }
       await loadTech(techTab);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Запись не сохранена");
@@ -460,7 +492,13 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
       const shown = (record: TechOperationRecord) => valueLabel(field, record.fields[field] ?? "");
       const values = tech.records.map((record) => record.fields[field] ?? "").filter((value) => value && value !== "—");
       const long = values.some((value) => value.length > 40);
-      const narrow = techTab === "ter" && TER_NARROW.has(headerKey(fieldTitle(field)));
+      const narrow = (contactTab && TER_NARROW.has(headerKey(fieldTitle(field)))) || (lugTab && LUG_NARROW.has(headerKey(field)));
+      // «Наконечники»: даташит — «открыть», как у кабелей (длинная ссылка не растягивает таблицу на 16").
+      if (lugTab && headerKey(field).startsWith("ссылка на datasheet")) return {
+        key: field, title: fieldTitle(field), value: (record) => record.fields[field] ?? "",
+        edit: canEdit ? fieldCellEdit<TechOperationRecord>(field, (record) => record) : undefined,
+        render: (record) => <DatasheetLink href={record.fields[field] ?? ""} name={record.display_text} />,
+      };
       const own = ownColumns.includes(field);
       // Да/нет листа (TRUE/FALSE) — выбор, а не текст: правится в окне записи. Первая колонка — ручка строки: щелчок по ней
       // открывает запись (карточку контакта), поэтому она не правится в ячейке.
@@ -475,7 +513,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         edit: canEdit && inCell ? (own ? ownCellEdit<TechOperationRecord>(field, (record) => record) : fieldCellEdit<TechOperationRecord>(field, (record) => record)) : undefined,
         remove: own ? techRemoval.removeOf(field) : undefined,
         // «Группа» материалов — заголовок группы строк, колонкой не повторяется (она в «Колонках»).
-        hidden: !own && ((techTab === "ter" && TER_RARE.has(headerKey(field))) || (techTab === "mat" && field === "Группа")
+        // «Наконечники»: сервер присылает только заполненные у наконечников столбцы — скрытых по умолчанию нет.
+        // «Наименование» наконечника (НКИ, НШВИ…) — заголовок блока, колонкой не повторяется (как «Группа» материалов).
+        hidden: !own && ((contactTab && TER_RARE.has(headerKey(field))) || (lugTab && LUG_FAMILY_KEYS.has(headerKey(field))) || (techTab === "mat" && field === "Группа")
           || (Boolean(matTab) && index > 0 && !filledInTab.has(field))),
         // An article of digits (Molex 39000038) is a code, not a number: no «39 000 038», as the warehouse writes it.
         numeric: !/артикул/i.test(fieldTitle(field)) && values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
@@ -485,28 +525,33 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   ];
   // БД.ТЕР: обжим одной колонкой «по сечениям» и «От AWG / До AWG» одной колонкой «AWG» (владелец 12.10); исходные
   // колонки остаются в «Колонках» и в выгрузке, но скрыты.
-  const techColumns = techTab === "ter" ? mergeTerminalColumns(sheetColumns, fieldColumns) : sheetColumns;
+  // «Наконечники»: «Сечение, мм²» и «AWG» от–до одной колонкой за артикулами (lugList.ts).
+  const techColumns = contactTab ? mergeTerminalColumns(sheetColumns, fieldColumns)
+    : lugTab ? mergeLugColumns(sheetColumns, fieldColumns) : sheetColumns;
   // Быстрые отборы «Без …» — по полям, без которых запись не годится генератору или закупке (как «Без D1–D3» у кабелей).
   const fieldOf = (...keys: string[]) => fieldColumns.find((field) => keys.some((key) => headerKey(field).startsWith(key)));
   const emptyIn = (field: string) => (record: TechOperationRecord) => !String(record.fields[field] ?? "").trim();
-  const presetFields: Array<[string, string | undefined]> = techTab === "ter"
+  const presetFields: Array<[string, string | undefined]> = contactTab
     ? [["Без высоты обжима", fieldOf("высота обжима проводника", "tercrimpheight")], ["Без аппликатора", fieldOf("аппликатор", "terapplicator")]]
+    : lugTab ? [["Без сечения", fieldOf("от мм2", "mm2from")], ["Без аппликатора", fieldOf("аппликатор", "terapplicator")]]
     : techTab === "mat" ? [["Без производителя", fieldOf("производитель")], ["Без поставщика", fieldOf("поставщик")]] : [];
   // «Расходники» take every row whose «Группа» names no tab — «Без группы» finds the empty ones to sort out.
   // Порядок по умолчанию: материалы — по группам листа (ТУТ, лента, стяжка…), внутри — по названию с числами как числа;
   // терминалы — по серии разъёмов (владелец 16.10.2026: «группировку по серии, а не по производителю»; terminalSeries.ts),
   // группы по имени (производитель, серия), «Без серии» в конце, внутри — по артикулу.
-  const terGroups = useMemo(() => techTab === "ter" ? terminalGroups(tech.records as TerminalRow[], terSeries) : null, [techTab, tech.records, terSeries]);
+  const terGroups = useMemo(() => contactTab ? terminalGroups(tech.records as TerminalRow[], terSeries) : null, [contactTab, tech.records, terSeries]);
+  // «Наконечники» — блоками по семейству (НКИ, НШВИ, РПИ-М…), как «Оболочки» по группам.
   const techGroup = techTab === "mat" ? (record: TechOperationRecord) => String(record.fields["Группа"] ?? "").trim() || NO_GROUP
-    : terGroups ? (record: TechOperationRecord) => terGroups.get(record.id)?.name ?? NO_SERIES : undefined;
-  const techGroupLabel = terGroups ? (name: string, rows: TechOperationRecord[]) => seriesCaption(name, rows as TerminalRow[]) : undefined;
-  const techRows = useMemo(() => techTab !== "mat" ? (terGroups ? sortBySeries(tech.records as TerminalRow[], terGroups, makerOrder(terSeries)) : tech.records) : (matTab && coverIds ? materialRows(tech.records, coverIds, matTab) : []).sort((a, b) => {
+    : terGroups ? (record: TechOperationRecord) => terGroups.get(record.id)?.name ?? NO_SERIES
+    : lugTab ? lugFamily : undefined;
+  const techGroupLabel = terGroups || lugTab ? (name: string, rows: TechOperationRecord[]) => seriesCaption(name, rows as TerminalRow[]) : undefined;
+  const techRows = useMemo(() => techTab !== "mat" ? (terGroups ? sortBySeries(tech.records as TerminalRow[], terGroups, makerOrder(terSeries)) : lugTab ? lugRows(tech.records) : tech.records) : (matTab && coverIds ? materialRows(tech.records, coverIds, matTab) : []).sort((a, b) => {
     const ga = String(a.fields["Группа"] ?? "").trim();
     const gb = String(b.fields["Группа"] ?? "").trim();
     return Number(!ga) - Number(!gb) || natural(ga, gb) || natural(String(a.fields["Наименование"] ?? a.display_text), String(b.fields["Наименование"] ?? b.display_text));
-  }), [tech.records, techTab, matTab, coverIds, terGroups, terSeries]);
+  }), [tech.records, techTab, lugTab, matTab, coverIds, terGroups, terSeries]);
   // The default order of the list over its table (owner 25.10.2026: «размер, затем наименование» везде).
-  const sortHint = techTab === "ter" ? "серия, затем сечение провода и артикул" : techTab === "mat" ? "группа, затем наименование" : "";
+  const sortHint = contactTab ? "серия, затем сечение провода и артикул" : lugTab ? LUG_SORT_HINT : techTab === "mat" ? "группа, затем наименование" : "";
   const techPresets: DataPreset<TechOperationRecord>[] = presetFields
     .filter((item): item is [string, string] => Boolean(item[1]))
     .map(([label, field]) => ({ label, test: emptyIn(field) }))
@@ -522,14 +567,14 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
       window.history.replaceState(window.history.state, "", url);
     } catch { /* address is not writable */ }
   }
-  const terminal = techTab === "ter" && terminalId ? tech.records.find((record) => record.id === terminalId) as TerminalRow | undefined : undefined;
+  const terminal = contactTab && terminalId ? tech.records.find((record) => record.id === terminalId) as TerminalRow | undefined : undefined;
   function startCreate(preset: Record<string, string> = {}) {
     const blank = Object.fromEntries(fieldColumns.map((key) => [key, ""]));
     setEditing({ id: null, values: techTab === "ob" ? { ...blank, Тип: "Оборудование", ...preset } : blank });
     window.scrollTo?.({ top: 0, behavior: "smooth" });
   }
   function startEdit(record: TechOperationRecord) {
-    setEditing({ id: record.id, values: editValues(record) });
+    setEditing({ id: record.id, values: editValues(record), terKind: record.ter_kind });
     window.scrollTo?.({ top: 0, behavior: "smooth" });
   }
   const current = groups.flatMap((group) => group.tabs).find((def) => def.id === tab);
@@ -586,6 +631,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
       {canEdit && editing && techTab !== "ob" && <PageWindow label={editing.id === null ? "Новая запись" : "Правка записи"} width={860} close={() => setEditing(null)}><div className="panel db-edit">
         <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${(editingRecord?.display_text ?? "").replace(/^[\s/]+|[\s/]+$/g, "")}`}</h2></div>
         <RowForm values={editing.values} hint={techTab === "ter" ? terFieldHint : undefined} onChange={(values) => setEditing({ ...editing, values })} />
+        {techTab === "ter" && editing.id !== null && editing.terKind && <TerKindSelect
+          value={editing.terKind} record={editingRecord ?? undefined} onChange={(terKind) => setEditing({ ...editing, terKind })} />}
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
         {editing.id !== null && <div className="db-edit-stock">
           <h3>Со склада</h3>
@@ -611,7 +658,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         </> : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
       // БД.КОАКС is ordered by its cable's Ø from «Кабели и провода»: it waits for them, the rows do not jump a second later
-      /> : techReady !== techTab || (matTab && !coverIds) || (coaxTab && cables === null) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
+      /> : techReady !== techKey || (matTab && !coverIds) || (coaxTab && cables === null) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
         records={tech.records}
         wireDiameter={wireDiameter}
         canEdit={canEdit}
@@ -642,12 +689,12 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         emptyText={viewOnly ? "Таблица не загружена из зеркала SUPPLYMAP." : "Записей нет."}
         // Правка — по строке целиком (столбец одинаковых «Править» делал строки выше и шумел); «Терминалы» — строка
         // открывает карточку контакта, правка из неё.
-        onRowClick={techTab === "ter" ? (record) => openTerminal(record.id) : canEdit ? startEdit : undefined}
-        rowTitle={techTab === "ter" ? (record) => `Открыть карточку: ${record.display_text}` : canEdit ? (record) => `Править: ${record.display_text}` : undefined}
-        rowClassName={techTab === "ter" ? (record) => (record.id === terminal?.id ? "eq-selected" : "") : undefined}
+        onRowClick={contactTab ? (record) => openTerminal(record.id) : canEdit ? startEdit : undefined}
+        rowTitle={contactTab ? (record) => `Открыть карточку: ${record.display_text}` : canEdit ? (record) => `Править: ${record.display_text}` : undefined}
+        rowClassName={contactTab ? (record) => (record.id === terminal?.id ? "eq-selected" : "") : undefined}
         toolbar={<>{sortHint && <SortHint text={sortHint} />}{canEdit && !editing ? <>
           <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button>
-          {OWN_COLUMN_TABS.includes(techTab) && <AddColumnButton tab={techTab} onAdded={async (name) => { await loadTech(techTab); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />}
+          {OWN_COLUMN_TABS.includes(techTab) && !lugTab && <AddColumnButton tab={techTab} onAdded={async (name) => { await loadTech(techTab); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />}
         </> : null}</>}
       /></div>{terminal && <TerminalCard record={terminal} canEdit={canEdit} onEdit={startEdit} onClose={() => openTerminal("")} />}</div>}
       {techRemoval.dialog}
@@ -727,6 +774,20 @@ function MapTable({ tab, rows, disabled, onChange, toolbar }: {
     />
     {!disabled && <p className="page-sub">Сохраняются все карты соответствий разом; пустые строки отбрасываются.</p>}
   </>;
+}
+
+const TER_KIND_LABELS: Record<TerKind, string> = { contact: "Терминалы", lug: "Наконечники" };
+
+/** «Список» строки БД.ТЕР в окне правки: перенос между «Терминалами» и «Наконечниками» (как «Вкладка» у кабелей). */
+function TerKindSelect({ value, record, onChange }: { value: TerKind; record?: TechOperationRecord; onChange: (kind: TerKind) => void }) {
+  const rule = record?.ter_rule;
+  return <label className="cable-kind"><small>Список</small>
+    <select aria-label="Список" value={value} onChange={(event) => onChange(event.target.value as TerKind)}>
+      {(["contact", "lug"] as const).map((kind) => <option key={kind} value={kind}>{TER_KIND_LABELS[kind]}</option>)}
+    </select>
+    {record?.ter_kind && value !== record.ter_kind && <span className="muted">Строка перейдёт в «{TER_KIND_LABELS[value]}», её значения сохранятся.</span>}
+    {rule && <span className="muted">{record?.ter_kind && record.ter_kind !== rule ? `перенесена вручную; по правилу — ${TER_KIND_LABELS[rule].toLowerCase()}` : `по правилу: ${TER_KIND_LABELS[rule].toLowerCase()}`}</span>}
+  </label>;
 }
 
 function RowForm({ values, hint, onChange }: {
