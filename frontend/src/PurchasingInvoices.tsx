@@ -173,7 +173,7 @@ export function InvoiceCardDialog({ id, readOnly, onClose, onChanged, onOpenUpd 
               <dt>Поставщик</dt><dd>{card.supplier_name ?? card.seller_name ?? "продавец не прочитан"}{card.seller_inn ? ` · ИНН ${card.seller_inn}` : ""}</dd>
               <dt>Сумма</dt><dd>{rub(card.total)}{card.vat_free ? " · без НДС" : card.vat !== null ? ` · НДС ${rub(card.vat)}` : ""}</dd>
               <dt>Статус</dt><dd><StatusChip tone={INVOICE_STATUS_TONE[card.status]}>{INVOICE_STATUS_LABELS[card.status]}</StatusChip>{card.column_title ? <span className="muted"> · колонка Kaiten «{card.column_title}»</span> : null}</dd>
-              <dt>Карточка Kaiten</dt><dd>{card.title}</dd>
+              <dt>{card.source === "procurement" ? "Загружен в закупке" : "Карточка Kaiten"}</dt><dd>{card.title}</dd>
             </dl>
             {card.parse_issues && <p className="doc-check warning">Замечания разбора: {card.parse_issues}</p>}
 

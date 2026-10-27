@@ -84,6 +84,8 @@ export type ChainQuery = { view: "problems" | "all"; q: string; closing: ChainCl
 export type InvoiceFile = { id: string; name: string; kind: "invoice" | "payment" | "other"; size: number; downloaded: boolean };
 export type InvoiceLine = { seq: number; name: string; article: string; qty: number | string | null; unit: string; price: number | null; sum: number | null };
 export type InvoiceRow = ChainInvoice & {
+  /** kaiten — карточка Kaiten; procurement — файл, загруженный к заказу в закупке ERP. */
+  source?: "kaiten" | "procurement";
   column_title: string; card_created: string | null; vat: number | null; vat_free: boolean; parse_issues: string; line_count: number;
   payment_numbers: string; payment_date: string | null; payment_sum: number | null; payment_matches: boolean | null; files: InvoiceFile[];
   chain: { state: ChainState; problem: boolean; upds: number; closed_gross: number; checks: DocCheck[] } | null;
@@ -91,6 +93,7 @@ export type InvoiceRow = ChainInvoice & {
 export type InvoiceList = { items: InvoiceRow[]; total: number; page: number; page_size: number; counts: Record<InvoiceStatus, number>; sum: number };
 export type InvoiceQuery = { q: string; status: InvoiceStatus | ""; closing: "" | "none"; from: string; to: string; page: number };
 export type InvoiceCard = ChainInvoice & {
+  source?: "kaiten" | "procurement";
   board_title: string; column_title: string; card_created: string | null; vat: number | null; vat_free: boolean; parse_issues: string;
   lines: InvoiceLine[]; payment_numbers: string; payment_date: string | null; payment_sum: number | null; payment_matches: boolean | null;
   files: InvoiceFile[]; chain: DocChain | null; receiving_available: boolean;
