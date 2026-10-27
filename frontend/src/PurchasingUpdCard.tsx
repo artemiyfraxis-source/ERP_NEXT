@@ -72,6 +72,18 @@ export function PurchasingUpdCard({ id, readOnly, onBack, onOpen, extraBlocks }:
           </button>
         )}
         {canAct && <button type="button" className="secondary" disabled={busy} onClick={() => setEditing(true)}>Исправить</button>}
+        {!readOnly && !editing && doc.origin === "google" && doc.file && doc.status !== "waiting" && (
+          <button type="button" className="secondary" disabled={busy} title="PDF прочитает модель сервера заново; ваши исправления и отметка «Проверено» останутся"
+            onClick={() => void act(() => updApi.reparse(doc.id), "Разбор не запустился")}>
+            Разобрать заново
+          </button>
+        )}
+        {doc.status === "waiting" && (
+          <button type="button" className="secondary" disabled={busy} title="Документ в очереди разборщика — карточка заполнится, когда модель ответит"
+            onClick={() => void act(() => updApi.card(doc.id), "Документ не загрузился")}>
+            Обновить
+          </button>
+        )}
         {canAct && (doc.verified ? (
           <button type="button" className="secondary" disabled={busy} onClick={() => void act(() => updApi.setVerified(doc.id, false), "Отметка не снялась")}>
             Снять отметку «Проверено»
