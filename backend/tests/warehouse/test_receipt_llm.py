@@ -41,7 +41,7 @@ SETTINGS = "/api/stock/receipts/llm-settings"
 CONFIG = receipt_llm.LlmConfig(base_url="https://llm.example.test/v1", api_key=KEY)
 PAGE_1 = {
     "docKind": "UPD", "number": "А-17", "date": "2026-10-20", "sellerName": "ООО «Пример Кабель»",
-    "sellerInn": "7701234567", "basis": "Счет № 45 от 01.10.2026; Договор поставки № 7 от 01.01.2026",
+    "sellerInn": "7701234560", "basis": "Счет № 45 от 01.10.2026; Договор поставки № 7 от 01.01.2026",
     "paymentDoc": None,
     "lines": [
         {"seq": 1, "article": "00-0001", "name": "Маркировочная трубка МТ-2К 6,4/3,2мм белая (в рулоне 100 м)",
@@ -231,8 +231,8 @@ def test_model_rows_become_warehouse_lines_pack_only_when_said_in_words():
 
 
 def test_the_header_of_a_reading_invoice_only_from_the_basis_prd_only_from_the_payment_line():
-    found = receipt_llm.reading_header(closing_doc([{**PAGE_1, "sellerInn": "77 0123 4567", "date": "20.10.2026"}]))
-    assert found == RecognisedUpd(supplier="ООО «Пример Кабель»", inn="7701234567", upd_number="А-17",
+    found = receipt_llm.reading_header(closing_doc([{**PAGE_1, "sellerInn": "77 0123 4560", "date": "20.10.2026"}]))
+    assert found == RecognisedUpd(supplier="ООО «Пример Кабель»", inn="7701234560", upd_number="А-17",
                                   upd_date=date(2026, 10, 20), invoice_number="45", invoice_date=date(2026, 10, 1))
     contract = receipt_llm.reading_header(closing_doc([{**PAGE_1, "basis": "Договор поставки № 7 от 01.01.2026"}]))
     assert (contract.invoice_number, contract.invoice_date) == ("", None), "a contract is not the delivery's invoice"
@@ -386,7 +386,7 @@ def test_without_a_key_the_scan_is_read_by_tesseract_as_before(api, monkeypatch)
 
 ELECTRONIC = [
     "Счет-фактура № А-17 от 20.10.2026 (1)", "Продавец: ООО «Пример Кабель» (2)",
-    "ИНН/КПП продавца: 7701234567/770101001 (2б)", "Основание передачи: Счёт № 45 от 01.10.2026",
+    "ИНН/КПП продавца: 7701234560/770101001 (2б)", "Основание передачи: Счёт № 45 от 01.10.2026",
 ] + ["Маркировочная трубка термоусадочная белая в рулоне сто метров"] * 5
 
 
@@ -541,7 +541,7 @@ def test_file_scan_is_read_by_the_model_in_the_background_and_merged_from_kept_r
     first = admin.post("/api/stock/receipts/scan", headers=_csrf(admin), files={"file": ("1.png", _png(), "image/png")})
     assert first.status_code == 200 and first.json()["result"] is None and first.json()["recognising"] is True
     page_1 = admin.get(f"/api/stock/receipts/scan-jobs/{first.json()['id']}").json()["result"]
-    assert page_1["recognised"]["upd_number"] == "А-17" and page_1["recognised"]["inn"] == "7701234567"
+    assert page_1["recognised"]["upd_number"] == "А-17" and page_1["recognised"]["inn"] == "7701234560"
     assert [(line["quantity"], line["unit"], line["supplier_code"]) for line in page_1["lines"]] == [
         ("300", "м", "00-0001"), ("2", "шт", "00-0002")]
     assert page_1["note"] == "Строки прочитаны со скана (2) — сверьте артикулы и количество"

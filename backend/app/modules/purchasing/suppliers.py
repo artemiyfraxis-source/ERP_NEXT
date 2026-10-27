@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.shared.inn import inn_valid  # the same check as the document reader (app.shared.doc_reader)
 
 from .infrastructure import QuoteRow, RfqSupplierRow, SupplierNameRow, SupplierRow
+from .upd_sellers import seller_name_key
 
 CATEGORIES: dict[str, str] = {
     "cable": "Кабель",
@@ -104,6 +105,27 @@ def looks_like_domain(text: str) -> bool:
 
 
 # ---- repository --------------------------------------------------------------------------------------------------
+
+
+def inns_named(session: Session, name: str) -> set[str]:
+    """The ИНН of the directory's suppliers named as `name` is — by their own name or an alias (`supplier_key`), or
+    one seller-name key inside the other (`seller_name_key`): what a misread ИНН of that seller may be put right to
+    (`app.shared.inn.checked_inn`)."""
+    key, short = supplier_key(name), seller_name_key(name)
+
+    def same(keys: tuple[str, ...], text: str) -> bool:
+        other = seller_name_key(text)
+        return bool(key and key in keys) or bool(short and other and (short in other or other in short))
+
+    if not (key or short):
+        return set()
+    rows = list(session.execute(select(SupplierRow.id, SupplierRow.name, SupplierRow.name_key, SupplierRow.inn)
+                                .where(SupplierRow.inn.is_not(None))))
+    aliased = {alias.supplier_id for alias in session.scalars(select(SupplierNameRow))
+               if same((alias.name_key,), alias.name_key)}
+    return {row.inn for row in rows if row.inn and (
+        row.id in aliased or same((row.name_key or "", supplier_key(row.name)), row.name))}
+
 
 
 def _clean(value: Any) -> str | None:

@@ -49,6 +49,7 @@ from app.modules.purchasing.suppliers import supplier_key
 from app.modules.purchasing.upd_sellers import seller_name_key
 from app.modules.receiving.application import DELIVERY_STATUSES
 from app.modules.receiving.domain import ReceivingLine
+from app.shared.inn import checked_inn
 from app.workflows.article_key import code_key
 
 INVOICE_DAYS = 31
@@ -74,7 +75,7 @@ class UpdHeader:
 
     @property
     def seller_known(self) -> bool:
-        return bool(self.inn or seller_name_key(self.supplier) or self.supplier.strip())
+        return bool(checked_inn(self.inn).inn or seller_name_key(self.supplier) or self.supplier.strip())
 
 
 @dataclass(frozen=True)
@@ -115,7 +116,19 @@ class SupplierBook:
     by_inn: Mapping[str, UUID] = field(default_factory=dict)
     by_key: Mapping[str, UUID] = field(default_factory=dict)
 
+    def usable_inn(self, name: str, inn: str) -> str:
+        """The seller's ИНН to match by: as read when it passes its check digits; a misread one put right to the ИНН of
+        the supplier named so (one digit / transposition away, else two — `checked_inn`); else «» — by the name."""
+        check = checked_inn(inn)
+        if not check.remark:
+            return check.inn
+        key = supplier_key(name)
+        named = self.by_key.get(key) if key else None
+        known = [found for found, supplier in self.by_inn.items() if named is not None and supplier == named]
+        return checked_inn(inn, known=known).inn
+
     def resolve(self, name: str, inn: str = "") -> UUID | None:
+        inn = self.usable_inn(name, inn)
         if inn and inn in self.by_inn:
             return self.by_inn[inn]
         key = supplier_key(name)

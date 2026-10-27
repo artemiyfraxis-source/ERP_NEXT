@@ -27,10 +27,12 @@ from sqlalchemy import delete, select
 
 from app.shared.doc_reader import closing
 from app.shared.identity import Actor
+from app.shared.inn import checked_inn
 
 from . import upd_parse
 from .infrastructure import SupplierRow, UpdDocumentRow, UpdLineRow
 from .upd_registry import _audit, _cut, _line_row, _stored_file, relink_documents
+from .suppliers import inns_named
 from .upd_sellers import seller_name_key
 
 ORIGIN = "scan"
@@ -86,17 +88,22 @@ def version(doc: ScanDocument) -> str:
     return f"wh|{hashlib.sha1(data.encode('utf-8')).hexdigest()}"
 
 
-def _inn(session, doc: ScanDocument) -> str:
-    """The seller's INN as read; when none, the INN of the one directory supplier with the seller's name."""
-    inn = "".join(doc.seller_inn.split())
-    if inn:
-        return inn
+def _inn(session, doc: ScanDocument) -> tuple[str, str]:
+    """(the seller's INN, a remark): as read when it passes its check digits; a misread one put right to the directory
+    supplier's ИНН of that seller it is a slip of (`checked_inn`: «ИНН исправлен по справочнику: было …»), else
+    dropped («ИНН продавца не прошёл проверку: …»); when none is left, the INN of the one directory supplier with the
+    seller's name."""
+    check = checked_inn(doc.seller_inn)
+    if check.remark:
+        check = checked_inn(doc.seller_inn, known=inns_named(session, doc.seller_name))
+    if check.inn:
+        return check.inn, check.remark
     key = seller_name_key(doc.seller_name)
     if not key:
-        return ""
+        return "", check.remark
     found = {row.inn for row in session.scalars(select(SupplierRow).where(SupplierRow.inn.is_not(None)))
              if row.inn and seller_name_key(row.name) == key}
-    return found.pop() if len(found) == 1 else ""
+    return (found.pop() if len(found) == 1 else ""), check.remark
 
 
 def parsed_doc(doc: ScanDocument, inn: str) -> closing.ParsedDoc | None:
@@ -116,7 +123,7 @@ def parsed_doc(doc: ScanDocument, inn: str) -> closing.ParsedDoc | None:
 
 
 def _values(doc: ScanDocument, parsed: closing.ParsedDoc | None, inn: str, md5: str, file_id,
-            now: datetime) -> dict[str, Any]:
+            now: datetime, inn_remark: str = "") -> dict[str, Any]:
     common = {
         "file_name": _cut(doc.file_name, 1024), "folder": _cut(doc.folder, 255), "md5": md5, "file_id": file_id,
         "tag": "", "model": _cut(f"Склад: {doc.engine}" if doc.engine else "Склад", 64), "number": _cut(doc.number, 128),
@@ -125,14 +132,16 @@ def _values(doc: ScanDocument, parsed: closing.ParsedDoc | None, inn: str, md5: 
         "parser_updated": version(doc), "synced_at": now,
     }
     if parsed is None:
-        issues = [CHECK_NOTE] + ([doc.warning] if doc.warning else [])
+        issues = [CHECK_NOTE] + [remark for remark in (doc.warning, inn_remark) if remark]
         return {**common, "status": STATUS, "kind": KIND, "issues": "; ".join(issues), "seller_kpp": "",
                 "buyer_inn": "", "total_net": None, "total_vat": None, "total_gross": None,
                 "line_count": len(doc.lines)}
     # The reader's own remarks: a page the model did not read is named there («их строк в разборе нет») — the
     # warehouse's fallback note about it would only repeat it.
     values = upd_parse.header_values(parsed)
-    return {**common, "status": values["status"], "kind": values["kind"], "issues": values["issues"],
+    issues = "; ".join(part for part in (inn_remark, values["issues"]) if part)
+    status = closing.CHECK if inn_remark and values["status"] == closing.OK else values["status"]
+    return {**common, "status": status, "kind": values["kind"], "issues": issues,
             "seller_kpp": values["seller_kpp"], "buyer_inn": values["buyer_inn"], "total_net": values["total_net"],
             "total_vat": values["total_vat"], "total_gross": values["total_gross"], "line_count": len(parsed.lines)}
 
@@ -173,9 +182,9 @@ def import_scan(uow, doc: ScanDocument, content: Callable[[], bytes], actor: Act
     if not data:
         return {"document_id": key, "status": "error", "message": "файл скана пустой"}
     stored = _stored_file(session, doc.file_name, data, now)
-    inn = _inn(session, doc)
+    inn, inn_remark = _inn(session, doc)
     parsed = parsed_doc(doc, inn)
-    values = _values(doc, parsed, inn, hashlib.md5(data).hexdigest(), stored.id, now)
+    values = _values(doc, parsed, inn, hashlib.md5(data).hexdigest(), stored.id, now, inn_remark)
     if previous is None:
         session.add(UpdDocumentRow(id=key, origin=ORIGIN, created_at=now, **values))
     else:

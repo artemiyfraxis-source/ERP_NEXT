@@ -140,3 +140,52 @@ def test_a_row_number_gap_on_seq_rereads_the_page(monkeypatch):
     monkeypatch.setattr(transport, "complete", Calls(lambda messages, model: next(answers)))
     page = reader.read_page(CONFIG, b"jpeg", 1, deadline=10_000, clock=lambda: 0.0, prompt="p")
     assert page.data == full and reader.numbering_gap(glued) and not reader.numbering_gap({"lines": [{"seq": 8.0}]})
+
+
+# ---- 27.10.2026: misread ИНН, OTHER, a page taken for a ТОРГ-12 -----------------------------------------------------
+
+PROVOD = {**HEAD, "sellerName": "ООО «Промышленный Провод»", "sellerKpp": "525601001"}
+
+
+def test_a_misread_inn_is_put_right_by_a_valid_one_of_the_same_document():
+    pages = [{**FIRST, **PROVOD, "sellerInn": "5256004951"}, {**LAST, "sellerInn": "5256084961"}]
+    assert closing.merge_pages(pages)["sellerInn"] == "5256084961", "another page's header that passes the check wins"
+    text = {**FIRST, **PROVOD, "sellerInn": "5256084951", closing.TEXT_INNS: ["5256084961", "7707083893"]}
+    doc = closing.closing_doc([text, LAST])
+    assert doc.seller_inn == "5256084961"
+    assert "ИНН продавца исправлен по тексту документа: было 5256084951" in doc.issues
+    alone = closing.closing_doc([{**FIRST, **PROVOD, "sellerInn": "5256004951"}, LAST])
+    assert alone.seller_inn == "5256004951", "nothing to put it right by: as read, for the directory check"
+    assert "ИНН продавца не прошёл проверку: 5256004951" in alone.issues
+    buyer = closing.closing_doc([{**FIRST, "buyerInn": "5040191161"}, LAST])
+    assert buyer.buyer_inn == "5040191181" and buyer.issues == [], "our own ИНН a slip away"
+    valid = closing.closing_doc([{**FIRST, closing.TEXT_INNS: ["7707083894"]}, LAST])
+    assert valid.seller_inn == "7707083893", "a valid ИНН is never changed"
+
+
+def test_a_text_layer_gives_its_valid_inns_only_to_a_misread_answer():
+    text = "Продавец: ООО «Промышленный Провод» ИНН/КПП продавца 5256084961/525601001 Покупатель ИНН 5040191181"
+    misread = reader.with_text_inns({"sellerInn": "5256084951"}, text)
+    assert misread[closing.TEXT_INNS] == ["5256084961"], "ours left out"
+    assert closing.TEXT_INNS not in reader.with_text_inns({"sellerInn": "5256084961"}, text)
+
+
+def test_other_kind_keeps_the_warehouse_lines_the_registry_drops_them():
+    other = [{**FIRST, "docKind": "OTHER"}, {**LAST, "docKind": "OTHER"}]
+    assert closing.closing_doc(other).lines == [] and closing.closing_doc(other).status == closing.OTHER
+    kept = closing.closing_doc(other, keep_lines=True)
+    assert [line.name for line in kept.lines] == ["Разъём XLR", "Кабель ВВГ 3х1,5", "Хомут 2,5х100"]
+
+
+def test_a_continuation_page_taken_for_a_torg12_keeps_its_lines():
+    continuation = {**LAST, "docKind": "TORG12"}
+    merged = closing.merge_pages([FIRST, continuation])
+    assert [line["seq"] for line in merged["lines"]] == [1, 2, 3], "row 3 is on no invoice page — kept"
+    doc = closing.closing_doc([FIRST, continuation])
+    assert len(doc.lines) == 3
+    assert "строк ТОРГ-12, которых нет в счёте-фактуре, оставлено: 1 (стр. 2) — сверьте, не задвоены ли" in doc.issues
+    pair = closing.merge_pages([{**FIRST, "docKind": "TORG12", "lines": [{**_line(1, "Разъём XLR"), "seq": "1.0"},
+                                                                        _line(2, "Кабель ВВГ 3x1.5", 10, 50)]},
+                                {**FIRST, "basis": None}])
+    assert [line["seq"] for line in pair["lines"]] == [1, 2] and "mergeRemarks" not in pair, \
+        "a real ТОРГ-12 + СФ pair: the ТОРГ-12 rows (same №) are the invoice's, once"

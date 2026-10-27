@@ -27,7 +27,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from app.shared.inn import OWN_INNS, inn_valid
+from app.shared.inn import OWN_INNS, checked_inn, inn_valid
 
 # The parser's verdict (the registry's «status» column).
 OK = "Разобран"
@@ -47,6 +47,10 @@ KIND_LABELS = {
 TAG_LABELS = {"M15": "М-15", "TN": "ТН + СФ", "": ""}
 OWN_INN = "5040191181"
 MISSING_PAGES = "модель не прочитала стр. {pages} — их строк в разборе нет"
+TORG12_KEPT = "строк ТОРГ-12, которых нет в счёте-фактуре, оставлено: {count} (стр. {pages}) — сверьте, не задвоены ли"
+# The valid ИНН of a page's own text (a text layer, tesseract), put on the page's answer by the caller when the
+# model's ИНН fails its check digits: what a misread ИНН is put right by (`app.shared.inn.checked_inn`).
+TEXT_INNS = "textInns"
 
 # ---- the file name ------------------------------------------------------------------------------------------------
 
@@ -314,8 +318,25 @@ def _digits(value: Any) -> str:
     return re.sub(r"\D", "", _str(value))
 
 
-def normalize(raw: dict | None, tag: str, file_name: str) -> ParsedDoc:
-    """The model's JSON (the fields of `prompt`) → the normalized document with its remarks."""
+def _check_inns(doc: ParsedDoc, raw: Mapping) -> None:
+    """A seller's or buyer's ИНН failing its check digits, put right by the valid ИНН of the document's own text it is a
+    slip of (the buyer's also by ours); else left as read — the remarks say it, and the callers that match by it
+    (`app.shared.inn.checked_inn` with the supplier directory) never take it as is."""
+    text = [_digits(inn) for inn in raw.get(TEXT_INNS) or [] if _digits(inn)]
+    seller = checked_inn(doc.seller_inn, text=text)
+    if seller.corrected:
+        doc.seller_inn = seller.inn
+        doc.issues.append(seller.remark)
+    buyer = checked_inn(doc.buyer_inn, text=[*text, *OWN_INNS], who="покупателя")
+    if buyer.corrected:
+        doc.buyer_inn = buyer.inn
+        doc.fixes += 1
+
+
+def normalize(raw: dict | None, tag: str, file_name: str, *, keep_lines: bool = False) -> ParsedDoc:
+    """The model's JSON (the fields of `prompt`) → the normalized document with its remarks. A document the model
+    calls OTHER (not a delivery) comes without lines — unless `keep_lines` (the warehouse: the rows the storekeeper
+    sees are kept whatever the kind, as its own reading always did)."""
     raw = raw if isinstance(raw, dict) else {}
     kind = _str(raw.get("docKind")).upper()
     if kind not in KIND_LABELS:
@@ -334,7 +355,8 @@ def normalize(raw: dict | None, tag: str, file_name: str) -> ParsedDoc:
         total_net=parse_num(raw.get("totalNet")), total_vat=parse_num(raw.get("totalVat")),
         total_gross=parse_num(raw.get("totalGross")), file_amount=file_amount(file_name),
     )
-    if kind == "OTHER":
+    _check_inns(doc, raw)
+    if kind == "OTHER" and not keep_lines:
         return doc
 
     act = kind == "ACT"
@@ -390,7 +412,10 @@ def normalize(raw: dict | None, tag: str, file_name: str) -> ParsedDoc:
         elif doc.seller_inn in OWN_INNS:
             doc.issues.append(f"в продавце наш ИНН {doc.seller_inn} — продавец и покупатель перепутаны?")
         elif not inn_valid(doc.seller_inn):
-            doc.issues.append(f"ИНН продавца не проходит проверку: {doc.seller_inn}")
+            doc.issues.append(f"ИНН продавца не прошёл проверку: {doc.seller_inn}")
+    if doc.buyer_inn and not inn_valid(doc.buyer_inn):
+        doc.issues.append(f"ИНН покупателя не прошёл проверку: {doc.buyer_inn}")
+    doc.issues.extend(_str(remark) for remark in raw.get("mergeRemarks") or [] if _str(remark))
 
     grosses = [line.gross for line in doc.lines]
     if doc.lines and all(gross is not None for gross in grosses):
@@ -420,6 +445,12 @@ def _last_number(pages: Sequence[Mapping], key: str):
     return next((page.get(key) for page in reversed(pages) if parse_num(page.get(key)) is not None), None)
 
 
+def _seq_key(value: Any) -> str:
+    """A row's № as a key: 3, «3», 3.0 → «3»; nothing — «»."""
+    number = parse_num(value)
+    return str(int(number)) if number is not None and number.is_integer() else _str(value)
+
+
 def merge_pages(pages: Sequence[Mapping | None]) -> dict:
     """The pages' answers as one document (a page no model read — None — is skipped): each header field from the first
     page that has it; the totals and crossCheckTotal from the last page that has them (the totals stand under the
@@ -427,7 +458,13 @@ def merge_pages(pages: Sequence[Mapping | None]) -> dict:
 
     A PDF of two documents — pages of a ТОРГ-12 and of its счёт-фактура (docKind TORG12_INVOICE on a page, or TORG12
     pages next to INVOICE / UPD pages) — is TORG12_INVOICE: lines, header and totals from the счёт-фактура pages, the
-    basis and crossCheckTotal (its «всего с НДС») from the ТОРГ-12 pages, as the one-call prompt asks."""
+    basis and crossCheckTotal (its «всего с НДС») from the ТОРГ-12 pages, as the one-call prompt asks. A row of a
+    ТОРГ-12 page is dropped only as a repeat of an invoice row (the same № or name); one the invoice pages lack — the
+    model took a page of the invoice for a ТОРГ-12 — is kept with a remark (`mergeRemarks`).
+
+    The seller's and buyer's ИНН — from the first page whose ИНН passes its check digits, else as for any field; the
+    valid ИНН of the pages' own text (`TEXT_INNS`) are carried over for `normalize`."""
+    numbers = [number for number, page in enumerate(pages, start=1) if isinstance(page, Mapping)]
     read = [dict(page) for page in pages if isinstance(page, Mapping)]
     if not read:
         return {}
@@ -440,35 +477,60 @@ def merge_pages(pages: Sequence[Mapping | None]) -> dict:
     for key in HEADER_KEYS:
         order = torg + invoice if key == "basis" else invoice + torg
         merged[key] = next((page.get(key) for page in order if _str(page.get(key))), None)
+        if key in ("sellerInn", "buyerInn"):  # a page whose ИНН passes its check digits wins over a misread one
+            merged[key] = next((page.get(key) for page in order if inn_valid(_digits(page.get(key)))), merged[key])
+    text_inns = [inn for page in read for inn in page.get(TEXT_INNS) or [] if isinstance(inn, str)]
+    if text_inns:
+        merged[TEXT_INNS] = list(dict.fromkeys(text_inns))
     for key in TOTAL_KEYS:
         merged[key] = _last_number(invoice, key)
     merged["crossCheckTotal"] = _last_number(read, "crossCheckTotal")
     if two and merged["crossCheckTotal"] is None and torg:
         merged["crossCheckTotal"] = _last_number(torg, "totalGross")
+
+    def rows(page: Mapping) -> list[Mapping]:
+        found = page.get("lines")
+        return [line for line in found if isinstance(line, Mapping)] if isinstance(found, list) else []
+
+    # The ТОРГ-12's rows repeat the счёт-фактура's — but a page the model took for a ТОРГ-12 may be the invoice's own
+    # continuation: a row of it whose № and name the invoice pages lack is kept, never silently lost.
+    invoice_seqs = {_seq_key(line.get("seq")) for page in invoice for line in rows(page) if _seq_key(line.get("seq"))}
+    invoice_names = {_str(line.get("name")).casefold() for page in invoice for line in rows(page) if _str(line.get("name"))}
+    torg_ids = {id(page) for page in torg}
     lines: list = []
+    kept_pages: list[str] = []
+    kept = 0
     seen: set[tuple[str, str, str]] = set()
-    for page in invoice:
-        for line in page.get("lines") if isinstance(page.get("lines"), list) else []:
-            if not isinstance(line, Mapping):
-                continue
+    for number, page in zip(numbers, read):
+        from_torg = id(page) in torg_ids
+        for line in rows(page):
             key = (_str(line.get("seq")), _str(line.get("article")), _str(line.get("name")).casefold())
+            if from_torg:
+                if _seq_key(line.get("seq")) in invoice_seqs or (key[2] and key[2] in invoice_names):
+                    continue  # the same row of the счёт-фактура
+                kept += 1
+                if str(number) not in kept_pages:
+                    kept_pages.append(str(number))
             if key[0] and key[2] and key in seen:
                 continue
             seen.add(key)
             lines.append(dict(line))
     merged["lines"] = lines
+    if kept:
+        merged["mergeRemarks"] = [TORG12_KEPT.format(count=kept, pages=", ".join(kept_pages))]
     return merged
 
 
 def closing_doc(pages: Sequence[Mapping | None], tag: str = "", file_name: str = "",
-                header: Mapping[str, Any] | None = None) -> ParsedDoc:
+                header: Mapping[str, Any] | None = None, *, keep_lines: bool = False) -> ParsedDoc:
     """The pages merged, normalized and checked. `header` — fields that win over the reading (the storekeeper's saved
     № / date / seller, in the reading's own keys: «number», «date», «sellerName», «sellerInn», «basis», «paymentDoc»).
-    A page no model read is named in the remarks: its lines are not in the document."""
+    A page no model read is named in the remarks: its lines are not in the document. `keep_lines` — the lines of a
+    document the model calls OTHER are kept (the warehouse, `normalize`)."""
     merged = merge_pages(pages)
     if header:
         merged.update(header)
-    doc = normalize(merged, tag, file_name)
+    doc = normalize(merged, tag, file_name, keep_lines=keep_lines)
     missing = [str(number) for number, page in enumerate(pages, start=1) if not isinstance(page, Mapping)]
     if missing:
         doc.issues.insert(0, MISSING_PAGES.format(pages=", ".join(missing)))
