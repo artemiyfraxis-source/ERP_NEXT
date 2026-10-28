@@ -17,6 +17,7 @@ export const AUDIT_MODULES: Array<[prefix: string, label: string]> = [
 const EVENT_NAMES: Record<string, string> = {
   "request.created": "Заявка создана",
   "request.deleted": "Заявка удалена",
+  "request.cancelled": "Заявка отменена",
   "request.sent_to_procurement": "Заявка передана в закупку",
   "request.resent_to_procurement": "Заявка повторно передана в закупку",
   "requests.reorder_requested": "Запрошена дозакупка",
