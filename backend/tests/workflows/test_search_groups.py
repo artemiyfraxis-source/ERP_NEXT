@@ -160,3 +160,38 @@ def test_staff_only_for_full_access(env):
     as_person({}, role="admin")
     hit = results(client, "иванов монтажник", "Сотрудники")[0]
     assert hit["title"] == "Иванов Пётр" and hit["section"] == "staff" and set(hit["params"]) == {"user"}
+
+
+def test_kit_requests_by_number_project_and_an_article_of_a_line_open_their_screen(env):
+    # owner 28.10.2026: «НШВ» must find the requests for the kit and the handout that carry it
+    from app.modules.fulfillment.infrastructure import FulfillmentLineRow, FulfillmentRequestRow
+    client, seed = env
+    picking = fill(FulfillmentRequestRow, number="ЗК-26-0011", purpose="713К.4 КБ1", project_key="713К.4",
+                   item_index="КБ1", requester="Мастер", status="Недоукомплектован", created_at=NOW, version=1,
+                   source_idempotency_key=uuid4().hex)
+    out = fill(FulfillmentRequestRow, number="ЗК-26-0012", purpose="713К.4 КБ2", project_key="713К.4",
+               item_index="КБ2", requester="Мастер", status="КБ Выдана", created_at=NOW, version=1,
+               source_idempotency_key=uuid4().hex)
+    closed = fill(FulfillmentRequestRow, number="ЗК-26-0013", purpose="700К.1 КБ1", project_key="700К.1",
+                  item_index="КБ1", requester="Мастер", status="Готово", created_at=NOW, version=1,
+                  source_idempotency_key=uuid4().hex)
+    seed(picking, out, closed,
+         fill(FulfillmentLineRow, request_id=picking.id, position=1, article="НШВ 0,5-8", name="Наконечник НШВ 0,5-8",
+              unit="шт", requirement=Decimal(10), reserved=Decimal(0), issued=Decimal(0), returned_good=Decimal(0),
+              defective_returned=Decimal(0), defective_missing=Decimal(0)),
+         fill(FulfillmentLineRow, request_id=closed.id, position=1, article="НШВ 1,0-8", name="Наконечник НШВ 1,0-8",
+              unit="шт", requirement=Decimal(5), reserved=Decimal(0), issued=Decimal(5), returned_good=Decimal(0),
+              defective_returned=Decimal(0), defective_missing=Decimal(0)))
+    as_person({"fulfillment": "edit", "handout": "edit"})
+    hit = {item["title"].split(" · ")[0]: item for item in results(client, "НШВ", "Комплектация и выдача")}
+    assert set(hit) == {"ЗК-26-0011", "ЗК-26-0013"}  # by an article of a line; КБ2 carries none
+    assert (hit["ЗК-26-0011"]["section"], hit["ЗК-26-0011"]["params"]) == ("issues", {"q": "ЗК-26-0011"})
+    assert "Запросы на комплектацию" in hit["ЗК-26-0011"]["subtitle"] and "НШВ 0,5-8" in hit["ЗК-26-0011"]["subtitle"]
+    assert hit["ЗК-26-0013"]["params"] == {"q": "ЗК-26-0013", "archive": "1"}
+    given = results(client, "713К.4 КБ2", "Комплектация и выдача")
+    assert [(item["section"], item["params"]) for item in given] == [("handout", {"q": "ЗК-26-0012"})]
+    # only the handout screen allowed — every request opens there; neither — no group
+    as_person({"handout": "view"})
+    assert {item["section"] for item in results(client, "713К.4", "Комплектация и выдача")} == {"handout"}
+    as_person({"warehouse": "view"})
+    assert "Комплектация и выдача" not in groups(client.get(URL, params={"q": "НШВ"}))

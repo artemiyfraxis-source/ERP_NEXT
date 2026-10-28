@@ -12,7 +12,7 @@ import {
   type FulfillmentRequest,
   type Principal,
 } from "./api";
-import { canAct, hasFullAccess } from "./navigation";
+import { canAct, hasFullAccess, urlParam } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
 import { StatusChip } from "./StatusChip";
@@ -279,13 +279,13 @@ function RequestTiles({ requests, openProject, openRequest }: {
 
 export function FulfillmentPage({ principal, mode }: { principal: Principal; mode?: keyof typeof MODES }) {
   const purposeText = usePurposeLabel();
-  const [archive, setArchive] = useState(false);
+  const [archive, setArchive] = useState(() => urlParam("archive") === "1");
   const [byProject, setByProject] = useState(false);
   const [project, setProject] = useState<string | null>(null);
   const [view, setView] = useState(savedView);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => urlParam("q"));  // from «Поиск по ERP» (28.10.2026): its word, every stage
   // The chosen stage chips; empty — «Все». The handout screen picks several, the others one.
-  const [picked, setPicked] = useState<string[]>(() => (mode === "give" ? savedGiveStages() : mode === "pick" ? TO_PICK_STAGES : []));
+  const [picked, setPicked] = useState<string[]>(() => (urlParam("q") ? [] : mode === "give" ? savedGiveStages() : mode === "pick" ? TO_PICK_STAGES : []));
   const multi = mode === "give";
   function choose(next: string[]) {
     setPicked(next);

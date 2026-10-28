@@ -30,6 +30,7 @@ from app.modules.purchasing.deps import purchasing_uow_factory
 from app.modules.purchasing.infrastructure import (
     InternalProjectRow, InvoiceRow, ItemAliasRow, ItemRow, RfqRow, SupplierRow, UpdDocumentRow,
 )
+from app.modules.fulfillment.infrastructure import FulfillmentLineRow, FulfillmentRequestRow
 from app.modules.warehouse.infrastructure import StockLotRow
 from app.modules.warehouse.word_search import _FOLD, fold, matches_words
 from app.shared import sqlite_casefold  # noqa: F401 — erp_casefold() on SQLite connections
@@ -48,6 +49,11 @@ G_LINES, G_PROJECTS, G_ITEMS = "Строки закупки", "Проекты", 
 G_SUPPLIERS, G_STOCK, G_RFQ = "Поставщики", "Склад", "Запросы КП"
 G_DB, G_SHIPMENTS, G_GOODS = "База данных", "Отгрузки", "Готовая продукция"
 G_TECHCARDS, G_TASKS, G_UPD, G_INVOICES, G_STAFF = "Техкарты", "Задания цеха", "Реестр УПД", "Счета", "Сотрудники"
+G_KITS = "Комплектация и выдача"
+# The stages of the two screens of one request (FulfillmentPage MODES): picking, then handing out; closed — archive.
+_PICK_STAGES = frozenset({"Новая", "Недоукомплектован", "Укомплектован", "Готов к выдаче"})
+_GIVE_STAGES = frozenset({"КБ Выдана", "КБ Возвращена"})
+_CLOSED_STAGES = frozenset({"Готово", "Отменена"})
 
 
 def _result(group: str, title: str, subtitle: str, section: str, **params: str) -> dict[str, Any]:
@@ -403,6 +409,41 @@ def _staff(session: Session, words: list[str], patterns: list[str]) -> list[dict
     return found
 
 
+def _kits(session: Session, words: list[str], patterns: list[str], pick: bool, give: bool) -> list[dict]:
+    """Kit requests («Запросы на комплектацию» / «Выдача со списанием», owner 28.10.2026: «НШВ» must find the requests
+    that carry it) — by number, purpose, project, КБ, requester and the article / name of their lines. Opens the screen
+    the request stands on (the other one when only that is allowed); a closed one — its archive."""
+    request, line = FulfillmentRequestRow, FulfillmentLineRow
+    by_lines: dict[Any, list[str]] = {}
+    statement = select(line.request_id, line.article, line.name)
+    narrow = _narrow([line.article, line.name], patterns, session)
+    if narrow is not None:
+        statement = statement.where(narrow)
+    for request_id, article, name in session.execute(statement):
+        by_lines.setdefault(request_id, []).append(f"{article} {name}")
+    own = [request.number, request.purpose, request.project_key, request.item_index, request.requester]
+    statement = select(request.id, request.number, request.status, request.purpose, request.project_key,
+                       request.item_index, request.requester).order_by(request.created_at.desc())
+    narrow = _narrow(own, patterns, session)
+    if narrow is not None:
+        statement = statement.where(or_(narrow, request.id.in_(list(by_lines)))) if by_lines else statement.where(narrow)
+    found: list[dict] = []
+    for request_id, number, status, purpose, project, item, requester in session.execute(statement):
+        lines = by_lines.get(request_id, [])
+        if not _hit(words, _text(number, purpose, project, item, requester, status, *lines)):
+            continue
+        on_give = status in _GIVE_STAGES
+        section = "handout" if (on_give and give) or not pick else "issues"
+        params = {"q": number, **({"archive": "1"} if status in _CLOSED_STAGES else {})}
+        where = "Выдача со списанием" if section == "handout" else "Запросы на комплектацию"
+        hit_line = next((text for text in lines if _hit(words, _text(text))), "")
+        found.append(_result(G_KITS, _dot(number, purpose or _dot(project, item)),
+                             _dot(where, status, hit_line[:60]), section, **params))
+        if len(found) >= PER_GROUP:
+            break
+    return found
+
+
 def _may(principal: Principal, *sections: str) -> bool:
     return section_allowed(principal, sections, "view")
 
@@ -439,6 +480,9 @@ def search(
     if _may(principal, "shipping", "shipping_goods"):
         groups.append((G_SHIPMENTS, lambda s: _shipments(s, words, patterns)))
         groups.append((G_GOODS, lambda s: _goods(s, words, patterns, _may(principal, "warehouse"))))
+    pick, give = _may(principal, "fulfillment"), _may(principal, "handout")
+    if pick or give:
+        groups.append((G_KITS, lambda s: _kits(s, words, patterns, pick, give)))
     if _may(principal, "techcards"):
         groups.append((G_TECHCARDS, lambda s: _techcards(s, words, patterns)))
     if _may(principal, "production"):
