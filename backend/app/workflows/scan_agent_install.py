@@ -1,6 +1,6 @@
 """Установка сканового агента на любой ПК (owner 28.10.2026: «везде… универсальность, если вдруг ПК сменять»).
 
-The administrator issues a one-time install token in the screen (`POST /api/stock/scan/agent/install-token` → the
+Whoever may scan («Сканирование документов» on edit; was the administrator alone) issues a one-time install token in the screen (`POST /api/stock/scan/agent/install-token` → the
 one-line PowerShell command); on the new PC the command downloads `install.ps1` from this server, which
 
 - `POST /api/stock/scan/agent/enroll` `{install_token, machine_id, pc_name}` (no login: the secret IS the credential,
@@ -27,7 +27,8 @@ from app.modules.identity.application import IdentityValidationError, issue_api_
 from app.modules.warehouse import agent_release, scan_agents
 from app.modules.warehouse.api import warehouse_uow_factory
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, warehouse_admin_principal
+from app.modules.warehouse.scan_jobs_api import scan_edit_principal
+from app.shared.http_auth import Principal
 from app.shared.identity import Actor
 
 router = APIRouter(prefix="/api/stock/scan/agent", tags=["warehouse"])
@@ -37,7 +38,9 @@ NO_FILES = "Файлы агента не лежат на этом сервере
 Now = Annotated[datetime, Depends(moscow_now)]
 WarehouseFactory = Annotated[Callable, Depends(warehouse_uow_factory)]
 IdentityFactory = Annotated[Callable, Depends(identity_uow_factory)]
-Admin = Annotated[Principal, Depends(warehouse_admin_principal)]  # the administrator's tools: never a token
+# Owner 28.10.2026 («каждый, кому доступна эта функция, может воспользоваться своим устройством»): whoever may scan
+# («Сканирование документов» on edit) sets up the agent on their own PC; a token never passes (no scope named).
+Admin = Annotated[Principal, Depends(scan_edit_principal)]
 
 
 def _base(request: Request) -> str:

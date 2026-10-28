@@ -100,7 +100,8 @@ def test_cli_rejects_cross_field_identifier_collision(monkeypatch, admin_databas
 def test_the_plans_default_matrix():
     """docs/migration/access-levels-plan.md «Матрица по умолчанию» (a level nobody holds starts from it)."""
     rows = {level: {section: mode.value for section, mode in row.items()} for level, row in LEVEL_SEED.items()}
-    filing = {"newrequest": "edit", "myrequests": "edit"}
+    # «Печать документов» (owner 28.10.2026) starts open to every level.
+    filing = {"newrequest": "edit", "myrequests": "edit", "print": "edit"}
     assert rows["commercial"] == {
         **filing, "projects": "view", "shipping": "view", "procurement": "view", "warehouse": "view",
         "production": "view", "requests": "edit",

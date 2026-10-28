@@ -22,7 +22,6 @@ EDIT_ONLY_READS = {
     "/api/stock/article-info",  # feeds «Внести позиции»
     "/api/stock/item-types",  # «Типы» dictionary editor
     "/api/stock/export",  # first half of «Загрузить правки»
-    "/api/stock/receipts/scan-jobs/{job_id}",  # the poll of «Отсканировать УПД» the storekeeper queued (23.10)
     "/api/procurement/mine",  # the buyer's own taken lines
     "/api/procurement/in-work/mine",
     "/api/procurement/kp",  # КП form
@@ -31,7 +30,12 @@ EDIT_ONLY_READS = {
     "/api/receiving/supplier-return",  # «Возврат поставщику» form
     "/api/receiving/upd/scan-jobs/{job_id}",  # the poll of «Принять по УПД» the receiver queued (26.10)
 }
-GATE_OF = {dependency: GATE_BY_KEY[key] for key, dependency in DEPENDENCIES.items() if dependency is not None}
+# «Сканирование документов» (`scan_edit`, 0159) is a section of its own, not one of the three: the scan routes of
+# «Склад» (`/api/stock/receipts/scan*`) take it alone since 28.10.2026.
+GATE_OF = {
+    dependency: GATE_BY_KEY[key] for key, dependency in DEPENDENCIES.items()
+    if dependency is not None and key in GATE_BY_KEY
+}
 
 
 def _gates(route, inherited):

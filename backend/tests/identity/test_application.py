@@ -101,6 +101,7 @@ def test_login_resolve_logout_and_server_owned_principal(identity_database):
     assert resolved.principal.permissions == {
         "newrequest": "edit",
         "myrequests": "edit",
+        "print": "edit",
         "requests": "edit",
         "production": "edit",
         "myops": "edit",
@@ -211,7 +212,7 @@ def test_user_override_removes_permission_and_deactivation_revokes_session(ident
     assert result.principal.permissions == {
         "newrequest": "edit", "myrequests": "edit", "requests": "edit", "production": "edit", "myops": "edit",
         "receiving": "edit", "warehouse": "edit", "fulfillment": "edit", "handout": "edit", "shipping_goods": "edit",
-        "quality": "view",
+        "quality": "view", "print": "edit",
     }
 
     with identity_database() as session:

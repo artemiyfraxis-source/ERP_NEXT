@@ -266,10 +266,10 @@ RECOGNISED = {"supplier": "ООО «Элитан»", "inn": "7801234567", "upd_n
 PDF = b"%PDF-1.4\n% scan of a paper UPD\n"
 
 
-def _as(permission: str) -> None:
+def _as(permission: str, scan: str = "edit") -> None:
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Приёмщик", department="ОТК"), email="receiver@example.test", roles=frozenset({"receiver"}),
-        permissions={"receiving": permission},
+        permissions={"receiving": permission, **({"scan": scan} if scan else {})},
     )
 
 
@@ -356,6 +356,18 @@ def test_the_receiving_edit_right_starts_a_scanner_job_on_the_warehouse_queue(st
     polled = client.get(f"/api/receiving/upd/scan-jobs/{started.json()['id']}").json()
     assert polled["status"] == "pending" and polled["result"] is None
     assert client.delete(f"/api/receiving/upd/scan-jobs/{started.json()['id']}").json()["status"] == "failed"
+
+
+def test_receiving_edit_without_the_scan_right_is_refused_the_scan_routes_only(stand):  # noqa: F811
+    client, _ = stand
+    _as("edit", scan="")
+    scan_routes = [("POST", "/api/receiving/upd/scan-jobs"), ("GET", f"/api/receiving/upd/scan-jobs/{uuid4()}"),
+                   ("DELETE", f"/api/receiving/upd/scan-jobs/{uuid4()}"), ("POST", "/api/receiving/upd/scan"),
+                   ("POST", "/api/receiving/upd/scan-merge")]
+    for method, path in scan_routes:
+        response = client.request(method, path, json={})
+        assert response.status_code == 403 and "Сканирование" in response.text, (method, path)
+    assert client.post("/api/receiving/upd/proposal", json={}).status_code != 403, "the matching stays receiving's"
 
 
 def test_proposal_and_acceptance_of_a_upd_over_two_orders_keep_the_scan_and_reach_the_registry(stand):  # noqa: F811
