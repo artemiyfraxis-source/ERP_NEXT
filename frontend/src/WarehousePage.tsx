@@ -417,7 +417,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
         <table className="grid wide compact stock-table" style={docsLayout ? { minWidth: docsLayout.minWidth } : undefined}>
           <colgroup>{shownColumns.map((key) => <col key={key} className={`stock-col-${key}`}
             style={docsLayout?.widths[key] ? { width: docsLayout.widths[key] } : undefined} />)}</colgroup>
-          {/* The server orders the whole filter by the columns it knows; the maker and the documents are not among them. */}
+          {/* The server orders the whole filter by every sortable column (`SORT_KEYS`), lot by lot, before cutting the page. */}
           <thead><tr>{shownColumns.map((key) => <th key={key} className={classes(columnClass(key), key === pinned && "stock-pin")} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : undefined}>
             {isSortKey(key)
               ? <button type="button" className="th-sort" title={COLUMN_HINTS[key]} onClick={() => setSort((current) => ({ key, desc: current.key === key ? !current.desc : false }))}>{columnTitle(key, false)}{sort.key === key ? (sort.desc ? " ▼" : " ▲") : ""}</button>
@@ -510,8 +510,11 @@ function shelf(location: string) {
   return location.replace(/\s+/g, "").toUpperCase().match(/^(\d+[A-ZА-Я])/)?.[1] ?? location;
 }
 
-/** The columns the grouped table is ordered by (the server's `sort`). */
-const SORT_KEYS = ["type", "grn", "balance", "reserved", "available", "lots", "place", "series", "article", "name", "warehouse"] as const;
+/** The columns the grouped table is ordered by (the server's `sort`): every column but «Назначение» and «Файл УПД». */
+const SORT_KEYS = [
+  "type", "grn", "balance", "reserved", "available", "lots", "place", "series", "article", "name", "warehouse",
+  "maker", "upd_name", "invoice_name", "invoice_number", "invoice_date", "upd_number", "upd_date", "prd_number", "prd_date",
+] as const;
 type SortKey = typeof SORT_KEYS[number];
 const isSortKey = (key: ColumnKey): key is SortKey => (SORT_KEYS as readonly string[]).includes(key);
 
@@ -562,7 +565,9 @@ function MoreMenu({ items }: { items: Array<{ label: string; disabled?: boolean;
   </div>;
 }
 
+/** A row is one lot (27.10), so the value is that lot's own, as the server's `sort_stock_lots` reads it. */
 function sortValue(item: WarehouseArticle, key: SortKey): string | number {
+  const lot = item.lots[0];
   switch (key) {
     case "type": return distinct(item.lots, "item_type");
     case "grn": return distinct(item.lots, "grn");
@@ -574,6 +579,11 @@ function sortValue(item: WarehouseArticle, key: SortKey): string | number {
     case "series": return distinct(item.lots, "series");
     case "name": return distinct(item.lots, "name");
     case "warehouse": return distinct(item.lots, "warehouse");
+    case "maker": return lot?.manufacturer ?? "";
+    case "upd_name": return lot?.upd_name ?? "";
+    case "invoice_name": return lot?.invoice_name ?? "";
+    case "invoice_number": case "invoice_date": case "upd_number": case "upd_date": case "prd_number": case "prd_date":
+      return lot?.receipt?.[key] ?? "";
     default: return item.article;
   }
 }
@@ -582,7 +592,11 @@ function compareArticles(left: WarehouseArticle, right: WarehouseArticle, sort: 
   const a = sortValue(left, sort.key);
   const b = sortValue(right, sort.key);
   const order = typeof a === "number" && typeof b === "number" ? a - b : warehouseCollator.compare(String(a), String(b));
-  return (sort.desc ? -order : order) || warehouseCollator.compare(left.key, right.key);
+  if (order) return sort.desc ? -order : order;
+  // Ties as on the server: the article key, then the lot id — the loaded page continues the server's order.
+  const [leftLot, rightLot] = [left.lots[0], right.lots[0]];
+  const byArticle = leftLot && rightLot ? warehouseCollator.compare(articleKey(leftLot), articleKey(rightLot)) : 0;
+  return byArticle || (leftLot && rightLot ? (leftLot.id < rightLot.id ? -1 : leftLot.id > rightLot.id ? 1 : 0) : warehouseCollator.compare(left.key, right.key));
 }
 
 function loadedTotals(lots: WarehouseLot[]): RowTotals {

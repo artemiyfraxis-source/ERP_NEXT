@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException
-from typing import Protocol, Sequence
+from typing import Mapping, Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.article_maker import split_article_maker, split_extras, with_extras
@@ -1254,7 +1254,13 @@ def warehouse_lots(
             raise KeyError(f"Warehouse cursor not found: {after_id}")
         if sort:
             # The order is the whole filter's, then the page is cut: the cursor is the last lot of the previous page.
-            lots = sort_stock_lots(uow.warehouse.filtered(query, warehouse, include_zero), sort, desc, group)
+            lots = uow.warehouse.filtered(query, warehouse, include_zero)
+            receipts: dict = {}
+            if sort in STOCK_RECEIPT_SORT_KEYS:  # the document columns read the lot's delivery, as the screen does
+                ids = {lot.receipt_id for lot in lots if lot.receipt_id is not None}
+                store = getattr(uow, "receipts", None)
+                receipts = store.by_ids(ids) if ids and store is not None else {}
+            lots = sort_stock_lots(lots, sort, desc, group, receipts)
             start = 0
             if after_id is not None:
                 start = next((index + 1 for index, lot in enumerate(lots) if lot.id == after_id), len(lots))
@@ -1267,7 +1273,11 @@ def warehouse_lots(
         return list(lots), uow.warehouse.count(query, warehouse, include_zero)
 
 
-STOCK_SORT_KEYS = ("type", "grn", "balance", "reserved", "available", "lots", "place", "series", "article", "name", "warehouse")
+STOCK_RECEIPT_SORT_KEYS = ("invoice_number", "invoice_date", "upd_number", "upd_date", "prd_number", "prd_date")
+STOCK_SORT_KEYS = (
+    "type", "grn", "balance", "reserved", "available", "lots", "place", "series", "article", "name", "warehouse",
+    "maker", "upd_name", "invoice_name", *STOCK_RECEIPT_SORT_KEYS,
+)
 
 
 def _natural(value: str) -> list:
@@ -1275,40 +1285,36 @@ def _natural(value: str) -> list:
     return [int(part) if index % 2 else part.casefold() for index, part in enumerate(re.split(r"(\d+)", value))]
 
 
-def sort_stock_lots(lots: list[StockLot], sort: str, desc: bool, group: str = "") -> list[StockLot]:
+def sort_stock_lots(
+    lots: list[StockLot], sort: str, desc: bool, group: str = "", receipts: Mapping[UUID, object] | None = None,
+) -> list[StockLot]:
     """All lots in the order of the grouped stock table (frontend `warehouseGroups` + `compareArticles`): groups of the
-    chosen grouping by name (the empty one last), inside a group the article rows by the sorted column's value
-    (numbers by value, text naturally, the article key breaks ties), a row's lots together in the id order."""
+    chosen grouping by name (the empty one last), inside a group the rows by the sorted column's value (numbers by
+    value, text and dates naturally), ties by the article key, then the lot id. A row is ONE lot (owner 27.10.2026),
+    so the value is the lot's own, never a sum over its article: otherwise the first page holds the top articles and
+    the screen re-sorts an incomplete set (owner 28.10). The document columns read the lot's delivery (`receipts`)."""
     if sort not in STOCK_SORT_KEYS:
         raise ValueError(f"Unknown stock sort: {sort}")
     if group not in STOCK_GROUPS:
         raise ValueError(f"Unknown stock group: {group}")
-    rows: dict[tuple[str, str], list[StockLot]] = {}
-    for lot in lots:
-        rows.setdefault((stock_group_value(lot, group), stock_article_key(lot)), []).append(lot)
+    receipts = receipts or {}
 
-    def joined(items: list[StockLot], attribute: str) -> str:
-        return " · ".join(dict.fromkeys(str(getattr(item, attribute) or "") for item in items if getattr(item, attribute)))
-
-    def value(items: list[StockLot]):
-        if sort == "balance":
-            return sum((item.balance for item in items), Decimal(0))
-        if sort == "reserved":
-            return sum((item.reserved for item in items), Decimal(0))
-        if sort == "available":
-            return sum((item.available for item in items), Decimal(0))
+    def value(lot: StockLot):
+        if sort in ("balance", "reserved", "available"):
+            return getattr(lot, sort)
         if sort == "lots":
-            return len(items)
-        attribute = {"type": "item_type", "place": "storage_location"}.get(sort, sort)
-        if sort == "article":
-            return _natural(items[0].article)
-        return _natural(joined(items, attribute))
+            return 1
+        if sort in STOCK_RECEIPT_SORT_KEYS:
+            field = getattr(receipts.get(lot.receipt_id), sort, None) if lot.receipt_id is not None else None
+            return _natural(field.isoformat() if hasattr(field, "isoformat") else str(field or ""))
+        attribute = {"type": "item_type", "place": "storage_location", "maker": "manufacturer"}.get(sort, sort)
+        return _natural(str(getattr(lot, attribute) or ""))
 
-    keys = list(rows)
-    keys.sort(key=lambda key: _natural(key[1]))
-    keys.sort(key=lambda key: value(rows[key]), reverse=desc)
-    keys.sort(key=lambda key: (not key[0], _natural(key[0])))
-    return [lot for key in keys for lot in rows[key]]
+    ordered = sorted(lots, key=lambda lot: (_natural(stock_article_key(lot)), str(lot.id)))
+    ordered.sort(key=value, reverse=desc)
+    group_of = {lot.id: stock_group_value(lot, group) for lot in ordered}
+    ordered.sort(key=lambda lot: (not group_of[lot.id], _natural(group_of[lot.id])))
+    return ordered
 
 
 STOCK_GROUPS = ("", "type", "place", "name", "series", "grn")
