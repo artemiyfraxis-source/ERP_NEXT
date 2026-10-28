@@ -3899,6 +3899,27 @@ export const shippingApi = {
   uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
     method: "POST", body: JSON.stringify({ shipment_id: shipmentId, version, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
   }),
+  /** «Данные отправок»: скан УПД со сканера ПК склада, файл (PDF, фото, ЭДО XML/ZIP), «+ Страница» — та же очередь и то же
+   *  распознавание, что у «Склад → Поставка», под правом «Отгрузка» и привязанные к отправке. */
+  updScan: (shipmentId: string) => {
+    const base = `/api/shipping/shipments/${encodeURIComponent(shipmentId)}/upd-scan`;
+    return {
+      startScanJob: (agentId?: string) =>
+        api<WarehouseScanStart>(`${base}/jobs`, { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "" }) }),
+      scanJob: (id: string) => api<WarehouseScanJob>(`${base}/jobs/${encodeURIComponent(id)}`),
+      cancelScanJob: (id: string) => api<WarehouseScanJob>(`${base}/jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+      scanFile: (file: File) => {
+        const form = new FormData();
+        form.append("file", file);
+        return api<WarehouseScanJob>(`${base}/file`, { method: "POST", body: form });
+      },
+      mergeScans: (files: string[]) => api<WarehouseScanJob>(`${base}/merge`, { method: "POST", body: JSON.stringify({ files }) }),
+    };
+  },
+  /** Прочитанный УПД ложится в отправку: файл, тип, № и дата; `number` — что делать с другим уже внесённым №. */
+  applyUpdScan: (shipmentId: string, body: { version: number; scan_file: string; upd_number: string; upd_date: string | null; invoice_number: string; number?: "replace" | "keep" }) =>
+    api<{ status: "applied"; shipment: Shipment; invoice: string } | { status: "conflict"; current: string; found: string }>(
+      `/api/shipping/shipments/${encodeURIComponent(shipmentId)}/upd-scan/apply`, { method: "POST", body: JSON.stringify(body) }),
   /** Файл бумажной УПД к данным отправки проекта (то же хранилище); ссылку в карточку ставит `saveAddressee` с `upd_url`. */
   uploadCardUpd: (project: string, file: { name: string; type: string; base64: string }) => api<{ file: { id: string; url: string; name: string } }>("/api/shipping/upd-files", {
     method: "POST", body: JSON.stringify({ project, file_name: file.name, content_type: file.type, content_base64: file.base64 }),

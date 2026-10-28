@@ -11,9 +11,10 @@ import { StatusChip as SharedChip } from "./StatusChip";
 import { isoDay } from "./Gantt";
 import { daysUntil } from "./productionGraph";
 import { goodsPieces } from "./FinishedGoodsStates";
-import { DispatchFields, changedDispatch, dispatchDraft, readFile, type DispatchDraft } from "./DispatchCard";
+import { readFile } from "./DispatchCard";
 import { CarrierSelect, PICKUP_CARRIER, isPickup, termsFor, termsText } from "./carriers";
-import { DataChip, ShipmentDataWindow, UPD_TYPES, updLabel } from "./ShipmentData";
+import { ProjectDataWindow } from "./ProjectData";
+import { DataChip, Readiness, ShipmentDataWindow, UPD_TYPES, updLabel } from "./ShipmentData";
 import "./shipping.css";
 
 /* Отгрузка (владелец 12–14.10.2026) — путь готовой продукции слева направо, штуки КБ в сквозных статусах.
@@ -181,7 +182,7 @@ export function ShippingPage({ principal }: { principal: Principal }) {
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner" role="status">{notice}</div>}
     {!loaded ? <div className="empty">Загрузка…</div> : <>
-      {tab === "pack" && <><StockTab {...context} rows={stockRows} /><ShipmentsTab {...context} scope="pack" /></>}
+      {tab === "pack" && <PackTab {...context} rows={stockRows} />}
       {tab === "ship" && <ShipmentsTab {...context} scope="ship" />}
       {tab === "done" && <ShipmentsTab {...context} scope="done" />}
       {tab === "journal" && <JournalTab shipments={shipments} />}
@@ -234,6 +235,8 @@ function projectRows(goods: FinishedGood[], shipments: Shipment[], addressees: P
   return rows.sort((a, b) => (a.customer || "яяя").localeCompare(b.customer || "яяя", "ru") || a.project.localeCompare(b.project, "ru"));
 }
 
+/* ---------- Упаковка: список по проектам — склад проекта развёрнут, под ним его отправки на упаковке ---------- */
+
 /** Места хранения КБ проекта, которые лежат на складе: «Стеллаж 3; Полка А». */
 function locationsOf(row: ProjectRow) {
   const places: string[] = [];
@@ -244,31 +247,83 @@ function locationsOf(row: ProjectRow) {
   return places.join("; ");
 }
 
-function StockTab(context: Context & { rows: ProjectRow[] }) {
-  const { rows, canManage, busy, mutate } = context;
+export interface PackBlock { project: string; customer: string; stock: ProjectRow | null; ships: Shipment[] }
+
+/** Проекты с принятым на складе и их отправки Новая/Собрана; отправка проекта, которого на складе нет, стоит одна. */
+export function packBlocks(stock: ProjectRow[], shipments: Shipment[]): PackBlock[] {
+  const packing = shipmentRows(shipments.filter((shipment) => SCOPES.pack.statuses.includes(shipment.status)));
+  const blocks = new Map<string, PackBlock>();
+  for (const row of stock) blocks.set(row.project, { project: row.project, customer: row.customer, stock: row, ships: [] });
+  for (const shipment of packing) {
+    const project = shipment.lines[0]?.project || "Без проекта";
+    const block = blocks.get(project) ?? { project, customer: shipment.customer || shipment.receiver, stock: null, ships: [] };
+    block.ships.push(shipment);
+    if (!block.customer) block.customer = shipment.customer || shipment.receiver;
+    blocks.set(project, block);
+  }
+  return [...blocks.values()].sort((a, b) => (a.customer || "яяя").localeCompare(b.customer || "яяя", "ru") || a.project.localeCompare(b.project, "ru"));
+}
+
+const blockText = (block: PackBlock) => [block.project, block.customer, ...(block.stock?.lines.map((line) => `${line.good.item_index} ${line.good.name}`) ?? []),
+  ...block.ships.map((shipment) => `${shipment.number} ${projectsOf(shipment)}`)].join(" ").toLowerCase();
+
+function PackTab(context: Context & { rows: ProjectRow[] }) {
+  const { rows: stock, shipments, goods, addressees, canManage, canWarehouse, canEdit, canUnship, busy, mutate, reload } = context;
   const [adding, setAdding] = useState(false);
-  const menu = useRef<HTMLDetailsElement>(null);
-  const columns: DataColumn<ProjectRow>[] = [
-    { key: "project", title: "Проект", value: (row) => row.project, render: (row) => <strong>{row.project}</strong> },
-    { key: "customer", title: "Заказчик", value: (row) => row.customer, filter: true, hidden: true },
-    { key: "kb", title: "КБ на складе", value: (row) => row.lines.filter((line) => line.ready > 0).map((line) => `${line.good.item_index} · ${line.ready}`).join(", "), wrap: true },
-    { key: "location", title: "Место хранения", value: (row) => locationsOf(row), wrap: true, render: (row) => locationsOf(row) || <span className="muted">—</span> },
-    { key: "ready", title: "Принято складом", value: (row) => row.ready, numeric: true, hint: "Лежит на складе, ещё не упаковано",
-      render: (row) => <strong className="tone-ok">{row.ready}</strong> },
-    { key: "due", title: "Срок", value: (row) => row.due ?? "", render: (row) => <Due day={row.due} late={row.late} /> },
-    { key: "point", title: "Куда", value: (row) => row.point, wrap: true,
-      render: (row) => row.point || <span className="tone-danger">адрес не указан</span> },
-  ];
+  const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState("");
+  const [dataFor, setDataFor] = useState<string | null>(null);
+  const [cardFor, setCardFor] = useState<string | null>(null);
+  const dataShipment = shipments.find((shipment) => shipment.id === dataFor) ?? null;
+  const blocks = useMemo(() => packBlocks(stock, shipments), [stock, shipments]);
+  const needle = query.trim().toLowerCase();
+  const shown = needle ? blocks.filter((block) => blockText(block).includes(needle)) : blocks;
+  const cardBlock = blocks.find((block) => block.project === cardFor) ?? null;
+  const customers = [...new Set(shown.map((block) => block.customer || NO_CUSTOMER))];
   return <>
+    {dataShipment && <ShipmentDataWindow key={dataShipment.id} shipment={dataShipment} close={() => setDataFor(null)} onSaved={reload} />}
+    {cardBlock && <ProjectDataWindow key={cardBlock.project} project={cardBlock.project} customer={cardBlock.customer} stored={addressees.find((item) => item.project === cardBlock.project)}
+      canManage={canManage} close={() => setCardFor(null)} onSaved={reload} />}
     {adding && <RegisterGood busy={busy} mutate={mutate} onDone={() => setAdding(false)} />}
-    <DataTable label="На складе" storageKey="shipping-stock" rows={rows} columns={columns} rowKey={(row) => row.project}
-      groupBy={(row) => row.customer || "Заказчик не указан"} exportName="Отгрузка — на складе"
-      toolbar={canManage && !adding ? <details className="ship-menu" ref={menu}><summary className="secondary small">Ещё</summary>
-        <div className="ship-menu-list"><button type="button" className="secondary small" onClick={() => { menu.current?.removeAttribute("open"); setAdding(true); }}>+ Добавить КБ проекта</button></div></details> : undefined}
-      emptyText="На складе ничего не ждёт упаковки — примите готовое в разделе «Приёмка с производства»."
-      renderDetail={(row) => <ShipPanel key={`${row.project}:${row.ready}:${row.packed}:${context.addressees.find((item) => item.project === row.project)?.version ?? 0}`} {...context} row={row} />} />
+    {creating && <CreateShipment goods={goods} busy={busy} mutate={mutate} onDone={() => setCreating(false)} />}
+    <div className="ship-pack-bar">
+      <input type="search" className="ship-pack-search" aria-label="Поиск по проектам" placeholder="Проект, заказчик, КБ или № отправки" value={query} onChange={(event) => setQuery(event.target.value)} />
+      <span className="ship-pack-count">{shown.length} из {blocks.length}</span>
+      {canManage && !(adding || creating) && <span className="ship-pack-tools">
+        <button type="button" className="secondary small" onClick={() => setCreating(true)}>+ Заявка на отгрузку</button>
+        <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Добавить КБ проекта</button></span>}
+    </div>
+    {shown.length === 0 && <div className="empty">{blocks.length ? "По запросу ничего не найдено." : "Упаковывать нечего — примите готовое в разделе «Приёмка с производства» или заведите заявку на отгрузку."}</div>}
+    {customers.map((customer) => <section key={customer} className="ship-customer" aria-label={`Заказчик ${customer}`}>
+      <h2 className="ship-customer-name">{customer}</h2>
+      {shown.filter((block) => (block.customer || NO_CUSTOMER) === customer).map((block) => {
+        const card = addressees.find((item) => item.project === block.project);
+        return <article key={block.project} className="ship-project" aria-label={`Проект ${block.project}`}>
+          <header className="ship-project-head">
+            <h3><strong>{block.project}</strong></h3>
+            <Readiness source={card ?? EMPTY_CARD} />
+            {block.stock && locationsOf(block.stock) && <span className="muted ship-place">Место: {locationsOf(block.stock)}</span>}
+            {canEdit && <button type="button" className="secondary small" onClick={() => setCardFor(block.project)}>Данные…</button>}
+          </header>
+          {block.stock && <ShipPanel key={`${block.project}:${block.stock.ready}:${block.stock.packed}:${card?.version ?? 0}`} {...context} row={block.stock} />}
+          {block.ships.length > 0 && <div className="ship-packing">
+            <h4>В упаковке</h4>
+            {block.ships.map((shipment) => <details key={shipment.id} className="ship-packing-item">
+              <summary><strong>{shipment.number}</strong> <StatusChip status={shipment.status} /> <span className="muted">{kbList(shipment)} · {sumOf(shipment, "picked")} из {sumOf(shipment, "requested")} шт</span>
+                {shipment.deadline && <span className="ship-packing-due">срок <Due day={shipment.deadline} late={overdue(shipment)} since={shipment.created_at} /></span>}
+                {(() => { const step = nextStep(shipment); return step ? <span className={`ship-step tone-${step.tone}`} title={step.why}>{step.text}</span> : null; })()}</summary>
+              <ShipmentDetail key={`${shipment.id}:${shipment.version}`} shipment={shipment} canManage={canManage} canWarehouse={canWarehouse} canEdit={canEdit} canUnship={canUnship} busy={busy} mutate={mutate} openData={() => setDataFor(shipment.id)} />
+            </details>)}
+          </div>}
+        </article>;
+      })}
+    </section>)}
   </>;
 }
+
+const NO_CUSTOMER = "Заказчик не указан";
+const EMPTY_CARD = { receiver: "", phone: "", shipping_point: "", carrier: "", terms: null, upd_type: null };
+const kbList = (shipment: Shipment) => [...new Set(shipment.lines.map((line) => line.item_index))].join(", ");
 
 /** КБ проекта в реестр ГП вручную — обычно КБ встают сюда при заведении проекта. */
 function RegisterGood({ busy, mutate, onDone }: { busy: string; mutate: Mutate; onDone: () => void }) {
@@ -285,66 +340,31 @@ function RegisterGood({ busy, mutate, onDone }: { busy: string; mutate: Mutate; 
   </form>;
 }
 
-/* Остальные поля карточки — под «Ещё»: владелец 14.10 оставил на виду получателя, адрес, телефон и УПД. */
-const REQUISITE_FIELDS: Array<[keyof ProjectAddressee, string, string]> = [
-  ["po", "Заказ № (PO)", "пусто — № проекта"], ["contract", "№ договора", "если есть"], ["spec", "№ спецификации", "если есть"],
-  ["invoice", "№ счёта (из УПД)", "подставится из УПД"], ["hours", "Время работы", "пн–пт 9:00–18:00"],
-];
-type MoreDraft = Record<"contact" | "carrier" | "terms", string>;
-
-/** Проект на вкладке «На складе»: что упаковать, куда, документы — и одна кнопка «Упаковать». Отгружают — в «Отправках». */
+/** Склад проекта на вкладке «Упаковка»: КБ и одна кнопка «Упаковать» (владелец 28.10: на панели только то, что нужно упаковщику).
+ *  Данные отправки — в полосе готовности проекта и в окне «Данные…». Отгружают — в «Отгрузке». */
 function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Context & { row: ProjectRow }) {
   const stored = addressees.find((item) => item.project === row.project);
-  const storedMore = (): MoreDraft => ({ contact: stored?.contact ?? "", carrier: stored?.carrier ?? "", terms: stored?.terms ?? "" });
-  const [card, setCard] = useState<DispatchDraft>(() => dispatchDraft(stored));
-  const [more, setMore] = useState<MoreDraft>(storedMore);
-  const [requisites, setRequisites] = useState<Record<string, string>>(() => Object.fromEntries(REQUISITE_FIELDS.map(([key]) => [key, String(stored?.[key] ?? "")])));
   const readyLines = row.lines.filter((line) => line.ready > 0);
   const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(readyLines.map((line) => [line.good.id, String(line.ready)])));
   const [marked, setMarked] = useState<Record<string, boolean>>(() => Object.fromEntries(readyLines.map((line) => [line.good.id, true])));
-  const [plan, setPlan] = useState({ plan_date: stored?.plan_date ?? "", note: stored?.note ?? "" });
-  const [docs, setDocs] = useState({ upd_number: "", upd_date: today(), deadline: "" });
+  const [deadline, setDeadline] = useState("");
   const [problem, setProblem] = useState("");
   // Ключ повтора живёт до успеха: повтор после обрыва связи вернёт уже заведённую отправку, а не заведёт вторую.
   const packKey = useRef(crypto.randomUUID());
   const chosen = readyLines.filter((line) => marked[line.good.id] && num(qty[line.good.id]) > 0);
   const total = round2(chosen.reduce((sum, line) => sum + num(qty[line.good.id]), 0));
-  // Данные отправки правят и менеджер, и склад (владелец 14.10, как в «Приёмке с производства»).
-  const editCard = canEdit;
-
-  const saveRequisite = (key: string, value: string) => {
-    if (String(stored?.[key as keyof ProjectAddressee] ?? "") === value) return;
-    void mutate(`addressee:${row.project}`, () => shippingApi.saveAddressee({ project: row.project, version: stored?.version ?? 0, [key]: key === "plan_date" && !value ? null : value }), "Реквизиты проекта сохранены");
-  };
 
   const pack = () => {
     setProblem("");
     const over = chosen.find((line) => num(qty[line.good.id]) > line.ready);
     if (over) { setProblem(`${over.good.item_index}: на складе только ${over.ready}`); return; }
-    // Самовывоз: адреса доставки нет, серверу нужна непустая точка — пишем «Самовывоз», как в старых карточках.
-    const sent = pickup && !card.shipping_point.trim() ? { ...card, shipping_point: PICKUP_CARRIER } : card;
     // Адрес не обязателен для упаковки: его вносит менеджер в «Данных отправок», без него отправка не уедет (сервер).
     const lines = chosen.map((line) => ({ good_id: line.good.id, version: line.good.version, quantity: qty[line.good.id] }));
     void mutate(`pack:${row.project}`, async () => {
-      const before = storedMore();
-      const changed = editCard ? {
-        ...changedDispatch(sent, stored),
-        ...Object.fromEntries(Object.entries(more).filter(([key, value]) => value.trim() !== before[key as keyof MoreDraft])
-          .map(([key, value]) => [key, key === "terms" ? value || null : value.trim()])),
-      } : {};
-      const number = docs.upd_number.trim();
-      // Менеджер: один запрос — одна транзакция, карточка и отправка с PL/DN сохраняются вместе или никак. Склад карточку
-      // в упаковке не правит (сервер) — его правка уходит в карточку отдельно, перед упаковкой.
-      let version = stored?.version ?? 0;
-      if (!canManage && Object.keys(changed).length) {
-        version = (await shippingApi.saveAddressee({ project: row.project, version, ...changed })).addressee.version;
-      }
-      // Адресат не копируется в отправку: пустые поля идут за карточкой проекта, пока отправка открыта; бумажную УПД,
-      // приложенную к данным отправки, новая отправка берёт себе.
+      // Адресат не копируется в отправку: пустые поля идут за карточкой проекта, пока отправка открыта.
       const result = await shippingApi.projectShip({
-        project: row.project, addressee_version: version, lines, ship: false,
-        ...(canManage && Object.keys(changed).length ? { addressee: changed } : {}),
-        ...(canManage ? { documents: { upd_number: number, upd_date: number ? docs.upd_date || null : null, deadline: docs.deadline || null } } : {}),
+        project: row.project, addressee_version: stored?.version ?? 0, lines, ship: false,
+        ...(canManage ? { documents: { upd_number: "", upd_date: null, deadline: deadline || null } } : {}),
       }, packKey.current);
       packKey.current = crypto.randomUUID();
       return result;
@@ -354,13 +374,8 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
     });
   };
 
-  const pickup = isPickup(more.carrier);
-  const filled = [
-    stored?.plan_date ? formatDate(stored.plan_date) : "", ...(canManage ? REQUISITE_FIELDS.map(([key]) => String(stored?.[key] ?? "")) : []),
-  ].filter(Boolean);
-
   return <div className="ship-panel">
-    <div className="table-scroll"><table className="ship-lines">
+    <table className="ship-lines ship-lines-compact">
       <thead><tr>{canEdit && <th aria-label="Отметка" />}<th>КБ</th><th>Наименование</th><th className="num">В заказе</th><th className="num">Принято складом</th><th className="num">Упаковано</th><th className="num">Отгружено</th>{canEdit && <th className="num">Упаковать</th>}</tr></thead>
       <tbody>{row.lines.map((line) => {
         const can = line.ready > 0;
@@ -376,49 +391,19 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
             : <span className="muted">нет на складе</span>}</td>}
         </tr>;
       })}</tbody>
-    </table></div>
+    </table>
 
-    {canEdit && readyLines.length > 0 && <>
-      <div className="ship-dispatch">
-        <h3>Данные отправки</h3>
-        <DispatchFields project={row.project} draft={card} onChange={setCard} editable={editCard} card={stored} suffix={` проекта ${row.project}`} hideAddress={pickup}
-          onCardSaved={(saved, message) => void mutate(`addressee:${row.project}`, async () => saved, message)} />
-        <div className="form-grid ship-way">
-          <label>ТК<CarrierSelect label={`ТК проекта ${row.project}`} disabled={!editCard} value={more.carrier}
-            onChange={(carrier) => setMore({ ...more, carrier, terms: termsFor(carrier) ?? more.terms })} /></label>
-          <label>Условия<span className="ship-terms" aria-label={`Условия доставки проекта ${row.project}`}>{termsText(more.terms) || "—"}</span></label>
-          <label>Контактное лицо<input aria-label={`Контактное лицо проекта ${row.project}`} disabled={!editCard} placeholder={editCard ? "кто принимает" : ""} value={more.contact}
-            onChange={(event) => setMore({ ...more, contact: event.target.value })} /></label>
-          {canManage && <label>Отгрузить до<input aria-label={`Отгрузить до: проект ${row.project}`} type="date" min={today()} value={docs.deadline}
-            onChange={(event) => setDocs({ ...docs, deadline: event.target.value })} /></label>}
-        </div>
-      </div>
-      <details className="ship-more"><summary>Реквизиты: {canManage ? "УПД, " : ""}план, документы <span className="muted">· {filled.length ? filled.join(" · ") : "не заполнены"}</span></summary>
-        <div className="ship-form">
-          {canManage && <>
-            <label>№ УПД<input aria-label={`№ УПД проекта ${row.project}`} value={docs.upd_number} onChange={(event) => setDocs({ ...docs, upd_number: event.target.value })} /></label>
-            <label>Дата УПД<input aria-label={`Дата УПД проекта ${row.project}`} type="date" value={docs.upd_date} onChange={(event) => setDocs({ ...docs, upd_date: event.target.value })} /></label>
-          </>}
-          <label className="ship-span2">Комментарий проекта<input aria-label={`Комментарий проекта ${row.project}`} placeholder="попадёт в новые отправки" value={plan.note} onChange={(event) => setPlan({ ...plan, note: event.target.value })} onBlur={(event) => saveRequisite("note", event.target.value.trim())} /></label>
-          <label>Плановая дата проекта<input aria-label={`Плановая дата проекта ${row.project}`} type="date" min={today()} value={plan.plan_date} onChange={(event) => setPlan({ ...plan, plan_date: event.target.value })} onBlur={(event) => saveRequisite("plan_date", event.target.value)} /></label>
-          {canManage && REQUISITE_FIELDS.map(([key, label, placeholder]) => <label key={key}>{label}
-            <input aria-label={`${label} проекта ${row.project}`} placeholder={placeholder} value={requisites[key] ?? ""} onChange={(event) => setRequisites({ ...requisites, [key]: event.target.value })} onBlur={(event) => saveRequisite(key, event.target.value.trim())} /></label>)}
-        </div>
-      </details>
-      <div className="ship-actions">
-        <span className="ship-total">Упаковать: <strong>{chosen.length} КБ · {total} шт</strong></span>
-        {problem && <span className="tone-danger" role="alert">{problem}</span>}
-        <span className="ship-actions-end">
-          <button type="button" className="primary" disabled={!chosen.length || Boolean(busy)} onClick={pack}>{busy === `pack:${row.project}` ? "Упаковываем…" : `Упаковать · ${total} шт`}</button>
-        </span>
-      </div>
-    </>}
+    {canEdit && readyLines.length > 0 && <div className="ship-actions">
+      <span className="ship-total">Упаковать: <strong>{chosen.length} КБ · {total} шт</strong></span>
+      {canManage && <label className="ship-deadline">Отгрузить до<input className="ship-narrow" aria-label={`Отгрузить до: проект ${row.project}`} type="date" min={today()} value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>}
+      {problem && <span className="tone-danger" role="alert">{problem}</span>}
+      <button type="button" className="primary" disabled={!chosen.length || Boolean(busy)} onClick={pack}>{busy === `pack:${row.project}` ? "Упаковываем…" : `Упаковать · ${total} шт`}</button>
+    </div>}
     {readyLines.length === 0 && <div className="empty">На складе по проекту ничего нет — примите готовое в разделе «Приёмка с производства».</div>}
+
     {row.open.length > 0 && <p className="ship-open-note">В отправках: {row.open.map((shipment) => <span key={shipment.id}>{shipment.number} <StatusChip status={shipment.status} /></span>)}</p>}
   </div>;
 }
-
-/* ---------- Отправки: по статусам ---------- */
 
 /** Этап отправки для группировки: «Собирается» — заявка и набор, «Упакована» — PL/DN готовы, «Отгружена» — уехала. */
 const PHASES: Array<[string, string[]]> = [
@@ -492,9 +477,8 @@ const PRESETS: Record<Scope, Array<{ label: string; test: (row: Shipment) => boo
     { label: "Отгружено без УПД", test: noUpd }, { label: "Отменены", test: (row) => row.status === "Отменена" }, { label: "Все", test: () => true }],
 };
 
-function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, canUnship, busy, mutate, reload, scope }: Context & { scope: Scope }) {
+function ShipmentsTab({ shipments, canManage, canWarehouse, canEdit, canUnship, busy, mutate, reload, scope }: Context & { scope: Scope }) {
   const rows = useMemo(() => shipmentRows(shipments.filter((shipment) => SCOPES[scope].statuses.includes(shipment.status))), [shipments, scope]);
-  const [creating, setCreating] = useState(false);
   // Окно данных живёт здесь, а не в раскрытой строке: строка пересоздаётся после каждого сохранения.
   const [dataFor, setDataFor] = useState<string | null>(null);
   const dataShipment = shipments.find((shipment) => shipment.id === dataFor) ?? null;
@@ -508,7 +492,7 @@ function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, canU
     } },
     scope === "ship"
       ? { key: "gaps", title: "Данные", value: (row) => row.missing_ship.join(", "), filter: true, hint: "Что ещё не внесено; трек-номер вписывает кладовщик",
-        render: (row) => <DataChip shipment={row} ship /> }
+        render: (row) => <Readiness source={row} gaps={row.missing_ship} withTrack /> }
       : { key: "step", title: "Что сделать", value: (row) => nextStep(row)?.text ?? "", filter: true, hint: "Следующий шаг по отправке",
         render: (row) => { const step = nextStep(row); return step ? <span className={`ship-step tone-${step.tone}`} title={step.why}>{step.text}</span> : <span className="muted">—</span>; } },
     { key: "customer", title: "Заказчик", value: (row) => row.customer || row.receiver, filter: true, render: (row) => <span className="ship-clip ship-clip-where" title={row.customer || row.receiver}>{row.customer || row.receiver}</span> },
@@ -528,10 +512,8 @@ function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, canU
   return <>
     {print.error && <div className="error-banner" role="alert">{print.error}</div>}
     {dataShipment && <ShipmentDataWindow key={dataShipment.id} shipment={dataShipment} close={() => setDataFor(null)} onSaved={reload} />}
-    {creating && <CreateShipment goods={goods} busy={busy} mutate={mutate} onDone={() => setCreating(false)} />}
     <DataTable label={SCOPES[scope].label} storageKey={`shipping-shipments-${scope}`} rows={rows} columns={columns} rowKey={(row) => row.id}
       presets={PRESETS[scope]} defaultPreset={PRESETS[scope][0]?.label}
-      toolbar={scope === "pack" && canManage && !creating ? <button type="button" className="secondary small" onClick={() => setCreating(true)}>+ Заявка на отгрузку</button> : undefined}
       rowClassName={(row) => row.status === "Отменена" ? "cancelled" : ""} exportName={SCOPES[scope].label}
       emptyText={SCOPES[scope].empty}
       renderDetail={(row) => <ShipmentDetail key={`${row.id}:${row.version}`} shipment={row} canManage={canManage} canWarehouse={canWarehouse} canEdit={canEdit} canUnship={canUnship} busy={busy} mutate={mutate} openData={() => setDataFor(row.id)} />} />
@@ -633,7 +615,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
     <div className="ship-card-head">
       <strong>{shipment.number}</strong><StatusChip status={shipment.status} />
       <span>{shipment.shipping_point.trim() ? destination({ ...shipment, receiver: shipment.receiver || shipment.customer })
-        : <><span className="tone-danger">адрес не указан</span>{` · ${shipment.receiver || shipment.customer}`}</>}</span>
+        : <><span className={["Новая", "Собрана"].includes(shipment.status) ? "muted" : "tone-danger"}>адрес не указан</span>{` · ${shipment.receiver || shipment.customer}`}</>}</span>
       {shipment.deadline && <span>срок <Due day={shipment.deadline} late={late} since={shipment.created_at} /></span>}
       {shipment.pl_number && <span className="muted">{shipment.pl_number} · {shipment.dn_number}</span>}
       {shipment.places > 0 && <span className="muted">мест {shipment.places}{shipment.weight ? ` · ${shipment.weight} кг` : ""}</span>}
