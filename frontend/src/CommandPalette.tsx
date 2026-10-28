@@ -7,7 +7,8 @@ import { hasNavAccess, NAV, openPlace, type Section } from "./navigation";
 export type SearchResult = { group: string; title: string; subtitle: string; section: string; params: Record<string, string> };
 type SearchPayload = { query: string; results: SearchResult[]; ms: number };
 
-type Command = { label: string; section: Section; params?: Record<string, string>; words?: string };
+// `search`: offered only once something is typed (the short list on an empty field stays the daily jumps).
+type Command = { label: string; section: Section; params?: Record<string, string>; words?: string; search?: boolean };
 
 // Order = order in the list.
 const COMMANDS: Command[] = [
@@ -25,12 +26,73 @@ const COMMANDS: Command[] = [
   { label: "Мои заявки", section: "myrequests", words: "личная карточка" },
   { label: "Реестр заявок", section: "requests", words: "заявки передать в закупку" },
   { label: "Внутренние проекты", section: "projects", params: { tab: "internal" }, words: "ВП" },
+  { label: "Счета (документация)", section: "primarydocs", params: { tab: "invoices" }, words: "счёт оплата платёжка kaiten", search: true },
+  { label: "Цепочка документов", section: "primarydocs", params: { tab: "chain" }, words: "упд счёт заказ", search: true },
+  { label: "Отправки", section: "shipping", params: { tab: "shipments" }, words: "отгрузка упаковка места накладная трек перевозчик", search: true },
+  { label: "Журнал отгрузки", section: "shipping", params: { tab: "journal" }, words: "журнал движения готовой продукции", search: true },
+  // «База данных»: каждая вкладка — отдельным переходом (ключи вкладок читает ReferencesPage из `&tab=`).
+  { label: "База данных → Операции", section: "references", params: { tab: "templates" }, words: "шаблоны техкарт карточки операций", search: true },
+  { label: "База данных → Оборудование", section: "references", params: { tab: "ob" }, words: "станки инструмент аппликаторы", search: true },
+  { label: "База данных → Разъёмы", section: "references", params: { tab: "connectors" }, words: "серии каталог разъёмов", search: true },
+  { label: "База данных → Коаксиальные разъёмы", section: "references", params: { tab: "coax" }, words: "sma bnc", search: true },
+  { label: "База данных → Терминалы", section: "references", params: { tab: "ter" }, words: "контакты обжим", search: true },
+  { label: "База данных → Наконечники", section: "references", params: { tab: "lug" }, words: "кольцевые вилочные гильзы", search: true },
+  { label: "База данных → Коаксиальные кабели", section: "references", params: { tab: "cab_coax" }, words: "rg провода", search: true },
+  { label: "База данных → Монтажные провода", section: "references", params: { tab: "cab_wire" }, words: "мс пв", search: true },
+  { label: "База данных → Многожильные кабели", section: "references", params: { tab: "cab_multi" }, search: true },
+  { label: "База данных → Кабели Ethernet", section: "references", params: { tab: "cab_lan" }, words: "витая пара lan", search: true },
+  { label: "База данных → Оболочки", section: "references", params: { tab: "cov" }, words: "тут ттк оплётка гофра кембрик лента", search: true },
+  { label: "База данных → Расходники", section: "references", params: { tab: "mat_use" }, words: "припой флюс материалы", search: true },
+  { label: "База данных → Соответствия", section: "references", params: { tab: "suppliers" }, words: "домен поставщик страна изготовитель сечения awg", search: true },
 ];
+
+// What else a person types to find a menu section (the section's own label and subtitle are searched as well).
+const SECTION_WORDS: Partial<Record<Section, string>> = {
+  shipping: "упаковка отправка готовая продукция",
+  intake: "приёмка с производства готовая продукция упаковка",
+  equipment: "принтер этикеток тсд сканер",
+  operations: "журнал аудит события",
+  production: "ресурсное планирование операторы смены",
+  prodplan: "план проекты блокеры сроки",
+  myops: "мои задания операции цех",
+  quality: "отк брак контроль",
+  staff: "люди сотрудники отделы",
+  access: "права уровни пароли",
+  references: "бд справочники",
+  handout: "списание выдача в цех",
+  issues: "комплектация набрать кб",
+};
+
+/** Every menu section plus the explicit jumps above; an explicit jump to the same place wins. */
+function allCommands(): Command[] {
+  const taken = new Set(COMMANDS.filter((command) => !command.params).map((command) => command.section));
+  const fromMenu: Command[] = NAV.filter((item) => item.id !== "card" && !taken.has(item.id)).map((item) => ({
+    label: item.label, section: item.id, words: `${item.sub ?? ""} ${SECTION_WORDS[item.id] ?? ""}`, search: true,
+  }));
+  return [...COMMANDS, ...fromMenu];
+}
 
 // A GRN as the label prints it: «PPM.26.0000001», with a package «FRX.26.0000003-П2».
 const GRN_LIKE = /^[a-zа-яё]{2,6}\.\d{2}\.\d{3,}(?:[-\s]\S{1,6})?$/i;
 const COMMAND_GROUP = "Команды";
 const DEBOUNCE_MS = 120;
+
+const OPEN_EVENT = "erp:open-search";
+
+/** Открыть палитру из любого места (строка поиска в меню, кнопка в верхней полосе планшета). */
+export function openSearch() {
+  window.dispatchEvent(new Event(OPEN_EVENT));
+}
+
+/** Видимый вход в общий поиск: над меню, с подсказкой «Ctrl+K». */
+export function SearchEntry() {
+  return (
+    <button type="button" className="search-entry" aria-label="Поиск по ERP" onClick={openSearch}>
+      <span className="search-entry-label">Поиск по ERP</span>
+      <kbd>Ctrl+K</kbd>
+    </button>
+  );
+}
 
 function fold(text: string): string {
   return text.toLowerCase().replace(/ё/g, "е");
@@ -51,6 +113,12 @@ export function CommandPalette({ principal }: { principal: Principal }) {
   const [error, setError] = useState("");
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener(OPEN_EVENT, show);
+    return () => window.removeEventListener(OPEN_EVENT, show);
+  }, []);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -114,8 +182,8 @@ export function CommandPalette({ principal }: { principal: Principal }) {
       list.unshift({ key: "grn", group: "Склад", title: text.toUpperCase(), subtitle: "Открыть склад с этой партией", go: finish("stock", { q: text }) });
     }
     const words = fold(text).split(/\s+/).filter(Boolean);
-    for (const command of COMMANDS) {
-      if (!sees(command.section)) continue;
+    for (const command of allCommands()) {
+      if (!sees(command.section) || (command.search && !words.length)) continue;
       const haystack = fold(`${command.label} ${command.words ?? ""}`);
       if (words.every((word) => haystack.includes(word))) {
         list.push({ key: `c${command.label}`, group: COMMAND_GROUP, title: command.label, subtitle: "Перейти", go: finish(command.section, command.params) });
@@ -159,7 +227,7 @@ export function CommandPalette({ principal }: { principal: Principal }) {
         <input
           ref={input} className="palette-input" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-label="Поиск по ERP"
           aria-activedescendant={entries[active] ? `palette-${entries[active].key}` : undefined}
-          placeholder="Строка закупки, проект, склад (ГРН), поставщик… или команда" autoComplete="off" spellCheck={false}
+          placeholder="Что найти: ГРН, проект, КБ, отгрузка, разъём, поставщик, раздел…" autoComplete="off" spellCheck={false}
           value={query} onChange={(event) => setQuery(event.target.value)}
         />
         <div className="palette-list" id="palette-list" role="listbox" aria-label="Результаты">

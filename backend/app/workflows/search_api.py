@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import date
 from collections.abc import Callable, Iterable, Iterator
 from typing import Annotated, Any
 
@@ -18,10 +19,16 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.procurement.infrastructure import ProcurementLineRow
+from app.modules.production.infrastructure import ProductionTaskRow
+from app.modules.references.coverings import classify as classify_covering
+from app.modules.references.infrastructure import TechOperationRecordRow
+from app.modules.shipping.infrastructure import FinishedGoodRow, ShipmentLineRow, ShipmentRow
+from app.modules.techcards.infrastructure import ProjectTechcardRow
 from app.modules.purchasing.deps import purchasing_uow_factory
 from app.modules.purchasing.infrastructure import (
-    InternalProjectRow, ItemAliasRow, ItemRow, RfqRow, SupplierRow,
+    InternalProjectRow, InvoiceRow, ItemAliasRow, ItemRow, RfqRow, SupplierRow, UpdDocumentRow,
 )
 from app.modules.warehouse.infrastructure import StockLotRow
 from app.modules.warehouse.word_search import _FOLD, fold, matches_words
@@ -39,6 +46,8 @@ _AMBIGUOUS = {chr(code) for code in _FOLD} | set(_FOLD.values()) | {"ё", "е"}
 
 G_LINES, G_PROJECTS, G_ITEMS = "Строки закупки", "Проекты", "Номенклатура"
 G_SUPPLIERS, G_STOCK, G_RFQ = "Поставщики", "Склад", "Запросы КП"
+G_DB, G_SHIPMENTS, G_GOODS = "База данных", "Отгрузки", "Готовая продукция"
+G_TECHCARDS, G_TASKS, G_UPD, G_INVOICES, G_STAFF = "Техкарты", "Задания цеха", "Реестр УПД", "Счета", "Сотрудники"
 
 
 def _result(group: str, title: str, subtitle: str, section: str, **params: str) -> dict[str, Any]:
@@ -215,6 +224,185 @@ def _rfqs(session: Session, words: list[str], patterns: list[str]) -> list[dict]
     return found
 
 
+# «База данных»: the stored tab of a record -> (tab of the screen, its label, the access key of the tab). A БД.ПРОВ row
+# goes by its cable list, a БД.ТЕР row by its list (терминал / наконечник), a БД.МАТ row by what it is.
+_CABLE_TABS = {"coax": ("cab_coax", "Коаксиальные кабели"), "wire": ("cab_wire", "Монтажные провода"),
+               "multi": ("cab_multi", "Многожильные кабели"), "lan": ("cab_lan", "Кабели Ethernet")}
+_PLAIN_TABS = {"op": ("templates", "Операции", "erptctpl"), "ob": ("ob", "Оборудование", "erpref"),
+               "coax": ("coax", "Коаксиальные разъёмы", "erpref")}
+_DB_STORED_TABS = ("op", "ob", "coax", "ter", "prov", "mat")
+_SOLDER_GROUP = "припой/флюс"
+
+
+def _db_place(tab: str, cable_kind: str | None, ter_kind: str | None, fields: dict) -> tuple[str, str, str] | None:
+    if tab in _PLAIN_TABS:
+        return _PLAIN_TABS[tab]
+    if tab == "ter":
+        return ("lug", "Наконечники", "erpref") if ter_kind == "lug" else ("ter", "Терминалы", "erpref")
+    if tab == "prov" and cable_kind in _CABLE_TABS:
+        return (*_CABLE_TABS[cable_kind], "erpref")
+    if tab == "mat":
+        if classify_covering(fields)[0]:
+            return "cov", "Оболочки", "erpref"
+        group = str((fields or {}).get("Группа", "")).strip().casefold().replace("ё", "е")
+        return ("mat_use", "Расходники", "erpref") if group == _SOLDER_GROUP else None
+    return None
+
+
+def _database(session: Session, words: list[str], patterns: list[str], keys: set[str]) -> list[dict]:
+    row = TechOperationRecordRow
+    stored = [tab for tab in _DB_STORED_TABS if tab != "op" or "erptctpl" in keys]
+    if "erpref" not in keys:
+        stored = [tab for tab in stored if tab == "op"]
+    found: list[dict] = []
+    columns = [row.tab, row.cable_kind, row.ter_kind, row.display_text, row.fields, row.normalized_search]
+    for tab, cable, ter, text, fields, haystack in _scan(
+        session, columns, patterns, [row.display_text, row.normalized_search], order=row.sort_key, base=row.tab.in_(stored),
+    ):
+        if not _hit(words, _text(text, haystack)):
+            continue
+        place = _db_place(tab, cable, ter, fields)
+        if place is None or place[2] not in keys:
+            continue
+        found.append(_result(G_DB, text[:140], f"База данных → {place[1]}", "references", tab=place[0], q=text[:80]))
+        if len(found) >= PER_GROUP:
+            break
+    return found
+
+
+def _shipments(session: Session, words: list[str], patterns: list[str]) -> list[dict]:
+    row, line_row = ShipmentRow, ShipmentLineRow
+    projects: dict[Any, set[str]] = {}
+    statement = select(line_row.shipment_id, line_row.project)
+    narrow = _narrow([line_row.project], patterns, session)
+    if narrow is not None:
+        statement = statement.where(narrow)
+    for shipment_id, project in session.execute(statement):
+        projects.setdefault(shipment_id, set()).add(project)
+    columns = [row.id, row.number, row.status, row.customer, row.receiver, row.track_number, row.upd_number,
+               row.pl_number, row.dn_number]
+    own_columns = [row.number, row.customer, row.receiver, row.track_number, row.upd_number, row.pl_number, row.dn_number]
+    statement = select(*columns).order_by(row.created_at.desc())
+    narrow = _narrow(own_columns, patterns, session)
+    if narrow is not None:
+        # A shipment qualifies by its own columns or by a project in its lines.
+        statement = statement.where(or_(narrow, row.id.in_(list(projects)))) if projects else statement.where(narrow)
+    found: list[dict] = []
+    for shipment_id, number, status, customer, receiver, track, upd, pl, dn in session.execute(statement):
+        own = " ".join(sorted(projects.get(shipment_id, ())))
+        if _hit(words, _text(number, customer, receiver, track, upd, pl, dn, own)):
+            found.append(_result(G_SHIPMENTS, _dot(number, customer), _dot(status, receiver, own),
+                                 "shipping", tab="shipments"))
+            if len(found) >= PER_GROUP:
+                break
+    return found
+
+
+def _goods(session: Session, words: list[str], patterns: list[str], warehouse: bool) -> list[dict]:
+    row = FinishedGoodRow
+    columns = [row.project, row.item_index, row.customer, row.article, row.name, row.grn, row.location,
+               row.accepted, row.shipped, row.unit]
+    found: list[dict] = []
+    for project, index, customer, article, name, grn, location, accepted, shipped, unit in _scan(
+        session, columns, patterns, [row.project, row.item_index, row.customer, row.article, row.name, row.grn],
+        order=row.project,
+    ):
+        if _hit(words, _text(project, index, customer, article, name, grn)):
+            left = float(accepted - shipped)
+            subtitle = _dot(project, f"КБ {index}" if index else "", customer, location, f"на складе ГП {left:g} {unit}")
+            # The warehouse screen takes the list and the word; a shipper without «Склад» gets the shipping screen.
+            section, params = ("stock", {"view": "goods", "q": project}) if warehouse else ("shipping", {"tab": "stock"})
+            found.append(_result(G_GOODS, _dot(name, article), subtitle, section, **params))
+            if len(found) >= PER_GROUP:
+                break
+    return found
+
+
+def _techcards(session: Session, words: list[str], patterns: list[str]) -> list[dict]:
+    row = ProjectTechcardRow
+    found: list[dict] = []
+    for project, index, name, status, revision in _scan(
+        session, [row.project, row.item_index, row.product_name, row.status, row.revision], patterns,
+        [row.project, row.item_index, row.product_name], order=row.updated_at.desc(),
+    ):
+        if _hit(words, _text(project, index, name)):
+            found.append(_result(G_TECHCARDS, _dot(project, f"КБ {index}" if index else "", name),
+                                 _dot("Техкарта (ЭТК)", status, f"ред. {revision}"), "techcards", project=project))
+            if len(found) >= PER_GROUP:
+                break
+    return found
+
+
+def _tasks(session: Session, words: list[str], patterns: list[str]) -> list[dict]:
+    row = ProductionTaskRow
+    found: list[dict] = []
+    for number, project, item, name, quantity, status in _scan(
+        session, [row.number, row.project, row.item, row.name, row.quantity, row.status], patterns,
+        [row.number, row.project, row.item, row.name], order=row.created_at.desc(),
+    ):
+        if _hit(words, _text(number, project, item, name)):
+            found.append(_result(G_TASKS, _dot(number, name),
+                                 _dot(project, f"КБ {item}" if item else "", f"{quantity} шт", status), "production"))
+            if len(found) >= PER_GROUP:
+                break
+    return found
+
+
+def _day(value: date | None) -> str:
+    return value.strftime("%d.%m.%Y") if value else ""
+
+
+def _upd(session: Session, words: list[str], patterns: list[str]) -> list[dict]:
+    row = UpdDocumentRow
+    found: list[dict] = []
+    for doc_id, number, doc_date, seller, inn, status in _scan(
+        session, [row.id, row.number, row.doc_date, row.seller_name, row.seller_inn, row.status], patterns,
+        [row.number, row.seller_name, row.seller_inn, row.file_name], order=row.doc_date.desc(),
+        base=row.twin_of.is_(None),
+    ):
+        if _hit(words, _text(number, seller, inn)):
+            found.append(_result(
+                G_UPD, _dot(f"УПД {number}" if number else "УПД", _day(doc_date)),
+                _dot(seller, f"ИНН {inn}" if inn else "", status), "primarydocs", tab="upd", upd=doc_id,
+            ))
+            if len(found) >= PER_GROUP:
+                break
+    return found
+
+
+def _invoices(session: Session, words: list[str], patterns: list[str]) -> list[dict]:
+    row = InvoiceRow
+    found: list[dict] = []
+    for number, doc_date, seller, inn, title in _scan(
+        session, [row.number, row.doc_date, row.seller_name, row.seller_inn, row.title], patterns,
+        [row.number, row.seller_name, row.seller_inn, row.title], order=row.card_created.desc(),
+    ):
+        if _hit(words, _text(number, seller, inn, title)):
+            found.append(_result(
+                G_INVOICES, _dot(f"Счёт {number}" if number else "Счёт", _day(doc_date)),
+                _dot(seller, f"ИНН {inn}" if inn else "", "" if seller else title), "primarydocs", tab="invoices",
+                q=number or title[:60],
+            ))
+            if len(found) >= PER_GROUP:
+                break
+    return found
+
+
+def _staff(session: Session, words: list[str], patterns: list[str]) -> list[dict]:
+    row = IdentityUserRow
+    found: list[dict] = []
+    for user_id, name, department, job, active in _scan(
+        session, [row.id, row.name, row.department, row.job_title, row.active], patterns,
+        [row.name, row.job_title, row.department], order=row.name,
+    ):
+        if _hit(words, _text(name, job, department)):
+            found.append(_result(G_STAFF, name, _dot(job, department, "" if active else "не работает"), "staff",
+                                 user=str(user_id)))
+            if len(found) >= PER_GROUP:
+                break
+    return found
+
+
 def _may(principal: Principal, *sections: str) -> bool:
     return section_allowed(principal, sections, "view")
 
@@ -245,6 +433,21 @@ def search(
         groups.append((G_STOCK, lambda s: _stock(s, q, patterns)))
     if procurement:
         groups.append((G_RFQ, lambda s: _rfqs(s, words, patterns)))
+    keys = {key for key in ("erpref", "erptctpl") if _may(principal, key)}
+    if keys:
+        groups.append((G_DB, lambda s: _database(s, words, patterns, keys)))
+    if _may(principal, "shipping", "shipping_goods"):
+        groups.append((G_SHIPMENTS, lambda s: _shipments(s, words, patterns)))
+        groups.append((G_GOODS, lambda s: _goods(s, words, patterns, _may(principal, "warehouse"))))
+    if _may(principal, "techcards"):
+        groups.append((G_TECHCARDS, lambda s: _techcards(s, words, patterns)))
+    if _may(principal, "production"):
+        groups.append((G_TASKS, lambda s: _tasks(s, words, patterns)))
+    if procurement:
+        groups.append((G_UPD, lambda s: _upd(s, words, patterns)))
+        groups.append((G_INVOICES, lambda s: _invoices(s, words, patterns)))
+    if principal.full_access:  # «Сотрудники» is outside the matrix: superadmin / admin only
+        groups.append((G_STAFF, lambda s: _staff(s, words, patterns)))
     # A scanned / typed GRN: the lot first.
     if GRN_LIKE.match(q.strip()):
         groups.sort(key=lambda pair: pair[0] != G_STOCK)

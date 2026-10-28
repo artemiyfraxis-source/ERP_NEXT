@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { CommandPalette } from "./CommandPalette";
+import { CommandPalette, SearchEntry } from "./CommandPalette";
 import type { Principal } from "./api";
 
 function json(body: unknown) {
@@ -123,7 +123,7 @@ it("commands are filtered by the sections the user can open", async () => {
   ]);
   const input = screen.getByRole("combobox");
   fireEvent.change(input, { target: { value: "поставщики" } });
-  expect(screen.getAllByRole("option").map((option) => option.querySelector(".palette-title")?.textContent)).toEqual(["Поставщики"]);
+  expect(screen.getAllByRole("option").map((option) => option.querySelector(".palette-title")?.textContent)).toEqual(["Поставщики", "Закупка"]);
   fireEvent.keyDown(input, { key: "Enter" });
   // The purchasing reference books left «Снабжение» (Витя's edit 4): «Справочники → Закупка».
   expect(window.location.search).toBe("?section=purchasingrefs&tab=directory");
@@ -154,4 +154,44 @@ it("an admin sees every command", async () => {
   press({ key: "k", code: "KeyK", ctrlKey: true });
   await screen.findByRole("combobox");
   expect(screen.getAllByRole("option").length).toBeGreaterThanOrEqual(4);
+});
+
+it("the visible entry «Поиск по ERP» with its Ctrl+K hint opens the palette", async () => {
+  serve([]);
+  render(<><SearchEntry /><CommandPalette principal={person({ warehouse: "view" })} /></>);
+  const entry = screen.getByRole("button", { name: "Поиск по ERP" });
+  expect(entry).toHaveTextContent("Ctrl+K");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(entry);
+  expect(await screen.findByRole("dialog", { name: "Поиск" })).toBeInTheDocument();
+  expect(screen.getByRole("combobox")).toHaveFocus();
+});
+
+it("a result of a new group says where it lives and opens that place", async () => {
+  serve([{ group: "База данных", title: "Наконечник кольцевой 6 мм", subtitle: "База данных → Наконечники", section: "references", params: { tab: "lug", q: "Наконечник кольцевой 6 мм" } }]);
+  await mount(person({ erpref: "view" }));
+  press({ key: "k", code: "KeyK", ctrlKey: true });
+  fireEvent.change(await screen.findByRole("combobox"), { target: { value: "кольцевой" } });
+  expect(await screen.findByText("База данных → Наконечники")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Наконечник кольцевой 6 мм"));
+  const url = new URL(window.location.href);
+  expect([url.searchParams.get("section"), url.searchParams.get("tab"), url.searchParams.get("q")]).toEqual(["references", "lug", "Наконечник кольцевой 6 мм"]);
+});
+
+it("section words find the menu section once something is typed, and an empty field stays short", async () => {
+  serve([]);
+  await mount(person({ shipping: "view", warehouse: "view", erpref: "view" }));
+  press({ key: "k", code: "KeyK", ctrlKey: true });
+  const input = await screen.findByRole("combobox");
+  const titles = () => screen.getAllByRole("option").map((option) => option.querySelector(".palette-title")?.textContent);
+  expect(titles()).toEqual(["Склад"]);
+  fireEvent.change(input, { target: { value: "упаковка" } });
+  expect(titles()).toEqual(expect.arrayContaining(["Отгрузка", "Отправки", "Приёмка с производства"]));
+  fireEvent.change(input, { target: { value: "наконечники" } });
+  expect(titles()).toEqual(["База данных → Наконечники"]);
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(window.location.search).toBe("?section=references&tab=lug");
+  fireEvent.keyDown(document.body, { key: "k", code: "KeyK", ctrlKey: true });
+  fireEvent.change(await screen.findByRole("combobox"), { target: { value: "оборудование" } });
+  expect(titles()).toEqual(expect.arrayContaining(["Оборудование", "База данных → Оборудование"]));
 });

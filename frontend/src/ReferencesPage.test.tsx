@@ -523,3 +523,20 @@ it("БД.ОБ: a click on a value edits it in the card — a model value goes to
   window.history.replaceState({}, "", "/");
 });
 
+
+it("a link from the global search opens its tab and fills the search with the word", async () => {
+  window.history.replaceState({}, "", "/?section=references&tab=coax&q=sma");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReferencesPage principal={admin} />);
+  expect(await screen.findByRole("button", { name: /^Коаксиальные разъёмы/ })).toHaveAttribute("aria-pressed", "true");
+  await waitFor(() => expect(screen.getByRole("searchbox")).toHaveValue("sma"));
+  fireEvent.click(screen.getByRole("button", { name: /^Терминалы/ }));
+  await waitFor(() => expect(window.location.search).not.toContain("q="));
+});
