@@ -1125,6 +1125,28 @@ it("asks the server to sort the whole stock when a column is clicked, from the f
   await waitFor(() => expect(paths).toContain("/api/stock?sort=grn&desc=true"));
 });
 
+it("a row is one lot: the loaded page keeps the server's lot order, not a sum over the article", async () => {
+  // Two lots of one article around a lot of another: by «Свободно» descending the article's lots stand apart.
+  const big = { ...lot, id: "l-big", grn: "OLD.26.0000008", balance: "744", available: "744", reserved: "0" };
+  const small = { ...lot, id: "l-small", grn: "OLD.26.0000030", balance: "3", available: "3", reserved: "0" };
+  const middle = { ...lot, id: "l-mid", grn: "OLD.26.0000019", article: "RP-SMA", name: "RP-SMA-male", balance: "500", available: "500", reserved: "0" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [big, middle, small], total: 3, truncated: 0, next_cursor: null });
+    return json({ group: "", groups: [], articles: [] });
+  });
+
+  render(<WarehousePage />);
+  await screen.findByText("OLD.26.0000008");
+  fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Свободно/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Свободно/ }));
+
+  await waitFor(() => expect(screen.getByRole("columnheader", { name: /^Свободно/ })).toHaveAttribute("aria-sort", "descending"));
+  const grns = screen.getAllByText(/^OLD\.26\.00000(08|19|30)$/).map((cell) => cell.textContent);
+  expect(grns).toEqual(["OLD.26.0000008", "OLD.26.0000019", "OLD.26.0000030"]);
+});
+
 function lotFetch() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);

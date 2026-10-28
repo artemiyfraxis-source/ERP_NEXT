@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -72,3 +73,22 @@ def test_natural_order_of_numbers_in_text():
     first, second = _lot(9, article="A-9"), _lot(10, article="A-10")
     assert [lot.article for lot in sort_stock_lots([second, first], "article", False)] == ["A-9", "A-10"]
     assert [lot.article for lot in sort_stock_lots([first, second], "article", True)] == ["A-10", "A-9"]
+
+
+def test_a_row_is_one_lot_so_lots_of_one_article_sort_apart():
+    # Owner 28.10.2026: a row is one lot (since 27.10), so the order is the lots', not the summed article's — else the
+    # first page holds the top articles and the screen re-sorts an incomplete set.
+    big, small = _lot(1, article="SMA-C58P", quantity="744"), _lot(2, article="SMA-C58P", quantity="3")
+    middle = _lot(3, article="RP-SMA", quantity="500")
+    by_balance = sort_stock_lots([small, middle, big], "balance", True)
+    assert [lot.balance for lot in by_balance] == [Decimal("744"), Decimal("500"), Decimal("3")]
+    late = _lot(99, article="SMA-C58P")
+    by_grn = sort_stock_lots([late, middle, big], "grn", False)
+    assert [lot.grn for lot in by_grn] == ["OLD.26.0000001", "OLD.26.0000003", "OLD.26.0000099"]
+
+
+def test_maker_and_document_columns_sort_the_whole_stock():
+    first = replace(_lot(1), manufacturer="RUICHI", upd_name="SMA-Female")
+    second = replace(_lot(2), manufacturer="MOLEX", upd_name="SMA-C58P")
+    assert [lot.manufacturer for lot in sort_stock_lots([first, second], "maker", False)] == ["MOLEX", "RUICHI"]
+    assert [lot.upd_name for lot in sort_stock_lots([first, second], "upd_name", True)] == ["SMA-Female", "SMA-C58P"]

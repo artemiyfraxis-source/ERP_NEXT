@@ -98,8 +98,10 @@ it("the positions table offers the maker and the documents in «Колонки»
   // A lot without a maker: a dim dash.
   const cap = row("CAP-1");
   expect(within(cap).getAllByText("—").some((cell) => cell.classList.contains("stock-dim"))).toBe(true);
-  // The new columns are not server-sortable: a plain header, no sort button.
-  expect(screen.queryByRole("button", { name: /^Производитель/ })).not.toBeInTheDocument();
+  // The maker and the documents sort the whole stock on the server like every other column (owner 28.10.2026);
+  // «Файл УПД» is a link, not a value to order by.
+  expect(screen.getByRole("button", { name: /^Производитель/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Файл УПД/ })).not.toBeInTheDocument();
 });
 
 it("a lot per row: its own ГРН, no «+1»; «Тип» wraps instead of «…»; an empty type is «—»", async () => {

@@ -389,7 +389,7 @@ def lots(
     q: Annotated[str, Query(max_length=255)] = "",
     zero: bool = False,
     warehouse: Annotated[str | None, Query(pattern="^(ЦАР|ЖУК)$")] = None,
-    sort: Annotated[str | None, Query(pattern="^(type|grn|balance|reserved|available|lots|place|series|article|name|warehouse)$")] = None,
+    sort: Annotated[str | None, Query(pattern="^(type|grn|balance|reserved|available|lots|place|series|article|name|warehouse|maker|upd_name|invoice_name|invoice_number|invoice_date|upd_number|upd_date|prd_number|prd_date)$")] = None,
     desc: bool = False,
     group: Annotated[str, Query(pattern="^(type|place|name|series|grn)?$")] = "",
 ) -> dict:
