@@ -172,7 +172,7 @@ def test_the_install_token_is_issued_by_an_administrator_and_spent_once(stand):
     assert issued.status_code == 200, issued.text
     command = issued.json()["command"]
     secret = command.split("-InstallToken '")[1].split("'")[0]
-    assert secret.startswith("frxi_") and "http://testserver/api/stock/scan/agent/install.ps1" in command
+    assert secret.startswith("frxi_") and "https://testserver/api/stock/scan/agent/install.ps1" in command
     assert command.startswith("powershell -NoProfile -ExecutionPolicy Bypass -Command")
     with sessions() as session:
         stored = session.query(scan_agents.ScanAgentInstallRow).one()
@@ -182,7 +182,7 @@ def test_the_install_token_is_issued_by_an_administrator_and_spent_once(stand):
     first = TestClient(app).post("/api/stock/scan/agent/enroll", json=body)
     assert first.status_code == 200, first.text
     token = first.json()["token"]
-    assert token.startswith("erp_") and first.json()["server"] == "http://testserver"
+    assert token.startswith("erp_") and first.json()["server"] == "https://testserver"
     # The enrolled token works as the agent's: it reports and claims, and the admin's token list shows it.
     assert TestClient(app).post(BEAT, json={"machine_id": "m-9", "scanners": []}, headers=_bearer(token)).status_code == 200
     listed = admin.get("/api/auth/api-tokens").json()["tokens"]
@@ -222,3 +222,18 @@ def test_the_repo_agent_carries_a_version_the_server_can_read():
     release = agent_release.release()
     assert release is not None and release.version, "tools/print-agent/agent.ps1 must hold $script:AgentVersion = 'x.y.z'"
     assert Path(agent_release.agent_dir(), "install.ps1").exists()
+
+
+def test_the_install_command_names_the_server_over_https_unless_a_local_address():
+    # 28.10.2026: TLS ends at Tailscale Funnel, the request reached the API as http — the command must say https
+    from starlette.requests import Request
+    from app.workflows.scan_agent_install import _base
+
+    def base(url):
+        scheme, rest = url.split("://")
+        host = rest.split("/")[0]
+        return _base(Request({"type": "http", "scheme": scheme, "server": (host.split(":")[0], 80), "path": "/",
+                              "headers": [(b"host", host.encode())], "query_string": b"", "root_path": ""}))
+    assert base("http://erp-server.tail811f20.ts.net/") == "https://erp-server.tail811f20.ts.net"
+    assert base("http://192.168.1.85:8080/") == "http://192.168.1.85:8080"
+    assert base("http://localhost:8021/") == "http://localhost:8021"

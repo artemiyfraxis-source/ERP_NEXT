@@ -41,7 +41,13 @@ Admin = Annotated[Principal, Depends(warehouse_admin_principal)]  # the administ
 
 
 def _base(request: Request) -> str:
-    return str(request.base_url).rstrip("/")
+    """The server address for the new PC. TLS ends at Tailscale Funnel before Caddy, so the request reads «http»: a
+    named host is always served over https (28.10.2026 — the first command said http://… and could not reach the
+    server); a bare IP or localhost (the LAN, the preview) keeps what it came with."""
+    url = request.base_url
+    host = url.hostname or ""
+    local = host == "localhost" or host.replace(".", "").isdigit() or ":" in host
+    return str(url if local else url.replace(scheme="https")).rstrip("/")
 
 
 def install_command(base: str, secret: str) -> str:
