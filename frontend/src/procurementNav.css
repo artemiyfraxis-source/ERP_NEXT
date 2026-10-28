@@ -1,13 +1,3 @@
-/* «Снабжение»: the row of «Статистика» tabs under the main row, and the «Не переданы в закупку» strip above «Заявки».
+/* «Снабжение → Статистика»: the row of its inner tabs. The work tabs are items of the sidebar block «Снабжение».
    Tokens only (styles.css :root); kept out of styles.css while other screens restyle it. */
 .seg-tabs.procurement-subtabs { display: flex; width: fit-content; margin-top: -4px; }
-.handoff-strip { margin: 0 0 12px; padding: 10px 14px 12px; }
-.handoff-strip-line { padding: 0 2px; }
-.handoff-strip-line .link-button { padding: 0; }
-.handoff-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 6px; }
-.handoff-head h2 { margin: 0; font-size: 16px; display: flex; align-items: baseline; gap: 8px; }
-.handoff-head .link-button { padding: 0; font-size: 13px; font-weight: 600; }
-.handoff-empty { margin: 0; }
-@media (pointer: coarse) {
-  .handoff-head .link-button, .handoff-strip-line .link-button { min-height: 40px; }
-}

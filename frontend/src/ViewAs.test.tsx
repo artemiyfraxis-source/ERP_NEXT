@@ -80,7 +80,7 @@ it("keeps the «only view» banner on every page and returns to the own card", a
   // The whole app is the worker's: their greeting and their sections.
   expect(screen.getByText("Добрый день, Иванов Пётр")).toBeInTheDocument();
   const nav = within(screen.getByRole("navigation", { name: "Основная навигация" }));
-  expect(nav.getByRole("button", { name: "Снабжение" })).toBeInTheDocument();
+  expect(nav.getByRole("button", { name: "Запросы КП" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Сотрудники" })).not.toBeInTheDocument();
 
   fireEvent.click(nav.getByRole("button", { name: "Первичная документация" }));

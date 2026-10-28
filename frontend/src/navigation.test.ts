@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 import { ACCESS_LEVEL_LABELS, accessLevelLabel, type AccessMode, type Principal } from "./api";
 import {
-  BLOCKS, MOVED_TABS, NAV, canAct, canSee, hasFullAccess, isViewOnly, runsTheSystem, sectionOfTab, visibleBlocks, visibleNav,
+  BLOCKS, MOVED_TABS, NAV, canAct, canSee, hasFullAccess, isViewOnly, procurementMenuTab, runsTheSystem, sectionOfTab,
+  visibleBlocks, visibleNav,
 } from "./navigation";
 
 const user = { id: "1", email: "u@example.test", name: "Сотрудник", department: "КБ" };
@@ -23,10 +24,13 @@ const ALL_EDIT = Object.fromEntries(
     "erpref", "operations"].map((key) => [key, "edit" as AccessMode]),
 );
 
+const BUYER_MENU = ["Сегодня", "Заявки", "Запросы КП", "Закупка", "Счета и поставки", "Статистика"];
+const READER_MENU = BUYER_MENU.filter((label) => label !== "Сегодня");
+
 const EVERYTHING = {
   "Производство": ["Проекты", "Ресурсное планирование", "Задания", "ОТК"],
   // «Мои заявки» and «Заявки» are no menu items (Витя's edits 2–3): the card and «Снабжение → Заявки» open them.
-  "Снабжение": ["Оформить заявку", "Снабжение"],
+  "Снабжение": ["Оформить заявку", ...BUYER_MENU],
   "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
   "Менеджмент": ["Данные отправок", "Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
   "Документация": ["Первичная документация"],
@@ -75,7 +79,7 @@ it("gives the operator the request form, own rows, own tasks and read-only stock
 it("gives the foreman the shop, the stock and the storekeeper's shipping, of the reference books only purchasing's", () => {
   expect(layout(as("foreman", FOREMAN))).toEqual({
     "Производство": ["Ресурсное планирование", "Задания", "ОТК"],
-    "Снабжение": ["Оформить заявку", "Снабжение"],
+    "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
     // «Снабжение» on view reads its moved tabs too.
@@ -87,7 +91,7 @@ it("gives the foreman the shop, the stock and the storekeeper's shipping, of the
 it("gives the technical lead projects, planning, the whole supply block and the reference book", () => {
   expect(layout(as("tech_lead", TECH_LEAD))).toEqual({
     "Производство": ["Проекты", "Ресурсное планирование", "ОТК"],
-    "Снабжение": ["Оформить заявку", "Снабжение"],
+    "Снабжение": ["Оформить заявку", ...BUYER_MENU],
     "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
     "Документация": ["Первичная документация"],
@@ -98,7 +102,7 @@ it("gives the technical lead projects, planning, the whole supply block and the 
 it("gives the commercial lead projects, the supply sheets and shipping for reading", () => {
   expect(layout(as("commercial", COMMERCIAL))).toEqual({
     "Производство": ["Проекты", "Ресурсное планирование"],
-    "Снабжение": ["Оформить заявку", "Снабжение"],
+    "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Склад", "Оборудование", "Приёмка с производства", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
     "Документация": ["Первичная документация"],
@@ -164,10 +168,10 @@ it("NAV-SECTIONS: closing «Заявки» keeps the form and own rows", () => {
 
 it("Витя's edits 2–3: «Мои заявки» and «Заявки» leave the menu, both still open by their keys", () => {
   const buyer = as("tech_lead", { ...OWN, requests: "edit", procurement: "edit" });
-  expect(section(buyer, "Снабжение")).toEqual(["Оформить заявку", "Снабжение"]);
+  expect(section(buyer, "Снабжение")).toEqual(["Оформить заявку", ...BUYER_MENU]);
   expect(visibleNav(buyer).map(({ id }) => id)).toEqual(expect.arrayContaining(["myrequests", "requests"]));
   const register = NAV.find(({ id }) => id === "requests")!;
-  expect(register.within).toBe("procurement"); // the menu highlights «Снабжение» on the register
+  expect(register.within).toBe("procurement"); // the menu highlights «Заявки» of «Снабжение» on the register
 });
 
 it("sends an old link of a moved «Лист закупки» tab to its new section through one table", () => {
@@ -193,7 +197,7 @@ it("hides a block with no section the principal may open", () => {
 it("opens a section by its key and the mode alone: no level name decides, a missing key closes it", () => {
   // A grant is the whole decision — the level's name adds nothing and takes nothing away.
   for (const level of ["operator", "foreman", "tech_lead", "commercial"]) {
-    expect(section(as(level, { procurement: "edit" }), "Снабжение")).toEqual(["Снабжение"]);
+    expect(section(as(level, { procurement: "edit" }), "Снабжение")).toEqual(BUYER_MENU);
     expect(section(as(level, { procurement: "view" }), "Документация")).toEqual(["Первичная документация"]);
     expect(section(as(level, { procurement: "view" }), "Справочники")).toEqual(["Закупка"]);
     expect(section(as(level, { receiving: "view" }), "Склад")).toEqual(["Приёмка"]);
@@ -310,4 +314,21 @@ it("«Данные отправок» in «Менеджмент» opens to edito
   expect(section(as("pm", { shipping: "view" }), "Менеджмент")).not.toContain("Данные отправок");
   expect(section(as("storekeeper", { shipping_goods: "edit" }), "Менеджмент")).not.toContain("Данные отправок");
   expect(section(as("admin", {}), "Менеджмент")).toContain("Данные отправок");
+});
+
+it("owner 28.10: the tabs of «Снабжение» are menu items in the order of doing, each opening its own ?tab=", () => {
+  const items = visibleBlocks(as("tech_lead", TECH_LEAD)).find((block) => block.title === "Снабжение")!.items;
+  expect(items.map((item) => [item.id, item.tab])).toEqual([
+    ["newrequest", undefined], ["procurement", "today"], ["procurement", "requests"], ["procurement", "rfq"],
+    ["procurement", "buy"], ["procurement", "orders"], ["procurement", "stats"],
+  ]);
+});
+
+it("maps an address tab to the menu item that stays lit", () => {
+  expect(procurementMenuTab("rfq", false)).toBe("rfq");
+  expect(procurementMenuTab("kpi", false)).toBe("stats");
+  expect(procurementMenuTab("sheet", true)).toBe("stats");
+  expect(procurementMenuTab(null, false)).toBe("today");
+  expect(procurementMenuTab("today", true)).toBe("stats"); // a reader has no «Сегодня»
+  expect(procurementMenuTab("nonsense", true)).toBe("stats");
 });

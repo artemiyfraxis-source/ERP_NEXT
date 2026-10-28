@@ -29,7 +29,6 @@ import { PurchasingBuy } from "./PurchasingBuy";
 import { PurchasingOrders } from "./PurchasingOrders";
 import { PurchasingRfq } from "./PurchasingRfq";
 import { openRfq } from "./rfqLinks";
-import { RequestsHandoff } from "./RequestsHandoff";
 import "./procurementNav.css";
 import { ProcurementStockPicker, waitsForGrn } from "./ProcurementStockPicker";
 import {
@@ -176,11 +175,8 @@ export function ProcurementPage({ readOnly = false, buyerName = "", canHandoff =
   // Своих и свободных позиций нет — очереди пусты: первым открывается «Весь лист», а не пустой экран (аудит 10.10, СН-1).
   const [autoOpened, setAutoOpened] = useState(false);
   const pickedByHand = useRef(picked !== null); // a tab from the URL counts as chosen by hand
-  // «Статистика» opens on the inner tab chosen last in this visit.
-  const [lastStats, setLastStats] = useState<StatsTab>(picked && isStats(picked) ? picked : "queues");
   const pick = (next: ProcurementTab) => {
     pickedByHand.current = true; setAutoOpened(false); setPicked(next);
-    if (isStats(next)) setLastStats(next);
   };
   useEffect(() => {
     const follow = () => {
@@ -198,19 +194,13 @@ export function ProcurementPage({ readOnly = false, buyerName = "", canHandoff =
   // The sheet opened by itself (empty queues while the lists were still loading) gives way to «Сегодня».
   const tab: ProcurementTab = picked && shown[picked] === false ? "queues"
     : autoOpened && todayOn ? "today" : picked ?? (todayOn ? "today" : "queues");
-  const workTabs = WORK_TABS.filter(([key]) => shown[key] !== false);
   const inStats = isStats(tab);
+  // The heading is the menu item that opened the page: the work tabs are items of the «Снабжение» block now.
+  const heading = inStats ? "Статистика" : WORK_TABS.find(([key]) => key === tab)?.[1] ?? "Снабжение";
   return (
     <>
-      <header className="page-head"><h1>Снабжение</h1></header>
+      <header className="page-head"><h1>{heading}</h1></header>
       {readOnly && <p className="page-sub">Снабжение открыто вам только на просмотр: что свободно и что едет.</p>}
-      <div className="seg-tabs" role="tablist" aria-label="Разделы закупки">
-        {workTabs.map(([key, label]) => (
-          <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => pick(key)}>{label}</button>
-        ))}
-        <span className="tab-sep" aria-hidden="true" />
-        <button type="button" role="tab" aria-selected={inStats} className={inStats ? "on" : undefined} onClick={() => pick(lastStats)}>Статистика</button>
-      </div>
       {inStats && (
         <div className="seg-tabs procurement-subtabs" role="tablist" aria-label="Статистика">
           {STATS_TABS.map(([key, label]) => (
@@ -221,7 +211,6 @@ export function ProcurementPage({ readOnly = false, buyerName = "", canHandoff =
       {tab === "sheet" && autoOpened && <p className="page-sub procurement-auto-note">У вас нет позиций в работе и свободных позиций нет — показан весь лист. Свои позиции появятся во вкладке «Очереди».</p>}
       {tab === "today" && <ProcurementToday ordersOn />}
       {tab === "requests" && <>
-        <RequestsHandoff canHandoff={canHandoff} openRegister={openRegister} />
         <ProcurementRequests readOnly={readOnly} />
       </>}
       {tab === "kpi" && <ProcurementKpi />}

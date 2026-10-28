@@ -18,6 +18,8 @@ import {
   isBlock,
   isViewOnly,
   isSection,
+  navKey,
+  procurementMenuTab,
   runsTheSystem,
   sectionOfTab,
   visibleBlocks,
@@ -66,7 +68,7 @@ import { ViewAsBanner } from "./ViewAs";
 
 /** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once.
  *  `tsd`: the ТСД screen (`?section=tsd`) — full screen, its own PIN sign-in. */
-type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string; library?: boolean }; tsd?: boolean };
+type Place = { section: Section; block: BlockId | null; user?: string | null; tab?: string | null; harness?: { project: string; index: string; library?: boolean }; tsd?: boolean };
 
 function placeFromUrl(): Place {
   const params = new URLSearchParams(window.location.search);
@@ -84,7 +86,7 @@ function placeFromUrl(): Place {
   if (value === "projects" && params.get("project") && params.get("harness")) {
     return { section: value, block: null, harness: { project: params.get("project")!, index: params.get("harness")!, library: params.get("library") === "1" } };
   }
-  if (isSection(value)) return { section: value, block: null, user: params.get("user") || null };
+  if (isSection(value)) return { section: value, block: null, user: params.get("user") || null, tab: value === "procurement" ? params.get("tab") : null };
   const block = params.get("block");
   return { section: "cabinet", block: isBlock(block) ? block : null };
 }
@@ -153,11 +155,13 @@ export function App() {
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);
     else if (next.block) url.searchParams.set("block", next.block);
     if (next.user) url.searchParams.set("user", next.user);
+    if (next.tab) { url.searchParams.set("tab", next.tab); setVisit((count) => count + 1); }
     window.history.pushState({}, "", url);
     setPlace(next);
     setNavOpen(false);
   }
   const navigate = (section: Section) => go({ section, block: null });
+  const openItem = (item: NavItem) => go({ section: item.id, block: null, tab: item.tab ?? null });
   // «Карточка проекта» from the production plan (SUPPLYMAP planAct_ 'card' → openKitsetCard): the kitset card
   // in «Проекты».
   function openProjectCard(project: string) {
@@ -173,7 +177,7 @@ export function App() {
   // wasted click (SUPPLYMAP openHomeBlock).
   function openBlock(id: BlockId) {
     const block = blocks.find((item) => item.id === id);
-    if (block?.items.length === 1) navigate(block.items[0].id);
+    if (block?.items.length === 1) openItem(block.items[0]);
     else go({ section: "cabinet", block: id });
   }
 
@@ -260,6 +264,11 @@ export function App() {
   const activeSection = visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
   const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
+  // «Снабжение» is menu items per tab: the lit one follows `?tab=`; the «Заявки» register lights the «Заявки» tab.
+  const procurementTab = procurementMenuTab(place.tab, !canAct(principal, "procurement"));
+  const isActive = (item: NavItem) => item.tab
+    ? (activeSection === "procurement" && item.tab === procurementTab) || (activeWithin === "procurement" && item.tab === "requests")
+    : activeSection === item.id || activeWithin === item.id;
   // The level's name under the user (the backend adds «· режим» while the admin mode is on).
   // Чертёж жгута — на весь экран, без меню: редактору нужна вся площадь.
   if (place.harness && visibleNav.some(({ id }) => id === "projects")) {
@@ -295,11 +304,11 @@ export function App() {
         </div>
         <SearchEntry />
         <nav aria-label="Основная навигация">
-          {visibleNav.filter((item) => !item.block).map((item) => <NavButton key={item.id} item={item} active={activeSection === item.id && !activeBlock} navigate={navigate} />)}
+          {visibleNav.filter((item) => !item.block).map((item) => <NavButton key={navKey(item)} item={item} active={activeSection === item.id && !activeBlock} open={openItem} />)}
           {blocks.map((block) => (
             <div className="nav-group" key={block.id}>
               <h4>{block.title}</h4>
-              {block.items.map((item) => <NavButton key={item.id} item={item} active={activeSection === item.id || activeWithin === item.id} navigate={navigate} />)}
+              {block.items.map((item) => <NavButton key={navKey(item)} item={item} active={isActive(item)} open={openItem} />)}
             </div>
           ))}
         </nav>
@@ -332,7 +341,7 @@ export function App() {
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}
         {runsTheSystem(principal) && <UpdateFailure />}
         {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
-        {activeBlock && <BlockPage principal={principal} block={activeBlock} navigate={navigate} home={() => go({ section: "cabinet", block: null })} />}
+        {activeBlock && <BlockPage principal={principal} block={activeBlock} open={openItem} home={() => go({ section: "cabinet", block: null })} />}
         {activeSection === "projects" && <ProjectsPage key={visit} principal={principal} />}
         {activeSection === "techcards" && <TechcardsPage key={visit} principal={principal} view="projects" />}
         {activeSection === "tctemplates" && <ReferencesPage principal={principal} initialTab="templates" />}
@@ -382,16 +391,16 @@ export function App() {
 function NavButton({
   item,
   active,
-  navigate,
+  open,
 }: {
   item: NavItem;
   active: boolean;
-  navigate: (section: Section) => void;
+  open: (item: NavItem) => void;
 }) {
   return (
     <button
       className={active ? "nav-item active" : "nav-item"}
-      onClick={() => navigate(item.id)}
+      onClick={() => open(item)}
     >
       <span>{item.label}</span>
     </button>
@@ -441,12 +450,12 @@ function Home({
 function BlockPage({
   principal,
   block,
-  navigate,
+  open,
   home,
 }: {
   principal: Principal;
   block: VisibleBlock;
-  navigate: (section: Section) => void;
+  open: (item: NavItem) => void;
   home: () => void;
 }) {
   return (
@@ -457,7 +466,7 @@ function BlockPage({
       </header>
       <div className="tiles section-tiles">
         {block.items.map((item) => (
-          <button className="tile section-tile" key={item.id} onClick={() => navigate(item.id)} aria-label={item.label}>
+          <button className="tile section-tile" key={navKey(item)} onClick={() => open(item)} aria-label={item.label}>
             <span className="tile-body">
               <strong className="t-h">{item.label}</strong>
               {item.sub && <span className="t-sub">{item.sub}</span>}

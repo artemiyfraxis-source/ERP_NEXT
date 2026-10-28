@@ -173,9 +173,9 @@ it("the procurement page has «Счета и поставки»", async () => {
     if (path === "/api/procurement/today") return json({ today: "2026-10-21", sections: [], calm: true });
     return json({ lines: [], buyers: [], stages: [], statuses: [], units: [], next_cursor: null });
   });
+  window.history.replaceState(null, "", "/?section=procurement&tab=orders");
   render(<ProcurementPage />);
-  const tabs = await screen.findByRole("tablist", { name: "Разделы закупки" });
-  fireEvent.click(await within(tabs).findByRole("tab", { name: "Счета и поставки" }));
+  expect(await screen.findByRole("heading", { level: 1, name: "Счета и поставки" })).toBeInTheDocument();
   expect(await screen.findByRole("list", { name: "Доска заказов" })).toBeInTheDocument();
 });
 
