@@ -491,7 +491,9 @@ export interface WarehouseReceiptAccept {
 export type WarehouseScanJobStatus = "pending" | "claimed" | "done" | "failed";
 
 /** «Сканер с любого ПК»: ПК с агентом, у которого Windows видит сканер. */
-export interface ScanAgentInfo { id: string; pc: string; scanners: string[]; version: string }
+/** Сканер ПК: прежний ответ — строка-название, новый — {id, name}. */
+export type ScanAgentScanner = string | { id: string; name: string };
+export interface ScanAgentInfo { id: string; pc: string; scanners: ScanAgentScanner[]; version: string }
 /** Ответ на «Сканировать»: задание — или «нет агента» (окно установки), или «выберите ПК». */
 export type WarehouseScanStart =
   | WarehouseScanJob
@@ -3233,8 +3235,8 @@ export const receivingApi = {
   /** «Принять по УПД»: скан со сканера ПК склада, файл, «+ Страница» — та же очередь и то же распознавание, что
    *  у «Склад → Поставка», под правом «Приёмка». */
   updScan: {
-    startScanJob: (agentId?: string) =>
-      api<WarehouseScanStart>("/api/receiving/upd/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "" }) }),
+    startScanJob: (agentId?: string, targetScanner?: string) =>
+      api<WarehouseScanStart>("/api/receiving/upd/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "", ...(targetScanner ? { target_scanner: targetScanner } : {}) }) }),
     scanJob: (id: string) => api<WarehouseScanJob>(`/api/receiving/upd/scan-jobs/${encodeURIComponent(id)}`),
     cancelScanJob: (id: string) => api<WarehouseScanJob>(`/api/receiving/upd/scan-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
     scanFile: (file: File) => {
@@ -3391,8 +3393,10 @@ export const warehouseApi = {
   updLlmSettings: () => api<UpdLlmSettings>("/api/stock/receipts/llm-settings"),
   saveUpdLlmSettings: (fields: UpdLlmSettingsInput) =>
     api<UpdLlmSettings>("/api/stock/receipts/llm-settings", { method: "PUT", body: JSON.stringify(fields) }),
-  startScanJob: (agentId?: string) =>
-    api<WarehouseScanStart>("/api/stock/receipts/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "" }) }),
+  startScanJob: (agentId?: string, targetScanner?: string) =>
+    api<WarehouseScanStart>("/api/stock/receipts/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "", ...(targetScanner ? { target_scanner: targetScanner } : {}) }) }),
+  /** ПК с агентом и их сканеры: из них человек выбирает свой («Сменить сканер»). */
+  scanAgents: () => api<{ agents: ScanAgentInfo[] }>("/api/stock/scan/agents"),
   /** Администратор: одноразовая команда установки агента на новый ПК (живёт час). */
   scanAgentInstallToken: () =>
     api<{ command: string; expires_at: string; valid_minutes: number }>("/api/stock/scan/agent/install-token", { method: "POST" }),

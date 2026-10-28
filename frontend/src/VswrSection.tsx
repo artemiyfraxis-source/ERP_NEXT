@@ -9,6 +9,7 @@ import {
   type VswrTaskListItem,
   type VswrTaskOverview,
 } from "./api";
+import { useCanPrint } from "./rights";
 import { printCoaxPassport } from "./coaxPassportPrint";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate, formatNumber } from "./format";
@@ -78,6 +79,7 @@ export function VswrSection({ instruments, canUpload, canReject, onReject }: {
   canReject: (taskId: string) => boolean;
   onReject: (request: VswrRejectRequest) => void;
 }) {
+  const canPrint = useCanPrint();
   const [choices, setChoices] = useState<VswrTaskListItem[] | null>(null);
   const [taskId, setTaskId] = useState("");
   const [overview, setOverview] = useState<VswrTaskOverview | null>(null);
@@ -134,7 +136,7 @@ export function VswrSection({ instruments, canUpload, canReject, onReject }: {
     {
       key: "actions", title: "", value: () => "", width: 330, render: (row) => <span className="vswr-actions">
         {canUpload && <button className="secondary small" onClick={() => setUploading(row)}>Загрузить замер</button>}
-        <button className="secondary small" disabled={!row.latest && !(sample && !row.in_sample)} onClick={() => void openPassport(row)}>Паспорт</button>
+        {canPrint && <button className="secondary small" disabled={!row.latest && !(sample && !row.in_sample)} onClick={() => void openPassport(row)}>Паспорт</button>}
         {row.latest && <a className="secondary small button-link" href={productionApi.vswrFileUrl(row.latest.id)} download>Файл</a>}
         {row.latest?.verdict === "fail" && canReject(taskId) && <button className="link-button" onClick={() => onReject({
           taskId, serialNumber: row.serial_number,

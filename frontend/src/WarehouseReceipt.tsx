@@ -4,7 +4,8 @@ import { labelsApi } from "./LabelPrint";
 import { PageWindow } from "./PageWindow";
 import { UpdDeliveryWindow, pluralLines, type UpdDelivery } from "./ReceivingDelivery";
 import { expectedBanner } from "./receivingByUpdLogic";
-import { useScanAgent } from "./ScanAgent";
+import { ScanDeviceLine, useScanAgent } from "./ScanAgent";
+import { useCanScan } from "./rights";
 import { SuggestInput } from "./SuggestInput";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import {
@@ -118,6 +119,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   const scanJobId = useRef<string | null>(null);
   const scanAborted = useRef(false);
   const scanAgent = useScanAgent(warehouseApi.startScanJob);
+  const canScan = useCanScan();
   const [accepting, setAccepting] = useState<number | null>(null);
   // The scanned УПД matches lines awaited in «Приёмка»: they are accepted there (ВК, ГРН, закрытие заказа), not here.
   const [expected, setExpected] = useState<{ delivery: UpdDelivery; text: string } | null>(null);
@@ -560,19 +562,20 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
           {headerField("upd_date", "Дата УПД", "date")}
           {headerField("purpose", "Назначение")}
           <div className="wr-scan">
-            {scanPages.length > 0 ? (
+            {canScan && (scanPages.length > 0 ? (
               <>
                 <button type="button" className="secondary" disabled={scanning} onClick={() => void scanFromScanner()}>+ Страница</button>
                 <button type="button" className="secondary" disabled={scanning} onClick={() => void scanFromScanner(true)}>Сканировать заново</button>
               </>
             ) : (
               <button type="button" className="secondary" disabled={scanning} onClick={() => void scanFromScanner()}>Сканировать</button>
-            )}
+            ))}
             <button type="button" className="secondary" disabled={scanning} onClick={() => fileInput.current?.click()}>{scanning && !scanStatus ? "Разбираем УПД…" : "Файл…"}</button>
             <input ref={fileInput} type="file" hidden multiple aria-label="Файл УПД" accept=".pdf,.xml,.zip,image/*,application/xml,text/xml,application/zip" {...(phone ? { capture: "environment" as const } : {})}
               onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void scan(files); }} />
           </div>
         </div>
+        <ScanDeviceLine />
         {scanAgent.dialogs(() => void scanFromScanner())}
         {scanStatus || scanError ? (
           <p className={`wr-scan-status${scanError ? " error" : ""}`} role="status">

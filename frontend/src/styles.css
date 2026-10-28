@@ -565,6 +565,8 @@ details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 
 .scan-agent h2 { margin: 0 0 8px; }
 .scan-agent-points { margin: 0 0 10px; padding-left: 18px; font-size: 14px; }
 .scan-agent-cmd { display: block; margin: 6px 0 10px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--accent); font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; user-select: all; }
+.scan-device { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 6px 0; font-size: 13px; color: var(--muted-foreground); }
+.scan-device b { color: var(--foreground); font-weight: 600; }
 .scan-agent-list { display: grid; gap: 6px; }
 .scan-agent-list button { text-align: left; }
 .scan-agent-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }

@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { Principal } from "./api";
+import { setRightsPrincipal } from "./rights";
 import { TdIssuesPanel } from "./TdIssuesPanel";
 import { openRouteSheetPrint, openStoPrint, openTdKitPrint } from "./tdPrint";
 import type { TdFinding, TdIssue } from "./tdTypes";
@@ -40,7 +42,7 @@ function mount(issues: TdIssue[], findings: TdFinding[] = [], extra?: (path: str
 }
 
 beforeEach(() => vi.clearAllMocks());
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); setRightsPrincipal(null); });
 
 it("lists issues with the column labels and dates as dd.mm.yyyy", async () => {
   mount([issue({ status: "active", status_label: "действует", approved_at: "2026-10-05T12:00:00+03:00", change_no: 1 })]);
@@ -168,4 +170,21 @@ it("print buttons call the print functions", async () => {
   fireEvent.click(within(dialog).getByRole("button", { name: "Печать" }));
   await waitFor(() => expect(openRouteSheetPrint).toHaveBeenCalledTimes(1));
   expect(vi.mocked(openRouteSheetPrint).mock.calls[0][1]).toEqual({ serial: "17", batch: "П-5", qty: "10" });
+});
+
+const asPrincipal = (permissions: Record<string, "view" | "edit" | "none">) =>
+  ({ user: { id: "u", email: "", name: "", department: "" }, roles: ["operator"], access_level: "operator", permissions }) as Principal;
+
+it("document print buttons are hidden without the «print» right and shown with it", async () => {
+  setRightsPrincipal(asPrincipal({ print: "view" }));
+  mount([issue({ status: "active", status_label: "действует" })]);
+  expect(await screen.findByText("ФРАК.60185.00001")).toBeInTheDocument();
+  for (const name of ["Печать СТО", "Печать комплекта ТД", "Сопроводительный лист"]) expect(screen.queryByRole("button", { name })).toBeNull();
+});
+
+it("«print» on edit shows the document print buttons", async () => {
+  setRightsPrincipal(asPrincipal({ print: "edit" }));
+  mount([issue({ status: "active", status_label: "действует" })]);
+  expect(await screen.findByRole("button", { name: "Печать комплекта ТД" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Печать СТО" })).toBeInTheDocument();
 });

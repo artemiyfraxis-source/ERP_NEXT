@@ -24,6 +24,7 @@ import { DefectPicture, useStdFigures } from "./EtkStdFigure";
 import { ETK_TOOLING_SECTIONS, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
+import { useCanPrint } from "./rights";
 import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm";
 import { hasFullAccess } from "./navigation";
 import { EtkFold, EtkFoldScope, useEtkFold } from "./etkFold";
@@ -728,6 +729,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
 
   const sketchLinks = () => Object.fromEntries(sketches.map((item) =>
     [item.operation_key, window.location.origin + source.url(item.operation_key, item.uploaded_at)]));
+  const canPrint = useCanPrint();
   const labelsPage = serial ? etkMarkLabelsPage(card, serial) : null;
   const linkScheme = etkLinkScheme(card.document);
   const serialContext = serial && labelsPage ? {
@@ -738,7 +740,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     <div className="etk-top">
       <div className="etk-title">{title ?? <strong>{card.project} · {card.item_index}</strong>}
         <span className="muted">{countLabel(list.length, ["операция", "операции", "операций"])} · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
-      {list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, sketchLinks(), serial,
+      {canPrint && list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, sketchLinks(), serial,
         stdFigures ? { index: stdFigures, base: window.location.origin } : null))}>Печать / PDF</button>}
       {canGenerate && onRebuild && <button className="secondary small" onClick={onRebuild}>Пересобрать</button>}
       {canEdit && !issued && card.document && <button className="primary small" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}
