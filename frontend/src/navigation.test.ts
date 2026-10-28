@@ -28,7 +28,7 @@ const EVERYTHING = {
   // «Мои заявки» and «Заявки» are no menu items (Витя's edits 2–3): the card and «Снабжение → Заявки» open them.
   "Снабжение": ["Оформить заявку", "Снабжение"],
   "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
-  "Менеджмент": ["Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
+  "Менеджмент": ["Данные отправок", "Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
   "Документация": ["Первичная документация"],
   "Справочники": ["База данных", "Закупка"],
 };
@@ -215,7 +215,7 @@ it("opens techcards, templates and the reference book by their own keys to any l
 it("opens «Доступы» and «Сотрудники» to superadmin and admin alone, not by any matrix grant", () => {
   for (const level of ["superadmin", "admin"]) {
     expect(section(as(level, {}), "Менеджмент")).toEqual(
-      ["Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
+      ["Данные отправок", "Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
     );
   }
   for (const level of ["commercial", "tech_lead", "foreman", "operator"]) {
@@ -303,4 +303,11 @@ it("tells a person who runs the shop or the system from an operator with only th
   expect(runsTheSystem(as("commercial", { production: "view", projects: "view" }))).toBe(false);
   expect(runsTheSystem(as("admin", {}))).toBe(true);
   expect(runsTheSystem(as("superadmin", {}))).toBe(true);
+});
+
+it("«Данные отправок» in «Менеджмент» opens to editors of «Отгрузка» (manager, admin), not to the storekeeper's «Отгрузка — склад»", () => {
+  expect(section(as("pm", { shipping: "edit" }), "Менеджмент")).toContain("Данные отправок");
+  expect(section(as("pm", { shipping: "view" }), "Менеджмент")).not.toContain("Данные отправок");
+  expect(section(as("storekeeper", { shipping_goods: "edit" }), "Менеджмент")).not.toContain("Данные отправок");
+  expect(section(as("admin", {}), "Менеджмент")).toContain("Данные отправок");
 });

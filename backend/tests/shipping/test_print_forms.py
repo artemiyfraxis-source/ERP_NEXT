@@ -13,11 +13,17 @@ from uuid import UUID
 from app.main import app
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.shared.persistence import OutboxMessageRow
-from app.modules.shipping.documents import packer_short, person_short, split_carrier, split_hours, storekeeper_signature
+from dataclasses import replace
+from datetime import date
+from decimal import Decimal
+
+from app.modules.shipping.documents import build_delivery_note, packer_short, person_short, split_carrier, split_hours, storekeeper_signature
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
+from app.modules.shipping.domain import ShipmentStatus
 from tests.shipping.test_api import shipping_api  # noqa: F401 — fixture
+from tests.shipping.test_domain import good as good_domain, shipment as domain_shipment
 from tests.shipping.test_documents_api import _shipment, _stocked
 
 SHIPPER = 'ООО "ЗЭП ФРАКСИС"'
@@ -113,7 +119,7 @@ def test_delivery_note_sums_each_kb_over_boxes_with_project_card_requisites(ship
     client = shipping_api
     client.put("/api/shipping/project-addressee", json={
         "project": "591К.3", "po": "PO-7", "contract": "Д-12", "spec": "С-3", "invoice": "591К.3", "pays": "Заказчик",
-        "customer_address": "Москва, ул. Заказчика, 1", "hours": "9-18",
+        "customer_address": "Москва, ул. Заказчика, 1", "hours": "9-18",  # pays и customer_address хранятся, но не печатаются
     })
     shipment = _packed_in_two_boxes(client, contact="Иванов", phone="+7 900 000-00-00", carrier="СДЭК")
     forms = _print(client, shipment["id"], "dn")
@@ -123,7 +129,7 @@ def test_delivery_note_sums_each_kb_over_boxes_with_project_card_requisites(ship
         # Ещё не отгружена — дата упаковки, как в образце (DN печатают вместе с PL).
         "date": "22.09.26",
         "customer": "Заказчик", "po": "PO-7", "po_from_card": True, "contract": "Д-12", "spec": "С-3", "invoice": "591К.3",
-        "terms": "Доставка ТК", "pays": "Заказчик", "customer_address": "Москва, ул. Заказчика, 1",
+        "terms": "Доставка ТК",
         # Получатель не заказчик — ТК везёт ему: он в адресе доставки.
         "shipping_address": "Получатель, Москва", "hours": "9-18", "contact": "Иванов", "phone": "+7 900 000-00-00",
         "carrier": "СДЭК", "track": "", "tk_note": "",
@@ -133,14 +139,14 @@ def test_delivery_note_sums_each_kb_over_boxes_with_project_card_requisites(ship
         ],
         "upd_edo": True, "upd_paper": False, "paper_box": "BXN 1", "note": "",
         # Брутто второго короба не взвешено — общий вес пустой, дописать от руки.
-        "places": "2", "gross": "", "upd": "", "shipped_at": "22.09.26", "packer": "Гусев А.А.",
+        "places": "2", "gross": "", "upd": "УПД-1", "shipped_at": "22.09.26", "packer": "Гусев А.А.",
     }]
 
 
 def test_delivery_note_takes_upd_number_and_date_and_the_shipping_day(shipping_api):
     client = shipping_api
     good = _stocked(client, accepted="10")
-    shipment = _shipment(client, [{"good_id": good["id"], "quantity": "2.5"}], upd_type="БУМАГА",
+    shipment = _shipment(client, [{"good_id": good["id"], "quantity": "2.5"}], upd_type="БУМАГА", terms="САМОВЫВОЗ", carrier="",
                          upd_number="УПД-17", upd_date="2026-09-21", upd_url="https://files.example/upd.pdf")
     shipped = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]})
     assert shipped.status_code == 200, shipped.text
@@ -154,13 +160,15 @@ def test_delivery_note_takes_upd_number_and_date_and_the_shipping_day(shipping_a
     assert [row["quantity"] for row in pl[0]["rows"]] == ["2,5"]
 
 
-def test_upd_without_number_leaves_the_cell_blank_and_no_upd_says_so(shipping_api):
+def test_upd_without_number_refuses_the_dn_and_no_upd_says_so(shipping_api):
     client = shipping_api
     good = _stocked(client, accepted="6")
-    paper = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], upd_type="БУМАГА")
-    none = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], upd_type="БЕЗ УПД")
+    paper = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], upd_type="БУМАГА", upd_number="")
+    none = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], upd_type="БЕЗ УПД", upd_number="")
 
-    assert _print(client, paper["id"], "dn")[0]["upd"] == ""
+    # Владелец 28.10.2026: пока не внесён № УПД, DN не печатается.
+    refused = client.get(f"/api/shipping/shipments/{paper['id']}/print", params={"document": "dn"})
+    assert refused.status_code == 409 and refused.json()["detail"] == "Нельзя печатать DN: не хватает — № УПД, файл УПД"
     assert _print(client, none["id"], "dn")[0]["upd"] == "без УПД"
 
 
@@ -335,8 +343,9 @@ def test_delivery_note_falls_back_to_the_project_number_and_prints_po_only_for_a
 
     dn = _print(client, shipment["id"], "dn")[0]
 
-    # Карточки проекта нет: «Заказ №» и «Номер спецификации» — номер проекта, без одинокого «PO #».
-    assert (dn["po"], dn["po_from_card"], dn["spec"]) == ("591К.3", False, "591К.3")
+    # Карточки проекта нет: «Заказ №» — номер проекта, без одинокого «PO #»; спецификация необязательна — пусто
+    # (владелец 28.10.2026).
+    assert (dn["po"], dn["po_from_card"], dn["spec"]) == ("591К.3", False, "")
 
 
 def test_delivery_note_card_values_win_over_the_project_number(shipping_api):
@@ -356,7 +365,7 @@ def test_delivery_note_moves_the_track_out_of_the_carrier_and_prints_the_shipmen
     typed = _shipment(client, [{"good_id": good["id"], "quantity": "1"}], carrier="major-express 2071163030")
     tracked = _shipment(client, [{"good_id": good["id"], "quantity": "1"}], carrier="СДЭК")
     tracked = client.put(f"/api/shipping/shipments/{tracked['id']}/documents", json={
-        "version": tracked["version"], "upd_type": "ЭДО", "track_number": "1234567890",
+        "version": tracked["version"], "upd_type": "ЭДО", "upd_number": "УПД-1", "track_number": "1234567890",
     }).json()["shipment"]
 
     split = _print(client, typed["id"], "dn")[0]
@@ -381,12 +390,16 @@ def test_delivery_terms_are_printed_as_words_and_default_to_the_carrier_when_one
     lines = [{"good_id": good["id"], "quantity": "1"}]
     pickup = _shipment(client, lines, terms="САМОВЫВОЗ")
     carrier = _shipment(client, lines, terms="ДОСТАВКА ТК")
-    bare = _shipment(client, lines, terms=None, carrier="СДЭК")
-    nothing = _shipment(client, lines, terms=None)
+    terms = [_print(client, one["id"], "dn")[0]["terms"] for one in (pickup, carrier)]
+    assert terms == ["Самовывоз", "Доставка ТК"]
 
-    terms = [_print(client, one["id"], "dn")[0]["terms"] for one in (pickup, carrier, bare, nothing)]
-
-    assert terms == ["Самовывоз", "Доставка ТК", "Доставка ТК", ""]
+    # Уехавшая до правила 28.10.2026 без условий печатается как есть: с ТК — «Доставка ТК», без — пусто.
+    item = good_domain().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
+    for carrier_name, word in (("СДЭК", "Доставка ТК"), ("", "")):
+        made = domain_shipment(item, terms=None, carrier=carrier_name)
+        picked, _ = made.pick({item.id: item.remaining}, {item.id: item.grn or ""})
+        old = replace(picked.pack("PL591К.3-1", "DN591К.3-1", date(2026, 9, 22)), status=ShipmentStatus.SHIPPED)
+        assert build_delivery_note(old, "Заказчик").terms == word
 
 
 def test_working_hours_left_in_the_note_go_to_the_hours_cell(shipping_api):

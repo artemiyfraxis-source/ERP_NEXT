@@ -767,8 +767,6 @@ export interface DeliveryNoteForm {
   spec: string;
   invoice: string;
   terms: string;
-  pays: string;
-  customer_address: string;
   shipping_address: string;
   hours: string;
   contact: string;
@@ -1600,6 +1598,10 @@ export interface Shipment {
   lines: ShipmentLine[];
   /** Поля адресата, которые идут за карточкой проекта, пока отправка не закрыта. */
   inherited: string[];
+  /** Чего не хватает для отгрузки, считает сервер (`shipping_gaps`): `missing_data` — что вносит менеджер (с этим
+   *  печатается DN), `missing_ship` — то же и трек-номер ТК, без которого «Отгрузить» откажет. */
+  missing_data: string[];
+  missing_ship: string[];
 }
 
 export interface ShipmentBox {

@@ -43,20 +43,19 @@ def test_finished_good_partial_shipment_and_close_gates(shipping_api):
     accepted = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "6"})
     good = accepted.json()["good"]
     made = client.post("/api/shipping/shipments", json={
-        "receiver": "Получатель", "shipping_point": "Москва", "terms": "ДОСТАВКА ТК",
+        "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "ДОСТАВКА ТК", "carrier": "СДЭК",
         "upd_type": "ЭДО", "lines": [{"good_id": good["id"], "quantity": "10"}],
     })
     shipment = made.json()["shipment"]
     assert shipment["status"] == "Упакована"
-    shipped = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]})
-    shipment = shipped.json()["shipment"]
-    rejected = client.post(f"/api/shipping/shipments/{shipment['id']}/close", json={"version": shipment["version"]})
+    # Владелец 28.10.2026: без № УПД и трека ТК отправка не уезжает.
+    rejected = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]})
     documented = client.put(f"/api/shipping/shipments/{shipment['id']}/documents", json={
         "version": shipment["version"], "upd_type": "ЭДО", "upd_number": "123",
         "upd_url": "https://files.example/upd.pdf", "track_number": "TRACK-1",
     })
     shipment = documented.json()["shipment"]
-    closed = client.post(f"/api/shipping/shipments/{shipment['id']}/close", json={"version": shipment["version"]})
+    closed = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]})
 
     assert created.status_code == 200
     assert good["grn"] == "ГП.26.0000001"
@@ -64,6 +63,7 @@ def test_finished_good_partial_shipment_and_close_gates(shipping_api):
     assert shipment["lines"][0]["picked"] == "6"
     assert shipment["lines"][0]["shortage"] == "4"
     assert rejected.status_code == 422
+    assert "№ УПД, трек-номер" in rejected.json()["detail"]
     assert closed.status_code == 200
     assert closed.json()["shipment"]["status"] == "Закрыта"
 
@@ -89,8 +89,8 @@ def _stocked_good(client, item_index: str, quantity: str) -> dict:
 def _picked_shipment(client, lines: list[tuple[dict, str]]) -> dict:
     # SH-1: creation picks at once; no_docs stops at «Собрана», the state these tests start from.
     shipment = client.post("/api/shipping/shipments", json={
-        "receiver": "Получатель", "shipping_point": "Москва", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО",
-        "no_docs": True, "lines": [{"good_id": good["id"], "quantity": quantity} for good, quantity in lines],
+        "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО",
+        "upd_number": "УПД-1", "no_docs": True, "lines": [{"good_id": good["id"], "quantity": quantity} for good, quantity in lines],
     }).json()["shipment"]
     assert shipment["status"] == "Собрана"
     return shipment
@@ -181,8 +181,8 @@ def _good_with_stock(client, *, project="591К.3", item_index="КБ1", accepted=
 
 def _create(client, lines, **extra):
     return client.post("/api/shipping/shipments", json={
-        "receiver": "Получатель", "shipping_point": "Москва", "terms": "САМОВЫВОЗ",
-        "upd_type": "ЭДО", "lines": lines, **extra,
+        "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ",
+        "upd_type": "ЭДО", "upd_number": "УПД-1", "lines": lines, **extra,
     })
 
 
@@ -376,7 +376,7 @@ def test_open_shipment_follows_project_card_until_closed_and_head_edit_overrides
 def test_closed_shipment_keeps_its_address_when_project_card_changes(shipping_api):
     client = shipping_api
     good = _stocked_good(client, "КБ1", "5")
-    card = client.put("/api/shipping/project-addressee", json={"project": "591К.3", "shipping_point": "Москва", "upd_type": "ЭДО"}).json()["addressee"]
+    card = client.put("/api/shipping/project-addressee", json={"project": "591К.3", "shipping_point": "Москва", "upd_type": "ЭДО", "phone": "+7 900", "terms": "САМОВЫВОЗ"}).json()["addressee"]
     shipment = client.post("/api/shipping/shipments", json={"lines": [{"good_id": good["id"], "quantity": "5"}]}).json()["shipment"]
     shipment = client.put(f"/api/shipping/shipments/{shipment['id']}/documents", json={
         "version": shipment["version"], "upd_number": "1", "upd_url": "https://files.example/upd.pdf",
@@ -394,7 +394,7 @@ def _shipment(client, shipment_id):
     return next(item for item in client.get("/api/shipping/shipments").json()["shipments"] if item["id"] == shipment_id)
 
 
-def test_first_shipment_without_card_requires_point_only_then_seeds_card(shipping_api):
+def test_first_shipment_without_card_takes_no_point_and_seeds_card(shipping_api):
     client = shipping_api
     good = _queued_good(client)
     lines = [{"good_id": good["id"], "quantity": "1"}]
@@ -405,8 +405,9 @@ def test_first_shipment_without_card_requires_point_only_then_seeds_card(shippin
     })
     card = client.get("/api/shipping/project-addressee", params={"project": "591К.3"}).json()["addressee"]
 
-    assert no_point.status_code == 422
-    assert "точку отгрузки" in no_point.json()["detail"]
+    # Владелец 28.10.2026: упаковывает кладовщик, адрес вносит менеджер позже — заявка без адреса заводится.
+    assert no_point.status_code == 200
+    assert no_point.json()["shipment"]["shipping_point"] == ""
     # shipRequestCreate_: условия доставки и тип УПД могут остаться пустыми.
     assert no_terms.status_code == 200
     assert (no_terms.json()["shipment"]["terms"], no_terms.json()["shipment"]["upd_type"]) == (None, "ЭДО")
@@ -443,5 +444,6 @@ def test_other_project_card_is_not_used_and_bad_terms_are_rejected(shipping_api)
     made = client.post("/api/shipping/shipments", json={"lines": [{"good_id": good["id"], "quantity": "1"}]})
     bad = client.put("/api/shipping/project-addressee", json={"project": "600", "terms": "ПОЧТОЙ"})
 
-    assert made.status_code == 422
+    assert made.status_code == 200
+    assert made.json()["shipment"]["shipping_point"] == ""  # адрес чужого проекта не подставляется
     assert bad.status_code == 422

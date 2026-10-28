@@ -450,8 +450,6 @@ def _create_shipment(
         project=card,
         customer_fallback=command.customer or next((name for name in customers if name), ""),
     )
-    if not address.shipping_point:
-        raise ShippingValidationError("Укажите точку отгрузки в заявке или в карточке проекта")
     shipment = Shipment.create(
         number=uow.shipments.reserve_number(command.now.date()), created_at=command.now,
         customer=command.customer, receiver=address.receiver, shipping_point=address.shipping_point,
@@ -888,12 +886,10 @@ def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
         lines.append(RequestedGood(good_id=requested.good_id, quantity=quantity))
     if not lines:
         raise ShippingValidationError("Упаковывать нечего: на складе по отмеченным КБ пусто — сначала «Принять» от цеха.")
-    if addressee is None or not addressee.shipping_point:
-        raise ShippingValidationError("Укажи адрес отгрузки в карточке проекта.")
     customer = next(iter(goods.values())).customer
     # Адресат не копируется, а наследуется: правка карточки проекта дойдёт до этой отправки, пока она открыта.
     return create_shipment(CreateShipmentCommand(
-        customer=customer, receiver="" if addressee.receiver or customer else project,
+        customer=customer, receiver="" if (addressee is not None and addressee.receiver) or customer else project,
         shipping_point="", contact="", phone="",
         terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="",
         note="", lines=tuple(lines), actor=command.actor, now=command.now, no_docs=True,
@@ -1030,7 +1026,7 @@ def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipRes
         customer = next((good.customer for good in uow.goods.by_project(project) if good.customer), "")
         # Адресат не копируется, а наследуется: правка карточки дойдёт до отправки, пока она открыта.
         shipment = _create_shipment(CreateShipmentCommand(
-            customer=customer, receiver="" if addressee.receiver or customer else project,
+            customer=customer, receiver="" if (addressee is not None and addressee.receiver) or customer else project,
             shipping_point="", contact="", phone="", terms=None, carrier="", upd_type=None,
             deadline=command.deadline if command.as_manager else None,
             upd_number=command.upd_number.strip() if command.as_manager else "",

@@ -28,7 +28,11 @@ def test_upload_stores_file_links_shipment_notifies_storekeepers_and_opens_the_p
     uploaded = _upload(client, shipment)
     updated = uploaded.json()["shipment"]
     downloaded = client.get(updated["upd_url"])
-    shipped = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": updated["version"]}).json()
+    no_track = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": updated["version"]})
+    tracked = client.put(f"/api/shipping/shipments/{shipment['id']}/documents", json={
+        "version": updated["version"], "upd_type": "БУМАГА", "upd_number": "17", "upd_url": updated["upd_url"], "track_number": "T-1",
+    }).json()["shipment"]
+    shipped = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": tracked["version"]}).json()
     with app.state.shipping_uow_factory() as uow:
         messages = [row.payload for row in uow.session.scalars(select(OutboxMessageRow))]
 
@@ -39,8 +43,9 @@ def test_upload_stores_file_links_shipment_notifies_storekeepers_and_opens_the_p
     assert downloaded.headers["content-type"] == "application/pdf"
     assert unquote(downloaded.headers["content-disposition"]) == f"inline; filename*=UTF-8''УПД № 17 591К.3 {shipment['number']}.pdf"
     assert any("УПД к отправке" in str(message) for message in messages)
-    # Файл открыл гейт «Отгружена»; закрыть не даёт только трек — доставка ТК (shipGateMiss_('Закрыта')).
-    assert shipped["shipment"]["status"] == "Отгружена" and shipped["why"].endswith("трек-номер")
+    # Файл открыл гейт «Отгружена»; доставке ТК остаётся трек-номер — без него кладовщик не отправит (владелец 28.10.2026).
+    assert no_track.status_code == 422 and no_track.json()["detail"].endswith("трек-номер")
+    assert shipped["shipment"]["status"] == "Закрыта"
 
 
 def test_upload_is_refused_for_cancelled_shipment_empty_or_too_large_file(shipping_api, monkeypatch):

@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.shipping.domain import (
+    DeliveryTerms,
     FinishedGood,
     GoodMove,
     GoodsRegister,
@@ -120,7 +121,7 @@ def test_unship_returns_a_shipment_to_packed_and_clears_the_date():
     good = _good(accepted=10)
     shipment = Shipment.create(
         number="ОТГ-1", created_at=NOW, customer="", receiver="Получатель", shipping_point="Москва", contact="",
-        phone="", terms=None, carrier="", deadline=None, upd_type=UpdType.EDO, upd_number="", upd_date=None, upd_url="",
+        phone="+7 900", terms=DeliveryTerms.PICKUP, carrier="", deadline=None, upd_type=UpdType.EDO, upd_number="1", upd_date=None, upd_url="",
         manager="М", note="", lines=(ShipmentLine.create(good, Decimal(4)),),
     )
     picked, _ = shipment.pick({good.id: Decimal(10)}, {good.id: "ГП.26.0000001"})
@@ -184,7 +185,7 @@ def test_every_shipping_path_writes_the_journal_and_it_sums_to_the_counters(regi
     assert over.status_code == 422 and "тираж 50 шт, уже принято 30 — принять можно ещё 20" in over.json()["detail"]
 
     made = client.post("/api/shipping/shipments", json={
-        "receiver": "Получатель", "shipping_point": "Москва", "upd_type": "ЭДО",
+        "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1",
         "lines": [{"good_id": good["id"], "quantity": "20"}],
     }).json()["shipment"]
     line = made["lines"][0]["id"]
@@ -195,7 +196,7 @@ def test_every_shipping_path_writes_the_journal_and_it_sums_to_the_counters(regi
     assert shipment["status"] == "Отгружена"
 
     second = client.post("/api/shipping/shipments", json={
-        "receiver": "Получатель", "shipping_point": "Москва", "upd_type": "ЭДО",
+        "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1",
         "lines": [{"good_id": good["id"], "quantity": "6"}],
     }).json()["shipment"]
     second = client.post(f"/api/shipping/shipments/{second['id']}/unpick", json={
@@ -228,7 +229,7 @@ def test_only_the_head_rolls_back_shipped_and_never_without_a_reason(register_ap
     }).json()["good"]
     good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "5"}).json()["good"]
     shipment = client.post("/api/shipping/shipments", json={
-        "receiver": "П", "shipping_point": "Москва", "upd_type": "ЭДО", "lines": [{"good_id": good["id"], "quantity": "5"}],
+        "receiver": "П", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1", "lines": [{"good_id": good["id"], "quantity": "5"}],
     }).json()["shipment"]
     shipment = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]}).json()["shipment"]
 

@@ -1,5 +1,10 @@
 """PL/DN, короба, «Заказано», «Отгружено» с авто-закрытием и «Упаковать» из карточки проекта."""
 
+from uuid import UUID
+
+from app.main import app
+from app.shared.http_auth import Principal, authenticated_principal
+from tests.factories import Actor
 from tests.shipping.test_api import shipping_api  # noqa: F401 — fixture
 
 
@@ -14,7 +19,8 @@ def _stocked(client, *, item_index="КБ1", ordered="40", accepted="6", project=
 
 
 def _shipment(client, lines, **extra):
-    body = {"receiver": "Получатель", "shipping_point": "Москва", "terms": "ДОСТАВКА ТК", "upd_type": "ЭДО", "lines": lines}
+    body = {"receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900 000-00-00", "terms": "ДОСТАВКА ТК", "carrier": "СДЭК",
+            "upd_type": "ЭДО", "upd_number": "УПД-1", "lines": lines}
     body.update(extra)
     response = client.post("/api/shipping/shipments", json=body)
     assert response.status_code == 200, response.text
@@ -53,21 +59,21 @@ def test_requested_quantity_changes_on_cancelled_shipment_without_moving_stock(s
     assert goods[0]["remaining"] == "6"
 
 
-def test_ship_closes_at_once_when_upd_is_filled_and_stays_shipped_otherwise(shipping_api):
+def test_ship_closes_at_once_when_upd_is_filled_and_is_refused_otherwise(shipping_api):
     client = shipping_api
     good = _stocked(client, accepted="10")
     ready = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], terms="САМОВЫВОЗ",
                       upd_number="УПД-1", upd_url="https://files.example/upd.pdf")
-    bare = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], no_docs=True)
+    bare = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], no_docs=True, upd_number="")
 
     closed = client.post(f"/api/shipping/shipments/{ready['id']}/ship", json={"version": ready["version"]}).json()
-    shipped = client.post(f"/api/shipping/shipments/{bare['id']}/ship", json={"version": bare["version"]}).json()
+    refused = client.post(f"/api/shipping/shipments/{bare['id']}/ship", json={"version": bare["version"]})
 
     assert closed["closed"] is True and closed["shipment"]["status"] == "Закрыта"
     assert closed["shipment"]["shipped_at"] == "2026-09-22"
-    # «Собрана» без документов тоже уезжает одной кнопкой (shipShipped_), но закрыть нечем.
-    assert shipped["closed"] is False and shipped["shipment"]["status"] == "Отгружена"
-    assert "№ УПД" in shipped["why"]
+    # «Собрана» без данных не уезжает (владелец 28.10.2026): сервер называет, чего не хватает.
+    assert refused.status_code == 422
+    assert "не хватает — № УПД, трек-номер" in refused.json()["detail"]
 
 
 def test_boxes_are_checked_pack_the_shipment_and_print_pl_per_box_and_one_dn(shipping_api):
@@ -126,7 +132,6 @@ def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(s
     client = shipping_api
     good = _stocked(client, accepted="6")
     empty = _stocked(client, item_index="КБ2", accepted="")
-    no_point = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "4"}]})
     client.put("/api/shipping/project-addressee", json={
         "project": "591К.3", "shipping_point": "Склад заказчика",
     })
@@ -134,7 +139,6 @@ def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(s
     packed = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "9"}]})
     addressees = client.get("/api/shipping/project-addressees").json()["addressees"]
 
-    assert no_point.status_code == 422 and "адрес отгрузки" in no_point.json()["detail"]
     assert nothing.status_code == 422 and "Упаковывать нечего" in nothing.json()["detail"]
     shipment = packed.json()["shipment"]
     assert shipment["status"] == "Собрана" and shipment["pl_number"] == ""
@@ -144,3 +148,54 @@ def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(s
     assert shipment["lines"][0]["requested"] == "6" and shipment["lines"][0]["picked"] == "6"
     assert [row["project"] for row in addressees] == ["591К.3"]
     assert addressees[0]["po"] == ""
+
+
+def test_dn_print_and_shipping_wait_for_the_managers_data_then_only_the_track_is_left(shipping_api):
+    client = shipping_api
+    good = _stocked(client, accepted="6")
+    # Упаковали без телефона получателя: PL печатается, DN и «Отгрузить» ждут менеджера.
+    made = _shipment(client, [{"good_id": good["id"], "quantity": "6"}], phone="")
+    url = f"/api/shipping/shipments/{made['id']}"
+    pl = client.get(url + "/print", params={"document": "pl"})
+    dn = client.get(url + "/print", params={"document": "dn"})
+    ship = client.post(url + "/ship", json={"version": made["version"]})
+
+    assert made["status"] == "Упакована" and made["missing_data"] == ["телефон получателя"]
+    assert made["missing_ship"] == ["телефон получателя", "трек-номер"]
+    assert pl.status_code == 200
+    assert dn.status_code == 409 and dn.json()["detail"] == "Нельзя печатать DN: не хватает — телефон получателя"
+    assert ship.status_code == 422 and ship.json()["detail"] == "Нельзя отгрузить: не хватает — телефон получателя, трек-номер"
+
+    headed = client.put(url + "/head", json={"version": made["version"], "phone": "+7 900 111-22-33"}).json()["shipment"]
+    assert (headed["missing_data"], headed["missing_ship"]) == ([], ["трек-номер"])
+    assert client.get(url + "/print", params={"document": "dn"}).status_code == 200
+    # Кладовщику остаётся трек-номер.
+    still = client.post(url + "/ship", json={"version": headed["version"]})
+    assert still.status_code == 422 and still.json()["detail"].endswith("не хватает — трек-номер")
+    tracked = client.put(url + "/documents", json={
+        "version": headed["version"], "upd_type": "ЭДО", "upd_number": "УПД-1", "track_number": "TRK-1",
+    }).json()["shipment"]
+    shipped = client.post(url + "/ship", json={"version": tracked["version"]})
+    assert shipped.status_code == 200 and shipped.json()["shipment"]["status"] == "Отгружена"  # закрыть не даёт файл УПД
+    # Уехавшую DN печатает по-прежнему и без перепроверки.
+    assert client.get(url + "/print", params={"document": "dn"}).status_code == 200
+
+
+def test_manager_without_the_warehouse_key_fills_the_data_but_cannot_ship(shipping_api):
+    client = shipping_api
+    good = _stocked(client, accepted="6")
+    made = _shipment(client, [{"good_id": good["id"], "quantity": "6"}], phone="")
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=UUID("10000000-0000-0000-0000-000000000009"), name="Ульяна Ладутько", department="Продажи"),
+        email="ladutko@example.test", roles=frozenset({"pm"}), permissions={"shipping": "edit"},
+    )
+    url = f"/api/shipping/shipments/{made['id']}"
+    headed = client.put(url + "/head", json={"version": made["version"], "phone": "+7 900"})
+    documented = client.put(url + "/documents", json={"version": headed.json()["shipment"]["version"], "upd_type": "БУМАГА", "upd_number": "7"})
+    shipped = client.post(url + "/ship", json={"version": documented.json()["shipment"]["version"]})
+    stale = client.put(url + "/head", json={"version": made["version"], "phone": "+7 111"})
+
+    assert headed.status_code == 200 and documented.status_code == 200
+    assert documented.json()["shipment"]["missing_data"] == ["файл УПД"]
+    assert shipped.status_code == 403
+    assert stale.status_code == 409
