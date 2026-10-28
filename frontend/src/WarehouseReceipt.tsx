@@ -4,6 +4,7 @@ import { labelsApi } from "./LabelPrint";
 import { PageWindow } from "./PageWindow";
 import { UpdDeliveryWindow, pluralLines, type UpdDelivery } from "./ReceivingDelivery";
 import { expectedBanner } from "./receivingByUpdLogic";
+import { useScanAgent } from "./ScanAgent";
 import { SuggestInput } from "./SuggestInput";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import {
@@ -116,6 +117,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
   const scanLinesRef = useRef(0);
   const scanJobId = useRef<string | null>(null);
   const scanAborted = useRef(false);
+  const scanAgent = useScanAgent(warehouseApi.startScanJob);
   const [accepting, setAccepting] = useState<number | null>(null);
   // The scanned УПД matches lines awaited in «Приёмка»: they are accepted there (ВК, ГРН, закрытие заказа), not here.
   const [expected, setExpected] = useState<{ delivery: UpdDelivery; text: string } | null>(null);
@@ -384,7 +386,8 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
     scanAborted.current = false;
     scanJobId.current = null;
     try {
-      const job = await warehouseApi.startScanJob();
+      const job = await scanAgent.begin();
+      if (!job) return; // нет агента / нужно выбрать ПК: открыто окно
       scanJobId.current = job.id;
       const deadline = Date.now() + SCAN_WAIT_MS;
       let current = job;
@@ -570,6 +573,7 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
               onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void scan(files); }} />
           </div>
         </div>
+        {scanAgent.dialogs(() => void scanFromScanner())}
         {scanStatus || scanError ? (
           <p className={`wr-scan-status${scanError ? " error" : ""}`} role="status">
             {scanError || (scanStatus === "recognising" ? "Распознаю УПД…" : scanStatus === "claimed" ? "Сканирует…" : "Положите УПД на стекло сканера — ждём ПК склада…")}

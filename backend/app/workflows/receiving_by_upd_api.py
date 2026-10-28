@@ -74,8 +74,9 @@ def _factory(request: Request, name: str) -> Callable | None:
 
 
 @router.post("/scan-jobs")
-def new_scan_job(principal: Editor, now: Now, uow_factory: WarehouseFactory) -> dict:
-    return scan_jobs_api.new_scan_job(principal, now, uow_factory)
+def new_scan_job(request: Request, principal: Editor, now: Now, uow_factory: WarehouseFactory,
+                 payload: scan_jobs_api.ScanStartInput | None = None) -> dict:
+    return scan_jobs_api.new_scan_job(request, principal, now, uow_factory, payload)
 
 
 @router.get("/scan-jobs/{job_id}")

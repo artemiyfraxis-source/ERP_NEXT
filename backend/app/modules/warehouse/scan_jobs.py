@@ -30,6 +30,8 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.shared.advisory_lock import advisory_lock, lock_key
 from app.shared.persistence import Base
 
+from .scan_agents import ScanAgentRow  # noqa: F401  (the FK target is in the metadata)
+
 PENDING_TIMEOUT = timedelta(seconds=120)
 CLAIMED_TIMEOUT = timedelta(seconds=180)
 KEEP_FINISHED = timedelta(days=30)
@@ -76,6 +78,10 @@ class ScanJobRow(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     file_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("warehouse_receipt_files.id", ondelete="RESTRICT"), nullable=True,
+    )
+    # «Сканер с любого ПК» (migration 0157): the agent the job was created for; NULL — any agent may claim it (legacy).
+    target_machine_id: Mapped[str | None] = mapped_column(
+        String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="RESTRICT"), nullable=True,
     )
     error: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     result: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
@@ -127,12 +133,12 @@ def _read(session: Session, job_id: UUID) -> ScanJob:
     return _job(row)
 
 
-def create_job(uow, *, requested_by: str, now: datetime) -> ScanJob:
-    """«Отсканировать УПД»: one pending job for the agent of the warehouse PC."""
+def create_job(uow, *, requested_by: str, now: datetime, target: str | None = None) -> ScanJob:
+    """«Отсканировать УПД»: one pending job for the agent `target` (None — any agent, an old one without an id)."""
     with uow:
         session = _session(uow)
         row = ScanJobRow(id=uuid4(), status=PENDING, requested_by=requested_by[:255] or "—", created_at=now,
-                         error="", result="")
+                         target_machine_id=target, error="", result="")
         session.add(row)
         uow.commit()
     return _job(row)
@@ -174,8 +180,9 @@ def cancel_job(uow, job_id: UUID, *, now: datetime) -> ScanJob:
     return job
 
 
-def claim(uow, *, now: datetime) -> UUID | None:
-    """The oldest pending job (not overdue) becomes claimed by the agent; finished jobs past KEEP_FINISHED go."""
+def claim(uow, *, now: datetime, machine_id: str | None = None) -> UUID | None:
+    """The oldest pending job (not overdue) for this agent — targeted to `machine_id` or untargeted — becomes claimed;
+    an old agent without an id (None) takes untargeted jobs only. Finished jobs past KEEP_FINISHED go."""
     with uow:
         session = _session(uow)
         _expire(session, now)
@@ -183,9 +190,11 @@ def claim(uow, *, now: datetime) -> UUID | None:
             ScanJobRow.status.in_(FINISHED_STATUSES), ScanJobRow.finished_at < now - KEEP_FINISHED,
         ))
         claimed = None
+        mine = ScanJobRow.target_machine_id.is_(None) if machine_id is None else or_(
+            ScanJobRow.target_machine_id.is_(None), ScanJobRow.target_machine_id == machine_id)
         for _attempt in range(5):  # another agent may take the same row between the read and the write
             candidate = session.scalar(
-                select(ScanJobRow.id).where(ScanJobRow.status == PENDING)
+                select(ScanJobRow.id).where(ScanJobRow.status == PENDING, mine)
                 .order_by(ScanJobRow.created_at, ScanJobRow.id).limit(1)
                 .with_for_update(skip_locked=True)
             )

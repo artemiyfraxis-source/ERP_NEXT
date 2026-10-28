@@ -23,6 +23,7 @@ from app.main import app
 from app.modules.warehouse import receipt_ocr
 from app.modules.warehouse.infrastructure import WarehouseReceiptFileRow
 from app.modules.warehouse.receipt_scan import NO_TEXT, OCR_MISSING, PARTLY, parse_upd_text, recognise_upd
+from app.modules.warehouse.scan_agents import ScanAgentRow
 from app.modules.warehouse.scan_jobs import (
     CANCELLED, CLAIMED_TIMEOUT, NO_ANSWER, NO_REASON, PENDING_TIMEOUT, ScanJobRow,
 )
@@ -65,10 +66,27 @@ def queue(tokens_api, monkeypatch):  # noqa: F811
     monkeypatch.setattr(receipt_ocr, "ocr_text", lambda content, kind: "")  # no real OCR unless a test asks for it
     admin = _login("admin")
     agent = _bearer(_issue(admin, scopes=("labels:print", "scan:upload"), name="Агент склада")["token"])
+    _STAND.update(sessions=sessions, clock=clock)
     return admin, agent, clock, sessions
 
 
+_STAND: dict = {}
+
+
+def old_agent_alive(sessions, clock, host: str = "SKLAD") -> None:
+    """An old agent (no machine id) claimed just now: its `legacy:<host>` row is live, so a press queues an untargeted job."""
+    with sessions() as session:
+        row = session.get(ScanAgentRow, f"legacy:{host}")
+        if row is None:
+            session.add(ScanAgentRow(machine_id=f"legacy:{host}", pc_name=host, legacy=True, first_seen=clock.now,
+                                     last_seen=clock.now))
+        else:
+            row.last_seen = clock.now
+        session.commit()
+
+
 def _new_job(admin: TestClient) -> str:
+    old_agent_alive(_STAND["sessions"], _STAND["clock"])
     response = admin.post(JOBS, headers=_csrf(admin))
     assert response.status_code == 200, response.text
     body = response.json()

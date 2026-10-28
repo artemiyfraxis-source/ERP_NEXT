@@ -70,6 +70,7 @@ from .workflows import finished_goods_api
 from .workflows import production_intake_api
 from .workflows import coax_vswr_api
 from .workflows import receiving_by_upd_api
+from .workflows import scan_agent_install
 from .modules.purchasing import api_upd as purchasing_upd_api
 
 app = FastAPI(
@@ -129,6 +130,7 @@ app.include_router(warehouse_labels_api.router)
 app.include_router(warehouse_receipt_llm_api.router)  # before /receipts/{receipt_id}
 app.include_router(warehouse_receipts_api.router)
 app.include_router(warehouse_scan_jobs_api.router)
+app.include_router(scan_agent_install.router)
 app.include_router(fulfillment_api.router)
 app.include_router(production_api.router)
 app.include_router(production_plan_api.router)

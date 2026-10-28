@@ -442,6 +442,7 @@ export function UpdDeliveryWindow({ group, start, onClose, onDone }: {
 
   return (
     <PageWindow label="Принять по УПД" width="min(1680px, calc(100vw - 32px))" close={() => { if (!busy || accepted.current) onClose(); }}>
+      {scan.agentDialogs()}
       {delivery ? (
         <DeliveryPanel key={`${delivery.scan.scan_file}:${delivery.proposal.warehouse}`} group={proposalGroup(delivery.proposal)} upd={delivery}
           onClose={onClose} onDone={(lines) => { accepted.current = true; onDone(lines); }}
