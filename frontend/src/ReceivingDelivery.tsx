@@ -8,6 +8,8 @@ import { StatusChip } from "./StatusChip";
 import { ReceiptLabels, type ReceiptLot } from "./LabelPrint";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { PageWindow } from "./PageWindow";
+import { ScanDeviceLine } from "./ScanAgent";
+import { useCanScan } from "./rights";
 import { useUpdScan } from "./useUpdScan";
 import {
   CONFIDENCE, initialRows, reassignRow, rowTargets, rowTitle, type UpdShare,
@@ -436,6 +438,7 @@ export function UpdDeliveryWindow({ group, start, onClose, onDone }: {
     }
   }
 
+  const canScan = useCanScan();
   const scan = useUpdScan(receivingApi.updScan, (answer, pages) => void propose(answer, pages, false));
   const phone = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
   const busy = scan.scanning || matching;
@@ -451,10 +454,11 @@ export function UpdDeliveryWindow({ group, start, onClose, onDone }: {
         <section className="panel delivery-panel upd-scan-step">
           <div className="upd-head"><h2>Принять по УПД</h2>{group && <span className="upd-ids">{group.supplier} · {group.warehouse}</span>}</div>
           <p className="page-sub">Отсканируйте УПД или выберите файл (PDF, фото, ЭДО XML/ZIP) — поставка из листа ожидания откроется сама.</p>
+          <ScanDeviceLine />
           <div className="header-actions">
-            {scan.pages.length > 0
+            {canScan && (scan.pages.length > 0
               ? <button type="button" className="secondary" disabled={busy} onClick={() => void scan.fromScanner()}>+ Страница</button>
-              : <button type="button" className="primary" disabled={busy} onClick={() => void scan.fromScanner(true)}>Сканировать</button>}
+              : <button type="button" className="primary" disabled={busy} onClick={() => void scan.fromScanner(true)}>Сканировать</button>)}
             <button type="button" className="secondary" disabled={busy} onClick={() => fileInput.current?.click()}>{scan.scanning && !scan.status ? "Разбираем УПД…" : "Файл…"}</button>
             <input ref={fileInput} type="file" hidden multiple aria-label="Файл УПД" accept=".pdf,.xml,.zip,image/*,application/xml,text/xml,application/zip" {...(phone ? { capture: "environment" as const } : {})}
               onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; if (files.length) void scan.fromFiles(files); }} />

@@ -22,6 +22,7 @@ import {
 } from "./api";
 import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
+import { useCanPrint } from "./rights";
 import { countLabel } from "./format";
 import { BUSY_TITLE } from "./WarehousePlaceHint";
 import { UndoLast, WarehouseScanResults, type ScanRequest } from "./WarehouseScan";
@@ -277,6 +278,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     if (received.length > 0) void reload([]);
   }
 
+  const canPrint = useCanPrint();
   async function openPutawaySheet() {
     setPutawayError("");
     setPutawayBusy(true);
@@ -319,7 +321,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
         {/* The daily actions stay in sight; the reference tools sit behind «Ещё» (every one still one click away). */}
         <div className="page-actions">
           <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
-          {!readOnly && <button className="secondary" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>Лист перемещения</button>}
+          {!readOnly && canPrint && <button className="secondary" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>Лист перемещения</button>}
           {!readOnly && <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => { setMoveLot(null); setMoveOpen(true); }}>↔ Переместить</button>}
           <MoreMenu items={[
             ...(readOnly ? [] : [

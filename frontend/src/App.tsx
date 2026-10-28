@@ -1,3 +1,4 @@
+import { setRightsPrincipal } from "./rights";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   AUTH_REQUIRED_EVENT,
@@ -103,6 +104,7 @@ export function App() {
   const [expired, setExpired] = useState(false);
   const principalRef = useRef<Principal | null>(null);
   principalRef.current = principal;
+  useEffect(() => { setRightsPrincipal(principal); }, [principal]);
   // Unsent forms per user (F07); lives as long as the tab, never in browser storage.
   const drafts = useRef(new DraftStore()).current;
 

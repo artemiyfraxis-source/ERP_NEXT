@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, failureText } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { openPrintDocument } from "./print";
+import { useCanPrint } from "./rights";
 import "./procurementKpi.css";
 
 /** Option `procurement.kpi`: the buyer's indicators of the lines paid in a period (server-computed, the sheet of
@@ -175,6 +176,7 @@ function printSheet(result: KpiResult, from: string, to: string, buyer: string) 
 }
 
 export function ProcurementKpi() {
+  const canPrint = useCanPrint();
   const [preset, setPreset] = useState<Preset | null>("month");
   const [range, setRange] = useState(() => presetRange("month"));
   const [buyer, setBuyer] = useState("");
@@ -216,7 +218,7 @@ export function ProcurementKpi() {
               {buyers.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
           </label>
-          <button type="button" className="secondary small kpi-print" disabled={!result} onClick={() => result && printSheet(result, from, to, buyer)}>Итоги на печать</button>
+          {canPrint && <button type="button" className="secondary small kpi-print" disabled={!result} onClick={() => result && printSheet(result, from, to, buyer)}>Итоги на печать</button>}
         </div>
         {error && <div className="error-banner" role="alert">{error}</div>}
         {!error && !result && <div className="empty">Загружаю…</div>}

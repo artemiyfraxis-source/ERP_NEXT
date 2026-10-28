@@ -5,6 +5,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 import { StatusChip } from "./StatusChip";
 import { openPrintSheet } from "./print";
+import { useCanPrint } from "./rights";
 import { ReceiptLabels } from "./LabelPrint";
 import { projectLabel, useInternalProjects } from "./internalProjects";
 import { usePurposeLabel } from "./purposeLabels";
@@ -492,6 +493,7 @@ function ReceivingCard({
 }: CardProps & { onClose: () => void; onDirty: (dirty: boolean) => void; banner: ReactNode }) {
   // Новая версия строки (ВК проведён) — новая карточка: набранное ушло на сервер.
   useEffect(() => { onDirty(false); }, []);
+  const canPrint = useCanPrint();
   const touch = () => onDirty(true);
   const [fact, setFact] = useState(line.fact_quantity ?? line.ordered_quantity);
   const [documentQty, setDocumentQty] = useState(line.document_quantity ?? line.ordered_quantity);
@@ -688,7 +690,7 @@ function ReceivingCard({
       {revisable && (
         <button className="secondary small" disabled={disabled} onClick={() => void onOpenVkRevision(line)}>Провести новый ВК</button>
       )}
-      {Boolean(line.acts?.length) && (
+      {canPrint && Boolean(line.acts?.length) && (
         <div className="header-actions acts">
           {line.acts!.map((act) => (
             <button key={act.kind} type="button" className="secondary small" onClick={() => void receivingApi.actSheet(line.id, act.kind).then(({ sheet }) => openPrintSheet(sheet)).catch(() => undefined)}>
