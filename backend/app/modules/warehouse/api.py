@@ -373,6 +373,9 @@ def _reserve_holders(request: Request, lots: list[StockLot]) -> dict[UUID, list[
     return holders
 
 
+WHOLE_STOCK = 10**9  # "no limit" for the paged read: SQL LIMIT and slices take it as all
+
+
 def _reserve_note(holders: list[dict]) -> str:
     if not holders:
         return ""
@@ -384,7 +387,10 @@ def lots(
     request: Request,
     _principal: Annotated[Principal, Depends(warehouse_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
-    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    # Without `limit` — the whole filter in one answer, always (owner 28.10.2026: no «Показать ещё» while scrolling;
+    # 673 lots ≈ 0.5 s): the sorted read orders the whole filter anyway, pages only re-did it. `limit`/`after` stay
+    # for other callers that want a page.
+    limit: Annotated[int | None, Query(ge=1)] = None,
     after: UUID | None = None,
     q: Annotated[str, Query(max_length=255)] = "",
     zero: bool = False,
@@ -397,7 +403,7 @@ def lots(
     try:
         lots, total = warehouse_lots(
             uow_factory(),
-            limit=limit + 1,
+            limit=(limit + 1) if limit is not None else WHOLE_STOCK,
             after_id=after,
             query=q,
             warehouse=warehouse,
@@ -408,7 +414,7 @@ def lots(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    page = lots[:limit]
+    page = lots[:limit] if limit is not None else lots
     holders = _reserve_holders(request, [lot for lot in page if lot.reserved > 0])
     receipts = lot_receipts(uow_factory(), page)
     return {
@@ -423,7 +429,7 @@ def lots(
         ],
         "total": total,
         "truncated": max(0, total - len(page)),
-        "next_cursor": str(page[-1].id) if len(lots) > limit else None,
+        "next_cursor": str(page[-1].id) if limit is not None and len(lots) > limit else None,
     }
 
 

@@ -92,3 +92,14 @@ def test_maker_and_document_columns_sort_the_whole_stock():
     second = replace(_lot(2), manufacturer="MOLEX", upd_name="SMA-C58P")
     assert [lot.manufacturer for lot in sort_stock_lots([first, second], "maker", False)] == ["MOLEX", "RUICHI"]
     assert [lot.upd_name for lot in sort_stock_lots([first, second], "upd_name", True)] == ["SMA-Female", "SMA-C58P"]
+
+
+def test_the_screen_gets_the_whole_stock_in_one_answer(warehouse_api):  # noqa: F811
+    client, _first = warehouse_api
+    with app.state.warehouse_uow_factory() as uow:
+        for number in range(1, 251):
+            uow.warehouse.add(_lot(number))
+        uow.commit()
+    page = client.get("/api/stock", params={"sort": "article", "group": "series"}).json()
+    assert len(page["lots"]) == page["total"] >= 250
+    assert page["next_cursor"] is None
