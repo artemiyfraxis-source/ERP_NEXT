@@ -16,8 +16,9 @@ import "./productionIntake.css";
 /* «Приёмка с производства» (владелец 14.10): всё, что у нас в работе, по проектам. Склад принимает кусками —
    сколько цех уже сдал; принятое встаёт в «Отгрузку». Данные отправки вносят, пока проект в работе. */
 
-type Segment = "ready" | "production" | "all";
-const SEGMENTS: Array<[Segment, string]> = [["ready", "Можно принять"], ["production", "В производстве"], ["all", "Все"]];
+// «В производстве» убрана (владелец 28.10.2026): всё, что в работе, принимается — оно в «Можно принять».
+type Segment = "ready" | "all";
+const SEGMENTS: Array<[Segment, string]> = [["ready", "Можно принять"], ["all", "Все"]];
 
 const num = (value: string | number | null | undefined) => {
   const parsed = Number(String(value ?? "").replace(",", "."));
@@ -35,14 +36,11 @@ function tasksText(row: IntakeRow) {
   return row.tasks.map((task) => `${task.number}${task.site ? ` · ${task.site}` : ""} · сдано ${task.delivered} из ${task.quantity}`).join("\n");
 }
 
-/** «В производстве» (владелец 14.10): по этапу КБ — «В работе» или «ОТК», — или запущено больше, чем сдано цехом. */
-const IN_WORK_STAGES = new Set(["В работе", "ОТК"]);
 const recentAct = (row: IntakeRow) => {
   const from = new Date(); from.setDate(from.getDate() - RECENT_DAYS);
   return (row.acts ?? []).some((act) => act.received_at >= isoDay(from));
 };
-const inSegment = (row: IntakeRow, segment: Segment) => segment === "all"
-  || (segment === "ready" ? num(row.remaining) > 0 || recentAct(row) : IN_WORK_STAGES.has(row.stage) || num(row.launched) > num(row.delivered));
+const inSegment = (row: IntakeRow, segment: Segment) => segment === "all" || num(row.remaining) > 0 || recentAct(row);
 
 /** КБ с принятым → зелёные строки актов, затем остаток (заказано − принято по КБ в целом, не по ГРН). «Заказано» — на каждой
  *  строке; «Остаток» — у строки КБ без акта (у актов «—»: остаток один на КБ, а не на каждый ГРН). */
@@ -86,7 +84,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       setRows(loadedRows); setGoods(goodsResult.goods ?? []); setBoxes(boxesResult.boxes ?? []); setError("");
       // Принимать нечего — сразу то, что в производстве (если и там пусто — всё).
       if (!segmentChosen.current && !loadedRows.some((row) => inSegment(row, "ready"))) {
-        setSegment(loadedRows.some((row) => inSegment(row, "production")) ? "production" : "all");
+        setSegment("all");
       }
     } catch (reason) {
       setError(failureText(reason, "Не удалось загрузить список КБ в работе"));

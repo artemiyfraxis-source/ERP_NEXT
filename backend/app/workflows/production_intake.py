@@ -69,8 +69,9 @@ PICKED_KITS = (
 # ── Строка списка ───────────────────────────────────────────────────────────────────────────────────────────────
 
 
-# Этапы, на которых КБ без заданий ERP принимается до заказанного (решено агентом 14.10 — проверить).
-ACCEPT_WITHOUT_TASKS_STAGES = frozenset({"В работе", "ОТК", "Готово к отгрузке", "На отгрузке"})
+# Этапы «в работе»: КБ принимается до заказанного — с заданиями цеха или без (владелец 28.10.2026: «всё, что в работе,
+# можно принять» — цех пока не ведёт всё через задания ERP).
+ACCEPT_WITHOUT_TASKS_STAGES = frozenset({"Распланировано", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке"})
 
 
 @dataclass(frozen=True)
@@ -94,12 +95,12 @@ class IntakeRow:
 
     @property
     def remaining(self) -> Decimal:
-        """Можно принять сейчас — тот же предел, что у `finished_goods.accept_batch` (`_limit`): есть задания цеха —
-        сдано цехом минус принятое; заданий нет, а КБ по этапу уже в работе (цех ведёт её вне заданий ERP) — заказанное
-        минус принятое (владелец 14.10: «почему Алексей не может тыкнуть на те, что в работе»)."""
-        if self.tasks or self.stage not in ACCEPT_WITHOUT_TASKS_STAGES:
-            return max(self.delivered - self.accepted, ZERO)
-        return max(self.needed - self.accepted, ZERO)
+        """Можно принять сейчас — тот же предел, что у `finished_goods.accept_batch` (`_limit`): КБ в работе (есть задания
+        цеха или этап «в работе») — заказанное (или сданное цехом, если сдано больше) минус принятое (владелец 28.10.2026:
+        «всё, что в работе, можно принять»); не запущена — сданное цехом минус принятое."""
+        if self.tasks or self.stage in ACCEPT_WITHOUT_TASKS_STAGES:
+            return max(max(self.needed, self.delivered) - self.accepted, ZERO)
+        return max(self.delivered - self.accepted, ZERO)
 
     @property
     def location(self) -> str:

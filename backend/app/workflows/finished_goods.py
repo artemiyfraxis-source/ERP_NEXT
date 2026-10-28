@@ -65,6 +65,7 @@ ZERO = Decimal("0")
 DELIVERED_BASIS = "сдано цехом"
 RUN_BASIS = "тираж"
 NO_TASKS_REASON = "КБ без заданий в ERP: принято до тиража"
+OUTSIDE_TASKS_REASON = "Цех сдал по заданиям меньше: принято до тиража вне заданий"
 ACCEPT_BATCH_NAMESPACE = uuid5(NAMESPACE_URL, "erp-next:shipping:accept-from-production")
 BATCH_EVENT = "shipping.goods_accepted_batch"
 
@@ -301,9 +302,12 @@ def accept_batch_fingerprint(command: AcceptBatchCommand) -> str:
 
 
 def _limit(kb: KbProduction | None, good: FinishedGood) -> tuple[Decimal, str, str]:
-    """(сколько всего можно принять, как это назвать, причина в журнале)."""
+    """(сколько всего можно принять, как это назвать, причина в журнале). КБ с заданиями цеха — до тиража, даже если цех
+    сдал по заданиям меньше (владелец 28.10.2026: «всё, что в работе, можно принять»; причина — в журнале)."""
     if kb is not None:
-        return kb.delivered, DELIVERED_BASIS, ""
+        if kb.delivered >= good.ordered:
+            return kb.delivered, DELIVERED_BASIS, ""
+        return good.ordered, RUN_BASIS, OUTSIDE_TASKS_REASON
     return good.ordered, RUN_BASIS, NO_TASKS_REASON
 
 
