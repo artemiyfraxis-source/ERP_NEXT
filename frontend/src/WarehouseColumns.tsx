@@ -2,7 +2,11 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent }
 
 /** The columns of the two stock tables: «Остатки по позициям» (one row per article) and «Таблица склада» (one row per lot). */
 export type ColumnKey = "type" | "grn" | "balance" | "lots" | "place" | "series" | "article" | "name" | "warehouse" | "available" | "reserved" | "purpose"
-  | "maker" | DocumentColumn;
+  | "maker" | ArticleColumn | DocumentColumn;
+/** Three articles of a lot (owner 28.10.2026): «Артикул номенклатуры» is ours (`article`), these two are the maker's and
+ *  the seller's codes — off until switched on in «Колонки», they stand right after ours. */
+export type ArticleColumn = "maker_article" | "supplier_article";
+const ARTICLE_COLUMNS: ArticleColumn[] = ["maker_article", "supplier_article"];
 /** The documents of a lot (owner 26.10.2026: «должно быть, но скрыто»): the names the УПД and the invoice give it, and
  *  the numbers, dates and file of its delivery. In both tables, off until switched on; a position of the grouped table
  *  shows the value its lots agree on, else «N разн.» (owner 26.10: «добавить сами столбцы»).
@@ -20,13 +24,16 @@ export const DOCUMENT_WIDTHS: Record<DocumentColumn, number> = {
 // the wider table and squeeze the name); the name takes the rest, at least NAME_MIN.
 const FIXED_WIDTHS: Partial<Record<ColumnKey, number>> = {
   type: 150, grn: 168, balance: 98, lots: 76, available: 96, reserved: 92, place: 110, series: 140, article: 200,
+  maker_article: 170, supplier_article: 140,
   warehouse: 92, purpose: 104, maker: 150, ...DOCUMENT_WIDTHS,
 };
 const NAME_MIN = 320;
+/** The optional columns that widen the table when switched on: the documents and the maker's / supplier's article. */
+const WIDENING: ReadonlySet<ColumnKey> = new Set<ColumnKey>([...DOCUMENT_COLUMNS, ...ARTICLE_COLUMNS]);
 
-/** Column widths and the table's min width when document columns are shown; null — none shown (styles.css widths). */
+/** Column widths and the table's min width when a widening column is shown; null — none shown (styles.css widths). */
 export function documentsLayout(keys: ColumnKey[]): { minWidth: number; widths: Partial<Record<ColumnKey, number>> } | null {
-  if (!keys.some((key) => key in DOCUMENT_WIDTHS)) return null;
+  if (!keys.some((key) => WIDENING.has(key))) return null;
   const widths = Object.fromEntries(keys.filter((key) => key !== "name").map((key) => [key, FIXED_WIDTHS[key] ?? 100]));
   const minWidth = Object.values(widths).reduce((sum, width) => sum + width, 0) + (keys.includes("name") ? NAME_MIN : 0);
   return { minWidth, widths };
@@ -40,15 +47,15 @@ export type ColumnLayouts = Record<TableKind, ColumnLayout>;
 // the same order with «Партий» left out. Since 22.10 the quantity read first is «Свободно» (balance minus reserve): the
 // raw «Остаток» is optional (it stays in the tooltip of «Свободно» and in the group header).
 const DEFAULT_ORDER: Record<TableKind, ColumnKey[]> = {
-  grouped: ["type", "grn", "available", "reserved", "balance", "lots", "place", "series", "article", "name", "warehouse", "maker", ...DOCUMENT_COLUMNS],
-  flat: ["type", "grn", "available", "reserved", "balance", "place", "series", "article", "name", "purpose", "warehouse", "maker", ...DOCUMENT_COLUMNS],
+  grouped: ["type", "grn", "available", "reserved", "balance", "lots", "place", "series", "article", ...ARTICLE_COLUMNS, "name", "warehouse", "maker", ...DOCUMENT_COLUMNS],
+  flat: ["type", "grn", "available", "reserved", "balance", "place", "series", "article", ...ARTICLE_COLUMNS, "name", "purpose", "warehouse", "maker", ...DOCUMENT_COLUMNS],
 };
 // «Назначение» (the project a lot is kept for) is the least needed column of the lot table; «Остаток» is off in both
 // tables: «Свободно» + «Резерв» already say it, and reading the raw balance misleads (owner, 22.10). «Производитель» and
 // the documents are there for whoever switches them on in «Колонки» (owner 26.10).
 const DEFAULT_HIDDEN: Record<TableKind, ColumnKey[]> = {
-  grouped: ["balance", "maker", ...DOCUMENT_COLUMNS],
-  flat: ["balance", "purpose", "maker", ...DOCUMENT_COLUMNS],
+  grouped: ["balance", "maker", ...ARTICLE_COLUMNS, ...DOCUMENT_COLUMNS],
+  flat: ["balance", "purpose", "maker", ...ARTICLE_COLUMNS, ...DOCUMENT_COLUMNS],
 };
 
 /** The person's layout of each table on the server (personalViews.ts): one view per table of «Материалы и комплектующие». */
@@ -56,7 +63,8 @@ export const STOCK_VIEWS: Record<TableKind, string> = { grouped: "stock.grouped"
 export const TABLE_KINDS: TableKind[] = ["grouped", "flat"];
 
 export const COLUMN_TITLES: Record<ColumnKey, string> = {
-  name: "Наименование", article: "Артикул", grn: "ГРН", balance: "Остаток", lots: "Партий", available: "Свободно", reserved: "Резерв",
+  name: "Наименование", article: "Артикул номенклатуры", maker_article: "Артикул производителя",
+  supplier_article: "Артикул поставщика", grn: "ГРН", balance: "Остаток", lots: "Партий", available: "Свободно", reserved: "Резерв",
   place: "Места", warehouse: "Склад", purpose: "Назначение", series: "Серия", type: "Тип", maker: "Производитель",
   upd_name: "Наим. по УПД", invoice_name: "Наим. по счёту", invoice_number: "№ счёта", invoice_date: "Дата счёта",
   upd_number: "№ УПД", upd_date: "Дата УПД", prd_number: "№ ПРД", prd_date: "Дата ПРД", upd_file: "Файл УПД",
@@ -65,6 +73,8 @@ export const COLUMN_TITLES: Record<ColumnKey, string> = {
 /** Header tooltips of the columns that need one. */
 export const COLUMN_HINTS: Partial<Record<ColumnKey, string>> = {
   available: "остаток минус резерв", reserved: "под какие заявки — в подсказке ячейки",
+  article: "наш общепринятый артикул", maker_article: "артикул, с которым позиция вышла с завода",
+  supplier_article: "артикул, под которым позиция в продаже у поставщика",
   upd_name: "строка товара, как напечатана в УПД", invoice_name: "строка товара в оплаченном счёте",
   prd_number: "платёжно-расчётный документ из УПД", upd_file: "скан или файл ЭДО поставки",
 };

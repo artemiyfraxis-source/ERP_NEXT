@@ -212,6 +212,9 @@ class StockLotRow(Base):
     # Migration 0152: the item row as the УПД prints it and as the paid invoice names it (read-only, '' — unknown).
     upd_name: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     invoice_name: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    # Migration 0158: «Артикул производителя» / «Артикул поставщика» ('' — not known); `article` is ours.
+    maker_article: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    supplier_article: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -427,13 +430,16 @@ def _row(lot: StockLot) -> StockLotRow:
         receipt_id=lot.receipt_id,
         upd_name=lot.upd_name,
         invoice_name=lot.invoice_name,
+        maker_article=lot.maker_article,
+        supplier_article=lot.supplier_article,
     )
 
 
 # The columns a search looks at; a search reads these and the id, never the whole row.
 _SEARCH_COLUMNS = (
     StockLotRow.grn, StockLotRow.package, StockLotRow.article, StockLotRow.series, StockLotRow.name,
-    StockLotRow.item_type, StockLotRow.purpose, StockLotRow.storage_location,
+    StockLotRow.item_type, StockLotRow.purpose, StockLotRow.storage_location, StockLotRow.maker_article,
+    StockLotRow.supplier_article,
 )
 
 
@@ -471,6 +477,8 @@ def _domain(row: StockLotRow) -> StockLot:
         receipt_id=row.receipt_id,
         upd_name=row.upd_name,
         invoice_name=row.invoice_name,
+        maker_article=row.maker_article,
+        supplier_article=row.supplier_article,
     )
 
 
