@@ -4,14 +4,19 @@ import type { Tone } from "./statusTone";
 /** «Счета», «Цепочка документов», «Поиск по документам»: /api/purchasing/invoices,
  *  /doc-chain, /upd/{id}/invoices, /doc-search. Money arrives in kopecks; the UI shows roubles. */
 
-export type InvoiceStatus = "to_pay" | "paid" | "return" | "other";
+/** cancelled / replaced — только у счёта, загруженного в закупке: строки отменены / его место занял новый счёт. */
+export type InvoiceStatus = "to_pay" | "paid" | "return" | "other" | "cancelled" | "replaced";
 export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
   to_pay: "В оплату",
   paid: "Оплачен",
   return: "Возврат",
   other: "Другое",
+  cancelled: "Отменён",
+  replaced: "Заменён",
 };
-export const INVOICE_STATUS_TONE: Record<InvoiceStatus, Tone> = { to_pay: "warning", paid: "success", return: "neutral", other: "neutral" };
+export const INVOICE_STATUS_TONE: Record<InvoiceStatus, Tone> = {
+  to_pay: "warning", paid: "success", return: "neutral", other: "neutral", cancelled: "neutral", replaced: "neutral",
+};
 
 export type ChainState = "closed" | "partial" | "over" | "waiting" | "missing" | "unpaid" | "return" | "orphan";
 export const CHAIN_STATES: readonly ChainState[] = ["closed", "partial", "over", "waiting", "missing", "unpaid", "return", "orphan"];
@@ -84,6 +89,8 @@ export type ChainQuery = { view: "problems" | "all"; q: string; closing: ChainCl
 export type InvoiceFile = { id: string; name: string; kind: "invoice" | "payment" | "other"; size: number; downloaded: boolean };
 export type InvoiceLine = { seq: number; name: string; article: string; qty: number | string | null; unit: string; price: number | null; sum: number | null };
 export type InvoiceRow = ChainInvoice & {
+  /** kaiten — карточка Kaiten; procurement — файл, загруженный к заказу в закупке ERP. */
+  source?: "kaiten" | "procurement";
   column_title: string; card_created: string | null; vat: number | null; vat_free: boolean; parse_issues: string; line_count: number;
   payment_numbers: string; payment_date: string | null; payment_sum: number | null; payment_matches: boolean | null; files: InvoiceFile[];
   chain: { state: ChainState; problem: boolean; upds: number; closed_gross: number; checks: DocCheck[] } | null;
@@ -91,6 +98,7 @@ export type InvoiceRow = ChainInvoice & {
 export type InvoiceList = { items: InvoiceRow[]; total: number; page: number; page_size: number; counts: Record<InvoiceStatus, number>; sum: number };
 export type InvoiceQuery = { q: string; status: InvoiceStatus | ""; closing: "" | "none"; from: string; to: string; page: number };
 export type InvoiceCard = ChainInvoice & {
+  source?: "kaiten" | "procurement";
   board_title: string; column_title: string; card_created: string | null; vat: number | null; vat_free: boolean; parse_issues: string;
   lines: InvoiceLine[]; payment_numbers: string; payment_date: string | null; payment_sum: number | null; payment_matches: boolean | null;
   files: InvoiceFile[]; chain: DocChain | null; receiving_available: boolean;

@@ -84,7 +84,7 @@ def test_pdf_and_pictures_still_open_in_the_tab(procurement_api, rates):
 def test_foreign_line_is_refused_403_before_the_file_is_read(procurement_api, rates, monkeypatch):
     client, line, _ = procurement_api  # nobody took the line yet — it is not the buyer's own
     read = []
-    monkeypatch.setattr(application, "recognise_invoice", lambda content: read.append(content))
+    monkeypatch.setattr(application, "recognise_invoice_file", lambda content: read.append(content))
 
     refused = _upload(client, line.id)
 

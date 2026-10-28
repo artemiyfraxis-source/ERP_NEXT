@@ -2848,12 +2848,47 @@ export interface ProcurementFile {
   uploaded_at: string;
 }
 
+/** Позиция счёта, как её прочитал разборщик Roller_Buyer: цена и сумма в копейках, как напечатаны (с НДС или без). */
+export interface InvoiceReadingLine {
+  seq: number;
+  name: string;
+  article: string;
+  qty: number | null;
+  unit: string;
+  price: number | null;
+  sum: number | null;
+}
+
+/** Полный разбор счёта из текста PDF: шапка с деньгами (копейки), позиции, замечания разбора. */
+export interface InvoiceReading {
+  number: string | null;
+  date: string | null;
+  seller_name: string | null;
+  seller_inn: string | null;
+  total: number | null;
+  vat: number | null;
+  vat_free: boolean;
+  /** Текста в файле нет (скан, фото) — разбирать нечего. */
+  scan: boolean;
+  lines: InvoiceReadingLine[];
+  issues: string[];
+}
+
+/** Что сверить: продавец против поставщика заказа, сумма против строк, позиции против строк заказа. */
+export interface InvoiceCheck {
+  kind: "seller" | "total" | "lines";
+  level: "ok" | "warning" | "info";
+  text: string;
+}
+
 export interface InvoiceUpload {
   url: string;
   file_name: string;
   invoice_number: string;
   invoice_date: string;
   hint: string;
+  reading?: InvoiceReading;
+  checks?: InvoiceCheck[];
 }
 
 // «Мои позиции» / «Режим просмотра»: большие страницы — тысячи строк за 1–5 запросов, а не за 50.

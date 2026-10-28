@@ -346,7 +346,8 @@ def kaiten_invoices(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_
         for view in world.views.values():
             if view.invoice_number:
                 ordered.setdefault(norm_doc_number(view.invoice_number), []).append(view.legacy_id)
-        rows = list(session.scalars(select(InvoiceRow).where(InvoiceRow.status != "return")))
+        # Kaiten cards only: an invoice uploaded in procurement already stands on its order's lines.
+        rows = list(session.scalars(select(InvoiceRow).where(InvoiceRow.status != "return", InvoiceRow.source == "kaiten")))
         out, unread = [], 0
         for inv in rows:
             if _invoice_day(inv) < rfq_day:

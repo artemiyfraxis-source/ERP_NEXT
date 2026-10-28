@@ -1,4 +1,5 @@
-"""«Счета»: the invoice registry mirrored from Kaiten (space «Закупки»), read-only.
+"""«Счета»: the invoice registry mirrored from Kaiten (space «Закупки»), read-only, and the invoices uploaded to orders in
+ERP procurement (source «procurement», `invoice_uploads`).
 
 One card = one invoice with its PDF and our payment orders (ported from Roller_Buyer kaiten.ts / routes/invoices.ts,
 no network here — the importer fills the tables). The header was read from the PDF's text layer; the payments come
@@ -17,12 +18,13 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .doc_chain import Chain, ChainInvoice, World, load_invoice_files
+from .doc_chain import VOID_STATUSES, Chain, ChainInvoice, World, load_invoice_files
 from .doc_refs import PaymentOrder, norm_doc_number
 from .infrastructure import DocumentFileRow, InvoiceFileRow, InvoiceRow, SupplierRow
 
 PAGE_SIZE = 100
-INVOICE_STATUSES = ("to_pay", "paid", "return", "other")
+# cancelled / replaced — only an invoice uploaded in procurement (its lines cancelled, a newer invoice in its place).
+INVOICE_STATUSES = ("to_pay", "paid", "return", "other", "cancelled", "replaced")
 
 
 class InvoiceNotFound(LookupError):
@@ -53,6 +55,15 @@ def payment_summary(payments: tuple[PaymentOrder, ...] | list[PaymentOrder]) -> 
         date=max((p.date for p in payments), default=None),
         sum=sum(p.sum for p in payments) if payments else None,
     )
+
+
+def procurement_payment(source: str, payments: PaymentSummary, payment_date: date | None,
+                        payment_sum: int | None) -> PaymentSummary:
+    """An invoice uploaded in procurement has no payment orders of its own: its payment is the procurement lines' one
+    (`invoice_uploads.apply_procurement_state`) — the day and sum written on the row."""
+    if source != "procurement" or payments.date is not None or payment_date is None:
+        return payments
+    return PaymentSummary(numbers=payments.numbers, date=payment_date.isoformat(), sum=payment_sum)
 
 
 def payment_matches_total(total: int | None, payment: int | None) -> bool | None:
@@ -90,8 +101,8 @@ class InvoiceQuery:
 def list_invoices(session: Session, world: World, query: InvoiceQuery) -> dict:
     rows = {
         row.id: row for row in session.execute(select(
-            InvoiceRow.id, InvoiceRow.column_title, InvoiceRow.card_created, InvoiceRow.vat, InvoiceRow.vat_free,
-            InvoiceRow.parse_issues, InvoiceRow.lines,
+            InvoiceRow.id, InvoiceRow.source, InvoiceRow.column_title, InvoiceRow.card_created, InvoiceRow.vat,
+            InvoiceRow.vat_free, InvoiceRow.parse_issues, InvoiceRow.lines, InvoiceRow.payment_date, InvoiceRow.payment_sum,
         ))
     }
     files = load_invoice_files(session)
@@ -134,8 +145,11 @@ def list_invoices(session: Session, world: World, query: InvoiceQuery) -> dict:
     def item(inv: ChainInvoice) -> dict:
         row = rows.get(inv.id)
         paid = payment_summary(inv.payments)
+        if row is not None:
+            paid = procurement_payment(row.source, paid, row.payment_date, row.payment_sum)
         return {
             **inv.as_json(),
+            "source": row.source if row is not None else "kaiten",
             "column_title": row.column_title if row is not None else "",
             "card_created": row.card_created.isoformat() if row is not None and row.card_created else None,
             "vat": row.vat if row is not None else None, "vat_free": bool(row.vat_free) if row is not None else False,
@@ -149,7 +163,8 @@ def list_invoices(session: Session, world: World, query: InvoiceQuery) -> dict:
 
     return {
         "items": [item(inv) for inv in page], "total": len(chosen), "page": query.page, "page_size": PAGE_SIZE,
-        "counts": counts, "sum": sum(inv.total or 0 for inv in chosen),
+        # a cancelled or replaced upload is no money owed: out of the sum unless asked for by its status
+        "counts": counts, "sum": sum(inv.total or 0 for inv in chosen if query.status or inv.status not in VOID_STATUSES),
     }
 
 
@@ -161,10 +176,10 @@ def invoice_card(session: Session, world: World, invoice_id: UUID) -> tuple[dict
     if row is None or inv is None:
         raise InvoiceNotFound("Счёт не найден")
     files = load_invoice_files(session, [invoice_id]).get(invoice_id, [])
-    paid = payment_summary(inv.payments)
+    paid = procurement_payment(row.source, payment_summary(inv.payments), row.payment_date, row.payment_sum)
     return {
         **inv.as_json(),
-        "board_title": row.board_title, "column_title": row.column_title,
+        "source": row.source, "board_title": row.board_title, "column_title": row.column_title,
         "card_created": row.card_created.isoformat() if row.card_created else None,
         "vat": row.vat, "vat_free": row.vat_free, "parse_issues": row.parse_issues, "lines": row.lines or [],
         "payment_numbers": paid.numbers, "payment_date": paid.date, "payment_sum": paid.sum,
@@ -199,7 +214,10 @@ def invoice_pdf(session: Session, invoice_id: UUID, number: str | None = None) -
 
 
 def invoice_title(row: InvoiceRow) -> str:
-    """«Счёт Kaiten № … от …» — how an order shows the registry's invoice it stands on."""
+    """«Счёт Kaiten № … от …» (an invoice uploaded in procurement: «Счёт № … от …») — how an order shows the registry's
+    invoice it stands on."""
+    if row.source != "kaiten":
+        return "Счёт" + (f" № {row.number}" if row.number else "") + (f" от {row.doc_date:%d.%m.%Y}" if row.doc_date else "")
     number = f" № {row.number}" if row.number else f" (карточка {row.external_id})"
     return f"Счёт Kaiten{number}" + (f" от {row.doc_date:%d.%m.%Y}" if row.doc_date else "")
 

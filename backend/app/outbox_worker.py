@@ -59,6 +59,7 @@ from app.workflows.etk_refresh import refresh_tick
 from app.workflows.kitset_names import kitset_names_tick
 from app.workflows.leave_calendar import leave_calendar_tick
 from app.workflows.procurement_autofill import AUTOFILL_TICK_CAP, procurement_autofill_tick
+from app.workflows.procurement_invoice_registry import invoice_status_tick
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from app.workflows.owner_alerts import alert_on_dead_letters, daily_overdue_digest, quarantine_escalations
 
@@ -76,6 +77,10 @@ _tail_thread: threading.Thread | None = None
 # Registered leave requests → the shop calendar: copied right after each decision; this pass repairs a copy that failed.
 LEAVE_CALENDAR_INTERVAL_SECONDS = 60.0
 _last_leave_calendar = float("-inf")
+# «Счета» ← procurement lines: an uploaded invoice's status follows the lines carrying it. Synced right after the pay /
+# invoice commands; this pass catches the rest (a cancelled line, a backorder, a failed hook).
+INVOICE_STATUS_INTERVAL_SECONDS = 60.0
+_last_invoice_status = float("-inf")
 # «Взять в работу» → name / manufacturer / country from the supplier's page (Guards.gs inWorkSideEffects_) run on their
 # own thread too, but on a short beat: the buyer is looking at the line while it fills, so the minute of the tail
 # group would be too slow, and a dead supplier site (15 s timeout) must not hold the outbox dispatch either.
@@ -266,7 +271,24 @@ def run_timers(sessions: sessionmaker[Session]) -> int:
     done += run_owner_jobs(sessions)
     done += run_arbiter(sessions)
     done += run_leave_calendar(sessions)
+    done += run_invoice_status(sessions)
     return done
+
+
+def run_invoice_status(sessions: sessionmaker[Session]) -> int:
+    """The registry invoices uploaded in procurement take the status of their lines (workflows/
+    procurement_invoice_registry.py), at most every INVOICE_STATUS_INTERVAL_SECONDS. A failure is logged, never raised."""
+    global _last_invoice_status
+    if time.monotonic() - _last_invoice_status < INVOICE_STATUS_INTERVAL_SECONDS:
+        return 0
+    _last_invoice_status = time.monotonic()
+    with _GroupRun(sessions, "invoice_status") as run:
+        try:
+            return int(invoice_status_tick(moscow_now(), sessions))
+        except Exception as error:  # noqa: BLE001 — one broken job must not stop the worker
+            logging.exception("Invoice status sync failed; retrying next pass")
+            run.failed("invoice status", error)
+            return 0
 
 
 def run_leave_calendar(sessions: sessionmaker[Session]) -> int:

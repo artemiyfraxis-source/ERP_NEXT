@@ -17,7 +17,13 @@ import "./purchasingDocs.css";
 const STATUSES: { key: InvoiceStatus | ""; label: string }[] = [
   { key: "", label: "Все" }, { key: "to_pay", label: INVOICE_STATUS_LABELS.to_pay }, { key: "paid", label: INVOICE_STATUS_LABELS.paid },
   { key: "return", label: INVOICE_STATUS_LABELS.return }, { key: "other", label: INVOICE_STATUS_LABELS.other },
+  { key: "cancelled", label: INVOICE_STATUS_LABELS.cancelled }, { key: "replaced", label: INVOICE_STATUS_LABELS.replaced },
 ];
+/** Почему счёт из закупки больше не живой — одной строкой в карточке. */
+const VOID_NOTE: Partial<Record<InvoiceStatus, string>> = {
+  cancelled: "Строки закупки по этому счёту отменены — в цепочке документов счёт не участвует.",
+  replaced: "К заказу загружен более новый счёт — этот в цепочке документов не участвует.",
+};
 const FILE_KIND: Record<InvoiceFile["kind"], string> = { invoice: "счёт", payment: "платёжка", other: "файл" };
 
 /** `&tab=invoices&status=to_pay` (a link from «Сегодня»): the registry opens on that status. */
@@ -71,7 +77,7 @@ export function PurchasingInvoices({ readOnly = false, onOpenUpd }: { readOnly?:
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!error && !list && <div className="empty">Загружаю…</div>}
       {list && list.items.length === 0 && (
-        <div className="empty">{query.q || query.status || query.closing || query.from || query.to ? "Ничего не найдено." : "Счетов ещё нет: их загружает перенос из Kaiten."}</div>
+        <div className="empty">{query.q || query.status || query.closing || query.from || query.to ? "Ничего не найдено." : "Счетов ещё нет: они приходят из Kaiten и со счетами, загруженными в закупке."}</div>
       )}
       {list && list.items.length > 0 && (
         <ul className="pdoc-grid" aria-label="Счета">
@@ -122,6 +128,7 @@ function InvoiceTile({ row, onOpen }: { row: InvoiceRow; onOpen: () => void }) {
       <div className="pdoc-sub">
         <span>Оплата: <PaymentCell row={row} /></span>
         {row.line_count > 0 && <span>позиций: {row.line_count}</span>}
+        {row.source === "procurement" && <span className="muted">загружен в закупке</span>}
       </div>
       {row.chain && (
         <div className="pdoc-sub" title={row.chain.checks.map((c) => c.text).join("\n")}>
@@ -173,8 +180,9 @@ export function InvoiceCardDialog({ id, readOnly, onClose, onChanged, onOpenUpd 
               <dt>Поставщик</dt><dd>{card.supplier_name ?? card.seller_name ?? "продавец не прочитан"}{card.seller_inn ? ` · ИНН ${card.seller_inn}` : ""}</dd>
               <dt>Сумма</dt><dd>{rub(card.total)}{card.vat_free ? " · без НДС" : card.vat !== null ? ` · НДС ${rub(card.vat)}` : ""}</dd>
               <dt>Статус</dt><dd><StatusChip tone={INVOICE_STATUS_TONE[card.status]}>{INVOICE_STATUS_LABELS[card.status]}</StatusChip>{card.column_title ? <span className="muted"> · колонка Kaiten «{card.column_title}»</span> : null}</dd>
-              <dt>Карточка Kaiten</dt><dd>{card.title}</dd>
+              <dt>{card.source === "procurement" ? "Загружен в закупке" : "Карточка Kaiten"}</dt><dd>{card.title}</dd>
             </dl>
+            {VOID_NOTE[card.status] && <p className="warning-inline">{VOID_NOTE[card.status]}</p>}
             {card.parse_issues && <p className="doc-check warning">Замечания разбора: {card.parse_issues}</p>}
 
             <h3>Позиции</h3>
@@ -182,7 +190,9 @@ export function InvoiceCardDialog({ id, readOnly, onClose, onChanged, onOpenUpd 
             {card.lines.length > 0 && <p className="muted">Прочитано из таблицы PDF. Цены — как напечатал поставщик: с НДС или без.</p>}
 
             <h3>Платёжные поручения</h3>
-            {card.payments.length === 0 ? <p className="muted">Платёжек в карточке нет.</p> : (
+            {card.payments.length === 0 && card.source === "procurement" && card.payment_date ? (
+              <ul className="doc-list" aria-label="Оплата в закупке"><li>Оплачено в закупке {dayText(card.payment_date)} · {rub(card.payment_sum)}</li></ul>
+            ) : card.payments.length === 0 ? <p className="muted">Платёжек в карточке нет.</p> : (
               <ul className="doc-list" aria-label="Платёжные поручения">
                 {card.payments.map((p) => <li key={`${p.number}|${p.date}|${p.sum}`}>№ {p.number} от {dayText(p.date)} · {rub(p.sum)}</li>)}
               </ul>

@@ -7,7 +7,8 @@ the delivery is accepted — the goods are really taken — the file goes to the
 * an ЭДО file (XML / Diadoc ZIP, kept as it came) — `upd_registry.import_edo`, an ordinary «edo» document; sent again
   it reports «unchanged» or a twin;
 * a paper scan — `upd_scans.import_scan`, origin «scan», one document per stored file («wh-<file uuid>»): the header as
-  the storekeeper saved it on the delivery (`scan_document`), the lines from the model's reading kept with the file.
+  the storekeeper saved it on the delivery (`scan_document`), the lines, money, basis and payments from the document
+  reader's answer kept with the file (since 26.10.2026: one reading for the delivery and the registry).
 
 Idempotent: a scan document is rewritten only when the delivery's header or the reading changed. A push that fails is
 logged and never fails the acceptance (`push_after_accept`); the next accepted line or the backfill retries.
@@ -39,6 +40,7 @@ from app.modules.warehouse.infrastructure import StockLotRow, WarehouseReceiptFi
 from app.modules.warehouse.receipts_application import scan_file_id
 from app.modules.warehouse.scan_reading import ScanReading, reading_from_json
 from app.shared.clock import moscow_now
+from app.shared.doc_reader import closing
 from app.shared.identity import Actor
 
 EDO_KINDS = ("application/xml", "application/zip")
@@ -61,13 +63,20 @@ def _agree(a: str, b: str) -> bool:
     return bool(a and b and (a == b or a in b or b in a))
 
 
+def _same(a: str, b: str) -> bool:
+    return " ".join(str(a or "").split()).casefold() == " ".join(str(b or "").split()).casefold()
+
+
 def scan_document(receipt: Mapping[str, Any], file: ReceiptFile, reading: ScanReading | None) -> upd_scans.ScanDocument:
     """The registry's header of a scanned УПД from the delivery as the storekeeper saved it — every column of
     warehouse_receipts comes in `receipt`, so a new field of the delivery is mapped here and nowhere else. The seller's
-    INN is the one read off the scan when the scan names the same seller (the storekeeper may have retyped it)."""
+    INN is the one read off the scan when the scan names the same seller (the storekeeper may have retyped it). The
+    basis and the payments are the reading's full wording (every basis document, every payment with its date) while
+    the delivery keeps the invoice and the ПРД the scan gave; where the storekeeper typed others, his."""
     supplier = str(receipt.get("supplier") or "").strip()
     invoice = str(receipt.get("invoice_number") or "").strip()
     basis = f"Счёт № {invoice}" + (f" от {_day(receipt.get('invoice_date'))}" if receipt.get("invoice_date") else "")
+    basis = basis if invoice else ""
     prd = str(receipt.get("prd_number") or "").strip()
     payment_doc = f"№ {prd}" + (f" от {_day(receipt.get('prd_date'))}" if receipt.get("prd_date") else "") if prd else ""
     found = reading.found if reading is not None else None
@@ -76,6 +85,13 @@ def scan_document(receipt: Mapping[str, Any], file: ReceiptFile, reading: ScanRe
         not supplier or not found.supplier or _agree(seller_name_key(found.supplier), seller_name_key(supplier))
     ):
         inn = found.inn
+    pages = reading.pages if reading is not None and any(isinstance(page, dict) for page in reading.pages) else ()
+    if pages:
+        read = closing.merge_pages(pages)
+        if _same(invoice, found.invoice_number) and str(read.get("basis") or "").strip():
+            basis = str(read["basis"]).strip()
+        if _same(prd, found.prd_number) and str(read.get("paymentDoc") or "").strip():
+            payment_doc = str(read["paymentDoc"]).strip()
     lines = tuple(
         upd_scans.ScanLine(
             name=line.name, article=line.article or line.supplier_code,
@@ -88,8 +104,8 @@ def scan_document(receipt: Mapping[str, Any], file: ReceiptFile, reading: ScanRe
     return upd_scans.ScanDocument(
         file_key=str(file.id), file_name=file.file_name, folder=f"Склад {receipt.get('warehouse') or ''}".strip(),
         number=str(receipt.get("upd_number") or "").strip(), day=receipt.get("upd_date"), seller_name=supplier,
-        seller_inn=inn, basis=basis if invoice else "", engine=reading.engine if reading is not None else "",
-        warning=reading.warning if reading is not None else "", lines=lines, payment_doc=payment_doc,
+        seller_inn=inn, basis=basis, engine=reading.engine if reading is not None else "",
+        warning=reading.warning if reading is not None else "", lines=lines, payment_doc=payment_doc, pages=pages,
     )
 
 

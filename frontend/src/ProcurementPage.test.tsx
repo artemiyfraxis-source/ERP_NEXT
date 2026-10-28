@@ -1488,6 +1488,42 @@ it("says to type № and date by hand when the invoice file has no text", async 
   expect(screen.getByLabelText("№ счёта")).toHaveValue("");
 });
 
+it("shows the whole reading of an uploaded invoice and what to check against the order", async () => {
+  const shipped = { ...line, status: "В пути" as const, buyer: "Закупщик", invoice_url: "https://files.test/invoice.pdf", paid_at: "2026-09-22T12:00:00+03:00", pay_missing: [] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [shipped], next_cursor: null });
+    if (path === "/api/procurement/invoice-files") {
+      return json({
+        ...UPLOADED,
+        reading: {
+          number: "58", date: "2026-09-14", seller_name: "ООО \"Поставка\"", seller_inn: "7701234560", total: 24400, vat: 4400,
+          vat_free: false, scan: false, issues: [],
+          lines: [{ seq: 1, name: "Разъём SMA", article: "SMA-J", qty: 2, unit: "шт", price: 12200, sum: 24400 }],
+        },
+        checks: [
+          { kind: "seller", level: "ok", text: "ИНН 7701234560 — поставщик заказа «ООО Поставка»" },
+          { kind: "total", level: "warning", text: "Сумма счёта 244,00 ₽, строк заказа — 200,00 ₽ (разница 44,00 ₽)" },
+        ],
+      });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  await openPaidBlock();
+  await openOrder("Без № заказа");
+  await pickRowAction("REQ-1", "Заменить счёт…");
+  fireEvent.change(await screen.findByLabelText("Файл счёта"), { target: { files: [new File(["pdf"], "счёт.pdf", { type: "application/pdf" })] } });
+
+  expect(await screen.findByText(/По счёту: продавец ООО "Поставка", ИНН 7701234560 · сумма 244,00\s₽, НДС 44,00\s₽/)).toBeInTheDocument();
+  expect(screen.getByText("ИНН 7701234560 — поставщик заказа «ООО Поставка»")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("строк заказа — 200,00 ₽");
+  expect(screen.getByText("Позиции счёта (1)")).toBeInTheDocument();
+  expect(screen.getByText("Разъём SMA")).toBeInTheDocument();
+});
+
 it("uploads one invoice file for the whole order in the КП form and fills № and date of every row", async () => {
   const awaiting = { ...line, status: "Жду счет" as const, buyer: "Закупщик", order_number: "PO-001", actual_quantity: "2", actual_unit: "шт" };
   const other = { ...awaiting, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", version: 5 };
@@ -2306,7 +2342,7 @@ describe("«Снабжение»: tabs, «Статистика» and «Не пе
     const main = screen.getByRole("tablist", { name: "Разделы закупки" });
     expect(within(main).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Сегодня", "Заявки", "Запросы КП", "Закупка", "Счета и поставки", "Статистика"]);
-    for (const gone of ["Поставщики", "Номенклатура", "Каталог закупок", "Настройки", "УПД", "Счета Kaiten", "Цепочка документов", "Поиск по документам"]) {
+    for (const gone of ["Поставщики", "Номенклатура", "Каталог закупок", "Настройки", "УПД", "Счета", "Цепочка документов", "Поиск по документам"]) {
       expect(screen.queryByRole("tab", { name: gone })).not.toBeInTheDocument();
     }
     expect(screen.queryByRole("tablist", { name: "Статистика" })).not.toBeInTheDocument();

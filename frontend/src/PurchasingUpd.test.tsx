@@ -52,6 +52,13 @@ function mockServer(calls: Call[] = []) {
       const status = body.files[0].file_name.endsWith(".png") ? "error" : "created";
       return json({ dry_run: body.dry_run, files: [{ name: body.files[0].file_name, status, document_id: "edo-1", number: "РЭ-0915", seller_name: "ООО Ромашка", message: status === "error" ? "«x.png»: нужен XML или ZIP из ЭДО" : undefined }] });
     }
+    if (path === "/api/purchasing/upd/import-pdf") {
+      const body = JSON.parse(String(init?.body));
+      const name = body.files[0].file_name;
+      const status = name.startsWith("копия") ? "unchanged" : "created";
+      return json({ files: [{ name, status, document_id: "pdf-1", message: status === "unchanged" ? "уже есть в реестре: «Дарт 500.pdf»" : undefined }], queued: status === "created" ? ["pdf-1"] : [], model_ready: false });
+    }
+    if (path === "/api/purchasing/upd/file-dart-0001/reparse") return json(detail({ status: "waiting", parser_status: "В очереди" }));
     if (path === "/api/purchasing/upd/sellers") return json({ sellers: [{ inn: "7707083893", name: "ООО «Дарт»", documents: 2, total_gross: 110_000, last_date: "2026-05-01", needs_review: 1 }], skipped_invalid_inn: 1 });
     if (path === "/api/purchasing/upd/sellers/import") {
       const body = JSON.parse(String(init?.body));
@@ -297,4 +304,33 @@ it("shows a warehouse scan as «Скан склада» and filters the registry
   expect(button.getAttribute("title")).toContain("распознавание модели");
   fireEvent.click(button);
   await waitFor(() => expect(calls.some((path) => new URLSearchParams(path.split("?")[1] ?? "").get("origin") === "scan")).toBe(true));
+});
+
+it("uploads PDFs into the parser's queue and says when the model key is missing", async () => {
+  const calls: Call[] = [];
+  mockServer(calls);
+  render(<PurchasingUpd />);
+  fireEvent.click(await screen.findByRole("button", { name: "Загрузить PDF" }));
+  const dialog = screen.getByRole("dialog", { name: "Загрузить PDF" });
+  const scan = new File(["%PDF-1.4"], "Сафетин 1 220.pdf", { type: "application/pdf" });
+  const copy = new File(["%PDF-1.4"], "копия.pdf", { type: "application/pdf" });
+  fireEvent.change(within(dialog).getByLabelText("Файлы PDF"), { target: { files: [scan, copy] } });
+  const table = await within(dialog).findByRole("table", { name: "Загруженные PDF" });
+  await waitFor(() => expect(table.textContent).toContain("уже был"));
+  expect(table.textContent).toContain("в очереди на разбор");
+  expect(within(dialog).getByRole("alert").textContent).toContain("Ключ модели не задан");
+  const names = calls.filter((call) => call.path === "/api/purchasing/upd/import-pdf").map((call) => JSON.parse(String(call.body)).files[0].file_name);
+  expect(names).toEqual(["Сафетин 1 220.pdf", "копия.pdf"]);
+});
+
+it("«Разобрать заново» queues the PDF and the card offers «Обновить» while it waits", async () => {
+  const calls: Call[] = [];
+  mockServer(calls);
+  render(<PurchasingUpd />);
+  fireEvent.click(await screen.findByRole("button", { name: "ООО «Дарт»" }));
+  const view = await screen.findByRole("region", { name: "Карточка УПД" });
+  fireEvent.click(within(view).getByRole("button", { name: "Разобрать заново" }));
+  await within(view).findByRole("button", { name: "Обновить" });
+  expect(within(view).queryByRole("button", { name: "Разобрать заново" })).toBeNull();
+  expect(calls.some((call) => call.path === "/api/purchasing/upd/file-dart-0001/reparse" && call.method === "POST")).toBe(true);
 });

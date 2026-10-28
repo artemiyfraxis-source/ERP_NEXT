@@ -30,7 +30,7 @@ class JobGroup:
 
 
 # The worker's job groups, in the order they are shown. `max_silence` is several beats of the group plus its longest
-# honest run: the dispatch loop turns every 2 s, the leave calendar every minute, the autofill thread every 3 s with up
+# honest run: the dispatch loop turns every 2 s, the leave calendar and the invoice status every minute, the autofill thread every 3 s with up
 # to 10 sites × 15 s, the kitset names once a minute with up to 15 sites × 15 s.
 JOB_GROUPS: tuple[JobGroup, ...] = (
     JobGroup("dispatch", "Очередь событий модулей", timedelta(minutes=5)),
@@ -38,6 +38,7 @@ JOB_GROUPS: tuple[JobGroup, ...] = (
     JobGroup("owner", "Сводки и оповещения", timedelta(minutes=5)),
     JobGroup("arbiter", "Задачи модулям по проектам", timedelta(minutes=5)),
     JobGroup("leave_calendar", "Отпуска в календаре цеха", timedelta(minutes=10)),
+    JobGroup("invoice_status", "Статус счетов из закупки", timedelta(minutes=10)),
     JobGroup("autofill", "Автозаполнение строк закупки", timedelta(minutes=15)),
     JobGroup("kitset_names", "Наименования наборов с сайтов", timedelta(minutes=30)),
 )

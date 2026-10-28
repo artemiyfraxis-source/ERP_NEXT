@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, BeforeValidator, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -144,6 +144,7 @@ from .kpi import build_kpi, period_lines
 from app.workflows.procurement_history import line_history
 from app.workflows.purchasing_kpi import purchasing_kpi_facts
 from app.workflows.procurement_today import today_page
+from app.workflows.procurement_invoice_registry import PurchasingSupplierInns, push_after_upload, sync_after_command
 from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
 from .money import MoneyInput, parse_number_loose
@@ -924,6 +925,8 @@ def lines_by_supplier(
 @router.post("/paid")
 def paid_batch(
     payload: PaidBatchInput,
+    request: Request,
+    background: BackgroundTasks,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
@@ -944,6 +947,10 @@ def paid_batch(
         )
     except ProcurementValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    background.add_task(
+        sync_after_command, uow_factory, _purchasing_factory(request), now,
+        line_ids=[item.line_id for item in payload.items],
+    )
     return {
         "lines": [_line_result(line) for line in result.lines],
         "done": len(result.lines),
@@ -1336,6 +1343,8 @@ def save_fact_prices(
 def invoice_order(
     order_number: str,
     payload: OrderInvoiceInput,
+    request: Request,
+    background: BackgroundTasks,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
@@ -1358,6 +1367,7 @@ def invoice_order(
             uow_factory(),
         )
     )
+    background.add_task(sync_after_command, uow_factory, _purchasing_factory(request), now, order_numbers=[order_number])
     return {"lines": [_line_result(line) for line in lines], "warnings": _price_warnings(lines)}
 
 
@@ -1365,6 +1375,8 @@ def invoice_order(
 def pay_order(
     order_number: str,
     payload: OrderPaidInput,
+    request: Request,
+    background: BackgroundTasks,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
@@ -1384,6 +1396,7 @@ def pay_order(
             rates,
         )
     )
+    background.add_task(sync_after_command, uow_factory, _purchasing_factory(request), now, order_numbers=[order_number])
     return {"lines": [_line_result(line) for line in lines]}
 
 
@@ -1643,10 +1656,13 @@ def replacement_permission(
 def invoice(
     line_id: UUID,
     payload: InvoiceInput,
+    request: Request,
+    background: BackgroundTasks,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
+    background.add_task(sync_after_command, uow_factory, _purchasing_factory(request), now, line_ids=[line_id])
     return _invoiced(
         lambda: record_invoice(
             RecordInvoiceCommand(
@@ -1664,15 +1680,26 @@ def invoice(
     )
 
 
+def _purchasing_factory(request: Request) -> Callable | None:
+    """Purchasing's unit of work for the invoice workflow (`procurement_invoice_registry`); None while not wired."""
+    factory = getattr(request.app.state, "purchasing_uow_factory", None)
+    return factory if callable(factory) else None
+
+
 @router.post("/invoice-files")
 def upload_invoice(
     payload: InvoiceFileInput,
+    request: Request,
+    background: BackgroundTasks,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
-    """`uploadInvoice`: the file goes to storage, the form gets its link and the recognised № and date."""
+    """`uploadInvoice`: the file goes to storage, the form gets its link and the recognised № and date, the whole
+    reading of the invoice (seller, INN, money, positions) and its checks against the order. After the answer the file
+    goes to purchasing's «Счета» (`procurement_invoice_registry`, never fails the upload)."""
     content = decode_upload(payload.content_base64, "Файл счёта повреждён")
+    purchasing = _purchasing_factory(request)
     try:
         uploaded = upload_invoice_file(
             UploadInvoiceFileCommand(
@@ -1680,6 +1707,7 @@ def upload_invoice(
                 content=content, actor=principal.actor, now=now,
             ),
             uow_factory(),
+            PurchasingSupplierInns(purchasing) if purchasing is not None else None,
         )
     except ProcurementAccessDenied as error:
         raise HTTPException(status_code=403, detail=str(error)) from error
@@ -1687,6 +1715,11 @@ def upload_invoice(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Строка закупки не найдена") from error
+    background.add_task(
+        push_after_upload, purchasing, uploaded.file.id, uploaded.file.file_name, uploaded.file.uploaded_at, content,
+        uploaded.reading, uploaded.order_number, uploaded.supplier, principal.actor, now, uploaded.file.line_id,
+        uow_factory,
+    )
     parsed = invoice_day(uploaded.info.date)
     return {
         "url": uploaded.url,
@@ -1694,6 +1727,8 @@ def upload_invoice(
         "invoice_number": uploaded.info.number,
         "invoice_date": parsed.isoformat() if parsed else "",
         "hint": uploaded.hint,
+        "reading": uploaded.reading.as_json(),
+        "checks": [check.as_json() for check in uploaded.checks],
     }
 
 
@@ -1812,6 +1847,8 @@ def _recognised_result(found: RecognisedOrderDocument) -> dict:
 def recognize_order_document(
     order_number: str,
     payload: DocumentRecognizeInput,
+    request: Request,
+    background: BackgroundTasks,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
@@ -1831,6 +1868,13 @@ def recognize_order_document(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error).strip("'\"")) from error
+    if found.kind == "invoice":  # an invoice dropped on the order is a new invoice for «Счета» too
+        first = found.lines[0]
+        background.add_task(
+            push_after_upload, _purchasing_factory(request), found.file.id, found.file.file_name,
+            found.file.uploaded_at, content, None, first.order_number or order_number, first.supplier or "",
+            principal.actor, now, None, uow_factory,
+        )
     return _recognised_result(found)
 
 
@@ -1838,6 +1882,8 @@ def recognize_order_document(
 def apply_document(
     order_number: str,
     payload: ApplyDocumentInput,
+    request: Request,
+    background: BackgroundTasks,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
@@ -1868,6 +1914,8 @@ def apply_document(
             uow_factory(),
         )
     )
+    if payload.kind == "invoice":
+        background.add_task(sync_after_command, uow_factory, _purchasing_factory(request), now, order_numbers=[order_number])
     return {"kind": payload.kind, "lines": [_line_result(line) for line in lines], "warnings": _price_warnings(lines)}
 
 
@@ -1875,10 +1923,13 @@ def apply_document(
 def invoice_replace(
     line_id: UUID,
     payload: InvoiceReplaceInput,
+    request: Request,
+    background: BackgroundTasks,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
+    background.add_task(sync_after_command, uow_factory, _purchasing_factory(request), now, line_ids=[line_id])
     return _invoiced(
         lambda: replace_invoice(
             ReplaceInvoiceCommand(
@@ -1899,11 +1950,14 @@ def invoice_replace(
 def paid(
     line_id: UUID,
     payload: PaidInput,
+    request: Request,
+    background: BackgroundTasks,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
     rates: Annotated[ExchangeRates, Depends(procurement_exchange_rates)],
 ) -> dict:
+    background.add_task(sync_after_command, uow_factory, _purchasing_factory(request), now, line_ids=[line_id])
     return _transition(
         lambda: mark_procurement_paid(
             MarkProcurementPaidCommand(

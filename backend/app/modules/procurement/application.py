@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -17,8 +17,11 @@ from app.shared.identity import Actor
 from app.shared.notifications import NotificationOutbox, notification_requested, publish_notification
 from app.shared.print_sheet import PrintSheet
 
+from app.shared.invoice_reading import InvoiceReading
+
+from .invoice_checks import InvoiceCheck, SupplierInns, invoice_checks
 from .invoice_file import (
-    INVOICE_FILE_LIMIT, INVOICE_FILE_PATH, InvoiceInfo, invoice_file_name, kp_file_name, recognise_invoice,
+    INVOICE_FILE_LIMIT, INVOICE_FILE_PATH, InvoiceInfo, invoice_file_name, kp_file_name, recognise_invoice_file,
 )
 from .domain import (
     AUTOFILL_TOPIC,
@@ -1595,6 +1598,11 @@ class UploadedInvoice:
     url: str
     info: InvoiceInfo
     hint: str
+    # The whole reading (Roller_Buyer's parser) and what the buyer should check against the order.
+    reading: InvoiceReading = field(default_factory=InvoiceReading)
+    checks: tuple[InvoiceCheck, ...] = ()
+    order_number: str = ""
+    supplier: str = ""
 
 
 def invoice_file_url(file_id: UUID) -> str:
@@ -1611,12 +1619,37 @@ def _invoice_upload_line(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> 
     return line
 
 
-def upload_invoice_file(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> UploadedInvoice:
+def _invoice_order_lines(line: ProcurementLine, actor: Actor, uow: UnitOfWork) -> list[ProcurementLine]:
+    """The lines an uploaded invoice is checked against: the buyer's lines of the same supplier order still waiting for
+    or carrying an invoice, else the line itself."""
+    if not line.order_number:
+        return [line]
+    lines = [
+        other for other in uow.procurement.by_buyer(actor, 10_000)
+        if other.order_number == line.order_number and other.status in _DOCUMENT_STAGES
+    ]
+    return sorted(lines, key=lambda other: other.legacy_id) or [line]
+
+
+def _checks(
+    reading: InvoiceReading, supplier: str, lines: list[ProcurementLine], suppliers: SupplierInns | None,
+) -> tuple[InvoiceCheck, ...]:
+    try:
+        return tuple(invoice_checks(reading, supplier, lines, suppliers))
+    except Exception:  # noqa: BLE001 — the directory is purchasing's; without it the seller is compared by name
+        _log.warning("invoice checks against the supplier directory failed", exc_info=True)
+        return tuple(invoice_checks(reading, supplier, lines, None))
+
+
+def upload_invoice_file(
+    command: UploadInvoiceFileCommand, uow: UnitOfWork, suppliers: SupplierInns | None = None,
+) -> UploadedInvoice:
     """`uploadInvoice`, first half: recognise № and date, store the file named after them.
 
     SUPPLYMAP writes the link, № and date into the rows in the same call; ERP hands them to the invoice
     form, which the buyer sends through the usual invoice / replacement / «Внести КП» command, so the pay
-    gate and the status move stay in one place.
+    gate and the status move stay in one place. The whole reading (seller, INN, money, positions) and its checks
+    against the order (`invoice_checks`, the supplier's INN through `suppliers`) come back with it.
     """
     if not command.content:
         raise ProcurementValidationError("Файл не передан")
@@ -1625,9 +1658,11 @@ def upload_invoice_file(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> U
     # Access first, then the (budgeted) reading outside any transaction, then the store re-checks the line (audit F05).
     with uow:
         _invoice_upload_line(command, uow)
-    info, hint = recognise_invoice(command.content)
+    recognised = recognise_invoice_file(command.content)
+    info, hint = recognised.info, recognised.hint
     with uow:
         line = _invoice_upload_line(command, uow)
+        order_lines = _invoice_order_lines(line, command.actor, uow)
         stored = StoredInvoiceFile(
             id=uuid4(),
             line_id=line.id,
@@ -1651,7 +1686,12 @@ def upload_invoice_file(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> U
             )
         )
         uow.commit()
-    return UploadedInvoice(file=stored, url=invoice_file_url(stored.id), info=info, hint=hint)
+    supplier = line.supplier or ""
+    return UploadedInvoice(
+        file=stored, url=invoice_file_url(stored.id), info=info, hint=hint, reading=recognised.reading,
+        checks=_checks(recognised.reading, supplier, order_lines, suppliers), order_number=line.order_number or "",
+        supplier=supplier,
+    )
 
 
 def invoice_file(file_id: UUID, uow: UnitOfWork) -> tuple[StoredInvoiceFile, bytes] | None:

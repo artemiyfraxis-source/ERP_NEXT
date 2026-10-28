@@ -358,7 +358,7 @@ def test_article_info_reads_the_procurement_line_of_the_invoice_and_the_awaited_
 UPD_TEXT = [
     "Счет-фактура № 123 от 20.10.2026 (1)",
     "Продавец: ООО «Ромашка Электро» (2)",
-    "ИНН/КПП продавца: 7701234567/770101001 (2б)",
+    "ИНН/КПП продавца: 7701234560/770101001 (2б)",
     "Основание передачи: Счёт № СЧ-45 от 01.10.2026",
     "К платёжно-расчётному документу № 916 от 19.10.2026, № 917 от 20.10.2026 (5)",
 ]
@@ -378,7 +378,7 @@ def test_scan_of_a_pdf_with_text_is_stored_and_recognised(stand):
     client, _ = stand
     body = _scan(client, "упд.pdf", identity_pdf(UPD_TEXT), "application/pdf")
     assert body["recognised"] == {
-        "supplier": "ООО «Ромашка Электро»", "inn": "7701234567", "upd_number": "123", "upd_date": "2026-10-20",
+        "supplier": "ООО «Ромашка Электро»", "inn": "7701234560", "upd_number": "123", "upd_date": "2026-10-20",
         "invoice_number": "СЧ-45", "invoice_date": "2026-10-01",
         "prd_number": "916, 917", "prd_date": "2026-10-19",  # the payment document, not the invoice
     }
@@ -410,7 +410,7 @@ def test_scan_takes_header_and_lines_of_the_upd_purchasing_already_holds(stand):
     with sessions() as session:
         session.add(UpdDocumentRow(
             id="edo-1", origin="edo", file_name="x.xml", status="Разобран", number="123", doc_date=date(2026, 10, 21),
-            seller_name="ООО \"Ромашка Электро\"", seller_inn="7701234567", synced_at=NOW, created_at=NOW,
+            seller_name="ООО \"Ромашка Электро\"", seller_inn="7701234560", synced_at=NOW, created_at=NOW,
             basis="Счёт № СЧ-45 от 01.10.2026",
         ))
         session.flush()

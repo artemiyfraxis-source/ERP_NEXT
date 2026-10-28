@@ -4,15 +4,20 @@ Port of `Invoices.gs` `parseInvoiceText_` / `normalizeInvoiceText_` / `wordDate_
 `invoiceExt_` and the file name built in `uploadInvoice`. SUPPLYMAP gets the text from Drive OCR; ERP
 reads the PDF text layer (`app.shared.pdf_text`) — a scan or a picture gives no text, and the buyer types
 № and date by hand, as SUPPLYMAP asks when OCR fails.
+
+Since 26.10.2026 (owner Витя: «нужен полноценный разборщик всех данных, как у нас в roller_buyer») the same file is also
+read whole by Roller_Buyer's invoice parser (`app.shared.invoice_reading`): seller, INN, total, VAT and positions.
+№ and date: SUPPLYMAP's reader, Roller_Buyer's title when it finds both («Счет-оферта 696419Z от 31.10.2025»).
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 from app.shared.invoice_header import parse_invoice_title
+from app.shared.invoice_reading import InvoiceReading, read_invoice
 from app.shared.pdf_text import PdfLimitExceeded, pdf_text
 
 # SUPPLYMAP sets no limit (Drive takes anything); ERP keeps the file in the database — 20 MB, as УПД.
@@ -126,20 +131,47 @@ def kp_file_name(info: InvoiceInfo, supplier: str, order_number: str, original: 
     return " ".join(parts) + invoice_extension(original)
 
 
-def recognise_invoice(content: bytes) -> tuple[InvoiceInfo, str]:
-    """Text of the file and what it says; the hint is the one SUPPLYMAP shows when nothing was found."""
+@dataclass(frozen=True)
+class InvoiceRecognition:
+    info: InvoiceInfo
+    hint: str
+    reading: InvoiceReading = field(default_factory=InvoiceReading)  # empty for a scan or a file too heavy to read
+
+
+def _dmy(iso: str | None) -> str:
+    """«2026-10-20» → «20.10.2026»; '' for none."""
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", iso or "")
+    return f"{match.group(3)}.{match.group(2)}.{match.group(1)}" if match else ""
+
+
+def recognise_invoice_file(content: bytes) -> InvoiceRecognition:
+    """№, date and the hint as before (SUPPLYMAP's reader, Roller_Buyer's title when it finds both), and the whole
+    reading of the file (`app.shared.invoice_reading`)."""
     try:
         text = pdf_text(content)
     except PdfLimitExceeded:
-        return InvoiceInfo(), TOO_HEAVY_HINT
+        return InvoiceRecognition(InvoiceInfo(), TOO_HEAVY_HINT)
     info = parse_invoice_text(text)
     # Roller_Buyer's title reader (26.10) when it finds both: «Счет-оферта 696419Z от 31.10.2025», «СЧЕТ - ДОГОВОР № …».
     number, day = parse_invoice_title(re.sub(r"\s+", " ", normalize_invoice_text(text)))
     if number and day:
-        year, month, dom = day.split("-")
-        info = InvoiceInfo(number=number, date=f"{dom}.{month}.{year}")
-    if not text.strip():
-        return info, "Текст из файла не читается (скан или картинка) — № и дату счёта впишите вручную."
+        info = InvoiceInfo(number=number, date=_dmy(day))
+    try:
+        reading = read_invoice(content, plain=text)
+    except PdfLimitExceeded:  # bigger than the reader's limit: № and date as read, no positions
+        reading = InvoiceReading()
+    # A text only pypdf reads (the small reader can't decode the font): № and date from the full reading.
+    if not info.number and not info.date and reading.header.number and reading.header.date:
+        info = InvoiceInfo(number=reading.header.number, date=_dmy(reading.header.date))
+    if not text.strip() and reading.scan:
+        return InvoiceRecognition(info, "Текст из файла не читается (скан или картинка) — № и дату счёта впишите вручную.",
+                                  reading)
     if not info.number and not info.date:
-        return info, "Не распознаны № и дата — впишите вручную."
-    return info, ""
+        return InvoiceRecognition(info, "Не распознаны № и дата — впишите вручную.", reading)
+    return InvoiceRecognition(info, "", reading)
+
+
+def recognise_invoice(content: bytes) -> tuple[InvoiceInfo, str]:
+    """Text of the file and what it says; the hint is the one SUPPLYMAP shows when nothing was found."""
+    found = recognise_invoice_file(content)
+    return found.info, found.hint

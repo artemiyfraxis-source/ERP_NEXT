@@ -9,15 +9,17 @@ from datetime import date, datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
 from app.shared.stored_files import decode_upload, file_response
+from app.workflows import upd_pdf_parse
 
+from . import upd_pdf
 from . import upd_registry as repo
-from .deps import purchasing_uow_factory
+from .deps import purchasing_uow_factory, warehouse_uow_factory
 from .upd_checks import STATUSES
 
 router = APIRouter(prefix="/api/purchasing/upd", tags=["purchasing"])
@@ -26,7 +28,9 @@ Uow = Annotated[Callable, Depends(purchasing_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
 Viewer = Annotated[Principal, Depends(procurement_view_principal)]
 Editor = Annotated[Principal, Depends(procurement_edit_principal)]
-# A Drive file id or «edo-<sha1>»: letters, digits, «_» and «-» only.
+# The warehouse's «Распознавание УПД» settings hold the model key the PDF parser uses (None — no warehouse module).
+Warehouse = Annotated[Callable | None, Depends(warehouse_uow_factory)]
+# A Drive file id, «edo-<sha1>», «pdf-<sha1>» or «wh-<uuid>»: letters, digits, «_» and «-» only.
 DocumentId = Annotated[str, Path(pattern=r"^[\w-]{1,128}$")]
 
 _BUYER = re.compile(r"^(?:ours|other|unknown|[0-9]{10}|[0-9]{12})$")
@@ -99,6 +103,10 @@ class EdoImportIn(BaseModel):
     dry_run: bool = True
 
 
+class PdfImportIn(BaseModel):
+    files: list[UploadFile] = Field(min_length=1, max_length=upd_pdf.MAX_FILES)
+
+
 class SellersImportIn(BaseModel):
     dry_run: bool = True
     inns: list[str] | None = Field(default=None, max_length=1000)
@@ -166,6 +174,46 @@ def import_edo(payload: EdoImportIn, principal: Editor, make_uow: Uow, now: Now)
         else:
             uow.commit()
         return {**result, "dry_run": payload.dry_run}
+
+
+def _model_ready(warehouse: Callable | None) -> bool:
+    try:
+        return upd_pdf_parse.llm_config(warehouse).ready
+    except Exception:  # noqa: BLE001 — unreadable settings: the documents wait in the queue
+        return False
+
+
+@router.post("/import-pdf")
+def import_pdf(payload: PdfImportIn, principal: Editor, make_uow: Uow, warehouse: Warehouse, now: Now,
+               background: BackgroundTasks) -> dict:
+    """«Загрузить PDF»: the files go into the registry «В очереди» and are read by the model after the answer is sent;
+    without a model key they wait in the queue (`python -m app.workflows.upd_pdf_parse --queued --apply`)."""
+    uploads: list[tuple[str, bytes]] = []
+    for item in payload.files:
+        content = decode_upload(item.content_base64, f"Файл «{item.file_name}» повреждён")
+        if not content:
+            raise HTTPException(status_code=422, detail=f"Файл «{item.file_name}» пустой")
+        uploads.append((item.file_name, content))
+    uow = make_uow()
+    with uow, _errors():
+        result = upd_pdf.add_pdfs(uow, uploads, principal.actor, now)
+        uow.commit()
+    ready = _model_ready(warehouse)
+    if ready and result["queued"]:
+        background.add_task(upd_pdf_parse.parse_documents, make_uow, warehouse, result["queued"], principal.actor)
+    return {**result, "model_ready": ready}
+
+
+@router.post("/{document_id}/reparse")
+def reparse(document_id: DocumentId, principal: Editor, make_uow: Uow, warehouse: Warehouse, now: Now,
+            background: BackgroundTasks) -> dict:
+    """«Разобрать заново»: the PDF is read by the model again in the background; the card shows «В очереди» until
+    the new reading replaces the old one (the buyer's corrections stay)."""
+    if not _model_ready(warehouse):
+        raise HTTPException(status_code=409, detail=f"Разбор недоступен: {upd_pdf_parse.NO_KEY}")
+    detail = _write(make_uow, document_id, lambda uow: upd_pdf.queue_parse(uow, document_id, principal.actor, now))
+    background.add_task(upd_pdf_parse.parse_documents, make_uow, warehouse, [document_id], principal.actor)
+    return detail
 
 
 @router.get("/{document_id}")

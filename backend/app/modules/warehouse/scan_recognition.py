@@ -3,7 +3,8 @@
 A model reads a page in 8–100 s — longer than a request may last behind the proxy (502). So nothing is recognised
 inside a request: the scan (from the scanner agent, «Файл…» or a merge of sheets) gets a done scan job, the reading
 runs as a background task (`recognise_job`), and the screen polls the job until its `result` is stored. Each file
-keeps its own reading (`scan_reading`), so a merge of sheets combines the kept readings and reads nothing again.
+keeps its own reading (`scan_reading`, since 26.10.2026 by the ERP's document reader, `app.shared.doc_reader`), so a
+merge of sheets combines the kept readings — re-merged and re-checked as one document — and reads nothing again.
 
 The answer — `{scan_file, recognised: {supplier, inn, upd_number, upd_date, invoice_number, invoice_date}, lines:
 [{article, name, upd_name, item_type, manufacturer, quantity, unit, packs, pack, pack_kind, supplier_code, source}],
@@ -16,13 +17,14 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from uuid import UUID
 
 from fastapi import Request
 
 from app.shared.file_types import sniffed_type
 from app.workflows.edo_receipt import EdoDelivery
+from app.workflows.seller_inn import seller_inn
 from app.workflows.stock_receipt import known_articles, upd_document
 
 from . import receipt_llm
@@ -79,8 +81,12 @@ def recognised_dict(found: RecognisedUpd) -> dict:
 
 
 def scan_answer(sources: ScanSources, link: str, reading: ScanReading) -> dict:
-    """What «Отсканировать УПД» answers for a read scan. Blocking (the registries) — off the event loop."""
+    """What «Отсканировать УПД» answers for a read scan. Blocking (the registries) — off the event loop. A seller's
+    ИНН failing its check digits is put right by the supplier directory or left out (`workflows.seller_inn`) — the
+    note says which."""
     found, note = reading.found, reading.note
+    inn = seller_inn(sources.purchasing, found.inn, found.supplier)
+    found = replace(found, inn=inn.inn)
     lines: list[dict] = []
     document = upd_document(
         sources.purchasing, number=found.upd_number, day=found.upd_date, inn=found.inn, seller=found.supplier,
@@ -104,8 +110,10 @@ def scan_answer(sources: ScanSources, link: str, reading: ScanReading) -> dict:
         lines = [line_answer(line) for line in read]
         read_note = OCR_LINES.format(count=len(lines))
         note = f"Шапка не распознана — заполните вручную. {read_note}" if note == NO_TEXT else note or read_note
-    if document is None and reading.warning:
-        note = f"{note}. {reading.warning}" if note else reading.warning
+    if document is None:
+        for remark in (reading.warning, inn.remark):
+            if remark:
+                note = f"{note}. {remark}" if note else remark
     return {"scan_file": link, "recognised": recognised_dict(found), "lines": lines, "note": note}
 
 
@@ -188,7 +196,8 @@ def recognise_job(uow_factory: Callable[[], UnitOfWork], sources: ScanSources, j
 
         try:
             if pages:
-                reading = merge_readings([file_reading(uow_factory, page, config) for page in pages])
+                readings = [file_reading(uow_factory, page, config) for page in pages]
+                reading = merge_readings(readings, item_types(uow_factory()))
                 keep_scan_recognition(uow_factory(), job.file_id, reading_json(reading))
             else:
                 reading = file_reading(uow_factory, job.file_id, config)
