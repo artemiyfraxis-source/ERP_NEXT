@@ -420,7 +420,8 @@ def _kits(session: Session, words: list[str], patterns: list[str], pick: bool, g
     if narrow is not None:
         statement = statement.where(narrow)
     for request_id, article, name in session.execute(statement):
-        by_lines.setdefault(request_id, []).append(f"{article} {name}")
+        # «НШВИ 0.5-8 НШВИ 0.5-8»: the name already says the article — once is enough
+        by_lines.setdefault(request_id, []).append(name if article and article in name else f"{article} {name}".strip())
     own = [request.number, request.purpose, request.project_key, request.item_index, request.requester]
     statement = select(request.id, request.number, request.status, request.purpose, request.project_key,
                        request.item_index, request.requester).order_by(request.created_at.desc())
