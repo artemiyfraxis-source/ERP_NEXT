@@ -128,19 +128,15 @@ describe("Приёмка с производства", () => {
     expect(await screen.findByText("Шлейф")).toBeInTheDocument();
   });
 
-  it("принимать нечего — открывается «В производстве»: КБ с этапом «В работе» без запущенных заданий, «Новый» — только во «Все»", async () => {
+  it("вкладки две — «Можно принять» и «Все» (владелец 28.10.2026); принимать нечего — открывается «Все»", async () => {
     intakeRows = [
-      row({ item_index: "КБ1", name: "Жгут в работе", stage: "В работе", launched: "0", delivered: "0", accepted: "0", remaining: "0", tasks: [] }),
       row({ item_index: "КБ2", name: "Жгут новый", stage: "Новый", launched: "0", delivered: "0", accepted: "0", remaining: "0", tasks: [] }),
     ];
     render(<ProductionIntakePage principal={principal} />);
-    expect(await screen.findByText("Жгут в работе")).toBeInTheDocument();
-    expect(screen.queryByText("Жгут новый")).toBeNull();
-    expect(screen.getByRole("tab", { name: /^В производстве/ })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: /^Можно принять/ })).toHaveTextContent("0");
-    expect(screen.getByRole("tab", { name: /^Все/ })).toHaveTextContent("2");
-    fireEvent.click(screen.getByRole("tab", { name: /^Все/ }));
     expect(await screen.findByText("Жгут новый")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^В производстве/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: /^Все/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /^Можно принять/ })).toHaveTextContent("0");
   });
 
   it("«Данные отправки»: сохраняет с версией только изменённое из четырёх полей", async () => {

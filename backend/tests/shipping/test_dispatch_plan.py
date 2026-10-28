@@ -231,7 +231,7 @@ def test_single_accept_stores_location(shipping_api):
 def test_batch_accept_stores_location_per_kb_and_keeps_the_shop_limit(flow_api):
     client, _ = flow_api
     over = client.post("/api/shipping/finished-goods/accept", headers={"Idempotency-Key": "loc-0"}, json={
-        "lines": [{"project": "708К.4", "item_index": "КБ1", "quantity": "31", "location": "Стеллаж 1"}],
+        "lines": [{"project": "708К.4", "item_index": "КБ1", "quantity": "51", "location": "Стеллаж 1"}],
     })
     accepted = client.post("/api/shipping/finished-goods/accept", headers={"Idempotency-Key": "loc-1"}, json={
         "lines": [
@@ -263,7 +263,7 @@ def test_batch_accept_stores_location_per_kb_and_keeps_the_shop_limit(flow_api):
 
     assert batch_place.status_code == 200
     assert [row["location"] for row in batch_place.json()["goods"]] == ["Паллет 7", "Стеллаж 9"]
-    assert over.status_code == 422 and "сдано цехом 30" in over.json()["detail"]
+    assert over.status_code == 422 and "тираж 50" in over.json()["detail"]  # in work: up to the order (28.10)
     goods = {row["item_index"]: row for row in accepted.json()["goods"]}
     assert (goods["КБ1"]["location"], goods["КБ2"]["location"]) == ("Стеллаж 1", "")
     assert replay.json()["replayed"] is True

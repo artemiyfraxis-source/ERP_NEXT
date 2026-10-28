@@ -130,15 +130,17 @@ def test_from_production_lists_what_the_shop_delivered_and_the_warehouse_has_not
     assert rows[1]["tasks"] == [{"number": "ПЗ-2", "status": "Запущено", "site": "ЖУК", "quantity": 10, "delivered": "10"}]
 
 
-def test_batch_accept_is_all_or_nothing_and_never_over_what_the_shop_delivered(flow_api):
+def test_batch_accept_is_all_or_nothing_and_never_over_the_order(flow_api):
     client, sessions = flow_api
-    over = _accept(client, [("708К.4", "КБ2", "10"), ("708К.4", "КБ1", "31")])
+    # owner 28.10.2026: a KB in work is accepted up to its order, though the shop delivered less (30 of 50)
+    over = _accept(client, [("708К.4", "КБ2", "10"), ("708К.4", "КБ1", "51")])
     assert over.status_code == 422
-    assert "708К.4 КБ1: сдано цехом 30 шт, уже принято 0 — принять можно ещё 30" in over.json()["detail"]
+    assert "708К.4 КБ1: тираж 50 шт, уже принято 0 — принять можно ещё 50" in over.json()["detail"]
     assert _moves(sessions) == 0  # КБ2 из того же пакета тоже не принята
     assert _accept(client, [("708К.4", "КБ1", "1"), ("708к.4", "кб1", "1")]).status_code == 422  # КБ дважды
-    nothing = _accept(client, [("708К.4", "КБ3", "1")])
-    assert nothing.status_code == 422 and "принять можно ещё 0" in nothing.json()["detail"]
+    # КБ3: the task is launched, the shop delivered nothing yet — in work, so up to the order (20), not 0
+    beyond = _accept(client, [("708К.4", "КБ3", "21")])
+    assert beyond.status_code == 422 and "принять можно ещё 20" in beyond.json()["detail"]
 
     done = _accept(client, [("708К.4", "КБ1", "30"), ("708К.4", "КБ2", "10")])
     assert done.status_code == 200, done.text
@@ -205,8 +207,8 @@ def test_accept_needs_the_storekeepers_shipping_rights(flow_api):
 def test_single_accept_keeps_the_same_limit(flow_api):
     client, _ = flow_api
     good = client.get("/api/shipping/goods").json()["goods"][0]
-    over = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "31"})
-    assert over.status_code == 422 and "сдано цехом 30" in over.json()["detail"]
+    over = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "51"})
+    assert over.status_code == 422 and "тираж 50" in over.json()["detail"]
     ok = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "12"})
     assert ok.status_code == 200 and ok.json()["good"]["accepted"] == "12"
     stale = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "1"})

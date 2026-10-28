@@ -175,13 +175,13 @@ def test_intake_lists_every_kb_of_open_projects_until_everything_is_sent(intake_
     )} == {
         "customer": "Заказчик А", "deadline": "2026-11-01", "name": "Жгут КБ1 изделие", "unit": "шт", "stage": "В работе",
         "needed": "50", "launched": "50", "delivered": "30", "accepted": "12", "packed": "0", "sent": "0",
-        "remaining": "18", "location": "",
+        "remaining": "38", "location": "",  # в работе — до заказанного (владелец 28.10.2026), не до сданного цехом
     }
     assert partly_accepted["tasks"] == [{"number": "ПЗ-1", "status": "Запущено", "site": "", "quantity": 50, "delivered": "30"}]
 
     partly_handed = by_kb[("708К.4", "КБ2")]
     assert (partly_handed["needed"], partly_handed["launched"], partly_handed["delivered"], partly_handed["remaining"]) == (
-        "10", "10", "4", "4",
+        "10", "10", "4", "10",
     )
     assert partly_handed["good_id"] is None and partly_handed["good_version"] is None and partly_handed["grn"] is None
     assert partly_handed["tasks"][0]["site"] == "ЖУК"
@@ -194,8 +194,10 @@ def test_intake_lists_every_kb_of_open_projects_until_everything_is_sent(intake_
     done = by_kb[("708К.4", "КБ10")]
     assert (done["stage"], done["delivered"], done["remaining"]) == ("ОТК", "5", "5")
 
-    for row in rows:
-        assert Decimal(row["remaining"]) == max(Decimal(row["delivered"]) - Decimal(row["accepted"]), Decimal(0))
+    for row in rows:  # в работе — до заказанного (или сданного, если сдано больше); не запущена — до сданного
+        in_work = row["tasks"] or row["stage"] in ("Распланировано", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке")
+        cap = max(Decimal(row["needed"]), Decimal(row["delivered"])) if in_work else Decimal(row["delivered"])
+        assert Decimal(row["remaining"]) == max(cap - Decimal(row["accepted"]), Decimal(0))
 
 
 def test_intake_reads_in_bulk_not_per_kb(intake_api):
@@ -235,7 +237,7 @@ def _good(item: str, ordered: int, *, accepted: int = 0, sent: int = 0) -> Finis
     return replace(good, accepted=Decimal(accepted), shipped=Decimal(sent), sent=Decimal(sent))
 
 
-def test_remaining_never_exceeds_what_the_shop_delivered_and_the_warehouse_has_not_accepted():
+def test_remaining_is_up_to_the_order_for_a_kb_in_work_even_when_the_shop_delivered_less():
     kb = KbProduction(
         key="720К.1|КБ1", project="720К.1", item_index="КБ1", name="Жгут", run=Decimal(10), delivered=Decimal(4),
         tasks=(TaskShare("ПЗ-1", "Запущено", "", 10, Decimal(4)),),
@@ -246,8 +248,8 @@ def test_remaining_never_exceeds_what_the_shop_delivered_and_the_warehouse_has_n
         production={kb.key: kb},
     )
     rows = {row.item_index: row for row in intake_rows(facts)}
-    # Принято до ERP больше сданного по заданиям — принять сейчас нечего, а не минус.
-    assert rows["КБ1"].remaining == 0 and rows["КБ1"].launched == 10
+    # Владелец 28.10.2026: «всё, что в работе, можно принять» — до тиража, хоть по заданиям цех сдал меньше (4 < 6 принятых).
+    assert rows["КБ1"].remaining == 4 and rows["КБ1"].launched == 10
     assert rows["КБ2"].sent == 2 and rows["КБ2"].remaining == 0  # уехало 2 из 3 — ещё в списке
     assert "КБ3" not in rows  # уехало всё
 
@@ -296,7 +298,7 @@ def test_intake_rows_carry_acceptance_acts_and_a_rollback_shrinks_the_latest(int
     kb1 = next(row for row in _rows(client) if (row["project"], row["item_index"]) == ("708К.4", "КБ1"))
     assert [(act["quantity"], act["location"]) for act in kb1["acts"]] == [("12", "Ячейка 3"), ("8", "Ячейка 3")]
     assert len({act["grn"] for act in kb1["acts"]}) == 2 and kb1["acts"][0]["grn"] == kb1["grn"]
-    assert kb1["acts"][0]["received_at"] and kb1["accepted"] == "20" and kb1["remaining"] == "10"
+    assert kb1["acts"][0]["received_at"] and kb1["accepted"] == "20" and kb1["remaining"] == "30"  # до заказанного 50 (28.10)
     # Откат руководителя «принято → в производство» на 5 шт сначала укорачивает последний акт.
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     with SqlAlchemyShippingUnitOfWork(sessions) as uow:
