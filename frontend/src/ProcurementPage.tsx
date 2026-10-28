@@ -211,7 +211,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "", canHandoff =
       {tab === "sheet" && autoOpened && <p className="page-sub procurement-auto-note">У вас нет позиций в работе и свободных позиций нет — показан весь лист. Свои позиции появятся во вкладке «Очереди».</p>}
       {tab === "today" && <ProcurementToday ordersOn />}
       {tab === "requests" && <>
-        <ProcurementRequests readOnly={readOnly} />
+        <ProcurementRequests readOnly={readOnly} canHandoff={canHandoff} openRegister={openRegister} />
       </>}
       {tab === "kpi" && <ProcurementKpi />}
       {tab === "rfq" && <PurchasingRfq readOnly={readOnly} />}
