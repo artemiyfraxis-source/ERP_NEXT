@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Iterable, Mapping
 from uuid import UUID, uuid4
 
-from .lugs import TER_KIND_REASON, TER_KIND_VALUES, ter_kind_of
+from .lugs import LUG as TER_LUG, TER_KIND_REASON, TER_KIND_VALUES, ter_kind_of
 
 
 class ReferenceValidationError(ValueError):
@@ -663,11 +663,15 @@ MAX_COLUMN_NAME = 60
 
 
 def custom_column_prefix(tab: TechOperationTab, cable_kind: str | None = None) -> str:
-    """Key prefix of the owner's columns of a tab (`ReferenceKind.CUSTOM_COLUMN`): «mat:»; БД.ПРОВ per list — «prov:coax:»."""
+    """Key prefix of the owner's columns of a tab (`ReferenceKind.CUSTOM_COLUMN`): «mat:»; БД.ПРОВ per list — «prov:coax:»;
+    БД.ТЕР — «ter:» of «Терминалы» (as before the split), «ter:lug:» of «Наконечники» (owner 28.10.2026: every tab of
+    «База данных» is its own table — a column of one list is never a column of the other)."""
     if tab == TechOperationTab.WIRE:
         if cable_kind not in CABLE_KIND_VALUES:
             raise ReferenceValidationError("Укажите список кабелей: " + CABLE_KIND_REASON.split(": ", 1)[1])
         return f"{tab.value}:{cable_kind}:"
+    if tab == TechOperationTab.TERMINAL and cable_kind == TER_LUG:
+        return f"{tab.value}:{TER_LUG}:"
     return f"{tab.value}:"
 
 

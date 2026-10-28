@@ -433,10 +433,11 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const fieldColumns = tech.columns?.length ? tech.columns : Object.keys(tech.records[0]?.fields ?? {});
   const ownColumns = tech.custom_columns ?? [];
   // «Удалить столбец» своих столбцов: окно подтверждения, после удаления таблица перечитывается.
+  // БД.ТЕР: свои столбцы у каждого списка — «Терминалы» и «Наконечники» отдельные таблицы (владелец 28.10.2026).
   const techRemoval = useColumnRemoval(techTab ?? "mat", canEdit, (name) => filledIn(tech.records, name), async (name) => {
     if (techTab) await loadTech(techTab);
     setError(""); setNotice(`Столбец «${name}» удалён`);
-  });
+  }, undefined, terKind ?? undefined);
   // Столбцы БД.ПРОВ у каждого списка свои: «+ Столбец» и «Удалить столбец» работают с тем списком, что открыт.
   const cableRemoval = useColumnRemoval("prov", principal.permissions.erpref === "edit",
     (name) => filledIn((cables?.rows ?? []).filter((row) => row.kind === cableKind).map((row) => row.record), name),
@@ -694,7 +695,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         rowClassName={contactTab ? (record) => (record.id === terminal?.id ? "eq-selected" : "") : undefined}
         toolbar={<>{sortHint && <SortHint text={sortHint} />}{canEdit && !editing ? <>
           <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button>
-          {OWN_COLUMN_TABS.includes(techTab) && !lugTab && <AddColumnButton tab={techTab} onAdded={async (name) => { await loadTech(techTab); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />}
+          {OWN_COLUMN_TABS.includes(techTab) && <AddColumnButton tab={techTab} terKind={terKind ?? undefined} onAdded={async (name) => { await loadTech(techTab); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />}
         </> : null}</>}
       /></div>{terminal && <TerminalCard record={terminal} canEdit={canEdit} onEdit={startEdit} onClose={() => openTerminal("")} />}</div>}
       {techRemoval.dialog}

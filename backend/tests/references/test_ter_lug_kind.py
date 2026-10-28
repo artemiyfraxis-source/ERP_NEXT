@@ -150,6 +150,31 @@ def test_lugs_has_only_lugs_with_its_columns_and_terminals_only_contacts(referen
                               params={"tab": "mat", "ter_kind": "lug"}).status_code == 422
 
 
+def test_each_list_has_its_own_columns_a_column_of_one_is_never_a_column_of_the_other(references_api):
+    # owner 28.10.2026: «каждая вкладка в БД — это отдельная таблица БД»
+    _load(references_api, LUG_ROW, CONTACT_ROW)
+    get = lambda kind: references_api.get("/api/references/tech-operations", params={"tab": "ter", "ter_kind": kind}).json()
+    column = lambda path, name, kind: references_api.post(f"/api/references/tech-operations/columns{path}",
+                                                          json={"tab": "ter", "name": name, "ter_kind": kind})
+
+    assert column("", "Цвет изоляции", "lug").status_code == 201
+    assert column("", "Полка", "contact").status_code == 201
+    lugs, contacts = get("lug"), get("contact")
+    assert lugs["custom_columns"] == ["Цвет изоляции"] and lugs["columns"][-1] == "Цвет изоляции"
+    assert "Полка" not in lugs["columns"] and "Полка" not in lugs["records"][0]["fields"]
+    assert contacts["custom_columns"] == ["Полка"] and "Цвет изоляции" not in contacts["columns"]
+    assert "Цвет изоляции" not in contacts["records"][0]["fields"]
+    # the same name in the other list is its own column; removing it from one list leaves the other
+    assert column("", "Полка", "lug").status_code == 201
+    assert column("/remove", "Полка", "lug").status_code == 200
+    assert get("contact")["custom_columns"] == ["Полка"] and "Полка" in get("contact")["records"][0]["fields"]
+    assert get("lug")["custom_columns"] == ["Цвет изоляции"]
+    # a new lug takes the lugs' own columns, not the terminals'
+    created = references_api.post("/api/references/tech-operations", json={
+        "tab": "ter", "ter_kind": "lug", "fields": {"Product Name": "НКИ", "Артикул контакта (REEL)": "НКИ 1.5-4"}}).json()
+    assert "Цвет изоляции" in created["fields"] and "Полка" not in created["fields"]
+
+
 def test_a_row_moved_by_hand_keeps_its_fields_and_a_new_row_goes_to_the_open_list(references_api):
     _load(references_api, LUG_ROW, CONTACT_ROW)
     [lug] = references_api.get("/api/references/tech-operations", params={"tab": "ter", "ter_kind": "lug"}).json()["records"]
