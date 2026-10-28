@@ -513,7 +513,7 @@ function shelf(location: string) {
 /** The columns the grouped table is ordered by (the server's `sort`): every column but «Назначение» and «Файл УПД». */
 const SORT_KEYS = [
   "type", "grn", "balance", "reserved", "available", "lots", "place", "series", "article", "name", "warehouse",
-  "maker", "upd_name", "invoice_name", "invoice_number", "invoice_date", "upd_number", "upd_date", "prd_number", "prd_date",
+  "maker", "maker_article", "supplier_article", "upd_name", "invoice_name", "invoice_number", "invoice_date", "upd_number", "upd_date", "prd_number", "prd_date",
 ] as const;
 type SortKey = typeof SORT_KEYS[number];
 const isSortKey = (key: ColumnKey): key is SortKey => (SORT_KEYS as readonly string[]).includes(key);
@@ -580,6 +580,8 @@ function sortValue(item: WarehouseArticle, key: SortKey): string | number {
     case "name": return distinct(item.lots, "name");
     case "warehouse": return distinct(item.lots, "warehouse");
     case "maker": return lot?.manufacturer ?? "";
+    case "maker_article": return lot?.maker_article ?? "";
+    case "supplier_article": return lot?.supplier_article ?? "";
     case "upd_name": return lot?.upd_name ?? "";
     case "invoice_name": return lot?.invoice_name ?? "";
     case "invoice_number": case "invoice_date": case "upd_number": case "upd_date": case "prd_number": case "prd_date":
@@ -708,6 +710,8 @@ function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: It
     case "series": return cutCell(key, lot.series || "—", pinned);
     case "type": return typeCell(key, lot.item_type, pinned);
     case "maker": return dimCell(key, lot.manufacturer ?? "", pinned);
+    case "maker_article": return cutCell(key, lot.maker_article || "", pinned);
+    case "supplier_article": return cutCell(key, lot.supplier_article || "", pinned);
     case "upd_name": return cutCell(key, lot.upd_name || "", pinned);
     case "invoice_name": return cutCell(key, lot.invoice_name || "", pinned);
     case "invoice_number": return cutCell(key, lot.receipt?.invoice_number || "", pinned);
@@ -766,6 +770,8 @@ function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, togg
     case "series": return dimCell(key, distinct(item.lots, "series"), pinned);
     case "type": return typeCell(key, distinct(item.lots, "item_type"), pinned);
     case "maker": return agreeCell(key, item.lots.map((lot) => lot.manufacturer ?? ""), pinned);
+    case "maker_article": return agreeCell(key, item.lots.map((lot) => lot.maker_article ?? ""), pinned);
+    case "supplier_article": return agreeCell(key, item.lots.map((lot) => lot.supplier_article ?? ""), pinned);
     case "upd_name": return agreeCell(key, item.lots.map((lot) => lot.upd_name ?? ""), pinned);
     case "invoice_name": return agreeCell(key, item.lots.map((lot) => lot.invoice_name ?? ""), pinned);
     case "invoice_number": return agreeCell(key, item.lots.map((lot) => lot.receipt?.invoice_number ?? ""), pinned);
@@ -1035,7 +1041,8 @@ type RowEditField = keyof WarehouseRowEdit;
 
 // SK-7 row edit (SUPPLYMAP Stock05.gs:982-993): reference and passport texts, then the quantities.
 const ROW_EDIT_TEXT: Array<[RowEditField, string]> = [
-  ["article", "Артикул"], ["series", "Серия"], ["name", "Наименование"], ["item_type", "Тип"], ["unit", "Ед. изм."],
+  ["article", "Артикул номенклатуры"], ["maker_article", "Артикул производителя"], ["supplier_article", "Артикул поставщика"],
+  ["series", "Серия"], ["name", "Наименование"], ["item_type", "Тип"], ["unit", "Ед. изм."],
   ["purpose", "Назначение"], ["storage_location", "Место хранения"], ["unit_mass_g", "Масса 1 шт, г"],
   ["expiry_date", "Срок годности"], ["manufacturer", "Производитель"], ["description", "Описание"],
   ["storage_conditions", "Условия хранения"], ["datasheet", "Datasheet"], ["certificate", "Сертификат"],
@@ -1312,7 +1319,7 @@ function LotEditDialog({ lot, disabled, mutate, onClose }: {
         run(() => warehouseApi.editIdentity(lot.id, lot.version, article.trim(), name.trim(), series.trim()));
       }}>
         <div className="move-grid three">
-          <label>Артикул<input required value={article} onChange={(event) => setArticle(event.target.value)} /></label>
+          <label>Артикул номенклатуры<input required value={article} onChange={(event) => setArticle(event.target.value)} /></label>
           <label>Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label>
           <label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
         </div>

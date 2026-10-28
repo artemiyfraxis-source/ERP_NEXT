@@ -431,6 +431,11 @@ export interface WarehouseLot {
   upd_name?: string;
   /** The row as the paid invoice names it (from purchasing, later); hidden column «Наим. по счёту». */
   invoice_name?: string;
+  /** «Артикул производителя» — the code the item left the factory with ("" — not known). `article` is ours,
+   *  «Артикул номенклатуры». */
+  maker_article?: string;
+  /** «Артикул поставщика» — the code the seller sells it under (the УПД «Код товара»). */
+  supplier_article?: string;
 }
 
 export interface WarehouseReceiptRef {
@@ -486,6 +491,9 @@ export interface WarehouseReceiptAccept {
   confirm_expected: boolean;
   /** the item row as the УПД prints it (kept on the lot, read-only) */
   upd_name: string;
+  /** «Артикул производителя» / «Артикул поставщика» of the УПД line (editable later in the lot card) */
+  maker_article: string;
+  supplier_article: string;
 }
 
 export type WarehouseScanJobStatus = "pending" | "claimed" | "done" | "failed";
@@ -569,8 +577,8 @@ export interface WarehouseLotPassport extends UnitMassFields {
 
 /** Editable fields of a stock row (SK-7); ГРН, пакет and склад are the row key and are not here. */
 export type WarehouseRowEdit = Partial<Record<
-  | "article" | "series" | "name" | "item_type" | "unit" | "purpose" | "storage_location"
-  | "unit_mass_g" | "expiry_date" | "manufacturer" | "description" | "storage_conditions"
+  | "article" | "maker_article" | "supplier_article" | "series" | "name" | "item_type" | "unit" | "purpose"
+  | "storage_location" | "unit_mass_g" | "expiry_date" | "manufacturer" | "description" | "storage_conditions"
   | "datasheet" | "certificate" | "inbound" | "written_off" | "reserved",
   string
 >>;

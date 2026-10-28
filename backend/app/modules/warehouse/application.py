@@ -214,6 +214,8 @@ class ManualStockItem:
     datasheet: str = ""
     certificate: str = ""
     upd_name: str = ""  # a delivery line: the item row as the УПД prints it (the lot's «Наим. по УПД»)
+    maker_article: str = ""  # «Артикул производителя»: a УПД line's article read off the name
+    supplier_article: str = ""  # «Артикул поставщика»: a УПД line's «Код товара»
 
 
 @dataclass(frozen=True)
@@ -506,6 +508,8 @@ def manual_lot(item: ManualStockItem, receipt: WarehouseReceipt | None = None) -
         datasheet=item.datasheet,
         certificate=item.certificate,
         upd_name=item.upd_name if receipt is not None else "",
+        maker_article=item.maker_article,
+        supplier_article=item.supplier_article,
     )
 
 
@@ -1276,7 +1280,7 @@ def warehouse_lots(
 STOCK_RECEIPT_SORT_KEYS = ("invoice_number", "invoice_date", "upd_number", "upd_date", "prd_number", "prd_date")
 STOCK_SORT_KEYS = (
     "type", "grn", "balance", "reserved", "available", "lots", "place", "series", "article", "name", "warehouse",
-    "maker", "upd_name", "invoice_name", *STOCK_RECEIPT_SORT_KEYS,
+    "maker", "maker_article", "supplier_article", "upd_name", "invoice_name", *STOCK_RECEIPT_SORT_KEYS,
 )
 
 

@@ -214,7 +214,7 @@ it("«По умолчанию» drops the person's layout on the server", async 
   render(<WarehousePage />);
   await waitFor(() => expect(headerNames()[0]).toBe("Наименование"));
   fireEvent.click(openChooser().getByRole("button", { name: "По умолчанию" }));
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул номенклатуры", "Наименование", "Склад"]);
   await waitFor(() => expect(writes(calls)).toEqual([{ method: "DELETE", path: "/api/auth/ui-settings/stock.grouped", body: undefined }]));
 });
 
