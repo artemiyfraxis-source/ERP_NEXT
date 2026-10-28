@@ -148,6 +148,6 @@ describe("удаление своего столбца", () => {
     expect(dialog.textContent).toContain("в журнале");
     fireEvent.click(within(dialog).getByRole("button", { name: "Удалить столбец и 3 знач." }));
 
-    await waitFor(() => expect(remove).toHaveBeenCalledWith("prov", "Полка", "coax"));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("prov", "Полка", "coax", undefined));
   });
 });

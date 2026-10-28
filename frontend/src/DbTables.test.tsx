@@ -157,7 +157,7 @@ it("Терминалы: an empty own column is removed after the confirm and the
   fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
   fireEvent.click(within(screen.getByRole("dialog", { name: "Удалить столбец" })).getByRole("button", { name: "Удалить столбец" }));
 
-  await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns/remove"))?.body).toEqual({ tab: "ter", name: "Полка" }));
+  await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns/remove"))?.body).toEqual({ tab: "ter", name: "Полка", ter_kind: "contact" }));
   expect(await screen.findByText("Столбец «Полка» удалён")).toBeInTheDocument();
   expect(screen.queryByRole("dialog")).toBeNull();
 });
