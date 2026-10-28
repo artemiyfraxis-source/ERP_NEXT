@@ -1,4 +1,4 @@
-"""Migration 0160 (owner 28.10.2026, «сделай так, чтобы там пусто было — там сейчас всё старое»): «нет, и после 28 тоже»): every
+"""Migration 0160 (owner 28.10.2026, «сделай так, чтобы там пусто было — там сейчас всё старое», «нет, и после 28 тоже»): every
 «Новый» request is cancelled with an audit event, whatever its date; requests in work stay; the downgrade restores them."""
 
 import sqlite3
