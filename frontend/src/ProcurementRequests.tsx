@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from "react";
-import { failureText, requestsApi, procurementApi, type ProcurementLine } from "./api";
-import { formatDay, formatNumber, formatQty, NBSP, unitLabel } from "./format";
-import { useInternalProjects } from "./internalProjects";
+import { failureText, isAborted, latestRead, requestsApi, procurementApi, type ProcurementLine, type RequestRow } from "./api";
+import { countLabel, formatDay, formatNumber, formatQty, NBSP, unitLabel } from "./format";
+import { projectLabel, useInternalProjects } from "./internalProjects";
+import { projectFromDesignation } from "./projectNumber";
 import { useLineHistory } from "./LineHistory";
 import { openPlace, urlParam } from "./navigation";
 import {
@@ -20,6 +21,20 @@ import { StatusChip } from "./StatusChip";
    lines grouped by type / plan from the calculation / last purchase; selection by group, Shift-range and drag (own new
    and requote lines only); «Запросить КП» and «Отменить выбранные». Several buyers: «Мои» is one's own lines and the
    unclaimed «Новый» ones, «Все» is read only. */
+
+const HANDOFF_LIMIT = 100; // как в реестре «Заявки»: столько заявок за один раз
+
+/* «Новые» заявки, ещё не переданные в закупку (шаг коммерческого отдела / руководителя проектов), по проектам. */
+type NotHanded = { label: string; rows: RequestRow[] };
+
+function groupNotHanded(rows: RequestRow[]): NotHanded[] {
+  const byProject = new Map<string, RequestRow[]>();
+  for (const row of rows) {
+    const label = projectLabel(row.project_reference || projectFromDesignation(row.designation));
+    byProject.set(label, [...(byProject.get(label) ?? []), row]);
+  }
+  return [...byProject.entries()].map(([label, list]) => ({ label, rows: list })).sort((a, b) => a.label.localeCompare(b.label, "ru"));
+}
 
 const money = (value: string | number | null | undefined) =>
   value === null || value === undefined || value === "" ? "—" : `${formatNumber(value, { digits: 2, minDigits: 2 })}${NBSP}₽`;
@@ -48,7 +63,9 @@ function syncAddress(project: string) {
   window.history.replaceState(window.history.state, "", url);
 }
 
-export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }) {
+export function ProcurementRequests({ readOnly = false, canHandoff = false, openRegister }: {
+  readOnly?: boolean; canHandoff?: boolean; openRegister?: () => void;
+}) {
   useInternalProjects(); // «ВП-001 · Название» in the project names
   const history = useLineHistory();
   const [scope, setScope] = useState<RqScope>(readOnly ? "all" : "mine");
@@ -68,6 +85,42 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
   const [busy, setBusy] = useState(false);
   const openRef = useRef(open);
   openRef.current = open;
+  const readNew = useRef(latestRead()).current;
+  const [notHanded, setNotHanded] = useState<RequestRow[]>([]);
+  const [openNew, setOpenNew] = useState<Set<string>>(new Set());
+  const mayHandoff = canHandoff && !readOnly;
+
+  const loadNotHanded = useCallback(async () => {
+    if (!canHandoff) return;
+    try {
+      const result = await requestsApi.list("", readNew());
+      setNotHanded((result.requests ?? []).filter((row) => row.status === "Новый"));
+    } catch (reason) {
+      if (isAborted(reason)) return;
+      setError(failureText(reason, "Заявки, не переданные в закупку, не загрузились"));
+    }
+  }, [canHandoff, readNew]);
+  useEffect(() => { void loadNotHanded(); }, [loadNotHanded]);
+
+  async function handoffGroup(group: NotHanded) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    let done = 0;
+    try {
+      for (let at = 0; at < group.rows.length; at += HANDOFF_LIMIT) {
+        const chunk = group.rows.slice(at, at + HANDOFF_LIMIT);
+        await requestsApi.handoff(chunk.map((row) => row.id));
+        done += chunk.length;
+      }
+    } catch (reason) {
+      setError(failureText(reason, "Заявки не переданы в закупку"));
+    } finally {
+      if (done > 0) setNotice(`Передано в закупку: ${countLabel(done, ["заявка", "заявки", "заявок"])}`);
+      setBusy(false);
+      await Promise.all([loadNotHanded(), load()]);
+    }
+  }
 
   useEffect(() => writeGroupBy(groupBy), [groupBy]);
   useEffect(() => syncAddress(project), [project]);
@@ -171,6 +224,17 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
   }, [projects]);
   const batches = view?.batches ?? [];
   const canAct = !readOnly && scope === "mine";
+  const projectName = current ? projectTitle(current) : project ? projectLabel(project) : "";
+  const newGroups = useMemo(
+    () => groupNotHanded(notHanded).filter((group) => !project || group.label === projectName),
+    [notHanded, project, projectName],
+  );
+  const toggleNew = (label: string) => setOpenNew((now) => {
+    const next = new Set(now);
+    if (next.has(label)) next.delete(label);
+    else next.add(label);
+    return next;
+  });
 
   return (
     <section className="page procurement-requests">
@@ -195,6 +259,7 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
           <span className="muted">Ход закупки:</span> <StatusChips counts={current ? current.counts : totals} />
         </span>
         <span className="spacer" />
+        {openRegister && <button type="button" className="link-button" onClick={openRegister}>Реестр заявок →</button>}
         {!readOnly && (
           <button
             type="button" className="secondary small"
@@ -207,7 +272,7 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
       {!error && view === null && <div className="empty">Загружаю…</div>}
-      {view !== null && batches.length === 0 && (
+      {view !== null && batches.length === 0 && newGroups.length === 0 && (
         <div className="empty">{scope === "mine" ? "Ваших позиций и неразобранных новых нет — посмотрите «Все» или оформите заявку." : "Заявок нет."}</div>
       )}
 
@@ -225,7 +290,7 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
       {view !== null && view.batches_total > batches.length && (
         <p className="page-sub">Показаны последние {batches.length} заявок из {view.batches_total} — выберите проект, чтобы увидеть все его заявки.</p>
       )}
-      {batches.length > 0 && (
+      {(batches.length > 0 || newGroups.length > 0) && (
         <div className="data-table">
           <div className="table-wrap">
             <table className="grid wide rq-batches" aria-label="Заявки">
@@ -242,6 +307,12 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
                 </tr>
               </thead>
               <tbody>
+                {newGroups.map((group) => (
+                  <NotHandedRows
+                    key={group.label} group={group} open={openNew.has(group.label)} onToggle={() => toggleNew(group.label)}
+                    canHandoff={mayHandoff} busy={busy} onHandoff={() => void handoffGroup(group)}
+                  />
+                ))}
                 {batches.map((batch) => (
                   <BatchRow
                     key={batch.key} batch={batch} open={open.has(batch.key)} onToggle={() => toggleBatch(batch.key)}
@@ -285,6 +356,64 @@ export function ProcurementRequests({ readOnly = false }: { readOnly?: boolean }
         </div>
       )}
     </section>
+  );
+}
+
+function NotHandedRows({ group, open, onToggle, canHandoff, busy, onHandoff }: {
+  group: NotHanded; open: boolean; onToggle: () => void; canHandoff: boolean; busy: boolean; onHandoff: () => void;
+}) {
+  const { rows } = group;
+  const initiators = [...new Set(rows.map((row) => row.initiator).filter(Boolean))];
+  const dates = (key: "created_at" | "planned_date") => rows.map((row) => row[key]).filter(Boolean).sort();
+  return (
+    <>
+      <tr className={open ? "clickable open" : "clickable"} onClick={onToggle} aria-expanded={open}>
+        <td className="rq-toggle">{open ? "▾" : "▸"}</td>
+        <td className="text"><strong>Не переданы в закупку</strong></td>
+        <td>{group.label}</td>
+        <td>{initiators.join(", ")}</td>
+        <td>{formatDay(dates("created_at")[0])}</td>
+        <td>{formatDay(dates("planned_date")[0])}</td>
+        <td className="num">{rows.length}</td>
+        <td>
+          <span className="rq-chips">
+            <StatusChip tone="warning">Не передана {rows.length}</StatusChip>
+          </span>
+          {canHandoff && (
+            <button
+              type="button" className="secondary small" disabled={busy}
+              onClick={(event) => { event.stopPropagation(); onHandoff(); }}
+            >В закупку</button>
+          )}
+        </td>
+      </tr>
+      {open && (
+        <tr className="detail">
+          <td colSpan={8}>
+            <div className="detail-body">
+              <table className="grid wide rq-lines-table" aria-label={`Не переданы в закупку: ${group.label}`}>
+                <thead>
+                  <tr><th>ID</th><th className="grow">Позиция</th><th className="num">Кол-во</th><th>Инициатор</th><th>Поступила</th><th>План. дата</th><th>Статус</th></tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.id}>
+                      <td><strong>{row.legacy_id}</strong></td>
+                      <td className="text">{row.name}<small>{row.item_type}</small></td>
+                      <td className="num">{formatQty(row.quantity, row.unit)}</td>
+                      <td>{row.initiator}</td>
+                      <td>{formatDay(row.created_at)}</td>
+                      <td>{formatDay(row.planned_date)}</td>
+                      <td><StatusChip tone="warning">Не передана</StatusChip></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 

@@ -73,7 +73,9 @@ def database(tmp_path, monkeypatch):
 
 def test_frozen_rows_are_the_level_seed_of_the_two_new_levels():
     frozen = _module().NEW_LEVEL_ROWS
-    assert frozen == {level: {section: mode.value for section, mode in LEVEL_SEED[level].items()}
+    # `scan` / `print` came later (0159 writes them), so the 14.10 copy leaves them out.
+    assert frozen == {level: {section: mode.value for section, mode in LEVEL_SEED[level].items()
+                              if section not in ("scan", "print")}
                       for level in ("pm", "storekeeper")}
     assert _module().DESTRUCTIVE is False
 

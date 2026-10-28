@@ -1,6 +1,7 @@
 """«Приёмка → Принять по УПД» — HTTP contract (owner 26.10.2026; the matching — `receiving_by_upd.py`).
 
-Every route is the receiving edit right (ID-6: a view-only «Приёмка» is refused):
+Every route is the receiving edit right (ID-6: a view-only «Приёмка» is refused); the scan routes take «Сканирование
+документов» on edit too (owner 28.10.2026):
 - the scan, as «Склад → Поставка» reads it (the same queue of the warehouse PC agent, the same files and answers —
   `warehouse.scan_jobs_api`): `POST /api/receiving/upd/scan-jobs` (scanner), `GET|DELETE /api/receiving/upd/scan-jobs/
   {id}`, `POST /api/receiving/upd/scan` (multipart `file`: PDF / photo / ЭДО XML / ZIP), `POST /api/receiving/upd/
@@ -73,19 +74,24 @@ def _factory(request: Request, name: str) -> Callable | None:
     return factory if callable(factory) else None
 
 
-@router.post("/scan-jobs")
+# «Сканирование документов» (owner 28.10.2026): the scanner job routes take it on top of the receiving edit right;
+# «Файл…» and the page merge stay under the receiving right alone (a file is no scanning).
+Scans = [Depends(scan_jobs_api.scan_edit_principal)]
+
+
+@router.post("/scan-jobs", dependencies=Scans)
 def new_scan_job(request: Request, principal: Editor, now: Now, uow_factory: WarehouseFactory,
                  payload: scan_jobs_api.ScanStartInput | None = None) -> dict:
     return scan_jobs_api.new_scan_job(request, principal, now, uow_factory, payload)
 
 
-@router.get("/scan-jobs/{job_id}")
+@router.get("/scan-jobs/{job_id}", dependencies=Scans)
 def scan_job(job_id: UUID, request: Request, background: BackgroundTasks, principal: Editor, now: Now,
              uow_factory: WarehouseFactory) -> dict:
     return scan_jobs_api.scan_job(job_id, request, background, principal, now, uow_factory)
 
 
-@router.delete("/scan-jobs/{job_id}")
+@router.delete("/scan-jobs/{job_id}", dependencies=Scans)
 def cancel_scan_job(job_id: UUID, principal: Editor, now: Now, uow_factory: WarehouseFactory) -> dict:
     return scan_jobs_api.cancel_scan_job(job_id, principal, now, uow_factory)
 

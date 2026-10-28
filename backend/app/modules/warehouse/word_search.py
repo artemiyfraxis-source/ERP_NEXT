@@ -46,8 +46,13 @@ def _fields(lot) -> tuple[str, ...]:
     if package:
         grn_forms += [f"{grn}-{package}", f"{grn} {package}"]
     return tuple(fold(text) for text in (
-        *grn_forms, lot.name, lot.storage_location, lot.series, lot.purpose, lot.item_type,
+        *grn_forms, lot.name, lot.storage_location, lot.series, lot.purpose, lot.item_type, *_other_articles(lot),
     ))
+
+
+def _other_articles(lot) -> tuple[str, ...]:
+    """«Артикул производителя» and «Артикул поставщика» (owner 28.10.2026) — "" for anything that has none."""
+    return tuple(str(getattr(lot, name, "") or "") for name in ("maker_article", "supplier_article"))
 
 
 def _word(word: str) -> Callable[[str], bool]:
@@ -69,6 +74,7 @@ def words_matcher(query: str) -> Callable[[object], bool]:
 
     def matches(lot) -> bool:
         fields = None
+        keys: list[str] = []
         article = fold(lot.article)
         key = article_key(lot.article)
         for found, word_key in words:
@@ -76,7 +82,8 @@ def words_matcher(query: str) -> Callable[[object], bool]:
                 continue
             if fields is None:
                 fields = _fields(lot)
-            if not any(found(field) for field in fields):
+                keys = [article_key(text) for text in _other_articles(lot)]
+            if not any(found(field) for field in fields) and not (word_key and any(word_key in other for other in keys)):
                 return False
         return True
 

@@ -50,6 +50,10 @@ export type ReceiptLine = Record<LineKey, string> & {
   model: LineKey[];
   /** the item row as the УПД prints it — kept on the lot («Наим. по УПД»), the title of «Наименование» */
   upd_name: string;
+  /** «Артикул производителя» / «Артикул поставщика» of a scanned УПД line (its article, its «Код товара») — kept on the
+   *  lot beside our article, which the storekeeper may change in the grid */
+  maker_article: string;
+  supplier_article: string;
   /** where the lookup took them from (the row's title) */
   source: string;
   /** how a scanned УПД line came: «3 рул. × 100 м · скан УПД» (the row's title too) */
@@ -113,7 +117,7 @@ export function emptyHeader(): ReceiptHeader {
 }
 
 export function emptyLine(): ReceiptLine {
-  const line = { auto: [], model: [], upd_name: "", source: "", scan: "", places: [], expected: "", accepted: null, error: "" } as unknown as ReceiptLine;
+  const line = { auto: [], model: [], upd_name: "", maker_article: "", supplier_article: "", source: "", scan: "", places: [], expected: "", accepted: null, error: "" } as unknown as ReceiptLine;
   for (const key of PASTE_ORDER) line[key] = "";
   return line;
 }
@@ -247,11 +251,12 @@ export function applyScan(header: ReceiptHeader, lines: ReceiptLine[], scan: War
     if (!scanned) return splitArticleCell(line);
     const hint = scanHint(scanned);
     // The printed УПД line is kept apart; our name / type / maker from the scan stay replaceable by the catalog.
-    const marked: ReceiptLine = {
+    const marked = splitArticleCell({
       ...line, scan: hint || line.scan, upd_name: text(scanned.upd_name) || text(scanned.name),
       model: MODEL_KEYS.filter((key) => line[key].trim()),
-    };
-    return splitArticleCell(marked);
+    });
+    // The article read off the УПД is the maker's (split from an «@maker» like the cell), the «Код товара» the seller's.
+    return { ...marked, maker_article: text(scanned.article) ? marked.article : "", supplier_article: text(scanned.supplier_code) };
   });
   return { header: nextHeader, lines: split, added: result.filled };
 }
@@ -314,6 +319,8 @@ export function buildAccept(line: ReceiptLine, header: ReceiptHeader, place: str
     labels,
     confirm_expected: confirmExpected,
     upd_name: line.upd_name.trim(),
+    maker_article: line.maker_article.trim(),
+    supplier_article: line.supplier_article.trim(),
   };
 }
 
@@ -440,7 +447,7 @@ export function lineFromLot(lot: WarehouseLot): ReceiptLine {
     article: text(lot.article), quantity: text(lot.inbound), unit: text(lot.unit), item_type: text(lot.item_type),
     manufacturer: text(lot.manufacturer), series: text(lot.series), name: text(lot.name), purpose: text(lot.purpose),
     expiry_date: text(lot.expiry_date), datasheet: text(lot.datasheet), certificate: text(lot.certificate),
-    upd_name: text(lot.upd_name),
+    upd_name: text(lot.upd_name), maker_article: text(lot.maker_article), supplier_article: text(lot.supplier_article),
     accepted: { lotId: lot.id, grn: lot.grn, place: lot.storage_location, labels: 0, labelError: "" },
   };
 }

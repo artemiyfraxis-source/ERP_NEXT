@@ -18,6 +18,7 @@ from app.modules.identity.domain import ACCESS_LEVELS, FULL_ACCESS_LEVELS, LEVEL
 from app.modules.identity.level_migration import GATES, OLD_SECTIONS, passes_after
 from app.modules.references.api import _map_rights
 from app.modules.shipping import api as shipping_api
+from app.modules.warehouse import scan_jobs_api
 from app.shared import http_auth
 from app.shared.http_auth import Principal, authenticated_principal
 from app.workflows import employee_card_api
@@ -28,6 +29,8 @@ DEPENDENCIES = {
     **{gate.key: getattr(http_auth, f"{gate.key}_principal", None) for gate in GATES},
     "shipping_editor": shipping_api.shipping_editor_principal,
     "staffdir_view": employee_card_api.staffdir_view_principal,
+    # «Сканирование документов» (0159, after the transfer): its own section, no role-era gate behind it.
+    "scan_edit": scan_jobs_api.scan_edit_principal,
 }
 
 
@@ -125,8 +128,10 @@ def test_route_role_lists_are_gone():
 
 
 def test_level_sections_are_the_old_ones_without_staffdir_plus_the_split_sections():
-    # «Кадры» (`hr`, 0089) came after the transfer: the matrix offers it, the transfer never saw it.
-    assert set(LEVEL_SECTION_LABELS) == (set(OLD_SECTIONS) - {"staffdir"}) | {"myops", "quality", "shipping_goods", "hr"}
+    # «Кадры» (`hr`, 0089), «Сканирование документов» / «Печать документов» (`scan`, `print`, 0159) came after the
+    # transfer: the matrix offers them, the transfer never saw them.
+    assert set(LEVEL_SECTION_LABELS) == (set(OLD_SECTIONS) - {"staffdir"}) | {
+        "myops", "quality", "shipping_goods", "hr", "scan", "print"}
     # "admin" stays full only as the «Режим админа» session level; it is no level a person holds (14.10.2026).
     assert domain.FULL_ACCESS_LEVELS == {"superadmin", domain.ADMIN_MODE_LEVEL} == {"superadmin", "admin"}
     assert domain.LEVEL_LABELS == {

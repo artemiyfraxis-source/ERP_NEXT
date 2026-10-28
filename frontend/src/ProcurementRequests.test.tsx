@@ -163,6 +163,65 @@ describe("the «Заявки» screen", () => {
     expect(screen.queryByRole("toolbar", { name: "Выбранные строки" })).toBeNull();
   });
 
+  describe("не переданные заявки", () => {
+    const req = (id: string, over: Record<string, unknown> = {}) => ({
+      id, legacy_id: `REQ-${id}`, name: `Разъём ${id}`, item_type: "Разъём", quantity: "5", unit: "шт", status: "Новый",
+      project_reference: "614К.1", designation: "", initiator: "Орлова Анна", created_at: "2026-10-05", planned_date: "2026-10-15", ...over,
+    });
+    let handed: string[][];
+    let fresh: boolean;
+    beforeEach(() => {
+      handed = [];
+      fresh = true;
+      const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+      vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+        const path = String(input);
+        if (path === "/api/requests") {
+          calls.push({ path, init });
+          const many = Array.from({ length: 101 }, (_, i) => req(`n${i}`));
+          return json({ requests: fresh ? [...many, req("x", { status: "В работе" })] : [] });
+        }
+        if (path === "/api/requests/handoff") {
+          calls.push({ path, init });
+          handed.push(JSON.parse(String(init?.body)).request_ids);
+          fresh = false;
+          return json({ accepted: [] });
+        }
+        return base(input, init);
+      });
+    });
+
+    it("shows the «Не передана» chip and the lines of the project group", async () => {
+      render(<ProcurementRequests canHandoff />);
+      expect(await screen.findByText("Не передана 101")).toBeTruthy();
+      fireEvent.click(screen.getByText("Не переданы в закупку"));
+      const table = await screen.findByRole("table", { name: "Не переданы в закупку: 614К.1" });
+      expect(within(table).getByText("REQ-n0")).toBeTruthy();
+      expect(within(table).queryByText("REQ-x")).toBeNull();
+    });
+
+    it("offers «В закупку» only with the handoff right and not read only", async () => {
+      const { unmount } = render(<ProcurementRequests canHandoff readOnly />);
+      await screen.findByText("Не передана 101");
+      expect(screen.queryByRole("button", { name: "В закупку" })).toBeNull();
+      unmount();
+      calls.length = 0;
+      render(<ProcurementRequests />);
+      await screen.findByText("Обеспечение производства.001");
+      expect(screen.queryByText(/Не передана/)).toBeNull();
+      expect(calls.some((call) => call.path === "/api/requests")).toBe(false);
+    });
+
+    it("hands the group over in chunks of 100, reports and reloads", async () => {
+      render(<ProcurementRequests canHandoff openRegister={() => undefined} />);
+      fireEvent.click(await screen.findByRole("button", { name: "В закупку" }));
+      await screen.findByText("Передано в закупку: 101 заявка");
+      expect(handed.map((ids) => ids.length)).toEqual([100, 1]);
+      await waitFor(() => expect(screen.queryByText(/Не передана/)).toBeNull());
+      expect(screen.getByRole("button", { name: "Реестр заявок →" })).toBeTruthy();
+    });
+  });
+
   it("is read only in «Все» and for a viewer", async () => {
     render(<ProcurementRequests readOnly />);
     fireEvent.click(await screen.findByText("Обеспечение производства.001"));

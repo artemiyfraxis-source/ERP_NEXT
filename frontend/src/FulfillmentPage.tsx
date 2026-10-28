@@ -15,6 +15,7 @@ import {
 import { canAct, hasFullAccess, urlParam } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
+import { useCanPrint } from "./rights";
 import { StatusChip } from "./StatusChip";
 import { BulkLotsPanel, absentPosition, absentTargets, searchSeed, CANDIDATE_LEGEND, OffBookQtyPopover, absentMark, bindPosition, bulkApi, candidateTone, isOffBook, matchText, type BulkPosition } from "./FulfillmentBulkLots";
 
@@ -750,6 +751,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
     ["Закрыта", stamp(request.at_closed)],
   ] as Array<[string, string]>).filter(([, value]) => value);
 
+  const canPrint = useCanPrint();
   async function print(load: () => Promise<{ sheet: Parameters<typeof openPrintSheet>[0] }>) {
     setPrintError("");
     try {
@@ -789,8 +791,8 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
         {canHandout && showGive && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button><button className="secondary" disabled={busy} onClick={() => move("Готово", "Заявка закроется и уйдёт в архив.", () => fulfillmentApi.close(request.id, request.version))}>Готово</button></>}
         {canEdit && request.status === "Готов к выдаче" && <button className="secondary" disabled={busy} title="Снять комплект с выдачи — это не возврат материала из цеха" onClick={() => move(returnTarget(request), `Комплект снимут с выдачи${request.handout_location ? ` (${request.handout_location})` : ""} и вернут в комплектацию. Это не возврат материала («КБ Возвращена»): со склада ничего не списано и ничего не двигается, резерв остаётся на партиях. Отменить заявку можно будет после этого.`, () => fulfillmentApi.returnToKitting(request.id, request.version))}>Вернуть в комплектацию</button>}
         {canEdit && request.kind !== "extra" && ["КБ Выдана", "КБ Возвращена", "Готово"].includes(request.status) && !adding && <button className="secondary" disabled={busy} onClick={() => setAdding(true)}>Довыдать</button>}
-        <button className="secondary" onClick={() => void print(() => fulfillmentApi.printSheet(request.id))}>Печать заявки</button>
-        {hasIssuedLines && <button className="secondary" onClick={() => void print(() => fulfillmentApi.returnSheet(request.id))}>Печать листа возврата</button>}
+        {canPrint && <button className="secondary" onClick={() => void print(() => fulfillmentApi.printSheet(request.id))}>Печать заявки</button>}
+        {canPrint && hasIssuedLines && <button className="secondary" onClick={() => void print(() => fulfillmentApi.returnSheet(request.id))}>Печать листа возврата</button>}
         {(canEdit && !closed && request.status !== "Готов к выдаче") || isAdmin ? <span className="fulfillment-danger-group">
           {canEdit && !closed && request.status !== "Готов к выдаче" && <button className="secondary danger" disabled={busy} onClick={() => move("Отменена", cancelHint(request), () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
           {isAdmin && <button className="secondary danger" disabled={busy} onClick={remove}>Удалить заявку</button>}

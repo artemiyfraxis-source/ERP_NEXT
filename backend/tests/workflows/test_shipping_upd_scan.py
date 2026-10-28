@@ -34,16 +34,16 @@ def _as(role: str = "pm", **permissions: str) -> None:
 def desk(stand):  # noqa: F811
     client, sessions = stand
     app.state.shipping_uow_factory = lambda: SqlAlchemyShippingUnitOfWork(sessions)
-    _as(shipping="edit")
+    _as(shipping="edit", scan="edit")
     yield client, sessions
     del app.state.shipping_uow_factory
 
 
 def _new_shipment(client, **extra):
-    _as("admin", shipping="edit")  # packing is the storekeeper's / admin's; the УПД is the manager's
+    _as("admin", shipping="edit", scan="edit")  # packing is the storekeeper's / admin's; the УПД is the manager's
     good = _stocked(client, accepted="5")
     made = _shipment(client, [{"good_id": good["id"], "quantity": "5"}], **{"upd_type": None, "upd_number": "", **extra})
-    _as(shipping="edit")
+    _as(shipping="edit", scan="edit")
     return made
 
 
@@ -80,6 +80,11 @@ def test_the_manager_with_the_shipping_right_scans_but_a_storekeeper_only_and_a_
         for method, tail in (("POST", "jobs"), ("GET", f"jobs/{uuid4()}"), ("DELETE", f"jobs/{uuid4()}"),
                              ("POST", "file"), ("POST", "merge"), ("POST", "apply")):
             assert client.request(method, _url(shipment, tail), json={}).status_code == 403, (permissions, method, tail)
+    _as(shipping="edit")  # the shipping right without «Сканирование документов»: no scanner, «Файл…» stays
+    for method, tail in (("POST", "jobs"), ("GET", f"jobs/{uuid4()}"), ("DELETE", f"jobs/{uuid4()}")):
+        response = client.request(method, _url(shipment, tail), json={})
+        assert response.status_code == 403 and "Сканирование" in response.text, (method, tail)
+    assert client.post(_url(shipment, "file"), json={}).status_code != 403
 
 
 def test_no_agent_is_answered_as_the_warehouse_does_and_an_unknown_shipment_is_404(desk):

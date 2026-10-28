@@ -431,6 +431,11 @@ export interface WarehouseLot {
   upd_name?: string;
   /** The row as the paid invoice names it (from purchasing, later); hidden column «Наим. по счёту». */
   invoice_name?: string;
+  /** «Артикул производителя» — the code the item left the factory with ("" — not known). `article` is ours,
+   *  «Артикул номенклатуры». */
+  maker_article?: string;
+  /** «Артикул поставщика» — the code the seller sells it under (the УПД «Код товара»). */
+  supplier_article?: string;
 }
 
 export interface WarehouseReceiptRef {
@@ -486,12 +491,17 @@ export interface WarehouseReceiptAccept {
   confirm_expected: boolean;
   /** the item row as the УПД prints it (kept on the lot, read-only) */
   upd_name: string;
+  /** «Артикул производителя» / «Артикул поставщика» of the УПД line (editable later in the lot card) */
+  maker_article: string;
+  supplier_article: string;
 }
 
 export type WarehouseScanJobStatus = "pending" | "claimed" | "done" | "failed";
 
 /** «Сканер с любого ПК»: ПК с агентом, у которого Windows видит сканер. */
-export interface ScanAgentInfo { id: string; pc: string; scanners: string[]; version: string }
+/** Сканер ПК: прежний ответ — строка-название, новый — {id, name}. */
+export type ScanAgentScanner = string | { id: string; name: string };
+export interface ScanAgentInfo { id: string; pc: string; scanners: ScanAgentScanner[]; version: string }
 /** Ответ на «Сканировать»: задание — или «нет агента» (окно установки), или «выберите ПК». */
 export type WarehouseScanStart =
   | WarehouseScanJob
@@ -569,8 +579,8 @@ export interface WarehouseLotPassport extends UnitMassFields {
 
 /** Editable fields of a stock row (SK-7); ГРН, пакет and склад are the row key and are not here. */
 export type WarehouseRowEdit = Partial<Record<
-  | "article" | "series" | "name" | "item_type" | "unit" | "purpose" | "storage_location"
-  | "unit_mass_g" | "expiry_date" | "manufacturer" | "description" | "storage_conditions"
+  | "article" | "maker_article" | "supplier_article" | "series" | "name" | "item_type" | "unit" | "purpose"
+  | "storage_location" | "unit_mass_g" | "expiry_date" | "manufacturer" | "description" | "storage_conditions"
   | "datasheet" | "certificate" | "inbound" | "written_off" | "reserved",
   string
 >>;
@@ -3233,8 +3243,8 @@ export const receivingApi = {
   /** «Принять по УПД»: скан со сканера ПК склада, файл, «+ Страница» — та же очередь и то же распознавание, что
    *  у «Склад → Поставка», под правом «Приёмка». */
   updScan: {
-    startScanJob: (agentId?: string) =>
-      api<WarehouseScanStart>("/api/receiving/upd/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "" }) }),
+    startScanJob: (agentId?: string, targetScanner?: string) =>
+      api<WarehouseScanStart>("/api/receiving/upd/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "", ...(targetScanner ? { target_scanner: targetScanner } : {}) }) }),
     scanJob: (id: string) => api<WarehouseScanJob>(`/api/receiving/upd/scan-jobs/${encodeURIComponent(id)}`),
     cancelScanJob: (id: string) => api<WarehouseScanJob>(`/api/receiving/upd/scan-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
     scanFile: (file: File) => {
@@ -3391,8 +3401,10 @@ export const warehouseApi = {
   updLlmSettings: () => api<UpdLlmSettings>("/api/stock/receipts/llm-settings"),
   saveUpdLlmSettings: (fields: UpdLlmSettingsInput) =>
     api<UpdLlmSettings>("/api/stock/receipts/llm-settings", { method: "PUT", body: JSON.stringify(fields) }),
-  startScanJob: (agentId?: string) =>
-    api<WarehouseScanStart>("/api/stock/receipts/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "" }) }),
+  startScanJob: (agentId?: string, targetScanner?: string) =>
+    api<WarehouseScanStart>("/api/stock/receipts/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "", ...(targetScanner ? { target_scanner: targetScanner } : {}) }) }),
+  /** ПК с агентом и их сканеры: из них человек выбирает свой («Сменить сканер»). */
+  scanAgents: () => api<{ agents: ScanAgentInfo[] }>("/api/stock/scan/agents"),
   /** Администратор: одноразовая команда установки агента на новый ПК (живёт час). */
   scanAgentInstallToken: () =>
     api<{ command: string; expires_at: string; valid_minutes: number }>("/api/stock/scan/agent/install-token", { method: "POST" }),
@@ -3904,8 +3916,8 @@ export const shippingApi = {
   updScan: (shipmentId: string) => {
     const base = `/api/shipping/shipments/${encodeURIComponent(shipmentId)}/upd-scan`;
     return {
-      startScanJob: (agentId?: string) =>
-        api<WarehouseScanStart>(`${base}/jobs`, { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "" }) }),
+      startScanJob: (agentId?: string, targetScanner?: string) =>
+        api<WarehouseScanStart>(`${base}/jobs`, { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "", ...(targetScanner ? { target_scanner: targetScanner } : {}) }) }),
       scanJob: (id: string) => api<WarehouseScanJob>(`${base}/jobs/${encodeURIComponent(id)}`),
       cancelScanJob: (id: string) => api<WarehouseScanJob>(`${base}/jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
       scanFile: (file: File) => {

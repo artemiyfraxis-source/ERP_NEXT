@@ -49,8 +49,7 @@ it("shows «Сегодня» first: sections in the order of doing with their to
     section("rfq", "Запросить КП", [row("П-100", { tab: "requests", project: "П-100" }, 10)], { tone: "accent", count: 3 }),
   ]);
   render(<ProcurementPage />);
-  const tab = await screen.findByRole("tab", { name: "Сегодня" });
-  expect(tab.parentElement?.firstElementChild).toBe(tab);
+  expect(await screen.findByRole("heading", { level: 1, name: "Сегодня" })).toBeInTheDocument(); // the default page of a buyer
   const cards = await screen.findAllByRole("region");
   expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual(["Просрочены поставки", "Запросить КП"]);
   expect(cards[0]).toHaveClass("today-card", "today-tone-danger");

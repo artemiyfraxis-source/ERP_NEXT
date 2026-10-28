@@ -80,7 +80,10 @@ describe("old «Лист закупки» links", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Снабжение", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Счета и поставки", level: 1 })).toBeInTheDocument();
+    // The menu lights the item of the open tab.
+    expect(sidebar().getByRole("button", { name: "Счета и поставки" })).toHaveClass("active");
+    expect(sidebar().getByRole("button", { name: "Запросы КП" })).not.toHaveClass("active");
     expect(new URL(window.location.href).searchParams.get("section")).toBe("procurement");
   });
 });
@@ -91,11 +94,12 @@ it("opens procurement by the section grant alone: the level's name decides nothi
   render(<App />);
 
   expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
-  expect(sidebar().getByRole("button", { name: "Снабжение" })).toBeInTheDocument();
+  expect(sidebar().getByRole("button", { name: "Статистика" })).toBeInTheDocument();
+  expect(sidebar().getByRole("button", { name: "Запросы КП" })).toBeInTheDocument();
   // Витя's edits 2–3: the register and own requests leave the menu; the same key opens the moved tabs' sections.
-  expect(sidebar().queryByRole("button", { name: "Заявки" })).not.toBeInTheDocument();
+  expect(sidebar().getAllByRole("button", { name: "Заявки" })).toHaveLength(1); // the tab of «Снабжение»; the register opens from it
   expect(sidebar().getByRole("button", { name: "Первичная документация" })).toBeInTheDocument();
-  expect(sidebar().getByRole("button", { name: "Закупка" })).toBeInTheDocument();
+  expect(sidebar().getAllByRole("button", { name: "Закупка" })).toHaveLength(2); // the buying tab and the reference book
 });
 
 it("draws the block tiles with line icons, never emoji (audit М-6)", async () => {
@@ -120,7 +124,7 @@ it("closes procurement without a grant on it, whatever the level", async () => {
   render(<App />);
 
   expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
-  expect(sidebar().queryByRole("button", { name: "Снабжение" })).not.toBeInTheDocument();
+  expect(sidebar().queryByRole("button", { name: "Статистика" })).not.toBeInTheDocument();
   // Without «Снабжение» the register is the only way in: it stays in the menu.
   expect(sidebar().getByRole("button", { name: "Заявки" })).toBeInTheDocument();
 });
@@ -140,7 +144,8 @@ it("ID-6: a view grant opens procurement, receiving and stock read-only", async 
 
   expect(await screen.findByText("Склад открыт вам только на просмотр.")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "+ Внести позиции" })).not.toBeInTheDocument();
-  expect(sidebar().getByRole("button", { name: "Снабжение" })).toBeInTheDocument();
+  expect(sidebar().getByRole("button", { name: "Статистика" })).toBeInTheDocument();
+  expect(sidebar().queryByRole("button", { name: "Сегодня" })).not.toBeInTheDocument(); // the buyer's own list is closed to a reader
   expect(screen.getByRole("button", { name: "Приёмка" })).toBeInTheDocument();
 });
 

@@ -6,6 +6,7 @@ import {
 import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
 import { fetchBoxLabels, openBoxLabels, openShippingForms } from "./shippingPrint";
+import { useCanPrint } from "./rights";
 import { formatDate, formatDayMonth } from "./format";
 import { StatusChip as SharedChip } from "./StatusChip";
 import { isoDay } from "./Gantt";
@@ -436,6 +437,7 @@ const noUpd = (shipment: Shipment) => ["Отгружена", "Закрыта"].i
 
 /** Печать PL / DN по номеру прямо из строки списка (во «Отправках» и в «Журнале»). */
 function useShipmentPrint() {
+  const canPrint = useCanPrint();
   const [error, setError] = useState("");
   const open = async (shipment: Shipment, document: "pl" | "dn") => {
     setError("");
@@ -446,6 +448,7 @@ function useShipmentPrint() {
   const link = (shipment: Shipment, document: "pl" | "dn", short = false) => {
     const number = document === "pl" ? shipment.pl_number : shipment.dn_number;
     const kind = document === "pl" ? "PL" : "DN";
+    if (number && !canPrint) return <span>{short ? kind : number}</span>;
     return number ? <button type="button" className="link-button ship-doc-link" title={`Печать ${kind} ${number}`} aria-label={short ? `Печать ${number}` : undefined}
       onClick={(event) => { event.stopPropagation(); void open(shipment, document); }}>{short ? kind : number}</button> : <span className="muted">—</span>;
   };
@@ -577,6 +580,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
   const open = !["Закрыта", "Отменена"].includes(shipment.status);
   const shipped = ["Отгружена", "Закрыта"].includes(shipment.status);
   const late = overdue(shipment);
+  const canPrintDocs = useCanPrint();
   const print = async (document: "pl" | "dn") => {
     setPrintError("");
     try { openShippingForms((await shippingApi.print(shipment.id, document)).forms); }
@@ -640,7 +644,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
         title={shipGaps.length ? `Не хватает: ${shipGaps.join(", ")}` : undefined} onClick={ship}>Отгрузить</button>}
       {canWarehouse && shipment.status === "Отгружена" && <button type="button" className="primary" disabled={disabled} onClick={() => void action("close", `Отгрузка закрыта: ${shipment.number}`)}>Закрыть</button>}
       {canWarehouse && shipment.status === "Новая" && <button type="button" className="secondary" disabled={disabled} onClick={() => void action("pick", "Заявка набрана из доступного остатка")}>Набрать со склада</button>}
-      {shipment.pl_number && got && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" disabled={dnGaps.length > 0} title={dnGaps.length ? `DN печатается, когда внесены данные. Не хватает: ${dnGaps.join(", ")}` : undefined} onClick={() => void print("dn")}>Печать DN</button><button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button></>}
+      {shipment.pl_number && got && <>{canPrintDocs && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" disabled={dnGaps.length > 0} title={dnGaps.length ? `DN печатается, когда внесены данные. Не хватает: ${dnGaps.join(", ")}` : undefined} onClick={() => void print("dn")}>Печать DN</button></>}<button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button></>}
       {canEdit && got && (ACTIVE.includes(shipment.status) || (shipment.pl_number && shipment.status === "Отгружена")) && !layout && <button type="button" className="secondary" disabled={disabled} onClick={() => setLayout(true)}>{shipment.pl_number ? "Перевыпустить" : "Сформировать отгрузочные"}</button>}
       {canEdit && open && <button type="button" className="secondary" disabled={disabled} onClick={openData}>Данные отправки</button>}
       {canEdit && open && !withoutUpd(shipment) && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}

@@ -65,6 +65,26 @@ it("builds the accept body: unit and purpose fall back, labels and confirmation 
   expect(body).toEqual({
     article: "A", quantity: "2.5", unit: "шт", item_type: "", manufacturer: "", series: "", name: "", purpose: "Склад",
     expiry_date: null, datasheet: "", certificate: "", storage_location: "1F4", labels: 3, confirm_expected: true, upd_name: "",
+    maker_article: "", supplier_article: "",
+  });
+});
+
+it("a scanned УПД line keeps the maker's article and the supplier's code beside ours, also after the article is edited", () => {
+  const result = applyScan(emptyHeader(), [emptyLine()], {
+    scan_file: "s.pdf", note: "",
+    recognised: { supplier: "", inn: "", upd_number: "", upd_date: "", invoice_number: "", invoice_date: "" },
+    lines: [
+      { article: "VLnhv-6.0-12(100)", name: "Наконечник штыревой втулочный, НШВ 6,0-12, 100 шт", quantity: "1", unit: "упак",
+        supplier_code: "1396474", manufacturer: "Vell" },
+      { article: "", name: "Провод МГТФ 0,12", quantity: "10", unit: "м" },
+    ],
+  });
+  const [nshv, wire] = result.lines;
+  expect([nshv.maker_article, nshv.supplier_article]).toEqual(["VLnhv-6.0-12(100)", "1396474"]);
+  expect([wire.maker_article, wire.supplier_article]).toEqual(["", ""]);
+  const ours = editCell(nshv, "article", "НШВ 6,0-12");
+  expect(buildAccept(ours, emptyHeader(), "1F4", 1, false)).toMatchObject({
+    article: "НШВ 6,0-12", maker_article: "VLnhv-6.0-12(100)", supplier_article: "1396474",
   });
 });
 

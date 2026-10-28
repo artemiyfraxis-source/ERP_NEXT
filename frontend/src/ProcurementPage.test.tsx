@@ -2290,8 +2290,7 @@ describe("«Лист закупки» без своих и свободных п
     render(<ProcurementPage readOnly />);
     expect(await screen.findByText("REQ-99")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Весь лист" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("heading", { level: 1, name: "Снабжение" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Статистика" })).toHaveAttribute("aria-selected", "true"); // «Весь лист» lives in «Статистика»
+    expect(screen.getByRole("heading", { level: 1, name: "Статистика" })).toBeInTheDocument();
     expect(screen.getByText(/показан весь лист/)).toBeInTheDocument();
     // статус на листе — чип со словом ERP
     expect(screen.getByText("Жду счёт")).toHaveClass("status-chip");
@@ -2310,7 +2309,7 @@ describe("«Лист закупки» без своих и свободных п
 });
 
 // Витя's edits 2–4 (owner-approved 23.10): «Лист закупки» became «Снабжение»; its reference books and documents moved out.
-describe("«Снабжение»: tabs, «Статистика» and «Не переданы в закупку»", () => {
+describe("«Снабжение»: page heading and «Статистика»", () => {
   const request = (id: string, legacy: string, status: string) => ({
     id, legacy_id: legacy, designation: "ВП-001.001", status, stage: status, created_at: "2026-10-20T10:00:00", initiator: "Ульяна",
     department: "Проекты", purpose: "Обеспечение производства", project_reference: null, delivery_point: "ЦАР", name: `Позиция ${legacy}`,
@@ -2335,62 +2334,30 @@ describe("«Снабжение»: tabs, «Статистика» and «Не пе
     return calls;
   }
 
-  it("keeps the work tabs in the order of doing, «Статистика» last with its own row; no reference book or document tab", async () => {
+  it("has no row of work tabs (they are menu items now); the heading is the item's name, «Статистика» keeps its inner row", async () => {
     mockRequests();
     window.history.replaceState(null, "", "/?section=procurement&tab=rfq");
-    render(<ProcurementPage />);
-    const main = screen.getByRole("tablist", { name: "Разделы закупки" });
-    expect(within(main).getAllByRole("tab").map((tab) => tab.textContent))
-      .toEqual(["Сегодня", "Заявки", "Запросы КП", "Закупка", "Счета и поставки", "Статистика"]);
+    const { unmount } = render(<ProcurementPage />);
+    expect(screen.getByRole("heading", { level: 1, name: "Запросы КП" })).toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "Разделы закупки" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "Статистика" })).not.toBeInTheDocument();
     for (const gone of ["Поставщики", "Номенклатура", "Каталог закупок", "Настройки", "УПД", "Счета", "Цепочка документов", "Поиск по документам"]) {
       expect(screen.queryByRole("tab", { name: gone })).not.toBeInTheDocument();
     }
-    expect(screen.queryByRole("tablist", { name: "Статистика" })).not.toBeInTheDocument();
-    fireEvent.click(within(main).getByRole("tab", { name: "Статистика" }));
+    unmount();
+    window.history.replaceState(null, "", "/?section=procurement&tab=stats");
+    render(<ProcurementPage />);
+    expect(screen.getByRole("heading", { level: 1, name: "Статистика" })).toBeInTheDocument();
     const stats = screen.getByRole("tablist", { name: "Статистика" });
     expect(within(stats).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Очереди", "Весь лист", "По поставщикам", "Показатели"]);
     expect(within(stats).getByRole("tab", { name: "Очереди" })).toHaveAttribute("aria-selected", "true");
-    fireEvent.click(within(stats).getByRole("tab", { name: "Показатели" }));
-    fireEvent.click(within(main).getByRole("tab", { name: "Запросы КП" }));
-    fireEvent.click(within(main).getByRole("tab", { name: "Статистика" }));
-    // «Статистика» comes back on the inner tab chosen last.
-    expect(within(screen.getByRole("tablist", { name: "Статистика" })).getByRole("tab", { name: "Показатели" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("an old `?tab=queues|sheet|suppliers|kpi` link opens «Статистика» on that tab", async () => {
     mockRequests();
     window.history.replaceState(null, "", "/?section=procurement&tab=suppliers");
     render(<ProcurementPage />);
-    expect(screen.getByRole("tab", { name: "Статистика" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { level: 1, name: "Статистика" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "По поставщикам" })).toHaveAttribute("aria-selected", "true");
-  });
-
-  it("with the hand-over right a request goes to purchasing from the «Заявки» tab", async () => {
-    const calls = mockRequests();
-    const openRegister = vi.fn();
-    window.history.replaceState(null, "", "/?section=procurement&tab=requests");
-    render(<ProcurementPage readOnly canHandoff openRegister={openRegister} />);
-    const strip = await screen.findByRole("region", { name: "Не переданы в закупку" });
-    // Only the requests not handed over yet: «Новый».
-    expect(await within(strip).findByText("REQ-1")).toBeInTheDocument();
-    expect(within(strip).queryByText("REQ-2")).not.toBeInTheDocument();
-    fireEvent.click(within(strip).getByRole("checkbox", { name: "Выбрать: REQ-1" }));
-    fireEvent.click(within(strip).getByRole("button", { name: "В закупку" }));
-    expect(await within(strip).findByText("Заявка REQ-1 передана в закупку")).toBeInTheDocument();
-    const handoff = calls.find((call) => call.path === "/api/requests/handoff");
-    expect(JSON.parse(handoff!.body)).toEqual({ request_ids: ["r-1"], retransfer: false });
-    expect(await within(strip).findByText("Все заявки переданы в закупку.")).toBeInTheDocument();
-    // The register has no menu item: it opens from here.
-    fireEvent.click(within(strip).getByRole("button", { name: "Реестр заявок →" }));
-    expect(openRegister).toHaveBeenCalled();
-  });
-
-  it("without the hand-over right there is no hand-over, only the way to the register", async () => {
-    const calls = mockRequests();
-    window.history.replaceState(null, "", "/?section=procurement&tab=requests");
-    render(<ProcurementPage readOnly openRegister={() => undefined} />);
-    expect(await screen.findByRole("button", { name: "Реестр заявок →" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Не переданы в закупку" })).not.toBeInTheDocument();
-    expect(calls.some((call) => call.path === "/api/requests")).toBe(false);
   });
 });

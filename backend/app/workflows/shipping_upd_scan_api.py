@@ -46,6 +46,8 @@ Editor = Annotated[Principal, Depends(shipping.shipping_editor_principal)]
 Now = Annotated[datetime, Depends(moscow_now)]
 WarehouseFactory = Annotated[Callable, Depends(warehouse_uow_factory)]
 ShippingFactory = Annotated[Callable, Depends(shipping.shipping_uow_factory)]
+# «Сканирование документов» (owner 28.10.2026): the scanner job routes take it on top of the shipping edit right.
+Scans = [Depends(scan_jobs_api.scan_edit_principal)]
 NO_SCAN = "Скан УПД не найден — отсканируйте или выберите файл заново"
 
 
@@ -55,20 +57,20 @@ def _exists(shipment_id: UUID, uow_factory: Callable) -> None:
             raise HTTPException(status_code=404, detail="Отправка не найдена")
 
 
-@router.post("/jobs")
+@router.post("/jobs", dependencies=Scans)
 async def new_scan_job(shipment_id: UUID, request: Request, principal: Editor, now: Now, uow_factory: WarehouseFactory,
                        shipping_factory: ShippingFactory, payload: scan_jobs_api.ScanStartInput | None = None) -> dict:
     await run_in_threadpool(_exists, shipment_id, shipping_factory)
     return await run_in_threadpool(scan_jobs_api.new_scan_job, request, principal, now, uow_factory, payload)
 
 
-@router.get("/jobs/{job_id}")
+@router.get("/jobs/{job_id}", dependencies=Scans)
 def scan_job(shipment_id: UUID, job_id: UUID, request: Request, background: BackgroundTasks, principal: Editor,
              now: Now, uow_factory: WarehouseFactory) -> dict:
     return scan_jobs_api.scan_job(job_id, request, background, principal, now, uow_factory)
 
 
-@router.delete("/jobs/{job_id}")
+@router.delete("/jobs/{job_id}", dependencies=Scans)
 def cancel_scan_job(shipment_id: UUID, job_id: UUID, principal: Editor, now: Now, uow_factory: WarehouseFactory) -> dict:
     return scan_jobs_api.cancel_scan_job(job_id, principal, now, uow_factory)
 

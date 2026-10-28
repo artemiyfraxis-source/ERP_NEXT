@@ -4,6 +4,8 @@ import { PageWindow } from "./PageWindow";
 import { CARRIERS, PICKUP_CARRIER, isPickup } from "./carriers";
 import { StatusChip } from "./StatusChip";
 import { useUpdScan } from "./useUpdScan";
+import { ScanDeviceLine } from "./ScanAgent";
+import { useCanScan } from "./rights";
 
 /* Данные отправки (владелец 28.10.2026): упаковывает и отгружает кладовщик, данные для отгрузки — тип доставки,
    перевозчик, адрес, получатель, телефон, УПД — вносит менеджер (Ульяна) в своём разделе «Данные отправок».
@@ -117,6 +119,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved }: { shipm
   answerRef.current = applyAnswer;
   const scanApi = useMemo(() => shippingApi.updScan(opened.id), [opened.id]);
   const scan = useUpdScan(scanApi, (answer) => void answerRef.current(answer));
+  const canScan = useCanScan();
   const coarse = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
   const reading = scan.scanning || applying;
 
@@ -170,7 +173,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved }: { shipm
           <option value="">не выбран</option>{UPD_TYPES.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
         {!noUpd && <div className="ship-span2 ship-upd-scan">
           <span className="ship-upd-buttons">
-            {!edoType && (scan.pages.length > 0
+            {!edoType && canScan && (scan.pages.length > 0
               ? <button type="button" className="secondary" disabled={reading} onClick={() => void scan.fromScanner()}>+ Страница</button>
               : <button type="button" className="secondary" disabled={reading} onClick={() => void scan.fromScanner(true)}>Сканировать</button>)}
             <button type="button" className="secondary" disabled={reading} onClick={() => fileInput.current?.click()}>{edoType ? "Файл ЭДО…" : "Файл…"}</button>
@@ -179,6 +182,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved }: { shipm
               {...(coarse && !edoType ? { capture: "environment" as const } : {})}
               onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; if (files.length) void scan.fromFiles(files); }} />
           </span>
+          {!edoType && <ScanDeviceLine />}
           {shipment.upd_url && <a className="ship-upd-link" href={shipment.upd_url} target="_blank" rel="noreferrer">{edoType ? "Файл ЭДО" : "Скан УПД"} · открыть</a>}
           {(scan.statusText || applying || note) && <p className={`wr-scan-status${scan.error ? " error" : ""}`} role="status">
             {applying ? "Вношу УПД в отправку…" : scan.statusText || note}

@@ -4,6 +4,7 @@ import {
 } from "./api";
 import { formatDay } from "./format";
 import { PageWindow } from "./PageWindow";
+import { useCanPrint } from "./rights";
 import { openRouteSheetPrint, openStoPrint, openTdKitPrint } from "./tdPrint";
 import { TD_SYSTEM_ACTOR, type RouteSheetOptions, type TdFinding, type TdIssue } from "./tdTypes";
 import { TdIssueWindow } from "./TdIssueWindow";
@@ -108,12 +109,13 @@ export function TdIssuesPanel({ cardId, canEdit }: { cardId: string; canEdit: bo
     catch (reason) { setError(failureText(reason, "СТО не открыт")); }
   }
 
+  const canPrint = useCanPrint();
   const mutable = selected && canEdit;
   return <section className="td-panel" aria-label="Комплект ТД (ЕСТД)">
     <div className="td-head">
       <strong className="td-title">Комплект ТД (ЕСТД)</strong>
       {canEdit && issues && issues.length === 0 && <button type="button" className="primary small" onClick={() => setForm({ issue: null })}>Новый выпуск</button>}
-      <button type="button" className="secondary small td-sto" onClick={() => void printSto()}>Печать СТО</button>
+      {canPrint && <button type="button" className="secondary small td-sto" onClick={() => void printSto()}>Печать СТО</button>}
     </div>
     {activeIssue?.has_changes && !changeInWork && <div className="warning-inline td-changes" role="status">
       <span>ЭТК изменилась (ревизия {activeIssue.current_etk_revision}), действующий комплект — ревизия {activeIssue.etk_revision}. Оформите извещение об изменении.</span>
@@ -150,8 +152,8 @@ export function TdIssuesPanel({ cardId, canEdit }: { cardId: string; canEdit: bo
         </>}
         {mutable && selected.status === "active" && <button type="button" className="danger small" disabled={busy} onClick={annul}>Аннулировать</button>}
         <span className="td-spacer" />
-        <button type="button" className="secondary small" disabled={busy} onClick={() => void printWith(openTdKitPrint)}>Печать комплекта ТД</button>
-        <button type="button" className="secondary small" disabled={busy} onClick={() => setRouteSheet(true)}>Сопроводительный лист</button>
+        {canPrint && <button type="button" className="secondary small" disabled={busy} onClick={() => void printWith(openTdKitPrint)}>Печать комплекта ТД</button>}
+        {canPrint && <button type="button" className="secondary small" disabled={busy} onClick={() => setRouteSheet(true)}>Сопроводительный лист</button>}
       </div>
     </div>}
     {form && <TdIssueWindow cardId={cardId} issue={form.issue} previous={issues?.[0] ?? null} isFirst={!issues?.length}

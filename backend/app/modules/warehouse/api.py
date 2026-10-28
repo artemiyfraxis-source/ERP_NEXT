@@ -131,6 +131,8 @@ class EditRowPayload(BaseModel):
 
     version: int = Field(ge=1)
     article: str | None = Field(default=None, max_length=1024)
+    maker_article: str | None = Field(default=None, max_length=LOT_DETAIL_LIMITS["maker_article"])
+    supplier_article: str | None = Field(default=None, max_length=LOT_DETAIL_LIMITS["supplier_article"])
     series: str | None = Field(default=None, max_length=255)
     name: str | None = Field(default=None, max_length=1024)
     item_type: str | None = Field(default=None, max_length=255)
@@ -194,6 +196,8 @@ class StockItemInput(BaseModel):
     storage_conditions: str = Field(default="", max_length=LOT_DETAIL_LIMITS["storage_conditions"])
     datasheet: str = Field(default="", max_length=LOT_DETAIL_LIMITS["datasheet"])
     certificate: str = Field(default="", max_length=LOT_DETAIL_LIMITS["certificate"])
+    maker_article: str = Field(default="", max_length=LOT_DETAIL_LIMITS["maker_article"])
+    supplier_article: str = Field(default="", max_length=LOT_DETAIL_LIMITS["supplier_article"])
 
     def manual_item(self, warehouse: str = "") -> ManualStockItem:
         return ManualStockItem(
@@ -215,6 +219,8 @@ class StockItemInput(BaseModel):
             storage_conditions=self.storage_conditions,
             datasheet=self.datasheet,
             certificate=self.certificate,
+            maker_article=self.maker_article,
+            supplier_article=self.supplier_article,
         )
 
 
@@ -247,6 +253,8 @@ def _result(lot: StockLot) -> dict:
         "grn": lot.grn,
         "package": lot.package,
         "article": lot.article,
+        "maker_article": lot.maker_article,
+        "supplier_article": lot.supplier_article,
         "series": lot.series,
         "name": lot.name,
         "item_type": lot.item_type,
@@ -395,7 +403,7 @@ def lots(
     q: Annotated[str, Query(max_length=255)] = "",
     zero: bool = False,
     warehouse: Annotated[str | None, Query(pattern="^(ЦАР|ЖУК)$")] = None,
-    sort: Annotated[str | None, Query(pattern="^(type|grn|balance|reserved|available|lots|place|series|article|name|warehouse|maker|upd_name|invoice_name|invoice_number|invoice_date|upd_number|upd_date|prd_number|prd_date)$")] = None,
+    sort: Annotated[str | None, Query(pattern="^(type|grn|balance|reserved|available|lots|place|series|article|name|warehouse|maker|maker_article|supplier_article|upd_name|invoice_name|invoice_number|invoice_date|upd_number|upd_date|prd_number|prd_date)$")] = None,
     desc: bool = False,
     group: Annotated[str, Query(pattern="^(type|place|name|series|grn)?$")] = "",
 ) -> dict:

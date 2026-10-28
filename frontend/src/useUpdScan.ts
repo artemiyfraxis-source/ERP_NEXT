@@ -4,7 +4,7 @@ import { useScanAgent } from "./ScanAgent";
 
 /** Where a УПД is scanned and read: the scanner queue of the warehouse PC, a file, a merge of sheets. */
 export interface UpdScanApi {
-  startScanJob: (agentId?: string) => Promise<WarehouseScanStart>;
+  startScanJob: (agentId?: string, targetScanner?: string) => Promise<WarehouseScanStart>;
   scanJob: (id: string) => Promise<WarehouseScanJob>;
   cancelScanJob: (id: string) => Promise<WarehouseScanJob>;
   scanFile: (file: File) => Promise<WarehouseScanJob>;

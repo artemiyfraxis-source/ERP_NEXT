@@ -64,6 +64,8 @@ LOT_DETAIL_LIMITS = {
     "storage_conditions": 1024,  # УСЛОВИЯ ХРАНЕНИЯ
     "datasheet": 4096,  # DATASHEET: a link or a name, as typed
     "certificate": 4096,  # СЕРТИФИКАТ: a link or a number, as typed
+    "maker_article": 255,  # АРТИКУЛ ПРОИЗВОДИТЕЛЯ: the code the item left the factory with
+    "supplier_article": 255,  # АРТИКУЛ ПОСТАВЩИКА: the code the seller sells it under (the УПД «Код товара»)
 }
 
 
@@ -90,6 +92,8 @@ def _unit_mass(value: Decimal | None) -> Decimal | None:
 # SUPPLYMAP sheet; ERP has no sheet, so they are in the edit form too.
 LOT_ROW_FIELDS = {
     "article": "АРТИКУЛ",
+    "maker_article": "АРТИКУЛ ПРОИЗВОДИТЕЛЯ",
+    "supplier_article": "АРТИКУЛ ПОСТАВЩИКА",
     "series": "СЕРИЯ",
     "name": "НАИМЕНОВАНИЕ",
     "item_type": "ТИП",
@@ -168,6 +172,10 @@ class StockLot:
     # (the lot's own «Наименование» is ours), and as the paid invoice names it (from purchasing, later). Read-only.
     upd_name: str = ""
     invoice_name: str = ""
+    # Three articles of a lot (owner 28.10.2026): `article` is «Артикул номенклатуры» — ours, the one techcards,
+    # requests and kitting match on; these two are the maker's and the seller's codes, "" — not known.
+    maker_article: str = ""
+    supplier_article: str = ""
 
     @classmethod
     def create(
@@ -195,6 +203,8 @@ class StockLot:
         certificate: str = "",
         receipt_id: UUID | None = None,
         upd_name: str = "",
+        maker_article: str = "",
+        supplier_article: str = "",
     ) -> StockLot:
         """location_as_is — old data: an empty place or an old address is kept as it was."""
         if str(warehouse).strip() not in WAREHOUSES:
@@ -241,6 +251,8 @@ class StockLot:
             certificate=_detail("certificate", certificate),
             receipt_id=receipt_id,
             upd_name=" ".join(str(upd_name or "").split())[:UPD_NAME_LIMIT],
+            maker_article=_detail("maker_article", maker_article),
+            supplier_article=_detail("supplier_article", supplier_article),
         )
 
     @property

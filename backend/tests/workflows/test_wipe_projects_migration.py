@@ -102,6 +102,9 @@ def database(tmp_path, monkeypatch):
         # 0152: the names the УПД and the invoice give a lot.
         connection.execute(text("ALTER TABLE warehouse_lots ADD COLUMN upd_name TEXT NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE warehouse_lots ADD COLUMN invoice_name TEXT NOT NULL DEFAULT ''"))
+        # 0158: the maker's and the supplier's article of a lot.
+        connection.execute(text("ALTER TABLE warehouse_lots ADD COLUMN maker_article VARCHAR(255) NOT NULL DEFAULT ''"))
+        connection.execute(text("ALTER TABLE warehouse_lots ADD COLUMN supplier_article VARCHAR(255) NOT NULL DEFAULT ''"))
         # 0089: the project / КБ / kind of a request and the year's number counter.
         connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN project_key VARCHAR(128)"))
         connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN item_index VARCHAR(64)"))

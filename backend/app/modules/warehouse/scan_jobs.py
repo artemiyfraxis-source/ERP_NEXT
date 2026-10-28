@@ -36,6 +36,7 @@ PENDING_TIMEOUT = timedelta(seconds=120)
 CLAIMED_TIMEOUT = timedelta(seconds=180)
 KEEP_FINISHED = timedelta(days=30)
 ERROR_MAX = 2000
+SCANNER_MAX = 300
 NO_ANSWER = "Сканер не ответил — проверьте агент на ПК склада"
 CANCELLED = "Отменено"
 NO_REASON = "Агент сканирования не прислал скан и не сказал почему"
@@ -67,6 +68,10 @@ class ScanJobRow(Base):
         ),
         CheckConstraint("status <> 'failed' OR error <> ''", name="ck_warehouse_scan_jobs_failed_error"),
         CheckConstraint("result = '' OR status = 'done'", name="ck_warehouse_scan_jobs_result_only_done"),
+        CheckConstraint(
+            "target_scanner IS NULL OR (target_scanner <> '' AND target_machine_id IS NOT NULL)",
+            name="ck_warehouse_scan_jobs_target_scanner",
+        ),
         Index("ix_warehouse_scan_jobs_status_created", "status", "created_at"),
     )
 
@@ -83,6 +88,9 @@ class ScanJobRow(Base):
     target_machine_id: Mapped[str | None] = mapped_column(
         String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="RESTRICT"), nullable=True,
     )
+    # «Своё устройство» (migration 0159): the scanner the person chose (WIA DeviceID or name, as the agent reported
+    # it); NULL — the agent scans with its first scanner. Only on a job with a target agent.
+    target_scanner: Mapped[str | None] = mapped_column(String(SCANNER_MAX), nullable=True)
     error: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     result: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
 
@@ -133,12 +141,15 @@ def _read(session: Session, job_id: UUID) -> ScanJob:
     return _job(row)
 
 
-def create_job(uow, *, requested_by: str, now: datetime, target: str | None = None) -> ScanJob:
-    """«Отсканировать УПД»: one pending job for the agent `target` (None — any agent, an old one without an id)."""
+def create_job(uow, *, requested_by: str, now: datetime, target: str | None = None,
+               scanner: str | None = None) -> ScanJob:
+    """«Отсканировать УПД»: one pending job for the agent `target` (None — any agent, an old one without an id), on its
+    scanner `scanner` (None — the agent's first one; kept only with a target)."""
+    scanner = (scanner or "").strip()[:SCANNER_MAX] or None
     with uow:
         session = _session(uow)
         row = ScanJobRow(id=uuid4(), status=PENDING, requested_by=requested_by[:255] or "—", created_at=now,
-                         target_machine_id=target, error="", result="")
+                         target_machine_id=target, target_scanner=scanner if target else None, error="", result="")
         session.add(row)
         uow.commit()
     return _job(row)
@@ -180,7 +191,13 @@ def cancel_job(uow, job_id: UUID, *, now: datetime) -> ScanJob:
     return job
 
 
-def claim(uow, *, now: datetime, machine_id: str | None = None) -> UUID | None:
+@dataclass(frozen=True)
+class Claimed:
+    id: UUID
+    target_scanner: str | None  # the scanner the person chose; None — the agent's first one
+
+
+def claim(uow, *, now: datetime, machine_id: str | None = None) -> Claimed | None:
     """The oldest pending job (not overdue) for this agent — targeted to `machine_id` or untargeted — becomes claimed;
     an old agent without an id (None) takes untargeted jobs only. Finished jobs past KEEP_FINISHED go."""
     with uow:
@@ -193,20 +210,20 @@ def claim(uow, *, now: datetime, machine_id: str | None = None) -> UUID | None:
         mine = ScanJobRow.target_machine_id.is_(None) if machine_id is None else or_(
             ScanJobRow.target_machine_id.is_(None), ScanJobRow.target_machine_id == machine_id)
         for _attempt in range(5):  # another agent may take the same row between the read and the write
-            candidate = session.scalar(
-                select(ScanJobRow.id).where(ScanJobRow.status == PENDING, mine)
+            candidate = session.execute(
+                select(ScanJobRow.id, ScanJobRow.target_scanner).where(ScanJobRow.status == PENDING, mine)
                 .order_by(ScanJobRow.created_at, ScanJobRow.id).limit(1)
                 .with_for_update(skip_locked=True)
-            )
+            ).first()
             if candidate is None:
                 break
             taken = session.execute(
-                update(ScanJobRow).where(ScanJobRow.id == candidate, ScanJobRow.status == PENDING)
+                update(ScanJobRow).where(ScanJobRow.id == candidate.id, ScanJobRow.status == PENDING)
                 .values(status=CLAIMED, claimed_at=now)
                 .execution_options(synchronize_session=False)
             )
             if taken.rowcount == 1:
-                claimed = candidate
+                claimed = Claimed(candidate.id, candidate.target_scanner)
                 break
         uow.commit()
     return claimed

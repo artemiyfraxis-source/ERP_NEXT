@@ -4,7 +4,9 @@
  Параметры: -DryRun (не печатать, результат ok=false "dry run"), -Once (один опрос и выход).
  Сканер УПД: -Scanner <адрес> (eSCL; без адреса - WIA), -TestScan (один скан в файл, без ERP).
  Сканер с любого ПК (28.10.2026): агент называет себя серверу (MachineGuid + имя ПК), раз в ~2 мин сообщает версию, найденные
- WIA-сканеры (первый из найденных работает; подключили позже - подхватится сам) и адрес в сети; принтер не обязателен.
+ WIA-сканеры (подключили позже - подхватится сам) и адрес в сети; принтер не обязателен.
+ Свой сканер (28.10.2026): задание приходит с выбранным человеком сканером (WIA DeviceID или имя) - сканирует он;
+ его нет на этом ПК или выбор не задан - первый найденный.
  Новая версия агента лежит на сервере: агент скачивает её, сверяет SHA-256, подменяет себя и перезапускает задачу.
 #>
 [CmdletBinding()]
@@ -26,7 +28,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.0.0'
+$script:AgentVersion = '2.1.0'
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
 
@@ -218,7 +220,7 @@ function Get-WiaScanners {
 }
 
 # Сканеры агента (вызывать как @(Get-AgentScanners ...)): адрес eSCL из настроек - один сканер; иначе все WIA-устройства
-# (работает первое). Нет сканеров - ничего не возвращает.
+# (сканирует выбранное в задании, иначе первое). Нет сканеров - ничего не возвращает.
 function Get-AgentScanners {
     param([string]$ScannerAddress)
     if ($ScannerAddress) { return @{ id = $ScannerAddress; name = "Сканер по сети $ScannerAddress (eSCL)" } }
@@ -449,12 +451,29 @@ function Invoke-EsclScan {
     } finally { [ErpTlsSkip]::Off() }
 }
 
-# USB-сканер через WIA: первое устройство типа "сканер", JPEG.
+# Какое WIA-устройство сканирует: выбранное человеком ($Device = DeviceID или имя), иначе первое типа "сканер".
+# Возвращает DeviceInfo или $null. Вынесено в функцию для тестов (на вход - любые объекты с Type/DeviceID/Name).
+function Select-WiaDevice {
+    param($DeviceInfos, [string]$Device)
+    $first = $null
+    foreach ($di in $DeviceInfos) {
+        if ($di.Type -ne 1) { continue }
+        if (-not $first) { $first = $di }
+        if (-not $Device) { break }
+        $name = ''
+        try { $name = [string]$di.Properties.Item('Name').Value } catch { $name = [string]$di.Name }
+        if ([string]$di.DeviceID -eq $Device -or ($name -and $name -eq $Device)) { return $di }
+    }
+    return $first
+}
+
+# USB-сканер через WIA: выбранное устройство (или первое типа "сканер"), JPEG.
 function Invoke-WiaScan {
+    param([string]$Device)
     $dm = New-Object -ComObject WIA.DeviceManager
-    $info = $null
-    foreach ($di in $dm.DeviceInfos) { if ($di.Type -eq 1) { $info = $di; break } }
+    $info = Select-WiaDevice -DeviceInfos $dm.DeviceInfos -Device $Device
     if (-not $info) { throw 'Сканер не найден: адрес не задан, а USB-сканера (WIA) нет' }
+    if ($Device -and [string]$info.DeviceID -ne $Device) { Write-Log "Скан: выбранного сканера '$Device' на этом ПК нет - сканирует первый найденный" }
     $item = $info.Connect().Items.Item(1)
     foreach ($p in @(@(6146, 2), @(6147, 300), @(6148, 300))) {
         try { $item.Properties.Item([string]$p[0]).Value = $p[1] } catch {}
@@ -480,9 +499,9 @@ function Invoke-WiaScan {
 
 # Скан выбранным способом. Вынесено в функцию, чтобы тесты подменяли её.
 function Invoke-ScannerScan {
-    param([string]$Address)
+    param([string]$Address, [string]$Device)
     if ($Address) { return Invoke-EsclScan -Address $Address }
-    return Invoke-WiaScan
+    return Invoke-WiaScan -Device $Device
 }
 
 # multipart/form-data байтами: тело бинарное, заголовки в UTF-8, CRLF.
@@ -517,16 +536,17 @@ function Invoke-ScanPollOnce {
         $script:ScanClaimError = ''
         if (-not $claim.job) { return 'idle' }
         $id = [string]$claim.job.id
+        $device = [string]$claim.job.target_scanner
     } catch {
         $msg = $_.Exception.Message
         if ($msg -ne $script:ScanClaimError) { Write-Log "Скан: опрос заданий не удался: $msg"; $script:ScanClaimError = $msg }
         return 'error'
     }
-    $how = if ($ScannerAddress) { "сканер $ScannerAddress (eSCL)" } else { 'USB (WIA)' }
+    $how = if ($ScannerAddress) { "сканер $ScannerAddress (eSCL)" } elseif ($device) { "USB (WIA), выбран $device" } else { 'USB (WIA)' }
     Write-Log "Скан: задание $id, $how"
     $resultUrl = "$Base/api/stock/scan/agent/jobs/$id/result"
     try {
-        $scan = Invoke-ScannerScan -Address $ScannerAddress
+        $scan = Invoke-ScannerScan -Address $ScannerAddress -Device $device
         Send-ScanFile -Url $resultUrl -AuthToken $AuthToken -Bytes $scan.Bytes -FileName "scan.$($scan.Ext)" -ContentType $scan.Mime
         Write-Log "Скан отправлен: задание $id, $($scan.Bytes.Length) байт, $($scan.Mime)"
     } catch {
