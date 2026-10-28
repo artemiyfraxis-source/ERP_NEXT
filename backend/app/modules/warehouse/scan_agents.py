@@ -9,7 +9,10 @@ A button press is routed to ONE agent (`route`):
   2. no address matches — the browser's remembered agent when it is live with a scanner, else «choose» from all live ones;
   3. none live with a scanner — an old agent that has no id (`legacy` row, kept by its claims) still takes an untargeted
      job (rollout: the warehouse PC works until it is reinstalled), else «no_agent».
-An agent claims the jobs targeted to it and untargeted ones; an old agent only the untargeted ones.
+  0. (owner 28.10.2026, «своё устройство») the scanner the person chose wins: its agent, live and still reporting it,
+     takes the job whatever the browser's address; the job carries the scanner (`target_scanner`) to that agent.
+An agent claims the jobs targeted to it and untargeted ones; an old agent only the untargeted ones. `agent_list` — every
+PC with the new agent and its scanners `[{id, name}]`, for the person's choice.
 
 Install tokens (`issue_install` / `redeem_install`): an administrator issues a one-time secret (only its SHA-256 is
 stored, valid INSTALL_TTL); the install script on the new PC redeems it once — the conditional UPDATE lets exactly one
@@ -95,6 +98,7 @@ class Routing:
     agent_id: str | None = None
     agents: list[AgentInfo] = field(default_factory=list)  # choose: who to pick from
     idle: list[str] = field(default_factory=list)  # no_agent: PCs with a live agent but no scanner
+    scanner: str | None = None  # agent: the chosen scanner as that agent reports it (None — its first one)
 
 
 class InstallRefused(Exception):
@@ -112,17 +116,34 @@ def _clean(text: object, limit: int) -> str:
     return " ".join(str(text or "").split())[:limit]
 
 
-def scanner_names(raw: str) -> list[str]:
+def scanner_list(raw: str) -> list[dict[str, str]]:
+    """The scanners an agent reported, as `[{id, name}]` (an id may be '' — an agent that sent names only)."""
     try:
         data = json.loads(raw or "[]")
     except ValueError:
         return []
-    names = []
+    found = []
     for item in data if isinstance(data, list) else []:
-        name = item.get("name") if isinstance(item, dict) else item
-        if str(name or "").strip():
-            names.append(str(name).strip())
-    return names
+        name = str((item.get("name") if isinstance(item, dict) else item) or "").strip()
+        if name:
+            found.append({"id": str(item.get("id") or "").strip() if isinstance(item, dict) else "", "name": name})
+    return found
+
+
+def matching_scanner(raw: str, wanted: str) -> str | None:
+    """The agent's scanner the person chose (`wanted` = its id or name) as the agent will look it up — its WIA DeviceID,
+    or its name when it reported none; None — this agent has no such scanner (it scans with its first one)."""
+    wanted = _clean(wanted, 300)
+    if not wanted:
+        return None
+    for scanner in scanner_list(raw):
+        if wanted in (scanner["id"], scanner["name"]):
+            return scanner["id"] or scanner["name"]
+    return None
+
+
+def scanner_names(raw: str) -> list[str]:
+    return [scanner["name"] for scanner in scanner_list(raw)]
 
 
 def _info(row: ScanAgentRow) -> AgentInfo:
@@ -186,31 +207,59 @@ def _live(session: Session, now: datetime, *, legacy: bool) -> list[ScanAgentRow
         .order_by(ScanAgentRow.pc_name, ScanAgentRow.machine_id)))
 
 
-def route(uow, *, browser_ip: str, remembered: str, now: datetime) -> Routing:
-    """Where a press of «Сканировать» goes (see the module doc)."""
+def route(uow, *, browser_ip: str, remembered: str, now: datetime, scanner: str = "") -> Routing:
+    """Where a press of «Сканировать» goes (see the module doc). `scanner` — the scanner the person chose (owner
+    28.10.2026: «каждый… может воспользоваться своим устройством»): with the agent it sits on (`remembered`) live and
+    still reporting it, the job goes there whatever the browser's address; otherwise the usual routing, and the chosen
+    scanner rides along only when the agent picked reports it too (else the agent scans with its first one)."""
     with uow:
         session = _session(uow)
         live = _live(session, now, legacy=False)
         old = bool(_live(session, now, legacy=True))
+        raw = {row.machine_id: row.scanners for row in live}
         pairs = [(row.ip_seen, row.ip_lan, _info(row)) for row in live if scanner_names(row.scanners)]
         idle = [row.pc_name or row.machine_id for row in live if not scanner_names(row.scanners)]
+
+    def to(agent_id: str) -> Routing:
+        return Routing(AGENT, agent_id, scanner=matching_scanner(raw.get(agent_id, ""), scanner))
+
+    if scanner and remembered in raw and matching_scanner(raw[remembered], scanner):
+        return to(remembered)
     with_scanner = [agent for _seen, _lan, agent in pairs]
     ip = _clean(browser_ip, 64)
     ids = {agent.id for agent in with_scanner}
     by_ip = [agent for seen, lan, agent in pairs if ip and ip in (seen, lan)]
     if len(by_ip) == 1:
-        return Routing(AGENT, by_ip[0].id)
+        return to(by_ip[0].id)
     if len(by_ip) > 1:
         if remembered in {agent.id for agent in by_ip}:
-            return Routing(AGENT, remembered)
+            return to(remembered)
         return Routing(CHOOSE, agents=by_ip)
     if remembered and remembered in ids:
-        return Routing(AGENT, remembered)
+        return to(remembered)
     if with_scanner:
         return Routing(CHOOSE, agents=with_scanner)
     if old:
         return Routing(LEGACY)
     return Routing(NO_AGENT, idle=idle)
+
+
+def agent_list(uow, *, now: datetime) -> list[dict]:
+    """Every PC with the new agent for the person's scanner choice: `{id, pc, version, live, last_seen, scanners:
+    [{id, name}]}` — live first, then by PC name. An old agent without an id is left out: it cannot be targeted."""
+    with uow:
+        session = _session(uow)
+        live = {row.machine_id for row in _live(session, now, legacy=False)}
+        rows = list(session.scalars(
+            select(ScanAgentRow).where(ScanAgentRow.legacy.is_(False))
+            .order_by(ScanAgentRow.pc_name, ScanAgentRow.machine_id)))
+        found = [
+            {"id": row.machine_id, "pc": row.pc_name or row.machine_id, "version": row.version,
+             "live": row.machine_id in live, "last_seen": row.last_seen.isoformat(),
+             "scanners": scanner_list(row.scanners)}
+            for row in rows
+        ]
+    return sorted(found, key=lambda agent: not agent["live"])
 
 
 def _hash(secret: str) -> str:

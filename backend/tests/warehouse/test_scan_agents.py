@@ -9,8 +9,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.modules.identity.domain import LEVEL_SEED, AccessMode, level_permissions
 from app.modules.warehouse import agent_release, scan_agents
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
+from app.shared.http_auth import Principal, authenticated_principal
+from tests.access_levels import principal_as
 from tests.identity.test_api_tokens import _bearer, _csrf, _issue, _login, tokens_api  # noqa: F401  (fixture)
 from tests.warehouse.test_scan_jobs import old_agent_alive
 
@@ -163,7 +166,7 @@ def test_a_claim_keeps_the_agent_alive_between_heartbeats(stand):
 # --- install --------------------------------------------------------------------------------------------------------
 
 
-def test_the_install_token_is_issued_by_an_administrator_and_spent_once(stand):
+def test_the_install_token_is_issued_by_whoever_may_scan_and_spent_once(stand):
     admin, _agent, clock, sessions = stand
     operator = _login("operator")
     assert operator.post("/api/stock/scan/agent/install-token", headers=_csrf(operator)).status_code == 403
@@ -237,3 +240,106 @@ def test_the_install_command_names_the_server_over_https_unless_a_local_address(
     assert base("http://erp-server.tail811f20.ts.net/") == "https://erp-server.tail811f20.ts.net"
     assert base("http://192.168.1.85:8080/") == "http://192.168.1.85:8080"
     assert base("http://localhost:8021/") == "http://localhost:8021"
+
+
+# --- «Сканирование документов» and the person's own scanner (owner 28.10.2026) ---------------------------------------
+
+SECOND = {"id": "{wia-2}", "name": "Canon LiDE"}
+
+
+def _claimed(agent, machine_id=None, host="PC"):
+    body = {"host": host, **({"machine_id": machine_id} if machine_id else {})}
+    return TestClient(app).post(CLAIM, json=body, headers=agent).json()["job"]
+
+
+@pytest.fixture()
+def person():
+    """A person of a level with the plan's matrix row (LEVEL_SEED) or the given one, through the session override."""
+
+    def use(level: str, rows: dict | None = None) -> TestClient:
+        row = LEVEL_SEED[level] if rows is None else rows
+        permissions = {key: mode.value for key, mode in level_permissions(level, row, {}).items()}
+        app.dependency_overrides[authenticated_principal] = lambda: Principal(
+            actor=principal_as(level).actor, email=f"{level}@example.test", roles=frozenset({level}),
+            permissions=permissions)
+        return TestClient(app)
+
+    yield use
+    app.dependency_overrides.pop(authenticated_principal, None)
+
+
+def test_the_storekeeper_scans_a_level_without_the_scan_right_is_refused(stand, person):
+    _admin, agent, _clock, _sessions = stand
+    _beat(agent, "m-1", pc="SKLAD")
+    storekeeper = person("storekeeper")
+    assert storekeeper.post(JOBS, json={"agent_id": "m-1"}).json()["status"] == "pending"
+    assert storekeeper.get("/api/stock/scan/agents").status_code == 200
+    assert storekeeper.post("/api/stock/scan/agent/install-token").status_code == 200, "whoever scans installs"
+
+    foreman = person("foreman", {**LEVEL_SEED["foreman"], "warehouse": AccessMode.EDIT})
+    for method, path in (("POST", JOBS), ("GET", f"{JOBS}/{'0' * 32}"), ("DELETE", f"{JOBS}/{'0' * 32}"),
+                         ("POST", "/api/stock/receipts/scan"), ("POST", "/api/stock/receipts/scan-merge"),
+                         ("GET", "/api/stock/scan/agents"), ("POST", "/api/stock/scan/agent/install-token")):
+        response = foreman.request(method, path, json={})
+        assert response.status_code == 403, (method, path, response.text)
+        assert "Сканирование документов" in response.json()["detail"]
+    scan_only = person("operator", {"scan": AccessMode.EDIT})
+    assert scan_only.post(JOBS, json={"agent_id": "m-1"}).status_code == 200, "the section alone opens it"
+    assert person("operator", {"scan": AccessMode.VIEW}).post(JOBS, json={}).status_code == 403, "view is not enough"
+
+
+def test_the_agents_list_carries_each_pcs_scanners(stand):
+    admin, agent, clock, _sessions = stand
+    _beat(agent, "m-1", pc="SKLAD", scanners=(SCANNER, SECOND), version="2.1.0")
+    clock.now += scan_agents.LIVE_FOR + timedelta(seconds=1)
+    _beat(agent, "m-2", pc="OFFICE", scanners=({"name": "Сканер без id"},))
+    _claimed(agent, host="OLD")  # an old agent: it cannot be targeted, so it is not listed
+    agents = admin.get("/api/stock/scan/agents").json()["agents"]
+    assert [(a["id"], a["pc"], a["live"], a["scanners"]) for a in agents] == [
+        ("m-2", "OFFICE", True, [{"id": "", "name": "Сканер без id"}]),
+        ("m-1", "SKLAD", False, [SCANNER, SECOND]),
+    ], "live first; every scanner as {id, name}"
+    assert agents[1]["version"] == "2.1.0" and agents[1]["last_seen"]
+
+
+def test_a_job_for_the_chosen_scanner_hands_it_to_the_agent(stand):
+    admin, agent, _clock, _sessions = stand
+    _beat(agent, "m-1", pc="SKLAD", scanners=(SCANNER, SECOND))
+
+    def press(**body):
+        response = admin.post(JOBS, json=body, headers=_csrf(admin))
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    by_id = press(agent_id="m-1", target_scanner="{wia-2}")
+    assert _claimed(agent, "m-1") == {"id": by_id["id"], "target_scanner": "{wia-2}"}
+    press(agent_id="m-1", target_scanner="Canon LiDE")
+    assert _claimed(agent, "m-1")["target_scanner"] == "{wia-2}", "a name becomes the id the agent reported"
+    press(agent_id="m-1", target_scanner="{gone}")
+    assert _claimed(agent, "m-1")["target_scanner"] is None, "a scanner this PC no longer has: its first one"
+    press(agent_id="m-1")
+    assert _claimed(agent, "m-1")["target_scanner"] is None
+
+
+def test_the_chosen_scanner_wins_over_the_browsers_address(stand):
+    _admin, agent, clock, sessions = stand
+    _beat(agent, "m-1", pc="SKLAD", lan="192.168.1.20")
+    _beat(agent, "m-2", pc="OFFICE", lan="192.168.1.30", scanners=(SECOND,))
+
+    def route(remembered="", scanner=""):
+        return scan_agents.route(_uow(sessions), browser_ip="192.168.1.20", remembered=remembered, now=clock.now,
+                                 scanner=scanner)
+
+    assert (route().agent_id, route().scanner) == ("m-1", None), "no choice: the PC the browser sits at"
+    chosen = route("m-2", "{wia-2}")
+    assert (chosen.kind, chosen.agent_id, chosen.scanner) == (scan_agents.AGENT, "m-2", "{wia-2}")
+    assert route("m-2", "{gone}").agent_id == "m-1", "a scanner its agent no longer reports: the usual routing"
+    assert route("m-1", "{wia-2}").scanner is None, "the scanner is not on the routed PC: its first one"
+
+
+def test_an_old_agent_claims_an_untargeted_job_without_a_scanner(stand):
+    admin, agent, _clock, _sessions = stand
+    _claimed(agent, host="SKLAD")
+    job = admin.post(JOBS, json={"target_scanner": "{wia-2}"}, headers=_csrf(admin)).json()
+    assert _claimed(agent, host="SKLAD") == {"id": job["id"], "target_scanner": None}, \
+        "a scanner rides only on a job for a known agent"

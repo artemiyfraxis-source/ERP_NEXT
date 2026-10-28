@@ -526,6 +526,12 @@ LEVEL_SECTION_LABELS: dict[str, str] = {
     "handout": "Выдача со списанием",
     "shipping": "Отгрузка",
     "shipping_goods": "Отгрузка — склад",
+    # Owner 28.10.2026: «Сканировать документы в базу может ограниченное количество операторов… печать отдельных
+    # документов доступна ограниченному количеству операторов (по должности)». `scan` edit sends a scan job to an agent
+    # (on the scanner the person chose) and installs agents on new PCs (warehouse/scan_jobs_api.py scan_edit_principal);
+    # `print` edit shows the screens' document print buttons (the frontend reads `permissions.print`).
+    "scan": "Сканирование документов",
+    "print": "Печать документов",
     "operations": "Системный журнал",
     # «Кадры» (cabinet plan, phase 2): a section key, not a role — edit registers leave requests (identity/leave.py)
     # and substitutes for a missing manager. Closed for every level until granted in «Доступы».
@@ -533,8 +539,9 @@ LEVEL_SECTION_LABELS: dict[str, str] = {
 }
 # The plan's default matrix: a level nobody holds yet (and a fresh database) starts from it. A level with people gets
 # its row from what they could really do (level_migration). «Оформить заявку» and «Мои заявки» stay open to everyone,
-# as with the roles («Оформлять могут все роли»; решено агентом — проверить).
-_FILE_REQUESTS = {"newrequest": AccessMode.EDIT, "myrequests": AccessMode.EDIT}
+# as with the roles («Оформлять могут все роли»; решено агентом — проверить). «Печать документов» (owner 28.10.2026)
+# starts open to every level — the owner narrows it in «Доступы»; «Сканирование документов» is the storekeeper's.
+_FILE_REQUESTS = {"newrequest": AccessMode.EDIT, "myrequests": AccessMode.EDIT, "print": AccessMode.EDIT}
 LEVEL_SEED: dict[str, dict[str, AccessMode]] = {
     "commercial": {
         **_FILE_REQUESTS,
@@ -587,6 +594,7 @@ LEVEL_SEED: dict[str, dict[str, AccessMode]] = {
         "handout": AccessMode.EDIT,
         "shipping": AccessMode.VIEW,
         "shipping_goods": AccessMode.EDIT,
+        "scan": AccessMode.EDIT,
     },
     "foreman": {
         **_FILE_REQUESTS,

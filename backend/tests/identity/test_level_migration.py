@@ -188,11 +188,16 @@ def test_an_inactive_member_does_not_narrow_the_row_and_keeps_his_own_access():
     assert "erpref" not in person_permissions_after(result, _id(7))
 
 
+def _transfer_seed(level: str) -> dict[str, str]:
+    """LEVEL_SEED on the sections the transfer knew (`scan` / `print` came later, written by 0159)."""
+    return {section: mode.value for section, mode in LEVEL_SEED[level].items() if section in TRANSFER_SECTIONS}
+
+
 def test_an_empty_level_starts_from_the_plan_default():
     snapshot = Snapshot(people=PEOPLE[:2], role_matrix=ROLE_MATRIX, user_access={})
     result = transfer(snapshot)
     for level in ("commercial", "tech_lead", "foreman", "operator"):
-        assert result.levels[level] == {section: mode.value for section, mode in LEVEL_SEED[level].items()}
+        assert result.levels[level] == _transfer_seed(level)
 
 
 def test_notification_audiences_and_administrators():
@@ -288,7 +293,7 @@ def test_frozen_old_model_matches_the_legacy_data():
     assert set(owner_alerts.OWNER_AUDIENCES) | set(owner_alerts.DISPOSAL_AUDIENCES) <= notifications.AUDIENCES
     new_sections = {"myops", "quality", "shipping_goods"}
     assert set(TRANSFER_SECTIONS) == (set(domain.SECTION_LABELS) - {"staffdir"}) | new_sections
-    assert set(LEVEL_SECTION_LABELS) == set(TRANSFER_SECTIONS) | {"hr"}
+    assert set(LEVEL_SECTION_LABELS) == set(TRANSFER_SECTIONS) | {"hr", "scan", "print"}
 
 
 # ── Migration 0086 on SQLite ───────────────────────────────────────────────────────────────────────
@@ -405,7 +410,7 @@ def test_migration_on_an_empty_database_seeds_the_plan_defaults(tmp_path):
     assert stored["people"] == {} and stored["exceptions"] == {}
     assert _audit_count(database_path) == 0  # nothing to record without people
     for level in ("commercial", "tech_lead", "foreman", "operator"):
-        assert stored["levels"][level] == {section: mode.value for section, mode in LEVEL_SEED[level].items()}
+        assert stored["levels"][level] == _transfer_seed(level)
 
 
 # ── The report CLI ─────────────────────────────────────────────────────────────────────────────────

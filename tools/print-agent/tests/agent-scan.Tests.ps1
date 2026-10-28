@@ -38,3 +38,40 @@ Describe 'Invoke-ScanPollOnce' {
         Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/jobs/s2/result' -and $Body.error -like '*нет связи*' }
     }
 }
+
+# Отдельный Describe: в Pester 3 мок с ParameterFilter из предыдущего It перекрывает мок без фильтра.
+Describe 'Invoke-ScanPollOnce: выбранный сканер' {
+    It 'задание с выбранным сканером -> сканирует им' {
+        Mock Invoke-ErpApi { [pscustomobject]@{ job = [pscustomobject]@{ id = 's3'; target_scanner = '{wia-2}' } } }
+        Mock Invoke-ScannerScan { @{ Bytes = [byte[]](1); Ext = 'jpg'; Mime = 'image/jpeg' } }
+        Mock Send-ScanFile {}
+        Invoke-ScanPollOnce -Base 'http://x' -AuthToken 't' -ScannerAddress '' | Should Be 'done'
+        Assert-MockCalled Invoke-ScannerScan -Times 1 -Exactly -Scope It -ParameterFilter { $Device -eq '{wia-2}' -and -not $Address }
+    }
+    It 'задание без выбора (старый сервер) -> первый сканер' {
+        Mock Invoke-ErpApi { [pscustomobject]@{ job = [pscustomobject]@{ id = 's4' } } }
+        Mock Invoke-ScannerScan { @{ Bytes = [byte[]](1); Ext = 'jpg'; Mime = 'image/jpeg' } }
+        Mock Send-ScanFile {}
+        Invoke-ScanPollOnce -Base 'http://x' -AuthToken 't' -ScannerAddress '' | Should Be 'done'
+        Assert-MockCalled Invoke-ScannerScan -Times 1 -Exactly -Scope It -ParameterFilter { -not $Device }
+    }
+}
+
+Describe 'Select-WiaDevice' {
+    $printer = [pscustomobject]@{ Type = 2; DeviceID = '{p}'; Name = 'Принтер' }
+    $first = [pscustomobject]@{ Type = 1; DeviceID = '{wia-1}'; Name = 'Pantum BM2300W' }
+    $second = [pscustomobject]@{ Type = 1; DeviceID = '{wia-2}'; Name = 'Canon LiDE' }
+    It 'выбранный по DeviceID' {
+        (Select-WiaDevice -DeviceInfos @($printer, $first, $second) -Device '{wia-2}').DeviceID | Should Be '{wia-2}'
+    }
+    It 'выбранный по имени (агент прислал только имя)' {
+        (Select-WiaDevice -DeviceInfos @($printer, $first, $second) -Device 'Canon LiDE').DeviceID | Should Be '{wia-2}'
+    }
+    It 'выбора нет или такого сканера на ПК нет -> первый сканер, не принтер' {
+        (Select-WiaDevice -DeviceInfos @($printer, $first, $second) -Device '').DeviceID | Should Be '{wia-1}'
+        (Select-WiaDevice -DeviceInfos @($printer, $first, $second) -Device '{gone}').DeviceID | Should Be '{wia-1}'
+    }
+    It 'сканеров нет -> $null' {
+        Select-WiaDevice -DeviceInfos @($printer) -Device '{wia-1}' | Should Be $null
+    }
+}

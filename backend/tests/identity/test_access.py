@@ -152,12 +152,12 @@ def test_only_superadmin_and_admin_open_access(access_api):
     assert body["seed"]["pm"] == body["matrix"]["pm"] == {
         "newrequest": "edit", "myrequests": "edit", "requests": "edit", "projects": "edit", "shipping": "edit",
         "techcards": "view", "production": "view", "erpref": "view", "procurement": "view", "warehouse": "view",
-        "shipping_goods": "view",
+        "shipping_goods": "view", "print": "edit",
     }
     assert body["seed"]["storekeeper"] == body["matrix"]["storekeeper"] == {
         "newrequest": "edit", "myrequests": "edit", "receiving": "edit", "warehouse": "edit", "fulfillment": "edit",
         "handout": "edit", "shipping_goods": "edit", "projects": "view", "erpref": "view", "procurement": "view",
-        "shipping": "view",
+        "shipping": "view", "scan": "edit", "print": "edit",
     }
     assert "admin" not in body["matrix"] and "superadmin" not in body["matrix"]
     # The legacy role admin (a full-access role) lands on superadmin, the only full level a person can hold.

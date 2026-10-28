@@ -1,11 +1,17 @@
 """«Отсканировать УПД» — HTTP contract (owner 23.10.2026; the queue itself — `scan_jobs.py`, the reading —
 `scan_recognition.py`).
 
-The storekeeper's screen (warehouse edit, as `POST /api/stock/receipts`):
-- `POST /api/stock/receipts/scan-jobs` (body `{agent_id?}` — the agent this browser remembered) → `{id, status}` — a
-  pending job for the agent of the PC the browser sits at (`scan_agents.route`: by address, by the remembered id), or
-  `{status: "choose", agents: [{id, pc, scanners, version}]}` — pick one and press again with its `agent_id`, or
-  `{status: "no_agent", idle: [PC…]}` — no PC with an agent and a scanner is alive (the screen shows the install guide);
+The screens of whoever may scan documents (owner 28.10.2026: «Сканировать документы в базу может ограниченное количество
+операторов» — the matrix section `scan` «Сканирование документов» on edit, `scan_edit_principal`; was warehouse edit):
+- `GET /api/stock/scan/agents` → `{agents: [{id, pc, version, live, last_seen, scanners: [{id, name}]}]}` — the PCs
+  with an agent and the scanners each reports, for the person's own scanner choice (live ones first);
+- `POST /api/stock/receipts/scan-jobs` (body `{agent_id?, target_scanner?}` — the agent this browser remembered or the
+  person chose, and the scanner chosen on it: its `id`, or its `name` when the id is empty) → `{id, status}` — a
+  pending job for the agent of the PC the browser sits at (`scan_agents.route`: the chosen scanner's agent when it is
+  live and still reports it, else by address, by the remembered id), or
+  `{status: "choose", agents: [{id, pc, scanners, version}]}` (scanners — names) — pick one and press again with its
+  `agent_id`, or `{status: "no_agent", idle: [PC…]}` — no PC with an agent and a scanner is alive (the screen shows the
+  install guide);
 - `GET /api/stock/receipts/scan-jobs/{id}` → `{id, status, error, result, recognising, scan_file}`; `result` — the
   answer `{scan_file, recognised, lines, note}` (`scan_recognition.scan_answer`) once it is made, else null;
   `recognising` — the scan is in, its answer is being made in the background (a model reads 8–100 s, never inside
@@ -23,8 +29,9 @@ The storekeeper's screen (warehouse edit, as `POST /api/stock/receipts`):
 
 The agent of the warehouse PC calls with `Authorization: Bearer <API token with the scope scan:upload>` (one token
 may carry `labels:print` and `scan:upload` together); a person's session is refused (403):
-- `POST /api/stock/scan/agent/claim` `{host, machine_id?}` → `{job: {id} | null}` — the oldest pending job targeted to
-  this agent (or untargeted) becomes claimed; an old agent without `machine_id` takes untargeted jobs only;
+- `POST /api/stock/scan/agent/claim` `{host, machine_id?}` → `{job: {id, target_scanner} | null}` — the oldest pending
+  job targeted to this agent (or untargeted) becomes claimed; an old agent without `machine_id` takes untargeted jobs
+  only; `target_scanner` — the WIA DeviceID (or name) to scan with, null — the agent's first scanner;
 - `POST /api/stock/scan/agent/heartbeat` `{machine_id, pc_name, version, lan_ip, scanners: [{id, name}]}` (at start,
   then every ~2 min) → `{ok, update: {version, sha256, size, path} | null}` — the registry row of the PC; `update` — a
   newer agent.ps1 to download (hash-checked by the agent);
@@ -47,7 +54,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, warehouse_edit_principal
+from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, require_section
 from app.workflows.edo_receipt import EdoRejected, file_kind, is_edo_upload, read_delivery
 
 from . import scan_agents
@@ -57,7 +64,19 @@ from .application import UnitOfWork
 from .domain import RECEIPT_SCAN_PATH
 from .receipts_api import _checked, multipart_file
 from .receipts_application import SCAN_FILE_LIMIT, merge_scans, store_edo_file, store_job_scan, store_scan
-from .scan_jobs import DONE, FAILED, ScanJob, ScanJobClosed, cancel_job, claim, create_job, fail_job, get_job, save_result
+from .scan_jobs import (
+    DONE,
+    FAILED,
+    SCANNER_MAX,
+    ScanJob,
+    ScanJobClosed,
+    cancel_job,
+    claim,
+    create_job,
+    fail_job,
+    get_job,
+    save_result,
+)
 from .scan_recognition import (
     ScanSources,
     edo_answer,
@@ -74,6 +93,10 @@ TOO_BIG = "Скан УПД больше 20 МБ"
 NO_FILE = "Файл не передан: нужен multipart с полем «file»"
 router = APIRouter(prefix="/api/stock", tags=["warehouse"])
 UowFactory = Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)]
+# «Сканирование документов» (owner 28.10.2026): the scan buttons, their jobs, the agent list and the agent install
+# (workflows/scan_agent_install.py) — whoever may scan may also set up their own PC's agent.
+scan_edit_principal = require_section("scan", "edit", detail="Сканирование документов вам не открыто.")
+ScanPerson = Annotated[Principal, Depends(scan_edit_principal)]
 
 
 def scan_agent_principal(
@@ -111,6 +134,7 @@ def _recognise_later(background: BackgroundTasks, uow_factory, sources: ScanSour
 
 class ScanStartInput(BaseModel):
     agent_id: str = Field(default="", max_length=scan_agents.MACHINE_ID_MAX)
+    target_scanner: str = Field(default="", max_length=SCANNER_MAX)
 
 
 def _client_ip(request: Request) -> str:
@@ -118,22 +142,33 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
+@router.get("/scan/agents")
+def scan_agent_list(
+    _principal: ScanPerson,
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: UowFactory,
+) -> dict:
+    return {"agents": scan_agents.agent_list(uow_factory(), now=now)}
+
+
 @router.post("/receipts/scan-jobs")
 def new_scan_job(
     request: Request,
-    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    principal: ScanPerson,
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
     payload: ScanStartInput | None = None,
 ) -> dict:
-    routing = scan_agents.route(uow_factory(), browser_ip=_client_ip(request),
-                                remembered=payload.agent_id if payload else "", now=now)
+    wish = payload or ScanStartInput()
+    routing = scan_agents.route(uow_factory(), browser_ip=_client_ip(request), remembered=wish.agent_id, now=now,
+                                scanner=wish.target_scanner)
     if routing.kind == scan_agents.CHOOSE:
         return {"status": "choose", "agents": [agent.view() for agent in routing.agents]}
     if routing.kind == scan_agents.NO_AGENT:
         return {"status": "no_agent", "idle": routing.idle}
     target = routing.agent_id if routing.kind == scan_agents.AGENT else None
-    return _brief(create_job(uow_factory(), requested_by=principal.actor.name, now=now, target=target))
+    return _brief(create_job(uow_factory(), requested_by=principal.actor.name, now=now, target=target,
+                             scanner=routing.scanner))
 
 
 @router.get("/receipts/scan-jobs/{job_id}")
@@ -141,7 +176,7 @@ def scan_job(
     job_id: UUID,
     request: Request,
     background: BackgroundTasks,
-    _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    _principal: ScanPerson,
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
@@ -153,7 +188,7 @@ def scan_job(
 @router.delete("/receipts/scan-jobs/{job_id}")
 def cancel_scan_job(
     job_id: UUID,
-    _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    _principal: ScanPerson,
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
@@ -164,7 +199,7 @@ def cancel_scan_job(
 async def scan_receipt_document(
     request: Request,
     background: BackgroundTasks,
-    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    principal: ScanPerson,
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
@@ -217,7 +252,7 @@ async def merge_receipt_scans(
     payload: ScanMergeInput,
     request: Request,
     background: BackgroundTasks,
-    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    principal: ScanPerson,
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
@@ -255,8 +290,8 @@ def scan_agent_claim(
     who = payload or AgentClaimInput()
     machine_id = scan_agents.touch(uow_factory(), machine_id=who.machine_id, host=who.host, ip_seen=_client_ip(request),
                                    now=now)
-    job_id = claim(uow_factory(), now=now, machine_id=machine_id)
-    return {"job": {"id": str(job_id)} if job_id else None}
+    job = claim(uow_factory(), now=now, machine_id=machine_id)
+    return {"job": {"id": str(job.id), "target_scanner": job.target_scanner} if job else None}
 
 
 @router.post("/scan/agent/heartbeat")

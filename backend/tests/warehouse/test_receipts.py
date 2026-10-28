@@ -58,7 +58,7 @@ def stand():
     app.state.purchasing_uow_factory = lambda: SqlAlchemyPurchasingUnitOfWork(sessions)
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Кладовщик", department="Склад"), email="warehouse@example.test",
-        roles=frozenset({"receiver"}), permissions={"warehouse": "edit"},
+        roles=frozenset({"receiver"}), permissions={"warehouse": "edit", "scan": "edit"},
     )
     app.dependency_overrides[moscow_now] = lambda: NOW
     yield TestClient(app), sessions
