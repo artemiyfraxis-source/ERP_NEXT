@@ -30,11 +30,35 @@ export interface NavItem {
   within?: Section;
   /** With `within`: still a menu item for a person to whom the `within` section is closed (their only way in). */
   menuWithoutParent?: boolean;
+  /** A menu item that opens one tab of its section (`?section=…&tab=<tab>`): the sidebar shows the tabs of «Снабжение»
+   *  as items of their own. */
+  tab?: string;
 }
+
+/** The buyer's work in the order it is done (owner 28.10): each is a menu item of the «Снабжение» block and opens
+ *  `?section=procurement&tab=<key>`; «stats» opens «Статистика» on its first inner tab. */
+export const PROCUREMENT_TABS: ReadonlyArray<readonly [string, string, string]> = [
+  ["today", "Сегодня", "что делать сегодня"],
+  ["requests", "Заявки", "проверить и передать в закупку"],
+  ["rfq", "Запросы КП", "запросы поставщикам"],
+  ["buy", "Закупка", "заказы поставщикам"],
+  ["orders", "Счета и поставки", "счета · оплата · приёмка"],
+  ["stats", "Статистика", "очереди · весь лист · по поставщикам · показатели"],
+];
+
+/** The menu tab a `?tab=` value belongs to: «Статистика» holds its inner tabs; unknown or none → the default. */
+export function procurementMenuTab(tab: string | null | undefined, readOnly: boolean): string {
+  if (tab && PROCUREMENT_TABS.some(([key]) => key === tab)) return readOnly && tab === "today" ? "stats" : tab;
+  if (tab && ["queues", "sheet", "suppliers", "kpi"].includes(tab)) return "stats";
+  return readOnly ? "stats" : "today";
+}
+
+/** Unique React key of a menu item (several items share the section `procurement`). */
+export const navKey = (item: NavItem) => (item.tab ? `${item.id}:${item.tab}` : item.id);
 
 export const BLOCKS: Array<{ id: BlockId; title: string; sub: string }> = [
   { id: "prod", title: "Производство", sub: "проекты · планирование · задания" },
-  { id: "supply", title: "Снабжение", sub: "оформить заявку · сегодня · запросы КП · счета и поставки" },
+  { id: "supply", title: "Снабжение", sub: "оформить заявку · сегодня · заявки · запросы КП · закупка · счета и поставки · статистика" },
   // Приёмка sits in Склад: the storekeeper does incoming inspection, not the buyer (SUPPLYMAP, owner 26.07.2026).
   { id: "stock", title: "Склад", sub: "приёмка · остатки · выдача · отгрузка" },
   { id: "mgmt", title: "Менеджмент", sub: "производственный план · сотрудники · доступы · журнал" },
@@ -198,8 +222,13 @@ export function visibleBlocks(principal: Principal) {
   // A screen opened from another section is no menu item; one marked `menuWithoutParent` is, while that section is
   // closed to this person (a level with «Заявки» but no «Снабжение» keeps its way in).
   const inMenu = (item: NavItem) => !item.within || (item.menuWithoutParent && !items.some(({ id }) => id === item.within));
+  // «Снабжение» is shown as its tabs, in the order of doing; «Сегодня» is the buyer's own list, closed to a reader.
+  const expand = (item: NavItem): NavItem[] => item.id !== "procurement" ? [item]
+    : PROCUREMENT_TABS
+      .filter(([tab]) => !(tab === "today" && isViewOnly(principal, item)))
+      .map(([tab, label, sub]) => ({ ...item, tab, label, sub }));
   return BLOCKS
-    .map((block) => ({ ...block, items: items.filter((item) => item.block === block.id && inMenu(item)) }))
+    .map((block) => ({ ...block, items: items.filter((item) => item.block === block.id && inMenu(item)).flatMap(expand) }))
     .filter((block) => block.items.length > 0);
 }
 
