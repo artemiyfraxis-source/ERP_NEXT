@@ -34,7 +34,7 @@ function statusFromUrl(): InvoiceStatus | "" {
 }
 
 export function PurchasingInvoices({ readOnly = false, onOpenUpd }: { readOnly?: boolean; onOpenUpd?: (id: string) => void } = {}) {
-  const [query, setQuery] = useState<InvoiceQuery>(() => ({ q: "", status: statusFromUrl(), closing: "", from: "", to: "", page: 1 }));
+  const [query, setQuery] = useState<InvoiceQuery>(() => ({ q: urlParam("tab") === "invoices" ? urlParam("q") : "", status: statusFromUrl(), closing: "", from: "", to: "", page: 1 }));
   const [list, setList] = useState<InvoiceList | null>(null);
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);

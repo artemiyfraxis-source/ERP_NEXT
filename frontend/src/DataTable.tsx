@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from "react";
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { selectRange } from "./bulk";
 import { EMPTY, displayCell, formatNumber } from "./format";
 import { matchesSearch, searchRows } from "./searchText";
@@ -142,6 +142,8 @@ export interface DataTableProps<T> {
   searchText?: (row: T) => CellValue[];
   searchLabel?: string;
   searchPlaceholder?: string;
+  /** Слово в строке поиска при открытии (ссылка из общего поиска: `&q=`). */
+  initialQuery?: string;
   /** Пока строк меньше — без строки поиска/фильтров/колонок и без «Показано N из N»: маленькой таблице они
       только мешают (блоки «Мои позиции» в листе закупки). По умолчанию всегда полная. */
   compactBelow?: number;
@@ -399,6 +401,9 @@ function identity(value: object | null | undefined): number {
   return id;
 }
 
+/** Слово, с которым открываются таблицы раздела (ссылка из общего поиска: `&q=`); раздел задаёт его провайдером. */
+export const SearchSeedContext = createContext("");
+
 export function DataTable<T>({
   rows,
   columns,
@@ -430,6 +435,7 @@ export function DataTable<T>({
   searchText,
   searchLabel,
   searchPlaceholder,
+  initialQuery,
   compactBelow = 0,
   hideSearch = false,
   phoneCards = true,
@@ -444,11 +450,12 @@ export function DataTable<T>({
   const groupSort = groupSortProp || blocks;
   const grouping = groupBy ?? (blocks ? () => label : undefined);
   const compact = rows.length < compactBelow;
+  const searchSeed = useContext(SearchSeedContext);
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
   // Groups the user flipped from the default (folded or open); the default is open, or folded with foldedByDefault
   // while nothing narrows the list.
   const [flipped, setFlipped] = useState<ReadonlySet<string>>(new Set());
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery ?? searchSeed);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<Sort>(saved.sort ?? null);
   const [preset, setPreset] = useState(saved.preset || defaultPreset);

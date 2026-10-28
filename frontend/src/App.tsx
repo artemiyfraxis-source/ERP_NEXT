@@ -59,7 +59,7 @@ import { ProfilePanel } from "./ProfilePanel";
 import { isTsdAddress } from "./devicesApi";
 import { TsdEntry, TsdLogin, TsdScreen } from "./TsdPage";
 import { ThemeSwitch } from "./ThemeSwitch";
-import { CommandPalette } from "./CommandPalette";
+import { CommandPalette, openSearch, SearchEntry } from "./CommandPalette";
 import { ViewAsBanner } from "./ViewAs";
 
 /** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once.
@@ -121,7 +121,7 @@ export function App() {
   useEffect(loadPrincipal, []);
 
   useEffect(() => {
-    const listener = () => { setPlace(placeFromUrl()); setVisit((count) => count + 1); };
+    const listener = () => { setPlace(placeFromUrl()); setVisit((count) => count + 1); setNavOpen(false); };
     window.addEventListener("popstate", listener);
     return () => window.removeEventListener("popstate", listener);
   }, []);
@@ -281,6 +281,7 @@ export function App() {
         <button className="nav-toggle" aria-label="Меню" aria-expanded={navOpen} onClick={() => setNavOpen((open) => !open)}>☰</button>
         <strong className="wordmark">FRAXIS</strong>
         <span className="mod">ERP</span>
+        <button className="topbar-search" aria-label="Поиск по ERP" onClick={openSearch}>Поиск</button>
       </div>
       {navOpen && <div className="nav-scrim" aria-hidden="true" onClick={() => setNavOpen(false)} />}
       <aside className="sidebar side">
@@ -289,6 +290,7 @@ export function App() {
           <span className="mod">ERP</span>
           {visibleNav.some(({ id }) => id === "notifications") && <NotificationBell open={() => navigate("notifications")} />}
         </div>
+        <SearchEntry />
         <nav aria-label="Основная навигация">
           {visibleNav.filter((item) => !item.block).map((item) => <NavButton key={item.id} item={item} active={activeSection === item.id && !activeBlock} navigate={navigate} />)}
           {blocks.map((block) => (
@@ -329,7 +331,7 @@ export function App() {
         {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
         {activeBlock && <BlockPage principal={principal} block={activeBlock} navigate={navigate} home={() => go({ section: "cabinet", block: null })} />}
         {activeSection === "projects" && <ProjectsPage key={visit} principal={principal} />}
-        {activeSection === "techcards" && <TechcardsPage principal={principal} view="projects" />}
+        {activeSection === "techcards" && <TechcardsPage key={visit} principal={principal} view="projects" />}
         {activeSection === "tctemplates" && <ReferencesPage principal={principal} initialTab="templates" />}
         {activeSection === "newrequest" && <RequestsPage principal={principal} view="create" />}
         {activeSection === "myrequests" && <RequestsPage principal={principal} view="mine" />}
@@ -343,14 +345,14 @@ export function App() {
           canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
         {activeSection === "intake" && <ProductionIntakePage principal={principal} />}
         {activeSection === "equipment" && <EquipmentPage readOnly={!canAct(principal, "warehouse")} admin={hasFullAccess(principal)} />}
-        {activeSection === "shipping" && <ShippingPage principal={principal} />}
+        {activeSection === "shipping" && <ShippingPage key={visit} principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
         {activeSection === "prodplan" && <ProductionPlanPage principal={principal} openProjectCard={visibleNav.some(({ id }) => id === "projects") ? openProjectCard : undefined} />}
         {activeSection === "production" && <ProductionPage principal={principal} />}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
         {activeSection === "quality" && <QualityPage principal={principal} />}
-        {activeSection === "references" && <ReferencesPage principal={principal} />}
+        {activeSection === "references" && <ReferencesPage key={visit} principal={principal} />}
         {activeSection === "notifications" && <NotificationsPage />}
         {activeSection === "operations" && <OperationsPage />}
         {activeSection === "staff" && <StaffPage openCard={openCard} openUserId={place.user} />}

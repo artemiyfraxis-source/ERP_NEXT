@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
-import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
-import { hasAccess } from "./navigation";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { DataTable, SearchSeedContext, type DataColumn, type DataPreset } from "./DataTable";
+import { hasAccess, urlParam } from "./navigation";
 import { EquipmentCards } from "./EquipmentCards";
 import { EquipmentForm } from "./EquipmentForm";
 import { applicatorTokens } from "./equipmentModel";
@@ -222,10 +222,20 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     .filter((group) => group.tabs.length > 0), [canTemplates, canRefs]);
   const allowed = groups.flatMap((group) => group.tabs.map((tab) => tab.id));
   const [tab, setTab] = useState<DbTab>(() => {
-    const raw = initialTab ?? savedTab();
-    const wanted = TAB_ALIASES[raw] ?? raw;
+    const raw = initialTab ?? (urlParam("section") === "references" ? urlParam("tab") : "");
+    const wanted0 = raw || savedTab();
+    const wanted = TAB_ALIASES[wanted0] ?? wanted0;
     return (allowed.find((id) => id === wanted) ?? allowed[0] ?? "ter") as DbTab;
   });
+  // `&q=` from the global search fills the search of the tab it opened; another tab starts clean.
+  const [seed, setSeed] = useState(() => urlParam("q"));
+  const openedTab = useRef(tab);
+  useEffect(() => {
+    if (openedTab.current === tab) return;
+    setSeed("");
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("q")) { url.searchParams.delete("q"); window.history.replaceState(window.history.state, "", url); }
+  }, [tab]);
   const [maps, setMaps] = useState<ReferenceMaps>(EMPTY_MAPS);
   const [savedMaps, setSavedMaps] = useState("");
   const [mapsFailed, setMapsFailed] = useState(false);
@@ -581,7 +591,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const current = groups.flatMap((group) => group.tabs).find((def) => def.id === tab);
   const editingRecord = editing?.id ? tech.records.find((record) => record.id === editing.id) : null;
 
-  return <section className="page references-page">
+  return <SearchSeedContext.Provider value={seed}><section className="page references-page">
     <header className="page-head"><h1>База данных</h1>{!stockLog && current && count(current) !== null && <span className="page-count">{count(current)}</span>}
       <div className="page-actions">
         {!stockLog && <ReferenceRoundtrip tab={tab} principal={principal} onApplied={() => { if (techTab) void loadTech(techTab); if (cables !== null) void loadCables(); referencesApi.maps().then(applyMaps).catch(() => undefined); loadBases(); }} />}
@@ -729,7 +739,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     />}
     {cableRemoval.dialog}
     </div>
-  </section>;
+  </section></SearchSeedContext.Provider>;
 }
 
 type MapRow = ReferencePair & { index: number };
