@@ -226,16 +226,14 @@ def tech_operations(
     with uow_factory() as uow:
         records = uow.tech_operations.list(tab=tab, query=q, limit=limit if ter_kind is None else 100_000)
         metadata = uow.tech_operations.metadata()
-        own = custom_columns(tab, uow) if tab is not None else []
+        own = custom_columns(tab, uow, ter_kind) if tab is not None else []
     if ter_kind is not None:
         records = [item for item in records if item.ter_kind == ter_kind][:limit]
     if tab == TechOperationTab.COAX:  # an own column removed from the table 25.10.2026 («Дата цены») is no column
         own = [name for name in own if name not in COAX_DROPPED_COLUMNS]
-    # «Наконечники» (owner 26.10.2026): only the columns lugs fill (`lugs.LUG_COLUMN_SLOTS`); the owner's own БД.ТЕР
-    # columns stay with «Терминалы».
-    columns = lug_columns(_sheet_columns(tab, records)) if ter_kind == LUG else _columns(tab, records, own)
-    if ter_kind == LUG:
-        own = []
+    # «Наконечники» (owner 26.10.2026): only the columns lugs fill (`lugs.LUG_COLUMN_SLOTS`), then the owner's own columns
+    # of «Наконечники» — each list of БД.ТЕР has its own (owner 28.10.2026: «каждая вкладка в БД — отдельная таблица»).
+    columns = [*lug_columns(_sheet_columns(tab, records)), *own] if ter_kind == LUG else _columns(tab, records, own)
     return {
         "metadata": None if metadata is None else {
             **metadata,
@@ -742,6 +740,7 @@ class ColumnPayload(BaseModel):
     tab: TechOperationTab
     name: str = Field(min_length=1, max_length=200)  # the limit proper (60) is the use case's, with its own words
     cable_kind: CableKind | None = None  # БД.ПРОВ: the cable list whose column it is (required there)
+    ter_kind: Literal["contact", "lug"] | None = None  # БД.ТЕР: «Терминалы» (default) or «Наконечники»
 
 
 @router.post("/tech-operations/columns", status_code=201, dependencies=[Depends(refuse_api_tokens("Токен API не меняет состав столбцов."))])
@@ -753,7 +752,8 @@ def add_tech_column(
 ) -> dict:
     """«+ Столбец»: an empty column of the owner's own in every record of the table (БД.ПРОВ, БД.МАТ, БД.КОАКС, БД.ТЕР, БД.ОП)."""
     records = _run_edit(lambda: add_column(ColumnCommand(
-        tab=payload.tab, name=payload.name, actor=principal.actor, now=now, cable_kind=payload.cable_kind), uow_factory()))
+        tab=payload.tab, name=payload.name, actor=principal.actor, now=now, cable_kind=payload.cable_kind,
+        ter_kind=payload.ter_kind), uow_factory()))
     return {"tab": payload.tab.value, "name": " ".join(payload.name.split()), "records": records,
             "cable_kind": payload.cable_kind.value if payload.cable_kind else None}
 
@@ -767,7 +767,8 @@ def remove_tech_column(
 ) -> dict:
     """Removes the owner's own column; its values go to the journal."""
     records = _run_edit(lambda: remove_column(ColumnCommand(
-        tab=payload.tab, name=payload.name, actor=principal.actor, now=now, cable_kind=payload.cable_kind), uow_factory()))
+        tab=payload.tab, name=payload.name, actor=principal.actor, now=now, cable_kind=payload.cable_kind,
+        ter_kind=payload.ter_kind), uow_factory()))
     return {"tab": payload.tab.value, "name": payload.name, "records": records,
             "cable_kind": payload.cable_kind.value if payload.cable_kind else None}
 

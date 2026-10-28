@@ -207,7 +207,10 @@ def test_terminals_and_operations_take_an_own_column_edit_it_and_drop_it_when_em
 
     assert added["ter"].status_code == 201 and added["op"].status_code == 201
     assert all(listed[tab]["columns"][-1] == "Полка" and listed[tab]["custom_columns"] == ["Полка"] for tab in ("ter", "op"))
-    assert all(record["fields"]["Полка"] == "" for tab in ("ter", "op") for record in listed[tab]["records"])
+    # БД.ТЕР without a list lists both lists: a column of «Терминалы» is a cell of the contacts only (owner 28.10.2026)
+    assert all(record["fields"]["Полка"] == "" for tab in ("ter", "op") for record in listed[tab]["records"]
+               if record.get("ter_kind", "contact") == "contact")
+    assert all("Полка" not in record["fields"] for record in listed["ter"]["records"] if record.get("ter_kind") == "lug")
     assert edit.status_code == 200 and edit.json()["fields"]["Полка"] == "Б-7"
     assert removed.status_code == 200 and "Полка" not in after["columns"] and after["custom_columns"] == []
     assert resolved.status_code == 200 and resolved.json()["applicator"] == "S8/M8"  # the generator reads the row as before
@@ -221,5 +224,7 @@ def test_a_terminal_column_survives_a_mirror_reload(tmp_path, uow):
 
     with uow:
         records = uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=100)
-        assert records and all(record.fields.get("Ячейка") == "" and record.edited_in_erp for record in records)
+        contacts = [record for record in records if record.ter_kind != "lug"]  # a column of «Терминалы» only (28.10.2026)
+        assert contacts and all(record.fields.get("Ячейка") == "" and record.edited_in_erp for record in contacts)
+        assert all("Ячейка" not in record.fields for record in records if record.ter_kind == "lug")
         assert custom_columns(TechOperationTab.TERMINAL, uow) == ["Ячейка"]

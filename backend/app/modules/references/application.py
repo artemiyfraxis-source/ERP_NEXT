@@ -29,7 +29,7 @@ from .domain import (
 from .domain import WIRE_COLOR_FIELD, WIRE_ROW_OWN, check_wire_color, wire_color_rows, wire_identity
 from .domain import BASE_COLUMNS, CUSTOM_COLUMN_TABS, EDITABLE_TABS, MAX_COLUMN_NAME, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
 from .domain import StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent
-from .lugs import TER_KIND_REASON, TER_KIND_VALUES, ter_kind_of
+from .lugs import CONTACT, LUG, TER_KIND_REASON, TER_KIND_VALUES, ter_kind_of
 from .equipment import (
     BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
     prepare_equipment,
@@ -302,7 +302,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
         if edit.field not in record.fields and own_columns is None:
             # БД.ПРОВ: the columns of the row's own list (another list's column is no cell of this row) and the ones
             # removed from it 25.10.2026 (`CABLE_WRITABLE`: an existing row still takes them — provenance, journals)
-            own_columns = [*custom_columns(record.tab, uow, record.cable_kind),
+            own_columns = [*custom_columns(record.tab, uow, record.cable_kind or record.ter_kind),
                            *(CABLE_WRITABLE[record.cable_kind] if record.tab == TechOperationTab.WIRE else ())]
         known = (edit.field in record.fields or edit.field in stored or edit.field in (own_columns or ())
                  or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS)
@@ -452,13 +452,17 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
 
 def custom_columns(tab: TechOperationTab, uow: UnitOfWork, cable_kind: str | None = None) -> list[str]:
     """The columns the owner added to the tab, in the order added. БД.ПРОВ: those of one cable list (`cable_kind`);
-    without it — of every list, each name once."""
+    without it — of every list, each name once. БД.ТЕР: those of «Наконечники» for `cable_kind` «lug», else of
+    «Терминалы»."""
     references = getattr(uow, "references", None)  # the workflows' units of work carry no maps: no own columns there
     if tab not in CUSTOM_COLUMN_TABS or references is None:
         return []
     kinds = (cable_kind,) if tab != TechOperationTab.WIRE or cable_kind is not None else CABLE_KIND_VALUES
     prefixes = tuple(custom_column_prefix(tab, kind) for kind in kinds)
-    own = [entry for entry in references.list() if entry.kind == ReferenceKind.CUSTOM_COLUMN and entry.key.startswith(prefixes)]
+    # «ter:» of «Терминалы» is the start of «ter:lug:» too: the other list's columns are left out
+    other = custom_column_prefix(tab, LUG) if tab == TechOperationTab.TERMINAL and cable_kind != LUG else None
+    own = [entry for entry in references.list() if entry.kind == ReferenceKind.CUSTOM_COLUMN
+           and entry.key.startswith(prefixes) and not (other and entry.key.startswith(other))]
     return list(dict.fromkeys(entry.value for entry in sorted(own, key=lambda entry: entry.position)))
 
 
@@ -504,16 +508,25 @@ class ColumnCommand:
     actor: Actor
     now: datetime
     cable_kind: CableKind | None = None  # БД.ПРОВ: the cable list whose column it is (required there)
+    ter_kind: str | None = None  # БД.ТЕР: «contact» («Терминалы», the default) or «lug» («Наконечники»)
 
 
 def _column_records(command: ColumnCommand, uow: UnitOfWork) -> tuple[str | None, list[TechOperationRecord]]:
-    """The cable list of the command (БД.ПРОВ: required; other tabs: none) and the records the column lives in."""
+    """The list of the command (БД.ПРОВ: the cable list, required; БД.ТЕР: «Терминалы» or «Наконечники»; other tabs:
+    none) and the records the column lives in — a column of one list is never a cell of the other (owner 28.10.2026)."""
+    records = uow.tech_operations.list(tab=command.tab, query="", limit=100_000)
+    if command.tab == TechOperationTab.TERMINAL:
+        kind = LUG if command.ter_kind == LUG else CONTACT
+        return kind, [record for record in records if (record.ter_kind or CONTACT) == kind]
     kind = command.cable_kind.value if command.cable_kind is not None else None
     if command.tab != TechOperationTab.WIRE:
         kind = None
     custom_column_prefix(command.tab, kind)  # БД.ПРОВ without a list is refused in words
-    records = uow.tech_operations.list(tab=command.tab, query="", limit=100_000)
     return kind, [record for record in records if record.cable_kind == kind]
+
+
+def _list_key(tab: TechOperationTab) -> str:
+    return "ter_kind" if tab == TechOperationTab.TERMINAL else "cable_kind"
 
 
 def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
@@ -543,7 +556,7 @@ def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
             ReferenceKind.CUSTOM_COLUMN, custom_column_prefix(command.tab, kind) + name, name, position)))
         _audit("references.column_added", command.actor, command.now, {
             "tab": command.tab.value, "column": name, "records": len(records),
-            **({"cable_kind": kind} if kind else {})}, uow)
+            **({_list_key(command.tab): kind} if kind else {})}, uow)
         uow.commit()
     return len(records)
 
@@ -572,7 +585,7 @@ def remove_column(command: ColumnCommand, uow: UnitOfWork) -> int:
                                      if not (entry.kind == ReferenceKind.CUSTOM_COLUMN and entry.key == key)))
         _audit("references.column_removed", command.actor, command.now, {
             "tab": command.tab.value, "column": name, "records": written, "filled": len(values), "values": values,
-            **({"cable_kind": kind} if kind else {})}, uow)
+            **({_list_key(command.tab): kind} if kind else {})}, uow)
         uow.commit()
     return written
 
@@ -765,7 +778,8 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
             _check_wire_row(fields, uow)
     else:
         # the owner's columns given empty — not those removed from the table (БД.КОАКС «Дата цены», 25.10.2026)
-        pad = [name for name in custom_columns(tab, uow) if name not in _dropped_columns(tab, None)]
+        own_list = (ter_kind or ter_kind_of(fields)) if tab == TechOperationTab.TERMINAL else None
+        pad = [name for name in custom_columns(tab, uow, own_list) if name not in _dropped_columns(tab, None)]
         fields = _without_empty_cable_columns(tab, {**{name: "" for name in pad}, **sync_schema_fields(tab.value, fields)})
     _check_terminal_card(tab, fields)
     if tab == TechOperationTab.OPERATION:

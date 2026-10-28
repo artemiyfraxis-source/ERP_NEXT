@@ -3963,9 +3963,9 @@ export const referencesApi = {
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
   /** БД.ПРОВ: столбец — одного списка кабелей, `cableKind` обязателен (сервер без него откажет). */
-  addColumn: (tab: TechOperationTab, name: string, cableKind?: CableKind) =>
+  addColumn: (tab: TechOperationTab, name: string, cableKind?: CableKind, terKind?: TerKind) =>
     api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns", {
-      method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}) }) }),
+      method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}), ...(terKind ? { ter_kind: terKind } : {}) }) }),
   /** Общий набор столбцов таблиц: что видно всем и в каком порядке. */
   columnViews: () => api<{ views: Record<string, SharedColumn[]>; can_edit: boolean }>("/api/references/column-views"),
   /** Пустой список снимает общий набор. */
@@ -3973,9 +3973,9 @@ export const referencesApi = {
     api<{ view: string; columns: SharedColumn[] }>(`/api/references/column-views/${encodeURIComponent(view)}`, {
       method: "PUT", body: JSON.stringify({ columns }) }),
   /** Удалить свой столбец вместе со значениями: они остаются в журнале. */
-  removeColumn: (tab: TechOperationTab, name: string, cableKind?: CableKind) =>
+  removeColumn: (tab: TechOperationTab, name: string, cableKind?: CableKind, terKind?: TerKind) =>
     api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns/remove", {
-      method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}) }) }),
+      method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}), ...(terKind ? { ter_kind: terKind } : {}) }) }),
   /** БД.ПРОВ: `cableKind` — список, в котором создаётся строка (без него — по правилу). */
   createRecord: (tab: TechOperationTab, fields: Record<string, string>, cableKind?: CableKind, terKind?: TerKind) =>
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields, ...(cableKind ? { cable_kind: cableKind } : {}), ...(terKind ? { ter_kind: terKind } : {}) }) }),

@@ -81,8 +81,8 @@ it("«Наконечники»: only lugs, in blocks by family, size then articl
   expect(rows.map((row) => within(row).getAllByRole("cell")[2].textContent)).toEqual(["НКИ 1.5-4", "НКИ 2.5-4"]);
   expect(within(rows[0]).getAllByRole("cell")[3].textContent).toBe("0,5–1,5");
   expect(within(rows[0]).getAllByRole("cell")[4].textContent).toBe("20–16");
-  // no «+ Столбец» here: the owner's БД.ТЕР columns stay with the terminals
-  expect(screen.queryByRole("button", { name: "+ Столбец" })).toBeNull();
+  // its own «+ Столбец»: «Наконечники» is its own table (owner 28.10.2026), a column added here is not the terminals'
+  expect(screen.getByRole("button", { name: "+ Столбец" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /^Без аппликатора · 1/ })).toBeInTheDocument();
 });
 
