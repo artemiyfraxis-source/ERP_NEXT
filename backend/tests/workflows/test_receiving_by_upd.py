@@ -5,6 +5,7 @@ the API: the receiving edit right, the scan file kept as the delivery's УПД, 
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -29,6 +30,7 @@ from app.workflows.receiving_by_upd import (
 )
 from tests.factories import Actor
 from tests.warehouse.test_receipts import NOW, stand  # noqa: F401 — fixture
+from tests.warehouse.test_scan_jobs import old_agent_alive
 
 ELITAN = UUID("00000000-0000-0000-0000-0000000000e1")
 ROMASHKA = UUID("00000000-0000-0000-0000-0000000000a2")
@@ -343,8 +345,11 @@ def test_a_view_only_receiving_is_refused_every_route(stand):  # noqa: F811
 
 
 def test_the_receiving_edit_right_starts_a_scanner_job_on_the_warehouse_queue(stand):  # noqa: F811
-    client, _ = stand
+    client, sessions = stand
     _as("edit")
+    refused = client.post("/api/receiving/upd/scan-jobs")
+    assert refused.json()["status"] == "no_agent", "no agent alive: the screen shows the install guide"
+    old_agent_alive(sessions, SimpleNamespace(now=NOW))
 
     started = client.post("/api/receiving/upd/scan-jobs")
     assert started.status_code == 200, started.text

@@ -1,9 +1,10 @@
 import { useRef, useState } from "react";
-import type { WarehouseReceiptScan, WarehouseScanJob } from "./api";
+import type { WarehouseReceiptScan, WarehouseScanJob, WarehouseScanStart } from "./api";
+import { useScanAgent } from "./ScanAgent";
 
 /** Where a УПД is scanned and read: the scanner queue of the warehouse PC, a file, a merge of sheets. */
 export interface UpdScanApi {
-  startScanJob: () => Promise<WarehouseScanJob>;
+  startScanJob: (agentId?: string) => Promise<WarehouseScanStart>;
   scanJob: (id: string) => Promise<WarehouseScanJob>;
   cancelScanJob: (id: string) => Promise<WarehouseScanJob>;
   scanFile: (file: File) => Promise<WarehouseScanJob>;
@@ -32,6 +33,7 @@ export function useUpdScan(api: UpdScanApi, onAnswer: (answer: WarehouseReceiptS
   const pagesRef = useRef<string[]>([]);
   const jobId = useRef<string | null>(null);
   const aborted = useRef(false);
+  const agent = useScanAgent(api.startScanJob);
 
   function setPages(next: string[]) {
     pagesRef.current = next;
@@ -105,7 +107,8 @@ export function useUpdScan(api: UpdScanApi, onAnswer: (answer: WarehouseReceiptS
     aborted.current = false;
     jobId.current = null;
     try {
-      const job = await api.startScanJob();
+      const job = await agent.begin();
+      if (!job) return; // нет агента / нужно выбрать ПК: открыто окно
       jobId.current = job.id;
       const deadline = Date.now() + SCANNER_WAIT_MS;
       let current = job;
@@ -142,5 +145,7 @@ export function useUpdScan(api: UpdScanApi, onAnswer: (answer: WarehouseReceiptS
 
   const statusText = error || (status === "recognising" ? "Распознаю УПД…" : status === "claimed" ? "Сканирует…"
     : status === "pending" ? "Положите УПД на стекло сканера — ждём ПК склада…" : "");
-  return { scanning, status, error, statusText, pages, edo, fromFiles, fromScanner, cancel };
+  /** Окно установки агента / выбора ПК поверх экрана (или null); рисуется рядом с кнопками «Сканировать». */
+  const agentDialogs = () => agent.dialogs(() => void fromScanner());
+  return { scanning, status, error, statusText, pages, edo, fromFiles, fromScanner, cancel, agentDialogs };
 }

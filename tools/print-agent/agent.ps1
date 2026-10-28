@@ -3,6 +3,9 @@
  Каждые 3 с забирает задание у сервера, отправляет байты в очередь, сообщает результат.
  Параметры: -DryRun (не печатать, результат ok=false "dry run"), -Once (один опрос и выход).
  Сканер УПД: -Scanner <адрес> (eSCL; без адреса - WIA), -TestScan (один скан в файл, без ERP).
+ Сканер с любого ПК (28.10.2026): агент называет себя серверу (MachineGuid + имя ПК), раз в ~2 мин сообщает версию, найденные
+ WIA-сканеры (первый из найденных работает; подключили позже - подхватится сам) и адрес в сети; принтер не обязателен.
+ Новая версия агента лежит на сервере: агент скачивает её, сверяет SHA-256, подменяет себя и перезапускает задачу.
 #>
 [CmdletBinding()]
 param(
@@ -22,6 +25,10 @@ $ProgressPreference = 'SilentlyContinue'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
 $script:LogMaxBytes = 1MB
+# Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
+$script:AgentVersion = '2.0.0'
+$script:TaskName = 'Fraxis — печать этикеток'
+$script:HeartbeatEverySec = 120
 
 function Write-Log {
     param([string]$Message)
@@ -170,14 +177,114 @@ function Invoke-PollOnce {
     return 'done'
 }
 
+# ---------------------------------------------------------------- Реестр агентов (сканер с любого ПК)
+
+# Постоянный номер ПК: MachineGuid Windows (не меняется при смене сети, имени, пользователя).
+function Get-MachineId {
+    try {
+        $guid = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid).MachineGuid
+        if ($guid) { return ([string]$guid).ToLower() }
+    } catch {}
+    return ([string]$env:COMPUTERNAME).ToLower()
+}
+
+# Адрес ПК в локальной сети: интерфейс со шлюзом по умолчанию; запасной путь - DNS-имя ПК.
+function Get-LanIp {
+    try {
+        $cfg = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } | Select-Object -First 1
+        if ($cfg -and $cfg.IPv4Address) { return [string]$cfg.IPv4Address[0].IPAddress }
+    } catch {}
+    try {
+        $ip = [Net.Dns]::GetHostAddresses($env:COMPUTERNAME) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1
+        if ($ip) { return $ip.IPAddressToString }
+    } catch {}
+    return ''
+}
+
+# WIA-сканеры, которые Windows видит сейчас (тип 1). Нет сканеров - пустой список. Вынесено в функцию для тестов.
+function Get-WiaScanners {
+    $found = @()
+    try {
+        $dm = New-Object -ComObject WIA.DeviceManager
+        foreach ($di in $dm.DeviceInfos) {
+            if ($di.Type -ne 1) { continue }
+            $name = ''
+            try { $name = [string]$di.Properties.Item('Name').Value } catch {}
+            if (-not $name) { $name = 'Сканер' }
+            $found += @{ id = [string]$di.DeviceID; name = $name }
+        }
+    } catch {}
+    return $found
+}
+
+# Сканеры агента (вызывать как @(Get-AgentScanners ...)): адрес eSCL из настроек - один сканер; иначе все WIA-устройства
+# (работает первое). Нет сканеров - ничего не возвращает.
+function Get-AgentScanners {
+    param([string]$ScannerAddress)
+    if ($ScannerAddress) { return @{ id = $ScannerAddress; name = "Сканер по сети $ScannerAddress (eSCL)" } }
+    return Get-WiaScanners
+}
+
+# Скачать новую версию, сверить SHA-256 и текст, подменить себя и перезапустить задачу. $NoRestart - для тестов.
+# Возвращает $true, если файл заменён. Ошибки не бросает: агент продолжает работать на старой версии.
+function Invoke-AgentUpdate {
+    param([string]$Base, $Update, [string]$AgentPath = $PSCommandPath, [switch]$NoRestart)
+    if (-not $Update -or -not $Update.version -or -not $Update.sha256 -or -not $AgentPath) { return $false }
+    $tmp = $AgentPath + '.new'
+    try {
+        Write-Log "Обновление: на сервере версия $($Update.version), у агента $($script:AgentVersion)"
+        Invoke-WebRequest -Uri ($Base + [string]$Update.path) -OutFile $tmp -UseBasicParsing -TimeoutSec 60
+        $actual = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash.ToLower()
+        if ($actual -ne ([string]$Update.sha256).ToLower()) { throw "хэш скачанного файла не совпал ($actual)" }
+        $errors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($tmp, [ref]$null, [ref]$errors)
+        if ($errors -and $errors.Count -gt 0) { throw "скачанный файл не разбирается: $($errors[0].Message)" }
+        Copy-Item -Path $AgentPath -Destination ($AgentPath + '.bak') -Force
+        Move-Item -Path $tmp -Destination $AgentPath -Force
+    } catch {
+        Write-Log "Обновление не удалось: $($_.Exception.Message). Работаю на версии $($script:AgentVersion)"
+        Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    Write-Log "Обновление: файл заменён на версию $($Update.version), перезапуск задачи"
+    if ($NoRestart) { return $true }
+    # Задача сейчас запущена (это мы): после выхода помощник запускает её заново уже с новым файлом.
+    $helper = "Start-Sleep -Seconds 4; Start-ScheduledTask -TaskName '$($script:TaskName)'"
+    Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+        -ArgumentList @('-NoProfile', '-WindowStyle', 'Hidden', '-Command', $helper) -WindowStyle Hidden
+    exit 0
+}
+
+# Отчёт серверу: кто я (номер, имя ПК), версия, сканеры, адрес в сети. Ответ может содержать update - новую версию.
+function Send-Heartbeat {
+    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$ScannerAddress)
+    $scanners = @(Get-AgentScanners -ScannerAddress $ScannerAddress)
+    $body = @{
+        machine_id = (Get-MachineId); pc_name = [string]$env:COMPUTERNAME; version = $script:AgentVersion
+        lan_ip = (Get-LanIp); printer = [string]$PrinterName; scanners = $scanners
+    }
+    $reply = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/heartbeat" -Body $body -AuthToken $AuthToken
+    $names = ($scanners | ForEach-Object { $_.name }) -join '; '
+    $line = "Отчёт серверу: сканеры: $(if ($names) { $names } else { 'не найдены' })"
+    if ($line -ne $script:LastHeartbeatLine) { Write-Log $line; $script:LastHeartbeatLine = $line }
+    if ($reply -and $reply.update) { [void](Invoke-AgentUpdate -Base $Base -Update $reply.update) }
+}
+
 function Start-AgentLoop {
     param([string]$Base, [string]$AuthToken, [string]$PrinterName, [switch]$DryRun, [switch]$Once, [string]$ScannerAddress)
     $delay = 3
-    Write-Log "Агент запущен: сервер $Base, принтер '$PrinterName'$(if ($DryRun) { ', DRY RUN' }), сканер: $(if ($ScannerAddress) { $ScannerAddress } else { 'USB (WIA)' })"
+    $nextBeat = Get-Date
+    Write-Log "Агент $($script:AgentVersion) запущен: сервер $Base, принтер '$PrinterName'$(if ($DryRun) { ', DRY RUN' }), сканер: $(if ($ScannerAddress) { $ScannerAddress } else { 'USB (WIA), автопоиск' })"
     while ($true) {
+        if (-not $Once -and (Get-Date) -ge $nextBeat) {
+            try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -ScannerAddress $ScannerAddress }
+            catch { Write-Log "Отчёт серверу не ушёл: $($_.Exception.Message)" }
+            $nextBeat = (Get-Date).AddSeconds($script:HeartbeatEverySec)
+        }
         $state = 'error'
         try {
-            $state = Invoke-PollOnce -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -DryRun:$DryRun
+            # Без принтера (ПК только со сканером) этикетки не опрашиваем.
+            $state = if ($PrinterName) { Invoke-PollOnce -Base $Base -AuthToken $AuthToken -PrinterName $PrinterName -DryRun:$DryRun } else { 'idle' }
             $delay = 3
         } catch {
             Write-Log "Сеть/сервер: $($_.Exception.Message). Повтор через $delay с"
@@ -406,7 +513,7 @@ function Invoke-ScanPollOnce {
     param([string]$Base, [string]$AuthToken, [string]$ScannerAddress)
     $id = ''
     try {
-        $claim = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/claim" -Body @{ host = $env:COMPUTERNAME } -AuthToken $AuthToken
+        $claim = Invoke-ErpApi -Url "$Base/api/stock/scan/agent/claim" -Body @{ host = $env:COMPUTERNAME; machine_id = (Get-MachineId) } -AuthToken $AuthToken
         $script:ScanClaimError = ''
         if (-not $claim.job) { return 'idle' }
         $id = [string]$claim.job.id
@@ -465,8 +572,8 @@ if ($MyInvocation.InvocationName -ne '.') {
     if ($Printer) { $cfg.printer = $Printer }
     if ($Scanner) { $cfg.scanner = $Scanner }
     if ($TestScan) { Invoke-TestScan -ScannerAddress $cfg.scanner; return }
-    if (-not $cfg.server -or -not $cfg.token -or -not $cfg.printer) {
-        Write-Log "Нет настроек (сервер/токен/принтер) в $ConfigPath"
+    if (-not $cfg.server -or -not $cfg.token) {
+        Write-Log "Нет настроек (сервер/токен) в $ConfigPath"
         throw "Агент не настроен: запустите install.ps1"
     }
     Start-AgentLoop -Base $cfg.server.TrimEnd('/') -AuthToken $cfg.token -PrinterName $cfg.printer -DryRun:$DryRun -Once:$Once -ScannerAddress $cfg.scanner

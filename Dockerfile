@@ -30,6 +30,8 @@ COPY backend/requirements.lock.txt ./
 RUN pip install -r requirements.lock.txt
 COPY backend/ ./
 COPY scripts/ /app/scripts/
+# The Windows scan/print agent: the server hands out install.ps1 / agent.ps1 and tells old agents to update.
+COPY tools/print-agent/agent.ps1 tools/print-agent/install.ps1 /app/tools/print-agent/
 COPY --from=web /src/frontend/dist /app/frontend/dist
 COPY --from=web /src/frontend/dist-tools /app/frontend/dist-tools
 RUN useradd --system --uid 10001 erp && chown -R erp /app

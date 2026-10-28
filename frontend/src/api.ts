@@ -490,6 +490,14 @@ export interface WarehouseReceiptAccept {
 
 export type WarehouseScanJobStatus = "pending" | "claimed" | "done" | "failed";
 
+/** «Сканер с любого ПК»: ПК с агентом, у которого Windows видит сканер. */
+export interface ScanAgentInfo { id: string; pc: string; scanners: string[]; version: string }
+/** Ответ на «Сканировать»: задание — или «нет агента» (окно установки), или «выберите ПК». */
+export type WarehouseScanStart =
+  | WarehouseScanJob
+  | { status: "no_agent"; idle?: string[] }
+  | { status: "choose"; agents: ScanAgentInfo[] };
+
 export interface WarehouseScanJob {
   id: string;
   status: WarehouseScanJobStatus;
@@ -3223,7 +3231,8 @@ export const receivingApi = {
   /** «Принять по УПД»: скан со сканера ПК склада, файл, «+ Страница» — та же очередь и то же распознавание, что
    *  у «Склад → Поставка», под правом «Приёмка». */
   updScan: {
-    startScanJob: () => api<WarehouseScanJob>("/api/receiving/upd/scan-jobs", { method: "POST" }),
+    startScanJob: (agentId?: string) =>
+      api<WarehouseScanStart>("/api/receiving/upd/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "" }) }),
     scanJob: (id: string) => api<WarehouseScanJob>(`/api/receiving/upd/scan-jobs/${encodeURIComponent(id)}`),
     cancelScanJob: (id: string) => api<WarehouseScanJob>(`/api/receiving/upd/scan-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
     scanFile: (file: File) => {
@@ -3380,7 +3389,11 @@ export const warehouseApi = {
   updLlmSettings: () => api<UpdLlmSettings>("/api/stock/receipts/llm-settings"),
   saveUpdLlmSettings: (fields: UpdLlmSettingsInput) =>
     api<UpdLlmSettings>("/api/stock/receipts/llm-settings", { method: "PUT", body: JSON.stringify(fields) }),
-  startScanJob: () => api<WarehouseScanJob>("/api/stock/receipts/scan-jobs", { method: "POST" }),
+  startScanJob: (agentId?: string) =>
+    api<WarehouseScanStart>("/api/stock/receipts/scan-jobs", { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "" }) }),
+  /** Администратор: одноразовая команда установки агента на новый ПК (живёт час). */
+  scanAgentInstallToken: () =>
+    api<{ command: string; expires_at: string; valid_minutes: number }>("/api/stock/scan/agent/install-token", { method: "POST" }),
   scanJob: (id: string) => api<WarehouseScanJob>(`/api/stock/receipts/scan-jobs/${encodeURIComponent(id)}`),
   cancelScanJob: (id: string) => api<WarehouseScanJob>(`/api/stock/receipts/scan-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   writeOff: (lotId: string, version: number, quantity: string, purpose: string, reason: string, date?: string) =>
