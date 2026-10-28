@@ -377,7 +377,7 @@ function NotHandedRows({ group, open, onToggle, canHandoff, busy, onHandoff }: {
         <td className="num">{rows.length}</td>
         <td>
           <span className="rq-chips">
-            <StatusChip tone="warn">Не передана {rows.length}</StatusChip>
+            <StatusChip tone="warning">Не передана {rows.length}</StatusChip>
           </span>
           {canHandoff && (
             <button
@@ -404,7 +404,7 @@ function NotHandedRows({ group, open, onToggle, canHandoff, busy, onHandoff }: {
                       <td>{row.initiator}</td>
                       <td>{formatDay(row.created_at)}</td>
                       <td>{formatDay(row.planned_date)}</td>
-                      <td><StatusChip tone="warn">Не передана</StatusChip></td>
+                      <td><StatusChip tone="warning">Не передана</StatusChip></td>
                     </tr>
                   ))}
                 </tbody>
