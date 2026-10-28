@@ -45,7 +45,7 @@ export function ShipmentDataPage({ principal: _principal }: { principal: Princip
     { key: "project", title: "Проект", value: (row) => projectsOf(row), render: (row) => <span className="ship-clip ship-clip-projects" title={projectsOf(row)}>{projectsOf(row)}</span> },
     { key: "customer", title: "Заказчик", value: (row) => row.customer || row.receiver, filter: true },
     { key: "status", title: "Статус", value: (row) => row.status, filter: true, render: (row) => <StatusChip status={row.status} /> },
-    { key: "gaps", title: "Что не хватает", value: (row) => dataGaps(row).join(", "), hint: "Слова сервера: то же, что не даёт отгрузить",
+    { key: "gaps", title: "Что не хватает", value: (row) => dataGaps(row).join(", "), hint: "Слова сервера: то же, что не даёт отгрузить", wrap: true, maxWidth: 360,
       render: (row) => dataGaps(row).length ? <DataChip shipment={{ ...row, missing_data: dataGaps(row) }} /> : <span className="muted">всё внесено</span> },
     { key: "deadline", title: "Срок", value: (row) => row.deadline ?? "", render: (row) => <Due day={row.deadline} late={overdue(row)} since={row.created_at} /> },
   ];
@@ -55,7 +55,7 @@ export function ShipmentDataPage({ principal: _principal }: { principal: Princip
     {!loaded ? <div className="empty">Загрузка…</div>
       : <DataTable label="Данные отправок" storageKey="shipment-data" rows={rows} columns={columns} rowKey={(row) => row.id}
         onRowClick={(row) => setOpen(row.id)} exportName="Данные отправок" searchPlaceholder="№ отправки, проект или заказчик"
-        presets={[{ label: "Не хватает данных", test: (row) => dataGaps(row).length > 0 }, { label: "Все", test: () => true }]}
+        presets={[{ label: "Не хватает данных", test: (row) => dataGaps(row).length > 0 }]}
         defaultPreset="Не хватает данных"
         emptyText="Отправок, которым не хватает данных, нет — фильтр «Все» покажет остальные." />}
     {current && <ShipmentDataWindow key={current.id} shipment={current} close={() => setOpen(null)} onSaved={reload} />}
