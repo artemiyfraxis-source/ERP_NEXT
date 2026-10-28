@@ -1,5 +1,5 @@
-"""Migration 0160 (owner 28.10.2026, «сделай так, чтобы там пусто было — там сейчас всё старое»): «Новый» requests
-filed before 28.10 are cancelled with an audit event; newer ones and requests in work stay; the downgrade restores them."""
+"""Migration 0160 (owner 28.10.2026, «сделай так, чтобы там пусто было — там сейчас всё старое»): «нет, и после 28 тоже»): every
+«Новый» request is cancelled with an audit event, whatever its date; requests in work stay; the downgrade restores them."""
 
 import sqlite3
 from pathlib import Path
@@ -38,12 +38,13 @@ def test_old_new_requests_are_cancelled_and_the_downgrade_brings_them_back(tmp_p
     with sqlite3.connect(path) as connection:
         assert _status(connection, "SM-OLD-NEW") == ("Отменено", 2)
         assert _status(connection, "SM-OLD-WORK") == ("В работе", 1)
-        assert _status(connection, "SM-FRESH-NEW") == ("Новый", 1)
+        assert _status(connection, "SM-FRESH-NEW") == ("Отменено", 2)
         events = connection.execute(
             "SELECT aggregate_id, actor_name FROM audit_events WHERE event_type = 'request.cancelled'"
         ).fetchall()
-        assert events == [(f"{0:032x}", "Очистка заявок")]
+        assert sorted(events) == [(f"{0:032x}", "Очистка заявок"), (f"{2:032x}", "Очистка заявок")]
     command.downgrade(config, f"{REVISION}-1")
     with sqlite3.connect(path) as connection:
         assert _status(connection, "SM-OLD-NEW") == ("Новый", 1)
+        assert _status(connection, "SM-FRESH-NEW") == ("Новый", 1)
         assert connection.execute("SELECT COUNT(*) FROM audit_events WHERE event_type = 'request.cancelled'").fetchone() == (0,)

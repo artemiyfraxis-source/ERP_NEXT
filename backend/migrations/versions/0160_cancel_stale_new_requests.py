@@ -1,15 +1,15 @@
 """Старые непереданные заявки отменяются (владелец, 28.10.2026: «сделай так, чтобы там пусто было — там сейчас всё
-старое»). Верхняя таблица «Не переданы в закупку» ушла, заявки в статусе «Новый» теперь видны в нижней таблице
-«Снабжение → Заявки» под своим проектом; всё, что лежало «Новым» до 28.10, — старьё (на проде — 104 строки 663К.1.001
-от 06.10, их заменила 663К.1.002 от 12.10, она в работе).
-- Заявки со статусом «Новый», созданные до 28.10.2026 00:00 МСК, получают статус «Отменено», версия +1; на каждую —
+старое»; «нет, и после 28 тоже»). Верхняя таблица «Не переданы в закупку» ушла, заявки в статусе «Новый» теперь видны
+в нижней таблице «Снабжение → Заявки» под своим проектом; на момент выпуска там должно быть пусто (на проде 28.10 —
+104 строки 663К.1.001 от 06.10, их заменила 663К.1.002 от 12.10, она в работе).
+- Все заявки со статусом «Новый», какой бы ни была дата, получают статус «Отменено», версия +1; на каждую —
   событие аудита `request.cancelled` (кто: «Очистка заявок», было «Новый»).
 - Печатается сверка: заявок по статусам было → стало.
 DESTRUCTIVE = False. Откат возвращает «Новый» и прежнюю версию тем заявкам, у которых есть событие этой миграции и
 статус всё ещё «Отменено», и удаляет события.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Sequence
 from uuid import UUID, uuid4
 
@@ -28,7 +28,6 @@ NEW = "Новый"
 CANCELLED = "Отменено"
 EVENT = "request.cancelled"
 ACTOR_NAME = "Очистка заявок"
-CUTOFF = datetime(2026, 10, 28, tzinfo=timezone(timedelta(hours=3)))
 
 _requests = sa.table(
     "requests",
@@ -55,7 +54,7 @@ def upgrade() -> None:
     before = _by_status(connection)
     stale = connection.execute(
         sa.select(_requests.c.id, _requests.c.legacy_id, _requests.c.version)
-        .where(_requests.c.status == NEW, _requests.c.created_at < CUTOFF)
+        .where(_requests.c.status == NEW)
     ).all()
     now = datetime.now(timezone.utc)
     for request_id, legacy_id, version in stale:
@@ -67,9 +66,9 @@ def upgrade() -> None:
             "id": uuid4(), "aggregate_id": request_id, "event_type": EVENT, "actor_id": UUID(int=0),
             "actor_name": ACTOR_NAME, "actor_department": "Система", "occurred_at": now,
             "details": {"legacy_id": legacy_id, "from": NEW, "to": CANCELLED, "version": version,
-                        "reason": "старая непереданная заявка (до 28.10.2026)"},
+                        "reason": "непереданная заявка, очистка при выпуске 28.10.2026"},
         }])
-    print(f"0160: отменено старых «Новых» заявок — {len(stale)}; по статусам было: {before}; стало: {_by_status(connection)}")
+    print(f"0160: отменено «Новых» заявок — {len(stale)}; по статусам было: {before}; стало: {_by_status(connection)}")
 
 
 def downgrade() -> None:
