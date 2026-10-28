@@ -24,14 +24,15 @@ Related: [[google-wiring]], [[erp-local-demo]], [[staff-and-sites]]. Hub: [[erp-
 - `erp.sh cli …` (docker compose run) reads stdin: inside an `ssh … 'bash -s' <<EOF` script it swallows every line after
   it — the rest of the script silently never runs (26.10: an `--apply` import "printed nothing" and wrote nothing). Give
   each `erp.sh cli` its own ssh call, or add `< /dev/null`; long runs → `nohup … > /tmp/x.log 2>&1 &` and read the log.
-- Витя's read-only access (28.10.2026, owner gave it instead of the `erp` key = root): Linux user `vitya` (locked
-  password, key in `/home/vitya/.ssh/authorized_keys`), `/etc/ssh/sshd_config.d/60-vitya-readonly.conf` Match block
+- Даша's (YdO) read-only DB access (28.10.2026, owner asked; never the `erp` key = root): Linux user `dasha` (locked
+  password, key in `/home/dasha/.ssh/authorized_keys`), `/etc/ssh/sshd_config.d/60-dasha-readonly.conf` Match block
   (ForceCommand `sudo -n /usr/local/bin/erp-ro`, no tty/forwarding/password), `/etc/sudoers.d/erp-ro` (only that
   script, keeps SSH_ORIGINAL_COMMAND). The script runs `docker exec -u postgres erp-db-1 psql -U erp_ro -c <query>`,
   refuses psql meta-commands (`\!` = shell in the container). PG role `erp_ro`: no password (local trust only),
   SELECT on all tables + default privileges for new ones from role `erp`, read-only transactions, 300 s timeout;
   REVOKEd on identity_credentials / identity_sessions / identity_api_tokens / identity_login_throttles and
-  `warehouse_upd_llm_settings.api_key`. A new table with secrets → REVOKE it from `erp_ro`. Витя reaches the server
-  only after the owner shares the `erp-server` node to his Tailscale account.
+  `warehouse_upd_llm_settings.api_key`. A new table with secrets → REVOKE it from `erp_ro`. Даша reaches the server
+  only after the owner shares the `erp-server` node to her Tailscale account. Her key + guide went to the owner in
+  `Downloads/erp-dasha-access/` (not in git). Not in RULES.md: she is not a developer, guard-danger doesn't apply.
 - OpenSSH 10 on the server penalises a source address after failed auths (PerSourcePenalties): a burst of bad-key
   attempts locked my own `erp@` ssh out for ~1 min (28.10). Test new accounts one connection at a time.
