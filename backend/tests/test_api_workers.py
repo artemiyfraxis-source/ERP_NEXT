@@ -25,13 +25,14 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 from app.database import build_engine, pool_options
 from app.modules.warehouse import scan_recognition
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork, WarehouseReceiptFileRow
+from app.modules.warehouse.scan_agents import ScanAgentRow
 from app.modules.warehouse.scan_jobs import DONE, ScanJob, ScanJobRow, stored_result
 from app.shared import device_logs
 from app.shared.advisory_lock import advisory_lock, lock_key
 from app.shared.persistence import Base
 
 NOW = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
-TABLES = [WarehouseReceiptFileRow.__table__, ScanJobRow.__table__]
+TABLES = [WarehouseReceiptFileRow.__table__, ScanAgentRow.__table__, ScanJobRow.__table__]  # jobs point at their agent
 
 
 def _postgres_url():
