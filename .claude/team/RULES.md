@@ -29,7 +29,9 @@ GitHub plan can't protect it — so `main` changes only through a merged PR with
    Without it the release goes out by itself at 02:00 / 06:00 MSK.
 5. Check the screen you changed on https://erp-server.tail811f20.ts.net; if it broke, say so in the chat at once — the owner rolls back.
 Direct push to `main`, `deploy/push.ps1` and ssh to the server stay the owner's (`guard-danger.mjs` enforces it for
-other identities).
+other identities). One exception (owner, 28.10.2026): Витя's key-only account `vitya@erp-server.tail811f20.ts.net` —
+no shell, no forwarding, only read-only SQL against the prod DB: `ssh vitya@… tables` / `sql "select …"` /
+`csv "select …"` (or `sql < query.sql`). Passwords, sessions, API tokens and the model key are closed to it.
 
 ## Not getting in each other's way
 - **Claim before code.** First step of a task: `gh pr list --state open --json number,title,headRefName,files`.
