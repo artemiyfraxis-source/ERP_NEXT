@@ -130,7 +130,7 @@ def intake_api():
     )
     good = next(item for item in client.get("/api/shipping/goods").json()["goods"] if item["item_index"] == "КБ4")
     shipment = client.post("/api/shipping/shipments", json={
-        "receiver": "Получатель", "shipping_point": "Москва", "upd_type": "ЭДО",
+        "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1",
         "lines": [{"good_id": good["id"], "quantity": "6"}],
     }).json()["shipment"]
     assert client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]}).status_code == 200

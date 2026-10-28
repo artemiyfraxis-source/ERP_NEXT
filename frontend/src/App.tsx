@@ -41,6 +41,7 @@ import { ReceivingPage } from "./ReceivingPage";
 import { WarehousePage } from "./WarehousePage";
 import { EquipmentPage } from "./EquipmentPage";
 import { ShippingPage } from "./ShippingPage";
+import { ShipmentDataPage } from "./ShipmentDataPage";
 import { ProductionIntakePage } from "./ProductionIntakePage";
 import { ReferencesPage } from "./ReferencesPage";
 import { NotificationsPage } from "./NotificationsPage";
@@ -346,6 +347,7 @@ export function App() {
         {activeSection === "intake" && <ProductionIntakePage principal={principal} />}
         {activeSection === "equipment" && <EquipmentPage readOnly={!canAct(principal, "warehouse")} admin={hasFullAccess(principal)} />}
         {activeSection === "shipping" && <ShippingPage key={visit} principal={principal} />}
+        {activeSection === "shipdata" && <ShipmentDataPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
         {activeSection === "prodplan" && <ProductionPlanPage principal={principal} openProjectCard={visibleNav.some(({ id }) => id === "projects") ? openProjectCard : undefined} />}

@@ -8,7 +8,7 @@ export type Section =
   | "cabinet" | "card"
   | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement" | "purchasingrefs" | "primarydocs"
-  | "receiving" | "stock" | "equipment" | "issues" | "handout" | "intake" | "shipping"
+  | "receiving" | "stock" | "equipment" | "issues" | "handout" | "intake" | "shipping" | "shipdata"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
 
 export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "docs" | "refs";
@@ -96,6 +96,9 @@ export const NAV: NavItem[] = [
   // «Отгрузка» (менеджер) и «Отгрузка — склад» (кладовщик) — два ключа матрицы, одна карточка: список читает любой из них.
   { id: "shipping", label: "Отгрузка", sub: "готовая продукция · отправки", anyPermission: ["shipping", "shipping_goods"], block: "stock" },
   // Менеджмент
+  // «Данные отправок» (владелец 28.10): менеджер (Ульяна) вносит данные для отгрузки — кладовщик без них не отправит.
+  // Открывает правка «Отгрузки» (менеджер, администратор): тот же ключ, что у правки отправки на сервере.
+  { id: "shipdata", label: "Данные отправок", sub: "тип доставки · адрес · получатель · УПД", permission: "shipping", minimum: "edit", block: "mgmt" },
   { id: "prodplan", label: "Производственный план", sub: "все проекты · блокеры · комплектующие · сроки", permission: "production", block: "mgmt" },
   // «Сотрудники» и «Доступы»: только superadmin / admin, вне матрицы (backend staffdir_principal, access_admin_principal).
   { id: "staff", label: "Сотрудники", sub: "справочник, уровни, отделы", fullAccessOnly: true, block: "mgmt" },

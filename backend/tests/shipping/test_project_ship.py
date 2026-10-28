@@ -66,6 +66,8 @@ def _stock(client, item_index="КБ1", quantity="6") -> dict:
 
 
 def _card(client, **fields) -> dict:
+    # Карточка проекта со всем, что нужно для отгрузки (владелец 28.10.2026): телефон и условия доставки.
+    fields = {"phone": "+7 900", "terms": "САМОВЫВОЗ", **fields}
     return client.put("/api/shipping/project-addressee", json={"project": PROJECT, "version": 0, **fields}).json()["addressee"]
 
 
@@ -119,14 +121,14 @@ def test_manager_with_warehouse_ships_card_change_documents_and_file_in_one_requ
             "shipping.shipped", "shipping.closed"} <= set(events)
 
 
-def test_shipped_without_upd_number_is_not_closed_and_says_why(env):
+def test_shipping_without_upd_number_is_refused_and_says_why(env):
     client, _ = env
     good = _stock(client)
     _card(client, shipping_point="Москва", upd_type="ЭДО")
-    data = _ship(client, _body([(good, "4")], addressee_version=1, ship=True)).json()
-    assert (data["shipped"], data["closed"]) == (True, False)
-    assert data["shipment"]["status"] == "Отгружена"
-    assert "№ УПД" in data["why"]
+    response = _ship(client, _body([(good, "4")], addressee_version=1, ship=True))
+    # Без № УПД отправка не уезжает вовсе (владелец 28.10.2026), а не уезжает незакрытой.
+    assert response.status_code == 422
+    assert "№ УПД" in response.json()["detail"]
 
 
 def test_pack_only_manager_gets_packed_storekeeper_gets_assembled(env):
@@ -147,7 +149,7 @@ def test_pack_only_manager_gets_packed_storekeeper_gets_assembled(env):
 def test_replay_with_same_key_and_body_returns_stored_result_and_writes_nothing(env):
     client, sessions = env
     good = _stock(client)
-    _card(client, shipping_point="Москва", upd_type="ЭДО")
+    _card(client, shipping_point="Москва", upd_type="БЕЗ УПД")
     body = _body([(good, "5")], addressee_version=1, ship=True)
     first = _ship(client, body).json()
     before = _snapshot(sessions)
@@ -204,7 +206,7 @@ def test_quantity_above_stock_is_409_not_clamped(env):
 def test_role_matrix(env):
     client, sessions = env
     good = _stock(client)
-    _card(client, shipping_point="Москва", upd_type="ЭДО")
+    _card(client, shipping_point="Москва", upd_type="БЕЗ УПД")
     before = _snapshot(sessions)
 
     _as(STOREKEEPER)
@@ -218,7 +220,7 @@ def test_role_matrix(env):
     _as(STOREKEEPER)
     shipped = _ship(client, _body([(good, "1")], addressee_version=1, ship=True), key="r4")
     assert shipped.status_code == 200
-    assert shipped.json()["shipment"]["status"] == "Отгружена"
+    assert shipped.json()["shipment"]["status"] == "Закрыта"  # «Без УПД»: закрывается сразу
 
 
 def test_paper_upd_without_file_refuses_shipping_and_keeps_the_card_unchanged(env):

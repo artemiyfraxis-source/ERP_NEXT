@@ -26,7 +26,8 @@ from datetime import date
 from uuid import UUID
 
 from .domain import (
-    DeliveryTerms, PackedItem, ProjectAddressee, Shipment, ShipmentBox, ShippingValidationError, UpdType, default_boxes, packed_by_index,
+    DeliveryTerms, PackedItem, ProjectAddressee, Shipment, ShipmentBox, ShipmentStatus, ShippingValidationError, UpdType, default_boxes,
+    packed_by_index, shipping_gaps,
     total_gross,
 )
 
@@ -123,8 +124,6 @@ class DeliveryNote:
     spec: str
     invoice: str
     terms: str
-    pays: str
-    customer_address: str
     shipping_address: str
     hours: str
     contact: str
@@ -237,7 +236,14 @@ def _places(numbers: list[int]) -> str:
 def build_delivery_note(
     shipment: Shipment, customer: str, packer: str = "", card: ProjectAddressee | None = None,
 ) -> DeliveryNote:
-    """DN одна на отправку: строка на каждую КБ (сумма по всем коробам) с местами, где она лежит; итог — число мест."""
+    """DN одна на отправку: строка на каждую КБ (сумма по всем коробам) с местами, где она лежит; итог — число мест.
+
+    Пока отправка не уехала, DN печатается только с внесёнными данными (всё, кроме трека — его вписывают при отгрузке,
+    владелец 28.10.2026); уехавшая и закрытая печатаются как есть — старые отправки не перепроверяются."""
+    if shipment.status in {ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
+        gaps = shipping_gaps(shipment, with_track=False)
+        if gaps:
+            raise ShippingValidationError("Нельзя печатать DN: не хватает — " + ", ".join(gaps))
     packed, boxes = _prepare(shipment)
     rows = tuple(FormRow(
         part=_part(item, item.item_index, _projects(shipment)), name=item.name, quantity=_qty(item.quantity), unit=item.unit or "шт",
@@ -255,12 +261,11 @@ def build_delivery_note(
         number=_number(shipment.dn_number),
         # До отгрузки DN печатают вместе с PL — в образце стоит дата упаковки.
         date=_day(shipment.shipped_at or shipment.packed_at),
-        # «Заказ №» и «Номер спецификации» без значения — номер проекта; «PO #» печатается только при заказе заказчика.
+        # «Заказ №» без значения — номер проекта; договор и спецификация необязательны (владелец 28.10.2026) — пусто, пока не внесены; «PO #» печатается только при заказе заказчика.
         customer=customer, po=card.po.strip() or project, po_from_card=bool(card.po.strip()), contract=card.contract,
-        spec=card.spec.strip() or project, invoice=card.invoice,
+        spec=card.spec.strip(), invoice=card.invoice,
         # Условий нет, но едет ТК — «Доставка ТК».
-        terms=_TERMS_LABELS[terms] if terms else ("Доставка ТК" if carrier else ""), pays=card.pays,
-        customer_address=card.customer_address,
+        terms=_TERMS_LABELS[terms] if terms else ("Доставка ТК" if carrier else ""),
         shipping_address=", ".join(part for part in (receiver, shipment.shipping_point or card.shipping_point) if part),
         hours=hours, contact=shipment.contact or card.contact, phone=shipment.phone or card.phone, carrier=carrier,
         track=track, tk_note=shipment.tk_note, rows=rows,

@@ -589,8 +589,8 @@ def _rehearse(shop: Shop, export_dir: Path, *, synthetic: bool) -> None:
 
     # Менеджер проекта оформляет отгрузку, склад упаковывает и отгружает.
     clock.tick(30)
-    shipment_body = {"receiver": "ООО Репетиция", "shipping_point": "Москва, склад заказчика", "terms": "САМОВЫВОЗ",
-                     "upd_type": "ЭДО", "no_docs": True, "lines": [{"good_id": good["id"], "quantity": str(KITS)}]}
+    shipment_body = {"receiver": "ООО Репетиция", "shipping_point": "Москва, склад заказчика", "terms": "САМОВЫВОЗ", "phone": "+7 900",
+                     "upd_type": "ЭДО", "upd_number": "1", "no_docs": True, "lines": [{"good_id": good["id"], "quantity": str(KITS)}]}
     shop.fitter.refused("POST", "/api/shipping/shipments", json=shipment_body)
     shop.storekeeper.refused("POST", "/api/shipping/shipments", json=shipment_body)
     shipment = shop.pm.ok("POST", "/api/shipping/shipments", json=shipment_body)["shipment"]

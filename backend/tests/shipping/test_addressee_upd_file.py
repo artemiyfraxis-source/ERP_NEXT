@@ -34,7 +34,7 @@ def _card(client, **fields) -> dict:
 
 def _paper_card(client) -> dict:
     url = _upload(client).json()["file"]["url"]
-    return _card(client, receiver="ООО Заказчик", shipping_point="Москва", phone="+7 900", upd_type="БУМАГА", upd_url=url)
+    return _card(client, receiver="ООО Заказчик", shipping_point="Москва", phone="+7 900", terms="САМОВЫВОЗ", upd_type="БУМАГА", upd_url=url)
 
 
 def test_card_upd_file_round_trips_and_an_empty_value_removes_it(shipping_api):
@@ -85,11 +85,17 @@ def test_project_pack_takes_the_paper_upd_of_the_card_and_passes_the_file_gate(s
     card = _paper_card(client)
     packed = client.post("/api/shipping/project-pack", json={"project": PROJECT, "lines": [{"good_id": good["id"], "quantity": "2"}]})
     shipment = packed.json()["shipment"]
-    shipped = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]})
+    refused = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]})
+    numbered = client.put(f"/api/shipping/shipments/{shipment['id']}/documents", json={
+        "version": shipment["version"], "upd_type": "БУМАГА", "upd_number": "5", "upd_url": shipment["upd_url"],
+    }).json()["shipment"]
+    shipped = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": numbered["version"]})
 
     assert packed.status_code == 200
     assert shipment["upd_type"] == "БУМАГА" and shipment["upd_url"] == card["upd_url"]
-    assert shipped.status_code == 200 and shipped.json()["shipment"]["status"] == "Отгружена"
+    # Файл карточки открыл гейт, но без № УПД отправка не уезжает.
+    assert refused.status_code == 422 and "№ УПД" in refused.json()["detail"] and "файл УПД" not in refused.json()["detail"]
+    assert shipped.status_code == 200 and shipped.json()["shipment"]["status"] == "Закрыта"
 
 
 def test_one_card_file_goes_to_one_shipment_and_back_after_cancel(shipping_api):

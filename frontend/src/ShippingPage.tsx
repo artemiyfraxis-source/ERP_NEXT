@@ -13,17 +13,21 @@ import { daysUntil } from "./productionGraph";
 import { goodsPieces } from "./FinishedGoodsStates";
 import { DispatchFields, changedDispatch, dispatchDraft, readFile, type DispatchDraft } from "./DispatchCard";
 import { CarrierSelect, PICKUP_CARRIER, isPickup, termsFor, termsText } from "./carriers";
+import { DataChip, ShipmentDataWindow, UPD_TYPES, updLabel } from "./ShipmentData";
 import "./shipping.css";
 
 /* Отгрузка (владелец 12–14.10.2026) — путь готовой продукции слева направо, штуки КБ в сквозных статусах.
    Приёмка с производства — отдельный пункт меню «Приёмка с производства»; здесь:
-   «На складе» — принятое, ещё не упакованное, по проектам; «Упаковать» заводит отправку (→ Упаковано);
-   «Отправки» — по статусам; документы PL/DN, «Отгрузить» (→ Отгружено), откат отгрузки — только администратору;
+   28.10.2026 «переосмыслить отгрузки»: кладовщик упаковывает и отгружает, данные для отгрузки вносит менеджер
+   (раздел «Данные отправок»). Вкладки идут слева направо по пути груза:
+   «Упаковка» — принятое по проектам и отправки Новая/Собрана (набрать, упаковать, PL);
+   «Отгрузка» — Упакована: «ждёт данных» или «готова к отгрузке», DN и «Отгрузить» — когда данные внесены;
+   «Отгружено» — уехавшие (следующий шаг, например файл УПД) и отменённые;
    «Журнал» — строка на позицию отправки, как журнал «ОТГРУЗКИ» в таблице владельца. */
-type Tab = "stock" | "shipments" | "journal";
-const TABS: Tab[] = ["stock", "shipments", "journal"];
-const UPD_TYPES: Array<[UpdType, string]> = [["ЭДО", "ЭДО"], ["БУМАГА", "Бумага"], ["БЕЗ УПД", "Без УПД"]];
-const updLabel = (value: string | null | undefined) => UPD_TYPES.find(([key]) => key === value)?.[1] ?? "";
+type Tab = "pack" | "ship" | "done" | "journal";
+const TABS: Tab[] = ["pack", "ship", "done", "journal"];
+/** Старые ссылки `?tab=stock` и `?tab=shipments` ведут на новые вкладки. */
+const TAB_ALIASES: Record<string, Tab> = { stock: "pack", shipments: "ship" };
 const withoutUpd = (shipment: Shipment) => shipment.upd_type === "БЕЗ УПД";
 /** Сообщение после действия: строка — успех, `{ warning }` — сделано не всё (показывается как ошибка). */
 type Outcome = string | { warning: string };
@@ -38,7 +42,7 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
 const today = () => isoDay(new Date());
 
 /** Срок прошёл, а груз ещё не уехал. */
-function overdue(shipment: Shipment) {
+export function overdue(shipment: Shipment) {
   return Boolean(shipment.deadline) && String(shipment.deadline) < today() && ACTIVE.includes(shipment.status);
 }
 
@@ -84,13 +88,15 @@ const needsUpdFile = (shipment: Shipment) => !["ЭДО", "БЕЗ УПД"].includ
 export interface NextStep { text: string; tone: "ok" | "warn" | "info"; why: string }
 
 /** Что кладовщику сделать с отправкой сейчас — видно в списке, не открывая строку (владелец 15.10). Порядок — как
- *  сервер: набрать → PL и DN → файл УПД (бумажная) → отгрузить → для закрытия № и файл УПД, трек для доставки ТК. */
+ *  сервер: набрать → PL и DN → данные от менеджера (и трек ТК) → отгрузить → для закрытия № и файл УПД. */
 export function nextStep(shipment: Shipment): NextStep | null {
   if (ACTIVE.includes(shipment.status)) {
     if (!shipment.lines.some((line) => num(line.picked) > 0)) return { text: "Набрать со склада", tone: "info", why: "В отправке ещё ничего не набрано" };
     if (!shipment.pl_number) return { text: "Сформировать PL и DN", tone: "info", why: "Набрано, отгрузочные документы не сформированы" };
-    if (needsUpdFile(shipment)) return { text: "Загрузить УПД", tone: "warn", why: "Без файла УПД отгрузить нельзя (кроме ЭДО и «Без УПД»)" };
-    return { text: "Отгрузить", tone: "ok", why: "Упакована, PL и DN готовы — распечатайте и отгрузите" };
+    // Слова сервера (`shipping_gaps`): без внесённых данных отправку не отгрузить и DN не напечатать.
+    if (shipment.missing_data.length) return { text: "Ждёт данных", tone: "warn", why: `Не хватает: ${shipment.missing_data.join(", ")}` };
+    if (shipment.missing_ship.length) return { text: `Внести: ${shipment.missing_ship.join(", ")}`, tone: "warn", why: "Без этого кладовщик не отгрузит" };
+    return { text: "Отгрузить", tone: "ok", why: "Упакована, данные внесены — распечатайте DN и отгрузите" };
   }
   if (shipment.status !== "Отгружена") return null;
   const missing: string[] = [];
@@ -110,8 +116,9 @@ function notClosed(why: string | undefined) {
 }
 
 function initialTab(): Tab {
-  const wanted = new URLSearchParams(window.location.search).get("tab");
-  return TABS.includes(wanted as Tab) ? wanted as Tab : "stock";
+  const wanted = new URLSearchParams(window.location.search).get("tab") ?? "";
+  const tab = TAB_ALIASES[wanted] ?? wanted;
+  return TABS.includes(tab as Tab) ? tab as Tab : "pack";
 }
 
 export function ShippingPage({ principal }: { principal: Principal }) {
@@ -155,14 +162,16 @@ export function ShippingPage({ principal }: { principal: Principal }) {
 
   const rows = useMemo(() => projectRows(goods, shipments, addressees), [goods, shipments, addressees]);
   const stockRows = rows.filter((row) => row.ready > 0);
-  const activeShipments = shipments.filter((shipment) => ACTIVE.includes(shipment.status)).length;
+  const inScope = (scope: Scope) => shipments.filter((shipment) => SCOPES[scope].statuses.includes(shipment.status));
   const journalCount = useMemo(() => journalRows(shipments).length, [shipments]);
+  // Число на вкладке — сколько ждёт действия здесь: проекты с принятым и заявки без упаковки; упакованные; уехавшие, не закрытые.
   const tabs: Array<[Tab, string, number, string]> = [
-    ["stock", "На складе", stockRows.length, "Проекты, у которых есть принятое и ещё не упакованное"],
-    ["shipments", "Отправки", activeShipments, "Отправки, которые ещё не уехали"],
+    ["pack", "Упаковка", stockRows.length + inScope("pack").length, "Принятое по проектам, ещё не упакованное, и отправки, которые набираются и упаковываются"],
+    ["ship", "Отгрузка", inScope("ship").length, "Упакованные отправки: ждут данных от менеджера или готовы к отгрузке"],
+    ["done", "Отгружено", inScope("done").filter((shipment) => shipment.status === "Отгружена").length, "Уехавшие, но не закрытые: нужен файл УПД, № или трек"],
     ["journal", "Журнал", journalCount, "Все отправки по строке на позицию — как журнал «ОТГРУЗКИ»"],
   ];
-  const context = { goods, shipments, addressees, canManage, canWarehouse, canEdit, canUnship, busy, mutate };
+  const context = { goods, shipments, addressees, canManage, canWarehouse, canEdit, canUnship, busy, mutate, reload };
   return <section className="page shipping-page">
     <header className="page-head"><h1>Отгрузка</h1></header>
     <div className="seg-tabs ship-tabs" role="tablist" aria-label="Отгрузка">{tabs.map(([key, label, count, hint]) =>
@@ -172,8 +181,9 @@ export function ShippingPage({ principal }: { principal: Principal }) {
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner" role="status">{notice}</div>}
     {!loaded ? <div className="empty">Загрузка…</div> : <>
-      {tab === "stock" && <StockTab {...context} rows={stockRows} />}
-      {tab === "shipments" && <ShipmentsTab {...context} />}
+      {tab === "pack" && <><StockTab {...context} rows={stockRows} /><ShipmentsTab {...context} scope="pack" /></>}
+      {tab === "ship" && <ShipmentsTab {...context} scope="ship" />}
+      {tab === "done" && <ShipmentsTab {...context} scope="done" />}
       {tab === "journal" && <JournalTab shipments={shipments} />}
     </>}
   </section>;
@@ -189,6 +199,7 @@ interface Context {
   canUnship: boolean;
   busy: string;
   mutate: Mutate;
+  reload: () => Promise<void>;
 }
 
 /* ---------- На складе: принятое и ещё не упакованное, по проектам ---------- */
@@ -276,9 +287,8 @@ function RegisterGood({ busy, mutate, onDone }: { busy: string; mutate: Mutate; 
 
 /* Остальные поля карточки — под «Ещё»: владелец 14.10 оставил на виду получателя, адрес, телефон и УПД. */
 const REQUISITE_FIELDS: Array<[keyof ProjectAddressee, string, string]> = [
-  ["po", "Заказ № (PO)", "номер заказа заказчика"], ["contract", "№ договора", ""], ["spec", "№ спецификации", "пусто — № проекта"],
-  ["invoice", "№ счёта", ""], ["pays", "Оплачивает доставку", "заказчик / мы"], ["customer_address", "Адрес заказчика", "юридический"],
-  ["hours", "Время работы", "пн–пт 9:00–18:00"],
+  ["po", "Заказ № (PO)", "пусто — № проекта"], ["contract", "№ договора", "если есть"], ["spec", "№ спецификации", "если есть"],
+  ["invoice", "№ счёта (из УПД)", "подставится из УПД"], ["hours", "Время работы", "пн–пт 9:00–18:00"],
 ];
 type MoreDraft = Record<"contact" | "carrier" | "terms", string>;
 
@@ -313,7 +323,7 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
     if (over) { setProblem(`${over.good.item_index}: на складе только ${over.ready}`); return; }
     // Самовывоз: адреса доставки нет, серверу нужна непустая точка — пишем «Самовывоз», как в старых карточках.
     const sent = pickup && !card.shipping_point.trim() ? { ...card, shipping_point: PICKUP_CARRIER } : card;
-    if (!sent.shipping_point.trim()) { setProblem("Укажите адрес доставки"); return; }
+    // Адрес не обязателен для упаковки: его вносит менеджер в «Данных отправок», без него отправка не уедет (сервер).
     const lines = chosen.map((line) => ({ good_id: line.good.id, version: line.good.version, quantity: qty[line.good.id] }));
     void mutate(`pack:${row.project}`, async () => {
       const before = storedMore();
@@ -340,7 +350,7 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
       return result;
     }, (outcome) => {
       const { shipment } = outcome as { shipment: Shipment };
-      return `Упаковано: ${shipment.number}${shipment.pl_number ? ` · ${shipment.pl_number}` : ""} — отгрузите во вкладке «Отправки»`;
+      return `Упаковано: ${shipment.number}${shipment.pl_number ? ` · ${shipment.pl_number}` : ""} — дальше вкладка «Отгрузка»`;
     });
   };
 
@@ -391,7 +401,7 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
           </>}
           <label className="ship-span2">Комментарий проекта<input aria-label={`Комментарий проекта ${row.project}`} placeholder="попадёт в новые отправки" value={plan.note} onChange={(event) => setPlan({ ...plan, note: event.target.value })} onBlur={(event) => saveRequisite("note", event.target.value.trim())} /></label>
           <label>Плановая дата проекта<input aria-label={`Плановая дата проекта ${row.project}`} type="date" min={today()} value={plan.plan_date} onChange={(event) => setPlan({ ...plan, plan_date: event.target.value })} onBlur={(event) => saveRequisite("plan_date", event.target.value)} /></label>
-          {canManage && REQUISITE_FIELDS.filter(([key]) => !(pickup && key === "pays")).map(([key, label, placeholder]) => <label key={key}>{label}
+          {canManage && REQUISITE_FIELDS.map(([key, label, placeholder]) => <label key={key}>{label}
             <input aria-label={`${label} проекта ${row.project}`} placeholder={placeholder} value={requisites[key] ?? ""} onChange={(event) => setRequisites({ ...requisites, [key]: event.target.value })} onBlur={(event) => saveRequisite(key, event.target.value.trim())} /></label>)}
         </div>
       </details>
@@ -415,7 +425,6 @@ const PHASES: Array<[string, string[]]> = [
   ["Собирается", ["Новая", "Собрана"]], ["Упакована", ["Упакована"]], ["Отгружена", ["Отгружена", "Закрыта"]], ["Отменена", ["Отменена"]],
 ];
 const phaseOf = (shipment: Shipment) => PHASES.findIndex(([, statuses]) => statuses.includes(shipment.status));
-const phaseName = (shipment: Shipment) => PHASES[phaseOf(shipment)]?.[0] ?? shipment.status;
 
 function shipmentRows(shipments: Shipment[]) {
   // По этапам; внутри — то, что ещё надо везти, по сроку; уехавшие и отменённые — свежие первыми.
@@ -428,7 +437,7 @@ function shipmentRows(shipments: Shipment[]) {
   });
 }
 /** «591К.3: КБ1, КБ2; 600К.1: КБ7». */
-function projectsOf(shipment: Shipment) {
+export function projectsOf(shipment: Shipment) {
   const byProject = new Map<string, string[]>();
   for (const line of shipment.lines) {
     const items = byProject.get(line.project) ?? [];
@@ -467,9 +476,28 @@ function UpdCell({ shipment }: { shipment: Shipment }) {
   return label ? <>{label}</> : <span className="muted">—</span>;
 }
 
-function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, canUnship, busy, mutate }: Context) {
-  const rows = useMemo(() => shipmentRows(shipments), [shipments]);
+/** Три списка отправок по пути груза; у каждого свои статусы, пресеты и пустой текст. */
+type Scope = "pack" | "ship" | "done";
+const SCOPES: Record<Scope, { statuses: string[]; label: string; empty: string }> = {
+  pack: { statuses: ["Новая", "Собрана"], label: "Отправки на упаковке", empty: "Отправок на упаковке нет — упакованное уходит во вкладку «Отгрузка»." },
+  ship: { statuses: ["Упакована"], label: "Упакованные отправки", empty: "Упакованных отправок нет — они появляются, когда на «Упаковке» формируют PL и DN." },
+  done: { statuses: ["Отгружена", "Закрыта", "Отменена"], label: "Отгруженные отправки", empty: "Отгруженных отправок пока нет." },
+};
+
+const PRESETS: Record<Scope, Array<{ label: string; test: (row: Shipment) => boolean }>> = {
+  pack: [{ label: "В работе", test: () => true }, { label: "Просрочены", test: overdue }],
+  ship: [{ label: "Все", test: () => true }, { label: "Ждут данных", test: (row) => row.missing_data.length > 0 },
+    { label: "Готовы к отгрузке", test: (row) => row.missing_ship.length === 0 }, { label: "Просрочены", test: overdue }],
+  done: [{ label: "Не закрыты", test: (row) => row.status === "Отгружена" }, { label: "Закрыты", test: (row) => row.status === "Закрыта" },
+    { label: "Отгружено без УПД", test: noUpd }, { label: "Отменены", test: (row) => row.status === "Отменена" }, { label: "Все", test: () => true }],
+};
+
+function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, canUnship, busy, mutate, reload, scope }: Context & { scope: Scope }) {
+  const rows = useMemo(() => shipmentRows(shipments.filter((shipment) => SCOPES[scope].statuses.includes(shipment.status))), [shipments, scope]);
   const [creating, setCreating] = useState(false);
+  // Окно данных живёт здесь, а не в раскрытой строке: строка пересоздаётся после каждого сохранения.
+  const [dataFor, setDataFor] = useState<string | null>(null);
+  const dataShipment = shipments.find((shipment) => shipment.id === dataFor) ?? null;
   const print = useShipmentPrint();
   // Строка — одна линия (владелец 15.10): статус с датой в одну строку, «Что сделать» — следующий шаг без раскрытия строки.
   const columns: DataColumn<Shipment>[] = [
@@ -478,9 +506,12 @@ function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, canU
       const [word, day] = row.shipped_at ? ["отгружена", row.shipped_at] : row.packed_at ? ["упакована", row.packed_at] : ["", null];
       return <span className="ship-status"><StatusChip status={row.status} />{day && <span className="ship-status-day" title={`${word} ${formatDate(day)}`}>{formatDayMonth(day)}</span>}</span>;
     } },
-    { key: "step", title: "Что сделать", value: (row) => nextStep(row)?.text ?? "", filter: true, hint: "Следующий шаг по отправке",
-      render: (row) => { const step = nextStep(row); return step ? <span className={`ship-step tone-${step.tone}`} title={step.why}>{step.text}</span> : <span className="muted">—</span>; } },
-    { key: "customer", title: "Заказчик", value: (row) => row.customer || row.receiver, filter: true, hidden: true },
+    scope === "ship"
+      ? { key: "gaps", title: "Данные", value: (row) => row.missing_ship.join(", "), filter: true, hint: "Что ещё не внесено; трек-номер вписывает кладовщик",
+        render: (row) => <DataChip shipment={row} ship /> }
+      : { key: "step", title: "Что сделать", value: (row) => nextStep(row)?.text ?? "", filter: true, hint: "Следующий шаг по отправке",
+        render: (row) => { const step = nextStep(row); return step ? <span className={`ship-step tone-${step.tone}`} title={step.why}>{step.text}</span> : <span className="muted">—</span>; } },
+    { key: "customer", title: "Заказчик", value: (row) => row.customer || row.receiver, filter: true, render: (row) => <span className="ship-clip ship-clip-where" title={row.customer || row.receiver}>{row.customer || row.receiver}</span> },
     { key: "projects", title: "Проект · КБ", value: (row) => projectsOf(row), render: (row) => <span className="ship-clip ship-clip-projects" title={projectsOf(row)}>{projectsOf(row)}</span> },
     { key: "picked", title: "Упаковано, шт", value: (row) => sumOf(row, "picked"), numeric: true, hint: "Набрано в отправку из заказанного",
       render: (row) => { const picked = sumOf(row, "picked"); const asked = sumOf(row, "requested"); return picked < asked ? <span className="tone-warn">{picked} из {asked}</span> : picked; } },
@@ -496,16 +527,14 @@ function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, canU
   ];
   return <>
     {print.error && <div className="error-banner" role="alert">{print.error}</div>}
+    {dataShipment && <ShipmentDataWindow key={dataShipment.id} shipment={dataShipment} close={() => setDataFor(null)} onSaved={reload} />}
     {creating && <CreateShipment goods={goods} busy={busy} mutate={mutate} onDone={() => setCreating(false)} />}
-    <DataTable label="Отправки" storageKey="shipping-shipments-v3" rows={rows} columns={columns} rowKey={(row) => row.id}
-      groupBy={phaseName}
-      presets={[{ label: "В работе", test: (row) => ACTIVE.includes(row.status) }, { label: "Отгружена", test: (row) => ["Отгружена", "Закрыта"].includes(row.status) },
-        { label: "Просрочены", test: overdue }, { label: "Отгружено без УПД", test: noUpd }]}
-      defaultPreset="В работе"
-      toolbar={canManage && !creating ? <button type="button" className="secondary small" onClick={() => setCreating(true)}>+ Заявка на отгрузку</button> : undefined}
-      rowClassName={(row) => row.status === "Отменена" ? "cancelled" : ""} exportName="Отправки"
-      emptyText={rows.length ? "Отправок в работе нет — упакуйте принятое во вкладке «На складе». Уехавшие — в «Отгружена» и «Все»." : "Отправок нет — они появляются, когда на вкладке «На складе» нажимают «Упаковать»."}
-      renderDetail={(row) => <ShipmentDetail key={`${row.id}:${row.version}`} shipment={row} canManage={canManage} canWarehouse={canWarehouse} canEdit={canEdit} canUnship={canUnship} busy={busy} mutate={mutate} />} />
+    <DataTable label={SCOPES[scope].label} storageKey={`shipping-shipments-${scope}`} rows={rows} columns={columns} rowKey={(row) => row.id}
+      presets={PRESETS[scope]} defaultPreset={PRESETS[scope][0]?.label}
+      toolbar={scope === "pack" && canManage && !creating ? <button type="button" className="secondary small" onClick={() => setCreating(true)}>+ Заявка на отгрузку</button> : undefined}
+      rowClassName={(row) => row.status === "Отменена" ? "cancelled" : ""} exportName={SCOPES[scope].label}
+      emptyText={SCOPES[scope].empty}
+      renderDetail={(row) => <ShipmentDetail key={`${row.id}:${row.version}`} shipment={row} canManage={canManage} canWarehouse={canWarehouse} canEdit={canEdit} canUnship={canUnship} busy={busy} mutate={mutate} openData={() => setDataFor(row.id)} />} />
   </>;
 }
 
@@ -517,14 +546,18 @@ function CreateShipment({ goods, busy, mutate, onDone }: { goods: FinishedGood[]
   const [noDocs, setNoDocs] = useState(false);
   const selected = goods.filter((good) => num(quantities[good.id]) > 0);
   const open = goods.filter((good) => num(good.sent) < num(good.ordered));
+  // Заказчик по умолчанию — из готовой продукции выбранного проекта (сервер подставляет его так же); набранное руками важнее.
+  const [customerTyped, setCustomerTyped] = useState(false);
+  const customer = customerTyped ? draft.customer : selected.find((good) => good.customer)?.customer ?? "";
   // Пустые получатель, точка, условия и тип УПД наследуются из карточки проекта — сервер скажет, если их нет и там.
   const payload = () => {
-    const body: Record<string, unknown> = { ...draft, no_docs: noDocs, lines: selected.map((good) => ({ good_id: good.id, quantity: quantities[good.id] })) };
+    const body: Record<string, unknown> = { ...draft, customer, no_docs: noDocs, lines: selected.map((good) => ({ good_id: good.id, quantity: quantities[good.id] })) };
     for (const key of ["terms", "upd_type", "deadline"]) if (!body[key]) body[key] = null;
     return body;
   };
   const text = (key: keyof typeof blank, label: string, className?: string) => <label key={key} className={className}>{label}
-    <input placeholder={key === "customer" ? "" : "из карточки проекта"} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} /></label>;
+    <input placeholder={key === "customer" ? "по выбранному проекту" : "из карточки проекта"} value={key === "customer" ? customer : draft[key]}
+      onChange={(event) => { if (key === "customer") setCustomerTyped(true); setDraft({ ...draft, [key]: event.target.value }); }} /></label>;
   return <form className="panel ship-request" onSubmit={(event) => { event.preventDefault(); void mutate("shipment:new", () => shippingApi.create(payload()), "Заявка на отгрузку создана").then((saved) => { if (saved) onDone(); }); }}>
     <h2>Заявка на отгрузку</h2>
     <div className="ship-form">
@@ -551,7 +584,7 @@ function CreateShipment({ goods, busy, mutate, onDone }: { goods: FinishedGood[]
   </form>;
 }
 
-function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship, busy, mutate }: { shipment: Shipment; canManage: boolean; canWarehouse: boolean; canEdit: boolean; canUnship: boolean; busy: string; mutate: Mutate }) {
+function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship, busy, mutate, openData }: { openData: () => void; shipment: Shipment; canManage: boolean; canWarehouse: boolean; canEdit: boolean; canUnship: boolean; busy: string; mutate: Mutate }) {
   const [documents, setDocuments] = useState({ upd_type: shipment.inherited.includes("upd_type") ? "" : shipment.upd_type ?? "", upd_number: shipment.upd_number, upd_date: shipment.upd_date ?? "", track_number: shipment.track_number });
   const [requested, setRequested] = useState<Record<string, string>>({});
   const [layout, setLayout] = useState(false);
@@ -592,6 +625,10 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
       .then((saved) => { if (saved) setRollback(null); });
   };
   const disabled = Boolean(busy);
+  // Слова сервера: чего не хватает, чтобы напечатать DN (`missing_data`) и чтобы отгрузить (`missing_ship`, ещё и трек ТК).
+  const active = ACTIVE.includes(shipment.status);
+  const dnGaps = active ? shipment.missing_data : [];
+  const shipGaps = shipment.missing_ship;
   return <article className={`ship-card${shipment.status === "Отменена" ? " cancelled" : ""}`}>
     <div className="ship-card-head">
       <strong>{shipment.number}</strong><StatusChip status={shipment.status} />
@@ -604,6 +641,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
       {withoutUpd(shipment) ? <span className="muted">Без УПД</span>
         : shipment.upd_url ? <a href={shipment.upd_url} target="_blank" rel="noreferrer">УПД{shipment.upd_number ? ` № ${shipment.upd_number}` : ""}</a> : <span className={needsUpdFile(shipment) || shipment.status === "Отгружена" ? "tone-danger" : "muted"} title={needsUpdFile(shipment) ? "Без файла не отгрузить" : "Файл понадобится, чтобы закрыть отправку"}>файла УПД нет</span>}
       {shipment.note && <span className="ship-note" title="Комментарий отправки">{shipment.note}</span>}
+      {active && shipment.pl_number && <DataChip shipment={shipment} ship />}
     </div>
     <div className="table-scroll"><table className="ship-lines">
       <thead><tr><th>Позиция</th><th>Наименование</th><th className="num">Заказано</th><th className="num">Упаковано</th><th className="num">Недобор</th><th>ГРН</th>{canWarehouse && <th aria-label="Возврат" />}</tr></thead>
@@ -616,12 +654,13 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
     </table></div>
     {printError && <div className="error-banner" role="alert">{printError}</div>}
     <div className="ship-actions">
-      {canWarehouse && got && ACTIVE.includes(shipment.status) && <button type="button" className="primary" disabled={disabled || needsUpdFile(shipment)}
-        title={needsUpdFile(shipment) ? "Сначала загрузите файл УПД (без файла отгружают только ЭДО и «Без УПД»)" : undefined} onClick={ship}>Отгрузить</button>}
+      {canWarehouse && got && ACTIVE.includes(shipment.status) && <button type="button" className="primary" disabled={disabled || shipGaps.length > 0}
+        title={shipGaps.length ? `Не хватает: ${shipGaps.join(", ")}` : undefined} onClick={ship}>Отгрузить</button>}
       {canWarehouse && shipment.status === "Отгружена" && <button type="button" className="primary" disabled={disabled} onClick={() => void action("close", `Отгрузка закрыта: ${shipment.number}`)}>Закрыть</button>}
       {canWarehouse && shipment.status === "Новая" && <button type="button" className="secondary" disabled={disabled} onClick={() => void action("pick", "Заявка набрана из доступного остатка")}>Набрать со склада</button>}
-      {shipment.pl_number && got && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" onClick={() => void print("dn")}>Печать DN</button><button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button></>}
+      {shipment.pl_number && got && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" disabled={dnGaps.length > 0} title={dnGaps.length ? `DN печатается, когда внесены данные. Не хватает: ${dnGaps.join(", ")}` : undefined} onClick={() => void print("dn")}>Печать DN</button><button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button></>}
       {canEdit && got && (ACTIVE.includes(shipment.status) || (shipment.pl_number && shipment.status === "Отгружена")) && !layout && <button type="button" className="secondary" disabled={disabled} onClick={() => setLayout(true)}>{shipment.pl_number ? "Перевыпустить" : "Сформировать отгрузочные"}</button>}
+      {canEdit && open && <button type="button" className="secondary" disabled={disabled} onClick={openData}>Данные отправки</button>}
       {canEdit && open && !withoutUpd(shipment) && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}
       <span className="ship-actions-end">
         {canUnship && shipped && rollback === null && <button type="button" className="danger small" disabled={disabled} onClick={() => setRollback("")}>Откатить отгрузку</button>}

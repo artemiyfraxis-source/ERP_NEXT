@@ -33,7 +33,7 @@ from .application import (
 from .documents import build_box_labels, build_delivery_note, build_packing_lists, storekeeper_signature
 from .domain import (
     ADDRESSEE_REQUISITE_FIELDS, DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment,
-    ShippingValidationError, UpdType, total_gross,
+    ShippingValidationError, UpdType, shipping_gaps, total_gross,
 )
 
 
@@ -308,6 +308,10 @@ def _shipment_result(shipment: Shipment) -> dict:
         "manager": shipment.manager, "note": shipment.note, "tk_note": shipment.tk_note,
         "places": len(shipment.boxes), "weight": total_gross(shipment.boxes),
         "inherited": sorted(shipment.inherited),
+        # Чего не хватает: `missing_data` — что вносит менеджер (с этим печатается DN), `missing_ship` — ещё и трек ТК
+        # для «Отгрузить». Один список на сервере (`shipping_gaps`), экраны его только показывают.
+        "missing_data": list(shipping_gaps(shipment, with_track=False)),
+        "missing_ship": list(shipping_gaps(shipment)),
         "boxes": [{
             "place": box.place, "kind": box.kind, "dims": box.dims, "net": box.net, "gross": box.gross,
             "seal": box.seal,

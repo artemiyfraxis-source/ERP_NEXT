@@ -151,9 +151,7 @@ function deliveryNoteHtml(form: DeliveryNoteForm, sheet: number): string {
     `<td class="val spec">${escapeHtml(form.spec)}</td><td class="val strong invoice">${escapeHtml(form.invoice)}</td></tr></table>` +
     `<table class="section delivery"><colgroup><col style="width:24%"><col style="width:28%"><col style="width:22%"><col style="width:26%"></colgroup>` +
     sectionHead(4, "1. ДАННЫЕ О ПОСТАВКЕ ИЗДЕЛИЙ", "DELIVERY DATA") +
-    `<tr><td class="grey lbl">${label("Условия поставки:", "Delivery terms")}</td><td class="terms">${escapeHtml(form.terms)}</td>` +
-    `<td class="grey lbl">${label("Оплачивает:", "Pays for")}</td><td class="pays">${escapeHtml(form.pays)}</td></tr>` +
-    `<tr><td class="grey lbl">${label("Адрес заказчика:", "Customer address")}</td>${wide(form.customer_address, "customer-address")}</tr>` +
+    `<tr><td class="grey lbl">${label("Условия поставки:", "Delivery terms")}</td>${wide(form.terms, "terms")}</tr>` +
     `<tr><td class="grey lbl">${label("Адрес доставки изделий:", "Shipping address")}</td>${wide(form.shipping_address, "shipping-address")}</tr>` +
     `<tr><td class="grey lbl">Время работы:</td>${wide(form.hours, "hours")}</tr>` +
     `<tr><td class="grey lbl">${label("Контактное лицо заказчика:", "Customer contact person")}</td><td class="contact">${escapeHtml(form.contact)}</td>` +

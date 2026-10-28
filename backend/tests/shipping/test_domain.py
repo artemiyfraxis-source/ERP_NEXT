@@ -5,18 +5,24 @@ from uuid import uuid4
 
 import pytest
 
-from app.modules.shipping.domain import DeliveryTerms, FinishedGood, ProjectAssembly, Shipment, ShipmentLine, ShipmentStatus, ShippingValidationError, UpdType, plan_project_queue
+from app.modules.shipping.domain import DeliveryTerms, FinishedGood, ProjectAssembly, Shipment, ShipmentLine, ShipmentStatus, ShippingValidationError, UpdType, plan_project_queue, shipping_gaps
 
 
 def good() -> FinishedGood:
     return FinishedGood.create(project="591К.3", item_index="КБ1", customer="Заказчик", article="A-1", name="Жгут", ordered=Decimal("40"), unit="шт")
 
 
-def shipment(item: FinishedGood, *, terms=DeliveryTerms.PICKUP, upd_type=UpdType.EDO) -> Shipment:
+def shipment(item: FinishedGood, *, terms=DeliveryTerms.PICKUP, upd_type=UpdType.EDO, **own) -> Shipment:
+    """Отправка со всеми данными для отгрузки (кроме трека ТК); `own` переопределяет любое поле создания."""
+    fields = dict(
+        receiver="Получатель", shipping_point="Москва", contact="", phone="+7 900 000-00-00", terms=terms,
+        carrier="СДЭК" if terms == DeliveryTerms.CARRIER else "", upd_number="УПД-1" if upd_type not in (None, UpdType.NONE) else "",
+    )
+    fields.update(own)
     return Shipment.create(
         number="ОТГ-20260922-01", created_at=datetime(2026, 9, 22, 9), customer=item.customer,
-        receiver="Получатель", shipping_point="Москва", contact="", phone="", terms=terms,
-        carrier="", deadline=None, upd_type=upd_type, upd_number="", upd_date=None,
+        **{key: fields[key] for key in ("receiver", "shipping_point", "contact", "phone", "terms", "carrier")},
+        deadline=None, upd_type=upd_type, upd_number=fields["upd_number"], upd_date=None,
         upd_url="", manager="Менеджер", note="", lines=(ShipmentLine.create(item, Decimal("10")),),
     )
 
@@ -33,9 +39,10 @@ def test_partial_pick_keeps_requested_and_picked_separate():
 
 def test_carrier_close_requires_upd_file_number_date_and_track():
     item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
-    picked, _ = shipment(item, terms=DeliveryTerms.CARRIER).pick({item.id: item.remaining}, {item.id: item.grn or ""})
+    picked, _ = shipment(item, terms=DeliveryTerms.CARRIER, upd_type=UpdType.PAPER, upd_number="").pick({item.id: item.remaining}, {item.id: item.grn or ""})
     packed = picked.pack("PL591К.3-1", "DN591К.3-1", date(2026, 9, 22))
-    shipped = packed.mark_shipped(date(2026, 9, 22))
+    # Отправка, уехавшая до этого правила (без данных): закрытие по-прежнему называет, чего не хватает.
+    shipped = replace(packed, status=ShipmentStatus.SHIPPED, shipped_at=date(2026, 9, 22))
 
     with pytest.raises(ShippingValidationError, match="№ УПД, файл УПД, трек-номер"):
         shipped.close()
@@ -286,9 +293,69 @@ def test_shipment_without_terms_and_upd_type_needs_upd_file_to_ship_like_paper()
     item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
     picked, _ = shipment(item, terms=None, upd_type=None).pick({item.id: item.remaining}, {item.id: item.grn or ""})
 
-    # shipGateMiss_: val('edo') !== 'ЭДО' && !updUrl — пустой тип УПД тоже требует файл.
-    with pytest.raises(ShippingValidationError, match="файл УПД"):
+    # Владелец 28.10.2026: без условий доставки и типа УПД отправка не уезжает — оба называются в списке.
+    with pytest.raises(ShippingValidationError, match="условия доставки.*тип УПД"):
         picked.mark_shipped(date(2026, 9, 22))
-    documented = picked.update_documents(upd_type=None, upd_number="7", upd_date=None, upd_url="https://f/u.pdf", track_number="")
-    # Без условий доставки трек для закрытия не нужен (его требует только «ДОСТАВКА ТК»).
+    documented = replace(picked, terms=DeliveryTerms.PICKUP).update_documents(
+        upd_type=UpdType.PAPER, upd_number="7", upd_date=None, upd_url="https://f/u.pdf", track_number="")
+    # Самовывозу трек для закрытия не нужен (его требует только «ДОСТАВКА ТК»).
     assert documented.mark_shipped(date(2026, 9, 22)).close().status == ShipmentStatus.CLOSED
+
+
+# ── Что не хватает для отгрузки (владелец 28.10.2026): один список для «Отгрузить», печати DN и экранов ──────────────
+
+
+def _gaps(**own) -> tuple[str, ...]:
+    item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
+    terms = own.pop("terms", DeliveryTerms.PICKUP)
+    upd_type = own.pop("upd_type", UpdType.EDO)
+    track = own.pop("track", "")
+    url = own.pop("upd_url", "")
+    made = replace(shipment(item, terms=terms, upd_type=upd_type, **own), track_number=track, upd_url=url)
+    return shipping_gaps(made)
+
+
+def test_pickup_needs_terms_receiver_phone_and_upd_but_neither_address_nor_track():
+    assert _gaps() == ()
+    assert _gaps(shipping_point="") == ()
+    assert _gaps(phone="") == ("телефон получателя",)
+    assert _gaps(terms=None) == ("условия доставки",)
+    item = good()
+    assert shipping_gaps(replace(shipment(item), receiver=" ")) == ("получатель",)
+
+
+def test_carrier_delivery_adds_carrier_address_and_track_and_the_track_is_the_storekeepers_part():
+    assert _gaps(terms=DeliveryTerms.CARRIER) == ("трек-номер",)
+    assert _gaps(terms=DeliveryTerms.CARRIER, track="T-1") == ()
+    assert _gaps(terms=DeliveryTerms.CARRIER, carrier="", shipping_point="", track="T-1") == ("перевозчик", "адрес доставки")
+    item = good()
+    # Без трека — то, что вносит менеджер: с этим списком печатается DN.
+    assert shipping_gaps(shipment(item, terms=DeliveryTerms.CARRIER), with_track=False) == ()
+
+
+def test_upd_types_decide_the_number_and_file_gaps():
+    assert _gaps(upd_type=None, upd_number="") == ("тип УПД",)
+    assert _gaps(upd_type=UpdType.EDO, upd_number="") == ("№ УПД",)
+    assert _gaps(upd_type=UpdType.PAPER, upd_number="") == ("№ УПД", "файл УПД")
+    assert _gaps(upd_type=UpdType.PAPER, upd_number="7") == ("файл УПД",)
+    assert _gaps(upd_type=UpdType.PAPER, upd_number="7", upd_url="/api/shipping/files/x") == ()
+    # ЭДО файла не требует; «без УПД» не просит ни номера, ни файла.
+    assert _gaps(upd_type=UpdType.EDO, upd_number="7") == ()
+    assert _gaps(upd_type=UpdType.NONE, upd_number="") == ()
+
+
+def test_shipping_refuses_with_the_whole_list_in_the_gates_words():
+    item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
+    picked, _ = shipment(item, terms=None, upd_type=None, phone="").pick({item.id: item.remaining}, {item.id: item.grn or ""})
+
+    with pytest.raises(ShippingValidationError) as refused:
+        picked.mark_shipped(date(2026, 9, 22))
+    assert str(refused.value) == "Нельзя отгрузить: не хватает — условия доставки, телефон получателя, тип УПД"
+    # Закрытие уже уехавших не пересматривается: оно проверяет своё (№ и файл УПД, трек).
+    gone = replace(picked, status=ShipmentStatus.SHIPPED, shipped_at=date(2026, 9, 22))
+    assert gone.status == ShipmentStatus.SHIPPED
+
+
+def test_a_shipment_may_be_created_without_an_address_for_the_storekeeper_to_pack_first():
+    item = good()
+    assert shipment(item, shipping_point="").shipping_point == ""

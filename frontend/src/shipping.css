@@ -38,3 +38,10 @@
 .ship-way select, .ship-way input { min-height: 36px; box-sizing: border-box; }
 .ship-terms { display: flex; align-items: center; min-height: 36px; font-weight: 600; white-space: nowrap; }
 .ship-more .ship-form { margin-top: 8px; }
+/* «Данные отправки» (владелец 28.10): чип «ждёт данных» со словами сервера и окно с полями менеджера. */
+.ship-gaps { display: inline-flex; gap: 8px; align-items: center; min-width: 0; }
+.ship-gaps-list { max-width: clamp(160px, 22vw, 420px); overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
+.ship-data h2 { margin: 0 0 4px; }
+.ship-data-sub { margin: 0 0 12px; color: var(--muted-foreground); }
+.ship-data .ship-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ship-upd-file { display: flex; gap: 12px; align-items: center; min-height: 36px; font-weight: 400; }

@@ -674,7 +674,9 @@ class Shipment:
             id=id or uuid4(), number=_text(number, "Номер отгрузки"), version=1,
             created_at=created_at, status=ShipmentStatus.NEW,
             customer=str(customer or "").strip(), receiver=_text(receiver, "Получатель"),
-            shipping_point=_text(shipping_point, "Точка отгрузки"),
+            # Адрес может быть пуст: упаковывает кладовщик, адрес и телефон вносит менеджер позже (владелец 28.10.2026);
+            # без него отправка не уедет — `shipping_gaps`.
+            shipping_point=str(shipping_point or "").strip(),
             contact=str(contact or "").strip(), phone=str(phone or "").strip(),
             terms=terms, carrier=str(carrier or "").strip(), deadline=deadline,
             upd_type=upd_type, upd_number=str(upd_number or "").strip(), upd_date=upd_date,
@@ -784,13 +786,14 @@ class Shipment:
 
     def mark_shipped(self, day: date) -> Shipment:
         """`shipShipped_`: груз уехал из любого активного статуса; гейт — `shipGateMiss_('Отгружена')`:
-        набрана хоть одна позиция и, кроме ЭДО и «без УПД», приложен файл УПД."""
+        набрана хоть одна позиция и все данные отправки на месте (`shipping_gaps`)."""
         if self.status not in {ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
             raise ShippingValidationError("Отгрузить можно только активную заявку")
         if not any(line.picked > 0 for line in self.lines):
             raise ShippingValidationError("Нельзя отгрузить: ни одна позиция не набрана")
-        if self.upd_type not in UPD_WITHOUT_FILE and not self.upd_url:
-            raise ShippingValidationError("Нельзя отгрузить: не хватает — файл УПД (без файла — только по ЭДО или «без УПД»)")
+        gaps = shipping_gaps(self)
+        if gaps:
+            raise ShippingValidationError("Нельзя отгрузить: не хватает — " + ", ".join(gaps))
         return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=self.shipped_at or day, version=self.version + 1)
 
     def unship(self) -> Shipment:
@@ -862,6 +865,36 @@ class Shipment:
                 released[line.finished_good_id] = released.get(line.finished_good_id, Decimal("0")) + line.picked
             lines.append(replace(line, picked=Decimal("0"), grn=None))
         return replace(self, status=ShipmentStatus.CANCELLED, lines=tuple(lines), version=self.version + 1), released
+
+
+def shipping_gaps(shipment: Shipment, *, with_track: bool = True) -> tuple[str, ...]:
+    """Чего не хватает отправке, чтобы уехать (владелец 28.10.2026): единый список для «Отгрузить», печати DN и экранов.
+
+    Вносит менеджер (Ульяна): условия доставки, получатель, телефон, для ТК — перевозчик и адрес, УПД (тип, № кроме
+    «без УПД», файл для бумажной). Трек-номер ТК вписывает кладовщик при отгрузке; `with_track=False` — «всё, что должна
+    внести Ульяна», с этим списком печатается DN. Самовывозу адрес и трек не нужны."""
+    gaps: list[str] = []
+    carrier = shipment.terms == DeliveryTerms.CARRIER
+    if shipment.terms is None:
+        gaps.append("условия доставки")
+    if not shipment.receiver.strip():
+        gaps.append("получатель")
+    if not shipment.phone.strip():
+        gaps.append("телефон получателя")
+    if carrier and not shipment.carrier.strip():
+        gaps.append("перевозчик")
+    if carrier and not shipment.shipping_point.strip():
+        gaps.append("адрес доставки")
+    if shipment.upd_type is None:
+        gaps.append("тип УПД")
+    elif shipment.upd_type != UpdType.NONE:
+        if not shipment.upd_number.strip():
+            gaps.append("№ УПД")
+        if shipment.upd_type not in UPD_WITHOUT_FILE and not shipment.upd_url:
+            gaps.append("файл УПД")
+    if carrier and with_track and not shipment.track_number.strip():
+        gaps.append("трек-номер")
+    return tuple(gaps)
 
 
 def _round2(value: Decimal) -> Decimal:

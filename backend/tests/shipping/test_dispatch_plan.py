@@ -41,15 +41,17 @@ def test_without_upd_ships_and_closes_with_neither_file_nor_number():
 
 
 def test_without_upd_by_carrier_still_needs_the_track():
-    shipped = _packed(UpdType.NONE, terms=DeliveryTerms.CARRIER).mark_shipped(DAY)
+    packed = _packed(UpdType.NONE, terms=DeliveryTerms.CARRIER)
 
     with pytest.raises(ShippingValidationError, match="не хватает — трек-номер$"):
-        shipped.close()
+        packed.mark_shipped(DAY)
+    shipped = packed.update_documents(upd_type=UpdType.NONE, upd_number="", upd_date=None, upd_url="", track_number="T-1").mark_shipped(DAY)
+    assert shipped.close().status.value == "Закрыта"
 
 
 def test_paper_and_empty_type_still_need_the_file():
-    for kind in (UpdType.PAPER, None):
-        with pytest.raises(ShippingValidationError, match="файл УПД"):
+    for kind, missing in ((UpdType.PAPER, "файл УПД"), (None, "тип УПД")):
+        with pytest.raises(ShippingValidationError, match=missing):
             _packed(kind).mark_shipped(DAY)
 
 
@@ -73,7 +75,7 @@ def test_without_upd_shipment_closes_at_once_through_the_api(shipping_api):
     client = shipping_api
     stocked = _stocked(client)
     made = client.post("/api/shipping/shipments", json={
-        "receiver": "Получатель", "shipping_point": "Москва", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД",
+        "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД",
         "lines": [{"good_id": stocked["id"], "quantity": "6"}],
     }).json()["shipment"]
     shipped = client.post(f"/api/shipping/shipments/{made['id']}/ship", json={"version": made["version"]})
@@ -87,7 +89,7 @@ def test_without_upd_shipment_closes_at_once_through_the_api(shipping_api):
 def test_card_upd_type_without_upd_is_inherited_by_the_shipment(shipping_api):
     client = shipping_api
     stocked = _stocked(client)
-    card = client.put("/api/shipping/project-addressee", json={"project": PROJECT, "shipping_point": "Москва", "upd_type": "БЕЗ УПД"})
+    card = client.put("/api/shipping/project-addressee", json={"project": PROJECT, "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД"})
     made = client.post("/api/shipping/shipments", json={"lines": [{"good_id": stocked["id"], "quantity": "6"}]}).json()["shipment"]
     shipped = client.post(f"/api/shipping/shipments/{made['id']}/ship", json={"version": made["version"]}).json()
 
