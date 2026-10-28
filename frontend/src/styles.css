@@ -836,6 +836,11 @@ table.ship-lines td:first-child { width: 1%; }
 .ship-form label > span { display: flex; gap: 8px; align-items: baseline; }
 .ship-form input, .ship-form select { padding: 7px 10px; }
 .ship-form input[type="file"] { padding: 5px 8px; font-size: 13px; }
+.ship-upd-scan { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.ship-upd-scan .ship-upd-file { display: inline-flex; gap: 10px; align-items: baseline; font-size: 13px; font-weight: 600; }
+.ship-upd-scan .ship-upd-file a { font-weight: 400; }
+.ship-upd-scan .ship-upd-buttons { display: inline-flex; gap: 8px; }
+.ship-upd-scan .wr-scan-status, .ship-upd-scan .warning-inline { flex-basis: 100%; margin: 0; }
 .ship-inherited { color: var(--muted-foreground); font-size: 11.5px; font-weight: 400; }
 .ship-more > summary { cursor: pointer; padding: 4px 0; color: var(--foreground); font-size: 13px; font-weight: 600; }
 .ship-more > .ship-form { margin-top: 8px; }

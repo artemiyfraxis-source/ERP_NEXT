@@ -70,6 +70,7 @@ from .workflows import finished_goods_api
 from .workflows import production_intake_api
 from .workflows import coax_vswr_api
 from .workflows import receiving_by_upd_api
+from .workflows import shipping_upd_scan_api
 from .workflows import scan_agent_install
 from .modules.purchasing import api_upd as purchasing_upd_api
 
@@ -124,6 +125,7 @@ app.include_router(requests_api.router)
 app.include_router(procurement_api.router)
 app.include_router(procurement_requests_api.router)
 app.include_router(receiving_by_upd_api.router)  # before receiving's /{line_id}/… routes
+app.include_router(shipping_upd_scan_api.router)
 app.include_router(receiving_api.router)
 app.include_router(warehouse_api.router)
 app.include_router(warehouse_labels_api.router)

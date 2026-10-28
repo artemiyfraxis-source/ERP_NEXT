@@ -45,3 +45,30 @@
 .ship-data-sub { margin: 0 0 12px; color: var(--muted-foreground); }
 .ship-data .ship-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .ship-upd-file { display: flex; gap: 12px; align-items: center; min-height: 36px; font-weight: 400; }
+
+/* «Упаковка»: список по проектам (владелец 28.10) — склад проекта развёрнут, полоса готовности данных, отправки в упаковке. */
+.ship-pack-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 10px; }
+.ship-pack-search { width: min(420px, 100%); padding: 7px 10px; }
+.ship-pack-count { color: var(--muted-foreground); font-size: 13px; }
+.ship-pack-tools { display: inline-flex; gap: 8px; margin-left: auto; }
+.ship-customer { margin: 0 0 16px; }
+.ship-customer-name { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted-foreground); text-transform: none; }
+.ship-project { border: 1px solid var(--border); border-radius: 10px; background: var(--card); padding: 8px 12px 10px; margin: 0 0 8px; }
+.ship-project-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0 0 6px; }
+.ship-project-head h3 { margin: 0; font-size: 15px; }
+.ship-project-head > .small { margin-left: auto; }
+.ship-ready { display: inline-flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.ship-ready .ship-ready-gap { font-weight: 400; }
+table.ship-lines.ship-lines-compact { width: max-content; min-width: 0; max-width: 100%; }
+table.ship-lines.ship-lines-compact td.ship-name { width: auto; min-width: 260px; }
+.ship-lines-compact th, .ship-lines-compact td { padding: 3px 14px 3px 0; }
+.ship-lines-compact th.num, .ship-lines-compact td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ship-panel .ship-actions { margin: 8px 0 0; }
+.ship-deadline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted-foreground); }
+.ship-narrow { width: 150px; }
+.ship-packing { margin: 10px 0 0; }
+.ship-packing h4 { margin: 0 0 4px; font-size: 13px; color: var(--muted-foreground); font-weight: 600; }
+.ship-packing-item { border-top: 1px solid var(--border); padding: 4px 0; }
+.ship-packing-item > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 13px; }
+.ship-packing-item[open] > summary { margin-bottom: 6px; }
+.ship-panel > table.ship-lines-compact { justify-self: start; }
