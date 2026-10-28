@@ -362,12 +362,12 @@ def test_receiving_edit_without_the_scan_right_is_refused_the_scan_routes_only(s
     client, _ = stand
     _as("edit", scan="")
     scan_routes = [("POST", "/api/receiving/upd/scan-jobs"), ("GET", f"/api/receiving/upd/scan-jobs/{uuid4()}"),
-                   ("DELETE", f"/api/receiving/upd/scan-jobs/{uuid4()}"), ("POST", "/api/receiving/upd/scan"),
-                   ("POST", "/api/receiving/upd/scan-merge")]
+                   ("DELETE", f"/api/receiving/upd/scan-jobs/{uuid4()}")]
     for method, path in scan_routes:
         response = client.request(method, path, json={})
         assert response.status_code == 403 and "Сканирование" in response.text, (method, path)
-    assert client.post("/api/receiving/upd/proposal", json={}).status_code != 403, "the matching stays receiving's"
+    for path in ("/api/receiving/upd/scan", "/api/receiving/upd/scan-merge", "/api/receiving/upd/proposal"):
+        assert client.post(path, json={}).status_code != 403, f"{path}: «Файл…», the merge and the matching stay receiving's"
 
 
 def test_proposal_and_acceptance_of_a_upd_over_two_orders_keep_the_scan_and_reach_the_registry(stand):  # noqa: F811

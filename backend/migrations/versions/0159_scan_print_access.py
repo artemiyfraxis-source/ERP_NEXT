@@ -3,8 +3,8 @@
 своим устройством. Также печать отдельных документов доступна ограниченному количеству операторов (по должности)»).
 
 - Матрица «Доступы» (`identity_level_access`) получает две новые клетки, никто ничего не теряет:
-  `scan` = edit — каждому уровню, у которого сегодня «Склад» или «Приёмка» на правке (сканировал УПД именно он: кнопки
-  «Склад → Поставка» и «Приёмка → Принять по УПД» стояли за правкой этих разделов); `print` = edit — каждому уровню, у которого записана хоть одна клетка. Только недостающие клетки
+  `scan` = edit — каждому уровню, у которого сегодня «Склад», «Приёмка» или «Отгрузка» на правке (сканировал УПД именно
+  он: кнопки «Склад → Поставка», «Приёмка → Принять по УПД» и УПД отправки (#747) стояли за правкой этих разделов); `print` = edit — каждому уровню, у которого записана хоть одна клетка. Только недостающие клетки
   (`ON CONFLICT DO NOTHING`): уже записанная не трогается, повторный запуск ничего не меняет. Личные исключения не
   добавляются; печатается, у скольких людей правка склада была только личным исключением (им «Сканирование» выдают
   в «Доступах», если нужно). Дальше владелец сужает оба права в «Доступах».
@@ -50,7 +50,7 @@ def upgrade() -> None:
     connection.execute(sa.text("""
         INSERT INTO identity_level_access (level, section, mode)
         SELECT DISTINCT level, :scan, :edit FROM identity_level_access
-        WHERE section IN ('warehouse', 'receiving') AND mode = :edit
+        WHERE section IN ('warehouse', 'receiving', 'shipping') AND mode = :edit
         ON CONFLICT (level, section) DO NOTHING
     """).bindparams(scan=SCAN, edit=EDIT))
     connection.execute(sa.text("""
@@ -63,7 +63,7 @@ def upgrade() -> None:
     # before, the level cell does not give it to them now (no exceptions are added — the owner grants it in «Доступы»).
     personal = _scalar(connection, """
         SELECT COUNT(DISTINCT u.id) FROM identity_user_level_access a JOIN identity_users u ON u.id = a.user_id
-        WHERE a.section IN ('warehouse', 'receiving') AND a.mode = 'edit' AND u.active = :active
+        WHERE a.section IN ('warehouse', 'receiving', 'shipping') AND a.mode = 'edit' AND u.active = :active
           AND u.access_level NOT IN ('superadmin', 'admin')
           AND NOT EXISTS (SELECT 1 FROM identity_level_access l
                           WHERE l.level = u.access_level AND l.section = :scan AND l.mode = :edit)

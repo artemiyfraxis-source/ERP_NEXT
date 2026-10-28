@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShipmentDataPage, dataGaps, dataRows, sentNote } from "./ShipmentDataPage";
 
-vi.mock("./ScanAgent", () => ({ useScanAgent: (start: (id?: string) => Promise<unknown>) => ({ begin: async () => start(), dialogs: () => null }) }));
+vi.mock("./ScanAgent", () => ({ useScanAgent: (start: (id?: string) => Promise<unknown>) => ({ begin: async () => start(), dialogs: () => null }), ScanDeviceLine: () => null }));
 
 const principal = {
   user: { id: "u2", email: "ladutko@example.test", name: "Ульяна Ладутько", department: "Продажи" },

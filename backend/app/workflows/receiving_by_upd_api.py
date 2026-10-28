@@ -74,7 +74,8 @@ def _factory(request: Request, name: str) -> Callable | None:
     return factory if callable(factory) else None
 
 
-# «Сканирование документов» (owner 28.10.2026): the scan routes take it on top of the receiving edit right.
+# «Сканирование документов» (owner 28.10.2026): the scanner job routes take it on top of the receiving edit right;
+# «Файл…» and the page merge stay under the receiving right alone (a file is no scanning).
 Scans = [Depends(scan_jobs_api.scan_edit_principal)]
 
 
@@ -95,13 +96,13 @@ def cancel_scan_job(job_id: UUID, principal: Editor, now: Now, uow_factory: Ware
     return scan_jobs_api.cancel_scan_job(job_id, principal, now, uow_factory)
 
 
-@router.post("/scan", dependencies=Scans)
+@router.post("/scan")
 async def scan_document(request: Request, background: BackgroundTasks, principal: Editor, now: Now,
                         uow_factory: WarehouseFactory) -> dict:
     return await scan_jobs_api.scan_receipt_document(request, background, principal, now, uow_factory)
 
 
-@router.post("/scan-merge", dependencies=Scans)
+@router.post("/scan-merge")
 async def merge_scans(payload: scan_jobs_api.ScanMergeInput, request: Request, background: BackgroundTasks,
                       principal: Editor, now: Now, uow_factory: WarehouseFactory) -> dict:
     return await scan_jobs_api.merge_receipt_scans(payload, request, background, principal, now, uow_factory)

@@ -581,6 +581,7 @@ LEVEL_SEED: dict[str, dict[str, AccessMode]] = {
         "warehouse": AccessMode.VIEW,
         "shipping": AccessMode.EDIT,
         "shipping_goods": AccessMode.VIEW,
+        "scan": AccessMode.EDIT,  # УПД отправки сканом (#747)
     },
     # owner 14.10.2026 (Алексей): receiving, stock, picking, handout and the shipping warehouse actions are his.
     "storekeeper": {

@@ -3916,8 +3916,8 @@ export const shippingApi = {
   updScan: (shipmentId: string) => {
     const base = `/api/shipping/shipments/${encodeURIComponent(shipmentId)}/upd-scan`;
     return {
-      startScanJob: (agentId?: string) =>
-        api<WarehouseScanStart>(`${base}/jobs`, { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "" }) }),
+      startScanJob: (agentId?: string, targetScanner?: string) =>
+        api<WarehouseScanStart>(`${base}/jobs`, { method: "POST", body: JSON.stringify({ agent_id: agentId ?? "", ...(targetScanner ? { target_scanner: targetScanner } : {}) }) }),
       scanJob: (id: string) => api<WarehouseScanJob>(`${base}/jobs/${encodeURIComponent(id)}`),
       cancelScanJob: (id: string) => api<WarehouseScanJob>(`${base}/jobs/${encodeURIComponent(id)}`, { method: "DELETE" }),
       scanFile: (file: File) => {

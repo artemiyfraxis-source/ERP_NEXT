@@ -54,7 +54,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, require_section
+from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, require_section, warehouse_edit_principal
 from app.workflows.edo_receipt import EdoRejected, file_kind, is_edo_upload, read_delivery
 
 from . import scan_agents
@@ -199,7 +199,7 @@ def cancel_scan_job(
 async def scan_receipt_document(
     request: Request,
     background: BackgroundTasks,
-    principal: ScanPerson,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],  # «Файл…» is no scanning: the section's right
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:
@@ -252,7 +252,7 @@ async def merge_receipt_scans(
     payload: ScanMergeInput,
     request: Request,
     background: BackgroundTasks,
-    principal: ScanPerson,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],  # pages of a scan or of files
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
 ) -> dict:

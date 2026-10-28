@@ -278,11 +278,14 @@ def test_the_storekeeper_scans_a_level_without_the_scan_right_is_refused(stand, 
 
     foreman = person("foreman", {**LEVEL_SEED["foreman"], "warehouse": AccessMode.EDIT})
     for method, path in (("POST", JOBS), ("GET", f"{JOBS}/{'0' * 32}"), ("DELETE", f"{JOBS}/{'0' * 32}"),
-                         ("POST", "/api/stock/receipts/scan"), ("POST", "/api/stock/receipts/scan-merge"),
                          ("GET", "/api/stock/scan/agents"), ("POST", "/api/stock/scan/agent/install-token")):
         response = foreman.request(method, path, json={})
         assert response.status_code == 403, (method, path, response.text)
         assert "Сканирование документов" in response.json()["detail"]
+    # «Файл…» and the page merge are no scanning: the warehouse right alone lets them through (the request is then
+    # refused for its body, not for the right).
+    for path in ("/api/stock/receipts/scan", "/api/stock/receipts/scan-merge"):
+        assert foreman.post(path, json={}).status_code != 403, path
     scan_only = person("operator", {"scan": AccessMode.EDIT})
     assert scan_only.post(JOBS, json={"agent_id": "m-1"}).status_code == 200, "the section alone opens it"
     assert person("operator", {"scan": AccessMode.VIEW}).post(JOBS, json={}).status_code == 403, "view is not enough"

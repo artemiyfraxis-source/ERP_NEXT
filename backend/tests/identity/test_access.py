@@ -152,7 +152,7 @@ def test_only_superadmin_and_admin_open_access(access_api):
     assert body["seed"]["pm"] == body["matrix"]["pm"] == {
         "newrequest": "edit", "myrequests": "edit", "requests": "edit", "projects": "edit", "shipping": "edit",
         "techcards": "view", "production": "view", "erpref": "view", "procurement": "view", "warehouse": "view",
-        "shipping_goods": "view", "print": "edit",
+        "shipping_goods": "view", "scan": "edit", "print": "edit",
     }
     assert body["seed"]["storekeeper"] == body["matrix"]["storekeeper"] == {
         "newrequest": "edit", "myrequests": "edit", "receiving": "edit", "warehouse": "edit", "fulfillment": "edit",

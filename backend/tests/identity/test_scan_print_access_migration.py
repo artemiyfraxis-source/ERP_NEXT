@@ -53,6 +53,7 @@ def database(tmp_path, monkeypatch):
             ("operator", "warehouse", "view"),
             ("pm", "projects", "edit"), ("pm", "scan", "view"),  # a cell already stored stays as stored
             ("commercial", "print", "view"),
+            ("tech_lead", "shipping", "edit"),  # the shipment УПД scan (#747) sat behind shipping edit
         ])
         user = uuid4().hex
         connection.execute(
@@ -68,7 +69,7 @@ def test_upgrade_adds_scan_and_print_without_taking_anything_and_downgrade_remov
     before = _matrix(database)
     command.upgrade(_config(database), AFTER)
     out = capsys.readouterr().out
-    assert "добавлено клеток scan 2, print 4" in out
+    assert "добавлено клеток scan 3, print 5" in out
     assert "только личным исключением (scan не получили): 1" in out, "Иван scanned by his exception: reported"
 
     after = _matrix(database)
@@ -77,6 +78,7 @@ def test_upgrade_adds_scan_and_print_without_taking_anything_and_downgrade_remov
     assert after["operator"] == {**before["operator"], "print": "edit"}, "warehouse view never scanned"
     assert after["pm"] == {"projects": "edit", "scan": "view", "print": "edit"}
     assert after["commercial"] == {"print": "view"}, "a stored cell is not touched"
+    assert after["tech_lead"] == {"shipping": "edit", "scan": "edit", "print": "edit"}, "shipping edit scanned too"
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT section, mode FROM identity_user_level_access").fetchall() == [
             ("warehouse", "edit")], "no personal exception is added"
