@@ -9,6 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.modules.identity.approval_pin import approval_pin_set_at
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal, require_section
 
@@ -90,4 +91,9 @@ def card_of(
     request: Request,
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    return _card(user_id, request, now)
+    card = _card(user_id, request, now)
+    # «Разрешительный ПИН» для администратора: задан ли и с какого дня (сам ПИН не хранится и не отдаётся). Чужая карточка
+    # открыта только полному доступу, поэтому поля есть только у него; в своей карточке их нет — там ПИН задаёт сам человек.
+    identity = _factory(request, "identity_uow_factory")
+    set_at = approval_pin_set_at(user_id, identity()) if identity is not None else None
+    return {**card, "approval_pin_set": set_at is not None, "approval_pin_set_at": set_at.isoformat() if set_at else None}

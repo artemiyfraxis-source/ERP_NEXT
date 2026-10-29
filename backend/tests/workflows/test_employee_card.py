@@ -662,7 +662,9 @@ def test_anothers_card_opens_for_superadmin_and_admin_only(erp, api):
 
     response = api("admin").get(f"/api/employee-card/{FITTER}")
     assert response.status_code == 200, response.text
-    assert response.json() == card(erp, FITTER)
+    body = response.json()
+    assert body.pop("approval_pin_set") is False and body.pop("approval_pin_set_at") is None
+    assert body == card(erp, FITTER)
     assert api("viewer").get(f"/api/employee-card/{FITTER}").status_code == 403
 
 
@@ -684,3 +686,19 @@ def test_api_skips_a_module_that_is_not_configured(erp, api):
 
     assert body["projects"] == [] and body["hours_this_month"]["hours"] is None
     assert body["requests"]["count"] == 0
+
+
+def test_anothers_card_tells_the_admin_whether_the_approval_pin_is_set(erp, api):
+    admin = api("admin")
+    assert admin.get(f"/api/employee-card/{FITTER}").json()["approval_pin_set"] is False
+
+    with erp.identity() as uow:
+        uow.identity.set_approval_pin(FITTER, "hash-not-a-pin", NOW)
+        uow.commit()
+
+    body = admin.get(f"/api/employee-card/{FITTER}").json()
+    assert body["approval_pin_set"] is True and body["approval_pin_set_at"].startswith("2026-10-14T12:00")
+    assert "hash-not-a-pin" not in str(body)
+    own = api("fitter").get("/api/employee-card/me").json()  # своя карточка и чужие без полномочий — без этих полей
+    assert "approval_pin_set" not in own
+    assert api("viewer").get(f"/api/employee-card/{FITTER}").status_code == 403

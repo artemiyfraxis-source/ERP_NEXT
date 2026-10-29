@@ -4419,6 +4419,9 @@ export type EmployeeCard = {
   requests: { count: number | null; items: EmployeeCardRequest[] };
   /** Открытые задачи арбитра в разделах, которые человек правит: всего и первые 10, старые сверху. */
   tasks: { count: number | null; items: EmployeeCardTask[] };
+  /** Только в чужой карточке (её открывает полный доступ): задан ли разрешительный ПИН и с какого дня; сам ПИН не отдаётся. */
+  approval_pin_set?: boolean;
+  approval_pin_set_at?: string | null;
 };
 
 export const employeeCardApi = {

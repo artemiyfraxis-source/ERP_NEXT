@@ -18,7 +18,7 @@ import { EmployeeSkills } from "./EmployeeSkills";
 import { StatusChip } from "./StatusChip";
 import { WorkTime } from "./WorkTime";
 import { ViewAsPicker } from "./ViewAs";
-import { ApprovalPin, ChangePassword } from "./ProfilePanel";
+import { ApprovalPin, ApprovalPinAdmin, ChangePassword } from "./ProfilePanel";
 
 /** «Личная карточка» сотрудника (концепт владельца, 04.10): одна страница про человека из данных всех модулей, только
  *  чтение. Вкладка «Обзор» — карточки в порядке концепта: Основные данные · Подчинённость · Проекты · Отпуска · Рабочее
@@ -247,6 +247,11 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
 
       {own && !principal.viewing && <Card title="Вход и пароль"><ChangePassword /></Card>}
       {own && !principal.viewing && <Card title="Разрешительный ПИН"><ApprovalPin /></Card>}
+      {!own && hasFullAccess(principal) && userId && card.approval_pin_set !== undefined
+        && <Card title="Разрешительный ПИН">
+          <ApprovalPinAdmin userId={userId} name={card.header.name} isSet={card.approval_pin_set} setAt={card.approval_pin_set_at ?? null}
+            onReset={() => setCard((current) => current && { ...current, approval_pin_set: false, approval_pin_set_at: null })} />
+        </Card>}
     </div>}
   </section>;
 }

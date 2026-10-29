@@ -339,3 +339,44 @@ it("opens the new tabs by ?tab= and shows the unread-documents counter on «До
   expect(screen.getByRole("region", { name: "Допуски к операциям" })).toHaveTextContent("Резка провода");
   window.history.pushState({}, "", "/");
 });
+
+const OTHER_CARD: EmployeeCard = { ...FULL, header: { ...FULL.header, id: OTHER, name: "Сидоров Олег" } };
+
+it("admin sees the approval PIN status on another card and resets it; the card refreshes", async () => {
+  const seen: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    seen.push(`${init?.method ?? "GET"} ${path}`);
+    if (path.startsWith("/api/employee-card/")) return json({ ...OTHER_CARD, approval_pin_set: true, approval_pin_set_at: "2026-10-20T09:00:00+00:00" });
+    if (path === `/api/auth/staff/${OTHER}/approval-pin`) return json({ reset: true, set: false, set_at: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<EmployeeCardPage principal={principal({}, "admin")} userId={OTHER} />);
+
+  const block = await screen.findByRole("region", { name: "Разрешительный ПИН" });
+  expect(within(block).getByText("Задан")).toBeInTheDocument();
+  expect(block).toHaveTextContent("с 20.10.2026");
+  fireEvent.click(within(block).getByRole("button", { name: "Сбросить" }));
+
+  expect(await within(block).findByText(/Не задан — задаёт сам сотрудник/)).toBeInTheDocument();
+  expect(within(block).queryByRole("button", { name: "Сбросить" })).toBeNull();
+  expect(seen).toContain(`DELETE /api/auth/staff/${OTHER}/approval-pin`);
+});
+
+it("admin sees «Не задан» without a reset button when the person has no approval PIN", async () => {
+  serve({ ...OTHER_CARD, approval_pin_set: false, approval_pin_set_at: null });
+  render(<EmployeeCardPage principal={principal({}, "admin")} userId={OTHER} />);
+
+  const block = await screen.findByRole("region", { name: "Разрешительный ПИН" });
+  expect(block).toHaveTextContent("Не задан — задаёт сам сотрудник в своей карточке");
+  expect(within(block).queryByRole("button")).toBeNull();
+});
+
+it("a non-admin sees no approval PIN block on another card", async () => {
+  serve({ ...OTHER_CARD, approval_pin_set: true, approval_pin_set_at: "2026-10-20T09:00:00+00:00" });
+  render(<EmployeeCardPage principal={principal({ staffdir: "view" } as Principal["permissions"])} userId={OTHER} />);
+
+  expect(await screen.findByRole("heading", { level: 1, name: "Сидоров Олег" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Разрешительный ПИН" })).toBeNull();
+});
