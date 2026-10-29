@@ -5,11 +5,16 @@ import type { TechOperationRecord } from "./api";
 
 export const CRIMP_TOOL_TYPE = "Обжимной инструмент";
 export const MATRIX_TYPE = "Матрицы";
-// «Аппликаторы» (owner 29.10.2026): БД.ТЕР «Аппликатор» codes A1…A20 — S is a hand tool, M a matrix, A an applicator.
+// «Аппликаторы» (owner 29.10.2026): every БД.ТЕР «Аппликатор» code is an applicator of one of three kinds —
+// M: ОТП format, pre-stripped wires only; A: for automatic machines; S: crimps unstripped wires.
 export const APPLICATOR_TYPE = "Аппликаторы";
 export const CRIMP_TYPES = [CRIMP_TOOL_TYPE, MATRIX_TYPE, APPLICATOR_TYPE];
 /** The record type a crimp code of БД.ТЕР belongs to: «A8» → applicator, «M10» → matrix, «S10» → hand tool. */
-export const crimpTypeOfCode = (code: string) => /^A/i.test(code) ? APPLICATOR_TYPE : /^M/i.test(code) ? MATRIX_TYPE : CRIMP_TOOL_TYPE;
+export const crimpTypeOfCode = (_code: string) => APPLICATOR_TYPE;
+const APPLICATOR_KINDS: Record<string, string> = { M: "ОТП", A: "Автомат", S: "С зачисткой" };
+/** The applicator kind by the code's letter, as in the old terminal sheet («Пневма Автомат» / «ОТР» / «С зачисткой»): «M10» → «ОТП»; no code — empty. */
+export const applicatorKindOf = (code: string) => APPLICATOR_KINDS[code.trim().charAt(0).toUpperCase()] ?? "";
+export const codeOf = (model: EquipmentModel) => model.items.map((item) => pick(item.fields, CODE_KEY)).find(Boolean) ?? "";
 export const NAME_KEYS = ["Наменование", "Наименование", "Полное наименование ", "Полное наименование"];
 export const CODE_KEY = "Код в базе терминалов";
 export const TOOL_KEY = "Для инструмента";
