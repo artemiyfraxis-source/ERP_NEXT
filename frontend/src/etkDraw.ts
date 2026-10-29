@@ -644,7 +644,8 @@ function roofCaption(hs: EtkHousing): string {
     const wings = hs.body?.wings ? ", плечи крепления в панель по торцам" : "";
     return `, ${what} сверху${wings}${mark}`;
   }
-  if (roof?.kind === "slots") return `${roof.at === "keys" ? ", кнопки поляризации сверху" : ", окна фиксаторов сверху"}${mark}`;
+  // JST PH/EH/ZH, Connfly DS1066: торец рисует окна фиксаторов на нижней грани (connectorArt bodyFace) — подпись та же.
+  if (roof?.kind === "slots") return `${roof.at === "keys" ? ", кнопки поляризации сверху" : hs.latch === "windows" ? ", окна фиксаторов снизу" : ", окна фиксаторов сверху"}${mark}`;
   return mark || (hs.latch === "windows" ? ", окна фиксаторов снизу" : "");
 }
 

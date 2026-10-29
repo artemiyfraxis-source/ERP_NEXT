@@ -36,7 +36,7 @@ CASES = [
     ("2145260600", "molex-microlock-125-s", [[1, 2, 3, 4, 5, 6]], "ramp", "high", "2145260000-SD"),
     ("510650600", "molex-microlatch", [[1, 2, 3, 4, 5, 6]], "ramp", "high", "510650000-SD"),
     ("502351-0600", "molex-microlatch-502351", [[1, 2, 3, 4, 5, 6]], "ramp", "high", "SD-502351-001"),
-    ("50-37-5043", "molex-minispox", [[1, 2, 3, 4]], "windows", "high", "5264-N"),
+    ("50-37-5043", "molex-minispox", [[4, 3, 2, 1]], "none", "high", "5264-N"),  # windows up (29.10.2026)
     ("87439-0400", "molex-picospox", [[1, 2, 3, 4]], "ramp", "high", "874390000-SD"),
     ("2127242040", "molex-microone", [[1, 2, 3, 4]], "lever", "high", "2127240000-SD"),
     ("2140922040", "molex-oneblade", [[1, 2, 3, 4]], "ramp", "high", "2140920000-SD"),
@@ -63,6 +63,7 @@ CASES = [
     ("DF19G-8S-1C(06)", "hirose-df19", ROW8, "mark", "high", "Single Row Socket (Cable Type)"),
     # Сверка 16.10.2026 — drawings read from jst-mfg.com, connfly.com and the copies of the Molex / Hirose documents.
     ("51047-0400", "molex-picoblade-plug", [[1, 2, 3, 4]], "mark", "high", "510470000-SD"),
+    ("51021-0400", "molex-picoblade", [[1, 2, 3, 4]], "none", "high", "510210000-SD"),  # lance windows up (29.10.2026)
     ("43645-0400", "molex-microfit-1r", [[4, 3, 2, 1]], "lever", "high", "436450000-SD"),
     ("43020-0800", "molex-microfit-plug", [[5, 6, 7, 8], [1, 2, 3, 4]], "lever", "high", "MX01 F-126"),
     ("43640-0300", "molex-microfit-plug-1r", [[1, 2, 3]], "lever", "high", "SD-43640-001"),
@@ -163,6 +164,34 @@ def test_df1b_double_row_in_line_socket_and_plug_mirror_with_the_lock_on_one_sid
     des = housing_of("DF1B-10DES-2.5RC")["grid"]
     des_hook_up = [list(reversed(row)) for row in reversed(des)]
     assert _mirror(des_hook_up) == housing_of("DF1B-10DEP-2.5RC")["grid"]
+
+
+@pytest.mark.parametrize("article", ["51021-0200", "51021-0400", "51021-1500"])
+def test_picoblade_51021_contact_1_is_left_with_the_lance_windows_up(article):
+    """Molex 510210000-SD rev. B, sheet 1 (third angle): the wire-end view has the CIRCUIT 1 INDICATOR MARK at the right
+    with the front face — a housing-lance window over every contact — at its bottom edge. Every picture draws those
+    windows on the roof, so from the wire side contact 1 is on the LEFT (owner 29.10.2026: «тут ошибка в нумерации» —
+    the card had 1 on the right under a top view with the windows up)."""
+    layout = housing_of(article)
+    n = layout["n"]
+    assert layout["grid"] == [list(range(1, n + 1))]
+    assert layout["roof"] == {"kind": "slots", "at": "contacts", "src": layout["roof"]["src"]}
+    assert "510210000-SD" in layout["roof"]["src"] and "510210000-SD" in layout["src"]
+    assert layout["latch"] != "windows"  # «windows» draws them on the bottom face of the end view — not this housing
+    assert "вверх — контакт 1 слева" in layout["note"]
+
+
+def test_picoblade_51021_and_51047_mirror_with_the_lock_faces_together():
+    # 51021 lance windows up = its locking face down; turned locking face up (180° about the wire axis) it meets the
+    # 51047 plug, drawn with its locking windows up, and the pair reads in opposite directions from the two wire sides.
+    receptacle_lock_up = _mirror(housing_of("51021-0400")["grid"])
+    assert receptacle_lock_up == _mirror(housing_of("51047-0400")["grid"]) == [[4, 3, 2, 1]]
+
+
+def test_minispox_contact_1_is_right_with_the_lance_windows_up():
+    # MX01 B-102: wire-end view, CIRCUIT 1 at the left, the lance-window face at its bottom -> windows up, 1 right.
+    layout = housing_of("50-37-5043")
+    assert layout["roof"]["kind"] == "slots" and layout["grid"] == [[4, 3, 2, 1]]
 
 
 def test_df1ba_simple_lock_plugs_are_split_from_the_full_lock_plugs():

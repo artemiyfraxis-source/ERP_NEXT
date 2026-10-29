@@ -135,12 +135,16 @@ FAMILIES: tuple[dict[str, Any], ...] = (
          src="JST eSM, Housing", model="arms",
          body={"extra": 3.0, "h": 7.4, "len": 11.7, "win": (1.1, 1.1), "lock_w": 3.0, "lock_h": 0.6, "lock_len": 1.3,
                "nose_h": 5.2, "front_len": 1.4, "wings": {"out": 3.2, "w": 4.0, "root": 4.3, "tip": 1.1}, "geom": "drawing", "geom_url": "https://www.jst-mfg.com/product/pdf/eng/eSM.pdf"}),
-    # PicoBlade 51021 — Molex 510210000-SD (third angle): the top view is the wire end, with the face of the contact
-    # windows (front view) at the bottom, the friction-lock bumps on the opposite face and CIRCUIT 1 (moulded «1» mark)
-    # on the right; the bottom view has CIRCUIT 1 on the right too. From the wire side, windows down: contact 1 on the
-    # RIGHT (as before). Flange A = B + 3.0 (B = (n−1)·1.25), 3.2 thick, 3.95 long; `win` is a sketch size.
-    {"id": "molex-picoblade", "title": "Molex PicoBlade", "pattern": r"^51021-?0?(\d{1,2})00$", "pitch": 1.25, "rows": 1, "order": "row", "start": "TR", "latch": "windows", "color": IVORY, "conf": "high",
-     "src": "Molex 510210000-SD", "note": "по чертежу Molex 510210000-SD: на торце проводов метка «1» у контакта 1; окнами вниз (выступы защёлки вверх) — контакт 1 справа",
+    # PicoBlade 51021 — Molex 510210000-SD rev. B (2022, third angle; Web Archive copy of molex.com/pdm_docs/sd/
+    # 510210400_sd.pdf, read 29.10.2026; the 1995 SD-51021 says the same). The view above the front view is the wire end
+    # (3.2 thick, flange A = B + 3.0) with the «CIRCUIT 1 INDICATOR MARK» at its RIGHT; the front view's face — its
+    # bottom edge in that view — carries the housing-lance window of every contact (the ramps on top of the 3D picture,
+    # the stepped left edge of the side view); the back face has the locking window(s) (note 4). So from the wire side
+    # with the lance windows DOWN contact 1 is on the right — and with them UP, as every picture draws the roof (the
+    # windows are the roof feature, ROOF_EXPLICIT), contact 1 is on the LEFT. Was TR with the windows drawn on top in the
+    # top view and below on the face: the face read mirrored against the top view (owner, 29.10.2026).
+    {"id": "molex-picoblade", "title": "Molex PicoBlade", "pattern": r"^51021-?0?(\d{1,2})00$", "pitch": 1.25, "rows": 1, "order": "row", "start": "TL", "latch": "none", "color": IVORY, "conf": "high",
+     "src": "Molex 510210000-SD", "note": "по чертежу Molex 510210000-SD: на торце проводов метка «1» у контакта 1; окнами фиксаторов вверх — контакт 1 слева",
      "body": {"extra": 3.0, "h": 3.2, "len": 3.95, "win": (0.9, 1.4)}},
     # PicoBlade 51047 (wire-to-wire plug housing) — Molex 510470000-SD rev. B (third angle; static.chipdip.ru copy, read
     # 16.10.2026): the top view (mating shroud with the pins) and the bottom view (wire end) both have CIRCUIT 1 at the
@@ -199,9 +203,11 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # (wire end up) shows the face with the contact-lance windows and «Pin1» at its LEFT — exactly as JST ePH. From the
     # wire side, windows down: contact 1 on the LEFT. Was TR with no face cue.
     {"id": "connfly-ds1066", "title": "Connfly DS1066 (шаг 2,0)", "pattern": r"^I-DS1066-SC[BWE]0*(\d+)", "pitch": 2.0, "rows": 1, "order": "row", "start": "TL", "latch": "windows", "color": IVORY, "erp_only": True, "conf": "high",
-     "src": "Connfly C-DS1066, Female Housing", "color_by": ((r"-SCB", BLACK),),
+     "src": "Connfly C-DS1066, Female Housing", "color_by": ((r"-SCB", BLACK),), "model": "slots",
      "note": "по чертежу Connfly DS1066: Pin1 слева на грани с окнами фиксаторов (как JST PH); окнами вниз — контакт 1 слева",
-     # DS1066 is the 2.0 mm PH-type housing (the C-DS1066 sheet draws the same front view as JST ePH): wire end as the PH photo.
+     # DS1066 is the 2.0 mm PH-type housing (the C-DS1066 sheet draws the same front view as JST ePH): wire end as the PH photo,
+     # and the PH model (29.10.2026): the top view and the 3D look at the windows face from below, as the face draws it
+     # — without the model they drew the windows on top while the face kept them below (mirrored views).
      "body": {"extra": 3.8, "h": 4.5, "len": 6.35, "win": (1.1, 2.3), "win_y": 2.7, "geom": "equivalent", "geom_url": "https://www.lcsc.com/product-detail/C493120.html", "geom_of": "jst-ph"}},
     # Amass XT / QS8: the Amass product specifications (XT60, XT60H 2021V1) show the faces without numbers or «+»/«−»,
     # so the contacts stay unlabelled and unchecked.
@@ -345,6 +351,11 @@ ROOF_EXPLICIT: dict[str, dict[str, str]] = {
     # (R) the lock lever on that face.
     "jst-jwpf": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eJWPF") + " (с. 2, Tab housing: окно замка)"},
     "jst-jwpf-r": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eJWPF") + " (с. 2, Receptacle housing: рычаг замка)"},
+    # PicoBlade 51021 — Molex 510210000-SD, sheet 1: a housing-lance window over every contact on the front face (the
+    # face drawn up in every picture; contact 1 on the left from the wire side, see FAMILIES).
+    "molex-picoblade": {"kind": "slots", "at": "contacts", "src": "Molex 510210000-SD, л. 1: окно фиксатора (housing lance) над каждым контактом"},
+    # Mini-SPOX 5264 — Molex MX01 B-102: the face under the wire-end view carries a lance window over every contact.
+    "molex-minispox": {"kind": "slots", "at": "contacts", "src": "Molex 5264-N, каталог MX01 B-102: окно фиксатора над каждым контактом"},
     # PicoBlade 51047 — Molex 510470000-SD note 4: a locking window in the shroud, one for 2–3 circuits, two from 4 on.
     "molex-picoblade-plug": {"kind": "latch", "at": "center", "pair_from": 4,
                              "src": "Molex 510470000-SD, л. 1, прим. 4 «LOCKING WINDOW» (2–3 конт. — одно, от 4 — два)"},
