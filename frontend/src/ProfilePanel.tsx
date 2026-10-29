@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { failureText, identityApi, type ApprovalPinState } from "./api";
+import { failureText, identityApi, staffApi, type ApprovalPinState } from "./api";
 import { formatDate } from "./format";
 
 /** Подвал меню: «Моя карточка». Смена пароля переехала в саму карточку (владелец 14.10) — `ChangePassword`. */
@@ -144,5 +144,36 @@ export function ApprovalPin() {
     </form>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+  </div>;
+}
+
+/** Разрешительный ПИН в ЧУЖОЙ карточке (владелец 29.10): администратор видит, задан ли он и с какого дня, и может сбросить —
+ *  сам ПИН не показывается никому. Новый задаёт сам сотрудник в своей карточке. */
+export function ApprovalPinAdmin({ userId, name, isSet, setAt, onReset }: {
+  userId: string; name: string; isSet: boolean; setAt: string | null; onReset: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function reset() {
+    if (busy || !window.confirm(`Сбросить разрешительный ПИН сотрудника ${name}? Новый он задаст сам в своей карточке.`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await staffApi.resetApprovalPin(userId);
+      onReset();
+    } catch (reason) {
+      setError(failureText(reason, "Разрешительный ПИН не сброшен"));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return <div className="approval-pin">
+    <p className="approval-pin-state">
+      {isSet
+        ? <><span className="tone-ok">Задан</span>{setAt && <span className="ec-note"> · с {formatDate(setAt)}</span>}</>
+        : <span className="ec-note">Не задан — задаёт сам сотрудник в своей карточке</span>}
+      {isSet && <button className="secondary small" type="button" disabled={busy} onClick={() => void reset()}>Сбросить</button>}
+    </p>
+    {error && <div className="error-banner" role="alert">{error}</div>}
   </div>;
 }
