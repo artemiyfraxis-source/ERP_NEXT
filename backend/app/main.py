@@ -42,6 +42,7 @@ from .modules.production import machine_load_api as production_machine_load_api
 from .modules.production import board_api as production_board_api
 from .modules.production import norm_fact_api as production_norm_fact_api
 from .workflows import production_workload_api
+from .workflows import shipping_forecast_api
 from .workflows import production_launch_ready_api
 from .workflows import production_today_api
 from .modules.shipping import api as shipping_api
@@ -149,6 +150,7 @@ app.include_router(production_machine_load_api.router)
 app.include_router(production_board_api.router)
 app.include_router(production_norm_fact_api.router)
 app.include_router(production_workload_api.router)
+app.include_router(shipping_forecast_api.router)
 app.include_router(production_launch_ready_api.router)
 app.include_router(production_today_api.router)
 app.include_router(kitsets_api.router)

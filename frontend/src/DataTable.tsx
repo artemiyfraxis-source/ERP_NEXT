@@ -168,6 +168,9 @@ export interface DataTableProps<T> {
   /** Блоки с `blocks`: ключи колонок, которые есть у блока (у оплётки нет «Ø до усадки»); без них — все колонки. Выбор
       «Колонок» общий: блок показывает выбранные из своих. */
   blockColumns?: (name: string) => string[] | undefined;
+  /** Вид «Карточки» (выбирает экран своим переключателем в `toolbar`): те же отобранные и отсортированные строки сеткой
+      карточек вместо таблицы; `card` рисует содержимое карточки, щелчок и клавиши — на экране. Без блоков и групп. */
+  cards?: (row: T) => ReactNode;
   /** Строки ещё не пришли: вместо «Ничего не найдено» и «Показано 0 из 0» — «Загрузка…». */
   loading?: boolean;
 }
@@ -430,6 +433,7 @@ export function DataTable<T>({
   emptyText = "Ничего не найдено.",
   pageSize = 200,
   toolbar,
+  cards,
   onSearch,
   searchButton = "Найти",
   searchText,
@@ -1652,6 +1656,10 @@ export function DataTable<T>({
             <tbody><tr><td colSpan={span} className="empty">{loading ? "Загрузка…" : emptyText}</td></tr></tbody>
           </table>
         </div>}
+        {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
+      </> : cards ? <>
+        {shown.length ? <div className="dt-card-grid">{shown.map((row) => <Fragment key={rowKey(row)}>{cards(row)}</Fragment>)}</div>
+          : <div className="empty">{loading ? "Загрузка…" : emptyText}</div>}
         {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
       </> : <div className="table-wrap">
         <table ref={tableRef} className={tableClass}>
