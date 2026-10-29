@@ -35,8 +35,10 @@ const ACT_TABS: Tab[] = ["accepted", "all"];
 const TAB_COLUMNS: Record<Exclude<Tab, "all">, string[]> = {
   waiting: ["project", "kb", "name", "needed"],
   // «В работе» принимается до заказанного и без «Готово» (владелец 28.10 и 29.10: «кладовщик не может принять без статуса»).
-  production: ["project", "kb", "name", "needed", "launched", "remaining", "tasks"],
-  ready: ["project", "kb", "name", "needed", "remaining", "tasks"],
+  // Кладовщику задания цеха не нужны (владелец 29.10: «зачем тут Алексею задания»): номера — в подсказке кнопки «Принять»
+  // и в «Колонках».
+  production: ["project", "kb", "name", "needed", "launched", "remaining"],
+  ready: ["project", "kb", "name", "needed", "remaining"],
   accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed"],
   packed: ["project", "kb", "name", "packed", "track"],
   to_ship: ["project", "kb", "name", "packed", "track", "ship"],
@@ -234,7 +236,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
 
   const columns: DataColumn<IntakeLine>[] = [
     { key: "project", title: "Проект", value: (row) => row.project, hidden: true },
-    { key: "kb", title: "КБ", value: (row) => row.item_index, render: (row) => <strong>{row.item_index}</strong> },
+    { key: "kb", title: "КБ", value: (row) => row.item_index, render: (row) => <span className="intake-kb">{row.item_index}</span> },
     // Строка — одна линия (владелец 15.10): длинное наименование обрезается «…», целиком — в подсказке.
     { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <span className="intake-clip intake-name" title={row.name}>{row.name}</span> },
     { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true, render: (row) => row.needed },
@@ -289,12 +291,12 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const left = first?.deadline ? daysUntil(first.deadline) : null;
     const ready = groupRows.filter((row) => !row.act && num(row.remaining) > 0);
     const total = round2(ready.reduce((sum, row) => sum + num(row.remaining), 0));
-    return <span className="intake-group">{title}
+    return <span className="intake-group"><span className="intake-group-title">{title}</span>
       {first?.deadline && <span className={left !== null && left < 0 ? "intake-due tone-danger" : left !== null && left <= 3 ? "intake-due tone-warn" : "intake-due"}>
         срок {formatDayMonth(first.deadline)}{left !== null && left < 0 ? ` · просрочен на ${-left} дн.` : left === 0 ? " · сегодня" : ""}</span>}
       {canWarehouse && (tab === "ready" || tab === "production" || tab === "all") && ready.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); setIntake(ready.map(source)); }}>
         Принять всё: {ready.length} КБ · {total} шт</button>}
-      <button type="button" className="secondary small" onClick={(event) => { event.stopPropagation(); setCard(project); }}>Данные отправки</button></span>;
+      {canSee(principal, "shipping") && <button type="button" className="secondary small" onClick={(event) => { event.stopPropagation(); setCard(project); }}>Данные отправки</button>}</span>;
   };
 
   const projectRows = (project: string) => rows.filter((row) => row.project === project);
