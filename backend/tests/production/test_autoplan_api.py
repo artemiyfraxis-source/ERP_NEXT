@@ -376,6 +376,33 @@ def test_project_mode_plans_only_that_project_on_the_chosen_people(client):
     assert all(operation["operator_ids"] == [str(BORIS)] for operation in after[own["id"]]["operations"])
 
 
+def test_project_mode_leaves_out_unticked_kb_and_exclusion_is_in_the_fingerprint(client):
+    http, _ = client
+    kept, dropped = launch(http, "КБ1"), launch(http, "КБ2")
+    card = issue("КБ3")
+    other = launch(http, "КБ1", project="815Р")
+    scope = {"mode": "project", "project": "708К", "people": [str(BORIS)]}
+
+    whole = preview(http, **scope)
+    planned = preview(http, **scope, exclude=[dropped["id"], str(card.id)])
+
+    assert {item["task_id"] for item in whole["proposals"] if not item["new"]} == {kept["id"], dropped["id"]}
+    assert {item["task_id"] for item in planned["proposals"]} == {kept["id"]}
+    assert planned["new_tasks"] == [] and planned["scope"] == {"tasks": 1, "new": 0, "fitters": 1}
+    assert planned["fingerprint"] != whole["fingerprint"]
+    # Применение с другим набором снятых КБ (или без него) — «данные изменились».
+    assert apply(http, planned, **scope).status_code == 409
+    assert apply(http, planned, **scope, exclude=[dropped["id"]]).status_code == 409
+    response = apply(http, planned, **scope, exclude=[str(card.id), dropped["id"]])
+    assert response.status_code == 200, response.text
+    assert response.json()["created"] == []
+    after = tasks_of(http)
+    assert set(after) == {kept["id"], dropped["id"], other["id"]}
+    assert all(operation["operator_ids"] == [str(BORIS)] for operation in after[kept["id"]]["operations"])
+    assert all(not operation["operator_ids"] for operation in after[dropped["id"]]["operations"])
+    assert all(not operation["operator_ids"] for operation in after[other["id"]]["operations"])
+
+
 def test_project_mode_needs_project_and_fitters_of_the_site(client):
     http, _ = client
     launch(http, "КБ1")
