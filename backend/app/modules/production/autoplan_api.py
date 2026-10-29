@@ -44,8 +44,10 @@ router = APIRouter(prefix="/api/production/autoplan", tags=["production"])
 
 
 class PreviewPayload(BaseModel):
-    # «Весь цех» — вся работа на всех монтажников ЦАР; «По проекту» — работа проекта на выбранных людей.
+    # «Весь цех» — вся работа на всех монтажников площадки; «По проекту» — работа проекта на выбранных людей.
     mode: Literal["shop", "project"] = "shop"
+    # Площадка, чьих людей ставить: ЦАР / ЖУК; пусто — обе (мастер площадки — всегда своя).
+    site: str = Field(default="", max_length=40)
     project: str = Field(default="", max_length=200)
     people: list[UUID] = Field(default_factory=list, max_length=200)
     # Снятые галочки («Весь цех» и КБ проекта в «По проекту»): id заданий и id техкарт КБ без задания.
@@ -72,7 +74,7 @@ def _command(payload: PreviewPayload, principal: Principal, now: datetime) -> Au
     return AutoplanCommand(
         actor=principal.actor, now=now, mode=AutoplanMode(payload.mode), project=payload.project.strip(),
         people=tuple(dict.fromkeys(payload.people)), exclude=frozenset(payload.exclude), date_to=payload.date_to,
-        runs=tuple(sorted(payload.runs.items(), key=lambda item: str(item[0]))),
+        runs=tuple(sorted(payload.runs.items(), key=lambda item: str(item[0]))), site=payload.site.strip(),
     )
 
 

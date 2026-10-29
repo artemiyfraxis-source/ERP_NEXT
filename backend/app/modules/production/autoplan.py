@@ -69,8 +69,9 @@ from .scheduling import (
     work_seconds_between,
 )
 
-# Автоплан расписывает только площадку с нормированием (ЖУК работает не нормированно, ему отдают задание целиком).
-AUTOPLAN_SITE = "ЦАР"
+# Площадки, которые расписывает автоплан: ЦАР и ЖУК (владелец 29.10: «ЖУК — показать и планировать как ЦАР»; до того —
+# только ЦАР). Мастер площадки планирует только своих людей.
+AUTOPLAN_SITES = ("ЦАР", "ЖУК")
 # Метка назначения автопланом (поле assigned_by операции): «Автоплан · <мастер>». По ней replan_auto знает, что можно
 # переставить.
 AUTOPLAN_MARK = "Автоплан · "
@@ -634,7 +635,7 @@ class _Planner:
             self.unplaced[operation_id] = (
                 f"Не помещается в период до {_day((self.data.end - timedelta(microseconds=1)).date())}"
                 if allowed else
-                f"Нет монтажников {AUTOPLAN_SITE} с допуском к операции {operation.code or stage_name(operation.stage)} — заполните компетенции"
+                f"Нет монтажников с допуском к операции {operation.code or stage_name(operation.stage)} — заполните компетенции"
             )
             self.pending.discard(operation_id)
             return None

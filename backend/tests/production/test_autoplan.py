@@ -231,7 +231,7 @@ def test_competences_limit_who_gets_the_operation():
     nobody = plan(data([current], {current.operations[0].id: crimp_key()}, skills=skills, team=(ANNA,)))
 
     assert result.placements[0].operator_id == VERA
-    assert nobody.unplaced[0].reason.startswith("Нет монтажников ЦАР с допуском к операции PRS")
+    assert nobody.unplaced[0].reason.startswith("Нет монтажников с допуском к операции PRS")
 
 
 def test_route_precedence_and_blocked_successors():
@@ -246,7 +246,7 @@ def test_route_precedence_and_blocked_successors():
     skills = {"CUT": {VERA: OperatorSkill(VERA, "CUT", True, 5, Decimal(1))}}
     blocked = plan(data([current], keys, skills=skills, team=(ANNA,)))
     assert [item.reason.split(" —")[0] for item in blocked.unplaced] == [
-        "Нет монтажников ЦАР с допуском к операции CUT", "Ждёт этап 1 «CUT»",
+        "Нет монтажников с допуском к операции CUT", "Ждёт этап 1 «CUT»",
     ]
 
 

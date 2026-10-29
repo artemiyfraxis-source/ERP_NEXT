@@ -21,7 +21,7 @@ from app.workflows.production_workload_api import _shipping, workload
 from app.modules.production.api import closed_kbs, production_uow_factory, techcards_uow_factory
 from app.modules.production.application import UnitOfWork, _progress, _shift, _skills
 from app.modules.production.dispatch import local, localize
-from app.modules.production.domain import ProductionStatus, ProductionTask, UNPLANNED_SITES, skill_of
+from app.modules.production.domain import ProductionStatus, ProductionTask, skill_of
 from app.modules.production.downtime import Downtime, moscow
 from app.modules.production.downtime_infrastructure import SqlAlchemyDowntimeRepository
 from app.modules.production.launchable import operation_code, stage_name
@@ -193,7 +193,7 @@ def today_view(
             if upcoming is not None else None,
         })
 
-    # 2. План на сегодня; у площадки без нормирования (ЖУК) — задания, отданные ей целиком.
+    # 2. План на сегодня — как у ЦАР, так и у ЖУК (владелец 29.10); плюс задания, отданные участку целиком.
     handed = [{
         "task_id": str(task.id), "task_number": task.number, "project": task.project, "item": task.item,
         "name": task.name, "quantity": task.quantity, "delivered": delivered.get(task.id, 0),
@@ -266,7 +266,7 @@ def today_view(
     return {
         "today": today.isoformat(), "now": now.isoformat(), "working_day": working_day,
         "shift": {"start": shift.start.strftime("%H:%M"), "finish": shift.finish.strftime("%H:%M")},
-        "site": chosen, "sites": list(SITES), "can_switch": can_switch, "handover": chosen in UNPLANNED_SITES,
+        "site": chosen, "sites": list(SITES), "can_switch": can_switch,
         "people": people,
         "plan": [_line(line, names, now) for line in today_lines],
         "handed": handed,

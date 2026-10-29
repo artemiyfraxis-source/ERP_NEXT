@@ -12,8 +12,8 @@
 - зарегистрированный отгул (заявление `day_off`) стоит норму смены за каждый рабочий день смены в нём;
 - баланс — с 1 января года месяца по конец месяца, на следующий год не переносится (как норма отпуска); меньше нуля —
   «долг с отработкой». Переработка справочная: не согласована и не оплачивается;
-- «нет данных» — у площадок без нормирования (ЖУК, `UNPLANNED_SITES`) и у тех, у кого с 1 января по конец месяца нет
-  ни одной сессии выработки.
+- «нет данных» — у тех, у кого с 1 января по конец месяца нет ни одной сессии выработки (ЖУК с 29.10 считается как ЦАР:
+  владелец «ЖУК — показать и планировать как ЦАР»).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from typing import Any
 from uuid import UUID
 
 from app.modules.identity.leave import KIND_LABELS, LeaveKind, LeaveStatus
-from app.modules.production.domain import UNPLANNED_SITES, WorkShift
+from app.modules.production.domain import WorkShift
 from app.shared.clock import MOSCOW, as_utc
 
 SOURCE = "по данным выработки"
@@ -206,8 +206,6 @@ def worktime(
     if person is None:
         return None
     base = _base(user_id, first, now)
-    if person.site in UNPLANNED_SITES:
-        return _no_data(base, f"Нет данных: площадка {person.site} работает без нормирования, время не учитывается.")
     if production is None:
         return _no_data(base, "Нет данных: производство не подключено.")
     year_start, stop = date(first.year, 1, 1), _next_month(first)

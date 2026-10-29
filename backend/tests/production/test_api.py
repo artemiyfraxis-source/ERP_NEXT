@@ -176,7 +176,8 @@ def test_a_master_with_the_shop_flag_gets_work_like_a_fitter(production_api):
     assert assigned.json()["task"]["operations"][0]["operator_ids"] == [str(MASTER_ID)]
 
 
-def test_zhuk_staff_are_not_assigned_by_hours(production_api):
+def test_zhuk_staff_are_installers_and_assigned_by_hours_like_tsar(production_api):
+    # Владелец 29.10: «ЖУК — показать и планировать как ЦАР» (правило 30.09 «ЖУК по часам не ставят» отменено).
     client, operator_id = production_api
     task = launch_from_card(client, "site-master", "591K.3", "КБ1", 10, [("OP-01", "Разделка", 60, 120)]).json()["task"]
     with app.state.production_uow_factory() as uow:
@@ -184,17 +185,21 @@ def test_zhuk_staff_are_not_assigned_by_hours(production_api):
         uow.commit()
     path = f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/assign"
 
+    # Мастер ЦАР видит всех монтажников в справочнике, но ставит только своих — как раньше между площадками.
+    listed = client.get("/api/production/operators").json()
     refused = client.post(path, json={"version": task["version"], "operator_ids": [str(operator_id)]})
     with app.state.production_uow_factory() as uow:
-        uow.session.get(IdentityUserRow, UUID("10000000-0000-0000-0000-000000000001")).site = None
-        uow.session.get(IdentityUserRow, operator_id).site = "ЦАР"
+        uow.session.get(IdentityUserRow, MASTER_ID).site = "ЖУК"
         uow.commit()
+    zhuk_master = client.get("/api/production/operators").json()
     allowed = client.post(path, json={"version": task["version"], "operator_ids": [str(operator_id)]})
 
-    assert refused.status_code == 422, refused.text
-    # ЖУК работает не нормированно (владелец, 30.09): его людей по часам не ставят, задание отдают площадке целиком.
-    assert "Отдать в ЖУК" in refused.json()["detail"]
+    assert [(item["name"], item["site"]) for item in listed["operators"]] == [("Оператор", "ЖУК")]
+    assert refused.status_code == 422 and "Площадка ЦАР" in refused.json()["detail"], refused.text
+    assert zhuk_master["viewer_site"] == "ЖУК"
     assert allowed.status_code == 200, allowed.text
+    operation = allowed.json()["task"]["operations"][0]
+    assert operation["operator_ids"] == [str(operator_id)] and operation["planned_start"] is not None
 
 
 def test_task_is_handed_to_zhuk_whole_and_can_be_taken_back(production_api):

@@ -48,7 +48,7 @@ from .application import (
 )
 from .autoplan import (
     AUTOPLAN_MARK,
-    AUTOPLAN_SITE,
+    AUTOPLAN_SITES,
     AutoplanInput,
     AutoplanResult,
     Batch,
@@ -108,6 +108,8 @@ class AutoplanCommand:
     exclude: frozenset[UUID] = frozenset()  # оба режима: исключённые задания (id) и КБ без задания (id техкарты)
     date_to: date | None = None  # «до даты» вручную; None — горизонт по работе
     runs: tuple[tuple[UUID, int], ...] = ()  # тиражи новых заданий по id техкарты КБ; нет — весь тираж КБ
+    # Площадка, чьих людей ставить (ЦАР / ЖУК); "" — обе. У мастера площадки — всегда его площадка.
+    site: str = ""
 
 
 @dataclass(frozen=True)
@@ -165,10 +167,12 @@ def _horizon(command: AutoplanCommand) -> tuple[datetime, datetime]:
     return start, datetime.combine(today + timedelta(days=MAX_HORIZON_DAYS), time.min, tz)
 
 
-def _auto_movable(operation, progress: Decimal, start: datetime, end: datetime) -> bool:
-    """Поставлено автопланом раньше, не начато и стоит в периоде — автоплан ставит его заново."""
+def _auto_movable(operation, progress: Decimal, start: datetime, end: datetime, foreign: frozenset[UUID] = frozenset()) -> bool:
+    """Поставлено автопланом раньше, не начато и стоит в периоде — автоплан ставит его заново. Стоящее на людях
+    другой площадки (foreign) не трогаем: автоплан мастера ЖУК не забирает работу у людей ЦАР и наоборот."""
     return (
         str(operation.assigned_by or "").startswith(AUTOPLAN_MARK)
+        and not any(share.operator_id in foreign for share in operation.shares)
         and bool(operation.shares) and progress <= 0
         and all(share.started_at is None and share.finished_at is None for share in operation.shares)
         and operation.planned_start is not None and operation.planned_finish is not None
@@ -193,6 +197,25 @@ class _Scope:
     operators: tuple[Any, ...]
     warnings: tuple[str, ...]
     assigner_site: str
+    site: str = ""  # площадка расчёта; "" — обе
+    sites: tuple[str, ...] = AUTOPLAN_SITES  # из каких площадок можно выбрать
+    foreign: frozenset[UUID] = frozenset()  # монтажники других площадок: их автоплан не переставляем
+
+
+def _site_of_plan(command: AutoplanCommand, assigner_site: str) -> tuple[str, tuple[str, ...]]:
+    """Площадка расчёта и выбор площадок: мастер площадки — только своя; без площадки — любая из AUTOPLAN_SITES или обе."""
+    wanted = str(command.site or "").strip()
+    if wanted and wanted not in AUTOPLAN_SITES:
+        raise ProductionValidationError(f"Площадка «{wanted}»: автоплан расписывает {', '.join(AUTOPLAN_SITES)}")
+    if not assigner_site:
+        return wanted, AUTOPLAN_SITES
+    if assigner_site not in AUTOPLAN_SITES:
+        raise AutoplanForbidden(
+            f"Автоплан расписывает площадки {', '.join(AUTOPLAN_SITES)}; мастер площадки {assigner_site} их не планирует"
+        )
+    if wanted and wanted != assigner_site:
+        raise AutoplanForbidden(f"Мастер площадки {assigner_site} планирует только её людей, не {wanted}")
+    return assigner_site, (assigner_site,)
 
 
 def _in_project(command: AutoplanCommand, project: str) -> bool:
@@ -206,10 +229,8 @@ def _scope(
     ready: Sequence[ReadyCard],
 ) -> _Scope:
     assigner = uow.operators.get(command.actor.id)
-    if assigner is not None and assigner.site and assigner.site != AUTOPLAN_SITE:
-        raise AutoplanForbidden(
-            f"Автоплан расписывает площадку {AUTOPLAN_SITE}; мастер площадки {assigner.site} её не планирует"
-        )
+    assigner_site = assigner.site if assigner is not None else ""
+    site, sites = _site_of_plan(command, assigner_site)
     project_mode = command.mode is AutoplanMode.PROJECT
     if project_mode and not str(command.project or "").strip():
         raise ProductionValidationError("Выберите проект")
@@ -245,24 +266,28 @@ def _scope(
             continue
         new_tasks[task.id] = NewTask(card, task)
     operators = tuple(uow.operators.list())
+    # Монтажники площадки расчёта (без площадки в карточке — на любой); "" — обеих площадок.
+    pool = (site,) if site else AUTOPLAN_SITES
     team_rows = tuple(sorted(
-        (item for item in operators if item.installer and item.site in (AUTOPLAN_SITE, "")),
+        (item for item in operators if item.installer and item.site in (*pool, "")),
         key=lambda item: (item.name, str(item.id)),
     ))
+    foreign = frozenset(item.id for item in operators if item.installer and item.site and item.site not in pool)
+    where = f" {site}" if site else ""
     if project_mode:
         chosen = set(command.people)
         if not chosen:
             raise ProductionValidationError("Выберите людей на проект")
         known = {item.id for item in team_rows}
         if not chosen <= known:
-            raise ProductionValidationError(f"На проект можно выделить только монтажников {AUTOPLAN_SITE}")
+            raise ProductionValidationError(f"На проект можно выделить только монтажников{where}")
         team_rows = tuple(item for item in team_rows if item.id in chosen)
     if not team_rows:
-        warnings.append(f"Нет монтажников {AUTOPLAN_SITE} — ставить работу некому")
+        warnings.append(f"Нет монтажников{where} — ставить работу некому")
     return _Scope(
         stored=stored, tasks=tasks, eligible=eligible, new_tasks=new_tasks, skipped=tuple(skipped),
         considered=tuple(considered), team_rows=team_rows, operators=operators, warnings=tuple(warnings),
-        assigner_site=assigner.site if assigner is not None else "",
+        assigner_site=assigner_site, site=site, sites=sites, foreign=foreign,
     )
 
 
@@ -293,7 +318,7 @@ def _prepare(
                     unplaced.append(Unplaced(task.id, operation.id, "Работа уже начата без назначения — назначьте вручную"))
                 else:
                     free.add(operation.id)
-            elif _auto_movable(operation, done, start, end):
+            elif _auto_movable(operation, done, start, end, scope.foreign):
                 free.add(operation.id)
                 movable.add(operation.id)
     for item in scope.new_tasks.values():
@@ -347,7 +372,7 @@ def _prepare(
         "project": normalize_project_number(command.project) if command.mode is AutoplanMode.PROJECT else "",
         "people": sorted(str(value) for value in command.people) if command.mode is AutoplanMode.PROJECT else [],
         "exclude": sorted(str(value) for value in command.exclude),
-        "date_to": command.date_to, "actor_site": scope.assigner_site,
+        "date_to": command.date_to, "actor_site": scope.assigner_site, "site": scope.site,
         "runs": sorted([str(key), value] for key, value in command.runs),
         "tasks": sorted([str(task.id), task.version] for task in scope.stored),
         # КБ к запуску: список и версия выданной техкарты (новая ревизия, тираж, уже запущенное или срок — другой план).
@@ -561,6 +586,7 @@ def autoplan_context(
             if deadline is not None and (row["deadline"] is None or deadline < row["deadline"]):
                 row["deadline"] = deadline
         return {
+            "site": whole.site, "sites": list(whole.sites),
             "period": {"start": start.isoformat(), "last_day": last.isoformat(), "auto": command.date_to is None},
             "max_days": MAX_HORIZON_DAYS,
             "tasks": [{

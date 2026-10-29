@@ -28,7 +28,7 @@ from decimal import Decimal
 from math import ceil
 from uuid import UUID
 
-from .autoplan import AUTOPLAN_SITE, AutoplanInput, Unplaced
+from .autoplan import AutoplanInput, Unplaced
 from .domain import ProductionOperation, ProductionValidationError, clock_between, clock_seconds, rewind_clock
 from .launchable import stage_name
 from .machine_load import lay_out, operation_occupancies, peak, planned_windows
@@ -232,7 +232,7 @@ class _Backward:
         if best is None:
             self.unplaced[operation_id] = (
                 "Не помещается в календарь даже с опозданием" if allowed else
-                f"Нет монтажников {AUTOPLAN_SITE} с допуском к операции {operation.code or stage_name(operation.stage)} — заполните компетенции"
+                f"Нет монтажников с допуском к операции {operation.code or stage_name(operation.stage)} — заполните компетенции"
             )
             return
         _, operator_id, start, finish, machine_hit = best

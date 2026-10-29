@@ -111,8 +111,7 @@ def _personnel(user: IdentityUser, manager: IdentityUser | None) -> dict[str, An
 
 
 def _is_fitter(operator) -> bool:
-    """Монтажник — активный сотрудник с флагом «Монтажник (работает в цеху)», как `Operator.installer`, но без
-    исключения площадок без нормирования: люди ЖУК не расписываются по часам, а мастеру ЖУК всё равно подчиняются."""
+    """Монтажник — активный сотрудник с флагом «Монтажник (работает в цеху)», как `Operator.installer`."""
     return operator.active and operator.shop_worker
 
 

@@ -217,17 +217,74 @@ def test_stale_fingerprint_is_refused(client):
     assert forged.status_code == 409
 
 
-def test_master_of_another_site_is_refused(client):
+def _master_site(sessions, site: str | None) -> None:
+    with sessions() as session:
+        session.get(IdentityUserRow, MASTER).site = site
+        session.commit()
+
+
+def test_zhuk_master_plans_zhuk_people_like_tsar(client):
+    # Владелец 29.10: «ЖУК — показать и планировать как ЦАР»; мастер ЖУК видит и ставит только своих.
+    http, sessions = client
+    task = launch(http, "КБ1")
+    _master_site(sessions, "ЖУК")
+
+    context = http.post("/api/production/autoplan/context", json={}).json()
+    planned = preview(http)
+    other = http.post("/api/production/autoplan/preview", json={"site": "ЦАР"})
+    applied = apply(http, planned)
+
+    assert (context["site"], context["sites"]) == ("ЖУК", ["ЖУК"])
+    assert [item["name"] for item in context["fitters"]] == ["Антон"]
+    assert {item["operator_id"] for item in planned["proposals"]} == {str(ZHUK)} and len(planned["proposals"]) == 2
+    assert other.status_code == 403 and "ЖУК" in other.json()["detail"], other.text
+    assert applied.status_code == 200, applied.text
+    assert [op["operator_ids"] for op in tasks_of(http)[task["id"]]["operations"]] == [[str(ZHUK)], [str(ZHUK)]]
+
+
+def test_master_of_a_site_outside_the_shop_is_refused(client):
     http, sessions = client
     launch(http, "КБ1")
-    with sessions() as session:
-        session.get(IdentityUserRow, MASTER).site = "ЖУК"
-        session.commit()
+    _master_site(sessions, "АДМ")
 
     response = http.post("/api/production/autoplan/preview", json={})
 
     assert response.status_code == 403, response.text
-    assert "ЦАР" in response.json()["detail"]
+    assert "ЦАР, ЖУК" in response.json()["detail"]
+
+
+def test_director_chooses_a_site_or_plans_both_and_picks_zhuk_people_for_a_project(client):
+    http, sessions = client
+    launch(http, "КБ1")
+    _master_site(sessions, None)
+
+    both = http.post("/api/production/autoplan/context", json={}).json()
+    zhuk = http.post("/api/production/autoplan/context", json={"site": "ЖУК"}).json()
+    unknown = http.post("/api/production/autoplan/preview", json={"site": "МСК"})
+    project = preview(http, mode="project", project="708К", people=[str(ZHUK), str(ANNA)])
+    zhuk_only = preview(http, mode="project", project="708К", people=[str(ZHUK)], site="ЖУК")
+    stranger = http.post("/api/production/autoplan/preview", json={"mode": "project", "project": "708К", "people": [str(ANNA)], "site": "ЖУК"})
+
+    assert (both["site"], both["sites"]) == ("", ["ЦАР", "ЖУК"])
+    assert {item["name"]: item["site"] for item in both["fitters"]} == {"Анна": "ЦАР", "Борис": "ЦАР", "Антон": "ЖУК"}
+    assert [item["name"] for item in zhuk["fitters"]] == ["Антон"]
+    assert unknown.status_code == 422, unknown.text
+    assert {item["operator_id"] for item in project["proposals"]} <= {str(ZHUK), str(ANNA)} and project["unplaced"] == []
+    assert {item["operator_id"] for item in zhuk_only["proposals"]} == {str(ZHUK)}
+    assert stranger.status_code == 422 and "монтажников ЖУК" in stranger.json()["detail"], stranger.text
+
+
+def test_zhuk_autoplan_does_not_move_work_autoplanned_on_tsar_people(client):
+    http, sessions = client
+    task = launch(http, "КБ1")
+    assert apply(http, preview(http)).status_code == 200  # мастер ЦАР: работа на Анне / Борисе
+    _master_site(sessions, "ЖУК")
+
+    planned = preview(http)
+
+    # Автоплан ЦАР не начат и переставляем, но стоит на людях ЦАР — автоплан мастера ЖУК его не забирает.
+    assert planned["proposals"] == []
+    assert {op["operator_ids"][0] for op in tasks_of(http)[task["id"]]["operations"]} <= {str(ANNA), str(BORIS)}
 
 
 def test_horizon_needs_no_dates_and_an_explicit_end_is_validated(client):

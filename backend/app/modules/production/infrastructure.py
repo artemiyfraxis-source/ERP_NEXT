@@ -139,7 +139,7 @@ class ProductionTaskTeamRow(Base):
 
 
 class ProductionTaskDeliveryRow(Base):
-    """«Сдано N шт» площадки без нормирования (ЖУК). Отмена — отметка, строка остаётся."""
+    """«Сдано N шт» площадки, которой задание отдано целиком (ЖУК). Отмена — отметка, строка остаётся."""
     __tablename__ = "production_task_deliveries"
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_production_task_deliveries_quantity"),
