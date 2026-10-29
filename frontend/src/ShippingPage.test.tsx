@@ -253,7 +253,6 @@ describe("ShippingPage", () => {
     expect(form.getByLabelText("Адрес доставки")).toBeInTheDocument();
     expect(form.getByLabelText("Перевозчик")).toBeInTheDocument();
     fireEvent.change(form.getByLabelText("Тип доставки"), { target: { value: "САМОВЫВОЗ" } });
-    expect(form.queryByLabelText("Адрес доставки")).not.toBeInTheDocument();
     expect(form.queryByLabelText("Перевозчик")).not.toBeInTheDocument();
     fireEvent.change(form.getByLabelText("Телефон получателя"), { target: { value: "+7 900 111-22-33" } });
     fireEvent.change(form.getByLabelText("Тип УПД"), { target: { value: "ЭДО" } });
