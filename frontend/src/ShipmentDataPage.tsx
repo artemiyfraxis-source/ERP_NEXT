@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { failureText, shippingApi, type Principal, type Shipment } from "./api";
+import { failureText, shippingApi, type Principal, type ProjectForecast, type Shipment } from "./api";
+import "./shipping.css";
+import { loadPersonalViews, savePersonalView } from "./personalViews";
 import { intakeApi, type IntakeRow } from "./productionIntakeApi";
 import { DataTable, type DataColumn } from "./DataTable";
 import { StatusChip } from "./StatusChip";
 import type { Tone } from "./statusTone";
 import { Readiness, ShipmentDataWindow } from "./ShipmentData";
-import { Due, overdue, projectsOf } from "./shippingCells";
+import { Due, ReadyForecast, overdue, projectsOf, readiness } from "./shippingCells";
 import { DISPATCH_STAGES, projectDispatchStage, shipmentDispatchStage, stageLabel, stageRank, type DispatchStage } from "./dispatchStage";
 import { DispatchCard } from "./DispatchCard";
 import { canAct } from "./navigation";
@@ -19,6 +21,14 @@ import { canAct } from "./navigation";
 const ACTIVE = ["Новая", "Собрана", "Упакована"];
 const SENT = ["Отгружена", "Закрыта"];
 const STORAGE_KEY = "shipment-data-stages";
+/** Личный вид списка («Таблица» / «Карточки») — на сервере у каждого свой (personalViews.ts), копия в браузере. */
+const VIEW_KEY = "shipment-data.view";
+type ListView = "table" | "cards";
+const VIEWS: Array<[ListView, string]> = [["table", "Таблица"], ["cards", "Карточки"]];
+
+function localView(): ListView | null {
+  try { const value = window.localStorage.getItem(VIEW_KEY); return value === "cards" || value === "table" ? value : null; } catch { return null; }
+}
 
 /** Что не хватает живой отправке (слова сервера). Уехавшие могли уехать осознанно без данных (владелец 28.10): для них
  *  «не хватает» не считается и в отбор не попадает. */
@@ -65,6 +75,9 @@ export function dataRows(shipments: Shipment[], intake: IntakeRow[] = []): DataR
 
 const STAGE_TONE: Record<DispatchStage, Tone> = { waiting: "neutral", production: "info", ready: "info", accepted: "warning", packed: "warning", to_ship: "info", shipped: "success" };
 
+/** Проекты строки — по ним ищется прогноз готовности. */
+const projectNames = (row: DataRow) => row.shipment ? [...new Set(row.shipment.lines.map((line) => line.project))] : [row.project];
+
 const gapsOf = (row: DataRow) => row.shipment ? dataGaps(row.shipment) : [];
 
 export function ShipmentDataPage({ principal }: { principal: Principal }) {
@@ -74,6 +87,21 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   const [error, setError] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const [onlyGaps, setOnlyGaps] = useState(false);
+  const [forecasts, setForecasts] = useState<Record<string, ProjectForecast>>({});
+  const [view, setView] = useState<ListView>(() => localView() ?? "table");
+  useEffect(() => {
+    let live = true;
+    void loadPersonalViews().then((views) => {
+      const stored = (views?.[VIEW_KEY] as { mode?: string } | undefined)?.mode;
+      if (live && (stored === "cards" || stored === "table")) setView(stored);
+    });
+    return () => { live = false; };
+  }, []);
+  const chooseView = (next: ListView) => {
+    setView(next);
+    try { window.localStorage.setItem(VIEW_KEY, next); } catch { /* браузер без хранилища: останется серверный вид */ }
+    savePersonalView(VIEW_KEY, { mode: next });
+  };
   const canEdit = canAct(principal, "shipping") || canAct(principal, "shipping_goods");
 
   const reload = async () => {
@@ -84,10 +112,30 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     finally { setLoaded(true); }
   };
   useEffect(() => { void reload(); }, []);
+  // Прогноз цеха — подсказка к сроку: не пришёл (нет связи, нет данных) — строки остаются без него.
+  useEffect(() => { void shippingApi.forecast().then((answer) => setForecasts(answer?.projects ?? {}), () => undefined); }, []);
 
   const rows = useMemo(() => dataRows(shipments, intake).filter((row) => !onlyGaps || gapsOf(row).length > 0), [shipments, intake, onlyGaps]);
   const current = open?.startsWith("project:") ? null : shipments.find((shipment) => shipment.id === open) ?? null;
   const project = open?.startsWith("project:") ? rows.find((row) => row.id === open) ?? null : null;
+  const forecastOf = (row: DataRow) => readiness(projectNames(row), forecasts, row.shipment?.deadline ?? null, row.shipment?.status ?? "Новая");
+  const dueCell = (row: DataRow) => <>
+    {row.shipment && <Due day={row.shipment.deadline} late={overdue(row.shipment)} since={row.shipment.created_at} />}
+    <ReadyForecast forecast={forecastOf(row)} />
+  </>;
+  const card = (row: DataRow) => <button type="button" className="data-card" onClick={() => setOpen(row.id)}
+    aria-label={`Открыть: ${row.shipment?.number ?? row.project}`}>
+    <span className="data-card-head">
+      <strong>{row.shipment?.number ?? "Нет отправки"}</strong>
+      <StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{stageLabel(row.stage)}</StatusChip>
+    </span>
+    <span className="data-card-project">{row.project}</span>
+    {row.customer && <span className="data-card-customer">{row.customer}</span>}
+    <span>{!row.shipment ? <span className="muted">внести заранее</span> : ACTIVE.includes(row.shipment.status) ? <Readiness source={row.shipment} gaps={gapsOf(row)} />
+      : <span className="muted">{SENT.includes(row.shipment.status) ? sentNote(row.shipment) || "—" : "—"}</span>}</span>
+    <span className="data-card-due"><span className="muted">Срок</span>{row.shipment ? <Due day={row.shipment.deadline} late={overdue(row.shipment)} since={row.shipment.created_at} /> : <span className="muted">—</span>}
+      <ReadyForecast forecast={forecastOf(row)} /></span>
+  </button>;
   const columns: DataColumn<DataRow>[] = [
     { key: "number", title: "№ отправки", value: (row) => row.shipment?.number ?? "", render: (row) => row.shipment ? <><strong>{row.shipment.number}</strong><div className="muted ship-sub">{row.shipment.status}</div></> : <span className="muted">нет отправки</span> },
     { key: "project", title: "Проект", value: (row) => row.project, render: (row) => <span className="ship-clip ship-clip-projects" title={row.project}>{row.project}</span> },
@@ -96,7 +144,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     { key: "gaps", title: "Данные", value: (row) => gapsOf(row).join(", ") || (row.shipment ? sentNote(row.shipment) : ""), hint: "Что внесено и чего не хватает; итог считает сервер", wrap: true, maxWidth: 520,
       render: (row) => !row.shipment ? <span className="muted">внести заранее</span> : ACTIVE.includes(row.shipment.status) ? <Readiness source={row.shipment} gaps={gapsOf(row)} />
         : SENT.includes(row.shipment.status) ? <span className="muted">{sentNote(row.shipment) || "—"}</span> : <span className="muted">—</span> },
-    { key: "deadline", title: "Срок", value: (row) => row.shipment?.deadline ?? "", render: (row) => row.shipment ? <Due day={row.shipment.deadline} late={overdue(row.shipment)} since={row.shipment.created_at} /> : null },
+    { key: "deadline", title: "Срок", value: (row) => row.shipment?.deadline ?? "", render: dueCell },
   ];
   return <section className="page shipping-page">
     <header className="page-head"><h1>Данные отправок</h1>
@@ -106,7 +154,10 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
       : <DataTable label="Данные отправок" storageKey={STORAGE_KEY} rows={rows} columns={columns} rowKey={(row) => row.id}
         onRowClick={(row) => setOpen(row.id)} exportName="Данные отправок" searchPlaceholder="№ отправки, проект или заказчик"
         presets={DISPATCH_STAGES.map(([key, label]) => ({ label, test: (row: DataRow) => row.stage === key }))}
-        defaultPreset="Упаковано" allLast
+        defaultPreset="Упаковано" allLast cards={view === "cards" ? card : undefined}
+        toolbar={<span className="view-switch" role="group" aria-label="Вид списка">
+          {VIEWS.map(([key, label]) => <button type="button" key={key} className="secondary small" aria-pressed={view === key} onClick={() => chooseView(key)}>{label}</button>)}
+        </span>}
         emptyText="В этом разделе пусто — другие этапы под чипами выше." />}
     {current && <ShipmentDataWindow key={current.id} shipment={current} stage={rows.find((row) => row.id === current.id)?.stage} canEdit={canEdit} close={() => setOpen(null)} onSaved={reload} />}
     {project && <DispatchCard key={project.id} project={project.project} customer={project.customer} stage={project.stage ?? undefined} canEdit={canEdit} close={() => setOpen(null)} onSaved={() => void reload()} />}

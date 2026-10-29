@@ -13,7 +13,10 @@ from app.modules.production.domain import WorkShift
 from app.modules.production.plan import PlanProjectSnapshot
 from app.modules.shipping.domain import FinishedGood, MoveContext
 from app.modules.techcards.kitsets import KitAssembly, Kitset
+from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow
+
+from tests.factories import Actor
 
 from tests.production.test_api import issue_card, production_api  # noqa: F401  (fixture)
 
@@ -99,3 +102,28 @@ def test_workload_without_issued_techcards_is_empty(production_api):  # noqa: F8
     body = client.get("/api/production/workload").json()
 
     assert body["projects"] == [] and body["bottlenecks"] == [] and len(body["weeks"]) == 8
+
+
+def _as(roles, permissions):
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=uuid4(), name="Ульяна", department="Продажи"), email="pm@example.test", roles=frozenset(roles), permissions=permissions)
+
+
+def test_shipping_forecast_gives_only_ready_status_slack_to_the_shipping_manager(production_api):  # noqa: F811
+    client, _operator = production_api
+    _seed(client)
+    _as({"pm"}, {"shipping": "edit"})  # менеджер: права на производство нет, на отправки есть
+    assert client.get("/api/production/workload").status_code == 403
+
+    response = client.get("/api/shipping/forecast")
+
+    assert response.status_code == 200, response.text
+    # 801К.1 не помещается в горизонт (ready пусто) — её нет; 802К.1 готова 23.09. Только три поля.
+    assert response.json() == {"projects": {"802К.1": {"ready": "2026-09-23", "status": "без срока", "slack_days": None}}}
+
+
+def test_shipping_forecast_is_closed_without_shipping_rights(production_api):  # noqa: F811
+    client, _operator = production_api
+    _as({"viewer"}, {"production": "view"})
+
+    assert client.get("/api/shipping/forecast").status_code == 403

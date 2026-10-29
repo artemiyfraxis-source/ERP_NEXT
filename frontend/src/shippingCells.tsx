@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ApiError, failureText, shippingApi, type ProjectAddressee, type Shipment } from "./api";
+import { ApiError, failureText, shippingApi, type ProjectAddressee, type ProjectForecast, type Shipment } from "./api";
 import { formatDate } from "./format";
 import { isoDay } from "./Gantt";
 import { intakeApi } from "./productionIntakeApi";
@@ -24,6 +24,23 @@ export function Due({ day, late, since }: { day: string | null; late: boolean; s
   const title = odd ? `Просрочено на ${behind} дн.: срок раньше даты заведения ${formatDate(String(since).slice(0, 10))} — похоже на опечатку в дате` : undefined;
   return <span className={late ? "ship-due tone-danger" : "ship-due"} title={title}>{formatDate(day)}
     {late && <span className="ship-due-late">{odd ? " · проверьте дату" : ` · просрочено на ${behind} дн.`}</span>}</span>;
+}
+
+/** Прогноз готовности отправки по плану цеха: самый поздний из её проектов; уехавшая и отменённая — без прогноза.
+ *  Не успевает — прогноз позже срока отправки (срока нет — цех сам говорит «не успевает»). */
+export function readiness(projects: string[], forecasts: Record<string, ProjectForecast>, deadline: string | null, status = ""): { ready: string; late: boolean } | null {
+  if (status && !ACTIVE.includes(status)) return null;
+  const found = projects.map((name) => forecasts[name]).filter((item): item is ProjectForecast => Boolean(item?.ready));
+  if (!found.length) return null;
+  const ready = found.map((item) => item.ready).sort().at(-1)!;
+  return { ready, late: deadline ? ready > deadline : found.some((item) => item.status === "не успевает") };
+}
+
+/** «прогноз готовности 05.11.2026» — красным, если позже срока. */
+export function ReadyForecast({ forecast }: { forecast: { ready: string; late: boolean } | null }) {
+  if (!forecast) return null;
+  return <span className={forecast.late ? "ship-forecast tone-danger" : "ship-forecast"} title={forecast.late ? "По плану цеха проект будет готов позже срока" : "Прогноз цеха по «Загрузке»"}>
+    прогноз готовности {formatDate(forecast.ready)}</span>;
 }
 
 /** «591К.3: КБ1, КБ2; 600К.1: КБ7». */

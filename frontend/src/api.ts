@@ -3966,9 +3966,14 @@ export const productionPlanApi = {
   }),
 };
 
+/** Прогноз готовности проекта по плану цеха: `ready` — дата, `status` — «в срок» / «риск» / «не успевает» / «без срока». */
+export interface ProjectForecast { ready: string; status: string; slack_days: number | null }
+
 export const shippingApi = {
   goods: () => api<{ goods: FinishedGood[] }>("/api/shipping/goods"),
   shipments: () => api<{ shipments: Shipment[] }>("/api/shipping/shipments"),
+  /** Прогноз готовности проектов из «Загрузки» цеха (открыт по праву на отправки): проект → дата, статус, запас дней. */
+  forecast: () => api<{ projects: Record<string, ProjectForecast> }>("/api/shipping/forecast"),
   registerGood: (payload: Record<string, unknown>) => api<{ good: FinishedGood }>("/api/shipping/goods", {
     method: "POST", body: JSON.stringify(payload),
   }),
