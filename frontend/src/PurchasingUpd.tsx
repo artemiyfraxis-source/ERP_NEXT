@@ -202,7 +202,7 @@ function UpdCardTile({ card, onOpen }: { card: UpdCard; onOpen: () => void }) {
       </div>
       {card.seller_note && <div className="pdoc-note">{card.seller_note}{card.seller_org_inn ? ` → ${card.seller_org_inn}` : ""}</div>}
       {card.issues.length > 0 && card.status !== "parsed" && <div className="pdoc-issues">{card.issues.join("; ")}</div>}
-      <div className="pdoc-file" title={card.file_name}>{card.file_name}</div>
+      <div className="pdoc-file" title={card.display_name || card.file_name}>{card.display_name || card.file_name}</div>
     </article>
   );
 }

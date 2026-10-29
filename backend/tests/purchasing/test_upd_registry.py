@@ -8,6 +8,7 @@ import base64
 import io
 import json
 import zipfile
+from urllib.parse import unquote
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -174,6 +175,8 @@ def test_list_filters_counts_and_order(env):
         "file-krox-0002", "file-dart-0001",
     ]
     assert cards(client, "?origin=edo")["items"] == []
+    assert dart["display_name"] == "УПД № 2937 от 21.04.2026.pdf"
+    assert by_id(listing)["file-new-00003"]["display_name"] == "file-new-00003.pdf"  # nothing recognised: the original
     assert client.get(f"{BASE}?origin=fax").status_code == 422
     assert client.get(f"{BASE}?buyer=всех").status_code == 422
     assert client.get(f"{BASE}?status=lost").status_code == 422
@@ -361,7 +364,8 @@ def test_the_file_opens_a_pdf_in_the_tab(env):
     opened = client.get(f"{BASE}/file-dart-0001/file")
     assert opened.status_code == 200 and opened.content.startswith(b"%PDF")
     assert opened.headers["content-disposition"].startswith("inline")
-    assert client.get(f"{BASE}/file-dart-0001").json()["file"] == {"name": "Дарт 500.pdf", "size": 9, "kind": "pdf"}
+    assert client.get(f"{BASE}/file-dart-0001").json()["file"] == {
+        "name": "УПД № file-dart-0001 от 17.03.2026.pdf", "size": 9, "kind": "pdf"}
     assert client.get(f"{BASE}/file-none-0002/file").status_code == 404
 
 
@@ -491,3 +495,31 @@ def test_sellers_without_a_supplier_are_listed_and_imported_then_linked(env):
     card = by_id(cards(client))["dart-0001"]
     assert card["supplier_name"] == "ООО «Дарт»"
     assert client.get(f"{BASE}/sellers").json()["sellers"] == []
+
+
+def test_paper_filter_takes_the_warehouse_scans_too_and_scan_stays_narrower(env):
+    client, sessions = env
+    upd(sessions, "file-paper-001")
+    upd(sessions, "wh-scan-0002", origin="scan")
+    relink(sessions)
+
+    listing = cards(client)
+    assert listing["origins"] == {"edo": 0, "google": 2, "scan": 1}
+    assert {c["id"] for c in cards(client, "?origin=google")["items"]} == {"file-paper-001", "wh-scan-0002"}
+    assert [c["id"] for c in cards(client, "?origin=scan")["items"]] == ["wh-scan-0002"]
+
+
+def test_original_downloads_under_the_recognised_name(env):
+    client, sessions = env
+    with sessions() as session:
+        stored = repo._stored_file(session, "scan.pdf", b"%PDF-1.4 scan", NOW)
+        file_id = stored.id
+        session.commit()
+    upd(sessions, "wh-file-00001", origin="scan", file_id=file_id, number="АБ/1788", doc_date=date(2026, 10, 20))
+    relink(sessions)
+
+    response = client.get(f"{BASE}/wh-file-00001/file")
+    assert response.status_code == 200
+    assert unquote(response.headers["content-disposition"]) == "inline; filename*=UTF-8''УПД № АБ-1788 от 20.10.2026.pdf"
+    assert by_id(cards(client))["wh-file-00001"]["display_name"] == "УПД № АБ-1788 от 20.10.2026.pdf"
+    assert client.get(f"{BASE}/wh-file-00001").json()["file"]["name"] == "УПД № АБ-1788 от 20.10.2026.pdf"

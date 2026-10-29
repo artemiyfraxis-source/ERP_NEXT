@@ -23,22 +23,22 @@ export const UPD_STATUS_TONES: Record<UpdStatus, Tone> = {
 export const UPD_STATUS_ORDER: UpdStatus[] = ["needs_review", "waiting", "parsed", "verified", "not_purchase"];
 
 export type UpdOrigin = "google" | "edo" | "scan";
-export const UPD_ORIGIN_LABELS: Record<UpdOrigin, string> = { edo: "ЭДО", google: "Бумажный", scan: "Скан склада" };
+export const UPD_ORIGIN_LABELS: Record<UpdOrigin, string> = { edo: "ЭДО", google: "Бумажный", scan: "Бумажный" };
 export const UPD_ORIGIN_HINTS: Record<UpdOrigin, string> = {
   edo: "электронный документ из Диадока (XML), подписан в ЭДО",
-  google: "скан или PDF, прочитан разборщиком (Google в Roller_Buyer или модель ERP) — оригинал на бумаге",
+  google: "скан или PDF, прочитан разборщиком — оригинал на бумаге",
   scan: "скан УПД, принятого на складе: шапка — как её сохранил кладовщик, строки — распознавание модели",
 };
 /** «Источник» filter of the registry: the buttons in this order, plural words. */
 export const UPD_ORIGIN_FILTERS: { key: "" | UpdOrigin; label: string }[] = [
-  { key: "", label: "Все" }, { key: "edo", label: "ЭДО" }, { key: "google", label: "Бумажные" }, { key: "scan", label: "Скан склада" },
+  { key: "", label: "Все" }, { key: "edo", label: "ЭДО" }, { key: "google", label: "Бумажные" },
 ];
 export type UpdBuyerKind = "ours" | "other" | "unknown";
 /** Our organisation: documents for any other INN are bought for someone else. */
 export const OUR_INN = "5040191181";
 
 export interface UpdCard {
-  id: string; file_name: string; kind: string; origin: UpdOrigin; status: UpdStatus; parser_status: string;
+  id: string; file_name: string; display_name: string; kind: string; origin: UpdOrigin; status: UpdStatus; parser_status: string;
   number: string; date: string | null; seller_name: string; seller_inn: string; seller_org_inn: string; seller_note: string;
   supplier_id: string | null; supplier_name: string | null; supplier_manual: boolean;
   total_gross: number | null; line_count: number; issues: string[]; has_file: boolean; project_reference: string | null;
