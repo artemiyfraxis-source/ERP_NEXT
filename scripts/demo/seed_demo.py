@@ -576,7 +576,8 @@ def production():
         {"project": "621К.2", "kind": "block", "blocker": "ОЖИД КОМПЛ", "text": "Ждём КСПВГ и DB-9 от поставщика"},
         {"project": "614К.1", "kind": "stage", "item_index": "КБ1", "value": "В работе"},
         {"project": "614К.1", "kind": "tcReview", "item_index": "КБ1", "value": "проверена"},
-        {"project": "708К.2", "kind": "stage", "item_index": "КБ1", "value": "КБ набрана"},
+        # «КБ набрана» — отметка проекта, не этап (владелец 29.10); «ТК готова» оставлена по факту.
+        {"project": "708К.2", "kind": "mark", "field": "kit_picked", "value": "да"},
     ):
         m.ok("POST", "/api/production/plan/events", "plan_events", json=ev)
     S["task1"] = task

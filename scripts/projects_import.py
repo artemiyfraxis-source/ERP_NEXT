@@ -42,10 +42,28 @@ SHOP_SPREADSHEET = "1DZ_H3vIVseQ3LKC8FgrhfezM-4JHznZUFiKvLWhqap0"  # PLAN_SHOP_S
 SHOP_SHEET = "ЗАГРУЗ"
 
 # planShopSync_: статус листа цеха → этап КБ, до которого КБ дотягиваются (назад не двигаем).
+# Владелец 29.10: «КБ набрана» — не этап, а отметка: «К ЗАПУСК» листа ставит отметку плана kit_picked «да»
+# (SHOP_KIT_PICKED); «РАСПЛАН» ничего не ставит; ХОЛД / ПАУЗА — блокер «СТОП».
 SHOP_STAGE = {"ОТГРУЖЕН": "Отгружено", "НА ОТГР": "Принято складом", "ГОТОВО": "Принято складом", "ОТК": "ОТК",
-              "В РАБОТЕ": "В работе", "К ЗАПУСК": "КБ набрана"}
+              "В РАБОТЕ": "В работе"}
+SHOP_KIT_PICKED = "К ЗАПУСК"
 SHOP_NOISE = re.compile(r"^(ОТГРУЗКА|ПРОВЕРКА)$", re.I)
-SHOP_ALIASES = {"К ЗАПУС": "К ЗАПУСК", "ОЖД ИНФ": "ОЖИД ИНФ", "ОЖИД КОМП": "ОЖИД КОМПЛ"}
+SHOP_ALIASES = {"К ЗАПУС": "К ЗАПУСК", "ОЖД ИНФ": "ОЖИД ИНФ", "ОЖИД КОМП": "ОЖИД КОМПЛ", "ХОЛД": "СТОП", "ПАУЗА": "СТОП"}
+# «Журнал проектов» SUPPLYMAP: бывшие этапы-отметки → отметка плана проекта «да» (запись «Этап КБ» с этим словом
+# база больше не примет, CHECK 0161).
+JOURNAL_MARKER_STAGES = {"ТК готова": "tc_ready", "КБ набрана": "kit_picked", "Распланировано": "kit_picked"}
+
+
+def journal_words(kind: str, blocker: str, value: str, item_index: str) -> tuple[str, str, str, str, str]:
+    """(вид, блокер, значение, КБ, поле) строки старого журнала словами ERP 29.10: этап «ТК готова» / «КБ набрана» /
+    «Распланировано» — отметка плана проекта «да», блокер ХОЛД / ПАУЗА — «СТОП». Чистая."""
+    from app.modules.production.plan import PLAN_KINDS, blocker_alias
+
+    if kind == PLAN_KINDS["stage"] and value in JOURNAL_MARKER_STAGES:
+        return PLAN_KINDS["mark"], "", "да", "", JOURNAL_MARKER_STAGES[value]
+    if kind == PLAN_KINDS["block"]:
+        return kind, blocker_alias(blocker), value, item_index, ""
+    return kind, blocker, value, item_index, ""
 
 
 def _flat(value: object) -> str:
@@ -177,7 +195,7 @@ def partial_shipments(sheet: list[dict]) -> dict[str, dict]:
 def shop_sync(sheet: list[dict], portal: list[dict]) -> dict:
     """Порт planShopSync_: записи журнала, которые приведут план к листу цеха. Чистая.
     portal — строки плана: {no, terminal, stage, kbs: [{index, status}], blocker: {type, text}|None,
-    deadline: date|None, texts: [тексты журнала]}."""
+    deadline: date|None, texts: [тексты журнала], kit_picked: bool}."""
     from app.modules.production.plan import KIT_STAGES, PLAN_BLOCKERS, normalize_project_number as key
 
     by_no: dict[str, dict] = {}
@@ -220,6 +238,8 @@ def shop_sync(sheet: list[dict], portal: list[dict]) -> dict:
             for kb in p["kbs"]:
                 if KIT_STAGES.index(kb["status"]) < target:
                     add({"kind": "stage", "item_index": kb["index"], "value": KIT_STAGES[target], "text": why_stage})
+        if SHOP_KIT_PICKED in s["statuses"] and not p["terminal"] and not p.get("kit_picked"):
+            add({"kind": "mark", "field": "kit_picked", "value": "да", "text": why_stage})
         blocker = next((b for b in PLAN_BLOCKERS if b in s["statuses"]), "")
         why = " · ".join(s["live_comments"] or s["comments"]) or ", ".join(s["statuses"])
         # Новый блокер уносит комментарии листа своим текстом — отдельными записями их не дублируем.
@@ -289,6 +309,7 @@ def plan_rows(state, today: date) -> list[dict]:
             "type": row.journal.blocker.type, "text": row.journal.blocker.text,
         },
         "deadline": row.deadline,
+        "kit_picked": bool(row.markers and row.markers.kit_picked),
     } for row in rows]
 
 
@@ -379,8 +400,10 @@ def load_projects(numbers: list[str], prod: dict[str, list[list[str]]], shop_gri
             if occurred is None:
                 report["notes"].append(f"журнал {row.get('№ ПРОЕКТА')}: строка без даты — пропущена")
                 continue
-            kind = row.get("ВИД", "")
-            entry = (project, _wall(occurred), kind, row.get("ТЕКСТ", ""), row.get("КБ", ""))
+            kind, blocker, value, item_index, field = journal_words(
+                row.get("ВИД", ""), row.get("БЛОКЕР", ""), row.get("ЗНАЧЕНИЕ", ""), row.get("КБ", ""),
+            )
+            entry = (project, _wall(occurred), kind, row.get("ТЕКСТ", ""), item_index)
             if entry in have:
                 continue
             deadline = None
@@ -389,8 +412,8 @@ def load_projects(numbers: list[str], prod: dict[str, list[list[str]]], shop_gri
                 deadline = _day(match[1]) if match else None
             uow.plan_events.add(PlanEvent(
                 project=project, occurred_at=occurred, who=row.get("КТО", ""), kind=kind,
-                blocker=row.get("БЛОКЕР", ""), text=row.get("ТЕКСТ", ""), deadline=deadline,
-                item_index=row.get("КБ", ""), value=row.get("ЗНАЧЕНИЕ", ""),
+                blocker=blocker, text=row.get("ТЕКСТ", ""), deadline=deadline,
+                item_index=item_index, value=value, field=field,
             ))
             have.add(entry)
             journal_added += 1
@@ -428,6 +451,7 @@ def load_projects(numbers: list[str], prod: dict[str, list[list[str]]], shop_gri
                 project=entry["project"], kind=entry["kind"], blocker=entry.get("blocker", ""),
                 text=entry.get("text", ""), deadline=entry.get("deadline"), known_projects=known,
                 actor=shop, now=now, item_index=entry.get("item_index", ""), value=entry.get("value", ""),
+                field=entry.get("field", ""),
             ), production())
             shop_added += 1
         except Exception as error:  # noqa: BLE001 — одна запись не роняет сверку

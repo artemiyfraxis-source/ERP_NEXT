@@ -22,7 +22,9 @@ from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepositor
 from .application import Absence, DuplicateLaunch, Operator
 from .domain import DEFAULT_SHIFT, MARKS_ISSUED_EVENT, MARKS_RELEASED_EVENT, RESTORED_EVENT, EtkOperation, FlowMode, MarkEvent, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
-    KIT_STAGES, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot, normalize_project_number,
+    KIT_STAGES, PLAN_BLOCKERS, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot,
+    blocker_alias,
+    normalize_project_number,
     stage_alias,
     terminal_alias,
 )
@@ -312,7 +314,9 @@ def _sql_in(column: str, values: tuple[str, ...]) -> str:
 # Migration 0101_production_stage_history added these checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
 # the journal only grows; DELETE stays for a deleted project); 0110_stage_warehouse_accepted re-points them at the
 # 8-stage ladder and the one closed-project word «Отменён» (old rows stay as written — NOT VALID — and read as the
-# new words via `stage_alias` / `terminal_alias`).
+# new words via `stage_alias` / `terminal_alias`); 0161_ladder_markers_blockers re-points the stage checks at the
+# short ladder (owner 29.10) and adds the blocker check (СТОП · ОЖИД ИНФ · ОЖИД КОМПЛ; old «Этап КБ» marker words and
+# ХОЛД / ПАУЗА stay as written and read via `summarize_kit_marks` / `blocker_alias`).
 # The value column comes first in each check: the head-1 seeder (tests/migrations/seed_any_revision.py) fills a
 # checked column with the first literal.
 PLAN_EVENT_CHECKS = {
@@ -327,6 +331,7 @@ PLAN_EVENT_CHECKS = {
         f"from_value = '' OR (kind = '{PLAN_KINDS['stage']}' AND {_sql_in('from_value', KIT_STAGES)})"
         f" OR (kind = '{PLAN_KINDS['status']}' AND {_sql_in('from_value', PROJECT_TERMINALS)})"
     ),
+    "ck_production_plan_events_blocker": f"{_sql_in('blocker', PLAN_BLOCKERS)} OR kind <> '{PLAN_KINDS['block']}'",
 }
 
 
@@ -1171,7 +1176,7 @@ class SqlAlchemyPlanEventRepository:
     def _domain(row: ProductionPlanEventRow) -> PlanEvent:
         return PlanEvent(
             id=row.id, project=row.project, occurred_at=row.occurred_at,
-            who=row.who, kind=row.kind, blocker=row.blocker,
+            who=row.who, kind=row.kind, blocker=blocker_alias(row.blocker),
             text=row.text, deadline=row.deadline, sequence=row.sequence,
             item_index=row.item_index, field=row.field, reason=row.reason,
             # Old «Этап КБ» rows keep their word (the journal is immutable); it reads as the current ladder stage.

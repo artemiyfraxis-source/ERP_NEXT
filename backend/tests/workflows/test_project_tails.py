@@ -586,7 +586,7 @@ def test_deleting_the_project_takes_its_journal_and_a_recreated_project_starts_c
     assert client.post("/api/techcards/kitsets/load", json={"url": CALC_URL}).status_code == 200
     # «30.09 Проверка ТК · КБ1 · проверена», блокер и дедлайн — всё, что видно в карточке и плане.
     assert client.post("/api/techcards/kitsets/708К.4/marks", json={"kb": "КБ1", "kind": "tcReview", "value": "проверена"}).status_code == 200
-    assert client.post("/api/techcards/kitsets/708К.4/status", json={"action": "block", "value": "ХОЛД", "text": "ждём оплату"}).status_code == 200
+    assert client.post("/api/techcards/kitsets/708К.4/status", json={"action": "block", "value": "СТОП", "text": "ждём оплату"}).status_code == 200
     assert client.post("/api/techcards/kitsets/708К.4/journal", json={"kind": "deadline", "deadline": "2026-10-20"}).status_code == 200
     _journal(erp, "708К.4", "mark", field="comment", text="Отметка мастера")
     # Соседи: «…41» и другой проект — в журнал удаляемого проекта не входят.
@@ -594,7 +594,7 @@ def test_deleting_the_project_takes_its_journal_and_a_recreated_project_starts_c
     _journal(erp, "709К.1", "block", blocker="СТОП", text="чужой блокер")
     assert _journal_rows(erp, "708К.4") == {"708К.4": 4}
     card = client.get("/api/techcards/kitsets/708К.4").json()
-    assert card["blocker"] == "ХОЛД" and card["deadline"] == "2026-10-20" and len(card["journal"]) == 4
+    assert card["blocker"] == "СТОП" and card["deadline"] == "2026-10-20" and len(card["journal"]) == 4
 
     deleted = client.delete("/api/techcards/kitsets/708К.4")
 
@@ -643,7 +643,7 @@ def test_journal_is_matched_after_normalisation_and_nothing_else_goes(erp):
 
 def test_cli_dry_run_lists_journal_rows_then_yes_removes(erp):
     _journal(erp, "719К.2", "tcReview", item_index="КБ1", value="проверена", text="")
-    _journal(erp, "719К.2", "block", blocker="ХОЛД", text="ждём оплату")
+    _journal(erp, "719К.2", "block", blocker="СТОП", text="ждём оплату")
     _journal(erp, "719К.21", "note", text="сосед")
     before = _journal_rows(erp)
 
