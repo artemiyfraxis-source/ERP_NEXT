@@ -2667,12 +2667,26 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .scan-undo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--muted-foreground); font-size: 12px; }
 .scan-undo strong { color: var(--foreground); }
 .scan-undo .link-button { padding: 0; }
-.mb-tiles { margin-top: 4px; }
-.mb-tile-extra { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 12px; }
-.mb-tile-extra .mb-free, .mb-tile-extra .mb-done, .mb-launch { padding: 1px 7px; border-radius: 6px; background: var(--accent); }
-.mb-tile-extra .mb-free { background: var(--bg-amber-1); }
-.mb-tile-extra .mb-done { background: var(--bg-teal-9); }
-.mb-launch { color: var(--fg-blue-3); background: var(--bg-blue-2); }
+/* Карточки проектов доски мастера (владелец 29.10): одна высота в сетке, пять строк — шапка со сроком, заказчик, статус,
+   «к запуску / без исполнителя», счётчики проблем (не больше двух строк, полные списки — в подсказках). */
+.mb-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); grid-auto-rows: 1fr; gap: 8px; margin-top: 4px; }
+.mb-card { display: grid; grid-template-rows: auto auto auto auto 1fr; gap: 4px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); cursor: pointer; transition: border-color .15s; }
+.mb-card:hover { border-color: color-mix(in srgb, var(--primary) 60%, var(--border)); }
+.mb-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.mb-card-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.mb-card-no { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; white-space: nowrap; }
+.mb-card-due { flex: none; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted-foreground); }
+.mb-card-customer { overflow: hidden; font-size: 14px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.mb-card-status { min-height: 20px; }
+.mb-card-action, .mb-card-problems { display: flex; flex-wrap: wrap; column-gap: 16px; font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; }
+/* Строка действия — главное для мастера: крупнее и плотнее счётчиков. */
+.mb-card-action { overflow: hidden; height: 20px; font-size: 13px; line-height: 20px; font-weight: 500; }
+.mb-card-problems { overflow: hidden; align-content: start; max-height: 36px; }
+.mb-card-problems b { font-weight: 600; }
+.mb-card [data-tone="danger"]:not(.status-chip) { color: var(--chip-danger-fg); }
+.mb-card [data-tone="warning"]:not(.status-chip) { color: var(--chip-warning-fg); }
+.mb-card [data-tone="info"]:not(.status-chip) { color: var(--chip-info-fg); }
+.mb-card [data-tone="success"]:not(.status-chip) { color: var(--chip-success-fg); }
 .mb-project-head .secondary { margin-right: 4px; }
 
 /* Проекты как в SUPPLYMAP: плотная сетка карточек, фильтры в одну строку. */
@@ -4185,8 +4199,8 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .mb-people .mb-week thead th:first-child { width: 200px; }
 .mb-period { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mb-people .mb-legend { margin-top: 10px; }
-/* Сроки на плитке, в шапке проекта и задания: дедлайн проекта и срок задания — разными словами (РП-1, РП-2). */
-.mb-tile-extra .status-chip, .mb-project-head .status-chip, .mb-task-head .status-chip { height: 20px; font-size: 12px; }
+/* Сроки в шапке проекта и задания: дедлайн проекта и срок задания — разными словами (РП-1, РП-2). */
+.mb-project-head .status-chip, .mb-task-head .status-chip { height: 20px; font-size: 12px; }
 .task-deadlines { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 /* Карточка задания: кнопки действий одной высоты, не растянуты по самой высокой. */
 .production-card > .page-actions { flex-wrap: wrap; align-items: flex-start; margin: 8px 0 12px; }
