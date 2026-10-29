@@ -29,6 +29,7 @@ import { UndoLast, WarehouseScanResults, type ScanRequest } from "./WarehouseSca
 import { WarehouseReceipt } from "./WarehouseReceipt";
 import { lotDocuments, receiptLine, shortDate } from "./warehouseReceiptLogic";
 import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
+import { EquipmentPage } from "./EquipmentPage";
 import { StockLinkDialog } from "./StockLinkDialog";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
@@ -62,21 +63,36 @@ function passportParts(mass: string, fields: Partial<Omit<WarehouseLotPassport, 
  *  `readOnly` — «режим просмотра» (ID-6): the stock is read, every entry/move/writeoff/edit control is gone
  *  (SUPPLYMAP portalApplyAccess_ 'view' drops b.edit, portalStock05Guard_ refuses writes).
  *  `finishedGoods` — the viewer reads «Отгрузка»: the «Готовая продукция» tab (read-only, owner 12.10.2026). */
-export function WarehousePage({ admin = false, readOnly = false, finishedGoods = false, canEditReferences = false }: { admin?: boolean; readOnly?: boolean; finishedGoods?: boolean; canEditReferences?: boolean } = {}) {
-  // `?section=stock&view=goods` opens «Готовая продукция» (a link, a screenshot).
-  const [view, setView] = useState<"stock" | "goods">(() => new URLSearchParams(window.location.search).get("view") === "goods" ? "goods" : "stock");
+export function WarehousePage({ admin = false, readOnly = false, finishedGoods = false, canEditReferences = false, equipment = false }: { admin?: boolean; readOnly?: boolean; finishedGoods?: boolean; canEditReferences?: boolean; equipment?: boolean } = {}) {
+  // `?section=stock&view=goods` opens «Готовая продукция», `view=equipment` — «Оборудование» (a link, a screenshot;
+  // the old `?section=equipment` lands on the second one). A sub-tab the viewer has no access to falls back to «Материалы».
+  const [view, setView] = useState<StockView>(() => {
+    const wanted = new URLSearchParams(window.location.search).get("view");
+    return wanted === "goods" && finishedGoods ? "goods" : wanted === "equipment" && equipment ? "equipment" : "stock";
+  });
+  const views = finishedGoods || equipment ? <StockViews view={view} onChange={setView} goods={finishedGoods} equipment={equipment} /> : null;
+  if (equipment && view === "equipment") return <section className="page stock-page">
+    <header className="page-head"><h1>Склад</h1></header>
+    {views}
+    <EquipmentPage />
+  </section>;
   if (finishedGoods && view === "goods") return <section className="page stock-page">
     <header className="page-head"><h1>Склад</h1></header>
-    <StockViews view={view} onChange={setView} />
+    {views}
     <FinishedGoodsPanel />
   </section>;
-  return <StockPage admin={admin} readOnly={readOnly} canEditReferences={canEditReferences} views={finishedGoods ? <StockViews view={view} onChange={setView} /> : null} />;
+  return <StockPage admin={admin} readOnly={readOnly} canEditReferences={canEditReferences} views={views} />;
 }
 
-/** «Материалы» | «Готовая продукция» под заголовком склада. */
-function StockViews({ view, onChange }: { view: "stock" | "goods"; onChange: (view: "stock" | "goods") => void }) {
+type StockView = "stock" | "goods" | "equipment";
+
+/** «Материалы и комплектующие» | «Готовая продукция» | «Оборудование» под заголовком склада. */
+function StockViews({ view, onChange, goods, equipment }: { view: StockView; onChange: (view: StockView) => void; goods: boolean; equipment: boolean }) {
+  const tabs: [StockView, string][] = [["stock", "Материалы и комплектующие"]];
+  if (goods) tabs.push(["goods", "Готовая продукция"]);
+  if (equipment) tabs.push(["equipment", "Оборудование"]);
   return <div className="seg-tabs stock-views" role="tablist" aria-label="Склад">
-    {([["stock", "Материалы и комплектующие"], ["goods", "Готовая продукция"]] as const).map(([key, label]) =>
+    {tabs.map(([key, label]) =>
       <button key={key} type="button" role="tab" aria-selected={view === key} className={view === key ? "on" : undefined} onClick={() => onChange(key)}>{label}</button>)}
   </div>;
 }
