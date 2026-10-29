@@ -22,7 +22,7 @@ from app.shared.notifications import (
 )
 
 from .domain import (
-    AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    PACK_NOT_DECIDED, AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
     plan_project_queue,
 )
@@ -191,6 +191,8 @@ class CreateShipmentCommand:
     actor: Actor
     now: datetime
     no_docs: bool = False
+    # Отправку заводит менеджер («Отгрузка» на правку): его отправка сама ставит решение «упаковывать».
+    decide_pack: bool = False
 
 
 @dataclass(frozen=True)
@@ -443,6 +445,9 @@ def _create_shipment(
     if not lines:
         raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
     # The shipment's project is its first line's (`shipHeadEff_`).
+    if command.decide_pack:
+        for project in dict.fromkeys(line.project for line in lines):
+            _decide_pack(project, command.actor, command.now, uow)
     card = uow.addressees.get(lines[0].project)
     address = effective_address(
         receiver=command.receiver, shipping_point=command.shipping_point, contact=command.contact,
@@ -450,6 +455,9 @@ def _create_shipment(
         project=card,
         customer_fallback=command.customer or next((name for name in customers if name), ""),
     )
+    upd_number, upd_date = str(command.upd_number or "").strip(), command.upd_date
+    if not upd_number:
+        upd_number, upd_date = _card_upd_number(card, address.upd_type, uow) or (upd_number, upd_date)
     shipment = Shipment.create(
         number=uow.shipments.reserve_number(command.now.date()), created_at=command.now,
         customer=command.customer, receiver=address.receiver, shipping_point=address.shipping_point,
@@ -457,7 +465,7 @@ def _create_shipment(
         carrier=address.carrier, upd_type=address.upd_type,
         # Срок и комментарий, не заданные в заявке, — из плана отгрузки карточки проекта (копия на момент заведения).
         deadline=command.deadline or (card.plan_date if card is not None else None),
-        upd_number=command.upd_number, upd_date=command.upd_date,
+        upd_number=upd_number, upd_date=upd_date,
         upd_url=str(command.upd_url or "").strip() or _card_upd(card, address.upd_type, uow),
         manager=command.actor.name, note=str(command.note or "").strip() or (card.note if card is not None else ""),
         lines=tuple(lines),
@@ -490,6 +498,104 @@ def _card_upd(card: ProjectAddressee | None, upd_type: UpdType | None, uow: Unit
     return "" if taken else card.upd_url
 
 
+def _card_upd_number(
+    card: ProjectAddressee | None, upd_type: UpdType | None, uow: UnitOfWork,
+) -> tuple[str, date | None] | None:
+    """№ и дата УПД карточки проекта (0162) — новой отправке без своего №, как `_card_upd` с файлом. «Без УПД» номер не
+    берёт; номер, уже стоящий в другой (не отменённой) отправке проекта, второй раз не выдаётся."""
+    if card is None or not card.upd_number or upd_type == UpdType.NONE:
+        return None
+    taken = any(
+        other.upd_number == card.upd_number and other.status != ShipmentStatus.CANCELLED
+        for other in uow.shipments.for_project(card.project)
+    )
+    return None if taken else (card.upd_number, card.upd_date)
+
+
+def _decide_pack(project: str, actor: Actor, now: datetime, uow: UnitOfWork) -> ProjectAddressee:
+    """Решение «упаковывать» без фиксации: ставит его менеджер (или его отправка); уже стоит — ничего не меняется."""
+    current = uow.addressees.get(project) or ProjectAddressee.empty(project)
+    decided = current.decide_pack(True, actor.name, now)
+    if decided is current:
+        return current
+    updated = replace(decided, version=current.version + 1, updated_by=actor.name, updated_at=now)
+    uow.addressees.add(updated)
+    _audit(_addressee_id(project), "shipping.pack_decided", actor, now, {"project": project}, uow)
+    _notify_pack_decided(updated, actor, now, uow)
+    return updated
+
+
+def _notify_pack_decided(card: ProjectAddressee, actor: Actor, now: datetime, uow: UnitOfWork) -> None:
+    """Кладовщикам: «можно упаковывать» со ссылкой на «Склад → Приёмка с производства»."""
+    publish_notification(uow.outbox, notification_requested(
+        key=f"shipping:pack-decided:{card.project}:v{card.version}",
+        now=now,
+        title=f"Можно упаковывать: проект {card.project}",
+        body=(
+            f"{actor.name}: проект {card.project} можно упаковывать — принятое на склад ГП упаковывайте."
+            "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."
+        ),
+        kind="ship",
+        reference=card.project,
+        audiences=(STOREKEEPER_AUDIENCE,),
+    ))
+
+
+def _require_pack_decision(shipment: Shipment, uow: UnitOfWork) -> None:
+    """Без решения менеджера «упаковывать» склад проекта не набирает (владелец 29.10.2026)."""
+    for project in dict.fromkeys(line.project for line in shipment.lines):
+        card = uow.addressees.get(project)
+        if card is None or not card.pack_decided:
+            raise ShippingValidationError(PACK_NOT_DECIDED)
+
+
+@dataclass(frozen=True)
+class PackDecisionCommand:
+    """«Упаковывать» в карточке проекта: `decided` — поставить или снять; версия — карточки проекта."""
+
+    project: str
+    expected_version: int
+    decided: bool
+    actor: Actor
+    now: datetime
+
+
+PACK_DECISION_LOCKED = "Решение «упаковывать» не снять: по проекту уже есть набранная отправка"
+
+
+def set_pack_decision(command: PackDecisionCommand, uow: UnitOfWork) -> ProjectAddressee:
+    """Ставит или снимает решение «упаковывать». Снять — только пока у проекта нет набранной (не отменённой) отправки;
+    поставленное решение уходит кладовщикам уведомлением «можно упаковывать»."""
+    project = str(command.project or "").strip()
+    if not project:
+        raise ShippingValidationError("Не указан проект")
+    with uow:
+        current = uow.addressees.get(project) or ProjectAddressee.empty(project)
+        if command.expected_version != current.version:
+            raise ConcurrentShippingUpdate("Карточка проекта изменилась после загрузки формы")
+        if command.decided == current.pack_decided:
+            return current
+        if command.decided:
+            updated = _decide_pack(project, command.actor, command.now, uow)
+        else:
+            picked = any(
+                shipment.status != ShipmentStatus.CANCELLED and any(line.picked > 0 for line in shipment.lines)
+                for shipment in uow.shipments.for_project(project)
+            )
+            if picked:
+                raise ShippingValidationError(PACK_DECISION_LOCKED)
+            updated = replace(
+                current.decide_pack(False, command.actor.name, command.now), version=current.version + 1,
+                updated_by=command.actor.name, updated_at=command.now,
+            )
+            uow.addressees.add(updated)
+            _audit(_addressee_id(project), "shipping.pack_decision_withdrawn", command.actor, command.now, {
+                "project": project, "was_by": current.pack_decided_by,
+            }, uow)
+        uow.commit()
+        return updated
+
+
 def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
     """Поля адресата, не заданные в заявке: они и дальше идут за карточкой проекта."""
     own = {
@@ -500,6 +606,7 @@ def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
 
 
 def _pick(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> tuple[Shipment, dict[UUID, Decimal]]:
+    _require_pack_decision(shipment, uow)
     goods = {line.finished_good_id: uow.goods.get(line.finished_good_id) for line in shipment.lines}
     if any(good is None for good in goods.values()):
         raise ShippingValidationError("Позиция готовой продукции больше не существует")
@@ -874,6 +981,8 @@ def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
         addressee = uow.addressees.get(project)
     if not goods:
         raise ShippingValidationError(f"У проекта {project} нет строк готовой продукции.")
+    if addressee is None or not addressee.pack_decided:
+        raise ShippingValidationError(PACK_NOT_DECIDED)
     remain = {good_id: good.remaining for good_id, good in goods.items()}
     lines: list[RequestedGood] = []
     for requested in command.lines:
@@ -1032,7 +1141,7 @@ def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipRes
             upd_number=command.upd_number.strip() if command.as_manager else "",
             upd_date=command.upd_date if command.as_manager and command.upd_number.strip() else None,
             upd_url="", note="", lines=tuple(requested), actor=command.actor, now=command.now,
-            no_docs=not command.as_manager,
+            no_docs=not command.as_manager, decide_pack=command.as_manager,
         ), uow, shipment_id=shipment_id, details={"idempotency_key": key, "fingerprint": fingerprint, "project": project})
         if command.upd_file is not None:
             shipment = _attach_upd(
@@ -1072,6 +1181,33 @@ def cancel_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
         return updated
 
 
+@dataclass(frozen=True)
+class ApproveNoUpdCommand(ShipmentCommand):
+    """Разрешение «отгрузить без УПД»: кто разрешил (PIN и право проверены в workflows/ship_no_upd.py)."""
+    approver_id: UUID
+    approver_name: str
+
+
+def check_no_upd(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
+    """Можно ли разрешать (версия формы, статус, ещё не разрешено) — до того, как тратить попытку PIN."""
+    with uow:
+        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+    shipment.approve_no_upd(command.actor.name or "проверка", command.now)
+    return shipment
+
+
+def approve_no_upd(command: ApproveNoUpdCommand, uow: UnitOfWork) -> Shipment:
+    with uow:
+        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        updated = shipment.approve_no_upd(command.approver_name, command.now)
+        uow.shipments.add(updated)
+        _audit(shipment.id, "shipping.no_upd_approved", command.actor, command.now, {
+            "approver_id": str(command.approver_id), "approver": command.approver_name,
+        }, uow)
+        uow.commit()
+        return updated
+
+
 ROLLBACK_SHIPPED_DENIED = "Откатить «Отгружено» может только руководитель (администратор)"
 
 
@@ -1100,6 +1236,7 @@ def rollback_shipped(command: RollbackShippedCommand, uow: UnitOfWork) -> Shipme
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.ship_rolled_back", command.actor, command.now, {
             "reason": reason, "from": shipment.status.value, "to": updated.status.value,
+            **({"no_upd_approval_cleared": shipment.no_upd_approved_by} if shipment.no_upd_approved_by else {}),
             "quantities": {str(key): _plain(value) for key, value in back.items()},
         }, uow)
         uow.commit()

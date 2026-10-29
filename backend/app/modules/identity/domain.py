@@ -526,6 +526,10 @@ LEVEL_SECTION_LABELS: dict[str, str] = {
     "handout": "Выдача со списанием",
     "shipping": "Отгрузка",
     "shipping_goods": "Отгрузка — склад",
+    # Owner 29.10.2026: «Отгрузить по пинкоду без УПД: пинкод у Артемия, Зингера, Касаточкина». Edit = the person may
+    # permit one shipment to leave without a УПД by typing their own PIN (workflows/ship_no_upd.py). No level seed: only
+    # the full levels hold it until the owner grants it in «Доступы».
+    "ship_no_upd": "Отгрузка без УПД — разрешение",
     # Owner 28.10.2026: «Сканировать документы в базу может ограниченное количество операторов… печать отдельных
     # документов доступна ограниченному количеству операторов (по должности)». `scan` edit sends a scan job to an agent
     # (on the scanner the person chose) and installs agents on new PCs (warehouse/scan_jobs_api.py scan_edit_principal);

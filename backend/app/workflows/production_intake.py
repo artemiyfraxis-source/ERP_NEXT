@@ -47,7 +47,7 @@ from app.modules.production.plan import (
 )
 from app.modules.production.traceability import BoxStatus
 from app.modules.shipping.domain import AcceptanceAct, FinishedGood
-from app.modules.shipping.infrastructure import SqlAlchemyFinishedGoodsRepository
+from app.modules.shipping.infrastructure import ProjectAddresseeRow, SqlAlchemyFinishedGoodsRepository
 from app.modules.techcards.infrastructure import ProjectTechcardRow
 from app.modules.techcards.kitset_infrastructure import SqlAlchemyKitsetRepository
 from app.modules.techcards.kitsets import Kitset
@@ -93,6 +93,8 @@ class IntakeRow:
     tasks: tuple[TaskShare, ...] = ()
     acts: tuple[AcceptanceAct, ...] = ()
     project_stage: str = ""  # низший этап по всем КБ проекта, отгруженные включены
+    # Менеджер решил «упаковывать» (карточка проекта в Отгрузке, 0162): без этого склад не упаковывает.
+    pack_decided: bool = False
 
     @property
     def remaining(self) -> Decimal:
@@ -148,6 +150,8 @@ class IntakeFacts:
     boxes: tuple[BoxFact, ...] = ()
     inspected: Collection[UUID] = frozenset()
     worked: Collection[UUID] = frozenset()
+    # Проекты (как записаны в карточке Отгрузки) с решением «упаковывать».
+    pack_decided: Collection[str] = frozenset()
 
 
 def is_closed(snapshot: PlanProjectSnapshot, journal: ProjectJournal | None) -> bool:
@@ -241,6 +245,7 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
                 needed=needed, launched=kb.run if kb else ZERO, delivered=kb.delivered if kb else ZERO,
                 accepted=good.accepted if good else ZERO, packed=good.shipped if good else ZERO, sent=sent,
                 good=good, tasks=kb.tasks if kb else (), project_stage=stage.status,
+                pack_decided=(good.project if good else snapshot.project) in facts.pack_decided,
                 acts=tuple(act for act in facts.acts.get(good.id, ()) if act.net > 0) if good else (),
             ))
     return sorted(rows, key=lambda row: (
@@ -308,6 +313,12 @@ class SqlAlchemyIntakeUnitOfWork:
         )
         return [KitRequestFact(purpose or "", FulfillmentStatus(status)) for purpose, status in found]
 
+    def pack_decided(self) -> frozenset[str]:
+        """Проекты карточек Отгрузки с решением «упаковывать»: проверка склада идёт по тому же № проекта."""
+        return frozenset(self._session().scalars(
+            select(ProjectAddresseeRow.project).where(ProjectAddresseeRow.pack_decided.is_(True))
+        ))
+
     def boxes(self, task_ids: Collection[UUID]) -> list[BoxFact]:
         if not task_ids:
             return []
@@ -353,6 +364,7 @@ def read_intake(uow) -> IntakeFacts:
         boxes=tuple(uow.boxes(task_ids)),
         inspected=frozenset(uow.qc.inspected_box_ids()),
         worked=frozenset(uow.production.worked(task_ids)),
+        pack_decided=uow.pack_decided(),
     )
 
 

@@ -193,6 +193,9 @@ def test_intake_lists_every_kb_of_open_projects_until_everything_is_sent(intake_
 
     done = by_kb[("708К.4", "КБ10")]
     assert (done["stage"], done["delivered"], done["remaining"]) == ("ОТК", "5", "5")
+    # Решение «упаковывать» (0162): 708К.4 — его поставила отправка менеджера в фикстуре, у 709К.1 решения нет.
+    assert partly_accepted["pack_decided"] is True and partly_handed["pack_decided"] is True
+    assert by_kb[("709К.1", "КБ1")]["pack_decided"] is False
 
     for row in rows:  # в работе — до заказанного (или сданного, если сдано больше); не запущена — до сданного
         in_work = row["tasks"] or row["stage"] in ("Распланировано", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке")

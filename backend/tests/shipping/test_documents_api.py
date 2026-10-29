@@ -5,7 +5,7 @@ from uuid import UUID
 from app.main import app
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
-from tests.shipping.test_api import shipping_api  # noqa: F401 — fixture
+from tests.shipping.test_api import decide_pack, shipping_api  # noqa: F401 — fixture
 
 
 def _stocked(client, *, item_index="КБ1", ordered="40", accepted="6", project="591К.3"):
@@ -135,10 +135,13 @@ def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(s
     client.put("/api/shipping/project-addressee", json={
         "project": "591К.3", "shipping_point": "Склад заказчика",
     })
+    undecided = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "9"}]})
+    decide_pack(client)
     nothing = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": empty["id"], "quantity": "4"}]})
     packed = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "9"}]})
     addressees = client.get("/api/shipping/project-addressees").json()["addressees"]
 
+    assert undecided.status_code == 422 and undecided.json()["detail"] == "Менеджер ещё не решил упаковывать"
     assert nothing.status_code == 422 and "Упаковывать нечего" in nothing.json()["detail"]
     shipment = packed.json()["shipment"]
     assert shipment["status"] == "Собрана" and shipment["pl_number"] == ""
