@@ -249,6 +249,18 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(form.queryByRole("button", { name: "+ Страница" })).not.toBeInTheDocument();
   });
 
+  it("with the type «ЭДО» a PDF exported from ЭДО is taken and lands as ЭДО", async () => {
+    stub([base]);
+    render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByText("ОТГ-20261028-01"));
+    const form = within(screen.getByRole("dialog", { name: "Данные отправки ОТГ-20261028-01" }));
+    fireEvent.change(form.getByLabelText("Тип УПД"), { target: { value: "ЭДО" } });
+    expect(form.getByLabelText("Файл УПД").getAttribute("accept")).toContain(".pdf");
+    fireEvent.change(form.getByLabelText("Файл УПД"), { target: { files: [new File(["%PDF"], "upd.pdf", { type: "application/pdf" })] } });
+    await waitFor(() => expect(bodies("/upd-scan/apply")).toHaveLength(1));
+    expect(bodies("/upd-scan/apply")[0]).toMatchObject({ upd_number: "РЭ-0915", edo: true });
+  });
+
   it("an ЭДО file fills the type, № and date at once and shows the attached file; the form stays editable", async () => {
     stub([base]);
     render(<ShipmentDataPage principal={principal} />);
