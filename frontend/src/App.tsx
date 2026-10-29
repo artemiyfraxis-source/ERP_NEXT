@@ -78,7 +78,8 @@ function placeFromUrl(): Place {
   if (moved && moved !== value) {
     const url = new URL(window.location.href);
     url.searchParams.set("section", moved);
-    if (ALIAS_VIEW[value]) url.searchParams.set("view", ALIAS_VIEW[value]);
+    const view = value ? ALIAS_VIEW[value] : undefined;
+    if (view) url.searchParams.set("view", view);
     window.history.replaceState(window.history.state, "", url);
     value = moved;
   }
