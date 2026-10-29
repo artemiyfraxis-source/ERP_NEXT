@@ -4024,7 +4024,7 @@ export const shippingApi = {
     };
   },
   /** Прочитанный УПД ложится в отправку: файл, тип, № и дата; `number` — что делать с другим уже внесённым №. */
-  applyUpdScan: (shipmentId: string, body: { version: number; scan_file: string; upd_number: string; upd_date: string | null; invoice_number: string; number?: "replace" | "keep" }) =>
+  applyUpdScan: (shipmentId: string, body: { version: number; scan_file: string; upd_number: string; upd_date: string | null; invoice_number: string; number?: "replace" | "keep"; edo?: boolean }) =>
     api<{ status: "applied"; shipment: Shipment; invoice: string } | { status: "conflict"; current: string; found: string }>(
       `/api/shipping/shipments/${encodeURIComponent(shipmentId)}/upd-scan/apply`, { method: "POST", body: JSON.stringify(body) }),
   /** Файл бумажной УПД к данным отправки проекта (то же хранилище); ссылку в карточку ставит `saveAddressee` с `upd_url`. */

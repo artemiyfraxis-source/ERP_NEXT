@@ -104,13 +104,13 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
   const noUpd = updType === "БЕЗ УПД";
   const edoType = updType === "ЭДО";
   // Распознавание идёт долго, а его ответ приходит из замыкания кнопки: свежее состояние — через ref.
-  const latest = useRef({ shipment, updNumber });
-  latest.current = { shipment, updNumber };
+  const latest = useRef({ shipment, updNumber, edoType });
+  latest.current = { shipment, updNumber, edoType };
 
   /** Ответ чтения ложится в отправку: файл, тип, № и дата документа, № счёта из «Основания». Другой уже внесённый № молча
    *  не затирается: сначала вопрос «Заменить?». */
   const applyAnswer = async (answer: WarehouseReceiptScan, number?: "replace" | "keep") => {
-    const { shipment: current, updNumber: typedRaw } = latest.current;
+    const { shipment: current, updNumber: typedRaw, edoType: edo } = latest.current;
     const found = (answer.recognised.upd_number ?? "").trim();
     const typed = typedRaw.trim();
     if (!number && found && typed && typed !== found) { setReplacing({ answer, typed }); return; }
@@ -118,7 +118,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
     try {
       const result = await shippingApi.applyUpdScan(current.id, {
         version: current.version, scan_file: answer.scan_file, upd_number: found, upd_date: answer.recognised.upd_date || null,
-        invoice_number: (answer.recognised.invoice_number ?? "").trim(), number: number ?? "replace",
+        invoice_number: (answer.recognised.invoice_number ?? "").trim(), number: number ?? "replace", ...(edo ? { edo } : {}),
       });
       if (result.status === "conflict") { setReplacing({ answer, typed: result.current }); return; }
       const next = result.shipment;
@@ -199,7 +199,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
               : <button type="button" className="secondary" disabled={reading} onClick={() => void scan.fromScanner(true)}>Сканировать</button>)}
             <button type="button" className="secondary" disabled={reading} onClick={() => fileInput.current?.click()}>{edoType ? "Файл ЭДО…" : "Файл…"}</button>
             <input ref={fileInput} type="file" hidden multiple={!edoType} aria-label="Файл УПД"
-              accept={edoType ? ".xml,.zip,application/xml,text/xml,application/zip" : ".pdf,.xml,.zip,image/*,application/xml,text/xml,application/zip"}
+              accept={edoType ? ".pdf,.xml,.zip,application/pdf,application/xml,text/xml,application/zip" : ".pdf,.xml,.zip,image/*,application/xml,text/xml,application/zip"}
               {...(coarse && !edoType ? { capture: "environment" as const } : {})}
               onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; if (files.length) void scan.fromFiles(files); }} />
           </span>
