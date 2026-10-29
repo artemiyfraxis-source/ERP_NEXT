@@ -164,7 +164,7 @@ def ship(erp, good, now=at(26)):
     return create_shipment(CreateShipmentCommand(
         customer="ООО Заказчик", receiver="ООО Заказчик", shipping_point="Москва, склад 3", contact="", phone="",
         terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="", note="",
-        lines=(RequestedGood(good.id, Decimal("1")),), actor=ACTOR, now=now,
+        lines=(RequestedGood(good.id, Decimal("1")),), actor=ACTOR, now=now, decide_pack=True,
     ), erp.shipping())
 
 

@@ -35,7 +35,7 @@ from app.modules.shipping.application import (
     register_good,
     update_documents,
 )
-from app.modules.shipping.domain import DeliveryTerms, UpdType
+from app.modules.shipping.domain import DeliveryTerms, ProjectAddressee, UpdType
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from app.shared.notifications import SUPPLY_AUDIENCE, TECHNOLOGIST_AUDIENCE, notification_requested
 from app.shared.persistence import OutboxMessageRow, create_schema
@@ -196,8 +196,12 @@ def test_procurement_line_without_initiator_user_is_marked_and_skipped(sessions)
         ).all() == []
 
 
-def _shipment(sessions, manager=MANAGER, upd_url=""):
+def _shipment(sessions, manager=MANAGER, upd_url="", upd_type=UpdType.PAPER):
+    """Упакованная отправка ТК с № УПД и телефоном: трек вписывается, когда УПД и ТК на месте (владелец 29.10.2026)."""
     uow = lambda: SqlAlchemyShippingUnitOfWork(sessions)
+    with uow() as card_uow:  # менеджер уже решил «упаковывать»; само решение — не предмет этих тестов
+        card_uow.addressees.add(replace(ProjectAddressee.empty("316К").decide_pack(True, manager.name, NOW), version=1))
+        card_uow.commit()
     good = register_good(RegisterGoodCommand(
         project="316К", item_index="КБ1", customer="АО Заказчик", article="A-1", name="Жгут",
         ordered=Decimal("10"), unit="шт", note="", actor=manager, now=NOW,
@@ -208,8 +212,8 @@ def _shipment(sessions, manager=MANAGER, upd_url=""):
     ), uow())
     return create_shipment(CreateShipmentCommand(
         customer="АО Заказчик", receiver="Склад заказчика", shipping_point="Москва", contact="",
-        phone="", terms=DeliveryTerms.CARRIER, carrier="СДЭК", deadline=None,
-        upd_type=UpdType.PAPER, upd_number="", upd_date=None, upd_url=upd_url, note="",
+        phone="+7 900 000-00-00", terms=DeliveryTerms.CARRIER, carrier="СДЭК", deadline=None,
+        upd_type=upd_type, upd_number="77", upd_date=None, upd_url=upd_url, note="",
         lines=(RequestedGood(good_id=good.id, quantity=Decimal("4")),), actor=manager, now=NOW,
     ), uow())
 
@@ -226,9 +230,9 @@ def _documents(sessions, shipment, **changes):
 def test_track_number_goes_to_the_manager_and_upd_to_storekeepers(sessions):
     shipment = _shipment(sessions)
     assert shipment.manager_id == MANAGER.id
+    shipment = _documents(sessions, shipment, upd_url="https://files.test/upd.pdf")
     shipment = _documents(sessions, shipment, track_number="TRK-1")
-    shipment = _documents(sessions, shipment, track_number="TRK-1")  # unchanged track: silent
-    _documents(sessions, shipment, upd_number="77", upd_url="https://files.test/upd.pdf")
+    _documents(sessions, shipment, track_number="TRK-1")  # unchanged track: silent
 
     inbox = _deliver(sessions)
     assert inbox == {
@@ -238,7 +242,7 @@ def test_track_number_goes_to_the_manager_and_upd_to_storekeepers(sessions):
 
 
 def test_track_without_a_manager_user_goes_to_every_project_manager(sessions):
-    shipment = _shipment(sessions)
+    shipment = _shipment(sessions, upd_type=UpdType.EDO)  # ЭДО: файл не нужен, УПД-уведомления нет
     with SqlAlchemyShippingUnitOfWork(sessions) as uow:
         shipment = replace(shipment, manager_id=None)  # the backfill found no user for МЕНЕДЖЕР
         uow.shipments.add(shipment)
