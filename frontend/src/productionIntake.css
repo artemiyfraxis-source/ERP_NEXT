@@ -47,3 +47,27 @@
 .intake-window .intake-place { width: 150px; }
 .intake-window .ship-inline input[type="date"] { min-width: 150px; }
 .intake-print-status { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+/* Упаковка и отгрузка на этом же экране (владелец 29.10): «Упаковано» и «Отгружено» — числа-кнопки, как «Можно принять».
+   Подсвечена — есть что делать; спокойная — окно отправок проекта; выключена — ждёт решения менеджера. */
+.intake-num-btn { min-width: 44px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card);
+  color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; }
+.intake-num-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.intake-num-btn:disabled { color: var(--muted-foreground); border-style: dashed; cursor: not-allowed; }
+.intake-take-btn:focus-visible, .intake-num-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.intake-track-cell { display: inline-flex; align-items: center; gap: 6px; }
+.intake-tracks { max-width: 160px; font-variant-numeric: tabular-nums; }
+.intake-ships { display: grid; gap: 10px; margin-top: 14px; }
+.intake-ships h3, .intake-window h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
+.intake-ship { display: grid; gap: 10px; }
+.intake-track-row { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--border); }
+.intake-track-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.intake-track-row .intake-window-actions { margin-top: 0; justify-content: flex-start; }
+.intake-track-row .ship-inline input { width: 240px; flex: none; }
+.intake-track-row .tone-warn { font-size: 13px; }
+.ship-card-ready { margin-top: -4px; }
+.intake-pin-grid { padding: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.intake-pin p { margin: 0 0 10px; }
+@media (pointer: coarse) {
+  .intake-num-btn { min-height: 40px; }
+  .intake-track-row input, .intake-pin input, .intake-pin select { min-height: 40px; }
+}

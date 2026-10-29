@@ -186,7 +186,8 @@ it("section words find the menu section once something is typed, and an empty fi
   const titles = () => screen.getAllByRole("option").map((option) => option.querySelector(".palette-title")?.textContent);
   expect(titles()).toEqual(["Склад"]);
   fireEvent.change(input, { target: { value: "упаковка" } });
-  expect(titles()).toEqual(expect.arrayContaining(["Отгрузка", "Отправки", "Приёмка с производства"]));
+  expect(titles()).toEqual(expect.arrayContaining(["Отправки", "Приёмка с производства"]));
+  expect(titles()).not.toContain("Отгрузка");
   fireEvent.change(input, { target: { value: "наконечники" } });
   expect(titles()).toEqual(["База данных → Наконечники"]);
   fireEvent.keyDown(input, { key: "Enter" });
