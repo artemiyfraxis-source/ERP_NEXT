@@ -77,7 +77,7 @@ describe("Приёмка с производства", () => {
     expect(screen.queryByText("Шлейф")).not.toBeInTheDocument(); // в «Можно принять» только то, что сдано
     const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent ?? "");
     for (const gone of ["Принять, шт", "Этап", "Сдано цехом", "Место хранения"]) expect(headers.some((text) => text.includes(gone))).toBe(false);
-    expect(headers.findIndex((text) => text.includes("Остаток"))).toBe(headers.findIndex((text) => text.includes("Заказано")) + 1);
+    expect(headers.map((text) => text.replace(/[^А-Яа-яЁё ]/g, "").trim())).toEqual(["КБ", "Наименование", "Заказано", "Можно принять", "Задания"]);
     expect(screen.queryByLabelText("Сколько принять 591К.3 КБ1")).not.toBeInTheDocument(); // поля в строке нет
     fireEvent.click(screen.getByRole("button", { name: "Принять 591К.3 КБ1: можно 20" }));
     const dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
@@ -116,7 +116,7 @@ describe("Приёмка с производства", () => {
     const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
     expect(headers.some((text) => text?.includes("Отгружено"))).toBe(false);
     expect(headers.some((text) => text?.includes("Трек"))).toBe(false);
-    expect(headers.some((text) => text?.includes("Принято"))).toBe(true);
+    expect(headers.some((text) => text?.includes("Можно принять"))).toBe(true);
     expect(screen.getByText(/просрочен на 8 дн\./)).toHaveClass("tone-danger");
   });
 
@@ -208,13 +208,12 @@ describe("Приёмка с производства", () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findAllByText("Жгут акты");
     expect(screen.getByRole("tab", { name: /^Готово/ })).toHaveAttribute("aria-selected", "true");
-    expect(document.querySelectorAll("tr.intake-act-row")).toHaveLength(2); // два акта КБ1; принятые целиком КБ2 и КБ3 — в «Принято»
+    expect(document.querySelectorAll("tr.intake-act-row")).toHaveLength(0); // акты — только в «Принято»
     expect(screen.queryByText("Жгут старый")).not.toBeInTheDocument();
-    const cells = (tr: Element) => [...tr.querySelectorAll("td")].map((td) => td.textContent);
-    const ordered = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Жгут акты")).map(cells);
-    expect(ordered).toHaveLength(3); // акт, акт, строка КБ
-    for (const line of ordered) expect(line).toContain("1000"); // «Заказано» на каждой строке, и на зелёных тоже
-    expect(ordered.filter((line) => line.includes("200")).length).toBeGreaterThan(0);
+    const kb1 = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Жгут акты"));
+    expect(kb1).toHaveLength(1);
+    expect(kb1[0].textContent).toContain("1000");
+    expect(kb1[0].textContent).toContain("200");
     expect(screen.getAllByRole("button", { name: /^Принять 591К.3/ })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Принять 591К.3 КБ1: можно 200" }));
     const dialog = await screen.findByRole("dialog");
@@ -224,6 +223,9 @@ describe("Приёмка с производства", () => {
     fireEvent.click(screen.getByRole("tab", { name: /^Принято/ }));
     expect((await screen.findAllByText("Жгут старый")).length).toBeGreaterThan(0);
     expect(document.querySelectorAll("tr.intake-act-row")).toHaveLength(4);
+    const cells = (tr: Element) => [...tr.querySelectorAll("td")].map((td) => td.textContent);
+    const ordered = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Жгут акты")).map(cells);
+    expect(ordered).toHaveLength(3); // акт, акт, строка КБ
   });
 
   it("остаток по КБ при приёмке в несколько ГРН: 100+350+350+173 принято из 1000 — остаток 27 одной строкой", async () => {
@@ -232,10 +234,11 @@ describe("Приёмка с производства", () => {
       acts: [["ГП.26.0000020", "100"], ["ГП.26.0000021", "350"], ["ГП.26.0000022", "350"], ["ГП.26.0000023", "173"]].map(([grn, quantity]) => ({ grn, quantity, received_at: day, location: "" })) })];
     render(<ProductionIntakePage principal={principal} />);
     await screen.findAllByText("CCW-0,2");
-    const lines = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("CCW-0,2"));
-    expect(lines).toHaveLength(5);
-    const left = lines.map((tr) => [...tr.querySelectorAll("td")][3]?.textContent);
-    expect(left).toEqual(["—", "—", "—", "—", "27"]);
+    const rowsIn = () => [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("CCW-0,2"));
+    expect(rowsIn()).toHaveLength(1); // «Готово»: одна строка, «Можно принять» 27, без актов
+    expect([...rowsIn()[0].querySelectorAll("td")][3]?.textContent).toBe("27");
+    fireEvent.click(screen.getByRole("tab", { name: /^Принято/ }));
+    await waitFor(() => expect(rowsIn()).toHaveLength(5)); // четыре акта и строка КБ
   });
 
   it("«Печать этикетки» у ГРН ставит этикетку в очередь печати и показывает статус", async () => {
@@ -296,12 +299,15 @@ describe("Приёмка с производства: упаковка и отг
     render(<ProductionIntakePage principal={principal} />);
     expect(await screen.findByText("Уехавший жгут")).toBeInTheDocument();
     expect(tab(/^Отгружено/)).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("button", { name: "Отгрузка 591К.3 КБ9: отгружено 5" })).toBeInTheDocument();
+    const line = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Уехавший жгут"))[0];
+    expect(line.querySelectorAll("button")).toHaveLength(0); // в «Отгружено» у строки нет кнопок
+    expect(line.textContent).toContain("5");
   });
 
   it("«Упаковано»: без решения менеджера кнопка выключена; с решением — окно, количество по умолчанию — всё принятое", async () => {
     intakeRows = [row({ accepted: "6", remaining: "0", delivered: "6", tasks: [] })];
     const { unmount } = render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Принято/ }));
     const waiting = await screen.findByRole("button", { name: "Упаковать 591К.3 КБ1: ждёт решения менеджера" });
     expect(waiting).toBeDisabled();
     expect(waiting).toHaveAttribute("title", "Упаковать можно после решения менеджера «упаковывать»");
@@ -328,6 +334,7 @@ describe("Приёмка с производства: упаковка и отг
     shipments = [{ ...packedShipment, missing_data: [] }, { ...packedShipment, id: "s5", number: "ОТГ-20261029-05", status: "Собрана", pl_number: "", dn_number: "", lines: [shipmentLine({ id: "l5", picked: "2" })] }];
     const printed = capturePrintFrames();
     render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Принято/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Упаковка 591К.3 КБ1: упаковано 4" }));
     const dialog = await screen.findByRole("dialog", { name: "Упаковка 591К.3" });
     const card = within(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-01" }));
@@ -351,10 +358,20 @@ describe("Приёмка с производства: упаковка и отг
     intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
     shipments = [packedShipment];
     const { unmount } = render(<ProductionIntakePage principal={principal} />);
+    // Держит только УПД — единственная кнопка строки «Без УПД…» открывает окно с ПИН.
+    fireEvent.click(await screen.findByRole("button", { name: "Без УПД 591К.3 КБ1" }));
+    expect(await screen.findByRole("dialog", { name: "Отгрузка без УПД · ОТГ-20261029-01" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Трек 591К.3 КБ1" })).not.toBeInTheDocument();
+    unmount();
+    // Держит ещё и другое (адрес) — выключенный «Трек…» с причиной.
+    shipments = [{ ...packedShipment, missing_ship: ["№ УПД", "адрес доставки", "трек-номер"] }];
+    const second = render(<ProductionIntakePage principal={principal} />);
     const off = await screen.findByRole("button", { name: "Трек 591К.3 КБ1" });
     expect(off).toBeDisabled();
-    expect(off).toHaveAttribute("title", "Трек вносится, когда есть УПД и ТК");
-    unmount();
+    expect(off.getAttribute("title")).toContain("не хватает: № УПД, адрес доставки, трек-номер");
+    expect(screen.queryByRole("button", { name: "Без УПД 591К.3 КБ1" })).not.toBeInTheDocument();
+    second.unmount();
+    shipments = [packedShipment];
 
     shipments = [{ ...packedShipment, upd_number: "У-7", missing_data: [], missing_ship: ["трек-номер"], ready_for_track: true }];
     render(<ProductionIntakePage principal={principal} />);
@@ -372,6 +389,7 @@ describe("Приёмка с производства: упаковка и отг
     intakeRows = [multi()];
     shipments = [packedShipment, ready, gone];
     render(<ProductionIntakePage principal={admin} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 3, к отгрузке 3" }));
     const dialog = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     const blocked = within(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-01" }));
@@ -394,6 +412,7 @@ describe("Приёмка с производства: упаковка и отг
     shipments = [{ ...packedShipment, missing_ship: ["№ УПД", "файл УПД", "трек-номер"] }];
     approvals = [[403, { detail: "Неверный разрешительный ПИН." }], [429, { detail: "Слишком много попыток. Подождите 10 минут." }], [200, { shipment: packedShipment }]];
     render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 0" }));
     const ships = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     fireEvent.click(within(ships).getByRole("button", { name: "Разрешить без УПД" }));
@@ -424,6 +443,7 @@ describe("Приёмка с производства: упаковка и отг
     intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
     shipments = [{ ...packedShipment, upd_type: "БЕЗ УПД", terms: "САМОВЫВОЗ", carrier: "", missing_data: [], missing_ship: ["разрешение на отгрузку без УПД"] }];
     render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 0" }));
     const ships = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     expect(within(ships).getByRole("button", { name: "Отгрузить" })).toBeDisabled();
@@ -434,6 +454,7 @@ describe("Приёмка с производства: упаковка и отг
     intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
     shipments = [{ ...packedShipment, status: "Собрана", terms: "САМОВЫВОЗ", carrier: "", pl_number: "", dn_number: "", missing_data: [], missing_ship: [], ready_to_ship: true }];
     render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 0" }));
     const ships = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     expect(within(ships).getByRole("button", { name: "Отгрузить" })).toBeEnabled();
@@ -443,9 +464,40 @@ describe("Приёмка с производства: упаковка и отг
     intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
     shipments = [{ ...packedShipment, missing_ship: ["№ УПД", "адрес доставки"] }];
     render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 0" }));
     const ships = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     expect(within(ships).queryByRole("button", { name: "Разрешить без УПД" })).not.toBeInTheDocument();
+  });
+
+  it("у каждой вкладки свои колонки и одно своё действие; чужих действий нет", async () => {
+    intakeRows = [multi()];
+    shipments = [packedShipment, ready, gone];
+    render(<ProductionIntakePage principal={admin} />);
+    await screen.findByText("Жгут");
+    const headers = () => screen.getAllByRole("columnheader").map((cell) => (cell.textContent ?? "").replace(/[^А-Яа-яЁё ]/g, "").trim());
+    const lineButtons = () => [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Жгут") && !tr.textContent.includes("Данные отправки"))
+      .flatMap((tr) => [...tr.querySelectorAll("button")].map((button) => button.getAttribute("aria-label") ?? button.textContent ?? ""));
+    const expected: Array<[RegExp, string[], RegExp | null]> = [
+      [/^В ожидании/, ["КБ", "Наименование", "Заказано"], null],
+      [/^В производстве/, ["КБ", "Наименование", "Заказано", "Запущено", "Остаток", "Задания"], null],
+      [/^Готово/, ["КБ", "Наименование", "Заказано", "Можно принять", "Задания"], /^Принять 591К\.3 КБ1/],
+      [/^Принято/, ["КБ", "Наименование", "Принято", "Дата приёмки", "ГРН", "Упаковано"], /^Упаковать|^Упаковка|^Печать этикетки/],
+      [/^Упаковано/, ["КБ", "Наименование", "Упаковано", "Трек"], /^(Трек|Без УПД) 591К\.3 КБ1/],
+      [/^На отгрузку/, ["КБ", "Наименование", "Упаковано", "Трек", "Отгрузка"], /^Отгрузить 591К\.3 КБ1/],
+      [/^Отгружено/, ["КБ", "Наименование", "Отгружено", "Трек", "Дата отгрузки"], null],
+    ];
+    for (const [name, heads, action] of expected) {
+      fireEvent.click(tab(name));
+      if (name.source === "^В ожидании") { await screen.findByText("В ожидании производства ничего нет."); continue; }
+      await waitFor(() => expect(headers()).toEqual(heads));
+      const buttons = lineButtons();
+      if (action) { expect(buttons.length).toBeGreaterThan(0); for (const label of buttons) expect(label).toMatch(action); }
+      else expect(buttons).toEqual([]);
+    }
+    // «Принять всё» — только в «Готово» и «Все»; «Принять» не бывает под «Отгружено» и «Упаковано».
+    fireEvent.click(tab(/^Все/));
+    await waitFor(() => expect(headers()).toContain("Можно принять"));
   });
 
   it("журнал, «+ Позиция ГП» и «+ Заявка на отгрузку» — окнами из шапки", async () => {
