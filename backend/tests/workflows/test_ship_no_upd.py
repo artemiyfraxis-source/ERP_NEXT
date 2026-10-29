@@ -1,5 +1,6 @@
 """«Отгрузить без УПД» по PIN (владелец 29.10.2026, workflows/ship_no_upd.py): разрешает действующий сотрудник с разделом
-«Отгрузка без УПД — разрешение» на правку своим PIN; неверный PIN — неудачная попытка входа под теми же пределами."""
+«Отгрузка без УПД — разрешение» на правку своим разрешительным ПИН (не PIN входа — владелец 29.10); неверный ПИН —
+неудачная попытка под пределами входа по PIN."""
 
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from app.main import app
 from app.modules.identity.application import LOGIN_FAIL_LIMIT
 from app.modules.identity.domain import LEVEL_SECTION_LABELS, AccessMode, IdentityUser, hash_password, hash_pin
 from app.modules.identity.infrastructure import (
-    IdentityLoginThrottleRow, SqlAlchemyIdentityUnitOfWork, provision_user, seed_level_matrix,
+    IdentityCredentialRow, IdentityLoginThrottleRow, SqlAlchemyIdentityUnitOfWork, provision_user, seed_level_matrix,
 )
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from app.shared.clock import moscow_now
@@ -25,7 +26,8 @@ from app.shared.persistence import AuditEventRow, create_schema
 from app.workflows.ship_no_upd import NO_UPD_SECTION
 from tests.factories import Actor
 
-PIN = "482913"
+PIN = "482913"  # разрешительный ПИН
+LOGIN_PIN = "135790"  # PIN входа — разрешения не даёт
 PROJECT = "591К.3"
 APPROVER = UUID("71000000-0000-0000-0000-000000000001")  # Зингер: раздел выдан лично
 OWNER = UUID("71000000-0000-0000-0000-000000000002")  # суперадминистратор: раздел у полного уровня сам
@@ -53,7 +55,7 @@ def env():
     engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
-    password, pin = hash_password("approver-password-1"), hash_pin(PIN)
+    password, pin, approval = hash_password("approver-password-1"), hash_pin(LOGIN_PIN), hash_pin(PIN)
     grant = {NO_UPD_SECTION: AccessMode.EDIT}
     with sessions() as session:
         for user, personal in (
@@ -63,6 +65,10 @@ def env():
             (_user(GONE, "kasatochkin", "Касаточкин", "commercial", active=False), grant),
         ):
             provision_user(session, user, password, pin_hash=pin, level_access=personal)
+        session.flush()
+        for user_id in (APPROVER, OWNER, STRANGER, GONE):
+            credential = session.get(IdentityCredentialRow, user_id)
+            credential.approval_pin_hash, credential.approval_pin_set_at = approval, datetime(2026, 10, 29, 7, 0)
         seed_level_matrix(session)
         session.commit()
     app.state.shipping_uow_factory = lambda: SqlAlchemyShippingUnitOfWork(sessions)
@@ -145,7 +151,7 @@ def test_right_pin_lets_the_shipment_go_without_a_upd(env):
     with sessions() as session:
         event = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "shipping.no_upd_approved")).one()
     assert (event.details["approver_id"], event.details["approver"], event.actor_name) == (str(APPROVER), "Зингер", "Алексей")
-    assert _failures(sessions, "noupd:zinger") == 0
+    assert _failures(sessions, "approval:zinger") == 0
 
 
 def test_a_full_level_approves_without_a_grant(env):
@@ -165,7 +171,7 @@ def test_a_stranger_an_inactive_or_unknown_person_cannot_permit(env, who):
     assert refused.status_code == 403 and refused.json()["detail"] == "Этот сотрудник не может дать такое разрешение."
     assert client.get("/api/shipping/shipments").json()["shipments"][0]["no_upd_approved_by"] == ""
     # До PIN не дошло — счётчики входа не тронуты.
-    assert _failures(sessions, "noupd:aleksey") == 0 and _failures(sessions, "noupd:kasatochkin") == 0
+    assert _failures(sessions, "approval:aleksey") == 0 and _failures(sessions, "approval:kasatochkin") == 0
 
 
 def test_a_wrong_pin_is_a_failed_login_and_a_series_locks_even_the_right_pin(env):
@@ -173,13 +179,13 @@ def test_a_wrong_pin_is_a_failed_login_and_a_series_locks_even_the_right_pin(env
     shipment = _without_upd(client)
     wrong = _approve(client, shipment, pin="000000")
 
-    assert wrong.status_code == 403 and wrong.json()["detail"] == "Неверный PIN."
-    assert _failures(sessions, "noupd:zinger") == 1
+    assert wrong.status_code == 403 and wrong.json()["detail"] == "Неверный разрешительный ПИН."
+    assert _failures(sessions, "approval:zinger") == 1
     for _ in range(LOGIN_FAIL_LIMIT - 1):
         assert _approve(client, shipment, pin="000000").status_code == 403
     locked = _approve(client, shipment)
 
-    assert _failures(sessions, "noupd:zinger") == LOGIN_FAIL_LIMIT
+    assert _failures(sessions, "approval:zinger") == LOGIN_FAIL_LIMIT
     assert locked.status_code == 429 and "Подождите 10 минут" in locked.json()["detail"]
     assert client.get("/api/shipping/shipments").json()["shipments"][0]["no_upd_approved_by"] == ""
     with sessions() as session:
@@ -198,7 +204,7 @@ def test_a_stale_form_or_a_viewer_spends_no_pin_attempt(env):
     viewer = _approve(client, shipment, pin="000000")
 
     assert stale.status_code == 409 and viewer.status_code == 403
-    assert _failures(sessions, "noupd:zinger") == 0
+    assert _failures(sessions, "approval:zinger") == 0
 
 
 def test_the_permit_is_refused_once_given(env):
@@ -208,3 +214,28 @@ def test_the_permit_is_refused_once_given(env):
     again = _approve(client, first, OWNER)
 
     assert again.status_code == 422 and "уже разрешил Зингер" in again.json()["detail"]
+
+
+def test_the_login_pin_no_longer_permits(env):
+    """Владелец 29.10: «ПИН того же, что для входа — нет»: PIN входа — неверный разрешительный ПИН (неудачная попытка)."""
+    client, sessions = env
+    shipment = _without_upd(client)
+    refused = _approve(client, shipment, pin=LOGIN_PIN)
+
+    assert refused.status_code == 403 and refused.json()["detail"] == "Неверный разрешительный ПИН."
+    assert _failures(sessions, "approval:zinger") == 1
+    assert client.get("/api/shipping/shipments").json()["shipments"][0]["no_upd_approved_by"] == ""
+
+
+def test_without_an_approval_pin_the_person_is_told_where_to_set_it(env):
+    client, sessions = env
+    with sessions() as session:
+        credential = session.get(IdentityCredentialRow, APPROVER)
+        credential.approval_pin_hash = credential.approval_pin_set_at = None
+        session.commit()
+    shipment = _without_upd(client)
+    refused = _approve(client, shipment)
+
+    assert refused.status_code == 403
+    assert refused.json()["detail"] == "У сотрудника не задан разрешительный ПИН — его задают в личном кабинете."
+    assert _failures(sessions, "approval:zinger") == 0

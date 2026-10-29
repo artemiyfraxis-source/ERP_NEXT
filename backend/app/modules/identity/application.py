@@ -88,6 +88,15 @@ class PinRecord:
     seen: bool  # portal_seen_<email>: signed in at least once
 
 
+@dataclass(frozen=True)
+class ApprovalCredentials:
+    """A person's secrets for the «разрешительный ПИН» (approval_pin.py): the hashes only, never the values."""
+    password_hash: str
+    pin_hash: str | None
+    approval_pin_hash: str | None
+    approval_pin_set_at: datetime | None
+
+
 class PinRefused(AuthenticationError):
     """Not a failed attempt (no counter moves): the PIN is not assigned, or the reveal door is closed."""
 
@@ -148,6 +157,10 @@ class IdentityRepository(Protocol):
     def pin_record(self, who: str) -> PinRecord | None: ...
     def set_pin(self, user_id: UUID, pin_hash: str) -> None: ...
     def pin_set_ids(self) -> set[UUID]: ...
+    # Разрешительный ПИН (approval_pin.py)
+    def approval_credentials(self, user_id: UUID) -> ApprovalCredentials | None: ...
+    def set_approval_pin(self, user_id: UUID, pin_hash: str | None, set_at: datetime | None) -> None: ...
+    def approval_pin_dates(self) -> dict[UUID, datetime]: ...
     def mark_seen(self, user_id: UUID, now: datetime) -> None: ...
     def setting(self, key: str) -> str | None: ...
     def set_setting(self, key: str, value: str | None) -> None: ...
@@ -272,11 +285,12 @@ def _session_admin_mode(session: IdentitySession, user: IdentityUser, now: datet
 
 
 def _rate_limited(
-    uow: UnitOfWork, account_key: str, client_key: str, identifier: str, now: datetime,
+    uow: UnitOfWork, account_key: str, client_key: str, identifier: str, now: datetime, *, method: str | None = None,
 ) -> tuple[int, int]:
     """Raises when this account or this client address is closed (see LOGIN_FAIL_LIMIT above); otherwise returns
     (failures of the account, failures overall) for the next attempt. The overall count never closes the login by
-    itself — it only tightens the per-address limit."""
+    itself — it only tightens the per-address limit. `method` names a check that is not a sign-in (an approval PIN)
+    in the lock's journal entry."""
     uow.identity.cleanup_security_state(now, THROTTLE_WINDOW, SECURITY_STATE_RETENTION)
     uow.identity.lock_throttle_keys((account_key, client_key, GLOBAL_KEY))
     login_failures = uow.identity.failure_count(account_key, now, THROTTLE_WINDOW)
@@ -303,6 +317,7 @@ def _rate_limited(
                 "identifier_hash": secret_hash(identifier),
                 "client_key": client_key,
                 "limited_by": limited_by,
+                **({"method": method} if method else {}),
             },
         )
         uow.commit()
@@ -520,7 +535,7 @@ def pin_reveal_enabled(uow: UnitOfWork) -> bool:
         return uow.identity.setting(PIN_REVEAL_SETTING) == "1"
 
 
-# ── Разрешение по личному PIN (workflows/ship_no_upd.py): «пинкод у Артемия, Зингера, Касаточкина» ─────────────────
+# ── Кто может разрешить (workflows/ship_no_upd.py; the PIN itself — approval_pin.py) ───────────────────────────────
 
 
 class ApproverRefused(AuthenticationError):
@@ -529,8 +544,6 @@ class ApproverRefused(AuthenticationError):
 
 
 APPROVER_REFUSED = "Этот сотрудник не может дать такое разрешение."
-APPROVER_PIN_BAD = "Неверный PIN."
-APPROVER_PIN_MISSING = "У сотрудника не назначен PIN — обратитесь к администратору."
 
 
 def _section_edit(user: IdentityUser, section: str, level_row: dict[str, AccessMode], exceptions: dict[str, AccessMode]) -> bool:
@@ -548,38 +561,6 @@ def section_editors(section: str, uow: UnitOfWork) -> list[IdentityUser]:
             if user.active and _section_edit(user, section, matrix.get(user_level(user), {}), exceptions.get(user.id, {}))
         ]
     return sorted(people, key=lambda user: ((user.name or user.email).casefold(), str(user.id)))
-
-
-def confirm_with_pin(
-    user_id: UUID, pin: str, section: str, now: datetime, uow: UnitOfWork, *, client_key: str, purpose: str,
-) -> IdentityUser:
-    """The person `user_id` permits an action with their own PIN, typed on someone else's device. They must be active
-    and hold `section` on edit. The PIN is checked like a PIN login, under the same limits: the account key is
-    `<purpose>:<login>`, the client and overall counters are the login's own; a wrong PIN is a failed attempt
-    (committed, journalled, the owner alerted at a threshold), a lock answers AuthenticationRateLimited."""
-    now = as_utc(now)
-    with uow:
-        user = uow.identity.user_by_id(user_id)
-        if user is None or not user.active:
-            raise ApproverRefused(APPROVER_REFUSED)
-        level = user_level(user)
-        if not _section_edit(user, section, uow.identity.level_access(level), uow.identity.user_level_access(user.id)):
-            raise ApproverRefused(APPROVER_REFUSED)
-        identifier = user.login or str(user.id)
-        account_key = f"{purpose}:{identifier}"
-        failures = _rate_limited(uow, account_key, client_key, identifier, now)
-        record = uow.identity.pin_record(str(user.id))
-        if record is None or not record.pin_hash:
-            raise PinRefused(APPROVER_PIN_MISSING)
-        if not verify_password(str(pin or ""), record.pin_hash):
-            _record_failure(
-                uow, account_key=account_key, client_key=client_key, identifier=identifier, user_id=user.id,
-                failures=failures, now=now, method=purpose,
-            )
-            raise AuthenticationError(APPROVER_PIN_BAD)
-        uow.identity.reset_failures(account_key)
-        uow.commit()
-        return user
 
 
 def set_pin_reveal(enabled: bool, uow: UnitOfWork) -> None:

@@ -42,6 +42,9 @@ from .application import (
     toggle_admin_mode,
 )
 from .access import access_overview, save_level_matrix, save_user_access
+from .approval_pin import (
+    ApprovalPinForbidden, approval_pin_dates, approval_pin_set_at, reset_approval_pin, set_own_approval_pin,
+)
 from .domain import (
     FULL_ACCESS_LEVELS,
     FULL_LEVEL_SECTIONS,
@@ -340,6 +343,50 @@ def change_password_route(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+class ApprovalPinInput(BaseModel):
+    current: str = Field(min_length=1, max_length=128)  # the account password or the login PIN
+    pin: str = Field(min_length=1, max_length=16)
+
+
+def _approval_state(set_at: datetime | None) -> dict:
+    return {"set": set_at is not None, "set_at": set_at.isoformat() if set_at is not None else None}
+
+
+_NO_TOKEN_APPROVAL_PIN = refuse_api_tokens("У токена API нет разрешительного ПИН.")
+
+
+@router.get("/approval-pin", dependencies=[Depends(_NO_TOKEN_APPROVAL_PIN)])
+def approval_pin_route(
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """«Разрешительный ПИН» on the own card: only whether it is set and since when — the PIN never leaves the server."""
+    return _approval_state(approval_pin_set_at(principal.actor.id, uow_factory()))
+
+
+@router.post("/approval-pin", dependencies=[Depends(_NO_TOKEN_APPROVAL_PIN)])
+def set_approval_pin_route(
+    request: Request,
+    payload: ApprovalPinInput,
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """Sets or changes the caller's own approval PIN; the person is the session's, never a parameter."""
+    try:
+        set_at = set_own_approval_pin(
+            principal.actor.id, payload.current, payload.pin, principal.actor, now, uow_factory(),
+            client_key=_client_key(request),
+        )
+    except AuthenticationRateLimited as error:
+        raise HTTPException(status_code=429, detail=str(error)) from error
+    except (AuthenticationError, IdentityValidationError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден.") from error
+    return _approval_state(set_at)
+
+
 class UiSettingInput(BaseModel):
     value: dict
 
@@ -508,8 +555,9 @@ def _level_label(user: IdentityUser) -> str:
     return level_label(_level(user))
 
 
-def _employee(user: IdentityUser, pin_set: bool = False) -> dict:
-    # No password, PIN or hash ever leaves the server; the screen only sets a new one and sees `pin_set`.
+def _employee(user: IdentityUser, pin_set: bool = False, approval_pin_at: datetime | None = None) -> dict:
+    # No password, PIN or hash ever leaves the server; the screen only sets a new one and sees `pin_set`. The approval
+    # PIN is the person's own: the administrator sees only whether it is set and since when, and may only reset it.
     return {
         "id": str(user.id),
         "login": user.login,
@@ -522,6 +570,8 @@ def _employee(user: IdentityUser, pin_set: bool = False) -> dict:
         "site": user.site or "",
         "active": user.active,
         "pin_set": pin_set,
+        "approval_pin_set": approval_pin_at is not None,
+        "approval_pin_set_at": approval_pin_at.isoformat() if approval_pin_at is not None else None,
         **_personnel(user),
         "shop_worker": user.shop_worker,
         "site_master": user.site_master,
@@ -556,8 +606,9 @@ def staff_route(
 ) -> dict:
     del principal
     directory = staff_directory(uow_factory())
+    approvals = approval_pin_dates(uow_factory())
     return {
-        "users": [_employee(user, user.id in directory.pin_set) for user in directory.users],
+        "users": [_employee(user, user.id in directory.pin_set, approvals.get(user.id)) for user in directory.users],
         "departments": directory.departments,
         "department_heads": _heads(directory.department_heads),
         "levels": _levels(),
@@ -604,7 +655,25 @@ def update_employee_route(
         )
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
-    return {"user": _employee(user, pin_assigned(user.id, uow_factory()))}
+    return {"user": _employee(user, pin_assigned(user.id, uow_factory()), approval_pin_set_at(user.id, uow_factory()))}
+
+
+@router.delete("/staff/{user_id}/approval-pin")
+def reset_approval_pin_route(
+    user_id: UUID,
+    principal: Annotated[Principal, Depends(staffdir_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """«Сбросить разрешительный ПИН» in the «Сотрудники» card: the administrator only clears it (journalled); the
+    person sets a new one on their own card."""
+    try:
+        was_set = reset_approval_pin(user_id, principal.actor, now, uow_factory(), actor_level=principal.level)
+    except ApprovalPinForbidden as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден.") from error
+    return {"reset": was_set, **_approval_state(None)}
 
 
 @router.delete("/staff/{user_id}")
