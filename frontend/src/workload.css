@@ -1,0 +1,40 @@
+/* «Загрузка» (ShopWorkload): таблица проектов и недельная полоса «нужно к срокам / мощность». Цвета — токены :root. */
+
+.wl { display: grid; gap: 12px; padding: 16px; }
+.wl-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.wl-summary { font-size: 13px; color: var(--muted-foreground); }
+.wl-summary b { color: var(--foreground); }
+.wl-kinds { font-size: 12px; color: var(--muted-foreground); }
+.wl-source { font-size: 12px; color: var(--muted-foreground); }
+.wl-how { font-size: 13px; color: var(--muted-foreground); max-width: 960px; }
+.wl-how summary { cursor: pointer; color: var(--foreground); }
+
+.wl-strip-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+.wl-strip-head h2 { margin: 0; font-size: 15px; }
+.wl-legend { display: inline-flex; align-items: center; gap: 4px 12px; font-size: 12px; color: var(--muted-foreground); }
+.wl-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.wl-key.need { background: var(--primary); }
+.wl-key.cap { background: var(--border); }
+.wl-key.over { background: var(--tone-danger); }
+
+.wl-strip-wrap { overflow-x: auto; }
+.wl-strip { border-collapse: collapse; font-size: 12px; }
+.wl-strip th, .wl-strip td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.wl-strip thead th { font-weight: 600; color: var(--muted-foreground); }
+.wl-strip th[scope="row"] { font-weight: 600; }
+.wl-strip th small { font-weight: 400; color: var(--muted-foreground); }
+.wl-strip td { min-width: 84px; }
+.wl-track { display: block; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.wl-track i { display: block; height: 100%; background: var(--primary); }
+.wl-strip td.over .wl-track i { background: var(--tone-danger); }
+.wl-strip td.over .wl-pct { color: var(--tone-danger); font-weight: 600; }
+.wl-pct { display: block; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+.wl-bottlenecks { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; }
+.wl-bottlenecks span { color: var(--tone-danger); }
+.wl-bottlenecks.muted span { color: inherit; }
+.wl-note { font-size: 13px; }
+
+@media (pointer: coarse) {
+  .wl button { min-height: 40px; }
+}

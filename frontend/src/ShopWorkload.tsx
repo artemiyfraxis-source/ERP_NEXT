@@ -4,6 +4,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { StatusChip } from "./StatusChip";
 import type { Tone } from "./statusTone";
 import { formatDay, formatDayMonth, formatNumber, plural } from "./format";
+import "./workload.css";
 
 /* «Загрузка» (владелец 29.10.2026, идея №1): загрузка цеха и прогноз готовности без заданий — по выданным ЭТК, фактам
    «сделано», календарю цеха и монтажникам площадок. Только чтение: расчёт целиком на сервере (production/workload.py). */
