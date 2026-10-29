@@ -104,13 +104,14 @@ describe("экран мастера: сроки и доска монтажник
       projectDeadlines={{ aaa: { deadline: "2026-11-04", days_left: 30 } }} />);
   }
 
-  it("плитка: «ДЛ проекта» из плана и отдельно «задание до» — не одно «ДЛ» на два разных срока (РП-1, РП-2)", () => {
+  it("карточка: «ДЛ проекта» из плана, срок задания — в подсказке, не одно «ДЛ» на два разных срока (РП-1, РП-2)", () => {
     mountBoard();
-    const tile = screen.getByText("AAA").closest(".kit-tile") as HTMLElement;
-    expect(within(tile).getByText("ДЛ проекта 04.11")).toHaveAttribute("data-tone", "neutral");
-    expect(within(tile).getByText("задание до 10.10")).toHaveAttribute("title", "Срок задания, указанный при запуске, 10.10.2026 — через 5 дн");
-    // Проекта BBB нет в плане — только срок задания, и он не красный за 5 дней.
-    const other = screen.getByText("BBB").closest(".kit-tile") as HTMLElement;
+    const tile = screen.getByText("AAA").closest(".mb-card") as HTMLElement;
+    const due = within(tile).getByText("ДЛ проекта 04.11");
+    expect(due).toHaveAttribute("data-tone", "neutral");
+    expect(due.getAttribute("title")).toBe("Дедлайн проекта 04.11.2026 — через 30 дн\nСрок задания, указанный при запуске, 10.10.2026 — через 5 дн");
+    // Проекта BBB нет в плане — в шапке срок задания, и он не красный за 5 дней.
+    const other = screen.getByText("BBB").closest(".mb-card") as HTMLElement;
     expect(within(other).queryByText(/ДЛ проекта/)).toBeNull();
     expect(within(other).getByText("задание до 10.10")).toHaveAttribute("data-tone", "neutral");
     fireEvent.click(screen.getByText("AAA"));
