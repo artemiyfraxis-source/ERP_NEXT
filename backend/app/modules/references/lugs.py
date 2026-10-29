@@ -66,9 +66,11 @@ def ter_kind_of(fields: Mapping[str, object]) -> str:
 
 # --- The columns of «Наконечники» ---------------------------------------------------------------------------------
 # Only what lugs fill (owner 23.10.2026: «если что-то заполняется на 3 % — это мусор для БД»; on the reference mirror
-# 26.10.2026, 112 lug rows): no L+ / L− / шаг / высота обжима / усилие обрыва / диаметр изоляции «от» (0 %), no constant
+# 26.10.2026, 112 lug rows): no шаг / высота обжима / усилие обрыва / диаметр изоляции «от» (0 %), no constant
 # columns («Тип разъёма» = «Обжимная клемма», «Пневма автомат», «ОТР», «С зачисткой» — one value for every row), no
 # «Источник высоты обжима» (a service note about a value lugs do not have). The values stay in the records.
+# L+ / L− (owner 29.10.2026: «у наконечника такой же функционал с припусками L+ L- и длина зачистки в БД») — the same
+# allowances as a contact's: the generator adds them to the cut length of a wire whose free end gets the lug.
 # Group order (owner 23.10.2026: «своя инфа в своём месте»): identification → size (мм², AWG) → construction
 # (insulation Ø, strip length, material) → electrical → tooling → the maker's document. Each slot lists its sheet
 # header and its schema key (a GAS snapshot carries the keys only), folded.
@@ -85,6 +87,8 @@ LUG_COLUMN_SLOTS: tuple[tuple[str, ...], ...] = (
     ("до awg", "awgto"),
     ("диаметр изоляции до, мм", "terinsodto"),
     ("длина зачистки, мм", "длина зачистки", "terstrip"),
+    ("l+", "terlplus"),
+    ("l-", "l−", "terlminus"),
     ("материал контакта", "termaterial"),
     ("максисмальная сила тока, а", "максимальная сила тока, а", "termaxcurrent"),
     ("аппликатор", "terapplicator"),

@@ -2015,6 +2015,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gtable tbody tr:last-child td { border-bottom: 0; }
 .tcgen .gtable .num { text-align: right; font-variant-numeric: tabular-nums; }
 .tcgen .gtable-empty { color: var(--muted-foreground); text-align: center; }
+/* «Свободные концы» → «Наконечник»: строка на провод — наконечник выбирается в строке, «нет под сечение» — под выбором. */
+.tcgen .lug-plan select { width: 100%; min-width: 150px; }
+.tcgen .lug-plan td small.tone-danger { color: var(--tone-danger); }
+.tcgen .lug-plan .lug-problem { font-size: 12px; line-height: 1.3; padding-top: 2px; }
 .tcgen .gbadge { border-radius: 6px; padding: 1px 7px; background: var(--bg-blue-4); font-size: 11.5px; white-space: nowrap; }
 .tcgen .badge-wire { background: var(--bg-blue-5); } .tcgen .badge-term { background: var(--bg-amber-6); } .tcgen .badge-conn { background: var(--bg-green-5); }
 

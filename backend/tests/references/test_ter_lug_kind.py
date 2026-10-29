@@ -95,13 +95,14 @@ def test_the_lug_columns_are_what_lugs_fill_in_the_group_order():
     sheet = list(LUG_ROW) + ["Тип контакта", "Артикул контакта (BAG)", "Диаметр изоляции до, мм", "Максисмальная сила тока, А"]
     assert lug_columns(sheet) == [
         "Производитель", "Product Name", "Series", "Артикул контакта (REEL)", "Артикул контакта (BAG)", "Тип контакта",
-        "От мм2", "До мм2", "От AWG", "До AWG", "Диаметр изоляции до, мм", "Длина зачистки, мм", "Материал контакта",
+        "От мм2", "До мм2", "От AWG", "До AWG", "Диаметр изоляции до, мм", "Длина зачистки, мм", "L+", "L-", "Материал контакта",
         "Максисмальная сила тока, А", "Аппликатор", "Ссылка на DATASHEET на сайте производителя",
     ]
     # schema keys only (a GAS snapshot): the same slots
-    assert lug_columns(["terManufacturer", "terComponent", "terArticle", "mm2From", "mm2To", "terCrimpHeight"]) == [
-        "terManufacturer", "terComponent", "terArticle", "mm2From", "mm2To"]
-    assert len(LUG_COLUMN_SLOTS) == 16
+    assert lug_columns(["terManufacturer", "terComponent", "terArticle", "mm2From", "mm2To", "terCrimpHeight", "terLMinus",
+                        "terStrip", "terLPlus"]) == [
+        "terManufacturer", "terComponent", "terArticle", "mm2From", "mm2To", "terStrip", "terLPlus", "terLMinus"]
+    assert len(LUG_COLUMN_SLOTS) == 18
 
 
 def test_a_ter_record_takes_its_list_by_the_rule_and_only_ter_has_one():
@@ -138,7 +139,7 @@ def test_lugs_has_only_lugs_with_its_columns_and_terminals_only_contacts(referen
     assert [row["fields"]["Product Name"] for row in lugs["records"]] == ["НШВИ"]
     assert lugs["records"][0]["ter_kind"] == "lug" and lugs["records"][0]["ter_rule"] == "lug"
     assert lugs["columns"] == ["Производитель", "Product Name", "Series", "Артикул контакта (REEL)", "От мм2", "До мм2",
-                               "От AWG", "До AWG", "Длина зачистки, мм", "Материал контакта", "Аппликатор",
+                               "От AWG", "До AWG", "Длина зачистки, мм", "L+", "L-", "Материал контакта", "Аппликатор",
                                "Ссылка на DATASHEET на сайте производителя"]
     assert lugs["custom_columns"] == []
     assert [row["fields"]["Product Name"] for row in contacts["records"]] == ["XH"]
@@ -210,7 +211,8 @@ def test_the_file_of_lugs_holds_the_lugs_with_their_columns(references_api):
     lugs, contacts = fields("lug"), fields("contact")
 
     assert (lugs["label"], lugs["rows"], contacts["label"], contacts["rows"]) == ("Наконечники", 1, "Терминалы", 1)
-    assert "L+" not in lugs["fields"] and "Источник высоты обжима" not in lugs["fields"]
+    # L+ / L− — припуски наконечника, как у контакта (владелец 29.10); служебная «Источник высоты обжима» — нет.
+    assert "L+" in lugs["fields"] and "Источник высоты обжима" not in lugs["fields"]
     assert lugs["fields"][:3] == ["Производитель", "Product Name", "Series"]
     assert "L+" in contacts["fields"]
     assert references_api.get("/api/references/import/ter/file/fields", params={"kind": "ring"}).status_code >= 400
