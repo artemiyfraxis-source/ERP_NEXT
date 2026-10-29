@@ -1,0 +1,43 @@
+/* «Сегодня» мастера участка (ProductionToday): четыре плотные панели на один экран. Цвета — токены :root. */
+
+.td { display: grid; gap: 12px; padding: 16px; }
+.td-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.td-site { font-size: 14px; }
+.td-date, .td-counts { font-size: 13px; color: var(--muted-foreground); }
+.td-date b, .td-counts b { color: var(--foreground); }
+.td-warn { color: var(--tone-warn); }
+.td-refresh { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: var(--muted-foreground); }
+.td .num { font-variant-numeric: tabular-nums; }
+
+.td-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.td .td-grid > .td-panel { min-width: 0; margin: 0; padding: 12px 0 4px; overflow-x: auto; }
+.td .td-panel > h2:first-child { display: flex; align-items: baseline; gap: 8px; margin: 0 16px 8px; padding: 0; font-size: 15px; font-weight: 600; }
+.td-panel > .empty { margin: 0 16px 8px; }
+.td-count { font-size: 12px; font-weight: 500; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+
+.td-table { font-size: 13px; }
+.td-table th, .td-table td { padding: 4px 8px; vertical-align: top; }
+.td-table th:first-child, .td-table td:first-child { padding-left: 16px; }
+.td-table th:last-child, .td-table td:last-child { padding-right: 16px; }
+.td-table thead th { font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
+.td-table tbody th { font-weight: 600; color: var(--foreground); background: transparent; font-size: 13px; white-space: normal; min-width: 96px; }
+.td-table .num { text-align: right; min-width: 0; }
+.td-what, .td-reason { white-space: normal; min-width: 180px; }
+.td-sub { color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+.td button.td-op { padding: 0; font: inherit; color: var(--foreground); text-align: left; }
+button.td-op:hover .td-sub, button.td-op:hover { text-decoration: underline; text-underline-offset: 3px; }
+.td .td-table .link-button { padding: 0; font: inherit; font-weight: 600; }
+.td-overdue { display: grid; gap: 8px; }
+
+@media (max-width: 1200px) {
+  .td-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (pointer: coarse) {
+  .td button { min-height: 40px; }
+}
+/* Причина «стоит»: точка перед текстом — стоп (простой, блокер проекта) красная, ожидание жёлтая. */
+.td-reason::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; }
+.td-reason.td-stop::before { background: var(--tone-danger); }
+.td-reason.td-wait::before { background: var(--tone-warn); }
+.td .td-toggle { margin: 0 16px 4px; font-size: 12px; }
+.td .td-panel > .td-toggle + .empty { margin: 0 16px 8px; }

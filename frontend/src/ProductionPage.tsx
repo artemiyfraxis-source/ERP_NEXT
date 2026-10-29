@@ -34,6 +34,7 @@ import { DowntimeReport } from "./DowntimeReport";
 import { ProductionNormFact } from "./ProductionNormFact";
 import { ShopWorkloadView } from "./ShopWorkload";
 import { LaunchReady } from "./LaunchReady";
+import { ProductionToday } from "./ProductionToday";
 import { JobPanel } from "./JobPlan";
 import { AutoTextarea } from "./AutoTextarea";
 import { StatusChip } from "./StatusChip";
@@ -53,8 +54,8 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [showDowntime, setShowDowntime] = useState(false);
-  // Вкладки «Ресурсного планирования»: доска мастера, «Загрузка» (прогноз готовности) и отчёт «Норма и факт».
-  const [view, setView] = useState<"board" | "workload" | "normfact">("board");
+  // Вкладки «Ресурсного планирования»: «Сегодня» мастера участка, доска мастера, «Загрузка» (прогноз готовности) и отчёт «Норма и факт».
+  const [view, setView] = useState<"today" | "board" | "workload" | "normfact">("board");
   const [holidays, setHolidays] = useState<string[]>([]);
   const [skills, setSkills] = useState<ProductionSkill[]>([]);
   const [absences, setAbsences] = useState<ProductionAbsence[]>([]);
@@ -173,10 +174,13 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {showAutoplan && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} close={() => setShowAutoplan(false)} onApplied={(count, created) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций${created ? `, создано заданий: ${created}` : ""}`); void reload(); }} />}
     {!mine && canEdit && !selectedTask && <LaunchReady refresh={tasks.length} onLaunched={(text) => { setNotice(text); void reload(); }} />}
     {!mine && canOverview && !selectedTask && <div className="seg-tabs" role="tablist" aria-label="Вид">
+      <button type="button" role="tab" aria-selected={view === "today"} className={view === "today" ? "on" : undefined} onClick={() => setView("today")}>Сегодня</button>
       <button type="button" role="tab" aria-selected={view === "board"} className={view === "board" ? "on" : undefined} onClick={() => setView("board")}>Доска</button>
       <button type="button" role="tab" aria-selected={view === "workload"} className={view === "workload" ? "on" : undefined} onClick={() => setView("workload")}>Загрузка</button>
       <button type="button" role="tab" aria-selected={view === "normfact"} className={view === "normfact" ? "on" : undefined} onClick={() => setView("normfact")}>Норма и факт</button>
     </div>}
+    {!mine && canOverview && !selectedTask && view === "today" && <ProductionToday principal={principal} openSkills={canEdit ? () => setShowSkills(true) : undefined} openWorkload={() => setView("workload")}
+      openTask={(taskId, operationId) => { if (tasks.some((task) => task.id === taskId)) { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); } }} />}
     {!mine && canOverview && !selectedTask && view === "workload" && <ShopWorkloadView />}
     {!mine && canOverview && !selectedTask && view === "normfact" && <ProductionNormFact />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
