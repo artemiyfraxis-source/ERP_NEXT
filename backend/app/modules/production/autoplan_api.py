@@ -48,7 +48,7 @@ class PreviewPayload(BaseModel):
     mode: Literal["shop", "project"] = "shop"
     project: str = Field(default="", max_length=200)
     people: list[UUID] = Field(default_factory=list, max_length=200)
-    # Исключённые из «Весь цех»: id заданий и id техкарт КБ без задания.
+    # Снятые галочки («Весь цех» и КБ проекта в «По проекту»): id заданий и id техкарт КБ без задания.
     exclude: list[UUID] = Field(default_factory=list, max_length=2000)
     # «До даты» вручную; не задано — план до горизонта работы (самый поздний срок или сколько нужно, до 8 недель).
     date_to: date | None = None

@@ -547,6 +547,9 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const [runs, setRuns] = useState<Record<string, string>>({});
   // Автопланирование из окна проекта (владелец 22.10): автоплан «По проекту» на этот проект.
   const [autoplanFor, setAutoplanFor] = useState("");
+  // «Автоплан КБ» у строки КБ (владелец 29.10): тот же автоплан проекта, отмечена только эта КБ.
+  const [autoplanKb, setAutoplanKb] = useState("");
+  const openAutoplan = (project: string, kb = "") => { setAutoplanKb(kb); setAutoplanFor(project); };
 
   function setView(next: BoardView) {
     setViewState(next);
@@ -892,7 +895,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           <button type="button" role="radio" aria-checked={view === "stages"} className={view === "stages" ? "on" : ""} onClick={() => setView("stages")}>По этапам КБ</button>
           <button type="button" role="radio" aria-checked={view === "equipment"} className={view === "equipment" ? "on" : ""} onClick={() => setView("equipment")}>По оборудованию</button>
         </div>
-        {canEdit && site !== HANDOVER_SITE && <button className="primary small" onClick={() => setAutoplanFor(project)}>Автопланирование</button>}
+        {canEdit && site !== HANDOVER_SITE && <button className="primary small" onClick={() => openAutoplan(project)}>Автопланирование</button>}
         <button className="secondary small" onClick={() => setOpenProject("")}>Закрыть</button>
       </div>
       <ProjectPlanBlock project={project} canEdit={canEdit} openProjectCard={openProjectCard} />
@@ -908,6 +911,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
               ? <StatusChip className="mb-new" tone="info">новое задание</StatusChip>
               : <button className="link-button" onClick={() => openTask(item.id)}>{item.number} · Гант</button>}
             <span><b>{taskItemLabel(item)}</b> × {item.quantity}{item.name ? ` · ${item.name}` : ""}</span>
+            {canEdit && site !== HANDOVER_SITE && item.status !== "Выполнено" && !item.handed_to &&
+              <button type="button" className="link-button" aria-label={`Автоплан ${taskItemLabel(item)}`} onClick={() => openAutoplan(project, item.item)}>Автоплан КБ</button>}
             {item.status !== "Выполнено" && deadlineChips(planOf(project), item.deadline).filter((chip) => chip.kind === "task")
               .map((chip) => <StatusChip key={chip.kind} className="mb-deadline" tone={chip.tone} title={chip.title}>{chip.text}</StatusChip>)}
             {item.pending
@@ -1167,7 +1172,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     {shown && task && operation && <PageWindow label={`Операция ${operation.position}. ${operationName(operation)}`} width={1600} close={() => select(task, null)}>
       {renderOperation(task, operation)}
     </PageWindow>}
-    {autoplanFor && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} preset={{ project: autoplanFor, runs: autoplanRuns }}
+    {autoplanFor && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} preset={{ project: autoplanFor, runs: autoplanRuns, ...(autoplanKb ? { kb: autoplanKb } : {}) }}
       close={() => setAutoplanFor("")}
       onApplied={(count, created) => {
         setAutoplanFor("");
