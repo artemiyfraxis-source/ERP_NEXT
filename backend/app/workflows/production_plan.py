@@ -287,6 +287,18 @@ def issued_runs(cards: Iterable, kitsets: Iterable[Kitset]) -> dict[str, int]:
     return kb_runs((card for card in cards if card.status is TechcardStatus.ISSUED), kitsets)
 
 
+def project_deadline(
+    journal: ProjectJournal | None, snapshot: PlanProjectSnapshot | None, cards: Iterable,
+) -> date | None:
+    """Срок проекта (план и «Загрузка»): запись журнала «Срок» → срок реестра проектов → ближайший срок его техкарт."""
+    card_deadlines = [card.deadline for card in cards if card.deadline]
+    return (
+        (journal.deadline if journal is not None else None)
+        or (snapshot.deadline if snapshot else None)
+        or (min(card_deadlines) if card_deadlines else None)
+    )
+
+
 def build_production_plan(
     *,
     cards: Iterable[ProjectTechcard],
@@ -348,12 +360,7 @@ def build_production_plan(
         item_indexes = project_kits(project, kit_indexes.get(project, []), project_cards)
         snapshot = project_snapshots.get(project)
         project_journal = journal.get(project, ProjectJournal(None, None, ()))
-        card_deadlines = [card.deadline for card in project_cards if card.deadline]
-        deadline = (
-            project_journal.deadline
-            or (snapshot.deadline if snapshot else None)
-            or (min(card_deadlines) if card_deadlines else None)
-        )
+        deadline = project_deadline(project_journal, snapshot, project_cards)
         project_goods = [good for good in goods if normalize_project_number(good.project) == project]
         customer = (snapshot.customer if snapshot else "") or next(
             (good.customer for good in project_goods if good.customer), "",
