@@ -40,7 +40,7 @@ def list_intake(
         "project": row.project, "customer": row.customer,
         "deadline": row.deadline.isoformat() if row.deadline else None,
         "item_index": row.item_index, "name": row.name, "unit": row.unit, "stage": row.stage,
-        "project_stage": row.project_stage,
+        "project_stage": row.project_stage, "pack_decided": row.pack_decided,
         "needed": _number(row.needed), "launched": _number(row.launched), "delivered": _number(row.delivered),
         "accepted": _number(row.accepted), "packed": _number(row.packed), "sent": _number(row.sent),
         "remaining": _number(row.remaining),

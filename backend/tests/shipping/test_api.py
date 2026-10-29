@@ -33,6 +33,16 @@ def shipping_api():
     engine.dispose()
 
 
+def decide_pack(client, project: str = "591К.3") -> dict:
+    """Менеджер решил «упаковывать» (0162): без этого склад проекта не набирает и не упаковывает."""
+    current = client.get("/api/shipping/project-addressee", params={"project": project}).json()["addressee"]
+    response = client.post("/api/shipping/project-pack-decision", json={
+        "project": project, "version": current["version"], "decided": True,
+    })
+    assert response.status_code == 200, response.text
+    return response.json()["addressee"]
+
+
 def test_finished_good_partial_shipment_and_close_gates(shipping_api):
     client = shipping_api
     created = client.post("/api/shipping/goods", json={
@@ -329,7 +339,8 @@ def test_shipment_inherits_project_card_and_remembers_typed_contact(shipping_api
     assert stored["contact"] == "Петров"
     assert stored["shipping_point"] == "Москва, склад 1"
     assert stored["upd_type"] == "БУМАГА"
-    assert stored["version"] == 2
+    # +1 — запомненный контакт, +1 — решение «упаковывать», которое ставит отправка менеджера.
+    assert stored["version"] == 3 and stored["pack_decided"] is True and stored["pack_decided_by"] == "Администратор"
 
 
 def test_open_shipment_follows_project_card_until_closed_and_head_edit_overrides(shipping_api):
@@ -343,7 +354,7 @@ def test_open_shipment_follows_project_card_until_closed_and_head_edit_overrides
     }).json()["shipment"]
     assert shipment["inherited"] == ["carrier", "phone", "receiver", "shipping_point", "terms", "upd_type"]
     card = client.put("/api/shipping/project-addressee", json={
-        "project": "591К.3", "version": card["version"] + 1, "shipping_point": "Тула", "contact": "Сидоров",
+        "project": "591К.3", "version": card["version"] + 2, "shipping_point": "Тула", "contact": "Сидоров",
         "terms": "ДОСТАВКА ТК", "carrier": "ПЭК", "upd_type": "ЭДО", "receiver": "АО Получатель",
     }).json()["addressee"]
     followed = _shipment(client, shipment["id"])
@@ -413,7 +424,7 @@ def test_first_shipment_without_card_takes_no_point_and_seeds_card(shipping_api)
     assert (no_terms.json()["shipment"]["terms"], no_terms.json()["shipment"]["upd_type"]) == (None, "ЭДО")
     assert made.status_code == 200
     assert made.json()["shipment"]["receiver"] == "Заказчик"
-    assert (card["shipping_point"], card["phone"], card["contact"], card["version"]) == ("Москва", "+7 900", "", 2)
+    assert (card["shipping_point"], card["phone"], card["contact"], card["version"]) == ("Москва", "+7 900", "", 3)
     assert card["terms"] is None
 
 

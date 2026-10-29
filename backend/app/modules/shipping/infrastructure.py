@@ -10,7 +10,7 @@ from hashlib import sha256
 from uuid import UUID
 
 from sqlalchemy import (
-    CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, func, or_,
+    Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, func, or_,
     select,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
@@ -68,9 +68,25 @@ class FinishedGoodRow(Base):
         return value
 
 
+# Кто и когда — вместе или никак (0162): разрешение «без УПД» у отправки, решение «упаковывать» у карточки проекта.
+SHIPMENT_NO_UPD_CHECK = (
+    "ck_shipments_no_upd_approval",
+    "(no_upd_approved_by = '' AND no_upd_approved_at IS NULL)"
+    " OR (no_upd_approved_by <> '' AND no_upd_approved_at IS NOT NULL)",
+)
+ADDRESSEE_PACK_CHECK = (
+    "ck_shipping_project_addressees_pack_decision",
+    "(pack_decided AND pack_decided_by <> '' AND pack_decided_at IS NOT NULL)"
+    " OR (NOT pack_decided AND pack_decided_by = '' AND pack_decided_at IS NULL)",
+)
+
+
 class ShipmentRow(Base):
     __tablename__ = "shipments"
-    __table_args__ = (Index("ix_shipments_created_id", "created_at", "id"),)
+    __table_args__ = (
+        Index("ix_shipments_created_id", "created_at", "id"),
+        CheckConstraint(SHIPMENT_NO_UPD_CHECK[1], name=SHIPMENT_NO_UPD_CHECK[0]),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     number: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
@@ -100,6 +116,9 @@ class ShipmentRow(Base):
     tk_note: Mapped[str] = mapped_column(Text(), nullable=False, default="")
     # Поля адресата из карточки проекта, через запятую (Shipment.inherited).
     inherited_fields: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # Разрешение «отгрузить без УПД» (0162): имя разрешившего и время; пусто — нет разрешения.
+    no_upd_approved_by: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    no_upd_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
@@ -231,6 +250,7 @@ class ProjectAddresseeRow(Base):
     """Project card's shipping defaults; a shipment copies them at creation."""
 
     __tablename__ = "shipping_project_addressees"
+    __table_args__ = (CheckConstraint(ADDRESSEE_PACK_CHECK[1], name=ADDRESSEE_PACK_CHECK[0]),)
     project: Mapped[str] = mapped_column(String(255), primary_key=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     receiver: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -254,6 +274,12 @@ class ProjectAddresseeRow(Base):
     note: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
     # Бумажная УПД, приложенная к данным отправки заранее (0125); новая отправка с бумажной УПД берёт её себе.
     upd_url: Mapped[str] = mapped_column(String(1024), nullable=False, default="", server_default="")
+    # № и дата УПД карточки (0162); решение «упаковывать»: флаг, кто, когда.
+    upd_number: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    upd_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    pack_decided: Mapped[bool] = mapped_column(Boolean(), nullable=False, default=False, server_default="0")
+    pack_decided_by: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    pack_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
@@ -411,6 +437,7 @@ class SqlAlchemyShipmentRepository:
             upd_url=row.upd_url, pl_number=row.pl_number, dn_number=row.dn_number,
             track_number=row.track_number, packed_at=row.packed_at, shipped_at=row.shipped_at,
             manager=row.manager, note=row.note, manager_id=row.manager_id, tk_note=row.tk_note or "",
+            no_upd_approved_by=row.no_upd_approved_by or "", no_upd_approved_at=row.no_upd_approved_at,
             inherited=frozenset(filter(None, (row.inherited_fields or "").split(","))),
             boxes=tuple(ShipmentBox(
                 place=box.place, kind=box.kind, dims=box.dims, net=box.net, gross=box.gross, seal=box.seal,
@@ -488,7 +515,7 @@ class SqlAlchemyShipmentRepository:
             "number", "version", "created_at", "customer", "receiver", "shipping_point",
             "contact", "phone", "carrier", "deadline", "upd_number", "upd_date", "upd_url",
             "pl_number", "dn_number", "track_number", "packed_at", "shipped_at", "manager", "note",
-            "manager_id", "tk_note",
+            "manager_id", "tk_note", "no_upd_approved_by", "no_upd_approved_at",
         ):
             setattr(row, key, getattr(shipment, key))
         row.status = shipment.status.value; row.terms = shipment.terms.value if shipment.terms else None
@@ -530,6 +557,8 @@ class SqlAlchemyProjectAddresseeRepository:
             updated_by=row.updated_by, updated_at=row.updated_at,
             **{key: getattr(row, key) or "" for key in ADDRESSEE_REQUISITE_FIELDS},
             plan_date=row.plan_date, note=row.note or "", upd_url=row.upd_url or "",
+            upd_number=row.upd_number or "", upd_date=row.upd_date,
+            pack_decided_by=row.pack_decided_by or "", pack_decided_at=row.pack_decided_at,
         )
     def list(self) -> list[ProjectAddressee]:
         return [self.get(project) for project in self.session.scalars(select(ProjectAddresseeRow.project).order_by(ProjectAddresseeRow.project))]
@@ -537,8 +566,12 @@ class SqlAlchemyProjectAddresseeRepository:
         row = self.session.get(ProjectAddresseeRow, addressee.project)
         if row is None:
             row = ProjectAddresseeRow(project=addressee.project); self.session.add(row)
-        for key in ("version", "receiver", "shipping_point", "contact", "phone", "carrier", "updated_by", "updated_at", *ADDRESSEE_REQUISITE_FIELDS, *ADDRESSEE_PLAN_FIELDS):
+        for key in (
+            "version", "receiver", "shipping_point", "contact", "phone", "carrier", "updated_by", "updated_at",
+            *ADDRESSEE_REQUISITE_FIELDS, *ADDRESSEE_PLAN_FIELDS, "pack_decided_by", "pack_decided_at",
+        ):
             setattr(row, key, getattr(addressee, key))
+        row.pack_decided = addressee.pack_decided
         row.terms = addressee.terms.value if addressee.terms else None
         row.upd_type = addressee.upd_type.value if addressee.upd_type else None
 

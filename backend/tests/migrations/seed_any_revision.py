@@ -179,6 +179,11 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     ("production_vswr_measurements", "verdict_manual"): True,
     # A scan job's recognition answer exists only once it is done; the seeder's job is pending (0145_warehouse_scan_jobs).
     ("warehouse_scan_jobs", "result"): "",
+    # «Who» goes with «when» (0162_pack_decision_no_upd): a seeded card is not decided, a shipment has no no-УПД permit.
+    ("shipping_project_addressees", "pack_decided_by"): "",
+    ("shipping_project_addressees", "pack_decided_at"): None,
+    ("shipments", "no_upd_approved_by"): "",
+    ("shipments", "no_upd_approved_at"): None,
 }
 # Values the column-by-column fill would leave empty by a CHECK's «other value → NULL» branch, although the row takes
 # the one value that needs them: a seeded tech record is `tab = 'ter'` (the first literal of the БД.ТЕР card CHECKs,

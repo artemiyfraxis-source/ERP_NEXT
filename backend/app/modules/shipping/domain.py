@@ -45,7 +45,8 @@ class DeliveryTerms(str, Enum):
 class UpdType(str, Enum):
     EDO = "ЭДО"
     PAPER = "БУМАГА"
-    # Владелец 14.10.2026: отправка уходит и закрывается без УПД — ни файла, ни номера не нужно.
+    # «Без УПД» сам по себе отгрузку больше не открывает (владелец 29.10.2026, вместо решения 14.10): нужна отметка
+    # «Отгрузка без УПД — разрешение» по PIN (`Shipment.approve_no_upd`), а закрыть отправку можно только с УПД.
     NONE = "БЕЗ УПД"
 
 
@@ -405,7 +406,9 @@ ADDRESSEE_REQUISITE_FIELDS = ("po", "contract", "spec", "invoice", "pays", "cust
 # План отгрузки в карточке проекта (владелец 14.10.2026): склад и менеджер заносят его заранее, пока КБ в цехе;
 # новая отправка берёт из него срок и комментарий, если свои пусты. `upd_url` (0125) — бумажная УПД, приложенная
 # заранее: новая отправка с бумажной УПД берёт её, если своей нет и файл ещё не ушёл с другой отправкой.
-ADDRESSEE_PLAN_FIELDS = ("plan_date", "note", "upd_url")
+ADDRESSEE_PLAN_FIELDS = ("plan_date", "note", "upd_url", "upd_number", "upd_date")
+# Решение менеджера «упаковывать» (владелец 29.10.2026): без него кладовщик не упаковывает.
+PACK_NOT_DECIDED = "Менеджер ещё не решил упаковывать"
 
 
 @dataclass(frozen=True)
@@ -433,6 +436,24 @@ class ProjectAddressee:
     plan_date: date | None = None
     note: str = ""
     upd_url: str = ""
+    # № и дата УПД в карточке проекта (0162): новая отправка берёт их, как `upd_url`, если своих нет.
+    upd_number: str = ""
+    upd_date: date | None = None
+    # Решение «упаковывать» (0162): кто и когда; пусто — не решено. Ставит менеджер или его отправка.
+    pack_decided_by: str = ""
+    pack_decided_at: datetime | None = None
+
+    @property
+    def pack_decided(self) -> bool:
+        return self.pack_decided_at is not None
+
+    def decide_pack(self, decided: bool, actor: str, now: datetime) -> ProjectAddressee:
+        """Решение «упаковывать» или его снятие; то же состояние — тот же объект."""
+        if decided == self.pack_decided:
+            return self
+        if decided:
+            return replace(self, pack_decided_by=_text(actor, "Кто решил"), pack_decided_at=now)
+        return replace(self, pack_decided_by="", pack_decided_at=None)
 
     @classmethod
     def empty(cls, project: str) -> ProjectAddressee:
@@ -461,6 +482,8 @@ class ProjectAddressee:
                 changes[key] = UpdType(value) if value else None
             elif key == "plan_date":
                 changes[key] = _day(value)
+            elif key == "upd_date":
+                changes[key] = _day(value, "Дата УПД")
             else:
                 changes[key] = str(value or "").strip()
         return replace(self, **changes)
@@ -483,7 +506,7 @@ class ProjectAddressee:
         return tuple(gaps)
 
 
-def _day(value: object) -> date | None:
+def _day(value: object, label: str = "Дата отгрузки по плану") -> date | None:
     """Дата из карточки: date, ISO-строка или пусто (стирает)."""
     if value in (None, ""):
         return None
@@ -494,7 +517,7 @@ def _day(value: object) -> date | None:
     try:
         return date.fromisoformat(str(value).strip())
     except ValueError as error:
-        raise ShippingValidationError("Дата отгрузки по плану — в виде ГГГГ-ММ-ДД") from error
+        raise ShippingValidationError(f"{label} — в виде ГГГГ-ММ-ДД") from error
 
 
 @dataclass(frozen=True)
@@ -655,6 +678,10 @@ class Shipment:
     # Поля адресата, не заданные в самой отправке: идут за карточкой проекта, пока отправка не закрыта
     # (`shipHeadEff_` считает их при каждом чтении; ERP хранит итог и обновляет его при правке карточки).
     inherited: frozenset[str] = frozenset()
+    # «Отгрузка без УПД — разрешение» (0162): кто разрешил своим PIN и когда; пусто — не разрешено. Откат «Отгружено»
+    # снимает разрешение.
+    no_upd_approved_by: str = ""
+    no_upd_approved_at: datetime | None = None
 
     @classmethod
     def create(
@@ -741,8 +768,10 @@ class Shipment:
             self, upd_type=upd_type, upd_number=str(upd_number or "").strip(),
             upd_date=upd_date, upd_url=str(upd_url or "").strip(),
             track_number=str(track_number or "").strip(), inherited=inherited,
-        )
-        return replace(edited._followed(card), version=self.version + 1)
+        )._followed(card)
+        if edited.track_number and edited.track_number != self.track_number:
+            _check_track(edited)
+        return replace(edited, version=self.version + 1)
 
     def edit_head(self, fields: dict[str, object], card: ProjectAddressee | None) -> Shipment:
         """`shipSetHead_`: менеджер или кладовщик правит шапку отправки. Присланное поле адресата с
@@ -802,7 +831,35 @@ class Shipment:
         if self.status not in {ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED}:
             raise ShippingValidationError("Откатить можно только отгруженную или закрытую отправку")
         status = ShipmentStatus.PACKED if self.pl_number else ShipmentStatus.ASSEMBLED
-        return replace(self, status=status, shipped_at=None, version=self.version + 1)
+        # Разрешение «без УПД» — на одну отгрузку: после отката его дают снова.
+        return replace(
+            self, status=status, shipped_at=None, no_upd_approved_by="", no_upd_approved_at=None,
+            version=self.version + 1,
+        )
+
+    def approve_no_upd(self, approver: str, now: datetime) -> Shipment:
+        """«Отгрузить без УПД»: разрешил человек с разделом «Отгрузка без УПД — разрешение» (PIN проверен снаружи).
+        После этого УПД не входит в `shipping_gaps` этой отправки; ТК и трек по-прежнему нужны."""
+        if self.status not in {ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
+            raise ShippingValidationError("Разрешить отгрузку без УПД можно только до отгрузки")
+        if self.no_upd_approved_at is not None:
+            raise ShippingValidationError(f"Отгрузку без УПД уже разрешил {self.no_upd_approved_by}")
+        return replace(
+            self, no_upd_approved_by=_text(approver, "Кто разрешил"), no_upd_approved_at=now, version=self.version + 1,
+        )
+
+    @property
+    def ready_for_track(self) -> bool:
+        """Можно вписать трек: отправка «Упакована» и всё, что вносит менеджер, на месте (УПД, ТК; самовывозу ТК не нужна)."""
+        return self.status == ShipmentStatus.PACKED and not shipping_gaps(self, with_track=False)
+
+    @property
+    def ready_to_ship(self) -> bool:
+        """«На отгрузку»: набрано и все данные отправки на месте, трек ТК тоже (самовывозу трек и ТК не нужны)."""
+        return (
+            self.status in {ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}
+            and any(line.picked > 0 for line in self.lines) and not shipping_gaps(self)
+        )
 
     def set_requested(self, line_id: UUID, quantity: Decimal) -> Shipment:
         """`shipItemSetQty_`: менеджер передумал — «Заказано» не ниже уже набранного, в любом статусе.
@@ -842,10 +899,11 @@ class Shipment:
     def close(self) -> Shipment:
         if self.status != ShipmentStatus.SHIPPED:
             raise ShippingValidationError("Закрыть можно только отгруженную заявку")
+        # Закрывается только с УПД (владелец 29.10.2026): уехавшая без УПД по разрешению ждёт его «Отгруженной».
         missing = []
-        if self.upd_type != UpdType.NONE and not self.upd_number:
+        if not self.upd_number:
             missing.append("№ УПД")
-        if self.upd_type != UpdType.NONE and not self.upd_url:
+        if not self.upd_url:
             missing.append("файл УПД")
         if self.terms == DeliveryTerms.CARRIER and not self.track_number:
             missing.append("трек-номер")
@@ -870,8 +928,8 @@ class Shipment:
 def shipping_gaps(shipment: Shipment, *, with_track: bool = True) -> tuple[str, ...]:
     """Чего не хватает отправке, чтобы уехать (владелец 28.10.2026): единый список для «Отгрузить», печати DN и экранов.
 
-    Вносит менеджер (Ульяна): условия доставки, получатель, телефон, для ТК — перевозчик и адрес, УПД (тип, № кроме
-    «без УПД», файл для бумажной). Трек-номер ТК вписывает кладовщик при отгрузке; `with_track=False` — «всё, что должна
+    Вносит менеджер (Ульяна): условия доставки, получатель, телефон, для ТК — перевозчик и адрес, УПД (тип, №, файл для
+    бумажной; «без УПД» — разрешение по PIN, с ним УПД не нужен вовсе). Трек-номер ТК вписывает кладовщик при отгрузке; `with_track=False` — «всё, что должна
     внести Ульяна», с этим списком печатается DN. Самовывозу адрес и трек не нужны."""
     gaps: list[str] = []
     carrier = shipment.terms == DeliveryTerms.CARRIER
@@ -885,9 +943,14 @@ def shipping_gaps(shipment: Shipment, *, with_track: bool = True) -> tuple[str, 
         gaps.append("перевозчик")
     if carrier and not shipment.shipping_point.strip():
         gaps.append("адрес доставки")
-    if shipment.upd_type is None:
+    # Отправке с разрешением «без УПД» УПД не нужен; «Без УПД» без разрешения — пробел «разрешение на отгрузку без УПД».
+    if shipment.no_upd_approved_at is not None:
+        pass
+    elif shipment.upd_type is None:
         gaps.append("тип УПД")
-    elif shipment.upd_type != UpdType.NONE:
+    elif shipment.upd_type == UpdType.NONE:
+        gaps.append(NO_UPD_APPROVAL_GAP)
+    else:
         if not shipment.upd_number.strip():
             gaps.append("№ УПД")
         if shipment.upd_type not in UPD_WITHOUT_FILE and not shipment.upd_url:
@@ -895,6 +958,19 @@ def shipping_gaps(shipment: Shipment, *, with_track: bool = True) -> tuple[str, 
     if carrier and with_track and not shipment.track_number.strip():
         gaps.append("трек-номер")
     return tuple(gaps)
+
+
+NO_UPD_APPROVAL_GAP = "разрешение на отгрузку без УПД"
+
+
+def _check_track(shipment: Shipment) -> None:
+    """Новый трек — только у «Упакованной» отправки, где всё, что вносит менеджер, уже есть (владелец 29.10.2026:
+    трек вносится, когда есть УПД и ТК). Уже записанные треки не трогаются."""
+    if shipment.status != ShipmentStatus.PACKED:
+        raise ShippingValidationError("Трек-номер вносится, когда отправка упакована")
+    gaps = shipping_gaps(shipment, with_track=False)
+    if gaps:
+        raise ShippingValidationError("Трек-номер — когда есть УПД и данные отправки: не хватает — " + ", ".join(gaps))
 
 
 def _round2(value: Decimal) -> Decimal:

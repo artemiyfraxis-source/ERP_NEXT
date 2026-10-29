@@ -339,9 +339,9 @@ def test_upd_types_decide_the_number_and_file_gaps():
     assert _gaps(upd_type=UpdType.PAPER, upd_number="") == ("№ УПД", "файл УПД")
     assert _gaps(upd_type=UpdType.PAPER, upd_number="7") == ("файл УПД",)
     assert _gaps(upd_type=UpdType.PAPER, upd_number="7", upd_url="/api/shipping/files/x") == ()
-    # ЭДО файла не требует; «без УПД» не просит ни номера, ни файла.
+    # ЭДО файла не требует; «без УПД» сам по себе не открывает отгрузку — нужно разрешение по PIN (владелец 29.10.2026).
     assert _gaps(upd_type=UpdType.EDO, upd_number="7") == ()
-    assert _gaps(upd_type=UpdType.NONE, upd_number="") == ()
+    assert _gaps(upd_type=UpdType.NONE, upd_number="") == ("разрешение на отгрузку без УПД",)
 
 
 def test_shipping_refuses_with_the_whole_list_in_the_gates_words():

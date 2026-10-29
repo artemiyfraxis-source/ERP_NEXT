@@ -18,17 +18,18 @@ from app.shared.http_auth import (
 )
 from app.shared.stored_files import decode_upload, file_response
 
+from app.workflows.ship_no_upd import ApproveNoUpd, NoUpdRefused, approve_shipment_without_upd, client_key, no_upd_approvers
 from app.workflows.shipping_storekeeper import storekeeper_ids
 
 from .application import (
     AttachCardUpdCommand, AttachUpdCommand, attach_upd_file, store_card_upd_file, UPD_FILE_URL_PREFIX, upd_file_url,
     ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand,
-    LayOutCommand, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
+    LayOutCommand, PackDecisionCommand, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
     RequestedGood, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
     ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
     close_shipment, create_shipment, drop_project, edit_shipment_head, lay_out_shipment, mark_shipped, pack_project,
     pack_shipment, pick_shipment, queue_project, register_good, rollback_shipped, set_project_addressee, set_requested,
-    ship_project, unpick_line, update_documents,
+    set_pack_decision, ship_project, unpick_line, update_documents,
 )
 from .documents import build_box_labels, build_delivery_note, build_packing_lists, storekeeper_signature
 from .domain import (
@@ -121,6 +122,23 @@ class AddresseePayload(BaseModel):
     note: str | None = Field(default=None, max_length=5000)
     # Бумажная УПД, приложенная заранее (ссылка из POST /upd-files с `project`); пустая строка убирает её.
     upd_url: str | None = Field(default=None, max_length=1024)
+    # № и дата УПД проекта (0162): новая отправка без своего № берёт их; пустое / null стирает.
+    upd_number: str | None = Field(default=None, max_length=255)
+    upd_date: date | None = None
+
+
+class PackDecisionPayload(BaseModel):
+    """«Упаковывать» в карточке проекта: `version` — версия карточки (0 — карточки ещё нет)."""
+
+    project: str = Field(min_length=1, max_length=255)
+    version: int = Field(ge=0)
+    decided: bool
+
+
+class ApproveNoUpdPayload(BaseModel):
+    version: int = Field(ge=1)
+    approver_id: UUID
+    pin: str = Field(min_length=1, max_length=64)
 
 
 class ProjectPackPayload(BaseModel):
@@ -266,6 +284,10 @@ def _addressee_result(addressee: ProjectAddressee) -> dict:
         **{key: getattr(addressee, key) for key in ADDRESSEE_REQUISITE_FIELDS},
         "plan_date": addressee.plan_date.isoformat() if addressee.plan_date else None, "note": addressee.note,
         "upd_url": addressee.upd_url, "upd_file_name": "",
+        "upd_number": addressee.upd_number, "upd_date": addressee.upd_date.isoformat() if addressee.upd_date else None,
+        # Решение «упаковывать» (0162): без него кладовщик не упаковывает.
+        "pack_decided": addressee.pack_decided, "pack_decided_by": addressee.pack_decided_by,
+        "pack_decided_at": addressee.pack_decided_at.isoformat() if addressee.pack_decided_at else None,
     }
 
 
@@ -312,6 +334,10 @@ def _shipment_result(shipment: Shipment) -> dict:
         # для «Отгрузить». Один список на сервере (`shipping_gaps`), экраны его только показывают.
         "missing_data": list(shipping_gaps(shipment, with_track=False)),
         "missing_ship": list(shipping_gaps(shipment)),
+        # «Можно вписать трек» (Упакована + УПД + ТК) и «На отгрузку» (всё, трек тоже): то же правило, что у гейтов.
+        "ready_for_track": shipment.ready_for_track, "ready_to_ship": shipment.ready_to_ship,
+        "no_upd_approved_by": shipment.no_upd_approved_by,
+        "no_upd_approved_at": shipment.no_upd_approved_at.isoformat() if shipment.no_upd_approved_at else None,
         "boxes": [{
             "place": box.place, "kind": box.kind, "dims": box.dims, "net": box.net, "gross": box.gross,
             "seal": box.seal,
@@ -431,6 +457,21 @@ def pack_project_goods(
     return {"shipment": _shipment_result(shipment)}
 
 
+@router.post("/project-pack-decision")
+def project_pack_decision(
+    payload: PackDecisionPayload,
+    principal: Annotated[Principal, Depends(shipping_manager_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    """Менеджер решает «упаковывать» (кладовщикам — уведомление) или снимает решение, пока набранной отправки нет."""
+    addressee = _run(lambda: set_pack_decision(PackDecisionCommand(
+        project=payload.project, expected_version=payload.version, decided=payload.decided,
+        actor=principal.actor, now=now,
+    ), uow_factory()))
+    return {"addressee": _addressee_results([addressee], uow_factory)[0]}
+
+
 @router.post("/project-ship")
 def ship_project_goods(
     payload: ProjectShipPayload,
@@ -502,7 +543,7 @@ def add_shipment(
     data = payload.model_dump(exclude={"lines"})
     shipment = _run(lambda: create_shipment(CreateShipmentCommand(
         **data, lines=tuple(RequestedGood(good_id=line.good_id, quantity=line.quantity) for line in payload.lines),
-        actor=principal.actor, now=now,
+        actor=principal.actor, now=now, decide_pack=True,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
 
@@ -554,6 +595,43 @@ def head(shipment_id: UUID, payload: HeadPayload, principal: Annotated[Principal
 def ship(shipment_id: UUID, payload: VersionPayload, principal: Annotated[Principal, Depends(shipping_warehouse_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
     result = _run(lambda: mark_shipped(_command(shipment_id, payload, principal, now), uow_factory()))
     return {"shipment": _shipment_result(result.shipment), "closed": result.shipment.status.value == "Закрыта", "why": result.why}
+
+
+@router.get("/no-upd-approvers")
+def approvers_without_upd(
+    _principal: Annotated[Principal, Depends(shipping_view_principal)],
+    request: Request,
+) -> dict:
+    """Кто может разрешить отгрузку без УПД своим PIN: [{id, name}]."""
+    return {"approvers": [{"id": str(item.id), "name": item.name} for item in no_upd_approvers(_identity(request)())]}
+
+
+@router.post("/shipments/{shipment_id}/approve-no-upd")
+def approve_without_upd(
+    shipment_id: UUID,
+    payload: ApproveNoUpdPayload,
+    principal: Annotated[Principal, Depends(shipping_editor_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    request: Request,
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    """«Отгрузить без УПД»: разрешающий выбирает себя и вводит свой PIN; неверный PIN — неудачная попытка входа."""
+    identity = _identity(request)
+    try:
+        shipment = _run(lambda: approve_shipment_without_upd(ApproveNoUpd(
+            shipment_id=shipment_id, expected_version=payload.version, approver_id=payload.approver_id,
+            pin=payload.pin, actor=principal.actor, now=now, client_key=client_key(request),
+        ), identity, uow_factory))
+    except NoUpdRefused as error:
+        raise HTTPException(status_code=error.status, detail=str(error)) from error
+    return {"shipment": _shipment_result(shipment)}
+
+
+def _identity(request: Request) -> Callable[[], object]:
+    factory = getattr(request.app.state, "identity_uow_factory", None)
+    if not callable(factory):
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    return factory
 
 
 class UnshipPayload(VersionPayload):
