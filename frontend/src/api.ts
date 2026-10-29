@@ -4014,7 +4014,7 @@ export const shippingApi = {
     method: "POST", body: JSON.stringify({ project, version, decided }),
   }),
   /** Кто уполномочен разрешить отгрузку без УПД. */
-  noUpdApprovers: () => api<NoUpdApprover[]>("/api/shipping/no-upd-approvers"),
+  noUpdApprovers: async () => (await api<{ approvers: NoUpdApprover[] }>("/api/shipping/no-upd-approvers")).approvers,
   /** Отгрузка без УПД: разрешение уполномоченного по PIN (на экране кладовщика). */
   approveNoUpd: (shipmentId: string, version: number, approverId: string, pin: string) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/approve-no-upd`, {
     method: "POST", body: JSON.stringify({ version, approver_id: approverId, pin }),
