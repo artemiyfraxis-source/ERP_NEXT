@@ -105,7 +105,7 @@ class AutoplanCommand:
     mode: AutoplanMode = AutoplanMode.SHOP
     project: str = ""  # «По проекту»: номер проекта
     people: tuple[UUID, ...] = ()  # «По проекту»: монтажники, выделенные на проект
-    exclude: frozenset[UUID] = frozenset()  # «Весь цех»: исключённые задания (id) и КБ (id техкарты)
+    exclude: frozenset[UUID] = frozenset()  # оба режима: исключённые задания (id) и КБ без задания (id техкарты)
     date_to: date | None = None  # «до даты» вручную; None — горизонт по работе
     runs: tuple[tuple[UUID, int], ...] = ()  # тиражи новых заданий по id техкарты КБ; нет — весь тираж КБ
 
@@ -217,7 +217,8 @@ def _scope(
     # Все запущенные, по индексу статуса: первые 10 000 заданий ленты теряли запущенные за границей (U06).
     stored = tuple(uow.production.with_status(ProductionStatus.RUNNING))
     tasks = {item.id: localize(item, now) for item in stored}
-    exclude = command.exclude if not project_mode else frozenset()
+    # Снятые галочки — в обоих режимах: «Весь цех» и КБ проекта в «По проекту».
+    exclude = command.exclude
     warnings: list[str] = []
     eligible = tuple(
         task for task in sorted(tasks.values(), key=lambda value: value.number)
@@ -345,7 +346,7 @@ def _prepare(
         "mode": command.mode.value,
         "project": normalize_project_number(command.project) if command.mode is AutoplanMode.PROJECT else "",
         "people": sorted(str(value) for value in command.people) if command.mode is AutoplanMode.PROJECT else [],
-        "exclude": sorted(str(value) for value in command.exclude) if command.mode is AutoplanMode.SHOP else [],
+        "exclude": sorted(str(value) for value in command.exclude),
         "date_to": command.date_to, "actor_site": scope.assigner_site,
         "runs": sorted([str(key), value] for key, value in command.runs),
         "tasks": sorted([str(task.id), task.version] for task in scope.stored),

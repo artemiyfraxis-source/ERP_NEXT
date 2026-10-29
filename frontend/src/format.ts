@@ -57,6 +57,12 @@ export function formatWallMoment(value: string | null | undefined): string {
   return match ? `${match[3]}.${match[2]} ${match[4]}:${match[5]}` : String(value ?? "");
 }
 
+/** Время момента, как его записал сервер (московское): «14:30»; не ISO — как есть. */
+export function formatWallTime(value: string | null | undefined): string {
+  const match = /^\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/.exec(String(value ?? ""));
+  return match ? `${match[1]}:${match[2]}` : String(value ?? "");
+}
+
 /** Только день: «2026-10-01T00:00:00+03:00» → «01.10.2026»; не ISO — как есть, пусто — пустая строка. */
 export function formatDay(value: string | null | undefined): string {
   const match = String(value ?? "").match(ISO_DAY_PREFIX);

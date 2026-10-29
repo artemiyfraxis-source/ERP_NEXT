@@ -1,0 +1,36 @@
+/* «Готово к запуску» (LaunchReady): полоса над вкладками, окно списка и окно подтверждения. Цвета — токены :root. */
+
+.lr-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 0 12px; padding: 8px 12px;
+  border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 8px; background: var(--card); font-size: 13px; }
+.lr-strip .warning-inline { margin: 0; }
+.lr-strip .muted { color: var(--muted-foreground); }
+
+.lr-window, .lr-confirm { display: grid; gap: 12px; }
+.lr-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.lr-head h2 { margin: 0; font-size: 16px; }
+.lr-head > .muted { font-size: 13px; color: var(--muted-foreground); }
+.lr-head > button { margin-left: auto; }
+.lr-window .muted, .lr-confirm .muted { color: var(--muted-foreground); }
+
+.lr-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 16px; margin: 0; }
+.lr-facts > div { min-width: 0; }
+.lr-facts dt { font-size: 12px; color: var(--muted-foreground); }
+.lr-facts dd { margin: 4px 0 0; font-size: 14px; }
+.lr-qty-input { width: 96px; font-variant-numeric: tabular-nums; text-align: right; }
+.lr-code { font-size: 12px; color: var(--muted-foreground); }
+
+.lr-ops-wrap { overflow-x: auto; }
+.lr-ops { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lr-ops th, .lr-ops td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.lr-ops thead th { font-size: 12px; font-weight: 500; color: var(--muted-foreground); white-space: nowrap; }
+.lr-ops .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lr-ops tbody tr:nth-child(even) { background: var(--accent); }
+.lr-ops tfoot td { border-bottom: 0; font-weight: 500; }
+.lr-confirm .form-actions { margin-top: 0; }
+
+@media (max-width: 1100px) {
+  .lr-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (pointer: coarse) {
+  .lr-strip button, .lr-confirm button, .lr-qty-input { min-height: 40px; }
+}
