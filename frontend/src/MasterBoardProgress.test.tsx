@@ -135,6 +135,15 @@ describe("экран мастера: сроки и доска монтажник
     expect(legend.textContent).toContain("8/8");
     expect(legend.textContent).not.toContain("/7");
   });
+
+  // Владелец 29.10: автоплан по одной КБ, не только всего проекта.
+  it("у строки КБ в окне проекта «Автоплан КБ» открывает автоплан проекта на эту КБ", () => {
+    mountBoard();
+    fireEvent.click(screen.getByText("AAA"));
+    const window = screen.getByRole("dialog", { name: "Проект AAA" });
+    fireEvent.click(within(window).getByRole("button", { name: /^Автоплан .*КБ1$/ }));
+    expect(screen.getByRole("heading", { name: "Автопланирование · AAA · КБ1" })).toBeInTheDocument();
+  });
 });
 
 describe("экран мастера: операция по ПФ", () => {

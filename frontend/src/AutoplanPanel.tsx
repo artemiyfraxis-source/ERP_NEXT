@@ -42,19 +42,23 @@ function slotText(start: string, finish: string) {
 }
 
 /** Group checkbox: ticked when all are chosen, a dash when only some are. */
-function GroupCheck({ label, items, chosen, onToggle }: {
+function GroupCheck({ label, count, total, onToggle }: {
   label: string;
-  items: AutoplanProposal[];
-  chosen: Set<string>;
+  count: number;
+  total: number;
   onToggle: (on: boolean) => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
-  const count = items.filter((item) => chosen.has(key(item))).length;
   useEffect(() => {
-    if (ref.current) ref.current.indeterminate = count > 0 && count < items.length;
-  }, [count, items.length]);
-  return <input ref={ref} type="checkbox" aria-label={label} checked={count === items.length} onChange={(event) => onToggle(event.target.checked)} />;
+    if (ref.current) ref.current.indeterminate = count > 0 && count < total;
+  }, [count, total]);
+  return <input ref={ref} type="checkbox" aria-label={label} checked={total > 0 && count === total} onChange={(event) => onToggle(event.target.checked)} />;
 }
+
+const chosenCount = (items: AutoplanProposal[], chosen: Set<string>) => items.filter((item) => chosen.has(key(item))).length;
+
+/** КБ из окна проекта: задание и будущая КБ сравниваются по индексу («КБ2» = «кб2 »). */
+const sameKb = (left: string, right: string) => left.trim().toLowerCase() === right.trim().toLowerCase();
 
 const key = (item: AutoplanProposal) => `${item.task_id}:${item.operation_id}`;
 
@@ -115,8 +119,8 @@ type PlanKind = "asap" | "ship";
 export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset }: {
   close: () => void;
   /** Из окна проекта на доске (владелец 22.10): «По проекту» на этот проект, тиражи новых заданий, один наименее
-   *  загруженный монтажник по умолчанию. */
-  preset?: { project: string; runs?: Record<string, number> };
+   *  загруженный монтажник по умолчанию; kb — только эта КБ проекта (остальные КБ сняты, галочки можно вернуть). */
+  preset?: { project: string; runs?: Record<string, number>; kb?: string };
   onApplied: (count: number, created: number) => void;
   /** ДЛ проектов из производственного плана — как на доске мастера; нет в плане — ближайший срок заданий и КБ. */
   projectDeadlines?: ProjectDeadlines;
@@ -129,6 +133,8 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
   const [kind, setKind] = useState<PlanKind>("asap");
   // Окно проекта: при первой загрузке отмечается один наименее загруженный монтажник — дальше «Людей» и галочки.
   const autoPick = useRef(Boolean(preset));
+  // «Автоплан КБ» с доски: после первой загрузки сняты все КБ проекта, кроме этой.
+  const onlyKb = useRef(preset?.kb ?? "");
   const [people, setPeople] = useState<Set<string>>(new Set());
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [dateTo, setDateTo] = useState("");
@@ -163,6 +169,14 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
         if (!active) return;
         setContext(value);
         if (mode === "project" && !project && value.projects.length) setProject(sortProjects(value.projects)[0].project);
+        if (onlyKb.current && mode === "project") {
+          const kb = onlyKb.current;
+          onlyKb.current = "";
+          setExcluded(new Set([
+            ...value.tasks.filter((task) => !sameKb(task.item, kb)).map((task) => task.id),
+            ...value.new.filter((item) => !sameKb(item.index, kb)).map((item) => item.techcard_id),
+          ]));
+        }
         if (autoPick.current && value.fitters.length) {
           autoPick.current = false;
           setPeople(new Set(leastLoaded(value.fitters, 1)));
@@ -176,8 +190,10 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
   const ready = (context?.new ?? []).filter((item) => !item.skipped);
   const skipped = (context?.new ?? []).filter((item) => item.skipped);
   const fitters = context?.fitters ?? [];
-  const includedTasks = mode === "shop" ? tasks.filter((task) => !excluded.has(task.id)) : tasks;
-  const includedNew = mode === "shop" ? ready.filter((item) => !excluded.has(item.techcard_id)) : ready;
+  // Снятые галочки — в обоих режимах: «Весь цех» и КБ проекта в «По проекту».
+  const includedTasks = tasks.filter((task) => !excluded.has(task.id));
+  const includedNew = ready.filter((item) => !excluded.has(item.techcard_id));
+  const included = includedTasks.length + includedNew.length;
   const chosenPeople = fitters.filter((person) => people.has(person.id));
   const listed = tasks.length + ready.length;
   const shownPeriod = result ? result.preview.period : context?.period;
@@ -194,17 +210,19 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
   function request(): AutoplanRequest {
     const date = dateTo ? { date_to: dateTo } : {};
     const runs = preset && preset.project === project && preset.runs && Object.keys(preset.runs).length ? { runs: preset.runs } : {};
-    if (mode === "project") return { mode, project, people: chosenPeople.map((person) => person.id), ...date, ...runs };
     const exclude = [...tasks.map((task) => task.id), ...ready.map((item) => item.techcard_id)].filter((id) => excluded.has(id));
-    return { mode, ...(exclude.length ? { exclude } : {}), ...date };
+    const excludeField = exclude.length ? { exclude } : {};
+    if (mode === "project") return { mode, project, people: chosenPeople.map((person) => person.id), ...excludeField, ...date, ...runs };
+    return { mode, ...excludeField, ...date };
   }
 
   // Любое изменение условий делает прежнее предложение неактуальным.
   function changed<T>(apply: (value: T) => void) {
     return (value: T) => { apply(value); setResult(null); setError(""); };
   }
-  const switchMode = changed((value: AutoplanMode) => setMode(value));
-  const pickProject = changed((value: string) => { setProject(value); setPeople(new Set()); });
+  // Другой режим или проект — другой список работы: все галочки снова стоят.
+  const switchMode = changed((value: AutoplanMode) => { setMode(value); setExcluded(new Set()); });
+  const pickProject = changed((value: string) => { setProject(value); setPeople(new Set()); setExcluded(new Set()); });
   const toggleId = (setter: typeof setPeople) => changed((id: string) => setter((current) => { const next = new Set(current); if (!next.delete(id)) next.add(id); return next; }));
   const togglePerson = toggleId(setPeople);
   const toggleExcluded = toggleId(setExcluded);
@@ -259,9 +277,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
   }
   const stats = result?.preview.stats;
   const period = shownPeriod ? periodText(shownPeriod.start, shownPeriod.last_day) : "";
-  const ready_ = Boolean(context) && (mode === "shop"
-    ? includedTasks.length + includedNew.length > 0
-    : Boolean(project) && chosenPeople.length > 0);
+  const ready_ = Boolean(context) && included > 0 && (mode === "shop" || (Boolean(project) && chosenPeople.length > 0));
   const workText = (tasksCount: number, newCount: number) => [
     tasksCount || !newCount ? count(tasksCount, "задание", "задания", "заданий") : "",
     newCount ? count(newCount, "новая КБ", "новые КБ", "новых КБ") : "",
@@ -270,12 +286,29 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
   // «К сроку отгрузки» — только расчёт: предложения и применения нет.
   const shipOnly = mode === "project" && kind === "ship";
 
-  const proposeButton = <button className={result ? "secondary" : "primary"} disabled={loading || applying || !ready_} title={mode === "project" && context && !chosenPeople.length ? "Отметьте людей на проект" : undefined} onClick={() => void run()}>{result ? "Пересчитать" : `Предложить план${period ? ` на ${period}` : ""}`}</button>;
+  // Работа с галочками — задания и будущие КБ; один список для «Весь цех» и КБ проекта в «По проекту».
+  function workLines(withSkipped: boolean) {
+    return <div className="autoplan-task-list">
+      {tasks.map((task) => <label key={task.id} className="autoplan-check autoplan-task-line" title={[task.number, kbLabel(task.project, task.item), task.name].filter(Boolean).join(" · ")}>
+        <input type="checkbox" checked={!excluded.has(task.id)} onChange={() => toggleExcluded(task.id)} aria-label={`${task.number} · ${kbLabel(task.project, task.item)}`} />
+        <b>{task.number}</b><span className="autoplan-task-item">{kbLabel(task.project, task.item)}</span><span className="autoplan-task-name">{task.name}{task.deadline ? ` · срок ${formatDayMonth(task.deadline)}` : ""}</span>
+      </label>)}
+      {ready.map((item) => <label key={item.techcard_id} className="autoplan-check autoplan-task-line" title="Задание создастся при применении плана">
+        <input type="checkbox" checked={!excluded.has(item.techcard_id)} onChange={() => toggleExcluded(item.techcard_id)} aria-label={`${kbLabel(item.project, item.index)} · новое задание`} />
+        <em className="autoplan-new">новое задание</em><span className="autoplan-task-item">{kbLabel(item.project, item.index)}</span><span className="autoplan-task-name">{item.name} · {item.launched ? `остаток ${item.quantity ?? 0} из ${item.run} (запущено ${item.launched})` : `тираж ${item.run}`}{item.deadline ? ` · срок ${formatDayMonth(item.deadline)}` : ""}</span>
+      </label>)}
+      {withSkipped && skipped.map((item) => <div key={item.techcard_id} className="autoplan-task-line autoplan-skipped">
+        <span /><span className="autoplan-new off">без задания</span><span className="autoplan-task-item">{kbLabel(item.project, item.index)}</span><span className="autoplan-task-name">{item.skipped}</span>
+      </div>)}
+    </div>;
+  }
+
+  const proposeButton = <button className={result ? "secondary" : "primary"} disabled={loading || applying || !ready_} title={context && listed > 0 && !included ? "Отметьте работу для плана" : mode === "project" && context && !chosenPeople.length ? "Отметьте людей на проект" : undefined} onClick={() => void run()}>{result ? "Пересчитать" : `Предложить план${period ? ` на ${period}` : ""}`}</button>;
 
   return createPortal(<div className="dialog-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
     <form ref={dialogRef} tabIndex={-1} className="move-dialog autoplan-dialog panel" role="dialog" aria-modal="true" aria-label="Автоплан" onSubmit={(event) => event.preventDefault()}>
       <div className="autoplan-head">
-        <h2>{preset ? `Автопланирование · ${preset.project}` : "Автоплан"}</h2>
+        <h2>{preset ? `Автопланирование · ${preset.kb ? kbLabel(preset.project, preset.kb) : preset.project}` : "Автоплан"}</h2>
         {!preset && <div className="seg-tabs autoplan-modes" role="radiogroup" aria-label="Что планировать">
           {([["shop", "Весь цех"], ["project", "По проекту"]] as Array<[AutoplanMode, string]>).map(([value, label]) =>
             <button key={value} type="button" role="radio" aria-checked={mode === value} className={mode === value ? "on" : undefined} onClick={() => { if (mode !== value) switchMode(value); }}>{label}</button>)}
@@ -304,19 +337,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
               <button type="button" className="link-button" onClick={() => setAllWork(true)} disabled={!excluded.size}>Выбрать все</button>
               <button type="button" className="link-button" onClick={() => setAllWork(false)} disabled={includedTasks.length + includedNew.length === 0}>Снять все</button>
             </div>
-            <div className="autoplan-task-list">
-              {tasks.map((task) => <label key={task.id} className="autoplan-check autoplan-task-line" title={[task.number, kbLabel(task.project, task.item), task.name].filter(Boolean).join(" · ")}>
-                <input type="checkbox" checked={!excluded.has(task.id)} onChange={() => toggleExcluded(task.id)} aria-label={`${task.number} · ${kbLabel(task.project, task.item)}`} />
-                <b>{task.number}</b><span className="autoplan-task-item">{kbLabel(task.project, task.item)}</span><span className="autoplan-task-name">{task.name}{task.deadline ? ` · срок ${formatDayMonth(task.deadline)}` : ""}</span>
-              </label>)}
-              {ready.map((item) => <label key={item.techcard_id} className="autoplan-check autoplan-task-line" title="Задание создастся при применении плана">
-                <input type="checkbox" checked={!excluded.has(item.techcard_id)} onChange={() => toggleExcluded(item.techcard_id)} aria-label={`${kbLabel(item.project, item.index)} · новое задание`} />
-                <em className="autoplan-new">новое задание</em><span className="autoplan-task-item">{kbLabel(item.project, item.index)}</span><span className="autoplan-task-name">{item.name} · {item.launched ? `остаток ${item.quantity ?? 0} из ${item.run} (запущено ${item.launched})` : `тираж ${item.run}`}{item.deadline ? ` · срок ${formatDayMonth(item.deadline)}` : ""}</span>
-              </label>)}
-              {skipped.map((item) => <div key={item.techcard_id} className="autoplan-task-line autoplan-skipped">
-                <span /><span className="autoplan-new off">без задания</span><span className="autoplan-task-item">{kbLabel(item.project, item.index)}</span><span className="autoplan-task-name">{item.skipped}</span>
-              </div>)}
-            </div>
+            {workLines(true)}
           </details>}
         </>}
         {context && mode === "project" && <>
@@ -335,9 +356,16 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
             </select>
           </label>}
           {projectRow && <div className="autoplan-scope">
-            <span>{workText(tasks.length, ready.length)} проекта{skipped.length ? ` · без тиража: ${skipped.map((item) => kbLabel(item.project, item.index)).join(", ")}` : ""}</span>
+            <span>{kind === "asap" ? workText(includedTasks.length, includedNew.length) : workText(tasks.length, ready.length)} проекта{kind === "asap" && included < listed ? ` · снято ${listed - included}` : ""}{skipped.length ?` · без тиража: ${skipped.map((item) => kbLabel(item.project, item.index)).join(", ")}` : ""}</span>
             <small>Другие проекты остаются как есть; их работа — занятость людей.</small>
           </div>}
+          {kind === "asap" && listed > 0 && <section className="autoplan-tasks" aria-label="КБ проекта">
+            <div className="autoplan-tasks-bar">
+              <label className="autoplan-check"><GroupCheck label="Все КБ проекта" count={included} total={listed} onToggle={setAllWork} /><b>КБ проекта</b></label>
+              <span className="autoplan-count">в плане {included} из {listed}</span>
+            </div>
+            {workLines(false)}
+          </section>}
           <section className="autoplan-tasks" aria-label="Люди на проект">
             <div className="autoplan-tasks-bar">
               <b>Люди на проект</b>
@@ -366,13 +394,13 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
           {result.preview.warnings.map((warning) => <div key={warning} className="warning-inline">{warning}</div>)}
           {!groups.length && <div className="empty">{result.preview.unplaced.length ? "Ничего не поместилось — причины ниже." : `Ставить нечего: вся работа на ${period} уже распределена вручную или начата.`}</div>}
           {groups.map((fitter) => <section key={fitter.id} className="autoplan-fitter" aria-label={`Монтажник ${fitter.name}`}>
-            <h3><label className="autoplan-check"><GroupCheck label={`Весь план: ${fitter.name}`} items={fitter.items} chosen={selected} onToggle={(on) => toggle(fitter.items, on)} /><span>{fitter.name}</span></label><small>{count(fitter.items.length, "операция", "операции", "операций")}</small></h3>
+            <h3><label className="autoplan-check"><GroupCheck label={`Весь план: ${fitter.name}`} count={chosenCount(fitter.items, selected)} total={fitter.items.length} onToggle={(on) => toggle(fitter.items, on)} /><span>{fitter.name}</span></label><small>{count(fitter.items.length, "операция", "операции", "операций")}</small></h3>
             {fitter.days.map((day) => <div key={day.day} className="autoplan-day">
               <div className="autoplan-day-title">{formatDay(day.day)}</div>
               {day.batches.map((batch) => {
                 const taskCount = new Set(batch.items.map((item) => item.task_id)).size;
                 return <div key={batch.id} className="autoplan-batch">
-                  <div className="autoplan-batch-head"><label className="autoplan-check"><GroupCheck label={`Наладка: ${batch.label}`} items={batch.items} chosen={selected} onToggle={(on) => toggle(batch.items, on)} /><span>Наладка: {batch.label || "без наладки"} — {count(batch.items.length, "операция", "операции", "операций")} из {taskCount} ПЗ</span></label>{batch.machine && <small>{batch.machine}</small>}</div>
+                  <div className="autoplan-batch-head"><label className="autoplan-check"><GroupCheck label={`Наладка: ${batch.label}`} count={chosenCount(batch.items, selected)} total={batch.items.length} onToggle={(on) => toggle(batch.items, on)} /><span>Наладка: {batch.label || "без наладки"} — {count(batch.items.length, "операция", "операции", "операций")} из {taskCount} ПЗ</span></label>{batch.machine && <small>{batch.machine}</small>}</div>
                   {batch.items.map((item) => <div key={key(item)} className="autoplan-row">
                     <input type="checkbox" aria-label={`${item.task_number}, ${item.stage}`} checked={selected.has(key(item))} onChange={(event) => toggle([item], event.target.checked)} />
                     <TaskCell item={item} />

@@ -293,3 +293,47 @@ it("«К сроку отгрузки» is the ship-date calculation: no proposal
   fireEvent.click(screen.getByRole("radio", { name: "Как можно раньше" }));
   expect(screen.getByRole("button", { name: /Предложить план/ })).toBeEnabled();
 });
+
+// Владелец 29.10: «почему я не могу автопланировать по КБ, а только весь проект».
+it("plans only the ticked КБ of the project: unticked ones are not sent, the group box ticks them all back", async () => {
+  const calls = mockApi(() => json({ applied: 3, tasks: [], created: [] }));
+  render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} preset={{ project: "708К" }} />);
+  await waitFor(() => expect(screen.getByLabelText("Иванов И.")).toBeChecked());
+  const kbs = screen.getByRole("region", { name: "КБ проекта" });
+  expect(within(kbs).getByText("в плане 2 из 2")).toBeInTheDocument();
+  expect(within(kbs).getByLabelText("Все КБ проекта")).toBeChecked();
+  // КБ без тиража — в строке охвата, без галочки.
+  expect(within(kbs).queryByText("Нет тиража КБ — задайте тираж в наборе проекта")).not.toBeInTheDocument();
+  fireEvent.click(within(kbs).getByLabelText("708К · КБ2 · новое задание"));
+  expect(within(kbs).getByText("в плане 1 из 2")).toBeInTheDocument();
+  expect(within(kbs).getByLabelText("Все КБ проекта")).not.toBeChecked();
+  expect(screen.getByText(/1 задание проекта · снято 1/)).toBeInTheDocument();
+  await openPreview();
+  expect(bodies(calls, "/preview")[0]).toEqual({ mode: "project", project: "708К", people: [A], exclude: [CARD] });
+  fireEvent.click(screen.getByRole("button", { name: "Применить выбранное (3)" }));
+  await waitFor(() => expect(bodies(calls, "/apply")).toHaveLength(1));
+  expect(bodies(calls, "/apply")[0]).toMatchObject({ mode: "project", exclude: [CARD], fingerprint: preview.fingerprint });
+});
+
+it("nothing ticked in the project — nothing to propose until a КБ is ticked again", async () => {
+  mockApi(() => json({ applied: 0, tasks: [], created: [] }));
+  render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} preset={{ project: "708К" }} />);
+  await waitFor(() => expect(screen.getByLabelText("Иванов И.")).toBeChecked());
+  const all = screen.getByLabelText("Все КБ проекта");
+  fireEvent.click(all);
+  expect(screen.getByText("в плане 0 из 2")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Предложить план/ })).toBeDisabled();
+  fireEvent.click(all);
+  expect(screen.getByText("в плане 2 из 2")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Предложить план/ })).toBeEnabled();
+});
+
+it("«Автоплан КБ» from the board: only that КБ of the project is ticked", async () => {
+  const calls = mockApi(() => json({ applied: 3, tasks: [], created: [] }));
+  render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} preset={{ project: "708К", kb: "КБ2" }} />);
+  expect(screen.getByRole("heading", { name: "Автопланирование · 708К · КБ2" })).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByLabelText("ПЗ-0001 · 591K.3 · КБ1")).not.toBeChecked());
+  expect(screen.getByLabelText("708К · КБ2 · новое задание")).toBeChecked();
+  await openPreview();
+  expect(bodies(calls, "/preview")[0]).toEqual({ mode: "project", project: "708К", people: [A], exclude: [TASK] });
+});
