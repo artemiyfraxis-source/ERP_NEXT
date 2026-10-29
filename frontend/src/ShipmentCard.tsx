@@ -107,7 +107,7 @@ export function projectsOf(shipment: Shipment) {
 }
 
 /** УПД без файла отгрузить нельзя, кроме ЭДО и «Без УПД» (сервер, `mark_shipped`). */
-const needsUpdFile = (shipment: Shipment) => !["ЭДО", "БЕЗ УПД"].includes(shipment.upd_type ?? "") && !shipment.upd_url;
+export const needsUpdFile = (shipment: Shipment) => !["ЭДО", "БЕЗ УПД"].includes(shipment.upd_type ?? "") && !shipment.upd_url;
 /** Что держит отгрузку из-за УПД; у «Без УПД» сервер пишет «разрешение на отгрузку без УПД», пока его не дали. */
 const UPD_GAPS = ["тип УПД", "№ УПД", "файл УПД", "разрешение на отгрузку без УПД"];
 /** Отгружают набранное: собранную (самовывоз) или упакованную отправку. */
@@ -136,25 +136,12 @@ function notClosed(why: string | undefined) {
   return missing ? `Не закрыта — не хватает: ${text.slice(missing[0].length)}` : `Не закрыта — ${text || "не хватает данных"}`;
 }
 
-export interface CardRights { canManage: boolean; canWarehouse: boolean; canEdit: boolean; canUnship: boolean }
-
-/** Отправка целиком: строки, набор и возврат, PL/DN и короба, этикетки, УПД и трек, отгрузка, закрытие, откат. */
-export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
-  shipment: DispatchShipment; rights: CardRights; busy: string; mutate: Mutate; openData: () => void;
-}) {
-  const { canManage, canWarehouse, canEdit, canUnship } = rights;
-  const [documents, setDocuments] = useState({ upd_type: shipment.inherited.includes("upd_type") ? "" : shipment.upd_type ?? "", upd_number: shipment.upd_number, upd_date: shipment.upd_date ?? "", track_number: shipment.track_number });
-  const [requested, setRequested] = useState<Record<string, string>>({});
-  const [layout, setLayout] = useState(false);
+/** Печать PL, DN и этикеток коробов отправки: общая у карточки и окна «Документы». DN печатается, когда внесены данные
+ *  (слова сервера `missing_data`). */
+export function useShipmentPrint(shipment: Shipment) {
   const [printError, setPrintError] = useState("");
-  const [rollback, setRollback] = useState<string | null>(null);
-  const [approving, setApproving] = useState(false);
-  const action = (name: "pick" | "pack" | "ship" | "close" | "cancel", message: string | ((result: unknown) => string)) => mutate(`${name}:${shipment.id}`, () => shippingApi.action(shipment.id, name, shipment.version), message);
-  const got = shipment.lines.some((line) => num(line.picked) > 0);
-  const open = !["Закрыта", "Отменена"].includes(shipment.status);
-  const shipped = ["Отгружена", "Закрыта"].includes(shipment.status);
-  const active = ACTIVE.includes(shipment.status);
   const canPrintDocs = useCanPrint();
+  const dnGaps = ACTIVE.includes(shipment.status) ? shipment.missing_data : [];
   const print = async (document: "pl" | "dn") => {
     setPrintError("");
     try { openShippingForms((await shippingApi.print(shipment.id, document)).forms); }
@@ -165,6 +152,27 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
     try { openBoxLabels((await fetchBoxLabels(shipment.id)).labels); }
     catch (reason) { setPrintError(failureText(reason, "Не удалось подготовить этикетки")); }
   };
+  return { print, printLabels, printError, canPrintDocs, dnGaps };
+}
+
+export interface CardRights { canManage: boolean; canWarehouse: boolean; canEdit: boolean; canUnship: boolean }
+
+/** Отправка целиком: строки, набор и возврат, PL/DN и короба, этикетки, УПД и трек, отгрузка, закрытие, откат. */
+export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
+  shipment: DispatchShipment; rights: CardRights; busy: string; mutate: Mutate; openData: () => void;
+}) {
+  const { canManage, canWarehouse, canEdit, canUnship } = rights;
+  const [documents, setDocuments] = useState({ upd_type: shipment.inherited.includes("upd_type") ? "" : shipment.upd_type ?? "", upd_number: shipment.upd_number, upd_date: shipment.upd_date ?? "", track_number: shipment.track_number });
+  const [requested, setRequested] = useState<Record<string, string>>({});
+  const [layout, setLayout] = useState(false);
+  const [rollback, setRollback] = useState<string | null>(null);
+  const [approving, setApproving] = useState(false);
+  const action = (name: "pick" | "pack" | "ship" | "close" | "cancel", message: string | ((result: unknown) => string)) => mutate(`${name}:${shipment.id}`, () => shippingApi.action(shipment.id, name, shipment.version), message);
+  const got = shipment.lines.some((line) => num(line.picked) > 0);
+  const open = !["Закрыта", "Отменена"].includes(shipment.status);
+  const shipped = ["Отгружена", "Закрыта"].includes(shipment.status);
+  const active = ACTIVE.includes(shipment.status);
+  const { print, printLabels, printError, canPrintDocs, dnGaps } = useShipmentPrint(shipment);
   const uploadUpd = (file: File | undefined) => {
     if (!file) return;
     void mutate(`upd:${shipment.id}`, async () => shippingApi.uploadUpd(shipment.id, shipment.version, await readFile(file)), "УПД приложена");
@@ -186,7 +194,6 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
   };
   const disabled = Boolean(busy);
   // Слова сервера: чего не хватает, чтобы напечатать DN (`missing_data`) и чтобы отгрузить (`missing_ship`, ещё и трек ТК).
-  const dnGaps = active ? shipment.missing_data : [];
   const shipGaps = shipment.missing_ship;
   const canShip = readyToShip(shipment);
   const trackOpen = readyForTrack(shipment) || Boolean(shipment.track_number);
