@@ -35,7 +35,7 @@ from app.shared.persistence import Base
 from app.shared.persistence import SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.clock import as_utc
 
-from .application import ApiToken, IdentitySession, PinRecord
+from .application import ApiToken, ApprovalCredentials, IdentitySession, PinRecord
 from .domain import FULL_ACCESS_LEVELS, LEVEL_SEED, AccessMode, IdentityUser, normalize_login
 from .documents import Acknowledgement, Document, DocumentKind, DocumentScope, DocumentVersion
 from .leave import LeaveConflict, LeaveKind, LeaveRequest, LeaveSignature, LeaveStatus, signature_order
@@ -107,6 +107,18 @@ class IdentityCredentialRow(Base):
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
     # portal_pin_<email>: the PIN (6–8 digits) as an Argon2id hash; empty — no PIN assigned.
     pin_hash: Mapped[str | None] = mapped_column(String(512))
+    # Разрешительный ПИН (0163): the person's own second PIN that permits actions (approval_pin.py), never the login
+    # PIN. The hash and the moment it was set go together; NULL — not set.
+    approval_pin_hash: Mapped[str | None] = mapped_column(String(512))
+    approval_pin_set_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "(approval_pin_hash IS NULL AND approval_pin_set_at IS NULL)"
+            " OR (approval_pin_hash IS NOT NULL AND approval_pin_set_at IS NOT NULL)",
+            name="ck_identity_credentials_approval_pin",
+        ),
+    )
 
 
 class IdentityIdentifierRow(Base):
@@ -893,6 +905,33 @@ class SqlAlchemyIdentityRepository:
         return set(self.session.scalars(
             select(IdentityCredentialRow.user_id).where(IdentityCredentialRow.pin_hash.is_not(None))
         ))
+
+    # ── Разрешительный ПИН (approval_pin.py) ──
+
+    def approval_credentials(self, user_id: UUID) -> ApprovalCredentials | None:
+        row = self.session.get(IdentityCredentialRow, user_id)
+        if row is None:
+            return None
+        return ApprovalCredentials(
+            password_hash=row.password_hash, pin_hash=row.pin_hash, approval_pin_hash=row.approval_pin_hash,
+            approval_pin_set_at=as_utc(row.approval_pin_set_at) if row.approval_pin_set_at is not None else None,
+        )
+
+    def set_approval_pin(self, user_id: UUID, pin_hash: str | None, set_at) -> None:
+        row = self.session.get(IdentityCredentialRow, user_id)
+        if row is None:
+            raise KeyError(f"Identity user not found: {user_id}")
+        row.approval_pin_hash = pin_hash
+        row.approval_pin_set_at = set_at if pin_hash is not None else None
+
+    def approval_pin_dates(self) -> dict[UUID, Any]:
+        return {
+            user_id: as_utc(set_at)
+            for user_id, set_at in self.session.execute(
+                select(IdentityCredentialRow.user_id, IdentityCredentialRow.approval_pin_set_at)
+                .where(IdentityCredentialRow.approval_pin_set_at.is_not(None))
+            )
+        }
 
     def mark_seen(self, user_id: UUID, now) -> None:
         row = self.session.get(IdentityUserRow, user_id)

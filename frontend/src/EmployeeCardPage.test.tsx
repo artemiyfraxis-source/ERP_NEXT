@@ -89,6 +89,7 @@ it("shows the own card: header, the «Обзор» tab and the cards in the conc
   const titles = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.firstChild?.textContent);
   expect(titles).toEqual([
     "Основные данные", "Подчинённость", "Проекты", "Отпуска", "Рабочее время", "Компетенции", "Мои заявки на покупку", "Задачи", "Вход и пароль",
+    "Разрешительный ПИН",
   ]);
 
   const main = screen.getByRole("region", { name: "Основные данные" });

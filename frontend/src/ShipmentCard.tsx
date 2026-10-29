@@ -251,7 +251,8 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
 }
 
 /** «Разрешить без УПД» (владелец 29.10): уполномоченный (Артемий, Зингер, Касаточкин) выбирает себя и вводит ПИН на
- *  экране кладовщика — разрешение на одну эту отправку. Неверный ПИН и блокировку объясняет сервер. */
+ *  экране кладовщика своим разрешительным ПИН (задаётся в личной карточке, не PIN входа) — разрешение на одну эту
+ *  отправку. Неверный ПИН, «не задан» и блокировку объясняет сервер. */
 export function NoUpdWindow({ shipment, close, mutate }: { shipment: DispatchShipment; close: () => void; mutate: Mutate }) {
   const [approvers, setApprovers] = useState<NoUpdApprover[] | null>(null);
   const [approver, setApprover] = useState("");
@@ -281,13 +282,13 @@ export function NoUpdWindow({ shipment, close, mutate }: { shipment: DispatchShi
     <form className="panel intake-pin" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
       <header className="page-head"><h2>Отгрузка без УПД · {shipment.number}</h2>
         <button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
-      <p className="muted">Разрешение на одну эту отправку. Уполномоченный выбирает себя и вводит свой ПИН.</p>
+      <p className="muted">Разрешение на одну эту отправку. Уполномоченный выбирает себя и вводит свой разрешительный ПИН (не PIN входа).</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="form-grid intake-pin-grid">
         <label>Кто разрешает<select aria-label="Кто разрешает" value={approver} disabled={!approvers} onChange={(event) => setApprover(event.target.value)}>
           <option value="">{approvers ? "выберите" : "загрузка…"}</option>
           {(approvers ?? []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label>ПИН<input aria-label="ПИН" type="password" inputMode="numeric" autoComplete="off" maxLength={12} value={pin} onChange={(event) => setPin(event.target.value)} /></label>
+        <label>Разрешительный ПИН<input aria-label="Разрешительный ПИН" type="password" inputMode="numeric" autoComplete="off" maxLength={12} value={pin} onChange={(event) => setPin(event.target.value)} /></label>
       </div>
       <div className="intake-window-actions">
         <button type="submit" className="primary" disabled={busy || !approver || !pin.trim()}>{busy ? "Проверяем…" : "Разрешить отгрузку без УПД"}</button>

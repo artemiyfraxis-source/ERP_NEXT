@@ -2614,7 +2614,18 @@ export const identityApi = {
     api<void>(`/api/auth/ui-settings/${encodeURIComponent(view)}`, { method: "DELETE", safe: true }),
   changePassword: (current: string, next: string) =>
     api<void>("/api/auth/password", { method: "POST", body: JSON.stringify({ current, new: next }) }),
+  /** «Разрешительный ПИН» (владелец 29.10): only whether it is set and since when — the PIN never comes back. */
+  approvalPin: () => api<ApprovalPinState>("/api/auth/approval-pin"),
+  /** Sets or changes the own approval PIN; `current` — the account password or the login PIN. */
+  setApprovalPin: (current: string, pin: string) =>
+    api<ApprovalPinState>("/api/auth/approval-pin", { method: "POST", body: JSON.stringify({ current, pin }) }),
 };
+
+/** «Разрешительный ПИН»: задан ли и с какого момента (ISO, UTC). */
+export interface ApprovalPinState {
+  set: boolean;
+  set_at: string | null;
+}
 
 /** The signed-in employee as the header shows them (SUPPLYMAP portalState_: role, department, site). */
 export interface OwnProfile {
@@ -2676,6 +2687,9 @@ export interface Employee extends PersonnelFields {
   site_master: boolean;
   /** portalStaffGet `pinSet`: a PIN is assigned (the PIN itself never comes back). */
   pin_set?: boolean;
+  /** «Разрешительный ПИН»: задан ли и когда; задаёт сам сотрудник, администратор только сбрасывает. */
+  approval_pin_set?: boolean;
+  approval_pin_set_at?: string | null;
 }
 
 /** Уровень доступа; `full` — суперадминистратор и администратор: всегда полный доступ, матрица их не меняет. */
@@ -2728,6 +2742,9 @@ export const staffApi = {
     api<{ user: Employee; pin: string }>("/api/auth/staff", { method: "POST", body: JSON.stringify(payload) }),
   update: (id: string, payload: EmployeeUpdate) =>
     api<{ user: Employee }>(`/api/auth/staff/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) }),
+  /** «Сбросить разрешительный ПИН» (только администратор, в журнал): `reset` false — он и не был задан. */
+  resetApprovalPin: (id: string) =>
+    api<ApprovalPinState & { reset: boolean }>(`/api/auth/staff/${encodeURIComponent(id)}/approval-pin`, { method: "DELETE" }),
   /** Erases an employee without history; one with history is switched off and hidden (`deleted: false`). */
   remove: (id: string) =>
     api<{ user: Employee; deleted: boolean }>(`/api/auth/staff/${encodeURIComponent(id)}`, { method: "DELETE" }),

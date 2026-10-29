@@ -159,6 +159,48 @@ it("sets a new PIN from the employee form (portalStaffSave pin)", async () => {
   expect(await screen.findByText("Сохранено: Закупкин, PIN назначен")).toBeInTheDocument();
 });
 
+it("«Разрешительный ПИН» in the form: only set / not set with the date, and the administrator only resets it", async () => {
+  const resets: string[] = [];
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValue(true);
+  const withPin: StaffDirectory = { ...DIRECTORY, users: DIRECTORY.users.map((user) => user.id === "u2" ? { ...user, approval_pin_set: true, approval_pin_set_at: "2026-10-29T07:00:00+00:00" } : user) };
+  serve(withPin, (path, init) => {
+    if (path === "/api/auth/staff/u2/approval-pin" && init?.method === "DELETE") {
+      resets.push(path);
+      return json({ reset: true, set: false, set_at: null });
+    }
+  });
+
+  render(<StaffPage />);
+  await rowAction("Править", "Закупкин");
+  const block = await screen.findByRole("group", { name: "Разрешительный ПИН" });
+  expect(within(block).getByText("задан")).toBeInTheDocument();
+  expect(within(block).getByText(/^· с 29.10.2026/)).toBeInTheDocument();
+  expect(within(block).queryByRole("textbox")).not.toBeInTheDocument();  // never entered or shown here
+  const reset = within(block).getByRole("button", { name: "Сбросить разрешительный ПИН" });
+
+  fireEvent.click(reset);  // the confirmation was declined
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Сбросить разрешительный ПИН сотрудника Закупкин?"));
+  expect(resets).toEqual([]);
+  fireEvent.click(reset);
+
+  expect(await within(block).findByText("Разрешительный ПИН сброшен")).toBeInTheDocument();
+  expect(resets).toEqual(["/api/auth/staff/u2/approval-pin"]);
+  expect(within(block).getByText("не задан — сотрудник задаёт его сам в своей карточке")).toBeInTheDocument();
+  expect(within(block).queryByRole("button", { name: "Сбросить разрешительный ПИН" })).not.toBeInTheDocument();
+});
+
+it("a person without an approval PIN shows «не задан» and no reset button; a new employee's form has no block", async () => {
+  serve(DIRECTORY);
+  render(<StaffPage />);
+  await rowAction("Править", "Закупкин");
+  const block = await screen.findByRole("group", { name: "Разрешительный ПИН" });
+  expect(within(block).getByText("не задан — сотрудник задаёт его сам в своей карточке")).toBeInTheDocument();
+  expect(within(block).queryByRole("button")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+  fireEvent.click(await screen.findByRole("button", { name: "+ Сотрудник" }));
+  expect(screen.queryByRole("group", { name: "Разрешительный ПИН" })).not.toBeInTheDocument();
+});
+
 it("deletes an employee after confirmation and hides switched-off ones until asked", async () => {
   let directory: StaffDirectory = DIRECTORY;
   const deleted: string[] = [];
@@ -258,7 +300,7 @@ it("splits the form into «Кадры» and «Доступ в ERP», each with i
     "ФИО", "Должность", "Категория / квалификация", "Отдел", "Руководитель", "Табельный номер", "В должности с",
   ]);
   expect(fieldsOf(screen.getByRole("region", { name: "Доступ в ERP" }))).toEqual([
-    "Уровень доступа", "Площадка", "Новый пароль", "Новый PIN", "Монтажник (работает в цеху)", "Мастер площадки", "Вход разрешён",
+    "Уровень доступа", "Площадка", "Новый пароль", "Новый PIN", "Разрешительный ПИН", "Монтажник (работает в цеху)", "Мастер площадки", "Вход разрешён",
   ]);
   // The old mixed labels are gone: the access level is never called just «Роль» or «Роль доступа».
   expect(screen.queryByLabelText("Роль")).toBeNull();
