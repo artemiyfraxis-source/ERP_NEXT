@@ -106,10 +106,9 @@ export interface ShopToday {
   site: string;
   sites: string[];
   can_switch: boolean;
-  /** Площадка без нормирования (ЖУК): задания отдаются ей целиком. */
-  handover: boolean;
   people: TodayPerson[];
   plan: TodayLine[];
+  /** Задания, отданные участку целиком («Отдать в ЖУК»): их участок сдаёт «Сдано N шт», в план людей они не входят. */
   handed: TodayHanded[];
   overdue: { operations: TodayLine[]; tasks: TodayLateTask[]; projects: TodayLateProject[] };
   stuck: TodayStuck[];

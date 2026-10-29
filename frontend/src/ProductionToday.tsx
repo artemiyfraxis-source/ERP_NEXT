@@ -150,17 +150,14 @@ export function ProductionToday({ principal, openTask, openSkills, openWorkload 
       </section>
 
       <section className="panel td-panel" aria-label="План на сегодня">
-        {data.handover
-          ? <>
-            <h2>Задания участка <span className="td-count">{data.handed.length}</span></h2>
-            {data.handed.length ? <Handed data={data} openTask={openTask} /> : <div className="empty">Участку {data.site} задания не отданы — отдайте их на «Доске».</div>}
-          </>
-          : <>
-            <h2>План на {formatDayMonth(data.today)} <span className="td-count">{planDone(data.plan)}</span></h2>
-            {data.plan.length
-              ? <Plan lines={data.plan} today={data.today} openTask={openTask} />
-              : <div className="empty">На {formatDay(data.today)} операций не запланировано — назначьте их на «Доске».</div>}
-          </>}
+        <h2>План на {formatDayMonth(data.today)} <span className="td-count">{planDone(data.plan)}</span></h2>
+        {data.plan.length
+          ? <Plan lines={data.plan} today={data.today} openTask={openTask} />
+          : <div className="empty">На {formatDay(data.today)} операций не запланировано — назначьте их на «Доске».</div>}
+        {data.handed.length > 0 && <>
+          <h2 className="td-subhead">Отдано участку целиком <span className="td-count">{data.handed.length}</span></h2>
+          <Handed data={data} openTask={openTask} />
+        </>}
       </section>
 
       <section className="panel td-panel" aria-label="Просрочено">
@@ -239,7 +236,7 @@ function Plan({ lines, today, openTask }: { lines: TodayLine[]; today: string; o
 }
 
 function Handed({ data, openTask }: { data: ShopToday; openTask?: (taskId: string, operationId?: string) => void }) {
-  return <table className="grid td-table" aria-label="Задания участка">
+  return <table className="grid td-table" aria-label="Отдано участку целиком">
     <thead><tr><th scope="col">Задание</th><th scope="col">Проект · КБ</th><th scope="col">Срок</th><th scope="col" className="num">Тираж</th><th scope="col" className="num">Сдано</th><th scope="col" className="num">Осталось</th></tr></thead>
     <tbody>{data.handed.map((task) => {
       const late = Boolean(task.deadline && task.deadline < data.today);

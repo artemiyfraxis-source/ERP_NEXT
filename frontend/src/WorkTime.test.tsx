@@ -92,12 +92,12 @@ it("switches the month with the arrows and the picker, asking the server for tha
 
 it("says «Нет данных: …» with the server's reason instead of zeros", async () => {
   serve(() => json(view({
-    available: false, no_data_reason: "Нет данных: площадка ЖУК работает без нормирования, время не учитывается.",
+    available: false, no_data_reason: "Нет данных: с 1 января 2026 по конец месяца нет ни одной сессии выработки.",
     days: [], totals: null, balance: null,
   })));
   render(<WorkTime />);
 
-  expect(await screen.findByText("Нет данных: площадка ЖУК работает без нормирования, время не учитывается.")).toBeInTheDocument();
+  expect(await screen.findByText("Нет данных: с 1 января 2026 по конец месяца нет ни одной сессии выработки.")).toBeInTheDocument();
   expect(screen.getByText("октябрь 2026")).toBeInTheDocument(); // месяц выбирается и без данных
   expect(screen.queryByRole("region", { name: "Дни месяца" })).toBeNull();
   expect(screen.queryByRole("region", { name: /Баланс/ })).toBeNull();
