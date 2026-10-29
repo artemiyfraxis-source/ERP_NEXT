@@ -316,7 +316,8 @@ def _sql_in(column: str, values: tuple[str, ...]) -> str:
 # 8-stage ladder and the one closed-project word «Отменён» (old rows stay as written — NOT VALID — and read as the
 # new words via `stage_alias` / `terminal_alias`); 0161_ladder_markers_blockers re-points the stage checks at the
 # short ladder (owner 29.10) and adds the blocker check (СТОП · ОЖИД ИНФ · ОЖИД КОМПЛ; old «Этап КБ» marker words and
-# ХОЛД / ПАУЗА stay as written and read via `summarize_kit_marks` / `blocker_alias`).
+# ХОЛД / ПАУЗА stay as written and read via `summarize_kit_marks` / `blocker_alias`); 0164_stage_ready_qc_passed
+# widens the stage checks with «Готово» and «ОТК пройден» (owner 29.10).
 # The value column comes first in each check: the head-1 seeder (tests/migrations/seed_any_revision.py) fills a
 # checked column with the first literal.
 PLAN_EVENT_CHECKS = {

@@ -52,9 +52,25 @@ it("falls back to the short ladder, blockers СТОП / ОЖИД ИНФ / ОЖИ
   fireEvent.click(screen.getByRole("button", { name: /Статус проекта 709К.1/ }));
   const menu = screen.getByRole("menu");
   expect(within(menu).getAllByRole("menuitemradio").map((item) => item.textContent?.trim()).filter((name) => !/^(да|нет|авто)$/.test(name ?? "")))
-    .toEqual(["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено", "Отменён"]);
+    .toEqual(["Новый", "В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано", "Отгружено", "Отменён"]);
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual(["Авто", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ"]);
   expect(within(menu).getByText("Отметки")).toBeInTheDocument();
+});
+
+it("picks «Готово» by hand from any stage — backwards from «ОТК» too — through the stage window", async () => {
+  // Владелец 29.10: «не могу руками теперь поставить Готово»; «Готово» — производство закончено, перед «ОТК».
+  const api: ProjectStatusApi = { stagePreview: vi.fn(async () => ({ ...preview, value: "Готово" })), setStatus: vi.fn(async () => null) };
+  const onChanged = vi.fn();
+  render(<ProjectStatus project="709К.1" status="ОТК" blocker="" canEdit api={api} onChanged={onChanged} />);
+  fireEvent.click(screen.getByRole("button", { name: /Статус проекта 709К.1/ }));
+  const ready = within(screen.getByRole("menu")).getByRole("menuitemradio", { name: "Готово" });
+  expect(ready).toHaveAttribute("data-tone", "success");
+  expect(within(screen.getByRole("menu")).getByRole("menuitemradio", { name: "ОТК пройден" })).toHaveAttribute("data-tone", "success");
+  fireEvent.click(ready);
+  await waitFor(() => expect(api.stagePreview).toHaveBeenCalledWith("709К.1", "Готово"));
+  fireEvent.click(await screen.findByRole("button", { name: "Сменить этап" }));
+  await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("709К.1", { action: "status", value: "Готово", reason: "", preview_token: "tok-1" }));
+  expect(onChanged).toHaveBeenCalledWith(null);
 });
 
 it("sets a mark by hand and returns it to auto through the adapter", async () => {

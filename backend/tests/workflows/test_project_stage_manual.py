@@ -70,6 +70,7 @@ MIGRATION = BACKEND / "migrations" / "versions" / "0101_production_stage_history
 LADDER_MIGRATION = BACKEND / "migrations" / "versions" / "0107_stage_ladder.py"
 ACCEPTED_MIGRATION = BACKEND / "migrations" / "versions" / "0110_stage_warehouse_accepted.py"
 MARKERS_MIGRATION = BACKEND / "migrations" / "versions" / "0161_ladder_markers_blockers.py"
+READY_MIGRATION = BACKEND / "migrations" / "versions" / "0164_stage_ready_qc_passed.py"
 # The blocker check came with 0161: an older revision has the other ones.
 BLOCKER_CHECK = "ck_production_plan_events_blocker"
 
@@ -88,8 +89,8 @@ def test_project_forward_raises_only_the_kbs_below_and_lists_the_skipped_stages(
 
     assert plan.direction == "forward" and not plan.reason_required and plan.error == ""
     assert [(c.item_index, c.from_stage, c.to_stage, c.skipped) for c in plan.changes] == [
-        ("КБ1", "Новый", "Принято складом", ("В работе", "ОТК")),
-        ("КБ2", "В работе", "Принято складом", ("ОТК",)),
+        ("КБ1", "Новый", "Принято складом", ("В работе", "Готово", "ОТК", "ОТК пройден")),
+        ("КБ2", "В работе", "Принято складом", ("Готово", "ОТК", "ОТК пройден")),
     ]
     # Ушедшая вперёд КБ не понижается.
     assert [(k.item_index, k.stage, k.note) for k in plan.kept] == [
@@ -123,7 +124,7 @@ def test_kb_pick_moves_only_that_kb_and_auto_clears_manual_marks():
 
     forward = plan_stage_change(kits, "Отгружено", "КБ2")
     assert [(c.item_index, c.skipped) for c in forward.changes] == [
-        ("КБ2", ("В работе", "ОТК", "Принято складом", "Упаковано")),
+        ("КБ2", ("В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано")),
     ]
     auto = plan_stage_change(kits, "авто")
     assert auto.direction == "auto" and not auto.reason_required
@@ -134,7 +135,7 @@ def test_kb_pick_moves_only_that_kb_and_auto_clears_manual_marks():
 
 def test_unknown_stage_and_bad_kb_are_refused_in_russian():
     with pytest.raises(ProductionValidationError, match="Неизвестный этап"):
-        plan_stage_change((_kit("КБ1", "Новый"),), "Готово")
+        plan_stage_change((_kit("КБ1", "Новый"),), "Готов")
     with pytest.raises(ProductionValidationError, match="Укажи КБ"):
         plan_stage_change((_kit("КБ1", "Новый"),), "В работе", "корпус")
     with pytest.raises(ProductionValidationError, match="В проекте нет КБ7"):
@@ -148,11 +149,11 @@ def test_shipped_fact_beats_a_manual_stage_and_the_card_shows_what_was_skipped()
         PlanEvent("708К.4", NOW, "Мастер", PLAN_KINDS["stage"], item_index="КБ1", value="Упаковано", from_value="ОТК"),
     )
     marks = summarize_kit_marks(events)
-    assert marks[key].skipped == ("В работе", "Принято складом")
+    assert marks[key].skipped == ("В работе", "Готово", "ОТК пройден", "Принято складом")
 
     stage = project_stage("708К.4", ("КБ1",), {"work": {key}}, marks=marks).kits[0]
     # «В работе» случилась по факту (смена по заданию) — пропущенным остаётся «Принято складом».
-    assert (stage.status, stage.manual, stage.skipped) == ("Упаковано", True, ("Принято складом",))
+    assert (stage.status, stage.manual, stage.skipped) == ("Упаковано", True, ("Готово", "ОТК пройден", "Принято складом"))
 
     shipped = project_stage("708К.4", ("КБ1",), {"shipped": {key}}, marks=marks).kits[0]
     assert (shipped.status, shipped.manual, shipped.skipped) == ("Отгружено", False, ())
@@ -160,7 +161,7 @@ def test_shipped_fact_beats_a_manual_stage_and_the_card_shows_what_was_skipped()
     back = summarize_kit_marks((*events, PlanEvent(
         "708К.4", NOW, "Мастер", PLAN_KINDS["stage"], item_index="КБ1", value="ОТК", from_value="Упаковано",
     )))
-    assert back[key].skipped == ("В работе",)
+    assert back[key].skipped == ("В работе", "Готово")
 
 
 # ── Запись (plan_application.change_stage) ─────────────────────────────
@@ -196,15 +197,16 @@ def test_change_writes_every_row_with_from_and_reason_in_one_transaction(product
     ]
     rows = _rows(sessions)
     assert [(row.kind, row.from_value, row.value, row.text) for row in rows] == [
-        ("Этап КБ", "Новый", "Принято складом", "Новый → Принято складом · пропущены: В работе, ОТК"),
-        ("Этап КБ", "В работе", "Принято складом", "В работе → Принято складом · пропущены: ОТК"),
+        ("Этап КБ", "Новый", "Принято складом",
+         "Новый → Принято складом · пропущены: В работе, Готово, ОТК, ОТК пройден"),
+        ("Этап КБ", "В работе", "Принято складом", "В работе → Принято складом · пропущены: Готово, ОТК, ОТК пройден"),
     ]
     [audit] = _audit(sessions)
     assert audit.actor_name == "Мастер"
     assert audit.details == {
         "project": "708К.4", "value": "Принято складом", "direction": "forward", "kbs": ["КБ1", "КБ2"],
         "changes": ["КБ1: Новый → Принято складом", "КБ2: В работе → Принято складом"],
-        "skipped": ["В работе", "ОТК"], "reason": "",
+        "skipped": ["В работе", "Готово", "ОТК", "ОТК пройден"], "reason": "",
     }
 
 
@@ -269,7 +271,7 @@ def test_the_database_refuses_a_bad_stage_row(production):
     with sessions() as session:
         session.add(ProductionPlanEventRow(
             id=uuid4(), project="708К.4", sequence=1, occurred_at=NOW, who="x", kind="Этап КБ", blocker="", text="",
-            item_index="КБ1", value="Готово", field="", from_value="", reason="",
+            item_index="КБ1", value="Готов", field="", from_value="", reason="",
         ))
         with pytest.raises(Exception, match="CHECK"):
             session.commit()
@@ -309,11 +311,12 @@ def test_preview_lists_from_to_skipped_what_closes_and_what_stays():
 
     preview = flow.preview_project_stage(state, "Отгружено")
 
-    # Выполненное задание цеха сделало весь тираж КБ (10 шт) — производство закончено: КБ1 «ОТК».
+    # Выполненное задание цеха сделало весь тираж КБ (10 шт) — производство закончено: КБ1 «Готово» (ОТК не трогал).
     assert preview["direction"] == "forward" and preview["reason_required"] is False and preview["error"] == ""
     kb1, kb2 = preview["kbs"]
     assert {key: kb1[key] for key in ("kb", "from", "to", "skipped", "change", "note")} == {
-        "kb": "КБ1", "from": "ОТК", "to": "Отгружено", "skipped": ["Принято складом", "Упаковано"], "change": True,
+        "kb": "КБ1", "from": "Готово", "to": "Отгружено",
+        "skipped": ["ОТК", "ОТК пройден", "Принято складом", "Упаковано"], "change": True,
         "note": "",
     }
     # Пропущенное закрывается, готовая продукция остаётся — с причиной.
@@ -326,18 +329,18 @@ def test_preview_lists_from_to_skipped_what_closes_and_what_stays():
         {"kind": "goods", "label": "Готовая продукция Жгут", "reason": "Отгружено 1 шт — отгрузки остаются, переносу не мешают."},
     ]
     assert kb1["warnings"] == [
-        "Закроется (пропущено вручную: ОТК → Отгружено): заданий цеха — 1, заявок на комплектацию — 1.",
+        "Закроется (пропущено вручную: Готово → Отгружено): заданий цеха — 1, заявок на комплектацию — 1.",
         "Готовая продукция Жгут: Принято на склад ГП, не отгружено: 3 шт — этап не отгружает, переносу не мешает.",
         "Готовая продукция Жгут: Отгружено 1 шт — отгрузки остаются, переносу не мешают.",
     ]
     assert (kb2["skipped"], kb2["close"], kb2["keep"], kb2["warnings"]) == (
-        ["В работе", "ОТК", "Принято складом", "Упаковано"], [], [], [],
+        ["В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано"], [], [], [],
     )
     assert preview["totals"] == {"tasks": 1, "kit_requests": 1, "reserves": 0, "close": 2, "keep": 2}
     assert len(preview["preview_token"]) == 32
     assert preview["warnings"] == ["Активный блокер «СТОП»: ждём оплату — смена этапа его не снимает."]
     assert preview["message"].startswith(
-        "КБ1: ОТК → Отгружено (пропущены: Принято складом, Упаковано); КБ2: Новый → Отгружено",
+        "КБ1: Готово → Отгружено (пропущены: ОТК, ОТК пройден, Принято складом, Упаковано); КБ2: Новый → Отгружено",
     )
 
 
@@ -726,13 +729,18 @@ def test_migration_checks_match_the_model():
     ladder = _migration(LADDER_MIGRATION, "stage_ladder_migration")
     accepted = _migration(ACCEPTED_MIGRATION, "stage_accepted_migration")
     markers = _migration(MARKERS_MIGRATION, "ladder_markers_migration")
+    ready = _migration(READY_MIGRATION, "stage_ready_migration")
 
     # 0101 поставил проверку вида, 0110 перевела три проверки (этап, статус проекта, «было») на лестницу из 8 этапов
-    # и один способ закрыть проект, 0161 — этап и «было» на короткую лестницу и добавила проверку блокера.
-    assert {**module.CHECKS, **accepted.CHECKS, **markers.CHECKS} == PLAN_EVENT_CHECKS
+    # и один способ закрыть проект, 0161 — этап и «было» на короткую лестницу и добавила проверку блокера, 0164 —
+    # добавила «Готово» и «ОТК пройден».
+    assert {**module.CHECKS, **accepted.CHECKS, **markers.CHECKS, **ready.CHECKS} == PLAN_EVENT_CHECKS
     assert module.KINDS == tuple(PLAN_KINDS.values())
     assert accepted.OLD_STAGES == ladder.STAGES
-    assert markers.STAGES == KIT_STAGES and markers.OLD_STAGES == accepted.STAGES
+    assert markers.OLD_STAGES == accepted.STAGES
+    assert ready.STAGES == KIT_STAGES and ready.OLD_STAGES == markers.STAGES
+    assert ready.OLD_CHECKS == {name: markers.CHECKS[name] for name in ready.OLD_CHECKS}
+    assert ready.TERMINALS == PROJECT_TERMINALS
     assert markers.BLOCKERS == PLAN_BLOCKERS and markers.TERMINALS == PROJECT_TERMINALS
     assert accepted.TERMINALS == PROJECT_TERMINALS and accepted.OLD_TERMINALS == module.TERMINALS
     assert accepted.OLD_CHECKS == {name: ladder.CHECKS.get(name, module.CHECKS[name]) for name in accepted.CHECKS}
