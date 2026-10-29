@@ -31,9 +31,9 @@ it("writes through the given adapter for a project without a card and reports no
 });
 
 it("shows plain chips without the menu when editing is not allowed", () => {
-  render(<ProjectStatus project="709К.1" status="В работе" blocker="ХОЛД" canEdit={false} onChanged={vi.fn()} />);
+  render(<ProjectStatus project="709К.1" status="В работе" blocker="СТОП" canEdit={false} onChanged={vi.fn()} />);
   expect(screen.queryByRole("button")).toBeNull();
-  expect(screen.getByText("ХОЛД")).toBeInTheDocument();
+  expect(screen.getByText("СТОП")).toBeInTheDocument();
 });
 
 it("offers the stages it is given, in that order, instead of its own list", () => {
@@ -43,4 +43,24 @@ it("offers the stages it is given, in that order, instead of its own list", () =
   const items = within(screen.getByRole("menu")).getAllByRole("menuitemradio").map((item) => item.textContent?.trim());
   expect(items.filter((name) => stages.includes(name ?? ""))).toEqual(stages);
   expect(items).not.toContain("КБ на складе");
+});
+
+it("falls back to the short ladder, blockers СТОП / ОЖИД ИНФ / ОЖИД КОМПЛ and a marks block", () => {
+  render(<ProjectStatus project="709К.1" status="Новый" blocker="" canEdit tcReady kitPicked={false} onChanged={vi.fn()} />);
+  expect(screen.getByText("ТК готова")).toBeInTheDocument();
+  expect(screen.getByText("КБ не набрана")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Статус проекта 709К.1/ }));
+  const menu = screen.getByRole("menu");
+  expect(within(menu).getAllByRole("menuitemradio").map((item) => item.textContent?.trim()).filter((name) => !/^(да|нет|авто)$/.test(name ?? "")))
+    .toEqual(["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено", "Отменён"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual(["Авто", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ"]);
+  expect(within(menu).getByText("Отметки")).toBeInTheDocument();
+});
+
+it("sets a mark by hand and returns it to auto through the adapter", async () => {
+  const api: ProjectStatusApi = { stagePreview: vi.fn(async () => preview), setStatus: vi.fn(async () => null) };
+  render(<ProjectStatus project="709К.1" status="Новый" blocker="" canEdit tcReady={false} tcManual="нет" api={api} onChanged={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: /Статус проекта 709К.1/ }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "ТК: авто" }));
+  await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("709К.1", { action: "marker", field: "tc_ready", value: "авто" }));
 });

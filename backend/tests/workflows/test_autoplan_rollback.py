@@ -17,7 +17,6 @@ from app.modules.production.infrastructure import (
     ProductionPlanEventRow,
     ProductionSerialRow,
     ProductionTaskRow,
-    SqlAlchemyProductionRepository,
     SqlAlchemyProductionUnitOfWork,
 )
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
@@ -27,7 +26,6 @@ from app.shared.clock import MOSCOW, moscow_now, moscow_today
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, create_schema
 from app.workflows.autoplan_rollback import EVENT_TYPE, run
-from app.workflows.production_plan import kit_stage_facts
 from tests.factories import Actor
 
 MASTER = UUID("31000000-0000-0000-0000-000000000001")
@@ -129,7 +127,8 @@ class Shop:
         return text
 
     def state(self) -> dict:
-        """Всё, что откат должен вернуть: задания, операции, доли, «Запущено» по КБ, «Распланировано», журнал плана."""
+        """Всё, что откат должен вернуть: задания, операции (плановые окна), доли, «Запущено» по КБ, журнал плана.
+        «Распланировано» больше не этап (владелец 29.10) — окна операций проверяются напрямую."""
         launched = {item["index"]: item["launched"] for item in self.http.get("/api/production/launchable").json()["items"]}
         with self.sessions() as session:
             tasks = sorted(
@@ -146,11 +145,9 @@ class Shop:
             )
             serials = len(list(session.scalars(select(ProductionSerialRow.id))))
             plan_events = sorted((row.project, row.kind, row.value) for row in session.scalars(select(ProductionPlanEventRow)))
-            domain = SqlAlchemyProductionRepository(session).list(limit=1000)
-        facts, _ = kit_stage_facts(cards=(), tasks=domain, fulfillment=(), goods=(), marks={})
         return {
             "tasks": tasks, "operations": operations, "shares": shares, "serials": serials, "launched": launched,
-            "planned": sorted(facts["planned"]), "plan_events": plan_events,
+            "planned": sorted({row[0] for row in operations if row[3] is not None}), "plan_events": plan_events,
         }
 
     def rollback_events(self) -> list[dict]:
@@ -170,7 +167,7 @@ def test_rollback_returns_tasks_kit_launch_ladder_and_plan_to_before_the_autopla
     shop.plan_status("708К.1", "Отменён")
     during = shop.state()
     assert len(applied["created"]) == 1 and during["launched"]["КБ2"] == 10
-    assert during["planned"] == ["708К.1|КБ1", "708К.1|КБ2"]
+    assert len(during["planned"]) == 2  # оба задания КБ1 и КБ2 стоят в плане
     assert all(operation[5] == "Автоплан · Мастер" for operation in during["operations"])
 
     dry = shop.rollback(apply=False)

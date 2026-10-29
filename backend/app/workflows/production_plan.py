@@ -19,8 +19,10 @@ from app.modules.production.plan import (
     KitMark,
     KitReview,
     PlanProjectSnapshot,
+    project_markers,
     project_terminal,
     ProjectJournal,
+    ProjectMarkers,
     ProjectStage,
     MANUAL_TECHCARD_PROJECTS,
     SupplyPosition,
@@ -95,6 +97,8 @@ class ProductionPlanRow:
     sheet: Mapping[str, SheetCell] | None = None
     group: str = "active"
     calendar: SheetCalendar = SheetCalendar()
+    # «ТК готова» / «КБ набрана» проекта (owner 29.10): вычисленные + ручной переключатель (отметка плана).
+    markers: ProjectMarkers | None = None
 
 
 def _project_for_request(request: Request) -> str:
@@ -171,13 +175,12 @@ def kit_stage_facts(
     worked: Collection[UUID] = (),
     runs: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, set[str]], dict[str, KitMark]]:
-    """`kitStageFacts_`: which КБ has an issued techcard, a picked kit, tasks placed in the resource plan, work begun,
+    """`kitStageFacts_`: which КБ has an issued techcard and a picked kit (the two markers, owner 29.10), work begun,
     finished production (ОТК), finished goods accepted and packed, gone.
 
     ``worked`` — ids of tasks that have a work session (any but a cancelled one): someone started work on them.
-    «Распланировано»: the КБ has running tasks and every one of them is placed (handed to a site, or every operation
-    has a planned window); a partly placed КБ stays below. «В работе»: a work session or a «взял» of a share on any
-    live task of the КБ — a launched task alone, or an issued kit, is no longer work (owner 12.10).
+    «В работе»: a work session or a «взял» of a share on any live task of the КБ — a launched task alone, or an issued
+    kit, is no longer work (owner 12.10). «Распланировано» is gone (owner 29.10): placing tasks moves no stage.
 
     ``boxes`` — production boxes, ``inspected`` — ids of the boxes ОТК inspected: a final-operation box handed in (the
     ОТК queue — no master confirmation since 13.10) or inspected counts its pieces as made. «ОТК» — the whole КБ run is
@@ -189,7 +192,7 @@ def kit_stage_facts(
     """
     marks = dict(marks)
     facts: dict[str, set[str]] = {
-        "tc": set(), "tc_project": set(), "kit": set(), "planned": set(), "work": set(),
+        "tc": set(), "tc_project": set(), "kit": set(), "work": set(),
         "qc": set(), "stock": set(), "packed": set(), "shipped": set(),
     }
     facts["tc_project"].update(MANUAL_TECHCARD_PROJECTS)
@@ -216,16 +219,12 @@ def kit_stage_facts(
                 facts["kit"].add(key)
     tasks = tuple(tasks)
     worked = frozenset(worked)
-    placed: dict[str, bool] = {}
     for task in tasks:
         key = kit_stage_key(task.project, task.item)
         if task.status is not ProductionStatus.CANCELLED and (
             task.id in worked or any(share.started_at is not None for op in task.operations for share in op.shares)
         ):
             facts["work"].add(key)
-        if task.status is ProductionStatus.RUNNING:
-            is_placed = bool(task.handed_to) or all(op.planned_start is not None for op in task.operations)
-            placed[key] = placed.get(key, True) and is_placed
     facts["qc"].update(_made_runs(tasks, boxes, frozenset(inspected), runs or {}))
     # Регистр ГП (0111): принято / упаковано / отгружено всего по КБ — счётчики, которые двигает только ход журнала ГП.
     for good in goods:
@@ -240,8 +239,6 @@ def kit_stage_facts(
         # Этап «Отгружено» — по уехавшему, не по отобранному: упакованное ещё на складе (решено агентом 30.09).
         if register.shipped_total > 0 and register.shipped_total >= need:
             facts["shipped"].add(key)
-
-    facts["planned"].update(key for key, value in placed.items() if value)
     return facts, marks
 
 
@@ -285,6 +282,18 @@ def _made_runs(
 def issued_runs(cards: Iterable, kitsets: Iterable[Kitset]) -> dict[str, int]:
     """Тиражи КБ для этапа «ОТК» (`kit_stage_facts`): `launchable.kb_runs` по выданным техкартам и наборам."""
     return kb_runs((card for card in cards if card.status is TechcardStatus.ISSUED), kitsets)
+
+
+def project_deadline(
+    journal: ProjectJournal | None, snapshot: PlanProjectSnapshot | None, cards: Iterable,
+) -> date | None:
+    """Срок проекта (план и «Загрузка»): запись журнала «Срок» → срок реестра проектов → ближайший срок его техкарт."""
+    card_deadlines = [card.deadline for card in cards if card.deadline]
+    return (
+        (journal.deadline if journal is not None else None)
+        or (snapshot.deadline if snapshot else None)
+        or (min(card_deadlines) if card_deadlines else None)
+    )
 
 
 def build_production_plan(
@@ -348,12 +357,7 @@ def build_production_plan(
         item_indexes = project_kits(project, kit_indexes.get(project, []), project_cards)
         snapshot = project_snapshots.get(project)
         project_journal = journal.get(project, ProjectJournal(None, None, ()))
-        card_deadlines = [card.deadline for card in project_cards if card.deadline]
-        deadline = (
-            project_journal.deadline
-            or (snapshot.deadline if snapshot else None)
-            or (min(card_deadlines) if card_deadlines else None)
-        )
+        deadline = project_deadline(project_journal, snapshot, project_cards)
         project_goods = [good for good in goods if normalize_project_number(good.project) == project]
         customer = (snapshot.customer if snapshot else "") or next(
             (good.customer for good in project_goods if good.customer), "",
@@ -395,6 +399,7 @@ def build_production_plan(
                 "calendar", lambda: sheet_calendar(project_tasks, project_marks, first_day, last_day),
                 SheetCalendar(),
             ),
+            markers=project_markers(stage, project_marks),
         ))
     return tuple(sorted(rows, key=lambda row: (
         row.journal.blocker is None,

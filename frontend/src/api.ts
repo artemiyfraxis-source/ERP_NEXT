@@ -969,6 +969,59 @@ export interface ProductionShare {
   output?: string;
 }
 
+/** «Загрузка»: КБ проекта — осталось по ЭТК × (тираж − сделано). */
+export interface WorkloadKb {
+  index: string;
+  name: string;
+  run: number | null;
+  done: number;
+  /** «сдано цехом» / «принято складом» / «отгружено»; пусто — фактов нет. */
+  done_source: string;
+  remaining: number;
+  hours: number;
+  unit_hours: number;
+  site: string;
+  site_note: string;
+  by_kind: Record<string, number>;
+}
+
+export interface WorkloadProject {
+  project: string;
+  customer: string;
+  deadline: string | null;
+  hours: number;
+  by_site: Record<string, number>;
+  by_kind: Record<string, number>;
+  ready: string | null;
+  /** «в срок» / «риск» / «не успевает» / «без срока». */
+  status: string;
+  slack_days: number | null;
+  order: number;
+  kbs: WorkloadKb[];
+}
+
+export interface WorkloadWeekSite {
+  capacity: number;
+  demand: number;
+  planned: number;
+  kinds: Record<string, number>;
+}
+
+export interface ShopWorkload {
+  today: string;
+  horizon_to: string;
+  shift_hours: number;
+  sites: string[];
+  unassigned: string;
+  shop: string;
+  kinds: string[];
+  people: Record<string, number>;
+  projects: WorkloadProject[];
+  weeks: Array<{ start: string; end: string; sites: Record<string, WorkloadWeekSite> }>;
+  bottlenecks: Array<{ site: string; start: string; demand: number; capacity: number; kinds: Array<[string, number]> }>;
+  no_run: string[];
+}
+
 export interface ProductionLaunchable {
   techcard_id: string;
   project: string;
@@ -1108,6 +1161,10 @@ export interface ProductionPlanRow {
   /** Registry status is terminal (closed/cancelled): the row is dimmed and out of «В работе». */
   terminal: boolean;
   stage_manual: boolean;
+  tc_ready?: boolean;
+  kit_picked?: boolean;
+  tc_manual?: ProjectMarkerManual;
+  kit_manual?: ProjectMarkerManual;
   kits: Array<{
     item_index: string;
     status: string;
@@ -3702,6 +3759,8 @@ export const productionApi = {
   }),
   skills: () => api<{ skills: ProductionSkill[]; operation_codes?: Array<{ code: string; name: string }> }>("/api/production/skills"),
   launchable: () => api<{ items: ProductionLaunchable[] }>("/api/production/launchable"),
+  /** «Загрузка»: часы по выданным ЭТК, мощность площадок по календарю цеха и прогноз готовности — только чтение. */
+  workload: () => api<ShopWorkload>("/api/production/workload"),
   saveSkills: (operatorId: string, skills: Omit<ProductionSkill, "operator_id">[]) => api<void>(`/api/production/skills/${operatorId}`, {
     method: "PUT", body: JSON.stringify({ skills }),
   }),
@@ -4504,6 +4563,10 @@ export interface KitsetTile {
   status: string;
   kb_stages: KitsetKbStage[];
   blocker: string;
+  tc_ready?: boolean;
+  kit_picked?: boolean;
+  tc_manual?: ProjectMarkerManual;
+  kit_manual?: ProjectMarkerManual;
 }
 
 export interface KitsetLot {
@@ -4676,6 +4739,10 @@ export interface KitsetCard {
   terminals?: string[];
   blockers?: string[];
   assemblies: KitsetAssembly[];
+  tc_ready?: boolean;
+  kit_picked?: boolean;
+  tc_manual?: ProjectMarkerManual;
+  kit_manual?: ProjectMarkerManual;
 }
 
 export interface KitsetJournalEvent {
@@ -4695,7 +4762,20 @@ export interface KitsetJournalEvent {
 /** Смена статуса проекта в один клик (POST …/status): этап на все КБ, «авто», закрытие, блокер. */
 export type ProjectStatusAction = { action: "status"; value: string; text?: string; reason?: string; preview_token?: string }
   | { action: "block"; value: string; text: string }
-  | { action: "unblock"; text?: string };
+  | { action: "unblock"; text?: string }
+  | { action: "marker"; field: ProjectMarkerField; value: ProjectMarkerValue };
+
+/** Отметки проекта «ТК готова» и «КБ набрана»: считаются по фактам, вручную — «да» / «нет», «авто» снимает ручную. */
+export type ProjectMarkerField = "tc_ready" | "kit_picked";
+export type ProjectMarkerValue = "да" | "нет" | "авто";
+/** Ручная отметка проекта: «да» / «нет»; null — считается по фактам. */
+export type ProjectMarkerManual = "да" | "нет" | null;
+export interface ProjectMarkers {
+  tc_ready?: boolean;
+  kit_picked?: boolean;
+  tc_manual?: ProjectMarkerManual;
+  kit_manual?: ProjectMarkerManual;
+}
 
 export interface KitsetLoadResult {
   project: string;
@@ -4862,6 +4942,8 @@ export const kitsetsApi = {
     api<StagePreview>(`${kitsetPath(project)}/status/preview?value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   setStatus: (project: string, payload: ProjectStatusAction) =>
     api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify(payload) }),
+  setMarker: (project: string, field: ProjectMarkerField, value: ProjectMarkerValue) =>
+    api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify({ action: "marker", field, value }) }),
   journal: (project: string, payload: { kind: "note" | "deadline"; text: string; deadline?: string | null }) =>
     api<{ card: KitsetCard }>(`${kitsetPath(project)}/journal`, { method: "POST", body: JSON.stringify(payload) }),
   setFolder: (project: string, url: string) =>

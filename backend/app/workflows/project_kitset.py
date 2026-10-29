@@ -49,7 +49,9 @@ from app.modules.production.traceability import ProductionBox
 from app.modules.production.plan import (
     kit_stage_key,
     KIT_STAGES,
+    MARKER_FIELDS,
     PLAN_KINDS,
+    PLAN_MARK_FLAGS,
     PLAN_STAGE_AUTO,
     TC_REVIEW_VALUES,
     legacy_stage_refusal,
@@ -638,6 +640,8 @@ def closed_kb_keys(techcards, production=None, fulfillment=None, shipping=None) 
 PROJECT_BLOCK = "block"
 PROJECT_UNBLOCK = "unblock"
 PROJECT_STATUS = "status"
+# Отметка «ТК готова» / «КБ набрана» проекта (владелец 29.10): ручной переключатель да / нет / авто.
+PROJECT_MARKER = "marker"
 
 
 # ── Ручная смена этапа: одна служба за всеми выборами этапа (карточка, КБ, «Производственный план») ──────────
@@ -801,8 +805,9 @@ class ChangeProjectStatusCommand:
     """Смена статуса проекта одним действием — из карточки, плитки и «Производственного плана».
 
     ``action``: "status" — ``value`` этап лестницы (поднимает отставшие КБ; назад — с причиной ``text``), «авто»
-    (снять ручные этапы) или Отказ/Слился/Отменён; "block" — блокер ``value`` (ХОЛД, СТОП…) с причиной ``text``;
-    "unblock" — снять блокер.
+    (снять ручные этапы) или Отказ/Слился/Отменён; "block" — блокер ``value`` (СТОП, ОЖИД ИНФ, ОЖИД КОМПЛ) с причиной
+    ``text``; "unblock" — снять блокер; "marker" — отметка ``field`` (tc_ready — «ТК готова», kit_picked — «КБ
+    набрана») = ``value`` да / нет / авто (авто — снова по факту).
     """
 
     project: str
@@ -813,6 +818,7 @@ class ChangeProjectStatusCommand:
     now: datetime
     text: str = ""
     preview_token: str = ""
+    field: str = ""
 
 
 def change_project_status(
@@ -827,12 +833,19 @@ def change_project_status(
     """
     project, value, known = command.project, str(command.value or "").strip(), (command.project,)
 
-    def add(kind: str, *, event_value: str = "", blocker: str = "", text: str = "") -> PlanEvent:
+    def add(kind: str, *, event_value: str = "", blocker: str = "", text: str = "", field: str = "") -> PlanEvent:
         return add_plan_event(AddPlanEventCommand(
             project=project, kind=kind, blocker=blocker, text=text, deadline=None, known_projects=known,
-            actor=command.actor, now=command.now, value=event_value,
+            actor=command.actor, now=command.now, value=event_value, field=field,
         ), uow_factory())
 
+    if command.action == PROJECT_MARKER:
+        field = str(command.field or "").strip()
+        if field not in MARKER_FIELDS:
+            raise KitsetValidationError("Отметка — tc_ready («ТК готова») или kit_picked («КБ набрана»).")
+        if value not in (*PLAN_MARK_FLAGS, PLAN_STAGE_AUTO):
+            raise KitsetValidationError(f"Отметка «{MARKER_FIELDS[field]}» — да, нет или авто.")
+        return [add("mark", event_value=value, field=field, text=command.text)]
     if command.action == PROJECT_BLOCK:
         return [add("block", blocker=value, text=command.text)]
     if command.action == PROJECT_UNBLOCK:

@@ -32,6 +32,7 @@ import { PageWindow } from "./PageWindow";
 import { DowntimeControl } from "./DowntimeControl";
 import { DowntimeReport } from "./DowntimeReport";
 import { ProductionNormFact } from "./ProductionNormFact";
+import { ShopWorkloadView } from "./ShopWorkload";
 import { JobPanel } from "./JobPlan";
 import { AutoTextarea } from "./AutoTextarea";
 import { StatusChip } from "./StatusChip";
@@ -51,8 +52,8 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [showDowntime, setShowDowntime] = useState(false);
-  // Вкладки «Ресурсного планирования»: доска мастера и отчёт «Норма и факт».
-  const [view, setView] = useState<"board" | "normfact">("board");
+  // Вкладки «Ресурсного планирования»: доска мастера, «Загрузка» (прогноз готовности) и отчёт «Норма и факт».
+  const [view, setView] = useState<"board" | "workload" | "normfact">("board");
   const [holidays, setHolidays] = useState<string[]>([]);
   const [skills, setSkills] = useState<ProductionSkill[]>([]);
   const [absences, setAbsences] = useState<ProductionAbsence[]>([]);
@@ -171,8 +172,10 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {showAutoplan && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} close={() => setShowAutoplan(false)} onApplied={(count, created) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций${created ? `, создано заданий: ${created}` : ""}`); void reload(); }} />}
     {!mine && canOverview && !selectedTask && <div className="seg-tabs" role="tablist" aria-label="Вид">
       <button type="button" role="tab" aria-selected={view === "board"} className={view === "board" ? "on" : undefined} onClick={() => setView("board")}>Доска</button>
+      <button type="button" role="tab" aria-selected={view === "workload"} className={view === "workload" ? "on" : undefined} onClick={() => setView("workload")}>Загрузка</button>
       <button type="button" role="tab" aria-selected={view === "normfact"} className={view === "normfact" ? "on" : undefined} onClick={() => setView("normfact")}>Норма и факт</button>
     </div>}
+    {!mine && canOverview && !selectedTask && view === "workload" && <ShopWorkloadView />}
     {!mine && canOverview && !selectedTask && view === "normfact" && <ProductionNormFact />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт

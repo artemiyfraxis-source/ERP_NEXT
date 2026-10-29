@@ -26,8 +26,8 @@ from app.modules.requests.application import CalcSheetError
 from app.modules.requests.domain import ValidationError as RequestValidationError, unit_for_type
 from app.modules.warehouse.domain import WarehouseValidationError
 from app.modules.production.plan import (
-    KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, stage_plan_message,
-    summarize_journal,
+    KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, project_markers,
+    stage_plan_message, summarize_journal, summarize_plan_marks,
 )
 from app.modules.production.plan_application import AddPlanEventCommand, StageChangeConflict, add_plan_event
 from app.shared.clock import moscow_now
@@ -167,7 +167,9 @@ def kitsets(
     """`portalKitsetList`: one tile per project with the computed status, КБ stages and the active blocker."""
     with techcards_factory(request)() as uow:
         items = list(uow.kitsets.list())
-    stages = flow.kitset_stages(items, _facts(request))
+    facts = _facts(request)
+    stages = flow.kitset_stages(items, facts)
+    plan_marks = summarize_plan_marks(facts.events)
     statuses = flow.kitset_statuses()
     rows = []
     for kitset in items:
@@ -178,6 +180,7 @@ def kitsets(
             "assemblies": len(kitset.assemblies), "lines": kitset.lines,
             "kbs": [assembly.index for assembly in kitset.assemblies],
             "status": stage.status, "kb_stages": [_kb_stage(item) for item in stage.kits], "blocker": blocker,
+            **project_markers(stage, plan_marks.get(normalize_project_number(kitset.project))).payload(),
         })
     rows = sort_kitsets(rows, sort, statuses)
     for row in rows:
@@ -332,6 +335,8 @@ def _card(request: Request, kitset: Kitset) -> dict:
         "folder_url": kitset.folder_url or None,
         "updated_at": kitset.updated_at.isoformat(), "updated_by": kitset.updated_by, "version": kitset.version,
         "status": stage.status, "blocker": blocker,
+        # «ТК готова» / «КБ набрана» (owner 29.10): bool + ручной переключатель («да» / «нет», None — авто).
+        **project_markers(stage, summarize_plan_marks(facts.events).get(canon)).payload(),
         "blocker_info": None if active is None else {
             "type": active.type, "text": active.text, "since": active.since.isoformat(), "who": active.who,
         },
@@ -649,6 +654,8 @@ def mark(
 class StatusPayload(BaseModel):
     action: str = Field(min_length=1, max_length=16)
     value: str = Field(default="", max_length=64)
+    # action «marker»: tc_ready («ТК готова») или kit_picked («КБ набрана»), value да / нет / авто.
+    field: str = Field(default="", max_length=32)
     text: str = Field(default="", max_length=5000)
     # Этап назад — причина обязательна (для этапа годится и `text`).
     reason: str = Field(default="", max_length=2000)
@@ -664,8 +671,8 @@ def change_status(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """Статус проекта в один клик: этап (поднимает отставшие КБ; назад — с причиной) / «авто» / Отказ·Слился·Отменён,
-    блокер или его снятие."""
+    """Статус проекта в один клик: этап (поднимает отставшие КБ; назад — с причиной) / «авто» / «Отменён»,
+    блокер или его снятие, отметка «ТК готова» / «КБ набрана» (action «marker», field, value да / нет / авто)."""
     factory = production_factory(request)
     if factory is None:
         raise HTTPException(status_code=503, detail="База ERP не настроена")
@@ -675,7 +682,7 @@ def change_status(
         project=kitset.project, item_indexes=tuple(assembly.index for assembly in kitset.assemblies),
         action=payload.action, value=payload.value,
         text=(payload.reason or payload.text) if stage else payload.text, actor=principal.actor, now=now,
-        preview_token=payload.preview_token if stage else "",
+        preview_token=payload.preview_token if stage else "", field=payload.field,
     ), factory, techcards=techcards_factory(request), fulfillment=fulfillment_factory(request),
         shipping=shipping_factory(request)))
     if isinstance(result, flow.ProjectStageChange):

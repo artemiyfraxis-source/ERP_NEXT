@@ -355,10 +355,13 @@ def test_native_production_plan_combines_project_snapshot_techcard_task_and_jour
     row = loaded.json()["rows"][0]
     assert row["project"] == "708К.4"
     assert row["customer"] == "Заказчик"
-    assert row["stage"] == "ТК готова"  # задание запущено, но ещё не стоит в ресурсном плане
+    assert row["stage"] == "Новый"  # задание запущено, работа не начата; ТК выдана — отметка, не этап (29.10)
     assert row["stage_manual"] is False
+    assert {key: row[key] for key in ("tc_ready", "kit_picked", "tc_manual", "kit_manual")} == {
+        "tc_ready": True, "kit_picked": False, "tc_manual": None, "kit_manual": None,
+    }
     assert row["kits"] == [{
-        "item_index": "КБ1", "status": "ТК готова", "manual": False,
+        "item_index": "КБ1", "status": "Новый", "manual": False,
         "tc": True, "kit": False, "skipped": [],
         "review": {
             "value": "не проверена", "text": "ТК выдана", "who": "генератор",
@@ -379,7 +382,7 @@ def test_production_plan_persists_manual_kit_stage_and_review(production_api):
         "project": "708К.4", "status": "Новый", "terminal": False,
     }]})
     stage = client.post("/api/production/plan/events", json={
-        "project": "708К.4", "kind": "stage", "item_index": "КБ1", "value": "КБ набрана",
+        "project": "708К.4", "kind": "stage", "item_index": "КБ1", "value": "В работе",
     })
     review = client.post("/api/production/plan/events", json={
         "project": "708К.4", "kind": "tcReview", "item_index": "КБ1",
@@ -427,7 +430,8 @@ def test_production_plan_sheet_columns_and_manual_marks_persist(production_api):
     assert (body["calendar_from"], body["calendar_to"]) == ("2026-09-15", "2026-11-21")
     row = body["rows"][0]
     sheet = row["sheet"]
-    assert sheet["status"] == {"value": "ТК готова", "auto": "ТК готова", "manual": False}
+    assert sheet["status"] == {"value": "Новый", "auto": "Новый", "manual": False}
+    assert sheet["tc_ready"] == {"value": "да", "auto": "да", "manual": False}
     assert row["group"] == "active"
     assert sheet["comment"]["value"] == "ждём ответ заказчика"
     assert sheet["kit_arrival"]["value"] == "2026-10-09" and sheet["kit_arrival"]["manual"] is True
@@ -907,9 +911,9 @@ def test_terminal_project_status_event_and_stage_kinds_still_work_next_to_refuse
         return client.post("/api/production/plan/events", json={"project": "708К.4", **body})
 
     refused = post(kind="mark", field="status", value="ХОЛД")
-    block = post(kind="block", blocker="ХОЛД", text="ждём")
+    block = post(kind="block", blocker="СТОП", text="ждём")
     unblock = post(kind="unblock", text="снято")
-    stage = post(kind="stage", value="ТК готова")
+    stage = post(kind="stage", value="В работе")
     closed = post(kind="status", value="Отменён")  # last: a stage change on a closed project would reopen it
 
     assert refused.status_code == 422 and "меняйте этап" in refused.text
