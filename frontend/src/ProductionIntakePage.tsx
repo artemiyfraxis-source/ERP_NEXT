@@ -34,7 +34,8 @@ const ACT_TABS: Tab[] = ["accepted", "all"];
  *  только своё; полный набор — во «Все». «Проект» — скрытая колонка для поиска и группировки. */
 const TAB_COLUMNS: Record<Exclude<Tab, "all">, string[]> = {
   waiting: ["project", "kb", "name", "needed"],
-  production: ["project", "kb", "name", "needed", "launched", "left", "tasks"],
+  // «В работе» принимается до заказанного и без «Готово» (владелец 28.10 и 29.10: «кладовщик не может принять без статуса»).
+  production: ["project", "kb", "name", "needed", "launched", "remaining", "tasks"],
   ready: ["project", "kb", "name", "needed", "remaining", "tasks"],
   accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed"],
   packed: ["project", "kb", "name", "packed", "track"],
@@ -291,7 +292,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     return <span className="intake-group">{title}
       {first?.deadline && <span className={left !== null && left < 0 ? "intake-due tone-danger" : left !== null && left <= 3 ? "intake-due tone-warn" : "intake-due"}>
         срок {formatDayMonth(first.deadline)}{left !== null && left < 0 ? ` · просрочен на ${-left} дн.` : left === 0 ? " · сегодня" : ""}</span>}
-      {canWarehouse && (tab === "ready" || tab === "all") && ready.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); setIntake(ready.map(source)); }}>
+      {canWarehouse && (tab === "ready" || tab === "production" || tab === "all") && ready.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); setIntake(ready.map(source)); }}>
         Принять всё: {ready.length} КБ · {total} шт</button>}
       <button type="button" className="secondary small" onClick={(event) => { event.stopPropagation(); setCard(project); }}>Данные отправки</button></span>;
   };
