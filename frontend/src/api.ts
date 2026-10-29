@@ -969,6 +969,59 @@ export interface ProductionShare {
   output?: string;
 }
 
+/** «Загрузка»: КБ проекта — осталось по ЭТК × (тираж − сделано). */
+export interface WorkloadKb {
+  index: string;
+  name: string;
+  run: number | null;
+  done: number;
+  /** «сдано цехом» / «принято складом» / «отгружено»; пусто — фактов нет. */
+  done_source: string;
+  remaining: number;
+  hours: number;
+  unit_hours: number;
+  site: string;
+  site_note: string;
+  by_kind: Record<string, number>;
+}
+
+export interface WorkloadProject {
+  project: string;
+  customer: string;
+  deadline: string | null;
+  hours: number;
+  by_site: Record<string, number>;
+  by_kind: Record<string, number>;
+  ready: string | null;
+  /** «в срок» / «риск» / «не успевает» / «без срока». */
+  status: string;
+  slack_days: number | null;
+  order: number;
+  kbs: WorkloadKb[];
+}
+
+export interface WorkloadWeekSite {
+  capacity: number;
+  demand: number;
+  planned: number;
+  kinds: Record<string, number>;
+}
+
+export interface ShopWorkload {
+  today: string;
+  horizon_to: string;
+  shift_hours: number;
+  sites: string[];
+  unassigned: string;
+  shop: string;
+  kinds: string[];
+  people: Record<string, number>;
+  projects: WorkloadProject[];
+  weeks: Array<{ start: string; end: string; sites: Record<string, WorkloadWeekSite> }>;
+  bottlenecks: Array<{ site: string; start: string; demand: number; capacity: number; kinds: Array<[string, number]> }>;
+  no_run: string[];
+}
+
 export interface ProductionLaunchable {
   techcard_id: string;
   project: string;
@@ -3706,6 +3759,8 @@ export const productionApi = {
   }),
   skills: () => api<{ skills: ProductionSkill[]; operation_codes?: Array<{ code: string; name: string }> }>("/api/production/skills"),
   launchable: () => api<{ items: ProductionLaunchable[] }>("/api/production/launchable"),
+  /** «Загрузка»: часы по выданным ЭТК, мощность площадок по календарю цеха и прогноз готовности — только чтение. */
+  workload: () => api<ShopWorkload>("/api/production/workload"),
   saveSkills: (operatorId: string, skills: Omit<ProductionSkill, "operator_id">[]) => api<void>(`/api/production/skills/${operatorId}`, {
     method: "PUT", body: JSON.stringify({ skills }),
   }),
