@@ -17,6 +17,19 @@ const hours = (value: number) => formatNumber(value, { digits: 1 });
 const minutes = (seconds: number) => (seconds ? formatNumber(seconds / 60, { digits: 2 }) : "—");
 const dash = <span className="muted">—</span>;
 
+/** «3, 4, 5, 7» → «3–5, 7». */
+export function spans(numbers: number[]): string {
+  const sorted = [...numbers].sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (let i = 0; i < sorted.length;) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j += 1;
+    parts.push(j - i >= 2 ? `${sorted[i]}–${sorted[j]}` : sorted.slice(i, j + 1).join(", "));
+    i = j + 1;
+  }
+  return parts.join(", ");
+}
+
 function siteText(row: LaunchReadyRow) {
   return <span title={row.site_note || undefined} className={row.site === "не распределено" ? "muted" : undefined}>{row.site}</span>;
 }
@@ -122,13 +135,13 @@ function OperationsTable({ operations, quantity }: { operations: LaunchReadyOper
         <td>
           <div>{item.stage}</div>
           {item.etk_ops.length > 1
-            ? <div className="lr-code">операции ЭТК {item.etk_ops.map((part) => part.position).join(", ")}</div>
+            ? <div className="lr-code">операции ЭТК {spans(item.etk_ops.map((part) => part.position))}</div>
             : item.code ? <div className="lr-code">{item.code}</div> : null}
         </td>
         <td className="num">{formatNumber(item.per_unit)}</td>
         <td className="num">{minutes(item.seconds_per_unit)}</td>
         <td className="num">{minutes(item.setup_seconds)}</td>
-        <td className="num">{hours(launchHours([item], quantity))}</td>
+        <td className="num">{formatNumber(launchHours([item], quantity), { digits: 2 })}</td>
       </tr>)}</tbody>
       <tfoot><tr>
         <td /><td>Итого на {formatNumber(quantity)} шт</td><td /><td /><td />

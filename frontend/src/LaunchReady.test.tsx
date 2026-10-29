@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { LaunchReady } from "./LaunchReady";
+import { LaunchReady, spans } from "./LaunchReady";
 import type { LaunchReadyList, LaunchReadyRow } from "./launchReadyApi";
 
 function json(body: unknown, status = 200) {
@@ -98,6 +98,12 @@ it("launches the selected rows in one batch and shows a refused one", async () =
   await waitFor(() => expect(launch).toHaveBeenCalledTimes(1));
   expect(launch.mock.calls[0][0].items).toHaveLength(2);
   expect(await screen.findByText(/Не запущено: 776К.1 КБ2 — Техкарта 776К.1 КБ2 перевыпущена/)).toBeTruthy();
+});
+
+it("folds ETK operation numbers into ranges", () => {
+  expect(spans([6, 7, 8, 9, 10])).toBe("6–10");
+  expect(spans([14, 15])).toBe("14, 15");
+  expect(spans([5, 3, 4, 7])).toBe("3–5, 7");
 });
 
 it("shows nothing when there is nothing to launch or wait for", async () => {

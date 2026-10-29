@@ -92,7 +92,7 @@ def suggest_site(
     site, note = decide(project)
     if site != UNASSIGNED:
         return site, f"по другим КБ проекта: {note}"
-    return UNASSIGNED, "заданий с исполнителями по проекту нет — выберите при назначении"
+    return UNASSIGNED, "по проекту нет заданий с исполнителями"
 
 
 def ready_rows(
