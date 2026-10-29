@@ -95,4 +95,33 @@ describe("Данные отправки", () => {
     expect(screen.queryByLabelText("Приложить УПД")).not.toBeInTheDocument();
     expect(screen.getByText("Только просмотр")).toBeInTheDocument();
   });
+
+  it("by stage: «В ожидании»/«В производстве» show only address, receiver, phone; «Готово»/«Принято» add УПД and «Упаковывать»", async () => {
+    for (const stage of ["waiting", "production"] as const) {
+      const view = render(<DispatchCard project="591К.3" stage={stage} canEdit close={() => undefined} />);
+      await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
+      expect(screen.getByLabelText("Адрес доставки")).toBeInTheDocument();
+      expect(screen.getByLabelText("Телефон")).toBeInTheDocument();
+      expect(screen.queryByLabelText("УПД")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Упаковывать 591К.3")).not.toBeInTheDocument();
+      view.unmount();
+    }
+    for (const stage of ["ready", "accepted"] as const) {
+      const view = render(<DispatchCard project="591К.3" stage={stage} canEdit close={() => undefined} />);
+      await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
+      expect(screen.getByLabelText("УПД")).toBeInTheDocument();
+      expect(screen.getByLabelText("Упаковывать 591К.3")).not.toBeChecked();
+      view.unmount();
+    }
+  });
+
+  it("«Упаковывать» posts the pack decision with the card version", async () => {
+    render(<DispatchCard project="591К.3" stage="ready" canEdit close={() => undefined} />);
+    await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("ООО Заказчик"));
+    vi.mocked(fetch).mockImplementationOnce(async () => json({ addressee: { ...card, version: 3, pack_decided: true, pack_decided_by: "Ульяна", pack_decided_at: "2026-10-29T09:00:00" } }));
+    fireEvent.click(screen.getByLabelText("Упаковывать 591К.3"));
+    await waitFor(() => expect(screen.getByLabelText("Упаковывать 591К.3")).toBeChecked());
+    expect(screen.getByText(/решил Ульяна, 29\.10\.2026/)).toBeInTheDocument();
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body))).toEqual({ project: "591К.3", version: 2, decided: true });
+  });
 });

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { ApiError, failureText, shippingApi, type ProjectAddressee } from "./api";
 import { PageWindow } from "./PageWindow";
 import { intakeApi, type DispatchData } from "./productionIntakeApi";
+import type { DispatchStage } from "./dispatchStage";
+import { PackDecision } from "./shippingCells";
 import "./dispatch.css";
 
 /* «Данные отправки» проекта (владелец 14.10): «надо только получатель, адрес, телефон, вариант УПД; если УПД бумага —
@@ -41,12 +43,14 @@ const FIELDS: Array<[Exclude<DispatchKey, "upd_type">, string, string]> = [
 
 /** Получатель, адрес, телефон, вариант УПД и — у бумажной — её файл. Файл прикладывается сразу (загрузка + правка
  *  карточки), поля сохраняет тот, кто встроил форму. `suffix` — к подписям для чтения с экрана, когда форм несколько. */
-export function DispatchFields({ project, draft, onChange, editable, card, onCardSaved, suffix = "", hideAddress = false }: {
+export function DispatchFields({ project, draft, onChange, editable, card, onCardSaved, suffix = "", hideAddress = false, hideUpd = false }: {
   project: string; draft: DispatchDraft; onChange: (draft: DispatchDraft) => void; editable: boolean;
   card: Partial<ProjectAddressee> | Partial<DispatchData> | null | undefined;
   onCardSaved: (card: ProjectAddressee, message: string) => void; suffix?: string;
   /** Самовывоз (22.10): адреса доставки нет — поле не показывается, в карточке остаётся как было. */
   hideAddress?: boolean;
+  /** «В ожидании» / «В производстве» (29.10): менеджер вносит только адрес, получателя, телефон — УПД позже. */
+  hideUpd?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
@@ -78,14 +82,14 @@ export function DispatchFields({ project, draft, onChange, editable, card, onCar
     aria-label={`Приложить УПД${suffix}`} disabled={busy} onChange={pick} />;
 
   return <>
-    <div className={hideAddress ? "form-grid dispatch-grid dispatch-grid-3" : "form-grid dispatch-grid"}>
+    <div className={hideAddress || hideUpd ? "form-grid dispatch-grid dispatch-grid-3" : "form-grid dispatch-grid"}>
       {FIELDS.filter(([key]) => !(hideAddress && key === "shipping_point")).map(([key, label, placeholder]) => <label key={key}>{label}
         <input aria-label={`${label}${suffix}`} value={draft[key]} disabled={!editable} placeholder={editable ? placeholder : ""}
           inputMode={key === "phone" ? "tel" : undefined} onChange={(event) => onChange({ ...draft, [key]: event.target.value })} /></label>)}
-      <label>УПД<select aria-label={`УПД${suffix}`} value={draft.upd_type} disabled={!editable} onChange={(event) => onChange({ ...draft, upd_type: event.target.value })}>
-        <option value="">не выбрано</option>{UPD.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      {!hideUpd && <label>УПД<select aria-label={`УПД${suffix}`} value={draft.upd_type} disabled={!editable} onChange={(event) => onChange({ ...draft, upd_type: event.target.value })}>
+        <option value="">не выбрано</option>{UPD.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
     </div>
-    {draft.upd_type === "БУМАГА" && <div className="dispatch-upd">
+    {!hideUpd && draft.upd_type === "БУМАГА" && <div className="dispatch-upd">
       {url
         ? <>УПД: <a href={url} target="_blank" rel="noreferrer">{fileName}</a></>
         : <span className={editable ? "muted" : "tone-warn"}>Файл бумажной УПД не приложен</span>}
@@ -100,9 +104,13 @@ export function DispatchFields({ project, draft, onChange, editable, card, onCar
   </>;
 }
 
-export function DispatchCard({ project, customer, canEdit, close, onSaved }: {
+export function DispatchCard({ project, customer, canEdit, close, onSaved, stage }: {
   project: string; customer?: string; canEdit: boolean; close: () => void; onSaved?: () => void;
+  /** Этап проекта на общей лестнице: до «Готово» — только адрес; «Готово»/«Принято» — ещё УПД и «Упаковывать». Без этапа — как раньше. */
+  stage?: DispatchStage;
 }) {
+  const early = stage === "waiting" || stage === "production";
+  const deciding = stage === "ready" || stage === "accepted";
   const [data, setData] = useState<DispatchData | null>(null);
   const [draft, setDraft] = useState<DispatchDraft>(dispatchDraft(null));
   const [loaded, setLoaded] = useState(false);
@@ -145,7 +153,8 @@ export function DispatchCard({ project, customer, canEdit, close, onSaved }: {
       {saved && <div className="success-banner" role="status">{saved}</div>}
       {!loaded ? <div className="empty">Загрузка…</div> : <>
         <DispatchFields project={project} draft={draft} onChange={(next) => { setDraft(next); setSaved(""); }} editable={canEdit}
-          card={data} onCardSaved={fileSaved} />
+          card={data} onCardSaved={fileSaved} hideUpd={early} />
+        {deciding && <PackDecision project={project} editable={canEdit} card={data} onCard={(card) => setData(card as DispatchData)} />}
         <div className="dispatch-actions">
           {canEdit
             ? <button type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? "Сохраняем…" : "Сохранить"}</button>

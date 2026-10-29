@@ -16,6 +16,7 @@ import { readFile } from "./DispatchCard";
 import { CarrierSelect, PICKUP_CARRIER, isPickup, termsFor, termsText } from "./carriers";
 import { ProjectDataWindow } from "./ProjectData";
 import { DataChip, Readiness, ShipmentDataWindow, UPD_TYPES, updLabel } from "./ShipmentData";
+import { Due, overdue, projectsOf } from "./shippingCells";
 import "./shipping.css";
 
 /* Отгрузка (владелец 12–14.10.2026) — путь готовой продукции слева направо, штуки КБ в сквозных статусах.
@@ -43,11 +44,6 @@ const num = (value: string | number | null | undefined) => {
 const round2 = (value: number) => Math.round(value * 100) / 100;
 const today = () => isoDay(new Date());
 
-/** Срок прошёл, а груз ещё не уехал. */
-export function overdue(shipment: Shipment) {
-  return Boolean(shipment.deadline) && String(shipment.deadline) < today() && ACTIVE.includes(shipment.status);
-}
-
 const STATUS_HINT: Record<string, string> = {
   "Новая": "заявка — ничего не набрано", "Собрана": "набрана, PL и DN не сформированы", "Упакована": "упакована, PL и DN готовы",
   "Отгружена": "уехала, не закрыта", "Закрыта": "уехала, документы на месте", "Отменена": "отменена, набранное вернулось на склад",
@@ -55,17 +51,6 @@ const STATUS_HINT: Record<string, string> = {
 function StatusChip({ status }: { status: string }) {
   return <SharedChip status={status} title={STATUS_HINT[status]} />;
 }
-/** Срок одной строкой: «16.10.2026 · просрочено на 3 дн.» (владелец 15.10: красная дата без слов не читается). Срок раньше
- *  заведения отправки — почти наверняка опечатка в дате (16.01 вместо 16.10): подсказка просит её проверить. */
-export function Due({ day, late, since }: { day: string | null; late: boolean; since?: string | null }) {
-  if (!day) return <span className="muted">—</span>;
-  const behind = late ? Math.max(1, -daysUntil(day)) : 0;
-  const odd = late && Boolean(since) && day < String(since).slice(0, 10);
-  const title = odd ? `Просрочено на ${behind} дн.: срок раньше даты заведения ${formatDate(String(since).slice(0, 10))} — похоже на опечатку в дате` : undefined;
-  return <span className={late ? "ship-due tone-danger" : "ship-due"} title={title}>{formatDate(day)}
-    {late && <span className="ship-due-late">{odd ? " · проверьте дату" : ` · просрочено на ${behind} дн.`}</span>}</span>;
-}
-
 const TERMS_LABEL: Record<string, string> = { "САМОВЫВОЗ": "Самовывоз", "ДОСТАВКА ТК": "Доставка ТК" };
 const sameWords = (text: string) => text.toLowerCase().replace(/[«»"'“”]/g, "").replace(/\s+/g, " ").trim();
 
@@ -421,16 +406,6 @@ function shipmentRows(shipments: Shipment[]) {
     if (!done) { const da = a.deadline ?? "9999"; const db = b.deadline ?? "9999"; if (da !== db) return da < db ? -1 : 1; }
     return a.created_at < b.created_at ? (done ? 1 : -1) : a.created_at > b.created_at ? (done ? -1 : 1) : 0;
   });
-}
-/** «591К.3: КБ1, КБ2; 600К.1: КБ7». */
-export function projectsOf(shipment: Shipment) {
-  const byProject = new Map<string, string[]>();
-  for (const line of shipment.lines) {
-    const items = byProject.get(line.project) ?? [];
-    if (!items.includes(line.item_index)) items.push(line.item_index);
-    byProject.set(line.project, items);
-  }
-  return [...byProject].map(([project, items]) => `${project}: ${items.join(", ")}`).join("; ");
 }
 const sumOf = (shipment: Shipment, key: "picked" | "requested") => round2(shipment.lines.reduce((sum, line) => sum + num(line[key]), 0));
 const noUpd = (shipment: Shipment) => ["Отгружена", "Закрыта"].includes(shipment.status) && !withoutUpd(shipment) && (!shipment.upd_number || !shipment.upd_url);

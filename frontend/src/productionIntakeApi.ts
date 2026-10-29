@@ -18,6 +18,8 @@ export interface IntakeRow {
   stage: string;
   /** Этап проекта: Новый → В работе → ОТК → Принято складом → Упаковано → Отгружено. */
   project_stage: string;
+  /** Менеджер решил «упаковывать» проект (29.10). */
+  pack_decided?: boolean;
   needed: string;
   launched: string;
   delivered: string;
