@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .doc_chain import VOID_STATUSES, Chain, ChainInvoice, World, load_invoice_files
+from app.shared.document_names import document_file_name
 from .doc_refs import PaymentOrder, norm_doc_number
 from .infrastructure import DocumentFileRow, InvoiceFileRow, InvoiceRow, SupplierRow
 
@@ -83,8 +84,14 @@ def _chain_brief(chain: Chain | None) -> dict | None:
     }
 
 
-def _file_json(row: InvoiceFileRow) -> dict:
-    return {"id": str(row.id), "name": row.name, "kind": row.kind, "size": row.size, "downloaded": row.file_id is not None}
+def _shown_name(row: InvoiceFileRow, number: str | None, doc_date: date | str | None) -> str:
+    """The invoice file is shown as «Счёт № … от …» (what the card recognised); payment orders and other files keep
+    their Kaiten names."""
+    return document_file_name("Счёт", number, doc_date, row.name) if row.kind == "invoice" else row.name
+
+
+def _file_json(row: InvoiceFileRow, number: str | None, doc_date: date | str | None) -> dict:
+    return {"id": str(row.id), "name": _shown_name(row, number, doc_date), "original_name": row.name, "kind": row.kind, "size": row.size, "downloaded": row.file_id is not None}
 
 
 @dataclass(frozen=True)
@@ -157,7 +164,7 @@ def list_invoices(session: Session, world: World, query: InvoiceQuery) -> dict:
             "line_count": len(row.lines or []) if row is not None else 0,
             "payment_numbers": paid.numbers, "payment_date": paid.date, "payment_sum": paid.sum,
             "payment_matches": payment_matches_total(inv.total, paid.sum),
-            "files": [_file_json(f) for f in files.get(inv.id, [])],
+            "files": [_file_json(f, inv.number, inv.date) for f in files.get(inv.id, [])],
             "chain": _chain_brief(world.chain_of_invoice.get(inv.id)),
         }
 
@@ -184,7 +191,7 @@ def invoice_card(session: Session, world: World, invoice_id: UUID) -> tuple[dict
         "vat": row.vat, "vat_free": row.vat_free, "parse_issues": row.parse_issues, "lines": row.lines or [],
         "payment_numbers": paid.numbers, "payment_date": paid.date, "payment_sum": paid.sum,
         "payment_matches": payment_matches_total(inv.total, paid.sum),
-        "files": [_file_json(f) for f in files],
+        "files": [_file_json(f, inv.number, inv.date) for f in files],
     }, world.chain_of_invoice.get(invoice_id)
 
 
@@ -197,7 +204,8 @@ def invoice_file(session: Session, invoice_id: UUID, file_row_id: UUID) -> tuple
     stored = session.get(DocumentFileRow, row.file_id)
     if stored is None:
         raise InvoiceNotFound("Файл не найден")
-    return stored.content, row.name
+    invoice = session.get(InvoiceRow, invoice_id)
+    return stored.content, _shown_name(row, invoice.number, invoice.doc_date) if invoice else row.name
 
 
 def invoice_pdf(session: Session, invoice_id: UUID, number: str | None = None) -> tuple[bytes, str] | None:
@@ -210,7 +218,11 @@ def invoice_pdf(session: Session, invoice_id: UUID, number: str | None = None) -
     row = (next((item for item in files if item.kind == "invoice"), None)
            or next((item for item in files if key and key in norm_doc_number(item.name)), None))
     stored = session.get(DocumentFileRow, row.file_id) if row is not None else None
-    return (bytes(stored.content), row.name) if stored is not None else None
+    if stored is None:
+        return None
+    invoice = session.get(InvoiceRow, invoice_id)
+    name = document_file_name("Счёт", invoice.number, invoice.doc_date, row.name) if invoice else row.name
+    return bytes(stored.content), name
 
 
 def invoice_title(row: InvoiceRow) -> str:

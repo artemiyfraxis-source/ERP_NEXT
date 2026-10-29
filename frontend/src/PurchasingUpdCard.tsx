@@ -188,7 +188,7 @@ function HeaderTable({ doc }: { doc: UpdDetail }) {
 }
 
 function Facts({ doc }: { doc: UpdDetail }) {
-  const version = doc.manual ? "своя (исправлена вручную)" : doc.origin !== "google" ? doc.model : `Google, ${doc.model || "модель не указана"}`;
+  const version = doc.manual ? "своя (исправлена вручную)" : doc.origin !== "google" ? doc.model : `Разборщик, ${doc.model || "модель не указана"}`;
   const rows: [string, ReactNode][] = [
     ["Вид", `${doc.kind || "—"}${doc.tag ? ` (метка «${doc.tag}»)` : ""}`],
     ["Источник", `${UPD_ORIGIN_LABELS[doc.origin]} — ${UPD_ORIGIN_HINTS[doc.origin]}`],

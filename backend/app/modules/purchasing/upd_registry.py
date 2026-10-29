@@ -21,6 +21,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.shared.document_names import document_file_name
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
@@ -220,7 +221,8 @@ class Registry:
         seller = self.sellers.get(row.id, _NO_SELLER)
         buyer = self.buyers.get(row.id, UNKNOWN_BUYER)
         return {
-            "id": row.id, "file_name": row.file_name, "kind": row.kind, "origin": row.origin,
+            "id": row.id, "file_name": row.file_name,
+            "display_name": document_file_name(row.kind, header["number"], header["date"], row.file_name), "kind": row.kind, "origin": row.origin,
             "status": registry_status(row.status, row.verified_at, row.twin_of), "parser_status": row.status,
             "number": header["number"] or "", "date": header["date"], "seller_name": header["seller_name"] or "",
             "seller_inn": header["seller_inn"] or "", "seller_org_inn": seller.inn, "seller_note": seller.note,
@@ -300,14 +302,20 @@ class ListFilter:
     page: int = 1
 
 
+def _origin_kept(origin: str, wanted: str) -> bool:
+    """The «Источник» filter: «google» (Бумажные) takes the scans of the warehouse too, «scan» only them."""
+    return origin == wanted or (wanted == "google" and origin == "scan")
+
+
 def list_documents(session: Session, wanted: ListFilter) -> dict[str, Any]:
     registry = load_registry(session)
     cards = [registry.card(row) for row in registry.docs]
     in_force = [card for card in cards if card["status"] != "duplicate"]
-    origins = {origin: sum(1 for card in in_force if card["origin"] == origin) for origin in ("edo", "google", "scan")}
+    # «Бумажные» = the Google/PDF reading and the warehouse scans (a scan is a paper УПД); «Скан склада» is the narrower part.
+    origins = {origin: sum(1 for card in in_force if _origin_kept(card["origin"], origin)) for origin in ("edo", "google", "scan")}
     buyers: dict[str, int] = {}
     for card in in_force:
-        if not wanted.origin or card["origin"] == wanted.origin:
+        if not wanted.origin or _origin_kept(card["origin"], wanted.origin):
             buyers[buyer_key(card)] = buyers.get(buyer_key(card), 0) + 1
     buyer_list = sorted(
         buyers.items(), key=lambda item: (item[0] != "ours", item[0] == "unknown", -item[1], item[0]),
@@ -328,7 +336,7 @@ def list_documents(session: Session, wanted: ListFilter) -> dict[str, Any]:
     def kept(card: dict[str, Any], by_kind: bool = True) -> bool:
         if by_kind and wanted.kind and kind_group(card["kind"]) != wanted.kind:
             return False
-        if wanted.origin and card["origin"] != wanted.origin:
+        if wanted.origin and not _origin_kept(card["origin"], wanted.origin):
             return False
         if wanted.buyer:
             if wanted.buyer in ("ours", "other", "unknown"):
@@ -396,7 +404,8 @@ def document_detail(session: Session, document_id: str) -> dict[str, Any]:
         if stored is not None:
             name = stored.file_name or row.file_name
             kind = "xml" if name.lower().endswith(".xml") else "pdf" if name.lower().endswith(".pdf") else "file"
-            file_info = {"name": name, "size": stored.size, "kind": kind}
+            shown = registry.card(row)["display_name"]
+            file_info = {"name": shown or name, "size": stored.size, "kind": kind}
     main = by_id.get(row.twin_of) if row.twin_of else None
     return {
         **registry.card(row),
@@ -420,7 +429,8 @@ def document_file(session: Session, document_id: str) -> tuple[bytes, str]:
     stored = session.get(DocumentFileRow, row.file_id) if row.file_id is not None else None
     if stored is None:
         raise UpdError("Файла документа нет в базе", 404)
-    return stored.content, stored.file_name or row.file_name
+    header = effective_header(row)
+    return stored.content, document_file_name(row.kind, header["number"], header["date"], stored.file_name or row.file_name)
 
 
 # ---- the buyer's word -------------------------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 receiving; the buyer's decisions; option gate; the list of 1000 × 700 documents in time."""
 
 import time
+from urllib.parse import quote
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
@@ -411,7 +412,7 @@ def test_invoice_card_positions_payments_files_and_the_file_itself(env):
     assert card["payments"] == [{"number": "880", "date": "2025-09-16", "sum": 481500}]
     assert [(f["name"], f["kind"], f["downloaded"]) for f in card["files"]] == [
         ("Платежное_поручение_№880_от_16.09.2025_на_сумму_4815.pdf", "payment", False),
-        ("Счет 43851.pdf", "invoice", True),
+        ("Счёт № 43851 от 01.09.2026.pdf", "invoice", True),
         ("Спецификация.xlsx", "other", False),
     ]
     pdf = next(f for f in card["files"] if f["kind"] == "invoice")
@@ -419,6 +420,7 @@ def test_invoice_card_positions_payments_files_and_the_file_itself(env):
     res = client.get(f"/api/purchasing/invoices/{inv}/files/{pdf['id']}")
     assert res.status_code == 200 and res.content.startswith(b"%PDF")
     assert res.headers["content-type"] == "application/pdf"
+    assert "filename*=UTF-8''" + quote("Счёт № 43851 от 01.09.2026.pdf") in res.headers["content-disposition"]
     missing = next(f for f in card["files"] if f["kind"] == "other")
     assert client.get(f"/api/purchasing/invoices/{inv}/files/{missing['id']}").status_code == 404
     assert client.get(f"/api/purchasing/invoices/{uuid4()}/files/{pdf['id']}").status_code == 404

@@ -21,6 +21,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.workflows.article_key import code_key
+from app.shared.document_names import document_file_name
 from app.shared.events import AuditEvent
 from app.shared.file_types import sniffed_type
 from app.shared.identity import Actor
@@ -1168,7 +1169,7 @@ def quote_file(uow: UnitOfWork, quote_id: UUID) -> tuple[bytes, str]:
         row = session.get(DocumentFileRow, quote.file_id)
         if row is None:
             raise NotFound("У этого КП нет файла")
-        return bytes(row.content), quote.file_name or row.file_name
+        return bytes(row.content), document_file_name("КП", quote.number, quote.received_on, quote.file_name or row.file_name)
 
 
 def delete_quote(uow: UnitOfWork, actor: Actor, now: datetime, quote_id: UUID) -> None:

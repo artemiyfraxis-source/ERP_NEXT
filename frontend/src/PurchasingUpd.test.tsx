@@ -283,27 +283,28 @@ it("checks match the server's rules", () => {
   expect(rub(null)).toBe("—");
 });
 
-it("shows a warehouse scan as «Скан склада» and filters the registry by it", async () => {
+it("shows a warehouse scan as «Бумажный», filters «Бумажные» without a separate scan filter, and names the file by the document", async () => {
   const calls: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     calls.push(path);
     if (path.startsWith("/api/purchasing/upd")) {
       return json({
-        ...listing([card({ id: "wh-5b1f", file_name: "УПД.pdf", origin: "scan", status: "needs_review", parser_status: "Требует проверки" })]),
-        origins: { edo: 1, google: 2, scan: 1 },
+        ...listing([card({ id: "wh-5b1f", file_name: "scan.pdf", display_name: "УПД № 1788 от 20.10.2026.pdf", number: "1788", origin: "scan", status: "needs_review", parser_status: "Требует проверки" })]),
+        origins: { edo: 1, google: 3, scan: 1 },
       });
     }
     return json({});
   });
   render(<PurchasingUpd />);
   const table = await screen.findByRole("list", { name: "Реестр УПД" });
-  const chip = within(table).getByText("Скан склада");
-  expect(chip.getAttribute("title")).toContain("принятого на складе");
-  const button = screen.getByRole("button", { name: "Скан склада 1" });
-  expect(button.getAttribute("title")).toContain("распознавание модели");
+  expect(within(table).getByText("Бумажный")).toBeTruthy();
+  expect(within(table).getByText("УПД № 1788 от 20.10.2026.pdf")).toBeTruthy();
+  expect(within(table).queryByText("scan.pdf")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Скан склада/ })).toBeNull();
+  const button = screen.getByRole("button", { name: "Бумажные 3" });
   fireEvent.click(button);
-  await waitFor(() => expect(calls.some((path) => new URLSearchParams(path.split("?")[1] ?? "").get("origin") === "scan")).toBe(true));
+  await waitFor(() => expect(calls.some((path) => new URLSearchParams(path.split("?")[1] ?? "").get("origin") === "google")).toBe(true));
 });
 
 it("uploads PDFs into the parser's queue and says when the model key is missing", async () => {

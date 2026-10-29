@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import or_, select
 
+from app.shared.document_names import document_file_name
 from app.shared.identity import Actor
 
 from . import items as items_repo
@@ -396,7 +397,7 @@ def invoice_file(uow: UnitOfWork, rfq_id: UUID, invoice_id: UUID) -> tuple[bytes
         row, stored = _invoice_file(session, inv)
         if row is None or stored is None:
             raise NotFound("Файл счёта не скачан из Kaiten")
-        return bytes(stored.content), row.name
+        return bytes(stored.content), document_file_name("Счёт", inv.number, inv.doc_date, row.name)
 
 
 # ── «Оформить» ──────────────────────────────────────────────────────────────────────────────────────────────────
