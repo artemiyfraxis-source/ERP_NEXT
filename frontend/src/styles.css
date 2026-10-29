@@ -2675,11 +2675,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mb-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .mb-card-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .mb-card-no { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; white-space: nowrap; }
-.mb-card-due { flex: none; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted-foreground); }
-.mb-card-customer { overflow: hidden; font-size: 13px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.mb-card-due { flex: none; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted-foreground); }
+.mb-card-customer { overflow: hidden; font-size: 14px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
 .mb-card-status { min-height: 20px; }
-.mb-card-action, .mb-card-problems { display: flex; flex-wrap: wrap; column-gap: 12px; font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; }
-.mb-card-action { overflow: hidden; height: 18px; }
+.mb-card-action, .mb-card-problems { display: flex; flex-wrap: wrap; column-gap: 16px; font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; }
+/* Строка действия — главное для мастера: крупнее и плотнее счётчиков. */
+.mb-card-action { overflow: hidden; height: 20px; font-size: 13px; line-height: 20px; font-weight: 500; }
 .mb-card-problems { overflow: hidden; align-content: start; max-height: 36px; }
 .mb-card-problems b { font-weight: 600; }
 .mb-card [data-tone="danger"]:not(.status-chip) { color: var(--chip-danger-fg); }
