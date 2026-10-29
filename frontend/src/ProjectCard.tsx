@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { KitsetTile } from "./api";
 import { formatDateTime } from "./format";
-import { ProjectStatus } from "./ProjectStatus";
+import { ProjectMarks, ProjectStatus } from "./ProjectStatus";
 import { StatusChip } from "./StatusChip";
 import type { Tone } from "./statusTone";
 
@@ -25,16 +25,13 @@ export function tileFacts(item: KitsetTile, statuses: string[]): Fact[] {
   const kit = kbs.filter((kb) => kb.kit).length;
   const index = statuses.indexOf(item.status);
   const shipped = statuses.indexOf("Отгружено");
-  const late = index >= statuses.indexOf("В работе") && index < shipped;
   // «Отменён» стоит после «Отгружено»: у закрытого проекта факты не нужны.
   if (!total || index > shipped) return [];
   const facts: Fact[] = [];
-  facts.push(tc === total ? { text: "ТК на все КБ", tone: "success", title: "Техкарты выданы на все КБ" }
-    : tc ? { text: `ТК ${tc} из ${total} КБ`, tone: "warning", title: "Техкарты выданы не на все КБ" }
-      : { text: "ТК нет", tone: "neutral", title: "Техкарт ещё нет" });
-  if (kit === total) facts.push({ text: "набрано на все КБ", tone: "success", title: "Комплектация набрана на все КБ" });
-  else if (kit) facts.push({ text: `набрано ${kit} из ${total} КБ`, tone: "warning", title: "Комплектация набрана не на все КБ" });
-  else if (late) facts.push({ text: "не набрано", tone: "neutral", title: "Заявки на комплектацию не набраны" });
+  // «Все» и «ни одной» уже сказаны отметками «ТК готова / не готова», «КБ набрана / не набрана» рядом с этапом
+  // (владелец 29.10: «не нужно раздувать статусы»); плитка добавляет только частичный счёт.
+  if (tc && tc < total) facts.push({ text: `ТК ${tc} из ${total} КБ`, tone: "warning", title: "Техкарты выданы не на все КБ" });
+  if (kit && kit < total) facts.push({ text: `набрано ${kit} из ${total} КБ`, tone: "warning", title: "Комплектация набрана не на все КБ" });
   return facts;
 }
 
@@ -70,8 +67,9 @@ export function KitTile({ item, statuses, canEdit, open, extra, statusChanged, l
       </div>
       <div className="kit-chips">
         {statusChanged
-          ? <ProjectStatus project={item.project} status={item.status} blocker={item.blocker} canEdit={canEdit} {...lists} onChanged={statusChanged} />
-          : <><StatusChip status={item.status} />{item.blocker && <StatusChip status={item.blocker} title="Активный блокер из журнала проекта" />}</>}
+          ? <ProjectStatus project={item.project} status={item.status} blocker={item.blocker} canEdit={canEdit}
+            tcReady={item.tc_ready} kitPicked={item.kit_picked} tcManual={item.tc_manual} kitManual={item.kit_manual} {...lists} onChanged={statusChanged} />
+          : <><StatusChip status={item.status} /><ProjectMarks tcReady={item.tc_ready} kitPicked={item.kit_picked} tcManual={item.tc_manual} kitManual={item.kit_manual} />{item.blocker && <StatusChip status={item.blocker} title="Активный блокер из журнала проекта" />}</>}
         {tileFacts(item, statuses).map((fact) => <StatusChip key={fact.text} status={fact.text} tone={fact.tone} title={fact.title} />)}
       </div>
       {mixed && <div className="t-sub">{kbs.map((kb) => `${kb.index} — ${kb.status}`).join(" · ")}</div>}

@@ -36,6 +36,7 @@ from .plan import (
     PlanEvent,
     PlanProjectSnapshot,
     normalize_project_number,
+    project_markers,
     work_days_left,
 )
 from .plan_sheet import calendar_span
@@ -207,6 +208,8 @@ def production_plan(
             "days_left": row.days_left,
             "work_days_left": work_days_left(row.deadline, today, holidays, weekdays), "stage": row.stage.status, "terminal": row.terminal,
             "stage_manual": row.stage.manual,
+            # «ТК готова» / «КБ набрана» (owner 29.10): bool + ручной переключатель («да» / «нет», None — авто).
+            **(row.markers or project_markers(row.stage)).payload(),
             "kits": [{
                 "item_index": item.item_index, "status": item.status, "manual": item.manual,
                 "tc": item.tc, "kit": item.kit, "skipped": list(item.skipped),

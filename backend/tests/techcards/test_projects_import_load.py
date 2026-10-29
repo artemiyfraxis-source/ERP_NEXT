@@ -95,3 +95,43 @@ def test_cli_needs_numbers_and_a_key(monkeypatch, capsys, state):
     assert "Ключ Google не задан" in capsys.readouterr().err
     with state.techcards_uow_factory() as uow:
         assert list(uow.kitsets.list()) == []
+
+
+def test_old_stage_and_blocker_words_come_in_as_markers_and_stop(state):
+    """Владелец 29.10: «К ЗАПУСК» листа — отметка «КБ набрана» проекта, старый этап «ТК готова» журнала — отметка
+    «ТК готова», ХОЛД / ПАУЗА — блокер «СТОП», «РАСПЛАН» ничего не ставит."""
+    prod = {**PROD, "Журнал проектов": [
+        *PROD["Журнал проектов"],
+        ["12.09.2026 09:00", "708К.4", "Мастер", "Этап КБ", "", "ТК сдана", "КБ1", "ТК готова"],
+        ["13.09.2026 09:00", "708К.4", "Мастер", "Блокер", "ПАУЗА", "ждём оплату", "", ""],
+    ]}
+    shop = [*SHOP[:3], ["Ждём", "ХОЛД, К ЗАПУСК, РАСПЛАН", "0%", "TRUE", "708К.4", "ООО Заказчик"]]
+
+    projects_import.load_projects(["708К.4"], prod, shop, FakeSheets(), state, now=NOW)
+
+    with state.production_uow_factory() as uow:
+        events = list(uow.plan_events.list())
+    rows = [(event.kind, event.field, event.value, event.blocker, event.item_index) for event in events]
+    assert ("Отметка плана", "tc_ready", "да", "", "") in rows
+    assert ("Блокер", "", "", "СТОП", "") in rows
+    assert ("Отметка плана", "kit_picked", "да", "", "") in rows
+    assert not [row for row in rows if row[0] == "Этап КБ" and row[2] in ("ТК готова", "КБ набрана", "Распланировано")]
+    [row] = projects_import.plan_rows(state, NOW.date())
+    assert (row["stage"], row["kit_picked"], row["blocker"]["type"]) == ("Новый", True, "СТОП")
+
+    # Повтор: отметка уже стоит — новой записи нет.
+    again = projects_import.shop_sync(
+        projects_import.shop_rows(shop),
+        [{**row, "no": row["project"], "kbs": [], "texts": [event.text for event in events]}],
+    )
+    assert not [entry for entry in again["entries"] if entry["kind"] == "mark"]
+
+
+def test_journal_words_translate_only_the_removed_words():
+    words = projects_import.journal_words
+    assert words("Этап КБ", "", "КБ набрана", "КБ2") == ("Отметка плана", "", "да", "", "kit_picked")
+    assert words("Этап КБ", "", "Распланировано", "КБ2") == ("Отметка плана", "", "да", "", "kit_picked")
+    assert words("Этап КБ", "", "ТК готова", "КБ1") == ("Отметка плана", "", "да", "", "tc_ready")
+    assert words("Этап КБ", "", "В работе", "КБ1") == ("Этап КБ", "", "В работе", "КБ1", "")
+    assert words("Блокер", "ХОЛД", "", "") == ("Блокер", "СТОП", "", "", "")
+    assert words("Блокер", "ОЖИД ИНФ", "", "") == ("Блокер", "ОЖИД ИНФ", "", "", "")

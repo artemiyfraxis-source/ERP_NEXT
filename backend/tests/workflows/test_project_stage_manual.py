@@ -45,6 +45,7 @@ from app.modules.production.infrastructure import (
 )
 from app.modules.production.plan import (
     KIT_STAGES,
+    PLAN_BLOCKERS,
     PLAN_KINDS,
     PROJECT_TERMINALS,
     KitMark,
@@ -68,6 +69,9 @@ BACKEND = Path(__file__).resolve().parents[2]
 MIGRATION = BACKEND / "migrations" / "versions" / "0101_production_stage_history.py"
 LADDER_MIGRATION = BACKEND / "migrations" / "versions" / "0107_stage_ladder.py"
 ACCEPTED_MIGRATION = BACKEND / "migrations" / "versions" / "0110_stage_warehouse_accepted.py"
+MARKERS_MIGRATION = BACKEND / "migrations" / "versions" / "0161_ladder_markers_blockers.py"
+# The blocker check came with 0161: an older revision has the other ones.
+BLOCKER_CHECK = "ck_production_plan_events_blocker"
 
 
 def _kit(index, status, *, manual=False, auto=None, shipped=False):
@@ -84,7 +88,7 @@ def test_project_forward_raises_only_the_kbs_below_and_lists_the_skipped_stages(
 
     assert plan.direction == "forward" and not plan.reason_required and plan.error == ""
     assert [(c.item_index, c.from_stage, c.to_stage, c.skipped) for c in plan.changes] == [
-        ("КБ1", "Новый", "Принято складом", ("ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК")),
+        ("КБ1", "Новый", "Принято складом", ("В работе", "ОТК")),
         ("КБ2", "В работе", "Принято складом", ("ОТК",)),
     ]
     # Ушедшая вперёд КБ не понижается.
@@ -115,16 +119,16 @@ def test_backward_needs_a_reason_and_never_goes_below_a_shipment():
 
 
 def test_kb_pick_moves_only_that_kb_and_auto_clears_manual_marks():
-    kits = (_kit("КБ1", "В работе", manual=True, auto="ТК готова"), _kit("КБ2", "Новый"))
+    kits = (_kit("КБ1", "В работе", manual=True, auto="Новый"), _kit("КБ2", "Новый"))
 
     forward = plan_stage_change(kits, "Отгружено", "КБ2")
     assert [(c.item_index, c.skipped) for c in forward.changes] == [
-        ("КБ2", ("ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано")),
+        ("КБ2", ("В работе", "ОТК", "Принято складом", "Упаковано")),
     ]
     auto = plan_stage_change(kits, "авто")
     assert auto.direction == "auto" and not auto.reason_required
     assert [(c.item_index, c.from_stage, c.to_stage, c.value) for c in auto.changes] == [
-        ("КБ1", "В работе", "ТК готова", "авто"),
+        ("КБ1", "В работе", "Новый", "авто"),
     ]
 
 
@@ -140,24 +144,23 @@ def test_unknown_stage_and_bad_kb_are_refused_in_russian():
 def test_shipped_fact_beats_a_manual_stage_and_the_card_shows_what_was_skipped():
     key = kit_stage_key("708К.4", "КБ1")
     events = (
-        PlanEvent("708К.4", NOW, "Мастер", PLAN_KINDS["stage"], item_index="КБ1", value="КБ набрана", from_value="Новый"),
-        PlanEvent("708К.4", NOW, "Мастер", PLAN_KINDS["stage"], item_index="КБ1", value="Принято складом",
-                  from_value="КБ набрана"),
+        PlanEvent("708К.4", NOW, "Мастер", PLAN_KINDS["stage"], item_index="КБ1", value="ОТК", from_value="Новый"),
+        PlanEvent("708К.4", NOW, "Мастер", PLAN_KINDS["stage"], item_index="КБ1", value="Упаковано", from_value="ОТК"),
     )
     marks = summarize_kit_marks(events)
-    assert marks[key].skipped == ("ТК готова", "Распланировано", "В работе", "ОТК")
+    assert marks[key].skipped == ("В работе", "Принято складом")
 
-    stage = project_stage("708К.4", ("КБ1",), {"tc": {key}}, marks=marks).kits[0]
-    # «ТК готова» случилась по факту (ТК выдана) — пропущенными остаются «В работе» и «ОТК».
-    assert (stage.status, stage.manual, stage.skipped) == ("Принято складом", True, ("Распланировано", "В работе", "ОТК"))
+    stage = project_stage("708К.4", ("КБ1",), {"work": {key}}, marks=marks).kits[0]
+    # «В работе» случилась по факту (смена по заданию) — пропущенным остаётся «Принято складом».
+    assert (stage.status, stage.manual, stage.skipped) == ("Упаковано", True, ("Принято складом",))
 
     shipped = project_stage("708К.4", ("КБ1",), {"shipped": {key}}, marks=marks).kits[0]
     assert (shipped.status, shipped.manual, shipped.skipped) == ("Отгружено", False, ())
 
     back = summarize_kit_marks((*events, PlanEvent(
-        "708К.4", NOW, "Мастер", PLAN_KINDS["stage"], item_index="КБ1", value="КБ набрана", from_value="Принято складом",
+        "708К.4", NOW, "Мастер", PLAN_KINDS["stage"], item_index="КБ1", value="ОТК", from_value="Упаковано",
     )))
-    assert back[key].skipped == ("ТК готова",)
+    assert back[key].skipped == ("В работе",)
 
 
 # ── Запись (plan_application.change_stage) ─────────────────────────────
@@ -184,24 +187,24 @@ def _audit(sessions):
 
 def test_change_writes_every_row_with_from_and_reason_in_one_transaction(production):
     factory, sessions = production
-    plan = plan_stage_change((_kit("КБ1", "Новый"), _kit("КБ2", "ТК готова")), "Принято складом")
+    plan = plan_stage_change((_kit("КБ1", "Новый"), _kit("КБ2", "В работе")), "Принято складом")
 
     events = change_stage(ChangeStageCommand("708К.4", plan, ACTOR, NOW, expected_sequence=0), factory())
 
     assert [(e.sequence, e.item_index, e.from_value, e.value) for e in events] == [
-        (1, "КБ1", "Новый", "Принято складом"), (2, "КБ2", "ТК готова", "Принято складом"),
+        (1, "КБ1", "Новый", "Принято складом"), (2, "КБ2", "В работе", "Принято складом"),
     ]
     rows = _rows(sessions)
     assert [(row.kind, row.from_value, row.value, row.text) for row in rows] == [
-        ("Этап КБ", "Новый", "Принято складом", "Новый → Принято складом · пропущены: ТК готова, КБ набрана, Распланировано, В работе, ОТК"),
-        ("Этап КБ", "ТК готова", "Принято складом", "ТК готова → Принято складом · пропущены: КБ набрана, Распланировано, В работе, ОТК"),
+        ("Этап КБ", "Новый", "Принято складом", "Новый → Принято складом · пропущены: В работе, ОТК"),
+        ("Этап КБ", "В работе", "Принято складом", "В работе → Принято складом · пропущены: ОТК"),
     ]
     [audit] = _audit(sessions)
     assert audit.actor_name == "Мастер"
     assert audit.details == {
         "project": "708К.4", "value": "Принято складом", "direction": "forward", "kbs": ["КБ1", "КБ2"],
-        "changes": ["КБ1: Новый → Принято складом", "КБ2: ТК готова → Принято складом"],
-        "skipped": ["ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК"], "reason": "",
+        "changes": ["КБ1: Новый → Принято складом", "КБ2: В работе → Принято складом"],
+        "skipped": ["В работе", "ОТК"], "reason": "",
     }
 
 
@@ -298,6 +301,7 @@ def test_preview_lists_from_to_skipped_what_closes_and_what_stays():
                                shipped=Decimal("1"), sent=Decimal("1"), unit="шт", name="Жгут", article="708К.4.01",
                                register=GoodsRegister(needed=Decimal("10"), accepted_total=Decimal("4"),
                                                       packed_total=Decimal("1"), shipped_total=Decimal("1"))),),
+        # Старый ХОЛД (журнал неизменяем) — это «СТОП».
         events=(PlanEvent("708К.4", NOW, "РП", PLAN_KINDS["block"], blocker="ХОЛД", text="ждём оплату"),),
         runs={kit_stage_key("708К.4", "КБ1"): 10},
     )
@@ -327,11 +331,11 @@ def test_preview_lists_from_to_skipped_what_closes_and_what_stays():
         "Готовая продукция Жгут: Отгружено 1 шт — отгрузки остаются, переносу не мешают.",
     ]
     assert (kb2["skipped"], kb2["close"], kb2["keep"], kb2["warnings"]) == (
-        ["ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано"], [], [], [],
+        ["В работе", "ОТК", "Принято складом", "Упаковано"], [], [], [],
     )
     assert preview["totals"] == {"tasks": 1, "kit_requests": 1, "reserves": 0, "close": 2, "keep": 2}
     assert len(preview["preview_token"]) == 32
-    assert preview["warnings"] == ["Активный блокер «ХОЛД»: ждём оплату — смена этапа его не снимает."]
+    assert preview["warnings"] == ["Активный блокер «СТОП»: ждём оплату — смена этапа его не снимает."]
     assert preview["message"].startswith(
         "КБ1: ОТК → Отгружено (пропущены: Принято складом, Упаковано); КБ2: Новый → Отгружено",
     )
@@ -488,8 +492,7 @@ def test_forward_to_work_cancels_new_and_underfilled_kits_and_gives_every_reserv
     assert [item["kind"] for item in change.payload()["close"]] == ["kit_request", "kit_request", "reserve", "kit_request"]
     # Причина — в журнале проекта и в журнале действий.
     rows = {row.item_index: row for row in _rows(sessions)}
-    assert rows["КБ1"].text.startswith("Новый → В работе · пропущены: ТК готова, КБ набрана, Распланировано · пропущено вручную: "
-                                       "Новый → В работе — закрыто: Заявка на комплектацию")
+    assert rows["КБ1"].text.startswith("Новый → В работе · пропущено вручную: Новый → В работе — закрыто: Заявка на комплектацию")
     assert "пропущено вручную" not in rows["КБ3"].text
     with sessions() as session:
         audit = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type.in_((
@@ -524,22 +527,19 @@ def test_forward_to_qc_cancels_idle_running_tasks_and_keeps_the_one_being_worked
                                  "reason": "пропущено вручную: собрали на ЖУК"}
 
 
-def test_a_target_below_the_rule_keeps_the_work_and_says_why(production):
+def test_a_former_stage_is_refused_with_its_replacement_and_closes_nothing(production):
     factory, sessions = production
     lot = _lot(sessions, "G-1", "A-1")
-    new = _request(sessions, "КБ1", lot, "5")
-    task = _task(factory, "КБ2", "П-1", working=True)
+    _request(sessions, "КБ1", lot, "5")
+    _task(factory, "КБ2", "П-1", working=True)
+    before = _world(sessions)
 
-    preview = flow.preview_project_stage(_state(factory, sessions), "КБ набрана")
-
-    assert preview["close"] == []
-    assert preview["keep"] == [
-        {"kind": "kit_request", "label": f"Заявка на комплектацию {new.number}",
-         "reason": "Этап ниже «В работе» — заявка остаётся."},
-    ]
-    # КБ2 уже «В работе» по факту (смена по заданию) — на «КБ набрана» не опускается и ничего не закрывает.
-    assert [kb["change"] for kb in preview["kbs"]] == [True, False, True]
-    assert task.number not in str(preview["keep"])
+    # 29.10: «КБ набрана» / «ТК готова» — отметки, «Распланировано» убрано: этапом их не поставить.
+    with pytest.raises(ProductionValidationError, match="это отметка «КБ набрана» рядом с этапом"):
+        flow.preview_project_stage(_state(factory, sessions), "КБ набрана")
+    with pytest.raises(ProductionValidationError, match="Этапа «Распланировано» больше нет — до начала работы этап «Новый»"):
+        flow.preview_project_stage(_state(factory, sessions), "Распланировано")
+    assert _world(sessions) == before
 
 
 def test_a_second_identical_apply_changes_nothing(production):
@@ -678,7 +678,7 @@ def test_migration_checks_block_updates_and_downgrades_cleanly(database):
             ("", "", "В работе"),
         ]
         sql = connection.execute("SELECT sql FROM sqlite_master WHERE name = 'production_plan_events'").fetchone()[0]
-        assert all(name in sql for name in PLAN_EVENT_CHECKS)
+        assert all(name in sql for name in PLAN_EVENT_CHECKS if name != BLOCKER_CHECK)
         with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
             connection.execute(
                 "INSERT INTO production_plan_events (id, project, sequence, occurred_at, who, kind, blocker, text,"
@@ -725,14 +725,18 @@ def test_migration_checks_match_the_model():
     module = _migration(MIGRATION, "stage_history_migration")
     ladder = _migration(LADDER_MIGRATION, "stage_ladder_migration")
     accepted = _migration(ACCEPTED_MIGRATION, "stage_accepted_migration")
+    markers = _migration(MARKERS_MIGRATION, "ladder_markers_migration")
 
     # 0101 поставил проверку вида, 0110 перевела три проверки (этап, статус проекта, «было») на лестницу из 8 этапов
-    # и один способ закрыть проект.
-    assert {**module.CHECKS, **accepted.CHECKS} == PLAN_EVENT_CHECKS
+    # и один способ закрыть проект, 0161 — этап и «было» на короткую лестницу и добавила проверку блокера.
+    assert {**module.CHECKS, **accepted.CHECKS, **markers.CHECKS} == PLAN_EVENT_CHECKS
     assert module.KINDS == tuple(PLAN_KINDS.values())
-    assert accepted.STAGES == KIT_STAGES and accepted.OLD_STAGES == ladder.STAGES
+    assert accepted.OLD_STAGES == ladder.STAGES
+    assert markers.STAGES == KIT_STAGES and markers.OLD_STAGES == accepted.STAGES
+    assert markers.BLOCKERS == PLAN_BLOCKERS and markers.TERMINALS == PROJECT_TERMINALS
     assert accepted.TERMINALS == PROJECT_TERMINALS and accepted.OLD_TERMINALS == module.TERMINALS
     assert accepted.OLD_CHECKS == {name: ladder.CHECKS.get(name, module.CHECKS[name]) for name in accepted.CHECKS}
+    assert markers.OLD_CHECKS == {name: accepted.CHECKS[name] for name in markers.OLD_CHECKS}
 
 
 def test_stock_fact_beats_a_lower_manual_stage():

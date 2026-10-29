@@ -49,10 +49,9 @@ BACKEND = Path(__file__).resolve().parents[2]
 LEGACY = "КБ на складе"
 
 
-def test_the_ladder_is_eight_steps_in_shop_order():
-    assert KIT_STAGES == (
-        "Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено",
-    )
+def test_the_ladder_is_six_steps_in_shop_order():
+    # Владелец 29.10: «ТК готова» / «КБ набрана» — отметки рядом с этапом, «Распланировано» убрано.
+    assert KIT_STAGES == ("Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено")
 
 
 # ── Факты этапов ────────────────────────────────────────────────────────
@@ -88,11 +87,10 @@ def _stage(tasks=(), boxes=(), inspected=(), goods=(), worked=(), run=None) -> s
     return project_stage(PROJECT, ("КБ1",), facts).status
 
 
-def test_a_launched_task_is_not_work_yet_a_placed_one_is_planned_a_worked_one_is_at_work():
+def test_a_launched_or_placed_task_is_not_work_yet_a_worked_one_is_at_work():
     assert _stage((_task(),)) == "Новый"  # запущено, но в ресурсном плане не стоит
-    assert _stage((_task(planned=True),)) == "Распланировано"
-    # Частично распланированное КБ остаётся ниже.
-    assert _stage((_task(planned=True), _task(planned=False))) == "Новый"
+    # «Распланировано» убрано (29.10): задание в ресурсном плане этап не двигает.
+    assert _stage((_task(planned=True),)) == "Новый"
     # Смена по заданию («след работы») или «взял» по доле — работа начата.
     placed = _task(planned=True)
     assert _stage((placed,), worked={placed.id}) == "В работе"
@@ -207,20 +205,15 @@ def _cascade(to_stage: str):
 
 
 def test_kit_requests_close_from_work_and_idle_tasks_from_qc():
-    assert _cascade("КБ набрана") == ([], [
-        ("kit_request", "Этап ниже «В работе» — заявка остаётся."),
-        ("task", "Этап ниже «ОТК» — задание остаётся."),
-    ])
     assert _cascade("В работе") == (["kit_request"], [("task", "Этап ниже «ОТК» — задание остаётся.")])
     assert _cascade("ОТК") == (["kit_request", "task"], [])
     assert _cascade("Принято складом") == (["kit_request", "task"], [])
 
 
-def test_a_manual_move_to_planned_closes_nothing():
-    assert _cascade("Распланировано") == ([], [
-        ("kit_request", "Этап ниже «В работе» — заявка остаётся."),
-        ("task", "Этап ниже «ОТК» — задание остаётся."),
-    ])
+def test_a_manual_move_to_a_former_stage_is_refused():
+    for word in ("ТК готова", "КБ набрана", "Распланировано"):
+        with pytest.raises(ProductionValidationError, match=f"Этапа «{word}» больше нет"):
+            _cascade(word)
 
 
 # ── Один набор КБ у плана и экрана проекта (T5) ─────────────────────────
@@ -324,7 +317,7 @@ def test_migration_keeps_old_rows_checks_the_new_ladder_and_keeps_the_journal_ap
         assert connection.execute("SELECT * FROM production_plan_events ORDER BY sequence").fetchall() == before
         schema = _schema(connection)
         sql = next(row[2] for row in schema if row[0] == "table")
-        assert all(name in sql for name in PLAN_EVENT_CHECKS)
+        assert all(name in sql for name in PLAN_EVENT_CHECKS if name != "ck_production_plan_events_blocker")  # 0161
         assert "'ОТК', 'Готово к отгрузке', 'На отгрузке'" in sql and LEGACY not in sql
         assert {row[1] for row in schema if row[0] == "index"} == indexes
         assert [row[1] for row in schema if row[0] == "trigger"] == ["production_plan_events_no_update"]

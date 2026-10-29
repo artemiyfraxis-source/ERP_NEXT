@@ -130,9 +130,15 @@ def test_project_from_calculation_registers_plan_queue_and_addressee(kitset_api)
     assert not (res["erp_error"] or res["ship_error"] or res["ship_to_error"] or res["deadline_error"])
 
     listing = client.get("/api/techcards/kitsets").json()
-    assert listing["statuses"][:2] == ["Новый", "ТК готова"]
+    assert listing["statuses"][:2] == ["Новый", "В работе"]
+    assert listing["stages"] == ["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"]
+    assert listing["blockers"] == ["СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ"]
     tile = listing["items"][0]
     assert (tile["project"], tile["status"], tile["kbs"]) == ("708К.4", "Новый", ["КБ1", "КБ2"])
+    # Две отметки рядом с этапом (29.10): по факту ни ТК, ни комплекта ещё нет, ручного переключателя нет.
+    assert {key: tile[key] for key in ("tc_ready", "kit_picked", "tc_manual", "kit_manual")} == {
+        "tc_ready": False, "kit_picked": False, "tc_manual": None, "kit_manual": None,
+    }
 
     with app.state.shipping_uow_factory() as uow:
         queued = list(uow.goods.by_project("708К.4"))
@@ -461,15 +467,19 @@ def test_project_status_in_one_click(kitset_api):
     card = staged.json()["card"]
     assert card["status"] == "В работе"
     assert {item["stage"]["status"] for item in card["assemblies"]} == {"В работе"}
-    assert card["terminals"] == ["Отменён"] and "ХОЛД" in card["blockers"]
+    assert card["terminals"] == ["Отменён"] and card["blockers"] == ["СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ"]
 
-    no_reason = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "block", "value": "ХОЛД"})
+    no_reason = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "block", "value": "СТОП"})
     assert no_reason.status_code == 422
-    held = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "block", "value": "ХОЛД", "text": "ждём оплату"})
+    # 29.10: ХОЛД и ПАУЗА — это «СТОП»; новое старое слово — 422 с заменой.
+    for word in ("ХОЛД", "ПАУЗА"):
+        old = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "block", "value": word, "text": "x"})
+        assert (old.status_code, old.json()["detail"]) == (422, f"Блокера «{word}» больше нет — теперь «СТОП».")
+    held = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "block", "value": "СТОП", "text": "ждём оплату"})
     card = held.json()["card"]
-    assert card["blocker"] == "ХОЛД" and card["blocker_info"]["text"] == "ждём оплату"
+    assert card["blocker"] == "СТОП" and card["blocker_info"]["text"] == "ждём оплату"
     tile = next(item for item in client.get("/api/techcards/kitsets").json()["items"] if item["project"] == "708К.4")
-    assert (tile["status"], tile["blocker"]) == ("В работе", "ХОЛД")
+    assert (tile["status"], tile["blocker"]) == ("В работе", "СТОП")
     card = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "unblock"}).json()["card"]
     assert card["blocker"] == "" and card["blocker_info"] is None
 
@@ -558,8 +568,8 @@ def test_manual_stage_change_previews_skips_needs_a_reason_back_and_closes_the_s
     body = preview.json()
     assert (body["direction"], body["reason_required"], body["error"]) == ("forward", False, "")
     assert [(kb["kb"], kb["from"], kb["to"], kb["skipped"]) for kb in body["kbs"]] == [
-        ("КБ1", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано"]),
-        ("КБ2", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано"]),
+        ("КБ1", "Новый", "Отгружено", ["В работе", "ОТК", "Принято складом", "Упаковано"]),
+        ("КБ2", "Новый", "Отгружено", ["В работе", "ОТК", "Принято складом", "Упаковано"]),
     ]
     assert body["kbs"][0]["warnings"] == [
         "Закроется (пропущено вручную: Новый → Отгружено): заявок на комплектацию — 1.",
@@ -578,7 +588,7 @@ def test_manual_stage_change_previews_skips_needs_a_reason_back_and_closes_the_s
     card = staged.json()["card"]
     stages = {item["index"]: item["stage"] for item in card["assemblies"]}
     assert (stages["КБ1"]["status"], stages["КБ2"]["status"]) == ("Принято складом", "Отгружено")
-    assert stages["КБ1"]["skipped"] == ["ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК"]
+    assert stages["КБ1"]["skipped"] == ["В работе", "ОТК"]
     assert card["journal"][0]["from_value"] == "Новый" and card["journal"][0]["value"] == "Принято складом"
 
     # Назад — только с причиной (и для проекта, и для КБ).
@@ -645,10 +655,80 @@ def test_the_old_stage_word_is_refused_on_every_write_route(kitset_api):
 
     assert [(item.status_code, item.json()["detail"]) for item in responses] == [(422, hint)] * len(responses)
     assert client.get("/api/techcards/kitsets/708К.4").json()["journal"] == []
-    # Лестница в ответе — 8 этапов по порядку.
+    # Лестница в ответе — 6 этапов по порядку (29.10).
     assert client.get("/api/techcards/kitsets").json()["stages"] == [
-        "Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено",
+        "Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено",
     ]
+
+
+@pytest.mark.parametrize(("word", "hint"), [
+    ("ТК готова", "Этапа «ТК готова» больше нет — это отметка «ТК готова» рядом с этапом."),
+    ("КБ набрана", "Этапа «КБ набрана» больше нет — это отметка «КБ набрана» рядом с этапом."),
+    ("Распланировано", "Этапа «Распланировано» больше нет — до начала работы этап «Новый», затем «В работе»."),
+])
+def test_a_former_stage_is_refused_on_every_write_route_with_its_replacement(kitset_api, word, hint):
+    """Владелец 29.10: «ТК готова» / «КБ набрана» — отметки, «Распланировано» убрано: этапом — 422 с заменой."""
+    client, _lot = kitset_api
+    _load(client)
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "production": "edit"})
+    responses = [
+        client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": word}),
+        client.post("/api/techcards/kitsets/708К.4/marks", json={"kb": "КБ1", "kind": "stage", "value": word}),
+        client.get("/api/techcards/kitsets/708К.4/status/preview", params={"value": word}),
+        client.get("/api/production/plan/stage-preview", params={"project": "708К.4", "value": word}),
+        client.post("/api/production/plan/events", json={
+            "project": "708К.4", "kind": "stage", "item_index": "КБ1", "value": word,
+        }),
+    ]
+    assert [(item.status_code, item.json()["detail"]) for item in responses] == [(422, hint)] * len(responses)
+    plan_block = client.post("/api/production/plan/events", json={
+        "project": "708К.4", "kind": "block", "blocker": "ПАУЗА", "text": "x",
+    })
+    assert (plan_block.status_code, plan_block.json()["detail"]) == (422, "Блокера «ПАУЗА» больше нет — теперь «СТОП».")
+    assert client.get("/api/techcards/kitsets/708К.4").json()["journal"] == []
+
+
+def test_markers_are_computed_and_the_manual_toggle_overrides_them(kitset_api):
+    """Две независимые отметки «ТК готова» / «КБ набрана»: по факту, ручной переключатель да / нет / авто."""
+    client, _lot = kitset_api
+    _load(client)
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "production": "edit"})
+    url = "/api/techcards/kitsets/708К.4/status"
+
+    def markers(body):
+        return {key: body[key] for key in ("tc_ready", "kit_picked", "tc_manual", "kit_manual")}
+
+    card = client.get("/api/techcards/kitsets/708К.4").json()
+    assert markers(card) == {"tc_ready": False, "kit_picked": False, "tc_manual": None, "kit_manual": None}
+    assert {(item["stage"]["tc"], item["stage"]["kit"]) for item in card["assemblies"]} == {(False, False)}
+
+    picked = client.post(url, json={"action": "marker", "field": "kit_picked", "value": "да"})
+    assert picked.status_code == 200, picked.text
+    assert picked.json()["events"] == 1
+    card = picked.json()["card"]
+    assert (card["status"], markers(card)) == (
+        "Новый", {"tc_ready": False, "kit_picked": True, "tc_manual": None, "kit_manual": "да"},
+    )
+    tc_no = client.post(url, json={"action": "marker", "field": "tc_ready", "value": "нет"}).json()["card"]
+    assert markers(tc_no) == {"tc_ready": False, "kit_picked": True, "tc_manual": "нет", "kit_manual": "да"}
+    tile = next(item for item in client.get("/api/techcards/kitsets").json()["items"] if item["project"] == "708К.4")
+    assert markers(tile) == markers(tc_no)
+    plan_row = next(row for row in client.get("/api/production/plan").json()["rows"] if row["project"] == "708К.4")
+    assert markers(plan_row) == markers(tc_no)
+    assert (plan_row["sheet"]["kit_picked"]["value"], plan_row["sheet"]["kit_picked"]["manual"]) == ("да", True)
+
+    # Работа начата — «КБ набрана» да по факту; «авто» снимает ручное значение.
+    client.post(url, json={"action": "status", "value": "В работе"})
+    auto = client.post(url, json={"action": "marker", "field": "kit_picked", "value": "авто"}).json()["card"]
+    assert (auto["status"], auto["kit_picked"], auto["kit_manual"]) == ("В работе", True, None)
+    assert {item["stage"]["kit"] for item in auto["assemblies"]} == {True}
+    # Ручное «нет» сильнее факта.
+    off = client.post(url, json={"action": "marker", "field": "kit_picked", "value": "нет"}).json()["card"]
+    assert (off["kit_picked"], off["kit_manual"]) == (False, "нет")
+
+    for bad in ({"field": "stage", "value": "да"}, {"field": "tc_ready", "value": "может"}):
+        refused = client.post(url, json={"action": "marker", **bad})
+        assert refused.status_code == 422, refused.text
 
 
 def test_plan_page_stage_goes_through_the_same_service(kitset_api):
@@ -658,7 +738,7 @@ def test_plan_page_stage_goes_through_the_same_service(kitset_api):
 
     preview = client.get("/api/production/plan/stage-preview", params={"project": "708К.4", "value": "В работе", "kb": "КБ1"})
     assert preview.status_code == 200, preview.text
-    assert preview.json()["kbs"][0]["skipped"] == ["ТК готова", "КБ набрана", "Распланировано"]
+    assert preview.json()["kbs"][0]["skipped"] == []
 
     saved = client.post("/api/production/plan/events", json={
         "project": "708К.4", "kind": "stage", "item_index": "КБ1", "value": "В работе",

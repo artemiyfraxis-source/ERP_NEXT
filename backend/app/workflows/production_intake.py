@@ -71,7 +71,7 @@ PICKED_KITS = (
 
 # Этапы «в работе»: КБ принимается до заказанного — с заданиями цеха или без (владелец 28.10.2026: «всё, что в работе,
 # можно принять» — цех пока не ведёт всё через задания ERP).
-ACCEPT_WITHOUT_TASKS_STAGES = frozenset({"Распланировано", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке"})
+ACCEPT_WITHOUT_TASKS_STAGES = frozenset({"В работе", "ОТК"})
 
 
 @dataclass(frozen=True)
@@ -92,6 +92,7 @@ class IntakeRow:
     good: FinishedGood | None = None
     tasks: tuple[TaskShare, ...] = ()
     acts: tuple[AcceptanceAct, ...] = ()
+    project_stage: str = ""  # низший этап по всем КБ проекта, отгруженные включены
 
     @property
     def remaining(self) -> Decimal:
@@ -239,7 +240,7 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
                 unit=good.unit if good else "шт", stage=stages.get(item_index, ""),
                 needed=needed, launched=kb.run if kb else ZERO, delivered=kb.delivered if kb else ZERO,
                 accepted=good.accepted if good else ZERO, packed=good.shipped if good else ZERO, sent=sent,
-                good=good, tasks=kb.tasks if kb else (),
+                good=good, tasks=kb.tasks if kb else (), project_stage=stage.status,
                 acts=tuple(act for act in facts.acts.get(good.id, ()) if act.net > 0) if good else (),
             ))
     return sorted(rows, key=lambda row: (

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 import re
 from typing import Collection, Iterable, Mapping
@@ -23,20 +23,33 @@ PLAN_KINDS = {
     "status": "Статус проекта",
     "mark": "Отметка плана",
 }
-PLAN_BLOCKERS = ("ХОЛД", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ", "ПАУЗА")
-# Одна лестница этапов на всё ERP (владелец 12.10.2026): «Распланировано» — задания КБ стоят в ресурсном плане
-# (у всех открытых заданий КБ все операции с плановым окном); «В работе» — кто-то начал работу (смена по заданию КБ
+# Владелец 29.10.2026: «чем стоп от холда отличается и стоп от паузы — не нужно раздувать статусы». Один блокер
+# «СТОП»; старые записи журнала (неизменяемы) с ХОЛД / ПАУЗА читаются как «СТОП», новые — отказ (422, CHECK 0161).
+PLAN_BLOCKERS = ("СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ")
+LEGACY_BLOCKER_ALIASES = {"ХОЛД": "СТОП", "ПАУЗА": "СТОП"}
+# Одна короткая лестница этапов на всё ERP (владелец 29.10.2026: «можно убрать распланировано пока что и сделать
+# возможно двух статусов одновременно КБ набрана и ТК готова»): «В работе» — кто-то начал работу (смена по заданию КБ
 # или «взял» по доле операции); ОТК — производство закончено (задание «Выполнено» или коробка последней операции
 # в очереди ОТК / принята ОТК), ГП ещё не принята на склад; «Принято складом» — ГП принята (принято ≥ нужно);
 # «Упаковано» — ГП отобрана в отправки и упакована (отобрано ≥ нужно), ещё не уехала; «Отгружено» — уехало (отправлено ≥ нужно).
-KIT_STAGES = (
-    "Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено",
-)
+# «ТК готова» и «КБ набрана» — не этапы, а две независимые отметки да/нет рядом с этапом (`KitStage.tc` / `.kit`,
+# проект — `project_markers`).
+KIT_STAGES = ("Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено")
 # Старые записи журнала «Этап КБ» неизменяемы (0101): их слово читается как этап новой лестницы; новые записи
-# со старым словом не принимаются (422 в приложении, CHECK 0108 в базе).
+# со старым словом не принимаются (422 в приложении, CHECK 0108 / 0161 в базе).
 LEGACY_STAGE_ALIASES = {
     "КБ на складе": "Принято складом", "Готово к отгрузке": "Принято складом", "На отгрузке": "Упаковано",
 }
+# Бывшие этапы, ставшие отметками (29.10): старая запись «Этап КБ» с этим словом — не ручной этап (решают факты),
+# а включённые отметки КБ: «ТК готова» — ТК; «КБ набрана» / «Распланировано» — ТК и КБ.
+LEGACY_MARKER_STAGES = {"ТК готова": ("tc",), "КБ набрана": ("tc", "kit"), "Распланировано": ("tc", "kit")}
+_LEGACY_STAGE_REFUSALS = {
+    "ТК готова": "Этапа «ТК готова» больше нет — это отметка «ТК готова» рядом с этапом.",
+    "КБ набрана": "Этапа «КБ набрана» больше нет — это отметка «КБ набрана» рядом с этапом.",
+    "Распланировано": "Этапа «Распланировано» больше нет — до начала работы этап «Новый», затем «В работе».",
+}
+# Отметки проекта: ручной переключатель — запись «Отметка плана» с этим полем (да / нет / авто).
+MARKER_FIELDS = {"tc_ready": "ТК готова", "kit_picked": "КБ набрана"}
 TC_REVIEW_VALUES = ("не проверена", "проверена", "с погрешностями")
 PLAN_STAGE_AUTO = "авто"
 # ERP_PROJ_TERMINALS_ (Schema.gs): решение человека перекрывает вычисленный этап. В SUPPLYMAP — СТАТУС листа
@@ -46,9 +59,9 @@ PROJECT_TERMINALS = ("Отменён",)
 LEGACY_TERMINAL_ALIASES = {"Отказ": "Отменён", "Слился": "Отменён"}
 # Лист цеха «ЗАГРУЗ» (владелец 04.10: «тут вот такое представление я хочу»): статусы ячейки «Статус», в одной
 # ячейке их может быть несколько через запятую. Порядок — как в выпадающем списке листа.
+# 29.10: ХОЛД / ПАУЗА — теперь «СТОП»; «К ЗАПУСК» и «РАСПЛАН» были этапами «КБ набрана» / «Распланировано» — их нет.
 SHOP_STATUSES = (
-    "ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "РАСПЛАН", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ",
-    "ОТК", "НА ОТГР", "ГОТОВО", "УПАК", "ОТГРУЖЕН",
+    "СТОП", "ПРВ КОМПЛ", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ", "ОТК", "НА ОТГР", "ГОТОВО", "УПАК", "ОТГРУЖЕН",
 )
 # ProdPlan.gs planShopStatus_: статусы в листе набраны руками — опечатки к словарю.
 _SHOP_STATUS_TYPOS = {"К ЗАПУС": "К ЗАПУСК", "ОЖД ИНФ": "ОЖИД ИНФ", "ОЖИД КОМП": "ОЖИД КОМПЛ"}
@@ -66,9 +79,11 @@ PLAN_MARK_FLAG_FIELDS = ("in_plan", "kit_checked", "kit_present", "zkp", "tc_rea
 STATUS_MARK_REFUSAL = "Статус в загрузке цеха берётся из этапа проекта — меняйте этап"
 PLAN_DAY_FIELD_PREFIX = "day:"
 PLAN_DAY_NOTE_MAX = 16
-# Факт, дающий этап лестницы (тот же порядок, что KIT_STAGES): planned — задания в ресурсном плане, work — работа
-# начата, qc — производство закончено, stock — ГП принята, packed — упакована в отправки, shipped — уехало.
-_KIT_STAGE_FACTS = ("", "tc", "kit", "planned", "work", "qc", "stock", "packed", "shipped")
+# Факт, дающий этап лестницы (тот же порядок, что KIT_STAGES): work — работа начата, qc — производство закончено,
+# stock — ГП принята, packed — упакована в отправки, shipped — уехало. tc / kit — отметки, не этапы.
+_KIT_STAGE_FACTS = ("", "work", "qc", "stock", "packed", "shipped")
+# С начала работы КБ считается набранной (правило листа «ЗАГРУЗ»): этап «В работе» и дальше — «КБ набрана» да.
+_WORK_INDEX = KIT_STAGES.index("В работе")
 # № проекта сравнивается по `app.shared.project_number` (normalize_project_number / project_from_purpose выше).
 MANUAL_TECHCARD_PROJECTS = frozenset(("714К.1", "35К.М.34"))
 
@@ -85,10 +100,26 @@ def terminal_alias(value: object) -> str:
     return LEGACY_TERMINAL_ALIASES.get(text, text)
 
 
+def blocker_alias(value: object) -> str:
+    """A stored blocker word as the current list reads it («ХОЛД» / «ПАУЗА» → «СТОП»)."""
+    text = str(value or "")
+    return LEGACY_BLOCKER_ALIASES.get(text, text)
+
+
 def legacy_stage_refusal(value: object) -> str:
     """The refusal for a new write of an old stage word ("" — not an old word)."""
     text = str(value or "").strip()
+    if text in _LEGACY_STAGE_REFUSALS:
+        return _LEGACY_STAGE_REFUSALS[text]
     return f"Этапа «{text}» больше нет — теперь «{LEGACY_STAGE_ALIASES[text]}»." if text in LEGACY_STAGE_ALIASES else ""
+
+
+def legacy_blocker_refusal(value: object) -> str:
+    """The refusal for a new blocker with an old word ("" — not an old word)."""
+    text = str(value or "").strip()
+    if text not in LEGACY_BLOCKER_ALIASES:
+        return ""
+    return f"Блокера «{text}» больше нет — теперь «{LEGACY_BLOCKER_ALIASES[text]}»."
 
 
 def require_stage_value(value: object) -> str:
@@ -120,7 +151,9 @@ class KitStage:
     status: str
     manual: bool = False
     review: KitReview | None = None
-    # Facts next to the stage: a manual stage jumps the ladder and would hide them otherwise.
+    # Markers next to the stage (owner 29.10), independent of it: «ТК готова» — techcard issued, a manual-techcard
+    # project or an old «ТК готова» / «КБ набрана» / «Распланировано» stage row; «КБ набрана» — kit request picked,
+    # work begun (stage «В работе» and on) or an old «КБ набрана» / «Распланировано» stage row.
     tc: bool = False
     kit: bool = False
     # Stages a manual pick jumped over and no fact covers since (ladder order): the card shows them as skipped.
@@ -141,6 +174,9 @@ class KitMark:
     review: KitReview | None = None
     # Stages jumped by the manual picks since the last «авто» (ladder order), below the current manual stage.
     skipped: tuple[str, ...] = ()
+    # Markers an old «ТК готова» / «КБ набрана» / «Распланировано» stage row turned on (cleared by «авто» / «Новый»).
+    tc: bool = False
+    kit: bool = False
 
 
 @dataclass(frozen=True)
@@ -149,14 +185,50 @@ class ProjectStage:
     kits: tuple[KitStage, ...]
     # True when a journal stage mark with an empty KB set the stage of a project without KBs.
     manual: bool = False
+    # Project markers from the facts: every КБ has it (a project without KBs — its own facts and marks). The manual
+    # toggle on top — `project_markers`.
+    tc: bool = False
+    kit: bool = False
 
 
-def _fact_index(key: str, facts: Mapping[str, Collection[str]], manual_tc: bool) -> int:
+@dataclass(frozen=True)
+class ProjectMarkers:
+    """«ТК готова» / «КБ набрана» of a project: the value shown, the computed one and the manual toggle ("да" / "нет";
+    None — «авто», the facts decide)."""
+
+    tc_ready: bool
+    kit_picked: bool
+    tc_auto: bool
+    kit_auto: bool
+    tc_manual: str | None = None
+    kit_manual: str | None = None
+
+    def payload(self) -> dict[str, object]:
+        """The API shape (plan rows, project list and card): shown value and the manual toggle (None — «авто»)."""
+        return {
+            "tc_ready": self.tc_ready, "kit_picked": self.kit_picked,
+            "tc_manual": self.tc_manual, "kit_manual": self.kit_manual,
+        }
+
+
+def project_markers(stage: ProjectStage, plan_marks: Mapping[str, str] | None = None) -> ProjectMarkers:
+    """The one marker rule (sheet columns «ТК готова» / «Комплект набран», project list, card, plan rows): the
+    project's computed markers, overridden by its plan marks `tc_ready` / `kit_picked` (`summarize_plan_marks`)."""
+    plan_marks = plan_marks or {}
+    tc_manual = plan_marks.get("tc_ready") if plan_marks.get("tc_ready") in PLAN_MARK_FLAGS else None
+    kit_manual = plan_marks.get("kit_picked") if plan_marks.get("kit_picked") in PLAN_MARK_FLAGS else None
+    return ProjectMarkers(
+        tc_ready=stage.tc if tc_manual is None else tc_manual == "да",
+        kit_picked=stage.kit if kit_manual is None else kit_manual == "да",
+        tc_auto=stage.tc, kit_auto=stage.kit, tc_manual=tc_manual, kit_manual=kit_manual,
+    )
+
+
+def _fact_index(key: str, facts: Mapping[str, Collection[str]]) -> int:
     """Highest ladder stage the facts alone give the КБ (0 — «Новый»)."""
     stage_index = len(KIT_STAGES) - 1
     while stage_index > 0:
-        fact = _KIT_STAGE_FACTS[stage_index]
-        if key in facts.get(fact, ()) or (fact == "tc" and manual_tc):
+        if key in facts.get(_KIT_STAGE_FACTS[stage_index], ()):
             break
         stage_index -= 1
     return stage_index
@@ -187,7 +259,7 @@ def project_stage(
     manual_tc = normalize_project_number(project) in facts.get("tc_project", ())
     for item_index in item_indexes:
         key = kit_stage_key(project, item_index)
-        stage_index = _fact_index(key, facts, manual_tc)
+        stage_index = _fact_index(key, facts)
         mark = marks.get(key, KitMark())
         manual_index = KIT_STAGES.index(mark.stage) if mark.stage in KIT_STAGES else -1
         # Контрактное производство: отгрузка по проекту — последний статус, ручной этап её не перекрывает
@@ -200,22 +272,24 @@ def project_stage(
             KIT_STAGES[status_index],
             manual_index >= 0,
             mark.review,
-            tc=key in facts.get("tc", ()) or manual_tc,
-            kit=key in facts.get("kit", ()),
+            tc=key in facts.get("tc", ()) or manual_tc or mark.tc,
+            kit=key in facts.get("kit", ()) or mark.kit or status_index >= _WORK_INDEX,
             skipped=tuple(stage for stage in mark.skipped if stage_index < KIT_STAGES.index(stage) < status_index),
         ))
-    project_index = min(
-        (KIT_STAGES.index(stage.status) for stage in stages),
-        default=1 if manual_tc else 0,
-    )
-    if terminal_status:
-        return ProjectStage(terminal_status, tuple(stages))
+    project_index = min((KIT_STAGES.index(stage.status) for stage in stages), default=0)
     # A project without KBs (a shop row with no calculation, or already shipped) takes its stage
     # from a journal stage mark with an empty KB; a project with KBs ignores such a mark.
     project_mark = marks.get(kit_stage_key(project, ""), KitMark())
-    if not stages and project_mark.stage in KIT_STAGES:
-        return ProjectStage(project_mark.stage, (), manual=True)
-    return ProjectStage(KIT_STAGES[project_index], tuple(stages))
+    manual = not stages and project_mark.stage in KIT_STAGES
+    status = project_mark.stage if manual else KIT_STAGES[project_index]
+    if stages:
+        tc, kit = all(stage.tc for stage in stages), all(stage.kit for stage in stages)
+    else:
+        tc = manual_tc or project_mark.tc
+        kit = project_mark.kit or KIT_STAGES.index(status) >= _WORK_INDEX
+    if terminal_status:
+        return ProjectStage(terminal_status, tuple(stages), tc=tc, kit=kit)
+    return ProjectStage(status, tuple(stages), manual=manual, tc=tc, kit=kit)
 
 
 # ── Ручная смена этапа: карточка проекта, этап КБ, «Производственный план» ─────────────────────────────────
@@ -294,13 +368,12 @@ def project_stage_now(
     """Per КБ: the stage now, the stage the facts give, a manual mark, a shipment — the ladder of `project_stage`.
     A project without KBs is one entry with an empty КБ (its project mark)."""
     marks = marks or {}
-    manual_tc = normalize_project_number(project) in facts.get("tc_project", ())
     kits: list[KitStageNow] = []
     for item_index in dict.fromkeys(str(item or "").strip().upper() for item in item_indexes):
         if not item_index:
             continue
         key = kit_stage_key(project, item_index)
-        fact_index = _fact_index(key, facts, manual_tc)
+        fact_index = _fact_index(key, facts)
         mark = marks.get(key, KitMark())
         shipped = key in facts.get("shipped", ())
         floor = _warehouse_floor(key, facts)
@@ -309,7 +382,7 @@ def project_stage_now(
         kits.append(KitStageNow(item_index, status, manual, KIT_STAGES[fact_index], shipped, KIT_STAGES[floor] if floor >= 0 else ""))
     if not kits:
         mark = marks.get(kit_stage_key(project, ""), KitMark())
-        auto = KIT_STAGES[1 if manual_tc else 0]
+        auto = KIT_STAGES[0]
         manual = mark.stage in KIT_STAGES
         kits.append(KitStageNow("", mark.stage if manual else auto, manual, auto))
     return tuple(kits)
@@ -580,7 +653,8 @@ def summarize_journal(events: Iterable[PlanEvent]) -> dict[str, ProjectJournal]:
         row = state.setdefault(project, {"blocker": None, "last": None, "events": [], "deadline": None, "status": None})
         row["events"].insert(0, event)
         if event.kind == PLAN_KINDS["block"]:
-            row["blocker"] = ActiveBlocker(event.blocker, event.text, event.occurred_at, event.who)
+            # An old ХОЛД / ПАУЗА row (immutable journal) is the one «СТОП» now, whatever store the event came from.
+            row["blocker"] = ActiveBlocker(blocker_alias(event.blocker), event.text, event.occurred_at, event.who)
         elif event.kind == PLAN_KINDS["unblock"]:
             row["blocker"] = None
         elif event.kind == PLAN_KINDS["deadline"]:
@@ -612,6 +686,11 @@ def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
         key = kit_stage_key(event.project, event.item_index)
         current = marks.get(key, KitMark())
         if event.kind == PLAN_KINDS["stage"]:
+            if event.value in LEGACY_MARKER_STAGES:
+                # A former stage that is a marker now (29.10): no manual stage — the facts decide — and its markers on.
+                markers = LEGACY_MARKER_STAGES[event.value]
+                marks[key] = KitMark(review=current.review, tc="tc" in markers, kit="kit" in markers)
+                continue
             # An old word (immutable journal row) reads as the current ladder stage, whatever store the event came from.
             stage = None if event.value == PLAN_STAGE_AUTO else stage_alias(event.value)
             skipped: tuple[str, ...] = ()
@@ -619,13 +698,13 @@ def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
                 # Пропущенное вживую копится по ручным шагам вперёд; шаг назад срезает то, что выше нового этапа.
                 jumped = (*current.skipped, *stage_skipped(stage_alias(event.from_value), stage))
                 skipped = tuple(item for item in KIT_STAGES[:KIT_STAGES.index(stage)] if item in jumped)
-            marks[key] = KitMark(stage=stage, review=current.review, skipped=skipped)
-        else:
+            # Markers of an old marker-stage row hold through later stages; «авто» and «Новый» clear them.
+            keep = stage in KIT_STAGES and stage != KIT_STAGES[0]
             marks[key] = KitMark(
-                stage=current.stage,
-                review=KitReview(event.value, event.text, event.who, event.occurred_at),
-                skipped=current.skipped,
+                stage=stage, review=current.review, skipped=skipped, tc=current.tc and keep, kit=current.kit and keep,
             )
+        else:
+            marks[key] = replace(current, review=KitReview(event.value, event.text, event.who, event.occurred_at))
     return marks
 
 
@@ -709,6 +788,8 @@ def validate_plan_note(payload: Mapping[str, object], known_projects: Iterable[s
         raise ProductionValidationError("Проект не найден в реестре.")
     if kind not in PLAN_KINDS:
         raise ProductionValidationError("Неизвестный вид записи.")
+    if kind == "block" and legacy_blocker_refusal(payload.get("blocker")):
+        raise ProductionValidationError(legacy_blocker_refusal(payload.get("blocker")))
     if kind == "block" and payload.get("blocker") not in PLAN_BLOCKERS:
         raise ProductionValidationError("Выбери вид блокера.")
     if kind in {"note", "block"} and not str(payload.get("text") or "").strip():

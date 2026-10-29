@@ -131,7 +131,7 @@ def test_second_run_and_new_checks(database):
         sql = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'production_plan_events'"
         ).fetchone()[0]
-        assert all(name in sql for name in PLAN_EVENT_CHECKS)
+        assert all(name in sql for name in PLAN_EVENT_CHECKS if name != "ck_production_plan_events_blocker")  # 0161
         assert "'Распланировано'" in sql and "'Принято складом'" in sql
         with pytest.raises(sqlite3.IntegrityError, match="ck_production_plan_events_status_value"):
             _event(connection, "20К.1", 1, "Статус проекта", "Отказ")

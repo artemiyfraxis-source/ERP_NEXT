@@ -55,20 +55,19 @@ def _track(factory):
 
 
 def test_a_jump_gives_a_row_per_skipped_stage_then_the_target(production):
-    _move(production, (_kit("КБ1", "Новый"),), "В работе")
+    _move(production, (_kit("КБ1", "Новый"),), "Принято складом")
 
     assert _track(production) == [
-        ("Этап КБ", "ТК готова", "пропущен вручную · Мастер", "КБ1"),
-        ("Этап КБ", "КБ набрана", "пропущен вручную · Мастер", "КБ1"),
-        ("Этап КБ", "Распланировано", "пропущен вручную · Мастер", "КБ1"),
-        ("Этап КБ", "В работе", "выставлен вручную · Мастер", "КБ1"),
+        ("Этап КБ", "В работе", "пропущен вручную · Мастер", "КБ1"),
+        ("Этап КБ", "ОТК", "пропущен вручную · Мастер", "КБ1"),
+        ("Этап КБ", "Принято складом", "выставлен вручную · Мастер", "КБ1"),
     ]
 
 
 def test_a_step_to_the_next_stage_has_no_skipped_rows(production):
-    _move(production, (_kit("КБ1", "Новый"),), "ТК готова")
+    _move(production, (_kit("КБ1", "Новый"),), "В работе")
 
-    assert _track(production) == [("Этап КБ", "ТК готова", "выставлен вручную · Мастер", "КБ1")]
+    assert _track(production) == [("Этап КБ", "В работе", "выставлен вручную · Мастер", "КБ1")]
 
 
 def test_a_backward_move_shows_from_to_and_the_reason(production):
@@ -80,10 +79,10 @@ def test_a_backward_move_shows_from_to_and_the_reason(production):
 
 
 def test_a_forward_pick_with_a_reason_keeps_it_on_the_target(production):
-    _move(production, (_kit("КБ1", "Новый"),), "ТК готова", reason="ТК сдана в обход системы")
+    _move(production, (_kit("КБ1", "Новый"),), "В работе", reason="работа начата в обход системы")
 
     assert _track(production) == [
-        ("Этап КБ", "ТК готова", "выставлен вручную · Мастер · причина: ТК сдана в обход системы", "КБ1"),
+        ("Этап КБ", "В работе", "выставлен вручную · Мастер · причина: работа начата в обход системы", "КБ1"),
     ]
 
 
@@ -94,23 +93,23 @@ def test_auto_shows_the_stage_is_back_on_facts(production):
 
 
 def test_blocker_set_and_removed(production):
-    _event(production, "block", 0, blocker="ХОЛД", text="ждём заказчика")
-    _event(production, "unblock", 5, blocker="ХОЛД")
+    _event(production, "block", 0, blocker="СТОП", text="ждём заказчика")
+    _event(production, "unblock", 5, blocker="СТОП")
 
     assert _track(production) == [
-        ("Блокер", "ХОЛД", "поставлен · Мастер · ждём заказчика", ""),
-        ("Блокер", "ХОЛД", "снят · Мастер", ""),
+        ("Блокер", "СТОП", "поставлен · Мастер · ждём заказчика", ""),
+        ("Блокер", "СТОП", "снят · Мастер", ""),
     ]
 
 
 def test_terminal_status_and_reopen(production):
     _event(production, "status", 0, value="Отменён", text="Отменён")
-    _move(production, (_kit("КБ1", "Новый"),), "ТК готова", minutes=10, reopen_from="Отменён", reason="заказчик вернулся")
+    _move(production, (_kit("КБ1", "Новый"),), "В работе", minutes=10, reopen_from="Отменён", reason="заказчик вернулся")
 
     assert _track(production) == [
         ("Статус проекта", "Отменён", "выставлен · Мастер", ""),
         ("Статус проекта", "Отменён", "возвращён в работу · Мастер · причина: заказчик вернулся", ""),
-        ("Этап КБ", "ТК готова", "выставлен вручную · Мастер · причина: заказчик вернулся", "КБ1"),
+        ("Этап КБ", "В работе", "выставлен вручную · Мастер · причина: заказчик вернулся", "КБ1"),
     ]
 
 

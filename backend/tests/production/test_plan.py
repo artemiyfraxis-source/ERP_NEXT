@@ -84,8 +84,11 @@ def test_project_stage_uses_farthest_fact_per_kit_and_slowest_kit_for_project():
         "tc": {first, second}, "kit": {first, second}, "work": {first},
         "stock": {first}, "shipped": set(),
     })
-    assert stage.status == "КБ набрана"
-    assert [item.status for item in stage.kits] == ["Принято складом", "КБ набрана"]
+    # 29.10: «ТК готова» / «КБ набрана» — отметки, не этапы: КБ2 без работы — «Новый» с обеими отметками.
+    assert stage.status == "Новый"
+    assert [item.status for item in stage.kits] == ["Принято складом", "Новый"]
+    assert [(item.tc, item.kit) for item in stage.kits] == [(True, True), (True, True)]
+    assert (stage.tc, stage.kit) == (True, True)
     assert project_stage("708К.4", ("КБ1",), {}, "Отменён").status == "Отменён"
     assert KIT_STAGES[-1] == "Отгружено"
 
@@ -132,13 +135,15 @@ def test_kit_stage_carries_techcard_and_kit_facts_under_a_manual_stage():
     ))
     stage = project_stage("708К.4", ("КБ1", "КБ2"), {"tc": {first}, "kit": {first}}, marks=marks)
 
+    # КБ2 «В работе» вручную: работа начата — «КБ набрана» да (правило листа), ТК — нет.
     assert [(item.status, item.manual, item.tc, item.kit) for item in stage.kits] == [
-        ("КБ набрана", False, True, True),
-        ("В работе", True, False, False),
+        ("Новый", False, True, True),
+        ("В работе", True, False, True),
     ]
+    assert (stage.tc, stage.kit) == (False, True)
     # A manual-techcard project counts «ТК выдана» for every KB without a card.
     manual_tc = project_stage("714К.", ("КБ1",), {"tc_project": {normalize_project_number("714К.")}})
-    assert (manual_tc.kits[0].status, manual_tc.kits[0].tc, manual_tc.kits[0].kit) == ("ТК готова", True, False)
+    assert (manual_tc.kits[0].status, manual_tc.kits[0].tc, manual_tc.kits[0].kit) == ("Новый", True, False)
 
 
 def test_stage_mark_without_kb_is_the_stage_of_a_project_without_kits():
@@ -169,6 +174,7 @@ def test_plan_shows_registry_project_without_kits_by_its_journal_stage_and_block
     events = (
         # Старая запись журнала со словом «КБ на складе» читается как «Принято складом».
         PlanEvent("70К.26.13", datetime(2026, 9, 28, 9), "план цеха", PLAN_KINDS["stage"], value="КБ на складе"),
+        # Старый блокер ХОЛД (журнал неизменяем) читается как «СТОП» (29.10).
         PlanEvent("70К.26.13", datetime(2026, 9, 28, 10), "план цеха", PLAN_KINDS["block"], "ХОЛД", "ждём оплату"),
     )
     rows = build_production_plan(
@@ -178,13 +184,13 @@ def test_plan_shows_registry_project_without_kits_by_its_journal_stage_and_block
     )
 
     assert [(row.project, row.stage.status, row.stage.manual) for row in rows] == [("70К.26.13", "Принято складом", True)]
-    assert rows[0].journal.blocker and rows[0].journal.blocker.type == "ХОЛД"
+    assert rows[0].journal.blocker and rows[0].journal.blocker.type == "СТОП"
+    assert rows[0].group == "hold"
 
 
-def test_manual_techcard_project_starts_at_ready_without_fake_card_rows():
-    assert project_stage(
-        "714К.", (), {"tc_project": {normalize_project_number("714К.")}},
-    ).status == "ТК готова"
+def test_manual_techcard_project_is_new_with_the_techcard_marker_without_fake_card_rows():
+    stage = project_stage("714К.", (), {"tc_project": {normalize_project_number("714К.")}})
+    assert (stage.status, stage.kits, stage.tc, stage.kit) == ("Новый", (), True, False)
 
 
 def test_deadline_and_note_validation_match_current_supplymap():

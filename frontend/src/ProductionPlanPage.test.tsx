@@ -23,10 +23,10 @@ const sheet = {
 
 const plan: ProductionPlanResult = {
   today: "2026-09-22", calendar_from: "2026-09-15", calendar_to: "2026-11-21",
-  shop_statuses: ["ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ", "ОТК", "НА ОТГР", "ГОТОВО", "ОТГРУЖЕН"],
+  shop_statuses: ["СТОП", "ПРВ КОМПЛ", "К ЗАПУСК", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ", "ОТК", "НА ОТГР", "ГОТОВО", "ОТГРУЖЕН"],
   supplied_values: ["НЕТ", "ДА", "Ч/Т"], arrival_values: ["Склад", "Ждем", "???"],
-  blockers: ["ХОЛД", "СТОП"],
-  stages: ["Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено"],
+  blockers: ["СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ"],
+  stages: ["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"],
   review_values: ["не проверена", "проверена", "с погрешностями"],
   rows: [{
     project: "708К.4", customer: "Заказчик", opened_on: "2026-09-01",
@@ -195,7 +195,7 @@ const board: ProductionPlanResult = {
   rows: [
     row({ project: "701К.1", customer: "Альфа", days_left: null, deadline: null }),
     row({ project: "702К.1", customer: "Бета", days_left: -2, deadline: "2026-09-20" }),
-    row({ project: "703К.1", customer: "Гамма", days_left: 5, deadline: "2026-09-27", blocker: { type: "ХОЛД", text: "оплата", since: "2026-09-21T09:00:00+03:00", who: "Мастер" } }),
+    row({ project: "703К.1", customer: "Гамма", days_left: 5, deadline: "2026-09-27", blocker: { type: "СТОП", text: "оплата", since: "2026-09-21T09:00:00+03:00", who: "Мастер" } }),
     row({ project: "704К.1", customer: "Дельта", days_left: 1, deadline: "2026-09-23", plan: null, stage: "ТК готова" }),
     row({ project: "705К.1", customer: "Эпсилон", terminal: true, stage: "Закрыт" }),
     row({ project: "706К.1", customer: "Зета", stage: "Отгружено" }),
@@ -210,7 +210,7 @@ it("groups the sheet by stage in the plan order, overdue first, closed last on d
   const groupedBoard: ProductionPlanResult = { ...board, rows: [
     row({ project: "701К.1", customer: "Альфа", days_left: null, deadline: null, stage: "В работе" }),
     row({ project: "702К.1", customer: "Бета", days_left: -2, deadline: "2026-09-20", stage: "В работе" }),
-    row({ project: "703К.1", customer: "Гамма", days_left: 5, deadline: "2026-09-27", stage: "Новый", blocker: { type: "ХОЛД", text: "Ждём", since: "2026-09-22", who: "Мастер" } }),
+    row({ project: "703К.1", customer: "Гамма", days_left: 5, deadline: "2026-09-27", stage: "Новый", blocker: { type: "СТОП", text: "Ждём", since: "2026-09-22", who: "Мастер" } }),
     row({ project: "704К.1", customer: "Дельта", days_left: 1, deadline: "2026-09-23", stage: "В работе" }),
     row({ project: "705К.1", customer: "Эпсилон", terminal: true, stage: "Отменён" }),
     row({ project: "706К.1", customer: "Зета", stage: "Отгружено" }),
@@ -227,7 +227,7 @@ it("groups the sheet by stage in the plan order, overdue first, closed last on d
   ]);
   expect(document.querySelector(".page-count")?.textContent).toBe("4");
   // The blocked project keeps its stage group and its chip.
-  expect(within(sheetRow("703К.1")).getByText("ХОЛД")).toBeInTheDocument();
+  expect(within(sheetRow("703К.1")).getByText("СТОП")).toBeInTheDocument();
   // A collapsed stage hides its rows and stays collapsed after a remount.
   fireEvent.click(screen.getByRole("button", { name: "В работе · 3" }));
   expect(projects()).toEqual(["703К.1"]);
@@ -251,7 +251,7 @@ it("groups the sheet by stage in the plan order, overdue first, closed last on d
   expect(screen.getByText("Под этот поиск проектов нет.")).toBeInTheDocument();
 });
 
-const STAGES = ["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"];
+const STAGES = ["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"];
 const names = (groups: ReturnType<typeof groupSheetRows>) => groups.map((group) => [group.label, group.rows.map((item) => item.project)]);
 
 it("groupSheetRows: groups follow the stage list, empty ones are hidden, closed go last", () => {
@@ -275,7 +275,7 @@ it("groupSheetRows: overdue first, no deadline last, project numbers compare num
 });
 
 it("groupSheetRows: a blocked project stays in its stage; an unknown stage goes after the known ones", () => {
-  const blocked = row({ project: "H", stage: "ОТК", blocker: { type: "ХОЛД", text: "", since: "2026-09-22", who: "" } });
+  const blocked = row({ project: "H", stage: "ОТК", blocker: { type: "СТОП", text: "", since: "2026-09-22", who: "" } });
   const groups = groupSheetRows([blocked, row({ project: "X", stage: "Новый" }), row({ project: "W", stage: "Неизвестный" })], STAGES);
   expect(names(groups)).toEqual([["Новый", ["X"]], ["ОТК", ["H"]], ["Неизвестный", ["W"]]]);
 });
@@ -359,7 +359,7 @@ it("keeps sheet helpers stable", () => {
   expect(autoHiddenColumns(1192, 46, false, 104, MIN_VISIBLE_WEEKS)).toEqual(["comment", "days_left", "zkp", "in_plan", "customer_supplied", "test_sb"]);
   expect(autoHiddenColumns(600, 24)).toEqual(["comment", "days_left", "zkp", "in_plan", "customer_supplied", "test_sb", "kit_checked", "ready", "tc_ready"]);
   expect(autoHiddenColumns(0, 24)).toEqual([]);
-  expect(markText({ field: "status", value: "ХОЛД", text: "" })).toBe("Статус: ХОЛД");
+  expect(markText({ field: "status", value: "СТОП", text: "" })).toBe("Статус: СТОП");
   expect(markText({ field: "kit_arrival", value: "2026-10-09", text: "" })).toBe("Приход комплектующих: 09.10.2026");
   expect(markText({ field: "status", value: "К ЗАПУСК, ОЖИД ИНФ", text: "" })).toBe("Статус: КБ набрана, ОЖИД ИНФ");
   expect(markText({ field: "in_plan", value: "авто", text: "" })).toBe("В плане: расчёт ERP");
@@ -482,14 +482,16 @@ it("shows the project stage in the shared chip with the blocker beside it and si
 
 it("sizes the status column by the stage chip and the blocker chip beside it", () => {
   expect(orderStatuses("В РАБОТЕ, СТОП")).toEqual(["СТОП", "В РАБОТЕ"]);
-  expect(orderStatuses("К ЗАПУСК, ОЖИД КОМПЛ, ХОЛД")).toEqual(["ОЖИД КОМПЛ", "ХОЛД", "К ЗАПУСК"]);
+  expect(orderStatuses("К ЗАПУСК, ОЖИД КОМПЛ, СТОП")).toEqual(["СТОП", "ОЖИД КОМПЛ", "К ЗАПУСК"]);
   const blocker = { type: "ОЖИД КОМПЛ", text: "", since: "", who: "" };
   const plain = statusColumnWidth([{ stage: "КБ на складе", blocker: null }]);
   const held = statusColumnWidth([{ stage: "КБ на складе", blocker }]);
   expect(plain).toBeGreaterThanOrEqual(84);
   expect(held).toBeGreaterThan(plain);
   expect(statusColumnWidth([])).toBe(84);
-  expect(held).toBeLessThanOrEqual(260);
+  expect(held).toBeLessThanOrEqual(400);
+  // Отметки «ТК готова» и «КБ набрана» рядом с этапом делают колонку шире.
+  expect(statusColumnWidth([{ stage: "В работе", blocker: null, tc_ready: true, kit_picked: false }])).toBeGreaterThan(statusColumnWidth([{ stage: "В работе", blocker: null }]));
 });
 
 it("changes the stage, blocks and closes a project without a card from the status chip, through the plan journal (one status everywhere)", async () => {
@@ -507,10 +509,10 @@ it("changes the stage, blocks and closes a project without a card from the statu
 
   // Блокер — с причиной, записью «Блокер» плана.
   let box = await menu();
-  fireEvent.click(within(box).getByRole("menuitem", { name: "ХОЛД" }));
-  fireEvent.change(screen.getByLabelText("Причина ХОЛД"), { target: { value: "ждём разъёмы" } });
+  fireEvent.click(within(box).getByRole("menuitem", { name: "СТОП" }));
+  fireEvent.change(screen.getByLabelText("Причина СТОП"), { target: { value: "ждём разъёмы" } });
   fireEvent.click(screen.getByRole("button", { name: "Поставить" }));
-  await waitFor(() => expect(payloads[0]).toMatchObject({ project: "709К.1", kind: "block", blocker: "ХОЛД", text: "ждём разъёмы" }));
+  await waitFor(() => expect(payloads[0]).toMatchObject({ project: "709К.1", kind: "block", blocker: "СТОП", text: "ждём разъёмы" }));
 
   // Закрытие проекта — запись «Статус проекта».
   box = await menu();

@@ -1161,6 +1161,10 @@ export interface ProductionPlanRow {
   /** Registry status is terminal (closed/cancelled): the row is dimmed and out of «В работе». */
   terminal: boolean;
   stage_manual: boolean;
+  tc_ready?: boolean;
+  kit_picked?: boolean;
+  tc_manual?: ProjectMarkerManual;
+  kit_manual?: ProjectMarkerManual;
   kits: Array<{
     item_index: string;
     status: string;
@@ -4559,6 +4563,10 @@ export interface KitsetTile {
   status: string;
   kb_stages: KitsetKbStage[];
   blocker: string;
+  tc_ready?: boolean;
+  kit_picked?: boolean;
+  tc_manual?: ProjectMarkerManual;
+  kit_manual?: ProjectMarkerManual;
 }
 
 export interface KitsetLot {
@@ -4731,6 +4739,10 @@ export interface KitsetCard {
   terminals?: string[];
   blockers?: string[];
   assemblies: KitsetAssembly[];
+  tc_ready?: boolean;
+  kit_picked?: boolean;
+  tc_manual?: ProjectMarkerManual;
+  kit_manual?: ProjectMarkerManual;
 }
 
 export interface KitsetJournalEvent {
@@ -4750,7 +4762,20 @@ export interface KitsetJournalEvent {
 /** Смена статуса проекта в один клик (POST …/status): этап на все КБ, «авто», закрытие, блокер. */
 export type ProjectStatusAction = { action: "status"; value: string; text?: string; reason?: string; preview_token?: string }
   | { action: "block"; value: string; text: string }
-  | { action: "unblock"; text?: string };
+  | { action: "unblock"; text?: string }
+  | { action: "marker"; field: ProjectMarkerField; value: ProjectMarkerValue };
+
+/** Отметки проекта «ТК готова» и «КБ набрана»: считаются по фактам, вручную — «да» / «нет», «авто» снимает ручную. */
+export type ProjectMarkerField = "tc_ready" | "kit_picked";
+export type ProjectMarkerValue = "да" | "нет" | "авто";
+/** Ручная отметка проекта: «да» / «нет»; null — считается по фактам. */
+export type ProjectMarkerManual = "да" | "нет" | null;
+export interface ProjectMarkers {
+  tc_ready?: boolean;
+  kit_picked?: boolean;
+  tc_manual?: ProjectMarkerManual;
+  kit_manual?: ProjectMarkerManual;
+}
 
 export interface KitsetLoadResult {
   project: string;
@@ -4917,6 +4942,8 @@ export const kitsetsApi = {
     api<StagePreview>(`${kitsetPath(project)}/status/preview?value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   setStatus: (project: string, payload: ProjectStatusAction) =>
     api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify(payload) }),
+  setMarker: (project: string, field: ProjectMarkerField, value: ProjectMarkerValue) =>
+    api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify({ action: "marker", field, value }) }),
   journal: (project: string, payload: { kind: "note" | "deadline"; text: string; deadline?: string | null }) =>
     api<{ card: KitsetCard }>(`${kitsetPath(project)}/journal`, { method: "POST", body: JSON.stringify(payload) }),
   setFolder: (project: string, url: string) =>
