@@ -8,7 +8,7 @@ export type Section =
   | "cabinet" | "card"
   | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement" | "purchasingrefs" | "primarydocs"
-  | "receiving" | "stock" | "equipment" | "issues" | "handout" | "intake" | "shipping" | "shipdata"
+  | "receiving" | "stock" | "equipment" | "issues" | "handout" | "intake" | "shipdata"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
 
 export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "docs" | "refs";
@@ -115,10 +115,10 @@ export const NAV: NavItem[] = [
   // its own access key (NAV-SECTIONS) so picking and writing off can go to different people.
   { id: "issues", label: "Запросы на комплектацию", sub: "заявки под КБ · набрать комплект", permission: "fulfillment", block: "stock" },
   { id: "handout", label: "Выдача со списанием", sub: "передать в цех · списать со склада", permission: "handout", block: "stock" },
-  // «Приёмка с производства» (владелец 14.10): всё, что в работе; склад принимает кусками, принятое встаёт в «Отгрузку».
-  { id: "intake", label: "Приёмка с производства", sub: "что в работе · принять кусками · данные отправки", anyPermission: ["shipping", "shipping_goods"], block: "stock" },
-  // «Отгрузка» (менеджер) и «Отгрузка — склад» (кладовщик) — два ключа матрицы, одна карточка: список читает любой из них.
-  { id: "shipping", label: "Отгрузка", sub: "готовая продукция · отправки", anyPermission: ["shipping", "shipping_goods"], block: "stock" },
+  // «Приёмка с производства» (владелец 14.10, 29.10): всё, что в работе, — принять, упаковать, отгрузить; экран «Отгрузка»
+  // убран, `?section=shipping` ведёт сюда (SECTION_ALIASES). «Отгрузка» (менеджер) и «Отгрузка — склад» (кладовщик) — два
+  // ключа матрицы, одна карточка: список читает любой из них.
+  { id: "intake", label: "Приёмка с производства", sub: "принять · упаковать · отгрузить", anyPermission: ["shipping", "shipping_goods"], block: "stock" },
   // Менеджмент
   // «Данные отправок» (владелец 28.10): менеджер (Ульяна) вносит данные для отгрузки — кладовщик без них не отправит.
   // Открывает правка «Отгрузки» (менеджер, администратор): тот же ключ, что у правки отправки на сервере.
@@ -144,9 +144,12 @@ export const MOVED_TABS: Readonly<Record<string, Readonly<Record<string, Section
   },
 };
 
+/** Sections that are gone, and where their old links land: «Отгрузка» merged into «Приёмка с производства» (owner 29.10). */
+export const SECTION_ALIASES: Readonly<Record<string, Section>> = { shipping: "intake" };
+
 /** The section a link to `section` + `tab` lands in now: the moved tab's new section, or `section` itself. */
 export function sectionOfTab(section: string, tab: string | null | undefined): string {
-  return (tab && MOVED_TABS[section]?.[tab]) || section;
+  return (tab && MOVED_TABS[section]?.[tab]) || SECTION_ALIASES[section] || section;
 }
 
 export function hasAccess(
