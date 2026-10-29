@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShipmentDataPage, dataGaps, dataRows, sentNote } from "./ShipmentDataPage";
+import { forgetPersonalViews } from "./personalViews";
 
 vi.mock("./ScanAgent", () => ({ useScanAgent: (start: (id?: string) => Promise<unknown>) => ({ begin: async () => start(), dialogs: () => null }), ScanDeviceLine: () => null }));
 
@@ -51,7 +52,7 @@ function stub(shipments: unknown[]) {
 const bodies = (suffix: string) => vi.mocked(fetch).mock.calls.filter(([target]) => String(target).endsWith(suffix)).map(([, init]) => JSON.parse(String(init?.body)));
 
 describe("ShipmentDataPage («Данные отправок»)", () => {
-  beforeEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
+  beforeEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); forgetPersonalViews(); });
 
   it("splits the list into seven stages with counts: «Упаковано» is open by default, «Все» holds the cancelled one too", async () => {
     stub([base, complete, working, shippedNoFile, shippedOld, closed, cancelled]);
@@ -327,5 +328,65 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     fireEvent.click(form.getByRole("button", { name: "Сохранить" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Закрытую или отменённую отгрузку нельзя менять");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  describe("cards view and forecast", () => {
+    /** The shipments stub plus the person's settings (`views`) and the workshop forecast. */
+    function stubWith(views: Record<string, unknown>, forecast: Record<string, unknown> = {}) {
+      const writes: Array<{ path: string; body: unknown }> = [];
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input), method = init?.method ?? "GET";
+        if (url === "/api/auth/ui-settings" && method === "GET") return json({ views });
+        if (url.startsWith("/api/auth/ui-settings/") && method === "PUT") { writes.push({ path: url, body: JSON.parse(String(init?.body)) }); return json({ view: "x", value: {} }); }
+        if (url === "/api/shipping/forecast") return json({ projects: forecast });
+        if (url === "/api/shipping/shipments") return json({ shipments: [base, complete] });
+        if (url === "/api/shipping/intake") return json({ rows: INTAKE });
+        return json({});
+      }));
+      return writes;
+    }
+
+    it("opens as a table by default; «Карточки» shows the same rows as cards, a card opens the shipment window, the choice is saved for the person", async () => {
+      const writes = stubWith({});
+      render(<ShipmentDataPage principal={principal} />);
+      expect(await screen.findByRole("table")).toBeInTheDocument();
+      const switcher = within(screen.getByRole("group", { name: "Вид списка" }));
+      expect(switcher.getByRole("button", { name: "Таблица" })).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(switcher.getByRole("button", { name: "Карточки" }));
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      const cardButton = await screen.findByRole("button", { name: "Открыть: ОТГ-20261028-01" });
+      expect(within(cardButton).getByText("ООО «ТСР»")).toBeInTheDocument();
+      expect(within(cardButton).getByText("Ждёт данных менеджера")).toBeInTheDocument();
+      expect(within(cardButton).getByText("02.11.2026")).toBeInTheDocument();
+      // the stage chip still filters the cards
+      fireEvent.click(within(screen.getByRole("group", { name: "Быстрый отбор" })).getByRole("button", { name: /^Все/ }));
+      expect(await screen.findByRole("button", { name: "Открыть: ОТГ-20261028-02" })).toBeInTheDocument();
+      fireEvent.click(cardButton);
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      await waitFor(() => expect(writes).toEqual([{ path: "/api/auth/ui-settings/shipment-data.view", body: { value: { mode: "cards" } } }]), { timeout: 2000 });
+    });
+
+    it("restores the saved view on reload: the server's choice wins", async () => {
+      stubWith({ "shipment-data.view": { mode: "cards" } });
+      render(<ShipmentDataPage principal={principal} />);
+      expect(await screen.findByRole("button", { name: "Открыть: ОТГ-20261028-01" })).toBeInTheDocument();
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Карточки" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("shows the workshop forecast next to the deadline: red when it is after the deadline, quiet when in time, nothing without a forecast", async () => {
+      stubWith({}, { "713К.4": { ready: "2026-11-05", status: "не успевает", slack_days: -3 } });
+      render(<ShipmentDataPage principal={principal} />);
+      expect(await screen.findByText("прогноз готовности 05.11.2026")).toHaveClass("tone-danger");
+      cleanup();
+      stubWith({}, { "713К.4": { ready: "2026-10-30", status: "в срок", slack_days: 3 } });
+      render(<ShipmentDataPage principal={principal} />);
+      expect(await screen.findByText("прогноз готовности 30.10.2026")).not.toHaveClass("tone-danger");
+      cleanup();
+      stubWith({}, {});
+      render(<ShipmentDataPage principal={principal} />);
+      await screen.findByText("ОТГ-20261028-01");
+      expect(screen.queryByText(/прогноз готовности/)).not.toBeInTheDocument();
+    });
   });
 });
