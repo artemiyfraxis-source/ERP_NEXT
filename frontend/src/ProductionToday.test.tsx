@@ -27,7 +27,7 @@ function line(overrides: Partial<TodayLine>): TodayLine {
 
 const DATA: ShopToday = {
   today: "2026-10-29", now: "2026-10-29T10:31:00+03:00", working_day: true, shift: { start: "09:00", finish: "17:30" },
-  site: "ЦАР", sites: ["ЦАР", "ЖУК"], can_switch: false, handover: false,
+  site: "ЦАР", sites: ["ЦАР", "ЖУК"], can_switch: false,
   people: [
     { id: "p1", name: "Оператор", state: "работает", work: { ...OP, since: "2026-10-29T09:05:00+03:00", paused_since: null },
       downtime: null, absence: null, planned: 2, done: 1, next: null },
