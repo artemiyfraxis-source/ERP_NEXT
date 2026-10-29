@@ -24,6 +24,10 @@ const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 const PERSON_TONE: Record<TodayPerson["state"], Tone> = {
   "работает": "info", "пауза": "warning", "простой": "danger", "отсутствует": "neutral", "свободен": "neutral",
 };
+const PERSON_TITLE: Record<TodayPerson["state"], string> = {
+  "работает": "Открыта работа в «Заданиях»", "пауза": "Работа на паузе", "простой": "Отмечен простой",
+  "отсутствует": "Отсутствие в «Календаре цеха»", "свободен": "Нет открытой работы и простоя",
+};
 const LINE_TONE: Record<TodayLine["state"], Tone> = { "не начата": "neutral", "в работе": "info", "сделано": "success" };
 const STUCK_WORD: Record<TodayStuck["kind"], string> = {
   downtime: "простой", blocker: "блокер", skill: "нет допуска", input: "ждёт этап", etk: "нет ЭТК", kit: "нет комплекта",
@@ -187,7 +191,7 @@ function People({ people, today, openTask }: { people: TodayPerson[]; today: str
     <thead><tr><th scope="col">Монтажник</th><th scope="col">Состояние</th><th scope="col">Что делает</th><th scope="col" className="num">С</th><th scope="col" className="num">План дня</th></tr></thead>
     <tbody>{people.map((person) => <tr key={person.id}>
       <th scope="row">{person.name}</th>
-      <td><StatusChip tone={PERSON_TONE[person.state]}>{person.state}</StatusChip></td>
+      <td><StatusChip tone={PERSON_TONE[person.state]} title={PERSON_TITLE[person.state]}>{person.state}</StatusChip></td>
       <td className="td-what">{personWhat(person, today, openTask)}</td>
       <td className="num">{personSince(person, today)}</td>
       <td className="num">{person.planned ? `${person.done} из ${person.planned}` : <span className="muted">—</span>}</td>
@@ -210,22 +214,28 @@ function personSince(person: TodayPerson, today: string) {
 }
 
 function Plan({ lines, today, openTask }: { lines: TodayLine[]; today: string; openTask?: (taskId: string, operationId?: string) => void }) {
+  // Сделанное за день свёрнуто: мастеру важнее, что осталось; счётчик «N из M» — в заголовке панели.
+  const [showDone, setShowDone] = useState(false);
+  const done = lines.filter((line) => line.state === "сделано").length;
+  const shown = showDone ? lines : lines.filter((line) => line.state !== "сделано");
   const byPerson = new Map<string, TodayLine[]>();
-  for (const line of lines) byPerson.set(line.operator_name, [...(byPerson.get(line.operator_name) ?? []), line]);
+  for (const line of shown) byPerson.set(line.operator_name, [...(byPerson.get(line.operator_name) ?? []), line]);
   const people = [...byPerson.keys()].sort((a, b) => a.localeCompare(b, "ru"));
-  return <table className="grid td-table" aria-label="План на сегодня">
-    <thead><tr><th scope="col">Монтажник</th><th scope="col">Время</th><th scope="col">Операция</th><th scope="col" className="num">Сделано</th><th scope="col" className="num">Осталось</th><th scope="col">Статус</th></tr></thead>
+  return <>
+  {done > 0 && <label className="check-inline td-toggle"><input type="checkbox" checked={showDone} onChange={(event) => setShowDone(event.target.checked)} />показать сделанные ({done})</label>}
+  {shown.length === 0 ? <div className="empty">Всё на сегодня сделано.</div> : <table className="grid td-table" aria-label="План на сегодня">
+    <thead><tr><th scope="col">Монтажник</th><th scope="col">Время</th><th scope="col">Операция</th><th scope="col" className="num">Сделано</th><th scope="col">Статус</th></tr></thead>
     <tbody>{people.map((name) => <Fragment key={name}>{(byPerson.get(name) ?? []).map((line, index, own) => <tr key={`${line.operation_id}:${line.operator_id}`}>
       {index === 0 && <th scope="row" rowSpan={own.length}>{name}</th>}
       <td className={`num${line.late ? " danger-text" : ""}`} title={line.late ? "Плановый конец прошёл, не сдано" : undefined}>
         {when(line.planned_start, today)}–{when(line.planned_finish, today)}
       </td>
       <td className="td-what"><OperationText op={line} openTask={openTask} />{line.crew && <span className="td-sub"> · бригада</span>}</td>
-      <td className="num">{qty(line.done)} из {qty(line.quantity)}</td>
-      <td className="num">{line.remaining ? qty(line.remaining) : <span className="muted">—</span>}</td>
+      <td className="num" title={line.remaining ? `Осталось ${qty(line.remaining)} шт` : undefined}>{qty(line.done)} из {qty(line.quantity)}</td>
       <td><StatusChip tone={line.late && line.state !== "сделано" ? "danger" : LINE_TONE[line.state]}>{line.state}</StatusChip></td>
     </tr>)}</Fragment>)}</tbody>
-  </table>;
+  </table>}
+  </>;
 }
 
 function Handed({ data, openTask }: { data: ShopToday; openTask?: (taskId: string, operationId?: string) => void }) {
@@ -286,10 +296,10 @@ function Stuck({ items, today, fixOf }: { items: TodayStuck[]; today: string; fi
       const fix = fixOf(item);
       return <tr key={`${item.kind}:${item.task_id ?? item.project}:${item.item}:${item.operation_id ?? ""}:${index}`}>
         <th scope="row">{kb(item)}</th>
-        <td>{item.stage
+        <td className="td-what">{item.stage
           ? <>{item.position}. {item.stage}{item.operator_name && <span className="td-sub"> · {item.operator_name}</span>}</>
           : item.task_number || <span className="muted">{item.item ? "КБ" : "проект"}</span>}</td>
-        <td className="td-reason"><StatusChip tone={item.kind === "downtime" || item.kind === "blocker" ? "danger" : "warning"}>{STUCK_WORD[item.kind]}</StatusChip> {item.reason}
+        <td className={`td-reason td-${item.kind === "downtime" || item.kind === "blocker" ? "stop" : "wait"}`} title={STUCK_WORD[item.kind]}>{item.reason}
           {item.since && <span className="td-sub"> с {when(item.since, today)}</span>}</td>
         <td>{fix ? <button type="button" className="secondary small" onClick={fix}>{item.fix_label}</button> : <span className="td-sub">{item.fix_label}</span>}</td>
       </tr>;

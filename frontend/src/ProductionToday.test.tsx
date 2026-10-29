@@ -134,3 +134,15 @@ it("says what went wrong when the first load fails", async () => {
   render(<ProductionToday principal={MASTER} />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Раздел не открыт");
 });
+
+it("folds the operations done today behind a switch", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({
+    ...DATA, plan: [...DATA.plan, line({ operation_id: "o5", stage: "Резка", done: 10, remaining: 0, state: "сделано" })],
+  }));
+  render(<ProductionToday principal={MASTER} />);
+  const plan = await screen.findByRole("table", { name: "План на сегодня" });
+  expect(within(plan).queryByText("Резка")).toBeNull();
+  expect(screen.getByText("1 из 3")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: "показать сделанные (1)" }));
+  expect(within(screen.getByRole("table", { name: "План на сегодня" })).getByText("Резка")).toBeInTheDocument();
+});
