@@ -97,6 +97,9 @@ class ApplyInput(BaseModel):
     upd_date: date | None = None
     invoice_number: str = Field(default="", max_length=255)
     number: Literal["replace", "keep"] | None = None
+    # PDF, выгруженный из ЭДО (Ульяна 29.10.2026: подписанные УПД из ЭДО у неё в PDF): тип выбран «ЭДО» — файл
+    # остаётся ЭДО, хотя по байтам это скан.
+    edo: bool = False
 
 
 def _apply(shipment_id: UUID, payload: ApplyInput, principal: Principal, now: datetime, warehouse: Callable,
@@ -119,7 +122,7 @@ def _apply(shipment_id: UUID, payload: ApplyInput, principal: Principal, now: da
     take = payload.number != "keep" and bool(found)
     number = found if take else current
     day = (payload.upd_date or shipment.upd_date) if take else shipment.upd_date
-    kind = UpdType.EDO if is_edo_upload(file_name, content) else UpdType.PAPER
+    kind = UpdType.EDO if payload.edo or is_edo_upload(file_name, content) else UpdType.PAPER
     actor = principal.actor
 
     def attach():

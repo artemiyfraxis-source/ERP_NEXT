@@ -138,6 +138,20 @@ def test_a_paper_scan_becomes_the_paper_upd_file_and_a_filled_invoice_is_kept(de
     assert client.get("/api/shipping/project-addressee", params={"project": "591К.3"}).json()["addressee"]["invoice"] == "СЧ-1"
 
 
+
+def test_a_pdf_exported_from_edo_stays_edo_when_the_type_is_edo(desk):
+    client, sessions = desk
+    shipment = _get(client, _new_shipment(client))
+
+    applied = client.post(_url(shipment, "apply"), json={
+        "version": shipment["version"], "scan_file": _paper_scan(sessions), "upd_number": "772", "upd_date": "2026-10-21",
+        "edo": True,
+    }).json()
+
+    result = applied["shipment"]
+    assert (result["upd_type"], result["upd_number"]) == ("ЭДО", "772")
+    assert client.get(result["upd_url"]).content == PDF
+
 def test_a_different_number_already_on_the_shipment_is_never_overwritten_silently(desk):
     client, sessions = desk
     shipment = _new_shipment(client, upd_number="ОТ РУКИ-5")
