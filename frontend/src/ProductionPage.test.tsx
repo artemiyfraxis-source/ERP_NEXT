@@ -456,7 +456,7 @@ it("lets the master hand out operations of issued projects in a project window a
   expect(screen.getByText("без исполнителя 1 из 2")).toBeInTheDocument();
   expect(await screen.findByText("к запуску 1")).toBeInTheDocument(); // счётчик запуска приходит отдельным запросом
   expect(screen.getByText("ООО «Тест»")).toBeInTheDocument();
-  expect(screen.getByText("ТК на все КБ")).toBeInTheDocument();
+  expect(screen.queryByText("ТК на все КБ")).toBeNull(); // сказано отметкой «ТК готова» (владелец 29.10)
 
   await openBoardProject("591K.3");
   // Проект открывается окном (владелец 22.10): операции, исполнители, план; операция — своим окном поверх.

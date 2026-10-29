@@ -25,16 +25,13 @@ export function tileFacts(item: KitsetTile, statuses: string[]): Fact[] {
   const kit = kbs.filter((kb) => kb.kit).length;
   const index = statuses.indexOf(item.status);
   const shipped = statuses.indexOf("Отгружено");
-  const late = index >= statuses.indexOf("В работе") && index < shipped;
   // «Отменён» стоит после «Отгружено»: у закрытого проекта факты не нужны.
   if (!total || index > shipped) return [];
   const facts: Fact[] = [];
-  facts.push(tc === total ? { text: "ТК на все КБ", tone: "success", title: "Техкарты выданы на все КБ" }
-    : tc ? { text: `ТК ${tc} из ${total} КБ`, tone: "warning", title: "Техкарты выданы не на все КБ" }
-      : { text: "ТК нет", tone: "neutral", title: "Техкарт ещё нет" });
-  if (kit === total) facts.push({ text: "набрано на все КБ", tone: "success", title: "Комплектация набрана на все КБ" });
-  else if (kit) facts.push({ text: `набрано ${kit} из ${total} КБ`, tone: "warning", title: "Комплектация набрана не на все КБ" });
-  else if (late) facts.push({ text: "не набрано", tone: "neutral", title: "Заявки на комплектацию не набраны" });
+  // «Все» и «ни одной» уже сказаны отметками «ТК готова / не готова», «КБ набрана / не набрана» рядом с этапом
+  // (владелец 29.10: «не нужно раздувать статусы»); плитка добавляет только частичный счёт.
+  if (tc && tc < total) facts.push({ text: `ТК ${tc} из ${total} КБ`, tone: "warning", title: "Техкарты выданы не на все КБ" });
+  if (kit && kit < total) facts.push({ text: `набрано ${kit} из ${total} КБ`, tone: "warning", title: "Комплектация набрана не на все КБ" });
   return facts;
 }
 
