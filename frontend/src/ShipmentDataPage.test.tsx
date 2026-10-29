@@ -59,7 +59,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     render(<ShipmentDataPage principal={principal} />);
     const table = await screen.findByRole("table");
     const headers = within(table).getAllByRole("columnheader").map((cell) => cell.textContent?.replace(/[▲▼↑↓⇅]/gu, "").trim()).filter(Boolean);
-    expect(headers).toEqual(["№ отправки", "Проект", "Заказчик", "Статус", "Данные", "Срок"]);
+    expect(headers).toEqual(["№ отправки", "Проект", "Заказчик", "Статус", "Данные", "УПД", "Срок"]);
     const chips = within(screen.getByRole("group", { name: "Быстрый отбор" }));
     // 713К.4 (ОТК) стоит в живых отправках; проекты без живой отправки: 800К.1 (В работе), 810К.1 и 820К.3 (ждут производства).
     expect(chips.getAllByRole("button").map((button) => button.textContent)).toEqual([
@@ -238,6 +238,15 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(bodies("/head")).toEqual([{ version: 4, phone: "+7 900 111-22-33", terms: "ДОСТАВКА ТК", carrier: "СДЭК", shipping_point: "Тула, ул. Оружейная, 12" }]);
     expect(bodies("/documents")).toEqual([{ version: 5, upd_type: "ЭДО", upd_number: "474", upd_date: "2026-10-27", upd_url: "", track_number: "" }]);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("the «УПД» column shows type, № and the file link even for shipped ones", async () => {
+    stub([{ ...base, upd_type: "ЭДО", upd_number: "518", upd_url: "/api/shipping/files/f1" }]);
+    render(<ShipmentDataPage principal={principal} />);
+    const table = await screen.findByRole("table");
+    expect(within(table).getByRole("columnheader", { name: /УПД/ })).toBeInTheDocument();
+    expect(within(table).getByText("№ 518")).toBeInTheDocument();
+    expect(within(table).getByRole("link", { name: "файл" })).toHaveAttribute("href", "/api/shipping/files/f1");
   });
 
   it("has «Сканировать» and «Файл…», and no «+ Страница» before the first scan", async () => {

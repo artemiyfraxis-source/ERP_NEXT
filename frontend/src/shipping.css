@@ -88,4 +88,6 @@ table.ship-lines.ship-lines-compact td.ship-name { width: auto; min-width: 260px
 .data-card-head strong { font-size: 14px; font-variant-numeric: tabular-nums; }
 .data-card-project { font-size: 13px; overflow-wrap: anywhere; }
 .data-card-customer { font-size: 14px; font-weight: 600; }
+.ship-upd-cell { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; white-space: nowrap; }
+.data-card-upd { display: flex; gap: 2px 10px; align-items: baseline; font-size: 13px; }
 .data-card-due { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; font-size: 13px; }
