@@ -7,7 +7,8 @@ Numbering, as found in the БД.ОБ data (216 sheet rows, 12.10.2026):
 - Equipment, «Оборудование (ПР)» and «Инструмент» share one `ОБ.` sequence; «Матрицы» are mostly `ОСН.NNN`
   (26 of 33, the rest are the КВТ die sets `ОБ.069.k`). The prefix of a type is the one most of its rows use.
 
-Crimp tools: БД.ТЕР «Аппликатор» holds tool codes («S10/M10/M19/M49/A8», S — hand tool, M — matrix, A — applicator);
+Crimp tools: БД.ТЕР «Аппликатор» holds applicator codes («S10/M10/M19/M49/A8»; owner 29.10.2026: all three are applicators —
+M: ОТП format, pre-stripped wires only; A: for automatic machines; S: crimps unstripped wires);
 a record in БД.ОБ owns a code in «Код в базе терминалов» and the terminals that name it are what it crimps.
 """
 

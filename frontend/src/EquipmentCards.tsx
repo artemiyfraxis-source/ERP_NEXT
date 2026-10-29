@@ -4,7 +4,7 @@ import { PageWindow } from "./PageWindow";
 import { CrimpLinks } from "./CrimpLinks";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
-  CODE_KEY, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, crimpTypeOfCode, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
+  CODE_KEY, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, applicatorKindOf, codeOf, crimpTypeOfCode, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
   inventoryRange, invOf, nameOf, operationsOfModel, pick, placeOf, typeOf,
   type EquipmentModel,
 } from "./equipmentModel";
@@ -216,6 +216,8 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     { key: "name", title: "Наименование", value: (model) => model.name, grow: true },
     { key: "count", title: "Единиц", numeric: true, value: (model) => model.items.length, render: (model) => model.items.length > 1 ? `${model.items.length} шт.` : "1 шт." },
     { key: "type", title: "Тип", value: (model) => model.type, filter: true },
+    { key: "code", title: "Код", value: (model) => codeOf(model), render: (model) => <span className="tnum">{codeOf(model) || "—"}</span> },
+    { key: "kind", title: "Вид", value: (model) => applicatorKindOf(codeOf(model)), filter: true },
     { key: "article", title: "Артикул", value: (model) => model.article },
     { key: "maker", title: "Производитель", value: (model) => model.maker },
     { key: "place", title: "Расположение", value: (model) => model.places.map((item) => valueLabel("Расположение", item)).join(", "), filter: true },

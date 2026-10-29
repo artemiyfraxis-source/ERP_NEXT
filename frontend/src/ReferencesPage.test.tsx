@@ -545,6 +545,27 @@ it("«Аппликаторы» is a tab of its own; «＋» at an A-code of «К
   window.history.replaceState({}, "", "/");
 });
 
+it("an M-code and an S-code are applicators too (owner 29.10: M — ОТП, A — автомат, S — незачищенные)", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      { id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields("ОБ.010.1") },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    if (path === "/api/references/tech-operations/crimp-codes") return json({ owners: {}, missing: [{ code: "A8", count: 43 }, { code: "M10", count: 43 }] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  window.history.replaceState({}, "", "/");
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  expect(await screen.findByRole("button", { name: /^Аппликаторы · 0/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Создать запись для кода M10" }));
+  expect(await screen.findByLabelText("Тип")).toHaveValue("Аппликаторы");
+  expect(screen.getByLabelText("Код в базе терминалов")).toHaveValue("M10");
+  window.history.replaceState({}, "", "/");
+});
+
 it("a link from the global search opens its tab and fills the search with the word", async () => {
   window.history.replaceState({}, "", "/?section=references&tab=coax&q=sma");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
