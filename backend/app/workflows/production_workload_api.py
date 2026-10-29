@@ -15,12 +15,12 @@ from app.shared.http_auth import Principal, production_overview_principal
 from app.workflows.finished_goods import read_delivered
 from app.workflows.production_plan import project_deadline
 
-from .api import closed_kbs, production_uow_factory, techcards_uow_factory
-from .application import UnitOfWork, _shift
-from .domain import ProductionStatus
-from .launchable import ready_cards
-from .plan import kit_stage_key, normalize_project_number, summarize_journal
-from .workload import (
+from app.modules.production.api import closed_kbs, production_uow_factory, techcards_uow_factory
+from app.modules.production.application import UnitOfWork, _shift
+from app.modules.production.domain import ProductionStatus
+from app.modules.production.launchable import ready_cards
+from app.modules.production.plan import kit_stage_key, normalize_project_number, summarize_journal
+from app.modules.production.workload import (
     HORIZON_DAYS,
     KINDS,
     SHOP,
