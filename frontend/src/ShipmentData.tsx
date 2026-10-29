@@ -77,6 +77,9 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved }: { shipm
   const [updType, setUpdType] = useState<string>(shipment.upd_type ?? "");
   const [updNumber, setUpdNumber] = useState(shipment.upd_number);
   const [updDate, setUpdDate] = useState(shipment.upd_date ?? "");
+  // «Убрать файл»: the attached file is dropped on «Сохранить» (empty `upd_url`); «Отмена» keeps it.
+  const [removedUrl, setRemovedUrl] = useState("");
+  const fileShown = Boolean(shipment.upd_url) && shipment.upd_url !== removedUrl;
   const [note, setNote] = useState("");
   const [applying, setApplying] = useState(false);
   const [replacing, setReplacing] = useState<{ answer: WarehouseReceiptScan; typed: string } | null>(null);
@@ -138,10 +141,12 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved }: { shipm
       if (Object.keys(head).length) current = (await shippingApi.head(shipment.id, { version: current.version, ...head })).shipment;
       const number = noUpd ? "" : updNumber.trim();
       const day = noUpd ? "" : updDate;
-      if (updType !== (current.upd_type ?? "") || number !== current.upd_number || day !== (current.upd_date ?? "")) {
+      const url = removedUrl && current.upd_url === removedUrl ? "" : current.upd_url;
+      if (updType !== (current.upd_type ?? "") || number !== current.upd_number || day !== (current.upd_date ?? "")
+        || url !== current.upd_url) {
         current = (await shippingApi.documents(shipment.id, {
           version: current.version, upd_type: updType || null, upd_number: number, upd_date: day || null,
-          upd_url: current.upd_url, track_number: current.track_number,
+          upd_url: url, track_number: current.track_number,
         })).shipment;
       }
       await onSaved();
@@ -183,7 +188,12 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved }: { shipm
               onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; if (files.length) void scan.fromFiles(files); }} />
           </span>
           {!edoType && <ScanDeviceLine />}
-          {shipment.upd_url && <a className="ship-upd-link" href={shipment.upd_url} target="_blank" rel="noreferrer">{edoType ? "Файл ЭДО" : "Скан УПД"} · открыть</a>}
+          {fileShown && <span className="ship-upd-attached">
+            <a className="ship-upd-link" href={shipment.upd_url} target="_blank" rel="noreferrer">{edoType ? "Файл ЭДО" : "Скан УПД"} · открыть</a>
+            <button type="button" className="secondary small" onClick={() => setRemovedUrl(shipment.upd_url ?? "")}>Убрать файл</button>
+          </span>}
+          {!fileShown && removedUrl && shipment.upd_url === removedUrl && <span className="ship-upd-removed">Файл уберётся при сохранении ·{" "}
+            <a href="#" onClick={(event) => { event.preventDefault(); setRemovedUrl(""); }}>Вернуть</a></span>}
           {(scan.statusText || applying || note) && <p className={`wr-scan-status${scan.error ? " error" : ""}`} role="status">
             {applying ? "Вношу УПД в отправку…" : scan.statusText || note}
             {scan.status ? <> <a href="#" onClick={(event) => { event.preventDefault(); scan.cancel(); }}>Отменить</a></> : null}

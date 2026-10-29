@@ -21,6 +21,8 @@
 .ship-docs-cell { white-space: nowrap; color: var(--muted-foreground); }
 .ship-docs-cell .ship-doc-link { min-height: 0; padding: 0; color: var(--foreground); vertical-align: baseline; }
 .ship-upd-link { color: var(--primary); white-space: nowrap; }
+.ship-upd-attached { display: inline-flex; align-items: center; gap: 8px; }
+.ship-upd-removed { color: var(--muted-foreground); white-space: nowrap; }
 /* «Ещё» в панели инструментов «На складе»: редкие действия под одной кнопкой. */
 .ship-menu { position: relative; display: inline-block; }
 .ship-menu > summary { display: inline-flex; align-items: center; cursor: pointer; list-style: none; min-height: 32px; box-sizing: border-box; }

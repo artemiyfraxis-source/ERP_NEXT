@@ -179,6 +179,22 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(form.getByLabelText("№ УПД")).toHaveValue("РЭ-0915/1");
   });
 
+  it("«Убрать файл» drops the attached file on «Сохранить»; «Вернуть» keeps it", async () => {
+    stub([{ ...APPLIED, version: 4 }]);
+    render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByText("ОТГ-20261028-01"));
+    const form = within(screen.getByRole("dialog", { name: "Данные отправки ОТГ-20261028-01" }));
+    fireEvent.click(form.getByRole("button", { name: "Убрать файл" }));
+    expect(form.queryByRole("link", { name: "Файл ЭДО · открыть" })).not.toBeInTheDocument();
+    fireEvent.click(form.getByRole("link", { name: "Вернуть" }));
+    expect(form.getByRole("link", { name: "Файл ЭДО · открыть" })).toBeInTheDocument();
+    fireEvent.click(form.getByRole("button", { name: "Убрать файл" }));
+    expect(form.getByText(/Файл уберётся при сохранении/)).toBeInTheDocument();
+    fireEvent.click(form.getByRole("button", { name: "Сохранить" }));
+    await waitFor(() => expect(bodies("/documents")).toHaveLength(1));
+    expect(bodies("/documents")).toEqual([{ version: 4, upd_type: "ЭДО", upd_number: "РЭ-0915", upd_date: "2026-09-15", upd_url: "", track_number: "" }]);
+  });
+
   it("never replaces a typed № silently: asks first, «Оставить мой №» sends keep, «Заменить» sends replace", async () => {
     stub([base]);
     render(<ShipmentDataPage principal={principal} />);
