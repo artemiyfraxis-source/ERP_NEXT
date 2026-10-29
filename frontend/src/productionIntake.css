@@ -1,6 +1,11 @@
 /* «Приёмка с производства»: свои мелочи; остальное — общие классы (.ship-take, .ship-accept-bar, .seg-tabs, .form-grid). */
 .intake-group { display: inline-flex; align-items: center; gap: 12px; }
 .intake-group .small { font-weight: 400; }
+/* Кладовщик (владелец 29.10, Алексей): проект и заказчик крупно, КБ — обычным, всё крупнее — путался. */
+.intake-group-title { font-size: 16px; font-weight: 700; }
+.intake-kb { font-weight: 400; }
+.intake-page .data-table .grid td { font-size: 14px; }
+.intake-page .data-table .grid th { font-size: 13px; }
 .intake-page .seg-tabs { margin-bottom: 10px; }
 .intake-page .ship-handoff { margin-top: 16px; }
 .ship-inline .intake-location { width: 170px; flex: none; padding: 4px 8px; }
@@ -15,7 +20,7 @@
 .intake-clip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .intake-name { max-width: clamp(200px, 16vw, 640px); }
 /* Плотные строки ≈ 32 px: поля количества и места — 26 px (на планшете min-height 40 из блока pointer: coarse). */
-.intake-page .data-table .grid td { padding-top: 3px; padding-bottom: 3px; }
+.intake-page .data-table .grid td { padding-top: 5px; padding-bottom: 5px; }
 .intake-page .ship-take .ship-qty, .intake-page .intake-place { height: 26px; padding-top: 2px; padding-bottom: 2px; }
 .intake-stage { max-width: 120px; }
 .intake-place { width: 116px; padding: 3px 8px; }

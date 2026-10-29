@@ -77,7 +77,7 @@ describe("Приёмка с производства", () => {
     expect(screen.queryByText("Шлейф")).not.toBeInTheDocument(); // в «Можно принять» только то, что сдано
     const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent ?? "");
     for (const gone of ["Принять, шт", "Этап", "Сдано цехом", "Место хранения"]) expect(headers.some((text) => text.includes(gone))).toBe(false);
-    expect(headers.map((text) => text.replace(/[^А-Яа-яЁё ]/g, "").trim())).toEqual(["КБ", "Наименование", "Заказано", "Можно принять", "Задания"]);
+    expect(headers.map((text) => text.replace(/[^А-Яа-яЁё ]/g, "").trim())).toEqual(["КБ", "Наименование", "Заказано", "Можно принять"]);
     expect(screen.queryByLabelText("Сколько принять 591К.3 КБ1")).not.toBeInTheDocument(); // поля в строке нет
     fireEvent.click(screen.getByRole("button", { name: "Принять 591К.3 КБ1: можно 20" }));
     const dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
@@ -162,8 +162,15 @@ describe("Приёмка с производства", () => {
     expect(screen.getByRole("tab", { name: /^Готово/ })).toHaveTextContent("0");
   });
 
-  it("«Данные отправки»: сохраняет с версией только изменённое из четырёх полей", async () => {
+  it("кладовщику без права на отправки «Данные отправки» и задания цеха не показываются", async () => {
     render(<ProductionIntakePage principal={principal} />);
+    await screen.findByText("Жгут");
+    expect(screen.queryByRole("button", { name: "Данные отправки" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /Задания/ })).not.toBeInTheDocument();
+  });
+
+  it("«Данные отправки»: сохраняет с версией только изменённое из четырёх полей", async () => {
+    render(<ProductionIntakePage principal={admin} />);
     await screen.findByText("Жгут");
     fireEvent.click(screen.getAllByRole("button", { name: "Данные отправки" })[0]);
     const receiver = await screen.findByLabelText("Получатель");
@@ -185,7 +192,7 @@ describe("Приёмка с производства", () => {
   });
 
   it("конфликт версии при сохранении просит открыть карточку заново", async () => {
-    render(<ProductionIntakePage principal={principal} />);
+    render(<ProductionIntakePage principal={admin} />);
     await screen.findByText("Жгут");
     fireEvent.click(screen.getAllByRole("button", { name: "Данные отправки" })[0]);
     await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue("Получатель"));
@@ -480,8 +487,8 @@ describe("Приёмка с производства: упаковка и отг
       .flatMap((tr) => [...tr.querySelectorAll("button")].map((button) => button.getAttribute("aria-label") ?? button.textContent ?? ""));
     const expected: Array<[RegExp, string[], RegExp | null]> = [
       [/^В ожидании/, ["КБ", "Наименование", "Заказано"], null],
-      [/^В производстве/, ["КБ", "Наименование", "Заказано", "Запущено", "Можно принять", "Задания"], /^Принять 591К\.3 КБ1/],
-      [/^Готово/, ["КБ", "Наименование", "Заказано", "Можно принять", "Задания"], /^Принять 591К\.3 КБ1/],
+      [/^В производстве/, ["КБ", "Наименование", "Заказано", "Запущено", "Можно принять"], /^Принять 591К\.3 КБ1/],
+      [/^Готово/, ["КБ", "Наименование", "Заказано", "Можно принять"], /^Принять 591К\.3 КБ1/],
       [/^Принято/, ["КБ", "Наименование", "Принято", "Дата приёмки", "ГРН", "Упаковано"], /^Упаковать|^Упаковка|^Печать этикетки/],
       [/^Упаковано/, ["КБ", "Наименование", "Упаковано", "Трек"], /^(Трек|Без УПД) 591К\.3 КБ1/],
       [/^На отгрузку/, ["КБ", "Наименование", "Упаковано", "Трек", "Отгрузка"], /^Отгрузить 591К\.3 КБ1/],
