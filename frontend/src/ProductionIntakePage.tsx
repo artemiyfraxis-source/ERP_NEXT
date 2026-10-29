@@ -13,7 +13,7 @@ import { IntakeWindow, leftOf } from "./IntakeWindow";
 import { PrintOutcome, type PrintResult } from "./LabelPrint";
 import { PackWindow } from "./PackWindow";
 import { PrintSetupButton } from "./PrintSetupWindow";
-import { ACTIVE, needsTrack, readyForTrack, type CardRights } from "./ShipmentCard";
+import { ACTIVE, needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, type CardRights } from "./ShipmentCard";
 import { CreateShipmentWindow, JournalWindow, RegisterGoodWindow } from "./ShipmentJournal";
 import { ShipWindow } from "./ShipWindow";
 import { TrackWindow } from "./TrackWindow";
@@ -85,7 +85,7 @@ function defaultTab(rows: IntakeRow[], pieces: (row: IntakeRow) => Pieces, wareh
   return "all";
 }
 
-type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; row: IntakeRow };
+type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; row: IntakeRow } | { kind: "noupd"; shipment: DispatchShipment };
 
 export function ProductionIntakePage({ principal }: { principal: Principal }) {
   // Принимает, упаковывает и отгружает кладовщик («Отгрузка — склад»); менеджер («Отгрузка») — данные отправки, заявки.
@@ -205,10 +205,19 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const needing = action ? trackShips(row) : [];
     const tracks = (needing.length ? needing : kbShips(row)).map((shipment) => shipment.track_number).filter(Boolean);
     const text = tracks.length ? <span className="intake-clip intake-tracks" title={tracks.join(", ")}>{tracks.join(", ")}</span> : null;
-    if (!needing.length || !canDispatch) return text ?? dash;
+    if (!canDispatch || !action) return text ?? dash;
+    // Одно действие на строку: «Трек…», когда можно; «Без УПД…», когда держит только УПД; иначе выключенный «Трек…» с причиной.
+    const packedShips = kbShips(row).filter((shipment) => shipment.status === "Упакована");
     const ready = needing.some((shipment) => readyForTrack(shipment) || Boolean(shipment.track_number));
+    const noUpd = canWarehouse && !ready ? packedShips.find(onlyUpdBlocks) : undefined;
+    if (noUpd) return <span className="intake-track-cell">{text}
+      <button type="button" className="secondary small intake-print" title="Отгрузка без УПД: разрешает уполномоченный по ПИН" aria-label={`Без УПД ${who(row)}`}
+        onClick={() => setOpened({ kind: "noupd", shipment: noUpd })}>Без УПД…</button></span>;
+    if (!needing.length) return text ?? dash;
+    const gaps = [...new Set(needing.flatMap((shipment) => shipment.missing_ship))];
     return <span className="intake-track-cell">{text}
-      <button type="button" className="secondary small intake-print" disabled={!ready} title={ready ? "Вписать трек-номер ТК" : "Трек вносится, когда есть УПД и ТК"}
+      <button type="button" className="secondary small intake-print" disabled={!ready}
+        title={ready ? "Вписать трек-номер ТК" : `Трек вносится, когда есть УПД и ТК${gaps.length ? ` — не хватает: ${gaps.join(", ")}` : ""}. Ждём данные менеджера`}
         aria-label={`Трек ${who(row)}`} onClick={() => setOpened({ kind: "track", row })}>Трек…</button></span>;
   };
   /** «Отгружено»: число — кнопка окна отправок проекта; подсвечена, когда есть готовое к отгрузке. */
@@ -318,6 +327,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {opened?.kind === "pack" && <PackWindow project={opened.project} rows={projectRows(opened.project)} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "ship" && <ShipWindow project={opened.project} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "track" && <TrackWindow title={who(opened.row)} shipments={trackShips(opened.row)} reload={reload} close={() => setOpened(null)} />}
+    {opened?.kind === "noupd" && <NoUpdWindow shipment={opened.shipment} mutate={(key, operation, message) => mutateBoxes(key, operation, typeof message === "string" ? message : "Готово")} close={() => setOpened(null)} />}
     {header === "journal" && <JournalWindow shipments={shipments} close={() => setHeader(null)} />}
     {header === "good" && <RegisterGoodWindow reload={reload} close={() => setHeader(null)} />}
     {header === "request" && <CreateShipmentWindow reload={reload} close={() => setHeader(null)} />}

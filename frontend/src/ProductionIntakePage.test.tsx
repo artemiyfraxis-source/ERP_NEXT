@@ -358,10 +358,20 @@ describe("Приёмка с производства: упаковка и отг
     intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
     shipments = [packedShipment];
     const { unmount } = render(<ProductionIntakePage principal={principal} />);
+    // Держит только УПД — единственная кнопка строки «Без УПД…» открывает окно с ПИН.
+    fireEvent.click(await screen.findByRole("button", { name: "Без УПД 591К.3 КБ1" }));
+    expect(await screen.findByRole("dialog", { name: "Отгрузка без УПД · ОТГ-20261029-01" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Трек 591К.3 КБ1" })).not.toBeInTheDocument();
+    unmount();
+    // Держит ещё и другое (адрес) — выключенный «Трек…» с причиной.
+    shipments = [{ ...packedShipment, missing_ship: ["№ УПД", "адрес доставки", "трек-номер"] }];
+    const second = render(<ProductionIntakePage principal={principal} />);
     const off = await screen.findByRole("button", { name: "Трек 591К.3 КБ1" });
     expect(off).toBeDisabled();
-    expect(off).toHaveAttribute("title", "Трек вносится, когда есть УПД и ТК");
-    unmount();
+    expect(off.getAttribute("title")).toContain("не хватает: № УПД, адрес доставки, трек-номер");
+    expect(screen.queryByRole("button", { name: "Без УПД 591К.3 КБ1" })).not.toBeInTheDocument();
+    second.unmount();
+    shipments = [packedShipment];
 
     shipments = [{ ...packedShipment, upd_number: "У-7", missing_data: [], missing_ship: ["трек-номер"], ready_for_track: true }];
     render(<ProductionIntakePage principal={principal} />);
@@ -473,7 +483,7 @@ describe("Приёмка с производства: упаковка и отг
       [/^В производстве/, ["КБ", "Наименование", "Заказано", "Запущено", "Остаток", "Задания"], null],
       [/^Готово/, ["КБ", "Наименование", "Заказано", "Можно принять", "Задания"], /^Принять 591К\.3 КБ1/],
       [/^Принято/, ["КБ", "Наименование", "Принято", "Дата приёмки", "ГРН", "Упаковано"], /^Упаковать|^Упаковка|^Печать этикетки/],
-      [/^Упаковано/, ["КБ", "Наименование", "Упаковано", "Трек"], /^Трек 591К\.3 КБ1/],
+      [/^Упаковано/, ["КБ", "Наименование", "Упаковано", "Трек"], /^(Трек|Без УПД) 591К\.3 КБ1/],
       [/^На отгрузку/, ["КБ", "Наименование", "Упаковано", "Трек", "Отгрузка"], /^Отгрузить 591К\.3 КБ1/],
       [/^Отгружено/, ["КБ", "Наименование", "Отгружено", "Трек", "Дата отгрузки"], null],
     ];
