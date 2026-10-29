@@ -81,7 +81,7 @@ it("confirms one row with its stages, norms and site, then launches it", async (
 });
 
 it("launches the selected rows in one batch and shows a refused one", async () => {
-  const launch = vi.fn(() => ({
+  const launch = vi.fn((_body: { items: unknown[] }) => ({
     created: [{ id: "t1", number: "ПЗ-26-0015", project: "713К.4", item: "КБ1", quantity: 300, techcard_id: "tc-1" }],
     refused: [{ techcard_id: "tc-2", reason: "Техкарта 776К.1 КБ2 перевыпущена — обновите доску" }],
   }));
@@ -96,7 +96,7 @@ it("launches the selected rows in one batch and shows a refused one", async () =
   fireEvent.click(within(confirm).getByRole("button", { name: "Запустить 2 задания" }));
 
   await waitFor(() => expect(launch).toHaveBeenCalledTimes(1));
-  expect(launch.mock.calls[0][0].items).toHaveLength(2);
+  expect(launch.mock.calls[0]?.[0].items).toHaveLength(2);
   expect(await screen.findByText(/Не запущено: 776К.1 КБ2 — Техкарта 776К.1 КБ2 перевыпущена/)).toBeTruthy();
 });
 
