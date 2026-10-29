@@ -356,7 +356,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
             </select>
           </label>}
           {projectRow && <div className="autoplan-scope">
-            <span>{kind === "asap" ? workText(includedTasks.length, includedNew.length) : workText(tasks.length, ready.length)} проекта{kind === "asap" && included < listed ? ` · снято ${listed - included}` : ""}{skipped.length ?` · без тиража: ${skipped.map((item) => kbLabel(item.project, item.index)).join(", ")}` : ""}</span>
+            <span>{kind === "asap" && !included && listed ? "КБ проекта не отмечены" : kind === "asap" ? `${workText(includedTasks.length, includedNew.length)} проекта` : `${workText(tasks.length, ready.length)} проекта`}{kind === "asap" && included < listed ? ` · снято ${listed - included}` : ""}{skipped.length ?` · без тиража: ${skipped.map((item) => kbLabel(item.project, item.index)).join(", ")}` : ""}</span>
             <small>Другие проекты остаются как есть; их работа — занятость людей.</small>
           </div>}
           {kind === "asap" && listed > 0 && <section className="autoplan-tasks" aria-label="КБ проекта">
