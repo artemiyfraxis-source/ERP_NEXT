@@ -1,0 +1,32 @@
+/* «Норма и факт» (ProductionNormFact): две плотные таблицы и окно фактов. Цвета — токены :root. */
+
+.nf-report { display: grid; gap: 12px; padding: 16px; }
+.nf-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.nf-head h2 { margin: 0; }
+.nf-period { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.nf-period label { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted-foreground); }
+.nf-period input { width: auto; }
+.nf-period button.on { border-color: var(--primary); color: var(--primary); background: var(--sheet-selected); }
+.nf-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted-foreground); }
+.nf-legend span { font-weight: 600; }
+.nf-close { margin-left: auto; }
+.nf-summary { display: flex; flex-wrap: wrap; gap: 8px 32px; margin: 0; }
+.nf-summary div { display: grid; gap: 2px; }
+.nf-summary dt { font-size: 12px; color: var(--muted-foreground); }
+.nf-summary dd { margin: 0; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.nf-title { margin: 4px 0 0; font-size: 14px; font-weight: 600; }
+
+.nf-num, .nf-ratio { font-variant-numeric: tabular-nums; }
+.nf-ratio { font-weight: 600; }
+.nf-ok { color: var(--tone-ok); }
+.nf-slow { color: var(--tone-warn); }
+.nf-fast { color: var(--tone-info); }
+.nf-few { color: var(--muted-foreground); font-style: italic; }
+.nf-muted { color: var(--muted-foreground); }
+.nf-code { display: block; color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+.nf-suggest { font-size: 13px; }
+.nf-suggest a { white-space: nowrap; }
+
+@media (pointer: coarse) {
+  .nf-report button { min-height: 40px; }
+}
