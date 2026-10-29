@@ -12,6 +12,7 @@ import { markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type 
 import { pickWireMarkTube, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkKey, wireMarkRow, wireMarkTexts, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
+import { LUG_CRIMP_CARD, LUG_CRIMP_NAMES, lugArt, lugByArt, lugCrimpOf, lugTypes, type LugCrimp, type LugRec } from "./tcGenLugs";
 
 /** `art` — what the row actually uses (selects, gauge, terminals, ETK); `kd` — the КД article it replaced, display only. */
 export type Comp = { id: string; type: string; name: string; art: string; title?: string; kd?: string; qty: number | string; length?: number };
@@ -54,6 +55,8 @@ export type GenData = {
   markMats?: MarkMat[];
   /** Кабели и провода из БД.ПРОВ (cableRecFromFields): число жил, цвета жил по порядку, экран. */
   cableRecords?: CableRec[];
+  /** Наконечники справочника (tcGenLugs.lugRecordsOf) — «Свободные концы» → «Наконечник». */
+  lugRecords?: LugRec[];
 };
 
 /** Строка «Термоусадки на жгут». `auto` (владелец 17.10, 713К.4 КБ1): true — засев из состава, владелец её не трогал:
@@ -296,6 +299,11 @@ export type GenState = {
   /** «Свободные концы» → «Зачистка и лужение хвостов» (владелец 16.10, 2–3 мм): концы S.tails зачищаются и лудятся — и при
    *  разъёмах стороны В. Нет поля (формы до 16.10) — выключено. Включено — заделка трубкой (cap) не делается. */
   tailTin?: { enabled: boolean; strip: string };
+  /** «Свободные концы» → «Наконечник» (владелец 29.10: «нет возможности сделать на свободные концы НШВИ, НКИ и т.д.»): концы
+   *  S.tails обжимаются наконечниками. `type` — тип по справочнику наконечников («НШВИ»; пусто — по составу), `arts` — артикул
+   *  наконечника на провод (ключ — idx строки «Кабели»; нет — подбор по сечению). Нет поля (формы до 29.10) — выключено.
+   *  Длина зачистки — из записи наконечника, нет — «Зачистка хвоста» (tailTin.strip); припуски L+/L− — как у контактов. */
+  tailLug?: { enabled: boolean; type: string; arts?: Record<string, string> };
   wrap: { enabled: boolean; slots: WrapSlot[] };
   /** «Термоусадка на место разделки» по сторонам — форма до переноса в строку «Кабели» (WireEntry.jacketShrink): читается
    *  запасным значением для кабеля без своего поля и больше не пишется (setCableJacketShrink). */
@@ -442,6 +450,8 @@ export type OpSpec = {
   sleeveItems?: Array<{ art: string; name: string; count: number }>;
   /** Чья операция ПФ «Сложной сборки» — ветвь («А1 «5»») или группа сростков («С1, С2»): в ключе операции ЭТК. */
   branch?: string;
+  /** Опрессовка наконечников хвостов: провода (idx строки «Кабели») и число концов каждого с этим наконечником. */
+  lugEnds?: Array<{ idx: number; units: number }>;
 };
 
 /** Схема полуфабрикатов, которую строит «Сложная сборка» (владелец 16.10): блоки — ПФ (`kit` — ПФ-комплект: партия резки,
@@ -1138,8 +1148,11 @@ export function makeGen(D: GenData, S: GenState) {
   function lugTmplHint_(art: string) {
     const s = String(art || "");
     if (!LUG_RE_.test(s)) return "";
-    const kind = /^\s*нши|^\s*ншви/i.test(s) ? /^PRS_НШВИ$/i : /^\s*тмл/i.test(s) ? /^PRS_ТМЛ$/i : /^PRS_[HН][KК]И\/НВИ\/РПИ$/i;
-    const t = (D.templates || []).find((x) => kind.test(String(x.title || "").split("|")[0].trim()));
+    return lugCardCode_(lugCrimpOf(s.trim()) || "lug");
+  }
+  /** Код карты опрессовки наконечников вида (tcGenLugs.LUG_CRIMP_CARD) в библиотеке; нет карты — "". */
+  function lugCardCode_(kind: LugCrimp) {
+    const t = (D.templates || []).find((x) => LUG_CRIMP_CARD[kind].test(String(x.title || "").split("|")[0].trim()));
     return t ? String(t.title).split("|")[0].trim() : "";
   }
   function stripCableTmpl_(c: Comp | null, screened = false) {
@@ -1198,7 +1211,7 @@ export function makeGen(D: GenData, S: GenState) {
   // концов под сростки» нет.
   const spliceStripAtCut_ = () => spliceEnds_() > 0;
   function capTube_() {
-    if (!isComplex_() || !S.cap.enabled || tailTinOn_() || !freeEnds_()) return null;
+    if (!isComplex_() || !S.cap.enabled || tailTinOn_() || tailLugOn_() || !freeEnds_()) return null;
     return getCompById(S.cap.tut) || null;
   }
   // ── Хвосты: зачистка и лужение ──
@@ -1245,6 +1258,121 @@ export function makeGen(D: GenData, S: GenState) {
   function tailTinOp_(ends: WireEnd[]): OpSpec {
     return { type: "tin", opKey: "tinTail", cat: "Лужение", ...(hasTemplateCode_("SDR_tin") ? { tmplHint: "SDR_tin" } : {}),
       wireIdxs: [...new Set(ends.map((e) => e.idx))], units: ends.length, label: `Лужение хвостов — ${ends.length} конц.` };
+  }
+  // ── Хвосты: наконечники ──
+  const tailLugOn_ = () => isComplex_() && !!S.tailLug?.enabled;
+  const lugRecs_ = () => D.lugRecords || [];
+  /** Типы наконечников справочника (без «ПМ» под пайку). */
+  const lugTypes_ = () => lugTypes(lugRecs_());
+  /** Тип наконечника хвостов: выбранный, иначе тип наконечника из состава, иначе НШВИ, иначе первый в справочнике. */
+  function tailLugType_() {
+    const types = lugTypes_();
+    const own = (S.tailLug?.type || "").trim();
+    if (own) return own;
+    const inBom = comps().map((c) => lugByArt(lugRecs_(), c.art || c.name || "")).find((r) => r && lugCrimpOf(r.type));
+    if (inBom) return inBom.type;
+    return types.find((t) => /^ншви$/i.test(t)) || types[0] || "";
+  }
+  /** Ширина диапазона сечений наконечника (мм², иначе AWG): узкий подходит точнее. */
+  function lugSpan_(r: LugRec) {
+    const g = terRange_(r);
+    if (!g) return Infinity;
+    return g.mm2Min != null ? g.mm2Max! - g.mm2Min : g.awgMax! - g.awgMin!;
+  }
+  /** Сечение провода под наконечник: AWG или мм² по базе монтажных проводов, марки вне базы — дробное число наименования
+   *  («НВ4 0,2 красный» → 0,2 мм², как сечение читает сервер), кабель «4x0,35» числом не считается. */
+  function lugGauge_(c: Comp | null) {
+    const g = wireGaugeOf_(c);
+    if (g.awg != null || g.mm2 != null || !c) return g;
+    const s = `${c.art || ""} ${c.name || ""}`;
+    if (/\d\s*[xх×*]\s*\d/i.test(s)) return g;
+    const m = /(?:^|\s)(\d+[.,]\d+)(?=\s|$)/.exec(s);
+    return m ? { awg: null, mm2: Number(m[1].replace(",", ".")) } : g;
+  }
+  /** Наконечники справочника под провод: диапазон сечений записан и провод в него входит. */
+  function lugsFor_(c: Comp | null, type?: string) {
+    const g = lugGauge_(c);
+    if (g.awg == null && g.mm2 == null) return [];
+    return lugRecs_().filter((r) => {
+      if ((type && r.type !== type) || !lugCrimpOf(r.type)) return false;
+      const fit = wireFitsTerminal_(g, terRange_(r));
+      return fit.basis !== "" && fit.ok;
+    });
+  }
+  /** Подбор наконечника по сечению (владелец 29.10): из наконечников типа под сечение провода — тот, что есть в составе,
+   *  иначе с самым узким диапазоном сечений, при равных — первый по артикулу. */
+  function autoLug_(c: Comp | null, type: string): LugRec | null {
+    const fit = lugsFor_(c, type);
+    if (!fit.length) return null;
+    const inBom = (r: LugRec) => (lugComp_(r) ? 1 : 0);
+    return fit.slice().sort((a, b) => inBom(b) - inBom(a) || lugSpan_(a) - lugSpan_(b)
+      || lugArt(a).localeCompare(lugArt(b), "ru", { numeric: true }))[0];
+  }
+  /** Наконечник в составе: строка состава с его артикулом (её наименование — в комплектующие ЭТК). */
+  const lugComp_ = (lug: LugRec) => comps().find((c) => !!lugByArt([lug], c.art || c.name || "")) || null;
+  /** Наконечники хвостов по проводам: провод, его концы-хвосты, сечение, наконечник (выбранный или по сечению), длина
+   *  зачистки (из записи наконечника, иначе «Зачистка хвоста») и припуски. `problem` — почему наконечника нет. */
+  function tailLugPlan_(): Array<{ idx: number; comp: Comp | null; ends: WireEnd[]; section: string; lug: LugRec | null; auto: boolean;
+    options: LugRec[]; others: LugRec[]; strip: string; stripFromDb: boolean; problem: string }> {
+    if (!tailLugOn_()) return [];
+    const type = tailLugType_();
+    const byWire = new Map<number, WireEnd[]>();
+    tailEnds_().forEach((e) => byWire.set(e.idx, [...(byWire.get(e.idx) || []), e]));
+    return activeWires_().filter((w) => byWire.has(w.idx)).map((w) => {
+      const comp = getCompById(w.compId);
+      const g = lugGauge_(comp);
+      const section = g.awg != null ? `${g.awg} AWG` : g.mm2 != null ? `${String(g.mm2).replace(".", ",")} мм²` : "";
+      const art = (S.tailLug?.arts?.[String(w.idx)] || "").trim();
+      const chosen = art ? lugByArt(lugRecs_(), art) : null;
+      const lug = art ? chosen : autoLug_(comp, type);
+      const options = lugsFor_(comp);
+      // Свой выбор — любой наконечник справочника: под сечение провода — первыми, остальные — отдельной группой.
+      const others = lugRecs_().filter((r) => !!lugCrimpOf(r.type) && !options.includes(r));
+      const own = (lug?.strip || "").trim();
+      const problem = lug ? "" : art ? `нет в справочнике: ${art}` : !section ? "сечение провода не определено" : "нет наконечника под сечение";
+      return { idx: w.idx, comp, ends: byWire.get(w.idx)!, section, lug, auto: !art, options, others, strip: own || tailStripMm(S),
+        stripFromDb: !!own, problem };
+    });
+  }
+  /** Наконечник на хвосте провода wIdx стороны side — для припусков L+/L− (как терминал разъёма). */
+  function tailLugAt_(wIdx: number, side: Side): LugRec | null {
+    const row = tailLugPlan_().find((r) => r.idx === wIdx);
+    return row && row.lug && row.ends.some((e) => e.side === side) ? row.lug : null;
+  }
+  /** Операции наконечников хвостов (владелец 29.10): по виду — втулочные (НШВ, НШВИ), кабельные (НКИ, НВИ, РПИ…), трубчатые —
+   *  своя зачистка (отдельно от резки, длина из справочника) и своя опрессовка на каждый артикул (свои нормы и аппликатор). */
+  function tailLugOps_(): OpSpec[] {
+    const rows = tailLugPlan_().filter((r) => r.lug);
+    const kindOf = (r: (typeof rows)[number]) => lugCrimpOf(r.lug!.type) || "lug";
+    const kinds: LugCrimp[] = [];
+    rows.forEach((r) => { if (!kinds.includes(kindOf(r))) kinds.push(kindOf(r)); });
+    const ops: OpSpec[] = [];
+    const tag: Record<LugCrimp, string> = { ferrule: "F", lug: "L", tube: "T" };
+    const mm = (v: string) => v.replace(".", ",");
+    kinds.forEach((kind) => {
+      const own = rows.filter((r) => kindOf(r) === kind);
+      const ends = own.flatMap((r) => r.ends);
+      const lens = (side: Side) => [...new Set(own.filter((r) => r.ends.some((e) => e.side === side)).map((r) => mm(r.strip)))].join(" / ");
+      const a = ends.some((e) => e.side === "A"), b = ends.some((e) => e.side === "B");
+      const all = [...new Set(own.map((r) => mm(r.strip)))].join(" / ");
+      const types = [...new Set(own.map((r) => r.lug!.type))].join(", ");
+      ops.push({ type: "stripCable", opKey: "stripLug" + tag[kind], tmplHint: "STRIP_WIRE", cat: "Разделка", tutCount: ends.length,
+        label: `Зачистка под наконечники ${types} (${all} мм) — ${ends.length} конц.`,
+        strip: { a, lenA: a ? lens("A") : "", b, lenB: b ? lens("B") : "" } });
+      const lugs: LugRec[] = [];
+      own.forEach((r) => { if (!lugs.includes(r.lug!)) lugs.push(r.lug!); });
+      const card = lugCardCode_(kind);
+      lugs.forEach((lug, i) => {
+        const mine = own.filter((r) => r.lug === lug);
+        const n = mine.reduce((sum, r) => sum + r.ends.length, 0);
+        const sides = new Set(mine.flatMap((r) => r.ends.map((e) => e.side)));
+        ops.push({ type: "prsTerm", opKey: `prsLug${tag[kind]}${i + 1}`, side: sides.has("A") ? "A" : "B",
+          label: `Опрессовка ${LUG_CRIMP_NAMES[kind]} ${lugArt(lug)} — ${n} шт`, cat: "Опрессовка наконечников",
+          ...(card ? { tmplHint: card } : {}), termArt: lugArt(lug),
+          lugEnds: mine.map((r) => ({ idx: r.idx, units: r.ends.length })) });
+      });
+    });
+    return ops;
   }
   // ── Способ сростка и гильзы ──
   const splMethod_ = (): SpliceMethod => S.spl.method || "solder";
@@ -1594,8 +1722,9 @@ export function makeGen(D: GenData, S: GenState) {
     const epB = byWire ? null : firstCrimpEndpoint_("B");
     const termA = byWire ? terminalForWireSide_(wIdx, "A") : (epA && epA.termId ? getCompById(epA.termId) : null);
     const termB = byWire ? terminalForWireSide_(wIdx, "B") : (epB && epB.termId ? getCompById(epB.termId) : null);
-    const terA = termA ? findTerRecord_(termA.art) : null;
-    const terB = termB ? findTerRecord_(termB.art) : null;
+    // Хвост с наконечником (владелец 29.10): припуски L+/L− наконечника — как у терминала разъёма на этой стороне.
+    const terA = termA ? findTerRecord_(termA.art) : byWire ? tailLugAt_(wIdx, "A") : null;
+    const terB = termB ? findTerRecord_(termB.art) : byWire ? tailLugAt_(wIdx, "B") : null;
     const mode = S.measureMode;
     const hasTermSelected = !!(termA || termB);
     if (mode === "cut") return { total: 0, noData: false, parts: [] as string[] };
@@ -2608,7 +2737,8 @@ export function makeGen(D: GenData, S: GenState) {
           wireIdxs: [...new Set([...tinLeft, ...tailTin.map((e) => e.idx)])], units });
       }
     }
-    const tailPrep = [tailStripOp_(), !(tinOn && tinLeft.length > 0) && tailTin.length ? tailTinOp_(tailTin) : null].filter((o): o is OpSpec => !!o);
+    const tailPrep = [tailStripOp_(), !(tinOn && tinLeft.length > 0) && tailTin.length ? tailTinOp_(tailTin) : null].filter((o): o is OpSpec => !!o)
+      .concat(tailLugOps_());
 
     const dress: OpSpec[] = [];
     // Термоусадка на жгут режется и надевается вместе с прочими трубками до обжима (sleeveCuts_/sleeveOn_), здесь — усадка.
@@ -2931,7 +3061,7 @@ export function makeGen(D: GenData, S: GenState) {
     const connEps = [...endpointsOnSide_("A"), ...endpointsOnSide_("B")].filter((ep) => !!ep.connId);
     const bareTwist = [...twistAt.keys()].some((at) => at === FINAL || (at.startsWith("ep:") && !connEps.some((ep) => `ep:${ep.id}` === at)));
     const connBlocks = !branchEps.length && !hsOn && groups.length > 0 && connEps.length >= 2 && !bareTwist
-      && !generic.some((o) => o.opKey === "stripTail" || o.opKey === "tinTail" || o.type === "foldCore" || (o.type === "endCap" && !o.side)) ? connEps : [];
+      && !generic.some((o) => o.opKey === "stripTail" || o.opKey === "tinTail" || !!o.lugEnds || o.opKey.startsWith("stripLug") || o.type === "foldCore" || (o.type === "endCap" && !o.side)) ? connEps : [];
     const branches = connBlocks.length ? connBlocks : branchEps;
     // Свой ПФ — только когда под трубку сходятся ветви или сростки. У простой сборки (концы с разъёмами или наконечниками, ветвей
     // и сростков нет) трубку надевают до пайки и обжима концов, усадка — после, без отдельного полуфабриката (владелец 25.10,
@@ -2978,7 +3108,8 @@ export function makeGen(D: GenData, S: GenState) {
       || (o.opKey === "twist" && !finalTwist)
       || (o.type === "insWrap" && o.wrapKind === "braid")
       || (o.type === "heatTut" && /^heatShr/.test(o.opKey) && !!branchOf(epOfOp(o)));
-    const prepKeys = (o: OpSpec) => o.type === "foldCore" || (o.type === "endCap" && !o.side) || o.opKey === "stripTail" || o.opKey === "tinTail";
+    const prepKeys = (o: OpSpec) => o.type === "foldCore" || (o.type === "endCap" && !o.side) || o.opKey === "stripTail" || o.opKey === "tinTail"
+      || !!o.lugEnds || o.opKey.startsWith("stripLug");
     const cutOps = generic.filter((o) => /^cutWire/.test(o.type));
     const blockOf = (o: OpSpec): string => {
       if (o.opKey === "insTut" || o.opKey === "heatTut") return blockOfEp(solderEp);
@@ -3592,7 +3723,22 @@ export function makeGen(D: GenData, S: GenState) {
         op.sleeves = spec.sleeveItems
           ?? spliceSleeves_().items.map((x) => ({ art: x.comp.art || x.comp.name || "", name: x.comp.name || x.comp.art || "", count: x.count }));
       }
-      if (spec.opKey === "stripTail") op.strip = spec.strip;
+      if (spec.opKey === "stripTail" || spec.opKey.startsWith("stripLug")) op.strip = spec.strip;
+      // Опрессовка наконечников хвостов: провод — строкой на каждый со своим числом концов (= наконечников), наконечник —
+      // как терминал конца (etk_builder: комплектующие, нормы и аппликатор из справочника по артикулу).
+      if (spec.lugEnds) {
+        const lug = lugByArt(lugRecs_(), spec.termArt || "");
+        const comp = lug ? lugComp_(lug) : null;
+        op.side = spec.side;
+        op.ep = { connArt: "", connName: "", termArt: spec.termArt || "", termName: comp?.name || (lug ? `Наконечник ${lug.type}` : ""),
+          sdrTmpl: null, double: false, perTerm: 2, fold: false, label: "свободные концы" };
+        op.wires = spec.lugEnds.flatMap((x) => {
+          const pos = activeWires.findIndex((w) => w.idx === x.idx);
+          if (pos < 0) return [];
+          const { cores: _cores, ...wire } = wires[pos] as Record<string, unknown>;
+          return [{ ...wire, qty: x.units }];
+        });
+      }
       // Зачистка жил USB-кабеля под пайку (владелец 26.10, «3–4 мм»): длина доходит до ЭТК строкой «Зачистка жил» своей стороны
       // (поле `coreA`/`coreB`, как у кабеля в оболочке); длины оболочки у этой операции нет — её снимает резка.
       if (spec.strip && /^stripCores/.test(spec.opKey) && /^STRIP_CABLE_usb/.test(spec.tmplHint || "")) {
@@ -3682,6 +3828,13 @@ export function makeGen(D: GenData, S: GenState) {
       const used = new Set([...sl.items.map((x) => x.comp.id), ...S.endpoints.map((e) => e.termId).filter(Boolean)]);
       spliceSleeveComps_().filter((c) => !used.has(c.id)).forEach((c) => w.push(`Гильза «${c.art || c.name}» из состава не выбрана ни в одном сростке.`));
       if (spliceSleeveComps_().length) sl.missing.forEach((label) => w.push(`Сростки (${label}): не выбрана гильза из состава.`));
+      // Наконечники свободных концов: провод без наконечника — без опрессовки; наконечник не из состава — его нет в КБ.
+      tailLugPlan_().forEach((r) => {
+        const wire = r.comp ? (r.comp.art || r.comp.name) : "провод";
+        if (!r.lug) { w.push(`Свободные концы «${wire}»: ${r.problem} — опрессовки не будет.`); return; }
+        if (!r.stripFromDb) w.push(`Наконечник «${lugArt(r.lug)}»: длины зачистки нет в БД — взята «Зачистка хвоста» ${r.strip} мм.`);
+        if (!lugComp_(r.lug)) w.push(`Наконечника «${lugArt(r.lug)}» нет в составе — добавьте его в состав КБ.`);
+      });
     }
     if (cfg.mode === "coax") {
       const cx = (cfg.coax || {}) as { cableLength?: unknown; sideA?: { article: string; type: string } | null; sideB?: { article: string; type: string } | null };
@@ -3719,7 +3872,7 @@ export function makeGen(D: GenData, S: GenState) {
   return {
     getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, connections_, endpointsOnSide_,
     cableRecOf_, isUlMulticore_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_, shieldCount_, isShieldPos_, shieldPinsAt_,
-    endpointOrdinal_, epPer_, epDoublePins_, epStripLen_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
+    endpointOrdinal_, epPer_, epDoublePins_, epStripLen_, findTerRecord_, isComplex_, lugTypes_, tailLugType_, tailLugPlan_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_, crimpCutBatchNote_, crimpCutBatchLines_, checkTerminalFit_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxFakra_, coaxCables_, coaxFakraMarks_, getActiveOpsFakra_, coaxBomConnectors_, coaxBomCable_, coaxBomCableComp_,
@@ -3967,12 +4120,17 @@ export function splMethodFromConfig(config: unknown): SpliceMethod | null {
   return op.method === "sleeve" || op.method === "band" || op.method === "ultrasonic" ? op.method : "solder";
 }
 
-/** «Свободные концы»: заделка трубкой, зачистка и лужение хвостов или ничего. */
-export type TailMode = "cap" | "tin" | "none";
-export const tailModeOf = (S: Pick<GenState, "cap" | "tailTin">): TailMode => (S.tailTin?.enabled ? "tin" : S.cap.enabled ? "cap" : "none");
+/** «Свободные концы»: заделка трубкой, зачистка и лужение хвостов, наконечник или ничего. Способы взаимоисключающие:
+ *  наконечник заменяет и лужение, и заделку трубкой (конец идёт в клемму, не изолируется). */
+export type TailMode = "cap" | "tin" | "lug" | "none";
+export const tailModeOf = (S: Pick<GenState, "cap" | "tailTin" | "tailLug">): TailMode =>
+  (S.tailLug?.enabled ? "lug" : S.tailTin?.enabled ? "tin" : S.cap.enabled ? "cap" : "none");
 export function setTailMode(S: GenState, mode: TailMode): GenState {
-  return { ...S, cap: { ...S.cap, enabled: mode === "cap" },
+  const next: GenState = { ...S, cap: { ...S.cap, enabled: mode === "cap" },
     tailTin: { strip: S.tailTin?.strip ?? TAIL_STRIP_MM_, enabled: mode === "tin" } };
+  // Поле наконечника появляется, только когда его выбрали: формы без него сохраняются как раньше.
+  if (mode === "lug" || S.tailLug) next.tailLug = { type: S.tailLug?.type ?? "", ...(S.tailLug?.arts ? { arts: S.tailLug.arts } : {}), enabled: mode === "lug" };
+  return next;
 }
 
 /** Новая карта на «Сложной сборке» (владелец 13.10: «в сложной сборке не нужно автоподбора конфигурации проводов»):

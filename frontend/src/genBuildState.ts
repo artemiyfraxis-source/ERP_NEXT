@@ -115,6 +115,8 @@ export function restoreFromSnapshot(components: Comp[], seed: GenState, snap: Ge
     spl: { ...S.spl, tutMat: keep(S.spl.tutMat), method: snap.S.spl?.method ?? "solder",
       ...(S.spl.sleeves ? { sleeves: Object.fromEntries(Object.entries(S.spl.sleeves).map(([key, id]) => [key, keep(id)])) } : {}),
       ...(S.spl.band ? { band: keep(S.spl.band) } : {}) },
+    // Наконечники хвостов по проводам: провод ушёл из состава — его выбор тоже.
+    ...(S.tailLug?.arts ? { tailLug: { ...S.tailLug, arts: Object.fromEntries(Object.entries(S.tailLug.arts).filter(([idx]) => live(Number(idx)))) } } : {}),
     ...(S.jacketShrink ? { jacketShrink: Object.fromEntries(Object.entries(S.jacketShrink).map(([side, js]) => [side, js ? { ...js, mat: keep(js.mat) } : js])) } : {}),
   };
   const note = added.length || removed.length

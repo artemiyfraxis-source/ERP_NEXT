@@ -93,6 +93,7 @@ import {
   type CableJacketShrink,
   type WireEntry,
 } from "./tcGenLogic";
+import { lugArt, lugRecordsOf, type LugRec } from "./tcGenLugs";
 import { RouteEditor } from "./RouteEditor";
 import { GenPfScheme, previewSummary, useBuildPreview, type BuildPreview } from "./GenPfScheme";
 import { schemeArt } from "./routeCards";
@@ -132,9 +133,9 @@ import { useTerminalPairs } from "./useTerminalPairs";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
-type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats" | "cableRecords"> & { library: LibraryCard[] };
+type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats" | "cableRecords" | "lugRecords"> & { library: LibraryCard[] };
 
-const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, markMats: [], cableRecords: [], library: [] };
+const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, markMats: [], cableRecords: [], lugRecords: [], library: [] };
 const COAX_VSWR_OPTIONS = [["all", "Каждое изделие"], ["sample", "Выборочно"], ["none", "Не проверять"]] as const;
 const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"], ["manual", "Ручная сборка"]];
 const WRAP_KINDS: Array<[WrapKind, string]> = [
@@ -198,6 +199,7 @@ async function readRefs(): Promise<Refs> {
     coaxCableDia: coaxDiaFromRecords((kabCoax?.records || []).map((record) => record.fields)),
     markMats: markMatsFromRecords((mat?.records || []).map((record) => record.fields)),
     cableRecords: (prov?.records || []).map((record) => cableRecFromFields(record.fields || {}, record.cable_kind)).filter((record): record is CableRec => !!record),
+    lugRecords: lugRecordsOf(ter?.records),
   };
 }
 
@@ -1117,6 +1119,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const capTubes = gen.capTubes();
   const tailMode = tailModeOf(S);
   const tailCount = gen.tailEnds_().length;
+  const lugTypeList = gen.lugTypes_();
+  const lugType = gen.tailLugType_();
+  const lugPlan = gen.tailLugPlan_();
   const splMethod = gen.splMethod_();
   const sleeveComps = gen.spliceSleeveComps_();
   const spliceSlots = gen.spliceSlots_();
@@ -1258,11 +1263,47 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </Toggle>,
     complex && <Toggle key="cap" checked={tailMode !== "none"} title="Свободные концы" hint="хвосты и жилы, не заведённые в разъём своей стороны"
       onChange={(on) => update((current) => setTailMode(current, on ? "cap" : "none"))}>
-      <Seg<TailMode> label="Обработка свободных концов" value={tailMode} options={[["cap", "Заделка трубкой"], ["tin", "Зачистка и лужение хвостов"]]}
+      <Seg<TailMode> label="Обработка свободных концов" value={tailMode} options={[["cap", "Заделка трубкой"], ["tin", "Зачистка и лужение хвостов"], ["lug", "Наконечник"]]}
         onChange={(mode) => update((current) => setTailMode(current, mode))} />
       {tailMode === "cap" ? <div className="opt-grid">
         <Field label="Трубка из состава" className="span2">{selectComps(capTubes, S.cap.tut, (id) => update((current) => ({ ...current, cap: { ...current.cap, tut: id } })), "Трубка заделки")}</Field>
         <Field label="Отрезок на конец"><UnitInput unit="мм" value={S.cap.len} placeholder="из нормы" onChange={(event) => update((current) => ({ ...current, cap: { ...current.cap, len: event.target.value } }))} /></Field>
+      </div> : tailMode === "lug" ? <div className="opt-grid">
+        <Field label="Тип наконечника">{lugTypeList.length
+          ? <select aria-label="Тип наконечника" value={lugType} onChange={(event) => update((current) => ({ ...current,
+              tailLug: { ...current.tailLug, enabled: true, type: event.target.value } }))}>
+              {lugTypeList.map((type) => <option key={type} value={type}>{type}</option>)}</select>
+          : <span className="opt-note tone-danger">В БД нет наконечников</span>}</Field>
+        <Field label="Зачистка, если нет в БД"><UnitInput unit="мм" aria-label="Зачистка хвоста" value={S.tailTin?.strip ?? TAIL_STRIP_MM_} placeholder={TAIL_STRIP_MM_}
+          onChange={(event) => update((current) => ({ ...current, tailTin: { enabled: !!current.tailTin?.enabled, strip: event.target.value } }))} /></Field>
+        {tailCount > 0 ? <span className="opt-note">Хвостов на схеме: {tailCount}</span>
+          : <span className="opt-note tone-warn">Хвостов на схеме нет — отметьте свободные концы на схеме соединений</span>}
+        {lugPlan.length > 0 && <div className="gtable-wrap span-all"><table className="gtable lug-plan" aria-label="Наконечники свободных концов">
+          <thead><tr><th>Провод</th><th className="num">Конц.</th><th>Наконечник</th><th className="num">Зачистка</th><th className="num">L+ / L−</th></tr></thead>
+          <tbody>{lugPlan.map((row) => {
+            const wire = row.comp ? row.comp.art || row.comp.name : "—";
+            const own = S.tailLug?.arts?.[String(row.idx)] || "";
+            const label = (lug: LugRec) => (lugArt(lug).toLowerCase().startsWith(lug.type.toLowerCase()) ? lugArt(lug) : `${lugArt(lug)} (${lug.type})`);
+            return <tr key={row.idx}>
+              <td>{wire}<small className={row.section ? undefined : "tone-danger"}>{row.section || "сечение не определено"}</small></td>
+              <td className="num">{row.ends.length}</td>
+              <td><select aria-label={`Наконечник — ${wire}`} value={own} onChange={(event) => update((current) => {
+                const arts = { ...(current.tailLug?.arts || {}) };
+                if (event.target.value) arts[String(row.idx)] = event.target.value; else delete arts[String(row.idx)];
+                return { ...current, tailLug: { type: current.tailLug?.type ?? "", enabled: true, arts } };
+              })}>
+                <option value="">{row.auto && row.lug ? `по сечению: ${label(row.lug)}` : "по сечению"}</option>
+                {own && !row.lug && <option value={own}>{own}</option>}
+                {row.options.length > 0 && <optgroup label={`Под ${row.section || "сечение"}`}>
+                  {row.options.map((lug) => <option key={lug.id || lugArt(lug)} value={lugArt(lug)}>{label(lug)}</option>)}</optgroup>}
+                {row.others.length > 0 && <optgroup label="Другие наконечники">
+                  {row.others.map((lug) => <option key={lug.id || lugArt(lug)} value={lugArt(lug)}>{label(lug)}</option>)}</optgroup>}
+              </select>
+                {!row.lug && <div className="tone-danger lug-problem">{row.problem}</div>}</td>
+              <td className="num">{row.lug ? (row.stripFromDb ? `${row.strip} мм` : <span className="tone-warn" title="В БД нет длины зачистки — из поля «Зачистка, если нет в БД»">{row.strip} мм<small>нет в БД</small></span>) : "—"}</td>
+              <td className="num">{row.lug ? `${row.lug.lPlus || "—"} / ${row.lug.lMinus || "—"}` : "—"}</td>
+            </tr>;
+          })}</tbody></table></div>}
       </div> : <div className="opt-grid">
         <Field label="Зачистка хвоста" hint="2–3 мм"><UnitInput unit="мм" aria-label="Зачистка хвоста" value={S.tailTin?.strip ?? TAIL_STRIP_MM_} placeholder={TAIL_STRIP_MM_}
           onChange={(event) => update((current) => ({ ...current, tailTin: { enabled: true, strip: event.target.value } }))} /></Field>

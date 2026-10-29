@@ -20,6 +20,7 @@ import {
   type GenData,
   type Tmpl,
 } from "./tcGenLogic";
+import { lugRecordsOf } from "./tcGenLugs";
 
 type Fields = Record<string, string>;
 
@@ -28,7 +29,8 @@ type Fields = Record<string, string>;
 export type BatchRefs = {
   templates: Array<{ id: string; title: string; category: string }>;
   op: Fields[];
-  ter: Array<{ id: string; fields: Fields }>;
+  /** БД.ТЕР; `ter_kind` "lug" — наконечник (tcGenLugs.lugRecordsOf). */
+  ter: Array<{ id: string; fields: Fields; ter_kind?: string }>;
   coax: Fields[];
   wire_dia: Fields[];
   kab_coax: Fields[];
@@ -49,7 +51,7 @@ export type BatchBom = {
 export type BatchInput = { refs: BatchRefs; items: Array<{ key: string; bom: BatchBom }> };
 export type BatchResult = { key: string; config: Record<string, unknown> | null; error: string; warnings: string[] };
 
-type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "cableRecords">;
+type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "cableRecords" | "lugRecords">;
 
 /** loadRefs (TcGenerator.tsx) над уже прочитанными записями. */
 export function refsFromRecords(refs: BatchRefs): Refs {
@@ -61,6 +63,7 @@ export function refsFromRecords(refs: BatchRefs): Refs {
     wireDia: wireDiaFromRecords(refs.wire_dia),
     coaxCableDia: coaxDiaFromRecords(refs.kab_coax),
     cableRecords: (refs.prov || []).map((record) => cableRecFromFields(record.fields || {}, record.cable_kind)).filter((record): record is CableRec => !!record),
+    lugRecords: lugRecordsOf(refs.ter),
   };
 }
 

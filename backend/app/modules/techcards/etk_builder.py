@@ -184,6 +184,15 @@ def _sleeve_suffix(op: Mapping[str, Any]) -> str:
 # stripping under the splices and the tinning of the main ends — the ETK title says whose ends they are.
 TAIL_KEYS = frozenset({"stripTail", "tinTail"})
 TAIL_SUFFIX = "свободные концы"
+# Lugs on the free tails (generator «Свободные концы» → «Наконечник», owner 29.10): a strip of their own per lug kind
+# (`stripLugF/L/T` — ferrules, cable lugs, tube lugs) and a crimp per lug article (`prsLug…`, the lug as `ep.termArt`).
+TAIL_LUG_STRIPS = {"stripLugF": "под втулочные наконечники", "stripLugL": "под кабельные наконечники",
+                   "stripLugT": "под трубчатые наконечники"}
+TAIL_LUG_CRIMP = "prsLug"
+
+
+def _tail_lug_crimp(op: Mapping[str, Any]) -> bool:
+    return op.get("type") == "prsTerm" and str(op.get("opKey") or "").startswith(TAIL_LUG_CRIMP)
 
 # How the splices are joined (generator «Сложная сборка», owner 16.10: «основа это обжим»): crimp with a sleeve, solder
 # or band crimp. A config without `method` (before 16.10) builds as it did — no words added, no parts.
@@ -265,6 +274,10 @@ def _suffix(op: Mapping[str, Any]) -> str:
     operation_type = op.get("type")
     if op.get("opKey") in TAIL_KEYS:
         return TAIL_SUFFIX
+    if op.get("opKey") in TAIL_LUG_STRIPS:
+        return f"{TAIL_SUFFIX} {TAIL_LUG_STRIPS[str(op.get('opKey'))]}"
+    if _tail_lug_crimp(op):
+        return f"{TAIL_SUFFIX} {_terminal(op)}".strip()
     if operation_type == "cutWireStrip":
         return "разделка"
     if operation_type == "cutWireCrimp":
@@ -358,7 +371,10 @@ def _fact_texts(facts: Sequence[tuple[str, Any]]) -> list[str]:
     for key, payload in facts:
         if key == "strip" and keys & {"crimp", "splice", "tin"}:
             continue
-        if key == "strip_tail" and "tail_tin" in keys:
+        if key == "strip_tail" and keys & {"tail_tin", "tail_lug"}:
+            continue
+        if key == "tail_lug":
+            texts.append(f"на {TAIL_SUFFIX} обжаты наконечники {', '.join(payload)}")
             continue
         if key == "crimp":
             if payload is not crimps[0]:
@@ -391,6 +407,10 @@ def _harness_step(
     wires = _wires(op, config)
     endpoint = _endpoint(op)
     has_previous = bool(base) or bool(facts)
+    if _tail_lug_crimp(op):
+        # Наконечники на хвостах не делают новой детали: к жгуту добавляется «на свободные концы обжаты наконечники …».
+        done = next((payload for key, payload in facts if key == "tail_lug"), ())
+        return base, _with_fact(facts, "tail_lug", (*done, _terminal(op)))
     if kind == "prs":
         terminal = str(endpoint.get("termArt") or endpoint.get("termName") or "")
         sources = list(dict.fromkeys(str(item) for item in op.get("wireSources") or [] if item))
@@ -451,7 +471,7 @@ def _harness_step(
         return base, _with_fact(facts, "tube", "термоусадка усажена" if op.get("harness") else "трубка усажена")
     if operation_type == "stripCable":
         count = int(_decimal(op.get("tutCount")))
-        tail = op.get("opKey") == "stripTail"
+        tail = op.get("opKey") == "stripTail" or op.get("opKey") in TAIL_LUG_STRIPS
         if has_previous:
             return base, _with_fact(facts, "strip_tail" if tail else "strip", f"{TAIL_SUFFIX} разделаны" if tail else "концы разделаны")
         ends = f"{TAIL_SUFFIX} разделаны" if tail else "концы разделаны"
