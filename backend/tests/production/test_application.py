@@ -129,9 +129,10 @@ def test_launch_is_idempotent_and_route_snapshot_is_not_rebuilt():
     (Operator(OPERATOR, "Мастер", "ЦАР", True, "Монтаж", site_master=True), False),
     (Operator(OPERATOR, "Сотрудник без флага", "ЦАР", True, "Монтаж"), False),
     (Operator(OPERATOR, "Уволенный", "ЦАР", False, shop_worker=True), False),
-    (Operator(OPERATOR, "Монтажник ЖУК", "ЖУК", True, shop_worker=True), False),
+    # Владелец 29.10: «ЖУК — планировать как ЦАР» — монтажник ЖУК тоже монтажник (до того, с 30.09, — нет).
+    (Operator(OPERATOR, "Монтажник ЖУК", "ЖУК", True, shop_worker=True), True),
 ])
-def test_installer_is_an_active_shop_worker_off_the_unplanned_sites(operator, installer):
+def test_installer_is_an_active_shop_worker_of_any_site(operator, installer):
     assert operator.installer is installer
 
 

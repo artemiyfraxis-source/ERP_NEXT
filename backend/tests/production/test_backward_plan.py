@@ -95,7 +95,7 @@ def test_the_latest_fitter_wins_and_admission_is_respected():
 
     assert free_boris.slots[0].operator_id == BORIS and free_boris.slots[0].finish == datetime(2026, 10, 9, 17, 30)
     assert only_anna.slots[0].operator_id == ANNA and only_anna.slots[0].finish == datetime(2026, 10, 8, 17, 30)
-    assert not nobody.fits and "Нет монтажников ЦАР с допуском к операции PRS" in nobody.unplaced[0].reason
+    assert not nobody.fits and "Нет монтажников с допуском к операции PRS" in nobody.unplaced[0].reason
 
 
 def test_a_manually_assigned_consumer_holds_its_start_and_bounds_the_input():

@@ -72,7 +72,7 @@ def _input(
             if not operation.shares:
                 if done <= 0:
                     free.add(operation.id)
-            elif _auto_movable(operation, done, start, end):
+            elif _auto_movable(operation, done, start, end, scope.foreign):
                 free.add(operation.id)
                 movable.add(operation.id)
     for item in scope.new_tasks.values():

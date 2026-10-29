@@ -136,6 +136,8 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
   // «Автоплан КБ» с доски: после первой загрузки сняты все КБ проекта, кроме этой.
   const onlyKb = useRef(preset?.kb ?? "");
   const [people, setPeople] = useState<Set<string>>(new Set());
+  // Площадка, чьих людей ставить (владелец 29.10: ЖУК планируется как ЦАР); "" — обе.
+  const [site, setSite] = useState("");
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [dateTo, setDateTo] = useState("");
   const [editDate, setEditDate] = useState(false);
@@ -164,7 +166,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
   useEffect(() => {
     let active = true;
     setContextError("");
-    productionApi.autoplanContext({ mode, ...(mode === "project" && project ? { project } : {}), date_to: dateTo || null })
+    productionApi.autoplanContext({ mode, ...(mode === "project" && project ? { project } : {}), ...(site ? { site } : {}), date_to: dateTo || null })
       .then((value) => {
         if (!active) return;
         setContext(value);
@@ -184,7 +186,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
       })
       .catch((reason) => { if (active) setContextError(failureText(reason, "Не удалось загрузить данные для автоплана")); });
     return () => { active = false; };
-  }, [mode, project, dateTo]);
+  }, [mode, project, dateTo, site]);
 
   const tasks = context?.tasks ?? [];
   const ready = (context?.new ?? []).filter((item) => !item.skipped);
@@ -212,8 +214,9 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
     const runs = preset && preset.project === project && preset.runs && Object.keys(preset.runs).length ? { runs: preset.runs } : {};
     const exclude = [...tasks.map((task) => task.id), ...ready.map((item) => item.techcard_id)].filter((id) => excluded.has(id));
     const excludeField = exclude.length ? { exclude } : {};
-    if (mode === "project") return { mode, project, people: chosenPeople.map((person) => person.id), ...excludeField, ...date, ...runs };
-    return { mode, ...excludeField, ...date };
+    const siteField = site ? { site } : {};
+    if (mode === "project") return { mode, project, people: chosenPeople.map((person) => person.id), ...excludeField, ...siteField, ...date, ...runs };
+    return { mode, ...excludeField, ...siteField, ...date };
   }
 
   // Любое изменение условий делает прежнее предложение неактуальным.
@@ -223,6 +226,9 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
   // Другой режим или проект — другой список работы: все галочки снова стоят.
   const switchMode = changed((value: AutoplanMode) => { setMode(value); setExcluded(new Set()); });
   const pickProject = changed((value: string) => { setProject(value); setPeople(new Set()); setExcluded(new Set()); });
+  // Другая площадка — другие люди: отметки людей снимаются.
+  const pickSite = changed((value: string) => { setSite(value); setPeople(new Set()); });
+  const sites = context?.sites ?? [];
   const toggleId = (setter: typeof setPeople) => changed((id: string) => setter((current) => { const next = new Set(current); if (!next.delete(id)) next.add(id); return next; }));
   const togglePerson = toggleId(setPeople);
   const toggleExcluded = toggleId(setExcluded);
@@ -313,6 +319,12 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
           {([["shop", "Весь цех"], ["project", "По проекту"]] as Array<[AutoplanMode, string]>).map(([value, label]) =>
             <button key={value} type="button" role="radio" aria-checked={mode === value} className={mode === value ? "on" : undefined} onClick={() => { if (mode !== value) switchMode(value); }}>{label}</button>)}
         </div>}
+        {sites.length > 1
+          ? <div className="seg-tabs autoplan-modes" role="radiogroup" aria-label="Чьих людей ставить">
+            {[["", "Обе площадки"], ...sites.map((name) => [name, name])].map(([value, label]) =>
+              <button key={value} type="button" role="radio" aria-checked={site === value} className={site === value ? "on" : undefined} onClick={() => { if (site !== value) pickSite(value); }}>{label}</button>)}
+          </div>
+          : sites.length === 1 && <span className="autoplan-site">Люди площадки <b>{sites[0]}</b></span>}
         <div className="autoplan-period">
           {editDate
             ? <label>План до<input aria-label="План до" type="date" min={today} max={maxDay} value={dateTo} onChange={(event) => changeDate(event.target.value)} /></label>
@@ -380,7 +392,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {}, preset 
                 <input type="checkbox" checked={people.has(person.id)} onChange={() => togglePerson(person.id)} aria-label={person.name} />
                 <b>{person.name}</b><span className="autoplan-task-name">{person.site}</span><span className="autoplan-free">свободно {hoursText(person.free_seconds)}</span>
               </label>)}
-              {!fitters.length && <small>Монтажников ЦАР нет.</small>}
+              {!fitters.length && <small>{context.site ? `Монтажников ${context.site} нет.` : "Монтажников нет."}</small>}
             </div>
           </section>
           {projectRow && kind === "ship" && <ShipDatePlan project={project} people={chosenPeople.map((person) => person.id)} deadline={deadlineOf(projectRow)} />}

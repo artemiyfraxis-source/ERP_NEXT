@@ -507,7 +507,7 @@ class SqlAlchemyFulfillmentRepository:
 
 
 # The shop site a kit goes to when no production task gives another one, and the site of a master with an empty
-# site: ЦАР is the default site of the staff and the site the autoplan schedules (`production.autoplan.AUTOPLAN_SITE`).
+# site: ЦАР is the default site of the staff (`production.workload.DEFAULT_SITE`).
 DEFAULT_KIT_SITE = "ЦАР"
 # How far back `last_handout` looks for a place used at the site.
 _HANDOUT_LOOKBACK = 200

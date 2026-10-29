@@ -311,14 +311,15 @@ def test_the_balance_is_not_carried_into_the_next_year(erp):
 # ── «Нет данных» ─────────────────────────────────────────────────────────
 
 
-def test_unplanned_site_has_no_data(erp):
+def test_zhuk_time_is_counted_like_tsar(erp):
+    # Владелец 29.10: «ЖУК — планировать как ЦАР»; до того у ЖУК было «нет данных: без нормирования».
     task = launch(erp, (FITTER_ZHUK,))
     worked(erp, task, msk(10, 5, 9), msk(10, 5, 16), operator=FITTER_ZHUK)
 
     body = read(erp, FITTER_ZHUK)
 
-    assert body["available"] is False and "ЖУК" in body["no_data_reason"]
-    assert body["days"] == [] and body["totals"] is None and body["balance"] is None
+    assert body["available"] is True and body["shift_hours"] == 7.0
+    assert day(body, "2026-10-05")["worked_hours"] == 7.0 and body["totals"]["worked_hours"] == 7.0
 
 
 def test_a_person_without_work_sessions_has_no_data(erp):

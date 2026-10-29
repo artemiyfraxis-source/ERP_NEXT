@@ -712,25 +712,47 @@ it("groups unassigned operations by equipment and assigns the whole group in one
   }
 });
 
-it("hands a task to ZHUK whole and shows the ZHUK master no hourly grid", async () => {
-  // Владелец, 30.09: ЖУК работает не нормированно — задание отдаётся площадке целиком, без людей и часов.
+it("plans ZHUK like TSAR: the ZHUK master sees his people by hours, a handed task stays out of their load", async () => {
+  // Владелец 29.10: «ЖУК — показать и планировать как ЦАР»; «Отдать в ЖУК» целиком остаётся вариантом для задания.
+  const zinger = "10000000-0000-0000-0000-000000000005";
+  const mine: ProductionTask = { ...task, operations: [{
+    ...task.operations[0], operator_ids: [zinger], planned_start: "2026-09-22T10:00:00", planned_finish: "2026-09-22T14:00:00",
+  }] };
+  // Отданное целиком (с устаревшей долей Зингера) — в часы людей не входит: 3,1 ч, а не 4,9.
+  const handed: ProductionTask = { ...task, id: "70000000-0000-0000-0000-000000000002", number: "ПЗ-0002", item: "591K.3.КБ2", handed_to: "ЖУК",
+    operations: [{ ...task.operations[0], id: "71000000-0000-0000-0000-000000000009", operator_ids: [zinger],
+      planned_start: "2026-09-22T14:00:00", planned_finish: "2026-09-22T16:00:00" }] };
   let sent: unknown;
-  masterFetch((path, init) => {
-    if (path === "/api/production/operators") return json({ viewer_site: "ЖУК", operators: [] });
-    if (path === "/api/production/launchable") return json({ items: [] });
-    if (path === `/api/production/tasks/${task.id}/handover`) {
-      sent = JSON.parse(String(init?.body));
-      return json({ task: { ...task, handed_to: "ЖУК" } });
-    }
-    return null;
-  }, [task]);
+  vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T08:00:00"));
+  try {
+    masterFetch((path, init) => {
+      if (path === "/api/production/operators") return json({ viewer_site: "ЖУК", operators: [
+        { id: zinger, name: "Зингер Антон", site: "ЖУК", department: "Монтаж" },
+        { id: "10000000-0000-0000-0000-000000000002", name: "Рыбкина Ольга", site: "ЦАР", department: "Монтаж" },
+      ] });
+      if (path === "/api/production/launchable") return json({ items: [] });
+      if (path === `/api/production/tasks/${task.id}/handover`) {
+        sent = JSON.parse(String(init?.body));
+        return json({ task: { ...mine, handed_to: "ЖУК" } });
+      }
+      return null;
+    }, [mine, handed]);
 
-  render(<ProductionPage principal={principal} />);
-  expect(await screen.findByText(/ЖУК работает без раскладки по людям и часам/)).toBeInTheDocument();
-  expect(document.querySelector(".mb-week")).toBeNull();
-  await openBoardProject("591K.3");
-  fireEvent.click(await screen.findByRole("button", { name: "Отдать в ЖУК" }));
-  await waitFor(() => expect(sent).toEqual({ version: task.version, site: "ЖУК" }));
+    render(<ProductionPage principal={principal} />);
+    expect(await screen.findByText("Зингер Антон", { selector: ".mb-week th b" })).toBeInTheDocument();
+    expect(screen.queryByText("Рыбкина Ольга", { selector: ".mb-week th b" })).toBeNull(); // мастер ЖУК — только ЖУК
+    expect(screen.getByText("ЖУК", { selector: ".mb-week th small" })).toBeInTheDocument();
+    expect(screen.getByTitle("Зингер Антон, 22.09: 3,1 из 7 ч")).toHaveTextContent("3,1/7");
+    expect(screen.queryByText(/без раскладки/)).toBeNull();
+    await openBoardProject("591K.3");
+    expect(await screen.findByRole("button", { name: "Автопланирование" })).toBeInTheDocument();
+    expect(screen.getByText("Отдано в ЖУК")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Отдать в ЖУК" }));
+    await waitFor(() => expect(sent).toEqual({ version: mine.version, site: "ЖУК" }));
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 // Сетевой график (ARCH-TRACK-2, B4): две нарезки идут в сборку, сборка — финал; вторая нарезка режет по 2 на изделие.

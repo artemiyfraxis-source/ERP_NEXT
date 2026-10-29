@@ -138,7 +138,7 @@ def test_today_shows_people_plan_and_what_cannot_start(production_api):  # noqa:
     assert response.status_code == 200, response.text
     body = response.json()
     # Мастер ЦАР: свой участок, выбор участка не действует.
-    assert (body["site"], body["can_switch"], body["handover"], body["today"]) == ("ЦАР", False, False, "2026-09-22")
+    assert (body["site"], body["can_switch"], body["today"]) == ("ЦАР", False, "2026-09-22")
     assert body["working_day"] is True and body["shift"] == {"start": "09:00", "finish": "17:30"}
     people = {item["name"]: item for item in body["people"]}
     assert list(people) == ["Байков", "Оператор", "Яковлева"]  # Зингер — ЖУК, мастер — не монтажник
@@ -204,7 +204,8 @@ def test_today_shows_running_work_overdue_and_late_projects(production_api):  # 
     assert [item["kind"] for item in body["stuck"]] == []
 
 
-def test_full_access_switches_to_the_handover_site(production_api):  # noqa: F811
+def test_full_access_switches_to_zhuk_with_its_people_plan_and_handed_tasks(production_api):  # noqa: F811
+    # Владелец 29.10: «Сегодня» ЖУК — люди, план и «стоит» как у ЦАР; задания, отданные целиком, видны отдельно.
     client, _operator_id = production_api
     _staff()
     task = _launch(client, "today-3", "802К.1", "КБ1", 20)
@@ -214,16 +215,20 @@ def test_full_access_switches_to_the_handover_site(production_api):  # noqa: F81
         actor=Actor(id=uuid4(), name="Директор", department="Дирекция"), email="boss@example.test",
         roles=frozenset({"superadmin"}), permissions={"production": "edit"},
     )
+    planned = _assign(client, _launch(client, "today-4", "803К.1", "КБ1", 4), 1, ZHUK)
 
     body = client.get("/api/production/today?site=ЖУК").json()
 
-    assert (body["site"], body["can_switch"], body["handover"]) == ("ЖУК", True, True)
+    assert (body["site"], body["can_switch"]) == ("ЖУК", True) and "handover" not in body
     assert [item["name"] for item in body["people"]] == ["Зингер"]
-    assert body["plan"] == []
+    assert body["people"][0]["planned"] == 1
+    assert [(line["operator_name"], line["task_number"], line["position"]) for line in body["plan"]] == [
+        ("Зингер", planned["number"], 1)]
     assert [(item["task_number"], item["quantity"], item["delivered"], item["remaining"]) for item in body["handed"]] == [
         (task["number"], 20, 0, 20)]
-    # Отданное ЖУК задание без комплекта: стоит, пока комплект не набран.
-    assert [(item["kind"], item["item"]) for item in body["stuck"]] == [("kit", "КБ1")]
+    # Без комплекта стоят и отданное ЖУК задание, и задание людей ЖУК.
+    assert sorted((item["kind"], item["project"], item["item"]) for item in body["stuck"]) == [
+        ("kit", "802К.1", "КБ1"), ("kit", "803К.1", "КБ1")]
 
 
 def test_today_on_an_empty_shop(production_api):  # noqa: F811

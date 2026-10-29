@@ -337,3 +337,47 @@ it("«Автоплан КБ» from the board: only that КБ of the project is t
   await openPreview();
   expect(bodies(calls, "/preview")[0]).toEqual({ mode: "project", project: "708К", people: [A], exclude: [TASK] });
 });
+
+it("lets a director choose whose people to plan — ЖУК like ЦАР — and sends the site with the plan", async () => {
+  // Владелец 29.10: «ЖУК — показать и планировать как ЦАР».
+  const Z = "10000000-0000-0000-0000-00000000000c";
+  const zhuk = { id: Z, name: "Зингер А.", site: "ЖУК", free_seconds: 25_200 };
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    calls.push({ path, body });
+    if (path === "/api/production/autoplan/context") {
+      return json(body.site === "ЖУК"
+        ? { ...context, site: "ЖУК", sites: ["ЦАР", "ЖУК"], fitters: [zhuk] }
+        : { ...context, site: "", sites: ["ЦАР", "ЖУК"], fitters: [...context.fitters, zhuk] });
+    }
+    if (path === "/api/production/autoplan/preview") return json(preview);
+    if (path === "/api/production/leftovers") return json({ leftovers });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} />);
+  expect(await screen.findByText(/· 3 монтажника ·/)).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "Обе площадки" })).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(screen.getByRole("radio", { name: "ЖУК" }));
+  expect(await screen.findByText(/· 1 монтажник ·/)).toBeInTheDocument();
+  expect(bodies(calls, "/context").at(-1)).toEqual({ mode: "shop", site: "ЖУК", date_to: null });
+  fireEvent.click(screen.getByRole("radio", { name: "По проекту" }));
+  fireEvent.click(await screen.findByLabelText("Зингер А."));
+  await openPreview();
+  expect(bodies(calls, "/preview").at(-1)).toEqual({ mode: "project", project: "591K.3", people: [Z], site: "ЖУК" });
+});
+
+it("shows a site master only his site's people, without a site choice", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/autoplan/context") return json({ ...context, site: "ЖУК", sites: ["ЖУК"], fitters: [] });
+    if (path === "/api/production/leftovers") return json({ leftovers });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} />);
+  expect(await screen.findByText("ЖУК", { selector: ".autoplan-site b" })).toBeInTheDocument();
+  expect(screen.queryByRole("radiogroup", { name: "Чьих людей ставить" })).toBeNull();
+  fireEvent.click(screen.getByRole("radio", { name: "По проекту" }));
+  expect(await screen.findByText("Монтажников ЖУК нет.")).toBeInTheDocument();
+});

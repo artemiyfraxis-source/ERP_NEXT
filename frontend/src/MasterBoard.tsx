@@ -176,7 +176,8 @@ export function installerLoad(operatorId: string, tasks: ProductionTask[], absen
 // ── Неделя монтажников (владелец, 30.09: «не понимаю, на какой период я закидываю»). Мастер видит загрузку
 // каждого монтажника по дням в часах и ставит операцию кликом в день: сервер планирует её с начала смены этого
 // дня в первое свободное окно (тот же assign и план, что в карточке с Гантом, prodPlan_).
-// Площадка без нормирования: задание ей отдают целиком (сервер: UNPLANNED_SITES).
+// Площадка, которой задание можно отдать целиком (сервер: HANDOVER_SITES). С 29.10 ЖУК планируется как ЦАР (люди, часы,
+// автоплан); «Отдать в ЖУК» — вариант для задания, отданное в загрузку людей не входит.
 const HANDOVER_SITE = "ЖУК";
 export const DEFAULT_SHIFT: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "7" };
 const WEEK_DAYS = 7;
@@ -800,7 +801,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     if (own && task && operation) setPieces(String(defaultPieces(task, operation, personId)));
   }
 
-  // ЖУК работает не нормированно (владелец, 30.09): задание отдают площадке целиком, без людей и часов.
+  // «Отдать в ЖУК» (владелец, 30.09): задание отдают площадке целиком, без людей и часов; с 29.10 — вариант, не правило.
   function handOver(item: ProductionTask, site: string) {
     if (selected?.taskId === item.id) setSelected(null);
     void mutate(`handover:${item.id}`, () => productionApi.handOver(item.id, item.version, site));
@@ -895,7 +896,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           <button type="button" role="radio" aria-checked={view === "stages"} className={view === "stages" ? "on" : ""} onClick={() => setView("stages")}>По этапам КБ</button>
           <button type="button" role="radio" aria-checked={view === "equipment"} className={view === "equipment" ? "on" : ""} onClick={() => setView("equipment")}>По оборудованию</button>
         </div>
-        {canEdit && site !== HANDOVER_SITE && <button className="primary small" onClick={() => openAutoplan(project)}>Автопланирование</button>}
+        {canEdit && <button className="primary small" onClick={() => openAutoplan(project)}>Автопланирование</button>}
         <button className="secondary small" onClick={() => setOpenProject("")}>Закрыть</button>
       </div>
       <ProjectPlanBlock project={project} canEdit={canEdit} openProjectCard={openProjectCard} />
@@ -911,7 +912,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
               ? <StatusChip className="mb-new" tone="info">новое задание</StatusChip>
               : <button className="link-button" onClick={() => openTask(item.id)}>{item.number} · Гант</button>}
             <span><b>{taskItemLabel(item)}</b> × {item.quantity}{item.name ? ` · ${item.name}` : ""}</span>
-            {canEdit && site !== HANDOVER_SITE && item.status !== "Выполнено" && !item.handed_to &&
+            {canEdit && item.status !== "Выполнено" && !item.handed_to &&
               <button type="button" className="link-button" aria-label={`Автоплан ${taskItemLabel(item)}`} onClick={() => openAutoplan(project, item.item)}>Автоплан КБ</button>}
             {item.status !== "Выполнено" && deadlineChips(planOf(project), item.deadline).filter((chip) => chip.kind === "task")
               .map((chip) => <StatusChip key={chip.kind} className="mb-deadline" tone={chip.tone} title={chip.title}>{chip.text}</StatusChip>)}
@@ -1081,7 +1082,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         <button className="secondary small" onClick={() => select(task, null)}>Закрыть</button>
       </div>
       {banners}
-      {site !== HANDOVER_SITE && canEdit && <div className="mb-target">
+      {canEdit && <div className="mb-target">
         <label className="mb-pieces">Штук монтажнику<input type="number" min={1} max={task.quantity} step={1} value={pieces} aria-label="Штук монтажнику" onChange={(event) => setPieces(event.target.value)} /><span>из {task.quantity}{free > 0 && free < task.quantity ? ` · не распределено ${free}` : ""} · норма {hours(Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * quantity)}</span></label>
         {quantity > free && free < task.quantity && <small>Сверх нераспределённых штуки заберём у того, кто заканчивает позже.</small>}
         {people.length > 0 && onlyPerson && <div className="mb-only" role="group" aria-label="Весь этап одному монтажнику">
@@ -1111,13 +1112,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           {task.pending && <small>Задание {taskItemLabel(task)} × {task.quantity} создастся вместе с записью.</small>}
         </div>}
       </div>}
-      {site === HANDOVER_SITE
-        ? <div className="mb-target muted">{HANDOVER_SITE} работает без раскладки по людям и часам.</div>
-        : <section className="mb-people mb-window-week" aria-label="Монтажники на операцию">
-          <div className="mb-head"><h3>Монтажники</h3>{canEdit && <span className="mb-count">нажмите на день — час и «Назначить»</span>}{weekNav}</div>
-          {renderWeek(true)}
-          <LoadLegend capacity={capacity} late={false} />
-        </section>}
+      <section className="mb-people mb-window-week" aria-label="Монтажники на операцию">
+        <div className="mb-head"><h3>Монтажники</h3>{canEdit && <span className="mb-count">нажмите на день — час и «Назначить»</span>}{weekNav}</div>
+        {renderWeek(true)}
+        <LoadLegend capacity={capacity} late={false} />
+      </section>
     </div>;
   }
 
@@ -1156,17 +1155,15 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     <aside className="panel mb-people" aria-label="Монтажники" ref={board.ref}>
       <div className="mb-head">
         <h2>Монтажники</h2><span className="mb-count">{site ? `${site} · ` : ""}{people.length}</span>
-        {site !== HANDOVER_SITE && weekNav}
+        {weekNav}
       </div>
-      {site === HANDOVER_SITE
-        ? <div className="mb-target muted">{HANDOVER_SITE} работает без раскладки по людям и часам: сюда падают задания с пометкой «Отдано в {HANDOVER_SITE}».</div>
-        : <div className="mb-target muted">{canEdit ? "Назначить — в проекте: нажмите операцию. День у монтажника — раскладка по часам." : "Нажмите на день — раскладка по часам."}</div>}
-      {site !== HANDOVER_SITE && renderWeek(false)}
-      {site !== HANDOVER_SITE && <LoadLegend capacity={capacity} late={false} />}
-      {site !== HANDOVER_SITE && <section className="mb-machines" aria-label="Загрузка станков" style={{ marginTop: 18 }}>
+      <div className="mb-target muted">{canEdit ? "Назначить — в проекте: нажмите операцию. День у монтажника — раскладка по часам." : "Нажмите на день — раскладка по часам."}</div>
+      {renderWeek(false)}
+      <LoadLegend capacity={capacity} late={false} />
+      <section className="mb-machines" aria-label="Загрузка станков" style={{ marginTop: 18 }}>
         <div className="mb-head"><h2>Загрузка станков</h2><span className="mb-count">процент смены всех единиц станка</span></div>
         <MachineLoadGrid days={days} holidays={holidays} shift={workShift} refreshKey={planVersion} />
-      </section>}
+      </section>
     </aside>
     {shown && <PageWindow label={`Проект ${shown}`} width={1600} close={() => setOpenProject("")}>{renderProject(shown)}</PageWindow>}
     {shown && task && operation && <PageWindow label={`Операция ${operation.position}. ${operationName(operation)}`} width={1600} close={() => select(task, null)}>

@@ -27,7 +27,7 @@ function line(overrides: Partial<TodayLine>): TodayLine {
 
 const DATA: ShopToday = {
   today: "2026-10-29", now: "2026-10-29T10:31:00+03:00", working_day: true, shift: { start: "09:00", finish: "17:30" },
-  site: "ЦАР", sites: ["ЦАР", "ЖУК"], can_switch: false, handover: false,
+  site: "ЦАР", sites: ["ЦАР", "ЖУК"], can_switch: false,
   people: [
     { id: "p1", name: "Оператор", state: "работает", work: { ...OP, since: "2026-10-29T09:05:00+03:00", paused_since: null },
       downtime: null, absence: null, planned: 2, done: 1, next: null },
@@ -87,11 +87,11 @@ it("shows who does what, the plan of the day, the overdue and what stands with t
   expect(openTask).toHaveBeenCalledWith("t1", "o1");
 });
 
-it("lets full access switch the site and shows the tasks handed to ЖУК", async () => {
+it("lets full access switch to ЖУК: its people and plan like ЦАР plus the tasks handed whole", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url.includes("site=%D0%96%D0%A3%D0%9A")) {
-      return json({ ...DATA, site: "ЖУК", can_switch: true, handover: true, people: [], plan: [], stuck: [],
+      return json({ ...DATA, site: "ЖУК", can_switch: true, people: [], plan: [], stuck: [],
         overdue: { operations: [], tasks: [], projects: [] },
         handed: [{ task_id: "t9", task_number: "ПЗ-0020", project: "802К.1", item: "КБ1", name: "Кабель", quantity: 20, delivered: 5, remaining: 15, deadline: "2026-11-02" }] });
     }
@@ -101,7 +101,8 @@ it("lets full access switch the site and shows the tasks handed to ЖУК", asyn
   fireEvent.click(await screen.findByRole("radio", { name: "ЖУК" }));
   expect(await screen.findByText("ПЗ-0020")).toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/api/production/today?site=%D0%96%D0%A3%D0%9A"))).toBe(true);
-  expect(screen.getByRole("table", { name: "Задания участка" })).toHaveTextContent("15");
+  expect(screen.getByRole("table", { name: "Отдано участку целиком" })).toHaveTextContent("15");
+  expect(screen.getByRole("heading", { name: /План на/ })).toBeInTheDocument(); // план людей ЖУК, как у ЦАР
   expect(screen.getByText("На участке ЖУК нет монтажников — отметьте «Монтажник» в карточке сотрудника.")).toBeInTheDocument();
   expect(screen.getByText("Не стоит ничего: запланированное может начаться.")).toBeInTheDocument();
   expect(screen.getByText("Просроченного нет.")).toBeInTheDocument();

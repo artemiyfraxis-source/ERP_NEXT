@@ -3692,6 +3692,8 @@ export interface AutoplanRequest {
   date_to?: string | null;
   /** Тиражи новых заданий по id техкарты КБ (окно проекта на доске); нет — весь тираж КБ. */
   runs?: Record<string, number>;
+  /** Площадка, чьих людей ставить (ЦАР / ЖУК); нет — обе. Мастер площадки — всегда своя. */
+  site?: string;
 }
 
 export interface AutoplanContext {
@@ -3702,6 +3704,9 @@ export interface AutoplanContext {
   new: Array<{ techcard_id: string; project: string; index: string; name: string; run: string; launched?: number; quantity?: number | null; deadline: string | null; operations: number; skipped: string }>;
   projects: Array<{ project: string; deadline: string | null; tasks: number; new: number }>;
   fitters: Array<{ id: string; name: string; site: string; free_seconds: number }>;
+  /** Площадка расчёта ("" — обе) и из каких можно выбрать (у мастера площадки — только своя). */
+  site?: string;
+  sites?: string[];
 }
 
 export interface AutoplanPreview {

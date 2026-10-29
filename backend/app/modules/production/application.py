@@ -37,7 +37,6 @@ from .launchable import launched_quantity, stage_name
 from .domain import (
     BusyInterval,
     DEFAULT_SHIFT,
-    UNPLANNED_SITES,
     FlowMode,
     MARKS_ISSUED_EVENT,
     MARKS_RELEASED_EVENT,
@@ -96,9 +95,9 @@ class Operator:
     def installer(self) -> bool:
         """Монтажник (владелец, 29.09: «тут только монтажники должны быть»): активный сотрудник с флагом «Монтажник
         (работает в цеху)» — уровень доступа и должность не важны. Без флага (директора, мастера, снабжение,
-        админ-учётки) работу не получают. Люди площадок без нормирования (ЖУК, владелец 30.09) по часам не
-        расписываются — им отдают задание целиком."""
-        return self.active and self.shop_worker and self.site not in UNPLANNED_SITES
+        админ-учётки) работу не получают. Площадка не важна: ЖУК планируется как ЦАР (владелец 29.10, раньше — 30.09 —
+        его людей по часам не расписывали)."""
+        return self.active and self.shop_worker
 
 
 @dataclass(frozen=True)
@@ -441,10 +440,6 @@ def _checked_names(
         operator = uow.operators.get(operator_id)
         if operator is None or not operator.active:
             raise ProductionValidationError("Оператора нет в справочнике сотрудников")
-        if operator.site in UNPLANNED_SITES and operator_id not in operation.operator_ids:
-            raise ProductionValidationError(
-                f"{operator.name} — площадка {operator.site}: по людям не расписывается, отдайте задание «Отдать в {operator.site}»"
-            )
         if not operator.installer and operator_id not in operation.operator_ids:
             raise ProductionValidationError(f"{operator.name} не монтажник: работу назначают только монтажникам")
         names[operator_id] = operator.name
