@@ -26,9 +26,10 @@ const working = { ...base, id: "s6", number: "ОТГ-20261027-06", status: "Но
 const cancelled = { ...complete, id: "s7", number: "ОТГ-20261001-07", status: "Отменена" };
 const closed = { ...complete, id: "s5", number: "ОТГ-20260901-05", status: "Закрыта" };
 
-// 713К.4 уже в отправках; 800К.1 — готовая продукция без отправки («Не в работе»); 900К.2 уехала целиком ещё до ERP.
-const good = (project: string, remaining: string) => ({ id: `g-${project}`, version: 1, project, item_index: "КБ1", customer: `Заказчик ${project}`, article: "", name: "Жгут", ordered: "10", unit: "шт", accepted: "0", shipped: "0", remaining, sent: remaining === "0" ? "10" : "0", before_erp: "0", received_at: null, grn: null, note: "" });
-const GOODS = [good("713К.4", "5"), good("800К.1", "10"), good("900К.2", "0")];
+// Строки приёмки: 713К.4 в отправках (ОТК); 800К.1 без отправки, В работе; 900К.2 уехала целиком; 810К.1 новый; 820К.3 «ТК готова» (старое слово).
+const take = (project: string, project_stage: string, needed = "10", sent = "0") => ({ project, customer: `Заказчик ${project}`, deadline: null, item_index: "КБ1", name: "Жгут", unit: "шт",
+  stage: "", project_stage, needed, launched: "0", delivered: "0", accepted: "0", packed: "0", sent, remaining: "0", good_id: null, good_version: null, grn: null, location: "", tasks: [] });
+const INTAKE = [take("713К.4", "ОТК"), take("800К.1", "В работе"), take("900К.2", "Отгружено", "10", "10"), take("810К.1", "Новый"), take("820К.3", "ТК готова")];
 const UPD_JOB = { id: "j1", status: "done", error: "", recognising: false, scan_file: "/api/stock/receipts/files/f1", result: {
   scan_file: "/api/stock/receipts/files/f1", lines: [], note: "",
   recognised: { supplier: "", inn: "", upd_number: "РЭ-0915", upd_date: "2026-09-15", invoice_number: "РЭ-777", invoice_date: "2026-09-08" } } };
@@ -40,7 +41,7 @@ function stub(shipments: unknown[]) {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url === "/api/shipping/shipments" && method === "GET") return json({ shipments });
-    if (url === "/api/shipping/goods" && method === "GET") return json({ goods: GOODS });
+    if (url === "/api/shipping/intake" && method === "GET") return json({ rows: INTAKE });
     if (url.endsWith("/upd-scan/file")) return json(UPD_JOB);
     if (url.endsWith("/upd-scan/apply")) return json({ status: "applied", shipment: { ...APPLIED, version: JSON.parse(String(init?.body)).version + 1 }, invoice: "РЭ-777" });
     if (/\/head$/.test(url) || /\/documents$/.test(url)) return json({ shipment: { ...base, version: JSON.parse(String(init?.body)).version + 1 } });
@@ -52,25 +53,28 @@ const bodies = (suffix: string) => vi.mocked(fetch).mock.calls.filter(([target])
 describe("ShipmentDataPage («Данные отправок»)", () => {
   beforeEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
 
-  it("splits the list into stages with counts: «Упакованы» is open by default, «Все» holds the cancelled one too", async () => {
+  it("splits the list into six stages with counts: «Упаковано» is open by default, «Все» holds the cancelled one too", async () => {
     stub([base, complete, working, shippedNoFile, shippedOld, closed, cancelled]);
     render(<ShipmentDataPage principal={principal} />);
     const table = await screen.findByRole("table");
     const headers = within(table).getAllByRole("columnheader").map((cell) => cell.textContent?.replace(/[▲▼↑↓⇅]/gu, "").trim()).filter(Boolean);
     expect(headers).toEqual(["№ отправки", "Проект", "Заказчик", "Статус", "Данные", "Срок"]);
     const chips = within(screen.getByRole("group", { name: "Быстрый отбор" }));
-    for (const name of ["Не в работе · 1", "В работе · 1", "Упакованы · 2", "Отправлены · 3", "Все · 8"]) expect(chips.getByRole("button", { name })).toBeInTheDocument();
-    expect(chips.getByRole("button", { name: "Упакованы · 2" })).toHaveAttribute("aria-pressed", "true");
+    // 713К.4 (ОТК) стоит в живых отправках; проекты без живой отправки: 800К.1 (В работе), 810К.1 и 820К.3 (ждут производства).
+    expect(chips.getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "В ожидании производства · 2", "В производстве · 1", "Готово · 1", "Принято на склад · 0", "Упаковано · 2", "Отгружено · 3", "Все · 10"]);
+    expect(chips.getByRole("button", { name: "Упаковано · 2" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("ОТГ-20261028-01")).toBeInTheDocument();
     expect(screen.getByText("Ждёт данных менеджера", { selector: ".status-chip" })).toHaveAttribute("title", "Не хватает: условия доставки, телефон получателя, тип УПД");
     expect(screen.queryByText("ОТГ-20261027-06")).not.toBeInTheDocument();
-    fireEvent.click(chips.getByRole("button", { name: "В работе · 1" }));
+    fireEvent.click(chips.getByRole("button", { name: "Готово · 1" }));
     expect(await screen.findByText("ОТГ-20261027-06")).toBeInTheDocument();
-    fireEvent.click(chips.getByRole("button", { name: "Отправлены · 3" }));
+    expect(screen.getByText("Новая", { selector: ".ship-sub" })).toBeInTheDocument();
+    fireEvent.click(chips.getByRole("button", { name: "Отгружено · 3" }));
     expect(await screen.findByText("ОТГ-20261020-03")).toBeInTheDocument();
     expect(screen.getByText("ОТГ-20260901-05")).toBeInTheDocument();
     expect(screen.queryByText("ОТГ-20261001-07")).not.toBeInTheDocument();
-    fireEvent.click(chips.getByRole("button", { name: "Все · 8" }));
+    fireEvent.click(chips.getByRole("button", { name: "Все · 10" }));
     expect(await screen.findByText("ОТГ-20261001-07")).toBeInTheDocument();
   });
 
@@ -82,20 +86,22 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     fireEvent.click(screen.getByLabelText("Только с недостающими данными"));
     await waitFor(() => expect(screen.queryByText("ОТГ-20261028-02")).not.toBeInTheDocument());
     expect(screen.getByText("ОТГ-20261028-01")).toBeInTheDocument();
-    expect(chips.getByRole("button", { name: "Отправлены · 0" })).toBeInTheDocument();
+    expect(chips.getByRole("button", { name: "Отгружено · 0" })).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Только с недостающими данными"));
-    fireEvent.click(await chips.findByRole("button", { name: "Отправлены · 2" }));
+    fireEvent.click(await chips.findByRole("button", { name: "Отгружено · 2" }));
     expect(await screen.findByText("Внести: файл УПД")).toBeInTheDocument();
     expect(screen.queryByText("Ждёт данных")).not.toBeInTheDocument();
   });
 
-  it("«Не в работе» lists projects with goods but no shipment and opens the project's «Данные отправки» card", async () => {
+  it("project rows come from the intake: «В ожидании производства» and «В производстве» open the project's «Данные отправки» card", async () => {
     stub([base]);
     render(<ShipmentDataPage principal={principal} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Не в работе · 1" }));
-    expect(await screen.findByText("800К.1")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "В ожидании производства · 2" }));
+    expect(await screen.findByText("810К.1")).toBeInTheDocument();
+    expect(screen.getByText("820К.3")).toBeInTheDocument();
     expect(screen.queryByText("900К.2")).not.toBeInTheDocument();
-    expect(screen.getByText("внести заранее")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "В производстве · 1" }));
+    expect(await screen.findByText("внести заранее")).toBeInTheDocument();
     fireEvent.click(screen.getByText("800К.1"));
     expect(await screen.findByRole("dialog", { name: "Данные отправки 800К.1" })).toBeInTheDocument();
   });
@@ -105,8 +111,43 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     for (const sent of [shippedNoFile, shippedOld, closed]) expect(dataGaps(sent as never)).toEqual([]);
     expect(sentNote(shippedNoFile as never)).toBe("Внести: файл УПД");
     expect(sentNote(shippedOld as never)).toBe("");
-    const rows = dataRows([closed, complete, base, cancelled] as never, GOODS as never);
+    const rows = dataRows([closed, complete, base, cancelled] as never, [take("713К.4", "ОТК"), take("800К.1", "В работе")] as never);
     expect(rows.map((row) => row.shipment?.number ?? row.project)).toEqual(["ОТГ-20260901-05", "ОТГ-20261001-07", "ОТГ-20261028-01", "ОТГ-20261028-02", "800К.1"]);
+  });
+
+  it("maps project stages: below «В работе» and unknown words wait for production; the ladder otherwise", () => {
+    const stages = (word: string) => dataRows([], [take("П", word)] as never).map((row) => row.stage);
+    expect(stages("Новый")).toEqual(["В ожидании производства"]);
+    for (const legacy of ["ТК готова", "КБ набрана", "Распланировано", "что-то новое", ""]) expect(stages(legacy)).toEqual(["В ожидании производства"]);
+    expect(stages("В работе")).toEqual(["В производстве"]);
+    expect(stages("ОТК")).toEqual(["Готово"]);
+    expect(stages("Принято складом")).toEqual(["Принято на склад"]);
+    expect(stages("Упаковано")).toEqual(["Упаковано"]);
+    expect(stages("Отгружено")).toEqual(["Отгружено"]);
+  });
+
+  it("shipment stage: sent goes to Отгружено, Упакована to Упаковано, Новая/Собрана follow the project capped at «Принято на склад»", () => {
+    const stageOf = (status: string, word: string) => dataRows([{ ...base, status }] as never, [take("713К.4", word)] as never).find((row) => row.kind === "shipment")?.stage;
+    expect(stageOf("Отгружена", "ОТК")).toBe("Отгружено");
+    expect(stageOf("Закрыта", "Новый")).toBe("Отгружено");
+    expect(stageOf("Упакована", "ОТК")).toBe("Упаковано");
+    expect(stageOf("Новая", "Новый")).toBe("В ожидании производства");
+    expect(stageOf("Новая", "В работе")).toBe("В производстве");
+    expect(stageOf("Собрана", "ОТК")).toBe("Готово");
+    expect(stageOf("Собрана", "Принято складом")).toBe("Принято на склад");
+    expect(stageOf("Собрана", "Упаковано")).toBe("Принято на склад");
+    expect(stageOf("Новая", "Отгружено")).toBe("Принято на склад");
+    expect(stageOf("Отменена", "ОТК")).toBe("Отменена");
+  });
+
+  it("partly shipped project: the shipped shipment stays in «Отгружено», the rest shows as a project row; a live shipment covers it; a cancelled one frees it", () => {
+    const intake = [take("713К.4", "Принято складом", "10", "4")] as never;
+    const rows = (list: unknown[]) => dataRows(list as never, intake).map((row) => `${row.shipment?.number ?? row.project}:${row.stage}`);
+    expect(rows([shippedNoFile])).toEqual(["ОТГ-20261020-03:Отгружено", "713К.4:Принято на склад"]);
+    expect(rows([shippedNoFile, base])).toEqual(["ОТГ-20261020-03:Отгружено", "ОТГ-20261028-01:Упаковано"]);
+    expect(rows([shippedNoFile, base, working]).filter((row) => row.startsWith("ОТГ")).length).toBe(3);
+    expect(rows([cancelled]).sort()).toEqual(["713К.4:Принято на склад", "ОТГ-20261001-07:Отменена"].sort());
+    expect(dataRows([shippedNoFile] as never, [take("713К.4", "Отгружено", "10", "10")] as never).map((row) => row.kind)).toEqual(["shipment"]);
   });
 
   it("opens a window with only the manager's fields; a pickup hides the address and the carrier, a carrier delivery shows them", async () => {
@@ -220,7 +261,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
   it("keeps the window open with the server's words when saving fails", async () => {
     stub([shippedNoFile]);
     render(<ShipmentDataPage principal={principal} />);
-    fireEvent.click(await screen.findByRole("button", { name: /^Отправлены/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Отгружено/ }));
     fireEvent.click(await screen.findByText("ОТГ-20261020-03"));
     const form = within(screen.getByRole("dialog", { name: "Данные отправки ОТГ-20261020-03" }));
     fireEvent.change(form.getByLabelText("№ УПД"), { target: { value: "8" } });

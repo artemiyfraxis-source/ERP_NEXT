@@ -16,6 +16,8 @@ export interface IntakeRow {
   name: string;
   unit: string;
   stage: string;
+  /** Этап проекта: Новый → В работе → ОТК → Принято складом → Упаковано → Отгружено. */
+  project_stage: string;
   needed: string;
   launched: string;
   delivered: string;

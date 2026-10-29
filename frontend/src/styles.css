@@ -5184,3 +5184,5 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .search-entry kbd { padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--accent); font: inherit; font-size: 11px; color: var(--muted-foreground); }
 .topbar-search { margin-left: auto; min-height: 44px; padding: 0 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); font-size: 14px; }
 @media (pointer: coarse) { .search-entry { min-height: 40px; } }
+
+.ship-sub { font-size: 11.5px; line-height: 1.2; }
