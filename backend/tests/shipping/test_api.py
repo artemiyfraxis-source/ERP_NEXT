@@ -343,6 +343,22 @@ def test_shipment_inherits_project_card_and_remembers_typed_contact(shipping_api
     assert stored["version"] == 3 and stored["pack_decided"] is True and stored["pack_decided_by"] == "Администратор"
 
 
+
+def test_head_edit_sets_delivery_terms_and_carrier(shipping_api):
+    """«Данные отправки» → «Тип доставки» падал с HTTP 500: перечисление теряло тип при обрезке пробелов (29.10)."""
+    client = shipping_api
+    good = _queued_good(client)
+    shipment = client.post("/api/shipping/shipments", json={"lines": [{"good_id": good["id"], "quantity": "5"}]}).json()["shipment"]
+
+    edited = client.put(f"/api/shipping/shipments/{shipment['id']}/head", json={
+        "version": shipment["version"], "terms": "ДОСТАВКА ТК", "carrier": "СДЭК", "phone": " 8925 ",
+    })
+
+    assert edited.status_code == 200, edited.text
+    body = edited.json()["shipment"]
+    assert (body["terms"], body["carrier"], body["phone"]) == ("ДОСТАВКА ТК", "СДЭК", "8925")
+    assert _shipment(client, shipment["id"])["terms"] == "ДОСТАВКА ТК"
+
 def test_open_shipment_follows_project_card_until_closed_and_head_edit_overrides(shipping_api):
     client = shipping_api
     good = _queued_good(client)

@@ -784,7 +784,8 @@ class Shipment:
         inherited = set(self.inherited)
         values: dict[str, object] = {}
         for key, value in fields.items():
-            value = value.strip() if isinstance(value, str) else value
+            # Тип доставки — str-перечисление: `strip()` превратил бы его в голую строку (HTTP 500 при записи, 29.10).
+            value = value.strip() if isinstance(value, str) and not isinstance(value, Enum) else value
             if key in ADDRESSEE_CARD_FIELDS and value in (None, ""):
                 inherited.add(key)
                 continue
