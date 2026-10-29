@@ -13,10 +13,10 @@ const sheet = {
 
 const plan: ProductionPlanResult = {
   today: "2026-09-22", calendar_from: "2026-09-15", calendar_to: "2026-11-21",
-  shop_statuses: ["ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ", "ОТК", "НА ОТГР", "ГОТОВО", "ОТГРУЖЕН"],
+  shop_statuses: ["СТОП", "ПРВ КОМПЛ", "К ЗАПУСК", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ", "ОТК", "НА ОТГР", "ГОТОВО", "ОТГРУЖЕН"],
   supplied_values: ["НЕТ", "ДА", "Ч/Т"], arrival_values: ["Склад", "Ждем", "???"],
-  blockers: ["ХОЛД", "СТОП"],
-  stages: ["Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено"],
+  blockers: ["СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ"],
+  stages: ["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"],
   review_values: ["не проверена", "проверена", "с погрешностями"],
   rows: [{
     project: "708К.4", customer: "Заказчик", opened_on: "2026-09-01",
@@ -100,7 +100,7 @@ it("writes a comment into the project journal through the plan API", async () =>
   expect(screen.getByRole("button", { name: "Записать" })).toBeDisabled();
   fireEvent.change(document.querySelector(".plan-note-text textarea")!, { target: { value: "нужна проверка" } });
   fireEvent.click(screen.getByRole("button", { name: "Записать" }));
-  await waitFor(() => expect(payload).toEqual({ project: "708К.4", kind: "note", blocker: "ХОЛД", text: "нужна проверка", deadline: "2026-09-30" }));
+  await waitFor(() => expect(payload).toEqual({ project: "708К.4", kind: "note", blocker: "СТОП", text: "нужна проверка", deadline: "2026-09-30" }));
 });
 
 it("adds a deadline through the project journal", async () => {
@@ -113,7 +113,7 @@ it("adds a deadline through the project journal", async () => {
   fireEvent.change(await screen.findByLabelText("Запись"), { target: { value: "deadline" } });
   fireEvent.change(screen.getByLabelText("Дата"), { target: { value: "2026-10-03" } });
   fireEvent.click(screen.getByRole("button", { name: "Записать" }));
-  await waitFor(() => expect(payload).toEqual({ project: "708К.4", kind: "deadline", blocker: "ХОЛД", text: "", deadline: "2026-10-03" }));
+  await waitFor(() => expect(payload).toEqual({ project: "708К.4", kind: "deadline", blocker: "СТОП", text: "", deadline: "2026-10-03" }));
 });
 
 it("sets the stage of a project without KBs through a journal mark with an empty KB", async () => {

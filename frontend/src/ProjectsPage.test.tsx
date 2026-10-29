@@ -14,11 +14,11 @@ const editor = {
 };
 const viewer = { ...editor, permissions: { projects: "view" as const } };
 
-const statuses = ["Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено", "Отменён"];
+const statuses = ["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено", "Отменён"];
 const tiles = [
   {
     project: "708К.4", customer: "ООО Заказчик", calc_source: "708К.4 Расчет.xlsx", updated_at: "2026-09-29T10:00:00",
-    updated_by: "Технолог", assemblies: 2, lines: 3, kbs: ["КБ1", "КБ2"], status: "Новый", blocker: "",
+    updated_by: "Технолог", assemblies: 2, lines: 3, kbs: ["КБ1", "КБ2"], status: "Новый", blocker: "", tc_ready: true, kit_picked: false, tc_manual: "да", kit_manual: null,
     kb_stages: [
       { index: "КБ1", status: "ТК готова", manual: false, tc: true, kit: false, review: { value: "проверена", text: "", who: "" } },
       { index: "КБ2", status: "Новый", manual: false, tc: false, kit: false, review: null },
@@ -26,7 +26,7 @@ const tiles = [
   },
   {
     project: "591К.3", customer: "АО Другой", calc_source: "", updated_at: "2026-09-20T10:00:00", updated_by: "",
-    assemblies: 1, lines: 1, kbs: ["КБ1"], status: "В работе", blocker: "ХОЛД",
+    assemblies: 1, lines: 1, kbs: ["КБ1"], status: "В работе", blocker: "СТОП",
     kb_stages: [{ index: "КБ1", status: "В работе", manual: true, tc: false, kit: false, review: null }],
   },
 ];
@@ -79,7 +79,7 @@ describe("ProjectsPage", () => {
     expect(await screen.findByText("708К.4")).toBeTruthy();
     // Факты — общим чипом статуса, с тем, о скольких КБ речь (аудит 10.10, ПР-4, ПР-11); корзины на плитке нет.
     expect(screen.getByText("ТК 1 из 2 КБ").classList.contains("status-chip")).toBe(true);
-    expect(screen.getByText("ХОЛД").classList.contains("status-chip")).toBe(true);
+    expect(screen.getByText("СТОП").classList.contains("status-chip")).toBe(true);
     expect(screen.getByText("проверена — КБ1")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Удалить/ })).toBeNull();
     expect(document.body.textContent).not.toMatch(/[⛔🗑✓]/u);
@@ -89,7 +89,48 @@ describe("ProjectsPage", () => {
     expect(localStorage.getItem("kitFilt")).toBe("В работе");
   });
 
-  it("changes the project status in one click from the tile: stage, ХОЛД with a reason, close", async () => {
+  it("shows the two marks next to the stage and sets them by hand from the menu", async () => {
+    const calls: unknown[] = [];
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4/status") { calls.push(JSON.parse(String(init?.body))); return json({ events: 1, card }); }
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={editor} />);
+    const ready = await screen.findByText("ТК готова", { selector: ".proj-mark" });
+    expect(ready.getAttribute("data-tone")).toBe("success");
+    expect(ready.getAttribute("title")).toBe("ТК готова — вручную");
+    const notPicked = screen.getByText("КБ не набрана");
+    expect(notPicked.getAttribute("data-tone")).toBe("neutral");
+    expect(notPicked.getAttribute("title")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
+    const menu = screen.getByRole("menu", { name: "Статус проекта 708К.4" });
+    expect(within(menu).queryByRole("menuitem", { name: "ХОЛД" })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: "ПАУЗА" })).toBeNull();
+    expect(within(menu).getByRole("menuitemradio", { name: "ТК: да" })).toHaveAttribute("aria-checked", "true");
+    expect(within(menu).getByRole("menuitemradio", { name: "КБ: авто" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "КБ: да" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({ action: "marker", field: "kit_picked", value: "да" });
+  });
+
+  it("shows both marks per КБ in the project card table", async () => {
+    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
+    const marked = { ...card, assemblies: [{ ...card.assemblies[0], stage: { ...card.assemblies[0].stage, tc: true, kit: false } }] };
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4") return json(marked);
+      return json({});
+    });
+    render(<ProjectsPage principal={editor} />);
+    const table = await screen.findByRole("table", { name: "Состав проекта" });
+    expect(within(table).getByRole("columnheader", { name: "Отметки" })).toBeTruthy();
+    expect(within(table).getByText("ТК готова").getAttribute("data-tone")).toBe("success");
+    expect(within(table).getByText("КБ не набрана").getAttribute("data-tone")).toBe("neutral");
+  });
+
+  it("changes the project status in one click from the tile: stage, СТОП with a reason, close", async () => {
     const calls: Array<{ url: string; body: unknown }> = [];
     const base = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation(async (input, init) => {
@@ -115,21 +156,21 @@ describe("ProjectsPage", () => {
     expect(screen.queryByText("Жгут питания")).toBeNull(); // клик по статусу не открыл карточку
 
     fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "ХОЛД" }));
-    const reason = screen.getByLabelText("Причина ХОЛД");
+    fireEvent.click(screen.getByRole("menuitem", { name: "СТОП" }));
+    const reason = screen.getByLabelText("Причина СТОП");
     expect(screen.getByRole("button", { name: "Поставить" })).toBeDisabled();
     fireEvent.change(reason, { target: { value: "ждём оплату" } });
     fireEvent.click(screen.getByRole("button", { name: "Поставить" }));
     await waitFor(() => expect(calls).toHaveLength(2));
-    expect(calls[1].body).toEqual({ action: "block", value: "ХОЛД", text: "ждём оплату" });
+    expect(calls[1].body).toEqual({ action: "block", value: "СТОП", text: "ждём оплату" });
 
     fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Отменён" }));
     await waitFor(() => expect(calls).toHaveLength(3));
     expect(calls[2].body).toEqual({ action: "status", value: "Отменён" });
-    // У проекта с активным блокером в меню — «Снять ХОЛД».
-    fireEvent.click(screen.getByRole("button", { name: "Статус проекта 591К.3: В работе, блокер ХОЛД" }));
-    expect(screen.getByRole("menuitem", { name: "Снять ХОЛД" })).toBeTruthy();
+    // У проекта с активным блокером в меню — «Снять СТОП».
+    fireEvent.click(screen.getByRole("button", { name: "Статус проекта 591К.3: В работе, блокер СТОП" }));
+    expect(screen.getByRole("menuitem", { name: "Снять СТОП" })).toBeTruthy();
   });
 
   it("«Состав» has no finished-goods column and never asks for it (owner 14.10)", async () => {
@@ -141,9 +182,9 @@ describe("ProjectsPage", () => {
   });
 
   it("shows the status, active blocker and journal in the project card", async () => {
-    const held = { ...card, status: "В работе", blocker: "ХОЛД", deadline: "2026-10-20",
-      blocker_info: { type: "ХОЛД", text: "ждём оплату", since: "2026-09-28T10:00:00", who: "РП" },
-      journal: [{ id: "e1", occurred_at: "2026-09-28T10:00:00", who: "РП", kind: "Блокер", blocker: "ХОЛД", text: "ждём оплату", item_index: "", value: "" }] };
+    const held = { ...card, status: "В работе", blocker: "СТОП", deadline: "2026-10-20",
+      blocker_info: { type: "СТОП", text: "ждём оплату", since: "2026-09-28T10:00:00", who: "РП" },
+      journal: [{ id: "e1", occurred_at: "2026-09-28T10:00:00", who: "РП", kind: "Блокер", blocker: "СТОП", text: "ждём оплату", item_index: "", value: "" }] };
     const posted: unknown[] = [];
     const base = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation(async (input, init) => {
@@ -154,9 +195,9 @@ describe("ProjectsPage", () => {
     });
     window.history.replaceState({}, "", "/?section=projects&project=708К.4");
     render(<ProjectsPage principal={editor} />);
-    expect(await screen.findByRole("button", { name: "Статус проекта 708К.4: В работе, блокер ХОЛД" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Статус проекта 708К.4: В работе, блокер СТОП" })).toBeTruthy();
     expect(screen.getByText("с 28.09.2026 · ждём оплату — РП")).toBeTruthy();
-    expect(document.querySelector(".kit-blocker .status-chip")?.textContent).toBe("ХОЛД");
+    expect(document.querySelector(".kit-blocker .status-chip")?.textContent).toBe("СТОП");
     fireEvent.click(screen.getByRole("tab", { name: "Журнал · 1" }));
     // Текст записи — растущее поле; Enter записывает, как раньше в однострочном.
     const text = screen.getByLabelText("Текст записи");

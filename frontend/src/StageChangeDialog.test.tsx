@@ -48,10 +48,10 @@ describe("StageChangeDialog", () => {
   });
 
   it("shows warnings and says there is nothing to close", async () => {
-    open(preview({ warnings: ["Активный блокер «ХОЛД» — смена этапа его не снимает."], kbs: [
+    open(preview({ warnings: ["Активный блокер «СТОП» — смена этапа его не снимает."], kbs: [
       { kb: "КБ1", label: "КБ1", from: "В работе", to: "Отгружено", skipped: [], change: true, note: "", warnings: ["Есть открытые задания цеха: 2"] },
     ] }));
-    expect(await screen.findByText("Активный блокер «ХОЛД» — смена этапа его не снимает.")).toBeTruthy();
+    expect(await screen.findByText("Активный блокер «СТОП» — смена этапа его не снимает.")).toBeTruthy();
     expect(screen.getByText("Есть открытые задания цеха: 2")).toBeTruthy();
     expect(screen.getByText("Меняется только этап, остальное не трогаем.")).toBeTruthy();
   });
