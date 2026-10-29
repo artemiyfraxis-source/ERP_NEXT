@@ -45,12 +45,12 @@ describe("Склад → Готовая продукция", () => {
     expect(screen.getByText("КБ7", { selector: "strong" })).toBeInTheDocument();
   });
 
-  it("links to the «Отгрузка» tabs", async () => {
+  it("links to the steps of «Приёмка с производства» (экран «Отгрузка» убран 29.10)", async () => {
     const moved = vi.fn();
     window.addEventListener("popstate", moved);
     render(<FinishedGoodsPanel />);
     fireEvent.click(await screen.findByRole("link", { name: "на складе" }));
-    expect(window.location.search).toBe("?section=shipping&tab=stock");
+    expect(window.location.search).toBe("?section=intake&tab=accepted");
     expect(moved).toHaveBeenCalled();
     window.removeEventListener("popstate", moved);
   });

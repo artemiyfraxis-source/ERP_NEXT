@@ -28,8 +28,9 @@ const COMMANDS: Command[] = [
   { label: "Внутренние проекты", section: "projects", params: { tab: "internal" }, words: "ВП" },
   { label: "Счета (документация)", section: "primarydocs", params: { tab: "invoices" }, words: "счёт оплата платёжка kaiten", search: true },
   { label: "Цепочка документов", section: "primarydocs", params: { tab: "chain" }, words: "упд счёт заказ", search: true },
-  { label: "Отправки", section: "shipping", params: { tab: "shipments" }, words: "отгрузка упаковка места накладная трек перевозчик", search: true },
-  { label: "Журнал отгрузки", section: "shipping", params: { tab: "journal" }, words: "журнал движения готовой продукции", search: true },
+  // Экран «Отгрузка» убран (владелец 29.10): отправки и журнал — на «Приёмке с производства».
+  { label: "Отправки", section: "intake", params: { tab: "packed" }, words: "отгрузка упаковка места накладная трек перевозчик", search: true },
+  { label: "Журнал отгрузки", section: "intake", params: { tab: "journal" }, words: "журнал движения готовой продукции", search: true },
   // «База данных»: каждая вкладка — отдельным переходом (ключи вкладок читает ReferencesPage из `&tab=`).
   { label: "База данных → Операции", section: "references", params: { tab: "templates" }, words: "шаблоны техкарт карточки операций", search: true },
   { label: "База данных → Оборудование", section: "references", params: { tab: "ob" }, words: "станки инструмент аппликаторы", search: true },
@@ -48,8 +49,7 @@ const COMMANDS: Command[] = [
 
 // What else a person types to find a menu section (the section's own label and subtitle are searched as well).
 const SECTION_WORDS: Partial<Record<Section, string>> = {
-  shipping: "упаковка отправка готовая продукция",
-  intake: "приёмка с производства готовая продукция упаковка",
+  intake: "приёмка с производства готовая продукция упаковка отправка отгрузка",
   equipment: "принтер этикеток тсд сканер",
   operations: "журнал аудит события",
   production: "ресурсное планирование операторы смены",

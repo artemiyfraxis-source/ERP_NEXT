@@ -1669,6 +1669,11 @@ export interface Shipment {
    *  печатается DN), `missing_ship` — то же и трек-номер ТК, без которого «Отгрузить» откажет. */
   missing_data: string[];
   missing_ship: string[];
+  /** Этапы 29.10: УПД и ТК внесены — ждём трек от склада; упакована + УПД + ТК + трек; «без УПД» разрешил уполномоченный. */
+  ready_for_track?: boolean;
+  ready_to_ship?: boolean;
+  no_upd_approved_by?: string | null;
+  no_upd_approved_at?: string | null;
 }
 
 export interface ShipmentBox {
@@ -1707,7 +1712,16 @@ export interface ProjectAddressee {
   /** Бумажная УПД, приложенная к данным отправки заранее: ссылка и имя файла («УПД: имя»). */
   upd_url?: string;
   upd_file_name?: string;
+  /** Решение менеджера «упаковывать» (29.10): кто и когда; после него Алексей может паковать. */
+  pack_decided?: boolean;
+  pack_decided_by?: string | null;
+  pack_decided_at?: string | null;
+  upd_number?: string;
+  upd_date?: string | null;
 }
+
+/** Кто может разрешить отгрузку без УПД (PIN вводится на экране кладовщика). */
+export interface NoUpdApprover { id: string; name: string }
 
 export interface ReferencePair {
   key: string;
@@ -3994,6 +4008,16 @@ export const shippingApi = {
   /** Файл бумажной УПД к данным отправки проекта (то же хранилище); ссылку в карточку ставит `saveAddressee` с `upd_url`. */
   uploadCardUpd: (project: string, file: { name: string; type: string; base64: string }) => api<{ file: { id: string; url: string; name: string } }>("/api/shipping/upd-files", {
     method: "POST", body: JSON.stringify({ project, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
+  }),
+  /** Решение «упаковывать» по проекту: `decided` true/false, версия карточки проекта. */
+  packDecision: (project: string, version: number, decided: boolean) => api<{ addressee: ProjectAddressee }>("/api/shipping/project-pack-decision", {
+    method: "POST", body: JSON.stringify({ project, version, decided }),
+  }),
+  /** Кто уполномочен разрешить отгрузку без УПД. */
+  noUpdApprovers: async () => (await api<{ approvers: NoUpdApprover[] }>("/api/shipping/no-upd-approvers")).approvers,
+  /** Отгрузка без УПД: разрешение уполномоченного по PIN (на экране кладовщика). */
+  approveNoUpd: (shipmentId: string, version: number, approverId: string, pin: string) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/approve-no-upd`, {
+    method: "POST", body: JSON.stringify({ version, approver_id: approverId, pin }),
   }),
   saveAddressee: (payload: Record<string, unknown>) => api<{ addressee: ProjectAddressee }>("/api/shipping/project-addressee", {
     method: "PUT", body: JSON.stringify(payload),

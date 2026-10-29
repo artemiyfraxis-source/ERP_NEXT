@@ -1,10 +1,11 @@
 """План отгрузки в карточке проекта, «без УПД» и место хранения ГП (владелец 14.10.2026): склад и менеджер заносят
-дату и комментарий заранее, новая отправка берёт их, если свои пусты; отправка «БЕЗ УПД» уезжает и закрывается без
-файла и номера; принятое кладётся на место хранения (одно на КБ, последняя приёмка с местом его заменяет)."""
+дату и комментарий заранее, новая отправка берёт их, если свои пусты; принятое кладётся на место хранения (одно на КБ,
+последняя приёмка с местом его заменяет). «БЕЗ УПД» с 29.10.2026 уезжает только по разрешению с PIN, а закрывается
+только с УПД (tests/shipping/test_pack_decision_no_upd.py, tests/workflows/test_ship_no_upd.py)."""
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -15,7 +16,7 @@ from app.modules.shipping.documents import build_delivery_note
 from app.modules.shipping.domain import DeliveryTerms, ProjectAddressee, ShippingValidationError, UpdType
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
-from tests.shipping.test_api import shipping_api  # noqa: F401 — fixture
+from tests.shipping.test_api import decide_pack, shipping_api  # noqa: F401 — fixture
 from tests.shipping.test_domain import good, shipment
 from tests.workflows.test_finished_goods_register import _accept, flow_api  # noqa: F401 — fixture
 
@@ -32,21 +33,26 @@ def _packed(upd_type, terms=DeliveryTerms.PICKUP):
 # ── «Без УПД» ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def test_without_upd_ships_and_closes_with_neither_file_nor_number():
-    shipped = _packed(UpdType.NONE).mark_shipped(DAY)
-    closed = shipped.close()
+def test_without_upd_ships_only_with_the_permit_and_stays_shipped_until_a_upd():
+    packed = _packed(UpdType.NONE)
+    with pytest.raises(ShippingValidationError, match="разрешение на отгрузку без УПД"):
+        packed.mark_shipped(DAY)
+    shipped = packed.approve_no_upd("Касаточкин", datetime(2026, 9, 22, 10)).mark_shipped(DAY)
 
-    assert (shipped.upd_url, shipped.upd_number) == ("", "")
-    assert closed.status.value == "Закрыта"
+    assert (shipped.upd_url, shipped.upd_number, shipped.no_upd_approved_by) == ("", "", "Касаточкин")
+    with pytest.raises(ShippingValidationError, match="№ УПД, файл УПД"):
+        shipped.close()
+    later = shipped.update_documents(upd_type=UpdType.EDO, upd_number="77", upd_date=DAY, upd_url="/api/shipping/files/x", track_number="")
+    assert later.close().status.value == "Закрыта"
 
 
 def test_without_upd_by_carrier_still_needs_the_track():
-    packed = _packed(UpdType.NONE, terms=DeliveryTerms.CARRIER)
+    packed = _packed(UpdType.NONE, terms=DeliveryTerms.CARRIER).approve_no_upd("Зингер", datetime(2026, 9, 22, 10))
 
     with pytest.raises(ShippingValidationError, match="не хватает — трек-номер$"):
         packed.mark_shipped(DAY)
     shipped = packed.update_documents(upd_type=UpdType.NONE, upd_number="", upd_date=None, upd_url="", track_number="T-1").mark_shipped(DAY)
-    assert shipped.close().status.value == "Закрыта"
+    assert shipped.status.value == "Отгружена"
 
 
 def test_paper_and_empty_type_still_need_the_file():
@@ -56,7 +62,7 @@ def test_paper_and_empty_type_still_need_the_file():
 
 
 def test_delivery_note_says_without_upd():
-    form = build_delivery_note(_packed(UpdType.NONE), "Заказчик")
+    form = build_delivery_note(_packed(UpdType.NONE).approve_no_upd("Зингер", datetime(2026, 9, 22, 10)), "Заказчик")
 
     assert (form.upd, form.upd_edo, form.upd_paper) == ("без УПД", False, False)
 
@@ -71,19 +77,18 @@ def _stocked(client, item_index="КБ1", quantity="6", **accept) -> dict:
     }).json()["good"]
 
 
-def test_without_upd_shipment_closes_at_once_through_the_api(shipping_api):
+def test_without_upd_shipment_waits_for_the_permit_through_the_api(shipping_api):
     client = shipping_api
     stocked = _stocked(client)
     made = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД",
         "lines": [{"good_id": stocked["id"], "quantity": "6"}],
     }).json()["shipment"]
-    shipped = client.post(f"/api/shipping/shipments/{made['id']}/ship", json={"version": made["version"]})
+    refused = client.post(f"/api/shipping/shipments/{made['id']}/ship", json={"version": made["version"]})
 
     assert made["upd_type"] == "БЕЗ УПД"
-    assert shipped.status_code == 200
-    assert shipped.json()["closed"] is True and shipped.json()["why"] == ""
-    assert shipped.json()["shipment"]["status"] == "Закрыта"
+    assert made["missing_ship"] == ["разрешение на отгрузку без УПД"] and made["ready_to_ship"] is False
+    assert refused.status_code == 422
 
 
 def test_card_upd_type_without_upd_is_inherited_by_the_shipment(shipping_api):
@@ -91,11 +96,9 @@ def test_card_upd_type_without_upd_is_inherited_by_the_shipment(shipping_api):
     stocked = _stocked(client)
     card = client.put("/api/shipping/project-addressee", json={"project": PROJECT, "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД"})
     made = client.post("/api/shipping/shipments", json={"lines": [{"good_id": stocked["id"], "quantity": "6"}]}).json()["shipment"]
-    shipped = client.post(f"/api/shipping/shipments/{made['id']}/ship", json={"version": made["version"]}).json()
 
     assert card.json()["addressee"]["upd_type"] == "БЕЗ УПД"
     assert made["upd_type"] == "БЕЗ УПД" and "upd_type" in made["inherited"]
-    assert shipped["shipment"]["status"] == "Закрыта"
 
 
 # ── План отгрузки в карточке проекта ────────────────────────────────────────────────────────────────────────────
@@ -165,6 +168,7 @@ def test_project_pack_takes_deadline_and_note_from_the_card(shipping_api):
     client.put("/api/shipping/project-addressee", json={
         "project": PROJECT, "shipping_point": "Склад заказчика", "plan_date": "2026-10-20", "note": "Хрупкое",
     })
+    decide_pack(client)
     packed = client.post("/api/shipping/project-pack", json={"project": PROJECT, "lines": [{"good_id": stocked["id"], "quantity": "2"}]})
 
     assert packed.status_code == 200
@@ -194,6 +198,7 @@ def test_project_ship_by_storekeeper_takes_the_card_deadline(shipping_api):
     card = client.put("/api/shipping/project-addressee", json={
         "project": PROJECT, "shipping_point": "Москва", "plan_date": "2026-10-22", "note": "Позвонить заранее",
     }).json()["addressee"]
+    card = decide_pack(client)
     _as({"shipping_goods": "edit"})
     made = client.post("/api/shipping/project-ship", headers={"Idempotency-Key": "plan-1"}, json={
         "project": PROJECT, "addressee_version": card["version"],

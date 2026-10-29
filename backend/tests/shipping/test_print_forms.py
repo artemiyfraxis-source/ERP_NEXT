@@ -169,7 +169,10 @@ def test_upd_without_number_refuses_the_dn_and_no_upd_says_so(shipping_api):
     # Владелец 28.10.2026: пока не внесён № УПД, DN не печатается.
     refused = client.get(f"/api/shipping/shipments/{paper['id']}/print", params={"document": "dn"})
     assert refused.status_code == 409 and refused.json()["detail"] == "Нельзя печатать DN: не хватает — № УПД, файл УПД"
-    assert _print(client, none["id"], "dn")[0]["upd"] == "без УПД"
+    # «Без УПД» — только по разрешению с PIN (владелец 29.10.2026); с ним DN пишет «без УПД» (test_dispatch_plan).
+    unapproved = client.get(f"/api/shipping/shipments/{none['id']}/print", params={"document": "dn"})
+    assert unapproved.status_code == 409
+    assert unapproved.json()["detail"] == "Нельзя печатать DN: не хватает — разрешение на отгрузку без УПД"
 
 
 def test_part_number_skips_an_article_that_is_only_project_and_kb(shipping_api):
@@ -462,7 +465,7 @@ def test_storekeeper_saves_the_track_number_and_the_manager_is_notified(shipping
     app.dependency_overrides[authenticated_principal] = lambda: _storekeeper_only(STOREKEEPER)
     try:
         response = client.put(f"/api/shipping/shipments/{shipment['id']}/documents", json={
-            "version": shipment["version"], "upd_type": "ЭДО", "track_number": "2071163030",
+            "version": shipment["version"], "upd_type": "ЭДО", "upd_number": "12", "track_number": "2071163030",
         })
     finally:
         app.dependency_overrides.clear()

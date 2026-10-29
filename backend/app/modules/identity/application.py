@@ -520,6 +520,68 @@ def pin_reveal_enabled(uow: UnitOfWork) -> bool:
         return uow.identity.setting(PIN_REVEAL_SETTING) == "1"
 
 
+# ── Разрешение по личному PIN (workflows/ship_no_upd.py): «пинкод у Артемия, Зингера, Касаточкина» ─────────────────
+
+
+class ApproverRefused(AuthenticationError):
+    """The chosen person may not give this permission (unknown, inactive or without the section on edit). Refused
+    before any PIN is checked: no counter moves."""
+
+
+APPROVER_REFUSED = "Этот сотрудник не может дать такое разрешение."
+APPROVER_PIN_BAD = "Неверный PIN."
+APPROVER_PIN_MISSING = "У сотрудника не назначен PIN — обратитесь к администратору."
+
+
+def _section_edit(user: IdentityUser, section: str, level_row: dict[str, AccessMode], exceptions: dict[str, AccessMode]) -> bool:
+    return level_permissions(user_level(user), level_row, exceptions).get(section) is AccessMode.EDIT
+
+
+def section_editors(section: str, uow: UnitOfWork) -> list[IdentityUser]:
+    """Active people who hold `section` on edit (the level matrix + the personal exceptions; full levels — always),
+    by name."""
+    with uow:
+        matrix = uow.identity.all_level_access()
+        exceptions = uow.identity.all_user_level_access()
+        people = [
+            user for user in uow.identity.all_users()
+            if user.active and _section_edit(user, section, matrix.get(user_level(user), {}), exceptions.get(user.id, {}))
+        ]
+    return sorted(people, key=lambda user: ((user.name or user.email).casefold(), str(user.id)))
+
+
+def confirm_with_pin(
+    user_id: UUID, pin: str, section: str, now: datetime, uow: UnitOfWork, *, client_key: str, purpose: str,
+) -> IdentityUser:
+    """The person `user_id` permits an action with their own PIN, typed on someone else's device. They must be active
+    and hold `section` on edit. The PIN is checked like a PIN login, under the same limits: the account key is
+    `<purpose>:<login>`, the client and overall counters are the login's own; a wrong PIN is a failed attempt
+    (committed, journalled, the owner alerted at a threshold), a lock answers AuthenticationRateLimited."""
+    now = as_utc(now)
+    with uow:
+        user = uow.identity.user_by_id(user_id)
+        if user is None or not user.active:
+            raise ApproverRefused(APPROVER_REFUSED)
+        level = user_level(user)
+        if not _section_edit(user, section, uow.identity.level_access(level), uow.identity.user_level_access(user.id)):
+            raise ApproverRefused(APPROVER_REFUSED)
+        identifier = user.login or str(user.id)
+        account_key = f"{purpose}:{identifier}"
+        failures = _rate_limited(uow, account_key, client_key, identifier, now)
+        record = uow.identity.pin_record(str(user.id))
+        if record is None or not record.pin_hash:
+            raise PinRefused(APPROVER_PIN_MISSING)
+        if not verify_password(str(pin or ""), record.pin_hash):
+            _record_failure(
+                uow, account_key=account_key, client_key=client_key, identifier=identifier, user_id=user.id,
+                failures=failures, now=now, method=purpose,
+            )
+            raise AuthenticationError(APPROVER_PIN_BAD)
+        uow.identity.reset_failures(account_key)
+        uow.commit()
+        return user
+
+
 def set_pin_reveal(enabled: bool, uow: UnitOfWork) -> None:
     """pinRevealOn / pinRevealOff (the owner, from the CLI)."""
     with uow:

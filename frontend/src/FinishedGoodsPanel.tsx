@@ -5,7 +5,7 @@ import { formatDate } from "./format";
 import { GOODS_STATES, GoodsStateBar, goodsPieces, sumPieces, type GoodsPieces } from "./FinishedGoodsStates";
 
 /* «Склад → Готовая продукция» (владелец 12.10.2026): только просмотр — по проекту и КБ, сколько штук в каждом
-   сквозном статусе. Принимают, упаковывают и отгружают на экране «Отгрузка». */
+   сквозном статусе. Принимают, упаковывают и отгружают на «Приёмке с производства». */
 
 interface Row { good: FinishedGood; pieces: GoodsPieces; waiting: number }
 
@@ -15,22 +15,21 @@ const num = (value: string | null | undefined) => {
 };
 const keyOf = (project: string, index: string) => `${project.trim().toUpperCase()}\u0000${index.trim().toUpperCase()}`;
 
-function openShipping(section: string, tab: string) {
+/** Шаг на «Приёмке с производства» (владелец 29.10: там принимают, упаковывают и отгружают; экран «Отгрузка» убран). */
+function openIntake(tab: string) {
   const url = new URL(window.location.href);
-  url.searchParams.set("section", section);
+  url.searchParams.set("section", "intake");
   url.searchParams.delete("block");
-  if (section === "shipping") url.searchParams.set("tab", tab); else url.searchParams.delete("tab");
+  url.searchParams.set("tab", tab);
   window.history.pushState({}, "", url);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
-function ShippingLink({ tab, children }: { tab: string; children: string }) {
-  // «Из производства» теперь отдельный раздел «Приёмка с производства».
-  const section = tab === "production" ? "intake" : "shipping";
-  return <a className="link-button" href={tab === "production" ? "?section=intake" : `?section=shipping&tab=${tab}`} onClick={(event) => {
+function IntakeLink({ tab, children }: { tab: string; children: string }) {
+  return <a className="link-button" href={`?section=intake&tab=${tab}`} onClick={(event) => {
     if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
     event.preventDefault();
-    openShipping(section, tab);
+    openIntake(tab);
   }}>{children}</a>;
 }
 
@@ -76,10 +75,10 @@ export function FinishedGoodsPanel() {
   const customer = (project: string) => rows.find((row) => row.good.project === project && row.good.customer)?.good.customer ?? "";
   return <section className="goods-panel" aria-label="Готовая продукция">
     <p className="goods-panel-head">
-      <span>Принимают, упаковывают и отгружают в «Отгрузке»:</span>
-      <ShippingLink tab="production">из производства</ShippingLink>
-      <ShippingLink tab="stock">на складе</ShippingLink>
-      <ShippingLink tab="shipments">отправки</ShippingLink>
+      <span>Принимают, упаковывают и отгружают в «Приёмке с производства»:</span>
+      <IntakeLink tab="ready">готово</IntakeLink>
+      <IntakeLink tab="accepted">на складе</IntakeLink>
+      <IntakeLink tab="packed">упаковано</IntakeLink>
     </p>
     <DataTable label="Готовая продукция" storageKey="stock-finished-goods" personalKey="stock.goods" rows={rows} columns={columns} rowKey={(row) => row.good.id}
       groupBy={(row) => row.good.project}

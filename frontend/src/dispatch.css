@@ -14,3 +14,12 @@
 @media (pointer: coarse) {
   .dispatch-grid input, .dispatch-grid select, .dispatch-card button, .dispatch-upd button { min-height: 40px; }
 }
+
+/* «Данные отправки» отправки по этапам (29.10): блоки «Адрес» и «ТК и УПД», обязательное при «Упаковано». */
+.ship-block { margin: 8px 0 12px; }
+.ship-block > h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
+.ship-required select, .ship-required input { border-color: var(--warn-border); background: var(--warn-soft); }
+.ship-required-note { margin: 6px 0 0; font-size: 13px; color: var(--tone-warn); }
+.ship-track { margin: 6px 0 0; font-size: 13px; }
+.ship-no-upd { margin: 6px 0 0; font-size: 13px; color: var(--tone-warn); }
+.ship-pack-decision { margin: 4px 0; font-size: 13px; }

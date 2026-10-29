@@ -293,7 +293,7 @@ def test_frozen_old_model_matches_the_legacy_data():
     assert set(owner_alerts.OWNER_AUDIENCES) | set(owner_alerts.DISPOSAL_AUDIENCES) <= notifications.AUDIENCES
     new_sections = {"myops", "quality", "shipping_goods"}
     assert set(TRANSFER_SECTIONS) == (set(domain.SECTION_LABELS) - {"staffdir"}) | new_sections
-    assert set(LEVEL_SECTION_LABELS) == set(TRANSFER_SECTIONS) | {"hr", "scan", "print"}
+    assert set(LEVEL_SECTION_LABELS) == set(TRANSFER_SECTIONS) | {"hr", "scan", "print", "ship_no_upd"}
 
 
 # ── Migration 0086 on SQLite ───────────────────────────────────────────────────────────────────────

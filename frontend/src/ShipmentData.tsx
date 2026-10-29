@@ -6,6 +6,10 @@ import { StatusChip } from "./StatusChip";
 import { useUpdScan } from "./useUpdScan";
 import { ScanDeviceLine } from "./ScanAgent";
 import { useCanScan } from "./rights";
+import { formatDate } from "./format";
+import { shipmentDispatchStage, type DispatchStage } from "./dispatchStage";
+import { PackDecision } from "./shippingCells";
+import "./dispatch.css";
 
 /* Данные отправки (владелец 28.10.2026): упаковывает и отгружает кладовщик, данные для отгрузки — тип доставки,
    перевозчик, адрес, получатель, телефон, УПД — вносит менеджер (Ульяна) в своём разделе «Данные отправок».
@@ -66,7 +70,16 @@ const CARRIER_CHOICES =CARRIERS.filter((name) => name !== PICKUP_CARRIER);
 
 /** Окно с данными одной отправки — только поля, которые вносит менеджер. Сохранение — через правку шапки и документов
  *  отправки (проверка версии на сервере): сначала шапка, потом документы, потом файл УПД. */
-export function ShipmentDataWindow({ shipment: opened, close, onSaved }: { shipment: Shipment; close: () => void; onSaved: () => Promise<void> | void }) {
+export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: given, canEdit = true }: {
+  shipment: Shipment; close: () => void; onSaved: () => Promise<void> | void;
+  /** Этап на общей лестнице (29.10); без него — как у принятой на склад отправки. */
+  stage?: DispatchStage | null; canEdit?: boolean;
+}) {
+  const stage: DispatchStage = given ?? shipmentDispatchStage(opened, "Принято складом") ?? "accepted";
+  const shipped = stage === "shipped";
+  const packed = stage === "packed";
+  const afterPack = stage === "to_ship" || shipped;
+  const deciding = stage === "ready" || stage === "accepted";
   // Скан или файл УПД сразу кладёт документ в отправку (версия растёт), поэтому окно ведёт свою копию отправки.
   const [shipment, setShipment] = useState<Shipment>(opened);
   const [delivery, setDelivery] = useState<string>(shipment.terms ?? (isPickup(shipment.carrier) ? "САМОВЫВОЗ" : ""));
@@ -136,8 +149,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved }: { shipm
       if (phone.trim() !== shipment.phone.trim()) head.phone = phone.trim();
       if (delivery && delivery !== shipment.terms) head.terms = delivery;
       if (delivery && wantedCarrier !== shipment.carrier.trim()) head.carrier = wantedCarrier;
-      // Самовывозу адрес не нужен: то, что было записано, остаётся как есть.
-      if (!pickup && point.trim() !== shipment.shipping_point.trim()) head.shipping_point = point.trim();
+      if (!shipped && point.trim() !== shipment.shipping_point.trim()) head.shipping_point = point.trim();
       if (Object.keys(head).length) current = (await shippingApi.head(shipment.id, { version: current.version, ...head })).shipment;
       const number = noUpd ? "" : updNumber.trim();
       const day = noUpd ? "" : updDate;
@@ -165,16 +177,20 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved }: { shipm
       <h2>Данные отправки {shipment.number}</h2>
       <p className="ship-data-sub">{shipment.customer || shipment.receiver}{shipment.lines.length ? ` · ${[...new Set(shipment.lines.map((line) => line.project))].join(", ")}` : ""}
         {gaps.length > 0 && <span className="tone-warn"> · не хватает: {gaps.join(", ")}</span>}</p>
-      <div className="ship-form">
-        <label>Тип доставки<select aria-label="Тип доставки" value={delivery} onChange={(event) => setDelivery(event.target.value)}>
+      {deciding && <div className="ship-block"><h3>Упаковка</h3>
+        {[...new Set(shipment.lines.map((line) => line.project))].map((name) => <PackDecision key={name} project={name} editable={canEdit} />)}</div>}
+      {!shipped && <div className="ship-block"><h3>Адрес</h3><div className="ship-form">
+        <label className="ship-span2">Адрес доставки<input aria-label="Адрес доставки" value={point} onChange={(event) => setPoint(event.target.value)} /></label>
+        <label>Получатель<input aria-label="Получатель" value={receiver} onChange={(event) => setReceiver(event.target.value)} /></label>
+        <label>Телефон получателя<input aria-label="Телефон получателя" value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
+      </div></div>}
+      <div className="ship-block"><h3>ТК и УПД</h3><div className="ship-form">
+        <label className={packed && !delivery ? "ship-required" : undefined}>Тип доставки<select aria-label="Тип доставки" value={delivery} onChange={(event) => setDelivery(event.target.value)}>
           <option value="">не выбран</option><option value="САМОВЫВОЗ">Самовывоз</option><option value="ДОСТАВКА ТК">Доставка ТК</option></select></label>
-        {carrierTrip && <label>Перевозчик<select aria-label="Перевозчик" value={carrier} onChange={(event) => setCarrier(event.target.value)}>
+        {carrierTrip && <label className={packed && !carrier ? "ship-required" : undefined}>Перевозчик<select aria-label="Перевозчик" value={carrier} onChange={(event) => setCarrier(event.target.value)}>
           <option value="">не выбран</option>{CARRIER_CHOICES.map((name) => <option key={name} value={name}>{name}</option>)}
           {carrier && !(CARRIER_CHOICES as readonly string[]).includes(carrier) && <option value={carrier}>{carrier} (прежнее)</option>}</select></label>}
-        {carrierTrip && <label className="ship-span2">Адрес доставки<input aria-label="Адрес доставки" value={point} onChange={(event) => setPoint(event.target.value)} /></label>}
-        <label className={pickup || !delivery ? "ship-span2" : undefined}>Получатель<input aria-label="Получатель" value={receiver} onChange={(event) => setReceiver(event.target.value)} /></label>
-        <label>Телефон получателя<input aria-label="Телефон получателя" value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
-        <label>УПД<select aria-label="Тип УПД" value={updType} onChange={(event) => setUpdType(event.target.value)}>
+        <label className={packed && !updType ? "ship-required" : undefined}>УПД<select aria-label="Тип УПД" value={updType} onChange={(event) => setUpdType(event.target.value)}>
           <option value="">не выбран</option>{UPD_TYPES.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
         {!noUpd && <div className="ship-span2 ship-upd-scan">
           <span className="ship-upd-buttons">
@@ -205,6 +221,12 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved }: { shipm
         </div>}
         {updType && !noUpd && <label>№ УПД<input aria-label="№ УПД" value={updNumber} onChange={(event) => setUpdNumber(event.target.value)} /></label>}
         {updType && !noUpd && <label>Дата УПД<input type="date" className="ship-narrow" aria-label="Дата УПД" value={updDate} onChange={(event) => setUpdDate(event.target.value)} /></label>}
+      </div>
+      {packed && (!updType || !delivery) && <p className="ship-required-note">Упаковано: УПД и ТК обязательны — внесите, чтобы склад мог отгрузить</p>}
+      {afterPack
+        ? <p className="ship-track">Трек: <strong>{shipment.track_number || "—"}</strong>{" · "}{shipped ? "отгружено" : "упаковано"} {formatDate(String((shipped ? shipment.shipped_at : shipment.packed_at) ?? "").slice(0, 10)) || "—"}</p>
+        : <p className="muted ship-track">{shipment.track_number ? `Трек: ${shipment.track_number}` : "трек: ждём склад"}</p>}
+      {shipment.no_upd_approved_by && <p className="ship-no-upd">без УПД — разрешил {shipment.no_upd_approved_by}{shipment.no_upd_approved_at ? `, ${formatDate(String(shipment.no_upd_approved_at).slice(0, 10))}` : ""}</p>}
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="ship-actions"><span className="ship-actions-end">

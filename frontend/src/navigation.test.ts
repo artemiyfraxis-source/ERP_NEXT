@@ -31,7 +31,7 @@ const EVERYTHING = {
   "Производство": ["Проекты", "Ресурсное планирование", "Задания", "ОТК"],
   // «Мои заявки» and «Заявки» are no menu items (Витя's edits 2–3): the card and «Снабжение → Заявки» open them.
   "Снабжение": ["Оформить заявку", ...BUYER_MENU],
-  "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
+  "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
   "Менеджмент": ["Данные отправок", "Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
   "Документация": ["Первичная документация"],
   "Справочники": ["База данных", "Закупка"],
@@ -80,7 +80,7 @@ it("gives the foreman the shop, the stock and the storekeeper's shipping, of the
   expect(layout(as("foreman", FOREMAN))).toEqual({
     "Производство": ["Ресурсное планирование", "Задания", "ОТК"],
     "Снабжение": ["Оформить заявку", ...READER_MENU],
-    "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
+    "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
     "Менеджмент": ["Производственный план", "Уведомления"],
     // «Снабжение» on view reads its moved tabs too.
     "Документация": ["Первичная документация"],
@@ -92,7 +92,7 @@ it("gives the technical lead projects, planning, the whole supply block and the 
   expect(layout(as("tech_lead", TECH_LEAD))).toEqual({
     "Производство": ["Проекты", "Ресурсное планирование", "ОТК"],
     "Снабжение": ["Оформить заявку", ...BUYER_MENU],
-    "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства", "Отгрузка"],
+    "Склад": ["Приёмка", "Склад", "Оборудование", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
     "Менеджмент": ["Производственный план", "Уведомления"],
     "Документация": ["Первичная документация"],
     "Справочники": ["База данных", "Закупка"],
@@ -103,7 +103,7 @@ it("gives the commercial lead projects, the supply sheets and shipping for readi
   expect(layout(as("commercial", COMMERCIAL))).toEqual({
     "Производство": ["Проекты", "Ресурсное планирование"],
     "Снабжение": ["Оформить заявку", ...READER_MENU],
-    "Склад": ["Склад", "Оборудование", "Приёмка с производства", "Отгрузка"],
+    "Склад": ["Склад", "Оборудование", "Приёмка с производства"],
     "Менеджмент": ["Производственный план", "Уведомления"],
     "Документация": ["Первичная документация"],
     "Справочники": ["Закупка"],
@@ -145,12 +145,15 @@ it("keeps «Ресурсное планирование» in the production bloc
   expect(section(as("foreman", { production: "edit", quality: "edit" }), "Производство")).toEqual(["Ресурсное планирование", "ОТК"]);
 });
 
-it("opens «Отгрузка» by either shipping key: the manager's or the storekeeper's", () => {
-  const shipping = (principal: Principal) => section(principal, "Склад").includes("Отгрузка");
-  expect(shipping(as("commercial", { shipping: "view" }))).toBe(true);
-  expect(shipping(as("foreman", { shipping_goods: "view" }))).toBe(true);
-  expect(shipping(as("foreman", { shipping_goods: "edit" }))).toBe(true);
-  expect(shipping(as("foreman", { production: "edit", receiving: "edit" }))).toBe(false);
+it("opens «Приёмка с производства» by either shipping key; «Отгрузка» is no menu item since 29.10", () => {
+  const intake = (principal: Principal) => section(principal, "Склад").includes("Приёмка с производства");
+  expect(intake(as("commercial", { shipping: "view" }))).toBe(true);
+  expect(intake(as("foreman", { shipping_goods: "view" }))).toBe(true);
+  expect(intake(as("foreman", { shipping_goods: "edit" }))).toBe(true);
+  expect(intake(as("foreman", { production: "edit", receiving: "edit" }))).toBe(false);
+  expect(section(as("admin", {}), "Склад")).not.toContain("Отгрузка");
+  expect(sectionOfTab("shipping", null)).toBe("intake");
+  expect(sectionOfTab("shipping", "journal")).toBe("intake");
 });
 
 it("hides «Оформить заявку» from a view-only grant on newrequest", () => {
@@ -240,10 +243,10 @@ it("tells a card open for reading only: all its keys are view grants, never for 
   expect(viewOnly(as("commercial", { warehouse: "view" }), "stock")).toBe(true);
   expect(viewOnly(as("commercial", { warehouse: "edit" }), "stock")).toBe(false);
   expect(viewOnly(as("commercial", {}), "stock")).toBe(false);
-  // «Отгрузка» opens by either key: reading only when neither is on edit.
-  expect(viewOnly(as("foreman", { shipping_goods: "view" }), "shipping")).toBe(true);
-  expect(viewOnly(as("foreman", { shipping: "view", shipping_goods: "edit" }), "shipping")).toBe(false);
-  expect(viewOnly(as("commercial", { shipping: "edit" }), "shipping")).toBe(false);
+  // «Приёмка с производства» opens by either shipping key: reading only when neither is on edit.
+  expect(viewOnly(as("foreman", { shipping_goods: "view" }), "intake")).toBe(true);
+  expect(viewOnly(as("foreman", { shipping: "view", shipping_goods: "edit" }), "intake")).toBe(false);
+  expect(viewOnly(as("commercial", { shipping: "edit" }), "intake")).toBe(false);
   // A card without a key of its own has nothing to be view-only about.
   expect(viewOnly(as("operator", {}), "notifications")).toBe(false);
   expect(viewOnly(as("admin", { warehouse: "view" }), "stock")).toBe(false);

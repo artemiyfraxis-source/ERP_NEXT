@@ -161,7 +161,7 @@ def seed_shipping(erp, project=PROJECT):
     shipment = create_shipment(CreateShipmentCommand(
         customer="ООО Заказчик", receiver="ООО Заказчик", shipping_point="Москва, склад 3", contact="", phone="",
         terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="", note="",
-        lines=(RequestedGood(accepted.id, Decimal("2")),), actor=ACTOR, now=at(26, 10),
+        lines=(RequestedGood(accepted.id, Decimal("2")),), actor=ACTOR, now=at(26, 10), decide_pack=True,
     ), erp.shipping())
     with erp.shipping() as uow:
         uow.shipments.add(replace(shipment, status=ShipmentStatus.SHIPPED, shipped_at=date(2026, 9, 27)))

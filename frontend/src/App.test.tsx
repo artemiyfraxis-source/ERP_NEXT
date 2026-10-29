@@ -262,24 +262,24 @@ it("opens the native production plan at the prodplan route", async () => {
   expect(await screen.findByText("Проектов в плане нет — заведите проект в «Проектах».")).toBeInTheDocument();
 });
 
-it("opens native finished-goods and shipping at the shipping route", async () => {
-  window.history.replaceState({}, "", "/login?section=shipping");
+it("lands an old «Отгрузка» link on «Приёмка с производства» (экран «Отгрузка» убран 29.10)", async () => {
+  window.history.replaceState({}, "", "/login?section=shipping&tab=shipments");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/auth/me") return json(as("foreman", { shipping_goods: "edit" }));
+    if (path === "/api/shipping/intake") return json({ rows: [] });
     if (path === "/api/shipping/goods") return json({ goods: [] });
     if (path === "/api/shipping/shipments") return json({ shipments: [] });
-    if (path === "/api/shipping/project-addressees") return json({ addressees: [] });
     if (path === "/api/production/finished-goods-ready") return json({ boxes: [] });
-    if (path === "/api/shipping/finished-goods/from-production") return json({ rows: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "Отгрузка", level: 1 })).toBeInTheDocument();
-  // Приёмка с производства — отдельный раздел; «Отгрузка» открывается на «На складе».
-  expect(await screen.findByText(/Упаковывать нечего/)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Приёмка с производства", level: 1 })).toBeInTheDocument();
+  expect(new URLSearchParams(window.location.search).get("section")).toBe("intake");
+  expect(await screen.findByRole("tab", { name: /^Упаковано/ })).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByRole("heading", { name: "Отгрузка", level: 1 })).not.toBeInTheDocument();
 });
 
 it("opens native references at the references route", async () => {
@@ -573,7 +573,7 @@ it("shows an operator «Задания» only with the myops grant", async () =>
   expect(navigationOf().getByRole("button", { name: "Задания" })).toBeInTheDocument();
 });
 
-it("marks a card «только просмотр» when every key that opens it is a view grant, «Отгрузка» included", async () => {
+it("marks a card «только просмотр» when every key that opens it is a view grant, «Приёмка с производства» included", async () => {
   window.history.replaceState({}, "", "/?block=stock");
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json(as("commercial", { warehouse: "edit", shipping: "view", shipping_goods: "view", receiving: "view" })));
 
@@ -581,7 +581,7 @@ it("marks a card «только просмотр» when every key that opens it 
   await screen.findByRole("heading", { name: /Склад/, level: 1 });
 
   const tile = (name: string) => within(screen.getByRole("main")).getByRole("button", { name });
-  expect(within(tile("Отгрузка")).getByText("только просмотр")).toBeInTheDocument();
+  expect(within(tile("Приёмка с производства")).getByText("только просмотр")).toBeInTheDocument();
   expect(within(tile("Приёмка")).getByText("только просмотр")).toBeInTheDocument();
   expect(within(tile("Склад")).queryByText("только просмотр")).not.toBeInTheDocument();
 });

@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.main import app
 from app.modules.shipping.domain import ProjectAddressee, UpdType
 from app.modules.shipping.infrastructure import ShippingFileRow
-from tests.shipping.test_api import shipping_api  # noqa: F401 — fixture
+from tests.shipping.test_api import decide_pack, shipping_api  # noqa: F401 — fixture
 from tests.shipping.test_dispatch_plan import _as
 from tests.shipping.test_documents_api import _stocked
 
@@ -83,6 +83,7 @@ def test_project_pack_takes_the_paper_upd_of_the_card_and_passes_the_file_gate(s
     client = shipping_api
     good = _stocked(client, accepted="6")
     card = _paper_card(client)
+    decide_pack(client)
     packed = client.post("/api/shipping/project-pack", json={"project": PROJECT, "lines": [{"good_id": good["id"], "quantity": "2"}]})
     shipment = packed.json()["shipment"]
     refused = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]})
