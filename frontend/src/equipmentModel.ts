@@ -11,8 +11,8 @@ export const APPLICATOR_TYPE = "Аппликаторы";
 export const CRIMP_TYPES = [CRIMP_TOOL_TYPE, MATRIX_TYPE, APPLICATOR_TYPE];
 /** The record type a crimp code of БД.ТЕР belongs to: «A8» → applicator, «M10» → matrix, «S10» → hand tool. */
 export const crimpTypeOfCode = (_code: string) => APPLICATOR_TYPE;
-const APPLICATOR_KINDS: Record<string, string> = { M: "ОТП (зачищенные)", A: "Для автомата", S: "Незачищенные" };
-/** The applicator kind by the code's letter: «M10» → «ОТП (зачищенные)»; no code — empty. */
+const APPLICATOR_KINDS: Record<string, string> = { M: "ОТП", A: "Автомат", S: "С зачисткой" };
+/** The applicator kind by the code's letter, as in the old terminal sheet («Пневма Автомат» / «ОТР» / «С зачисткой»): «M10» → «ОТП»; no code — empty. */
 export const applicatorKindOf = (code: string) => APPLICATOR_KINDS[code.trim().charAt(0).toUpperCase()] ?? "";
 export const codeOf = (model: EquipmentModel) => model.items.map((item) => pick(item.fields, CODE_KEY)).find(Boolean) ?? "";
 export const NAME_KEYS = ["Наменование", "Наименование", "Полное наименование ", "Полное наименование"];
