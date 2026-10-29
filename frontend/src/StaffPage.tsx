@@ -5,6 +5,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { RowActionMenu } from "./RowActionMenu";
 import { StatusChip } from "./StatusChip";
 import { SuggestInput } from "./SuggestInput";
+import { formatDate } from "./format";
 
 /** ID-8 «Сотрудники» (SUPPLYMAP Staff.gs portalStaffGet/portalStaffSave): the administrator creates and
  *  edits employees and keeps the department list. The PIN (6–8 digits) and the optional password are set here and
@@ -152,6 +153,11 @@ export function StaffPage({ openCard, openUserId }: {
     return parts.join(", ");
   });
 
+  /** «Сбросить разрешительный ПИН»: администратор только очищает его (в журнал); новый сотрудник задаёт сам. */
+  const approvalPinReset = (user: Employee) => {
+    setData((current) => current && { ...current, users: current.users.map((item) => item.id === user.id ? { ...item, approval_pin_set: false, approval_pin_set_at: null } : item) });
+  };
+
   const remove = (user: Employee) => {
     if (!window.confirm(`Удалить сотрудника ${user.name}? Если за ним есть операции, выдачи или другие записи, он будет отключён и скрыт, история останется.`)) return;
     void run(async () => {
@@ -199,7 +205,7 @@ export function StaffPage({ openCard, openUserId }: {
 
   /** `users` — the list just loaded, when the form opens before `data` reaches the render (sent from the card). */
   function startEdit(user: Employee, users?: Employee[]) {
-    const { pin_set: _pinSet, role: _role, access_level_label: _levelLabel, ...fields } = user;
+    const { pin_set: _pinSet, approval_pin_set: _approval, approval_pin_set_at: _approvalAt, role: _role, access_level_label: _levelLabel, ...fields } = user;
     const names = users ? personLabels(users) : labels;
     const managerText = user.manager_id ? names.get(user.manager_id) ?? "" : "";
     setEditing({ id: user.id, draft: { ...fields, password: "", pin: "", managerText } });
@@ -250,7 +256,7 @@ export function StaffPage({ openCard, openUserId }: {
         rowClassName={(user) => user.active ? "" : "muted"}
         rowTitle={(user) => openCard ? `Открыть карточку: ${user.name}` : `Править: ${user.name}`}
         onRowClick={(user) => openCard ? openCard(user.id) : startEdit(user)} />
-      {editing && <EmployeeForm data={data} labels={labels} editing={editing} actorIsSuperadmin={actorLevel === "superadmin"} busy={busy} onChange={(draft) => setEditing({ ...editing, draft })} onSave={() => void saveEmployee()} onCancel={() => setEditing(null)} />}
+      {editing && <EmployeeForm data={data} labels={labels} editing={editing} actorIsSuperadmin={actorLevel === "superadmin"} busy={busy} onChange={(draft) => setEditing({ ...editing, draft })} onSave={() => void saveEmployee()} onCancel={() => setEditing(null)} onApprovalPinReset={approvalPinReset} />}
       <article className="panel staff-departments">
         <h2>Отделы</h2>
         <div className="staff-dep-body">
@@ -294,7 +300,7 @@ export function StaffPage({ openCard, openUserId }: {
   </section>;
 }
 
-function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange, onSave, onCancel }: {
+function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange, onSave, onCancel, onApprovalPinReset }: {
   data: StaffDirectory;
   labels: Map<string, string>;
   /** The session is a superadministrator: the only level that may give or take «Суперадминистратор». */
@@ -304,8 +310,10 @@ function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange
   onChange: (draft: Draft) => void;
   onSave: () => void;
   onCancel: () => void;
+  onApprovalPinReset: (user: Employee) => void;
 }) {
   const { id, draft } = editing;
+  const stored = id === null ? undefined : data.users.find((user) => user.id === id);
   const creating = id === null;
   const set = (field: keyof Draft, value: string | boolean | null) => onChange({ ...draft, [field]: value });
   // The department of this person stays selectable even when it is not in the list (a role-like old value).
@@ -315,7 +323,7 @@ function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange
   const managers = managerCandidates(data.users, id, draft.manager_id);
   const managerIdByLabel = new Map(managers.map((user) => [labels.get(user.id) ?? user.name, user.id]));
   // A holder of a full level cannot be moved by an administrator; the full options are shut for everyone but a superadmin.
-  const storedLevel = id === null ? undefined : data.users.find((user) => user.id === id)?.access_level;
+  const storedLevel = stored?.access_level;
   const levelLocked = !actorIsSuperadmin && data.levels.some((level) => level.full && level.key === storedLevel);
   const setManager = (text: string) => onChange({ ...draft, managerText: text, manager_id: managerIdByLabel.get(text.trim()) ?? null });
   return <PageWindow label={creating ? "Новый сотрудник" : "Правка сотрудника"} width={1100} close={onCancel}><div className="panel" id="staff-edit-form">
@@ -354,6 +362,7 @@ function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange
         </select></label>
         <label>{creating ? "Пароль" : "Новый пароль"}<input aria-label={creating ? "Пароль" : "Новый пароль"} type="password" autoComplete="new-password" placeholder={creating ? "необязательно, 8–128 символов" : "пусто — не менять"} value={draft.password} onChange={(event) => set("password", event.target.value)} /></label>
         <label className={creating ? "pair" : undefined}>{creating ? "PIN" : "Новый PIN"}<input aria-label={creating ? "PIN" : "Новый PIN"} inputMode="numeric" autoComplete="off" maxLength={8} placeholder={creating ? "6–8 цифр, пусто — сгенерируем и покажем" : "пусто — не менять"} value={draft.pin} onChange={(event) => set("pin", event.target.value)} /></label>
+        {stored && <ApprovalPinReset user={stored} onReset={onApprovalPinReset} />}
         <div className="staff-flags">
           <label className="staff-switch" title={SHOP_WORKER_HINT}><input type="checkbox" role="switch" aria-label="Монтажник (работает в цеху)" checked={draft.shop_worker} onChange={(event) => set("shop_worker", event.target.checked)} /><span>Монтажник (работает в цеху)</span></label>
           <label className="staff-switch" title={SITE_MASTER_HINT}><input type="checkbox" role="switch" aria-label="Мастер площадки" checked={draft.site_master} onChange={(event) => set("site_master", event.target.checked)} /><span>Мастер площадки</span></label>
@@ -366,4 +375,36 @@ function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange
       <button className="secondary" onClick={onCancel}>Отмена</button>
     </div>
   </div></PageWindow>;
+}
+
+/** «Разрешительный ПИН» сотрудника в форме правки: задан ли и с какого момента; администратор может только сбросить его
+ *  (ПИН задаёт сам сотрудник в своей карточке, администратор его не видит). */
+function ApprovalPinReset({ user, onReset }: { user: Employee; onReset: (user: Employee) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  async function reset() {
+    if (busy || !window.confirm(`Сбросить разрешительный ПИН сотрудника ${user.name}? Новый он задаст сам в своей карточке.`)) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await staffApi.resetApprovalPin(user.id);
+      onReset(user);
+      setNotice("Разрешительный ПИН сброшен");
+    } catch (reason) {
+      setError(errorText(reason, "Разрешительный ПИН не сброшен"));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return <div className="staff-approval-pin" role="group" aria-label="Разрешительный ПИН">
+    <strong>Разрешительный ПИН</strong>
+    {user.approval_pin_set
+      ? <span><span className="tone-ok">задан</span>{user.approval_pin_set_at && <span className="muted"> · с {formatDate(user.approval_pin_set_at)}</span>}</span>
+      : <span className="muted">не задан — сотрудник задаёт его сам в своей карточке</span>}
+    {user.approval_pin_set && <button type="button" className="secondary small" disabled={busy} onClick={() => void reset()}>Сбросить разрешительный ПИН</button>}
+    {notice && <span className="tone-ok" role="status">{notice}</span>}
+    {error && <span className="error-banner" role="alert">{error}</span>}
+  </div>;
 }

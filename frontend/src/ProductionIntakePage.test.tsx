@@ -407,10 +407,10 @@ describe("Приёмка с производства: упаковка и отг
     await waitFor(() => expect(calls.find((call) => call.url === "/api/shipping/shipments/s3/unship")?.body).toEqual({ version: 3, reason: "по ошибке" }));
   });
 
-  it("без УПД: уполномоченный выбирает себя и вводит ПИН; неверный ПИН и блокировку объясняет сервер", async () => {
+  it("без УПД: уполномоченный выбирает себя и вводит разрешительный ПИН; неверный ПИН и блокировку объясняет сервер", async () => {
     intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
     shipments = [{ ...packedShipment, missing_ship: ["№ УПД", "файл УПД", "трек-номер"] }];
-    approvals = [[403, { detail: "Неверный PIN." }], [429, { detail: "Слишком много попыток. Подождите 10 минут." }], [200, { shipment: packedShipment }]];
+    approvals = [[403, { detail: "Неверный разрешительный ПИН." }], [429, { detail: "Слишком много попыток. Подождите 10 минут." }], [200, { shipment: packedShipment }]];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Отгрузка 591К.3 КБ1: отгружено 0" }));
@@ -419,14 +419,14 @@ describe("Приёмка с производства: упаковка и отг
     const pinWindow = await screen.findByRole("dialog", { name: "Отгрузка без УПД · ОТГ-20261029-01" });
     const who = within(pinWindow).getByLabelText("Кто разрешает");
     await waitFor(() => expect(within(who).getAllByRole("option").map((option) => option.textContent)).toEqual(["выберите", "Артемий", "Зингер", "Касаточкин"]));
-    const pin = within(pinWindow).getByLabelText("ПИН");
+    const pin = within(pinWindow).getByLabelText("Разрешительный ПИН");
     expect(pin).toHaveAttribute("type", "password");
     const submit = within(pinWindow).getByRole("button", { name: "Разрешить отгрузку без УПД" });
     expect(submit).toBeDisabled();
     fireEvent.change(who, { target: { value: "p2" } });
     fireEvent.change(pin, { target: { value: "1111" } });
     fireEvent.click(submit);
-    expect(await within(pinWindow).findByText("Неверный PIN.")).toBeInTheDocument();
+    expect(await within(pinWindow).findByText("Неверный разрешительный ПИН.")).toBeInTheDocument();
     expect(pin).toHaveValue("");
     fireEvent.change(pin, { target: { value: "2222" } });
     fireEvent.click(submit);
