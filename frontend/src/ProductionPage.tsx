@@ -33,6 +33,7 @@ import { DowntimeControl } from "./DowntimeControl";
 import { DowntimeReport } from "./DowntimeReport";
 import { ProductionNormFact } from "./ProductionNormFact";
 import { ShopWorkloadView } from "./ShopWorkload";
+import { LaunchReady } from "./LaunchReady";
 import { JobPanel } from "./JobPlan";
 import { AutoTextarea } from "./AutoTextarea";
 import { StatusChip } from "./StatusChip";
@@ -170,6 +171,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {showCalendar && canEdit && <PageWindow label="Календарь цеха" close={() => setShowCalendar(false)}><CalendarForm operators={operators} close={() => setShowCalendar(false)} /></PageWindow>}
     {showSkills && canEdit && <PageWindow label="Компетенции" width={1280} close={() => { setShowSkills(false); void reload(); }}><SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} /></PageWindow>}
     {showAutoplan && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} close={() => setShowAutoplan(false)} onApplied={(count, created) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций${created ? `, создано заданий: ${created}` : ""}`); void reload(); }} />}
+    {!mine && canEdit && !selectedTask && <LaunchReady refresh={tasks.length} onLaunched={(text) => { setNotice(text); void reload(); }} />}
     {!mine && canOverview && !selectedTask && <div className="seg-tabs" role="tablist" aria-label="Вид">
       <button type="button" role="tab" aria-selected={view === "board"} className={view === "board" ? "on" : undefined} onClick={() => setView("board")}>Доска</button>
       <button type="button" role="tab" aria-selected={view === "workload"} className={view === "workload" ? "on" : undefined} onClick={() => setView("workload")}>Загрузка</button>
