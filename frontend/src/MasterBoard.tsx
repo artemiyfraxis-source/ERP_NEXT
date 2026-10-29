@@ -21,7 +21,7 @@ import { LoadCell, LoadLegend, shiftCapacity } from "./PeopleLoad";
 import { periodWords } from "./PlanLoadSheet";
 import { ProjectPlanBlock } from "./ProjectPlanBlock";
 import { urlParam } from "./navigation";
-import { KitTile } from "./ProjectCard";
+import { boardCard, BoardProjectCard, type BoardCardModel } from "./MasterBoardCard";
 import { deadlineChips, feedsText, operationPlanText, taskItemLabel, upstreamIds, windowText } from "./productionGraph";
 import { StatusChip } from "./StatusChip";
 import { PageWindow } from "./PageWindow";
@@ -603,7 +603,6 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     .map((task) => task.deadline).filter((value): value is string => Boolean(value)).sort()[0] ?? "";
   const deadlineOf = (project: string) => planOf(project)?.deadline || taskDeadlineOf(project)
     || waiting.filter((item) => item.project === project).map((item) => item.deadline).filter(Boolean).sort()[0] || "";
-  projects.sort((a, b) => (deadlineOf(a) || "9999").localeCompare(deadlineOf(b) || "9999") || a.localeCompare(b, "ru"));
   const deadlineTags = (project: string) => deadlineChips(planOf(project), taskDeadlineOf(project))
     .map((chip) => <StatusChip key={chip.kind} className="mb-deadline" tone={chip.tone} title={chip.title}>{chip.text}</StatusChip>);
 
@@ -621,18 +620,27 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const projectHasFlag = (project: string) => live.some((item) => item.project === project && item.operations.some((op) => hasFlag(item, op)));
   const freeOf = (project: string) => live.filter((item) => item.project === project && !item.handed_to)
     .reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
-  function tileFacts(project: string) {
-    const free = freeOf(project);
-    const total = live.filter((item) => item.project === project && !item.handed_to).reduce((sum, item) => sum + item.operations.length, 0);
-    const toLaunch = waiting.filter((item) => item.project === project).length;
-    const handed = live.filter((item) => item.project === project && item.handed_to).length;
-    return <>
-      {deadlineTags(project)}
-      {total > 0 && <span className={free ? "mb-free" : "mb-done"}>{free ? `без исполнителя ${free} из ${total}` : `распределено ${total}`}</span>}
-      {toLaunch > 0 && <span className="mb-launch" title="КБ с выданной техкартой: задания нет или запущен не весь тираж">к запуску {toLaunch}</span>}
-      {handed > 0 && <span className="mb-handed">в {HANDOVER_SITE}: {handed}</span>}
-    </>;
-  }
+  // Карточка проекта (владелец 29.10): одна высота, один статус, счётчики проблем; списки — в подсказках.
+  const cards = new Map<string, BoardCardModel>(projects.map((project) => {
+    const own = live.filter((item) => item.project === project);
+    const flags: Record<OpFlag, string[]> = { late: [], wait: [], over: [] };
+    for (const item of own) {
+      if (item.handed_to) continue;
+      // Номер проекта в подсказке своей же карточки лишний: «ПЗ-0012 · КБ1 · 2. Опрессовка».
+      const kb = item.item.toUpperCase().startsWith(project.toUpperCase()) ? item.item.slice(project.length).replace(/^[\s.·-]+/, "") : item.item;
+      for (const op of item.operations) for (const flag of progressOf(item, op).flags) flags[flag].push(`${item.number} · ${kb} · ${op.position}. ${operationName(op)}`);
+    }
+    const toLaunch = waiting.filter((item) => item.project === project);
+    return [project, boardCard({
+      project, tile: tiles.items.find((item) => item.project.toLowerCase() === project.toLowerCase()), statuses: tiles.statuses,
+      customer: toLaunch.find((item) => item.customer)?.customer, plan: planOf(project), taskDeadline: taskDeadlineOf(project),
+      free: freeOf(project), total: own.filter((item) => !item.handed_to).reduce((sum, item) => sum + item.operations.length, 0),
+      toLaunch: toLaunch.length, handed: own.filter((item) => item.handed_to).length, handedSite: HANDOVER_SITE, flags, now: new Date(nowMs),
+    })];
+  }));
+  // Порядок: сначала горящие (блокер, срок, просроченные операции), потом с замечаниями; внутри — ближайший срок.
+  projects.sort((a, b) => cards.get(a)!.rank - cards.get(b)!.rank
+    || (deadlineOf(a) || "9999").localeCompare(deadlineOf(b) || "9999") || a.localeCompare(b, "ru"));
 
   // Мастер площадки (Степан в Жуковском) видит и ставит только своих монтажников; без площадки — всех.
   const people = installers(operators).filter((person) => !site || person.site === site);
@@ -1139,16 +1147,10 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         {flagFilter && <button type="button" className="link-button" onClick={() => setFlagFilter(null)}>Сбросить</button>}
       </div>}
       {!projects.length && <div className="empty">Проектов с выданной техкартой пока нет.</div>}
-      {projects.length > 0 && <div className="tiles kit-tiles mb-tiles">{projects.map((project) => {
+      {projects.length > 0 && <div className="mb-cards">{projects.map((project) => {
         if (onlyFree && !freeOf(project)) return null;
         if (flagFilter && !projectHasFlag(project)) return null;
-        const tile = tiles.items.find((item) => item.project.toLowerCase() === project.toLowerCase());
-        const extra = <div className="mb-tile-extra">{tileFacts(project)}</div>;
-        return tile
-          ? <KitTile key={project} item={tile} statuses={tiles.statuses} canEdit={false} open={() => setOpenProject(project)} extra={extra} />
-          : <div key={project} className="tile kit-tile" role="button" tabIndex={0} onClick={() => setOpenProject(project)} onKeyDown={(event) => { if (event.key === "Enter") setOpenProject(project); }}>
-            <div className="tile-body"><div className="kit-tile-head"><strong className="t-h">{project}</strong></div>{extra}</div>
-          </div>;
+        return <BoardProjectCard key={project} model={cards.get(project)!} open={() => setOpenProject(project)} />;
       })}</div>}
       {flagFilter && projects.length > 0 && !projects.some(projectHasFlag) && <div className="empty">Нет операций с отметкой «{FLAG_TEXT[flagFilter]}».</div>}
     </section>
