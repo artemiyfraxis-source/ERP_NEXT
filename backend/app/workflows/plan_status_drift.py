@@ -19,6 +19,7 @@ from app.modules.production.plan import (
     PLAN_KINDS,
     PLAN_STAGE_AUTO,
     PlanEvent,
+    blocker_alias,
     normalize_project_number,
     normalize_shop_statuses,
 )
@@ -36,7 +37,8 @@ class StatusDrift:
 
 
 def _status_set(value: str) -> set[str]:
-    return {part.strip().casefold() for part in value.split(",") if part.strip()}
+    # An old ХОЛД / ПАУЗА mark is the one «СТОП» blocker now (29.10).
+    return {blocker_alias(part.strip()).casefold() for part in value.split(",") if part.strip()}
 
 
 def status_drift(rows: Iterable[ProductionPlanRow], events: Iterable[PlanEvent]) -> list[StatusDrift]:

@@ -108,17 +108,19 @@ def test_latest_mark_wins_and_auto_or_empty_clears():
 
 
 def test_status_is_blocker_plus_erp_stage_name():
-    assert shop_status_auto("КБ набрана") == "КБ набрана"
+    assert shop_status_auto("Новый") == "Новый"
     assert shop_status_auto("В работе", "ОЖИД КОМПЛ") == "ОЖИД КОМПЛ, В работе"
     assert shop_status_auto("Принято складом") == "Принято складом"
     assert shop_status_auto("Отгружено") == "Отгружено"
-    assert shop_status_auto("ТК готова") == "ТК готова"
+    assert shop_status_auto("Новый", "СТОП") == "СТОП, Новый"
 
 
 def test_groups_come_from_stage_and_blocker():
-    assert sheet_group("В работе", "ХОЛД") == "hold"
-    assert sheet_group("Принято складом", "ПАУЗА") == "hold"
+    # 29.10: один блокер «СТОП» вместо ХОЛД / ПАУЗА (старые записи журнала читаются как «СТОП» ещё при чтении).
+    assert sheet_group("В работе", "СТОП") == "hold"
+    assert sheet_group("Принято складом", "СТОП") == "hold"
     assert sheet_group("Отменён", "СТОП", terminal=True) == "hold"
+    assert sheet_group("В работе", "ХОЛД") == "active"
     assert sheet_group("В работе", "ОЖИД ИНФ") == "active"
     # Работа цеха кончена — ГП принята и дальше; ОТК ещё у цеха.
     assert sheet_group("ОТК") == "active"
@@ -143,12 +145,15 @@ def test_ready_percent_is_output_weighted_by_norm():
 
 
 def _stage(*kits, status="В работе"):
-    return ProjectStage(status, tuple(kits))
+    # Project markers as `project_stage` gives them: every КБ has it.
+    return ProjectStage(
+        status, tuple(kits), tc=bool(kits) and all(kit.tc for kit in kits), kit=bool(kits) and all(kit.kit for kit in kits),
+    )
 
 
 def test_sheet_cells_compute_sheet_columns_from_erp_facts():
     stage = _stage(
-        KitStage("КБ1", "В работе", tc=True, kit=True), KitStage("КБ2", "ТК готова", tc=True),
+        KitStage("КБ1", "В работе", tc=True, kit=True), KitStage("КБ2", "Новый", tc=True),
     )
     supply = SupplySummary(total=4, stock=2, transit=2, customer_supplied=1, purchased=3, eta="09.10.2026")
     cells = sheet_cells(stage=stage, blocker="ОЖИД КОМПЛ", supply=supply, assigned=2, ready="40", marks={})
@@ -166,14 +171,14 @@ def test_sheet_cells_edge_cases_without_supply_and_all_in_stock():
     assert (bare["customer_supplied"].value, bare["kit_arrival"].value, bare["zkp"].value) == ("НЕТ", "", "нет")
     assert (bare["tc_ready"].value, bare["kit_picked"].value, bare["in_plan"].value) == ("нет", "нет", "нет")
     stocked = sheet_cells(
-        stage=_stage(KitStage("КБ1", "Принято складом", tc=True)), blocker="",
+        stage=_stage(KitStage("КБ1", "Принято складом", tc=True, kit=True)), blocker="",
         supply=SupplySummary(total=3, stock=3, customer_supplied=3, customer_supplied_stock=3),
         assigned=0, ready="100", marks={},
     )
     assert stocked["kit_arrival"].value == "Склад"
     assert stocked["kit_present"].value == "да"
     assert stocked["customer_supplied"].value == "ДА"
-    # A KB that has gone past «КБ набрана» counts as picked even without the fulfilment fact.
+    # A KB past the start of work counts as picked even without the fulfilment fact (`project_stage` sets `kit`).
     assert stocked["kit_picked"].value == "да"
     waiting = sheet_cells(stage=_stage(), blocker="", supply=SupplySummary(total=2, buying=2),
                           assigned=0, ready="", marks={})

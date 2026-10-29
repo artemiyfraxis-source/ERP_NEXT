@@ -321,7 +321,7 @@ def test_a_manual_stage_change_by_the_tester_is_taken_back(shop):
         return row
 
     with shop.sessions() as session:
-        journal(session, 1, MASTER.name, at(9), "В работе", "Распланировано")
+        journal(session, 1, MASTER.name, at(9), "В работе", "Новый")
         row = journal(session, 2, OWNER.name, at(10, 30), "ОТК", "В работе")
         session.add(AuditEventRow(
             id=uuid4(), aggregate_id=row.id, event_type="production.stage_changed", actor_id=OWNER.id,

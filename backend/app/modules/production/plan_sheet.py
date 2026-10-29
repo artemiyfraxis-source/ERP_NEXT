@@ -15,27 +15,27 @@ from uuid import UUID
 
 from .domain import ProductionStatus, ProductionTask
 from .plan import (
-    KIT_STAGES,
     PLAN_DAY_FIELD_PREFIX,
     SHOP_STATUSES,
     ProjectStage,
     SupplySummary,
     _date,
+    project_markers,
 )
 
 
 # Owner 12.10: «Статус» листа сквозной — всегда этап проекта (как на экране «Проекты») + блокер, ручной отметки нет.
 # Старые отметки `status` в журнале остаются историей; STAGE_SHOP_STATUS — только чтобы сверить их с этапом (plan_status_drift).
+# 29.10: «К ЗАПУСК» / «РАСПЛАН» были этапами «КБ набрана» / «Распланировано» — теперь это отметка, не этап.
 STAGE_SHOP_STATUS = {
-    "КБ набрана": "К ЗАПУСК",
-    "Распланировано": "РАСПЛАН",
     "В работе": "В РАБОТЕ",
     "ОТК": "ОТК",
     "Принято складом": "ГОТОВО",
     "Упаковано": "УПАК",
     "Отгружено": "ОТГРУЖЕН",
 }
-SHOP_HOLD = frozenset(("ХОЛД", "СТОП", "ПАУЗА"))
+# Строка «на стопе» — наверх (29.10: ХОЛД и ПАУЗА — это «СТОП»).
+SHOP_HOLD = frozenset(("СТОП",))
 # Работа цеха закончена: изделие принято на склад ГП и дальше (ОТК ещё у цеха — строка активная).
 SHOP_DONE_STAGES = frozenset(("Принято складом", "Упаковано", "Отгружено"))
 # Производство закончено (ОТК и дальше): готовность 100.
@@ -113,9 +113,8 @@ def sheet_cells(
     marks: Mapping[str, str],
 ) -> dict[str, SheetCell]:
     """Auto value of every sheet column next to the manual mark that overrides it (the status has no mark)."""
-    kits = stage.kits
-    reached = lambda status: KIT_STAGES.index(status) if status in KIT_STAGES else -1  # noqa: E731
-    picked = KIT_STAGES.index("КБ набрана")
+    # «ТК готова» / «Комплект набран» — the one marker rule (`project_markers`); the plan mark overrides it below.
+    markers = project_markers(stage)
     if supply is None or not supply.customer_supplied:
         supplied = "НЕТ"
     elif supply.customer_supplied >= supply.total:
@@ -142,9 +141,9 @@ def sheet_cells(
         # Владелец 14.10: ЗКП — «что купили», а не «есть заявки»: каждая покупная позиция (без давальческих) оплачена.
         "zkp": _flag(bool(supply) and to_buy > 0 and supply.purchased >= to_buy),
         "kit_arrival": arrival,
-        "tc_ready": _flag(bool(kits) and all(item.tc for item in kits)),
+        "tc_ready": _flag(markers.tc_auto),
         "test_sb": "нет",
-        "kit_picked": _flag(bool(kits) and all(item.kit or reached(item.status) >= picked for item in kits)),
+        "kit_picked": _flag(markers.kit_auto),
     }
     return {
         name: SheetCell(marks[name], value, True) if name in marks and name != "status" else SheetCell(value, value, False)

@@ -48,7 +48,9 @@ def test_an_issued_kit_alone_is_no_longer_work_started():
     ):
         facts = _kit_facts(status)
         assert key in facts["kit"] and key not in facts["work"]
-        assert project_stage("33МФ.2", ("КБ1",), facts).status == "КБ набрана"
+        # 29.10: собранный комплект — отметка «КБ набрана» рядом с этапом «Новый».
+        stage = project_stage("33МФ.2", ("КБ1",), facts)
+        assert (stage.status, stage.kit, stage.kits[0].kit) == ("Новый", True, True)
 
 
 def test_issued_kit_does_not_hold_back_later_stages():
