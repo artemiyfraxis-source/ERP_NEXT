@@ -319,3 +319,34 @@ describe("эскиз «Монтаж в разъём»: два вида, без 3
     expect(marks(svg)).toBe(2);
   });
 });
+
+// Molex 510210000-SD (вид с торца проводов: CIRCUIT 1 справа, грань с окнами фиксаторов снизу) — окнами вверх, как их
+// рисуют все виды, контакт 1 слева (владелец 29.10: «тут ошибка в нумерации» — было справа под видом сверху с окнами вверх).
+describe("PicoBlade 51021: окна фиксаторов сверху — контакт 1 слева на всех видах", () => {
+  const hs = items.find((i) => i.family === "molex-picoblade")!.housing;
+  const xs = (svg: string, re: RegExp) => [...svg.matchAll(re)].map((m) => Number(m[1]));
+
+  it("numbers the wire face 1…N left to right with the red mark on the left, under the windows on top", () => {
+    const face = connectorFace(hs, 0, 0, 24, null).body;
+    const label = (n: number) => xs(face, new RegExp(`<text x="([\\d.]+)"[^>]*>${n}</text>`, "g"))[0];
+    expect(label(1)).toBeLessThan(label(4));
+    const red = xs(face, /<path d="M([\d.-]+),[\d.-]+[^"]*" fill="#d7322d"/g);
+    expect(red).toHaveLength(1);
+    expect(red[0]).toBeLessThan(label(1)); // метка — снаружи у левого края, у контакта 1
+    const slotY = xs(face, /data-top="slots"><rect x="[\d.]+" y="([\d.]+)"/g)[0];
+    const textY = xs(face, /<text x="[\d.]+" y="([\d.]+)"/g)[0];
+    expect(slotY).toBeLessThan(textY); // окна — на верхней кромке, не на нижней
+  });
+
+  it("draws the same windows on the roof of the top view and the catalog picture", () => {
+    expect(hs.roof).toMatchObject({ kind: "slots", at: "contacts" });
+    expect(hs.roof!.src).toContain("510210000-SD");
+    expect(connectorTopView(hs, 200, 140)!.body).toContain('data-top="slots"');
+    expect(connectorPicture(hs, 150, 90).body).toContain('data-top="slots"');
+  });
+
+  it("captions the ETK sketch with the windows on top", () => {
+    const op = { type: "insTerm", housing: hs, fields: { wires: [{ art: "красный", pins: [1] }] } };
+    expect(etkDrawPinout(op)).toContain("окна фиксаторов сверху");
+  });
+});
