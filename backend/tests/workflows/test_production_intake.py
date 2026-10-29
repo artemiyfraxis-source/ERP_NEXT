@@ -311,3 +311,29 @@ def test_intake_rows_carry_acceptance_acts_and_a_rollback_shrinks_the_latest(int
     kb1 = next(row for row in rows if (row["project"], row["item_index"]) == ("708К.4", "КБ1"))
     assert [act["quantity"] for act in kb1["acts"]] == ["12", "3"] and kb1["accepted"] == "15"
     assert next(row for row in rows if (row["project"], row["item_index"]) == ("708К.4", "КБ2"))["acts"] == []
+
+
+def _stage_mark(project: str, item: str, stage: str) -> PlanEvent:
+    return PlanEvent(project=project, item_index=item, occurred_at=NOW, who="Мастер", kind="Этап КБ", value=stage)
+
+
+def test_rows_carry_the_lowest_stage_of_the_project():
+    """Этап проекта = низший этап по всем КБ: у обеих строк «В работе», пока КБ2 не дошла дальше."""
+    facts = IntakeFacts(
+        projects=(PlanProjectSnapshot(project="724К.1"),),
+        kitsets=(_kitset("724К.1", ("КБ1", 5), ("КБ2", 5)),),
+        events=(_stage_mark("724К.1", "КБ1", "Принято складом"), _stage_mark("724К.1", "КБ2", "В работе")),
+    )
+    rows = {row.item_index: row for row in intake_rows(facts)}
+    assert (rows["КБ1"].stage, rows["КБ2"].stage) == ("Принято складом", "В работе")
+    assert (rows["КБ1"].project_stage, rows["КБ2"].project_stage) == ("В работе", "В работе")
+
+
+def test_project_stage_counts_a_shipped_kb_that_left_the_rows():
+    facts = IntakeFacts(
+        projects=(PlanProjectSnapshot(project="725К.1"),),
+        kitsets=(_kitset("725К.1", ("КБ1", 5), ("КБ2", 5)),),
+        events=(_stage_mark("725К.1", "КБ1", "Отгружено"), _stage_mark("725К.1", "КБ2", "ОТК")),
+    )
+    rows = intake_rows(facts)
+    assert [(row.item_index, row.project_stage) for row in rows] == [("КБ2", "ОТК")]
