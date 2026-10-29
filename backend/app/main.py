@@ -41,6 +41,7 @@ from .modules.production import baseline_api as production_baseline_api
 from .modules.production import machine_load_api as production_machine_load_api
 from .modules.production import board_api as production_board_api
 from .modules.production import norm_fact_api as production_norm_fact_api
+from .modules.production import workload_api as production_workload_api
 from .modules.shipping import api as shipping_api
 from .modules.references import api as references_api
 from .modules.references import wire_dia_api as references_wire_dia_api
@@ -145,6 +146,7 @@ app.include_router(production_baseline_api.router)
 app.include_router(production_machine_load_api.router)
 app.include_router(production_board_api.router)
 app.include_router(production_norm_fact_api.router)
+app.include_router(production_workload_api.router)
 app.include_router(kitsets_api.router)
 app.include_router(assembly_api.router)
 app.include_router(harness_api.router)
