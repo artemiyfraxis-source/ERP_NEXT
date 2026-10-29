@@ -4,7 +4,7 @@ import { PageWindow } from "./PageWindow";
 import { CrimpLinks } from "./CrimpLinks";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
-  CODE_KEY, CRIMP_TOOL_TYPE, INV_KEY, MATRIX_TYPE, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
+  CODE_KEY, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, crimpTypeOfCode, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
   inventoryRange, invOf, nameOf, operationsOfModel, pick, placeOf, typeOf,
   type EquipmentModel,
 } from "./equipmentModel";
@@ -25,7 +25,6 @@ const SHOWN_KEYS = new Set(["Тип", "Наменование", "Наимено�
   "Расположение", "Инв. номер", "№", "Для базы", "Описание", CODE_KEY, TOOL_KEY, TARGETS_KEY]);
 const ECONOMY = /^(стоимость|коэффициент|[cс]рок окупаемости|кол-во сек|желаемый срок|потребление)/i;
 const isEconomy = (key: string) => ECONOMY.test(key.trim());
-const CRIMP_TYPES = [CRIMP_TOOL_TYPE, MATRIX_TYPE];
 const opNumber = (op: TechOperationRecord) => pick(op.fields, "Номер", "opNumber");
 const opName = (op: TechOperationRecord) => pick(op.fields, "Название", "opName");
 // Passport of the model: the sheet column each line edits (the first one the record has).
@@ -165,8 +164,8 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
       ? <InlineValue label={`${label} ${invOf(item)}`} value={pick(item.fields, key)} display={shown} editable={canEdit} onSave={(next) => saveUnit(item)(key, next)} />
       : (shown || "—");
 
-    // Коды терминалов есть только у обжимного инструмента и матриц (owner 12.10.2026).
-    const withCodes = open.type === CRIMP_TOOL_TYPE || open.type === MATRIX_TYPE;
+    // Коды терминалов есть только у обжимного инструмента, матриц и аппликаторов (owner 12.10, 29.10.2026).
+    const withCodes = CRIMP_TYPES.includes(open.type);
     panel = <PageWindow label="Карточка оборудования" width={760} dismissable close={() => select("")}>
       <article className="panel eq-card">
         <header className="eq-head">
@@ -230,7 +229,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         <summary>Коды обжима без записи <span className="muted">({missing.length})</span></summary>
         <div className="eq-missing-list">{missing.map((item) => <span key={item.code} className="tr-code eq-op" title={`Указан у ${item.count} контактов в БД.ТЕР`}>
           <span className="tnum">{item.code}</span>{canEdit && <button type="button" className="eq-x" aria-label={`Создать запись для кода ${item.code}`}
-            onClick={() => onCreate({ Тип: CRIMP_TOOL_TYPE, [CODE_KEY]: item.code })}>＋</button>}</span>)}</div>
+            onClick={() => onCreate({ Тип: crimpTypeOfCode(item.code), [CODE_KEY]: item.code })}>＋</button>}</span>)}</div>
       </details>}
       <DataTable
         rows={models}

@@ -5,6 +5,11 @@ import type { TechOperationRecord } from "./api";
 
 export const CRIMP_TOOL_TYPE = "Обжимной инструмент";
 export const MATRIX_TYPE = "Матрицы";
+// «Аппликаторы» (owner 29.10.2026): БД.ТЕР «Аппликатор» codes A1…A20 — S is a hand tool, M a matrix, A an applicator.
+export const APPLICATOR_TYPE = "Аппликаторы";
+export const CRIMP_TYPES = [CRIMP_TOOL_TYPE, MATRIX_TYPE, APPLICATOR_TYPE];
+/** The record type a crimp code of БД.ТЕР belongs to: «A8» → applicator, «M10» → matrix, «S10» → hand tool. */
+export const crimpTypeOfCode = (code: string) => /^A/i.test(code) ? APPLICATOR_TYPE : /^M/i.test(code) ? MATRIX_TYPE : CRIMP_TOOL_TYPE;
 export const NAME_KEYS = ["Наменование", "Наименование", "Полное наименование ", "Полное наименование"];
 export const CODE_KEY = "Код в базе терминалов";
 export const TOOL_KEY = "Для инструмента";

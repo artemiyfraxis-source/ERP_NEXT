@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { referencesApi, type TechOperationRecord } from "./api";
 import { headerLabel, valueLabel } from "./referenceLabels";
 import {
-  CODE_KEY, CRIMP_TOOL_TYPE, INV_KEY, MATRIX_TYPE, TARGETS_KEY, TOOL_KEY, invOf, makerOf, nameOf, placeOf, typeOf,
+  APPLICATOR_TYPE, CODE_KEY, CRIMP_TOOL_TYPE, CRIMP_TYPES, INV_KEY, MATRIX_TYPE, TARGETS_KEY, TOOL_KEY, invOf, makerOf, nameOf, placeOf, typeOf,
 } from "./equipmentModel";
 
 /** «Новая запись» / «Правка» in БД.ОБ (owner 12.10.2026: «очень сложно… чтобы быстро»): the six things a person knows
@@ -21,7 +21,7 @@ export function EquipmentForm({ values, isNew, records, onChange }: {
   onChange: (values: Record<string, string>) => void;
 }) {
   const types = useMemo(() => {
-    const found = new Set<string>(["Оборудование", "Инструмент", MATRIX_TYPE, CRIMP_TOOL_TYPE]);
+    const found = new Set<string>(["Оборудование", "Инструмент", MATRIX_TYPE, CRIMP_TOOL_TYPE, APPLICATOR_TYPE]);
     records.forEach((record) => { const type = typeOf(record); if (type !== "Без типа") found.add(type); });
     if (values["Тип"]) found.add(values["Тип"]);
     return [...found];
@@ -49,7 +49,7 @@ export function EquipmentForm({ values, isNew, records, onChange }: {
   const set = (key: string, value: string) => onChange({ ...values, [key]: value });
   const rest = Object.keys(values).filter((key) => !FIRST.includes(key) && !HIDDEN.has(key) && !FORMULA_LIKE.has(key)
     && key !== CODE_KEY && key !== TOOL_KEY && key !== TARGETS_KEY);
-  const crimpType = type === CRIMP_TOOL_TYPE || type === MATRIX_TYPE;
+  const crimpType = CRIMP_TYPES.includes(type);
 
   return <div className="eq-form">
     <div className="form-grid">
@@ -73,7 +73,7 @@ export function EquipmentForm({ values, isNew, records, onChange }: {
         <input aria-label="Инв. номер" className="tnum" value={values[INV_KEY] ?? ""} placeholder={proposal || "назначится сам"}
           onChange={(event) => { touchedInv.current = true; set(INV_KEY, event.target.value); }} /></label>
       {crimpType && <label><small>Код в базе терминалов</small>
-        <input aria-label="Код в базе терминалов" className="tnum" placeholder={type === MATRIX_TYPE ? "M31" : "S10"} value={values[CODE_KEY] ?? ""} onChange={(event) => set(CODE_KEY, event.target.value)} /></label>}
+        <input aria-label="Код в базе терминалов" className="tnum" placeholder={type === MATRIX_TYPE ? "M31" : type === APPLICATOR_TYPE ? "A8" : "S10"} value={values[CODE_KEY] ?? ""} onChange={(event) => set(CODE_KEY, event.target.value)} /></label>}
       {type === MATRIX_TYPE && <label><small>Для инструмента</small>
         <select aria-label="Для инструмента" value={values[TOOL_KEY] ?? ""} onChange={(event) => set(TOOL_KEY, event.target.value)}>
           <option value="">— не указан —</option>
