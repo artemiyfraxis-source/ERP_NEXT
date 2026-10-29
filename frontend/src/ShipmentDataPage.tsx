@@ -6,7 +6,7 @@ import { intakeApi, type IntakeRow } from "./productionIntakeApi";
 import { DataTable, type DataColumn } from "./DataTable";
 import { StatusChip } from "./StatusChip";
 import type { Tone } from "./statusTone";
-import { Readiness, ShipmentDataWindow } from "./ShipmentData";
+import { Readiness, ShipmentDataWindow, updLabel } from "./ShipmentData";
 import { Due, ReadyForecast, overdue, projectsOf, readiness } from "./shippingCells";
 import { DISPATCH_STAGES, projectDispatchStage, shipmentDispatchStage, stageLabel, stageRank, type DispatchStage } from "./dispatchStage";
 import { DispatchCard } from "./DispatchCard";
@@ -39,6 +39,28 @@ export function dataGaps(shipment: Shipment): string[] {
 /** Тихая заметка уехавшей отправке: ЭДО/бумажная УПД без файла — «Внести: файл УПД» (не предупреждение). */
 export function sentNote(shipment: Shipment): string {
   return shipment.status === "Отгружена" && shipment.missing_data.includes("файл УПД") ? "Внести: файл УПД" : "";
+}
+
+/** УПД отправки одной строкой (владелец 29.10: «нет понимания, где есть УПД, файл, номер»): тип, № и файл — у любой отправки,
+ *  и у уехавшей, где «Данные» молчат. */
+export function updText(shipment: Shipment): string {
+  if (shipment.upd_type === "БЕЗ УПД") return "Без УПД";
+  const parts = [updLabel(shipment.upd_type) || "тип не выбран", shipment.upd_number ? `№ ${shipment.upd_number}` : "нет №"];
+  return [...parts, shipment.upd_url ? "файл" : "без файла"].join(" · ");
+}
+
+/** `link` — файл ссылкой; в карточке-кнопке ссылки нет (кнопка внутри кнопки), файл откроется в окне отправки. */
+function UpdCell({ shipment, link = true }: { shipment: Shipment | null; link?: boolean }) {
+  if (!shipment) return <span className="muted">—</span>;
+  if (shipment.upd_type === "БЕЗ УПД") return <span className="muted">Без УПД</span>;
+  const type = updLabel(shipment.upd_type);
+  return <span className="ship-upd-cell">
+    <span className={type ? undefined : "muted"}>{type || "тип не выбран"}</span>
+    {shipment.upd_number ? <strong>№ {shipment.upd_number}</strong> : <span className="tone-warn">нет №</span>}
+    {shipment.upd_url && !link ? <span>файл</span> : shipment.upd_url
+      ? <a href={shipment.upd_url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>файл</a>
+      : <span className="tone-warn">без файла</span>}
+  </span>;
 }
 
 /** Строка списка: отправка или проект, по которому живой отправки нет. `stage` — этап общей лестницы (у отменённой — null). */
@@ -133,6 +155,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     {row.customer && <span className="data-card-customer">{row.customer}</span>}
     <span>{!row.shipment ? <span className="muted">внести заранее</span> : ACTIVE.includes(row.shipment.status) ? <Readiness source={row.shipment} gaps={gapsOf(row)} />
       : <span className="muted">{SENT.includes(row.shipment.status) ? sentNote(row.shipment) || "—" : "—"}</span>}</span>
+    {row.shipment && <span className="data-card-upd"><span className="muted">УПД</span><UpdCell shipment={row.shipment} link={false} /></span>}
     <span className="data-card-due"><span className="muted">Срок</span>{row.shipment ? <Due day={row.shipment.deadline} late={overdue(row.shipment)} since={row.shipment.created_at} /> : <span className="muted">—</span>}
       <ReadyForecast forecast={forecastOf(row)} /></span>
   </button>;
@@ -144,6 +167,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     { key: "gaps", title: "Данные", value: (row) => gapsOf(row).join(", ") || (row.shipment ? sentNote(row.shipment) : ""), hint: "Что внесено и чего не хватает; итог считает сервер", wrap: true, maxWidth: 520,
       render: (row) => !row.shipment ? <span className="muted">внести заранее</span> : ACTIVE.includes(row.shipment.status) ? <Readiness source={row.shipment} gaps={gapsOf(row)} />
         : SENT.includes(row.shipment.status) ? <span className="muted">{sentNote(row.shipment) || "—"}</span> : <span className="muted">—</span> },
+    { key: "upd", title: "УПД", value: (row) => row.shipment ? updText(row.shipment) : "", filter: true, render: (row) => <UpdCell shipment={row.shipment} /> },
     { key: "deadline", title: "Срок", value: (row) => row.shipment?.deadline ?? "", render: dueCell },
   ];
   return <section className="page shipping-page">
