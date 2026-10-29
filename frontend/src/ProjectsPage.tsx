@@ -36,7 +36,7 @@ const HarnessPage = lazy(() => import("./HarnessPage").then((module) => ({ defau
 // «Маршрут КБn» — холст маршрута позиции с чертежом, тоже отдельным куском (ядро поля жгута рисует карточки).
 const HarnessRouteView = lazy(() => import("./HarnessRouteView"));
 import { useLatestSearch } from "./useLatestSearch";
-import { ProjectStatus } from "./ProjectStatus";
+import { ProjectMarks, ProjectStatus } from "./ProjectStatus";
 import { StageChangeDialog, STAGE_AUTO } from "./StageChangeDialog";
 import { ProjectTrack } from "./ProjectTrack";
 import { InternalProjectsTab } from "./InternalProjectsTab";
@@ -76,7 +76,7 @@ function hidden(item: KitsetTile, hide: Record<HideKey, boolean>, status: string
   if (hide.working && item.status === "В работе" && status !== "В работе") return true; // владелец 19.10
   if (hide.tcReady && total > 0 && tc === total) return true;             // чип «ТК на все КБ»
   if (hide.tcChecked && total > 0 && tc === total && !unreviewed) return true; // и ни одной «не проверена»
-  if (hide.blocked && item.blocker) return true;                           // ХОЛД, СТОП, ОЖИД ИНФ, ОЖИД КОМПЛ, ПАУЗА
+  if (hide.blocked && item.blocker) return true;                           // СТОП, ОЖИД ИНФ, ОЖИД КОМПЛ
   return false;
 }
 
@@ -492,6 +492,7 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
   return <section className="page projects-page kit-card">
     <header className="page-head kit-head">{toList}<h1>{card.project}</h1>
       <ProjectStatus project={card.project} status={card.status} blocker={card.blocker} canEdit={canEdit}
+        tcReady={card.tc_ready} kitPicked={card.kit_picked} tcManual={card.tc_manual} kitManual={card.kit_manual}
         stages={card.stages} terminals={card.terminals} blockers={card.blockers} onChanged={setCard} onError={setError} />
       {/* Рабочие действия — в «Ещё» рядом с этапом (владелец 12.10: «много кнопок рудиментов»); «Отгрузить» убрана:
           отгрузка идёт через приёмку кладовщика на экране «Отгрузка». Без прав на правку и заявку меню нет. */}
@@ -838,7 +839,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, 
   return <div className="kit-pane">
     <input ref={fileRef} type="file" hidden data-testid="kd-file" onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ""; }} />
     {!card.assemblies.length ? <div className="empty">В проекте нет сборок.</div> : <div className="table-wrap kit-sostav"><table className="grid" aria-label="Состав проекта">
-      <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th></tr></thead>
+      <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Отметки</th><th>Проверка ТК</th></tr></thead>
       <tbody>{card.assemblies.map((assembly) => <tr key={assembly.index} title={`Открыть генератор ${assembly.index}`} onClick={(event) => {
         // Внутри строки свои кликабельные вещи — ссылка на КД, «＋ файл», выпадающие списки.
         if ((event.target as HTMLElement).closest("a, button, input, select, label")) return;
@@ -853,6 +854,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, 
           ? <button className="link-button" onClick={() => (assembly.techcard!.issued ? openTc : openGen)(assembly.index)}>{assembly.techcard.issued ? "готова" : "черновик"} · {assembly.techcard.stages} эт.</button>
           : <span className="muted">{assembly.techcard ? "не собрана" : "нет"}</span>}</td>
         <td data-label="Этап">{stageCell(assembly)}</td>
+        <td data-label="Отметки"><span className="kb-marks"><ProjectMarks tcReady={!!assembly.stage?.tc} kitPicked={!!assembly.stage?.kit} /></span></td>
         <td data-label="Проверка ТК">{reviewCell(assembly)}</td>
       </tr>)}</tbody>
     </table></div>}

@@ -147,7 +147,7 @@ const MARK_LABELS: Record<string, string> = {
   tc_ready: "Техкарта выдана", test_sb: "Тестовая сборка", kit_picked: "Комплект набран",
 };
 
-/** Текст записи «Отметка плана» в истории проекта: «Статус: ХОЛД», «Отметка 06.10: П», «В плане: расчёт ERP». */
+/** Текст записи «Отметка плана» в истории проекта: «Статус: СТОП», «Отметка 06.10: П», «В плане: расчёт ERP». */
 export function markText(event: { field?: string; value: string; text: string }) {
   const field = event.field ?? "";
   const label = field.startsWith("day:") ? `Отметка ${formatDate(field.slice(4))}` : MARK_LABELS[field] ?? field;
@@ -184,15 +184,18 @@ function chipTextWidth(text: string) {
   return width;
 }
 
-export const STATUS_WIDTH = { min: 84, max: 260, caret: 14 };
+export const STATUS_WIDTH = { min: 84, max: 400, caret: 14 };
 
 /** Ширина колонки «Статус» по самому длинному этапу и блокеру рядом с ним (чип со стрелкой меню): слово не обрезается. */
-export function statusColumnWidth(rows: Pick<ProductionPlanRow, "stage" | "blocker">[]) {
+export function statusColumnWidth(rows: Array<Pick<ProductionPlanRow, "stage" | "blocker"> & Partial<Pick<ProductionPlanRow, "tc_ready" | "kit_picked">>>) {
   let widest = 0;
   for (const row of rows) {
     const stage = chipTextWidth(statusLabel(row.stage)) + 16 + STATUS_WIDTH.caret;
     const blocker = row.blocker ? chipTextWidth(statusLabel(row.blocker.type)) + 16 + 6 : 0;
-    widest = Math.max(widest, Math.ceil(stage + blocker + 10));
+    // Отметки «ТК готова» и «КБ набрана» рядом с этапом: ширина по слову, которое сейчас на экране.
+    const marks = (row.tc_ready === undefined ? 0 : chipTextWidth(row.tc_ready ? "ТК готова" : "ТК не готова") + 22)
+      + (row.kit_picked === undefined ? 0 : chipTextWidth(row.kit_picked ? "КБ набрана" : "КБ не набрана") + 22);
+    widest = Math.max(widest, Math.ceil(stage + blocker + marks + 10));
   }
   return Math.min(STATUS_WIDTH.max, Math.max(STATUS_WIDTH.min, widest));
 }
@@ -688,6 +691,7 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
     // Тот же чип и меню, что в «Проектах»: этап, блокер, закрытие проекта; расчётные слова листа — в подсказке.
     const words = orderStatuses(value).map(statusLabel).join(", ");
     return td(<ProjectStatus project={row.project} status={row.stage} blocker={row.blocker?.type ?? ""} canEdit={canEdit && !busy}
+      tcReady={row.tc_ready} kitPicked={row.kit_picked} tcManual={row.tc_manual} kitManual={row.kit_manual}
       api={planStatusApi} floating onChanged={onStatusChanged} />,
     "", { title: [words, row.stage_manual ? "Этап поставлен вручную" : "", row.blocker ? `${row.blocker.type}: ${row.blocker.text}` : ""].filter(Boolean).join(" — ") || undefined });
   }
