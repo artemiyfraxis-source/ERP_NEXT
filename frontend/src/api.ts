@@ -1753,6 +1753,9 @@ export type TechOperationTab = "ob" | "op" | "ter" | "lug" | "coax" | "prov" | "
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
 export type CableKind = "coax" | "wire" | "multi" | "lan";
+/** The base a cable kind is stored in: монтажные stay `prov`, the other kinds have `cab_*`. */
+export const CABLE_BASES: Record<CableKind, TechOperationTab> = { wire: "prov", coax: "cab_coax", multi: "cab_multi", lan: "cab_lan" };
+export const cableTab = (kind: CableKind): TechOperationTab => CABLE_BASES[kind];
 /** Столбец общего набора таблицы: ключ и виден ли он всем. */
 export interface SharedColumn { key: string; visible: boolean }
 
@@ -4104,27 +4107,29 @@ export const referencesApi = {
     method: "PUT",
     body: JSON.stringify(maps),
   }),
-  /** `terKind` (БД.ТЕР): строки одного списка и его столбцы; без него — все строки БД.ТЕР. */
-  techOperations: (tab: TechOperationTab, query = "", limit?: number, terKind?: TerKind) => {
+  /** Строки одной базы и её столбцы (каждая база — своя таблица, миграция 0165); `family` — строки всего листа семьи
+   *  (БД.ТЕР: «Терминалы» и «Наконечники»; БД.ПРОВ: четыре базы кабелей), столбцы остаются базы `tab`. */
+  techOperations: (tab: TechOperationTab, query = "", limit?: number, family = false) => {
     const params = new URLSearchParams({ tab });
     if (query.trim()) params.set("q", query.trim());
     if (limit) params.set("limit", String(limit));
-    if (terKind) params.set("ter_kind", terKind);
+    if (family) params.set("family", "true");
     return visitRead<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
-  /** БД.ТЕР: перенести строку в «Терминалы» / «Наконечники» (поля строки не меняются). */
-  moveTerminal: (recordId: string, kind: TerKind) =>
-    api<TechOperationRecord>(`/api/references/tech-operations/${recordId}/ter-kind`, { method: "PUT", body: JSON.stringify({ kind }) }),
+  /** «Перенести в …»: строка в другую базу своей семьи («Терминалы» ↔ «Наконечники», монтажные ↔ виды кабелей);
+   *  id и значения строки не меняются. */
+  moveRecord: (recordId: string, tab: TechOperationTab) =>
+    api<TechOperationRecord>(`/api/references/tech-operations/${recordId}/tab`, { method: "PUT", body: JSON.stringify({ tab }) }),
   wireDia: () => api<WireDiaResult>("/api/references/wire-dia"),
   /** СПР.КАБ · коаксиал для генератора ЭТК: строки D1·D2·D3 и по строке на каждое другое имя кабеля (полное название,
    *  артикул поставщика, другое написание марки) с D1–D3 этого кабеля. */
   coaxDia: () => api<TechOperationResult>("/api/references/coax-dia"),
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
-  /** БД.ПРОВ: столбец — одного списка кабелей, `cableKind` обязателен (сервер без него откажет). */
-  addColumn: (tab: TechOperationTab, name: string, cableKind?: CableKind, terKind?: TerKind) =>
+  /** «+ Столбец» — своя колонка одной базы (у каждой базы свои). */
+  addColumn: (tab: TechOperationTab, name: string) =>
     api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns", {
-      method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}), ...(terKind ? { ter_kind: terKind } : {}) }) }),
+      method: "POST", body: JSON.stringify({ tab, name }) }),
   /** Общий набор столбцов таблиц: что видно всем и в каком порядке. */
   columnViews: () => api<{ views: Record<string, SharedColumn[]>; can_edit: boolean }>("/api/references/column-views"),
   /** Пустой список снимает общий набор. */
@@ -4132,12 +4137,12 @@ export const referencesApi = {
     api<{ view: string; columns: SharedColumn[] }>(`/api/references/column-views/${encodeURIComponent(view)}`, {
       method: "PUT", body: JSON.stringify({ columns }) }),
   /** Удалить свой столбец вместе со значениями: они остаются в журнале. */
-  removeColumn: (tab: TechOperationTab, name: string, cableKind?: CableKind, terKind?: TerKind) =>
+  removeColumn: (tab: TechOperationTab, name: string) =>
     api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns/remove", {
-      method: "POST", body: JSON.stringify({ tab, name, ...(cableKind ? { cable_kind: cableKind } : {}), ...(terKind ? { ter_kind: terKind } : {}) }) }),
-  /** БД.ПРОВ: `cableKind` — список, в котором создаётся строка (без него — по правилу). */
-  createRecord: (tab: TechOperationTab, fields: Record<string, string>, cableKind?: CableKind, terKind?: TerKind) =>
-    api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields, ...(cableKind ? { cable_kind: cableKind } : {}), ...(terKind ? { ter_kind: terKind } : {}) }) }),
+      method: "POST", body: JSON.stringify({ tab, name }) }),
+  /** Новая строка в базе `tab` (для кабеля — `cableTab(kind)`). */
+  createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
+    api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
   equipmentNumber: (type: string) =>
     api<{ inventory: string; row: string }>(`/api/references/tech-operations/equipment-number?${new URLSearchParams({ type })}`),
   duplicateRecord: (id: string) =>

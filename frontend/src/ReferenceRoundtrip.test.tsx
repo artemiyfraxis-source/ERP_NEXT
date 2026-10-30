@@ -71,8 +71,8 @@ it("downloads the tab with the screen's Russian titles", async () => {
 
   await waitFor(() => expect(click).toHaveBeenCalled());
   const exported = calls.find((call) => call.path.endsWith("/file/export"));
-  // «Терминалы» — список «contact» БД.ТЕР (наконечники — свой файл, 26.10.2026)
-  expect(exported?.body).toEqual({ titles: { terStep: "Шаг", "Шаг разьема": "Шаг разъёма" }, kind: "contact" });
+  // «Терминалы» — своя база ter (наконечники — lug, свой файл)
+  expect(exported?.body).toEqual({ titles: { terStep: "Шаг", "Шаг разьема": "Шаг разъёма" }, kind: "" });
   expect(created).toHaveBeenCalled();
 });
 
@@ -106,4 +106,18 @@ it("previews the file in a window, then applies it on «Применить»", a
   expect(calls.some((call) => call.path.endsWith("dry_run=0"))).toBe(true);
   expect(applied).toHaveBeenCalledTimes(1);
   expect(within(dialog).queryByRole("button", { name: /Применить/ })).toBeNull();
+});
+
+it("«Наконечники» и виды кабелей качают файл своей базы, монтажные — prov", async () => {
+  const seen: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    seen.push(String(input).split("?")[0]);
+    return json({ fields: [], titles: {}, label: "x", rows: 0 });
+  });
+  for (const [tab, table] of [["lug", "lug"], ["cab_coax", "cab_coax"], ["cab_multi", "cab_multi"], ["cab_lan", "cab_lan"], ["cab_wire", "prov"]] as const) {
+    const view = render(<ReferenceRoundtrip tab={tab} principal={principal({ erpref: "view" })} onApplied={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "Скачать для правки" }));
+    await waitFor(() => expect(seen).toContain(`/api/references/import/${table}/file/fields`));
+    view.unmount();
+  }
 });
