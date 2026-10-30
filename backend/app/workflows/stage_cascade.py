@@ -5,7 +5,7 @@ Relative to the stage a КБ is moved to:
 
 * to «В работе» or higher — the КБ's kit requests (main and «Довыдача») still at «Новая» / «Недоукомплектован» are
   cancelled: their lines give РЕЗЕРВ back to the lots; the КБ's active techcard reserves are released too;
-* to «ОТК» or higher (production over) — the КБ's shop tasks at «Запущено» with no work session open are cancelled.
+* to «Готово» or higher (production over) — the КБ's shop tasks at «Запущено» with no work session open are cancelled.
 
 Picked kits («Укомплектован», «Готов к выдаче»), issued kits, tasks someone is working on and finished goods stay —
 the preview lists them with the reason. Stock quantities never move: only reserve fields are released. A backward
@@ -73,8 +73,9 @@ from app.shared.persistence import SqlAlchemyAuditRepository
 from app.shared.project_number import project_from_purpose
 
 WORK_STAGE = "В работе"
-# Лестница 12.10: производство кончается на «ОТК» — с него простаивающие задания цеха закрываются (было «КБ на складе»).
-QC_STAGE = "ОТК"
+# Производство кончается на «Готово» (владелец 29.10: «Готово — это то, что производство закончено») — с него
+# простаивающие задания цеха закрываются (12.10 — с «ОТК», раньше — с «КБ на складе»).
+MADE_STAGE = "Готово"
 CASCADE_CONFLICT = "Этапы проекта или связанные задания изменились — обновите и повторите"
 BACK_NOTE = "Назад ничего не открывается"
 
@@ -243,7 +244,7 @@ def plan_cascade(project: str, plan: StagePlan, facts: CascadeFacts, reason: str
         close: list[CloseItem] = []
         keep: list[KeepItem] = []
         at_work = target >= KIT_STAGES.index(WORK_STAGE)
-        at_qc = target >= KIT_STAGES.index(QC_STAGE)
+        at_made = target >= KIT_STAGES.index(MADE_STAGE)
         for request in facts.requests:
             if request.status in _CLOSED_REQUESTS or not owns(project_from_purpose(request.purpose), kb_of(request.purpose)):
                 continue
@@ -274,8 +275,8 @@ def plan_cascade(project: str, plan: StagePlan, facts: CascadeFacts, reason: str
             if task.status is not ProductionStatus.RUNNING or not owns(task.project, task.item):
                 continue
             label = _task_label(task)
-            if not at_qc:
-                keep.append(KeepItem(CLOSE_TASK, label, f"Этап ниже «{QC_STAGE}» — задание остаётся."))
+            if not at_made:
+                keep.append(KeepItem(CLOSE_TASK, label, f"Этап ниже «{MADE_STAGE}» — задание остаётся."))
             elif task.id in facts.busy:
                 keep.append(KeepItem(CLOSE_TASK, label, "По заданию идёт работа (смена открыта) — остаётся, не мешает переносу."))
             else:

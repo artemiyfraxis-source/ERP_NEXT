@@ -49,9 +49,12 @@ BACKEND = Path(__file__).resolve().parents[2]
 LEGACY = "КБ на складе"
 
 
-def test_the_ladder_is_six_steps_in_shop_order():
-    # Владелец 29.10: «ТК готова» / «КБ набрана» — отметки рядом с этапом, «Распланировано» убрано.
-    assert KIT_STAGES == ("Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено")
+def test_the_ladder_is_eight_steps_in_shop_order():
+    # Владелец 29.10: «ТК готова» / «КБ набрана» — отметки рядом с этапом, «Распланировано» убрано; «Готово» —
+    # производство закончено, «ОТК» — на проверке, «ОТК пройден» — заглушка после ОТК.
+    assert KIT_STAGES == (
+        "Новый", "В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано", "Отгружено",
+    )
 
 
 # ── Факты этапов ────────────────────────────────────────────────────────
@@ -100,15 +103,65 @@ def test_a_launched_or_placed_task_is_not_work_yet_a_worked_one_is_at_work():
     assert _stage((cancelled,), worked={cancelled.id}) == "Новый"
 
 
-def test_a_finished_task_without_a_box_is_at_qc():
-    assert _stage((_task(ProductionStatus.DONE),)) == "ОТК"
+def test_a_finished_task_without_a_box_is_ready_not_at_qc():
+    """Владелец 29.10: «Готово — это то, что производство закончено; ОТК — то, что на проверке»."""
+    assert _stage((_task(ProductionStatus.DONE),)) == "Готово"
+    # Коробка последней операции выполненного задания в очереди ОТК — уже на проверке.
+    done = _task(ProductionStatus.DONE)
+    assert _stage((done,), (_box(done),)) == "ОТК"
+    # Коробка не последней операции — ОТК её не проверяет: «Готово».
+    assert _stage((done,), (_box(done, operation=EARLIER),)) == "Готово"
 
 
 def test_a_final_operation_box_in_the_qc_queue_or_inspected_is_at_qc():
     task = _task(started=True)
     assert _stage((task,), (_box(task),)) == "ОТК"  # подтверждена мастером — в очереди ОТК
     inspected = _box(task, BoxStatus.CONSUMED)
-    assert _stage((task,), (inspected,), {inspected.id}) == "ОТК"  # проверена ОТК
+    # ОТК проверил весь тираж — «ОТК пройден» (заглушка: сам — только по проверкам ОТК в ERP).
+    assert _stage((task,), (inspected,), {inspected.id}) == "ОТК пройден"
+
+
+def test_qc_passed_only_when_inspected_boxes_cover_the_whole_run():
+    """«ОТК пройден» — заглушка (владелец 29.10): сам — только когда проверки ОТК в ERP покрыли весь тираж КБ."""
+    task = _task(started=True, quantity=10)
+    checked, queued = _box(task, BoxStatus.CONSUMED, quantity="6"), _box(task, quantity="4")
+    # 6 проверено, 4 в очереди — тираж сделан, на проверке: «ОТК».
+    assert _stage((task,), (checked, queued), {checked.id}, run=10) == "ОТК"
+    other = _box(task, BoxStatus.CONSUMED, quantity="4")
+    assert _stage((task,), (checked, other), {checked.id, other.id}, run=10) == "ОТК пройден"
+    # Выполненное задание без проверенных коробок — не «ОТК пройден».
+    done = _task(ProductionStatus.DONE, quantity=4)
+    assert _stage((task, done), (checked,), {checked.id}, run=10) == "ОТК"
+    # Проверенная коробка отменённого задания не считается.
+    cancelled = _task(ProductionStatus.CANCELLED, quantity=10)
+    lost = _box(cancelled, BoxStatus.CONSUMED)
+    assert _stage((cancelled,), (lost,), {lost.id}) == "Новый"
+
+
+def test_warehouse_acceptance_moves_on_from_ready_qc_and_qc_passed():
+    """Приёмка ГП ставит «Принято складом» с любого из трёх этапов после производства."""
+    done = _task(ProductionStatus.DONE)
+    queued = _box(done)
+    checked = _box(done, BoxStatus.CONSUMED)
+    for boxes, inspected in (((), ()), ((queued,), ()), ((checked,), (checked.id,))):
+        assert _stage((done,), boxes, inspected, goods=(_good("10"),)) == "Принято складом"
+
+
+def test_a_manual_ready_or_qc_passed_is_a_ladder_stage_in_any_order():
+    """Владелец 29.10: «Готово» и «ОТК пройден» ставятся руками; пока система гибкая — в любом порядке."""
+    key = kit_stage_key(PROJECT, "КБ1")
+    for word in ("Готово", "ОТК пройден"):
+        marks = summarize_kit_marks((
+            PlanEvent(PROJECT, NOW, "РП", PLAN_KINDS["stage"], item_index="КБ1", value=word, from_value="В работе"),
+        ))
+        kit = project_stage(PROJECT, ("КБ1",), {"work": {key}}, marks=marks).kits[0]
+        assert (kit.status, kit.manual) == (word, True)
+        validate_plan_note({"project": PROJECT, "kind": "stage", "item_index": "КБ1", "value": word}, (PROJECT,))
+    # С «ОТК пройден» назад на «Готово» — с причиной, как любой шаг назад; вперёд — без.
+    back = plan_stage_change((KitStageNow("КБ1", "ОТК пройден", True, "Новый"),), "Готово")
+    assert back.direction == "back" and back.error == "" and [c.to_stage for c in back.changes] == ["Готово"]
+    forward = plan_stage_change((KitStageNow("КБ1", "Новый", False, "Новый"),), "ОТК пройден")
+    assert forward.direction == "forward" and forward.changes[0].skipped == ("В работе", "Готово", "ОТК")
 
 
 def test_a_box_not_yet_at_qc_keeps_the_kb_at_work():
@@ -123,7 +176,8 @@ def test_a_box_not_yet_at_qc_keeps_the_kb_at_work():
 
 
 def test_qc_only_once_the_whole_kb_run_is_made():
-    """Владелец 22.10: «ОТК» — весь тираж КБ сделан, а не одно его задание; отменённые не считаются."""
+    """Владелец 22.10: этап производства закончен — весь тираж КБ сделан, а не одно его задание; отменённые не
+    считаются (29.10: сделано без коробок у ОТК — «Готово», с коробками в очереди ОТК — «ОТК»)."""
     first = _task(ProductionStatus.DONE, started=True, quantity=4)
     # Тираж 10, выполнено 4, остальное не запущено — не «ОТК».
     assert _stage((first,), run=10) == "В работе"
@@ -133,22 +187,22 @@ def test_qc_only_once_the_whole_kb_run_is_made():
     # Сдано с последней операции 5 из 6 — 9 из 10, ещё не «ОТК»; 6 из 6 — весь тираж: «ОТК».
     assert _stage((first, second), (_box(second, quantity="5"),), run=10) == "В работе"
     assert _stage((first, second), (_box(second, quantity="5"), _box(second, quantity="1")), run=10) == "ОТК"
-    # Выполнено всё запущенное — 10 из 10.
-    assert _stage((first, _task(ProductionStatus.DONE, quantity=6)), run=10) == "ОТК"
+    # Выполнено всё запущенное — 10 из 10, коробок у ОТК нет: производство закончено, «Готово».
+    assert _stage((first, _task(ProductionStatus.DONE, quantity=6)), run=10) == "Готово"
     # Отменённое задание тираж не закрывает.
     cancelled = _task(ProductionStatus.CANCELLED, started=True, quantity=6)
     assert _stage((first, cancelled), run=10) == "В работе"
 
 
-def test_a_kb_without_a_known_run_is_at_qc_when_everything_launched_is_made():
+def test_a_kb_without_a_known_run_is_ready_when_everything_launched_is_made():
     done = _task(ProductionStatus.DONE, started=True, quantity=4)
-    assert _stage((done,)) == "ОТК"
+    assert _stage((done,)) == "Готово"
     assert _stage((done, _task(started=True, quantity=6))) == "В работе"
 
 
 def test_accepted_and_sent_goods_climb_the_ladder():
     done = (_task(ProductionStatus.DONE),)
-    assert _stage(done, goods=(_good("4"),)) == "ОТК"  # принята не вся ГП
+    assert _stage(done, goods=(_good("4"),)) == "Готово"  # принята не вся ГП
     accepted = _good("10")
     assert _stage(done, goods=(accepted,)) == "Принято складом"
     taken = accepted.take(Decimal("10"))
@@ -167,7 +221,7 @@ def test_an_old_journal_word_reads_as_accepted_by_the_warehouse():
         PlanEvent(PROJECT, NOW, "РП", PLAN_KINDS["stage"], item_index="КБ1", value=LEGACY, from_value="В работе"),
     ))
     stage = project_stage(PROJECT, ("КБ1",), {}, marks=marks).kits[0]
-    assert (stage.status, stage.manual, stage.skipped) == ("Принято складом", True, ("ОТК",))
+    assert (stage.status, stage.manual, stage.skipped) == ("Принято складом", True, ("Готово", "ОТК", "ОТК пройден"))
     back = summarize_kit_marks((
         PlanEvent(PROJECT, NOW, "РП", PLAN_KINDS["stage"], item_index="КБ1", value="В работе", from_value=LEGACY),
     ))
@@ -204,9 +258,12 @@ def _cascade(to_stage: str):
     return [item.kind for item in kb.close], [(item.kind, item.reason) for item in kb.keep]
 
 
-def test_kit_requests_close_from_work_and_idle_tasks_from_qc():
-    assert _cascade("В работе") == (["kit_request"], [("task", "Этап ниже «ОТК» — задание остаётся.")])
+def test_kit_requests_close_from_work_and_idle_tasks_from_ready():
+    # Производство кончается на «Готово» (владелец 29.10) — с него простаивающие задания цеха закрываются.
+    assert _cascade("В работе") == (["kit_request"], [("task", "Этап ниже «Готово» — задание остаётся.")])
+    assert _cascade("Готово") == (["kit_request", "task"], [])
     assert _cascade("ОТК") == (["kit_request", "task"], [])
+    assert _cascade("ОТК пройден") == (["kit_request", "task"], [])
     assert _cascade("Принято складом") == (["kit_request", "task"], [])
 
 
@@ -244,7 +301,7 @@ def test_a_techcard_kb_outside_the_kitset_gives_the_same_stage_on_the_plan_and_t
 
 
 def test_the_plan_takes_the_kb_run_from_the_kitset_and_the_etk_batch_for_qc():
-    """«ОТК» на плане — по тиражу КБ из карточки набора (нет набора — партия выданной ЭТК), как остаток к запуску."""
+    """«Готово» на плане — по тиражу КБ из карточки набора (нет набора — партия выданной ЭТК), как остаток к запуску."""
     kitset = Kitset(
         project=PROJECT, customer="ООО", calc_source="", updated_at=NOW, updated_by="Технолог", created_at=NOW,
         assemblies=(KitAssembly(index="КБ1", name="Жгут", run=Decimal("10")),),
@@ -260,7 +317,7 @@ def test_the_plan_takes_the_kb_run_from_the_kitset_and_the_etk_batch_for_qc():
         projects=(PlanProjectSnapshot(PROJECT, customer="ООО"),), events=(), today=NOW.date(), kitsets=(kitset,),
     )
 
-    assert [(kit.item_index, kit.status) for kit in row.stage.kits] == [("КБ1", "В работе"), ("КБ2", "ОТК")]
+    assert [(kit.item_index, kit.status) for kit in row.stage.kits] == [("КБ1", "В работе"), ("КБ2", "Готово")]
 
 
 # ── Миграция 0107 ───────────────────────────────────────────────────────

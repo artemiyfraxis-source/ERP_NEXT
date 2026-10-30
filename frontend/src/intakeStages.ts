@@ -29,7 +29,7 @@ export const canPack = (row: IntakeRow) => row.pack_decided === true && packable
 export type Pieces = Record<DispatchStage, number>;
 const zero = (): Pieces => ({ waiting: 0, production: 0, ready: 0, accepted: 0, packed: 0, to_ship: 0, shipped: 0 });
 
-/** Штуки КБ по шагам. Непринятое: сданное цехом (или всё, что можно принять, когда КБ уже на ОТК и дальше) — «Готово»,
+/** Штуки КБ по шагам. Непринятое: сданное цехом (или всё, что можно принять, когда КБ уже «Готово» / ОТК и дальше) — «Готово»,
  *  остальное — «В производстве» или «В ожидании» по этапу КБ. Принятое — по отправкам: набранное в заявку ещё на складе
  *  («Принято»), упакованное — «Упаковано» или «На отгрузку», уехавшее — «Отгружено». */
 export function stagePieces(row: IntakeRow, shipments: DispatchShipment[]): Pieces {

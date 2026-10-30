@@ -6,7 +6,7 @@ import { StatusChip } from "./StatusChip";
 import { statusTone } from "./statusTone";
 
 /** Запасной список этапов — только когда экран не передал свой (порядок этапов ведёт сервер: `stages` плана и карточки). */
-const FALLBACK_STAGES = ["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"];
+const FALLBACK_STAGES = ["Новый", "В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано", "Отгружено"];
 export const PROJECT_TERMINALS = ["Отменён"];
 export const PROJECT_BLOCKERS = ["СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ"];
 
