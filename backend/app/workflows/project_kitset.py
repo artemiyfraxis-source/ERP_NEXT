@@ -532,12 +532,12 @@ class KitsetFacts:
     goods: tuple[FinishedGood, ...] = ()
     events: tuple[PlanEvent, ...] = ()
     projects: tuple[PlanProjectSnapshot, ...] = ()
-    # Production boxes and the ids of the boxes ОТК inspected: the ladder's «ОТК» stage.
+    # Production boxes and the ids of the boxes ОТК inspected: the ladder's «Готово» / «ОТК» stages.
     boxes: tuple[ProductionBox, ...] = ()
     inspected: frozenset[UUID] = frozenset()
     # Ids of the tasks with a work session: the ladder's «В работе».
     worked: frozenset[UUID] = frozenset()
-    # КБ runs (kit_stage_key → pieces, `issued_runs`): «ОТК» only once the whole run is made.
+    # КБ runs (kit_stage_key → pieces, `issued_runs`): «Готово» / «ОТК» only once the whole run is made.
     runs: dict[str, int] = field(default_factory=dict)
 
 

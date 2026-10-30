@@ -131,7 +131,9 @@ def test_project_from_calculation_registers_plan_queue_and_addressee(kitset_api)
 
     listing = client.get("/api/techcards/kitsets").json()
     assert listing["statuses"][:2] == ["Новый", "В работе"]
-    assert listing["stages"] == ["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"]
+    assert listing["stages"] == [
+        "Новый", "В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано", "Отгружено",
+    ]
     assert listing["blockers"] == ["СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ"]
     tile = listing["items"][0]
     assert (tile["project"], tile["status"], tile["kbs"]) == ("708К.4", "Новый", ["КБ1", "КБ2"])
@@ -490,7 +492,15 @@ def test_project_status_in_one_click(kitset_api):
     assert reopened["status"] == "Новый"
     assert all(item["stage"]["manual"] is False for item in reopened["assemblies"])
 
-    bad = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "Готово"})
+    # «Готово» (производство закончено) и «ОТК пройден» ставятся руками (владелец 29.10).
+    for word in ("Готово", "ОТК пройден"):
+        manual = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": word})
+        assert manual.status_code == 200, manual.text
+        assert manual.json()["card"]["status"] == word
+    back = client.post("/api/techcards/kitsets/708К.4/status",
+                       json={"action": "status", "value": "Готово", "reason": "ОТК вернул"})
+    assert back.status_code == 200 and back.json()["card"]["status"] == "Готово"
+    bad = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "Готов"})
     assert bad.status_code == 422
 
     noted = client.post("/api/techcards/kitsets/708К.4/journal", json={"kind": "deadline", "deadline": "2026-10-20"})
@@ -568,8 +578,8 @@ def test_manual_stage_change_previews_skips_needs_a_reason_back_and_closes_the_s
     body = preview.json()
     assert (body["direction"], body["reason_required"], body["error"]) == ("forward", False, "")
     assert [(kb["kb"], kb["from"], kb["to"], kb["skipped"]) for kb in body["kbs"]] == [
-        ("КБ1", "Новый", "Отгружено", ["В работе", "ОТК", "Принято складом", "Упаковано"]),
-        ("КБ2", "Новый", "Отгружено", ["В работе", "ОТК", "Принято складом", "Упаковано"]),
+        ("КБ1", "Новый", "Отгружено", ["В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано"]),
+        ("КБ2", "Новый", "Отгружено", ["В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано"]),
     ]
     assert body["kbs"][0]["warnings"] == [
         "Закроется (пропущено вручную: Новый → Отгружено): заявок на комплектацию — 1.",
@@ -588,7 +598,7 @@ def test_manual_stage_change_previews_skips_needs_a_reason_back_and_closes_the_s
     card = staged.json()["card"]
     stages = {item["index"]: item["stage"] for item in card["assemblies"]}
     assert (stages["КБ1"]["status"], stages["КБ2"]["status"]) == ("Принято складом", "Отгружено")
-    assert stages["КБ1"]["skipped"] == ["В работе", "ОТК"]
+    assert stages["КБ1"]["skipped"] == ["В работе", "Готово", "ОТК", "ОТК пройден"]
     assert card["journal"][0]["from_value"] == "Новый" and card["journal"][0]["value"] == "Принято складом"
 
     # Назад — только с причиной (и для проекта, и для КБ).
@@ -657,7 +667,7 @@ def test_the_old_stage_word_is_refused_on_every_write_route(kitset_api):
     assert client.get("/api/techcards/kitsets/708К.4").json()["journal"] == []
     # Лестница в ответе — 6 этапов по порядку (29.10).
     assert client.get("/api/techcards/kitsets").json()["stages"] == [
-        "Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено",
+        "Новый", "В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано", "Отгружено",
     ]
 
 

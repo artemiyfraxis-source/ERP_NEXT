@@ -54,12 +54,30 @@ def _kit(*events, facts=None):
 
 
 def test_the_lists_have_no_removed_words():
-    assert KIT_STAGES == ("Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено")
+    assert KIT_STAGES == (
+        "Новый", "В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано", "Отгружено",
+    )
     assert PLAN_BLOCKERS == ("СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ")
     assert not {"ХОЛД", "ПАУЗА", "К ЗАПУСК", "РАСПЛАН"} & set(SHOP_STATUSES)
     assert SHOP_HOLD == frozenset(("СТОП",))
     assert not {"К ЗАПУСК", "РАСПЛАН"} & set(STAGE_SHOP_STATUS.values())
     assert set(STAGE_SHOP_STATUS) <= set(KIT_STAGES)
+
+
+def test_ready_and_qc_are_produced_but_not_closed():
+    """Владелец 29.10: «Готово» / «ОТК» / «ОТК пройден» — производство закончено, склад ещё не принял: строка листа
+    активна, КБ к запуску не закрыта, приёмка без заданий разрешена."""
+    from app.modules.production.plan_sheet import SHOP_DONE_STAGES, SHOP_PRODUCED_STAGES
+    from app.workflows.production_intake import ACCEPT_WITHOUT_TASKS_STAGES
+    from app.workflows.project_kitset import CLOSED_KB_STAGES
+
+    after_production = {"Готово", "ОТК", "ОТК пройден"}
+    assert after_production <= SHOP_PRODUCED_STAGES and not after_production & SHOP_DONE_STAGES
+    assert not after_production & set(CLOSED_KB_STAGES)
+    assert ACCEPT_WITHOUT_TASKS_STAGES == {"В работе", *after_production}
+    assert (STAGE_SHOP_STATUS["Готово"], STAGE_SHOP_STATUS["ОТК"], STAGE_SHOP_STATUS["ОТК пройден"]) == (
+        "ГОТОВО", "ОТК", "ГОТОВО",
+    )
 
 
 @pytest.mark.parametrize(("word", "markers"), [

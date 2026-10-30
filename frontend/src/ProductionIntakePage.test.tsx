@@ -300,6 +300,15 @@ describe("Приёмка с производства: упаковка и отг
     expect(await screen.findByText("В ожидании производства ничего нет.")).toBeInTheDocument();
   });
 
+  it.each(["Готово", "ОТК", "ОТК пройден"])("КБ на этапе «%s» (сделано, ждёт приёмки) — во вкладке «Готово», не «В производстве»", async (stage) => {
+    // Владелец 29.10: «Готово» — производство закончено, «ОТК» — на проверке, «ОТК пройден» — заглушка; всё принимается.
+    intakeRows = [row({ stage, project_stage: stage, delivered: "0", accepted: "6", remaining: "34", tasks: [] })];
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findByText("Жгут");
+    expect(tab(/^Готово/)).toHaveAttribute("aria-selected", "true");
+    expect([/^В производстве/, /^Готово/].map(count)).toEqual(["0", "1"]);
+  });
+
   it("уехавшая целиком КБ (её нет в приёмке) видна в «Отгружено» из отправок за 30 дней", async () => {
     intakeRows = [];
     shipments = [{ ...gone, lines: [shipmentLine({ id: "l9", item_index: "КБ9", name: "Уехавший жгут", picked: "5", requested: "5" })] }];
