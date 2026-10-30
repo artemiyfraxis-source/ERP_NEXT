@@ -32,7 +32,7 @@ import re
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, TechOperationTab
 from app.modules.techcards.connector_housings import housing_of
 from app.modules.techcards.etk_parts import kit_article
 from app.modules.techcards.kitset_names import clean_site_title
@@ -57,6 +57,11 @@ class ItemName:
 def _tab(record: _Record) -> str:
     tab = record.tab
     return tab.value if isinstance(tab, TechOperationTab) else str(tab)
+
+
+# БД.ТЕР is «Терминалы» + «Наконечники», БД.ПРОВ is the four cable bases (migration 0165): a name reads the family.
+_TERMINAL_VALUES = frozenset(tab.value for tab in TERMINAL_TABS)
+_CABLE_VALUES = frozenset(tab.value for tab in CABLE_TABS)
 
 
 def _field(fields: Mapping[str, Any], *names: str) -> str:
@@ -107,13 +112,13 @@ class ReferenceNames:
     def __init__(self, records: Iterable[_Record] = ()):
         records = tuple(records)
         self._identity_records = tuple(
-            record for record in records if _tab(record) in (TechOperationTab.TERMINAL.value, TechOperationTab.COAX.value)
+            record for record in records if _tab(record) in _TERMINAL_VALUES | {TechOperationTab.COAX.value}
         )
         self._makers = {
             compact(_field(record.fields, "terArticle", "article")): _field(record.fields, "terManufacturer")
-            for record in records if _tab(record) == TechOperationTab.TERMINAL.value
+            for record in records if _tab(record) in _TERMINAL_VALUES
         }
-        self._wires = tuple(self._wire(record.fields) for record in records if _tab(record) == TechOperationTab.WIRE.value)
+        self._wires = tuple(self._wire(record.fields) for record in records if _tab(record) in _CABLE_VALUES)
         self._wires = tuple(wire for wire in self._wires if wire.mark)
         self._materials = tuple(record.fields for record in records if _tab(record) == TechOperationTab.MATERIAL.value)
         self._covering_groups = {
@@ -304,7 +309,7 @@ def reference_records(references_uow) -> list[Any]:
     with references_uow() as uow:
         return [
             record
-            for tab in (TechOperationTab.TERMINAL, TechOperationTab.COAX, TechOperationTab.WIRE, TechOperationTab.MATERIAL)
+            for tab in (TERMINAL_TABS, TechOperationTab.COAX, CABLE_TABS, TechOperationTab.MATERIAL)
             for record in uow.tech_operations.list(tab=tab, query="", limit=10_000)
         ]
 

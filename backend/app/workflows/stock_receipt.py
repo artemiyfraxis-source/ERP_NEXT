@@ -27,7 +27,7 @@ from app.modules.purchasing.infrastructure import ItemRow, UpdDocumentRow, UpdLi
 from app.modules.purchasing.upd_sellers import seller_name_key
 from app.modules.receiving.domain import ReceivingStatus
 from app.modules.receiving.infrastructure import ReceivingLineRow as RC
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, TechOperationTab
 from app.modules.warehouse.infrastructure import StockLotRow
 from app.workflows.article_key import code_key
 
@@ -190,7 +190,7 @@ def upd_document(
 
 
 # Reference DB tabs whose records are articles of what the shop buys.
-_ARTICLE_TABS = (TechOperationTab.MATERIAL, TechOperationTab.TERMINAL, TechOperationTab.COAX, TechOperationTab.WIRE)
+_ARTICLE_TABS = (TechOperationTab.MATERIAL, TERMINAL_TABS, TechOperationTab.COAX, CABLE_TABS)  # a sheet family each
 
 
 def known_articles(

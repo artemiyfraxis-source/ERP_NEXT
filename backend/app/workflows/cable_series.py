@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.modules.references.application import UnitOfWork, _audit, _search_text
-from app.modules.references.domain import TechOperationRecord, TechOperationTab
+from app.modules.references.domain import CABLE_TABS, TechOperationRecord, TechOperationTab
 from app.modules.references.wire_makers import CATEGORY_FIELD, MAKERS_FIELD, STANDARD_FIELD, join_makers, parse_makers
 from app.shared.clock import moscow_now
 from app.shared.identity import Actor
@@ -183,7 +183,7 @@ def format_plan(plan: Plan, series: list[dict], *, applied: bool) -> str:
 def run(uow: UnitOfWork, actor: Actor, now: datetime, *, apply: bool, series: list[dict] | None = None) -> Plan:
     series = series if series is not None else load_series()
     with uow:
-        records = list(uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=100_000))
+        records = list(uow.tech_operations.list(tab=CABLE_TABS, query="", limit=100_000))
         plan = build_plan(records, series)
         if not apply or plan.empty:
             return plan

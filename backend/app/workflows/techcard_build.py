@@ -41,7 +41,7 @@ from app.modules.references.coax_vswr import (
     vswr_norm,
     with_customer_norm,
 )
-from app.modules.references.domain import TechOperationTab, cable_key, gost_awg_map, pick_wire_row
+from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, TechOperationTab, cable_key, gost_awg_map, pick_wire_row
 from app.modules.references.wire_dia import outer_by_series
 from app.modules.references.technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, matching_terminal_records, resolve_terminal,
@@ -111,11 +111,11 @@ def load_refs(references_factory: Callable[[], ReferencesUnitOfWork], *, coax: b
         metadata = uow.tech_operations.metadata()
         gauges = tuple(uow.cable_structure.gauges())
         hookups = tuple(uow.cable_structure.hookups())
-        wire_rows = _rows(uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=10_000))
+        wire_rows = _rows(uow.tech_operations.list(tab=CABLE_TABS, query="", limit=10_000))
         if not metadata or metadata["schema_version"] != TECH_SNAPSHOT_SCHEMA_VERSION:
             # The wire Ø come from the cable bases, not from the snapshot: the ETK gets them even without it.
             return Refs(None, gauges=gauges, hookups=hookups, wire_rows=wire_rows)
-        terminal = _rows(uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000))
+        terminal = _rows(uow.tech_operations.list(tab=TERMINAL_TABS, query="", limit=10_000))
         # ГОСТ section → AWG from «Сечения AWG ↔ мм²» of the база монтажных проводов (the old СПР.КАБ AWG table is
         # retired, owner 12.10.2026); the stored map only when the sizes table is empty.
         gost_awg = gauge_gost_awg(gauges) or gost_awg_map(uow.references.list())
@@ -146,7 +146,7 @@ def load_coax_refs(references_factory: Callable[[], ReferencesUnitOfWork]) -> tu
     with references_factory() as uow:
         rows = _rows(uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000))
         cards = tuple(uow.cable_structure.cards())
-        wires = _rows(uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=10_000))
+        wires = _rows(uow.tech_operations.list(tab=CABLE_TABS, query="", limit=10_000))
     return rows, cards, wires
 
 

@@ -28,7 +28,7 @@ from app.shared.http_auth import (
     tctemplates_edit_principal, tctemplates_view_principal, section_allowed,
 )
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import TERMINAL_TABS, TechOperationTab
 from app.workflows.etk_lots import IssuedKitLots
 from app.workflows.new_operation import NewOperationUnitOfWork, create_operation
 from app.workflows.techcard_build import coax_customer_problem, with_technology
@@ -280,7 +280,7 @@ def etk_part_identifier(
             with references_factory() as uow:
                 records = tuple(
                     record
-                    for tab in (TechOperationTab.TERMINAL, TechOperationTab.COAX)
+                    for tab in (TERMINAL_TABS, TechOperationTab.COAX)
                     for record in uow.tech_operations.list(tab=tab, query="", limit=10_000)
                 )
             names = ReferenceNames(reference_records(references_factory))
@@ -1019,7 +1019,7 @@ def connector_series_view(
     if references_factory is not None:
         with references_factory() as uow:
             records = [{**record.fields, RECORD_ID_KEY: str(record.id)}
-                       for record in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)]
+                       for record in uow.tech_operations.list(tab=TERMINAL_TABS, query="", limit=10_000)]
             coax = [record.fields for record in uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000)]
     series = connector_series(records, coax)
     return {"series": series, "match": find_in_series(article[:255], series) if article.strip() else None}

@@ -39,7 +39,7 @@ from typing import Any, Protocol
 
 from app.modules.production.plan import MANUAL_TECHCARD_PROJECTS, normalize_project_number
 from app.modules.references.application import coax_dia_rows
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, TechOperationTab
 from app.modules.references.wire_dia import read_wire_dia
 from app.modules.requests.application import CalcSheetError
 from app.modules.requests.domain import spreadsheet_id_from_url
@@ -182,14 +182,15 @@ def generator_refs(techcards_factory: Callable[[], Any], references_factory: Cal
     if references_factory is not None:
         with references_factory() as uow:
             for tab in tabs:
-                records = uow.tech_operations.list(tab=TechOperationTab(tab), query="", limit=5000)
+                records = uow.tech_operations.list(tab=TERMINAL_TABS if tab == "ter" else TechOperationTab(tab), query="",
+                                                    limit=5000)
                 tabs[tab] = ([{"id": str(item.id), "fields": item.fields} for item in records] if tab == "ter"
                              else [item.fields for item in records])
             tabs["kab_coax"] = coax_dia_rows(uow)
             wire_dia = read_wire_dia(uow)
             # БД.ПРОВ с её списком кабелей (`cable_kind`): монтажный/многожильный/LAN/коаксиал решает форма так же, как в браузере.
             prov = [{"cable_kind": item.cable_kind, "fields": item.fields}
-                    for item in uow.tech_operations.list(tab=TechOperationTab("prov"), query="", limit=5000)]
+                    for item in uow.tech_operations.list(tab=CABLE_TABS, query="", limit=5000)]
     return {"templates": templates, **tabs, "wire_dia": wire_dia, "prov": prov}
 
 

@@ -133,7 +133,10 @@ class SqlAlchemyTechOperationRepository:
         statement = select(TechOperationRecordRow)
         if isinstance(tab, TechOperationTab): statement = statement.where(TechOperationRecordRow.tab == tab.value)
         elif tab is not None: statement = statement.where(TechOperationRecordRow.tab.in_([item.value for item in tab]))
-        statement = statement.order_by(TechOperationRecordRow.tab, TechOperationRecordRow.sort_key, TechOperationRecordRow.id)
+        # A family keeps the order of its sheet across its bases (as one tab before migration 0165): the readers that
+        # take the first match of an article (names, ETK, a scanned article) find the same record as before.
+        by_tab = (TechOperationRecordRow.tab,) if tab is None or isinstance(tab, TechOperationTab) else ()
+        statement = statement.order_by(*by_tab, TechOperationRecordRow.sort_key, TechOperationRecordRow.id)
         words = search_words(query)
         if not words:
             return [self._domain(row) for row in self.session.scalars(statement.limit(limit))]
