@@ -21,7 +21,7 @@ from app.modules.references.infrastructure import STOCK_LINK_TAB_CHECK, TAB_CHEC
 from tests.migrations.seed_any_revision import seed
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
 
-BEFORE, AFTER = "0163_approval_pin", "0165_split_lug_cable_tabs"
+BEFORE, AFTER = "0164_stage_ready_qc_passed", "0165_split_lug_cable_tabs"
 MIGRATION = Path(__file__).parents[2] / "migrations" / "versions" / f"{AFTER}.py"
 
 LUG = {"Product Name": "НШВИ", "Series": "НШВИ 0.5", "Артикул контакта (REEL)": "НШВИ 0.5-8", "terArticle": "НШВИ 0.5-8"}

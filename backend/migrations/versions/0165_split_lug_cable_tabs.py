@@ -33,7 +33,7 @@ import sqlalchemy as sa
 
 
 revision: str = "0165_split_lug_cable_tabs"
-down_revision: str | None = "0163_approval_pin"
+down_revision: str | None = "0164_stage_ready_qc_passed"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
