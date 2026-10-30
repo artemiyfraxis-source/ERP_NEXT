@@ -490,8 +490,8 @@ describe("Приёмка с производства: упаковка и отг
       [/^В производстве/, ["КБ", "Наименование", "Заказано", "Запущено", "Можно принять"], /^Принять 591К\.3 КБ1/],
       [/^Готово/, ["КБ", "Наименование", "Заказано", "Можно принять"], /^Принять 591К\.3 КБ1/],
       [/^Принято/, ["КБ", "Наименование", "Принято", "Дата приёмки", "ГРН", "Упаковано"], /^Упаковать|^Упаковка|^Печать этикетки/],
-      [/^Упаковано/, ["КБ", "Наименование", "Упаковано", "Трек"], /^(Трек|Без УПД) 591К\.3 КБ1/],
-      [/^На отгрузку/, ["КБ", "Наименование", "Упаковано", "Трек", "Отгрузка"], /^Отгрузить 591К\.3 КБ1/],
+      [/^Упаковано/, ["КБ", "Наименование", "Упаковано", "Трек", "Документы"], /^(Трек|Без УПД) 591К\.3 КБ1|^Документы ОТГ-/],
+      [/^На отгрузку/, ["КБ", "Наименование", "Упаковано", "Трек", "Документы", "Отгрузка"], /^Отгрузить 591К\.3 КБ1|^Документы ОТГ-/],
       [/^Отгружено/, ["КБ", "Наименование", "Отгружено", "Трек", "Дата отгрузки"], null],
     ];
     for (const [name, heads, action] of expected) {
@@ -505,6 +505,62 @@ describe("Приёмка с производства: упаковка и отг
     // «Принять всё» — только в «Готово» и «Все»; «Принять» не бывает под «Отгружено» и «Упаковано».
     fireEvent.click(tab(/^Все/));
     await waitFor(() => expect(headers()).toContain("Можно принять"));
+  });
+
+  it("«Документы»: отправка без PL/DN — только «Сформировать отгрузочные», окно упаковки; печати в строке нет", async () => {
+    intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
+    shipments = [{ ...packedShipment, pl_number: "", dn_number: "" }];
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
+    const form = await screen.findByRole("button", { name: "Сформировать отгрузочные ОТГ-20261029-01" });
+    expect(screen.queryByRole("button", { name: /^Документы ОТГ/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Печать/ })).not.toBeInTheDocument();
+    fireEvent.click(form);
+    const dialog = await screen.findByRole("dialog", { name: "Упаковка 591К.3" });
+    expect(within(dialog).getByRole("button", { name: "Сформировать отгрузочные" })).toBeInTheDocument();
+  });
+
+  it("«Документы»: сформировано — кнопка открывает окно, PL и DN печатаются там, УПД — тип, № и ссылка на файл", async () => {
+    intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
+    shipments = [{ ...packedShipment, upd_type: "БУМАГА", upd_number: "485", upd_url: "https://files/upd-485.pdf", missing_data: [] }];
+    const printed = capturePrintFrames();
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
+    const open = await screen.findByRole("button", { name: "Документы ОТГ-20261029-01" });
+    expect(open).toHaveTextContent("Документы: DN, УПД · Бумага");
+    expect(screen.queryByRole("button", { name: "Печать PL" })).not.toBeInTheDocument();
+    fireEvent.click(open);
+    const dialog = await screen.findByRole("dialog", { name: "Документы отправки ОТГ-20261029-01" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Печать PL" }));
+    await waitFor(() => expect(printed.print).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Печать DN" }));
+    await waitFor(() => expect(printed.print).toHaveBeenCalledTimes(2));
+    expect(calls.map((call) => call.url)).toEqual(expect.arrayContaining(["/api/shipping/shipments/s1/print?document=pl", "/api/shipping/shipments/s1/print?document=dn"]));
+    expect(within(dialog).getByText("УПД · Бумага № 485")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "Открыть / печать" })).toHaveAttribute("href", "https://files/upd-485.pdf");
+    expect(within(dialog).getByRole("button", { name: "Перевыпустить" })).toBeInTheDocument();
+    printed.restore();
+  });
+
+  it("«Документы»: DN выключен, пока не внесены данные; бумажная УПД без файла и УПД без типа — предупреждения", async () => {
+    intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
+    shipments = [{ ...packedShipment, upd_type: "БУМАГА", upd_number: "", upd_url: "" }];
+    const { unmount } = render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
+    expect(await screen.findByText("нет файла УПД")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Документы ОТГ-20261029-01" }));
+    const dialog = await screen.findByRole("dialog", { name: "Документы отправки ОТГ-20261029-01" });
+    expect(within(dialog).getByRole("button", { name: "Печать DN" })).toBeDisabled();
+    expect(within(dialog).getByText("УПД · Бумага — нет файла")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("link", { name: "Открыть / печать" })).not.toBeInTheDocument();
+    unmount(); cleanup();
+    shipments = [{ ...packedShipment, upd_type: null, missing_data: [] }];
+    stub();
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
+    expect(await screen.findByText("тип УПД не выбран")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Документы ОТГ-20261029-01" }));
+    expect(within(await screen.findByRole("dialog", { name: "Документы отправки ОТГ-20261029-01" })).getByText("УПД — тип не выбран")).toBeInTheDocument();
   });
 
   it("журнал, «+ Позиция ГП» и «+ Заявка на отгрузку» — окнами из шапки", async () => {

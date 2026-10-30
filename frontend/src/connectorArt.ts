@@ -680,7 +680,7 @@ function bodyPicture(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: n
       dark ? "#5d666b" : shade(color, -0.3), EDGE, 0.4);
   });
   if (topFeature(hs) === "slots") {
-    // Крыша без замка (PicoBlade): прорези ключа на длинной грани за фланцем.
+    // Крыша без замка (PicoBlade 51021 — окна фиксаторов по контактам, 510210000-SD): прорези на длинной грани за фланцем.
     const groove = shade(color, -0.5), y = H - rearH, wd = core1 - core0;
     body += roofMark("slots", slotSpans(hs).map(([a, b]) => poly([P(core0 + a * wd, y, fl + 0.3), P(core0 + b * wd, y, fl + 0.3),
       P(core0 + b * wd, y, L - 0.4), P(core0 + a * wd, y, L - 0.4)], groove, groove, 0.3)).join(""));

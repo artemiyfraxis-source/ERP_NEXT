@@ -230,14 +230,14 @@ def test_connfly_dupont_contact_one_is_left_under_the_slots_by_the_owner():
 
 def test_eh_pa_vh_phd_picoblade_minifit_and_usb_follow_the_maker_drawings():
     # Wire side. eEH: windows/numbers face down, 1 left. ePA-F / eVH: lever up, 1 left. ePHD: ▽ face up, 1 top-left, 2
-    # under it. 510210000-SD: windows down (lock bumps up), 1 right. SD-5557-003: latch up, 1 bottom-right, rows right to
+    # under it. 510210000-SD: lance windows up, 1 left (see test_connector_numbering). SD-5557-003: latch up, 1 bottom-right, rows right to
     # left. USB 2.0 fig. 6-7/6-9: plastic part down, 1 (+5В) left.
     cases = {
         "EHR-4": ("jst-eh", [[1, 2, 3, 4]], "windows", 2.5),
         "PAP-04V-S": ("jst-pa", [[1, 2, 3, 4]], "lever", 2.0),
         "VHR-4N": ("jst-vh", [[1, 2, 3, 4]], "lever", 3.96),
         "PHDR-10VS": ("jst-phd", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "mark", 2.0),
-        "51021-0400": ("molex-picoblade", [[4, 3, 2, 1]], "windows", 1.25),
+        "51021-0400": ("molex-picoblade", [[1, 2, 3, 4]], "none", 1.25),
         "39-01-2080": ("molex-minifit-jr", [[8, 7, 6, 5], [4, 3, 2, 1]], "lever", 4.2),
         "USB-A Male 2.0": ("usb-a", [[1, 2, 3, 4]], "none", None),
     }

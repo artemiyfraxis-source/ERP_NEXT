@@ -452,10 +452,12 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             latch="ramp", color_by=((r"1$", BLACK),), conf="high", src="Molex SD-502351-001",
             note="по чертежу Molex SD-502351-001: на торце проводов замком вверх «1» слева"),
     # Mini-SPOX 5264 — the catalogue top view is the wire end (round wire entries) with CIRCUIT 1 at the left and the
-    # face with the lance windows at its bottom (friction lock, no latch) -> windows down, contact 1 on the LEFT.
-    _family("molex-minispox", "Molex Mini-SPOX", r"^50-?37-?5(\d{2})3$", 2.5, latch="windows", conf="high",
+    # face with the lance windows at its bottom (friction lock, no latch) -> windows down, contact 1 on the left. Every
+    # picture draws those windows on the roof (connector_housings.ROOF_EXPLICIT), so turned windows UP contact 1 is on
+    # the RIGHT (re-read 29.10.2026: it was TL with the windows drawn on top — mirrored against the catalogue).
+    _family("molex-minispox", "Molex Mini-SPOX", r"^50-?37-?5(\d{2})3$", 2.5, start="TR", conf="high",
             src="Molex 5264-N, каталог MX01 B-102",
-            note="по каталогу Molex 5264-N: на торце проводов окнами фиксаторов вниз CIRCUIT 1 слева"),
+            note="по каталогу Molex 5264-N: на торце проводов окнами фиксаторов вниз CIRCUIT 1 слева; окнами вверх — контакт 1 справа"),
     # Pico-SPOX 87439 — the bottom view has the «MARK FOR CIRCUIT1» at the right under the mating-end view; the ramp
     # bump is on the opposite (top) face -> from the wire side, ramp up, contact 1 on the LEFT.
     _family("molex-picospox", "Molex Pico-SPOX", r"^87439-?(\d{2})0[01]$", 1.5, latch="ramp", color_by=((r"1$", BLACK),),

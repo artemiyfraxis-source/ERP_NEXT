@@ -15,6 +15,7 @@ import { PackWindow } from "./PackWindow";
 import { PrintSetupButton } from "./PrintSetupWindow";
 import { ACTIVE, needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, type CardRights } from "./ShipmentCard";
 import { CreateShipmentWindow, JournalWindow, RegisterGoodWindow } from "./ShipmentJournal";
+import { ShipmentDocsWindow, docsLabel, updState } from "./ShipmentDocs";
 import { ShipWindow } from "./ShipWindow";
 import { TrackWindow } from "./TrackWindow";
 import "./productionIntake.css";
@@ -40,8 +41,9 @@ const TAB_COLUMNS: Record<Exclude<Tab, "all">, string[]> = {
   production: ["project", "kb", "name", "needed", "launched", "remaining"],
   ready: ["project", "kb", "name", "needed", "remaining"],
   accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed"],
-  packed: ["project", "kb", "name", "packed", "track"],
-  to_ship: ["project", "kb", "name", "packed", "track", "ship"],
+  // «Документы» — формирование отгрузочных и печать PL/DN/УПД окном (владелец 29.10: «где формирование отгрузочных, где печать УПД»).
+  packed: ["project", "kb", "name", "packed", "track", "docs"],
+  to_ship: ["project", "kb", "name", "packed", "track", "docs", "ship"],
   shipped: ["project", "kb", "name", "sent", "track", "shippedAt"],
 };
 const EMPTY: Record<Tab, string> = {
@@ -88,7 +90,7 @@ function defaultTab(rows: IntakeRow[], pieces: (row: IntakeRow) => Pieces, wareh
   return "all";
 }
 
-type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; row: IntakeRow } | { kind: "noupd"; shipment: DispatchShipment };
+type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; row: IntakeRow } | { kind: "noupd"; shipment: DispatchShipment } | { kind: "docs"; id: string };
 
 export function ProductionIntakePage({ principal }: { principal: Principal }) {
   // Принимает, упаковывает и отгружает кладовщик («Отгрузка — склад»); менеджер («Отгрузка») — данные отправки, заявки.
@@ -223,6 +225,26 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         title={ready ? "Вписать трек-номер ТК" : `Трек вносится, когда есть УПД и ТК${gaps.length ? ` — не хватает: ${gaps.join(", ")}` : ""}. Ждём данные менеджера`}
         aria-label={`Трек ${who(row)}`} onClick={() => setOpened({ kind: "track", row })}>Трек…</button></span>;
   };
+  /** «Документы»: у упакованной отправки — «Сформировать отгрузочные» (окно упаковки) или одна кнопка окна с PL, DN, УПД;
+   *  печатается только в окне. Несколько отправок КБ — по строке на каждую с № ОТГ. */
+  const docsShips = (row: IntakeLine) => row.act ? [] : kbShips(row).filter((shipment) => shipment.status === "Упакована");
+  const docsCell = (row: IntakeLine) => {
+    const ships = docsShips(row);
+    if (!ships.length) return dash;
+    return <span className="intake-docs">{ships.map((shipment) => {
+      const upd = updState(shipment);
+      return <span className="intake-docs-line" key={shipment.id}>
+        {ships.length > 1 && <span className="intake-ship-no muted">{shipment.number}</span>}
+        {!shipment.pl_number
+          ? (rights.canEdit
+            ? <button type="button" className="secondary small intake-print" aria-label={`Сформировать отгрузочные ${shipment.number}`} onClick={() => setOpened({ kind: "pack", project: row.project })}>Сформировать отгрузочные</button>
+            : <span className="muted">не сформированы</span>)
+          : <>
+            <button type="button" className="secondary small intake-print" aria-label={`Документы ${shipment.number}`} title={upd.text} onClick={() => setOpened({ kind: "docs", id: shipment.id })}>{docsLabel(shipment)}</button>
+            {(upd.tone === "danger" || upd.tone === "warn") && <span className={`tone-${upd.tone}`}>{upd.tone === "danger" ? "нет файла УПД" : "тип УПД не выбран"}</span>}</>}
+      </span>;
+    })}</span>;
+  };
   /** «Отгружено»: число — кнопка окна отправок проекта; подсвечена, когда есть готовое к отгрузке. */
   const sentCell = (row: IntakeLine) => {
     if (row.act) return dash;
@@ -253,6 +275,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     { key: "packed", title: "Упаковано", value: (row) => num(row.packed), numeric: true, render: packCell },
     { key: "track", title: "Трек", value: (row) => kbShips(row).map((shipment) => shipment.track_number).filter(Boolean).join(", "),
       render: (row) => trackCell(row, tab === "packed" || tab === "all") },
+    { key: "docs", title: "Документы", value: (row) => docsShips(row).map((shipment) => shipment.pl_number ? docsLabel(shipment) : "не сформированы").join(", "), render: docsCell },
     { key: "ship", title: "Отгрузка", value: (row) => readyShips(row).length, render: (row) => {
       if (row.act || !canDispatch || !readyShips(row).length) return dash;
       return <button type="button" className="primary small intake-print" title={`Готово к отгрузке: ${piecesOf(row).to_ship}`} aria-label={`Отгрузить ${who(row)}`}
@@ -282,7 +305,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     grn: (row) => Boolean(row.grn), received: (row) => Boolean(row.act), tasks: (row) => row.tasks.length > 0,
   };
   const visibleColumns = tab === "all"
-    ? columns.filter((column) => !["ship", "shippedAt"].includes(column.key) && (!OPTIONAL[column.key] || shown.some(OPTIONAL[column.key])))
+    ? columns.filter((column) => !["ship", "shippedAt", "docs"].includes(column.key) && (!OPTIONAL[column.key] || shown.some(OPTIONAL[column.key])))
     : TAB_COLUMNS[tab].flatMap((key) => columns.filter((column) => column.key === key)).map((column) => column.key === "tasks" ? { ...column, hidden: false } : column);
 
   const groupLabel = (project: string, groupRows: IntakeLine[]) => {
@@ -329,6 +352,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {intake && <IntakeWindow rows={intake} close={() => setIntake(null)} onDone={accepted} />}
     {opened?.kind === "pack" && <PackWindow project={opened.project} rows={projectRows(opened.project)} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "ship" && <ShipWindow project={opened.project} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
+    {opened?.kind === "docs" && (() => {
+      const shipment = shipments.find((item) => item.id === opened.id);
+      return shipment ? <ShipmentDocsWindow key={shipment.id} shipment={shipment} rights={rights} reload={reload} close={() => setOpened(null)} /> : null;
+    })()}
     {opened?.kind === "track" && <TrackWindow title={who(opened.row)} shipments={trackShips(opened.row)} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "noupd" && <NoUpdWindow shipment={opened.shipment} mutate={(key, operation, message) => mutateBoxes(key, operation, typeof message === "string" ? message : "Готово")} close={() => setOpened(null)} />}
     {header === "journal" && <JournalWindow shipments={shipments} close={() => setHeader(null)} />}
