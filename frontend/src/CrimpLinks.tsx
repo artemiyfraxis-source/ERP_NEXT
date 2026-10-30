@@ -49,7 +49,8 @@ export function CrimpLinks({ model, tool, siblings, canEdit, onChanged, onEditTo
     if (text.length < 2) { setFound([]); return; }
     let live = true;
     const timer = window.setTimeout(() => {
-      referencesApi.techOperations("ter", text, 40).then((result) => {
+      // Контакты и наконечники (базы «Терминалы» и «Наконечники» листа БД.ТЕР): аппликатор обжимает и те, и другие.
+      referencesApi.techOperations("ter", text, 40, true).then((result) => {
         if (live) setFound(result.records.map(terminalOf));
       }).catch(() => { if (live) setFound([]); });
     }, 250);
