@@ -25,6 +25,7 @@ import {
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, fieldTitle, headerKey, headerLabel, terFieldHint, valueLabel } from "./referenceLabels";
 import {
+  cableTab,
   failureText,
   openReadVisit,
   referencesApi,
@@ -39,7 +40,6 @@ import {
   type TechOperationRecord,
   type TechOperationResult,
   type TechOperationTab,
-  type TerKind,
 } from "./api";
 import { LUG_SORT_HINT, lugFamily, lugRows, mergeLugColumns } from "./lugList";
 
@@ -180,13 +180,15 @@ type CableDia = Record<string, Record<string, string>>;
 // Таблицы записей с правкой прямо в ячейках (владелец 14.10: «как у коаксиальных кабелей, по всей базе»). Ячейка не
 // правится, когда это ключ записи (по нему строка называется и ищется), выбор из списка или то, что пишет сама ERP:
 // такие поля — в окне записи / карточке контакта.
+const TER_NOT_IN_CELL = new Set(["тип разъема", "производитель", "series", "серия", "артикул контакта (reel)", "тип контакта",
+    "termanufacturer", "terseries", "terarticle", "tertype", "tergender"]);
 const NOT_IN_CELL: Partial<Record<TechOperationTab, Set<string>>> = {
-  ter: new Set(["тип разъема", "производитель", "series", "серия", "артикул контакта (reel)", "тип контакта",
-    "termanufacturer", "terseries", "terarticle", "tertype", "tergender"]),
+  ter: TER_NOT_IN_CELL,
+  lug: TER_NOT_IN_CELL,
   mat: new Set(["наименование", "группа", "закупок", "цена посл., ₽ без ндс"]),
 };
 // Таблицы, куда владелец добавляет свои столбцы («+ Столбец»; бэкенд CUSTOM_COLUMN_TABS): «Коаксиальные разъёмы» — своим экраном.
-const OWN_COLUMN_TABS: TechOperationTab[] = ["ter", "mat"];
+const OWN_COLUMN_TABS: TechOperationTab[] = ["ter", "lug", "mat"];
 const BOOLEAN = /^(true|false)$/i;
 const natural = (a: string, b: string) => a.localeCompare(b, "ru", { numeric: true, sensitivity: "base" });
 const NO_GROUP = "Без группы";
@@ -265,17 +267,17 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [stockLog, setStockLog] = useState(false);
-  // `terKind` — список строки БД.ТЕР в окне правки («Терминалы» / «Наконечники»): смена переносит строку.
-  const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string>; terKind?: TerKind } | null>(null);
+  // `moveTo` — база строки в окне правки («Перенести в …»: «Терминалы» ↔ «Наконечники»): смена переносит строку.
+  const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string>; moveTo?: TechOperationTab } | null>(null);
   const matTab = isMaterialTab(tab) ? tab : null;
-  const techTab: TechOperationTab | null = matTab ? "mat" : tab === "lug" ? "ter"
+  const techTab: TechOperationTab | null = matTab ? "mat"
     : !isMapTab(tab) && !isCableTab(tab) && !isMaterialTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" ? tab : null;
-  // БД.ТЕР двумя списками: «Терминалы» — обжимные контакты (contact), «Наконечники» — lug.
-  const terKind: TerKind | null = tab === "lug" ? "lug" : tab === "ter" ? "contact" : null;
-  const lugTab = terKind === "lug";
-  const contactTab = terKind === "contact";
-  // Ключ загруженного списка: вкладка БД и, у БД.ТЕР, её список («ter:lug»).
-  const techKey = techTab ? `${techTab}${terKind ? `:${terKind}` : ""}` : "";
+  // «Терминалы» и «Наконечники» — каждая своя база (миграция 0165): ter и lug.
+  const lugTab = tab === "lug";
+  const contactTab = tab === "ter";
+  const terLike = lugTab || contactTab;
+  // Ключ загруженной базы.
+  const techKey = techTab ?? "";
   const cableKind = isCableTab(tab) ? CABLE_TABS[tab] : null;
   const viewOnly = VIEW_ONLY_TABS.includes(tab);
   // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
@@ -291,7 +293,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     setSavedMaps(JSON.stringify({ suppliers: next.suppliers, countries: next.countries, gost_awg: next.gost_awg }));
   }
 
-  async function loadTech(next: TechOperationTab, kind: TerKind | null = next === "ter" ? terKind : null) {
+  async function loadTech(next: TechOperationTab) {
     setError("");
     try {
       // БД.КОАКС: the cables' D1–D3 are asked at once with the rows, not after them.
@@ -299,12 +301,12 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         ? referencesApi.techOperations("kab_coax", "", 5000).catch(() => ({ records: [] as TechOperationRecord[] })) : null;
       // «Терминалы»: серии приходят вместе со строками — группы не перестраиваются на глазах.
       const [records, series] = await Promise.all([
-        referencesApi.techOperations(next, "", 5000, kind ?? undefined),
-        next === "ter" && kind !== "lug" ? techcardsApi.connectorSeries().then((result) => result.series, () => [] as ConnectorSeries[]) : Promise.resolve(null),
+        referencesApi.techOperations(next, "", 5000),
+        next === "ter" ? techcardsApi.connectorSeries().then((result) => result.series, () => [] as ConnectorSeries[]) : Promise.resolve(null),
       ]);
       setTech(records);
       if (series) setTerSeries(series);
-      if (next === "ter") {
+      if (next === "ter" || next === "lug") {
         void referencesApi.crimpCodes().then((result) => setToolOwners(result.owners)).catch(() => setToolOwners({}));
       }
       if (next === "ob") {
@@ -319,7 +321,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
       setTech({ metadata: null, records: [] });
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить базу техопераций");
     } finally {
-      setTechReady(`${next}${kind ? `:${kind}` : ""}`);
+      setTechReady(next);
     }
   }
 
@@ -388,7 +390,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     if (def.id === "connectors") return connectorCount;
     if (def.id === "cov") return coveringCount ?? matCounts?.cov ?? null;
     if (isMaterialTab(def.id)) return matCounts?.[def.id] ?? null;
-    if (isCableTab(def.id)) return (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
+    // каждая база кабелей — своя таблица: число берётся из `tabs` (cab_coax, prov…), запасной путь — старые «cables»
+    if (isCableTab(def.id)) return bases.tabs?.[cableTab(CABLE_TABS[def.id])] ?? (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
     if (def.id === "gauges") return cables?.gauges?.length ?? bases.gauges ?? null;
     // the open tab counts its rows once they came (before — the summary's number, not «0»)
     if (def.id === tab && techTab && techReady === techKey) return tech.records.length;
@@ -412,23 +415,23 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     if (!editing || busy || !techTab) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      let moved: TerKind | null = null;
+      let moved: TechOperationTab | null = null;
       if (editing.id === null) {
-        await referencesApi.createRecord(techTab, editing.values, undefined, terKind ?? undefined);
+        await referencesApi.createRecord(techTab, editing.values);
       } else {
         const original = tech.records.find((record) => record.id === editing.id);
         const edits = Object.entries(editing.values)
           .filter(([field, value]) => original && original.fields[field] !== value)
           .map(([field, value]) => ({ field, old: original?.fields[field] ?? "", value }));
         if (edits.length) await referencesApi.editRecord(editing.id, edits);
-        // «Список»: строка БД.ТЕР перенесена в «Терминалы» / «Наконечники» (поля не меняются)
-        if (editing.terKind && original?.ter_kind && editing.terKind !== original.ter_kind) {
-          await referencesApi.moveTerminal(editing.id, editing.terKind);
-          moved = editing.terKind;
+        // «Перенести в …»: строка в «Терминалы» / «Наконечники» (поля не меняются)
+        if (editing.moveTo && editing.moveTo !== techTab) {
+          await referencesApi.moveRecord(editing.id, editing.moveTo);
+          moved = editing.moveTo;
         }
       }
       setEditing(null);
-      setNotice(moved ? `Запись перенесена в «${TER_KIND_LABELS[moved]}»` : "Запись сохранена");
+      setNotice(moved ? `Запись перенесена в «${MOVE_LABELS[moved] ?? moved}»` : "Запись сохранена");
       if (moved) { openTerminal(""); loadBases(); }
       await loadTech(techTab);
     } catch (reason) {
@@ -441,17 +444,17 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const fieldColumns = tech.columns?.length ? tech.columns : Object.keys(tech.records[0]?.fields ?? {});
   const ownColumns = tech.custom_columns ?? [];
   // «Удалить столбец» своих столбцов: окно подтверждения, после удаления таблица перечитывается.
-  // БД.ТЕР: свои столбцы у каждого списка — «Терминалы» и «Наконечники» отдельные таблицы (владелец 28.10.2026).
+  // Свои столбцы у каждой базы — «Терминалы» и «Наконечники» отдельные таблицы (владелец 28.10.2026).
   const techRemoval = useColumnRemoval(techTab ?? "mat", canEdit, (name) => filledIn(tech.records, name), async (name) => {
     if (techTab) await loadTech(techTab);
     setError(""); setNotice(`Столбец «${name}» удалён`);
-  }, undefined, terKind ?? undefined);
+  });
   // Столбцы БД.ПРОВ у каждого списка свои: «+ Столбец» и «Удалить столбец» работают с тем списком, что открыт.
-  const cableRemoval = useColumnRemoval("prov", principal.permissions.erpref === "edit",
+  const cableRemoval = useColumnRemoval(cableKind ? cableTab(cableKind) : "prov", principal.permissions.erpref === "edit",
     (name) => filledIn((cables?.rows ?? []).filter((row) => row.kind === cableKind).map((row) => row.record), name),
-    (name) => cablesSaved(`Столбец «${name}» удалён`), cableKind ?? undefined);
+    (name) => cablesSaved(`Столбец «${name}» удалён`));
   const columnButton = principal.permissions.erpref === "edit" && cableKind
-    ? <AddColumnButton tab="prov" cableKind={cableKind} onAdded={(name) => cablesSaved(`Столбец «${name}» добавлен`)} /> : undefined;
+    ? <AddColumnButton tab={cableTab(cableKind)} onAdded={(name) => cablesSaved(`Столбец «${name}» добавлен`)} /> : undefined;
   const coaxTab = techTab === "coax";
   // The connector's cable Ø (its row in «Коаксиальные кабели») — the connectors' default order is by it.
   const wireDiameter = useMemo(() => {
@@ -483,7 +486,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
             ? <span className="muted" title={`У кабеля «${record.fields["Провод"] ?? record.fields.coaxWire ?? ""}» нет D1–D3 — задайте их во вкладке «Коаксиальные кабели»`}>нет у кабеля</span>
             : <span className="muted" title="У разъёма не указан кабель («Провод»)">—</span>,
       };
-      if (techTab === "ter" && headerKey(fieldTitle(field)) === "аппликатор") return {
+      if (terLike && headerKey(fieldTitle(field)) === "аппликатор") return {
         key: field, title: fieldTitle(field), value: (record) => record.fields[field] ?? "",
         edit: canEdit ? fieldCellEdit<TechOperationRecord>(field, (record) => record) : undefined,
         // A tool code with a БД.ОБ record is a link to its card («что обжимает» lives there).
@@ -515,7 +518,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
       const inCell = own || (Boolean(fixed) && index > 0 && !fixed?.has(headerKey(field))
         && !(values.length > 0 && values.every((value) => BOOLEAN.test(value.trim()))));
       return {
-        key: field, title: fieldTitle(field), value: shown, hint: techTab === "ter" ? terFieldHint(field) : undefined,
+        key: field, title: fieldTitle(field), value: shown, hint: terLike ? terFieldHint(field) : undefined,
         // Long text (datasheet links, sources) is one line cut with «…», full text on hover: a row stays 30 px, not 66.
         render: long || narrow
           ? (record) => <span className={narrow ? "db-clip db-clip-narrow" : "db-clip"} title={record.fields[field] ?? ""}>{shown(record)}</span> : undefined,
@@ -583,7 +586,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     window.scrollTo?.({ top: 0, behavior: "smooth" });
   }
   function startEdit(record: TechOperationRecord) {
-    setEditing({ id: record.id, values: editValues(record), terKind: record.ter_kind });
+    setEditing({ id: record.id, values: editValues(record), moveTo: techTab ?? undefined });
     window.scrollTo?.({ top: 0, behavior: "smooth" });
   }
   const current = groups.flatMap((group) => group.tabs).find((def) => def.id === tab);
@@ -639,9 +642,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     {techTab && <>
       {canEdit && editing && techTab !== "ob" && <PageWindow label={editing.id === null ? "Новая запись" : "Правка записи"} width={860} close={() => setEditing(null)}><div className="panel db-edit">
         <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${(editingRecord?.display_text ?? "").replace(/^[\s/]+|[\s/]+$/g, "")}`}</h2></div>
-        <RowForm values={editing.values} hint={techTab === "ter" ? terFieldHint : undefined} onChange={(values) => setEditing({ ...editing, values })} />
-        {techTab === "ter" && editing.id !== null && editing.terKind && <TerKindSelect
-          value={editing.terKind} record={editingRecord ?? undefined} onChange={(terKind) => setEditing({ ...editing, terKind })} />}
+        <RowForm values={editing.values} hint={terLike ? terFieldHint : undefined} onChange={(values) => setEditing({ ...editing, values })} />
+        {terLike && techTab && editing.id !== null && editing.moveTo && <MoveSelect
+          current={techTab} value={editing.moveTo} onChange={(moveTo) => setEditing({ ...editing, moveTo })} />}
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
         {editing.id !== null && <div className="db-edit-stock">
           <h3>Со склада</h3>
@@ -703,7 +706,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         rowClassName={contactTab ? (record) => (record.id === terminal?.id ? "eq-selected" : "") : undefined}
         toolbar={<>{sortHint && <SortHint text={sortHint} />}{canEdit && !editing ? <>
           <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button>
-          {OWN_COLUMN_TABS.includes(techTab) && <AddColumnButton tab={techTab} terKind={terKind ?? undefined} onAdded={async (name) => { await loadTech(techTab); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />}
+          {OWN_COLUMN_TABS.includes(techTab) && <AddColumnButton tab={techTab} onAdded={async (name) => { await loadTech(techTab); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />}
         </> : null}</>}
       /></div>{terminal && <TerminalCard record={terminal} canEdit={canEdit} onEdit={startEdit} onClose={() => openTerminal("")} />}</div>}
       {techRemoval.dialog}
@@ -785,17 +788,16 @@ function MapTable({ tab, rows, disabled, onChange, toolbar }: {
   </>;
 }
 
-const TER_KIND_LABELS: Record<TerKind, string> = { contact: "Терминалы", lug: "Наконечники" };
+const MOVE_LABELS: Partial<Record<TechOperationTab, string>> = { ter: "Терминалы", lug: "Наконечники" };
 
-/** «Список» строки БД.ТЕР в окне правки: перенос между «Терминалами» и «Наконечниками» (как «Вкладка» у кабелей). */
-function TerKindSelect({ value, record, onChange }: { value: TerKind; record?: TechOperationRecord; onChange: (kind: TerKind) => void }) {
-  const rule = record?.ter_rule;
-  return <label className="cable-kind"><small>Список</small>
-    <select aria-label="Список" value={value} onChange={(event) => onChange(event.target.value as TerKind)}>
-      {(["contact", "lug"] as const).map((kind) => <option key={kind} value={kind}>{TER_KIND_LABELS[kind]}</option>)}
+/** «Перенести в …» в окне правки строки «Терминалов» / «Наконечников»: каждая — своя база, строка переезжает целиком,
+ *  id и значения сохраняются (PUT …/tech-operations/{id}/tab). */
+function MoveSelect({ current, value, onChange }: { current: TechOperationTab; value: TechOperationTab; onChange: (tab: TechOperationTab) => void }) {
+  return <label className="cable-kind"><small>Перенести в …</small>
+    <select aria-label="Перенести в" value={value} onChange={(event) => onChange(event.target.value as TechOperationTab)}>
+      {(["ter", "lug"] as const).map((tab) => <option key={tab} value={tab}>{MOVE_LABELS[tab]}{tab === current ? " (здесь)" : ""}</option>)}
     </select>
-    {record?.ter_kind && value !== record.ter_kind && <span className="muted">Строка перейдёт в «{TER_KIND_LABELS[value]}», её значения сохранятся.</span>}
-    {rule && <span className="muted">{record?.ter_kind && record.ter_kind !== rule ? `перенесена вручную; по правилу — ${TER_KIND_LABELS[rule].toLowerCase()}` : `по правилу: ${TER_KIND_LABELS[rule].toLowerCase()}`}</span>}
+    {value !== current && <span className="muted">Строка перейдёт в «{MOVE_LABELS[value]}», её значения сохранятся; у базы свои столбцы.</span>}
   </label>;
 }
 

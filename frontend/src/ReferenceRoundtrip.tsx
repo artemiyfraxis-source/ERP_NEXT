@@ -15,13 +15,13 @@ const TARGETS: Record<string, { table: string; kind?: string }> = {
   templates: { table: "op" },
   ob: { table: "ob" },
   coax: { table: "coax" },
-  // БД.ТЕР двумя списками (26.10.2026): «Терминалы» — обжимные контакты, «Наконечники» — НШВИ, НКИ, РПИ…
-  ter: { table: "ter", kind: "contact" },
-  lug: { table: "ter", kind: "lug" },
-  cab_coax: { table: "prov", kind: "coax" },
-  cab_wire: { table: "prov", kind: "wire" },
-  cab_multi: { table: "prov", kind: "multi" },
-  cab_lan: { table: "prov", kind: "lan" },
+  // Каждая база — своя таблица (миграция 0165): «Терминалы» (ter), «Наконечники» (lug), виды кабелей (cab_*; монтажные — prov).
+  ter: { table: "ter" },
+  lug: { table: "lug" },
+  cab_coax: { table: "cab_coax" },
+  cab_wire: { table: "prov" },
+  cab_multi: { table: "cab_multi" },
+  cab_lan: { table: "cab_lan" },
   cov: { table: "mat", kind: "cov" },
   mat: { table: "mat" },
   // «Материалы» расформированы (15.10.2026): вкладки по назначению выгружают всю БД.МАТ — файл тот же, строки по ID.

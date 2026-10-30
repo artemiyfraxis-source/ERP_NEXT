@@ -3,6 +3,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataCellEdit, type DataColumn } from "./DataTable";
 import { CABLE_KIND_LABELS, CoaxCardView, cardColumns, freq, kindColumns, moveText, num, range, spanText } from "./CableStructure";
 import {
+  cableTab,
   failureText,
   referencesApi,
   type CableDiameters,
@@ -29,10 +30,10 @@ import { arrangeCableColumns, knownCableColumn } from "./cableColumnOrder";
 export { CABLE_KIND_LABELS };
 const KINDS: CableKind[] = ["coax", "wire", "multi", "lan"];
 
-/** «Вкладка» of a БД.ПРОВ row: the list it is in, and why (rule or a manual move). */
+/** «Перенести в …» of a cable row: the base it is in (its own table, 0165); a pick moves the row to that base. */
 export function kindSelect(row: CableRow, value: CableKind, onChange: (kind: CableKind) => void): ReactNode {
-  return <label className="cable-kind"><small>Вкладка</small>
-    <select aria-label="Вкладка" value={value} onChange={(event) => onChange(event.target.value as CableKind)}>
+  return <label className="cable-kind"><small>Перенести в …</small>
+    <select aria-label="Перенести в" value={value} onChange={(event) => onChange(event.target.value as CableKind)}>
       {KINDS.map((item) => <option key={item} value={item}>{CABLE_KIND_LABELS[item]}{item === row.auto_kind && row.manual ? " (по правилу)" : ""}</option>)}
     </select>
     {value !== row.kind && <span className="muted">Заполненные значения строки сохранятся при переносе.</span>}
@@ -504,7 +505,7 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
     try {
       let record = row?.record ?? null;
       if (!row) {
-        record = created = await referencesApi.createRecord("prov", draft.fields, kind);
+        record = created = await referencesApi.createRecord(cableTab(kind), draft.fields);
       }
       const cable = row ? row.cable : (draft.fields[MARK] || record?.display_text || "").trim();
       if (isCoax && changedDia && cable) {
@@ -521,7 +522,7 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
           .filter(([name, value]) => (row.record?.fields[name] ?? "") !== value)
           .map(([name, value]) => ({ field: name, old: row.record?.fields[name] ?? "", value }));
         if (edits.length) await referencesApi.editRecord(row.record.id, edits);
-        if (draft.kind !== row.kind) await referencesApi.moveCable(row.record.id, draft.kind);
+        if (draft.kind !== row.kind) await referencesApi.moveRecord(row.record.id, cableTab(draft.kind));
       }
       await onSaved(row
         ? draft.kind !== row.kind ? `«${row.cable}» перенесён во вкладку «${CABLE_KIND_LABELS[draft.kind]}», заполненные значения сохранены` : `«${row.cable}» сохранён`

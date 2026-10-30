@@ -82,7 +82,7 @@ function mockApi(calls: Call[] = [], rows: CableRow[] = ROWS) {
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     if (path === "/api/references/maps") return json({ suppliers: [{ key: "склад", value: "Склад" }], countries: [], gost_awg: [], can_edit: { suppliers: true, gost_awg: true } });
     if (path === "/api/references/bases") return json({
-      bases: [], tabs: { ob: 192, ter: 528, coax: 181, kab_awg: 22, mat: 115, kab_coax: 30, prov: 139 },
+      bases: [], tabs: { ob: 192, ter: 528, coax: 181, kab_awg: 22, mat: 115, kab_coax: 30, prov: 52, cab_coax: 47, cab_multi: 9, cab_lan: 0 },
       cables: { coax: 47, wire: 52, multi: 9 }, gauges: 24,
     });
     if (path === "/api/references/cables") return json({ columns: [...COLUMNS, "Цвета", "Поставщик"], counts: { coax: 3, wire: 3, multi: 1 }, rows, gauges: GAUGES });
@@ -92,6 +92,7 @@ function mockApi(calls: Call[] = [], rows: CableRow[] = ROWS) {
     if (path === "/api/references/cables/diameters") return json(dia("d-new", "x", "", "", ""));
     if (path.startsWith("/api/references/cables/")) return json(rows[0]);
     if (path.startsWith("/api/references/tech-operations/") && method === "PATCH") return json(rows[0].record);
+    if (path.startsWith("/api/references/tech-operations/") && path.endsWith("/tab") && method === "PUT") return json(rows[0].record);
     if (path.startsWith("/api/references/tech-operations?tab=op")) return json({ metadata: null, records: [
       { id: "o1", tab: "op", display_text: "Резка", source_sheet: "БД.ОП", fields: { opNumber: "CUT_WIRE_auto" } },
       { id: "o2", tab: "op", display_text: "Пайка", source_sheet: "БД.ОП", fields: { opNumber: "SDR_PCB" } },
@@ -557,12 +558,12 @@ it("moves a cable to another list from its editor, after a confirm that says its
 
   fireEvent.click(await screen.findByText("ПВАМ 0,50"));
   expect(screen.getByText("по правилу: одна жила")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Вкладка"), { target: { value: "multi" } });
+  fireEvent.change(screen.getByLabelText("Перенести в"), { target: { value: "multi" } });
   expect(screen.getByText("Заполненные значения строки сохранятся при переносе.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 
   expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Заполненные значения строки сохранятся"));
-  await waitFor(() => expect(calls.find((call) => call.path === "/api/references/cables/w-pvam/kind")).toMatchObject({ method: "PUT", body: { kind: "multi" } }));
+  await waitFor(() => expect(calls.find((call) => call.path === "/api/references/tech-operations/w-pvam/tab")).toMatchObject({ method: "PUT", body: { tab: "cab_multi" } }));
   expect(await screen.findByText("«ПВАМ 0,50» перенесён во вкладку «Многожильные кабели», заполненные значения сохранены")).toBeInTheDocument();
 });
 
@@ -733,7 +734,7 @@ describe("«+ Столбец» (owner 14.10: «добавить свои сто�
     fireEvent.click(within(dialog).getByRole("button", { name: "Добавить столбец" }));
 
     expect((await screen.findAllByRole("columnheader", { name: "Полка" }))[0]).toBeInTheDocument();
-    expect(calls.find((call) => call.method === "POST")?.body).toEqual({ tab: "prov", name: "Полка", cable_kind: "coax" });
+    expect(calls.find((call) => call.method === "POST")?.body).toEqual({ tab: "cab_coax", name: "Полка" });
     expect(screen.queryByRole("dialog", { name: "Новый столбец" })).toBeNull();
 
     const line = screen.getByText("RG316", { selector: "td.key strong" }).closest("tr") as HTMLElement;
@@ -969,7 +970,7 @@ describe("«Монтажные провода» and the other cable lists across
     fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
     const dialog = screen.getByRole("dialog", { name: "Удалить столбец" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Удалить столбец" }));
-    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns/remove"))?.body).toEqual({ tab: "prov", name: "Полка", cable_kind: "multi" }));
+    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns/remove"))?.body).toEqual({ tab: "cab_multi", name: "Полка" }));
     expect(await screen.findByText("Столбец «Полка» удалён")).toBeInTheDocument();
   });
 });
@@ -1033,7 +1034,7 @@ describe("columns of each cable list (БД.ПРОВ cable_kind)", () => {
     expect(screen.queryByLabelText("Поле Полка проводов")).toBeNull();
   });
 
-  it("«+ Столбец» and the removal send the list's cable_kind, «+ Запись» creates a row of that list", async () => {
+  it("«+ Столбец» and the removal go to the list's own base (tab), «+ Запись» creates a row of that list", async () => {
     const calls = withKinds();
     const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
     vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
@@ -1050,18 +1051,18 @@ describe("columns of each cable list (БД.ПРОВ cable_kind)", () => {
     const dialog = screen.getByRole("dialog", { name: "Новый столбец" });
     fireEvent.change(within(dialog).getByLabelText("Название столбца"), { target: { value: "Полка Х" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Добавить столбец" }));
-    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns"))?.body).toEqual({ tab: "prov", name: "Полка Х", cable_kind: "multi" }));
+    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns"))?.body).toEqual({ tab: "cab_multi", name: "Полка Х" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
     fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка многожильных" }));
     fireEvent.click(within(screen.getByRole("dialog", { name: "Удалить столбец" })).getByRole("button", { name: "Удалить столбец" }));
-    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns/remove"))?.body).toEqual({ tab: "prov", name: "Полка многожильных", cable_kind: "multi" }));
+    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns/remove"))?.body).toEqual({ tab: "cab_multi", name: "Полка многожильных" }));
 
     fireEvent.click(screen.getByRole("button", { name: "+ Запись" }));
     fireEvent.change(screen.getByLabelText("Поле Марка"), { target: { value: "ПВС 3x1" } });
     fireEvent.click(screen.getByRole("button", { name: "Добавить запись" }));
     await waitFor(() => expect(calls.find((call) => call.path === "/api/references/tech-operations")?.body)
-      .toMatchObject({ tab: "prov", cable_kind: "multi", fields: { "Марка": "ПВС 3x1" } }));
+      .toMatchObject({ tab: "cab_multi", fields: { "Марка": "ПВС 3x1" } }));
   });
 
   it("keeps the user's «Колонки» choice of the coax list across a reload; a removed column is not offered", async () => {
