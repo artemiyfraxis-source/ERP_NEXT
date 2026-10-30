@@ -8,7 +8,7 @@ export type Section =
   | "cabinet" | "card"
   | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement" | "purchasingrefs" | "primarydocs"
-  | "receiving" | "stock" | "equipment" | "issues" | "handout" | "intake" | "shipdata"
+  | "receiving" | "stock" | "issues" | "handout" | "intake" | "shipdata"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
 
 export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "docs" | "refs";
@@ -108,9 +108,7 @@ export const NAV: NavItem[] = [
   { id: "procurement", label: "Снабжение", sub: "сегодня · заявки · запросы КП · счета и поставки · статистика", permission: "procurement", block: "supply" },
   // Склад
   { id: "receiving", label: "Приёмка", sub: "входной контроль и оприходование", permission: "receiving", block: "stock" },
-  { id: "stock", label: "Склад", sub: "остатки · внести · переместить", permission: "warehouse", block: "stock" },
-  // «Оборудование»: the GRN label printer and access from a ТСД.
-  { id: "equipment", label: "Оборудование", sub: "принтер этикеток · ТСД", permission: "warehouse", block: "stock" },
+  { id: "stock", label: "Склад", sub: "остатки · внести · переместить · оборудование", permission: "warehouse", block: "stock" },
   // Picking only reserves, handout writes off: two sections over one request (SUPPLYMAP, owner 02.09.2026), each with
   // its own access key (NAV-SECTIONS) so picking and writing off can go to different people.
   { id: "issues", label: "Запросы на комплектацию", sub: "заявки под КБ · набрать комплект", permission: "fulfillment", block: "stock" },
@@ -145,7 +143,10 @@ export const MOVED_TABS: Readonly<Record<string, Readonly<Record<string, Section
 };
 
 /** Sections that are gone, and where their old links land: «Отгрузка» merged into «Приёмка с производства» (owner 29.10). */
-export const SECTION_ALIASES: Readonly<Record<string, Section>> = { shipping: "intake" };
+export const SECTION_ALIASES: Readonly<Record<string, Section>> = { shipping: "intake", equipment: "stock" };
+
+/** An old section that became a sub-tab of its new one: `?section=equipment` opens «Склад» on «Оборудование» (owner 29.10). */
+export const ALIAS_VIEW: Readonly<Record<string, string>> = { equipment: "equipment" };
 
 /** The section a link to `section` + `tab` lands in now: the moved tab's new section, or `section` itself. */
 export function sectionOfTab(section: string, tab: string | null | undefined): string {

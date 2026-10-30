@@ -22,6 +22,7 @@ import {
   procurementMenuTab,
   runsTheSystem,
   sectionOfTab,
+  ALIAS_VIEW,
   visibleBlocks,
   visibleNav as visibleNavFor,
   type BlockId,
@@ -42,7 +43,6 @@ import { QualityPage } from "./QualityPage";
 import { RequestsPage } from "./RequestsPage";
 import { ReceivingPage } from "./ReceivingPage";
 import { WarehousePage } from "./WarehousePage";
-import { EquipmentPage } from "./EquipmentPage";
 import { ShipmentDataPage } from "./ShipmentDataPage";
 import { ProductionIntakePage } from "./ProductionIntakePage";
 import { ReferencesPage } from "./ReferencesPage";
@@ -78,6 +78,8 @@ function placeFromUrl(): Place {
   if (moved && moved !== value) {
     const url = new URL(window.location.href);
     url.searchParams.set("section", moved);
+    const view = value ? ALIAS_VIEW[value] : undefined;
+    if (view) url.searchParams.set("view", view);
     window.history.replaceState(window.history.state, "", url);
     value = moved;
   }
@@ -353,9 +355,9 @@ export function App() {
         {activeSection === "primarydocs" && <PrimaryDocsPage key={visit} readOnly={!canAct(principal, "procurement")} />}
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
         {activeSection === "stock" && <WarehousePage key={visit} admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
-          canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
+          canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")}
+          equipment={canSee(principal, "warehouse")} />}
         {activeSection === "intake" && <ProductionIntakePage key={visit} principal={principal} />}
-        {activeSection === "equipment" && <EquipmentPage readOnly={!canAct(principal, "warehouse")} admin={hasFullAccess(principal)} />}
         {activeSection === "shipdata" && <ShipmentDataPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}

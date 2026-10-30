@@ -18,6 +18,7 @@ const COMMANDS: Command[] = [
   { label: "Закупка", section: "procurement", params: { tab: "buy" }, words: "решения кп запросить счёт оплата пп" },
   { label: "Счета и поставки", section: "procurement", params: { tab: "orders" }, words: "заказы поставщикам оплата доставка" },
   { label: "Склад", section: "stock", words: "остатки ГРН" },
+  { label: "Склад → Оборудование", section: "stock", params: { view: "equipment" }, words: "тсд терминал сбора данных проверка сканера", search: true },
   { label: "Приёмка", section: "receiving", words: "входной контроль" },
   { label: "Поставщики", section: "purchasingrefs", params: { tab: "directory" }, words: "справочники закупка" },
   { label: "Номенклатура", section: "purchasingrefs", params: { tab: "items" }, words: "справочники закупка" },
@@ -50,7 +51,7 @@ const COMMANDS: Command[] = [
 // What else a person types to find a menu section (the section's own label and subtitle are searched as well).
 const SECTION_WORDS: Partial<Record<Section, string>> = {
   intake: "приёмка с производства готовая продукция упаковка отправка отгрузка",
-  equipment: "принтер этикеток тсд сканер",
+  stock: "оборудование принтер этикеток тсд сканер",
   operations: "журнал аудит события",
   production: "ресурсное планирование операторы смены",
   prodplan: "план проекты блокеры сроки",
