@@ -22,7 +22,7 @@ from app.shared.http_auth import (
 )
 from app.shared.events import AuditEvent
 from app.shared.warehouse_location import STORAGE_LOCATION_MAX_LENGTH, RackLayout, current_rack_layout, rack_layout_from_config
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import TERMINAL_TABS, TechOperationTab
 from app.workflows.stock_receipt import expected_in_receiving, procurement_line, purchasing_item
 from app.workflows.warehouse_article import infer_article_identity
 
@@ -614,7 +614,7 @@ def article_info(
     factory = _factory(request, "references_uow_factory")
     if factory is not None:
         with factory() as uow:
-            for tab in (TechOperationTab.TERMINAL, TechOperationTab.COAX):
+            for tab in (TERMINAL_TABS, TechOperationTab.COAX):
                 records.extend(uow.tech_operations.list(tab=tab, query="", limit=10_000))
     identity = infer_article_identity(article, records)
     item = purchasing_item(_factory(request, "purchasing_uow_factory"), article)

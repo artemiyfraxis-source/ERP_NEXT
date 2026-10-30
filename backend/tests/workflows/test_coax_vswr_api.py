@@ -5,6 +5,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from app.main import app
+from app.modules.references.domain import CABLE_TABS
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardRevision
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
@@ -206,11 +207,11 @@ def test_old_etk_with_a_coax_config_gets_a_computed_norm_and_an_automatic_verdic
 
 
 class _CableRefs(_FakeRefs):
-    """БД.КОАКС rows and the cable's БД.ПРОВ row, each list by its tab."""
+    """БД.КОАКС rows and the cable's row of the cable bases (БД.ПРОВ, read as a family since migration 0165)."""
 
     class _ByTab:
         def list(self, *, tab, **_kwargs):
-            rows = ({"Марка": "RG316", "Стандарт": "MIL-DTL-17/113", "Частота до, ГГц": "3"},)                 if tab.value == "prov" else ROWS
+            rows = ({"Марка": "RG316", "Стандарт": "MIL-DTL-17/113", "Частота до, ГГц": "3"},)                 if tab == CABLE_TABS else ROWS
             return [type("Record", (), {"fields": row})() for row in rows]
 
     tech_operations = _ByTab()

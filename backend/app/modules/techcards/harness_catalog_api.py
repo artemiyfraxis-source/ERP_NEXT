@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Response
 from pydantic import BaseModel, Field
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork, coax_dia_rows
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import CABLE_TABS, TERMINAL_TABS, TechOperationTab
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, projects_edit_principal, projects_view_principal
 from app.shared.stored_files import decode_upload, file_response
@@ -34,6 +34,9 @@ from .harness_catalog import TABS, build_harness_catalog
 router = APIRouter(prefix="/api/techcards", tags=["Редактор жгута"])
 
 RECORD_LIMIT = 100_000
+# A catalog table of a mirror sheet reads the whole family (migration 0165): «ter» — contacts and lugs, «prov» — the
+# hook-up wires and the three cable bases.
+_TABLE_TABS = {"ter": TERMINAL_TABS, "prov": CABLE_TABS}
 
 
 @router.get("/harness-catalog", dependencies=[Depends(projects_view_principal)])
@@ -60,7 +63,8 @@ def reference_tables(references_factory: Callable[[], ReferencesUnitOfWork]) -> 
         metadata = uow.tech_operations.metadata()
         tables = {
             tab: coax_dia_rows(uow, RECORD_LIMIT) if tab == "kab_coax" else
-            [record.fields for record in uow.tech_operations.list(tab=TechOperationTab(tab), query="", limit=RECORD_LIMIT)]
+            [record.fields for record in uow.tech_operations.list(
+                tab=_TABLE_TABS.get(tab) or TechOperationTab(tab), query="", limit=RECORD_LIMIT)]
             for tab in TABS
         }
     return metadata, tables
