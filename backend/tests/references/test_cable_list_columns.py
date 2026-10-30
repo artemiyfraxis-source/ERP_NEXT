@@ -9,7 +9,7 @@ from app.modules.references.domain import (
     BASE_COLUMNS, CABLE_COLUMNS, CABLE_DROPPED, CABLE_WRITABLE, COAX_DROPPED_COLUMNS, TechOperationTab, cable_fields,
 )
 from app.main import app
-from app.modules.references.domain import ReferenceEntry, ReferenceKind, custom_column_prefix
+from app.modules.references.domain import ReferenceEntry, ReferenceKind, cable_tab, custom_column_prefix
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
 
 SUPPLY = ("Поставщик",)  # the base supply column; the others are the owner's own columns of every list
@@ -127,7 +127,8 @@ def _register_own(columns: dict[str, tuple[str, ...]], tab: TechOperationTab = T
         for kind, names in columns.items():
             for name in names:
                 entries.append(ReferenceEntry.create(ReferenceKind.CUSTOM_COLUMN,
-                                                     custom_column_prefix(tab, kind or None) + name, name, position))
+                                                     custom_column_prefix(cable_tab(kind) if kind else tab) + name,
+                                                     name, position))
                 position += 1
         uow.references.replace(tuple(entries))
         uow.commit()
@@ -135,7 +136,7 @@ def _register_own(columns: dict[str, tuple[str, ...]], tab: TechOperationTab = T
 
 def _prov_records(client) -> dict[str, dict]:
     return {record["fields"]["Марка"]: record for record in
-            client.get("/api/references/tech-operations", params={"tab": "prov"}).json()["records"]}
+            client.get("/api/references/tech-operations", params={"tab": "prov", "family": "true"}).json()["records"]}
 
 
 def test_the_cable_lists_send_no_removed_column_but_the_rows_keep_the_values(references_api):

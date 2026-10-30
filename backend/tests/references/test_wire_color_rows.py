@@ -230,7 +230,7 @@ def _seed_api(client: TestClient) -> list[dict]:
 
 
 def _all(client: TestClient) -> list[dict]:
-    return client.get("/api/references/tech-operations", params={"tab": "prov"}).json()["records"]
+    return client.get("/api/references/tech-operations", params={"tab": "prov", "family": "true"}).json()["records"]
 
 
 def _wire(client: TestClient, color: str) -> dict:

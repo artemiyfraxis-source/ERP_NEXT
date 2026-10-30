@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import re
 from typing import Any, Iterable, Mapping
 
-from app.modules.references.domain import TechOperationRecord, TechOperationTab
+from app.modules.references.domain import TERMINAL_TABS, TechOperationRecord, TechOperationTab
 from app.modules.references.lugs import LUG, ter_kind_of
 from app.modules.techcards.connector_housings import housing_of, normalize_article
 from app.shared.article_maker import split_article_maker
@@ -287,7 +287,7 @@ def infer_article_identity(
         return None
 
     records = tuple(records)
-    terminal_records = tuple(item for item in records if item.tab is TechOperationTab.TERMINAL)
+    terminal_records = tuple(item for item in records if item.tab in TERMINAL_TABS)  # contacts and lugs (БД.ТЕР)
     terminals = tuple(item.fields for item in terminal_records)
     coax = tuple(item.fields for item in records if item.tab is TechOperationTab.COAX)
 

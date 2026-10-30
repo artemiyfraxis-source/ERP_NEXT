@@ -33,7 +33,7 @@ it("searches a base by the lot article and links the picked record", async () =>
   render(<StockLinkDialog lot={lot} onClose={() => undefined} />);
 
   expect(screen.getByLabelText("Поиск записи")).toHaveValue("GHR-04V-S");
-  expect(String(fetch.mock.calls[0][0])).toBe("/api/references/tech-operations?tab=ter&q=GHR-04V-S&limit=30");
+  expect(String(fetch.mock.calls[0][0])).toBe("/api/references/tech-operations?tab=ter&q=GHR-04V-S&limit=30&family=true");
   const submit = screen.getByRole("button", { name: "Привязать" });
   expect(submit).toBeDisabled();
   fireEvent.click(await screen.findByRole("button", { name: "GHR-04V-S · JST" }));

@@ -19,11 +19,10 @@ from .cable_structure import (
     ALIAS_KINDS, LAYERS, PARAMS, CoaxAlias, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, CoaxNames,
     HookupWire, WireGauge, same_card,
 )
-from .lugs import ter_kind_of
 from .search_text import search_rows, search_words
 from .domain import (
-    EDITABLE_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent,
-    TechOperationRecord, TechOperationTab,
+    EDITABLE_TABS, TERMINAL_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry,
+    StockLinkEvent, TechOperationRecord, TechOperationTab, family_root,
 )
 
 
@@ -41,8 +40,9 @@ class ReferenceEntryRow(Base):
 
 
 def terminal_card_checks(dialect: str) -> dict[str, str]:
-    """БД.ТЕР contact card CHECKs over the JSON `fields` (migration 0115 holds a literal copy): gender Male / Female or
-    empty; insulation Ø from / to a positive number (decimal point or comma), from ≤ to; datasheet a http(s) link.
+    """БД.ТЕР contact card CHECKs over the JSON `fields` (migration 0115 holds a literal copy; 0165 extended them to
+    «Наконечники», a tab of its own since — `TER_CARD_OTHER`): gender Male / Female or empty; insulation Ø from / to a
+    positive number (decimal point or comma), from ≤ to; datasheet a http(s) link.
     CASE keeps a text from being cast before it is known to be a number (PostgreSQL does not order AND / OR)."""
     def value(key: str) -> str:
         raw = f"json_extract(fields, '$.{key}')" if dialect == "sqlite" else f"(fields ->> '{key}')"
@@ -61,36 +61,24 @@ def terminal_card_checks(dialect: str) -> dict[str, str]:
         return f"CASE WHEN {text} = '' THEN TRUE WHEN {number(text)} THEN {cast(text)} > 0 ELSE FALSE END"
 
     gender, od_from, od_to, sheet = (value(key) for key in ("terGender", "terInsOdFrom", "terInsOdTo", "terDatasheet"))
+    other = TER_CARD_OTHER
     return {
-        "ck_tech_operation_records_ter_gender": f"tab <> 'ter' OR {gender} IN ('', 'Male', 'Female')",
+        "ck_tech_operation_records_ter_gender": f"{other} OR {gender} IN ('', 'Male', 'Female')",
         "ck_tech_operation_records_ter_ins_od": (
-            f"tab <> 'ter' OR (({positive(od_from)}) AND ({positive(od_to)}) AND (CASE WHEN {number(od_from)} AND"
+            f"{other} OR (({positive(od_from)}) AND ({positive(od_to)}) AND (CASE WHEN {number(od_from)} AND"
             f" {number(od_to)} THEN {cast(od_from)} <= {cast(od_to)} ELSE TRUE END))"
         ),
         "ck_tech_operation_records_ter_datasheet": (
-            f"tab <> 'ter' OR {sheet} = '' OR {sheet} LIKE 'http://%' OR {sheet} LIKE 'https://%'"
+            f"{other} OR {sheet} = '' OR {sheet} LIKE 'http://%' OR {sheet} LIKE 'https://%'"
         ),
     }
 
 
-# A БД.ПРОВ row is in exactly one cable list, a row of another tab in none (migrations 0131 and 0150 hold literal copies; 0150 added «lan»).
-CABLE_KIND_CHECK = (
-    "(tab = 'prov' AND cable_kind IS NOT NULL AND cable_kind IN ('coax', 'wire', 'multi', 'lan'))"
-    " OR (tab <> 'prov' AND cable_kind IS NULL)"
-)
-# A БД.ТЕР row is in exactly one list — «Терминалы» (contact) or «Наконечники» (lug), a row of another tab in none
-# (migration 0155 holds a literal copy).
-TER_KIND_CHECK = (
-    "(tab = 'ter' AND ter_kind IS NOT NULL AND ter_kind IN ('contact', 'lug'))"
-    " OR (tab <> 'ter' AND ter_kind IS NULL)"
-)
-
-
-def _ter_kind(record: TechOperationRecord) -> str | None:
-    """The stored list of a БД.ТЕР record: its own, else by the rule (a record built without one); None elsewhere."""
-    if record.tab != TechOperationTab.TERMINAL:
-        return None
-    return record.ter_kind or ter_kind_of(record.fields)
+# A row of neither «Терминалы» nor «Наконечники»: the card CHECKs hold on both (migration 0165 holds a literal copy).
+TER_CARD_OTHER = "tab NOT IN (" + ", ".join(f"'{tab.value}'" for tab in TERMINAL_TABS) + ")"
+# Every record is in a known base, «ter» first (migration 0165 holds a literal copy; a new tab widens it in a migration).
+TAB_CHECK = "tab IN (" + ", ".join(f"'{tab.value}'" for tab in sorted(
+    TechOperationTab, key=lambda tab: (tab != TechOperationTab.TERMINAL, list(TechOperationTab).index(tab)))) + ")"
 
 
 class TechOperationRecordRow(Base):
@@ -99,15 +87,11 @@ class TechOperationRecordRow(Base):
         Index("ix_tech_operation_records_tab_sort", "tab", "sort_key"),
         *(CheckConstraint(sql, name=name).ddl_if(dialect=dialect)
           for dialect in ("sqlite", "postgresql") for name, sql in terminal_card_checks(dialect).items()),
-        CheckConstraint(CABLE_KIND_CHECK, name="ck_tech_operation_records_cable_kind"),
-        CheckConstraint(TER_KIND_CHECK, name="ck_tech_operation_records_ter_kind"),
+        CheckConstraint(TAB_CHECK, name="ck_tech_operation_records_tab"),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    # The base of the record (`TechOperationTab`): «Наконечники» and each cable kind are bases of their own (0165).
     tab: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
-    # БД.ПРОВ: the cable list of the row (migration 0129); NULL on every other tab.
-    cable_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
-    # БД.ТЕР: «Терминалы» (contact) or «Наконечники» (lug) — migration 0155; NULL on every other tab.
-    ter_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
     display_text: Mapped[str] = mapped_column(String(2000), nullable=False)
     normalized_search: Mapped[str] = mapped_column(Text(), nullable=False)
     source_sheet: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -143,11 +127,16 @@ class SqlAlchemyTechOperationRepository:
     def __init__(self, session: Session): self.session = session
     @staticmethod
     def _domain(row: TechOperationRecordRow) -> TechOperationRecord:
-        return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search, row.source_sheet, row.sort_key, row.fields, row.mirror_key, row.edited_in_erp, row.cable_kind, row.ter_kind)
-    def list(self, *, tab: TechOperationTab | None, query: str, limit: int) -> list[TechOperationRecord]:
+        return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search, row.source_sheet, row.sort_key, row.fields, row.mirror_key, row.edited_in_erp)
+    def list(self, *, tab: TechOperationTab | Sequence[TechOperationTab] | None, query: str, limit: int) -> list[TechOperationRecord]:
+        """The records of one tab, of several (a family: `domain.TERMINAL_TABS`, `CABLE_TABS`) or of every tab (None)."""
         statement = select(TechOperationRecordRow)
-        if tab is not None: statement = statement.where(TechOperationRecordRow.tab == tab.value)
-        statement = statement.order_by(TechOperationRecordRow.tab, TechOperationRecordRow.sort_key, TechOperationRecordRow.id)
+        if isinstance(tab, TechOperationTab): statement = statement.where(TechOperationRecordRow.tab == tab.value)
+        elif tab is not None: statement = statement.where(TechOperationRecordRow.tab.in_([item.value for item in tab]))
+        # A family keeps the order of its sheet across its bases (as one tab before migration 0165): the readers that
+        # take the first match of an article (names, ETK, a scanned article) find the same record as before.
+        by_tab = (TechOperationRecordRow.tab,) if tab is None or isinstance(tab, TechOperationTab) else ()
+        statement = statement.order_by(*by_tab, TechOperationRecordRow.sort_key, TechOperationRecordRow.id)
         words = search_words(query)
         if not words:
             return [self._domain(row) for row in self.session.scalars(statement.limit(limit))]
@@ -160,12 +149,6 @@ class SqlAlchemyTechOperationRepository:
     def counts(self) -> dict[TechOperationTab, int]:
         rows = self.session.execute(select(TechOperationRecordRow.tab, func.count()).group_by(TechOperationRecordRow.tab))
         return {TechOperationTab(tab): count for tab, count in rows}
-    def ter_counts(self) -> dict[str, int]:
-        """БД.ТЕР rows per list («Терминалы» / «Наконечники») — the counts on the two chips."""
-        rows = self.session.execute(select(TechOperationRecordRow.ter_kind, func.count())
-                                    .where(TechOperationRecordRow.tab == TechOperationTab.TERMINAL.value)
-                                    .group_by(TechOperationRecordRow.ter_kind))
-        return {str(kind): count for kind, count in rows if kind}
     def get(self, record_id: UUID) -> TechOperationRecord | None:
         row = self.session.get(TechOperationRecordRow, record_id)
         return None if row is None else self._domain(row)
@@ -179,24 +162,25 @@ class SqlAlchemyTechOperationRepository:
         row.normalized_search = record.normalized_search; row.source_sheet = record.source_sheet
         row.sort_key = record.sort_key; row.fields = dict(record.fields)
         row.mirror_key = record.mirror_key; row.edited_in_erp = record.edited_in_erp
-        row.cable_kind = record.cable_kind
-        row.ter_kind = _ter_kind(record)
     def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = (), preserve_erp_edits: bool = False) -> dict[str, int]:
         """Replaces the records of every tab not in `keep_tabs`. With `preserve_erp_edits` the rows edited/created in
-        ERP stay untouched and a mirror record whose `mirror_key` belongs to an edited row is not inserted again;
-        returns {tab: skipped mirror records}."""
+        ERP stay untouched and a mirror record whose `mirror_key` belongs to an edited row is not inserted again — the
+        row is known by its sheet family and key (`family_root`), so a row moved to another base of the family
+        («Терминалы» → «Наконечники», a cable kind) and edited is not inserted again in the base the rule gives;
+        returns {sheet tab (`family_root`): skipped mirror records}."""
         skipped: dict[str, int] = {}
         scope = TechOperationRecordRow.tab.not_in([tab.value for tab in keep_tabs]) if keep_tabs else None
         statement = delete(TechOperationRecordRow)
         if scope is not None: statement = statement.where(scope)
         if preserve_erp_edits:
             statement = statement.where(TechOperationRecordRow.edited_in_erp.is_(False))
-            protected = {(row.tab, row.mirror_key) for row in self.session.execute(
+            protected = {(family_root(TechOperationTab(row.tab)), row.mirror_key) for row in self.session.execute(
                 select(TechOperationRecordRow.tab, TechOperationRecordRow.mirror_key).where(TechOperationRecordRow.edited_in_erp.is_(True), TechOperationRecordRow.mirror_key != ""))}
             kept = []
             for record in records:
-                if (record.tab.value, record.mirror_key) in protected:
-                    skipped[record.tab.value] = skipped.get(record.tab.value, 0) + 1
+                if (family_root(record.tab), record.mirror_key) in protected:
+                    sheet = family_root(record.tab).value  # counted by the mirror sheet the row came from
+                    skipped[sheet] = skipped.get(sheet, 0) + 1
                 else:
                     kept.append(record)
             records = tuple(kept)
@@ -205,7 +189,6 @@ class SqlAlchemyTechOperationRepository:
             id=record.id, tab=record.tab.value, display_text=record.display_text,
             normalized_search=record.normalized_search, source_sheet=record.source_sheet,
             sort_key=record.sort_key, fields=record.fields, mirror_key=record.mirror_key, edited_in_erp=False,
-            cable_kind=record.cable_kind, ter_kind=_ter_kind(record),
         ) for record in records)
         meta = self.session.get(TechOperationSnapshotRow, "current")
         if meta is None: meta = TechOperationSnapshotRow(name="current"); self.session.add(meta)
@@ -593,13 +576,15 @@ class SqlAlchemyCableStructureRepository:
 
 STOCK_LINK_EVENTS = tuple(event.value for event in StockLinkEvent)
 STOCK_LINK_TABS = tuple(sorted(tab.value for tab in EDITABLE_TABS))
+# Migration 0165 holds a literal copy (it added «lug» and the cable bases).
+STOCK_LINK_TAB_CHECK = "record_tab IN (" + ", ".join(f"'{tab}'" for tab in STOCK_LINK_TABS) + ")"
 
 
 class ReferenceStockLinkRow(Base):
     __tablename__ = "reference_stock_links"
     __table_args__ = (
         CheckConstraint("event IN ('linked', 'created', 'updated')", name="ck_reference_stock_links_event"),
-        CheckConstraint("record_tab IN ('coax', 'mat', 'ob', 'op', 'prov', 'ter')", name="ck_reference_stock_links_tab"),
+        CheckConstraint(STOCK_LINK_TAB_CHECK, name="ck_reference_stock_links_tab"),
         CheckConstraint("length(trim(grn)) > 0", name="ck_reference_stock_links_grn"),
         CheckConstraint("length(trim(record_text)) > 0", name="ck_reference_stock_links_record_text"),
         CheckConstraint("length(trim(actor_name)) > 0", name="ck_reference_stock_links_actor"),

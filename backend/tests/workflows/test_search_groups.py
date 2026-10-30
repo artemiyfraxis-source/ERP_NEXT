@@ -17,7 +17,10 @@ from tests.workflows.test_search_api import NOW, URL, env, fill, groups, titles 
 
 
 def record(tab, text, *, cable_kind=None, ter_kind=None, fields=None):
-    return fill(TechOperationRecordRow, tab=tab, cable_kind=cable_kind, ter_kind=ter_kind, display_text=text,
+    # every base is its own tab since migration 0165: the kind names the base
+    tab = {"lug": "lug"}.get(ter_kind, tab) if tab == "ter" else tab
+    tab = {"coax": "cab_coax", "multi": "cab_multi", "lan": "cab_lan"}.get(cable_kind, tab) if tab == "prov" else tab
+    return fill(TechOperationRecordRow, tab=tab, display_text=text,
                 normalized_search=text.casefold(), sort_key=text, fields=fields or {}, mirror_key="")
 
 

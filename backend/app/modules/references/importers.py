@@ -60,8 +60,9 @@ from app.shared.identity import Actor
 
 from .application import (
     UnitOfWork, _audit, _check_wire_row, _kind_rule, _same_wire_mark, _search_text, _sync_gost_awg, _wire_fields,
-    cable_overrides, custom_columns,
+    cable_custom_columns, cable_overrides, custom_columns,
 )
+from .lugs import ter_kind_of
 from .cable_structure import (
     AWG_FIELD, INSULATION_FIELD, MIRRORED_FIELDS, OUTER_FIELD, SECTION_FIELD, TEMP_MAX_FIELD, TEMP_MIN_FIELD,
     VOLTAGE_FIELD, HookupWire, WireGauge, decimal_or_none, leading_int, parse_hookup, refreshed_hookup, section_key,
@@ -70,8 +71,8 @@ from .cable_structure import (
 from .cables import CABLE_KIND_LABELS, CableKind, cable_mark, diameter_index, hookup_series, left_hookups
 from .wire_makers import STANDARD_FIELD
 from .domain import (
-    BASE_COLUMNS, CABLE_COLUMNS, CABLE_DROPPED, CABLE_KIND_VALUES, CABLE_NEW_ROW_EXTRA, CABLE_WRITABLE,
-    COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceEntry, cable_list_own,
+    BASE_COLUMNS, CABLE_COLUMNS, CABLE_DROPPED, CABLE_KIND_BY_TAB, CABLE_KIND_VALUES, CABLE_NEW_ROW_EXTRA, CABLE_TABS,
+    CABLE_WRITABLE, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, TERMINAL_TABS, ReferenceEntry, cable_list_own, cable_tab,
     ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, WIRE_COLOR_FIELD, WIRE_ROW_OWN,
     cable_key, color_key,
     normalized_manufacturer_key, normalized_section_key, normalized_supplier_key, split_colors, validate_entries,
@@ -557,7 +558,7 @@ def import_hookups(uow: UnitOfWork, payload: object, actor: Actor, now: datetime
     with uow:
         gauges = _gauge_step(seed, uow, report)
         by_id = {gauge.id: gauge for gauge in gauges}
-        records = list(uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=10_000))
+        records = list(uow.tech_operations.list(tab=CABLE_TABS, query="", limit=40_000))
         diameters = uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)
         dia_keys = frozenset(diameter_index(diameters))
         overrides = cable_overrides(uow.references.list())
@@ -812,7 +813,7 @@ def cable_kind_value(value: str) -> CableKind:
 def cable_list_columns(uow: UnitOfWork, kind: str) -> tuple[str, ...]:
     """The columns of one cable list of БД.ПРОВ: the list's (`CABLE_COLUMNS`), then the owner's columns of it — without
     the ones removed 25.10.2026 (`CABLE_DROPPED`)."""
-    own = cable_list_own(kind, custom_columns(TechOperationTab.WIRE, uow, kind))
+    own = cable_list_own(kind, custom_columns(cable_tab(kind), uow))
     return tuple(dict.fromkeys((*CABLE_COLUMNS[kind], *own)))
 
 
@@ -850,6 +851,10 @@ def _prov_cell(name: str, value: Any) -> Any:
 
 @dataclass(frozen=True)
 class _TechTable:
+    """`tab` — the base a new row goes to; `tabs` — the bases the load matches its rows in (default: `tab` alone). The
+    sheet loads «ter» / «prov» match over the whole family (`domain.TERMINAL_TABS` / `CABLE_TABS`) and send a new row
+    to its base by the rule (БД.ТЕР: `lugs.ter_kind_of`; БД.ПРОВ: «Вид кабеля», else `resolve_kind`); a base's own load
+    («lug», «cab_coax»…) matches and creates in that base only."""
     tab: TechOperationTab
     label: str
     key_fields: tuple[str, ...]
@@ -860,6 +865,19 @@ class _TechTable:
     card_columns: tuple[str, ...] = ()  # sheet columns a load may bring before any row has them (КОАКС card, ТЕР L− note)
     optional_keys: tuple[str, ...] = ()  # key fields a row may leave empty (БД.ПРОВ «Цвет»: only a монтажный wire has one)
     index_forms: Callable[[tuple[str, ...]], tuple[tuple[str, object], ...]] | None = None  # a stored row's (default `forms`)
+    family: tuple[TechOperationTab, ...] = ()
+
+    @property
+    def tabs(self) -> tuple[TechOperationTab, ...]:
+        return self.family or (self.tab,)
+
+    @property
+    def cables(self) -> bool:
+        return self.tab in CABLE_TABS
+
+    @property
+    def terminals(self) -> bool:
+        return self.tab in TERMINAL_TABS
 
     @property
     def sheet_columns(self) -> bool:
@@ -897,15 +915,30 @@ COAX_CARD_COLUMNS = (
 # 13.10.2026, «попробуй на первое время заполнить сам L-» — data/terminals/ter-lminus.json marks its estimates there).
 TER_CARD_COLUMNS = ("Источник L-",)
 
+def _ter_table(tab: TechOperationTab, label: str, family: tuple[TechOperationTab, ...] = ()) -> _TechTable:
+    return _TechTable(tab, label, ("terArticle",), _ter_forms, cell=_ter_cell, card_columns=TER_CARD_COLUMNS,
+                      family=family)
+
+
+def _cable_table(tab: TechOperationTab, label: str, family: tuple[TechOperationTab, ...] = ()) -> _TechTable:
+    return _TechTable(tab, label, ("Марка", WIRE_COLOR_FIELD), lambda values: _prov_forms(values), cell=_prov_cell,
+                      optional_keys=(WIRE_COLOR_FIELD,),
+                      index_forms=lambda values: (*_prov_forms(values)[:1], ("any_color", cable_key(values[0]))),
+                      family=family)
+
+
 TECH_TABLES: dict[str, _TechTable] = {
-    "ter": _TechTable(TechOperationTab.TERMINAL, "БД.ТЕР — контакты, терминалы и разъёмы", ("terArticle",), _ter_forms,
-                      cell=_ter_cell, card_columns=TER_CARD_COLUMNS),
+    "ter": _ter_table(TechOperationTab.TERMINAL, "БД.ТЕР — контакты, терминалы и разъёмы",
+                      TERMINAL_TABS),
+    "lug": _ter_table(TechOperationTab.LUG, "Наконечники"),
     "coax": _TechTable(TechOperationTab.COAX, "БД.КОАКС — коаксиальные разъёмы", ("coaxArticle", "coaxWire"),
                        lambda values: (("pair", (_folded(values[0]), cable_key(values[1]))),),
                        card_columns=COAX_CARD_COLUMNS),
-    "prov": _TechTable(TechOperationTab.WIRE, "БД.ПРОВ — кабели и провода", ("Марка", WIRE_COLOR_FIELD),
-                       lambda values: _prov_forms(values), cell=_prov_cell, optional_keys=(WIRE_COLOR_FIELD,),
-                       index_forms=lambda values: (*_prov_forms(values)[:1], ("any_color", cable_key(values[0])))),
+    "prov": _cable_table(TechOperationTab.WIRE, "БД.ПРОВ — кабели и провода",
+                         CABLE_TABS),
+    "cab_coax": _cable_table(TechOperationTab.CAB_COAX, "Коаксиальные кабели"),
+    "cab_multi": _cable_table(TechOperationTab.CAB_MULTI, "Многожильные кабели"),
+    "cab_lan": _cable_table(TechOperationTab.CAB_LAN, "Кабели Ethernet"),
     "mat": _TechTable(TechOperationTab.MATERIAL, "БД.МАТ — материалы", ("Наименование",),
                       lambda values: (("name", _folded(values[0])),)),
     "ob": _TechTable(TechOperationTab.EQUIPMENT, "БД.ОБ — станки и оборудование", ("baseValue",),
@@ -924,11 +957,12 @@ def _sheet_columns(table: _TechTable, records: Sequence[TechOperationRecord]) ->
 
 
 def _load_fields(spec: _TechTable, records: Sequence[TechOperationRecord], uow: UnitOfWork) -> list[str]:
-    """Every field a load of the table accepts. БД.ПРОВ: the sheet columns, the owner's columns of every cable list and
-    «Вид кабеля»; which of them a row may fill is its list's business (`_TechTarget`)."""
+    """Every field a load of the table accepts. A cable load: the sheet columns, the owner's columns (of every cable
+    base for the БД.ПРОВ load, of the base for its own) and «Вид кабеля»; which of them a row may fill is its base's
+    business (`_TechTarget`)."""
     fields = [*spec.schema_fields(), *_sheet_columns(spec, records)]
-    if spec.tab == TechOperationTab.WIRE:
-        fields += [*custom_columns(TechOperationTab.WIRE, uow), KIND_FIELD]
+    if spec.cables:
+        fields += [*(cable_custom_columns(uow) if spec.family else custom_columns(spec.tab, uow)), KIND_FIELD]
     return list(dict.fromkeys(fields))
 
 
@@ -952,7 +986,7 @@ class _TechTarget(_Target):
             values = tuple(str(self._current(record).get(name) or "") for name in table.key_fields)
             keyed = [values] if all(value for name, value in zip(table.key_fields, values)
                                     if name not in table.optional_keys) else []
-            if table.tab == TechOperationTab.TERMINAL:  # the same terminal in BAG packaging is the same row
+            if table.terminals:  # the same terminal in BAG packaging is the same row
                 bag = str(record.fields.get("terArticleBag") or terminal_card_fields(record.fields).get("terArticleBag")
                           or "")
                 keyed += [(bag,)] if bag.strip() else []
@@ -977,7 +1011,7 @@ class _TechTarget(_Target):
         fields = dict(record.fields)
         if self.table.virtual:
             fields[self.table.virtual] = record.display_text
-        if self.table.tab == TechOperationTab.WIRE:
+        if self.table.cables:
             fields[KIND_FIELD] = record.cable_kind or ""
         return fields
 
@@ -1011,7 +1045,7 @@ class _TechTarget(_Target):
         columns = [name for name in fields if name not in keys]
         resolved = _resolve_schema(_TECH_SCHEMA[tab][0], columns)
         result = dict(fields)
-        if self.table.tab == TechOperationTab.TERMINAL:
+        if self.table.terminals:
             resolved.update(_range_indexes(columns))
             resolved.update(terminal_card_indexes(columns))
             self._gender(result, given, columns, resolved)
@@ -1024,7 +1058,7 @@ class _TechTarget(_Target):
                 raise RowRefused(f"{name} и «{column}» — одно и то же поле, а значения разные")
             result[column] = fields[name]
         synced = sync_schema_fields(tab, result)
-        if self.table.tab == TechOperationTab.TERMINAL and (problems := terminal_card_problems(synced)):
+        if self.table.terminals and (problems := terminal_card_problems(synced)):
             raise RowRefused("; ".join(problems))  # the CHECKs of migration 0115 would refuse the whole load
         return synced
 
@@ -1049,18 +1083,22 @@ class _TechTarget(_Target):
     def create(self, key, fields):
         if key in self.ambiguous:
             colorless = self.table.optional_keys and not any(self.key_values[key][len(self.table.key_fields) - 1:])
-            raise RowRefused(WIRE_COLOR_REASON if self.table.tab == TechOperationTab.WIRE and colorless
+            raise RowRefused(WIRE_COLOR_REASON if self.table.cables and colorless
                              else AMBIGUOUS_REASON)
         forms = set(self.table.forms(self.key_values[key]))
         if key in self.duplicates or forms & self.created:
             raise RowRefused(DUPLICATE_REASON)
         kind = None
-        if self.table.tab == TechOperationTab.WIRE:  # БД.ПРОВ: the row's list (given, else the rule) and its columns
+        if self.table.cables:  # the row's base (its own, given, else the rule) and its columns
             fields = dict(fields)
             given = fields.pop(KIND_FIELD, "")
             extra = CABLE_NEW_ROW_EXTRA
-            if given:
-                kind = CableKind(given)
+            own = None if self.table.family else CableKind(CABLE_KIND_BY_TAB[self.table.tab])
+            if own is not None and given and given != own.value:
+                raise RowRefused(f"«{KIND_FIELD}»: строка этой таблицы — «{CABLE_KIND_LABELS[own]}», а не "
+                                 f"«{CABLE_KIND_LABELS[CableKind(given)]}»")
+            if own is not None or given:
+                kind = own or CableKind(given)
             else:
                 if self._kind_of is None:
                     self._kind_of = _kind_rule(self.uow)
@@ -1090,9 +1128,11 @@ class _TechTarget(_Target):
         if self.table.virtual:
             stored.pop(self.table.virtual, None)
         try:
+            # the БД.ТЕР load: a new row goes to «Наконечники» or «Терминалы» by the rule
+            ter_kind = ter_kind_of(stored) if self.table.terminals and self.table.family else None
             record = TechOperationRecord.create(tab=self.table.tab, display_text=display, search_text="",
                                                 source_sheet="", sort_key=sort_key, fields=stored, edited_in_erp=True,
-                                                cable_kind=kind.value if kind else None)
+                                                cable_kind=kind.value if kind else None, ter_kind=ter_kind)
         except ReferenceValidationError as error:
             raise RowRefused(str(error)) from error
         self.uow.tech_operations.save(record)
@@ -1100,10 +1140,10 @@ class _TechTarget(_Target):
 
     def update(self, key, changes):
         record = self.matched[key]
-        if self.table.tab == TechOperationTab.WIRE:
+        if self.table.cables:
             if KIND_FIELD in changes:
                 current = CABLE_KIND_LABELS[CableKind(record.cable_kind)]
-                raise RowRefused(f"строка в списке «{current}» — перенос в другой список делают на экране "
+                raise RowRefused(f"строка в базе «{current}» — перенос в другую базу делают на экране "
                                  "«Кабели и провода»")
             kind = CableKind(record.cable_kind)
             # an existing row: also the columns removed from its list 25.10.2026 (provenance, journals, prod scripts)
@@ -1116,7 +1156,7 @@ class _TechTarget(_Target):
         updated = replace(updated, normalized_search=_search_text(updated))
         wire = None
         mark_key = cable_key(cable_mark(record))
-        if self.table.tab == TechOperationTab.WIRE and mark_key and set(changes) & set(MIRRORED_FIELDS):
+        if self.table.cables and mark_key and set(changes) & set(MIRRORED_FIELDS):
             stored = self.uow.cable_structure.hookup(mark_key)
             if stored is not None:  # a structured монтажный wire follows its cells (as edit_record)
                 try:
@@ -1127,7 +1167,7 @@ class _TechTarget(_Target):
         self.uow.tech_operations.save(updated)
         if wire is not None:
             self.uow.cable_structure.save_hookup(wire, self.now)
-        if self.table.tab == TechOperationTab.WIRE:  # the mark's cells go to its other colours
+        if self.table.cables:  # the mark's cells go to its other colours
             try:
                 _same_wire_mark(record, updated, self.now, self.uow)
             except ReferenceValidationError as error:
@@ -1368,7 +1408,7 @@ def import_rows(table: str, uow: UnitOfWork, rows: Sequence[ImportRowIn], actor:
     with uow:
         if table in TECH_TABLES:
             spec = TECH_TABLES[table]
-            records = uow.tech_operations.list(tab=spec.tab, query="", limit=100_000)
+            records = uow.tech_operations.list(tab=spec.tabs, query="", limit=100_000)
             import_table = _table(table, spec.key_fields, _load_fields(spec, records, uow), spec.cell, spec.optional_keys)
             target: _Target = _TechTarget(uow, source, spec, records, _key_values(import_table, rows), now)
         elif table in _MAPS:
@@ -1391,18 +1431,20 @@ def import_schema(table: str, uow: UnitOfWork) -> dict:
     if table in TECH_TABLES:
         spec = TECH_TABLES[table]
         with uow:
-            records = uow.tech_operations.list(tab=spec.tab, query="", limit=100_000)
+            records = uow.tech_operations.list(tab=spec.tabs, query="", limit=100_000)
             schema = list(spec.schema_fields())
             columns = [name for name in _sheet_columns(spec, records) if name not in schema] if spec.sheet_columns else []
             result = {"table": table, "label": spec.label, "key": list(spec.key_fields), "fields": schema + columns,
                       "schema_fields": schema if spec.sheet_columns else [], "sheet_columns": columns}
             if spec.optional_keys:  # БД.ПРОВ: «Цвет» is the key of a монтажный wire only
                 result["optional_key"] = list(spec.optional_keys)
-            if spec.tab == TechOperationTab.WIRE:  # each cable list its own columns; «Вид кабеля» chooses the list
+            if spec.cables and spec.family:  # each cable base its own columns; «Вид кабеля» chooses the base
                 result["fields"] = _load_fields(spec, records, uow)
                 result["kind_field"] = KIND_FIELD
                 result["kinds"] = {kind.value: CABLE_KIND_LABELS[kind] for kind in CableKind}
                 result["columns_by_kind"] = {kind: list(cable_list_columns(uow, kind)) for kind in CABLE_KIND_VALUES}
+            elif spec.cables:  # a cable base's own load: its columns
+                result["fields"] = list(cable_list_columns(uow, CABLE_KIND_BY_TAB[spec.tab]))
         return result
     if table in _MAPS:
         return {"table": table, "label": _MAPS[table][2], "key": ["key"], "fields": list(MAP_FIELDS)}

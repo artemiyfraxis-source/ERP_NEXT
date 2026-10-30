@@ -167,6 +167,9 @@ let refsCache: Promise<Refs> | null = null;
 /** Тесты: каждый тест подменяет справочники своими — кэш сбрасывается после теста (src/test/setup.ts). */
 export function resetGeneratorRefs() { refsCache = null; }
 
+/** Тесты: справочники генератора так, как их читает форма. */
+export const generatorRefs = () => loadRefs();
+
 function loadRefs(force = false): Promise<Refs> {
   if (!refsCache || force) refsCache = readRefs();
   return refsCache;
@@ -178,13 +181,16 @@ async function readRefs(): Promise<Refs> {
   const [templates, op, ter, coax, wireDia, kabCoax, mat, prov] = await Promise.all([
     safe(techcardsApi.templates(), { items: [] }),
     safe(referencesApi.techOperations("op", "", 5000), noRecords),
-    safe(referencesApi.techOperations("ter", "", 5000), noRecords),
+    // БД.ТЕР целиком — «Терминалы» и «Наконечники» (с 0165 — отдельные базы): контакты ищутся по артикулу среди всех строк
+    // листа, как до разделения; наконечник — строка с `ter_kind` "lug" (lugRecordsOf).
+    safe(referencesApi.techOperations("ter", "", 5000, true), noRecords),
     safe(referencesApi.techOperations("coax", "", 5000), noRecords),
     safe(referencesApi.wireDia(), { columns: [], series: [], records: [] }),
     safe(referencesApi.coaxDia(), noRecords),
     safe(referencesApi.techOperations("mat", "", 5000), noRecords),
-    // БД.ПРОВ: число жил, цвета жил по порядку и экран кабеля — для распиновки и операций с оболочкой.
-    safe(referencesApi.techOperations("prov", "", 5000), noRecords),
+    // БД.ПРОВ: число жил, цвета жил по порядку и экран кабеля — для распиновки и операций с оболочкой. Весь лист —
+    // монтажные и базы кабелей (коаксиальные, многожильные, LAN); вид кабеля — `cable_kind` строки.
+    safe(referencesApi.techOperations("prov", "", 5000, true), noRecords),
   ]);
   return {
     templates: (templates?.items || []).map((item): Tmpl => ({ id: item.id, title: item.title, category: item.category })),

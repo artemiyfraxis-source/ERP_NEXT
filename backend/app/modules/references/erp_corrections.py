@@ -18,7 +18,7 @@ from app.database import build_engine, build_references_uow_factory
 from app.shared.identity import Actor
 
 from .application import EditRecordCommand, FieldEdit, StaleRecordError, edit_record
-from .domain import TechOperationTab
+from .domain import TechOperationTab, tab_family
 
 ACTOR = Actor(id=UUID(int=0), name="ERP Integration", department="System")
 
@@ -48,7 +48,7 @@ def apply_corrections(factory, now: datetime, corrections: tuple[Correction, ...
     report: list[str] = []
     for item in corrections:
         with factory() as uow:
-            records = [record for record in uow.tech_operations.list(tab=item.tab, query="", limit=100_000)
+            records = [record for record in uow.tech_operations.list(tab=tab_family(item.tab), query="", limit=100_000)
                        if str(record.fields.get(item.key_field, "")).strip() == item.key]
         if len(records) != 1:
             report.append(f"{item.key}: записей {len(records)}, правка не нужна или неоднозначна")

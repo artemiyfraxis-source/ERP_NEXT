@@ -4,14 +4,15 @@
 БД.ТЕР holds two kinds of crimped wire ends: the crimp contacts of connector housings (JST SXH-001T-P0.6, Molex
 Micro-Fit…) — «Терминалы» — and the lugs that end a wire on their own: ferrules НШВ / НШВИ, ring and fork lugs НКИ / НК /
 НВИ / НВ, pin lugs НШИ / ПМ, flat (quick-disconnect) receptacles and tabs РПИ / РППИ and their imported twins (FDD, FDFD,
-FDFN, FLVDDF, «Female / Quick Disconnect», FASTON), tube lugs ТМ / ТМЛ / ТА / ТАМ. Every row stores its list
-(`TechOperationRecord.ter_kind`, migration 0155) — the rows stay in tab `ter`, so every reader (the ETK generator's crimp
-lookup, the harness catalogue, item names, the warehouse article identity, the stock links) finds a lug as before.
+FDFN, FLVDDF, «Female / Quick Disconnect», FASTON), tube lugs ТМ / ТМЛ / ТА / ТАМ. The lugs are a base of their own,
+tab `lug` (owner 29.10.2026: «наконечники и контакты хранятся в одной базе БД.ТЕР — так не должно быть»; migration 0165
+moved the rows the 0155 flag `ter_kind` marked), with their own columns; `TechOperationRecord.ter_kind` is the kind of the
+row's base. The readers that look a crimped end up by its article read both bases (`domain.TERMINAL_TABS`).
 Butt splices «ГС» and sleeves «ГМЛ» are no lugs (owner's brief 26.10.2026): they stay with the contacts.
 
 The rule reads the row's product name, series and articles (schema key or sheet column): the first word of any of them
 is a lug family (`LUG_FAMILY`), or the product / series names a disconnect, FASTON or «наконечник». A row the rule
-misjudges is moved by hand (`set_ter_kind`), and the move holds — a mirror reload keeps a row edited in ERP.
+misjudges is moved by hand (`application.move_record`), and the move holds — a mirror reload keeps a row edited in ERP.
 """
 
 from __future__ import annotations

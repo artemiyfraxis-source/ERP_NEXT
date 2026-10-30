@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 from app.modules.fulfillment.infrastructure import SqlAlchemyFulfillmentRepository
 from app.modules.identity.domain import ROLE_LABELS
 from app.modules.identity.infrastructure import IdentityUserRow
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import TERMINAL_TABS, TechOperationTab
 from app.modules.references.infrastructure import SqlAlchemyTechOperationRepository
 from app.modules.techcards.etk_read import card_views
 from app.modules.techcards.project_cards import ProjectTechcard
@@ -159,7 +159,7 @@ class _SessionFulfillment:
 def snapshot(uow: Any, session: Session, card: ProjectTechcard) -> dict[str, Any]:
     """Карта ЭТК как её отдаёт GET карты, с `td_ops` из БД.ОП."""
     records = SqlAlchemyTechOperationRepository(session)
-    parts = [record for tab in (TechOperationTab.TERMINAL, TechOperationTab.COAX)
+    parts = [record for tab in (TERMINAL_TABS, TechOperationTab.COAX)
              for record in records.list(tab=tab, query="", limit=10_000)]
 
     def identify(article: str) -> str:

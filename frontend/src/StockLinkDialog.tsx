@@ -69,7 +69,8 @@ export function StockLinkDialog({ lot, onClose }: { lot: WarehouseLot; onClose: 
     const mine = ++latest.current;
     setRecords(null);
     setPicked("");
-    referencesApi.techOperations(tab, query, 30).then((result) => {
+    // «Терминалы» ищут и в «Наконечниках», «Монтажные провода» — во всех базах кабелей, как до разделения баз (0165).
+    referencesApi.techOperations(tab, query, 30, tab === "ter" || tab === "prov").then((result) => {
       if (latest.current === mine) setRecords(result.records ?? []);
     }, (reason) => {
       if (latest.current !== mine) return;

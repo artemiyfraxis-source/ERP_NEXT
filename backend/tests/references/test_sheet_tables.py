@@ -2,6 +2,8 @@
 
 import pytest
 
+from app.modules.references.domain import CABLE_COLUMNS
+
 from app.modules.references.technology import import_supplymap_snapshot, parse_mirror_tsv
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
 
@@ -61,7 +63,8 @@ def _put(client, **tables):
 
 
 def _rows(client, tab):
-    return client.get("/api/references/tech-operations", params={"tab": tab}).json()
+    # БД.ПРОВ: every cable base of the sheet (migration 0165), the columns of the монтажные
+    return client.get("/api/references/tech-operations", params={"tab": tab, "family": "true"}).json()
 
 
 def test_imports_both_bases_and_exposes_schema(references_api):
@@ -82,8 +85,8 @@ def test_empty_tab_still_reports_columns_and_accepts_create(references_api):
         "tab": "prov", "fields": {name: "МГТФ" if name == "Марка" else "" for name in empty["columns"]},
     })
 
-    # 24 sheet columns + the монтажный «Цвет» (0130) + the coax «Частота до, ГГц» (25.10.2026)
-    assert empty["records"] == [] and len(empty["columns"]) == 26
+    # «prov» is the монтажные провода since migration 0165: their own columns
+    assert empty["records"] == [] and empty["columns"] == list(CABLE_COLUMNS["wire"])
     assert created.status_code == 201 and len(_rows(references_api, "prov")["records"]) == 1
 
 

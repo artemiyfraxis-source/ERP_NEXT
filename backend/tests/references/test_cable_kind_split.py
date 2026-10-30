@@ -12,7 +12,8 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-from app.modules.references.application import SetCableKindCommand, cable_catalog, set_cable_kind
+from app.modules.references.application import cable_catalog
+from tests.references.test_cables import move_cable
 from app.modules.references.cables import CableKind
 from app.modules.references.domain import CABLE_COLUMNS, CABLE_WRITABLE, cable_fields
 from app.modules.references.load_mirror import ACTOR, load_mirror
@@ -196,7 +197,7 @@ def test_moving_a_row_takes_the_new_list_columns_and_keeps_its_values(tmp_path, 
     rg = rows["RG316"]
     assert rg.record.cable_kind == "coax" and "AWG" not in rg.record.fields  # an empty AWG is no coax cell
 
-    moved = set_cable_kind(SetCableKindCommand(ul.record.id, CableKind.COAX, ACTOR, NOW), uow)
+    moved = move_cable(ul.record.id, CableKind.COAX, uow)
 
     assert (moved.kind, moved.record.cable_kind, moved.manual) == (CableKind.COAX, "coax", True)
     assert moved.record.fields["AWG"] == "28"  # a filled value is never dropped, even in another list's column

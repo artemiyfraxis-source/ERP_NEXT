@@ -134,7 +134,7 @@ describe("общий набор столбцов", () => {
 
 describe("удаление своего столбца", () => {
   function Harness({ filled }: { filled: number }) {
-    const removal = useColumnRemoval("prov", true, () => filled, () => undefined, "coax");
+    const removal = useColumnRemoval("cab_coax", true, () => filled, () => undefined);
     return <><button type="button" onClick={removal.removeOf("Полка")}>открыть</button>{removal.dialog}</>;
   }
 
@@ -148,6 +148,6 @@ describe("удаление своего столбца", () => {
     expect(dialog.textContent).toContain("в журнале");
     fireEvent.click(within(dialog).getByRole("button", { name: "Удалить столбец и 3 знач." }));
 
-    await waitFor(() => expect(remove).toHaveBeenCalledWith("prov", "Полка", "coax", undefined));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("cab_coax", "Полка"));
   });
 });

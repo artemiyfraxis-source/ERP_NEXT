@@ -18,7 +18,7 @@ const admin: Principal = {
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const lug = (id: string, fields: Record<string, string>): TechOperationRecord =>
-  ({ id, tab: "ter", display_text: id, source_sheet: "", fields, ter_kind: "lug", ter_rule: "lug" });
+  ({ id, tab: "lug", display_text: id, source_sheet: "", fields });
 
 const LUG_COLUMNS = ["Производитель", "Product Name", "Series", "Артикул\n контакта (REEL)", "От мм2", "До мм2", "От AWG", "До AWG", "Материал контакта", "Аппликатор"];
 const LUGS = [
@@ -26,7 +26,7 @@ const LUGS = [
   lug("l2", { Производитель: "КВТ", "Product Name": "НКИ", Series: "НКИ 1.5", "Артикул\n контакта (REEL)": "НКИ 1.5-4", "От мм2": "0,5", "До мм2": "1,5", "От AWG": "20", "До AWG": "16", "Материал контакта": "медь", Аппликатор: "M31" }),
   lug("l3", { Производитель: "КВТ", "Product Name": "НШВИ", Series: "НШВИ 0.5", "Артикул\n контакта (REEL)": "НШВИ 0.5-8", "От мм2": "0,5", "До мм2": "0,5", "От AWG": "20", "До AWG": "20", "Материал контакта": "медь", Аппликатор: "" }),
 ];
-const CONTACT: TechOperationRecord = { id: "c1", tab: "ter", display_text: "c1", source_sheet: "", ter_kind: "contact", ter_rule: "contact",
+const CONTACT: TechOperationRecord = { id: "c1", tab: "ter", display_text: "c1", source_sheet: "",
   fields: { Производитель: "JST", Series: "XH", "Артикул\n контакта (REEL)": "SXH-001T-P0.6" } };
 
 type Call = { path: string; method: string; body: unknown };
@@ -38,14 +38,14 @@ function mockDb() {
     const method = init?.method ?? "GET";
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
-    if (path === "/api/references/bases") return json({ bases: [], tabs: { ter: 4 }, ter_kinds: { contact: 1, lug: 3 } });
+    if (path === "/api/references/bases") return json({ bases: [], tabs: { ter: 1, lug: 3 } });
     if (path === "/api/references/coverings") return json({ counts: {}, titles: {}, rows: [] });
     if (path.startsWith("/api/references/tech-operations?tab=mat")) return json({ metadata: null, columns: [], records: [] });
     if (path === "/api/references/crimp-codes") return json({ owners: {}, codes: [], missing: [] });
     if (path === "/api/techcards/connector-series") return json({ match: null, series: [] });
-    if (path.startsWith("/api/references/tech-operations?tab=ter") && path.includes("ter_kind=lug")) return json({ metadata: null, columns: LUG_COLUMNS, custom_columns: [], records: LUGS });
-    if (path.startsWith("/api/references/tech-operations?tab=ter") && path.includes("ter_kind=contact")) return json({ metadata: null, columns: ["Производитель", "Series", "Артикул\n контакта (REEL)"], custom_columns: [], records: [CONTACT] });
-    if (path === "/api/references/tech-operations/l2/ter-kind" && method === "PUT") return json({ ...LUGS[1], ter_kind: "contact" });
+    if (path.startsWith("/api/references/tech-operations?tab=lug")) return json({ metadata: null, columns: LUG_COLUMNS, custom_columns: [], records: LUGS });
+    if (path.startsWith("/api/references/tech-operations?tab=ter")) return json({ metadata: null, columns: ["Производитель", "Series", "Артикул\n контакта (REEL)"], custom_columns: [], records: [CONTACT] });
+    if (path === "/api/references/tech-operations/l2/tab" && method === "PUT") return json({ ...LUGS[1], tab: "ter" });
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
   return calls;
@@ -61,7 +61,7 @@ it("«Наконечники» stands right after «Терминалы» with it
   const chips = within(screen.getByRole("navigation", { name: "Вкладки базы данных" })).getAllByRole("button").map((button) => button.textContent);
   const at = chips.findIndex((text) => text?.startsWith("Терминалы"));
   expect(chips[at + 1]).toBe("Наконечники3");
-  expect(calls.some((call) => call.path.includes("tab=ter") && call.path.includes("ter_kind=contact"))).toBe(true);
+  expect(calls.some((call) => call.path.includes("tab=ter") && !call.path.includes("ter_kind"))).toBe(true);
   expect(screen.queryByText("НКИ 1.5-4")).toBeNull();
 });
 
@@ -86,19 +86,18 @@ it("«Наконечники»: only lugs, in blocks by family, size then articl
   expect(screen.getByRole("button", { name: /^Без аппликатора · 1/ })).toBeInTheDocument();
 });
 
-it("«Наконечники»: a row opens its window, «Список» moves it to the terminals and the list is read again", async () => {
+it("«Наконечники»: a row opens its window, «Перенести в» moves it to the terminals and the list is read again", async () => {
   const calls = mockDb();
   render(<ReferencesPage principal={admin} initialTab="lug" />);
   fireEvent.click(await screen.findByText("НКИ 1.5-4"));
 
-  const select = await screen.findByRole("combobox", { name: "Список" });
-  expect(screen.getByText("по правилу: наконечники")).toBeInTheDocument();
-  fireEvent.change(select, { target: { value: "contact" } });
-  expect(screen.getByText("Строка перейдёт в «Терминалы», её значения сохранятся.")).toBeInTheDocument();
+  const select = await screen.findByRole("combobox", { name: "Перенести в" });
+  fireEvent.change(select, { target: { value: "ter" } });
+  expect(screen.getByText("Строка перейдёт в «Терминалы», её значения сохранятся; у базы свои столбцы.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
 
   await waitFor(() => expect(calls.find((call) => call.method === "PUT")).toEqual({
-    path: "/api/references/tech-operations/l2/ter-kind", method: "PUT", body: { kind: "contact" } }));
+    path: "/api/references/tech-operations/l2/tab", method: "PUT", body: { tab: "ter" } }));
   expect(await screen.findByText("Запись перенесена в «Терминалы»")).toBeInTheDocument();
 });
 

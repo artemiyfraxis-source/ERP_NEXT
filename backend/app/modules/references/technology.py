@@ -706,6 +706,8 @@ _TECH_SCHEMA = {
         lambda v: " ".join(v[key] for key in ("coaxArticle", "coaxType", "coaxMfr", "supplier", "coaxWire", "program")),
         lambda v: f"{v['coaxWire']} {v['coaxType']} {v['coaxMfr']} {v['coaxArticle']}"),
 }
+# «Наконечники» (migration 0165: a tab of its own) are БД.ТЕР sheet rows: the same schema values the generator reads.
+_TECH_SCHEMA["lug"] = _TECH_SCHEMA["ter"]
 
 
 def _normalize_header(value: object) -> str:
@@ -755,6 +757,7 @@ TER_CARD_KEYS = ("terGender", *(field.key for field in _TER_CARD))
 
 # Fields the import derives from the sheet besides the DB_SCHEMA ones (БД.ТЕР AWG/мм² ranges, the contact card).
 _DERIVED_KEYS = {"ter": ("awgFrom", "awgTo", "mm2From", "mm2To", *TER_CARD_KEYS)}
+_DERIVED_KEYS["lug"] = _DERIVED_KEYS["ter"]
 
 _FEMALE = re.compile(r"^(female|socket|receptacle|гнезд|мама)|\(socket\)|\(гнездо\)")
 _MALE = re.compile(r"^(male|pin|tab|plug|штыр|папа)|\(pin\)|\(tab\)|\(штырь\)")
@@ -911,7 +914,7 @@ def sync_schema_fields(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
         index = resolved[field.key]
         if field.store and index >= 0:
             result[field.key] = str(fields[columns[index]] or "").strip()
-    if tab == "ter":
+    if tab in ("ter", "lug"):
         for key, index in _range_indexes(columns).items():
             if index >= 0:
                 result[key] = str(fields[columns[index]] or "").strip()

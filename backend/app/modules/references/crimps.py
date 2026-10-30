@@ -11,7 +11,7 @@ from uuid import UUID
 from app.shared.identity import Actor
 
 from .application import UnitOfWork, _audit, _equipment_rows, _search_text
-from .domain import ReferenceValidationError, TechOperationRecord, TechOperationTab
+from .domain import TERMINAL_TABS, ReferenceValidationError, TechOperationRecord, TechOperationTab
 from .equipment import (
     CODE_KEY, TARGETS_KEY, add_code, applicator_keys, applicator_value, dump_targets, field, has_code, name_of,
     parse_targets, remove_code, tokens,
@@ -26,7 +26,7 @@ def _tool(uow: UnitOfWork, tool_id: UUID) -> TechOperationRecord:
 
 
 def _terminals(uow: UnitOfWork) -> list[TechOperationRecord]:
-    return list(uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=20_000))
+    return list(uow.tech_operations.list(tab=TERMINAL_TABS, query="", limit=40_000))  # contacts and lugs
 
 
 def _terminal_json(record: TechOperationRecord, code: str) -> dict:
@@ -79,7 +79,7 @@ def change_terminal(tool_id: UUID, terminal_id: UUID, *, add: bool, actor: Actor
         if not code:
             raise ReferenceValidationError("У инструмента нет кода в базе терминалов — задайте его в записи")
         terminal = uow.tech_operations.get(terminal_id)
-        if terminal is None or terminal.tab != TechOperationTab.TERMINAL:
+        if terminal is None or terminal.tab not in TERMINAL_TABS:
             raise LookupError("Терминал не найден")
         current = applicator_value(terminal.fields)
         value = add_code(current, code) if add else remove_code(current, code)

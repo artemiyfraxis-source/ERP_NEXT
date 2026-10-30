@@ -18,11 +18,12 @@ from app.modules.references.cables import (
     resolve_kind,
 )
 from app.modules.references.domain import CABLE_COLUMNS, CABLE_DROPPED, CABLE_KIND_VALUES, CABLE_WRITABLE
-from app.modules.references.infrastructure import CABLE_KIND_CHECK
+from app.modules.references.domain import CABLE_TAB_BY_KIND, TechOperationTab
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
 
 BEFORE, AFTER = "0149_receiving_defect_quantity", "0150_prov_lan_kind"
 MIGRATION = Path(__file__).parents[2] / "migrations" / "versions" / "0150_prov_lan_kind.py"
+SPLIT = Path(__file__).parents[2] / "migrations" / "versions" / "0165_split_lug_cable_tabs.py"
 
 LAN_TYPE = "витая пара U/UTP Cat5e (LAN, внутренняя прокладка)"
 ROWS = {
@@ -170,9 +171,14 @@ def test_the_downgrade_keeps_a_value_changed_after_the_move():
 
 
 def test_the_check_and_the_lists_know_the_lan_kind():
-    assert "lan" in CABLE_KIND_VALUES and "'lan'" in CABLE_KIND_CHECK
+    # ETHERNET is a base of its own since migration 0165 (tab «cab_lan»); its downgrade restores the 0150 check
+    assert "lan" in CABLE_KIND_VALUES and CABLE_TAB_BY_KIND["lan"] == TechOperationTab.CAB_LAN
     assert CABLE_KIND_LABELS[CableKind.LAN] == "Кабели Ethernet"
-    assert "'lan'" in MIGRATION.read_text(encoding="utf-8")
+    namespace: dict = {}
+    exec(compile(MIGRATION.read_text(encoding="utf-8"), str(MIGRATION), "exec"), namespace)
+    split: dict = {}
+    exec(compile(SPLIT.read_text(encoding="utf-8"), str(SPLIT), "exec"), split)
+    assert namespace["CHECK_NEW"] == split["CABLE_KIND_CHECK"] and "'lan'" in split["CABLE_KIND_CHECK"]
 
 
 @pytest.mark.parametrize("name", sorted(ROWS))

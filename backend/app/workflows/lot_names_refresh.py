@@ -59,7 +59,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import TERMINAL_TABS, TechOperationTab
 from app.modules.techcards.connector_housings import housing_of
 from app.modules.warehouse import receipt_llm
 from app.modules.warehouse.domain import UPD_NAME_LIMIT, StockLot
@@ -74,6 +74,8 @@ from app.workflows.item_names import ReferenceNames
 from app.workflows.warehouse_article import infer_article_identity
 
 log = logging.getLogger(__name__)
+# БД.ТЕР is «Терминалы» + «Наконечники» since migration 0165: the makers of both.
+_TERMINAL_VALUES = frozenset(tab.value for tab in TERMINAL_TABS)
 
 ACTOR_NAME = "обновление склада 26.10"
 REVERT_ACTOR_NAME = "откат обновления склада 26.10"
@@ -229,7 +231,7 @@ class Catalog:
         self._names = ReferenceNames(self.records)
         for record in self.records:
             tab = record.tab.value if isinstance(record.tab, TechOperationTab) else str(record.tab)
-            if tab != TechOperationTab.TERMINAL.value:
+            if tab not in _TERMINAL_VALUES:  # contacts and lugs (БД.ТЕР)
                 continue
             fields = record.fields or {}
             key = article_key(fields.get("terArticle") or fields.get("article") or "")

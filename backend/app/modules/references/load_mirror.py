@@ -43,7 +43,7 @@ from uuid import UUID
 from app.shared.identity import Actor
 
 from .application import ReplaceSnapshotCommand, TechRecordInput, UnitOfWork, replace_snapshot_detailed
-from .domain import ReferenceValidationError, TechOperationTab
+from .domain import ReferenceValidationError, TechOperationTab, tab_family
 from .wire_makers import split_fields
 from .technology import (
     TER_CARD_KEYS, KAB_TABLES, SHEET_TABLES, SPR_KAB_SHEET, TECH_SHEETS, TECH_SNAPSHOT_SCHEMA_VERSION, import_sheet_table,
@@ -201,7 +201,9 @@ def load_mirror(source: Path, uow: UnitOfWork, *, dry_run: bool, now: datetime) 
     tables = mirror.tables
     with uow:
         metadata = uow.tech_operations.metadata()
-        current = {tab: len(uow.tech_operations.list(tab=TechOperationTab(tab), query="", limit=100_000)) for tab in tables}
+        # a sheet's rows in every base of its family (БД.ТЕР: «Терминалы» + «Наконечники»; БД.ПРОВ: the cable bases)
+        current = {tab: len(uow.tech_operations.list(tab=tab_family(TechOperationTab(tab)), query="", limit=100_000))
+                   for tab in tables}
     counts = {tab: len(records) for tab, records in tables.items()}
     source_updated_at = mirror.source_updated_at or (metadata["source_updated_at"] if metadata else None)
     skipped: dict[str, int] = {}

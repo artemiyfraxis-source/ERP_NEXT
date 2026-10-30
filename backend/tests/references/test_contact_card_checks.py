@@ -67,20 +67,20 @@ def sessions():
 
 
 def _insert(session: Session, tab: str, fields: dict) -> None:
-    # a БД.ТЕР row is always in one list (CHECK of migration 0155): «Терминалы» here
     session.execute(text(
-        "INSERT INTO tech_operation_records (id, tab, display_text, normalized_search, source_sheet, sort_key, fields,"
-        " ter_kind) VALUES (:id, :tab, 'x', 'x', '', 'x', :fields, :kind)"),
-        {"id": uuid4().hex, "tab": tab, "fields": json.dumps(fields), "kind": "contact" if tab == "ter" else None})
+        "INSERT INTO tech_operation_records (id, tab, display_text, normalized_search, source_sheet, sort_key, fields)"
+        " VALUES (:id, :tab, 'x', 'x', '', 'x', :fields)"),
+        {"id": uuid4().hex, "tab": tab, "fields": json.dumps(fields)})
 
 
+@pytest.mark.parametrize("tab", ["ter", "lug"])  # «Наконечники» keep the card checks as a base of their own (0165)
 @pytest.mark.parametrize("fields", [
     {"terGender": "Pin"}, {"terInsOdFrom": "3", "terInsOdTo": "2"}, {"terInsOdFrom": "abc"}, {"terInsOdTo": "0"},
     {"terInsOdTo": "1,2,3"}, {"terDatasheet": "www.molex.com"},
 ])
-def test_the_database_refuses_a_bad_card_whoever_writes_it(sessions, fields):
+def test_the_database_refuses_a_bad_card_whoever_writes_it(sessions, fields, tab):
     with sessions() as session, pytest.raises(IntegrityError):
-        _insert(session, "ter", fields)
+        _insert(session, tab, fields)
         session.commit()
 
 

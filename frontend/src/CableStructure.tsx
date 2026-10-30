@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { cellFailure, fieldCellEdit, ownCellEdit } from "./CustomColumn";
 import { DataTable, type DataCellEdit, type DataColumn } from "./DataTable";
 import {
+  cableTab,
   failureText,
   referencesApi,
   type CableKind,
@@ -424,7 +425,7 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
     let record = row?.record ?? null;
     try {
       if (!record) {
-        record = await referencesApi.createRecord("prov", fields, "wire");
+        record = await referencesApi.createRecord(cableTab("wire"), fields);
       } else {
         const edits = Object.entries(fields)
           .filter(([name, value]) => (record?.fields[name] ?? "") !== value)
@@ -437,7 +438,7 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
       if (changedWire && record && kind === "wire" && (!shared || sharedChanged)) {
         await referencesApi.saveHookup(record.id, { ...wire, old: row?.hookup ? hookupPayload(row.hookup) : shared ? hookupPayload(shared) : null });
       }
-      if (row?.record && kind !== row.kind) await referencesApi.moveCable(row.record.id, kind);
+      if (row?.record && kind !== row.kind) await referencesApi.moveRecord(row.record.id, cableTab(kind));
       const mark = (fields[MARK] || record?.display_text || "").trim();
       await onSaved(row ? kind !== row.kind ? `«${mark}» перенесён во вкладку «${CABLE_KIND_LABELS[kind]}», заполненные значения сохранены` : `«${mark}» сохранён` : `«${mark}» добавлен`);
     } catch (reason) {

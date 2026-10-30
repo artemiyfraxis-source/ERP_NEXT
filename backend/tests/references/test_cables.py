@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.modules.references.application import (
-    SetCableKindCommand, SetCoaxDiametersCommand, StaleRecordError, list_cables, set_cable_kind, set_coax_diameters,
+    MoveRecordCommand, SetCoaxDiametersCommand, StaleRecordError, list_cables, move_record, set_coax_diameters,
 )
 from app.modules.references.cables import CableKind, auto_kind, cable_counts, cable_rows, family_dia
 from app.modules.references.domain import ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab
@@ -101,9 +101,10 @@ def test_the_stored_kind_beats_the_rule():
     assert (row.kind, row.auto, row.manual, row.reason) == (CableKind.MULTI, CableKind.WIRE, True, "перенесён вручную")
 
 
-def test_a_wire_record_needs_its_list_and_another_tab_has_none():
-    with pytest.raises(ReferenceValidationError):
-        _record("prov", {"Марка": "ПВАМ 0,50"})
+def test_a_cable_kind_names_a_cable_base_and_another_tab_has_none():
+    # every cable kind is a base of its own (migration 0165): «prov» is the монтажные провода
+    assert _record("prov", {"Марка": "ПВАМ 0,50"}).cable_kind == "wire"
+    assert _record("prov", {"Марка": "RG316"}, cable_kind="coax").tab == TechOperationTab.CAB_COAX
     with pytest.raises(ReferenceValidationError):
         _record("prov", {"Марка": "ПВАМ 0,50"}, cable_kind="other")
     with pytest.raises(ReferenceValidationError):
@@ -171,13 +172,21 @@ def test_diameters_refuse_stale_values_formulas_and_text(tmp_path, uow):
     assert _row(uow, "RG316").dia.fields["D1"] == "0,5"
 
 
+def move_cable(record_id, kind: CableKind, uow):
+    """A cable moved to the base of `kind` (`move_record`) and its row of «Кабели и провода»."""
+    from app.modules.references.application import cable_catalog
+    from app.modules.references.domain import cable_tab
+    move_record(MoveRecordCommand(record_id, cable_tab(kind), ACTOR, NOW), uow)
+    return next(row for row in cable_catalog(uow).rows if row.record is not None and row.record.id == record_id)
+
+
 def test_move_between_lists_survives_a_mirror_reload_and_moving_back_clears_it(tmp_path, uow):
     load_mirror(_mirror(tmp_path / "a"), uow, dry_run=False, now=NOW)
     pvam = _row(uow, "ПВАМ 0,50")
 
     assert pvam.record.cable_kind == "wire" and "Волновое сопротивление, Ом" not in pvam.record.fields  # not a wire column
 
-    moved = set_cable_kind(SetCableKindCommand(pvam.record.id, CableKind.MULTI, ACTOR, NOW), uow)
+    moved = move_cable(pvam.record.id, CableKind.MULTI, uow)
     assert moved.kind == CableKind.MULTI and moved.manual and moved.record.cable_kind == "multi"
     assert moved.record.fields["Наружный диаметр, мм"] == "1,6"
     load_mirror(_mirror(tmp_path / "b", prov=PROV.replace("1,6", "1,7")), uow, dry_run=False, now=NOW)
@@ -187,7 +196,7 @@ def test_move_between_lists_survives_a_mirror_reload_and_moving_back_clears_it(t
     assert again.record.fields["Наружный диаметр, мм"] == "1,7"  # the row itself still follows the mirror
     assert not again.record.edited_in_erp
 
-    back = set_cable_kind(SetCableKindCommand(again.record.id, CableKind.WIRE, ACTOR, NOW), uow)
+    back = move_cable(again.record.id, CableKind.WIRE, uow)
     assert (back.kind, back.manual) == (CableKind.WIRE, False)
     with uow:
         assert not [entry for entry in uow.references.list() if entry.kind == ReferenceKind.CABLE_KIND]
@@ -196,8 +205,8 @@ def test_move_between_lists_survives_a_mirror_reload_and_moving_back_clears_it(t
 def test_move_needs_a_wire_record(tmp_path, uow):
     load_mirror(_mirror(tmp_path), uow, dry_run=False, now=NOW)
     diameter_only = _row(uow, "RG58")
-    with pytest.raises(LookupError):
-        set_cable_kind(SetCableKindCommand(diameter_only.dia.id, CableKind.WIRE, ACTOR, NOW), uow)
+    with pytest.raises(ReferenceValidationError):  # a D-table row is view-only: it moves nowhere
+        move_record(MoveRecordCommand(diameter_only.dia.id, TechOperationTab.WIRE, ACTOR, NOW), uow)
 
 
 # --- HTTP ---
@@ -260,7 +269,11 @@ def test_api_lists_moves_and_edits_cables(tmp_path, sessions, cables_api):  # no
 
     bases = cables_api.get("/api/references/bases").json()
     assert bases["cables"] == {"coax": 6, "wire": 2, "multi": 2, "lan": 0}
-    assert bases["tabs"]["kab_awg"] == 1 and bases["tabs"]["kab_coax"] == 4 and bases["tabs"]["prov"] == len(PROV_ROWS)
+    assert bases["tabs"]["kab_awg"] == 1 and bases["tabs"]["kab_coax"] == 4
+    # each cable kind its own base (migration 0165): the chips count the bases
+    assert {tab: bases["tabs"][tab] for tab in ("cab_coax", "prov", "cab_multi", "cab_lan")} == {
+        "cab_coax": 4, "prov": 2, "cab_multi": 2, "cab_lan": 0}  # ПВАМ 0,50 moved to the coax cables
+    assert sum(base["count"] for base in bases["bases"] if base["id"] == "prov") == len(PROV_ROWS)
 
 
 def test_api_cable_edits_need_the_reference_edit_right(tmp_path, sessions, cables_api):  # noqa: F811
@@ -278,4 +291,5 @@ def test_record_ids_are_uuids_for_wire_rows(tmp_path, sessions, cables_api):  # 
     load_mirror(_mirror(tmp_path), SqlAlchemyReferencesUnitOfWork(sessions), dry_run=False, now=NOW)
     for row in cables_api.get("/api/references/cables").json()["rows"]:
         if row["record"]:
-            assert UUID(row["id"]) and row["record"]["tab"] == "prov"
+            assert UUID(row["id"]) and row["record"]["tab"] == {"coax": "cab_coax", "wire": "prov", "multi": "cab_multi",
+                                                                 "lan": "cab_lan"}[row["kind"]]

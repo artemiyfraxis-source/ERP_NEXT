@@ -42,7 +42,7 @@ def _seed(client: TestClient) -> list[dict]:
                     for row in PROV],
     })
     assert response.status_code == 200, response.text
-    return client.get("/api/references/tech-operations", params={"tab": "prov"}).json()["records"]
+    return client.get("/api/references/tech-operations", params={"tab": "prov", "family": "true"}).json()["records"]
 
 
 def _download(client: TestClient, table: str = "prov", titles: dict | None = None, kind: str = "") -> bytes:
@@ -88,7 +88,7 @@ def _audit(event_type: str) -> list[AuditEventRow]:
 
 
 def _prov(client: TestClient) -> dict[str, dict]:
-    records = client.get("/api/references/tech-operations", params={"tab": "prov"}).json()["records"]
+    records = client.get("/api/references/tech-operations", params={"tab": "prov", "family": "true"}).json()["records"]
     return {record["id"]: record["fields"] for record in records}
 
 
@@ -98,7 +98,7 @@ def test_the_downloaded_file_carries_id_version_every_field_and_the_screen_title
 
     assert rows[0][:2] == ["ID записи", "Версия"]
     assert "Марка" in rows[0] and "Цвет изоляции" in rows[0]
-    assert "Категория" in rows[0]  # every column of БД.ПРОВ, not just the visible ones
+    assert "Стандарт" in rows[0]  # every column of the base («prov» — монтажные провода), not just the visible ones
     assert sorted(row[0] for row in rows[1:]) == sorted(record["id"] for record in records)
     assert all(len(row[1]) == 12 for row in rows[1:])
     service = read_xlsx(_download(references_api))[1]
@@ -394,7 +394,7 @@ def _seed_cables(client: TestClient) -> dict[str, dict]:
           "fields": {"Кабель": "RG316", "D1": "0,5", "D2": "1,48", "D3": "1,95"}}]}).status_code == 200
     gauge = client.post("/api/references/wire-gauges", json={"awg": "28", "section_mm2": "0,08"}).json()
     records = {record["fields"]["Марка"]: record for record in
-               client.get("/api/references/tech-operations", params={"tab": "prov"}).json()["records"]}
+               client.get("/api/references/tech-operations", params={"tab": "prov", "family": "true"}).json()["records"]}
     response = client.put(f"/api/references/cables/{records['UL1061 28AWG']['id']}/hookup", json={
         "series": "UL1061", "gauge_id": gauge["id"], "insulation": "ПВХ", "outer_d_mm": "0,89", "voltage_v": "",
         "temp_min_c": "", "temp_max_c": "", "conductor_material": "медь луженая", "insulation_thickness_mm": "0,2"})

@@ -27,19 +27,20 @@ from uuid import UUID
 from app.shared.identity import Actor
 
 from .application import (
-    FieldEdit, SaveGaugeCommand, SaveHookupCommand, SetCoaxDiametersCommand, UnitOfWork, _audit, _clean_new_fields,
+    custom_columns, FieldEdit, SaveGaugeCommand, SaveHookupCommand, SetCoaxDiametersCommand, UnitOfWork, _audit, _clean_new_fields,
     _create_in, _edit_in, save_gauge_in, save_hookup_in, set_coax_diameters_in,
 )
 from .cable_structure import parse_hookup, shown
-from .cables import DIAMETERS, CableKind, cable_mark, cable_rows, diameter_index
+from .cables import DIAMETERS, cable_mark, cable_rows, diameter_index
 from .domain import (
-    BASE_COLUMNS, CABLE_DROPPED, CABLE_KIND_VALUES, COAX_DROPPED_COLUMNS, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceKind, ReferenceValidationError,
+    BASE_COLUMNS, CABLE_DROPPED, CABLE_KIND_BY_TAB, CABLE_KIND_VALUES, CABLE_TAB_BY_KIND, CABLE_TABS, COAX_DROPPED_COLUMNS,
+    TER_TAB_BY_KIND, family_root, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceKind, ReferenceValidationError,
     StaleRecordError, TechOperationRecord, TechOperationTab, merge_country_pairs, normalized_cable_key,
     normalized_manufacturer_key, normalized_supplier_key,
 )
 from .equipment import EXTRA_KEYS, TARGETS_KEY
 from .importers import _MapTarget, cable_list_columns
-from .lugs import LUG, TER_KIND_LABELS, TER_KIND_VALUES, lug_columns
+from .lugs import lug_columns
 from .technology import OPERATION_TD_KEYS, schema_columns, schema_keys
 from .xlsx_file import Cell, ReadSheet, Sheet, XlsxError, read_xlsx, write_xlsx
 
@@ -96,37 +97,24 @@ class _Table(Protocol):
 
 
 class _TechTable:
-    """БД.ОБ / БД.ОП / БД.ТЕР / БД.КОАКС / БД.ПРОВ / БД.МАТ rows by record id.
+    """The rows of one base of «База данных» by record id (every base is its own table, owner 28.10.2026).
 
-    БД.ПРОВ of one cable list (owner 20.10.2026: «у каждого своя структура»): only the rows of that list
-    (`TechOperationRecord.cable_kind`) and only that list's columns — `CABLE_COLUMNS[list]`, the owner's columns of the
-    list, the cells its rows carry that are no other list's column nor removed from the list (25.10.2026), then the list's
-    extras; a row created from the file goes to that list. Without a list — every row and column of БД.ПРОВ (a new row's list by the rule)."""
+    A cable base (owner 20.10.2026: «у каждого своя структура»): only that base's columns — `CABLE_COLUMNS[kind]`, the
+    owner's columns of the base, the cells its rows carry that are no other cable base's column nor removed from it
+    (25.10.2026), then the base's extras (the coax D1–D3, the монтажный structure). «Наконечники»: the lug columns
+    (`lugs.LUG_COLUMN_SLOTS`) and the owner's."""
 
     titles: Mapping[str, str] = {}
 
     def __init__(self, tab: TechOperationTab, label: str, kinds: Mapping[str, str] | None = None) -> None:
         self.tab, self.label, self.kinds = tab, label, dict(kinds or {})
-        self.extras: Mapping[str, str] = {}  # extra columns of the chosen list: field → title
-        self.cable_kind = ""  # БД.ПРОВ: the cable list of the file ('' — all lists together)
-        self.own_columns: tuple[str, ...] = ()  # БД.ПРОВ of a list: its columns, read in `items`
-        self.foreign: frozenset[str] = frozenset()  # БД.ПРОВ of a list: the columns of the other lists only
-        self.ter_kind = ""  # БД.ТЕР: «contact» («Терминалы») / «lug» («Наконечники»); '' — every row
-
-    def for_kind(self, kind: str) -> "_TechTable":
-        if self.tab == TechOperationTab.WIRE and kind:
-            if kind not in CABLE_KIND_VALUES:
-                raise RoundtripError(f"Списка «{kind}» в «Кабелях и проводах» нет — скачайте таблицу заново из "
-                                     "коаксиальных, монтажных, многожильных или кабелей Ethernet")
-            self.cable_kind = kind
-            self.extras = COAX_TITLES if kind == "coax" else HOOKUP_TITLES if kind == "wire" else {}
+        self.cable_kind = CABLE_KIND_BY_TAB.get(tab, "")  # a cable base: its kind
+        self.extras: Mapping[str, str] = {}  # extra columns of the base: field → title
+        if self.cable_kind:
+            self.extras = COAX_TITLES if self.cable_kind == "coax" else HOOKUP_TITLES if self.cable_kind == "wire" else {}
             self.titles = self.extras
-        if self.tab == TechOperationTab.TERMINAL and kind:
-            if kind not in TER_KIND_VALUES:
-                raise RoundtripError(f"Списка «{kind}» в БД.ТЕР нет — скачайте таблицу заново из «Терминалов» или "
-                                     "«Наконечников»")
-            self.ter_kind = kind
-        return self
+        self.own_columns: tuple[str, ...] = ()  # a cable base: its columns, read in `items`
+        self.foreign: frozenset[str] = frozenset()  # a cable base: the columns of the other cable bases only
 
     def _extra_values(self, uow: UnitOfWork, records: Sequence[TechOperationRecord]) -> dict[str, dict[str, str]]:
         """The extra columns of every БД.ПРОВ row, read in the open `uow` (the cable catalogue's own join)."""
@@ -148,22 +136,15 @@ class _TechTable:
         return result
 
     def _records(self, uow: UnitOfWork) -> list[TechOperationRecord]:
-        records = list(uow.tech_operations.list(tab=self.tab, query="", limit=100_000))
-        if self.cable_kind:  # БД.ПРОВ of one list: its rows only (an ID of another list's row is «not found»)
-            records = [record for record in records if record.cable_kind == self.cable_kind]
-        if self.ter_kind:  # БД.ТЕР of one list: its rows only (an ID of the other list's row is «not found»)
-            records = [record for record in records if record.ter_kind == self.ter_kind]
-        return records
+        """The base's rows only (an ID of another base's row is «not found»)."""
+        return list(uow.tech_operations.list(tab=self.tab, query="", limit=100_000))
 
     def kind_ids(self, uow: UnitOfWork, kind: str) -> set[str] | None:
-        """The ids of one list of the tab («Оболочки» of БД.МАТ), read in `uow` (not open); a cable list of БД.ПРОВ is
-        chosen by `_records` itself."""
+        """The ids of one list of the tab («Оболочки» of БД.МАТ), read in `uow` (not open)."""
         if not kind:
             return None
         if kind not in self.kinds:
             raise RoundtripError("Неизвестный список: " + kind)
-        if self.tab in (TechOperationTab.WIRE, TechOperationTab.TERMINAL):
-            return None
         from .coverings import build  # «Оболочки»: the БД.МАТ rows that cover a harness
         with uow:
             records = self._records(uow)
@@ -176,6 +157,8 @@ class _TechTable:
             self.own_columns = columns[self.cable_kind]
             self.foreign = frozenset(name for kind, names in columns.items() if kind != self.cable_kind
                                      for name in names) - set(self.own_columns)
+        if self.tab == TechOperationTab.LUG:  # «Наконечники»: the owner's columns of the base after the lug columns
+            self.own_columns = tuple(custom_columns(self.tab, uow))
         extra = self._extra_values(uow, records) if self.extras else {}
         return [
             Item(str(record.id), record.display_text.strip(" /") or str(record.id),
@@ -210,8 +193,9 @@ class _TechTable:
             mapped = {key for item in items for key in schema_columns(self.tab.value, item.values)}
             ordered.update(dict.fromkeys(key for key in OPERATION_TD_KEYS if key not in mapped))
         ordered.update(dict.fromkeys(self.extras))
-        if self.ter_kind == LUG:  # «Наконечники»: the list's own columns only (`lugs.LUG_COLUMN_SLOTS`)
-            return lug_columns(list(ordered))
+        if self.tab == TechOperationTab.LUG:  # «Наконечники»: the base's own columns only (`lugs.LUG_COLUMN_SLOTS`)
+            own = self.own_columns
+            return [*lug_columns([name for name in ordered if name not in own]), *own]
         return list(ordered)
 
     def update(self, uow, item, changes, actor, now):
@@ -279,8 +263,7 @@ class _TechTable:
         (D1–D3 of a coax cable, the structure of a монтажный wire), as `update` writes them."""
         own = {name: value for name, value in values.items() if name not in self.extras}
         extra = {name: value for name, value in values.items() if name in self.extras}
-        kind = CableKind(self.cable_kind) if self.cable_kind else None
-        record = _create_in(self.tab, _clean_new_fields(self.tab, own), uow, kind, self.ter_kind or None)
+        record = _create_in(self.tab, _clean_new_fields(self.tab, own), uow)
         _audit("references.tech_record_created", actor, now, {
             "record_id": str(record.id), "tab": record.tab.value, "via": VIA,
             **({"cable_kind": record.cable_kind} if record.cable_kind else {}),
@@ -414,9 +397,10 @@ def _tables() -> dict[str, Callable[[], _Table]]:
     return {
         "ob": lambda: _TechTable(TechOperationTab.EQUIPMENT, "Оборудование"),
         "op": lambda: _TechTable(TechOperationTab.OPERATION, "Операции (БД.ОП)"),
-        "ter": lambda: _TechTable(TechOperationTab.TERMINAL, "Терминалы", TER_KIND_LABELS),
+        "ter": lambda: _TechTable(TechOperationTab.TERMINAL, "Терминалы"),
+        "lug": lambda: _TechTable(TechOperationTab.LUG, "Наконечники"),
         "coax": lambda: _TechTable(TechOperationTab.COAX, "Коаксиальные разъёмы"),
-        "prov": lambda: _TechTable(TechOperationTab.WIRE, "Кабели и провода", CABLE_KINDS),
+        **{tab.value: (lambda tab=tab: _TechTable(tab, CABLE_KINDS[CABLE_KIND_BY_TAB[tab]])) for tab in CABLE_TABS},
         "mat": lambda: _TechTable(TechOperationTab.MATERIAL, "Материалы", {"cov": "Оболочки"}),
         "wire-gauges": _GaugeTable,
         "suppliers": lambda: _MapTable(ReferenceKind.SUPPLIER, "Домен → поставщик", "Домен или ссылка", "Поставщик",
@@ -430,12 +414,32 @@ ROUNDTRIP_TABLES = tuple(_tables())
 MAP_ROUNDTRIP_TABLES = ("suppliers", "countries")
 
 
+# The lists of БД.ПРОВ / БД.ТЕР before migration 0165 made them bases of their own: (tab, list) → the base. A file
+# downloaded from a list (its «Таблица» / «Список») loads into that base.
+_LIST_BASES = {
+    **{("prov", kind): (CABLE_TAB_BY_KIND[kind].value, "") for kind in CABLE_KIND_VALUES},
+    **{("ter", kind): (TER_TAB_BY_KIND[kind].value, "") for kind in TER_TAB_BY_KIND},
+}
+
+
+def _resolved(tab: str, kind: str = "") -> tuple[str, str]:
+    return _LIST_BASES.get((tab, kind), (tab, kind))
+
+
+def _family(tab: str) -> str:
+    """The sheet a base came from («cab_coax» → «prov», «lug» → «ter»); a name of no base — itself."""
+    try:
+        return family_root(TechOperationTab(tab)).value
+    except ValueError:
+        return tab
+
+
 def _table(tab: str, kind: str = "") -> _Table:
+    tab, kind = _resolved(tab, kind)
     factory = _tables().get(tab)
     if factory is None:
         raise LookupError(f"Нет таблицы «{tab}» для правки файлом; есть: " + ", ".join(ROUNDTRIP_TABLES))
-    table = factory()
-    return table.for_kind(kind) if isinstance(table, _TechTable) else table
+    return factory()
 
 
 def _label(table: _Table, kind: str) -> str:
@@ -461,6 +465,7 @@ def _listed(table: _Table, uow_factory: Callable[[], UnitOfWork], kind: str) -> 
 
 def table_fields(tab: str, uow_factory: Callable[[], UnitOfWork], kind: str = "") -> dict:
     """What «Скачать для правки» writes: the fields in order and the table's own titles (the screen adds its own)."""
+    tab, kind = _resolved(tab, kind)
     table = _table(tab, kind)
     items = _listed(table, uow_factory, kind)
     return {"tab": tab, "kind": kind, "label": _label(table, kind), "fields": table.fields(items),
@@ -487,6 +492,7 @@ class ExportedFile:
 
 def export_file(tab: str, uow_factory: Callable[[], UnitOfWork], titles: Mapping[str, str], now: datetime,
                 kind: str = "") -> ExportedFile:
+    tab, kind = _resolved(tab, kind)
     table = _table(tab, kind)
     items = _listed(table, uow_factory, kind)
     fields = table.fields(items)
@@ -641,18 +647,25 @@ _ROW_ERRORS = (ReferenceValidationError, StaleRecordError, LookupError, ValueErr
 
 def import_file(tab: str, uow_factory: Callable[[], UnitOfWork], content: bytes, actor: Actor, now: datetime, *,
                 dry_run: bool, kind: str = "") -> Report:
-    _table(tab)  # an unknown table is refused before the file is read
+    _table(tab, kind)  # an unknown table is refused before the file is read
     main, service = _sheets(content)
     service_titles, meta = _service_map(service)
-    table = _table(tab, kind or meta.get("Список", ""))
-    if meta.get("Таблица") and meta["Таблица"] != tab:
+    asked = _resolved(tab, kind)
+    given = _resolved(meta.get("Таблица") or asked[0], meta.get("Список", ""))
+    # a file of a base loads into it; the БД.ПРОВ / БД.ТЕР load without a list takes the base of the file (the screens
+    # before migration 0165 load every cable list's file at «prov»)
+    if not kind and given[0] != asked[0] and _family(given[0]) == _family(asked[0]):
+        asked = given
+    tab, kind = asked if kind else (asked[0], given[1] if given[0] == asked[0] else asked[1])
+    table = _table(tab, kind)
+    if meta.get("Таблица") and given[0] != tab:
         raise RoundtripError(f"Файл скачан из другой таблицы («{meta.get('Название') or meta['Таблица']}») — "
                              f"загрузите его в ней")
     if not main.rows:
         raise RoundtripError("Лист таблицы пуст")
     if len(main.rows) - 1 > MAX_FILE_ROWS:
         raise RoundtripError(f"Строк в файле больше {MAX_FILE_ROWS}")
-    report = Report(tab=tab, label=_label(table, kind or meta.get("Список", "")), dry_run=dry_run)
+    report = Report(tab=tab, label=_label(table, kind), dry_run=dry_run)
     uow = uow_factory()
     with uow:
         items = table.items(uow)

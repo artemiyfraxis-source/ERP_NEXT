@@ -1,4 +1,5 @@
-"""«+ Столбец» (owner 14.10.2026): the owner's own column of a reference table; БД.ПРОВ — of one cable list (20.10.2026)."""
+"""«+ Столбец» (owner 14.10.2026): the owner's own column of a reference table — each base its own (owner 28.10.2026:
+«каждая вкладка в БД — это отдельная таблица БД»; every cable kind and «Наконечники» are bases since migration 0165)."""
 
 from uuid import UUID
 
@@ -8,7 +9,7 @@ from sqlalchemy import select
 from app.main import app
 from app.modules.references.application import ColumnCommand, FieldEdit, _edit_in, add_column, custom_columns
 from app.modules.references.cables import CableKind
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import CABLE_TABS, TechOperationTab
 from app.modules.references.load_mirror import ACTOR, load_mirror
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow
@@ -51,7 +52,7 @@ def test_a_column_is_added_to_every_record_listed_edited_inline_and_audited_once
     assert after["columns"][-1] == "Склад полка"
     assert all(record["fields"]["Склад полка"] == "" for record in after["records"])
     [event] = _events("references.column_added")
-    assert event.details == {"tab": "prov", "column": "Склад полка", "records": 2, "cable_kind": "wire"}
+    assert event.details == {"tab": "prov", "column": "Склад полка", "records": 2}
     edit = references_api.patch(f"/api/references/tech-operations/{records[0]['id']}",
                                 json={"edits": [{"field": "Склад полка", "old": "", "value": "А-12"}]})
     assert edit.status_code == 200 and edit.json()["fields"]["Склад полка"] == "А-12"
@@ -69,9 +70,11 @@ def test_the_cables_screen_columns_and_the_coax_tab_get_the_new_column(reference
     assert "Полка" not in cables["columns_by_kind"]["coax"] and cables["custom_columns_by_kind"]["wire"] == ["Полка"]
     assert _columns(references_api, "coax")[-1] == "Полка"
     assert references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "wire", "name": "полка"}).status_code == 422
-    no_list = references_api.post(COLUMNS, json={"tab": "prov", "name": "Ячейка"})
-    assert no_list.status_code == 422 and "список кабелей" in no_list.json()["detail"]
-    # another list has no such column yet: a coax cable gets its own «Полка» (here the list is empty — no place for it)
+    # «prov» is a base of its own (the монтажные провода): a column of it without the list API's kind
+    assert references_api.post(COLUMNS, json={"tab": "prov", "name": "Ячейка"}).status_code == 201
+    assert references_api.get("/api/references/cables").json()["custom_columns_by_kind"]["wire"] == ["Полка", "Ячейка"]
+    # another base has no such column yet: a coax cable gets its own «Полка» (here the base is empty — no place for it)
+    assert "нет записей" in references_api.post(COLUMNS, json={"tab": "cab_coax", "name": "Полка"}).json()["detail"]
     assert "нет записей" in references_api.post(COLUMNS, json={"tab": "prov", "cable_kind": "coax", "name": "Полка"}).json()["detail"]
 
 
@@ -115,14 +118,14 @@ def test_the_column_survives_a_mirror_reload_and_a_row_that_lacks_it_still_edits
     load_mirror(_mirror(tmp_path / "b", prov=prov), uow, dry_run=False, now=NOW)
 
     with uow:
-        records = {item.fields["Марка"]: item for item in uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=100)}
+        records = {item.fields["Марка"]: item for item in uow.tech_operations.list(tab=CABLE_TABS, query="", limit=100)}
         wires = {mark for mark, record in records.items() if record.cable_kind == "wire"}
         assert written == len(wires) - 1 == 3 and len(records) == len(PROV_ROWS) + 1
         assert all(record.fields.get("Полка") == "" for mark, record in records.items() if mark in wires - {"Новый 1"})
         assert not any("Полка" in record.fields for mark, record in records.items() if mark not in wires)  # own list only
         assert "Полка" not in records["Новый 1"].fields and records["Новый 1"].cable_kind == "wire"
-        assert custom_columns(TechOperationTab.WIRE, uow) == ["Полка"] == custom_columns(TechOperationTab.WIRE, uow, "wire")
-        assert custom_columns(TechOperationTab.WIRE, uow, "coax") == []
+        assert custom_columns(TechOperationTab.WIRE, uow) == ["Полка"]
+        assert custom_columns(TechOperationTab.CAB_COAX, uow) == [] == custom_columns(TechOperationTab.CAB_MULTI, uow)
         _record_in, updated = _edit_in(records["Новый 1"].id, (FieldEdit("Полка", "", "Б-3"),), NOW, uow)
     assert updated.fields["Полка"] == "Б-3"
 
