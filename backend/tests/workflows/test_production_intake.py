@@ -192,13 +192,16 @@ def test_intake_lists_every_kb_of_open_projects_until_everything_is_sent(intake_
     assert by_kb[("709К.1", "КБ1")]["deadline"] is None and by_kb[("709К.1", "КБ1")]["needed"] == "3"
 
     done = by_kb[("708К.4", "КБ10")]
-    assert (done["stage"], done["delivered"], done["remaining"]) == ("ОТК", "5", "5")
+    # Задание «Выполнено», коробок у ОТК нет — производство закончено: «Готово» (владелец 29.10).
+    assert (done["stage"], done["delivered"], done["remaining"]) == ("Готово", "5", "5")
     # Решение «упаковывать» (0162): 708К.4 — его поставила отправка менеджера в фикстуре, у 709К.1 решения нет.
     assert partly_accepted["pack_decided"] is True and partly_handed["pack_decided"] is True
     assert by_kb[("709К.1", "КБ1")]["pack_decided"] is False
 
     for row in rows:  # в работе — до заказанного (или сданного, если сдано больше); не запущена — до сданного
-        in_work = row["tasks"] or row["stage"] in ("Распланировано", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке")
+        in_work = row["tasks"] or row["stage"] in (
+            "Распланировано", "В работе", "Готово", "ОТК", "ОТК пройден", "Готово к отгрузке", "На отгрузке",
+        )
         cap = max(Decimal(row["needed"]), Decimal(row["delivered"])) if in_work else Decimal(row["delivered"])
         assert Decimal(row["remaining"]) == max(cap - Decimal(row["accepted"]), Decimal(0))
 
@@ -290,6 +293,19 @@ def test_kb_in_work_without_erp_tasks_can_be_accepted_up_to_the_order():
     rows = {row.item_index: row for row in intake_rows(facts)}
     assert (rows["КБ1"].stage, rows["КБ1"].remaining) == ("В работе", 30)
     assert rows["КБ2"].remaining == 0
+
+
+@pytest.mark.parametrize("stage", ["Готово", "ОТК", "ОТК пройден"])
+def test_kb_ready_or_at_qc_without_erp_tasks_can_be_accepted_up_to_the_order(stage):
+    """Владелец 29.10: «Готово», «ОТК» и «ОТК пройден» — сделано, ждёт приёмки: принимается до заказанного."""
+    facts = IntakeFacts(
+        projects=(PlanProjectSnapshot(project="723К.1"),),
+        kitsets=(_kitset("723К.1", ("КБ1", 50)),),
+        goods=(replace(_good("КБ1", 50, accepted=20), project="723К.1"),),
+        events=(PlanEvent(project="723К.1", item_index="КБ1", occurred_at=NOW, who="Мастер", kind="Этап КБ", value=stage),),
+    )
+    [row] = intake_rows(facts)
+    assert (row.stage, row.remaining) == (stage, 30)
 
 
 def test_intake_rows_carry_acceptance_acts_and_a_rollback_shrinks_the_latest(intake_api):

@@ -176,24 +176,27 @@ def kit_stage_facts(
     runs: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, set[str]], dict[str, KitMark]]:
     """`kitStageFacts_`: which КБ has an issued techcard and a picked kit (the two markers, owner 29.10), work begun,
-    finished production (ОТК), finished goods accepted and packed, gone.
+    finished production («Готово»), made goods at ОТК («ОТК»), finished goods accepted and packed, gone.
 
     ``worked`` — ids of tasks that have a work session (any but a cancelled one): someone started work on them.
     «В работе»: a work session or a «взял» of a share on any live task of the КБ — a launched task alone, or an issued
     kit, is no longer work (owner 12.10). «Распланировано» is gone (owner 29.10): placing tasks moves no stage.
 
     ``boxes`` — production boxes, ``inspected`` — ids of the boxes ОТК inspected: a final-operation box handed in (the
-    ОТК queue — no master confirmation since 13.10) or inspected counts its pieces as made. «ОТК» — the whole КБ run is
-    made (owner 22.10): Σ over the КБ's non-cancelled tasks of the made pieces (a done task — its quantity, a running
+    ОТК queue — no master confirmation since 13.10) or inspected counts its pieces as made. «Готово» — the whole КБ run
+    is made (owner 22.10): Σ over the КБ's non-cancelled tasks of the made pieces (a done task — its quantity, a running
     one — its final-operation boxes, at most its quantity) reaches the КБ run (``runs``: kit_stage_key → pieces,
     `launchable.kb_runs`, the run `launch_remainders` launches); a КБ without a known run — every launched piece made.
-    A done task of a partly launched run is not «ОТК». Shared by the production plan and the project kitset list
-    (SUPPLYMAP portalKitsetList).
+    A done task of a partly launched run is not «Готово». «ОТК» (owner 29.10: «Готово — это то, что производство
+    закончено; ОТК — то, что на проверке») — a made run with ОТК activity: a final-operation box of a live task of the
+    КБ in the ОТК queue or inspected. A run made with no such box (tasks set «Выполнено», a site's delivery) stays
+    «Готово». «ОТК пройден» (owner 29.10: a stub, set by hand for now) — the inspected final-operation boxes alone
+    cover the whole run. Shared by the production plan and the project kitset list (SUPPLYMAP portalKitsetList).
     """
     marks = dict(marks)
     facts: dict[str, set[str]] = {
         "tc": set(), "tc_project": set(), "kit": set(), "work": set(),
-        "qc": set(), "stock": set(), "packed": set(), "shipped": set(),
+        "made": set(), "qc": set(), "passed": set(), "stock": set(), "packed": set(), "shipped": set(),
     }
     facts["tc_project"].update(MANUAL_TECHCARD_PROJECTS)
     for card in cards:
@@ -225,7 +228,11 @@ def kit_stage_facts(
             task.id in worked or any(share.started_at is not None for op in task.operations for share in op.shares)
         ):
             facts["work"].add(key)
-    facts["qc"].update(_made_runs(tasks, boxes, frozenset(inspected), runs or {}))
+    boxes, inspected = tuple(boxes), frozenset(inspected)
+    made = _made_runs(tasks, boxes, inspected, runs or {})
+    facts["made"].update(made)
+    facts["qc"].update(made & _at_qc(tasks, boxes, inspected))
+    facts["passed"].update(made & _inspected_runs(tasks, boxes, inspected, runs or {}))
     # Регистр ГП (0111): принято / упаковано / отгружено всего по КБ — счётчики, которые двигает только ход журнала ГП.
     for good in goods:
         key = kit_stage_key(good.project, good.item_index)
@@ -242,18 +249,15 @@ def kit_stage_facts(
     return facts, marks
 
 
-def _made_runs(
-    tasks: tuple[ProductionTask, ...], boxes: Iterable[ProductionBox], inspected: frozenset[UUID], runs: Mapping[str, int],
-) -> set[str]:
-    """КБ, весь тираж которых сделан — этап «ОТК» (владелец 12.10: лестница с «ОТК»; 22.10: только когда сделан весь
-    тираж КБ, а не одно его задание). Сделано заданием: «Выполнено» — его тираж; «Запущено» — штуки коробок последней
-    операции в очереди ОТК (сдана монтажником) или проверенных ОТК, не больше тиража задания (коробка без штук в
-    фактах — всё задание). Отменённые не считаются."""
-    live = {task.id: task for task in tasks if task.status is not ProductionStatus.CANCELLED}
-    boxed: dict[UUID, Decimal | None] = {}
+def _final_pieces(
+    live: Mapping[UUID, ProductionTask], boxes: Iterable[ProductionBox], counts: Callable[[ProductionBox], bool],
+) -> dict[UUID, Decimal | None]:
+    """Штуки коробок последней операции по заданию (только коробки, где ``counts``); None — у коробки нет штук в
+    фактах (всё задание)."""
+    pieces: dict[UUID, Decimal | None] = {}
     for box in boxes:
         task = live.get(box.task_id)
-        if task is None or task.status is not ProductionStatus.RUNNING or not (box.status in TAKEABLE_BOX or box.id in inspected):
+        if task is None or not counts(box):
             continue
         try:
             final = task.final_operation.id
@@ -262,25 +266,69 @@ def _made_runs(
         if box.operation_id != final:
             continue
         quantity = getattr(box, "quantity", None)
-        current = boxed.get(task.id, Decimal(0))
-        boxed[task.id] = None if quantity is None or current is None else current + Decimal(quantity)
+        current = pieces.get(task.id, Decimal(0))
+        pieces[task.id] = None if quantity is None or current is None else current + Decimal(quantity)
+    return pieces
+
+
+def _covered_runs(
+    live: Mapping[UUID, ProductionTask], pieces: Mapping[UUID, Decimal | None], runs: Mapping[str, int], *,
+    done_counts: bool,
+) -> set[str]:
+    """КБ, у которых Σ штук заданий (не больше тиража задания) дошла до тиража КБ (``runs``; нет — всё запущенное).
+    ``done_counts`` — задание «Выполнено» считается сделанным целиком."""
     launched: dict[str, int] = {}
-    made: dict[str, Decimal] = {}
+    covered: dict[str, Decimal] = {}
     for task in live.values():
         key = kit_stage_key(task.project, task.item)
         launched[key] = launched.get(key, 0) + task.quantity
-        if task.status is ProductionStatus.DONE:
+        if done_counts and task.status is ProductionStatus.DONE:
             piece = Decimal(task.quantity)
-        elif task.id in boxed:
-            piece = min(Decimal(task.quantity), boxed[task.id] if boxed[task.id] is not None else Decimal(task.quantity))
+        elif task.id in pieces:
+            own = pieces[task.id]
+            piece = min(Decimal(task.quantity), own if own is not None else Decimal(task.quantity))
         else:
             continue
-        made[key] = made.get(key, Decimal(0)) + piece
-    return {key for key, value in made.items() if value > 0 and value >= (runs.get(key) or launched[key])}
+        covered[key] = covered.get(key, Decimal(0)) + piece
+    return {key for key, value in covered.items() if value > 0 and value >= (runs.get(key) or launched[key])}
+
+
+def _live(tasks: Iterable[ProductionTask]) -> dict[UUID, ProductionTask]:
+    return {task.id: task for task in tasks if task.status is not ProductionStatus.CANCELLED}
+
+
+def _made_runs(
+    tasks: tuple[ProductionTask, ...], boxes: Iterable[ProductionBox], inspected: frozenset[UUID], runs: Mapping[str, int],
+) -> set[str]:
+    """КБ, весь тираж которых сделан — этап «Готово» (владелец 12.10: лестница; 22.10: только когда сделан весь
+    тираж КБ, а не одно его задание; 29.10: сделанное — «Готово», у ОТК — «ОТК»). Сделано заданием: «Выполнено» — его
+    тираж; «Запущено» — штуки коробок последней операции в очереди ОТК (сдана монтажником) или проверенных ОТК, не
+    больше тиража задания (коробка без штук в фактах — всё задание). Отменённые не считаются."""
+    live = _live(tasks)
+    running = {task_id: task for task_id, task in live.items() if task.status is ProductionStatus.RUNNING}
+    pieces = _final_pieces(running, boxes, lambda box: box.status in TAKEABLE_BOX or box.id in inspected)
+    return _covered_runs(live, pieces, runs, done_counts=True)
+
+
+def _at_qc(tasks: tuple[ProductionTask, ...], boxes: Iterable[ProductionBox], inspected: frozenset[UUID]) -> set[str]:
+    """КБ, у которых ОТК уже есть что проверять или он проверил: коробка последней операции живого (не отменённого)
+    задания в очереди ОТК (сдана монтажником / подтверждена) или проверенная ОТК."""
+    live = _live(tasks)
+    pieces = _final_pieces(live, boxes, lambda box: box.status in TAKEABLE_BOX or box.id in inspected)
+    return {kit_stage_key(live[task_id].project, live[task_id].item) for task_id in pieces}
+
+
+def _inspected_runs(
+    tasks: tuple[ProductionTask, ...], boxes: Iterable[ProductionBox], inspected: frozenset[UUID], runs: Mapping[str, int],
+) -> set[str]:
+    """КБ, весь тираж которых проверил ОТК — этап «ОТК пройден»: Σ штук проверенных коробок последней операции (не
+    больше тиража задания) дошла до тиража КБ. «Выполнено» без проверенных коробок не считается."""
+    live = _live(tasks)
+    return _covered_runs(live, _final_pieces(live, boxes, lambda box: box.id in inspected), runs, done_counts=False)
 
 
 def issued_runs(cards: Iterable, kitsets: Iterable[Kitset]) -> dict[str, int]:
-    """Тиражи КБ для этапа «ОТК» (`kit_stage_facts`): `launchable.kb_runs` по выданным техкартам и наборам."""
+    """Тиражи КБ для этапа «Готово» (`kit_stage_facts`): `launchable.kb_runs` по выданным техкартам и наборам."""
     return kb_runs((card for card in cards if card.status is TechcardStatus.ISSUED), kitsets)
 
 

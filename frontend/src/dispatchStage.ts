@@ -9,8 +9,10 @@ export const DISPATCH_STAGES: ReadonlyArray<readonly [DispatchStage, string]> = 
   ["packed", "Упаковано"], ["to_ship", "На отгрузку"], ["shipped", "Отгружено"],
 ];
 
+// «Готово» (производство закончено), «ОТК» (на проверке) и «ОТК пройден» — уже не в цехе и ждут приёмки складом.
 const PROJECT_STAGE: Record<string, DispatchStage> = {
-  "В работе": "production", "ОТК": "ready", "Принято складом": "accepted", "Упаковано": "packed", "Отгружено": "shipped",
+  "В работе": "production", "Готово": "ready", "ОТК": "ready", "ОТК пройден": "ready", "Принято складом": "accepted",
+  "Упаковано": "packed", "Отгружено": "shipped",
 };
 
 /** Номер этапа на лестнице (для «не дальше принято» и сравнения). */

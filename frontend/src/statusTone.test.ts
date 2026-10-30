@@ -18,7 +18,7 @@ const BACKEND_STATUSES: Record<string, string[]> = {
   "shipping/domain.py ShipmentStatus": ["Новая", "Собрана", "Упакована", "Отгружена", "Закрыта", "Отменена"],
   "techcards/project_cards.py TechcardStatus": ["Черновик", "Выдана"],
   "production/plan.py PLAN_BLOCKERS": ["СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ"],
-  "production/plan.py KIT_STAGES": ["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"],
+  "production/plan.py KIT_STAGES": ["Новый", "В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано", "Отгружено"],
   "production/plan.py SHOP_STATUSES": ["СТОП", "ПРВ КОМПЛ", "К ЗАПУСК", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ", "ОТК", "НА ОТГР", "ГОТОВО", "УПАК", "ОТГРУЖЕН"],
   "production/plan.py TC_REVIEW_VALUES": ["не проверена", "проверена", "с погрешностями"],
   "production/plan.py PROJECT_TERMINALS": ["Отменён"],
@@ -81,8 +81,9 @@ describe("statusTone", () => {
   });
 
   it("colours the project stage ladder from new to shipped", () => {
-    expect(["Новый", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"]
-      .map(statusTone)).toEqual(["neutral", "info", "info", "success", "info", "success"]);
+    // «Готово» (производство закончено) и «ОТК пройден» — спокойный зелёный, «ОТК» (на проверке) — идёт.
+    expect(["Новый", "В работе", "Готово", "ОТК", "ОТК пройден", "Принято складом", "Упаковано", "Отгружено"]
+      .map(statusTone)).toEqual(["neutral", "info", "success", "info", "success", "success", "info", "success"]);
     // Слова листа «К ЗАПУСК» больше нет на экране — это этап «КБ набрана».
     expect(statusLabel("К ЗАПУСК")).toBe("КБ набрана");
   });

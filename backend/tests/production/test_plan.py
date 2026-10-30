@@ -209,7 +209,7 @@ def test_deadline_and_note_validation_match_current_supplymap():
         ({"project": "708К.4", "kind": "deadline"}, "Укажи дату"),
         ({"project": "708К.4", "kind": "tcReview", "item_index": "КБ1", "value": "с погрешностями"}, "Напиши"),
         ({"project": "708К.4", "kind": "stage", "item_index": "корпус", "value": "В работе"}, "Укажи КБ"),
-        ({"project": "708К.4", "kind": "stage", "value": "Готово"}, "Неизвестный этап"),
+        ({"project": "708К.4", "kind": "stage", "value": "Готов"}, "Неизвестный этап"),
         ({"project": "708К.4", "kind": "tcReview", "value": "проверена"}, "Укажи КБ"),
     )
     for payload, message in cases:

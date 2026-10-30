@@ -122,8 +122,9 @@ def test_groups_come_from_stage_and_blocker():
     assert sheet_group("Отменён", "СТОП", terminal=True) == "hold"
     assert sheet_group("В работе", "ХОЛД") == "active"
     assert sheet_group("В работе", "ОЖИД ИНФ") == "active"
-    # Работа цеха кончена — ГП принята и дальше; ОТК ещё у цеха.
-    assert sheet_group("ОТК") == "active"
+    # Работа цеха кончена — ГП принята и дальше; «Готово», ОТК и «ОТК пройден» ещё у цеха (склад не принял).
+    for stage in ("Готово", "ОТК", "ОТК пройден"):
+        assert sheet_group(stage) == "active"
     assert sheet_group("Принято складом") == "done"
     assert sheet_group("Отгружено") == "done"
     assert sheet_group("Отгружено") == "done"
@@ -137,8 +138,9 @@ def test_ready_percent_is_output_weighted_by_norm():
     task = _task([heavy, light], quantity=10)
     assert ready_percent("В работе", [task], {heavy.id: Decimal(5), light.id: Decimal(20)}) == "63"
     assert ready_percent("В работе", [task], {}) == "0"
-    # Производство закончено (ОТК и дальше) — 100.
-    assert ready_percent("ОТК", [task], {}) == "100"
+    # Производство закончено («Готово», ОТК и дальше) — 100.
+    for stage in ("Готово", "ОТК", "ОТК пройден"):
+        assert ready_percent(stage, [task], {}) == "100"
     assert ready_percent("Принято складом", [task], {}) == "100"
     assert ready_percent("В работе", [_task([heavy], status=ProductionStatus.CANCELLED)], {}) == ""
     assert ready_percent("Новый", [], {}) == ""

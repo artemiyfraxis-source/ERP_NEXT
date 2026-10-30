@@ -194,5 +194,5 @@ it("section words find the menu section once something is typed, and an empty fi
   expect(window.location.search).toBe("?section=references&tab=lug");
   fireEvent.keyDown(document.body, { key: "k", code: "KeyK", ctrlKey: true });
   fireEvent.change(await screen.findByRole("combobox"), { target: { value: "оборудование" } });
-  expect(titles()).toEqual(expect.arrayContaining(["Оборудование", "База данных → Оборудование"]));
+  expect(titles()).toEqual(expect.arrayContaining(["Склад → Оборудование", "База данных → Оборудование"]));
 });

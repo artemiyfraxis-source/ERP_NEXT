@@ -123,7 +123,8 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(stages("Новый")).toEqual(["waiting"]);
     for (const legacy of ["ТК готова", "КБ набрана", "Распланировано", "что-то новое", ""]) expect(stages(legacy)).toEqual(["waiting"]);
     expect(stages("В работе")).toEqual(["production"]);
-    expect(stages("ОТК")).toEqual(["ready"]);
+    // «Готово» (производство закончено), «ОТК» (на проверке), «ОТК пройден» — все ждут приёмки: вкладка «Готово».
+    for (const ready of ["Готово", "ОТК", "ОТК пройден"]) expect(stages(ready)).toEqual(["ready"]);
     expect(stages("Принято складом")).toEqual(["accepted"]);
     expect(stages("Упаковано")).toEqual(["packed"]);
     expect(stages("Отгружено")).toEqual(["shipped"]);
@@ -137,6 +138,8 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(stageOf("Новая", "Новый")).toBe("waiting");
     expect(stageOf("Новая", "В работе")).toBe("production");
     expect(stageOf("Собрана", "ОТК")).toBe("ready");
+    expect(stageOf("Новая", "Готово")).toBe("ready");
+    expect(stageOf("Собрана", "ОТК пройден")).toBe("ready");
     expect(stageOf("Собрана", "Принято складом")).toBe("accepted");
     expect(stageOf("Собрана", "Упаковано")).toBe("accepted");
     expect(stageOf("Новая", "Отгружено")).toBe("accepted");
