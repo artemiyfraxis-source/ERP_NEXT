@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.modules.references.application import SaveGaugeCommand, save_gauge, structure_hookups
 from app.modules.references.cable_structure import HookupWire, WireGauge, gauge_gost_awg
-from app.modules.references.domain import gost_awg_map
+from app.modules.references.domain import CABLE_TABS, TechOperationTab, gost_awg_map
 from app.modules.references.importers import import_hookups
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.references.load_mirror import ACTOR, load_mirror
@@ -291,6 +291,18 @@ def test_the_batch_generator_gets_prov_with_the_cable_list_of_each_row(real_base
     assert refs["prov"], "the real base holds БД.ПРОВ rows"
     assert all(set(row) == {"cable_kind", "fields"} and row["cable_kind"] in {"wire", "multi", "lan", "coax"} for row in refs["prov"])
     assert generator_refs(_Techcards, None)["prov"] == []
+
+
+def test_the_batch_generator_reads_whole_sheets_across_the_split_bases(real_base):
+    # Migration 0165: lugs live in the base «lug», cable kinds in «cab_*». The batch reads БД.ТЕР and БД.ПРОВ whole, as the
+    # form does with `family=true`, so contacts + lugs and every cable kind reach the generator as before the split.
+    refs = generator_refs(_Techcards, real_base.factory)
+    with real_base.factory() as uow:
+        counts = uow.tech_operations.counts()
+    assert counts.get(TechOperationTab.LUG) and counts.get(TechOperationTab.CAB_COAX), "the real base holds lugs and coax"
+    assert len(refs["ter"]) == counts[TechOperationTab.TERMINAL] + counts[TechOperationTab.LUG]
+    assert len(refs["prov"]) == sum(counts.get(tab, 0) for tab in CABLE_TABS)
+    assert {"wire", "coax"} <= {row["cable_kind"] for row in refs["prov"]}
 
 
 def test_the_etk_build_takes_gost_awg_from_the_sizes_table_else_the_stored_map(real_base, monkeypatch):

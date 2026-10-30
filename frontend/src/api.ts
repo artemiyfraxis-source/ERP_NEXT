@@ -4104,12 +4104,15 @@ export const referencesApi = {
     method: "PUT",
     body: JSON.stringify(maps),
   }),
-  /** `terKind` (БД.ТЕР): строки одного списка и его столбцы; без него — все строки БД.ТЕР. */
-  techOperations: (tab: TechOperationTab, query = "", limit?: number, terKind?: TerKind) => {
+  /** `terKind` (БД.ТЕР): строки одного списка и его столбцы. `family` — строки всех баз листа `tab` (БД.ТЕР: «Терминалы»
+   *  и «Наконечники»; БД.ПРОВ: монтажные и три базы кабелей) со столбцами `tab`: для тех, кто ищет контакт или кабель по
+   *  артикулу/марке (генератор техкарт); вид строки — её `ter_kind` / `cable_kind`. */
+  techOperations: (tab: TechOperationTab, query = "", limit?: number, terKind?: TerKind, family = false) => {
     const params = new URLSearchParams({ tab });
     if (query.trim()) params.set("q", query.trim());
     if (limit) params.set("limit", String(limit));
     if (terKind) params.set("ter_kind", terKind);
+    if (family) params.set("family", "true");
     return visitRead<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
   /** БД.ТЕР: перенести строку в «Терминалы» / «Наконечники» (поля строки не меняются). */

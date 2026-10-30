@@ -16,7 +16,7 @@ export type LugRec = TerRec & { type: string };
  *  (НШВ, НШВИ) — своя операция, кабельные (кольцевые, вилочные, штыревые, ножевые) — своя, трубчатые (ТМ, ТМЛ, ТА) — своя. */
 export type LugCrimp = "ferrule" | "lug" | "tube";
 
-type LugSource = { id: string; fields?: Record<string, string> | null; ter_kind?: string | null };
+type LugSource = { id: string; fields?: Record<string, string> | null; ter_kind?: string | null; tab?: string };
 
 const text = (v: unknown) => String(v ?? "").trim();
 /** Тип наконечника записи: «Product Name» (terComponent), иначе первое слово серии или артикула. */
@@ -27,9 +27,9 @@ function lugType(f: Record<string, string>, art: string): string {
   return series.split(/[\s\d]/)[0] || series;
 }
 
-/** Наконечники из записей справочника (сейчас — строки БД.ТЕР списка «Наконечники»). */
+/** Наконечники из записей справочника: строки базы «Наконечники» (`tab` "lug"; `ter_kind` "lug" — вид из базы). */
 export function lugRecordsOf(records: ReadonlyArray<LugSource> | null | undefined): LugRec[] {
-  return (records || []).filter((r) => r.ter_kind === "lug").map((r) => {
+  return (records || []).filter((r) => r.tab === "lug" || r.ter_kind === "lug").map((r) => {
     const f = r.fields || {};
     const rec = terFromFields(r.id, f);
     return { ...rec, type: lugType(f, rec.article || rec.articleBag || "") };
