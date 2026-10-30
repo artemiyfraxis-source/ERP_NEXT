@@ -230,23 +230,20 @@ def _rfqs(session: Session, words: list[str], patterns: list[str]) -> list[dict]
     return found
 
 
-# «База данных»: the stored tab of a record -> (tab of the screen, its label, the access key of the tab). A БД.ПРОВ row
-# goes by its cable list, a БД.ТЕР row by its list (терминал / наконечник), a БД.МАТ row by what it is.
-_CABLE_TABS = {"coax": ("cab_coax", "Коаксиальные кабели"), "wire": ("cab_wire", "Монтажные провода"),
-               "multi": ("cab_multi", "Многожильные кабели"), "lan": ("cab_lan", "Кабели Ethernet")}
+# «База данных»: the stored tab of a record -> (tab of the screen, its label, the access key of the tab). Every base is
+# its own tab (migration 0165: «Наконечники» and each cable kind too); a БД.МАТ row goes by what it is.
 _PLAIN_TABS = {"op": ("templates", "Операции", "erptctpl"), "ob": ("ob", "Оборудование", "erpref"),
-               "coax": ("coax", "Коаксиальные разъёмы", "erpref")}
-_DB_STORED_TABS = ("op", "ob", "coax", "ter", "prov", "mat")
+               "coax": ("coax", "Коаксиальные разъёмы", "erpref"), "ter": ("ter", "Терминалы", "erpref"),
+               "lug": ("lug", "Наконечники", "erpref"), "cab_coax": ("cab_coax", "Коаксиальные кабели", "erpref"),
+               "prov": ("cab_wire", "Монтажные провода", "erpref"), "cab_multi": ("cab_multi", "Многожильные кабели", "erpref"),
+               "cab_lan": ("cab_lan", "Кабели Ethernet", "erpref")}
+_DB_STORED_TABS = ("op", "ob", "coax", "ter", "lug", "prov", "cab_coax", "cab_multi", "cab_lan", "mat")
 _SOLDER_GROUP = "припой/флюс"
 
 
-def _db_place(tab: str, cable_kind: str | None, ter_kind: str | None, fields: dict) -> tuple[str, str, str] | None:
+def _db_place(tab: str, fields: dict) -> tuple[str, str, str] | None:
     if tab in _PLAIN_TABS:
         return _PLAIN_TABS[tab]
-    if tab == "ter":
-        return ("lug", "Наконечники", "erpref") if ter_kind == "lug" else ("ter", "Терминалы", "erpref")
-    if tab == "prov" and cable_kind in _CABLE_TABS:
-        return (*_CABLE_TABS[cable_kind], "erpref")
     if tab == "mat":
         if classify_covering(fields)[0]:
             return "cov", "Оболочки", "erpref"
@@ -261,13 +258,13 @@ def _database(session: Session, words: list[str], patterns: list[str], keys: set
     if "erpref" not in keys:
         stored = [tab for tab in stored if tab == "op"]
     found: list[dict] = []
-    columns = [row.tab, row.cable_kind, row.ter_kind, row.display_text, row.fields, row.normalized_search]
-    for tab, cable, ter, text, fields, haystack in _scan(
+    columns = [row.tab, row.display_text, row.fields, row.normalized_search]
+    for tab, text, fields, haystack in _scan(
         session, columns, patterns, [row.display_text, row.normalized_search], order=row.sort_key, base=row.tab.in_(stored),
     ):
         if not _hit(words, _text(text, haystack)):
             continue
-        place = _db_place(tab, cable, ter, fields)
+        place = _db_place(tab, fields)
         if place is None or place[2] not in keys:
             continue
         found.append(_result(G_DB, text[:140], f"База данных → {place[1]}", "references", tab=place[0], q=text[:80]))

@@ -19,12 +19,12 @@ from app.shared.http_auth import (
 
 from .application import (
     ColumnCommand, CreateRecordCommand, EditRecordCommand, FieldEdit, ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
-    SetCableKindCommand, SetCoaxDiametersCommand, SetCoveringGroupCommand, StaleRecordError, UnitOfWork, create_record, edit_record, list_cables,
+    SetCoaxDiametersCommand, SetCoveringGroupCommand, StaleRecordError, UnitOfWork, create_record, edit_record, list_cables,
     SaveColumnViewCommand, ViewColumn, column_views, save_column_view,
-    replace_maps, replace_snapshot, set_cable_kind, add_column, custom_columns, remove_column, set_coax_diameters, set_covering_group, coverings_catalog,
+    replace_maps, replace_snapshot, add_column, custom_columns, remove_column, set_coax_diameters, set_covering_group, coverings_catalog,
 )
-from .application import SetTerKindCommand, set_ter_kind
-from .lugs import LUG, TER_KIND_LABELS, lug_columns, ter_kind_of
+from .application import MoveRecordCommand, family_member, move_record
+from .lugs import lug_columns, ter_kind_of
 from .crimps import change_target, change_terminal, crimp_codes, crimp_overview
 from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
 from .application import LinkStockCommand, link_stock_article, stock_links
@@ -35,8 +35,9 @@ from .application import (
 from .cable_structure import (
     LAYER_LABELS, CoaxCard, HookupWire, WireGauge, parse_hookup,
 )
-from .cables import CONNECTOR_FIELDS, DIAMETERS, CableKind, CableRow, cable_counts, compatible_connectors
+from .cables import CONNECTOR_FIELDS, DIAMETERS, CableKind, CableRow, cable_counts, cable_rows, compatible_connectors
 from .domain import (
+    CABLE_COLUMNS, CABLE_KIND_BY_TAB, CABLE_TABS, TERMINAL_TABS, cable_list_own, cable_tab, tab_family, ter_tab,
     BASE_COLUMNS, COAX_DROPPED_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, merge_country_pairs, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
     StockLinkEntry, TechOperationTab,
 )
@@ -97,12 +98,18 @@ class RecordEditPayload(BaseModel):
 class RecordCreatePayload(BaseModel):
     tab: str = Field(min_length=1, max_length=32)
     fields: dict[str, str] = Field(max_length=100)
-    cable_kind: CableKind | None = None  # БД.ПРОВ: the cable list the row is created in (none — by the rule)
-    ter_kind: Literal["contact", "lug"] | None = None  # БД.ТЕР: «Терминалы» / «Наконечники» (none — by the rule)
+    # The list API before migration 0165 (the screens until they ask for the base): the base within the family of `tab`
+    # — a cable kind of a cable base, «contact» / «lug» of «Терминалы» / «Наконечники». None — the record goes to `tab`.
+    cable_kind: CableKind | None = None
+    ter_kind: Literal["contact", "lug"] | None = None
 
 
 class TerKindPayload(BaseModel):
     kind: Literal["contact", "lug"]
+
+
+class MovePayload(BaseModel):
+    tab: TechOperationTab  # another base of the record's sheet family
 
 
 class TerminalResolutionPayload(BaseModel):
@@ -194,7 +201,10 @@ def _columns(tab: TechOperationTab | None, records: Sequence[TechOperationRecord
 
 def _sheet_columns(tab: TechOperationTab | None, records: Sequence[TechOperationRecord]) -> list[str]:
     """Known sheet schema first (so an empty tab still has a create form). ОБ/ОП/ТЕР/КОАКС: the sheet's own columns
-    kept by the import, without the schema values derived from them; a snapshot without them shows the schema keys."""
+    kept by the import, without the schema values derived from them; a snapshot without them shows the schema keys. A
+    cable base: its own columns (`CABLE_COLUMNS`)."""
+    if tab in CABLE_TABS:
+        return list(CABLE_COLUMNS[CABLE_KIND_BY_TAB[tab]])
     if tab in BASE_COLUMNS:
         return list(BASE_COLUMNS[tab])
     if not tab or not records:
@@ -218,22 +228,29 @@ def tech_operations(
     q: Annotated[str, Query(max_length=255)] = "",
     limit: Annotated[int, Query(ge=1, le=5000)] = 200,
     ter_kind: Literal["contact", "lug"] | None = None,
+    family: bool = False,
 ) -> dict:
-    """`ter_kind` (БД.ТЕР only): the rows of one list — «Терминалы» (contact) or «Наконечники» (lug) — with that list's
-    columns; without it every БД.ТЕР row (the readers that look a contact or a lug up by its article)."""
-    if ter_kind is not None and tab != TechOperationTab.TERMINAL:
-        raise HTTPException(status_code=422, detail="Список «Терминалы / Наконечники» бывает только у БД.ТЕР")
-    with uow_factory() as uow:
-        records = uow.tech_operations.list(tab=tab, query=q, limit=limit if ter_kind is None else 100_000)
-        metadata = uow.tech_operations.metadata()
-        own = custom_columns(tab, uow, ter_kind) if tab is not None else []
+    """The rows of one base with its columns. `family` — the rows of every base of the tab's sheet (БД.ТЕР: «Терминалы»
+    and «Наконечники»; БД.ПРОВ: the four cable bases) for the readers that look a crimped end or a cable up by its
+    article / mark; the columns stay the tab's. `ter_kind` — the list API before migration 0165 («lug» with tab «ter»
+    is the base «lug»)."""
     if ter_kind is not None:
-        records = [item for item in records if item.ter_kind == ter_kind][:limit]
+        if tab not in TERMINAL_TABS:
+            raise HTTPException(status_code=422, detail="Список «Терминалы / Наконечники» бывает только у БД.ТЕР")
+        tab = ter_tab(ter_kind)
+    with uow_factory() as uow:
+        records = uow.tech_operations.list(tab=tab_family(tab) if family and tab is not None else tab, query=q, limit=limit)
+        metadata = uow.tech_operations.metadata()
+        own = custom_columns(tab, uow) if tab is not None else []
     if tab == TechOperationTab.COAX:  # an own column removed from the table 25.10.2026 («Дата цены») is no column
         own = [name for name in own if name not in COAX_DROPPED_COLUMNS]
+    if tab in CABLE_TABS:  # nor one removed from a cable base (`CABLE_DROPPED`)
+        own = cable_list_own(CABLE_KIND_BY_TAB[tab], own)
+    shown = [item for item in records if item.tab == tab] if family else records
     # «Наконечники» (owner 26.10.2026): only the columns lugs fill (`lugs.LUG_COLUMN_SLOTS`), then the owner's own columns
-    # of «Наконечники» — each list of БД.ТЕР has its own (owner 28.10.2026: «каждая вкладка в БД — отдельная таблица»).
-    columns = [*lug_columns(_sheet_columns(tab, records)), *own] if ter_kind == LUG else _columns(tab, records, own)
+    # of «Наконечники» — every base has its own (owner 28.10.2026: «каждая вкладка в БД — отдельная таблица»).
+    columns = ([*lug_columns(_sheet_columns(tab, shown)), *own] if tab == TechOperationTab.LUG
+               else _columns(tab, shown, own))
     return {
         "metadata": None if metadata is None else {
             **metadata,
@@ -246,11 +263,12 @@ def tech_operations(
         "records": [{
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet, **({"cable_kind": item.cable_kind} if item.cable_kind else {}),
-            # БД.ТЕР: the list of the row and the one the rule gives (they differ after a move by hand)
+            # «Терминалы» / «Наконечники»: the kind of the row's base and the one the rule gives (they differ after a
+            # move by hand)
             **({"ter_kind": item.ter_kind, "ter_rule": ter_kind_of(item.fields)} if item.ter_kind else {}),
-            "fields": normalize_terminal_fields(item.fields) if item.tab == TechOperationTab.TERMINAL else item.fields,
+            "fields": normalize_terminal_fields(item.fields) if item.tab in TERMINAL_TABS else item.fields,
             # «Терминалы»: the contact card by protocol v5.2, read from the record as the generator reads it.
-            **({"card": terminal_card(item.fields)} if item.tab == TechOperationTab.TERMINAL else {}),
+            **({"card": terminal_card(item.fields)} if item.tab in TERMINAL_TABS else {}),
         } for item in records],
     }
 
@@ -263,7 +281,7 @@ def resolve_terminal_norm(
 ) -> dict:
     with uow_factory() as uow:
         metadata = uow.tech_operations.metadata()
-        records = uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)
+        records = uow.tech_operations.list(tab=TERMINAL_TABS, query="", limit=40_000)  # contacts and lugs
     if metadata is None or metadata["schema_version"] != TECH_SNAPSHOT_SCHEMA_VERSION:
         raise HTTPException(
             status_code=409,
@@ -353,8 +371,8 @@ _BASE_TILES = {
     "tk_templates": ("🧩", "шаблоны техкарт · только просмотр"),
 }
 _BASE_TABS = {
-    "op": (TechOperationTab.OPERATION,), "ob": (TechOperationTab.EQUIPMENT,), "ter": (TechOperationTab.TERMINAL,),
-    "coax": (TechOperationTab.COAX,), "prov": (TechOperationTab.WIRE,), "mat": (TechOperationTab.MATERIAL,),
+    "op": (TechOperationTab.OPERATION,), "ob": (TechOperationTab.EQUIPMENT,), "ter": TERMINAL_TABS,
+    "coax": (TechOperationTab.COAX,), "prov": CABLE_TABS, "mat": (TechOperationTab.MATERIAL,),
     "spr_kab": (TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG),
 }
 
@@ -381,7 +399,6 @@ def bases(
     templates live in «Шаблоны техкарт», so their count is not known here (null)."""
     with uow_factory() as uow:
         counts = uow.tech_operations.counts()
-        ter_counts = uow.tech_operations.ter_counts()
         gauges = len(uow.cable_structure.gauges())
     return {
         "bases": [
@@ -392,11 +409,10 @@ def bases(
             }
             for key, label in _BASE_LABELS.items()
         ],
-        # Tab chips of «База данных»: every stored tab, and the three cable lists («Кабели и провода»).
+        # Tab chips of «База данных»: every base (each its own table: «ter», «lug», «prov», «cab_coax»…), and the cable
+        # kinds as «Кабели и провода» shows them (the coax D-table cables without a row included).
         "tabs": {tab.value: counts.get(tab, 0) for tab in TechOperationTab},
         "cables": cable_counts(list_cables(uow_factory())),
-        # БД.ТЕР by list: «Терминалы» (contact) and «Наконечники» (lug)
-        "ter_kinds": {kind: ter_counts.get(kind, 0) for kind in TER_KIND_LABELS},
         "gauges": gauges,
     }
 
@@ -669,7 +685,16 @@ def move_cable(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    row = _run_edit(lambda: set_cable_kind(SetCableKindCommand(record_id, payload.kind, principal.actor, now), uow_factory()))
+    """The list API before migration 0165: a cable moved to the base of `kind` (`PUT …/tech-operations/{id}/tab`)."""
+    with uow_factory() as uow:
+        found = uow.tech_operations.get(record_id)
+    if found is None or found.tab not in CABLE_TABS:
+        raise HTTPException(status_code=404, detail="Кабель не найден в БД.ПРОВ")
+    record = _run_edit(lambda: move_record(MoveRecordCommand(record_id, cable_tab(payload.kind), principal.actor, now),
+                                           uow_factory()))
+    with uow_factory() as uow:
+        diameters = uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)
+    [row] = [item for item in cable_rows([record], diameters) if item.record is not None]
     return _cable_json(row)
 
 
@@ -750,12 +775,13 @@ def add_tech_column(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    """«+ Столбец»: an empty column of the owner's own in every record of the table (БД.ПРОВ, БД.МАТ, БД.КОАКС, БД.ТЕР, БД.ОП)."""
+    """«+ Столбец»: an empty column of the owner's own in every record of the table (the cable bases, БД.МАТ, БД.КОАКС,
+    «Терминалы», «Наконечники», БД.ОП). `cable_kind` / `ter_kind` — the list API before migration 0165."""
+    tab = _run(lambda: family_member(payload.tab, payload.cable_kind, payload.ter_kind))
     records = _run_edit(lambda: add_column(ColumnCommand(
-        tab=payload.tab, name=payload.name, actor=principal.actor, now=now, cable_kind=payload.cable_kind,
-        ter_kind=payload.ter_kind), uow_factory()))
-    return {"tab": payload.tab.value, "name": " ".join(payload.name.split()), "records": records,
-            "cable_kind": payload.cable_kind.value if payload.cable_kind else None}
+        tab=tab, name=payload.name, actor=principal.actor, now=now), uow_factory()))
+    return {"tab": tab.value, "name": " ".join(payload.name.split()), "records": records,
+            "cable_kind": CABLE_KIND_BY_TAB.get(tab)}
 
 
 @router.post("/tech-operations/columns/remove", dependencies=[Depends(refuse_api_tokens("Токен API не меняет состав столбцов."))])
@@ -766,11 +792,10 @@ def remove_tech_column(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
     """Removes the owner's own column; its values go to the journal."""
+    tab = _run(lambda: family_member(payload.tab, payload.cable_kind, payload.ter_kind))
     records = _run_edit(lambda: remove_column(ColumnCommand(
-        tab=payload.tab, name=payload.name, actor=principal.actor, now=now, cable_kind=payload.cable_kind,
-        ter_kind=payload.ter_kind), uow_factory()))
-    return {"tab": payload.tab.value, "name": payload.name, "records": records,
-            "cable_kind": payload.cable_kind.value if payload.cable_kind else None}
+        tab=tab, name=payload.name, actor=principal.actor, now=now), uow_factory()))
+    return {"tab": tab.value, "name": payload.name, "records": records, "cable_kind": CABLE_KIND_BY_TAB.get(tab)}
 
 
 class ViewColumnPayload(BaseModel):
@@ -819,14 +844,24 @@ def create_tech_record(
         raise HTTPException(status_code=422, detail="База только для просмотра")
     try: tab = TechOperationTab(payload.tab)
     except ValueError as error: raise HTTPException(status_code=422, detail="Неизвестная база") from error
-    if payload.cable_kind is not None and tab != TechOperationTab.WIRE:
-        raise HTTPException(status_code=422, detail="Список кабеля бывает только у строки БД.ПРОВ")
-    if payload.ter_kind is not None and tab != TechOperationTab.TERMINAL:
-        raise HTTPException(status_code=422, detail="Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
+    tab = _run(lambda: family_member(tab, payload.cable_kind, payload.ter_kind))
     record = _run_edit(lambda: create_record(CreateRecordCommand(
-        tab=tab, fields=payload.fields, actor=principal.actor, now=now, cable_kind=payload.cable_kind,
-        ter_kind=payload.ter_kind,
+        tab=tab, fields=payload.fields, actor=principal.actor, now=now,
     ), uow_factory()))
+    return _record_json(record)
+
+
+@router.put("/tech-operations/{record_id}/tab")
+def move_tech_record(
+    record_id: UUID,
+    payload: MovePayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """«Перенести в другую базу»: a row moved by hand to another base of its sheet family — «Терминалы» ↔
+    «Наконечники», or between the cable bases (`application.move_record`). Its id stays."""
+    record = _run_edit(lambda: move_record(MoveRecordCommand(record_id, payload.tab, principal.actor, now), uow_factory()))
     return _record_json(record)
 
 
@@ -838,8 +873,13 @@ def move_terminal(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    """«Терминалы» ↔ «Наконечники»: a БД.ТЕР row moved by hand (its fields stay)."""
-    record = _run_edit(lambda: set_ter_kind(SetTerKindCommand(record_id, payload.kind, principal.actor, now), uow_factory()))
+    """The list API before migration 0165: «Терминалы» ↔ «Наконечники» (`PUT …/tech-operations/{id}/tab`)."""
+    with uow_factory() as uow:
+        found = uow.tech_operations.get(record_id)
+    if found is not None and found.tab not in TERMINAL_TABS:
+        raise HTTPException(status_code=422, detail="Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
+    record = _run_edit(lambda: move_record(MoveRecordCommand(record_id, ter_tab(payload.kind), principal.actor, now),
+                                           uow_factory()))
     return _record_json(record)
 
 

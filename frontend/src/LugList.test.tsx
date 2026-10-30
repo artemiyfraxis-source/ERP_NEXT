@@ -38,7 +38,7 @@ function mockDb() {
     const method = init?.method ?? "GET";
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
-    if (path === "/api/references/bases") return json({ bases: [], tabs: { ter: 4 }, ter_kinds: { contact: 1, lug: 3 } });
+    if (path === "/api/references/bases") return json({ bases: [], tabs: { ter: 1, lug: 3 } });
     if (path === "/api/references/coverings") return json({ counts: {}, titles: {}, rows: [] });
     if (path.startsWith("/api/references/tech-operations?tab=mat")) return json({ metadata: null, columns: [], records: [] });
     if (path === "/api/references/crimp-codes") return json({ owners: {}, codes: [], missing: [] });

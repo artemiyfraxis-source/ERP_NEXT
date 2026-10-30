@@ -330,7 +330,7 @@ def test_vocabulary_rewrites_the_coax_cells_once_and_a_mirror_reload_keeps_them(
     assert again["rewritten"] == [] and again["problems"] == []
     load_mirror(BUNDLED_MIRROR, uow, dry_run=False, now=NOW)
     with uow:
-        rg316 = next(record for record in uow.tech_operations.list(tab=TechOperationTab.WIRE, query="RG316", limit=50)
+        rg316 = next(record for record in uow.tech_operations.list(tab=TechOperationTab.CAB_COAX, query="RG316", limit=50)
                      if record.fields.get("Марка") == "RG316")
     assert rg316.edited_in_erp and rg316.fields["Экран"] == "оплётка медь посеребрённая"
     assert rg316.fields["Тип провода"] == "коаксиальный"

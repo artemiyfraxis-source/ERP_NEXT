@@ -57,7 +57,7 @@ def test_tech_operations_query_uses_the_same_rules(references_api):  # noqa: F81
     })
 
     def found(q: str) -> list[str]:
-        result = references_api.get("/api/references/tech-operations", params={"tab": "ter", "q": q})
+        result = references_api.get("/api/references/tech-operations", params={"tab": "ter", "q": q, "family": "true"})
         assert result.status_code == 200
         return [item["display_text"] for item in result.json()["records"]]
 

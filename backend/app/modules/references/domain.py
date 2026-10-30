@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Iterable, Mapping
 from uuid import UUID, uuid4
 
-from .lugs import LUG as TER_LUG, TER_KIND_REASON, TER_KIND_VALUES, ter_kind_of
+from .lugs import TER_KIND_REASON, TER_KIND_VALUES
 
 
 class ReferenceValidationError(ValueError):
@@ -25,13 +25,13 @@ class ReferenceKind(str, Enum):
     SUPPLIER = "supplier"
     COUNTRY = "country"
     GOST_AWG = "gost_awg"
-    # «Кабели и провода»: БД.ПРОВ mark → the list the user moved it to (coax / wire / multi). The row itself stores its
-    # list (`TechOperationRecord.cable_kind`, migration 0129); this map remembers the move by the mark, so a row of that
-    # mark created anew (a mirror reload, an import) lands in the same list.
+    # «Кабели и провода»: БД.ПРОВ mark → the cable kind the user moved it to (coax / wire / multi / lan). The row itself
+    # is in that kind's base (`CABLE_TAB_BY_KIND`, migration 0165); this map remembers the move by the mark, so a row of
+    # that mark created anew (a mirror reload, an import) lands in the same base.
     CABLE_KIND = "cable_kind"
-    # A column the owner added to a tech-operation table («+ Столбец», 14.10.2026): key «<tab>:<name>», value — the name;
-    # БД.ПРОВ: «prov:<cable list>:<name>» — each cable list has its own columns (owner 20.10.2026). Fields are JSON, so
-    # the column is real in every record of the tab (of the list); this entry says it is the owner's.
+    # A column the owner added to a tech-operation table («+ Столбец», 14.10.2026): key «<tab>:<name>», value — the name
+    # (every cable base and «Наконечники» are tabs of their own since migration 0165: «cab_coax:<name>», «lug:<name>»).
+    # Fields are JSON, so the column is real in every record of the tab; this entry says it is the owner's.
     CUSTOM_COLUMN = "custom_column"
     # The shared column set of a table (owner 22.10.2026: «показывать все, но выбрать только нужные»): one entry per
     # table column, key «<table view>|<column key>», value «1» shown / «0» hidden, position — the column's place. A
@@ -49,14 +49,59 @@ CABLE_KIND_REASON = "Список кабеля: коаксиальные, мон
 
 
 class TechOperationTab(str, Enum):
+    """A base of «База данных» — its own table (owner 28–29.10.2026: «каждая вкладка в БД — это отдельная таблица БД»).
+    The lugs and the cable kinds were lists inside БД.ТЕР / БД.ПРОВ (a `ter_kind` / `cable_kind` flag, migrations 0131,
+    0150, 0155); since migration 0165 each is a tab of its own."""
     EQUIPMENT = "ob"
     OPERATION = "op"
-    TERMINAL = "ter"
+    TERMINAL = "ter"  # «Терминалы»: the crimp contacts of connector housings
+    LUG = "lug"  # «Наконечники»: НШВ / НКИ / РПИ… (lugs.py)
     COAX = "coax"
-    WIRE = "prov"
+    WIRE = "prov"  # «Монтажные провода»
+    CAB_COAX = "cab_coax"  # «Коаксиальные кабели»
+    CAB_MULTI = "cab_multi"  # «Многожильные кабели»
+    CAB_LAN = "cab_lan"  # «Кабели Ethernet»
     MATERIAL = "mat"
     KAB_COAX = "kab_coax"  # СПР.КАБ, верхняя таблица: коаксиал, D1–D3
     KAB_AWG = "kab_awg"  # СПР.КАБ, нижняя таблица: AWG → сечение, Ø жилы, Ø изоляции по маркам
+
+
+# The bases that came out of one mirror sheet («семейство»): БД.ТЕР → «Терминалы» + «Наконечники», БД.ПРОВ → the four
+# cable bases. A mirror reload replaces a family as a whole and routes each sheet row to its base (`application.
+# replace_snapshot_detailed`); a row moved or edited in ERP is known by (family, mirror key) whatever base it is in.
+TERMINAL_TABS = (TechOperationTab.TERMINAL, TechOperationTab.LUG)
+CABLE_TABS = (TechOperationTab.CAB_COAX, TechOperationTab.WIRE, TechOperationTab.CAB_MULTI, TechOperationTab.CAB_LAN)
+# The cable kind (`cables.CableKind`, the API's «список кабелей») ↔ its base; the БД.ТЕР kind (contact / lug) ↔ its base.
+CABLE_TAB_BY_KIND: dict[str, TechOperationTab] = dict(zip(("coax", "wire", "multi", "lan"), CABLE_TABS))
+CABLE_KIND_BY_TAB: dict[TechOperationTab, str] = {tab: kind for kind, tab in CABLE_TAB_BY_KIND.items()}
+TER_TAB_BY_KIND: dict[str, TechOperationTab] = dict(zip(TER_KIND_VALUES, TERMINAL_TABS))
+TER_KIND_BY_TAB: dict[TechOperationTab, str] = {tab: kind for kind, tab in TER_TAB_BY_KIND.items()}
+
+
+def tab_family(tab: TechOperationTab) -> tuple[TechOperationTab, ...]:
+    """The bases of the mirror sheet `tab` belongs to (itself alone for a base of its own sheet)."""
+    return TERMINAL_TABS if tab in TERMINAL_TABS else CABLE_TABS if tab in CABLE_TABS else (tab,)
+
+
+def family_root(tab: TechOperationTab) -> TechOperationTab:
+    """The sheet base of a family: «ter» for «Наконечники», «prov» for a cable base; else the tab itself. The schema of
+    the sheet (`technology._TECH_SCHEMA`, `BASE_COLUMNS`) is the root's."""
+    return TechOperationTab.TERMINAL if tab in TERMINAL_TABS else TechOperationTab.WIRE if tab in CABLE_TABS else tab
+
+
+def cable_tab(kind: object) -> TechOperationTab:
+    """The base of a cable kind («coax» → «cab_coax»…); an unknown kind is refused in words."""
+    value = getattr(kind, "value", kind)
+    if value not in CABLE_TAB_BY_KIND:
+        raise ReferenceValidationError(CABLE_KIND_REASON)
+    return CABLE_TAB_BY_KIND[value]
+
+
+def ter_tab(kind: object) -> TechOperationTab:
+    """The base of a БД.ТЕР kind («contact» → «ter», «lug» → «lug»); an unknown kind is refused in words."""
+    if kind not in TER_TAB_BY_KIND:
+        raise ReferenceValidationError(TER_KIND_REASON)
+    return TER_TAB_BY_KIND[kind]
 
 
 _URL_HOST = re.compile(r"^[a-z]+://([^/]+)")
@@ -410,13 +455,17 @@ class TechOperationRecord:
     fields: dict[str, str]
     mirror_key: str = ""  # identity of the mirror row this record came from ('' — created in ERP); survives ERP edits
     edited_in_erp: bool = False  # edited/created in ERP: a mirror reload never overwrites or deletes it
-    # БД.ПРОВ: the cable list of the row (CABLE_KIND_VALUES); None on every other tab — `check_cable_kind`, and the
-    # CHECK ck_tech_operation_records_cable_kind in the database.
-    cable_kind: str | None = None
-    # БД.ТЕР: the list of the row — «contact» («Терминалы») or «lug» («Наконечники», owner 26.10.2026; `lugs.py`); None on
-    # every other tab — `check_ter_kind`, and the CHECK ck_tech_operation_records_ter_kind in the database. A БД.ТЕР
-    # record built without it takes the list by the rule (`create`, and the repository on save).
-    ter_kind: str | None = None
+
+    # The cable kind (coax / wire / multi / lan) of a cable base's record and the БД.ТЕР kind (contact / lug) of a
+    # «Терминалы» / «Наконечники» record — read from the tab (migration 0165 dropped the stored flags); None elsewhere.
+    # The API still returns them, so the generator payloads keep their shape.
+    @property
+    def cable_kind(self) -> str | None:
+        return CABLE_KIND_BY_TAB.get(self.tab)
+
+    @property
+    def ter_kind(self) -> str | None:
+        return TER_KIND_BY_TAB.get(self.tab)
 
     @classmethod
     def create(
@@ -424,35 +473,25 @@ class TechOperationRecord:
         source_sheet: str, sort_key: str, fields: dict[str, str], mirror_key: str = "", edited_in_erp: bool = False,
         cable_kind: str | None = None, ter_kind: str | None = None,
     ) -> TechOperationRecord:
+        """`cable_kind` / `ter_kind` name the base within the family of `tab` (a cable base / «Терминалы» or
+        «Наконечники»): the record goes to that base. Without them the record is in `tab` itself."""
         display = str(display_text or "").strip()
         if not display:
             raise ReferenceValidationError("Отображаемое значение техоперации обязательно")
-        check_cable_kind(tab, cable_kind)
+        if cable_kind is not None:
+            if tab not in CABLE_TABS:
+                raise ReferenceValidationError("Список кабеля бывает только у строки кабелей")
+            tab = cable_tab(cable_kind)
+        if ter_kind is not None:
+            if tab not in TERMINAL_TABS:
+                raise ReferenceValidationError("Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
+            tab = ter_tab(ter_kind)
         clean_fields = {str(key): str(value or "").strip() for key, value in fields.items() if str(key).strip()}
-        if tab == TechOperationTab.TERMINAL and ter_kind is None:
-            ter_kind = ter_kind_of(clean_fields)
-        check_ter_kind(tab, ter_kind)
         search = " ".join(f"{display} {search_text or ''} {' '.join(clean_fields.values())}".casefold().split())
         return cls(
             uuid4(), tab, display, search, str(source_sheet or "").strip(),
-            str(sort_key or display).strip(), clean_fields, mirror_key, edited_in_erp, cable_kind, ter_kind,
+            str(sort_key or display).strip(), clean_fields, mirror_key, edited_in_erp,
         )
-
-
-def check_cable_kind(tab: TechOperationTab, cable_kind: str | None) -> None:
-    """A БД.ПРОВ row is in exactly one cable list; a row of any other tab is in none."""
-    if tab == TechOperationTab.WIRE and cable_kind not in CABLE_KIND_VALUES:
-        raise ReferenceValidationError(CABLE_KIND_REASON)
-    if tab != TechOperationTab.WIRE and cable_kind is not None:
-        raise ReferenceValidationError("Список кабеля бывает только у строки БД.ПРОВ")
-
-
-def check_ter_kind(tab: TechOperationTab, ter_kind: str | None) -> None:
-    """A БД.ТЕР row is in exactly one list («Терминалы» or «Наконечники»); a row of any other tab is in none."""
-    if tab == TechOperationTab.TERMINAL and ter_kind not in TER_KIND_VALUES:
-        raise ReferenceValidationError(TER_KIND_REASON)
-    if tab != TechOperationTab.TERMINAL and ter_kind is not None:
-        raise ReferenceValidationError("Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
 
 
 def validate_entries(entries: tuple[ReferenceEntry, ...]) -> None:
@@ -654,28 +693,26 @@ BASE_COLUMNS = {
 }
 # The v14 GAS snapshot never carries these; a snapshot without them must not wipe portal-edited rows.
 # Same for СПР.КАБ (REF-SPRKAB): only the mirror carries it.
-# Tabs whose table accepts the owner's own columns («+ Столбец»): БД.ПРОВ (each cable list its own, 20.10.2026),
-# БД.МАТ, БД.КОАКС, БД.ТЕР and БД.ОП (14.10.2026, «Операции» shows them beside the code). БД.ОБ has none: its list is one
-# row per model.
-CUSTOM_COLUMN_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.COAX, TechOperationTab.TERMINAL,
+# Every cable base has the БД.ПРОВ sheet header as its base columns (the load of the sheet, the file); what a base shows
+# is its own `CABLE_COLUMNS[kind]`.
+BASE_COLUMNS.update({tab: _PROV_COLUMNS for tab in CABLE_TABS})
+# Tabs whose table accepts the owner's own columns («+ Столбец»): every cable base (each its own, 20.10.2026),
+# БД.МАТ, БД.КОАКС, «Терминалы», «Наконечники» (28.10.2026) and БД.ОП (14.10.2026, «Операции» shows them beside the
+# code). БД.ОБ has none: its list is one row per model.
+CUSTOM_COLUMN_TABS = (*CABLE_TABS, TechOperationTab.MATERIAL, TechOperationTab.COAX, *TERMINAL_TABS,
                       TechOperationTab.OPERATION)
 MAX_COLUMN_NAME = 60
 
 
-def custom_column_prefix(tab: TechOperationTab, cable_kind: str | None = None) -> str:
-    """Key prefix of the owner's columns of a tab (`ReferenceKind.CUSTOM_COLUMN`): «mat:»; БД.ПРОВ per list — «prov:coax:»;
-    БД.ТЕР — «ter:» of «Терминалы» (as before the split), «ter:lug:» of «Наконечники» (owner 28.10.2026: every tab of
-    «База данных» is its own table — a column of one list is never a column of the other)."""
-    if tab == TechOperationTab.WIRE:
-        if cable_kind not in CABLE_KIND_VALUES:
-            raise ReferenceValidationError("Укажите список кабелей: " + CABLE_KIND_REASON.split(": ", 1)[1])
-        return f"{tab.value}:{cable_kind}:"
-    if tab == TechOperationTab.TERMINAL and cable_kind == TER_LUG:
-        return f"{tab.value}:{TER_LUG}:"
+def custom_column_prefix(tab: TechOperationTab) -> str:
+    """Key prefix of the owner's columns of a tab (`ReferenceKind.CUSTOM_COLUMN`): «mat:», «cab_coax:», «lug:» — every
+    tab of «База данных» is its own table, a column of one is never a column of another (owner 28.10.2026; migration
+    0165 turned the list keys «prov:<kind>:» / «ter:lug:» into the tab keys)."""
     return f"{tab.value}:"
 
 
-SHEET_TABLE_TABS =(TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG)
+# The tables a БД.Технология snapshot without them leaves as they are (a mirror reload of the sheet tables only).
+SHEET_TABLE_TABS = (*CABLE_TABS, TechOperationTab.MATERIAL, TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG)
 
 
 def _clean_cell(value: str) -> str:

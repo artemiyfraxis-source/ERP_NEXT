@@ -392,8 +392,6 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     if (def.id === "gauges") return cables?.gauges?.length ?? bases.gauges ?? null;
     // the open tab counts its rows once they came (before — the summary's number, not «0»)
     if (def.id === tab && techTab && techReady === techKey) return tech.records.length;
-    if (def.id === "lug") return bases.ter_kinds?.lug ?? null;
-    if (def.id === "ter" && bases.ter_kinds) return bases.ter_kinds.contact;
     return bases.tabs?.[def.id as TechOperationTab] ?? bases.bases.find((base) => base.id === def.base)?.count ?? null;
   }
 

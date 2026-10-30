@@ -2,10 +2,11 @@
 lists — коаксиальные кабели, монтажные провода, многожильные кабели («Прочие кабели» closed 20.10.2026) and, since
 25.10.2026, ETHERNET (the LAN cables moved out of the многожильные, migration 0150).
 
-Storage stays as SUPPLYMAP keeps it: БД.ПРОВ rows (`prov`) and the D-table rows (`kab_coax`) the ETK generator reads
-by cable name. Each БД.ПРОВ row stores its list (`TechOperationRecord.cable_kind`, migration 0129); the rule here
-(`auto_kind`) gives the list of a row being created and the «auto» shown beside a moved one. This module only
-classifies and joins; nothing here changes what the generator looks up."""
+Each kind is a base of its own since migration 0165 (owner 29.10.2026: «все виды проводов лежат в одной таблице… я же
+просил как раз наоборот»): `cab_coax`, `prov` (монтажные), `cab_multi`, `cab_lan` (`domain.CABLE_TABS`); the D-table rows
+(`kab_coax`) the ETK generator reads by cable name stay. `TechOperationRecord.cable_kind` is the kind of the row's base;
+the rule here (`auto_kind`) gives the base of a БД.ПРОВ sheet row (a mirror reload, a load) and the «auto» shown beside
+a moved one. This module only classifies and joins; nothing here changes what the generator looks up."""
 
 from __future__ import annotations
 
@@ -285,7 +286,7 @@ def cable_rows(
     wires: Sequence[TechOperationRecord], diameters: Sequence[TechOperationRecord],
     cards: Mapping[str, CoaxCard] | None = None,
 ) -> list[CableRow]:
-    """БД.ПРОВ rows, each in the list it stores (`cable_kind`; «перенесён вручную» when the rule says another), plus the
+    """The cable rows, each in the kind of its base (`cable_kind`; «перенесён вручную» when the rule says another), plus the
     D-table cables that have no БД.ПРОВ coax row of the same name, plus the coax cards no row is named as. Every coax
     row carries its card (`card_for`)."""
     cards = cards or {}

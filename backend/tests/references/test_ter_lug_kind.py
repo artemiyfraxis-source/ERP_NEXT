@@ -1,7 +1,9 @@
 """«Наконечники» (owner 26.10.2026: «тип наконечник, а не терминал… и в базе их бы тоже отдельно сделать, в другую БД —
-наконечники»): the lugs of БД.ТЕР are their own list (`ter_kind = 'lug'`) with their own columns, «Терминалы» shows only
-the crimp contacts. The rows stay in tab `ter`, so every reader still finds a lug; the warehouse stocks it as
-«Наконечник». Migration 0155 classifies the rows by the rule, keeps the counts and its downgrade drops the list."""
+наконечники»; 29.10.2026: «наконечники и контакты хранятся в одной базе БД.ТЕР — так не должно быть»): the lugs are a base
+of their own, tab `lug` (migration 0165; 0155 first marked them `ter_kind = 'lug'` inside БД.ТЕР), with their own
+columns, «+ Столбец», count and file; «Терминалы» holds only the crimp contacts. A БД.ТЕР sheet row goes to its base by
+the rule; the readers that look a crimped end up by its article read both bases; the warehouse stocks a lug as
+«Наконечник». Migration 0155 classified the rows by the rule, kept the counts and its downgrade dropped the list."""
 
 import csv
 import json
@@ -14,8 +16,9 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-from app.modules.references.domain import ReferenceValidationError, TechOperationRecord, TechOperationTab
-from app.modules.references.infrastructure import TER_KIND_CHECK
+from dataclasses import replace
+
+from app.modules.references.domain import TERMINAL_TABS, ReferenceValidationError, TechOperationRecord, TechOperationTab
 from app.modules.references.lugs import LUG_COLUMN_SLOTS, LUG_FAMILY, LUG_WORDS, is_lug, lug_columns, ter_kind_of
 from app.workflows.item_names import ReferenceNames
 from app.workflows.warehouse_article import infer_article_identity
@@ -24,6 +27,7 @@ from tests.references.test_api import references_api  # noqa: F401  (fixture)
 BEFORE, AFTER = "0154_user_ui_settings", "0155_ter_lug_kind"
 MIRROR = Path(__file__).parents[2] / "data" / "reference-mirror" / "БД.ТЕР.tsv"
 MIGRATION = Path(__file__).parents[2] / "migrations" / "versions" / "0155_ter_lug_kind.py"
+SPLIT = Path(__file__).parents[2] / "migrations" / "versions" / "0165_split_lug_cable_tabs.py"
 
 # БД.ТЕР rows as the mirror keeps them (sheet columns), plus the schema keys a GAS snapshot carries
 LUG_ROW = {"Тип разъема": "Обжимная клемма", "Производитель": "КВТ", "Product Name": "НШВИ", "Series": "НШВИ 0.5",
@@ -105,20 +109,20 @@ def test_the_lug_columns_are_what_lugs_fill_in_the_group_order():
     assert len(LUG_COLUMN_SLOTS) == 18
 
 
-def test_a_ter_record_takes_its_list_by_the_rule_and_only_ter_has_one():
+def test_a_record_is_in_the_base_it_is_given_and_the_kind_is_the_base():
     def record(tab, fields, **kind):
         return TechOperationRecord.create(tab=tab, display_text="x", search_text="", source_sheet="", sort_key="x",
                                           fields=fields, **kind)
 
-    assert record(TechOperationTab.TERMINAL, LUG_ROW).ter_kind == "lug"
-    assert record(TechOperationTab.TERMINAL, CONTACT_ROW).ter_kind == "contact"
-    assert record(TechOperationTab.TERMINAL, LUG_ROW, ter_kind="contact").ter_kind == "contact"  # a move by hand wins
+    # the base decides, not the rule (a БД.ТЕР sheet row is routed by the rule when it is loaded, not when it is built)
+    assert record(TechOperationTab.TERMINAL, LUG_ROW).ter_kind == "contact"
+    assert record(TechOperationTab.LUG, CONTACT_ROW).ter_kind == "lug"
+    assert record(TechOperationTab.TERMINAL, LUG_ROW, ter_kind="lug").tab == TechOperationTab.LUG
     assert record(TechOperationTab.MATERIAL, LUG_ROW).ter_kind is None
     with pytest.raises(ReferenceValidationError):
         record(TechOperationTab.MATERIAL, LUG_ROW, ter_kind="lug")
     with pytest.raises(ReferenceValidationError):
         record(TechOperationTab.TERMINAL, LUG_ROW, ter_kind="ring")
-    assert "tab = 'ter'" in TER_KIND_CHECK and "('contact', 'lug')" in TER_KIND_CHECK
 
 
 # --- the screen and its API ---
@@ -134,7 +138,9 @@ def test_lugs_has_only_lugs_with_its_columns_and_terminals_only_contacts(referen
     _load(references_api, LUG_ROW, CONTACT_ROW)
     get = lambda **params: references_api.get("/api/references/tech-operations", params={"tab": "ter", **params}).json()
 
-    lugs, contacts, every = get(ter_kind="lug"), get(ter_kind="contact"), get()
+    # the list API before migration 0165 («ter» + `ter_kind`) and the bases themselves answer the same
+    lugs, contacts, every = get(ter_kind="lug"), get(ter_kind="contact"), get(family="true")
+    assert lugs == get(tab="lug") and contacts == get()
 
     assert [row["fields"]["Product Name"] for row in lugs["records"]] == ["НШВИ"]
     assert lugs["records"][0]["ter_kind"] == "lug" and lugs["records"][0]["ter_rule"] == "lug"
@@ -144,9 +150,12 @@ def test_lugs_has_only_lugs_with_its_columns_and_terminals_only_contacts(referen
     assert lugs["custom_columns"] == []
     assert [row["fields"]["Product Name"] for row in contacts["records"]] == ["XH"]
     assert "L+" in contacts["columns"] and "Высота обжима проводника , мм" in contacts["columns"]
-    # without a list — every БД.ТЕР row (the readers that look a lug or a contact up by its article)
+    assert lugs["records"][0]["tab"] == "lug" and contacts["records"][0]["tab"] == "ter"
+    # the family — every row of the sheet (the readers that look a lug or a contact up by its article)
     assert sorted(row["fields"]["Product Name"] for row in every["records"]) == ["XH", "НШВИ"]
-    assert references_api.get("/api/references/bases").json()["ter_kinds"] == {"contact": 1, "lug": 1}
+    bases = references_api.get("/api/references/bases").json()
+    assert (bases["tabs"]["ter"], bases["tabs"]["lug"]) == (1, 1) and "ter_kinds" not in bases
+    assert next(base["count"] for base in bases["bases"] if base["id"] == "ter") == 2  # the БД.ТЕР tile: the family
     assert references_api.get("/api/references/tech-operations",
                               params={"tab": "mat", "ter_kind": "lug"}).status_code == 422
 
@@ -196,10 +205,12 @@ def test_a_row_moved_by_hand_keeps_its_fields_and_a_new_row_goes_to_the_open_lis
                                  "Артикул контакта (REEL)": "1/02506-01"}, "ter_kind": "lug"})
     assert created.status_code == 201, created.text
     assert created.json()["ter_kind"] == "lug" and created.json()["ter_rule"] == "contact"
-    by_rule = references_api.post("/api/references/tech-operations", json={
+    # a record created in a base stays there, whatever the rule says (the rule routes the sheet's rows only)
+    in_terminals = references_api.post("/api/references/tech-operations", json={
         "tab": "ter", "fields": {"Производитель": "КВТ", "Product Name": "НКИ", "Series": "НКИ 2.5",
                                  "Артикул контакта (REEL)": "НКИ 2.5-5"}})
-    assert by_rule.json()["ter_kind"] == "lug"
+    assert (in_terminals.json()["tab"], in_terminals.json()["ter_kind"], in_terminals.json()["ter_rule"]) == (
+        "ter", "contact", "lug")
     assert references_api.post("/api/references/tech-operations", json={
         "tab": "mat", "fields": {"Наименование": "ТУТ"}, "ter_kind": "lug"}).status_code == 422
 
@@ -221,11 +232,12 @@ def test_the_file_of_lugs_holds_the_lugs_with_their_columns(references_api):
 # --- the readers find a lug as before; the warehouse stocks it as «Наконечник» ---
 
 def _records():
-    return [TechOperationRecord.create(tab=TechOperationTab.TERMINAL, display_text=row["Series"], search_text="",
+    return [TechOperationRecord.create(tab=tab, display_text=row["Series"], search_text="",
                                        source_sheet="БД.ТЕР", sort_key="", fields=row)
-            for row in ({**LUG_ROW, "terManufacturer": "КВТ", "terComponent": "НШВИ", "terArticle": "НШВИ 0.5-8"},
-                        {**CONTACT_ROW, "terManufacturer": "JST", "terComponent": "XH", "terArticle": "SXH-001T-P0.6",
-                         "terType": "Female (Socket)"})]
+            for tab, row in ((TechOperationTab.LUG, {**LUG_ROW, "terManufacturer": "КВТ", "terComponent": "НШВИ",
+                                                     "terArticle": "НШВИ 0.5-8"}),
+                             (TechOperationTab.TERMINAL, {**CONTACT_ROW, "terManufacturer": "JST", "terComponent": "XH",
+                                                          "terArticle": "SXH-001T-P0.6", "terType": "Female (Socket)"}))]
 
 
 def test_the_warehouse_names_a_lug_a_lug_and_a_contact_a_terminal():
@@ -241,7 +253,7 @@ def test_the_warehouse_names_a_lug_a_lug_and_a_contact_a_terminal():
 
 def test_a_lug_moved_to_terminals_is_stocked_as_a_terminal():
     lug, contact = _records()
-    moved = TechOperationRecord(**{**lug.__dict__, "ter_kind": "contact"})
+    moved = replace(lug, tab=TechOperationTab.TERMINAL)
     assert infer_article_identity("НШВИ 0.5-8", [moved, contact]).item_type == "Терминал"
 
 
@@ -316,4 +328,57 @@ def test_the_migration_holds_a_literal_copy_of_the_rule_and_the_check():
     flat = re.sub(r'"\s*r"', "", text)  # the pattern is split over two raw-string lines
 
     assert LUG_FAMILY.pattern in flat and LUG_WORDS.pattern in text
-    assert all(line.strip(" ()") in text for line in TER_KIND_CHECK.split(" OR "))
+    split: dict = {}
+    exec(compile(SPLIT.read_text(encoding="utf-8"), str(SPLIT), "exec"), split)  # 0165's downgrade restores 0155's check
+    assert all(line.strip(" ()") in text for line in split["TER_KIND_CHECK"].split(" OR "))
+
+
+# --- «Наконечники» as a base of their own (migration 0165) ---
+
+def test_lugs_are_a_base_with_their_own_columns_records_and_moves(references_api):
+    _load(references_api, LUG_ROW, CONTACT_ROW)
+    get = lambda tab: references_api.get("/api/references/tech-operations", params={"tab": tab}).json()
+    column = lambda path, tab, name: references_api.post(f"/api/references/tech-operations/columns{path}",
+                                                         json={"tab": tab, "name": name})
+
+    assert column("", "lug", "Цвет изоляции").status_code == 201 and column("", "ter", "Полка").status_code == 201
+    lugs, contacts = get("lug"), get("ter")
+    assert lugs["custom_columns"] == ["Цвет изоляции"] and contacts["custom_columns"] == ["Полка"]
+    assert "Полка" not in lugs["records"][0]["fields"] and "Цвет изоляции" not in contacts["records"][0]["fields"]
+    created = references_api.post("/api/references/tech-operations", json={
+        "tab": "lug", "fields": {"Product Name": "НКИ", "Артикул контакта (REEL)": "НКИ 1.5-4"}})
+    assert created.status_code == 201 and created.json()["tab"] == "lug" and "Цвет изоляции" in created.json()["fields"]
+
+    [lug] = [row for row in get("lug")["records"] if row["fields"]["Product Name"] == "НШВИ"]
+    moved = references_api.put(f"/api/references/tech-operations/{lug['id']}/tab", json={"tab": "ter"})
+    assert moved.status_code == 200 and (moved.json()["id"], moved.json()["tab"]) == (lug["id"], "ter")
+    assert moved.json()["fields"] == lug["fields"]
+    # a move across sheets or into a base of no family is refused in words
+    for tab in ("prov", "mat", "cab_coax"):
+        refused = references_api.put(f"/api/references/tech-operations/{lug['id']}/tab", json={"tab": tab})
+        assert refused.status_code == 422 and "соседнюю базу" in refused.json()["detail"]
+    counts = references_api.get("/api/references/bases").json()["tabs"]
+    assert (counts["ter"], counts["lug"]) == (2, 1)
+
+
+def test_the_file_and_the_load_of_lugs_are_the_lugs_base(references_api):
+    _load(references_api, {**LUG_ROW, "terArticle": "НШВИ 0.5-8"}, {**CONTACT_ROW, "terArticle": "SXH-001T-P0.6"})
+    fields = references_api.get("/api/references/import/lug/file/fields").json()
+    assert (fields["label"], fields["rows"]) == ("Наконечники", 1) and "L+" in fields["fields"]
+
+    report = references_api.post("/api/references/import/lug", params={"dry_run": 0}, json={"rows": [
+        {"fields": {"terArticle": "НВИ 1.5-3", "terManufacturer": "КВТ", "terComponent": "НВИ"}},
+        {"fields": {"terArticle": "НШВИ 0.5-8", "terStrip": "8"}}]}).json()
+    assert report["refused"] == [] and report["created"] == ["НВИ 1.5-3"], report
+    lugs = references_api.get("/api/references/tech-operations", params={"tab": "lug"}).json()["records"]
+    assert sorted(row["fields"]["terArticle"] for row in lugs) == ["НВИ 1.5-3", "НШВИ 0.5-8"]
+    # the БД.ТЕР load matches over both bases and sends a new row to its base by the rule
+    report = references_api.post("/api/references/import/ter", params={"dry_run": 0}, json={"rows": [
+        {"fields": {"terArticle": "НВИ 1.5-3", "terStep": "1"}},
+        {"fields": {"terArticle": "НКИ 2.5-5", "terManufacturer": "КВТ", "terComponent": "НКИ"}},
+        {"fields": {"terArticle": "SPH-002T-P0.5L", "terManufacturer": "JST", "terComponent": "PH"}}]}).json()
+    assert report["refused"] == [] and len(report["updated"]) == 1, report
+    tabs = {row["fields"]["terArticle"]: row["tab"] for row in references_api.get(
+        "/api/references/tech-operations", params={"tab": "ter", "family": "true"}).json()["records"]}
+    assert (tabs["НКИ 2.5-5"], tabs["SPH-002T-P0.5L"], tabs["НВИ 1.5-3"]) == ("lug", "ter", "lug")
+    assert set(tabs.values()) <= {tab.value for tab in TERMINAL_TABS}

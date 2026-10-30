@@ -23,13 +23,13 @@ from .cables import (
     NOT_HOOKUP_REASON, hookup_series, lan_fill, resolve_kind,
 )
 from .domain import (
-    CABLE_COLUMNS, CABLE_DROPPED, CABLE_KIND_VALUES, CABLE_WRITABLE, COAX_DROPPED_COLUMNS, cable_fields, cable_list_own,
-    custom_column_prefix,
+    CABLE_COLUMNS, CABLE_DROPPED, CABLE_KIND_BY_TAB, CABLE_KIND_VALUES, CABLE_TABS, CABLE_WRITABLE, COAX_DROPPED_COLUMNS,
+    TERMINAL_TABS, cable_fields, cable_list_own, cable_tab, custom_column_prefix, family_root, tab_family, ter_tab,
 )
 from .domain import WIRE_COLOR_FIELD, WIRE_ROW_OWN, check_wire_color, wire_color_rows, wire_identity
 from .domain import BASE_COLUMNS, CUSTOM_COLUMN_TABS, EDITABLE_TABS, MAX_COLUMN_NAME, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
 from .domain import StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent
-from .lugs import CONTACT, LUG, TER_KIND_REASON, TER_KIND_VALUES, ter_kind_of
+from .lugs import ter_kind_of
 from .equipment import (
     BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
     prepare_equipment,
@@ -46,9 +46,8 @@ class ReferenceRepository(Protocol):
 
 
 class TechOperationRepository(Protocol):
-    def list(self, *, tab: TechOperationTab | None, query: str, limit: int) -> Sequence[TechOperationRecord]: ...
+    def list(self, *, tab: TechOperationTab | Sequence[TechOperationTab] | None, query: str, limit: int) -> Sequence[TechOperationRecord]: ...
     def counts(self) -> dict[TechOperationTab, int]: ...
-    def ter_counts(self) -> dict[str, int]: ...
     def get(self, record_id: UUID) -> TechOperationRecord | None: ...
     def save(self, record: TechOperationRecord) -> None: ...
     def delete(self, record_id: UUID) -> None: ...
@@ -194,22 +193,27 @@ def replace_snapshot_detailed(command: ReplaceSnapshotCommand, uow: UnitOfWork) 
             f"Ожидается схема БД.Технология v{TECH_SNAPSHOT_SCHEMA_VERSION}"
         )
     keyed = list(zip(command.records, mirror_keys(command.records)))
-    # БД.ПРОВ / БД.МАТ are replaced only when the snapshot carries them (rows or an explicit table).
-    present = {item.tab for item in command.records} | set(command.declared_tabs)
+    # БД.ПРОВ / БД.МАТ are replaced only when the snapshot carries them (rows or an explicit table); a sheet is replaced
+    # with every base of its family (БД.ТЕР — «Терминалы» and «Наконечники», БД.ПРОВ — the four cable bases).
+    given = {*(item.tab for item in command.records), *command.declared_tabs}
+    present = {tab for sheet in given for tab in tab_family(sheet)}
     keep_tabs = tuple(tab for tab in (tuple(TechOperationTab) if command.keep_other_tabs else SHEET_TABLE_TABS) if tab not in present)
     with uow:
+        # A БД.ТЕР sheet row goes to «Наконечники» or «Терминалы» by the rule (`lugs.ter_kind_of`).
         built = {index: TechOperationRecord.create(
             tab=item.tab, display_text=item.display_text, search_text=item.search_text,
             source_sheet=item.source_sheet, sort_key=item.sort_key, fields=item.fields, mirror_key=key,
-        ) for index, (item, key) in enumerate(keyed) if item.tab != TechOperationTab.WIRE}
-        # A БД.ПРОВ row takes its list by the rule over the D-table this load leaves (`resolve_kind`) and the columns
-        # of that list.
+            ter_kind=ter_kind_of(item.fields) if item.tab == TechOperationTab.TERMINAL else None,
+        ) for index, (item, key) in enumerate(keyed) if item.tab not in CABLE_TABS}
+        # A БД.ПРОВ sheet row takes its cable base by the rule over the D-table this load leaves (`resolve_kind`, the
+        # moves by mark included) and the columns of that base; a row given in a cable base stays there.
         diameters = [record for record in built.values() if record.tab == TechOperationTab.KAB_COAX] \
             if TechOperationTab.KAB_COAX in present else None
         kind_of = _kind_rule(uow, diameters)
         for index, (item, key) in enumerate(keyed):
-            if item.tab == TechOperationTab.WIRE:
-                kind = kind_of(item.fields, str(item.fields.get(MARK_FIELD) or item.display_text).strip())
+            if item.tab in CABLE_TABS:
+                kind = kind_of(item.fields, str(item.fields.get(MARK_FIELD) or item.display_text).strip()) \
+                    if item.tab == TechOperationTab.WIRE else CableKind(CABLE_KIND_BY_TAB[item.tab])
                 # a монтажный wire: one row per colour of the sheet's «Цвета» (owner 20.10.2026), one mirror key
                 variants = wire_color_rows(item.fields) if kind == CableKind.WIRE else [item.fields]
                 built[index] = tuple(TechOperationRecord.create(
@@ -253,8 +257,10 @@ class CreateRecordCommand:
     fields: dict[str, str]
     actor: Actor
     now: datetime
-    cable_kind: CableKind | None = None  # БД.ПРОВ: the list the row is created in (None — by the rule, `resolve_kind`)
-    ter_kind: str | None = None  # БД.ТЕР: «contact» / «lug» — the list the row is created in (None — by the rule)
+    # Compatibility of the list API (before migration 0165): the base within the family of `tab` — a cable kind / a
+    # БД.ТЕР kind («contact» / «lug»). None — the record goes to `tab` itself.
+    cable_kind: CableKind | None = None
+    ter_kind: str | None = None
 
 
 def _search_text(record: TechOperationRecord) -> str:
@@ -263,7 +269,7 @@ def _search_text(record: TechOperationRecord) -> str:
 
 def _check_terminal_card(tab: TechOperationTab, fields: dict[str, str]) -> None:
     """БД.ТЕР: a card the database CHECKs would refuse (gender, insulation Ø, datasheet) is refused here in words."""
-    if tab == TechOperationTab.TERMINAL and (problems := terminal_card_problems(fields)):
+    if tab in TERMINAL_TABS and (problems := terminal_card_problems(fields)):
         raise ReferenceValidationError("; ".join(problems))
 
 
@@ -300,10 +306,10 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     own_columns: list[str] | None = None  # the owner's columns: a row that came from a mirror reload may lack one
     for edit in edits:
         if edit.field not in record.fields and own_columns is None:
-            # БД.ПРОВ: the columns of the row's own list (another list's column is no cell of this row) and the ones
-            # removed from it 25.10.2026 (`CABLE_WRITABLE`: an existing row still takes them — provenance, journals)
-            own_columns = [*custom_columns(record.tab, uow, record.cable_kind or record.ter_kind),
-                           *(CABLE_WRITABLE[record.cable_kind] if record.tab == TechOperationTab.WIRE else ())]
+            # a cable base: also the columns removed from it 25.10.2026 (`CABLE_WRITABLE`: an existing row still
+            # takes them — provenance, journals)
+            own_columns = [*custom_columns(record.tab, uow),
+                           *(CABLE_WRITABLE[record.cable_kind] if record.tab in CABLE_TABS else ())]
         known = (edit.field in record.fields or edit.field in stored or edit.field in (own_columns or ())
                  or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS)
                  or (record.tab == TechOperationTab.COAX and edit.field in _coax_card_columns()))
@@ -352,7 +358,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     if record.cable_kind == CableKind.WIRE.value and edited & {MARK_FIELD, WIRE_COLOR_FIELD}:
         _check_wire_row(updated.fields, uow, record.id)
     uow.tech_operations.save(updated)
-    if record.tab == TechOperationTab.WIRE and edited & {MARK_FIELD, *MIRRORED_FIELDS}:
+    if record.tab in CABLE_TABS and edited & {MARK_FIELD, *MIRRORED_FIELDS}:
         _follow_wire_edit(uow, record, updated, edited, now)
     if siblings:
         _same_wire_mark(record, updated, now, uow)
@@ -450,20 +456,20 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
 
 # --- «+ Столбец»: the owner's own column of a table (owner 14.10.2026: «добавить свои столбцы») ---
 
-def custom_columns(tab: TechOperationTab, uow: UnitOfWork, cable_kind: str | None = None) -> list[str]:
-    """The columns the owner added to the tab, in the order added. БД.ПРОВ: those of one cable list (`cable_kind`);
-    without it — of every list, each name once. БД.ТЕР: those of «Наконечники» for `cable_kind` «lug», else of
-    «Терминалы»."""
+def custom_columns(tab: TechOperationTab, uow: UnitOfWork) -> list[str]:
+    """The columns the owner added to the tab, in the order added — each tab its own (owner 28.10.2026: «каждая
+    вкладка в БД — это отдельная таблица БД»)."""
     references = getattr(uow, "references", None)  # the workflows' units of work carry no maps: no own columns there
     if tab not in CUSTOM_COLUMN_TABS or references is None:
         return []
-    kinds = (cable_kind,) if tab != TechOperationTab.WIRE or cable_kind is not None else CABLE_KIND_VALUES
-    prefixes = tuple(custom_column_prefix(tab, kind) for kind in kinds)
-    # «ter:» of «Терминалы» is the start of «ter:lug:» too: the other list's columns are left out
-    other = custom_column_prefix(tab, LUG) if tab == TechOperationTab.TERMINAL and cable_kind != LUG else None
-    own = [entry for entry in references.list() if entry.kind == ReferenceKind.CUSTOM_COLUMN
-           and entry.key.startswith(prefixes) and not (other and entry.key.startswith(other))]
+    prefix = custom_column_prefix(tab)
+    own = [entry for entry in references.list() if entry.kind == ReferenceKind.CUSTOM_COLUMN and entry.key.startswith(prefix)]
     return list(dict.fromkeys(entry.value for entry in sorted(own, key=lambda entry: entry.position)))
+
+
+def cable_custom_columns(uow: UnitOfWork) -> list[str]:
+    """The owner's columns of every cable base, each name once (a load of the БД.ПРОВ sheet takes any of them)."""
+    return list(dict.fromkeys(name for tab in CABLE_TABS for name in custom_columns(tab, uow)))
 
 
 def _coax_card_columns() -> tuple[str, ...]:
@@ -481,20 +487,18 @@ def _folded(name: str) -> str:
     return " ".join(str(name).casefold().split())
 
 
-def _dropped_columns(tab: TechOperationTab, cable_kind: str | None) -> frozenset[str]:
+def _dropped_columns(tab: TechOperationTab) -> frozenset[str]:
     """The columns removed from a table (owner 25.10.2026): «+ Столбец» does not bring them back."""
-    if tab == TechOperationTab.WIRE and cable_kind in CABLE_DROPPED:
-        return CABLE_DROPPED[cable_kind]
+    if tab in CABLE_TABS:
+        return CABLE_DROPPED[CABLE_KIND_BY_TAB[tab]]
     return COAX_DROPPED_COLUMNS if tab == TechOperationTab.COAX else frozenset()
 
 
-def _taken_names(tab: TechOperationTab, records: Sequence[TechOperationRecord], uow: UnitOfWork,
-                 cable_kind: str | None = None) -> set[str]:
-    """Every name the tab (БД.ПРОВ: the cable list) already uses as a column or a schema value (folded), the owner's own
-    columns included."""
-    base = CABLE_WRITABLE[cable_kind] if tab == TechOperationTab.WIRE else BASE_COLUMNS.get(tab, ())
+def _taken_names(tab: TechOperationTab, records: Sequence[TechOperationRecord], uow: UnitOfWork) -> set[str]:
+    """Every name the tab already uses as a column or a schema value (folded), the owner's own columns included."""
+    base = CABLE_WRITABLE[CABLE_KIND_BY_TAB[tab]] if tab in CABLE_TABS else BASE_COLUMNS.get(tab, ())
     names = set(base) | set(schema_keys(tab.value)) | set(stored_schema_keys(tab.value))
-    names |= {name for record in records for name in record.fields} | set(custom_columns(tab, uow, cable_kind))
+    names |= {name for record in records for name in record.fields} | set(custom_columns(tab, uow))
     if tab == TechOperationTab.COAX:
         from .importers import TECH_TABLES
         names |= set(TECH_TABLES["coax"].card_columns)
@@ -507,30 +511,34 @@ class ColumnCommand:
     name: str
     actor: Actor
     now: datetime
-    cable_kind: CableKind | None = None  # БД.ПРОВ: the cable list whose column it is (required there)
-    ter_kind: str | None = None  # БД.ТЕР: «contact» («Терминалы», the default) or «lug» («Наконечники»)
+    # Compatibility of the list API (before migration 0165): the base within the family of `tab`.
+    cable_kind: CableKind | None = None
+    ter_kind: str | None = None
 
 
-def _column_records(command: ColumnCommand, uow: UnitOfWork) -> tuple[str | None, list[TechOperationRecord]]:
-    """The list of the command (БД.ПРОВ: the cable list, required; БД.ТЕР: «Терминалы» or «Наконечники»; other tabs:
-    none) and the records the column lives in — a column of one list is never a cell of the other (owner 28.10.2026)."""
-    records = uow.tech_operations.list(tab=command.tab, query="", limit=100_000)
-    if command.tab == TechOperationTab.TERMINAL:
-        kind = LUG if command.ter_kind == LUG else CONTACT
-        return kind, [record for record in records if (record.ter_kind or CONTACT) == kind]
-    kind = command.cable_kind.value if command.cable_kind is not None else None
-    if command.tab != TechOperationTab.WIRE:
-        kind = None
-    custom_column_prefix(command.tab, kind)  # БД.ПРОВ without a list is refused in words
-    return kind, [record for record in records if record.cable_kind == kind]
+def family_member(tab: TechOperationTab, cable_kind: object = None, ter_kind: str | None = None) -> TechOperationTab:
+    """The base a request means: `tab` itself, or — the list API before migration 0165 — the base of the cable kind /
+    the БД.ТЕР kind within the family of `tab` (a kind of another family is refused in words)."""
+    if cable_kind is not None:
+        if tab not in CABLE_TABS:
+            raise ReferenceValidationError("Список кабеля бывает только у строки кабелей")
+        tab = cable_tab(cable_kind)
+    if ter_kind is not None:
+        if tab not in TERMINAL_TABS:
+            raise ReferenceValidationError("Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
+        tab = ter_tab(ter_kind)
+    return tab
 
 
-def _list_key(tab: TechOperationTab) -> str:
-    return "ter_kind" if tab == TechOperationTab.TERMINAL else "cable_kind"
+def _column_records(command: ColumnCommand, uow: UnitOfWork) -> tuple[TechOperationTab, list[TechOperationRecord]]:
+    """The base of the command and its records — a column of one base is never a cell of another (owner 28.10.2026)."""
+    tab = family_member(command.tab, command.cable_kind, command.ter_kind)
+    _check_column_tab(tab)
+    return tab, list(uow.tech_operations.list(tab=tab, query="", limit=100_000))
 
 
 def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
-    """Adds an empty column to every record of the tab (БД.ПРОВ: of one cable list) in one transaction; the records are
+    """Adds an empty column to every record of the tab in one transaction; the records are
     marked edited in ERP, so a mirror reload keeps the column. Returns the number of records written."""
     _check_column_tab(command.tab)
     name = " ".join(str(command.name or "").split())
@@ -540,11 +548,11 @@ def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
         raise ReferenceValidationError(f"Название столбца — не длиннее {MAX_COLUMN_NAME} знаков")
     _clean_cell(name)  # a formula is not a name
     with uow:
-        kind, records = _column_records(command, uow)
-        if _folded(name) in {_folded(item) for item in _dropped_columns(command.tab, kind)}:
+        tab, records = _column_records(command, uow)
+        if _folded(name) in {_folded(item) for item in _dropped_columns(tab)}:
             raise ReferenceValidationError(f"Столбец «{name}» убран из таблицы (владелец 25.10.2026) — его значения "
                                            "остаются в записях и видны в карточке записи")
-        if _folded(name) in _taken_names(command.tab, records, uow, kind):
+        if _folded(name) in _taken_names(tab, records, uow):
             raise ReferenceValidationError(f"Столбец «{name}» уже есть в таблице")
         if not records:
             raise ReferenceValidationError("В таблице нет записей — столбцу негде жить")
@@ -553,24 +561,23 @@ def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
         entries = list(uow.references.list())
         position = max((entry.position for entry in entries if entry.kind == ReferenceKind.CUSTOM_COLUMN), default=-1) + 1
         uow.references.replace((*entries, ReferenceEntry.create(
-            ReferenceKind.CUSTOM_COLUMN, custom_column_prefix(command.tab, kind) + name, name, position)))
+            ReferenceKind.CUSTOM_COLUMN, custom_column_prefix(tab) + name, name, position)))
         _audit("references.column_added", command.actor, command.now, {
-            "tab": command.tab.value, "column": name, "records": len(records),
-            **({_list_key(command.tab): kind} if kind else {})}, uow)
+            "tab": tab.value, "column": name, "records": len(records)}, uow)
         uow.commit()
     return len(records)
 
 
 def remove_column(command: ColumnCommand, uow: UnitOfWork) -> int:
-    """Removes the owner's own column (БД.ПРОВ: of one cable list — the other lists keep a column of the same name).
+    """Removes the owner's own column of a tab (another tab keeps a column of the same name).
     A column with data goes too (owner 22.10.2026: «снести»): its values are written to the journal event
     `references.column_removed` (record id, title, value), so they can be put back by hand. The base columns are never
     dropped — the generator and the warehouse read them; they are only hidden (`save_column_view`).
     Returns the number of records written."""
     _check_column_tab(command.tab)
     with uow:
-        kind, records = _column_records(command, uow)
-        name = next((item for item in custom_columns(command.tab, uow, kind) if _folded(item) == _folded(command.name)), None)
+        tab, records = _column_records(command, uow)
+        name = next((item for item in custom_columns(tab, uow) if _folded(item) == _folded(command.name)), None)
         if name is None:
             raise ReferenceValidationError("Удалить можно только свой столбец")
         values = [{"record_id": str(record.id), "title": record.display_text, "value": record.fields[name]}
@@ -580,12 +587,11 @@ def remove_column(command: ColumnCommand, uow: UnitOfWork) -> int:
             if name in record.fields:
                 uow.tech_operations.save(replace(record, fields={k: v for k, v in record.fields.items() if k != name}, edited_in_erp=True))
                 written += 1
-        key = custom_column_prefix(command.tab, kind) + name
+        key = custom_column_prefix(tab) + name
         uow.references.replace(tuple(entry for entry in uow.references.list()
                                      if not (entry.kind == ReferenceKind.CUSTOM_COLUMN and entry.key == key)))
         _audit("references.column_removed", command.actor, command.now, {
-            "tab": command.tab.value, "column": name, "records": written, "filled": len(values), "values": values,
-            **({_list_key(command.tab): kind} if kind else {})}, uow)
+            "tab": tab.value, "column": name, "records": written, "filled": len(values), "values": values}, uow)
         uow.commit()
     return written
 
@@ -757,11 +763,10 @@ def _clean_new_fields(tab: TechOperationTab, values: dict[str, str]) -> dict[str
 
 def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
                cable_kind: CableKind | None = None, ter_kind: str | None = None) -> TechOperationRecord:
-    """A new record inside an open unit of work (nothing committed); `fields` cleaned by `_clean_new_fields`. A БД.ПРОВ
-    row goes to `cable_kind` (None — by the rule) and takes the columns of that list; a БД.ТЕР row to `ter_kind`
-    («Терминалы» / «Наконечники»; None — by the rule, `lugs.ter_kind_of`)."""
-    if ter_kind is not None and tab != TechOperationTab.TERMINAL:
-        raise ReferenceValidationError("Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
+    """A new record inside an open unit of work (nothing committed); `fields` cleaned by `_clean_new_fields`. The record
+    goes to `tab` (`cable_kind` / `ter_kind` — the list API before migration 0165 — name another base of its family);
+    a cable base's row takes the columns of that base."""
+    tab = family_member(tab, cable_kind, ter_kind)
     if tab == TechOperationTab.EQUIPMENT:
         # Number, row and code are checked and given under this same transaction as the save.
         fields = prepare_equipment(fields, _equipment_rows(uow), creating=True)
@@ -770,16 +775,14 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
     filled = [value for value in fields.values() if value]
     if not filled:
         raise ReferenceValidationError("Заполни хотя бы одно поле")
-    kind: CableKind | None = None
-    if tab == TechOperationTab.WIRE:
-        kind = cable_kind or _kind_rule(uow)(fields, str(fields.get(MARK_FIELD) or filled[0]))
+    if tab in CABLE_TABS:
+        kind = CableKind(CABLE_KIND_BY_TAB[tab])
         fields = _wire_fields(kind, fields, uow, pad_own=True)
         if kind == CableKind.WIRE:
             _check_wire_row(fields, uow)
     else:
         # the owner's columns given empty — not those removed from the table (БД.КОАКС «Дата цены», 25.10.2026)
-        own_list = (ter_kind or ter_kind_of(fields)) if tab == TechOperationTab.TERMINAL else None
-        pad = [name for name in custom_columns(tab, uow, own_list) if name not in _dropped_columns(tab, None)]
+        pad = [name for name in custom_columns(tab, uow) if name not in _dropped_columns(tab)]
         fields = _without_empty_cable_columns(tab, {**{name: "" for name in pad}, **sync_schema_fields(tab.value, fields)})
     _check_terminal_card(tab, fields)
     if tab == TechOperationTab.OPERATION:
@@ -787,9 +790,8 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork,
         _check_operation_grade(fields)
     display = schema_display_text(tab.value, fields) or filled[0]
     record = TechOperationRecord.create(
-        tab=tab, display_text=display, search_text="", source_sheet="",
-        sort_key=display, fields=fields, edited_in_erp=True, cable_kind=kind.value if kind else None,
-        ter_kind=ter_kind,
+        tab=tab, display_text=display, search_text="", source_sheet="", sort_key=display, fields=fields,
+        edited_in_erp=True,
     )
     uow.tech_operations.save(record)
     return record
@@ -815,7 +817,7 @@ def _wire_fields(kind: CableKind, fields: Mapping[str, str], uow: UnitOfWork, *,
     owner's, so a row created or moved here is editable in each) and its empty «Категория», «Экран», «Число пар»,
     «Прокладка» read from the type, the mark and «Число жил» (`cables.lan_fill`)."""
     sheet = CABLE_COLUMNS[kind.value]
-    own = tuple(cable_list_own(kind.value, custom_columns(TechOperationTab.WIRE, uow, kind.value)))
+    own = tuple(cable_list_own(kind.value, custom_columns(cable_tab(kind), uow)))
     if kind == CableKind.LAN:
         pad_all = True
         fields = lan_fill(fields, str(fields.get(MARK_FIELD) or ""))
@@ -829,39 +831,69 @@ def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperatio
         record = _create_in(command.tab, fields, uow, command.cable_kind, command.ter_kind)
         _audit("references.tech_record_created", command.actor, command.now, {
             "record_id": str(record.id), "tab": record.tab.value,
-            **({"ter_kind": record.ter_kind} if record.ter_kind else {}),
         }, uow)
         uow.commit()
     return record
 
 
 @dataclass(frozen=True)
-class SetTerKindCommand:
+class MoveRecordCommand:
     record_id: UUID
-    kind: str  # lugs.TER_KIND_VALUES
+    tab: TechOperationTab  # another base of the record's family
     actor: Actor
     now: datetime
 
 
-def set_ter_kind(command: SetTerKindCommand, uow: UnitOfWork) -> TechOperationRecord:
-    """Moves a БД.ТЕР row between «Терминалы» and «Наконечники» by hand (the rule misjudged it). The row's fields stay as
-    they are — only its list changes; the row is marked edited in ERP, so a mirror reload keeps the move."""
-    if command.kind not in TER_KIND_VALUES:
-        raise ReferenceValidationError(TER_KIND_REASON)
+MOVE_FAMILY_REASON = ("Строку переносят только в соседнюю базу того же листа: «Терминалы» ↔ «Наконечники» или между "
+                      "базами кабелей")
+
+
+def move_record(command: MoveRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
+    """Moves a row to another base of its sheet family by hand (the rule misjudged it): «Терминалы» ↔ «Наконечники»,
+    or between the cable bases. The row keeps its id, so its stock links and the readers that hold the id follow it.
+
+    «Терминалы» / «Наконечники»: the fields stay as they are; the row is marked edited in ERP, so a mirror reload keeps
+    the move (it knows the row by its family and mirror key). A cable: the row takes the columns of the new base —
+    every filled value stays, an empty cell of a column the new base has not leaves (`domain.cable_fields`); a
+    монтажный wire's other colours move with it (the base is the mark's). The move is kept by the mark in the
+    `cable_kind` map, so the row recreated by a mirror reload (its cells still follow the mirror) or a row of that mark
+    created anew lands in the same base; moving it back to the base the rule gives removes the entry."""
     with uow:
         record = _editable(command.record_id, uow)
-        if record.tab != TechOperationTab.TERMINAL:
-            raise ReferenceValidationError("Список «Терминалы / Наконечники» бывает только у строки БД.ТЕР")
-        before = record.ter_kind
-        moved = replace(record, ter_kind=command.kind, edited_in_erp=True)
-        if before != command.kind:
-            uow.tech_operations.save(moved)
-            _audit("references.ter_kind_set", command.actor, command.now, {
-                "record_id": str(record.id), "title": record.display_text, "from": before, "to": command.kind,
-                "rule": ter_kind_of(record.fields),
-            }, uow)
+        family = tab_family(record.tab)
+        if len(family) < 2 or command.tab not in family:
+            raise ReferenceValidationError(MOVE_FAMILY_REASON)
+        details: dict[str, object] = {}
+        if record.tab != command.tab and record.tab in CABLE_TABS:
+            details = _move_cable(record, CableKind(CABLE_KIND_BY_TAB[command.tab]), uow)
+        elif record.tab != command.tab:
+            uow.tech_operations.save(replace(record, tab=command.tab, edited_in_erp=True))
+            details = {"rule": ter_tab(ter_kind_of(record.fields)).value}
+        if record.tab != command.tab:
+            _audit("references.record_moved", command.actor, command.now, {
+                "record_id": str(record.id), "title": record.display_text, "from": record.tab.value,
+                "to": command.tab.value, **details}, uow)
             uow.commit()
+        moved = uow.tech_operations.get(record.id)
     return moved
+
+
+def _move_cable(record: TechOperationRecord, kind: CableKind, uow: UnitOfWork) -> dict[str, object]:
+    mark = cable_mark(record)
+    key = normalized_cable_key(mark)
+    diameters = uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)
+    auto, _reason = auto_kind(record.fields, mark, frozenset(diameter_index(diameters)))
+    entries = [entry for entry in uow.references.list()
+               if not (entry.kind == ReferenceKind.CABLE_KIND and entry.normalized_key == key)]
+    if kind != auto:
+        position = max((entry.position for entry in entries if entry.kind == ReferenceKind.CABLE_KIND), default=-1) + 1
+        entries.append(ReferenceEntry.create(ReferenceKind.CABLE_KIND, mark, kind.value, position))
+    uow.references.replace(tuple(entries))
+    colours = wire_siblings(record, uow)  # the base is the mark's: its other colours move with it
+    for item in (record, *colours):
+        moved = replace(item, tab=cable_tab(kind), fields=_wire_fields(kind, item.fields, uow))
+        uow.tech_operations.save(replace(moved, normalized_search=_search_text(moved)))
+    return {"mark": mark, "manual": kind != auto, **({"colour_rows": len(colours)} if colours else {})}
 
 
 # --- «Склад → база данных»: a stock article tied to, or made into, a record; each event is journaled (T14) ---
@@ -1009,16 +1041,15 @@ class CableCatalog:
 
 def cable_catalog(uow: UnitOfWork) -> CableCatalog:
     with uow:
-        wires = uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=10_000)
+        wires = uow.tech_operations.list(tab=CABLE_TABS, query="", limit=40_000)
         diameters = uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)
         cards = {card.name_key: card for card in uow.cable_structure.cards()}
         gauges = uow.cable_structure.gauges()
         hookups = {wire.mark_key: wire for wire in uow.cable_structure.hookups()}
         usage = uow.cable_structure.gauge_usage()
-        custom_by_kind = {kind: cable_list_own(kind, custom_columns(TechOperationTab.WIRE, uow, kind))
-                          for kind in CABLE_KIND_VALUES}
+        custom_by_kind = {kind: cable_list_own(kind, custom_columns(cable_tab(kind), uow)) for kind in CABLE_KIND_VALUES}
         kept = {name for names in custom_by_kind.values() for name in names}
-        own_columns = [name for name in custom_columns(TechOperationTab.WIRE, uow) if name in kept]
+        own_columns = [name for name in cable_custom_columns(uow) if name in kept]
         connectors = connectors_by_cable(uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000))
     rows = sorted(cable_rows(wires, diameters, cards), key=lambda row: (row.key, row.cable))
     columns_by_kind = {kind: [*CABLE_COLUMNS[kind], *(name for name in own if name not in CABLE_COLUMNS[kind])]
@@ -1154,7 +1185,7 @@ def save_hookup_in(command: SaveHookupCommand, uow: UnitOfWork,
     harness catalogue and the ETK generator read the same values. Inside an open unit of work, nothing committed;
     `details` go into the audit."""
     record = uow.tech_operations.get(command.record_id)
-    if record is None or record.tab != TechOperationTab.WIRE:
+    if record is None or record.tab not in CABLE_TABS:
         raise LookupError("Провод не найден в БД.ПРОВ")
     mark = cable_mark(record)
     current = uow.cable_structure.hookup(normalized_cable_key(mark))
@@ -1302,7 +1333,7 @@ def apply_coax_vocabulary(document, actor: Actor, now: datetime, uow: UnitOfWork
     problems: list[str] = []
     found: set[str] = set()
     with uow:
-        for record in uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=10_000):
+        for record in uow.tech_operations.list(tab=CABLE_TABS, query="", limit=40_000):
             key = cable_key(cable_mark(record))
             if key not in by_mark:
                 continue
@@ -1322,49 +1353,6 @@ def apply_coax_vocabulary(document, actor: Actor, now: datetime, uow: UnitOfWork
             uow.commit()
     return {"cells": sum(len(group) for group in by_mark.values()), "rewritten": rewritten, "problems": problems,
             "missing": missing}
-
-
-@dataclass(frozen=True)
-class SetCableKindCommand:
-    record_id: UUID
-    kind: CableKind
-    actor: Actor
-    now: datetime
-
-
-def set_cable_kind(command: SetCableKindCommand, uow: UnitOfWork) -> CableRow:
-    """Moves a БД.ПРОВ row to a list: the row stores the list and takes its columns — every filled value stays, an
-    empty cell of a column the new list has not leaves (`domain.cable_fields`). The move is also kept by the cable's
-    mark in the `cable_kind` map, so the row recreated by a mirror reload (its cells still follow the mirror) or a row of
-    that mark created anew lands in the same list; moving it back to its automatic list removes the entry."""
-    with uow:
-        record = uow.tech_operations.get(command.record_id)
-        if record is None or record.tab != TechOperationTab.WIRE:
-            raise LookupError("Кабель не найден в БД.ПРОВ")
-        mark = cable_mark(record)
-        key = normalized_cable_key(mark)
-        diameters = uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)
-        auto, _reason = auto_kind(record.fields, mark, frozenset(diameter_index(diameters)))
-        entries = [entry for entry in uow.references.list()
-                   if not (entry.kind == ReferenceKind.CABLE_KIND and entry.normalized_key == key)]
-        if command.kind != auto:
-            position = max((entry.position for entry in entries if entry.kind == ReferenceKind.CABLE_KIND), default=-1) + 1
-            entries.append(ReferenceEntry.create(ReferenceKind.CABLE_KIND, mark, command.kind.value, position))
-        uow.references.replace(tuple(entries))
-        before = record.cable_kind
-        colours = wire_siblings(record, uow)  # the list is the mark's: its other colours move with it
-        if before != command.kind.value:
-            for item in (record, *colours):
-                moved = replace(item, cable_kind=command.kind.value, fields=_wire_fields(command.kind, item.fields, uow))
-                uow.tech_operations.save(replace(moved, normalized_search=_search_text(moved)))
-            record = uow.tech_operations.get(record.id)
-        _audit("references.cable_kind_set", command.actor, command.now, {
-            "record_id": str(record.id), "mark": mark, "kind": command.kind.value, "from": before,
-            "manual": command.kind != auto, **({"colour_rows": len(colours)} if colours else {}),
-        }, uow)
-        uow.commit()
-    [row] = [item for item in cable_rows([record], diameters) if item.record is not None]
-    return row
 
 
 @dataclass(frozen=True)

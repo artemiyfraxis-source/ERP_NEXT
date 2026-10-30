@@ -10,7 +10,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import TERMINAL_TABS, TechOperationTab
 from app.modules.references.importers import _normalized_article, technologist_field
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.references.load_mirror import TER_EXPORT_KEYS, default_source, load_mirror, ter_import_rows
@@ -68,7 +68,7 @@ def test_on_the_production_base_the_body_only_fills_the_card_and_a_second_apply_
     uow = SqlAlchemyReferencesUnitOfWork(sessions)
     load_mirror(default_source(), uow, dry_run=False, now=NOW)
     with uow:  # loaded from the mirror before the card keys existed, as production holds it
-        for record in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=100_000):
+        for record in uow.tech_operations.list(tab=TERMINAL_TABS, query="", limit=100_000):
             uow.tech_operations.save(replace(record, fields={
                 key: value for key, value in record.fields.items() if key not in TER_CARD_KEYS}))
         uow.commit()

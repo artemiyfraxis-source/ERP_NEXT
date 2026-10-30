@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.references.application import ReplaceSnapshotCommand, TechRecordInput, replace_snapshot
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import CABLE_TABS, TechOperationTab
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.references.load_mirror import ACTOR, MirrorLoadError, default_source, format_report, load_mirror, main, read_mirror
 from app.modules.references.technology import import_supplymap_snapshot, schema_keys
@@ -296,11 +296,13 @@ def test_load_replaces_every_mirrored_base_in_one_snapshot_and_is_repeatable(tmp
     load_mirror(source, uow, dry_run=False, now=NOW)
     load_mirror(source, uow, dry_run=False, now=NOW)
 
-    assert sorted(rows(uow, TechOperationTab.TERMINAL)) == ["Molex | 43020, 43640 | Micro-Fit 3.0", "КВТ | НВИ 1.5 | НВИ"]
+    # a БД.ТЕР sheet row goes to «Терминалы» or «Наконечники», a БД.ПРОВ row to its cable base (migration 0165)
+    assert rows(uow, TechOperationTab.TERMINAL) == ["Molex | 43020, 43640 | Micro-Fit 3.0"]
+    assert rows(uow, TechOperationTab.LUG) == ["КВТ | НВИ 1.5 | НВИ"]
     assert rows(uow, TechOperationTab.OPERATION) == ["Резка | CUT_WIRE_auto"]
     assert rows(uow, TechOperationTab.EQUIPMENT) == ["DT-8920/Дифманометр"]
     assert rows(uow, TechOperationTab.COAX) == ["BNC-male | RG58"]
-    assert rows(uow, TechOperationTab.WIRE) == ["RG316", "UL1061"]
+    assert rows(uow, TechOperationTab.WIRE) == ["UL1061"] and rows(uow, TechOperationTab.CAB_COAX) == ["RG316"]
     assert rows(uow, TechOperationTab.MATERIAL) == ["ТУТ 4/2"]
     assert rows(uow, TechOperationTab.KAB_AWG) == ["24"]  # no СПР.КАБ.tsv in this mirror → kept as it was
     with uow:
@@ -315,7 +317,8 @@ def test_default_source_is_the_snapshot_bundled_with_the_repo(monkeypatch, tmp_p
     source = default_source()
     assert source == Path(__file__).resolve().parents[2] / "data" / "reference-mirror"
     snapshot = read_mirror(source)
-    assert set(snapshot.tables) == {tab.value for tab in TechOperationTab}
+    # the mirror's sheets: БД.ТЕР and БД.ПРОВ come whole, each row goes to its base on the load
+    assert set(snapshot.tables) == {tab.value for tab in TechOperationTab} - {"lug", "cab_coax", "cab_multi", "cab_lan"}
     assert all(snapshot.tables.values()), "every tab of the bundled snapshot has records"
     assert snapshot.source_updated_at == datetime(2026, 9, 29, 9, 23, tzinfo=timezone.utc)
 
@@ -349,14 +352,14 @@ def _erp_record(uow, tab, display):
 def test_reload_keeps_erp_edit_and_updates_untouched(tmp_path, uow):
     from app.modules.references.application import EditRecordCommand, FieldEdit, edit_record
     load_mirror(mirror(tmp_path / "a"), uow, dry_run=False, now=NOW)
-    record = _erp_record(uow, TechOperationTab.WIRE, "RG316")
+    record = _erp_record(uow, TechOperationTab.CAB_COAX, "RG316")
     edit_record(EditRecordCommand(record.id, (FieldEdit(next(iter(record.fields)), "RG316", "RG316-ERP"),), ACTOR, NOW), uow)
 
     result = load_mirror(mirror(tmp_path / "b"), uow, dry_run=False, now=NOW)
 
-    edited = _erp_record(uow, TechOperationTab.WIRE, "RG316-ERP")
+    edited = _erp_record(uow, TechOperationTab.CAB_COAX, "RG316-ERP")
     assert edited.id == record.id and edited.edited_in_erp
-    assert sorted(rows(uow, TechOperationTab.WIRE)) == ["RG316-ERP", "UL1061"]  # no mirror twin next to the edit
+    assert sorted(rows(uow, CABLE_TABS)) == ["RG316-ERP", "UL1061"]  # no mirror twin next to the edit
     assert result.skipped_edited["prov"] == 1 and sum(result.skipped_edited.values()) == 1
     assert "пропущено (правлено в ERP): 1" in format_report(result)
     with uow:
@@ -371,7 +374,7 @@ def test_reload_updates_untouched_record_from_new_mirror(tmp_path, uow):
 
     result = load_mirror(mirror(tmp_path / "b", **{"БД.ПРОВ": changed}), uow, dry_run=False, now=NOW)
 
-    assert sorted(rows(uow, TechOperationTab.WIRE)) == ["RG316", "UL1061-NEW"]
+    assert sorted(rows(uow, CABLE_TABS)) == ["RG316", "UL1061-NEW"]
     assert sum(result.skipped_edited.values()) == 0
     assert _erp_record(uow, TechOperationTab.WIRE, "UL1061-NEW").id != old_id
 
@@ -385,8 +388,32 @@ def test_reload_keeps_record_created_in_erp(tmp_path, uow):
     load_mirror(mirror(tmp_path / "c"), uow, dry_run=False, now=NOW)
 
     assert _erp_record(uow, TechOperationTab.WIRE, "ERP-NEW").id == created.id
-    assert sorted(rows(uow, TechOperationTab.WIRE)) == ["ERP-NEW", "RG316", "UL1061"]
+    assert sorted(rows(uow, CABLE_TABS)) == ["ERP-NEW", "RG316", "UL1061"]
     assert sum(result.skipped_edited.values()) == 0  # the new record has no mirror twin
+
+
+def test_a_row_moved_to_another_base_and_edited_is_not_inserted_again_in_the_base_the_rule_gives(tmp_path, uow):
+    # owner 29.10.2026: «Наконечники» and each cable kind are bases of their own (migration 0165); a reload knows a row
+    # by its sheet family and mirror key, so a move by hand plus an edit holds
+    from app.modules.references.application import (
+        EditRecordCommand, FieldEdit, MoveRecordCommand, edit_record, move_record,
+    )
+    load_mirror(mirror(tmp_path / "a"), uow, dry_run=False, now=NOW)
+    lug = _erp_record(uow, TechOperationTab.LUG, "КВТ | НВИ 1.5 | НВИ")
+    wire = _erp_record(uow, TechOperationTab.WIRE, "UL1061")
+    move_record(MoveRecordCommand(lug.id, TechOperationTab.TERMINAL, ACTOR, NOW), uow)
+    move_record(MoveRecordCommand(wire.id, TechOperationTab.CAB_MULTI, ACTOR, NOW), uow)
+    moved_wire = _erp_record(uow, TechOperationTab.CAB_MULTI, "UL1061")
+    edit_record(EditRecordCommand(wire.id, (FieldEdit("Марка", "UL1061", "UL1061 (правка)"),), ACTOR, NOW), uow)
+
+    result = load_mirror(mirror(tmp_path / "b"), uow, dry_run=False, now=NOW)
+
+    assert rows(uow, TechOperationTab.LUG) == []  # the rule would send it back to «Наконечники»: kept where it was moved
+    assert sorted(rows(uow, TechOperationTab.TERMINAL)) == ["Molex | 43020, 43640 | Micro-Fit 3.0", "КВТ | НВИ 1.5 | НВИ"]
+    assert _erp_record(uow, TechOperationTab.TERMINAL, "КВТ | НВИ 1.5 | НВИ").id == lug.id
+    assert rows(uow, TechOperationTab.WIRE) == []  # neither the rule's монтажный twin nor the cable's mark map
+    assert rows(uow, TechOperationTab.CAB_MULTI) == ["UL1061 (правка)"] and moved_wire.id == wire.id
+    assert (result.skipped_edited["ter"], result.skipped_edited["prov"]) == (1, 1)  # counted by the mirror sheet
 
 
 def test_dry_run_report_has_no_skipped_column(tmp_path, uow):

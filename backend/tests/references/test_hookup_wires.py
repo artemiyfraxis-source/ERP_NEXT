@@ -12,11 +12,12 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.modules.references import load_cables
+from tests.references.test_cables import move_cable
 from app.modules.references.application import (
-    SaveHookupCommand, SetCableKindCommand, cable_catalog, save_hookup, set_cable_kind, structure_hookups,
+    SaveHookupCommand, cable_catalog, save_hookup, structure_hookups,
 )
 from app.modules.references.cables import NOT_HOOKUP_REASON, CableKind, auto_kind, hookup_series
-from app.modules.references.domain import TechOperationTab, cable_key, gost_awg_map
+from app.modules.references.domain import CABLE_TABS, TechOperationTab, cable_key, gost_awg_map
 from app.modules.references.importers import HookupSeedError, hookup_seed, import_hookups
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.references.load_mirror import ACTOR, load_mirror
@@ -110,9 +111,9 @@ def test_the_base_goes_to_hookup_wires_whatever_the_row_type(mark):
 def test_a_manual_move_still_wins_both_ways(tmp_path, uow):
     load_mirror(_mirror(tmp_path, prov=PROV), uow, dry_run=False, now=NOW)
     rows ={item.cable: item for item in cable_catalog(uow).rows}
-    moved = set_cable_kind(SetCableKindCommand(rows["M22759/16 26AWG"].record.id, CableKind.MULTI, ACTOR, NOW), uow)
+    moved = move_cable(rows["M22759/16 26AWG"].record.id, CableKind.MULTI, uow)
     assert (moved.kind, moved.auto, moved.manual) == (CableKind.MULTI, CableKind.WIRE, True)
-    out = set_cable_kind(SetCableKindCommand(rows["МГТФ 0,20"].record.id, CableKind.COAX, ACTOR, NOW), uow)
+    out = move_cable(rows["МГТФ 0,20"].record.id, CableKind.COAX, uow)
     assert (out.kind, out.manual) == (CableKind.COAX, True)
 
 
@@ -182,12 +183,12 @@ def _prepared(tmp_path, uow):
 
 def _all(uow):
     with uow:
-        return list(uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=1000))
+        return list(uow.tech_operations.list(tab=CABLE_TABS, query="", limit=4000))
 
 
 def _records(uow):
     with uow:
-        return {cable: record for record in uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=1000)
+        return {cable: record for record in uow.tech_operations.list(tab=CABLE_TABS, query="", limit=4000)
                 for cable in [str(record.fields.get("Марка") or record.display_text)]}
 
 
@@ -285,7 +286,7 @@ def test_import_updates_in_place_creates_missing_sizes_and_a_second_run_changes_
 
 def test_a_row_moved_away_by_hand_is_left_alone(tmp_path, uow):
     _prepared(tmp_path, uow)
-    set_cable_kind(SetCableKindCommand(_records(uow)["ПВАМ 0,50"].id, CableKind.MULTI, ACTOR, NOW), uow)
+    move_cable(_records(uow)["ПВАМ 0,50"].id, CableKind.MULTI, uow)
     pvam = _records(uow)["ПВАМ 0,50"]
     report = import_hookups(_factory(uow)(), _payload(), ACTOR, NOW)
     assert {"key": "ПВАМ 0,50", "reason": "перенесён вручную в другой список — не тронут"} in report.refused

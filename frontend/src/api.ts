@@ -1746,7 +1746,10 @@ export interface ReferenceBase {
   count: number | null;
 }
 
-export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
+/** A base of «База данных» — its own table (migration 0165): «Наконечники» (lug) and each cable kind (prov = монтажные,
+ *  cab_coax, cab_multi, cab_lan) too. */
+export type TechOperationTab = "ob" | "op" | "ter" | "lug" | "coax" | "prov" | "cab_coax" | "cab_multi" | "cab_lan" | "mat"
+  | "kab_coax" | "kab_awg";
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
 export type CableKind = "coax" | "wire" | "multi" | "lan";
@@ -1755,11 +1758,9 @@ export interface SharedColumn { key: string; visible: boolean }
 
 export interface BasesResult {
   bases: ReferenceBase[];
-  /** Records per stored tab and per cable list — the counts on the tab chips. */
+  /** Records per base (each its own table: ter, lug, prov, cab_coax…) — the counts on the tab chips. */
   tabs?: Partial<Record<TechOperationTab, number>>;
   cables?: Record<CableKind, number>;
-  /** БД.ТЕР rows per list: «Терминалы» (contact), «Наконечники» (lug). */
-  ter_kinds?: Record<TerKind, number>;
   /** Rows of «Сечения AWG ↔ мм²». */
   gauges?: number;
 }
@@ -1952,9 +1953,9 @@ export interface TechOperationRecord {
   tab: TechOperationTab;
   display_text: string;
   source_sheet: string;
-  /** БД.ПРОВ: список кабелей записи — монтажный (wire), многожильный (multi), LAN (lan), коаксиал (coax). */
+  /** Кабель: вид его базы — монтажный (wire, prov), многожильный (multi), LAN (lan), коаксиал (coax). */
   cable_kind?: string;
-  /** БД.ТЕР: список строки — «Терминалы» (contact) или «Наконечники» (lug); `ter_rule` — какой даёт правило. */
+  /** «Терминалы» (contact) / «Наконечники» (lug): вид базы строки; `ter_rule` — какой даёт правило. */
   ter_kind?: TerKind;
   ter_rule?: TerKind;
   fields: Record<string, string>;

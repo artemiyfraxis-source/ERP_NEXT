@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.modules.references.domain import CABLE_COLUMNS, TechOperationTab
+from app.modules.references.domain import CABLE_COLUMNS, CABLE_TABS, TechOperationTab
 from app.modules.references.importers import import_rows
 from app.modules.references.roundtrip import COAX_TITLES, HOOKUP_TITLES, NOT_FOUND_REASON
 from app.shared import bulk_import
@@ -38,7 +38,7 @@ def fresh_limiter(monkeypatch):
 
 def _records(client: TestClient) -> dict[str, dict]:
     return {record["fields"]["Марка"]: record for record in
-            client.get("/api/references/tech-operations", params={"tab": "prov"}).json()["records"]}
+            client.get("/api/references/tech-operations", params={"tab": "prov", "family": "true"}).json()["records"]}
 
 
 def _seed(client: TestClient) -> dict[str, dict]:
@@ -230,9 +230,11 @@ def test_the_ssh_import_rows_path_creates_rows_with_a_list(references_api):
     assert sorted(report.created) == ["RG142", "ПуГВ 1,5"] and not report.refused
     with uow:
         rows = {record.display_text: record for record in
-                uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=100)}
+                uow.tech_operations.list(tab=CABLE_TABS, query="", limit=100)}
     assert all(record.cable_kind for record in rows.values())
     assert (rows["RG142"].cable_kind, rows["ПуГВ 1,5"].cable_kind) == ("coax", "wire")
+    # each in the base of its kind (migration 0165)
+    assert (rows["RG142"].tab, rows["ПуГВ 1,5"].tab) == (TechOperationTab.CAB_COAX, TechOperationTab.WIRE)
 
 
 def test_the_schema_of_the_prov_load_names_the_kind_field_and_the_columns_of_each_list(references_api):
