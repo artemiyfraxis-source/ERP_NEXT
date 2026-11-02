@@ -22,6 +22,10 @@ import { BulkLotsPanel, absentPosition, absentTargets, searchSeed, CANDIDATE_LEG
 /** One position of a project card: article + name, the same key for the groups and for the candidates. */
 export const positionKey = (article: string, name: string) => `${article}|${name}`.trim().toLocaleLowerCase("ru");
 
+function ComponentLinks({ links = [] }: { links?: string[] }) {
+  return <>{links.map((url, index) => <small key={url}><a href={url} target="_blank" rel="noopener noreferrer">{links.length > 1 ? `Ссылка ${index + 1}` : "Ссылка"}</a></small>)}</>;
+}
+
 /* NAV-1: one request, two sections (SUPPLYMAP ISS_MODES_, owner 02.09.2026): «Запросы на комплектацию» picks and
    only reserves, «Выдача со списанием» hands the kit out and writes it off. «Готов к выдаче» is the joint and reads as
    «Укомплектован» on both. Closed requests live in the archive of either screen. */
@@ -509,12 +513,13 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
   const [tab, setTab] = useState("all");
   const current = requests.find((request) => request.id === tab);
   const positions = useMemo(() => {
-    const groups = new Map<string, { article: string; name: string; unit: string; need: number; got: number; off: number; absent: number; remaining: number; kb: Map<string, { request: FulfillmentRequest; need: number; got: number; off: number; absent: number; remaining: number }> }>();
+    const groups = new Map<string, { article: string; name: string; links: string[]; unit: string; need: number; got: number; off: number; absent: number; remaining: number; kb: Map<string, { request: FulfillmentRequest; need: number; got: number; off: number; absent: number; remaining: number }> }>();
     for (const request of requests) {
       for (const line of request.lines ?? []) {
         const key = positionKey(line.article, line.name);
-        if (!groups.has(key)) groups.set(key, { article: line.article, name: line.name, unit: line.unit, need: 0, got: 0, off: 0, absent: 0, remaining: 0, kb: new Map() });
+        if (!groups.has(key)) groups.set(key, { article: line.article, name: line.name, links: [], unit: line.unit, need: 0, got: 0, off: 0, absent: 0, remaining: 0, kb: new Map() });
         const group = groups.get(key)!;
+        for (const link of line.links ?? []) if (!group.links.includes(link)) group.links.push(link);
         const off = isOffBook(line) ? Math.max(Number(line.requirement) - picked(line), 0) : 0;
         const open = closedLine(line) ? 0 : Math.max(Number(line.requirement) - picked(line), 0);
         const absent = absentMark(line) ? Number(line.requirement) : 0;
@@ -632,7 +637,7 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
           const others = offered ? offered.items.length - 1 + offered.more : 0;
           return <Fragment key={key}>
             <tr className={canBulk && offered ? `cand-row cand-${tone}` : undefined}>
-              <td><strong>{position.article || "—"}</strong></td><td>{position.name}</td>
+              <td>{position.article || "—"}</td><td><strong>{position.name}</strong><ComponentLinks links={position.links} /></td>
               <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got + kb.off)} / {round(kb.need)}{kb.off > 0 ? ` · ${round(kb.off)} не заведено` : ""}{kb.absent > 0 ? " · нет на складе" : ""}</button>)}</td>
               <td className="num">{round(position.need)} {position.unit}</td>
               <td className="num">{round(position.got + position.off)}{position.off > 0 && <small>из них {round(position.off)} есть, не заведено</small>}{position.absent > 0 && <small>{round(position.absent)} нет на складе</small>}</td>
@@ -932,7 +937,7 @@ function FulfillmentLineRow({ request, line, lots, canEdit, busy, mutate }: {
   const absent = absentMark(line);
   return <>
     <tr>
-      <td className="text"><strong>{line.article || "—"}</strong><small>{line.name}</small></td>
+      <td className="text"><strong>{line.name}</strong><small>{line.article || "—"}</small><ComponentLinks links={line.links} /></td>
       <td className="num">{line.requirement} {line.unit}</td><td className="num">{line.reserved} {line.unit}</td><td className="num">{line.issued} {line.unit}</td>
       <td>{line.lot ? `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}`
         : off ? <StatusChip tone="neutral">есть, не заведено</StatusChip>
