@@ -1682,7 +1682,7 @@ export interface Shipment {
   weight: string;
   boxes: ShipmentBox[];
   lines: ShipmentLine[];
-  /** Поля адресата, которые идут за карточкой проекта, пока отправка не закрыта. */
+  /** Поля адресата, которые идут за карточкой проекта до отгрузки. */
   inherited: string[];
   /** Чего не хватает для отгрузки, считает сервер (`shipping_gaps`): `missing_data` — что вносит менеджер (с этим
    *  печатается DN), `missing_ship` — то же и трек-номер ТК, без которого «Отгрузить» откажет. */
@@ -1704,6 +1704,9 @@ export interface ShipmentBox {
   seal: string;
   items: Array<{ item_index: string; quantity: string }>;
 }
+
+export type ShipmentHistoryField = "receiver" | "shipping_point" | "contact" | "phone" | "carrier" | "track_number";
+export type ShipmentHistoryCorrection = { version: number; reason: string; source: string } & Partial<Record<ShipmentHistoryField, string>>;
 
 /** Карточка отгрузки проекта (`ОТГРУЗКА.ПРОЕКТЫ`): адресат, доставка, тип УПД и реквизиты DN. */
 export interface ProjectAddressee {
@@ -4027,6 +4030,9 @@ export const shippingApi = {
   /** `shipSetHead_`: шапка отправки; приходят только правленые поля, пустое поле адресата — из карточки проекта. */
   head: (shipmentId: string, payload: Record<string, unknown>) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/head`, {
     method: "PUT", body: JSON.stringify(payload),
+  }),
+  correctHistory: (shipmentId: string, payload: ShipmentHistoryCorrection) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${encodeURIComponent(shipmentId)}/history-correction`, {
+    method: "POST", body: JSON.stringify(payload),
   }),
   /** SH-4 `portalShipItemQty`: «Заказано» после создания, не ниже набранного. */
   setRequested: (shipmentId: string, version: number, lineId: string, quantity: string) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/lines/${lineId}`, {

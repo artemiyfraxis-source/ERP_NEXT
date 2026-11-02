@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
-import { failureText, shippingApi, type Shipment, type UpdType, type WarehouseReceiptScan } from "./api";
+import { ApiError, failureText, shippingApi, type Shipment, type ShipmentHistoryField, type UpdType, type WarehouseReceiptScan } from "./api";
+import { DataTable, type DataColumn } from "./DataTable";
 import { PageWindow } from "./PageWindow";
 import { CARRIERS, PICKUP_CARRIER, isPickup, needsTrack } from "./carriers";
 import { StatusChip } from "./StatusChip";
@@ -79,11 +80,15 @@ const CARRIER_CHOICES =CARRIERS.filter((name) => name !== PICKUP_CARRIER);
 
 /** Окно с данными одной отправки — только поля, которые вносит менеджер. Сохранение — через правку шапки и документов
  *  отправки (проверка версии на сервере): сначала шапка, потом документы, потом файл УПД. */
-export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: given, canEdit = true }: {
+export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: given, canEdit: grantedEdit = true, canCorrectHistory = false }: {
   shipment: Shipment; close: () => void; onSaved: () => Promise<void> | void;
   /** Этап на общей лестнице (29.10); без него — как у принятой на склад отправки. */
-  stage?: DispatchStage | null; canEdit?: boolean;
+  stage?: DispatchStage | null; canEdit?: boolean; canCorrectHistory?: boolean;
 }) {
+  const historical = opened.status === "Отгружена" || opened.status === "Закрыта";
+  const canEdit = grantedEdit && opened.status !== "Закрыта" && opened.status !== "Отменена";
+  const canEditHead = canEdit && !historical;
+  const [correcting, setCorrecting] = useState(false);
   const stage: DispatchStage = given ?? shipmentDispatchStage(opened, "Принято складом") ?? "accepted";
   const shipped = stage === "shipped";
   const packed = stage === "packed";
@@ -163,12 +168,14 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
       let current = shipment;
       const head: Record<string, unknown> = {};
       const wantedCarrier = pickup ? PICKUP_CARRIER : carrier.trim();
-      if (receiver.trim() !== shipment.receiver.trim()) head.receiver = receiver.trim();
-      if (phone.trim() !== shipment.phone.trim()) head.phone = phone.trim();
-      if (warehouseNote.trim() !== shipment.note.trim()) head.note = warehouseNote.trim();
-      if (delivery && delivery !== shipment.terms) head.terms = delivery;
-      if (delivery && wantedCarrier !== shipment.carrier.trim()) head.carrier = wantedCarrier;
-      if (!shipped && !pickup && point.trim() !== shipment.shipping_point.trim()) head.shipping_point = point.trim();
+      if (canEditHead) {
+        if (receiver.trim() !== shipment.receiver.trim()) head.receiver = receiver.trim();
+        if (phone.trim() !== shipment.phone.trim()) head.phone = phone.trim();
+        if (warehouseNote.trim() !== shipment.note.trim()) head.note = warehouseNote.trim();
+        if (delivery && delivery !== shipment.terms) head.terms = delivery;
+        if (delivery && wantedCarrier !== shipment.carrier.trim()) head.carrier = wantedCarrier;
+        if (!shipped && !pickup && point.trim() !== shipment.shipping_point.trim()) head.shipping_point = point.trim();
+      }
       if (Object.keys(head).length) current = (await shippingApi.head(shipment.id, { version: current.version, ...head })).shipment;
       const number = noUpd ? "" : updNumber.trim();
       const day = noUpd ? "" : updDate;
@@ -190,6 +197,8 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
   };
 
   const gaps = shipment.missing_data;
+  if (correcting && grantedEdit && canCorrectHistory && historical) return <ShipmentHistoryWindow
+    shipment={shipment} close={() => setCorrecting(false)} onSaved={async () => { await onSaved(); close(); }} />;
   return <PageWindow label={`Данные отправки ${shipment.number}`} width={760} close={close}>
     {canEdit && scan.agentDialogs()}
     <form className="panel ship-data" onSubmit={(event) => { event.preventDefault(); if (canEdit) void save(); }}>
@@ -199,15 +208,15 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
       {deciding && <div className="ship-block"><h3>Упаковка</h3>
         {[...new Set(shipment.lines.map((line) => line.project))].map((name) => <PackDecision key={name} project={name} editable={canEdit} />)}</div>}
       {!shipped && <div className="ship-block"><h3>Адрес</h3><div className="ship-form">
-        {!pickup && <label className="ship-span2">Адрес доставки<input aria-label="Адрес доставки" value={point} readOnly={!canEdit} onChange={canEdit ? (event) => setPoint(event.target.value) : undefined} /></label>}
-        <label>Получатель<input aria-label="Получатель" value={receiver} readOnly={!canEdit} onChange={canEdit ? (event) => setReceiver(event.target.value) : undefined} /></label>
-        <label>Телефон получателя<input aria-label="Телефон получателя" value={phone} readOnly={!canEdit} onChange={canEdit ? (event) => setPhone(event.target.value) : undefined} /></label>
-        <label className="ship-span2">Комментарий для склада<textarea aria-label="Комментарий для склада" maxLength={5000} value={warehouseNote} readOnly={!canEdit} onChange={canEdit ? (event) => setWarehouseNote(event.target.value) : undefined} /></label>
+        {!pickup && <label className="ship-span2">Адрес доставки<input aria-label="Адрес доставки" value={point} readOnly={!canEditHead} onChange={canEditHead ? (event) => setPoint(event.target.value) : undefined} /></label>}
+        <label>Получатель<input aria-label="Получатель" value={receiver} readOnly={!canEditHead} onChange={canEditHead ? (event) => setReceiver(event.target.value) : undefined} /></label>
+        <label>Телефон получателя<input aria-label="Телефон получателя" value={phone} readOnly={!canEditHead} onChange={canEditHead ? (event) => setPhone(event.target.value) : undefined} /></label>
+        <label className="ship-span2">Комментарий для склада<textarea aria-label="Комментарий для склада" maxLength={5000} value={warehouseNote} readOnly={!canEditHead} onChange={canEditHead ? (event) => setWarehouseNote(event.target.value) : undefined} /></label>
       </div></div>}
       <div className="ship-block"><h3>ТК и УПД</h3><div className="ship-form">
-        <label className={packed && !delivery ? "ship-required" : undefined}>Тип доставки<select aria-label="Тип доставки" value={delivery} disabled={!canEdit} onChange={canEdit ? (event) => setDelivery(event.target.value) : undefined}>
+        <label className={packed && !delivery ? "ship-required" : undefined}>Тип доставки<select aria-label="Тип доставки" value={delivery} disabled={!canEditHead} onChange={canEditHead ? (event) => setDelivery(event.target.value) : undefined}>
           <option value="">не выбран</option><option value="САМОВЫВОЗ">Самовывоз</option><option value="ДОСТАВКА ТК">Доставка ТК</option></select></label>
-        {carrierTrip && <label className={packed && !carrier ? "ship-required" : undefined}>Перевозчик<select aria-label="Перевозчик" value={carrier} disabled={!canEdit} onChange={canEdit ? (event) => setCarrier(event.target.value) : undefined}>
+        {carrierTrip && <label className={packed && !carrier ? "ship-required" : undefined}>Перевозчик<select aria-label="Перевозчик" value={carrier} disabled={!canEditHead} onChange={canEditHead ? (event) => setCarrier(event.target.value) : undefined}>
           <option value="">не выбран</option>{CARRIER_CHOICES.map((name) => <option key={name} value={name}>{name}</option>)}
           {carrier && !(CARRIER_CHOICES as readonly string[]).includes(carrier) && <option value={carrier}>{carrier} (прежнее)</option>}</select></label>}
         <label className={packed && !updType ? "ship-required" : undefined}>УПД<select aria-label="Тип УПД" value={updType} disabled={!canEdit} onChange={canEdit ? (event) => setUpdType(event.target.value) : undefined}>
@@ -250,9 +259,115 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="ship-actions"><span className="ship-actions-end">
+        {grantedEdit && canCorrectHistory && historical && <button type="button" className="secondary" disabled={saving || reading} onClick={() => setCorrecting(true)}>Исправить историю</button>}
         {shipment.pl_number && canPrint && <button type="button" className="secondary" onClick={() => void printPl()}>Печать ПЛ · {shipment.pl_number}</button>}
         <button type="button" className="secondary" onClick={close}>Отмена</button>
         {canEdit && <button className="primary" disabled={saving || reading}>{saving ? "Сохраняем…" : "Сохранить"}</button>}
+      </span></div>
+    </form>
+  </PageWindow>;
+}
+
+const HISTORY_FIELDS: Array<{ key: ShipmentHistoryField; label: string; max: number }> = [
+  { key: "receiver", label: "Получатель", max: 512 }, { key: "shipping_point", label: "Адрес доставки", max: 5000 },
+  { key: "contact", label: "Контактное лицо", max: 255 }, { key: "phone", label: "Телефон получателя", max: 128 },
+  { key: "carrier", label: "Перевозчик", max: 255 }, { key: "track_number", label: "Трек-номер", max: 255 },
+];
+type HistoryChange = { key: ShipmentHistoryField; label: string; before: string; after: string };
+const HISTORY_COLUMNS: DataColumn<HistoryChange>[] = [
+  { key: "field", title: "Поле", value: (row) => row.label, wrap: true },
+  { key: "before", title: "Было", value: (row) => row.before || "Не указано", wrap: true },
+  { key: "after", title: "Станет", value: (row) => row.after || "Будет очищено", wrap: true },
+];
+
+function ShipmentHistoryWindow({ shipment: opened, close, onSaved }: {
+  shipment: Shipment; close: () => void; onSaved: () => Promise<void>;
+}) {
+  const [shipment, setShipment] = useState(opened);
+  const [selected, setSelected] = useState<ShipmentHistoryField[]>([]);
+  const [values, setValues] = useState<Partial<Record<ShipmentHistoryField, string>>>({});
+  const [reason, setReason] = useState("");
+  const [source, setSource] = useState("");
+  const [reviewing, setReviewing] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const reasonInput = useRef<HTMLTextAreaElement>(null);
+  const sourceInput = useRef<HTMLInputElement>(null);
+  const changes: HistoryChange[] = HISTORY_FIELDS.filter(({ key }) => selected.includes(key))
+    .map(({ key, label }) => ({ key, label, before: shipment[key], after: (values[key] ?? shipment[key]).trim() }))
+    .filter(({ before, after }) => before !== after);
+  const reload = async () => {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      const latest = (await shippingApi.shipments()).shipments.find((item) => item.id === shipment.id);
+      if (!latest) throw new Error("Отправка не найдена в списке. Закройте окно и откройте её заново.");
+      if (!["Отгружена", "Закрыта"].includes(latest.status)) throw new Error("Статус отправки изменился. Закройте окно и проверьте отправку.");
+      setShipment(latest); setValues({}); setSelected([]); setReason(""); setSource("");
+      setReviewing(false); setConflict(false);
+    } catch (failure) { setError(failureText(failure, "Не удалось загрузить отправку")); }
+    finally { setBusy(false); }
+  };
+  const submit = async () => {
+    if (busy || conflict || saved) return;
+    setError("");
+    if (!changes.length) { setError("Выберите поля и внесите исправления."); return; }
+    if (!reason.trim()) { setError("Укажите причину исправления."); reasonInput.current?.focus(); return; }
+    if (!source.trim()) { setError("Укажите источник правильных данных."); sourceInput.current?.focus(); return; }
+    if (!reviewing) { setReviewing(true); return; }
+    setBusy(true);
+    try {
+      await shippingApi.correctHistory(shipment.id, {
+        version: shipment.version, reason: reason.trim(), source: source.trim(),
+        ...Object.fromEntries(changes.map(({ key, after }) => [key, after])),
+      });
+      setSaved(true);
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 409) {
+        setConflict(true); setError("Отправка изменилась. Загрузите актуальные данные и проверьте исправление заново.");
+      } else setError(failureText(failure, "Не удалось исправить историю"));
+      setBusy(false); return;
+    }
+    try { await onSaved(); }
+    catch (failure) { setError(failureText(failure, "Исправление сохранено, но список не обновлён. Закройте окно и обновите страницу.")); }
+    finally { setBusy(false); }
+  };
+  return <PageWindow label={`Исправление истории ${shipment.number}`} width={860} close={() => { if (!busy) close(); }}>
+    <form className="panel ship-data" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <h2>Исправление истории {shipment.number}</h2>
+      <p className="ship-data-sub">{shipment.status} · дата отгрузки: {formatDate(shipment.shipped_at ?? "") || "не указана"}
+        {" · "}{shipment.customer || shipment.receiver}</p>
+      {reviewing ? <>
+        <h3>Проверьте изменения</h3>
+        <DataTable rows={changes} columns={HISTORY_COLUMNS} rowKey={(row) => row.key} compactBelow={7} />
+        <p style={{ overflowWrap: "anywhere" }}><strong>Причина:</strong> {reason.trim()}</p>
+        <p style={{ overflowWrap: "anywhere" }}><strong>Источник:</strong> {source.trim()}</p>
+      </> : <>
+        <div className="ship-form">
+          {HISTORY_FIELDS.map(({ key, label, max }) => <div key={key}>
+            <label className="check-inline"><input type="checkbox" name={`change-${key}`} checked={selected.includes(key)} disabled={busy || conflict}
+              aria-label={`Исправить ${label}`} onChange={(event) => setSelected(event.target.checked ? [...selected, key] : selected.filter((item) => item !== key))} />{label}</label>
+            <input name={key} autoComplete="off" type={key === "phone" ? "tel" : "text"} aria-label={`Новое значение: ${label}`}
+              value={values[key] ?? shipment[key]} maxLength={max} disabled={!selected.includes(key) || busy || conflict}
+              onChange={(event) => setValues({ ...values, [key]: event.target.value })} />
+            {selected.includes(key) && <button type="button" className="secondary small" disabled={busy || conflict}
+              aria-label={`Очистить ${label}`} onClick={() => setValues({ ...values, [key]: "" })}>Очистить</button>}
+          </div>)}
+          <label className="ship-span2">Причина исправления<textarea ref={reasonInput} name="reason" autoComplete="off" maxLength={2000} required
+            value={reason} disabled={busy || conflict} onChange={(event) => setReason(event.target.value)} /></label>
+          <label className="ship-span2">Источник правильных данных<input ref={sourceInput} name="source" autoComplete="off" maxLength={2000} required
+            value={source} disabled={busy || conflict} onChange={(event) => setSource(event.target.value)} /></label>
+        </div>
+      </>}
+      {saved && <div className="success-banner" role="status">Исправление истории сохранено.</div>}
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="ship-actions"><span className="ship-actions-end">
+        <button type="button" className="secondary" disabled={busy} onClick={close}>{saved ? "Закрыть" : "Отмена"}</button>
+        {reviewing && !conflict && !saved && <button type="button" className="secondary" disabled={busy} onClick={() => setReviewing(false)}>Вернуться к правке</button>}
+        {conflict && <button type="button" className="secondary" disabled={busy} onClick={() => void reload()}>Загрузить актуальную отправку</button>}
+        {!saved && <button className="primary" disabled={busy || conflict}>{busy ? "Сохраняем…" : reviewing ? "Записать исправление" : "Проверить исправление"}</button>}
       </span></div>
     </form>
   </PageWindow>;

@@ -63,6 +63,18 @@ const bodies = (suffix: string) => vi.mocked(fetch).mock.calls.filter(([target])
 describe("ShipmentDataPage («Данные отправок»)", () => {
   beforeEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); forgetPersonalViews(); });
 
+  it.each([
+    ["admin", false, true], ["superadmin", false, true], ["pm", false, false], ["admin", true, false],
+  ])("history correction capability is restricted: %s, viewing=%s", async (level, viewing, allowed) => {
+    stub([{ ...closed, shipped_at: "2026-10-25" }]);
+    render(<ShipmentDataPage principal={{ ...principal, roles: [String(level)], access_level: String(level),
+      viewing: viewing ? { viewer: { id: "viewer", name: "Администратор" }, until: null } : null }} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Отгружено/ }));
+    fireEvent.click(await screen.findByText(closed.number));
+    const dialog = await screen.findByRole("dialog", { name: `Данные отправки ${closed.number}` });
+    expect(Boolean(within(dialog).queryByRole("button", { name: "Исправить историю" }))).toBe(allowed);
+  });
+
   const acceptedCard = { project: "780К.1", version: 7, pack_decided: false, dispatch_gaps: ["телефон", "вариант УПД"] };
   function projectStub(card = acceptedCard, status = 200, stage = "Принято складом") {
     stub([]);

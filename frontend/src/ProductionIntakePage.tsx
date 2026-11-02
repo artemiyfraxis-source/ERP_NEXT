@@ -352,7 +352,13 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       return <button type="button" className="primary small intake-print" title={`Готово к отгрузке: ${piecesOf(row).to_ship}`} aria-label={`Отгрузить ${who(row)}`}
         onClick={() => setOpened({ kind: "ship", project: row.project })}>Отгрузить</button>;
     } },
-    { key: "shippedAt", title: "Дата отгрузки", value: (row) => shippedAt(row), render: (row) => shippedAt(row) ? formatDay(shippedAt(row)) : dash },
+    { key: "shippedAt", title: "Дата отгрузки", value: (row) => shippedAt(row), render: (row) => {
+      if (!hasFullAccess(principal) || principal.viewing) return shippedAt(row) ? formatDay(shippedAt(row)) : dash;
+      const sent = shownShips(row).filter((shipment) => SHIPPED_STATUS.includes(shipment.status));
+      return sent.length ? <span className="intake-grn">{sent.map((shipment) => <button type="button" key={shipment.id}
+        className="link-button" aria-label={`Данные отправки ${shipment.number}`} title={`Исправление истории ${shipment.number}`}
+        onClick={() => setCard(shipment)}>{formatDay(shipment.shipped_at ?? "") || "Дата не указана"} · {shipment.number}</button>)}</span> : dash;
+    } },
     { key: "sent", title: "Отгружено", value: (row) => num(row.sent), numeric: true, render: sentCell },
     { key: "received", title: "Дата приёмки", value: (row) => row.act?.received_at ?? "", render: (row) => row.act ? formatDay(row.act.received_at) : dash },
     { key: "grn", title: "ГРН", wrap: true, minWidth: 132, maxWidth: 132, value: (row) => grnGroups(row).map((group) => group.grns.join(", ")).join("; "), render: (row) => {
@@ -436,6 +442,6 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {header === "journal" && <JournalWindow shipments={shipments} close={() => setHeader(null)} />}
     {header === "good" && <RegisterGoodWindow reload={reload} close={() => setHeader(null)} />}
     {header === "request" && <CreateShipmentWindow reload={reload} close={() => setHeader(null)} />}
-    {card && <ShipmentDataWindow shipment={card} canEdit={canDispatch} onSaved={reload} close={() => setCard(null)} />}
+    {card && <ShipmentDataWindow shipment={card} canEdit={canDispatch} canCorrectHistory={hasFullAccess(principal) && !principal.viewing} onSaved={reload} close={() => setCard(null)} />}
   </section>;
 }
