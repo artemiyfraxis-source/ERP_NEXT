@@ -594,6 +594,16 @@ describe("Приёмка с производства: упаковка и отг
     expect(line.textContent).toContain("5");
   });
 
+  it("administrator opens the exact historical shipment from its date", async () => {
+    intakeRows = [];
+    shipments = [gone];
+    render(<ProductionIntakePage principal={admin} />);
+    fireEvent.click(await screen.findByRole("button", { name: `Данные отправки ${gone.number}` }));
+    const dialog = await screen.findByRole("dialog", { name: `Данные отправки ${gone.number}` });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Исправить историю" }));
+    expect(screen.getByRole("dialog", { name: `Исправление истории ${gone.number}` })).toBeInTheDocument();
+  });
+
   it("«Упаковано»: без решения менеджера кнопка выключена; с решением — окно, количество по умолчанию — всё принятое", async () => {
     intakeRows = [row({ accepted: "6", remaining: "0", delivered: "6", tasks: [] })];
     const { unmount } = render(<ProductionIntakePage principal={principal} />);
@@ -775,7 +785,7 @@ describe("Приёмка с производства: упаковка и отг
       [/^Принято/, ["КБ", "Наименование", "Принято", "Дата приёмки", "ГРН", "Упаковано", ...deliveryHeaders], /^Упаковать|^Упаковка|^Печать этикетки/],
       [/^Упаковано/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "Документы"], /^(Трек|Без УПД) 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
       [/^На отгрузку/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "Документы", "Отгрузка"], /^Отгрузить 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
-      [/^Отгружено/, ["КБ", "Наименование", "ГРН", "Отгружено", ...deliveryHeaders, "Трек", "Дата отгрузки"], /^Печать этикетки/],
+      [/^Отгружено/, ["КБ", "Наименование", "ГРН", "Отгружено", ...deliveryHeaders, "Трек", "Дата отгрузки"], /^(Печать этикетки|Данные отправки)/],
     ];
     for (const [name, heads, action] of expected) {
       fireEvent.click(tab(name));

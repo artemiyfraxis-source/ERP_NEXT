@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { shippingApi, type Shipment } from "./api";
+import { ApiError, shippingApi, type Shipment } from "./api";
 import { Readiness, ShipmentDataWindow } from "./ShipmentData";
 
 vi.mock("./ScanAgent", () => ({
@@ -94,5 +94,103 @@ describe("ShipmentDataWindow read-only mode", () => {
     expect(documents).not.toHaveBeenCalled();
     expect(applyUpdScan).not.toHaveBeenCalled();
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  const historical = { ...shipment, status: "Закрыта", shipped_at: "2026-10-25", track_number: "TRK-42" };
+  function openCorrection() {
+    fireEvent.click(screen.getByRole("button", { name: "Исправить историю" }));
+    fireEvent.click(screen.getByLabelText("Исправить Телефон получателя"));
+    fireEvent.click(screen.getByRole("button", { name: "Очистить Телефон получателя" }));
+    fireEvent.change(screen.getByLabelText("Причина исправления"), { target: { value: "Ошибка переноса" } });
+    fireEvent.change(screen.getByLabelText("Источник правильных данных"), { target: { value: "Накладная 42" } });
+    fireEvent.click(screen.getByRole("button", { name: "Проверить исправление" }));
+  }
+
+  it.each([undefined, false])("denies correction by default and keeps closed fields read-only: %s", (canCorrectHistory) => {
+    render(<ShipmentDataWindow shipment={historical} canCorrectHistory={canCorrectHistory} close={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Исправить историю" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Тип доставки")).toBeDisabled();
+    expect(screen.getByLabelText("Тип УПД")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Сохранить" })).not.toBeInTheDocument();
+  });
+
+  it("previews and submits only explicitly changed historical fields with evidence and version", async () => {
+    const correction = vi.spyOn(shippingApi, "correctHistory").mockResolvedValue({ shipment: { ...historical, phone: "", version: 5 } });
+    const head = vi.spyOn(shippingApi, "head");
+    const documents = vi.spyOn(shippingApi, "documents");
+    const close = vi.fn();
+    render(<ShipmentDataWindow shipment={historical} canCorrectHistory close={close} onSaved={vi.fn()} />);
+    openCorrection();
+    expect(screen.getByText(/ОТГ-20261102-01/)).toBeInTheDocument();
+    expect(screen.getByText(/25.10.2026/)).toBeInTheDocument();
+    expect(screen.getByText("Будет очищено")).toBeInTheDocument();
+    expect(screen.getByText(historical.phone)).toBeInTheDocument();
+    expect(correction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Записать исправление" }));
+    await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+    expect(correction).toHaveBeenCalledWith(historical.id, { version: 4, reason: "Ошибка переноса", source: "Накладная 42", phone: "" });
+    expect(head).not.toHaveBeenCalled();
+    expect(documents).not.toHaveBeenCalled();
+  });
+
+  it("requires reloading and reviewing after a conflict without retrying automatically", async () => {
+    const correction = vi.spyOn(shippingApi, "correctHistory").mockRejectedValue(new ApiError("Отгрузка изменилась", 409));
+    const reload = vi.spyOn(shippingApi, "shipments").mockResolvedValue({ shipments: [{ ...historical, phone: "Другой телефон", version: 9 }] });
+    render(<ShipmentDataWindow shipment={historical} canCorrectHistory close={vi.fn()} onSaved={vi.fn()} />);
+    openCorrection();
+    fireEvent.click(screen.getByRole("button", { name: "Записать исправление" }));
+    expect(await screen.findByRole("button", { name: "Загрузить актуальную отправку" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Записать исправление" })).toBeDisabled();
+    expect(correction).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Загрузить актуальную отправку" }));
+    await waitFor(() => expect(screen.getByLabelText("Новое значение: Телефон получателя")).toHaveValue("Другой телефон"));
+    expect(screen.getByLabelText("Исправить Телефон получателя")).not.toBeChecked();
+    expect(screen.queryByRole("button", { name: "Записать исправление" })).not.toBeInTheDocument();
+    expect(correction).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps shipped UPD completion available without ordinary header changes", async () => {
+    const head = vi.spyOn(shippingApi, "head");
+    const documents = vi.spyOn(shippingApi, "documents").mockResolvedValue({ shipment: { ...historical, status: "Отгружена", version: 5 } });
+    render(<ShipmentDataWindow shipment={{ ...historical, status: "Отгружена" }} close={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByLabelText("Тип доставки")).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("№ УПД"), { target: { value: "УПД-42" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await waitFor(() => expect(documents).toHaveBeenCalled());
+    expect(head).not.toHaveBeenCalled();
+    expect(documents.mock.calls[0][1]).toMatchObject({ upd_number: "УПД-42", track_number: "TRK-42" });
+  });
+
+  it("does not offer correction for active or cancelled shipments even with capability", () => {
+    const view = render(<ShipmentDataWindow shipment={shipment} canCorrectHistory close={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Исправить историю" })).not.toBeInTheDocument();
+    view.rerender(<ShipmentDataWindow shipment={{ ...shipment, status: "Отменена" }} canCorrectHistory close={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Исправить историю" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Сохранить" })).not.toBeInTheDocument();
+  });
+
+  it("requires actual selected changes and nonblank evidence before preview", () => {
+    render(<ShipmentDataWindow shipment={historical} canCorrectHistory close={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Исправить историю" }));
+    fireEvent.submit(screen.getByRole("dialog").querySelector("form")!);
+    expect(screen.getByRole("alert")).toHaveTextContent("Выберите поля и внесите исправления");
+    fireEvent.click(screen.getByLabelText("Исправить Телефон получателя"));
+    fireEvent.change(screen.getByLabelText("Новое значение: Телефон получателя"), { target: { value: "new" } });
+    fireEvent.change(screen.getByLabelText("Причина исправления"), { target: { value: " " } });
+    fireEvent.submit(screen.getByRole("dialog").querySelector("form")!);
+    expect(screen.getByRole("alert")).toHaveTextContent("Укажите причину");
+    expect(screen.getByLabelText("Причина исправления")).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Записать исправление" })).not.toBeInTheDocument();
+  });
+
+  it("does not repeat a committed correction when refreshing the list fails", async () => {
+    const correction = vi.spyOn(shippingApi, "correctHistory").mockResolvedValue({ shipment: { ...historical, version: 5, phone: "" } });
+    render(<ShipmentDataWindow shipment={historical} canCorrectHistory close={vi.fn()} onSaved={vi.fn().mockRejectedValue(new Error("Нет связи"))} />);
+    openCorrection();
+    fireEvent.click(screen.getByRole("button", { name: "Записать исправление" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Исправление истории сохранено");
+    expect(screen.queryByRole("button", { name: "Записать исправление" })).not.toBeInTheDocument();
+    expect(correction).toHaveBeenCalledTimes(1);
   });
 });
