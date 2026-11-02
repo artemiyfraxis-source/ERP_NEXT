@@ -1459,9 +1459,9 @@ export interface PassportInstrument {
   name: string;
   instrument_type: string;
   inventory_number: string;
-  verification_number: string;
-  verified_at: string;
-  verification_due: string;
+  verification_number: string | null;
+  verified_at: string | null;
+  verification_due: string | null;
 }
 export interface PassportCheck {
   kind: string;
@@ -1497,9 +1497,9 @@ export interface ProductionInstrument {
   inventory_number: string;
   name: string;
   instrument_type: string;
-  verification_number: string;
-  verified_at: string;
-  verification_due: string;
+  verification_number: string | null;
+  verified_at: string | null;
+  verification_due: string | null;
   status: string;
 }
 
@@ -3961,7 +3961,7 @@ export const productionApi = {
     api(`/api/production/qc/rejections/${inspectionId}/decide`, {
       method: "POST", body: JSON.stringify({ disposition, act_reference: actReference }),
     }),
-  registerInstrument: (payload: Omit<ProductionInstrument, "id" | "version" | "status">) =>
+  registerInstrument: (payload: Omit<ProductionInstrument, "id" | "version" | "status"> & { status?: "Действует" | "Поверка не подтверждена" }) =>
     api<{ instrument: ProductionInstrument }>("/api/production/instruments", {
       method: "POST", body: JSON.stringify(payload),
     }),

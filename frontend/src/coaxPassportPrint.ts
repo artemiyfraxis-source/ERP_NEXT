@@ -56,8 +56,11 @@ function endsTable(ends: PassportEnd[]): string {
 function instrumentRows(check: PassportCheck): string {
   const item = check.instrument;
   if (!item) return `<tr><th>Средство измерения</th><td>${DASH}</td></tr>`;
+  const verification = item.verification_number && item.verified_at && item.verification_due
+    ? `свидетельство № ${item.verification_number} от ${formatDay(item.verified_at)}, действительно до ${formatDay(item.verification_due)}`
+    : "Поверка не подтверждена";
   return `<tr><th>Средство измерения</th><td>${escapeHtml(`${item.name}, ${item.instrument_type}, инв. № ${item.inventory_number}`)}</td></tr>` +
-    `<tr><th>Поверка</th><td>${escapeHtml(`свидетельство № ${item.verification_number} от ${formatDay(item.verified_at)}, действительно до ${formatDay(item.verification_due)}`)}</td></tr>`;
+    `<tr><th>Поверка</th><td>${escapeHtml(verification)}</td></tr>`;
 }
 
 function verdictHtml(check: PassportCheck): string {

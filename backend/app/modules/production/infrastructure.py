@@ -594,14 +594,20 @@ class ProductionSerialRow(Base):
 
 class ProductionInstrumentRow(Base):
     __tablename__ = "production_instruments"
+    __table_args__ = (
+        CheckConstraint("status IN ('Действует', 'Не используется', 'Поверка не подтверждена')", name="ck_production_instruments_status"),
+        CheckConstraint("status <> 'Действует' OR (verification_number IS NOT NULL AND length(trim(verification_number)) > 0 AND verified_at IS NOT NULL AND verification_due IS NOT NULL)", name="ck_production_instruments_active_verification"),
+        CheckConstraint("status <> 'Поверка не подтверждена' OR (verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL)", name="ck_production_instruments_unverified"),
+        CheckConstraint("verified_at IS NULL OR verification_due IS NULL OR verification_due >= verified_at", name="ck_production_instruments_verification_dates"),
+    )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     version: Mapped[int] = mapped_column(Integer(), nullable=False)
     inventory_number: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     instrument_type: Mapped[str] = mapped_column(String(255), nullable=False)
-    verification_number: Mapped[str] = mapped_column(String(255), nullable=False)
-    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    verification_due: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    verification_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verification_due: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 

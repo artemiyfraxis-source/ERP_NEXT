@@ -12,7 +12,7 @@ const BACKEND_STATUSES: Record<string, string[]> = {
   "production/traceability.py DefectStatus": ["Ожидает решения", "Решение принято"],
   "production/traceability.py DefectDisposition": ["Доработка", "Списание", "Использовать как есть"],
   "production/traceability.py SerialStatus": ["В работе", "Принято ОТК", "Сдано на ГП", "Брак"],
-  "production/traceability.py InstrumentStatus": ["Действует", "Не используется"],
+  "production/traceability.py InstrumentStatus": ["Действует", "Не используется", "Поверка не подтверждена"],
   "receiving/domain.py ReceivingStatus": ["В пути", "Ожидание", "Принято", "Карантин", "Возврат", "Архив ВК"],
   "requests/domain.py RequestStatus": ["Новый", "В работе", "Согласование", "В пути", "Закрыто", "Отменено"],
   "shipping/domain.py ShipmentStatus": ["Новая", "Собрана", "Упакована", "Отгружена", "Закрыта", "Отменена"],

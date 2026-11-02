@@ -29,6 +29,13 @@ const passport = (checks: PassportCheck[] = [check], over: Partial<CableAssembly
 // Числа форматируются узким пробелом разрядов — в проверках приводим любые пробелы к обычному.
 const flat = (html: string) => html.replace(/[   ]/g, " ");
 
+it("prints an honest warning instead of a null verification certificate", () => {
+  const html = buildCoaxPassportHtml(passport([{ ...check, instrument: { ...check.instrument!, verification_number: null, verified_at: null, verification_due: null } }]));
+  expect(html).toContain("Поверка не подтверждена");
+  expect(html).not.toContain("свидетельство №");
+  expect(html).not.toMatch(/null|undefined|Invalid Date/);
+});
+
 it("prints every part of the passport", () => {
   const html = flat(buildCoaxPassportHtml(passport()));
   for (const part of ["Паспорт кабельной сборки", "ПЗ-1-01", "ПЗ-0001", "716К.1 / 716К.1.КБ2", "ревизия 3", "RG-316", "затухание 0,9 дБ/м",

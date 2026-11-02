@@ -247,8 +247,8 @@ def _instrument_result(instrument) -> dict[str, Any] | None:
         "id": str(instrument.id), "name": instrument.name, "instrument_type": instrument.instrument_type,
         "inventory_number": instrument.inventory_number,
         "verification_number": instrument.verification_number,
-        "verified_at": instrument.verified_at.isoformat(),
-        "verification_due": instrument.verification_due.isoformat(),
+        "verified_at": instrument.verified_at.isoformat() if instrument.verified_at is not None else None,
+        "verification_due": instrument.verification_due.isoformat() if instrument.verification_due is not None else None,
     }
 
 

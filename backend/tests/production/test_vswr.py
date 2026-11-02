@@ -6,7 +6,7 @@ import pytest
 
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.quality import InspectBoxCommand, RegisterInstrumentCommand, inspect_box, register_instrument
-from app.modules.production.traceability import ProductionBox, SerialStatus, format_box_number
+from app.modules.production.traceability import InstrumentStatus, ProductionBox, SerialStatus, format_box_number
 from app.modules.production.vswr import (
     TRACE_LIMIT,
     RecordVswrCommand,
@@ -105,15 +105,21 @@ def test_defined_norm_refuses_a_contradicting_manual_verdict(setup):
     assert same.verdict is VswrVerdict.FAIL and not same.verdict_manual
 
 
-def test_expired_instrument_is_refused(setup):
+@pytest.mark.parametrize("pending", [False, True])
+def test_expired_or_unverified_instrument_is_refused(setup, pending):
     factory, master, _operator, task, _instrument, now = setup
+    with factory() as uow:
+        serials_before = uow.serials.list_for_task(task.id)
     old = register_instrument(RegisterInstrumentCommand(
-        inventory_number="ВАЦ-OLD", name="ВАЦ", instrument_type="ВАЦ", verification_number="ПВ-1",
-        verified_at=now - timedelta(days=400), verification_due=now - timedelta(days=1), actor=master, now=now,
+        inventory_number="ВАЦ-OLD", name="ВАЦ", instrument_type="ВАЦ", verification_number=None if pending else "ПВ-1",
+        verified_at=None if pending else now - timedelta(days=400), verification_due=None if pending else now - timedelta(days=1), actor=master, now=now,
+        status=InstrumentStatus.UNVERIFIED if pending else InstrumentStatus.ACTIVE,
     ), factory())
-    with pytest.raises(ProductionValidationError, match="истекла"):
+    with pytest.raises(ProductionValidationError, match="не подтверждена" if pending else "истекла"):
         _record(setup, 1, [(1000, 1.1), (2000, 1.2)], instrument_id=old.id)
     assert list_vswr_for_task(task.id, factory()) == []
+    with factory() as uow:
+        assert uow.serials.list_for_task(task.id) == serials_before
 
 
 def test_bad_file_size_position_and_garbage_are_refused(setup):
