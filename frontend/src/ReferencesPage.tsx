@@ -695,8 +695,9 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
         searchText={recordSearchText}
         onEdited={() => loadTech(techTab)}
         rowKey={(record) => record.id}
-        storageKey={`db:${tab}`}
-        sharedKey={tab}
+        // The lug article replaces the old packaging columns; old layouts must not re-enable them.
+        storageKey={lugTab ? "db:lug:article-v2" : `db:${tab}`}
+        sharedKey={lugTab ? "lug:article-v2" : tab}
         exportName={current?.label}
         emptyText={viewOnly ? "Таблица не загружена из зеркала SUPPLYMAP." : "Записей нет."}
         // Правка — по строке целиком (столбец одинаковых «Править» делал строки выше и шумел); «Терминалы» — строка
