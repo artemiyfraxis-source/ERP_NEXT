@@ -1,4 +1,4 @@
-# Fraxis ERP Next — working rules for Claude Code
+# Fraxis ERP Next — working rules for Claude and Codex
 
 The production ERP of the shop, running on its own server since the 05.10.2026 launch. Modular monolith: FastAPI +
 SQLAlchemy/Alembic backend, React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and preview.
@@ -19,22 +19,27 @@ SQLAlchemy/Alembic backend, React/TypeScript (Vite) frontend, PostgreSQL in prod
 - `SOURCE.json` files are frozen provenance records: no pins, no `sync:*`.
 
 ## Commands
-- `npm run check` (repo root) — THE gate (architecture tests + backend pytest + frontend tests + build), after every
-  slice. Parts: `npm run test:backend`, `npm run test:frontend`. Merge only when CI `check` is SUCCESS (never pipe
-  `gh pr checks` into `head` before a merge).
+- `npm run check` (repo root) — THE gate (architecture tests + backend pytest + frontend tests + build), once for
+  the final integrated application-code slice. Repeat after content changes, failures or a new concern, not just
+  a new merge SHA with identical content. Instruction-only changes may use skill/schema/link checks and behavioral
+  review; this exception does not cover scripts or application code. Parts: `npm run test:backend`,
+  `npm run test:frontend`. Merge only when CI `check` is SUCCESS (never truncate its result before a merge).
 - Local preview and venv — see RULES.md «Testing»; schema only via Alembic.
 
 ## How to work — decide yourself, don't ask
 - **Plan first** (`orchestrate` skill → `erp-planner`) for a new module, a status machine, money/stock quantities, or
   a change across 3+ files. Small fixes: act directly.
-- **Orchestrator (local VS Code / Desktop):** the main session plans, dispatches and integrates — one `erp-worker` per
-  task in its own worktree, merge branch by branch, one Alembic head, `erp-verifier` before saying done and before
-  every commit, one PR. Architecture/domain decisions and migration revision chains stay in the main session.
-- **Delegate by model:** wide reading → `Explore`; mechanical bulk edits → general-purpose `model: haiku`, then check
-  its diff. Don't fan out agents for a task a few tool calls finish.
+- **Orchestrator (local VS Code / Desktop):** `.claude/skills/orchestrate/SKILL.md` is the shared workflow and model
+  policy; Codex enters through `.agents/skills/erp-orchestrate/SKILL.md`. Main keeps decisions and the task queue,
+  assigns exclusive files and an exact base in each worker worktree, and integrates branch by branch. Workers run
+  affected tests before committing; an independent code reviewer and `erp-verifier` gate integrated content before
+  claiming done or shipping. Main owns domain decisions, the migration chain and one coherent slice per PR.
+- **Delegate proportionally:** tiny fixes go directly; parallel agents only for independent work worth the context
+  cost and within available concurrency. Role cards reference the shared policy; no recursive worker delegation.
 - **Depth:** think hard on domain invariants, migrations and anything that moves stock or money; go quick on wiring,
   copy and tests that mirror existing ones.
-- **One slice per session.** Once green and committed, say so and suggest a fresh session.
+- **One coherent slice per PR.** A worker commit does not end an authorized batch; main continues through integration
+  and verification. Release authority remains the user's task scope, not a grant from a skill.
 
 ## Project memory
 `.claude/knowledge/memory/` (in git; `MEMORY.md` is the index — read only the relevant note). `autoMemoryDirectory`
