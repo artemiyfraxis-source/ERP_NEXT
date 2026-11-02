@@ -1,163 +1,250 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ApiError, identityApi, warehouseApi, type Principal, type WarehouseScanStart } from "./api";
-import { forgetPersonalViews } from "./personalViews";
-import { rememberedScanAgent, ScanDeviceLine, forgetScanDevice, useScanAgent } from "./ScanAgent";
+import { ApiError, identityApi, warehouseApi, type Principal, type WarehouseScanStart, type ScanAgentInfo } from "./api";
+import { forgetPersonalViews, setPersonalViewsUser } from "./personalViews";
+import { rememberedScanAgent, ScanDeviceLine, forgetScanDevice, useScanAgent, setScanDevice, setScanDeviceUser, loadScanDevice } from "./ScanAgent";
 import { setRightsPrincipal } from "./rights";
 
 const AGENTS = [
-  { id: "m-1", pc: "SKLAD", scanners: ["Pantum BM2300W"], version: "2.0.0" },
-  { id: "m-2", pc: "OFFICE", scanners: ["Canon LiDE"], version: "2.0.0" },
+  { id: "m-1", pc: "СКЛАД", scanners: [{ id: "s-1", name: "Pantum" }, { id: "s-2", name: "Epson" }], version: "2.2.0", live: true },
+  { id: "m-2", pc: "ОФИС", scanners: [{ id: "s-9", name: "Canon" }], version: "2.2.0", live: true },
 ];
-const AGENTS_WITH_IDS = [
-  { id: "m-1", pc: "SKLAD", scanners: [{ id: "s-1", name: "Pantum BM2300W" }, { id: "s-2", name: "Epson V39" }], version: "2.0.0" },
-  { id: "m-2", pc: "OFFICE", scanners: [{ id: "s-9", name: "Canon LiDE" }], version: "2.0.0" },
-];
-
-/** «Сканировать» on the shared hook: the first press, and what it did with the answer. */
-function Harness({ start, onJob }: { start: (agentId?: string, targetScanner?: string) => Promise<WarehouseScanStart>; onJob: (id: string | null) => void }) {
+function Harness({ start, onJob = () => undefined }: { start: (agentId?: string, targetScanner?: string) => Promise<WarehouseScanStart>; onJob?: (id: string | null) => void }) {
   const agent = useScanAgent(start);
   const press = () => void agent.begin().then((job) => onJob(job ? job.id : null));
   return (<><button onClick={press}>Сканировать</button>{agent.dialogs(press)}</>);
 }
-
 let saved: Array<[string, unknown]> = [];
-function account(views: Record<string, unknown>, agents: unknown[] = AGENTS_WITH_IDS) {
-  vi.spyOn(identityApi, "uiSettings").mockResolvedValue({ views });
-  vi.spyOn(identityApi, "saveUiSetting").mockImplementation(async (view, value) => { saved.push([view, value]); return undefined as never; });
-  vi.spyOn(warehouseApi, "scanAgents").mockResolvedValue({ agents } as never);
+function account(choice: unknown) {
+  vi.mocked(identityApi.uiSettings).mockResolvedValue({ views: { "scan.device": choice } });
 }
 beforeEach(() => {
   window.localStorage.clear();
-  forgetPersonalViews();
-  forgetScanDevice();
-  setRightsPrincipal(null);
-  saved = [];
+  forgetPersonalViews(); forgetScanDevice(); setRightsPrincipal(null); saved = [];
   vi.spyOn(identityApi, "uiSettings").mockResolvedValue({ views: {} });
-  vi.spyOn(warehouseApi, "scanAgents").mockResolvedValue({ agents: AGENTS_WITH_IDS } as never);
+  vi.spyOn(identityApi, "saveUiSetting").mockImplementation(async (view, value) => { saved.push([view, value]); return undefined as never; });
+  vi.spyOn(identityApi, "resetUiSetting").mockResolvedValue(undefined as never);
+  vi.spyOn(warehouseApi, "scanAgents").mockResolvedValue({ agents: AGENTS });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); forgetPersonalViews(); forgetScanDevice(); vi.restoreAllMocks(); });
 
-it("a job from the server goes straight on, the remembered agent is sent along", async () => {
+function bindUser(user: string | null) {
+  setPersonalViewsUser(user); setScanDeviceUser(user);
+}
+
+it("legacy remembered PC cannot start a scan without explicit scanner choice", async () => {
   window.localStorage.setItem("erp.scanAgent", "m-2");
-  const start = vi.fn(async () => ({ id: "j1", status: "pending" as const }));
-  const onJob = vi.fn();
-  render(<Harness start={start} onJob={onJob} />);
+  const start = vi.fn(); render(<Harness start={start} />);
   fireEvent.click(screen.getByText("Сканировать"));
+  expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy();
+  expect(start).not.toHaveBeenCalled();
+});
+it("choice stores both ids, shows the actual PC and scanner, then starts only that pair", async () => {
+  const start = vi.fn(async () => ({ id: "j1", status: "pending" as const })); const onJob = vi.fn();
+  render(<><ScanDeviceLine /><Harness start={start} onJob={onJob} /></>);
+  fireEvent.click(screen.getByText("Сканировать")); fireEvent.click(await screen.findByText("СКЛАД · Epson"));
   await waitFor(() => expect(onJob).toHaveBeenCalledWith("j1"));
-  expect(start).toHaveBeenCalledWith("m-2", undefined);
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(start).toHaveBeenCalledExactlyOnceWith("m-1", "s-2");
+  await waitFor(() => expect(saved).toEqual([["scan.device", { agent_id: "m-1", scanner_id: "s-2" }]]));
+  expect(screen.getByTestId("scan-device").textContent).toContain("СКЛАД · Epson");
+});
+it("reset clears the legacy remote PC; the next scan asks for a scanner", async () => {
+  account({ agent_id: "m-2", scanner_id: "s-9" }); window.localStorage.setItem("erp.scanAgent", "m-2");
+  const start = vi.fn(); render(<><ScanDeviceLine /><Harness start={start} /></>);
+  await screen.findByText("ОФИС · Canon"); fireEvent.click(screen.getByText("Сменить сканер"));
+  fireEvent.click(await screen.findByText("Сбросить выбор"));
+  expect(rememberedScanAgent()).toBe(""); expect(window.localStorage.getItem("erp.scanDevice")).toBeNull();
+  fireEvent.click(screen.getByText("Сканировать"));
+  expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy(); expect(start).not.toHaveBeenCalled();
+});
+it.each([{ agent_id: "gone", scanner_id: "s-9" }, { agent_id: "m-1", scanner_id: "gone" }, { agent_id: "m-1" }])(
+  "an unavailable or incomplete stored choice never falls back: %j", async (choice) => {
+    account(choice); const start = vi.fn(); render(<Harness start={start} />); fireEvent.click(screen.getByText("Сканировать"));
+    expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy(); expect(start).not.toHaveBeenCalled();
+  });
+it("offline and pre-strict PCs show a reason and cannot be selected", async () => {
+  vi.mocked(warehouseApi.scanAgents).mockResolvedValue({ agents: [{ ...AGENTS[0], live: false }, { ...AGENTS[1], version: "2.1.0" }] });
+  account({ agent_id: "m-1", scanner_id: "s-2" }); const start = vi.fn();
+  render(<><ScanDeviceLine /><Harness start={start} /></>);
+  expect(await screen.findByText(/ПК не на связи/)).toBeTruthy();
+  expect(screen.getByTestId("scan-device").textContent).not.toContain("этот ПК"); fireEvent.click(screen.getByText("Сканировать"));
+  expect(await screen.findByRole("button", { name: /СКЛАД · Epson/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /ОФИС · Canon/ })).toBeDisabled();
+  expect(screen.getByText(/Ожидается обновление агента на ОФИС/)).toBeTruthy(); expect(start).not.toHaveBeenCalled();
+});
+it("refreshes on picker open and before start; a disappeared scanner is never started", async () => {
+  const listing = vi.mocked(warehouseApi.scanAgents); render(<ScanDeviceLine />);
+  await waitFor(() => expect(listing).toHaveBeenCalledTimes(1));
+  listing.mockResolvedValue({ agents: [{ ...AGENTS[0], scanners: [AGENTS[0].scanners[1]] }] });
+  fireEvent.click(screen.getByText("Сменить сканер")); expect(await screen.findByText("СКЛАД · Epson")).toBeTruthy();
+  expect(screen.queryByText("СКЛАД · Pantum")).toBeNull(); fireEvent.click(screen.getByText("СКЛАД · Epson"));
+  listing.mockResolvedValue({ agents: [AGENTS[1]] }); const start = vi.fn(); render(<Harness start={start} />);
+  fireEvent.click(screen.getByText("Сканировать")); expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy();
+  expect(start).not.toHaveBeenCalled(); expect(listing).toHaveBeenCalledTimes(3);
+});
+it("a failed list explains the failure and never starts even a stored choice", async () => {
+  account({ agent_id: "m-1", scanner_id: "s-2" }); vi.mocked(warehouseApi.scanAgents).mockRejectedValue(new Error("Нет связи с ERP"));
+  const start = vi.fn(); render(<Harness start={start} />); fireEvent.click(screen.getByText("Сканировать"));
+  expect(await screen.findByText(/Список ПК недоступен/)).toBeTruthy(); expect(start).not.toHaveBeenCalled();
+});
+it("server invalidation reopens choice and preserves scanner ids on the next request", async () => {
+  account({ agent_id: "m-1", scanner_id: "s-1" });
+  const start = vi.fn().mockResolvedValueOnce({ status: "choose", agents: AGENTS }).mockResolvedValueOnce({ id: "j2", status: "pending" });
+  render(<Harness start={start} />); fireEvent.click(screen.getByText("Сканировать")); fireEvent.click(await screen.findByText("ОФИС · Canon"));
+  await waitFor(() => expect(start).toHaveBeenLastCalledWith("m-2", "s-9"));
+});
+it("no scanner opens installation; missing permission points to an administrator", async () => {
+  vi.mocked(warehouseApi.scanAgents).mockResolvedValue({ agents: [] });
+  vi.spyOn(warehouseApi, "scanAgentInstallToken").mockRejectedValue(new ApiError("Только администратору.", 403));
+  render(<Harness start={vi.fn()} />); fireEvent.click(screen.getByText("Сканировать")); expect(await screen.findByText(/попросите его/)).toBeTruthy();
+});
+it("without scan rights the line is hidden", () => {
+  const principal = (permissions: Record<string, "view" | "edit" | "none">) =>
+    ({ user: { id: "u", email: "", name: "", department: "" }, roles: ["operator"], access_level: "operator", permissions }) as Principal;
+  setRightsPrincipal(principal({ scan: "view" })); const { rerender } = render(<ScanDeviceLine />);
+  expect(screen.queryByTestId("scan-device")).toBeNull(); setRightsPrincipal(principal({ scan: "edit" })); rerender(<ScanDeviceLine />);
+  expect(screen.getByTestId("scan-device")).toBeTruthy();
+});
+it("direct reset drops both browser copies", () => {
+  window.localStorage.setItem("erp.scanAgent", "m-2"); setScanDevice({ agent_id: "m-1", scanner_id: "s-2" }); setScanDevice(null);
+  expect(rememberedScanAgent()).toBe(""); expect(window.localStorage.getItem("erp.scanDevice")).toBeNull();
 });
 
-it("no agent: the install guide with the one-time command, «Копировать» and «Проверить» that asks again", async () => {
-  const issued = vi.spyOn(warehouseApi, "scanAgentInstallToken").mockResolvedValue({
-    command: "powershell -NoProfile -Command \"... -InstallToken 'frxi_abc'\"", expires_at: "2026-10-28T12:00:00", valid_minutes: 60,
-  });
+it("a reset while registry refresh is pending prevents the captured old pair from starting", async () => {
+  account({ agent_id: "m-1", scanner_id: "s-2" });
+  let finish!: (answer: { agents: ScanAgentInfo[] }) => void;
+  vi.mocked(warehouseApi.scanAgents).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  const start = vi.fn(); render(<Harness start={start} />); fireEvent.click(screen.getByText("Сканировать"));
+  await waitFor(() => expect(warehouseApi.scanAgents).toHaveBeenCalled());
+  act(() => setScanDevice(null)); await act(async () => finish({ agents: AGENTS }));
+  expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy(); expect(start).not.toHaveBeenCalled();
+});
+
+it("a reset during initial account loading wins over the old remote preference", async () => {
+  let finish!: (answer: { views: Record<string, unknown> }) => void;
+  vi.mocked(identityApi.uiSettings).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  const start = vi.fn(); render(<Harness start={start} />); fireEvent.click(screen.getByText("Сканировать"));
+  act(() => setScanDevice(null));
+  await act(async () => finish({ views: { "scan.device": { agent_id: "m-2", scanner_id: "s-9" } } }));
+  expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy(); expect(start).not.toHaveBeenCalled();
+});
+
+it("server no_agent opens the guide, copies the command and rechecks on Проверить", async () => {
+  account({ agent_id: "m-1", scanner_id: "s-2" });
+  vi.spyOn(warehouseApi, "scanAgentInstallToken").mockResolvedValue({ command: "test-install-command", expires_at: "", valid_minutes: 60 });
   const writeText = vi.fn(async () => undefined);
   Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-  const start = vi.fn()
-    .mockResolvedValueOnce({ status: "no_agent", idle: [] })
-    .mockResolvedValueOnce({ id: "j2", status: "pending" });
-  const onJob = vi.fn();
-  render(<Harness start={start} onJob={onJob} />);
+  const start = vi.fn().mockResolvedValueOnce({ status: "no_agent", idle: [] }).mockResolvedValueOnce({ id: "j3", status: "pending" });
+  const onJob = vi.fn(); render(<Harness start={start} onJob={onJob} />); fireEvent.click(screen.getByText("Сканировать"));
+  expect(await screen.findByTestId("scan-agent-command")).toHaveTextContent("test-install-command");
+  fireEvent.click(screen.getByText("Копировать")); await waitFor(() => expect(writeText).toHaveBeenCalledWith("test-install-command"));
+  fireEvent.click(screen.getByText("Проверить")); await waitFor(() => expect(onJob).toHaveBeenCalledWith("j3"));
+  expect(start).toHaveBeenLastCalledWith("m-1", "s-2");
+});
+
+it("the explicit scanner chooser can open installation for a new PC", async () => {
+  vi.spyOn(warehouseApi, "scanAgentInstallToken").mockResolvedValue({ command: "test-command", expires_at: "", valid_minutes: 60 });
+  render(<Harness start={vi.fn()} />); fireEvent.click(screen.getByText("Сканировать"));
+  fireEvent.click(await screen.findByText("Установить на этом ПК")); expect(await screen.findByRole("dialog", { name: "Установка сканера" })).toBeTruthy();
+});
+
+it("a different account never reuses a loaded scanner or an unscoped local copy", async () => {
+  bindUser("a"); account({ agent_id: "m-1", scanner_id: "s-2" });
+  expect(await loadScanDevice()).toEqual({ agent_id: "m-1", scanner_id: "s-2" });
+  setScanDevice({ agent_id: "m-1", scanner_id: "s-2" });
+  window.localStorage.setItem("erp.scanDevice", JSON.stringify({ agent_id: "m-1", scanner_id: "s-2" }));
+  bindUser(null); bindUser("b");
+  vi.mocked(identityApi.uiSettings).mockRejectedValue(new Error("offline"));
+  expect(await loadScanDevice()).toBeNull();
+  expect(window.localStorage.getItem("erp.scanDevice")).toBeNull();
+  expect(JSON.parse(window.localStorage.getItem("erp.scanDevice:a")!)).toEqual({ agent_id: "m-1", scanner_id: "s-2" });
+  expect(window.localStorage.getItem("erp.scanDevice:b")).toBeNull();
+});
+
+it("offline fallback reads only the current account's local choice", async () => {
+  bindUser("a"); setScanDevice({ agent_id: "m-1", scanner_id: "s-2" });
+  bindUser("b"); setScanDevice({ agent_id: "m-2", scanner_id: "s-9" });
+  bindUser(null); bindUser("a");
+  vi.mocked(identityApi.uiSettings).mockRejectedValue(new Error("offline"));
+  expect(await loadScanDevice()).toEqual({ agent_id: "m-1", scanner_id: "s-2" });
+  bindUser("b"); expect(await loadScanDevice()).toEqual({ agent_id: "m-2", scanner_id: "s-9" });
+  setScanDevice(null); expect(window.localStorage.getItem("erp.scanDevice:b")).toBeNull();
+});
+
+it.each(["b", "a"])("an old account load cannot restore its scanner after switching to a new session of %s", async (next) => {
+  bindUser("a");
+  let finishA!: (answer: { views: Record<string, unknown> }) => void;
+  vi.mocked(identityApi.uiSettings).mockReturnValueOnce(new Promise((resolve) => { finishA = resolve; }));
+  const old = loadScanDevice();
+  bindUser(null); bindUser(next); account({ agent_id: "m-2", scanner_id: "s-9" });
+  expect(await loadScanDevice()).toEqual({ agent_id: "m-2", scanner_id: "s-9" });
+  finishA({ views: { "scan.device": { agent_id: "m-1", scanner_id: "s-2" } } });
+  expect(await old).toBeNull(); expect(await loadScanDevice()).toEqual({ agent_id: "m-2", scanner_id: "s-9" });
+});
+
+it("an A scan paused on account loading aborts before querying the registry under B", async () => {
+  bindUser("a");
+  let finishA!: (answer: { views: Record<string, unknown> }) => void;
+  vi.mocked(identityApi.uiSettings).mockReturnValueOnce(new Promise((resolve) => { finishA = resolve; }));
+  const start = vi.fn(); const onJob = vi.fn(); render(<Harness start={start} onJob={onJob} />);
   fireEvent.click(screen.getByText("Сканировать"));
+  act(() => { bindUser(null); bindUser("b"); });
+  await act(async () => finishA({ views: { "scan.device": { agent_id: "m-1", scanner_id: "s-2" } } }));
+  expect(warehouseApi.scanAgents).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+  expect(onJob).toHaveBeenCalledWith(null); expect(screen.queryByRole("dialog")).toBeNull();
+});
 
-  expect(await screen.findByRole("dialog", { name: "Установка сканера" })).toBeTruthy();
-  expect((await screen.findByTestId("scan-agent-command")).textContent).toContain("frxi_abc");
-  expect(issued).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByText("Копировать"));
-  await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining("frxi_abc")));
-  expect(await screen.findByText("Скопировано")).toBeTruthy();
+it("an A scan paused on registry loading aborts before starting a command under B", async () => {
+  bindUser("a"); account({ agent_id: "m-1", scanner_id: "s-2" });
+  let finishA!: (answer: { agents: ScanAgentInfo[] }) => void;
+  vi.mocked(warehouseApi.scanAgents).mockReturnValueOnce(new Promise((resolve) => { finishA = resolve; }));
+  const start = vi.fn(); const onJob = vi.fn(); render(<Harness start={start} onJob={onJob} />);
+  fireEvent.click(screen.getByText("Сканировать")); await waitFor(() => expect(warehouseApi.scanAgents).toHaveBeenCalled());
+  act(() => { bindUser(null); bindUser("b"); });
+  await act(async () => finishA({ agents: AGENTS }));
+  expect(start).not.toHaveBeenCalled(); expect(onJob).toHaveBeenCalledWith(null); expect(screen.queryByRole("dialog")).toBeNull();
+});
 
-  fireEvent.click(screen.getByText("Проверить"));
-  await waitFor(() => expect(onJob).toHaveBeenLastCalledWith("j2"));
-  expect(start).toHaveBeenCalledTimes(2);
+it("an old job response cannot reach B or block B's scan while A's request is still pending", async () => {
+  bindUser("a"); account({ agent_id: "m-1", scanner_id: "s-2" });
+  let finishA!: (answer: WarehouseScanStart) => void;
+  const start = vi.fn().mockReturnValueOnce(new Promise((resolve) => { finishA = resolve; }))
+    .mockResolvedValueOnce({ id: "b-job", status: "pending" });
+  const onJob = vi.fn(); render(<Harness start={start} onJob={onJob} />);
+  fireEvent.click(screen.getByText("Сканировать")); await waitFor(() => expect(start).toHaveBeenCalledWith("m-1", "s-2"));
+  act(() => { bindUser(null); bindUser("b"); }); account({ agent_id: "m-2", scanner_id: "s-9" });
+  fireEvent.click(screen.getByText("Сканировать")); await waitFor(() => expect(onJob).toHaveBeenCalledWith("b-job"));
+  await act(async () => finishA({ id: "a-job", status: "pending" }));
+  expect(start).toHaveBeenLastCalledWith("m-2", "s-9"); expect(onJob).not.toHaveBeenCalledWith("a-job");
+});
+
+it("a kept screen clears A's picker and reloads B's own selection on auth change", async () => {
+  bindUser("a"); account({ agent_id: "m-1", scanner_id: "s-2" });
+  render(<ScanDeviceLine />); await screen.findByText("СКЛАД · Epson");
+  fireEvent.click(screen.getByText("Сменить сканер")); await screen.findByRole("dialog", { name: "Выбор сканера" });
+  account({ agent_id: "m-2", scanner_id: "s-9" }); act(() => { bindUser(null); bindUser("b"); });
   expect(screen.queryByRole("dialog")).toBeNull();
+  await screen.findByText("ОФИС · Canon"); expect(screen.getByTestId("scan-device")).not.toHaveTextContent("СКЛАД · Epson");
 });
 
-it("a user who may not issue the command is told to ask the administrator", async () => {
-  vi.spyOn(warehouseApi, "scanAgentInstallToken").mockRejectedValue(new ApiError("Только администратору.", 403));
-  render(<Harness start={async () => ({ status: "no_agent" as const })} onJob={() => undefined} />);
-  fireEvent.click(screen.getByText("Сканировать"));
-  expect(await screen.findByText(/попросите его/)).toBeTruthy();
-  expect(screen.queryByTestId("scan-agent-command")).toBeNull();
-  expect(screen.getByText("Проверить")).toBeTruthy();
+it("suspends scanner reads, choices and commands while the auth cookie changes", async () => {
+  bindUser("a"); bindUser(null);
+  setScanDevice({ agent_id: "m-1", scanner_id: "s-2" });
+  expect(await loadScanDevice()).toBeNull();
+  const start = vi.fn(); render(<Harness start={start} />); fireEvent.click(screen.getByText("Сканировать"));
+  await act(async () => { await Promise.resolve(); });
+  expect(identityApi.uiSettings).not.toHaveBeenCalled(); expect(identityApi.saveUiSetting).not.toHaveBeenCalled();
+  expect(warehouseApi.scanAgents).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
 });
 
-it("several PCs: a picker «Сканер: <ПК> · <модель>», the choice is remembered and the press repeats", async () => {
-  const start = vi.fn()
-    .mockResolvedValueOnce({ status: "choose", agents: AGENTS })
-    .mockResolvedValueOnce({ id: "j3", status: "pending" });
-  const onJob = vi.fn();
-  render(<Harness start={start} onJob={onJob} />);
-  fireEvent.click(screen.getByText("Сканировать"));
-  fireEvent.click(await screen.findByText("Сканер: OFFICE · Canon LiDE"));
-  await waitFor(() => expect(onJob).toHaveBeenCalledWith("j3"));
-  expect(rememberedScanAgent()).toBe("m-2");
-  expect(start).toHaveBeenLastCalledWith("m-2", undefined);
-});
-
-it("the picker opens the install guide for this PC", async () => {
-  vi.spyOn(warehouseApi, "scanAgentInstallToken").mockResolvedValue({ command: "cmd-1", expires_at: "", valid_minutes: 60 });
-  render(<Harness start={async () => ({ status: "choose" as const, agents: AGENTS })} onJob={() => undefined} />);
-  fireEvent.click(screen.getByText("Сканировать"));
-  fireEvent.click(await screen.findByText("Установить на этом ПК"));
-  expect(await screen.findByRole("dialog", { name: "Установка сканера" })).toBeTruthy();
-});
-
-it("the account's stored scanner is sent as target_scanner with its PC", async () => {
-  account({ "scan.device": { agent_id: "m-1", scanner_id: "s-2" } });
-  const start = vi.fn(async () => ({ id: "j9", status: "pending" as const }));
-  const onJob = vi.fn();
-  render(<Harness start={start} onJob={onJob} />);
-  fireEvent.click(screen.getByText("Сканировать"));
-  await waitFor(() => expect(onJob).toHaveBeenCalledWith("j9"));
-  expect(start).toHaveBeenCalledWith("m-1", "s-2");
-});
-
-it("no stored choice: the request carries no PC and no scanner (this browser's PC, its first scanner)", async () => {
-  const start = vi.fn(async () => ({ id: "j8", status: "pending" as const }));
-  const onJob = vi.fn();
-  render(<Harness start={start} onJob={onJob} />);
-  fireEvent.click(screen.getByText("Сканировать"));
-  await waitFor(() => expect(onJob).toHaveBeenCalledWith("j8"));
-  expect(start).toHaveBeenCalledWith(undefined, undefined);
-});
-
-it("a stored scanner no longer reported: falls back to this PC and says so in one line", async () => {
-  account({ "scan.device": { agent_id: "m-1", scanner_id: "s-gone" } });
-  const start = vi.fn(async () => ({ id: "j7", status: "pending" as const }));
-  const onJob = vi.fn();
-  render(<><ScanDeviceLine /><Harness start={start} onJob={onJob} /></>);
-  expect(await screen.findByText("Выбранный сканер не найден — сканируем с этого ПК")).toBeTruthy();
-  expect(screen.getByTestId("scan-device").textContent).toContain("этот ПК · первый сканер");
-  fireEvent.click(screen.getByText("Сканировать"));
-  await waitFor(() => expect(onJob).toHaveBeenCalledWith("j7"));
-  expect(start).toHaveBeenCalledWith(undefined, undefined);
-});
-
-it("the line shows «ПК · сканер», «Сменить сканер» lists PCs with scanners and the pick is saved to the account", async () => {
-  account({ "scan.device": { agent_id: "m-2", scanner_id: "s-9" } });
-  render(<ScanDeviceLine />);
-  await waitFor(() => expect(screen.getByTestId("scan-device").textContent).toContain("OFFICE · Canon LiDE"));
-  fireEvent.click(screen.getByText("Сменить сканер"));
-  expect(await screen.findByRole("dialog", { name: "Выбор сканера" })).toBeTruthy();
-  fireEvent.click(screen.getByText("SKLAD · Epson V39"));
-  await waitFor(() => expect(saved).toEqual([["scan.device", { agent_id: "m-1", scanner_id: "s-2" }]]));
-  expect(screen.getByTestId("scan-device").textContent).toContain("SKLAD · Epson V39");
-  expect(screen.queryByRole("dialog")).toBeNull();
-});
-
-it("without the «scan» right the line (and so the scanner choice) is hidden; with it, shown", () => {
-  const principal = (permissions: Record<string, "view" | "edit" | "none">, level = "operator") =>
-    ({ user: { id: "u", email: "", name: "", department: "" }, roles: [level], access_level: level, permissions }) as Principal;
-  setRightsPrincipal(principal({ scan: "view" }));
-  const { rerender } = render(<ScanDeviceLine />);
-  expect(screen.queryByTestId("scan-device")).toBeNull();
-  setRightsPrincipal(principal({ scan: "edit" }));
-  rerender(<ScanDeviceLine />);
-  expect(screen.getByTestId("scan-device")).toBeTruthy();
-  setRightsPrincipal(principal({}, "superadmin"));
-  rerender(<ScanDeviceLine />);
-  expect(screen.getByTestId("scan-device")).toBeTruthy();
+it("a saved begin callback from A cannot start a new scan after B has signed in", async () => {
+  bindUser("a"); account({ agent_id: "m-1", scanner_id: "s-2" });
+  const start = vi.fn(async () => ({ id: "b-job", status: "pending" as const }));
+  const { result } = renderHook(() => useScanAgent(start));
+  const oldBegin = result.current.begin;
+  act(() => { bindUser(null); bindUser("b"); }); account({ agent_id: "m-2", scanner_id: "s-9" });
+  expect(await oldBegin()).toBeNull();
+  expect(warehouseApi.scanAgents).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+  await act(async () => { expect(await result.current.begin()).toEqual({ id: "b-job", status: "pending" }); });
+  expect(start).toHaveBeenCalledExactlyOnceWith("m-2", "s-9");
 });

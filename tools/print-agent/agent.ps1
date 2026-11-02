@@ -6,7 +6,7 @@
  Сканер с любого ПК (28.10.2026): агент называет себя серверу (MachineGuid + имя ПК), раз в ~2 мин сообщает версию, найденные
  WIA-сканеры (подключили позже - подхватится сам) и адрес в сети; принтер не обязателен.
  Свой сканер (28.10.2026): задание приходит с выбранным человеком сканером (WIA DeviceID или имя) - сканирует он;
- его нет на этом ПК или выбор не задан - первый найденный.
+ его нет на этом ПК - ошибка без подмены; без выбора WIA допускает только единственное устройство.
  Новая версия агента лежит на сервере: агент скачивает её, сверяет SHA-256, подменяет себя и перезапускает задачу.
 #>
 [CmdletBinding()]
@@ -28,7 +28,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.1.0'
+$script:AgentVersion = '2.2.0'
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
 
@@ -219,12 +219,11 @@ function Get-WiaScanners {
     return $found
 }
 
-# Сканеры агента (вызывать как @(Get-AgentScanners ...)): адрес eSCL из настроек - один сканер; иначе все WIA-устройства
-# (сканирует выбранное в задании, иначе первое). Нет сканеров - ничего не возвращает.
+# Сканеры агента: все WIA-устройства и настроенный адрес eSCL. Выбор в задании задаёт способ сканирования.
 function Get-AgentScanners {
     param([string]$ScannerAddress)
-    if ($ScannerAddress) { return @{ id = $ScannerAddress; name = "Сканер по сети $ScannerAddress (eSCL)" } }
-    return Get-WiaScanners
+    Get-WiaScanners
+    if ($ScannerAddress) { @{ id = $ScannerAddress; name = "Сканер по сети $ScannerAddress (eSCL)" } }
 }
 
 # Скачать новую версию, сверить SHA-256 и текст, подменить себя и перезапустить задачу. $NoRestart - для тестов.
@@ -451,29 +450,34 @@ function Invoke-EsclScan {
     } finally { [ErpTlsSkip]::Off() }
 }
 
-# Какое WIA-устройство сканирует: выбранное человеком ($Device = DeviceID или имя), иначе первое типа "сканер".
+# Какое WIA-устройство сканирует: выбранное человеком ($Device = DeviceID или уникальное имя).
 # Возвращает DeviceInfo или $null. Вынесено в функцию для тестов (на вход - любые объекты с Type/DeviceID/Name).
 function Select-WiaDevice {
     param($DeviceInfos, [string]$Device)
-    $first = $null
-    foreach ($di in $DeviceInfos) {
-        if ($di.Type -ne 1) { continue }
-        if (-not $first) { $first = $di }
-        if (-not $Device) { break }
+    $scanners = @($DeviceInfos | Where-Object { $_.Type -eq 1 })
+    if (-not $Device) {
+        if ($scanners.Count -gt 1) { throw 'Найдено несколько сканеров WIA — выберите сканер в ERP' }
+        if ($scanners.Count -eq 1) { return $scanners[0] }
+        return $null
+    }
+    $matches = @()
+    foreach ($di in $scanners) {
+        if ([string]$di.DeviceID -eq $Device) { return $di }
         $name = ''
         try { $name = [string]$di.Properties.Item('Name').Value } catch { $name = [string]$di.Name }
-        if ([string]$di.DeviceID -eq $Device -or ($name -and $name -eq $Device)) { return $di }
+        if ($name -and $name -eq $Device) { $matches += $di }
     }
-    return $first
+    if ($matches.Count -eq 1) { return $matches[0] }
+    if ($matches.Count -gt 1) { throw 'Имя сканера неоднозначно — выберите устройство по идентификатору в ERP' }
+    return $null
 }
 
-# USB-сканер через WIA: выбранное устройство (или первое типа "сканер"), JPEG.
+# USB-сканер через WIA: выбранное устройство (без выбора — только единственное), JPEG.
 function Invoke-WiaScan {
     param([string]$Device)
     $dm = New-Object -ComObject WIA.DeviceManager
     $info = Select-WiaDevice -DeviceInfos $dm.DeviceInfos -Device $Device
-    if (-not $info) { throw 'Сканер не найден: адрес не задан, а USB-сканера (WIA) нет' }
-    if ($Device -and [string]$info.DeviceID -ne $Device) { Write-Log "Скан: выбранного сканера '$Device' на этом ПК нет - сканирует первый найденный" }
+    if (-not $info) { throw 'Выбранный сканер WIA не найден — проверьте подключение и выберите сканер в ERP' }
     $item = $info.Connect().Items.Item(1)
     foreach ($p in @(@(6146, 2), @(6147, 300), @(6148, 300))) {
         try { $item.Properties.Item([string]$p[0]).Value = $p[1] } catch {}
@@ -500,7 +504,7 @@ function Invoke-WiaScan {
 # Скан выбранным способом. Вынесено в функцию, чтобы тесты подменяли её.
 function Invoke-ScannerScan {
     param([string]$Address, [string]$Device)
-    if ($Address) { return Invoke-EsclScan -Address $Address }
+    if ($Address -and ((-not $Device) -or $Device -eq $Address)) { return Invoke-EsclScan -Address $Address }
     return Invoke-WiaScan -Device $Device
 }
 

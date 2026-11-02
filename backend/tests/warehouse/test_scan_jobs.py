@@ -74,7 +74,7 @@ _STAND: dict = {}
 
 
 def old_agent_alive(sessions, clock, host: str = "SKLAD") -> None:
-    """An old agent (no machine id) claimed just now: its `legacy:<host>` row is live, so a press queues an untargeted job."""
+    """An old agent's live registry row, used to prove it cannot enable an untargeted scan."""
     with sessions() as session:
         row = session.get(ScanAgentRow, f"legacy:{host}")
         if row is None:
@@ -86,8 +86,17 @@ def old_agent_alive(sessions, clock, host: str = "SKLAD") -> None:
 
 
 def _new_job(admin: TestClient) -> str:
-    old_agent_alive(_STAND["sessions"], _STAND["clock"])
-    response = admin.post(JOBS, headers=_csrf(admin))
+    # Queue fixtures exercise endpoint behavior on a strict-capable, explicitly selected scanner.
+    with _STAND["sessions"]() as session:
+        row = session.get(ScanAgentRow, "test-scan-pc")
+        if row is None:
+            row = ScanAgentRow(machine_id="test-scan-pc", pc_name="TEST", first_seen=_STAND["clock"].now)
+            session.add(row)
+        row.last_seen = _STAND["clock"].now
+        row.version = "2.2.0"
+        row.scanners = json.dumps([{"id": "test-scanner", "name": "Тестовый сканер"}])
+        session.commit()
+    response = admin.post(JOBS, json={"agent_id": "test-scan-pc", "target_scanner": "test-scanner"}, headers=_csrf(admin))
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "pending"
@@ -101,7 +110,7 @@ def _job(admin: TestClient, job_id: str) -> dict:
 
 
 def _claim(agent: dict) -> str | None:
-    response = TestClient(app).post(CLAIM, headers=agent)
+    response = TestClient(app).post(CLAIM, json={"machine_id": "test-scan-pc"}, headers=agent)
     assert response.status_code == 200, response.text
     job = response.json()["job"]
     return job["id"] if job else None
@@ -251,6 +260,30 @@ def test_jobs_are_handed_out_oldest_first(queue):
     assert [_claim(agent), _claim(agent), _claim(agent)] == [first, second, None]
 
 
+@pytest.mark.parametrize("targeted_pc", [False, True])
+def test_pre_strict_jobs_without_the_full_pair_never_scan_and_expire_normally(queue, targeted_pc):
+    admin, agent, clock, sessions = queue
+    # Keep a valid explicit job behind a legacy one to prove the legacy row cannot block the queue.
+    strict_job = _new_job(admin)
+    old_id = uuid4()
+    with sessions() as session:
+        session.add(ScanJobRow(id=old_id, status="pending", requested_by="Тест", created_at=clock.now - timedelta(seconds=1),
+                              target_machine_id="test-scan-pc" if targeted_pc else None, target_scanner=None))
+        session.commit()
+    service = TestClient(app)
+    for body in ({"host": "OLD"}, {"machine_id": "another-pc"}):
+        assert service.post(CLAIM, json=body, headers=agent).json()["job"] is None
+    assert _claim(agent) == strict_job, "the complete pair still goes only to its PC"
+    assert _claim(agent) is None, "the correct PC must not take an old first-scanner job either"
+    assert _job(admin, str(old_id))["status"] == "pending", "no bulk mutation or premature failure"
+    clock.now += PENDING_TIMEOUT - timedelta(seconds=2)
+    assert _job(admin, str(old_id))["status"] == "pending"
+    clock.now += timedelta(seconds=2)
+    assert service.post(CLAIM, json={"host": "OLD"}, headers=agent).json()["job"] is None
+    assert _job(admin, str(old_id))["status"] == "failed"
+    assert _job(admin, str(old_id))["error"] == NO_ANSWER
+
+
 def test_the_agent_reports_why_it_could_not_scan(queue):
     admin, agent, _clock, _sessions = queue
     job_id = _new_job(admin)
@@ -334,7 +367,7 @@ def test_only_the_agent_takes_jobs_and_only_a_person_queues_them(queue):
     assert service.post(_result(job_id), json={"error": "x"}, headers=labels_only).status_code == 403
     scan_only = _bearer(_issue(admin, scopes=("scan:upload",), name="Только скан")["token"])
     assert service.post("/api/stock/labels/agent/claim", json={}, headers=scan_only).status_code == 403
-    assert service.post(CLAIM, headers=scan_only).json()["job"]["id"] == job_id
+    assert service.post(CLAIM, json={"machine_id": "test-scan-pc"}, headers=scan_only).json()["job"]["id"] == job_id
 
     assert service.post(JOBS, headers=agent).status_code == 403
     assert service.get(f"{JOBS}/{job_id}", headers=agent).status_code == 403

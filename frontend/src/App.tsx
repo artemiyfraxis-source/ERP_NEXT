@@ -10,6 +10,7 @@ import {
 } from "./api";
 import { DraftProvider, DraftStore } from "./formDrafts";
 import { setPersonalViewsUser } from "./personalViews";
+import { setScanDeviceUser } from "./ScanAgent";
 import {
   accessLevelOf,
   canAct,
@@ -93,10 +94,15 @@ function placeFromUrl(): Place {
   return { section: "cabinet", block: isBlock(block) ? block : null };
 }
 
+function bindPersonalState(userId: string | null) {
+  setPersonalViewsUser(userId);
+  setScanDeviceUser(userId);
+}
+
 export function App() {
   const [principal, setPrincipal] = useState<Principal | null>(null);
   function acceptPrincipal(next: Principal | null) {
-    setPersonalViewsUser(next?.user.id ?? null);
+    bindPersonalState(next?.user.id ?? null);
     setPrincipal(next);
   }
   const [loading, setLoading] = useState(true);
@@ -117,6 +123,7 @@ export function App() {
   const drafts = useRef(new DraftStore()).current;
 
   function loadPrincipal() {
+    bindPersonalState(null);
     setLoading(true);
     setBootError("");
     identityApi
@@ -139,7 +146,7 @@ export function App() {
 
   useEffect(() => {
     const requireLogin = () => {
-      if (principalRef.current) { setPersonalViewsUser(null); setExpired(true); }
+      if (principalRef.current) { bindPersonalState(null); setExpired(true); }
     };
     window.addEventListener(AUTH_REQUIRED_EVENT, requireLogin);
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, requireLogin);
@@ -206,25 +213,25 @@ export function App() {
 
   // «Смотреть как сотрудник» (из своей карточки): весь ERP глазами выбранного — с главного экрана, как у него.
   async function startViewAs(employee: { id: string }) {
-    setPersonalViewsUser(null);
+    bindPersonalState(null);
     try {
       const viewed = await identityApi.viewAs(employee.id);
       acceptPrincipal(viewed);
       go({ section: "cabinet", block: null });
     } catch (error) {
-      setPersonalViewsUser(principal?.user.id ?? null);
+      bindPersonalState(principal?.user.id ?? null);
       throw error;
     }
   }
   // «Вернуться к себе» — туда, откуда начали: своя карточка.
   async function exitViewAs() {
-    setPersonalViewsUser(null);
+    bindPersonalState(null);
     try {
       const own = await identityApi.stopViewAs();
       acceptPrincipal(own);
       go({ section: "card", block: null });
     } catch (error) {
-      setPersonalViewsUser(principal?.user.id ?? null);
+      bindPersonalState(principal?.user.id ?? null);
       throw error;
     }
   }
@@ -232,7 +239,7 @@ export function App() {
   async function signOut() {
     setShellError("");
     const leaving = principal;
-    setPersonalViewsUser(null);
+    bindPersonalState(null);
     const signedOut = () => {
       if (leaving) drafts.clearUser(leaving.user.id);
       setExpired(false);
@@ -251,7 +258,7 @@ export function App() {
           ? `Выход не выполнен: ${error.message}`
           : "Выход не выполнен: сервер недоступен",
       );
-      setPersonalViewsUser(leaving?.user.id ?? null);
+      bindPersonalState(leaving?.user.id ?? null);
     }
   }
 

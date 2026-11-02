@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { Principal } from "./api";
+import { AUTH_REQUIRED_EVENT, type Principal } from "./api";
 import { forgetPersonalViews, loadPersonalViews, SAVE_DELAY, savePersonalView } from "./personalViews";
+import { forgetScanDevice, loadScanDevice } from "./ScanAgent";
 
 const principal: Principal = {
   user: {
@@ -29,6 +30,7 @@ function json(body: unknown, status = 200) {
 
 afterEach(() => {
   forgetPersonalViews();
+  forgetScanDevice();
   vi.useRealTimers();
   vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
@@ -73,6 +75,33 @@ it("returns to login when an active session is rejected", async () => {
   render(<App />);
 
   expect(await screen.findByRole("button", { name: "Войти" }, { timeout: 5000 })).toBeInTheDocument();
+});
+
+it.each(["logout", "expired"])("binds the scanner to B after A's %s without reloading the page", async (mode) => {
+  const other = { ...principal, user: { ...principal.user, id: "20000000-0000-0000-0000-000000000002", name: "Другой сотрудник" } };
+  const aChoice = { agent_id: "pc-a", scanner_id: "scanner-a" };
+  const bChoice = { agent_id: "pc-b", scanner_id: "scanner-b" };
+  let current = principal;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json(current);
+    if (path === "/api/auth/logout") return new Response(null, { status: 204 });
+    if (path === "/api/auth/login") { current = other; return json(other); }
+    if (path === "/api/auth/ui-settings") return json({ views: { "scan.device": current === principal ? aChoice : bChoice } });
+    if (path === "/api/notifications/unread") return json({ unread: 0 });
+    return json({}, 404);
+  });
+  render(<App />); await screen.findByText("Добрый день, Сотрудник");
+  expect(await loadScanDevice()).toEqual(aChoice);
+  if (mode === "logout") fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
+  else act(() => window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT)));
+  await screen.findByRole("button", { name: "Войти" });
+  expect(await loadScanDevice()).toBeNull();
+  fireEvent.change(screen.getByLabelText("Логин"), { target: { value: "b" } });
+  fireEvent.change(screen.getByLabelText("Пароль"), { target: { value: "password-b" } });
+  fireEvent.click(screen.getByRole("button", { name: "Войти" }));
+  await screen.findByText("Добрый день, Другой сотрудник");
+  expect(await loadScanDevice()).toEqual(bChoice);
 });
 
 const sidebar = () => within(screen.getByRole("navigation", { name: "Основная навигация" }));
