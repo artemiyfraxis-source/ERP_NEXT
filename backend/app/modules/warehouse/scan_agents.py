@@ -3,16 +3,10 @@
 Every PC that scans runs the same agent (`tools/print-agent`). It names itself (the Windows MachineGuid + the PC name),
 and every ~2 minutes reports its version, the WIA scanners it sees right now (none — an empty list) and its LAN address;
 the server adds the address it saw the agent from (`request.client.host`, the real one through Caddy's X-Forwarded-For).
-A button press is routed to ONE agent (`route`):
-  1. the live agents with a scanner (heard within LIVE_FOR) whose address equals the browser's — exactly one wins; several
-     — the browser's remembered choice among them, else «choose»;
-  2. no address matches — the browser's remembered agent when it is live with a scanner, else «choose» from all live ones;
-  3. none live with a scanner — an old agent that has no id (`legacy` row, kept by its claims) still takes an untargeted
-     job (rollout: the warehouse PC works until it is reinstalled), else «no_agent».
-  0. (owner 28.10.2026, «своё устройство») the scanner the person chose wins: its agent, live and still reporting it,
-     takes the job whatever the browser's address; the job carries the scanner (`target_scanner`) to that agent.
-An agent claims the jobs targeted to it and untargeted ones; an old agent only the untargeted ones. `agent_list` — every
-PC with the new agent and its scanners `[{id, name}]`, for the person's choice.
+A button press queues only an explicit PC/scanner pair on a live agent running strict selection (2.2.0+). A missing,
+offline, outdated or incomplete choice returns «choose» / «no_agent» without a command; browser IP never proves a local
+PC. Existing untargeted jobs remain claimable by legacy agents, but no new untargeted scan is created here.
+`agent_list` and chooser responses carry PC/scanner identities, version and liveness for an honest selection.
 
 Install tokens (`issue_install` / `redeem_install`): an administrator issues a one-time secret (only its SHA-256 is
 stored, valid INSTALL_TTL); the install script on the new PC redeems it once — the conditional UPDATE lets exactly one
@@ -22,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -38,6 +33,7 @@ INSTALL_TTL = timedelta(hours=1)
 INSTALL_PREFIX = "frxi_"
 LEGACY_PREFIX = "legacy:"
 MACHINE_ID_MAX = 80
+STRICT_SCANNER_VERSION = (2, 2, 0)
 
 AGENT, LEGACY, CHOOSE, NO_AGENT = "agent", "legacy", "choose", "no_agent"
 
@@ -84,12 +80,15 @@ class ScanAgentInstallRow(Base):
 class AgentInfo:
     id: str
     pc: str
-    scanners: list[str]
+    scanners: list[dict[str, str]]
     version: str
     ip: str
+    live: bool
+    last_seen: str
 
     def view(self) -> dict:
-        return {"id": self.id, "pc": self.pc, "scanners": self.scanners, "version": self.version}
+        return {"id": self.id, "pc": self.pc, "scanners": self.scanners, "version": self.version,
+                "live": self.live, "last_seen": self.last_seen}
 
 
 @dataclass(frozen=True)
@@ -98,7 +97,7 @@ class Routing:
     agent_id: str | None = None
     agents: list[AgentInfo] = field(default_factory=list)  # choose: who to pick from
     idle: list[str] = field(default_factory=list)  # no_agent: PCs with a live agent but no scanner
-    scanner: str | None = None  # agent: the chosen scanner as that agent reports it (None — its first one)
+    scanner: str | None = None  # agent: the exact scanner selected by the person
 
 
 class InstallRefused(Exception):
@@ -132,13 +131,15 @@ def scanner_list(raw: str) -> list[dict[str, str]]:
 
 def matching_scanner(raw: str, wanted: str) -> str | None:
     """The agent's scanner the person chose (`wanted` = its id or name) as the agent will look it up — its WIA DeviceID,
-    or its name when it reported none; None — this agent has no such scanner (it scans with its first one)."""
+    or its name when it reported none; None means no unambiguous match and prevents creating a job."""
     wanted = _clean(wanted, 300)
     if not wanted:
         return None
-    for scanner in scanner_list(raw):
-        if wanted in (scanner["id"], scanner["name"]):
-            return scanner["id"] or scanner["name"]
+    scanners = scanner_list(raw)
+    by_id = [scanner for scanner in scanners if scanner["id"] == wanted]
+    matches = by_id or [scanner for scanner in scanners if scanner["name"] == wanted]
+    if len(matches) == 1:
+        return matches[0]["id"] or matches[0]["name"]
     return None
 
 
@@ -146,9 +147,13 @@ def scanner_names(raw: str) -> list[str]:
     return [scanner["name"] for scanner in scanner_list(raw)]
 
 
-def _info(row: ScanAgentRow) -> AgentInfo:
-    return AgentInfo(id=row.machine_id, pc=row.pc_name or row.machine_id, scanners=scanner_names(row.scanners),
-                     version=row.version, ip=row.ip_seen)
+def _info(row: ScanAgentRow, *, live: bool) -> AgentInfo:
+    return AgentInfo(id=row.machine_id, pc=row.pc_name or row.machine_id, scanners=scanner_list(row.scanners),
+                     version=row.version, ip=row.ip_seen, live=live, last_seen=row.last_seen.isoformat())
+
+
+def strict_scanner_version(version: str) -> bool:
+    return bool(re.fullmatch(r"\d+\.\d+\.\d+", version)) and tuple(map(int, version.split("."))) >= STRICT_SCANNER_VERSION
 
 
 def heartbeat(uow, *, machine_id: str, pc_name: str, version: str, ip_seen: str, ip_lan: str, scanners: list,
@@ -208,39 +213,26 @@ def _live(session: Session, now: datetime, *, legacy: bool) -> list[ScanAgentRow
 
 
 def route(uow, *, browser_ip: str, remembered: str, now: datetime, scanner: str = "") -> Routing:
-    """Where a press of «Сканировать» goes (see the module doc). `scanner` — the scanner the person chose (owner
-    28.10.2026: «каждый… может воспользоваться своим устройством»): with the agent it sits on (`remembered`) live and
-    still reporting it, the job goes there whatever the browser's address; otherwise the usual routing, and the chosen
-    scanner rides along only when the agent picked reports it too (else the agent scans with its first one)."""
+    """Queue only an explicit PC/scanner pair on a live agent with strict selection support.
+
+    Browser addresses (including a shared external IP) do not prove which PC the person uses. A stale, incomplete
+    or invalid choice returns the chooser; legacy agents cannot safely accept new untargeted scan commands.
+    """
     with uow:
         session = _session(uow)
         live = _live(session, now, legacy=False)
-        old = bool(_live(session, now, legacy=True))
-        raw = {row.machine_id: row.scanners for row in live}
-        pairs = [(row.ip_seen, row.ip_lan, _info(row)) for row in live if scanner_names(row.scanners)]
+        rows = list(session.scalars(select(ScanAgentRow).where(ScanAgentRow.legacy.is_(False))
+                                    .order_by(ScanAgentRow.pc_name, ScanAgentRow.machine_id)))
+        live_ids = {row.machine_id for row in live}
+        choices = [_info(row, live=row.machine_id in live_ids) for row in rows if scanner_names(row.scanners)]
         idle = [row.pc_name or row.machine_id for row in live if not scanner_names(row.scanners)]
-
-    def to(agent_id: str) -> Routing:
-        return Routing(AGENT, agent_id, scanner=matching_scanner(raw.get(agent_id, ""), scanner))
-
-    if scanner and remembered in raw and matching_scanner(raw[remembered], scanner):
-        return to(remembered)
-    with_scanner = [agent for _seen, _lan, agent in pairs]
-    ip = _clean(browser_ip, 64)
-    ids = {agent.id for agent in with_scanner}
-    by_ip = [agent for seen, lan, agent in pairs if ip and ip in (seen, lan)]
-    if len(by_ip) == 1:
-        return to(by_ip[0].id)
-    if len(by_ip) > 1:
-        if remembered in {agent.id for agent in by_ip}:
-            return to(remembered)
-        return Routing(CHOOSE, agents=by_ip)
-    if remembered and remembered in ids:
-        return to(remembered)
-    if with_scanner:
-        return Routing(CHOOSE, agents=with_scanner)
-    if old:
-        return Routing(LEGACY)
+        selected = next((row for row in live if row.machine_id == remembered), None)
+        if selected is not None and strict_scanner_version(selected.version):
+            target = matching_scanner(selected.scanners, scanner)
+            if target:
+                return Routing(AGENT, selected.machine_id, scanner=target)
+    if choices:
+        return Routing(CHOOSE, agents=sorted(choices, key=lambda agent: not agent.live))
     return Routing(NO_AGENT, idle=idle)
 
 

@@ -86,8 +86,17 @@ def old_agent_alive(sessions, clock, host: str = "SKLAD") -> None:
 
 
 def _new_job(admin: TestClient) -> str:
-    old_agent_alive(_STAND["sessions"], _STAND["clock"])
-    response = admin.post(JOBS, headers=_csrf(admin))
+    # Queue fixtures exercise endpoint behavior on a strict-capable, explicitly selected scanner.
+    with _STAND["sessions"]() as session:
+        row = session.get(ScanAgentRow, "test-scan-pc")
+        if row is None:
+            row = ScanAgentRow(machine_id="test-scan-pc", pc_name="TEST", first_seen=_STAND["clock"].now)
+            session.add(row)
+        row.last_seen = _STAND["clock"].now
+        row.version = "2.2.0"
+        row.scanners = json.dumps([{"id": "test-scanner", "name": "Тестовый сканер"}])
+        session.commit()
+    response = admin.post(JOBS, json={"agent_id": "test-scan-pc", "target_scanner": "test-scanner"}, headers=_csrf(admin))
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "pending"
@@ -101,7 +110,7 @@ def _job(admin: TestClient, job_id: str) -> dict:
 
 
 def _claim(agent: dict) -> str | None:
-    response = TestClient(app).post(CLAIM, headers=agent)
+    response = TestClient(app).post(CLAIM, json={"machine_id": "test-scan-pc"}, headers=agent)
     assert response.status_code == 200, response.text
     job = response.json()["job"]
     return job["id"] if job else None
@@ -326,7 +335,7 @@ def test_only_the_agent_takes_jobs_and_only_a_person_queues_them(queue):
     assert service.post(_result(job_id), json={"error": "x"}, headers=labels_only).status_code == 403
     scan_only = _bearer(_issue(admin, scopes=("scan:upload",), name="Только скан")["token"])
     assert service.post("/api/stock/labels/agent/claim", json={}, headers=scan_only).status_code == 403
-    assert service.post(CLAIM, headers=scan_only).json()["job"]["id"] == job_id
+    assert service.post(CLAIM, json={"machine_id": "test-scan-pc"}, headers=scan_only).json()["job"]["id"] == job_id
 
     assert service.post(JOBS, headers=agent).status_code == 403
     assert service.get(f"{JOBS}/{job_id}", headers=agent).status_code == 403

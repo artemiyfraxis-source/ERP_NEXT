@@ -48,7 +48,7 @@ Describe 'Invoke-ScanPollOnce: выбранный сканер' {
         Invoke-ScanPollOnce -Base 'http://x' -AuthToken 't' -ScannerAddress '' | Should Be 'done'
         Assert-MockCalled Invoke-ScannerScan -Times 1 -Exactly -Scope It -ParameterFilter { $Device -eq '{wia-2}' -and -not $Address }
     }
-    It 'задание без выбора (старый сервер) -> первый сканер' {
+    It 'задание без выбора (старый сервер) передаёт отсутствие выбора адаптеру' {
         Mock Invoke-ErpApi { [pscustomobject]@{ job = [pscustomobject]@{ id = 's4' } } }
         Mock Invoke-ScannerScan { @{ Bytes = [byte[]](1); Ext = 'jpg'; Mime = 'image/jpeg' } }
         Mock Send-ScanFile {}
@@ -67,11 +67,52 @@ Describe 'Select-WiaDevice' {
     It 'выбранный по имени (агент прислал только имя)' {
         (Select-WiaDevice -DeviceInfos @($printer, $first, $second) -Device 'Canon LiDE').DeviceID | Should Be '{wia-2}'
     }
-    It 'выбора нет или такого сканера на ПК нет -> первый сканер, не принтер' {
-        (Select-WiaDevice -DeviceInfos @($printer, $first, $second) -Device '').DeviceID | Should Be '{wia-1}'
-        (Select-WiaDevice -DeviceInfos @($printer, $first, $second) -Device '{gone}').DeviceID | Should Be '{wia-1}'
+    It 'исчезнувший выбор не подменяется первым устройством' {
+        Select-WiaDevice -DeviceInfos @($printer, $first, $second) -Device '{gone}' | Should Be $null
+    }
+    It 'без выбора разрешён только единственный сканер' {
+        { Select-WiaDevice -DeviceInfos @($printer, $first, $second) -Device '' } | Should Throw
+        (Select-WiaDevice -DeviceInfos @($printer, $first) -Device '').DeviceID | Should Be '{wia-1}'
+    }
+    It 'три сканера доступны по id; прочие типы исключены' {
+        $third = [pscustomobject]@{ Type = 1; DeviceID = '{wia-3}'; Name = 'Epson' }
+        foreach ($id in '{wia-1}', '{wia-2}', '{wia-3}') {
+            (Select-WiaDevice -DeviceInfos @($printer, $first, $second, $third) -Device $id).DeviceID | Should Be $id
+        }
+        Select-WiaDevice -DeviceInfos @($printer, $first) -Device '{p}' | Should Be $null
     }
     It 'сканеров нет -> $null' {
         Select-WiaDevice -DeviceInfos @($printer) -Device '{wia-1}' | Should Be $null
+    }
+    It 'одинаковые имена требуют id устройства' {
+        $same = [pscustomobject]@{ Type = 1; DeviceID = '{wia-3}'; Name = 'Canon LiDE' }
+        { Select-WiaDevice -DeviceInfos @($second, $same) -Device 'Canon LiDE' } | Should Throw
+        (Select-WiaDevice -DeviceInfos @($second, $same) -Device '{wia-3}').DeviceID | Should Be '{wia-3}'
+    }
+}
+
+Describe 'Invoke-WiaScan: устройство исчезло' {
+    It 'не вызывает Connect или Transfer другого устройства' {
+        $script:connected = $false
+        $other = [pscustomobject]@{ Type = 1; DeviceID = '{other}'; Name = 'Другой' }
+        $other | Add-Member -MemberType ScriptMethod -Name Connect -Value { $script:connected = $true; throw 'Не должен подключаться' }
+        Mock New-Object -ParameterFilter { $ComObject -eq 'WIA.DeviceManager' } { [pscustomobject]@{ DeviceInfos = @($other) } }
+        { Invoke-WiaScan -Device '{gone}' } | Should Throw 'Выбранный сканер WIA не найден'
+        $script:connected | Should Be $false
+    }
+}
+
+Describe 'Invoke-ScannerScan: строгий выбор' {
+    It 'выбранный WIA сканер не заменяется настроенным eSCL' {
+        Mock Invoke-EsclScan { throw 'Не должен вызываться' }
+        Mock Invoke-WiaScan { @{ Ext = 'jpg' } }
+        (Invoke-ScannerScan -Address '10.0.0.5' -Device '{wia-2}').Ext | Should Be 'jpg'
+        Assert-MockCalled Invoke-EsclScan -Times 0 -Exactly -Scope It
+        Assert-MockCalled Invoke-WiaScan -Times 1 -Exactly -Scope It -ParameterFilter { $Device -eq '{wia-2}' }
+    }
+    It 'выбранный адрес eSCL совпадает с настройкой' {
+        Mock Invoke-EsclScan { @{ Ext = 'pdf' } }
+        (Invoke-ScannerScan -Address '10.0.0.5' -Device '10.0.0.5').Ext | Should Be 'pdf'
+        Assert-MockCalled Invoke-EsclScan -Times 1 -Exactly -Scope It -ParameterFilter { $Address -eq '10.0.0.5' }
     }
 }

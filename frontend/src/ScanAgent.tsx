@@ -1,13 +1,11 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ApiError, failureText, warehouseApi, type ScanAgentInfo, type ScanAgentScanner, type WarehouseScanJob, type WarehouseScanStart } from "./api";
 import { PageWindow } from "./PageWindow";
 import { loadPersonalViews, resetPersonalView, savePersonalView } from "./personalViews";
 import { useCanScan } from "./rights";
 
-/** «Сканер с любого ПК» (владелец 28.10: «везде… универсальность, если вдруг ПК сменять»): «Сканировать» уходит на тот
- *  ПК, за которым сидит человек. Сервер сам находит агент по адресу; нет агента — окно с установкой, несколько — выбор.
- *  Владелец 28.10: каждый, кому доступно сканирование, выбирает свой сканер — выбор лежит в учётке (вид `scan.device`
- *  личных настроек) и действует на любом экране и любом ПК. Нет выбора — сканер этого ПК, первый из его списка. */
+/** The account stores an explicit PC/scanner pair. Every scan rechecks the current registry; an unavailable choice
+ *  opens the chooser without creating a command for another device. */
 const REMEMBERED_KEY = "erp.scanAgent";
 const DEVICE_VIEW = "scan.device";
 const DEVICE_LOCAL_KEY = "erp.scanDevice";
@@ -16,14 +14,10 @@ export function rememberedScanAgent(): string {
   try { return window.localStorage.getItem(REMEMBERED_KEY) ?? ""; } catch { return ""; }
 }
 
-function rememberScanAgent(id: string) {
-  try { window.localStorage.setItem(REMEMBERED_KEY, id); } catch { /* приватное окно: выбор не запомнится */ }
-}
-
-export const scannerId = (scanner: ScanAgentScanner) => (typeof scanner === "string" ? scanner : scanner.id);
+export const scannerId = (scanner: ScanAgentScanner) => (typeof scanner === "string" ? scanner : scanner.id || scanner.name);
 export const scannerName = (scanner: ScanAgentScanner) => (typeof scanner === "string" ? scanner : scanner.name);
 
-/** Выбранные ПК и сканер учётки; без `scanner_id` — первый сканер этого ПК. */
+/** A legacy preference without scanner_id must be selected again. */
 export interface ScanDevice { agent_id: string; scanner_id?: string }
 
 function parseDevice(value: unknown): ScanDevice | null {
@@ -47,6 +41,7 @@ function publishDevice() {
 export async function loadScanDevice(): Promise<ScanDevice | null> {
   if (!deviceLoaded) {
     const views = await loadPersonalViews();
+    if (deviceLoaded) return device; // A choice or reset made while the account was loading wins.
     if (views) {
       device = parseDevice(views[DEVICE_VIEW]);
       deviceLoaded = true;
@@ -58,11 +53,12 @@ export async function loadScanDevice(): Promise<ScanDevice | null> {
   return device;
 }
 
-/** Запоминает выбор в учётке; `null` — «Сканер этого ПК» (по умолчанию). */
+/** Store a choice in the account; null clears both current and legacy browser preferences. */
 export function setScanDevice(next: ScanDevice | null) {
   device = next;
   deviceLoaded = true;
   try {
+    window.localStorage.removeItem(REMEMBERED_KEY);
     if (next) window.localStorage.setItem(DEVICE_LOCAL_KEY, JSON.stringify(next)); else window.localStorage.removeItem(DEVICE_LOCAL_KEY);
   } catch { /* приватное окно */ }
   if (next) savePersonalView(DEVICE_VIEW, next, 0); else resetPersonalView(DEVICE_VIEW);
@@ -81,29 +77,45 @@ export function resolveScanDevice(chosen: ScanDevice | null, agents: ScanAgentIn
   if (!chosen || !agents) return { agent: null, scanner: null, missing: false };
   const agent = agents.find((item) => item.id === chosen.agent_id) ?? null;
   const scanner = agent && chosen.scanner_id ? agent.scanners.find((item) => scannerId(item) === chosen.scanner_id) ?? null : null;
-  return { agent, scanner, missing: !agent || Boolean(chosen.scanner_id && !scanner) };
+  return { agent, scanner, missing: !agent || !scanner };
 }
 
-type View = { kind: "guide"; idle: string[] } | { kind: "choose"; agents: ScanAgentInfo[] } | null;
+function unavailable(agent: ScanAgentInfo): string {
+  if (agent.live !== true) return "ПК не на связи";
+  const version = /^\d+\.\d+\.\d+$/.test(agent.version) ? agent.version.split(".").map(Number) : [];
+  if (version.length !== 3 || version[0] < 2 || (version[0] === 2 && version[1] < 2)) return `Ожидается обновление агента на ${agent.pc}`;
+  return "";
+}
+
+type View = { kind: "guide"; idle: string[] } | { kind: "choose"; agents: ScanAgentInfo[] | null } | null;
 
 /** `start` — запрос задания у сервера (ПК и сканер из учётки). `begin()` отдаёт задание или null: тогда открыто окно
  *  установки / выбора, а `dialogs(retry)` рисует его; после выбора и по «Проверить» вызывается `retry` — снова «Сканировать». */
 export function useScanAgent(start: (agentId?: string, targetScanner?: string) => Promise<WarehouseScanStart>) {
   const [view, setView] = useState<View>(null);
+  const busy = useRef(false);
 
   async function begin(): Promise<WarehouseScanJob | null> {
-    const chosen = await loadScanDevice();
-    let agentId = chosen?.agent_id || rememberedScanAgent() || undefined;
-    let scanner = chosen?.scanner_id;
-    if (chosen) {
-      // Выбранного сканера больше нет в списке — сканируем с этого ПК (строка «Сменить сканер» скажет об этом).
+    if (busy.current) return null;
+    busy.current = true;
+    try {
+      const chosen = await loadScanDevice();
       const agents = await warehouseApi.scanAgents().then((answer) => answer.agents, () => null);
-      if (resolveScanDevice(chosen, agents).missing) { agentId = undefined; scanner = undefined; }
+      const { agent, scanner, missing } = resolveScanDevice(chosen, agents);
+      const changed = device?.agent_id !== chosen?.agent_id || device?.scanner_id !== chosen?.scanner_id;
+      if (changed || !agents || !chosen || missing || !agent || !scanner || unavailable(agent)) {
+        setView(agents && !agents.some((item) => item.scanners.length)
+          ? { kind: "guide", idle: agents.map((item) => item.pc) }
+          : { kind: "choose", agents });
+        return null;
+      }
+      const answer = await start(agent.id, scannerId(scanner));
+      if (answer.status === "no_agent") { setView({ kind: "guide", idle: answer.idle ?? [] }); return null; }
+      if (answer.status === "choose") { setView({ kind: "choose", agents: answer.agents }); return null; }
+      return answer;
+    } finally {
+      busy.current = false;
     }
-    const answer = await start(agentId, scanner);
-    if (answer.status === "no_agent") { setView({ kind: "guide", idle: answer.idle ?? [] }); return null; }
-    if (answer.status === "choose") { setView({ kind: "choose", agents: answer.agents }); return null; }
-    return answer;
   }
 
   function dialogs(retry: () => void) {
@@ -111,8 +123,8 @@ export function useScanAgent(start: (agentId?: string, targetScanner?: string) =
     const done = (again: boolean) => { setView(null); if (again) retry(); };
     return view.kind === "guide"
       ? <ScanAgentGuide idle={view.idle} close={() => done(false)} check={() => done(true)} />
-      : <ScanAgentPicker agents={view.agents} close={() => done(false)}
-          pick={(id) => { rememberScanAgent(id); setScanDevice({ agent_id: id }); done(true); }}
+      : <ScanDevicePicker agents={view.agents} chosen={device} close={() => done(false)}
+          pick={(next) => { setScanDevice(next); done(Boolean(next)); }}
           install={() => setView({ kind: "guide", idle: [] })} />;
   }
 
@@ -129,75 +141,68 @@ export function ScanDeviceLine() {
   const { device: chosen } = useSyncExternalStore(subscribeDevice, deviceSnapshot, deviceSnapshot);
   const [agents, setAgents] = useState<ScanAgentInfo[] | null>(null);
   const [picking, setPicking] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const request = useRef(0);
+
+  async function refresh() {
+    const current = ++request.current;
+    setLoading(true);
+    const fresh = await warehouseApi.scanAgents().then((answer) => answer.agents, () => null);
+    if (current === request.current) { setAgents(fresh); setLoading(false); }
+  }
 
   useEffect(() => {
     if (!canScan) return;
-    let alive = true;
     void loadScanDevice();
-    warehouseApi.scanAgents().then((answer) => { if (alive) setAgents(answer.agents); }, () => undefined);
-    return () => { alive = false; };
+    void refresh();
+    return () => { request.current++; };
   }, [canScan]);
 
   if (!canScan) return null;
   const { agent, scanner, missing } = resolveScanDevice(chosen, agents);
-  const text = !chosen || missing ? "этот ПК · первый сканер"
-    : `${agent ? agent.pc : "выбранный ПК"} · ${scanner ? scannerName(scanner) : "первый сканер"}`;
+  const text = !chosen ? "не выбран" : agent && scanner ? `${agent.pc} · ${scannerName(scanner)}`
+    : loading ? "Проверяем выбранный сканер…" : "Выбранный сканер не найден";
+  const reason = agent ? unavailable(agent) : "";
+  const warning = chosen && !loading ? !agents ? "Список ПК недоступен — проверьте связь с ERP"
+    : missing ? "Выберите доступный сканер" : reason : "";
   return (
-    <p className="scan-device" data-testid="scan-device">
-      <span>ПК · сканер: <b>{text}</b></span>
-      <button type="button" className="link-button" onClick={() => setPicking(true)}>Сменить сканер</button>
-      {chosen && missing ? <span className="warning-inline">Выбранный сканер не найден — сканируем с этого ПК</span> : null}
-      {picking ? <ScanDevicePicker agents={agents} chosen={chosen} close={() => setPicking(false)}
+    <div className="scan-device" data-testid="scan-device">
+      <span aria-live="polite">ПК · сканер: <b>{text}</b></span>
+      <button type="button" className="link-button" onClick={() => { setPicking(true); void refresh(); }}>Сменить сканер</button>
+      {warning ? <span className="warning-inline">{warning}</span> : null}
+      {picking ? <ScanDevicePicker agents={agents} loading={loading} chosen={chosen} close={() => setPicking(false)}
         pick={(next) => { setScanDevice(next); setPicking(false); }} /> : null}
-    </p>
+    </div>
   );
 }
 
-function ScanDevicePicker({ agents, chosen, close, pick }: {
-  agents: ScanAgentInfo[] | null; chosen: ScanDevice | null; close: () => void; pick: (next: ScanDevice | null) => void;
+function ScanDevicePicker({ agents, loading = false, chosen, close, pick, install }: {
+  agents: ScanAgentInfo[] | null; loading?: boolean; chosen: ScanDevice | null; close: () => void; pick: (next: ScanDevice | null) => void;
+  install?: () => void;
 }) {
   return (
     <PageWindow label="Выбор сканера" close={close} width={560} dismissable>
       <div className="panel scan-agent">
         <h2>Каким сканером сканировать</h2>
         <div className="scan-agent-list">
-          <button type="button" className={chosen ? "secondary" : "primary"} aria-pressed={!chosen} onClick={() => pick(null)}>Сканер этого ПК (первый из списка)</button>
-          {agents === null ? <p className="empty">Список ПК недоступен — проверьте связь с ERP</p> : null}
-          {agents?.length === 0 ? <p className="empty">Ни один ПК со сканером не вышел на связь</p> : null}
-          {agents?.map((agent) => agent.scanners.length === 0
+          <button type="button" className="secondary" onClick={() => pick(null)}>Сбросить выбор</button>
+          {loading ? <p className="empty" role="status">Загрузка…</p> : agents === null ? <p className="error-banner" role="alert">Список ПК недоступен — проверьте связь с ERP</p> : null}
+          {!loading && agents?.length === 0 ? <p className="empty">Ни один ПК со сканером не вышел на связь</p> : null}
+          {!loading && agents?.map((agent) => agent.scanners.length === 0
             ? <p key={agent.id} className="muted">{agent.pc}: сканер не виден</p>
             : agent.scanners.map((scanner) => {
               const current = chosen?.agent_id === agent.id && chosen.scanner_id === scannerId(scanner);
               return (
                 <button key={`${agent.id}/${scannerId(scanner)}`} type="button" className={current ? "primary" : "secondary"}
-                  aria-pressed={current} onClick={() => pick({ agent_id: agent.id, scanner_id: scannerId(scanner) })}>
+                  aria-pressed={current} disabled={Boolean(unavailable(agent))} onClick={() => pick({ agent_id: agent.id, scanner_id: scannerId(scanner) })}>
                   {agent.pc} · {scannerName(scanner)}
+                  {unavailable(agent) ? <span> — {unavailable(agent)}</span> : null}
                 </button>
               );
             }))}
         </div>
-        <p className="scan-agent-actions"><button type="button" className="secondary small" onClick={close}>Отмена</button></p>
-      </div>
-    </PageWindow>
-  );
-}
-
-function ScanAgentPicker({ agents, close, pick, install }: {
-  agents: ScanAgentInfo[]; close: () => void; pick: (id: string) => void; install: () => void;
-}) {
-  return (
-    <PageWindow label="Выбор сканера" close={close} width={560} dismissable>
-      <div className="panel scan-agent">
-        <h2>С какого ПК сканировать</h2>
-        <div className="scan-agent-list">
-          {agents.map((agent) => (
-            <button key={agent.id} type="button" className="secondary" onClick={() => pick(agent.id)}>
-              Сканер: {agent.pc} · {agent.scanners.map(scannerName).join(", ")}
-            </button>
-          ))}
-        </div>
         <p className="scan-agent-actions">
-          <button type="button" className="secondary small" onClick={install}>Установить на этом ПК</button>
+          {install ? <button type="button" className="secondary small" onClick={install}>Установить на этом ПК</button> : null}
           <button type="button" className="secondary small" onClick={close}>Отмена</button>
         </p>
       </div>

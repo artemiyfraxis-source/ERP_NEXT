@@ -501,7 +501,7 @@ export type WarehouseScanJobStatus = "pending" | "claimed" | "done" | "failed";
 /** «Сканер с любого ПК»: ПК с агентом, у которого Windows видит сканер. */
 /** Сканер ПК: прежний ответ — строка-название, новый — {id, name}. */
 export type ScanAgentScanner = string | { id: string; name: string };
-export interface ScanAgentInfo { id: string; pc: string; scanners: ScanAgentScanner[]; version: string }
+export interface ScanAgentInfo { id: string; pc: string; scanners: ScanAgentScanner[]; version: string; live?: boolean; last_seen?: string }
 /** Ответ на «Сканировать»: задание — или «нет агента» (окно установки), или «выберите ПК». */
 export type WarehouseScanStart =
   | WarehouseScanJob
