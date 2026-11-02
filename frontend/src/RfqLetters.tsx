@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { failureText } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { failureText, identityApi } from "./api";
 import { formatDay, formatNumber, unitLabel } from "./format";
 import { rfqApi, type RfqLine, type RfqMatrix, type RfqSupplier } from "./purchasingRfqApi";
 
@@ -40,13 +40,14 @@ export function letterSubject(matrix: RfqMatrix, lines: RfqLine[]): string {
   return `Запрос КП № ${matrix.rfq.number} от ${formatDay(matrix.rfq.created_at)} — ${lines.length} ${positions(lines.length)}`;
 }
 
-export function letterBody(lines: RfqLine[], answerBy: string | null, ask: AskQty = {}, extra: number[] = []): string {
-  return [
+const TEMPLATE_KEY = "rfq.letters";
+const TEMPLATE_LIMIT = 6000;
+export const DEFAULT_LETTER_TEMPLATE = [
     "Добрый день!",
     "",
     "Просим направить коммерческое предложение на следующие позиции:",
     "",
-    ...lines.map((line, index) => lineText(line, index, ask)),
+    "{{позиции}}",
     "",
     "В предложении, пожалуйста, укажите:",
     "— цену за единицу с НДС (если цена без НДС — отметьте это);",
@@ -54,13 +55,33 @@ export function letterBody(lines: RfqLine[], answerBy: string | null, ask: AskQt
     "— минимальную партию и кратность упаковки, если есть;",
     "— если цена зависит от количества — ступени цены (от какого количества какая цена);",
     "— срок действия предложения.",
-    ...(extra.length ? ["", `Также просим указать цену при заказе ${extra.map((value) => `от ${qty(value)}`).join(" и ")} (в тех же единицах) по каждой позиции.`] : []),
+    "",
+    "{{ступени_цены}}",
     "",
     "Если какую-то позицию поставить не можете — отметьте это в ответе. Аналоги предлагайте, только если оригинала нет, с указанием производителя.",
-    ...(answerBy ? ["", `Ответ просим направить до ${formatDay(answerBy)}.`] : []),
+    "",
+    "{{срок_ответа}}",
     "",
     "Заранее спасибо!",
   ].join("\n");
+
+function templateError(text: string): string {
+  if (text.length > TEMPLATE_LIMIT) return `Шаблон — не больше ${TEMPLATE_LIMIT} символов`;
+  if (!text.includes("{{позиции}}")) return "Добавьте {{позиции}} — список запрашиваемых позиций";
+  const rest = text.replace(/\{\{(позиции|срок_ответа|ступени_цены)\}\}/g, "");
+  return rest.includes("{{") || rest.includes("}}") ? "Неизвестная подстановка. Используйте {{позиции}}, {{срок_ответа}} или {{ступени_цены}}" : "";
+}
+
+export function letterBody(lines: RfqLine[], answerBy: string | null, ask: AskQty = {}, extra: number[] = [], template = DEFAULT_LETTER_TEMPLATE): string {
+  const values: Record<string, string> = {
+    позиции: lines.map((line, index) => lineText(line, index, ask)).join("\n"),
+    ступени_цены: extra.length ? `Также просим указать цену при заказе ${extra.map((value) => `от ${qty(value)}`).join(" и ")} (в тех же единицах) по каждой позиции.` : "",
+    срок_ответа: answerBy ? `Ответ просим направить до ${formatDay(answerBy)}.` : "",
+  };
+  // One pass: braces in a product name are plain text, never another template expression.
+  const body = template.replace(/\{\{(позиции|срок_ответа|ступени_цены)\}\}/g, (_match, name: string) => values[name]);
+  const appended = ["ступени_цены", "срок_ответа"].filter((name) => !template.includes(`{{${name}}}`)).map((name) => values[name]).filter(Boolean);
+  return [body, ...appended].join("\n\n").replace(/\n{3,}/g, "\n\n");
 }
 
 /** For a supplier bought from on a website: what to put in the cart. */
@@ -156,6 +177,61 @@ export function RfqLetters({ matrix, editable, onClose, onSent }: {
   const [askText, setAskText] = useState<Record<string, string>>({});
   const [extraText, setExtraText] = useState("");
   const [error, setError] = useState("");
+  const [template, setTemplate] = useState(DEFAULT_LETTER_TEMPLATE);
+  const [draft, setDraft] = useState(DEFAULT_LETTER_TEMPLATE);
+  const [templateReady, setTemplateReady] = useState(false);
+  const [templateErrorText, setTemplateErrorText] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const savePending = useRef(false);
+  const editor = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    let active = true;
+    setTemplateReady(false);
+    setTemplateErrorText("");
+    void identityApi.uiSettings().then(({ views }) => {
+      if (!active) return;
+      const setting = views[TEMPLATE_KEY];
+      const body = setting === undefined ? DEFAULT_LETTER_TEMPLATE
+        : typeof setting === "object" && setting !== null && "body" in setting ? setting.body : null;
+      if (typeof body !== "string" || templateError(body)) throw new Error("Сохранённый шаблон повреждён");
+      setTemplate(body);
+      setDraft(body);
+      setTemplateReady(true);
+    }).catch((reason: unknown) => {
+      if (active) setTemplateErrorText(failureText(reason, "Шаблон не загружен"));
+    });
+    return () => { active = false; };
+  }, [loadAttempt]);
+  useEffect(() => {
+    if (!editing || draft === template) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [editing, draft, template]);
+
+  async function saveTemplate() {
+    if (!templateReady || savePending.current) return;
+    const invalid = templateError(draft);
+    setTemplateErrorText(invalid);
+    setSaved(false);
+    if (invalid) { editor.current?.focus(); return; }
+    savePending.current = true;
+    setSaving(true);
+    try {
+      await identityApi.saveUiSetting(TEMPLATE_KEY, { body: draft });
+      setTemplate(draft);
+      setEditing(false);
+      setSaved(true);
+    } catch (reason) {
+      setTemplateErrorText(failureText(reason, "Шаблон не сохранён"));
+    } finally {
+      savePending.current = false;
+      setSaving(false);
+    }
+  }
   const ask: AskQty = {};
   for (const [id, text] of Object.entries(askText)) {
     const value = qtyNum(text);
@@ -185,9 +261,34 @@ export function RfqLetters({ matrix, editable, onClose, onSent }: {
           Письма поставщикам
         </h3>
         <span className="muted">Почту ERP не отправляет: скопируйте текст или откройте в почте. Плановой цены в письме нет.</span>
-        <button type="button" className="secondary small rfq-letters-close" onClick={onClose}>Свернуть</button>
+        <button type="button" className="secondary small rfq-letters-close" disabled={saving} onClick={() => {
+          if (!editing || draft === template || window.confirm("Изменения шаблона не сохранены. Свернуть?")) onClose();
+        }}>Свернуть</button>
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {templateErrorText && <div className="error-banner" role="alert">{templateErrorText}</div>}
+      {!templateReady && (templateErrorText
+        ? <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button type="button" className="secondary small" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить загрузку шаблона</button>
+            <button type="button" className="secondary small" onClick={() => { setTemplateReady(true); setTemplateErrorText(""); }}>Использовать стандартный шаблон</button>
+          </div>
+        : <p className="muted" role="status">Загрузка шаблона…</p>)}
+      {templateReady && <div className="rfq-letter-qty">
+        {!editing ? <button type="button" className="secondary small" onClick={() => { setDraft(template); setEditing(true); setSaved(false); setTemplateErrorText(""); }}>Изменить шаблон</button>
+          : <>
+            <label>Текст шаблона
+              <textarea ref={editor} name="rfq-letter-template" autoComplete="off" rows={12} maxLength={TEMPLATE_LIMIT} value={draft} disabled={saving}
+                style={{ width: "100%", boxSizing: "border-box" }} onChange={(event) => { setDraft(event.target.value); setTemplateErrorText(""); }} />
+            </label>
+            <p className="muted">Обязательно: {"{{позиции}}"}. Можно добавить: {"{{срок_ответа}}"}, {"{{ступени_цены}}"} — иначе они добавятся в конце. Шаблон личный, сохраняется для следующих запросов КП.</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button type="button" className="primary small" disabled={saving} onClick={() => void saveTemplate()}>{saving ? "Сохраняю…" : "Сохранить шаблон"}</button>
+              <button type="button" className="secondary small" disabled={saving} onClick={() => setDraft(DEFAULT_LETTER_TEMPLATE)}>Стандартный текст</button>
+              <button type="button" className="secondary small" disabled={saving} onClick={() => { setEditing(false); setDraft(template); setTemplateErrorText(""); }}>Отмена</button>
+            </div>
+          </>}
+        {saved && <span className="muted" role="status"> Шаблон сохранён</span>}
+      </div>}
       <details className="rfq-letter-qty">
         <summary>Количества в письме — запросить больше или цену на крупную партию</summary>
         <label className="rfq-letter-extra">Также запросить цену при заказе от (через запятую)
@@ -213,9 +314,9 @@ export function RfqLetters({ matrix, editable, onClose, onSent }: {
         <p className="muted">Это меняет только текст письма. Потребность проекта остаётся из заявки: излишек при покупке уйдёт в свободный остаток.</p>
       </details>
       {groups.length === 0 && <p className="muted">Писать некому: в запросе нет поставщиков (или все отказались).</p>}
-      {groups.map((group) => {
+      {templateReady && groups.map((group) => {
         const subject = letterSubject(matrix, group.lines);
-        const body = letterBody(group.lines, answerBy(group.suppliers, matrix.settings.quote_wait_days), ask, extra);
+        const body = letterBody(group.lines, answerBy(group.suppliers, matrix.settings.quote_wait_days), ask, extra, template);
         const key = (what: string) => `${group.key}-${what}`;
         const single = group.suppliers.length === 1 ? group.suppliers : [];
         return (
@@ -226,6 +327,7 @@ export function RfqLetters({ matrix, editable, onClose, onSent }: {
                 <span className="muted"> · {group.lines.length} {positions(group.lines.length)} из {lines.length}</span>
               </div>
             )}
+            {editing && <p className="muted">Ниже — письмо по сохранённому шаблону.</p>}
             <div className="rfq-letter-subject"><span className="muted">Тема:</span> {subject}</div>
             <pre className="rfq-letter-body">{body}</pre>
             <div className="rfq-letter-actions">

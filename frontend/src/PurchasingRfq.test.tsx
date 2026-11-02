@@ -39,6 +39,7 @@ const matrix = {
 function mockServer(posts: { path: string; body: unknown }[] = []) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
+    if (path === "/api/auth/ui-settings") return json({ views: {} });
     if (init?.method === "POST") {
       posts.push({ path, body: JSON.parse(String(init.body)) });
       return json({ id: "d1" }, 201);
@@ -55,6 +56,7 @@ function mockServer(posts: { path: string; body: unknown }[] = []) {
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup(); // unmount before the reset: a live tree would refetch the options without the mock
+  window.history.replaceState({}, "", "/");
 });
 
 it("renders the matrix with the cheapest offer marked and the gate chip", async () => {
@@ -250,7 +252,7 @@ it("«&letters=1» opens the supplier letters with the request; «Свернут
   mockServer();
   render(<PurchasingRfq />);
   const letters = await screen.findByRole("region", { name: "Письма поставщикам" });
-  expect(within(letters).getAllByText(/Запрос КП № КП-2610-001 от 01\.10\.2026 — 1 позиция/).length).toBeGreaterThan(0);
+  expect((await within(letters).findAllByText(/Запрос КП № КП-2610-001 от 01\.10\.2026 — 1 позиция/)).length).toBeGreaterThan(0);
   expect(screen.queryByRole("button", { name: "Письма поставщикам" })).not.toBeInTheDocument();
   fireEvent.click(within(letters).getByRole("button", { name: "Свернуть" }));
   expect(screen.queryByRole("region", { name: "Письма поставщикам" })).not.toBeInTheDocument();
