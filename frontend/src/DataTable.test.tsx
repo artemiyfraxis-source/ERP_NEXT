@@ -23,6 +23,24 @@ function names() {
 
 afterEach(() => { window.localStorage.clear(); vi.restoreAllMocks(); });
 
+it("keeps grouped cards flat unless groupCards explicitly opts in, with independent header controls", () => {
+  const opened = vi.fn();
+  const props = { rows, columns, rowKey: (row: Row) => row.id, groupBy: (row: Row) => row.supplier,
+    groupLabel: (name: string) => <label><input type="checkbox" aria-label={`Решение ${name}`} />{name}</label>,
+    cards: (row: Row) => <button type="button" onClick={() => opened(row.id)}>{row.name}</button> };
+  const page = render(<DataTable {...props} />);
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(screen.getAllByRole("button").filter((button) => rows.some((row) => row.name === button.textContent))).toHaveLength(3);
+  page.rerender(<DataTable {...props} groupCards />);
+  expect(page.container.querySelectorAll(".dt-card-group-title")).toHaveLength(2);
+  expect(page.container.querySelectorAll(".dt-card-grid > button")).toHaveLength(3);
+  const decision = screen.getByRole("checkbox", { name: "Решение Кабель-Торг" });
+  expect(decision.closest("button")).toBeNull();
+  decision.focus(); expect(decision).toHaveFocus();
+  fireEvent.click(decision); expect(decision).toBeChecked(); expect(opened).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Разъём Molex" })); expect(opened).toHaveBeenCalledWith("3");
+});
+
 it("searches every word in any column, like SUPPLYMAP", () => {
   expect(matchesWords(["Разъём Molex", "Кабель-Торг"], "molex кабель")).toBe(true);
   expect(matchesWords(["Разъём Molex", "Кабель-Торг"], "molex чип")).toBe(false);

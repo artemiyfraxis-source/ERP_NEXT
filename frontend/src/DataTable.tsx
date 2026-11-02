@@ -115,6 +115,8 @@ export interface DataTableProps<T> {
   groupBy?: (row: T) => string;
   /** Подпись заголовка группы (по умолчанию — её имя); например, заказ и поставщик. */
   groupLabel?: (name: string, rows: T[]) => ReactNode;
+  /** Opt in to project/group headers above cards; existing card consumers keep their flat layout. */
+  groupCards?: boolean;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
   collapsibleGroups?: boolean;
   /** Группы открываются свёрнутыми (длинные справочники: заголовки групп, строки по клику); поиск, фильтр колонки
@@ -421,6 +423,7 @@ export function DataTable<T>({
   allLast = false,
   groupBy,
   groupLabel,
+  groupCards = false,
   collapsibleGroups,
   foldedByDefault = false,
   bulkActions = [],
@@ -1658,7 +1661,10 @@ export function DataTable<T>({
         </div>}
         {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
       </> : cards ? <>
-        {shown.length ? <div className="dt-card-grid">{shown.map((row) => <Fragment key={rowKey(row)}>{cards(row)}</Fragment>)}</div>
+        {shown.length ? groupCards && grouping ? groups.map(([name, groupRows]) => <div className="dt-card-group" key={name}>
+          <div className="dt-card-group-title">{groupLabel ? groupLabel(name, groupRows) : name} <span className="page-count">{groupRows.length}</span></div>
+          <div className="dt-card-grid">{groupRows.map((row) => <Fragment key={rowKey(row)}>{cards(row)}</Fragment>)}</div>
+        </div>) : <div className="dt-card-grid">{shown.map((row) => <Fragment key={rowKey(row)}>{cards(row)}</Fragment>)}</div>
           : <div className="empty">{loading ? "Загрузка…" : emptyText}</div>}
         {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
       </> : <div className="table-wrap">
