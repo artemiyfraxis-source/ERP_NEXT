@@ -48,6 +48,31 @@ def test_carrier_close_requires_upd_file_number_date_and_track():
         shipped.close()
 
 
+@pytest.mark.parametrize("carrier, required", [("Курьер (наш)", False), (" Курьер (наш) ", False), ("СДЭК", True), ("Яндекс Доставка", True), ("Курьер внешний", True), ("курьер (наш)", True), ("Старый перевозчик", True)])
+def test_track_rule_allows_only_exact_own_courier_without_track(carrier, required):
+    item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
+    picked, _ = shipment(item, terms=DeliveryTerms.CARRIER, carrier=carrier).pick({item.id: item.remaining}, {item.id: item.grn or ""})
+    packed = picked.pack("PL1", "DN1", date(2026, 9, 22))
+    assert packed.track_required is required
+    assert ("трек-номер" in shipping_gaps(packed)) is required
+    assert packed.ready_to_ship is not required
+    if required:
+        with pytest.raises(ShippingValidationError, match="трек-номер"):
+            packed.mark_shipped(date(2026, 9, 22))
+    else:
+        assert replace(packed, upd_url="https://files.example/upd.pdf").mark_shipped(date(2026, 9, 22)).close().status == ShipmentStatus.CLOSED
+
+
+@pytest.mark.parametrize("field, gap", [("shipping_point", "адрес доставки"), ("phone", "телефон получателя"), ("upd_number", "№ УПД")])
+def test_own_courier_keeps_manager_data_gates(field, gap):
+    item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
+    picked, _ = shipment(item, terms=DeliveryTerms.CARRIER, carrier="Курьер (наш)", **{field: ""}).pick({item.id: item.remaining}, {item.id: item.grn or ""})
+    packed = picked.pack("PL1", "DN1", date(2026, 9, 22))
+    assert gap in shipping_gaps(packed)
+    with pytest.raises(ShippingValidationError, match=gap):
+        packed.mark_shipped(date(2026, 9, 22))
+
+
 def test_paper_shipment_requires_upd_file_before_dispatch():
     item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
     picked, _ = shipment(item, upd_type=UpdType.PAPER).pick({item.id: item.remaining}, {item.id: item.grn or ""})
@@ -243,6 +268,24 @@ def test_project_addressee_card_edit_changes_only_sent_fields_and_empty_erases()
     assert (edited.receiver, edited.shipping_point, edited.upd_type) == ("АО Получатель", "Москва", UpdType.PAPER)
     with pytest.raises(ShippingValidationError):
         stored.edit({"customer": "x"})
+
+
+@pytest.mark.parametrize("terms, carrier, address_required", [
+    (DeliveryTerms.PICKUP, "", False),
+    (DeliveryTerms.PICKUP, "Самовывоз", False),
+    (None, " Самовывоз ", False),
+    (DeliveryTerms.CARRIER, "Самовывоз", False),
+    (DeliveryTerms.CARRIER, "СДЭК", True),
+    (DeliveryTerms.CARRIER, "Курьер (наш)", True),
+    (None, "", True),
+])
+def test_project_dispatch_gaps_require_address_only_for_delivery(terms, carrier, address_required):
+    from app.modules.shipping.domain import ProjectAddressee
+
+    card = ProjectAddressee(project="591К.3", receiver="Получатель", phone="1", terms=terms,
+                            carrier=carrier, upd_type=UpdType.EDO)
+
+    assert card.dispatch_gaps() == (("адрес доставки",) if address_required else ())
 
 
 def test_effective_address_own_non_empty_wins_and_empty_inherits_project_card():

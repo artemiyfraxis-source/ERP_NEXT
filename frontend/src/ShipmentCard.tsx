@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AutoTextarea } from "./AutoTextarea";
 import { failureText, shippingApi, type Shipment } from "./api";
-import { CarrierSelect, isPickup, termsFor, termsText } from "./carriers";
+import { CarrierSelect, isPickup, needsTrack, termsFor, termsText } from "./carriers";
 import { readFile } from "./DispatchCard";
 import { formatDate } from "./format";
 import { isoDay } from "./Gantt";
@@ -121,7 +121,7 @@ export const readyToShip = (shipment: DispatchShipment) =>
 export const readyForTrack = (shipment: DispatchShipment) =>
   shipment.ready_for_track ?? (shipment.missing_ship.length > 0 && shipment.missing_ship.every((gap) => gap === "трек-номер"));
 /** Трек нужен доставке ТК; самовывоз уезжает без него. */
-export const needsTrack = (shipment: Shipment) => shipment.terms !== "САМОВЫВОЗ" && !isPickup(shipment.carrier);
+export { needsTrack } from "./carriers";
 /** Держит только УПД (и трек, который без УПД не вписать) — можно разрешить отгрузку без УПД по ПИН. */
 export function onlyUpdBlocks(shipment: DispatchShipment) {
   if (!SHIPPABLE.includes(shipment.status) || !picked(shipment) || readyToShip(shipment) || shipment.no_upd_approved_by) return false;

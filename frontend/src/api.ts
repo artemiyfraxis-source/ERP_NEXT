@@ -1654,6 +1654,7 @@ export interface Shipment {
   pl_number: string;
   dn_number: string;
   track_number: string;
+  track_required?: boolean;
   packed_at: string | null;
   shipped_at: string | null;
   manager: string;
