@@ -681,6 +681,15 @@ def _set_project_addressee(command: SetProjectAddresseeCommand, uow: UnitOfWork)
     _audit(_addressee_id(project), "shipping.addressee_set", command.actor, command.now, {
         "project": project, "fields": sorted(command.fields),
     }, uow)
+    if updated.note != current.note:
+        publish_notification(uow.outbox, notification_requested(
+            key=f"shipping:warehouse-comment:{project}:v{updated.version}", now=command.now,
+            title=f"Комментарий для склада: проект {project}",
+            body=(f"{command.actor.name}: проект {project}\n"
+                  + (updated.note or "Комментарий для склада очищен")
+                  + "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."),
+            kind="ship", reference=project, audiences=(STOREKEEPER_AUDIENCE,),
+        ))
     for shipment in uow.shipments.open_for_project(project):
         followed = shipment.follow(updated)
         if followed is not shipment:
@@ -701,6 +710,16 @@ def edit_shipment_head(command: EditHeadCommand, uow: UnitOfWork) -> Shipment:
             return shipment
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.head_edited", command.actor, command.now, {"fields": sorted(command.fields)}, uow)
+        if updated.note != shipment.note:
+            projects = ", ".join(dict.fromkeys(line.project for line in updated.lines))
+            publish_notification(uow.outbox, notification_requested(
+                key=f"shipping:shipment-warehouse-comment:{updated.id}:v{updated.version}", now=command.now,
+                title=f"Комментарий для склада: отправка {updated.number}",
+                body=(f"{command.actor.name}: отправка {updated.number}, проекты {projects}\n"
+                      + (updated.note or "Комментарий для склада очищен")
+                      + "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."),
+                kind="ship", reference=updated.number, audiences=(STOREKEEPER_AUDIENCE,),
+            ))
         uow.commit()
         return updated
 
