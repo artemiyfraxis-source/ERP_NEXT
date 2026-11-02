@@ -11,7 +11,7 @@ export type Section =
   | "receiving" | "stock" | "issues" | "handout" | "intake" | "shipdata"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
 
-export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "docs" | "refs";
+export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "docs" | "refs" | "admin";
 
 export interface NavItem {
   id: Section;
@@ -61,18 +61,19 @@ export const BLOCKS: Array<{ id: BlockId; title: string; sub: string }> = [
   { id: "supply", title: "Снабжение", sub: "оформить заявку · сегодня · заявки · запросы КП · закупка · счета и поставки · статистика" },
   // Приёмка sits in Склад: the storekeeper does incoming inspection, not the buyer (SUPPLYMAP, owner 26.07.2026).
   { id: "stock", title: "Склад", sub: "приёмка · остатки · выдача · отгрузка" },
-  { id: "mgmt", title: "Менеджмент", sub: "производственный план · сотрудники · доступы · журнал" },
+  { id: "mgmt", title: "Менеджмент", sub: "данные отправок · производственный план" },
   // Primary documents of purchasing (УПД, счета, их цепочка): a block of their own (Витя's edit 4, owner-approved 23.10).
   { id: "docs", title: "Документация", sub: "первичная документация" },
   // Reference books are not a production step (owner 29.09.2026): their own block, last in the menu.
   { id: "refs", title: "Справочники", sub: "база данных · шаблоны техкарт · закупка" },
+  { id: "admin", title: "Администрирование", sub: "сотрудники · доступы · системный журнал" },
 ];
 
 // Access levels (owner 04.10.2026): a card opens by its section key and nothing else — no role lists. superadmin / admin
 // pass every card (backend `section_allowed`); the keys and minimums mirror backend level_migration.GATES.
 // Array order = card order inside a block = sidebar order.
 export const NAV: NavItem[] = [
-  { id: "cabinet", label: "Личный кабинет" },
+  { id: "cabinet", label: "Главная" },
   // «Личная карточка» (owner concept 04.10): own card from the sidebar profile, someone else's from «Сотрудники»
   // (?section=card&user=<id>). No access key — own card is open to everyone, the backend gates other people's. Not a
   // menu item or a tile (`within`), and no menu highlight (the home screen is its parent).
@@ -123,10 +124,10 @@ export const NAV: NavItem[] = [
   { id: "shipdata", label: "Данные отправок", sub: "тип доставки · адрес · получатель · УПД", permission: "shipping", minimum: "edit", block: "mgmt" },
   { id: "prodplan", label: "Производственный план", sub: "все проекты · блокеры · комплектующие · сроки", permission: "production", block: "mgmt" },
   // «Сотрудники» и «Доступы»: только superadmin / admin, вне матрицы (backend staffdir_principal, access_admin_principal).
-  { id: "staff", label: "Сотрудники", sub: "справочник, уровни, отделы", fullAccessOnly: true, block: "mgmt" },
-  { id: "access", label: "Доступы", sub: "уровни × разделы · исключения по сотрудникам", fullAccessOnly: true, block: "mgmt" },
-  { id: "notifications", label: "Уведомления", sub: "мои события", block: "mgmt" },
-  { id: "operations", label: "Системный журнал", sub: "аудит и очередь событий", permission: "operations", block: "mgmt" },
+  { id: "staff", label: "Сотрудники", sub: "справочник, уровни, отделы", fullAccessOnly: true, block: "admin" },
+  { id: "access", label: "Доступы", sub: "уровни × разделы · исключения по сотрудникам", fullAccessOnly: true, block: "admin" },
+  { id: "notifications", label: "Уведомления", sub: "мои события", block: "mgmt", within: "cabinet" },
+  { id: "operations", label: "Системный журнал", sub: "аудит и очередь событий", permission: "operations", block: "admin" },
   // Документация
   { id: "primarydocs", label: "Первичная документация", sub: "УПД · счета Kaiten · цепочка документов · поиск по документам", permission: "procurement", block: "docs" },
   // Справочники: after «База данных» above
