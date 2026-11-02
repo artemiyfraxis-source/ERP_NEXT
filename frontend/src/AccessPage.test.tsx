@@ -14,7 +14,7 @@ const LEVELS = [
 ];
 const SECTIONS = [
   { key: "requests", label: "Заявки" }, { key: "warehouse", label: "Склад" }, { key: "myops", label: "Задания" },
-  { key: "quality", label: "ОТК" }, { key: "shipping_goods", label: "Отгрузка — склад" },
+  { key: "quality", label: "ОТК" }, { key: "shipping_goods", label: "Приёмка с производства — складские действия" },
 ];
 const FULL_ROW = Object.fromEntries(SECTIONS.map((section) => [section.key, "edit" as const]));
 
@@ -49,6 +49,57 @@ function serve(overview: AccessOverview = OVERVIEW) {
 
 afterEach(() => vi.restoreAllMocks());
 
+it.each(["levels", "people"])("hides print/scan rows but preserves their complete %s save payload", async (tab) => {
+  const saved: unknown[] = [];
+  const overview: AccessOverview = {
+    ...OVERVIEW,
+    sections: [...SECTIONS, { key: "print", label: "Печать документов" }, { key: "scan", label: "Сканирование документов" },
+      { key: "future_section", label: "Новый раздел сервера" }],
+    defaults: { ...OVERVIEW.defaults, foreman: { print: "edit", scan: "view" } },
+    matrix: { ...OVERVIEW.matrix, foreman: { ...OVERVIEW.matrix.foreman, print: "none", scan: "edit", future_section: "view" } },
+    users: OVERVIEW.users.map((user) => user.id === "u2"
+      ? { ...user, access: { ...user.access, print: "edit", scan: "none", future_section: "view" } } : user),
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "PUT") { saved.push(JSON.parse(String(init.body))); return json({ access: {} }); }
+    if (String(input) === "/api/auth/access") return json(overview);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(<AccessPage />);
+  await screen.findByLabelText("Склад · Бригадир");
+  if (tab === "people") {
+    fireEvent.click(screen.getByRole("button", { name: "Исключения по сотрудникам" }));
+    fireEvent.change(screen.getByLabelText("Сотрудник"), { target: { value: "u2" } });
+  }
+  expect(screen.queryByText("Печать документов")).toBeNull();
+  expect(screen.queryByText("Сканирование документов")).toBeNull();
+  expect(screen.getByText("Новый раздел сервера")).toBeInTheDocument();
+  expect(levelModes(overview, "foreman")).toMatchObject({ scan: "edit", future_section: "view" });
+  expect(levelModes(overview, "foreman")).not.toHaveProperty("print");
+  fireEvent.change(screen.getByLabelText(tab === "people" ? "Исключение: Склад" : "Склад · Бригадир"), { target: { value: "view" } });
+  fireEvent.click(screen.getByRole("button", { name: tab === "people" ? "Сохранить исключения" : "Сохранить доступы уровней" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual(tab === "people"
+    ? { access: { ...overview.users[1].access, warehouse: "view" } }
+    : { matrix: { ...overview.matrix, foreman: { ...overview.matrix.foreman, warehouse: "view" } } });
+});
+
+it("groups existing permission keys by navigation and lists their shared screens once", async () => {
+  serve({ ...OVERVIEW, sections: [
+    { key: "production", label: "Планирование и производственный план" },
+    { key: "procurement", label: "Снабжение" },
+    { key: "operations", label: "Системный журнал" },
+  ] });
+  render(<AccessPage />);
+  expect(await screen.findByText("Ресурсное планирование · Производственный план")).toBeInTheDocument();
+  expect(screen.getByText("Снабжение · Первичная документация · Закупка")).toBeInTheDocument();
+  const table = screen.getByRole("table");
+  for (const group of ["Производство", "Снабжение", "Администрирование"]) {
+    expect(within(table).getByText(group, { selector: "strong" })).toBeInTheDocument();
+  }
+  expect(within(table).getAllByRole("combobox")).toHaveLength(3 * (LEVELS.length - 1));
+});
+
 it("computes a level's sections as what it has with nothing stored plus the stored row", () => {
   expect(levelModes(OVERVIEW, "foreman")).toEqual({ myops: "edit", shipping_goods: "edit" });
   expect(levelModes({ ...OVERVIEW, matrix: { foreman: { requests: "view", myops: "none" } } }, "foreman"))
@@ -71,12 +122,12 @@ it("«Уровни × разделы»: one column per level with the owner's na
   expect(within(table).queryByRole("columnheader", { name: "Администратор" })).toBeNull();
 });
 
-it("the new sections «Задания», «ОТК» and «Отгрузка — склад» are rows with editable cells for the six matrix levels", async () => {
+it("the existing sections have one editable row for the six matrix levels", async () => {
   serve();
   render(<AccessPage />);
   await screen.findByLabelText("Склад · Бригадир");
   const table = screen.getByRole("table");
-  for (const name of ["Задания", "ОТК", "Отгрузка — склад"]) {
+  for (const name of ["Задания", "ОТК", "Приёмка с производства — складские действия"]) {
     const row = within(table).getByText(name).closest("tr") as HTMLElement;
     expect(within(row).getAllByRole("combobox")).toHaveLength(6);
     for (const level of ["Коммерческое руководство", "Технический руководитель", "Менеджер по проектам", "Кладовщик", "Бригадир", "Оператор"]) {
@@ -84,7 +135,7 @@ it("the new sections «Задания», «ОТК» and «Отгрузка — �
     }
   }
   expect((screen.getByLabelText("Задания · Бригадир") as HTMLSelectElement).value).toBe("edit");
-  expect((screen.getByLabelText("Отгрузка — склад · Оператор") as HTMLSelectElement).value).toBe("");
+  expect((screen.getByLabelText("Приёмка с производства — складские действия · Оператор") as HTMLSelectElement).value).toBe("");
 });
 
 it("superadmin is fixed «полный» with a drawn padlock and a tooltip, never an editable cell", async () => {
@@ -115,7 +166,7 @@ it("keeps the screen short: no explanation paragraph, a one-line legend with a �
   expect(within(legend).getByText("не сохранено")).toBeInTheDocument();
   expect(within(legend).getByRole("note", { name: "Подсказка" }))
     .toHaveAttribute("title", expect.stringContaining("Исключение по сотруднику сильнее уровня"));
-  expect(container.querySelector(".access-matrix tbody strong")).toBeNull(); // section names are regular weight
+  expect(container.querySelector(".access-matrix .cell-wrap strong")).toBeNull(); // section names are regular weight
 });
 
 it("shows each cell as a chip in the tone of its mode; an empty or stored «закрыт» cell is the same pale «закрыт»", async () => {
@@ -247,7 +298,7 @@ it("edits one person's exceptions against what the level gives", async () => {
   expect(within(table).getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
     "Раздел", "У уровня «Бригадир»", "Исключение",
   ]);
-  const warehouseRow = within(table).getByText("Склад").closest("tr")!;
+  const warehouseRow = within(table).getByText("Склад", { selector: ".cell-wrap" }).closest("tr")!;
   expect(within(warehouseRow).getByText("закрыт", { selector: "span" })).toBeInTheDocument(); // the level's row has it closed
   expect((screen.getByLabelText("Исключение: ОТК") as HTMLSelectElement).value).toBe("view");
   expect((screen.getByLabelText("Исключение: Склад") as HTMLSelectElement).value).toBe("");

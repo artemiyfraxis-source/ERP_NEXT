@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ApiTokens } from "./ApiTokens";
 import { accessApi, type AccessLevel, type AccessMode, type AccessOverview, type AccessRow, type AccessSetting } from "./api";
+import { BLOCKS, NAV } from "./navigation";
 
 /** NAV-ACCESS «Доступы» (SUPPLYMAP Portal.gs portalAccessGet/portalAccessSave, PortalApp.html openAccessHub and the
  *  per-person «Доступ» of «Сотрудники»): the level × section matrix and personal exceptions that are stronger than the
@@ -16,8 +17,32 @@ const FIXED_FULL_HINT = "Всегда полный доступ";
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
 type Tab = "levels" | "people" | "tokens";
-type Section = AccessOverview["sections"][number];
+type Section = AccessOverview["sections"][number] & { group: string };
 type Option = [value: AccessSetting | "", label: string];
+
+const ACCESS_TAB_LABELS: Record<string, string> = {
+  erpref: "База данных — справочники",
+  erptctpl: "База данных — шаблоны техкарт",
+  tcgen: "Генератор техкарт в проектах",
+  shipping_goods: "Приёмка с производства — складские действия",
+};
+
+/** Presentation only: keys and complete stored rows remain untouched when permissions are saved. */
+function sectionsForDisplay(sections: AccessOverview["sections"]): Section[] {
+  return sections.filter(({ key }) => key !== "print" && key !== "scan").map((section) => {
+    const screens = NAV.filter((item) => !item.fullAccessOnly
+      && (item.permission === section.key || item.anyPermission?.includes(section.key)));
+    const block = BLOCKS.find(({ id }) => id === (section.key === "tcgen" ? "prod" : screens[0]?.block));
+    return {
+      ...section,
+      label: ACCESS_TAB_LABELS[section.key] ?? (screens.length ? screens.map((item) => item.label).join(" · ") : section.label),
+      group: block?.title ?? "Другие разделы",
+    };
+  }).sort((left, right) => {
+    const order = (group: string) => { const index = BLOCKS.findIndex(({ title }) => title === group); return index < 0 ? BLOCKS.length : index; };
+    return order(left.group) - order(right.group);
+  });
+}
 
 /** The level matrix has three states of a cell: an empty cell and a stored `none` both read «закрыт». */
 const matrixCell = (row: AccessRow | undefined, section: string): AccessSetting | "" => {
@@ -168,6 +193,7 @@ export function AccessPage() {
   const cellChanged = (level: string, section: string) =>
     matrixCell(matrix[level], section) !== matrixCell(data?.matrix[level], section);
   const matrixDirty = data !== null && editable.some((level) => data.sections.some((section) => cellChanged(level.key, section.key)));
+  const sections = sectionsForDisplay(data?.sections ?? []);
 
   const matrixColumns: DataColumn<Section>[] = data ? [
     { key: "section", title: "Раздел", value: (section) => section.label, wrap: true },
@@ -235,7 +261,7 @@ export function AccessPage() {
     {notice && <div className="success-banner">{notice}</div>}
     {data && tab === "levels" && <>
       <div className="access-matrix">
-        <DataTable label="Матрица доступов" rows={data.sections} rowKey={(section) => section.key} columns={matrixColumns} emptyText="Разделов нет" />
+        <DataTable label="Матрица доступов" rows={sections} rowKey={(section) => section.key} columns={matrixColumns} groupBy={(section) => section.group} emptyText="Разделов нет" />
       </div>
       <div className={matrixDirty ? "form-actions access-savebar dirty" : "form-actions access-savebar"}>
         <button className="primary small" disabled={busy || !matrixDirty} onClick={() => void saveLevels()}>Сохранить доступы уровней</button>
@@ -257,7 +283,7 @@ export function AccessPage() {
         </select>
       </div>
       {person && personLevel ? <>
-        <DataTable label={`Исключения: ${person.name}`} rows={data.sections} rowKey={(section) => section.key} columns={personColumns(personLevel)} />
+        <DataTable label={`Исключения: ${person.name}`} rows={sections} rowKey={(section) => section.key} columns={personColumns(personLevel)} groupBy={(section) => section.group} />
         {!personLevel.full && <div className="form-actions access-savebar">
           <button className="primary small" disabled={busy} onClick={() => void savePerson()}>Сохранить исключения</button>
         </div>}
