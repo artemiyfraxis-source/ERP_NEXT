@@ -7,7 +7,10 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { StatusChip } from "./StatusChip";
 import type { Tone } from "./statusTone";
 import { Readiness, ShipmentDataWindow, updLabel } from "./ShipmentData";
-import { Due, ReadyForecast, overdue, projectsOf, readiness } from "./shippingCells";
+import { ReadyForecast, projectsOf, readiness } from "./shippingCells";
+import { formatDate } from "./format";
+import { useCanPrint } from "./rights";
+import { openShippingForms } from "./shippingPrint";
 import { DISPATCH_STAGES, projectDispatchStage, shipmentDispatchStage, stageLabel, stageRank, type DispatchStage } from "./dispatchStage";
 import { DispatchCard } from "./DispatchCard";
 import { canAct } from "./navigation";
@@ -129,6 +132,24 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     savePersonalView(VIEW_KEY, { mode: next });
   };
   const canEdit = canAct(principal, "shipping") || canAct(principal, "shipping_goods");
+  const canPrint = useCanPrint();
+  const printPl = async (shipment: Shipment) => {
+    setError("");
+    try { openShippingForms((await shippingApi.print(shipment.id, "pl")).forms); }
+    catch (reason) { setError(failureText(reason, "Не удалось открыть упаковочный лист")); }
+  };
+  const plCell = (shipment: Shipment | null) => !shipment?.pl_number ? <span className="muted">—</span> : canPrint
+    ? <button type="button" className="link-button ship-pl" aria-label={`Печать ПЛ ${shipment.pl_number}`}
+      onClick={(event) => { event.stopPropagation(); void printPl(shipment); }}>{shipment.pl_number}</button>
+    : <span className="muted">{shipment.pl_number}</span>;
+  const projectCell = (row: DataRow) => <span className="ship-data-project">
+    <strong>{projectNames(row).join(", ")}</strong>
+    {row.shipment && <span className="muted ship-sub">{row.shipment.number}<span className="ship-sub">{row.shipment.status}</span></span>}
+    {row.shipment?.lines.map((line) => <span className="ship-data-line" key={line.id}>
+      <span className="ship-data-kb">{projectNames(row).length > 1 ? `${line.project} · ` : ""}{line.item_index}</span>
+      <span>{line.name}</span><span className="muted ship-data-grn">{line.grn || "ГРН не присвоен"}</span>
+    </span>)}
+  </span>;
 
   const reload = async () => {
     try {
@@ -146,32 +167,33 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   const project = open?.startsWith("project:") ? rows.find((row) => row.id === open) ?? null : null;
   const forecastOf = (row: DataRow) => readiness(projectNames(row), forecasts, row.shipment?.deadline ?? null, row.shipment?.status ?? "Новая");
   const dueCell = (row: DataRow) => <>
-    {row.shipment && <Due day={row.shipment.deadline} late={overdue(row.shipment)} since={row.shipment.created_at} />}
+    {row.shipment && <span className="muted ship-due">{formatDate(row.shipment.deadline) || "—"}</span>}
     <ReadyForecast forecast={forecastOf(row)} />
   </>;
-  const card = (row: DataRow) => <button type="button" className="data-card" onClick={() => setOpen(row.id)}
-    aria-label={`Открыть: ${row.shipment?.number ?? row.project}`}>
+  const card = (row: DataRow) => <div className="data-card">
+    <button type="button" className="data-card-main" onClick={() => setOpen(row.id)} aria-label={`Открыть: ${row.shipment?.number ?? row.project}`}>
     <span className="data-card-head">
-      <strong>{row.shipment?.number ?? "Нет отправки"}</strong>
+      {projectCell(row)}
       <StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{stageLabel(row.stage)}</StatusChip>
     </span>
-    <span className="data-card-project">{row.project}</span>
     {row.customer && <span className="data-card-customer">{row.customer}</span>}
     <span>{!row.shipment ? <span className="muted">внести заранее</span> : ACTIVE.includes(row.shipment.status) ? <Readiness source={row.shipment} gaps={gapsOf(row)} />
       : <span className="muted">{SENT.includes(row.shipment.status) ? sentNote(row.shipment) || "—" : "—"}</span>}</span>
     {row.shipment && <span className="data-card-upd"><span className="muted">УПД</span><UpdCell shipment={row.shipment} link={false} /></span>}
-    <span className="data-card-due"><span className="muted">Срок</span>{row.shipment ? <Due day={row.shipment.deadline} late={overdue(row.shipment)} since={row.shipment.created_at} /> : <span className="muted">—</span>}
+    <span className="data-card-due"><span className="muted">Срок</span>{row.shipment ? <span className="muted ship-due">{formatDate(row.shipment.deadline) || "—"}</span> : <span className="muted">—</span>}
       <ReadyForecast forecast={forecastOf(row)} /></span>
-  </button>;
+    </button>
+    {row.shipment?.pl_number && <span className="data-card-upd"><span className="muted">ПЛ</span>{plCell(row.shipment)}</span>}
+  </div>;
   const columns: DataColumn<DataRow>[] = [
-    { key: "number", title: "№ отправки", value: (row) => row.shipment?.number ?? "", render: (row) => row.shipment ? <><strong>{row.shipment.number}</strong><div className="muted ship-sub">{row.shipment.status}</div></> : <span className="muted">нет отправки</span> },
-    { key: "project", title: "Проект", value: (row) => row.project, render: (row) => <span className="ship-clip ship-clip-projects" title={row.project}>{row.project}</span> },
+    { key: "project", title: "Проект / КБ", value: (row) => row.project, render: projectCell, wrap: true, grow: true, minWidth: 280, maxWidth: 480 },
     { key: "customer", title: "Заказчик", value: (row) => row.customer, filter: true },
     { key: "status", title: "Статус", value: (row) => stageLabel(row.stage), filter: true, render: (row) => <StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{stageLabel(row.stage)}</StatusChip> },
     { key: "gaps", title: "Данные", value: (row) => gapsOf(row).join(", ") || (row.shipment ? sentNote(row.shipment) : ""), hint: "Что внесено и чего не хватает; итог считает сервер", wrap: true, maxWidth: 520,
       render: (row) => !row.shipment ? <span className="muted">внести заранее</span> : ACTIVE.includes(row.shipment.status) ? <Readiness source={row.shipment} gaps={gapsOf(row)} />
         : SENT.includes(row.shipment.status) ? <span className="muted">{sentNote(row.shipment) || "—"}</span> : <span className="muted">—</span> },
     { key: "upd", title: "УПД", value: (row) => row.shipment ? updText(row.shipment) : "", filter: true, render: (row) => <UpdCell shipment={row.shipment} /> },
+    { key: "pl", title: "ПЛ", value: (row) => row.shipment?.pl_number ?? "", render: (row) => plCell(row.shipment) },
     { key: "deadline", title: "Срок", value: (row) => row.shipment?.deadline ?? "", render: dueCell },
   ];
   return <section className="page shipping-page">
@@ -180,7 +202,8 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!loaded ? <div className="empty">Загрузка…</div>
       : <DataTable label="Данные отправок" storageKey={STORAGE_KEY} rows={rows} columns={columns} rowKey={(row) => row.id}
-        onRowClick={(row) => setOpen(row.id)} exportName="Данные отправок" searchPlaceholder="№ отправки, проект или заказчик"
+        onRowClick={(row) => setOpen(row.id)} exportName="Данные отправок" searchPlaceholder="Проект, КБ, наименование, ГРН или № отправки"
+        searchText={(row) => [row.shipment?.number, ...(row.shipment?.lines.flatMap((line) => [line.name, line.grn]) ?? [])]}
         presets={DISPATCH_STAGES.map(([key, label]) => ({ label, test: (row: DataRow) => row.stage === key }))}
         defaultPreset="Упаковано" allLast cards={view === "cards" ? card : undefined}
         toolbar={<span className="view-switch" role="group" aria-label="Вид списка">

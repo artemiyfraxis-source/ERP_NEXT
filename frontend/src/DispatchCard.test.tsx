@@ -40,13 +40,24 @@ const open = async (canEdit = true) => {
 };
 
 describe("Данные отправки", () => {
-  it("показывает только получателя, адрес, телефон и УПД", async () => {
+  it("показывает адресата, доставку и комментарий для склада", async () => {
     const dialog = await open();
-    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон"]);
-    expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["УПД"]);
+    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон", "Комментарий для склада"]);
+    expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["Тип доставки", "Перевозчик", "УПД"]);
     for (const hidden of ["Контактное лицо", "Условия доставки", "Способ отгрузки / ТК", "Плановая дата отгрузки", "Комментарий"]) {
       expect(within(dialog).queryByLabelText(hidden)).not.toBeInTheDocument();
     }
+  });
+
+  it("pickup hides the address, preserves history and saves the warehouse comment with the version", async () => {
+    await open();
+    fireEvent.change(screen.getByLabelText("Тип доставки"), { target: { value: "САМОВЫВОЗ" } });
+    expect(screen.queryByLabelText("Адрес доставки")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Комментарий для склада"), { target: { value: "В понедельник сами приедут" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await screen.findByText("Данные отправки сохранены");
+    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 2, terms: "САМОВЫВОЗ", carrier: "Самовывоз", note: "В понедельник сами приедут" });
+    expect(stored.shipping_point).toBe("Москва");
   });
 
   it("не шлёт скрытые поля: в PUT только версия и изменённое", async () => {

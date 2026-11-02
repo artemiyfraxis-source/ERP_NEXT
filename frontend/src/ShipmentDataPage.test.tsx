@@ -2,6 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShipmentDataPage, dataGaps, dataRows, sentNote } from "./ShipmentDataPage";
 import { forgetPersonalViews } from "./personalViews";
+import { openShippingForms } from "./shippingPrint";
+import { setRightsPrincipal } from "./rights";
+vi.mock("./shippingPrint", () => ({ openShippingForms: vi.fn() }));
 
 vi.mock("./ScanAgent", () => ({ useScanAgent: (start: (id?: string) => Promise<unknown>) => ({ begin: async () => start(), dialogs: () => null }), ScanDeviceLine: () => null }));
 
@@ -54,12 +57,80 @@ const bodies = (suffix: string) => vi.mocked(fetch).mock.calls.filter(([target])
 describe("ShipmentDataPage («Данные отправок»)", () => {
   beforeEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); forgetPersonalViews(); });
 
+  it("keeps every assembly name paired with its GRN in a single shipment row", async () => {
+    const lines = Array.from({ length: 12 }, (_, index) => ({ ...base.lines[0], id: `line${index}`, item_index: `КБ${index + 1}`, name: `Жгут сборка ${index + 1}`, grn: `ГП.26.${index + 1}` }));
+    stub([{ ...base, lines }]);
+    render(<ShipmentDataPage principal={principal} />);
+    const table = await screen.findByRole("table");
+    const row = within(table).getByText(base.number).closest("tr")!;
+    for (const line of lines) {
+      const assembly = within(row).getByText(line.name).closest(".ship-data-line")!;
+      expect(assembly).toHaveTextContent(line.item_index);
+      expect(assembly).toHaveTextContent(line.grn);
+    }
+    expect(within(table).getAllByText(base.number)).toHaveLength(1);
+  });
+
+  it("prints the PL directly by shipment id without opening or modifying the shipment", async () => {
+    stub([base]);
+    render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: `Печать ПЛ ${base.pl_number}` }));
+    await waitFor(() => expect(openShippingForms).toHaveBeenCalled());
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === `/api/shipping/shipments/${base.id}/print?document=pl`)).toBe(true);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method && init.method !== "GET")).toHaveLength(0);
+  });
+
+  it("leaves PL text plain when printing is forbidden", async () => {
+    setRightsPrincipal({ ...principal, permissions: { shipping: "edit", print: "view" } });
+    try {
+      stub([base]); render(<ShipmentDataPage principal={principal} />);
+      await screen.findByRole("table");
+      expect(screen.queryByRole("button", { name: `Печать ПЛ ${base.pl_number}` })).not.toBeInTheDocument();
+    } finally { setRightsPrincipal(null); }
+  });
+
+  it("has no PL print action before a PL exists and reports print errors without changing the shipment", async () => {
+    stub([{ ...base, pl_number: "" }]);
+    const view = render(<ShipmentDataPage principal={principal} />);
+    await screen.findByRole("table");
+    expect(screen.queryByRole("button", { name: /^Печать ПЛ/ })).not.toBeInTheDocument();
+    view.unmount();
+    stub([base]);
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((input, init) => String(input).includes("/print?")
+      ? Promise.resolve(new Response(JSON.stringify({ detail: "Печать временно недоступна" }), { status: 503 })) : original(input, init));
+    render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: `Печать ПЛ ${base.pl_number}` }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Печать временно недоступна");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method && init.method !== "GET")).toHaveLength(0);
+  });
+
+  it("prints PL explicitly from the shipment window without saving data", async () => {
+    stub([base]); render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByText(base.number));
+    const form = within(screen.getByRole("dialog"));
+    fireEvent.click(form.getByRole("button", { name: `Печать ПЛ · ${base.pl_number}` }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === `/api/shipping/shipments/${base.id}/print?document=pl`)).toBe(true));
+    expect(bodies("/head")).toHaveLength(0); expect(bodies("/documents")).toHaveLength(0);
+  });
+
+  it("keeps internal shipment numbers searchable after making project and assembly primary", async () => {
+    stub([base]); render(<ShipmentDataPage principal={principal} />);
+    const search = await screen.findByRole("searchbox", { name: "Поиск: Данные отправок" });
+    fireEvent.change(search, { target: { value: base.number } });
+    expect(await screen.findByText(base.number)).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "does not exist" } });
+    await waitFor(() => expect(screen.queryByText(base.number)).not.toBeInTheDocument());
+  });
+
   it("splits the list into seven stages with counts: «Упаковано» is open by default, «Все» holds the cancelled one too", async () => {
     stub([base, complete, working, shippedNoFile, shippedOld, closed, cancelled]);
     render(<ShipmentDataPage principal={principal} />);
     const table = await screen.findByRole("table");
     const headers = within(table).getAllByRole("columnheader").map((cell) => cell.textContent?.replace(/[▲▼↑↓⇅]/gu, "").trim()).filter(Boolean);
-    expect(headers).toEqual(["№ отправки", "Проект", "Заказчик", "Статус", "Данные", "УПД", "Срок"]);
+    expect(headers).toEqual(["Проект / КБ", "Заказчик", "Статус", "Данные", "УПД", "ПЛ", "Срок"]);
     const chips = within(screen.getByRole("group", { name: "Быстрый отбор" }));
     // 713К.4 (ОТК) стоит в живых отправках; проекты без живой отправки: 800К.1 (В работе), 810К.1 и 820К.3 (ждут производства).
     expect(chips.getAllByRole("button").map((button) => button.textContent)).toEqual([
@@ -219,7 +290,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     fireEvent.click(await screen.findByText("ОТГ-20261028-01"));
     let form = within(screen.getByRole("dialog", { name: "Данные отправки ОТГ-20261028-01" }));
     expect(form.getByText(/УПД и ТК обязательны/)).toBeInTheDocument();
-    expect(form.getByText("трек: ждём склад")).toBeInTheDocument();
+    expect(form.queryByText("трек: ждём склад")).not.toBeInTheDocument();
     expect(form.getByLabelText("Тип УПД").closest("label")).toHaveClass("ship-required");
     fireEvent.click(form.getByRole("button", { name: "Отмена" }));
     fireEvent.click(await screen.findByRole("button", { name: "На отгрузку · 1" }));
