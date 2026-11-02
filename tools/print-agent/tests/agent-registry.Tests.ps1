@@ -21,13 +21,30 @@ Describe 'скрипты агента' {
     }
 }
 
+Describe 'Get-WiaScanners' {
+    It 'публикует все три WIA сканера, исключая устройства других типов' {
+        $devices = @()
+        foreach ($number in 1, 2, 3) {
+            $properties = New-Object PSObject
+            $properties | Add-Member -MemberType ScriptMethod -Name Item -Value { param($name) [pscustomobject]@{ Value = 'WIA scanner' } }
+            $devices += [pscustomobject]@{ Type = 1; DeviceID = "{wia-$number}"; Properties = $properties }
+        }
+        $devices += [pscustomobject]@{ Type = 2; DeviceID = '{printer}' }
+        Mock New-Object -ParameterFilter { $ComObject -eq 'WIA.DeviceManager' } { [pscustomobject]@{ DeviceInfos = $devices } }
+        $list = @(Get-WiaScanners)
+        $list.Count | Should Be 3
+        ($list.id -join ',') | Should Be '{wia-1},{wia-2},{wia-3}'
+    }
+}
+
 Describe 'Get-AgentScanners' {
-    It 'адрес eSCL из настроек - один сканер, WIA не опрашивается' {
-        Mock Get-WiaScanners {}
+    It 'адрес eSCL дополняет WIA, не скрывая подключённые сканеры' {
+        Mock Get-WiaScanners { @{ id = '{1}'; name = 'Pantum' } }
         $list = @(Get-AgentScanners -ScannerAddress '10.0.0.5')
-        $list.Count | Should Be 1
-        $list[0].id | Should Be '10.0.0.5'
-        Assert-MockCalled Get-WiaScanners -Times 0 -Exactly -Scope It
+        $list.Count | Should Be 2
+        $list[0].id | Should Be '{1}'
+        $list[1].id | Should Be '10.0.0.5'
+        Assert-MockCalled Get-WiaScanners -Times 1 -Exactly -Scope It
     }
     It 'без адреса - то, что нашла Windows; нет сканеров - пустой список' {
         Mock Get-WiaScanners { @{ id = '{1}'; name = 'Pantum BM2300W' } }

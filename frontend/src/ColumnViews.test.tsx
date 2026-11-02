@@ -115,7 +115,8 @@ describe("общий набор столбцов", () => {
     mount({ t: SHARED }, false);
 
     await waitFor(() => expect(headers()).toEqual(["Марка", "Статус", "Кол-во"]));
-    expect(JSON.parse(window.localStorage.getItem("erp-table:t")!).sharedSig).toBe(sig);
+    // Rendering the shared columns and persisting their signature settle in separate effects.
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem("erp-table:t")!).sharedSig).toBe(sig));
   });
 
   it("the list is ordered by dragging a row", async () => {

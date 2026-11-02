@@ -95,3 +95,97 @@ it("does not send or read settings while the session is suspended", async () => 
   expect(identityApi.saveUiSetting).not.toHaveBeenCalled();
   expect(identityApi.resetUiSetting).not.toHaveBeenCalled();
 });
+
+it("serializes an in-flight PUT before reset DELETE so a fresh read stays reset", async () => {
+  setPersonalViewsUser("a");
+  let finishPut!: () => void;
+  const server: Record<string, unknown> = {};
+  vi.mocked(identityApi.saveUiSetting).mockImplementationOnce(async (view, value) => {
+    await new Promise<void>((resolve) => { finishPut = resolve; });
+    server[view] = value;
+    return { view, value };
+  });
+  vi.mocked(identityApi.resetUiSetting).mockImplementation(async (view) => { delete server[view]; });
+  vi.mocked(identityApi.uiSettings).mockImplementation(async () => ({ views: { ...server } }));
+  savePersonalView("scan.device", { agent_id: "pc-a", scanner_id: "s-a" }, 0, "a");
+  await vi.advanceTimersByTimeAsync(0);
+  resetPersonalView("scan.device");
+  expect(identityApi.resetUiSetting).not.toHaveBeenCalled();
+  finishPut(); await vi.advanceTimersByTimeAsync(0);
+  expect(identityApi.resetUiSetting).toHaveBeenCalledExactlyOnceWith("scan.device");
+  forgetPersonalViews(); setPersonalViewsUser("a");
+  expect(await loadPersonalViews("a")).toEqual({});
+});
+
+it("persists two choices in order even when the first PUT is delayed", async () => {
+  setPersonalViewsUser("a");
+  let finishFirst!: () => void;
+  const server: Record<string, unknown> = {};
+  vi.mocked(identityApi.saveUiSetting).mockImplementation(async (view, value) => {
+    if (!finishFirst) await new Promise<void>((resolve) => { finishFirst = resolve; });
+    server[view] = value;
+    return { view, value };
+  });
+  savePersonalView("scan.device", { scanner: "first" }, 0, "a");
+  await vi.advanceTimersByTimeAsync(0);
+  savePersonalView("scan.device", { scanner: "second" }, 0, "a");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(identityApi.saveUiSetting).toHaveBeenCalledTimes(1);
+  finishFirst(); await vi.advanceTimersByTimeAsync(0);
+  expect(identityApi.saveUiSetting).toHaveBeenNthCalledWith(2, "scan.device", { scanner: "second" });
+  expect(server["scan.device"]).toEqual({ scanner: "second" });
+});
+
+it.each(["save", "reset"])("drops an old account's queued %s after switching cookies", async (operation) => {
+  setPersonalViewsUser("a");
+  let finishFirst!: () => void;
+  vi.mocked(identityApi.saveUiSetting).mockImplementationOnce(async (view, value) => {
+    await new Promise<void>((resolve) => { finishFirst = resolve; });
+    return { view, value };
+  });
+  savePersonalView("scan.device", { scanner: "a-1" }, 0, "a");
+  await vi.advanceTimersByTimeAsync(0);
+  if (operation === "reset") resetPersonalView("scan.device");
+  else { savePersonalView("scan.device", { scanner: "a-2" }, 0, "a"); await vi.advanceTimersByTimeAsync(0); }
+  setPersonalViewsUser(null); setPersonalViewsUser("b");
+  savePersonalView("scan.device", { scanner: "b" }, 0, "b");
+  await vi.advanceTimersByTimeAsync(0);
+  finishFirst(); await vi.advanceTimersByTimeAsync(0);
+  expect(identityApi.resetUiSetting).not.toHaveBeenCalled();
+  expect(identityApi.saveUiSetting).toHaveBeenCalledTimes(2);
+  expect(identityApi.saveUiSetting).toHaveBeenLastCalledWith("scan.device", { scanner: "b" });
+});
+
+it("does not deduplicate a save against a PUT when a DELETE is queued behind it", async () => {
+  setPersonalViewsUser("a");
+  vi.mocked(identityApi.uiSettings).mockResolvedValue({ views: { plan: { order: ["old"] } } });
+  await loadPersonalViews("a");
+  let finishDelete!: () => void;
+  vi.mocked(identityApi.resetUiSetting).mockImplementation(async () => { await new Promise<void>((resolve) => { finishDelete = resolve; }); });
+  resetPersonalView("plan");
+  savePersonalView("plan", { order: ["old"] }, 0, "a");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(identityApi.saveUiSetting).not.toHaveBeenCalled();
+  finishDelete(); await vi.advanceTimersByTimeAsync(0);
+  expect(identityApi.saveUiSetting).toHaveBeenCalledExactlyOnceWith("plan", { order: ["old"] });
+});
+
+it("orders a new session's reset after the same account's already dispatched PUT", async () => {
+  setPersonalViewsUser("a");
+  let finishPut!: () => void;
+  const server: Record<string, unknown> = {};
+  vi.mocked(identityApi.saveUiSetting).mockImplementationOnce(async (view, value) => {
+    await new Promise<void>((resolve) => { finishPut = resolve; });
+    server[view] = value;
+    return { view, value };
+  });
+  vi.mocked(identityApi.resetUiSetting).mockImplementation(async (view) => { delete server[view]; });
+  savePersonalView("scan.device", { scanner: "old-session" }, 0, "a");
+  await vi.advanceTimersByTimeAsync(0);
+  setPersonalViewsUser(null); setPersonalViewsUser("a");
+  resetPersonalView("scan.device", "a");
+  expect(identityApi.resetUiSetting).not.toHaveBeenCalled();
+  finishPut(); await vi.advanceTimersByTimeAsync(0);
+  expect(identityApi.resetUiSetting).toHaveBeenCalledExactlyOnceWith("scan.device");
+  expect(server).toEqual({});
+});
