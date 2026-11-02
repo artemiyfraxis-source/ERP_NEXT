@@ -209,6 +209,13 @@ _LABEL_FORMATS = ("58x30", "58x40", "100x50")
 _LABEL_SETTINGS = {"width_mm": 58, "height_mm": 30, "dpi": 300, "gap_mm": 2, "density": 12, "speed": 2,
                    "offset_x_mm": 0, "offset_y_mm": 0}
 _SHAPED_VALUES: dict[tuple[str, str], Any] = {
+    # A full source snapshot must contain a nonempty array (0168); never real source data.
+    ("requests_calc_compositions", "rows"): lambda i: [{
+        "source_row": 2, "name": f"Synthetic component {i}", "item_type": "Провод", "unit": "м",
+        "unit_source": "derived_known", "quantity": "1", "price": None, "price_with_vat": None,
+        "link": "", "country": "", "raw": {"unit": ""}, "issues": [],
+        "request_id": None, "request_link_state": "unlinked",
+    }],
     ("purchasing_internal_projects", "number"): lambda i: f"ВП-{i + 1:03d}",
     **{("warehouse_label_settings", name): (lambda value: lambda i: value)(value) for name, value in _LABEL_SETTINGS.items()},
     # A VSWR band is from < to and its peak lies inside (0142_production_vswr_measurements).

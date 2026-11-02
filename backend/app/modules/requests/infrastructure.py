@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
+    JSON,
+    CheckConstraint,
     Date,
     DateTime,
     Integer,
@@ -18,7 +21,9 @@ from sqlalchemy import (
     func,
     or_,
     select,
+    update,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.identity import Actor
@@ -33,6 +38,52 @@ from app.shared.persistence import (
 )
 
 from .domain import Request, RequestStatus
+from .composition import CalcComposition, CompositionConflict
+
+
+class CalcCompositionRow(Base):
+    __tablename__ = "requests_calc_compositions"
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_requests_calc_compositions_version"),
+        CheckConstraint("length(trim(project)) > 0", name="ck_requests_calc_compositions_project"),
+        CheckConstraint("length(trim(source_id)) > 0", name="ck_requests_calc_compositions_source"),
+        CheckConstraint("json_array_length(rows) IS NOT NULL AND json_array_length(rows) BETWEEN 1 AND 5000",
+                        name="ck_requests_calc_compositions_rows"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    source_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    imported_by: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    rows: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+
+
+class SqlAlchemyCompositionRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get(self, project: str) -> CalcComposition | None:
+        row = self.session.scalar(select(CalcCompositionRow).where(CalcCompositionRow.project == project))
+        return CalcComposition(**{column.name: getattr(row, column.name)
+                                  for column in CalcCompositionRow.__table__.columns}) if row else None
+
+    def save(self, value: CalcComposition, expected_version: int) -> None:
+        values = {column.name: getattr(value, column.name) for column in CalcCompositionRow.__table__.columns}
+        if expected_version == 0:
+            self.session.add(CalcCompositionRow(**values))
+            try:
+                self.session.flush()
+            except IntegrityError as error:
+                raise CompositionConflict("Состав ЗКП уже сохранён; обновите данные") from error
+        else:
+            result = self.session.execute(update(CalcCompositionRow).where(
+                CalcCompositionRow.id == value.id, CalcCompositionRow.version == expected_version,
+            ).values(**values).execution_options(synchronize_session=False))
+            if result.rowcount != 1:
+                raise CompositionConflict("Состав ЗКП изменён; обновите данные")
 
 
 class RequestRow(Base):
@@ -355,6 +406,7 @@ class SqlAlchemyUnitOfWork:
         self.committed = False
         self.session = self.session_factory()
         self.requests = SqlAlchemyRequestRepository(self.session)
+        self.compositions = SqlAlchemyCompositionRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self

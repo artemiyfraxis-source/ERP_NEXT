@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.shared.clock import moscow_now
@@ -21,6 +21,9 @@ from app.workflows.procurement_requests_view import (
     last_purchases,
     order_states,
     rfq_states,
+    saved_composition,
+    refresh_composition,
+    CompositionRefreshError,
 )
 
 from .api import (
@@ -48,6 +51,42 @@ from .requests_view import batch_lines, build_summary, line_results
 BATCH_LIMIT = 300  # requests listed without a project filter
 router = APIRouter(prefix="/api/procurement", tags=["procurement"])
 Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+
+
+@router.get("/requests-composition")
+def requests_composition(
+    principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    project: Annotated[str, Query(min_length=1, max_length=128)],
+) -> dict:
+    with uow_factory() as uow:
+        return saved_composition(uow.session, project)
+
+
+class CompositionRefreshInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    project: str = Field(min_length=1, max_length=128)
+    url: str = Field(min_length=1, max_length=2000)
+    expected_version: int = Field(ge=0)
+
+
+@router.post("/requests-composition/refresh")
+def requests_composition_refresh(
+    request: Request,
+    payload: CompositionRefreshInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    # Translate the other context's errors in the workflow, without importing its domain here.
+    if not callable(getattr(request.app.state, "uow_factory", None)):
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    try:
+        return refresh_composition(
+            request.app.state, project=payload.project, url=payload.url, expected_version=payload.expected_version,
+            actor=principal.actor, now=now,
+        )
+    except CompositionRefreshError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
 
 
 @router.get("/requests-view")

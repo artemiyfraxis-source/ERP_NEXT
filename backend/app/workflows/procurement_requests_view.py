@@ -32,6 +32,99 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 
+def saved_composition(session: Session, project: str) -> dict:
+    """Read saved full source + exact recorded request relations. Never fetch Google or create obligations."""
+    from app.modules.requests.infrastructure import SqlAlchemyCompositionRepository, RequestRow
+    from app.modules.procurement.infrastructure import ProcurementLineRow
+    from app.shared.project_number import normalize_project_number
+
+    project = normalize_project_number(project)
+    snapshot = SqlAlchemyCompositionRepository(session).get(project)
+    if snapshot is None:
+        return {"project": project, "state": "missing", "version": 0, "source": None, "rows": []}
+    ids = [UUID(row["request_id"]) for row in snapshot.rows if row["request_id"]]
+    existing = set(session.scalars(select(RequestRow.id).where(RequestRow.id.in_(ids)))) if ids else set()
+    procurement = {}
+    if ids:
+        for line_id, request_id in session.execute(select(
+            ProcurementLineRow.id, ProcurementLineRow.source_request_id,
+        ).where(ProcurementLineRow.source_request_id.in_(ids))):
+            procurement.setdefault(str(request_id), []).append(str(line_id))
+    lots = session.scalars(select(StockLotRow).where(
+        StockLotRow.inbound - StockLotRow.written_off > 0,
+    ).order_by(StockLotRow.warehouse, StockLotRow.grn, StockLotRow.package, StockLotRow.id)).all()
+    by_article, by_name = {}, {}
+    for lot in lots:
+        if article_key(lot.article):
+            by_article.setdefault(article_key(lot.article), []).append(lot)
+        if name_key(lot.name):
+            by_name.setdefault(name_key(lot.name), []).append(lot)
+    rows = []
+    for row in snapshot.rows:
+        matched = by_article.get(article_key(row["name"]), [])
+        how = "exact_article"
+        if not matched:
+            matched = by_name.get(name_key(row["name"]), [])
+            how = "exact_name"
+        matched = [lot for lot in matched if row.get("unit_source") in {"explicit", "derived_known"}
+                   and row["unit"].strip() and lot.unit.strip()
+                   and same_unit(row["unit"], lot.unit)]
+        ambiguous = how == "exact_name" and len({article_key(lot.article) for lot in matched}) > 1
+        request_id = row["request_id"] if row["request_id"] and UUID(row["request_id"]) in existing else None
+        rows.append({
+            **row, "request_id": request_id, "procurement_ids": sorted(procurement.get(request_id, [])),
+            "relation": "recorded" if request_id else (
+                "request_missing" if row["request_id"] else row.get("request_link_state", "unlinked")
+            ),
+            "lots": [{
+                "id": str(lot.id), "grn": lot.grn, "package": lot.package, "warehouse": lot.warehouse,
+                "article": lot.article, "name": lot.name, "unit": lot.unit,
+                "balance": str(lot.inbound - lot.written_off), "reserved": str(lot.reserved),
+                "free": str(lot.inbound - lot.written_off - lot.reserved),
+                "role": "matching_stock", "match_source": how,
+                "match_state": "ambiguous" if ambiguous else "exact",
+            } for lot in matched],
+        })
+    return {
+        "project": snapshot.project, "state": "saved", "version": snapshot.version,
+        "coverage": "full_source", "valid": all(not row["issues"] for row in rows),
+        "source": {
+            "kind": "google_calc", "id": snapshot.source_id,
+            "url": f"https://docs.google.com/spreadsheets/d/{snapshot.source_id}/edit",
+            "sheet": "ЗКП", "content_hash": snapshot.content_hash,
+            "imported_at": snapshot.imported_at.isoformat(), "imported_by": str(snapshot.imported_by),
+        }, "rows": rows,
+    }
+
+
+class CompositionRefreshError(RuntimeError):
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def refresh_composition(state, *, project, url, expected_version, actor, now):
+    """Explicit source read; the command's own Requests UOW commits only snapshot + audit."""
+    from app.modules.requests.application import CalcSheetError, extract_from_calc
+    from app.modules.requests.composition import CompositionConflict, composition_seed, save_composition
+    from app.modules.requests.domain import ValidationError
+    from app.modules.requests.google_sheets import reader_from_env
+
+    try:
+        reader = getattr(state, "calc_spreadsheet_reader", None) or reader_from_env()
+        seed = composition_seed(project, url, extract_from_calc(url, reader))
+        with state.uow_factory() as uow:
+            value = save_composition(seed, expected_version, actor, now, uow)
+            uow.commit()
+    except CompositionConflict as error:
+        raise CompositionRefreshError(str(error), 409) from error
+    except ValidationError as error:
+        raise CompositionRefreshError(str(error), 422) from error
+    except CalcSheetError as error:
+        raise CompositionRefreshError(str(error), 503) from error
+    return {"project": value.project, "version": value.version, "content_hash": value.content_hash}
+
+
 
 def rfq_states(session: Session, line_ids: Iterable[UUID]) -> dict[UUID, RfqState]:
     return {
