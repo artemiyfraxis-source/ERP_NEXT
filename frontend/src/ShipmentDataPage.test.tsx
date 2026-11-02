@@ -31,9 +31,14 @@ const cancelled = { ...complete, id: "s7", number: "ОТГ-20261001-07", status:
 const closed = { ...complete, id: "s5", number: "ОТГ-20260901-05", status: "Закрыта" };
 
 // Строки приёмки: 713К.4 в отправках (ОТК); 800К.1 без отправки, В работе; 900К.2 уехала целиком; 810К.1 новый; 820К.3 «ТК готова» (старое слово).
-const take = (project: string, project_stage: string, needed = "10", sent = "0") => ({ project, customer: `Заказчик ${project}`, deadline: null, item_index: "КБ1", name: "Жгут", unit: "шт",
-  stage: "", project_stage, needed, launched: "0", delivered: "0", accepted: "0", packed: "0", sent, remaining: "0", good_id: null, good_version: null, grn: null, location: "", tasks: [] });
-const INTAKE = [take("713К.4", "ОТК"), take("800К.1", "В работе"), take("900К.2", "Отгружено", "10", "10"), take("810К.1", "Новый"), take("820К.3", "ТК готова")];
+const take = (project: string, project_stage: string, needed = "10", sent = "0") => {
+  const accepted = ["Принято складом", "Упаковано", "Отгружено"].includes(project_stage) ? needed : "0";
+  const packed = ["Упаковано", "Отгружено"].includes(project_stage) ? needed : "0";
+  return { project, customer: `Заказчик ${project}`, deadline: null, item_index: "КБ1", name: "Жгут", unit: "шт",
+    stage: project_stage, project_stage, needed, launched: "0", delivered: "0", accepted, packed, sent,
+    remaining: String(Number(needed) - Number(accepted)), good_id: null, good_version: null, grn: null, location: "", tasks: [] };
+};
+const INTAKE = [{ ...take("713К.4", "ОТК", "500"), item_index: "КБ2", accepted: "500", packed: "500", remaining: "0" }, take("800К.1", "В работе"), take("900К.2", "Отгружено", "10", "10"), take("810К.1", "Новый"), take("820К.3", "ТК готова")];
 const UPD_JOB = { id: "j1", status: "done", error: "", recognising: false, scan_file: "/api/stock/receipts/files/f1", result: {
   scan_file: "/api/stock/receipts/files/f1", lines: [], note: "",
   recognised: { supplier: "", inn: "", upd_number: "РЭ-0915", upd_date: "2026-09-15", invoice_number: "РЭ-777", invoice_date: "2026-09-08" } } };
@@ -185,18 +190,152 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith("/api/shipping/project-addressees"))).toHaveLength(2);
   });
 
-  it("keeps every assembly name paired with its GRN in a single shipment row", async () => {
+  it("renders twelve shipment positions as twelve rows under one project header", async () => {
     const lines = Array.from({ length: 12 }, (_, index) => ({ ...base.lines[0], id: `line${index}`, item_index: `КБ${index + 1}`, name: `Жгут сборка ${index + 1}`, grn: `ГП.26.${index + 1}` }));
     stub([{ ...base, lines }]);
     render(<ShipmentDataPage principal={principal} />);
     const table = await screen.findByRole("table");
-    const row = within(table).getByText(base.number).closest("tr")!;
     for (const line of lines) {
-      const assembly = within(row).getByText(line.name).closest(".ship-data-line")!;
-      expect(assembly).toHaveTextContent(line.item_index);
-      expect(assembly).toHaveTextContent(line.grn);
+      const row = within(table).getByText(line.name).closest("tr")!;
+      expect(row).toHaveTextContent(line.item_index);
+      expect(row).toHaveTextContent(line.grn);
+      expect(row).toHaveTextContent("500");
     }
-    expect(within(table).getAllByText(base.number)).toHaveLength(1);
+    expect(table.querySelectorAll("tbody tr:not(.group-row)")).toHaveLength(12);
+    expect(table.querySelectorAll(".group-row")).toHaveLength(1);
+    expect(within(table).getAllByText(base.number)).toHaveLength(12);
+  });
+
+  it("preserves each shipment line and free partial slices without adding picked quantities twice", () => {
+    const intake = { ...take("713К.4", "Новый", "100"), item_index: "КБ2", stage: "В работе", accepted: "60", packed: "50", remaining: "40" };
+    const first = { ...base, lines: [{ ...base.lines[0], picked: "20" }] };
+    const second = { ...closed, lines: [{ ...base.lines[0], picked: "30" }] };
+    const rows = dataRows([first, second] as never, [intake] as never);
+    expect(rows.map((row) => row.id)).toEqual(expect.arrayContaining(["s1:l1", "s5:l1"]));
+    expect(rows.filter((row) => !row.shipment).map((row) => [row.stage, row.quantity])).toEqual([["production", 40], ["accepted", 10]]);
+    expect(rows.filter((row) => row.shipment).map((row) => row.quantity).sort()).toEqual([20, 30]);
+    const unknown = { ...take("Новый проект", "Новый", "0"), stage: "Неизвестный этап" };
+    expect(dataRows([], [unknown] as never)).toHaveLength(1);
+  });
+
+  it.each([
+    ["В ожидании", "Новый"], ["В производстве", "В работе"], ["Готово", "ОТК"], ["Принято", "Принято складом"],
+    ["Упаковано", "Упакована"], ["На отгрузку", "Упакована"], ["Отгружено", "Закрыта"],
+  ])("%s counts twelve KB positions and renders one project group", async (label, status) => {
+    const actual = ["Упаковано", "На отгрузку", "Отгружено"].includes(label);
+    const lines = Array.from({ length: 12 }, (_, index) => ({ ...base.lines[0], id: `twelve-${index}`, item_index: `КБ${index + 1}`, name: `Сборка позиции ${index + 1}` }));
+    const sources = lines.map((line) => ({ ...take("713К.4", status, "500"), item_index: line.item_index, name: line.name,
+      stage: actual ? "Принято складом" : status, project_stage: "Новый", accepted: actual || label === "Принято" ? "500" : "0",
+      packed: actual ? "500" : "0", remaining: actual || label === "Принято" ? "0" : "500" }));
+    stub(actual ? [{ ...base, status, ready_to_ship: label === "На отгрузку", lines }] : []);
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((input, init) => String(input) === "/api/shipping/intake" ? Promise.resolve(json({ rows: sources })) : fallback(input, init));
+    render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: `${label} · 12` }));
+    const table = await screen.findByRole("table");
+    expect(table.querySelectorAll("tbody tr:not(.group-row)")).toHaveLength(12);
+    expect(table.querySelectorAll(".group-row")).toHaveLength(1);
+    for (const line of lines) expect(within(table).getByText(line.name).closest("tr")).toHaveTextContent(line.item_index);
+    if (label === "Принято" || label === "Готово") expect(screen.getAllByRole("checkbox", { name: "Упаковывать 713К.4" })).toHaveLength(1);
+    if (!actual) expect(within(table).getAllByText("Не создана")).toHaveLength(12);
+    expect(screen.getByText("Счётчики: позиции КБ")).toBeInTheDocument();
+  });
+
+  it.each(["table", "cards"])("%s keeps exact document IDs and UPD file links for two shipments of the same KB", async (view) => {
+    window.localStorage.setItem("shipment-data.view", view);
+    const one = { ...complete, id: "exact-one", number: "ОТГ-1", ready_to_ship: false, pl_number: "PL-1", dn_number: "DN-1", upd_url: "/file-one.pdf" };
+    const two = { ...complete, id: "exact-two", number: "ОТГ-2", ready_to_ship: false, pl_number: "PL-2", dn_number: "DN-2", upd_url: "/file-two.pdf" };
+    stub([one, two]); render(<ShipmentDataPage principal={principal} />);
+    const row = (await screen.findByText("ОТГ-2")).closest<HTMLElement>(view === "cards" ? ".data-card" : "tr")!;
+    const content = within(row);
+    fireEvent.click(content.getByRole("button", { name: "Печать ПЛ PL-2" }));
+    fireEvent.click(content.getByRole("button", { name: "Печать DN DN-2" }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith("/api/shipping/shipments/exact-two/print?")).map(([url]) => String(url))).toEqual([
+      "/api/shipping/shipments/exact-two/print?document=pl", "/api/shipping/shipments/exact-two/print?document=dn",
+    ]));
+    expect(content.getByRole("link", { name: "файл" })).toHaveAttribute("href", "/file-two.pdf");
+    fireEvent.click(content.getByRole("link", { name: "файл" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(view === "cards" ? content.getByRole("button", { name: "Открыть: ОТГ-2" }) : content.getByText("Жгут"));
+    expect(await screen.findByRole("dialog", { name: /ОТГ-2/ })).toBeInTheDocument();
+    expect(bodies("/head")).toHaveLength(0); expect(bodies("/documents")).toHaveLength(0);
+  });
+
+  it("groups twelve free KB cards under one project decision outside every card button", async () => {
+    window.localStorage.setItem("shipment-data.view", "cards");
+    projectStub();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((input, init) => String(input) === "/api/shipping/intake"
+      ? Promise.resolve(json({ rows: Array.from({ length: 12 }, (_, index) => ({ ...take("780К.1", "Принято складом"), item_index: `КБ${index + 1}`, name: `Жгут ${index + 1}` })) })) : fallback(input, init));
+    const page = render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Принято · 12" }));
+    expect(page.container.querySelectorAll(".data-card")).toHaveLength(12);
+    expect(page.container.querySelectorAll(".dt-card-group-title")).toHaveLength(1);
+    const decision = screen.getByRole("checkbox", { name: "Упаковывать 780К.1" });
+    expect(decision.closest("button")).toBeNull();
+    fireEvent.click(decision);
+    await waitFor(() => expect(decision).toBeChecked());
+    expect(bodies("/project-pack-decision")).toEqual([{ project: "780К.1", version: 7, decided: true }]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it.each(["table", "cards"])("%s opens the clicked free slice and the group's accepted context instead of its first packed row", async (view) => {
+    window.localStorage.setItem("shipment-data.view", view);
+    projectStub();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    const source = { ...take("780К.1", "Новый", "70"), stage: "В работе", name: "Смешанная позиция", accepted: "30", packed: "20", remaining: "40" };
+    const packed = { ...base, lines: [{ ...base.lines[0], project: "780К.1", item_index: "КБ1", picked: "20", name: "Упакованная часть" }] };
+    vi.mocked(fetch).mockImplementation((input, init) => String(input) === "/api/shipping/intake" ? Promise.resolve(json({ rows: [source] }))
+      : String(input) === "/api/shipping/shipments" ? Promise.resolve(json({ shipments: [packed] })) : fallback(input, init));
+    render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Принято · 1" }));
+    fireEvent.click(view === "cards" ? screen.getByRole("button", { name: "Открыть: 780К.1" }) : screen.getByText("Смешанная позиция"));
+    let dialog = within(await screen.findByRole("dialog"));
+    expect(await dialog.findByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeInTheDocument();
+    expect(dialog.getByRole("combobox", { name: "УПД" })).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
+    fireEvent.click(screen.getByRole("button", { name: "В производстве · 1" }));
+    fireEvent.click(view === "cards" ? screen.getByRole("button", { name: "Открыть: 780К.1" }) : screen.getByText("Смешанная позиция"));
+    dialog = within(await screen.findByRole("dialog"));
+    await dialog.findByRole("textbox", { name: "Телефон" });
+    expect(dialog.queryByRole("checkbox", { name: "Упаковывать 780К.1" })).not.toBeInTheDocument();
+    expect(dialog.queryByRole("combobox", { name: "УПД" })).not.toBeInTheDocument();
+    fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
+    fireEvent.click(screen.getByRole("button", { name: "Все · 3" }));
+    fireEvent.click(screen.getByRole("button", { name: "780К.1 · Заказчик 780К.1" }));
+    dialog = within(await screen.findByRole("dialog"));
+    expect(await dialog.findByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeInTheDocument();
+    expect(dialog.getByRole("combobox", { name: "УПД" })).toBeInTheDocument();
+  });
+
+  it.each(["table", "cards"])("%s preserves the clicked line stage within a mixed new shipment", async (view) => {
+    window.localStorage.setItem("shipment-data.view", view);
+    projectStub();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    const first = { ...take("780К.1", "Новый", "20"), stage: "В работе", accepted: "20", packed: "20", remaining: "0" };
+    const second = { ...take("780К.1", "Новый", "10"), item_index: "КБ2", stage: "Принято складом", accepted: "10", packed: "10", remaining: "0" };
+    const mixed = { ...working, lines: [first, second].map((source, index) => ({ ...base.lines[0], id: `mixed-${index}`, project: "780К.1", item_index: source.item_index, name: `Часть ${index + 1}`, picked: source.packed })) };
+    vi.mocked(fetch).mockImplementation((input, init) => String(input) === "/api/shipping/intake" ? Promise.resolve(json({ rows: [first, second] }))
+      : String(input) === "/api/shipping/shipments" ? Promise.resolve(json({ shipments: [mixed] })) : fallback(input, init));
+    render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Принято · 1" }));
+    fireEvent.click(view === "cards" ? screen.getByRole("button", { name: `Открыть: ${mixed.number}` }) : screen.getByText("Часть 2"));
+    const dialog = within(await screen.findByRole("dialog", { name: new RegExp(mixed.number) }));
+    expect(await dialog.findByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeInTheDocument();
+    expect(dialog.getByRole("combobox", { name: "Тип УПД" })).toBeInTheDocument();
+  });
+
+  it("explains blocked DN and isolates the old oversized column preferences", async () => {
+    window.localStorage.setItem("erp-table:shipment-data-stages", JSON.stringify({ widths: { project: 1000 } }));
+    stub([base]); render(<ShipmentDataPage principal={principal} />);
+    const dn = await screen.findByRole("button", { name: `Печать DN ${base.dn_number}` });
+    expect(dn).toBeDisabled(); expect(dn.parentElement).toHaveAttribute("title", `Не хватает: ${base.missing_data.join(", ")}`);
+    const table = screen.getByRole("table");
+    expect(within(table).queryByRole("columnheader", { name: "Срок" })).not.toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "КБ" }).style.width).not.toBe("1000px");
+    await waitFor(() => expect(window.localStorage.getItem("erp-table:shipment-data-positions-v2")).not.toBeNull());
+    expect(window.localStorage.getItem("erp-table:shipment-data-stages")).toContain("1000");
+    expect(window.localStorage.getItem("shipment-data.view")).toBeNull();
   });
 
   it("prints the PL directly by shipment id without opening or modifying the shipment", async () => {
@@ -258,7 +397,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     render(<ShipmentDataPage principal={principal} />);
     const table = await screen.findByRole("table");
     const headers = within(table).getAllByRole("columnheader").map((cell) => cell.textContent?.replace(/[▲▼↑↓⇅]/gu, "").trim()).filter(Boolean);
-    expect(headers).toEqual(["Проект / КБ", "Заказчик", "Статус", "Данные", "УПД", "ПЛ", "Срок"]);
+    expect(headers).toEqual(["КБ", "Наименование", "Количество", "Этап позиции", "ГРН", "Статус отправки", "Дата отгрузки", "ПЛ", "DN", "УПД"]);
     const chips = within(screen.getByRole("group", { name: "Быстрый отбор" }));
     // 713К.4 (ОТК) стоит в живых отправках; проекты без живой отправки: 800К.1 (В работе), 810К.1 и 820К.3 (ждут производства).
     expect(chips.getAllByRole("button").map((button) => button.textContent)).toEqual([
@@ -269,7 +408,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(screen.queryByText("ОТГ-20261027-06")).not.toBeInTheDocument();
     fireEvent.click(chips.getByRole("button", { name: "Готово · 1" }));
     expect(await screen.findByText("ОТГ-20261027-06")).toBeInTheDocument();
-    expect(screen.getByText("Новая", { selector: ".ship-sub" })).toBeInTheDocument();
+    expect(screen.getByText("Новая", { selector: ".ship-position-shipment > span" })).toBeInTheDocument();
     fireEvent.click(chips.getByRole("button", { name: "Отгружено · 3" }));
     expect(await screen.findByText("ОТГ-20261020-03")).toBeInTheDocument();
     expect(screen.getByText("ОТГ-20260901-05")).toBeInTheDocument();
@@ -314,7 +453,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(sentNote(shippedNoFile as never)).toBe("Внести: файл УПД");
     expect(sentNote(shippedOld as never)).toBe("");
     const rows = dataRows([closed, complete, base, cancelled] as never, [take("713К.4", "ОТК"), take("800К.1", "В работе")] as never);
-    expect(rows.map((row) => row.shipment?.number ?? row.project)).toEqual(["ОТГ-20260901-05", "ОТГ-20261001-07", "ОТГ-20261028-01", "ОТГ-20261028-02", "800К.1"]);
+    expect(rows.map((row) => row.shipment?.number ?? row.project)).toEqual(["ОТГ-20260901-05", "ОТГ-20261001-07", "ОТГ-20261028-01", "ОТГ-20261028-02", "713К.4", "800К.1"]);
   });
 
   it("maps project stages: below «В работе» and unknown words wait for production; the ladder otherwise", () => {
@@ -325,12 +464,13 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     // «Готово» (производство закончено), «ОТК» (на проверке), «ОТК пройден» — все ждут приёмки: вкладка «Готово».
     for (const ready of ["Готово", "ОТК", "ОТК пройден"]) expect(stages(ready)).toEqual(["ready"]);
     expect(stages("Принято складом")).toEqual(["accepted"]);
-    expect(stages("Упаковано")).toEqual(["packed"]);
-    expect(stages("Отгружено")).toEqual(["shipped"]);
+    // Packed/sent quantities appear only as actual shipment lines, not an invented free row.
+    expect(stages("Упаковано")).toEqual([]);
+    expect(stages("Отгружено")).toEqual([]);
   });
 
   it("shipment stage: sent goes to Отгружено, Упакована to Упаковано, Новая/Собрана follow the project capped at «Принято на склад»", () => {
-    const stageOf = (status: string, word: string) => dataRows([{ ...base, status }] as never, [take("713К.4", word)] as never).find((row) => row.kind === "shipment")?.stage;
+    const stageOf = (status: string, word: string) => dataRows([{ ...base, status }] as never, [{ ...take("713К.4", word), item_index: "КБ2" }] as never).find((row) => row.kind === "shipment")?.stage;
     expect(stageOf("Отгружена", "ОТК")).toBe("shipped");
     expect(stageOf("Закрыта", "Новый")).toBe("shipped");
     expect(stageOf("Упакована", "ОТК")).toBe("packed");
@@ -357,17 +497,17 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     const partial = { ...take("713К.4", "В работе", "500"), accepted: "24", remaining: "476", pack_decided: true };
     const covered = { ...partial, item_index: "КБ2", accepted: "500", packed: "500", remaining: "0", stage: "Упаковано" };
     const actual = dataRows([base] as never, [partial, covered] as never);
-    expect(actual.filter((row) => row.kind === "project").map((row) => [row.project, row.stage])).toEqual([["713К.4", "accepted"]]);
+    expect(actual.filter((row) => row.kind === "project").map((row) => [row.project, row.stage])).toEqual([["713К.4", "production"], ["713К.4", "accepted"]]);
   });
 
   it("uses factual accepted residuals for 780К.1 and covers only picked quantities of each KB, including drafts", () => {
-    const accepted = (quantity: string) => ({ ...take("780К.1", "Упаковано", quantity), accepted: quantity, pack_decided: false });
+    const accepted = (quantity: string) => ({ ...take("780К.1", "Упаковано", quantity), accepted: quantity, packed: "0", pack_decided: false });
     const actual = ["15", "15", "50", "15"].map((quantity, index) => ({ ...accepted(quantity), item_index: `КБ${index + 1}` }));
-    expect(dataRows([], actual as never).map((row) => [row.project, row.stage])).toEqual([["780К.1", "accepted"]]);
+    expect(dataRows([], actual as never).map((row) => [row.project, row.stage])).toEqual(Array.from({ length: 4 }, () => ["780К.1", "accepted"]));
     const partial = { ...take("713К.4", "В работе", "500"), accepted: "24", remaining: "476" };
     const packed = { ...partial, item_index: "КБ2", accepted: "500", packed: "500", remaining: "0" };
     expect(dataRows([base] as never, [...actual, partial, packed] as never).filter((row) => row.kind === "project")
-      .map((row) => [row.project, row.stage])).toEqual([["713К.4", "accepted"], ["780К.1", "accepted"]]);
+      .map((row) => [row.project, row.stage])).toEqual([["713К.4", "production"], ["713К.4", "accepted"], ...Array.from({ length: 4 }, () => ["780К.1", "accepted"])]);
     const draft = (picked: string) => ({ ...working, lines: [{ ...base.lines[0], project: "780К.1", item_index: "КБ1", requested: "100", picked }] });
     for (const picked of ["0", "40"]) {
       const rows = dataRows([draft(picked)] as never, [{ ...accepted("100"), packed: picked }] as never);
@@ -381,7 +521,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     stub([]);
     const original = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation(async (input, init) => String(input) === "/api/shipping/intake"
-      ? json({ rows: [{ ...take("780К.1", "Упаковано", "15"), accepted: "15" }] })
+      ? json({ rows: [{ ...take("780К.1", "Упаковано", "15"), accepted: "15", packed: "0" }] })
       : String(input).startsWith("/api/shipping/project-addressee?") ? json({ addressee: { project: "780К.1", version: 0, pack_decided: false } }) : original(input, init));
     render(<ShipmentDataPage principal={principal} />);
     fireEvent.click(await screen.findByRole("button", { name: "Принято · 1" }));
@@ -602,7 +742,8 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
       const cardButton = await screen.findByRole("button", { name: "Открыть: ОТГ-20261028-01" });
       expect(within(cardButton).getByText("ООО «ТСР»")).toBeInTheDocument();
       expect(within(cardButton).getByText("Ждёт данных менеджера")).toBeInTheDocument();
-      expect(within(cardButton).getByText("02.11.2026")).toBeInTheDocument();
+      expect(within(cardButton).getByText("Дата отгрузки")).toBeInTheDocument();
+      expect(within(cardButton).queryByText("02.11.2026")).not.toBeInTheDocument();
       // the stage chip still filters the cards
       fireEvent.click(within(screen.getByRole("group", { name: "Быстрый отбор" })).getByRole("button", { name: /^Все/ }));
       expect(await screen.findByRole("button", { name: "Открыть: ОТГ-20261028-02" })).toBeInTheDocument();
