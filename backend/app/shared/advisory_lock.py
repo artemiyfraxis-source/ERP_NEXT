@@ -14,6 +14,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import Connection, Engine, text
+from sqlalchemy.orm import Session
+
+from app.shared.project_number import normalize_project_number
 
 log = logging.getLogger(__name__)
 _guard = threading.Lock()
@@ -24,6 +27,19 @@ def lock_key(namespace: str, value: object) -> int:
     """A stable signed 64-bit key (PostgreSQL bigint) for `namespace:value`."""
     digest = hashlib.sha256(f"{namespace}:{value}".encode("utf-8")).digest()
     return int.from_bytes(digest[:8], byteorder="big", signed=True)
+
+
+def lock_project_run(session: Session, project: str) -> None:
+    """Serialize run-source writes and progress reads until THIS session commits or rolls back.
+
+    SQLite has no advisory locks: the progress writer must start BEGIN IMMEDIATE before reading sources;
+    its database write lock then excludes the other SQLite writers. No process-local lock stands in for this.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        with session.no_autoflush:
+            session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {
+                "key": lock_key("project-kb-run", normalize_project_number(project)),
+            })
 
 
 def engine_of(bind: Engine | Connection) -> Engine:

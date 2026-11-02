@@ -39,6 +39,7 @@ from app.modules.warehouse.domain import StockLot
 from app.modules.shipping.domain import GoodsRegister
 from app.modules.production.infrastructure import (
     PLAN_EVENT_CHECKS,
+    PROGRESS_CHECKS,
     ProductionPlanEventRow,
     SqlAlchemyPlanEventRepository,
     SqlAlchemyProductionUnitOfWork,
@@ -71,6 +72,7 @@ LADDER_MIGRATION = BACKEND / "migrations" / "versions" / "0107_stage_ladder.py"
 ACCEPTED_MIGRATION = BACKEND / "migrations" / "versions" / "0110_stage_warehouse_accepted.py"
 MARKERS_MIGRATION = BACKEND / "migrations" / "versions" / "0161_ladder_markers_blockers.py"
 READY_MIGRATION = BACKEND / "migrations" / "versions" / "0164_stage_ready_qc_passed.py"
+PROGRESS_MIGRATION = BACKEND / "migrations" / "versions" / "0166_kb_progress.py"
 # The blocker check came with 0161: an older revision has the other ones.
 BLOCKER_CHECK = "ck_production_plan_events_blocker"
 
@@ -730,12 +732,15 @@ def test_migration_checks_match_the_model():
     accepted = _migration(ACCEPTED_MIGRATION, "stage_accepted_migration")
     markers = _migration(MARKERS_MIGRATION, "ladder_markers_migration")
     ready = _migration(READY_MIGRATION, "stage_ready_migration")
+    progress = _migration(PROGRESS_MIGRATION, "kb_progress_migration")
 
     # 0101 поставил проверку вида, 0110 перевела три проверки (этап, статус проекта, «было») на лестницу из 8 этапов
     # и один способ закрыть проект, 0161 — этап и «было» на короткую лестницу и добавила проверку блокера, 0164 —
     # добавила «Готово» и «ОТК пройден».
-    assert {**module.CHECKS, **accepted.CHECKS, **markers.CHECKS, **ready.CHECKS} == PLAN_EVENT_CHECKS
-    assert module.KINDS == tuple(PLAN_KINDS.values())
+    assert {**module.CHECKS, **accepted.CHECKS, **markers.CHECKS, **ready.CHECKS, **progress.CHECKS} == PLAN_EVENT_CHECKS
+    assert {progress.PROGRESS_CHECK: progress.PROGRESS_SQL} == PROGRESS_CHECKS
+    assert module.KINDS == progress.OLD_KINDS
+    assert (*progress.OLD_KINDS, "Количество КБ") == tuple(PLAN_KINDS.values())
     assert accepted.OLD_STAGES == ladder.STAGES
     assert markers.OLD_STAGES == accepted.STAGES
     assert ready.STAGES == KIT_STAGES and ready.OLD_STAGES == markers.STAGES

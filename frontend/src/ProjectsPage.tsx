@@ -726,6 +726,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, 
   const fileRef = useRef<HTMLInputElement>(null);
   const [kdIndex, setKdIndex] = useState("");
   const [stagePick, setStagePick] = useState<{ assembly: KitsetAssembly; value: string } | null>(null);
+  const [progressPick, setProgressPick] = useState<string | null>(null);
   async function applyKbStage(assembly: KitsetAssembly, value: string, reason: string, previewToken: string) {
     const result = await kitsetsApi.mark(card.project, { kb: assembly.index, kind: "stage", value, text: "", reason, preview_token: previewToken });
     setStagePick(null);
@@ -853,7 +854,13 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, 
         <td data-label="Техкарта">{assembly.techcard && assembly.techcard.stages > 0
           ? <button className="link-button" onClick={() => (assembly.techcard!.issued ? openTc : openGen)(assembly.index)}>{assembly.techcard.issued ? "готова" : "черновик"} · {assembly.techcard.stages} эт.</button>
           : <span className="muted">{assembly.techcard ? "не собрана" : "нет"}</span>}</td>
-        <td data-label="Этап">{stageCell(assembly)}</td>
+        <td data-label="Этап">{stageCell(assembly)}
+          {assembly.stage?.progress && <div className="t-sub" style={{ fontVariantNumeric: "tabular-nums" }} aria-label={`Количества ${assembly.index}`}>
+            Начато: {assembly.stage.progress.counts.started ?? "—"} · Готово: {assembly.stage.progress.counts.done ?? "—"}<br />
+            На ОТК: {assembly.stage.progress.counts.qc ?? "—"} · ОТК прошло: {assembly.stage.progress.counts.passed ?? "—"}
+          </div>}
+          {canEdit && <button className="link-button" aria-label={`Количества ${assembly.index}`} onClick={() => setProgressPick(assembly.index)}>Количества</button>}
+        </td>
         <td data-label="Отметки"><span className="kb-marks"><ProjectMarks tcReady={!!assembly.stage?.tc} kitPicked={!!assembly.stage?.kit} /></span></td>
         <td data-label="Проверка ТК">{reviewCell(assembly)}</td>
       </tr>)}</tbody>
@@ -862,6 +869,13 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, 
       current={stagePick.assembly.stage?.status || "—"} value={stagePick.value}
       loadPreview={() => kitsetsApi.stagePreview(card.project, stagePick.value, stagePick.assembly.index)}
       apply={(reason, token) => applyKbStage(stagePick.assembly, stagePick.value, reason, token)} onClose={() => setStagePick(null)} />}
+    {progressPick && <StageChangeDialog progressOnly project={card.project} kb={progressPick}
+      loadProgress={() => kitsetsApi.kbProgress(card.project, progressPick)}
+      applyProgress={async (changes, sequence, run) => {
+        const result = await kitsetsApi.saveKbProgress(card.project, progressPick, changes, sequence, run);
+        await reload();
+        return result;
+      }} onClose={() => setProgressPick(null)} />}
   </div>;
 }
 

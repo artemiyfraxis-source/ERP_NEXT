@@ -194,6 +194,11 @@ def kit_stage_facts(
     cover the whole run. Shared by the production plan and the project kitset list (SUPPLYMAP portalKitsetList).
     """
     marks = dict(marks)
+    # A changed calculation changes the denominator; historical journal quantities stay untouched.
+    for key, mark in marks.items():
+        current_run = (runs or {}).get(key)
+        if mark.progress is not None:
+            marks[key] = replace(mark, progress=replace(mark.progress, run=current_run))
     facts: dict[str, set[str]] = {
         "tc": set(), "tc_project": set(), "kit": set(), "work": set(),
         "made": set(), "qc": set(), "passed": set(), "stock": set(), "packed": set(), "shipped": set(),

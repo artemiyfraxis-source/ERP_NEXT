@@ -19,6 +19,8 @@ import logging
 from typing import Any, Iterable, Protocol
 from uuid import UUID, uuid4
 
+from sqlalchemy import text
+
 from app.modules.fulfillment.application import (
     BindLotCommand,
     CreateFulfillmentCommand,
@@ -45,6 +47,7 @@ from app.modules.procurement.application import (
 from app.modules.procurement.domain import ProcurementLine
 from app.workflows.item_names import ReferenceNames, StockNames, reference_records, resolve_name
 from app.modules.production.domain import ProductionTask
+from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
 from app.modules.production.traceability import ProductionBox
 from app.modules.production.plan import (
     kit_stage_key,
@@ -57,6 +60,9 @@ from app.modules.production.plan import (
     legacy_stage_refusal,
     ActiveBlocker,
     KitStageNow,
+    KbProgress,
+    KB_PROGRESS_FIELDS,
+    kb_progress_stage,
     PlanEvent,
     PlanProjectSnapshot,
     PROJECT_TERMINALS,
@@ -76,6 +82,8 @@ from app.modules.production.plan import (
 from app.modules.production.plan_application import (
     AddPlanEventCommand,
     ChangeStageCommand,
+    ChangeKbProgressCommand,
+    change_kb_progress,
     DeleteProjectPlanEventsCommand,
     PlanUnitOfWork,
     ReplacePlanProjectsCommand,
@@ -118,6 +126,8 @@ from app.modules.shipping.application import (
 )
 from app.modules.shipping.domain import FinishedGood, ProjectAssembly
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
+from app.modules.techcards.infrastructure import SqlAlchemyTechcardRepository
+from app.modules.techcards.kitset_infrastructure import SqlAlchemyKitsetRepository
 from app.workflows import stage_cascade
 from app.modules.techcards.etk_parts import kit_article
 from app.modules.techcards.kitset_calc import PROJECT_SHEET, SPEC_SHEET, parse_calc_sheets
@@ -140,6 +150,7 @@ from app.modules.techcards.kitsets import (
 )
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus
 from app.shared.events import AuditEvent
+from app.shared.advisory_lock import lock_project_run
 from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
 from app.workflows.production_plan import issued_runs, kit_stage_facts, project_kits
@@ -562,7 +573,7 @@ def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) ->
 
     def read_production(uow):
         listed = tuple(uow.production.list(limit=10_000))
-        return listed, tuple(uow.plan_events.list()), tuple(uow.plan_projects.list()), _qc_facts(uow, listed)
+        return listed, tuple(uow.plan_events.list_with_latest_progress()), tuple(uow.plan_projects.list()), _qc_facts(uow, listed)
 
     tasks, events, projects, (boxes, inspected, worked) = read(production, read_production, ((), (), (), ((), frozenset(), frozenset())))
     cards, kitsets = read(techcards, lambda uow: (
@@ -658,6 +669,8 @@ class ProjectStageState:
     sequence: int = 0
     # What a forward move may close or must keep (`stage_cascade`): tasks, kit requests, reserves, goods.
     cascade: stage_cascade.CascadeFacts = field(default_factory=stage_cascade.CascadeFacts)
+    runs: dict[str, int] = field(default_factory=dict)
+    progress: dict[str, KbProgress] = field(default_factory=dict)
 
 
 def project_stage_state(
@@ -680,6 +693,8 @@ def project_stage_state(
     return ProjectStageState(
         project=canon, kits=kits, terminal=project_terminal(snapshot, journal),
         blocker=journal.blocker if journal is not None else None, sequence=sequence, cascade=cascade,
+        runs=facts.runs,
+        progress={key: mark.progress for key, mark in marks.items() if mark.progress is not None},
     )
 
 
@@ -702,6 +717,55 @@ def load_project_stage_state(
     facts = kitset_facts(techcards, production, fulfillment, shipping)
     cascade = stage_cascade.load_cascade_facts(stage_cascade.cascade_uow_factory(production), project)
     return project_stage_state(project, item_indexes, facts, sequence=sequence, kb=kb, cascade=cascade)
+
+
+def preview_project_kb_progress(state: ProjectStageState, kb: str, notices: Iterable[str] = ()) -> dict[str, Any]:
+    index = str(kb or "").strip().upper()
+    if not index:
+        raise ProductionValidationError("Выберите КБ для ввода количеств.")
+    key = kit_stage_key(state.project, index)
+    run = state.runs.get(key)
+    current = state.progress.get(key)
+    warnings = list(current.warnings()) if current is not None else []
+    kit = next((kit for kit in state.kits if kit.item_index == index), None)
+    if current is not None and kit is not None and kit.manual and kit.status != kb_progress_stage(current):
+        warnings.append(f"Ручной этап «{kit.status}», по количествам — «{kb_progress_stage(current)}».")
+    return {
+        "project": state.project, "kb": index, "run": run,
+        "counts": current.counts() if current is not None else dict.fromkeys(KB_PROGRESS_FIELDS),
+        "sequence": state.sequence, "warnings": warnings,
+        "unavailable": "" if run is not None and run > 0 else "Тираж КБ не задан.", "notices": list(notices),
+    }
+
+
+class SqlAlchemyKbProgressUnitOfWork(SqlAlchemyProductionUnitOfWork):
+    """Run sources, journal sequence, quantity event and audit share one transaction."""
+
+    def current_run(self, project: str, kb: str) -> int | None:
+        if self.session is None:
+            raise RuntimeError("Unit of Work has not been entered")
+        # Called before the first read in this fresh session. SQLite needs a write transaction from the start;
+        # PostgreSQL uses the same project lock as BOTH run-source repositories (including insert/delete).
+        if self.session.get_bind().dialect.name == "sqlite":
+            self.session.execute(text("BEGIN IMMEDIATE"))
+        lock_project_run(self.session, project)
+        kitset = SqlAlchemyKitsetRepository(self.session).get(project)
+        cards = SqlAlchemyTechcardRepository(self.session).for_project(project)
+        return issued_runs(cards, (kitset,) if kitset is not None else ()).get(kit_stage_key(project, kb))
+
+
+def save_project_kb_progress(
+    state: ProjectStageState, *, kb: str, changes: dict[str, object], expected_sequence: int, expected_run: int,
+    actor: Actor, now: datetime, uow_factory: Callable[[], PlanUnitOfWork],
+) -> dict[str, Any]:
+    key = kit_stage_key(state.project, kb)
+    event, notices = change_kb_progress(ChangeKbProgressCommand(
+        project=state.project, kb=kb, changes=changes, expected_sequence=expected_sequence,
+        expected_run=expected_run, actor=actor, now=now,
+    ), SqlAlchemyKbProgressUnitOfWork(uow_factory().session_factory))
+    result = replace(state, sequence=event.sequence, progress={**state.progress, key: event.progress},
+                     runs={**state.runs, key: event.progress.run})
+    return preview_project_kb_progress(result, kb, notices)
 
 
 def stage_change_payload(

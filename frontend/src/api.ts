@@ -1121,6 +1121,21 @@ export interface ProductionFlow {
   norms: { techcard_id: string | null; revision: number | null; current_revision: number | null; outdated: boolean };
 }
 
+export type KbProgressField = "started" | "done" | "qc" | "passed";
+export type KbProgressCounts = Record<KbProgressField, number | null>;
+export type KbProgressChanges = Partial<Record<KbProgressField, number>>;
+
+export interface KbProgressState {
+  project: string;
+  kb: string;
+  run: number | null;
+  counts: KbProgressCounts;
+  sequence: number;
+  warnings: string[];
+  unavailable: string;
+  notices?: string[];
+}
+
 export interface ProductionPlanEvent {
   id: string;
   project: string;
@@ -1136,6 +1151,7 @@ export interface ProductionPlanEvent {
   field?: string;
   from_value?: string;
   reason?: string;
+  progress?: { run: number | null; counts: KbProgressCounts };
 }
 
 /** Ячейка листа «ЗАГРУЗ»: показанное значение, вычисленное ERP и признак ручной отметки поверх него. */
@@ -1171,6 +1187,7 @@ export interface ProductionPlanRow {
     manual: boolean;
     tc: boolean;
     kit: boolean;
+    progress?: { run: number | null; counts: KbProgressCounts; warnings: string[] };
     review: null | { value: string; text: string; who: string; occurred_at: string | null };
   }>;
   supply: null | {
@@ -3952,6 +3969,12 @@ export const productionApi = {
 
 export const productionPlanApi = {
   load: () => api<ProductionPlanResult>("/api/production/plan"),
+  kbProgress: (project: string, kb: string) =>
+    api<KbProgressState>(`/api/production/plan/kb-progress?project=${encodeURIComponent(project)}&kb=${encodeURIComponent(kb)}`),
+  saveKbProgress: (project: string, kb: string, counts: KbProgressChanges, expectedSequence: number, expectedRun: number) =>
+    api<KbProgressState>("/api/production/plan/kb-progress", {
+      method: "POST", body: JSON.stringify({ project, kb, counts, expected_sequence: expectedSequence, expected_run: expectedRun }),
+    }),
   stagePreview: (project: string, value: string, kb = "") =>
     api<StagePreview>(`/api/production/plan/stage-preview?project=${encodeURIComponent(project)}&value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   addEvent: (payload: {
@@ -4569,6 +4592,7 @@ export interface KitsetKbStage {
   review: { value: string; text: string; who: string } | null;
   /** Этапы, которые ручная смена перескочила (в порядке лестницы) — «пропущен» в карточке. */
   skipped?: string[];
+  progress?: { run: number | null; counts: KbProgressCounts; warnings: string[] };
 }
 
 /** Предпросмотр ручной смены этапа (GET …/status/preview и /api/production/plan/stage-preview). */
@@ -5001,6 +5025,12 @@ export const kitsetsApi = {
     api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
   stagePreview: (project: string, value: string, kb = "") =>
     api<StagePreview>(`${kitsetPath(project)}/status/preview?value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
+  kbProgress: (project: string, kb: string) =>
+    api<KbProgressState>(`${kitsetPath(project)}/progress/${encodeURIComponent(kb)}`),
+  saveKbProgress: (project: string, kb: string, counts: KbProgressChanges, expectedSequence: number, expectedRun: number) =>
+    api<KbProgressState>(`${kitsetPath(project)}/progress/${encodeURIComponent(kb)}`, {
+      method: "POST", body: JSON.stringify({ counts, expected_sequence: expectedSequence, expected_run: expectedRun }),
+    }),
   setStatus: (project: string, payload: ProjectStatusAction) =>
     api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify(payload) }),
   setMarker: (project: string, field: ProjectMarkerField, value: ProjectMarkerValue) =>

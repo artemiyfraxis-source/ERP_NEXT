@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 from sqlalchemy.exc import IntegrityError
 
 from app.modules.fulfillment.application import UnitOfWork as FulfillmentUnitOfWork
@@ -82,6 +82,14 @@ class PlanEventPayload(BaseModel):
     preview_token: str = Field(default="", max_length=64)
 
 
+class KbProgressPayload(BaseModel):
+    project: str = Field(min_length=1, max_length=255)
+    kb: str = Field(min_length=1, max_length=64)
+    counts: dict[str, StrictInt] = Field(min_length=1, max_length=4)
+    expected_sequence: StrictInt = Field(ge=0)
+    expected_run: StrictInt = Field(gt=0)
+
+
 def _factory(request: Request, name: str, *, required: bool = False):
     factory = getattr(request.app.state, name, None)
     if callable(factory):
@@ -139,6 +147,7 @@ def _event_result(event: PlanEvent) -> dict[str, Any]:
         "deadline": event.deadline.isoformat() if event.deadline else None,
         "item_index": event.item_index, "value": event.value, "field": event.field,
         "from_value": event.from_value, "reason": event.reason,
+        **({"progress": {"run": event.progress.run, "counts": event.progress.counts()}} if event.progress is not None else {}),
     }
 
 
@@ -168,7 +177,7 @@ def production_plan(
     with production_uow_factory() as uow:
         projects = tuple(uow.plan_projects.list())
     tasks = _safe_read("tasks", production_uow_factory, lambda uow: tuple(uow.production.list(limit=10_000)))
-    events = _safe_read("journal", production_uow_factory, lambda uow: tuple(uow.plan_events.list()))
+    events = _safe_read("journal", production_uow_factory, lambda uow: tuple(uow.plan_events.list_with_latest_progress()))
     cards = _safe_read("techcards", techcards_uow_factory, lambda uow: tuple(uow.techcards.list()))
     kitsets = _safe_read(
         "kitsets", techcards_uow_factory,
@@ -213,6 +222,7 @@ def production_plan(
             "kits": [{
                 "item_index": item.item_index, "status": item.status, "manual": item.manual,
                 "tc": item.tc, "kit": item.kit, "skipped": list(item.skipped),
+                **({"progress": {"run": item.progress.run, "counts": item.progress.counts(), "warnings": list(item.progress.warnings())}} if item.progress is not None else {}),
                 "review": None if item.review is None else {
                     "value": item.review.value, "text": item.review.text,
                     "who": item.review.who,
@@ -315,6 +325,39 @@ def stage_preview(
     try:
         state = _stage_state(project, kb, uow_factory, techcards_uow_factory, fulfillment_uow_factory, shipping_uow_factory)
         return stage_flow.preview_project_stage(state, value, kb)
+    except ProductionValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.get("/kb-progress")
+def kb_progress(
+    request: Request,
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    project: Annotated[str, Query(min_length=1, max_length=255)],
+    kb: Annotated[str, Query(min_length=1, max_length=64)],
+) -> dict:
+    try:
+        state = _stage_state(project, kb, production_factory(request), techcards_factory(request), fulfillment_factory(request), shipping_factory(request))
+        return stage_flow.preview_project_kb_progress(state, kb)
+    except ProductionValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/kb-progress")
+def save_kb_progress(
+    payload: KbProgressPayload, request: Request,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    factory = production_factory(request)
+    try:
+        state = _stage_state(payload.project, payload.kb, factory, techcards_factory(request), fulfillment_factory(request), shipping_factory(request))
+        return stage_flow.save_project_kb_progress(
+            state, kb=payload.kb, changes=payload.counts, expected_sequence=payload.expected_sequence,
+            expected_run=payload.expected_run, actor=principal.actor, now=now, uow_factory=factory,
+        )
+    except (StageChangeConflict, IntegrityError) as error:
+        raise HTTPException(status_code=409, detail="Журнал проекта или тираж КБ изменились — обновите и повторите.") from error
     except ProductionValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 

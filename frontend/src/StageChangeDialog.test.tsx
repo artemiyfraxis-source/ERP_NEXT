@@ -3,6 +3,69 @@ import { describe, expect, it, vi } from "vitest";
 import { StageChangeDialog } from "./StageChangeDialog";
 import type { StagePreview } from "./api";
 
+const progressState = {
+  project: "708К.4", kb: "КБ1", run: 200,
+  counts: { started: 80, done: null, qc: null, passed: null }, sequence: 4, warnings: [] as string[], unavailable: "",
+};
+
+describe("StageChangeDialog quantities", () => {
+  it("previews an auto-raise, saves only the edited counter and shows the recorded notice", async () => {
+    const applyProgress = vi.fn(async () => ({ ...progressState, sequence: 5, counts: { ...progressState.counts, started: 120, done: 120 }, notices: ["Начато: 80 → 120 (поднято автоматически)."] }));
+    render(<StageChangeDialog project="708К.4" kb="КБ1" progressOnly
+      loadProgress={async () => progressState} applyProgress={applyProgress} onClose={vi.fn()} />);
+    expect(await screen.findByLabelText("Начато")).toHaveValue("80");
+    expect(screen.getByLabelText("Готово")).toHaveValue("");
+    expect(screen.getByText("Тираж КБ: 200")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Готово"), { target: { value: "120" } });
+    expect(screen.getByText(/Начато: 80 → 120/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить количества" }));
+    await waitFor(() => expect(applyProgress).toHaveBeenCalledWith({ done: 120 }, 4, 200));
+    expect(await screen.findByLabelText("Начато")).toHaveValue("120");
+    expect(screen.getByText("Начато: 80 → 120 (поднято автоматически).")).toBeInTheDocument();
+  });
+
+  it("warns about lowering inconsistencies without changing other fields or blocking the save", async () => {
+    const state = { ...progressState, counts: { started: 150, done: 140, qc: 130, passed: null } };
+    render(<StageChangeDialog project="708К.4" kb="КБ1" progressOnly
+      loadProgress={async () => state} applyProgress={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByLabelText("Готово");
+    fireEvent.change(screen.getByLabelText("Готово"), { target: { value: "20" } });
+    expect(screen.getByLabelText("На ОТК")).toHaveValue("130");
+    expect(screen.getByText(/На ОТК: 130 больше «Готово»: 20/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Сохранить количества" })).toBeEnabled();
+    for (const bad of ["-1", "201", "1.5", "не число"]) {
+      fireEvent.change(screen.getByLabelText("Готово"), { target: { value: bad } });
+      expect(screen.getByRole("button", { name: "Сохранить количества" })).toBeDisabled();
+    }
+  });
+
+  it("shows unknown run honestly and never offers a save", async () => {
+    render(<StageChangeDialog project="708К.4" kb="КБ1" progressOnly
+      loadProgress={async () => ({ ...progressState, run: null, unavailable: "Тираж КБ не задан." })}
+      applyProgress={vi.fn()} onClose={vi.fn()} />);
+    expect(await screen.findByText("Тираж КБ не задан.")).toBeInTheDocument();
+    expect(screen.getByText("Тираж КБ: —")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Сохранить количества" })).toBeDisabled();
+  });
+
+  it("disables another save when the current run disappears during a failed update", async () => {
+    const loadProgress = vi.fn().mockResolvedValueOnce(progressState)
+      .mockResolvedValue({ ...progressState, run: null, sequence: 5, unavailable: "Тираж КБ не задан." });
+    const applyProgress = vi.fn(async () => { throw new Error("Тираж КБ изменился — обновите и повторите."); });
+    render(<StageChangeDialog project="708К.4" kb="КБ1" progressOnly
+      loadProgress={loadProgress} applyProgress={applyProgress} onClose={vi.fn()} />);
+    await screen.findByLabelText("Начато");
+    fireEvent.change(screen.getByLabelText("Начато"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить количества" }));
+    expect(await screen.findByText("Тираж КБ: —")).toBeInTheDocument();
+    expect(screen.getByText("Тираж КБ не задан.")).toBeInTheDocument();
+    expect(screen.getByText("Тираж КБ изменился — обновите и повторите.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Начато")).toHaveValue("80");
+    expect(screen.getByRole("button", { name: "Сохранить количества" })).toBeDisabled();
+    expect(applyProgress).toHaveBeenCalledExactlyOnceWith({ started: 100 }, 4, 200);
+  });
+});
+
 const preview = (over: Partial<StagePreview> = {}): StagePreview => ({
   project: "708К.4", value: "Отгружено", kb: "", direction: "forward", reason_required: false, error: "", message: "",
   terminal: "", blocker: "", warnings: [],

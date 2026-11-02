@@ -104,6 +104,7 @@ def test_closed_projects_get_one_cancelled_row_with_the_old_word_and_stage_rows_
         ]
 
     # Читается по-новому: закрытые — «Отменён», вернувшиеся в работу — нет, старые этапы — «Принято складом».
+    command.upgrade(_config(database), "head")
     engine = create_engine(f"sqlite+pysqlite:///{database.as_posix()}")
     try:
         with Session(engine) as session:
