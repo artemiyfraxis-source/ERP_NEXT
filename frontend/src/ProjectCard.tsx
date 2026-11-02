@@ -1,12 +1,9 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import type { KitsetTile } from "./api";
 import { formatDateTime } from "./format";
 import { ProjectMarks, ProjectStatus } from "./ProjectStatus";
 import { StatusChip } from "./StatusChip";
 import type { Tone } from "./statusTone";
-
-/** Карточка проекта как в SUPPLYMAP «Проекты» (статус, блокер, ТК, проверка, набор, заказчик, сборки · позиции).
- *  Общая для списка проектов и экрана мастера. Статусы — общим `StatusChip` (аудит дизайна 10.10, ПР-4). */
 
 /** Сколько КБ с выданной ТК и сколько из них без отметки проверки — те же числа, что в строке «Проверка ТК». */
 export function tcProgress(item: KitsetTile) {
@@ -14,25 +11,6 @@ export function tcProgress(item: KitsetTile) {
   const tc = kbs.filter((kb) => kb.tc).length;
   const unreviewed = kbs.filter((kb) => kb.tc && !(kb.review?.value && kb.review.value !== "не проверена")).length;
   return { total: kbs.length, tc, unreviewed };
-}
-
-type Fact = { text: string; tone: Tone; title: string };
-
-/** Факты плитки про КБ: техкарты и набор — «из скольких КБ», чтобы число читалось без подсказки (ПР-11). */
-export function tileFacts(item: KitsetTile, statuses: string[]): Fact[] {
-  const kbs = item.kb_stages;
-  const { total, tc } = tcProgress(item);
-  const kit = kbs.filter((kb) => kb.kit).length;
-  const index = statuses.indexOf(item.status);
-  const shipped = statuses.indexOf("Отгружено");
-  // «Отменён» стоит после «Отгружено»: у закрытого проекта факты не нужны.
-  if (!total || index > shipped) return [];
-  const facts: Fact[] = [];
-  // «Все» и «ни одной» уже сказаны отметками «ТК готова / не готова», «КБ набрана / не набрана» рядом с этапом
-  // (владелец 29.10: «не нужно раздувать статусы»); плитка добавляет только частичный счёт.
-  if (tc && tc < total) facts.push({ text: `ТК ${tc} из ${total} КБ`, tone: "warning", title: "Техкарты выданы не на все КБ" });
-  if (kit && kit < total) facts.push({ text: `набрано ${kit} из ${total} КБ`, tone: "warning", title: "Комплектация набрана не на все КБ" });
-  return facts;
 }
 
 /** Проверка выданных ТК по КБ: «проверена: КБ1 · не проверена: КБ2 · с погрешностями: КБ3» — видно, о каких КБ речь. */
@@ -58,26 +36,64 @@ export function KitTile({ item, statuses, canEdit, open, extra, statusChanged, l
   lists?: { stages?: string[]; terminals?: string[]; blockers?: string[] };
 }) {
   const kbs = item.kb_stages;
-  const mixed = kbs.some((kb) => kb.status !== kbs[0].status);
   const reviews = reviewLine(item);
-  return <div className="tile kit-tile" role="button" tabIndex={0} onClick={open} onKeyDown={(event) => { if (event.key === "Enter") open(); }}>
+  const descriptionId = useId();
+  const shipped = statuses.indexOf("Отгружено");
+  const closed = shipped >= 0 && statuses.indexOf(item.status) > shipped;
+  const noTc = item.tc_ready ? [] : kbs.filter((kb) => !kb.tc).map((kb) => kb.index);
+  const notPicked = item.kit_picked ? [] : kbs.filter((kb) => !kb.kit).map((kb) => kb.index);
+  const unreviewed = reviews.find((group) => group.label === "не проверена")?.kbs ?? [];
+  const defects = reviews.find((group) => group.label === "с погрешностями")?.kbs ?? [];
+  const lines = closed ? [] : [
+    [
+      { text: "не выдана", label: "ТК не выдана", kbs: noTc, tone: "warning" },
+      { text: "не проверена", label: "ТК не проверена", kbs: unreviewed, tone: "warning" },
+    ],
+    [
+      { text: "С погрешностями", label: "ТК с погрешностями", kbs: defects, tone: "danger" },
+      { text: "КБ не набрана", label: "КБ не набрана", kbs: notPicked, tone: "warning" },
+    ],
+  ].map((line) => line.filter((fact) => fact.kbs.length));
+  const hasProblems = lines.some((line) => line.length);
+  const details = [
+    `Заказчик: ${item.customer || "—"}`,
+    `Статус проекта: ${item.status || "—"}`,
+    ...(item.blocker ? [`Блокер: ${item.blocker}`] : []),
+    ...(item.tc_manual ? [`ТК: ${item.tc_manual} — вручную`] : []),
+    ...(item.kit_manual ? [`КБ: ${item.kit_manual} — вручную`] : []),
+    `КБ: ${kbs.map((kb) => `${kb.index} — ${kb.status}`).join(" · ") || "—"}`,
+    ...reviews.map((group) => `Проверка ТК: ${group.label} — ${group.kbs.join(", ")}`),
+    ...lines.flat().map((fact) => `${fact.label}: ${fact.kbs.length} КБ — ${fact.kbs.join(", ")}`),
+    `сборок ${item.assemblies} · позиций ${item.lines}`,
+    `обновлено ${formatDateTime(item.updated_at) || "—"}`,
+  ].join("\n");
+  return <div className="tile kit-tile" role="button" tabIndex={0} aria-label={`Открыть проект ${item.project}`}
+    aria-describedby={descriptionId} title={details} onClick={open} onKeyDown={(event) => {
+      if (event.target === event.currentTarget && !event.repeat && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault(); open();
+      }
+    }}>
     <div className="tile-body">
       <div className="kit-tile-head">
         <strong className="t-h">{item.project}</strong>
       </div>
+      <div className="kit-tile-customer" title={item.customer || undefined}>{item.customer || "—"}</div>
       <div className="kit-chips">
         {statusChanged
           ? <ProjectStatus project={item.project} status={item.status} blocker={item.blocker} canEdit={canEdit}
             tcReady={item.tc_ready} kitPicked={item.kit_picked} tcManual={item.tc_manual} kitManual={item.kit_manual} {...lists} onChanged={statusChanged} />
           : <><StatusChip status={item.status} /><ProjectMarks tcReady={item.tc_ready} kitPicked={item.kit_picked} tcManual={item.tc_manual} kitManual={item.kit_manual} />{item.blocker && <StatusChip status={item.blocker} title="Активный блокер из журнала проекта" />}</>}
-        {tileFacts(item, statuses).map((fact) => <StatusChip key={fact.text} status={fact.text} tone={fact.tone} title={fact.title} />)}
       </div>
-      {mixed && <div className="t-sub">{kbs.map((kb) => `${kb.index} — ${kb.status}`).join(" · ")}</div>}
-      {reviews.length > 0 && <div className="t-in kit-review">Проверка ТК: {reviews.map((group, position) =>
-        <span key={group.label} className={`kit-review-${group.tone}`}>{position > 0 && " · "}{group.label} — {group.kbs.join(", ")}</span>)}</div>}
-      <div className="t-sub">{item.customer || "—"}</div>
-      <div className="t-in">сборок {item.assemblies} · позиций {item.lines}</div>
-      <div className="t-sub">обновлено {formatDateTime(item.updated_at)}</div>
+      <div className="kit-tile-problems">
+        {hasProblems && lines.map((line, row) => <div className="kit-tile-problem-line" key={row}>
+          {row === 0 && line.length > 0 && "ТК: "}
+          {line.map((fact, position) => <span key={fact.label} data-tone={fact.tone}
+            title={`${fact.label}: ${fact.kbs.length} КБ — ${fact.kbs.join(", ")}`}>
+            {position > 0 && " · "}{fact.text} <b>{fact.kbs.length}</b>
+          </span>)}
+        </div>)}
+      </div>
+      <div className="kit-tile-details" id={descriptionId}>{details}</div>
       {extra}
     </div>
   </div>;

@@ -77,10 +77,11 @@ describe("ProjectsPage", () => {
   it("lists project tiles with facts, filters by status and keeps the choice", async () => {
     render(<ProjectsPage principal={editor} />);
     expect(await screen.findByText("708К.4")).toBeTruthy();
-    // Факты — общим чипом статуса, с тем, о скольких КБ речь (аудит 10.10, ПР-4, ПР-11); корзины на плитке нет.
-    expect(screen.getByText("ТК 1 из 2 КБ").classList.contains("status-chip")).toBe(true);
+    // Счётчики — компактно, полный состав и проверка доступны в описании плитки; ручная готовность ТК сохранена.
+    const tile = screen.getByRole("button", { name: "Открыть проект 708К.4" });
+    expect(tile.querySelector(".kit-tile-problems")).toHaveTextContent("КБ не набрана 2");
     expect(screen.getByText("СТОП").classList.contains("status-chip")).toBe(true);
-    expect(screen.getByText("проверена — КБ1")).toBeTruthy();
+    expect(tile).toHaveAccessibleDescription(/проверена — КБ1/);
     expect(screen.queryByRole("button", { name: /Удалить/ })).toBeNull();
     expect(document.body.textContent).not.toMatch(/[⛔🗑✓]/u);
     fireEvent.change(screen.getByLabelText("Статус"), { target: { value: "В работе" } });
@@ -101,7 +102,7 @@ describe("ProjectsPage", () => {
     const ready = await screen.findByText("ТК готова", { selector: ".proj-mark" });
     expect(ready.getAttribute("data-tone")).toBe("success");
     expect(ready.getAttribute("title")).toBe("ТК готова — вручную");
-    const notPicked = screen.getByText("КБ не набрана");
+    const notPicked = screen.getByText("КБ не набрана", { selector: ".proj-mark" });
     expect(notPicked.getAttribute("data-tone")).toBe("neutral");
     expect(notPicked.getAttribute("title")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
