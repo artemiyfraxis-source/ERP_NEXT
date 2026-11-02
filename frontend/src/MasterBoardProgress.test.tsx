@@ -147,6 +147,40 @@ describe("экран мастера: сроки и доска монтажник
   });
 });
 
+describe("монтажники по площадкам", () => {
+  const people = [
+    { id: "p1", name: "Монтажник ЦАР", site: "ЦАР" },
+    { id: "p2", name: "Монтажник ЖУК", site: "ЖУК" },
+    { id: "p3", name: "Монтажник без площадки", site: "" },
+  ];
+  function mountSites(site = "") {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [], statuses: [] }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    return render(<MasterBoard tasks={tasks} operators={people} site={site} skills={[]} absences={[]} canEdit={false} busy="" mutate={async () => {}} openTask={() => {}} />);
+  }
+  it("разделяет ЦАР, ЖУК и неизвестную площадку, оставляя общую навигацию", () => {
+    mountSites();
+    const board = screen.getByRole("complementary", { name: "Монтажники" });
+    const tsar = within(board).getByRole("region", { name: "Монтажники · ЦАР" });
+    const zhuk = within(board).getByRole("region", { name: "Монтажники · ЖУК" });
+    const unknown = within(board).getByRole("region", { name: "Монтажники · Площадка не указана" });
+    expect(within(tsar).getByText("Монтажник ЦАР")).toBeInTheDocument();
+    expect(within(tsar).queryByText("Монтажник ЖУК")).toBeNull();
+    expect(within(zhuk).getByText("Монтажник ЖУК")).toBeInTheDocument();
+    expect(within(unknown).getByText("Монтажник без площадки")).toBeInTheDocument();
+    expect(within(board).getAllByRole("button", { name: "неделя →" })).toHaveLength(1);
+    fireEvent.click(within(board).getByRole("button", { name: "неделя →" }));
+    expect(within(tsar).getByRole("button", { name: "День Монтажник ЦАР 12.10" })).toBeInTheDocument();
+    expect(within(zhuk).getByRole("button", { name: "День Монтажник ЖУК 12.10" })).toBeInTheDocument();
+  });
+  it("сохраняет ограничение мастера своей площадкой", () => {
+    mountSites("ЖУК");
+    const board = screen.getByRole("complementary", { name: "Монтажники" });
+    expect(within(board).getByText("Монтажник ЖУК")).toBeInTheDocument();
+    expect(within(board).queryByText("Монтажник ЦАР")).toBeNull();
+    expect(within(board).queryByText("Монтажник без площадки")).toBeNull();
+  });
+});
+
 describe("экран мастера: операция по ПФ", () => {
   it("показывает ПФ и номера его операций, обычная операция как раньше", () => {
     const pf = op({ id: "p1", position: 3, stage: "Опрессовка", code: "OP-5", etk_ops: [{ position: 5, code: "OP-5", stage: "Зачистка" }, { position: 6, code: "OP-6", stage: "Опрессовка" }] });

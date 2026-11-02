@@ -2,6 +2,7 @@
 станке при ручной постановке."""
 
 from datetime import datetime
+from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -151,3 +152,66 @@ def test_period_is_validated(client):
     assert client.get("/api/production/machine-load", params={"date_from": "2026-09-27", "date_to": "2026-09-21"}).status_code == 422
     assert client.get("/api/production/machine-load", params={"date_from": "2026-09-01", "date_to": "2026-12-01"}).status_code == 422
     assert client.get("/api/production/machine-load", params={"date_from": "2026-09-21", "date_to": "2026-09-27"}).json()["machines"] == []
+
+
+def test_site_boards_preserve_aggregate_contract_and_refresh_registered_idle_machines(client):
+    with app.state.references_uow_factory() as references:
+        for record in references.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=100):
+            references.tech_operations.save(replace(record, fields={**record.fields, "Расположение": "Цар"}))
+        references.commit()
+    put(client, launch(client, "КБ1"), ANNA, "2026-09-22T09:00")
+    params = {"date_from": "2026-09-21", "date_to": "2026-09-27"}
+    body = client.get("/api/production/machine-load", params=params).json()
+    [aggregate] = body["machines"]
+    sites = {site["site"]: site["machines"] for site in body["sites"]}
+    assert aggregate["units"] == 2 and len(aggregate["items"]) == 1
+    assert sites["ЖУК"] == [] and sites["ЦАР"][0]["units"] == 2
+
+    with app.state.references_uow_factory() as references:
+        for number in ("ОБ.027.3", "ОБ.027.X", "ОБ.098.1"):
+            references.tech_operations.save(TechOperationRecord.create(
+                tab=TechOperationTab.EQUIPMENT, display_text=f"Станок {number}", search_text=number,
+                source_sheet="БД.ОБ", sort_key=number,
+                fields={"Тип": "Оборудование", "Инв. номер": number, "Расположение": "жук", "Наименование": "Автомат"},
+            ))
+        references.commit()
+    body = client.get("/api/production/machine-load", params=params).json()
+    sites = {site["site"]: site["machines"] for site in body["sites"]}
+    assert [(row["machine"], row["units"]) for row in sites["ЖУК"]] == [("ОБ.027", 1), ("ОБ.098", 1)]
+    assert all(not row["items"] and not any(day["busy_seconds"] for day in row["days"]) for row in sites["ЖУК"])
+    assert sites["ЦАР"][0]["days"][1]["busy_seconds"] == aggregate["days"][1]["busy_seconds"]
+
+
+def test_unknown_reference_location_and_worker_site_stay_unknown(client):
+    put(client, launch(client, "КБ1"), ANNA, "2026-09-22T09:00")
+    with app.state.production_uow_factory() as uow:
+        uow.session.get(IdentityUserRow, ANNA).site = ""
+        uow.commit()
+    body = client.get("/api/production/machine-load", params={"date_from": "2026-09-22", "date_to": "2026-09-22"}).json()
+    sites = {site["site"]: site["machines"] for site in body["sites"]}
+    assert sites["ЦАР"] == sites["ЖУК"] == []
+    [row] = sites[""]
+    assert row["units"] == 0 and len(row["items"]) == 1
+    assert row["days"][0]["percent"] is None and not row["days"][0]["over"]
+
+
+def test_idle_machine_board_excludes_hand_tools_but_keeps_their_actual_occupancy(client):
+    with app.state.references_uow_factory() as references:
+        for record in references.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=100):
+            references.tech_operations.save(replace(record, fields={**record.fields, "Тип": "Обжимной инструмент", "Расположение": "ЦАР"}))
+        for index, kind in enumerate(("Инструмент", "Матрицы", "Обжимной инструмент", "Оборудование (ПР)"), 91):
+            references.tech_operations.save(TechOperationRecord.create(
+                tab=TechOperationTab.EQUIPMENT, display_text=kind, search_text=kind, source_sheet="БД.ОБ", sort_key=kind,
+                fields={"obType": kind, "inventoryNumber": f"ОБ.{index}.1", "Расположение": "ЦАР"},
+            ))
+        references.commit()
+    params = {"date_from": "2026-09-22", "date_to": "2026-09-22"}
+    body = client.get("/api/production/machine-load", params=params).json()
+    [tsar, zhuk, unknown] = body["sites"]
+    assert [row["machine"] for row in tsar["machines"]] == ["ОБ.94"]
+    assert zhuk["machines"] == unknown["machines"] == []
+    put(client, launch(client, "КБ1"), ANNA, "2026-09-22T09:00")
+    tsar = client.get("/api/production/machine-load", params=params).json()["sites"][0]
+    press, idle = tsar["machines"]
+    assert press["machine"] == "ОБ.027" and press["units"] == 2 and len(press["items"]) == 1
+    assert idle["machine"] == "ОБ.94"

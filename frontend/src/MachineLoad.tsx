@@ -33,6 +33,7 @@ export function machineLevel(day: MachineLoadDay): MachineLevel {
 /** «ОБ.027 Пресс, 22.09: занято 3,5 из 14 ч (25 %) · одновременно 2 работы из 1 ед.» */
 function dayTitle(row: MachineLoadRow, day: MachineLoadDay) {
   const head = `${row.label}, ${formatDayMonth(day.day)}: `;
+  if (row.units <= 0) return `${head}занято ${hoursOf(day.busy_seconds)} ч · Количество станков не указано`;
   if (day.capacity_seconds <= 0 && !day.busy_seconds) return `${head}нерабочий день`;
   const peak = day.peak > row.units ? ` · одновременно ${day.peak} из ${row.units} ед.` : "";
   return `${head}занято ${hoursOf(day.busy_seconds)} из ${hoursOf(day.capacity_seconds)} ч${day.percent != null ? ` (${day.percent} %)` : ""}${peak}`;
@@ -67,7 +68,7 @@ function useBlockWidth() {
   return { ref, width };
 }
 
-export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeekChange, refreshKey = "" }: {
+export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeekChange, refreshKey = "", site = "" }: {
   holidays: string[];
   shift?: ProductionShift | null;
   /** Дни доски, если их задаёт экран (доска мастера); без них — неделя `week` по ширине блока. */
@@ -77,6 +78,7 @@ export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeek
   onWeekChange?: (week: number) => void;
   /** Меняется, когда план перезагружен: сетка запрашивает занятость заново. */
   refreshKey?: string;
+  site?: string;
 }) {
   const { ref, width } = useBlockWidth();
   const workShift = shift && shift.weekdays ? shift : DEFAULT_SHIFT;
@@ -87,7 +89,7 @@ export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeek
   const to = days[days.length - 1];
   const [data, setData] = useState<MachineLoad | null>(null);
   const [error, setError] = useState("");
-  const [open, setOpen] = useState<{ machine: string; day: string } | null>(null);
+  const [open, setOpen] = useState<{ site: string; machine: string; day: string } | null>(null);
   const today = isoOf(new Date());
 
   useEffect(() => {
@@ -101,10 +103,13 @@ export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeek
 
   const period = `${formatDayMonth(from)}–${formatDayMonth(to)}`;
   const current = data && data.date_from === from && data.date_to === to ? data : null;
-  const rows = current?.machines ?? [];
+  const groups = current ? (current.sites ?? [
+    { site: "ЦАР", machines: [] }, { site: "ЖУК", machines: [] }, { site: "", machines: current.machines ?? [] },
+  ]).filter((group) => site ? group.site === site : group.site || group.machines.length) : [];
+  const rows = groups.flatMap((group) => group.machines);
   const weeks = Math.max(1, Math.round(days.length / 7));
-  const detail = open ? rows.find((row) => row.machine === open.machine) : undefined;
-  const warnings = current?.warnings ?? [];
+  const detail = open ? groups.find((group) => group.site === open.site)?.machines.find((row) => row.machine === open.machine) : undefined;
+  const warnings = (current?.warnings ?? []).map((warning) => current?.sites ? warning.replace(" — считаю, что он один", "") : warning);
 
   return <div className="pl" ref={ref}>
     {!given?.length && <div className="pl-head">
@@ -117,9 +122,12 @@ export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeek
     </div>}
     {error ? <div className="error-banner" role="alert">{error}</div>
       : !current ? <div className="empty">Загрузка…</div>
-      : !rows.length ? <div className="empty">За {period} станки не заняты: в плане нет операций ЭТК со станком в «Оборудовании».</div>
-      // На доске мастера — та же таблица, что у монтажников над ней; в плане — как «Загрузка по людям».
-      : <table className={given?.length ? "mb-week machine-load" : "mb-week pl-table machine-load"}>
+      : <>
+        {!current.sites && !rows.length && <div className="empty">За {period} станки не заняты: в плане нет операций ЭТК со станком в «Оборудовании».</div>}
+        {groups.map((group) => <section key={group.site} aria-label={`Станки · ${group.site || "Площадка не указана"}`}>
+          <div className="mb-head"><h3>{group.site || "Площадка не указана"}</h3><span className="mb-count">{group.machines.length}</span></div>
+          {!group.machines.length ? <div className="empty">Станки площадки {group.site} ещё не внесены</div>
+            : <table className={given?.length ? "mb-week machine-load" : "mb-week pl-table machine-load"}>
         <thead><tr>
           <th scope="col">Станок</th>
           {days.map((day) => {
@@ -128,28 +136,30 @@ export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeek
               title={`${weekdayOf(day)} ${formatDayMonth(day)}${day === today ? " · сегодня" : working ? "" : " · выходной"}`}><b>{formatDayMonth(day)}</b><span>{weekdayOf(day)}</span></th>;
           })}
         </tr></thead>
-        <tbody>{rows.map((row) => {
+        <tbody>{group.machines.map((row) => {
           const total = row.days.reduce((sum, day) => sum + day.busy_seconds, 0);
           return <tr key={row.machine}>
             <th scope="row" title={row.label}><b>{machineName(row).title}</b>
-              <small>{machineName(row).model ? `${machineName(row).model} · ` : ""}{row.units} ед.{row.known ? "" : " · нет в БД.ОБ"} · {total > 0 ? `${hoursOf(total)} ч за ${weeks} нед.` : "свободен"}</small></th>
+              <small>{machineName(row).model ? `${machineName(row).model} · ` : ""}{row.units > 0 ? `${row.units} ед.${row.known ? "" : " · нет в БД.ОБ"}` : "Количество станков не указано"} · {total > 0 ? `${hoursOf(total)} ч за ${weeks} нед.` : "свободен"}</small></th>
             {days.map((day) => {
               const value = row.days.find((item) => item.day === day);
               if (!value) return <td key={day} className="mb-cell off"><span /></td>;
-              const level = machineLevel(value);
-              const picked = open?.machine === row.machine && open.day === day;
-              const text = level === "off" || level === "free" ? "" : `${value.percent ?? "—"} %`;
+              const level = row.units > 0 ? machineLevel(value) : value.busy_seconds > 0 ? "unknown" : workingDay(day, workShift, holidays) ? "free" : "off";
+              const picked = open?.site === group.site && open.machine === row.machine && open.day === day;
+              const text = level === "off" || level === "free" ? "" : row.units > 0 ? `${value.percent ?? "—"} %` : `${hoursOf(value.busy_seconds)} ч`;
               const title = dayTitle(row, value);
               return <td key={day} className={`mb-cell ${level}${day === today ? " today" : ""}${picked ? " picked" : ""}`}>
                 {value.busy_seconds > 0
                   ? <button title={title} aria-label={`Загрузка ${row.machine} ${formatDayMonth(day)}`} aria-expanded={picked}
-                    onClick={() => setOpen(picked ? null : { machine: row.machine, day })}>{text}</button>
+                    onClick={() => setOpen(picked ? null : { site: group.site, machine: row.machine, day })}>{text}</button>
                   : <span title={title}>{text}</span>}
               </td>;
             })}
           </tr>;
         })}</tbody>
       </table>}
+        </section>)}
+      </>}
     {open && detail && <MachineDay row={detail} day={open.day} onClose={() => setOpen(null)} />}
     {rows.length > 0 && <MachineLegend />}
     {warnings.length > 0 && <div className="warning-inline machine-load-warnings" role="note">
@@ -165,7 +175,7 @@ function MachineDay({ row, day, onClose }: { row: MachineLoadRow; day: string; o
   const items = row.items.filter((item) => new Date(item.start).getTime() < upper && new Date(item.finish).getTime() > lower);
   return <div className="pl-detail" role="group" aria-label={`Что на станке: ${row.machine}, ${formatDayMonth(day)}`}>
     <div className="pl-detail-head"><b>{row.label} · {weekdayOf(day)} {formatDayMonth(day)}</b>
-      {value && <span>{hoursOf(value.busy_seconds)} из {hoursOf(value.capacity_seconds)} ч · {row.units} ед.</span>}
+      {value && <span>{row.units > 0 ? `${hoursOf(value.busy_seconds)} из ${hoursOf(value.capacity_seconds)} ч · ${row.units} ед.` : `${hoursOf(value.busy_seconds)} ч · Количество станков не указано`}</span>}
       <button className="mb-day-close" aria-label="Закрыть день" title="Закрыть" onClick={onClose}>×</button></div>
     <ul>{items.map((item) => <li key={`${item.operation_id}-${item.etk_position}-${item.start}`}>
       <b>{item.task_number} · {item.item}</b> <span>{itemText(item)}</span>

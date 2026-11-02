@@ -100,6 +100,43 @@ it("names a machine by its kind, the model goes to the second line", () => {
   expect(machineName({ machine: "ОБ.027", label: "ОБ.027 Пресс" })).toEqual({ title: "ОБ.027 Пресс", model: "" });
 });
 
+it("splits machines by site, shows empty ЖУК and new idle machines after refresh", async () => {
+  let added = false;
+  serve(() => json({ ...LOAD, sites: [
+    { site: "ЦАР", machines: [LOAD.machines[0]] },
+    { site: "ЖУК", machines: added ? [{ ...LOAD.machines[1], known: true }] : [] },
+    { site: "", machines: [] },
+  ] }));
+  const { rerender } = render(<MachineLoadGrid holidays={[]} days={DAYS} refreshKey="1" />);
+  const tsar = await screen.findByRole("region", { name: "Станки · ЦАР" });
+  const zhuk = screen.getByRole("region", { name: "Станки · ЖУК" });
+  expect(within(tsar).getByText("ОБ.027 Пресс")).toBeInTheDocument();
+  expect(within(zhuk).getByText("Станки площадки ЖУК ещё не внесены")).toBeInTheDocument();
+  expect(within(zhuk).queryByText("ОБ.027 Пресс")).toBeNull();
+  added = true;
+  rerender(<MachineLoadGrid holidays={[]} days={DAYS} refreshKey="2" />);
+  expect(await within(zhuk).findByText("ОБ.098 Автомат резки")).toBeInTheDocument();
+  expect(within(zhuk).queryByText(/ещё не внесены/)).toBeNull();
+});
+
+it("shows unknown local capacity as hours without claiming overload or a percentage", async () => {
+  serve(() => json({ ...LOAD, sites: [
+    { site: "ЦАР", machines: [{ ...LOAD.machines[0], units: 0, known: false, days: [day(DAYS[0], 3600, 0)] }] },
+    { site: "ЖУК", machines: [] }, { site: "", machines: [LOAD.machines[1]] },
+  ] }));
+  render(<MachineLoadGrid holidays={[]} days={DAYS} />);
+  const tsar = await screen.findByRole("region", { name: "Станки · ЦАР" });
+  expect(within(tsar).getByText(/Количество станков не указано/)).toBeInTheDocument();
+  const cell = within(tsar).getByRole("button", { name: "Загрузка ОБ.027 19.10" });
+  expect(cell).toHaveTextContent("1 ч");
+  expect(cell).not.toHaveTextContent("%");
+  expect(cell.closest("td")).not.toHaveClass("over");
+  expect(cell.closest("td")).not.toHaveClass("low", "full");
+  fireEvent.click(cell);
+  expect(screen.getByRole("group", { name: "Что на станке: ОБ.027, 19.10" })).toHaveTextContent("1 ч · Количество станков не указано");
+  expect(screen.getByRole("region", { name: "Станки · Площадка не указана" })).toHaveTextContent("ОБ.098 Автомат резки");
+});
+
 it("levels: off day, free, part, full and overload", () => {
   expect(machineLevel(day(DAYS[0], 0, 0))).toBe("off");
   expect(machineLevel(day(DAYS[0], 0))).toBe("free");
