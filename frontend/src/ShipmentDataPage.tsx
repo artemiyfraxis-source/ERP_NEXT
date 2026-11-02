@@ -13,7 +13,7 @@ import { useCanPrint } from "./rights";
 import { openShippingForms } from "./shippingPrint";
 import { DISPATCH_STAGES, projectDispatchStage, shipmentDispatchStage, stageLabel, stageRank, type DispatchStage } from "./dispatchStage";
 import { DispatchCard } from "./DispatchCard";
-import { canAct } from "./navigation";
+import { canAct, hasFullAccess } from "./navigation";
 import { packable } from "./intakeStages";
 
 /* «Данные отправок» (владелец 28.10.2026, раздел «Менеджмент»): менеджер (Ульяна Ладутько) вносит данные для
@@ -233,7 +233,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
           {VIEWS.map(([key, label]) => <button type="button" key={key} className="secondary small" aria-pressed={view === key} onClick={() => chooseView(key)}>{label}</button>)}
         </span>}
         emptyText="В этом разделе пусто — другие этапы под чипами выше." />}
-    {current && <ShipmentDataWindow key={current.id} shipment={current} stage={rows.find((row) => row.id === current.id)?.stage} canEdit={canEdit} close={() => setOpen(null)} onSaved={reload} />}
+    {current && <ShipmentDataWindow key={current.id} shipment={current} stage={rows.find((row) => row.id === current.id)?.stage} canEdit={canEdit} canCorrectHistory={hasFullAccess(principal) && !principal.viewing} close={() => setOpen(null)} onSaved={reload} />}
     {project && <DispatchCard key={project.id} project={project.project} customer={project.customer} stage={project.stage ?? undefined} canEdit={canEdit} close={() => setOpen(null)} onSaved={() => void reload()} />}
   </section>;
 }

@@ -16,7 +16,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
-from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
+from app.shared.persistence import (
+    AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository,
+    check_read_version, note_written_version, track_read_versions,
+)
 from app.shared.project_number import normalize_project_number
 from .domain import (
     ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, AcceptanceAct, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
@@ -121,6 +124,9 @@ class ShipmentRow(Base):
     no_upd_approved_by: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
     no_upd_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+track_read_versions(ShipmentRow)
 
 
 class ShipmentBoxRow(Base):
@@ -512,6 +518,8 @@ class SqlAlchemyShipmentRepository:
         row = self.session.get(ShipmentRow, shipment.id)
         if row is None:
             row = ShipmentRow(id=shipment.id); self.session.add(row)
+        else:
+            check_read_version(self.session, row, shipment.version)
         for key in (
             "number", "version", "created_at", "customer", "receiver", "shipping_point",
             "contact", "phone", "carrier", "deadline", "upd_number", "upd_date", "upd_url",
@@ -522,6 +530,7 @@ class SqlAlchemyShipmentRepository:
         row.status = shipment.status.value; row.terms = shipment.terms.value if shipment.terms else None
         row.upd_type = shipment.upd_type.value if shipment.upd_type else None
         row.inherited_fields = ",".join(sorted(shipment.inherited))
+        note_written_version(self.session, row)
         existing = {line.id: line for line in self.session.scalars(select(ShipmentLineRow).where(ShipmentLineRow.shipment_id == shipment.id))}
         for position, line in enumerate(shipment.lines):
             stored = existing.pop(line.id, None)
