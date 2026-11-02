@@ -143,13 +143,125 @@ describe("the «Заявки» screen", () => {
     expect(within(bar).getByText("Выбрано строк: 2")).toBeTruthy();
     expect(within(bar).getByRole("button", { name: "Запросить КП (2)" })).toBeTruthy();
     fireEvent.click(within(bar).getByRole("button", { name: "Отменить выбранные" }));
-    fireEvent.change(within(bar).getByLabelText("Причина отмены"), { target: { value: "дубль" } });
-    fireEvent.click(within(bar).getByRole("button", { name: "Подтвердить отмену" }));
+    const dialog = screen.getByRole("dialog", { name: "Отменить закупку" });
+    expect(within(dialog).getByText("Выбрано строк: 2")).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Подтвердить отмену" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText("Причина отмены"), { target: { value: "дубль" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить отмену" }));
     await screen.findByText(/Отменено строк: 1\. Не отменены: SM-b — строка изменилась/);
     const sent = calls.find((call) => call.path === "/api/procurement/cancel-many");
     expect(JSON.parse(String(sent?.init?.body))).toEqual({
       lines: [{ id: "a", version: 2 }, { id: "b", version: 2 }], reason: "дубль",
     });
+  });
+
+  const unclaimed = line("d", {
+    status: "Новый", mine: false, buyer: null, selectable: false, can_take: true,
+    can_split: false, can_cover: false,
+  });
+
+  function useLines(rows: RqLine[]) {
+    const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      if (String(input).startsWith("/api/procurement/requests-view") && String(input).includes("batch=")) {
+        calls.push({ path: String(input), init });
+        return json({ scope: "mine", batch: BATCH, lines: rows });
+      }
+      return base(input, init);
+    });
+  }
+
+  it("offers refusal beside taking an unclaimed new line, without making it selectable", async () => {
+    useLines([...lines, unclaimed]);
+    const table = await openBatch();
+    const row = within(table).getByText("Позиция d").closest("tr")!;
+    expect(within(row).getByRole("button", { name: "Взять в работу" })).toBeTruthy();
+    expect(within(row).queryByRole("checkbox")).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Отказать" }));
+    const dialog = screen.getByRole("dialog", { name: "Отказать в закупке" });
+    expect(within(dialog).getByText("Позиция d · SM-d")).toBeTruthy();
+    const reason = within(dialog).getByLabelText("Причина отказа");
+    expect(reason.getAttribute("maxlength")).toBe("500");
+    fireEvent.change(reason, { target: { value: "   " } });
+    expect(within(dialog).getByRole("button", { name: "Подтвердить отказ" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.submit(reason.closest("form")!);
+    expect(calls.some((call) => call.path === "/api/procurement/cancel-many")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Не отменять" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Отказать" }));
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(calls.some((call) => call.path === "/api/procurement/cancel-many")).toBe(false);
+  });
+
+  it("keeps the reason on HTTP error, retries once and reports a skipped refusal honestly", async () => {
+    useLines([unclaimed]);
+    const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let attempts = 0;
+    let finish: (response: Response) => void = () => undefined;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      if (String(input) === "/api/procurement/cancel-many") {
+        calls.push({ path: String(input), init });
+        attempts += 1;
+        return attempts === 1 ? json({ detail: "Временная ошибка" }, 503) : new Promise<Response>((resolve) => { finish = resolve; });
+      }
+      return base(input, init);
+    });
+    await openBatch();
+    fireEvent.click(screen.getByRole("button", { name: "Отказать" }));
+    const dialog = screen.getByRole("dialog", { name: "Отказать в закупке" });
+    const reason = within(dialog).getByLabelText("Причина отказа") as HTMLTextAreaElement;
+    fireEvent.change(reason, { target: { value: "  Уже заказано  " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить отказ" }));
+    await within(dialog).findByRole("alert");
+    expect(reason.value).toBe("  Уже заказано  ");
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Подтвердить отказ" }).hasAttribute("disabled")).toBe(false));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить отказ" }));
+    fireEvent.submit(reason.closest("form")!);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(attempts).toBe(2);
+    expect(within(dialog).getByRole("button", { name: "Сохраняю…" }).hasAttribute("disabled")).toBe(true);
+    finish(json({ cancelled: [], skipped: [{ id: "d", reason: "строка изменилась — обновите список" }] }));
+    await screen.findByText("Отменено строк: 0. Не отменены: SM-d — строка изменилась — обновите список");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const requests = calls.filter((call) => call.path === "/api/procurement/cancel-many");
+    expect(requests).toHaveLength(2);
+    for (const request of requests) expect(JSON.parse(String(request.init?.body))).toEqual({
+      lines: [{ id: "d", version: 2 }], reason: "Уже заказано",
+    });
+    expect(calls.some((call) => call.path === "/api/procurement/take")).toBe(false);
+  });
+
+  it("cancels an owned row through the same modal", async () => {
+    useLines([lines[0]]);
+    await openBatch();
+    fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
+    const dialog = screen.getByRole("dialog", { name: "Отменить закупку" });
+    fireEvent.change(within(dialog).getByLabelText("Причина отмены"), { target: { value: "  Не требуется  " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить отмену" }));
+    await screen.findByRole("status");
+    expect(JSON.parse(String(calls.find((call) => call.path === "/api/procurement/cancel-many")?.init?.body))).toEqual({
+      lines: [{ id: "a", version: 2 }], reason: "Не требуется",
+    });
+  });
+
+  it("hides cancellation for a foreign or non-cancellable row", async () => {
+    useLines([line("e", { mine: false, selectable: false, can_cancel: false }), line("f", { can_cancel: false })]);
+    await openBatch();
+    expect(screen.queryByRole("button", { name: "Отказать" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Отменить" })).toBeNull();
+  });
+
+  it("hides refusal and cancellation in «Все»", async () => {
+    useLines([...lines, unclaimed]);
+    render(<ProcurementRequests />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Все" }));
+    fireEvent.click(await screen.findByText("Обеспечение производства.001"));
+    await screen.findByRole("table", { name: "Позиции заявки" });
+    expect(screen.queryByRole("button", { name: "Отказать" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Отменить" })).toBeNull();
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
   });
 
   it("«Запросить КП» opens the supplier step for the selected lines", async () => {
@@ -223,11 +335,14 @@ describe("the «Заявки» screen", () => {
   });
 
   it("is read only in «Все» and for a viewer", async () => {
+    useLines([...lines, unclaimed]);
     render(<ProcurementRequests readOnly />);
     fireEvent.click(await screen.findByText("Обеспечение производства.001"));
     await screen.findByRole("table", { name: "Позиции заявки" });
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     expect(screen.queryByRole("button", { name: "Разделить" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Отказать" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Отменить" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Мои" })).toBeNull();
     expect(calls.some((call) => call.path.includes("scope=all"))).toBe(true);
   });

@@ -345,8 +345,10 @@ def line_results(
             "can_take": line.buyer_id is None and line.status == ProcurementStatus.NEW.value,
             "can_split": mine and line.status in {stage.value for stage in FACTS_EDITABLE} and line.to_buy > 0,
             "can_cover": mine and line.status in {stage.value for stage in STOCK_COVER_STAGES} and line.to_buy > 0,
-            "can_cancel": mine and status not in {"cancelled", "paid", "shipped", "partial", "delivered", "from_stock"}
-            and not line.backorder,
+            "can_cancel": actor_id is not None
+            and (mine or (line.buyer_id is None and line.status == ProcurementStatus.NEW.value))
+            and status not in {"cancelled", "paid", "shipped", "partial", "delivered", "from_stock"}
+            and not line.paid and not line.backorder and line.to_buy > 0,
             "can_resend": mine and status == "cancelled",
         })
     return rows
