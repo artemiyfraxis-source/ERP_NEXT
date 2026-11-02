@@ -91,3 +91,18 @@ table.ship-lines.ship-lines-compact td.ship-name { width: auto; min-width: 260px
 .ship-upd-cell { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; white-space: nowrap; }
 .data-card-upd { display: flex; gap: 2px 10px; align-items: baseline; font-size: 13px; }
 .data-card-due { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; font-size: 13px; }
+.ship-data-project { display: flex; flex-direction: column; gap: 4px; white-space: normal; }
+.ship-data-project > strong { font-size: 14px; font-variant-numeric: tabular-nums; }
+.ship-data-project > .ship-sub { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.ship-data-line { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; align-items: baseline; }
+.ship-data-line > span { overflow-wrap: anywhere; }
+.ship-data-grn { grid-column: 2; font-variant-numeric: tabular-nums; font-size: 12px; }
+.ship-data-kb, .ship-pl { font-variant-numeric: tabular-nums; }
+.data-card-main { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; border: 0; padding: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.data-card-main .data-card-head { align-items: flex-start; }
+.data-card-main:focus-visible, .ship-pl:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.data-card-main .ship-data-project { min-width: 0; }
+.ship-pl { touch-action: manipulation; }
+@media (pointer: coarse) { .ship-pl { min-height: 40px; } }
+.ship-ready .ship-gaps-list { white-space: normal; }
+.shipping-page .ship-forecast { color: var(--muted-foreground); font-weight: 400; }

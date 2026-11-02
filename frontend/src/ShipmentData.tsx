@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from "react";
 import { failureText, shippingApi, type Shipment, type UpdType, type WarehouseReceiptScan } from "./api";
 import { PageWindow } from "./PageWindow";
-import { CARRIERS, PICKUP_CARRIER, isPickup } from "./carriers";
+import { CARRIERS, PICKUP_CARRIER, isPickup, needsTrack } from "./carriers";
 import { StatusChip } from "./StatusChip";
 import { useUpdScan } from "./useUpdScan";
 import { ScanDeviceLine } from "./ScanAgent";
-import { useCanScan } from "./rights";
+import { useCanPrint, useCanScan } from "./rights";
+import { openShippingForms } from "./shippingPrint";
 import { formatDate } from "./format";
 import { shipmentDispatchStage, type DispatchStage } from "./dispatchStage";
 import { PackDecision } from "./shippingCells";
@@ -27,13 +28,13 @@ export function DataChip({ shipment, ship = false }: { shipment: Shipment; ship?
     <span className="ship-gaps-list" title={missing.join(", ")}>{missing.join(", ")}</span></span>;
 }
 
-/* Полоса готовности данных (владелец 28.10): чип на каждую позицию данных — внесено зелёным, не внесено приглушённо
-   «нет телефона» — и один общий чип. Одна и та же на панели упаковки, в «Отгрузке» и в «Данных отправок». */
+/* Один итог готовности и фактический список недостающих данных; общий для склада и менеджера. */
 export interface ReadinessItem { label: string; ok: boolean }
 interface ReadinessSource {
   receiver: string; phone: string; shipping_point: string; carrier: string; terms: string | null; upd_type: string | null;
   upd_number?: string; upd_url?: string; track_number?: string;
   ready_to_ship?: boolean; missing_ship?: string[];
+  track_required?: boolean;
 }
 
 export function readinessItems(source: ReadinessSource, withTrack = false): ReadinessItem[] {
@@ -51,11 +52,11 @@ export function readinessItems(source: ReadinessSource, withTrack = false): Read
     const label = [updLabel(source.upd_type), source.upd_number ? `№ ${source.upd_number}` : ""].filter(Boolean).join(" ");
     items.push(source.upd_number === undefined || source.upd_number ? { label, ok: true } : { label: `${label} · нет №`, ok: false });
   }
-  if (withTrack && !pickup) items.push(source.track_number?.trim() ? { label: "Трек", ok: true } : { label: "нет трека", ok: false });
+  if (withTrack && needsTrack(source)) items.push(source.track_number?.trim() ? { label: "Трек", ok: true } : { label: "нет трека", ok: false });
   return items;
 }
 
-/** Чипы данных и общий итог. `gaps` — слова сервера для отправки (они главнее); для карточки проекта итог считается по чипам. */
+/** `gaps` — слова сервера для отправки (они главнее); для карточки проекта считаем незаполненные поля. */
 export function Readiness({ source, gaps, withTrack = false }: { source: ReadinessSource; gaps?: string[]; withTrack?: boolean }) {
   const items = readinessItems(source, withTrack);
   const allMissing = gaps ?? items.filter((item) => !item.ok).map((item) => item.label);
@@ -64,13 +65,13 @@ export function Readiness({ source, gaps, withTrack = false }: { source: Readine
     || (withTrack && items.some((item) => item.label === "нет трека"));
   const warehouse = source.ready_to_ship === false || Boolean(source.missing_ship?.length) || trackMissing;
   return <span className="ship-ready" aria-label="Готовность данных отправки">
-    {items.map((item) => <StatusChip key={item.label} tone={item.ok ? "success" : "neutral"} className={item.ok ? "ship-ready-ok" : "ship-ready-gap"}>{item.label}</StatusChip>)}
     {missing.length === 0
       ? warehouse
         ? <StatusChip tone="warning" title={`Не хватает: ${(source.missing_ship ?? allMissing).join(", ") || "готовность склада"}`}>
           {trackMissing ? "Ждёт трек от склада" : "Ждёт склад"}</StatusChip>
         : <StatusChip tone="success" title="Все данные внесены">{source.ready_to_ship === true ? "Готово к отгрузке" : "Данные внесены"}</StatusChip>
       : <StatusChip tone="warning" title={`Не хватает: ${missing.join(", ")}`}>Ждёт данных менеджера</StatusChip>}
+    {missing.length > 0 && <span className="ship-gaps-list">{missing.join(", ")}</span>}
   </span>;
 }
 
@@ -95,6 +96,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
   const [point, setPoint] = useState(shipment.shipping_point);
   const [receiver, setReceiver] = useState(shipment.receiver);
   const [phone, setPhone] = useState(shipment.phone);
+  const [warehouseNote, setWarehouseNote] = useState(shipment.note);
   const [updType, setUpdType] = useState<string>(shipment.upd_type ?? "");
   const [updNumber, setUpdNumber] = useState(shipment.upd_number);
   const [updDate, setUpdDate] = useState(shipment.upd_date ?? "");
@@ -118,6 +120,7 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
   /** Ответ чтения ложится в отправку: файл, тип, № и дата документа, № счёта из «Основания». Другой уже внесённый № молча
    *  не затирается: сначала вопрос «Заменить?». */
   const applyAnswer = async (answer: WarehouseReceiptScan, number?: "replace" | "keep") => {
+    if (!canEdit) return;
     const { shipment: current, updNumber: typedRaw, edoType: edo } = latest.current;
     const found = (answer.recognised.upd_number ?? "").trim();
     const typed = typedRaw.trim();
@@ -144,10 +147,17 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
   const scanApi = useMemo(() => shippingApi.updScan(opened.id), [opened.id]);
   const scan = useUpdScan(scanApi, (answer) => void answerRef.current(answer));
   const canScan = useCanScan();
+  const canPrint = useCanPrint();
+  const printPl = async () => {
+    setError("");
+    try { openShippingForms((await shippingApi.print(shipment.id, "pl")).forms); }
+    catch (reason) { setError(failureText(reason, "Не удалось открыть упаковочный лист")); }
+  };
   const coarse = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
   const reading = scan.scanning || applying;
 
   const save = async () => {
+    if (!canEdit) return;
     setSaving(true); setError("");
     try {
       let current = shipment;
@@ -155,9 +165,10 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
       const wantedCarrier = pickup ? PICKUP_CARRIER : carrier.trim();
       if (receiver.trim() !== shipment.receiver.trim()) head.receiver = receiver.trim();
       if (phone.trim() !== shipment.phone.trim()) head.phone = phone.trim();
+      if (warehouseNote.trim() !== shipment.note.trim()) head.note = warehouseNote.trim();
       if (delivery && delivery !== shipment.terms) head.terms = delivery;
       if (delivery && wantedCarrier !== shipment.carrier.trim()) head.carrier = wantedCarrier;
-      if (!shipped && point.trim() !== shipment.shipping_point.trim()) head.shipping_point = point.trim();
+      if (!shipped && !pickup && point.trim() !== shipment.shipping_point.trim()) head.shipping_point = point.trim();
       if (Object.keys(head).length) current = (await shippingApi.head(shipment.id, { version: current.version, ...head })).shipment;
       const number = noUpd ? "" : updNumber.trim();
       const day = noUpd ? "" : updDate;
@@ -180,28 +191,29 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
 
   const gaps = shipment.missing_data;
   return <PageWindow label={`Данные отправки ${shipment.number}`} width={760} close={close}>
-    {scan.agentDialogs()}
-    <form className="panel ship-data" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+    {canEdit && scan.agentDialogs()}
+    <form className="panel ship-data" onSubmit={(event) => { event.preventDefault(); if (canEdit) void save(); }}>
       <h2>Данные отправки {shipment.number}</h2>
       <p className="ship-data-sub">{shipment.customer || shipment.receiver}{shipment.lines.length ? ` · ${[...new Set(shipment.lines.map((line) => line.project))].join(", ")}` : ""}
         {gaps.length > 0 && <span className="tone-warn"> · не хватает: {gaps.join(", ")}</span>}</p>
       {deciding && <div className="ship-block"><h3>Упаковка</h3>
         {[...new Set(shipment.lines.map((line) => line.project))].map((name) => <PackDecision key={name} project={name} editable={canEdit} />)}</div>}
       {!shipped && <div className="ship-block"><h3>Адрес</h3><div className="ship-form">
-        <label className="ship-span2">Адрес доставки<input aria-label="Адрес доставки" value={point} onChange={(event) => setPoint(event.target.value)} /></label>
-        <label>Получатель<input aria-label="Получатель" value={receiver} onChange={(event) => setReceiver(event.target.value)} /></label>
-        <label>Телефон получателя<input aria-label="Телефон получателя" value={phone} onChange={(event) => setPhone(event.target.value)} /></label>
+        {!pickup && <label className="ship-span2">Адрес доставки<input aria-label="Адрес доставки" value={point} readOnly={!canEdit} onChange={canEdit ? (event) => setPoint(event.target.value) : undefined} /></label>}
+        <label>Получатель<input aria-label="Получатель" value={receiver} readOnly={!canEdit} onChange={canEdit ? (event) => setReceiver(event.target.value) : undefined} /></label>
+        <label>Телефон получателя<input aria-label="Телефон получателя" value={phone} readOnly={!canEdit} onChange={canEdit ? (event) => setPhone(event.target.value) : undefined} /></label>
+        <label className="ship-span2">Комментарий для склада<textarea aria-label="Комментарий для склада" maxLength={5000} value={warehouseNote} readOnly={!canEdit} onChange={canEdit ? (event) => setWarehouseNote(event.target.value) : undefined} /></label>
       </div></div>}
       <div className="ship-block"><h3>ТК и УПД</h3><div className="ship-form">
-        <label className={packed && !delivery ? "ship-required" : undefined}>Тип доставки<select aria-label="Тип доставки" value={delivery} onChange={(event) => setDelivery(event.target.value)}>
+        <label className={packed && !delivery ? "ship-required" : undefined}>Тип доставки<select aria-label="Тип доставки" value={delivery} disabled={!canEdit} onChange={canEdit ? (event) => setDelivery(event.target.value) : undefined}>
           <option value="">не выбран</option><option value="САМОВЫВОЗ">Самовывоз</option><option value="ДОСТАВКА ТК">Доставка ТК</option></select></label>
-        {carrierTrip && <label className={packed && !carrier ? "ship-required" : undefined}>Перевозчик<select aria-label="Перевозчик" value={carrier} onChange={(event) => setCarrier(event.target.value)}>
+        {carrierTrip && <label className={packed && !carrier ? "ship-required" : undefined}>Перевозчик<select aria-label="Перевозчик" value={carrier} disabled={!canEdit} onChange={canEdit ? (event) => setCarrier(event.target.value) : undefined}>
           <option value="">не выбран</option>{CARRIER_CHOICES.map((name) => <option key={name} value={name}>{name}</option>)}
           {carrier && !(CARRIER_CHOICES as readonly string[]).includes(carrier) && <option value={carrier}>{carrier} (прежнее)</option>}</select></label>}
-        <label className={packed && !updType ? "ship-required" : undefined}>УПД<select aria-label="Тип УПД" value={updType} onChange={(event) => setUpdType(event.target.value)}>
+        <label className={packed && !updType ? "ship-required" : undefined}>УПД<select aria-label="Тип УПД" value={updType} disabled={!canEdit} onChange={canEdit ? (event) => setUpdType(event.target.value) : undefined}>
           <option value="">не выбран</option>{UPD_TYPES.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
-        {!noUpd && <div className="ship-span2 ship-upd-scan">
-          <span className="ship-upd-buttons">
+        {!noUpd && (canEdit || fileShown) && <div className="ship-span2 ship-upd-scan">
+          {canEdit && <span className="ship-upd-buttons">
             {!edoType && canScan && (scan.pages.length > 0
               ? <button type="button" className="secondary" disabled={reading} onClick={() => void scan.fromScanner()}>+ Страница</button>
               : <button type="button" className="secondary" disabled={reading} onClick={() => void scan.fromScanner(true)}>Сканировать</button>)}
@@ -210,36 +222,37 @@ export function ShipmentDataWindow({ shipment: opened, close, onSaved, stage: gi
               accept={edoType ? ".pdf,.xml,.zip,application/pdf,application/xml,text/xml,application/zip" : ".pdf,.xml,.zip,image/*,application/xml,text/xml,application/zip"}
               {...(coarse && !edoType ? { capture: "environment" as const } : {})}
               onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; if (files.length) void scan.fromFiles(files); }} />
-          </span>
-          {!edoType && <ScanDeviceLine />}
+          </span>}
+          {canEdit && !edoType && <ScanDeviceLine />}
           {fileShown && <span className="ship-upd-attached">
             <a className="ship-upd-link" href={shipment.upd_url} target="_blank" rel="noreferrer">{edoType ? "Файл ЭДО" : "Скан УПД"} · открыть</a>
-            <button type="button" className="secondary small" onClick={() => setRemovedUrl(shipment.upd_url ?? "")}>Убрать файл</button>
+            {canEdit && <button type="button" className="secondary small" onClick={() => setRemovedUrl(shipment.upd_url ?? "")}>Убрать файл</button>}
           </span>}
-          {!fileShown && removedUrl && shipment.upd_url === removedUrl && <span className="ship-upd-removed">Файл уберётся при сохранении ·{" "}
+          {canEdit && !fileShown && removedUrl && shipment.upd_url === removedUrl && <span className="ship-upd-removed">Файл уберётся при сохранении ·{" "}
             <a href="#" onClick={(event) => { event.preventDefault(); setRemovedUrl(""); }}>Вернуть</a></span>}
-          {(scan.statusText || applying || note) && <p className={`wr-scan-status${scan.error ? " error" : ""}`} role="status">
+          {canEdit && (scan.statusText || applying || note) && <p className={`wr-scan-status${scan.error ? " error" : ""}`} role="status">
             {applying ? "Вношу УПД в отправку…" : scan.statusText || note}
             {scan.status ? <> <a href="#" onClick={(event) => { event.preventDefault(); scan.cancel(); }}>Отменить</a></> : null}
           </p>}
-          {replacing && <p className="warning-inline" role="alert">
+          {canEdit && replacing && <p className="warning-inline" role="alert">
             Заменить № УПД «{replacing.typed}» на «{replacing.answer.recognised.upd_number}» из документа?
             {" "}<button type="button" className="secondary small" onClick={() => void applyAnswer(replacing.answer, "replace")}>Заменить</button>
             {" "}<button type="button" className="secondary small" onClick={() => void applyAnswer(replacing.answer, "keep")}>Оставить мой №</button></p>}
         </div>}
-        {updType && !noUpd && <label>№ УПД<input aria-label="№ УПД" value={updNumber} onChange={(event) => setUpdNumber(event.target.value)} /></label>}
-        {updType && !noUpd && <label>Дата УПД<input type="date" className="ship-narrow" aria-label="Дата УПД" value={updDate} onChange={(event) => setUpdDate(event.target.value)} /></label>}
+        {updType && !noUpd && <label>№ УПД<input aria-label="№ УПД" value={updNumber} readOnly={!canEdit} onChange={canEdit ? (event) => setUpdNumber(event.target.value) : undefined} /></label>}
+        {updType && !noUpd && <label>Дата УПД<input type="date" className="ship-narrow" aria-label="Дата УПД" value={updDate} disabled={!canEdit} onChange={canEdit ? (event) => setUpdDate(event.target.value) : undefined} /></label>}
       </div>
       {packed && (!updType || !delivery) && <p className="ship-required-note">Упаковано: УПД и ТК обязательны — внесите, чтобы склад мог отгрузить</p>}
       {afterPack
-        ? <p className="ship-track">Трек: <strong>{shipment.track_number || "—"}</strong>{" · "}{shipped ? "отгружено" : "упаковано"} {formatDate(String((shipped ? shipment.shipped_at : shipment.packed_at) ?? "").slice(0, 10)) || "—"}</p>
-        : <p className="muted ship-track">{shipment.track_number ? `Трек: ${shipment.track_number}` : "трек: ждём склад"}</p>}
+        ? <p className="muted ship-track">{(needsTrack(shipment) || shipment.track_number) && <>Трек: <strong>{shipment.track_number || "—"}</strong>{" · "}</>}{shipped ? "отгружено" : "упаковано"} {formatDate(String((shipped ? shipment.shipped_at : shipment.packed_at) ?? "").slice(0, 10)) || "—"}</p>
+        : (needsTrack(shipment) || shipment.track_number) && <p className="muted ship-track">{shipment.track_number ? `Трек: ${shipment.track_number}` : "трек: ждём склад"}</p>}
       {shipment.no_upd_approved_by && <p className="ship-no-upd">без УПД — разрешил {shipment.no_upd_approved_by}{shipment.no_upd_approved_at ? `, ${formatDate(String(shipment.no_upd_approved_at).slice(0, 10))}` : ""}</p>}
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="ship-actions"><span className="ship-actions-end">
+        {shipment.pl_number && canPrint && <button type="button" className="secondary" onClick={() => void printPl()}>Печать ПЛ · {shipment.pl_number}</button>}
         <button type="button" className="secondary" onClick={close}>Отмена</button>
-        <button className="primary" disabled={saving || reading}>{saving ? "Сохраняем…" : "Сохранить"}</button>
+        {canEdit && <button className="primary" disabled={saving || reading}>{saving ? "Сохраняем…" : "Сохранить"}</button>}
       </span></div>
     </form>
   </PageWindow>;

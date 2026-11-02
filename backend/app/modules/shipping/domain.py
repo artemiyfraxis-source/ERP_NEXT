@@ -42,6 +42,9 @@ class DeliveryTerms(str, Enum):
     CARRIER = "ДОСТАВКА ТК"
 
 
+OWN_COURIER = "Курьер (наш)"
+
+
 class UpdType(str, Enum):
     EDO = "ЭДО"
     PAPER = "БУМАГА"
@@ -496,9 +499,10 @@ class ProjectAddressee:
 
     def dispatch_gaps(self) -> tuple[str, ...]:
         """Чего не хватает в «Данных отправки» (владелец 14.10.2026): получатель, адрес, телефон, вариант УПД,
-        у бумажной УПД — её файл."""
+        у бумажной УПД — её файл. Самовывозу адрес не нужен."""
+        pickup = self.terms == DeliveryTerms.PICKUP or self.carrier.strip() == "Самовывоз"
         gaps = [label for key, label in (("receiver", "получатель"), ("shipping_point", "адрес доставки"), ("phone", "телефон"))
-                if not str(getattr(self, key) or "").strip()]
+                if (key != "shipping_point" or not pickup) and not str(getattr(self, key) or "").strip()]
         if self.upd_type is None:
             gaps.append("вариант УПД")
         elif self.upd_type == UpdType.PAPER and not self.upd_url.strip():
@@ -897,6 +901,10 @@ class Shipment:
             raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
         return replace(self, boxes=boxes, tk_note=str(tk_note or "").strip(), version=self.version + 1)
 
+    @property
+    def track_required(self) -> bool:
+        return self.terms == DeliveryTerms.CARRIER and self.carrier.strip() != OWN_COURIER
+
     def close(self) -> Shipment:
         if self.status != ShipmentStatus.SHIPPED:
             raise ShippingValidationError("Закрыть можно только отгруженную заявку")
@@ -906,7 +914,7 @@ class Shipment:
             missing.append("№ УПД")
         if not self.upd_url:
             missing.append("файл УПД")
-        if self.terms == DeliveryTerms.CARRIER and not self.track_number:
+        if self.track_required and not self.track_number.strip():
             missing.append("трек-номер")
         if not self.shipped_at:
             missing.append("дата отгрузки")
@@ -931,7 +939,7 @@ def shipping_gaps(shipment: Shipment, *, with_track: bool = True) -> tuple[str, 
 
     Вносит менеджер (Ульяна): условия доставки, получатель, телефон, для ТК — перевозчик и адрес, УПД (тип, №, файл для
     бумажной; «без УПД» — разрешение по PIN, с ним УПД не нужен вовсе). Трек-номер ТК вписывает кладовщик при отгрузке; `with_track=False` — «всё, что должна
-    внести Ульяна», с этим списком печатается DN. Самовывозу адрес и трек не нужны."""
+    внести Ульяна», с этим списком печатается DN. Самовывозу адрес и трек не нужны; своему курьеру нужен адрес, но не трек."""
     gaps: list[str] = []
     carrier = shipment.terms == DeliveryTerms.CARRIER
     if shipment.terms is None:
@@ -956,7 +964,7 @@ def shipping_gaps(shipment: Shipment, *, with_track: bool = True) -> tuple[str, 
             gaps.append("№ УПД")
         if shipment.upd_type not in UPD_WITHOUT_FILE and not shipment.upd_url:
             gaps.append("файл УПД")
-    if carrier and with_track and not shipment.track_number.strip():
+    if shipment.track_required and with_track and not shipment.track_number.strip():
         gaps.append("трек-номер")
     return tuple(gaps)
 

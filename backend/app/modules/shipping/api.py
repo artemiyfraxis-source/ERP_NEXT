@@ -324,7 +324,7 @@ def _shipment_result(shipment: Shipment) -> dict:
         "upd_type": shipment.upd_type.value if shipment.upd_type else None, "upd_number": shipment.upd_number,
         "upd_date": shipment.upd_date.isoformat() if shipment.upd_date else None,
         "upd_url": shipment.upd_url, "pl_number": shipment.pl_number,
-        "dn_number": shipment.dn_number, "track_number": shipment.track_number,
+        "dn_number": shipment.dn_number, "track_number": shipment.track_number, "track_required": shipment.track_required,
         "packed_at": shipment.packed_at.isoformat() if shipment.packed_at else None,
         "shipped_at": shipment.shipped_at.isoformat() if shipment.shipped_at else None,
         "manager": shipment.manager, "note": shipment.note, "tk_note": shipment.tk_note,
