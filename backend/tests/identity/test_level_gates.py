@@ -28,6 +28,8 @@ from tests.access_levels import principal_as
 DEPENDENCIES = {
     **{gate.key: getattr(http_auth, f"{gate.key}_principal", None) for gate in GATES},
     "shipping_editor": shipping_api.shipping_editor_principal,
+    # Added after the transfer: historical corrections are admin tools, never section-matrix rights.
+    "shipping_history": shipping_api.shipping_history_principal,
     "staffdir_view": employee_card_api.staffdir_view_principal,
     # «Сканирование документов» (0159, after the transfer): its own section, no role-era gate behind it.
     "scan_edit": scan_jobs_api.scan_edit_principal,
@@ -82,6 +84,16 @@ def _gate_dependencies() -> set:
     return {dependency for dependency in DEPENDENCIES.values() if dependency is not None}
 
 
+@pytest.mark.parametrize("level", (*ACCESS_LEVELS, domain.ADMIN_MODE_LEVEL))
+@pytest.mark.parametrize("service", (False, True))
+def test_shipping_history_gate_is_full_access_only_regardless_of_section_rights(level, service):
+    for permissions in _permission_sets():
+        principal = replace(_principal(level, permissions), service=service)
+        assert _passes(DEPENDENCIES["shipping_history"], principal) == (
+            level in FULL_ACCESS_LEVELS and not service
+        )
+
+
 def _walk(dependant):
     for child in dependant.dependencies:
         if child.call is not None:
@@ -115,6 +127,11 @@ def test_no_route_takes_a_gate_outside_the_contract():
                 seen.add(call)
     # Every contract dependency guards at least one route (production_view_work: start / pause / submit).
     assert {DEPENDENCIES["production_view_work"], DEPENDENCIES["shipping_editor"], DEPENDENCIES["staffdir_view"]} <= seen
+    history_route, inherited = next(
+        (route, inherited) for route, inherited in routes
+        if route.path == "/api/shipping/shipments/{shipment_id}/history-correction" and route.methods == {"POST"}
+    )
+    assert DEPENDENCIES["shipping_history"] in (*inherited, *_walk(history_route.dependant))
     built = {
         name for name, value in vars(http_auth).items()
         if name.endswith("_principal") and getattr(value, "__qualname__", "") in builders
