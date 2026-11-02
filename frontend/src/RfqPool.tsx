@@ -246,13 +246,43 @@ function reasonText(reason: SuggestReason) {
   return parts.join(" · ");
 }
 
+function filterSuppliers(items: SupplierSuggestion[], query: string) {
+  const words = query.trim().toLocaleLowerCase("ru").split(/\s+/).filter(Boolean);
+  return items.filter((item) => {
+    const text = `${item.name} ${item.supplier_id ?? ""}`.toLocaleLowerCase("ru");
+    return words.every((word) => text.includes(word));
+  });
+}
+
+function SupplierSearch({ query, onChange, shown, total, selected }: {
+  query: string; onChange: (query: string) => void; shown: number; total: number; selected: number;
+}) {
+  return <>
+    <div className="filters table-toolbar">
+      <div className="table-search">
+        <input className="search" type="search" name="supplier-search" autoComplete="off"
+          aria-label="Поиск по списку поставщиков" placeholder="Найти поставщика в списке…"
+          value={query} onChange={(event) => onChange(event.target.value)} />
+      </div>
+      {query && <button type="button" className="secondary small" aria-label="Очистить поиск поставщиков" onClick={() => onChange("")}>Очистить</button>}
+      <span className="muted" role="status" style={{ fontVariantNumeric: "tabular-nums" }}>Показано {shown} из {total} · выбрано {selected}</span>
+    </div>
+    {shown === 0 && query.trim() && <div className="empty">По поиску поставщиков ничего не найдено. Измените или очистите поиск.</div>}
+  </>;
+}
+
 /** Suppliers with their reason chips and a checkbox each (the pool's panel and «Подобрать поставщиков»). */
 export function SuggestionList({ items, checked, onToggle }: {
   items: SupplierSuggestion[]; checked: Set<string>; onToggle: (key: string) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const visible = filterSuppliers(items, query);
   return (
+    <>
+      <SupplierSearch query={query} onChange={setQuery} shown={visible.length} total={items.length}
+        selected={items.filter((item) => item.in_rfq || checked.has(suggestionKey(item))).length} />
     <div className="rfq-suggest-list" role="group" aria-label="Поставщики">
-      {items.map((item) => {
+      {visible.map((item) => {
         const key = suggestionKey(item);
         return (
           <label key={key}>
@@ -266,6 +296,7 @@ export function SuggestionList({ items, checked, onToggle }: {
         );
       })}
     </div>
+    </>
   );
 }
 
@@ -305,6 +336,8 @@ function SupplierLinesList({ items, lines, chosen, onChange }: {
   onChange: (key: string, lineIds: string[]) => void;
 }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState("");
+  const visible = filterSuppliers(items, query);
   const lineIds = lines.map((line) => line.id);
   const ordered = (ids: Set<string>) => lineIds.filter((id) => ids.has(id));
   const toggleOpen = (key: string) => setOpen((current) => {
@@ -313,8 +346,11 @@ function SupplierLinesList({ items, lines, chosen, onChange }: {
     return next;
   });
   return (
+    <>
+      <SupplierSearch query={query} onChange={setQuery} shown={visible.length} total={items.length}
+        selected={items.filter((item) => item.in_rfq || (chosen[suggestionKey(item)]?.length ?? 0) > 0).length} />
     <div className="rfq-suggest-list" role="group" aria-label="Поставщики">
-      {items.map((item) => {
+      {visible.map((item) => {
         const key = suggestionKey(item);
         const picked = new Set(chosen[key] ?? []);
         const related = relatedLines(item, lineIds);
@@ -374,6 +410,7 @@ function SupplierLinesList({ items, lines, chosen, onChange }: {
         );
       })}
     </div>
+    </>
   );
 }
 
