@@ -69,17 +69,18 @@ function urlTab(): { tab: Tab | null; journal: boolean } {
   return { tab: TABS.some(([key]) => key === tab) ? tab as Tab : null, journal: false };
 }
 
-/** Акты приёмки КБ — зелёные строки с ГРН над строкой КБ; строка КБ — всегда (на ней числа-кнопки). «Принято» у неё —
- *  прочерк, когда акты показаны: принятое уже расписано по ГРН. */
-type IntakeLine = IntakeRow & { act?: IntakeAct; left: number };
-function expand(row: IntakeRow, withActs: boolean): IntakeLine[] {
+/** Акты остаются отдельными строками; первая несёт общие действия КБ. Ниже — только фактический остаток к приёмке. */
+type IntakeLine = IntakeRow & { act?: IntakeAct; left: number; kbActions: boolean };
+function expand(row: IntakeRow, withActs: boolean, withRemainder: boolean): IntakeLine[] {
   const acts = withActs ? row.acts ?? [] : [];
   const left = leftOf(row);
-  const lines: IntakeLine[] = acts.map((act) => ({
-    ...row, act, left: 0, stage: "", launched: "0", delivered: "0", accepted: act.quantity, remaining: "0", packed: "0", sent: "0",
+  const lines: IntakeLine[] = acts.map((act, index) => ({
+    ...row, act, kbActions: index === 0, left: 0, stage: "", launched: "0", delivered: "0", accepted: act.quantity, remaining: "0",
+    packed: index === 0 ? row.packed : "0", sent: index === 0 ? row.sent : "0",
     grn: act.grn, location: act.location, tasks: [],
   }));
-  lines.push(acts.length ? { ...row, left, accepted: "0", grn: null, location: "" } : { ...row, left });
+  if (!acts.length) lines.push({ ...row, left, kbActions: true });
+  else if (withRemainder && (left > 0 || num(row.remaining) > 0)) lines.push({ ...row, left, kbActions: false, accepted: "0", packed: "0", sent: "0", grn: null, location: "" });
   return lines;
 }
 
@@ -140,7 +141,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const pieces = useMemo(() => new Map(allRows.map((row) => [kbKey(row), stagePieces(row, shipments)])), [allRows, shipments]);
   const piecesOf = (row: IntakeRow) => pieces.get(kbKey(row)) ?? stagePieces(row, shipments);
   const inTab = (row: IntakeRow, key: Tab) => key === "all" || piecesOf(row)[key] > 0;
-  const shown = useMemo(() => allRows.filter((row) => inTab(row, tab)).flatMap((row) => expand(row, ACT_TABS.includes(tab))),
+  const shown = useMemo(() => allRows.filter((row) => inTab(row, tab)).flatMap((row) => expand(row, ACT_TABS.includes(tab), tab === "all")),
     [allRows, tab, pieces]); // eslint-disable-line react-hooks/exhaustive-deps
   const head = useMemo(() => {
     const byProject: Record<string, IntakeRow> = {};
@@ -153,7 +154,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const shippedAt = (row: IntakeRow) => kbShips(row).filter((shipment) => SHIPPED_STATUS.includes(shipment.status)).map((shipment) => String(shipment.shipped_at ?? "")).sort().pop() ?? "";
   const trackShips = (row: IntakeRow) => kbShips(row).filter((shipment) => shipment.status === "Упакована" && needsTrack(shipment));
 
-  /** Строка КБ как пришла с сервера (у строки после актов «Принято» обнулено для таблицы, окну нужно настоящее). */
+  /** Общие действия КБ считают количества по серверной строке, а не по одному акту. */
   const source = (line: IntakeRow) => allRows.find((row) => keyOf(row) === keyOf(line)) ?? line;
 
   async function accepted(pieceCount: number) {
@@ -186,11 +187,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const who = (row: IntakeRow) => `${row.project} ${row.item_index}`;
   /** «Упаковано»: число — кнопка окна упаковки. Подсвечена, когда есть что упаковать и менеджер решила «упаковывать». */
   const packCell = (line: IntakeLine) => {
-    if (line.act) return dash;
+    if (!line.kbActions) return dash;
     // «Упаковано» и «На отгрузку»: только число штук своего шага, действие — в соседней колонке.
     if (tab === "packed" || tab === "to_ship") return count(String(piecesOf(line)[tab]));
     if (!canDispatch) return count(line.packed);
-    // Строка КБ под актами показывает «Принято» прочерком — считать надо по настоящей строке.
     const row = source(line);
     const avail = packable(row);
     const open = kbShips(row).some((shipment) => ACTIVE.includes(shipment.status));
@@ -206,7 +206,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   };
   /** «Трек»: у упакованных отправок с доставкой ТК; вписать можно, когда есть УПД и ТК. */
   const trackCell = (row: IntakeLine, action = true) => {
-    if (row.act) return dash;
+    if (!row.kbActions) return dash;
     const needing = action ? trackShips(row) : [];
     const tracks = (needing.length ? needing : kbShips(row)).map((shipment) => shipment.track_number).filter(Boolean);
     const text = tracks.length ? <span className="intake-clip intake-tracks" title={tracks.join(", ")}>{tracks.join(", ")}</span> : null;
@@ -223,11 +223,11 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     return <span className="intake-track-cell">{text}
       <button type="button" className="secondary small intake-print" disabled={!ready}
         title={ready ? "Вписать трек-номер ТК" : `Трек вносится, когда есть УПД и ТК${gaps.length ? ` — не хватает: ${gaps.join(", ")}` : ""}. Ждём данные менеджера`}
-        aria-label={`Трек ${who(row)}`} onClick={() => setOpened({ kind: "track", row })}>Трек…</button></span>;
+        aria-label={`Трек ${who(row)}`} onClick={() => setOpened({ kind: "track", row: source(row) })}>Трек…</button></span>;
   };
   /** «Документы»: у упакованной отправки — «Сформировать отгрузочные» (окно упаковки) или одна кнопка окна с PL, DN, УПД;
    *  печатается только в окне. Несколько отправок КБ — по строке на каждую с № ОТГ. */
-  const docsShips = (row: IntakeLine) => row.act ? [] : kbShips(row).filter((shipment) => shipment.status === "Упакована");
+  const docsShips = (row: IntakeLine) => row.kbActions ? kbShips(row).filter((shipment) => shipment.status === "Упакована") : [];
   const docsCell = (row: IntakeLine) => {
     const ships = docsShips(row);
     if (!ships.length) return dash;
@@ -247,7 +247,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   };
   /** «Отгружено»: число — кнопка окна отправок проекта; подсвечена, когда есть готовое к отгрузке. */
   const sentCell = (row: IntakeLine) => {
-    if (row.act) return dash;
+    if (!row.kbActions) return dash;
     if (tab === "shipped") return count(String(piecesOf(row).shipped));
     if (!canDispatch || !kbShips(row).length) return count(row.sent);
     const toShip = piecesOf(row).to_ship;
@@ -277,7 +277,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       render: (row) => trackCell(row, tab === "packed" || tab === "all") },
     { key: "docs", title: "Документы", value: (row) => docsShips(row).map((shipment) => shipment.pl_number ? docsLabel(shipment) : "не сформированы").join(", "), render: docsCell },
     { key: "ship", title: "Отгрузка", value: (row) => readyShips(row).length, render: (row) => {
-      if (row.act || !canDispatch || !readyShips(row).length) return dash;
+      if (!row.kbActions || !canDispatch || !readyShips(row).length) return dash;
       return <button type="button" className="primary small intake-print" title={`Готово к отгрузке: ${piecesOf(row).to_ship}`} aria-label={`Отгрузить ${who(row)}`}
         onClick={() => setOpened({ kind: "ship", project: row.project })}>Отгрузить</button>;
     } },
@@ -299,9 +299,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const OPTIONAL: Record<string, (row: IntakeLine) => boolean> = {
     launched: (row) => num(row.launched) > 0, accepted: (row) => num(row.accepted) > 0,
     remaining: (row) => num(row.remaining) > 0,
-    packed: (row) => !row.act && (num(row.packed) > 0 || packable(source(row)) > 0 || kbShips(row).some((shipment) => ACTIVE.includes(shipment.status))),
-    track: (row) => !row.act && (trackShips(row).length > 0 || kbShips(row).some((shipment) => Boolean(shipment.track_number))),
-    sent: (row) => !row.act && (num(row.sent) > 0 || kbShips(row).length > 0),
+    packed: (row) => row.kbActions && (num(row.packed) > 0 || packable(source(row)) > 0 || kbShips(row).some((shipment) => ACTIVE.includes(shipment.status))),
+    track: (row) => row.kbActions && (trackShips(row).length > 0 || kbShips(row).some((shipment) => Boolean(shipment.track_number))),
+    sent: (row) => row.kbActions && (num(row.sent) > 0 || kbShips(row).length > 0),
     grn: (row) => Boolean(row.grn), received: (row) => Boolean(row.act), tasks: (row) => row.tasks.length > 0,
   };
   const visibleColumns = tab === "all"

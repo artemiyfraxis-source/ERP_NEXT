@@ -33,6 +33,7 @@ export interface ReadinessItem { label: string; ok: boolean }
 interface ReadinessSource {
   receiver: string; phone: string; shipping_point: string; carrier: string; terms: string | null; upd_type: string | null;
   upd_number?: string; upd_url?: string; track_number?: string;
+  ready_to_ship?: boolean; missing_ship?: string[];
 }
 
 export function readinessItems(source: ReadinessSource, withTrack = false): ReadinessItem[] {
@@ -57,11 +58,18 @@ export function readinessItems(source: ReadinessSource, withTrack = false): Read
 /** Чипы данных и общий итог. `gaps` — слова сервера для отправки (они главнее); для карточки проекта итог считается по чипам. */
 export function Readiness({ source, gaps, withTrack = false }: { source: ReadinessSource; gaps?: string[]; withTrack?: boolean }) {
   const items = readinessItems(source, withTrack);
-  const missing = gaps ?? items.filter((item) => !item.ok).map((item) => item.label);
+  const allMissing = gaps ?? items.filter((item) => !item.ok).map((item) => item.label);
+  const missing = allMissing.filter((gap) => gap !== "трек-номер" && gap !== "нет трека");
+  const trackMissing = allMissing.includes("трек-номер") || allMissing.includes("нет трека") || source.missing_ship?.includes("трек-номер")
+    || (withTrack && items.some((item) => item.label === "нет трека"));
+  const warehouse = source.ready_to_ship === false || Boolean(source.missing_ship?.length) || trackMissing;
   return <span className="ship-ready" aria-label="Готовность данных отправки">
     {items.map((item) => <StatusChip key={item.label} tone={item.ok ? "success" : "neutral"} className={item.ok ? "ship-ready-ok" : "ship-ready-gap"}>{item.label}</StatusChip>)}
     {missing.length === 0
-      ? <StatusChip tone="success" title="Все данные внесены">Готово к отгрузке</StatusChip>
+      ? warehouse
+        ? <StatusChip tone="warning" title={`Не хватает: ${(source.missing_ship ?? allMissing).join(", ") || "готовность склада"}`}>
+          {trackMissing ? "Ждёт трек от склада" : "Ждёт склад"}</StatusChip>
+        : <StatusChip tone="success" title="Все данные внесены">{source.ready_to_ship === true ? "Готово к отгрузке" : "Данные внесены"}</StatusChip>
       : <StatusChip tone="warning" title={`Не хватает: ${missing.join(", ")}`}>Ждёт данных менеджера</StatusChip>}
   </span>;
 }
