@@ -387,7 +387,16 @@ def test_migration_keeps_old_rows_checks_the_new_ladder_and_keeps_the_journal_ap
             connection.execute("UPDATE production_plan_events SET text = 'правка'")
         connection.commit()
 
-    # Старое слово читается как этап новой лестницы.
+    # Повторный upgrade ничего не делает.
+    with sqlite3.connect(database) as connection:
+        schema = _schema(connection)
+    command.upgrade(_config(database), "0107_stage_ladder")
+    with sqlite3.connect(database) as connection:
+        assert _schema(connection) == schema
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0107_stage_ladder"
+
+    # Старое слово читается как этап новой лестницы текущим репозиторием на текущей схеме.
+    command.upgrade(_config(database), "head")
     engine = create_engine(f"sqlite+pysqlite:///{database.as_posix()}")
     try:
         with Session(engine) as session:
@@ -399,14 +408,6 @@ def test_migration_keeps_old_rows_checks_the_new_ladder_and_keeps_the_journal_ap
         ("Принято складом", "В работе", "КБ на складе → В работе"),
         ("В работе", "ОТК", "В работе → ОТК"),
     ]
-
-    # Повторный upgrade ничего не делает.
-    with sqlite3.connect(database) as connection:
-        schema = _schema(connection)
-    command.upgrade(_config(database), "0107_stage_ladder")
-    with sqlite3.connect(database) as connection:
-        assert _schema(connection) == schema
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0107_stage_ladder"
 
 
 def test_migration_downgrades_to_the_old_checks_and_keeps_the_trigger(database):

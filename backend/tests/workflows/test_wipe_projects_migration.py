@@ -71,6 +71,9 @@ def database(tmp_path, monkeypatch):
         connection.execute(text(
             "ALTER TABLE production_plan_events ADD COLUMN from_value VARCHAR(64) NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE production_plan_events ADD COLUMN reason TEXT NOT NULL DEFAULT ''"))
+        # 0166: nullable piece counts, absent on ordinary journal events.
+        for name in ("run", "started", "done", "qc", "passed"):
+            connection.execute(text(f"ALTER TABLE production_plan_events ADD COLUMN progress_{name} INTEGER"))
         connection.execute(text("ALTER TABLE production_operations ADD COLUMN stage_key VARCHAR(128)"))
         # 0119: код коробки.
         connection.execute(text("ALTER TABLE production_boxes ADD COLUMN code VARCHAR(64)"))
