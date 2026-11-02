@@ -422,7 +422,7 @@ function Home({
   return (
     <section className="page">
       <header className="page-header">
-        <div><span className="eyebrow">Личный кабинет</span><h1>Добрый день, {principal.user.name}</h1><p>Выберите блок — внутри его разделы.</p></div>
+        <div><span className="eyebrow">Главная</span><h1>Добрый день, {principal.user.name}</h1><p>Выберите блок — внутри его разделы.</p></div>
       </header>
       <div className="tiles block-tiles">
         {blocks.map((block) => {

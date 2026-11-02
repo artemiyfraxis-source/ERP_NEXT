@@ -51,6 +51,22 @@ it("returns to login when an active session is rejected", async () => {
 
 const sidebar = () => within(screen.getByRole("navigation", { name: "Основная навигация" }));
 
+it.each(["/", "/?section=cabinet"])("keeps %s as Главная with the personal card only in the footer and notifications in the bell", async (address) => {
+  window.history.replaceState({}, "", address);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    String(input) === "/api/auth/me" ? json(principal) : json({ detail: "нет в тесте" }, 404));
+  render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+  expect(sidebar().getByRole("button", { name: "Главная" })).toBeInTheDocument();
+  expect(sidebar().queryByRole("button", { name: "Личный кабинет" })).toBeNull();
+  expect(sidebar().queryByRole("button", { name: "Уведомления" })).toBeNull();
+  expect(sidebar().queryByRole("button", { name: "Моя карточка" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Моя карточка" }).closest(".side-foot")).not.toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Уведомления" }));
+  expect(await screen.findByRole("heading", { name: "Уведомления", level: 1 })).toBeInTheDocument();
+  expect(new URL(window.location.href).searchParams.get("section")).toBe("notifications");
+});
+
 // Витя's edit 4: the old «Лист закупки» tabs moved out; bookmarks and links land in the new places (MOVED_TABS).
 describe("old «Лист закупки» links", () => {
   const cases: Array<[string, string, string]> = [
@@ -103,13 +119,14 @@ it("opens procurement by the section grant alone: the level's name decides nothi
 });
 
 it("draws the block tiles with line icons, never emoji (audit М-6)", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(principal));
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(as("superadmin", {})));
 
   render(<App />);
 
   await screen.findByText("Добрый день, Сотрудник");
   const tiles = document.querySelectorAll(".block-tile");
   expect(tiles.length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "Администрирование" }).querySelector("svg path")).not.toBeNull();
   tiles.forEach((tile) => {
     expect(tile.querySelector(".tile-icon svg.block-icon")).not.toBeNull();
     expect(tile.querySelector(".tile-icon")?.textContent).toBe("");
@@ -433,18 +450,17 @@ it("NAV-1: home shows the blocks as tiles and a block shows its section cards in
 it("NAV-1: a block with a single visible section opens that section directly", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({ ...principal, permissions: {} });
-    if (path === "/api/notifications") return json({ notifications: [], unread: 0 });
+    if (path === "/api/auth/me") return json({ ...principal, permissions: { production: "view" } });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<App />);
 
   const main = await screen.findByRole("main");
-  expect(within(main).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Менеджмент"]);
+  expect(within(main).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Производство", "Менеджмент"]);
   fireEvent.click(within(main).getByRole("button", { name: "Менеджмент" }));
 
-  expect(await screen.findByRole("heading", { name: "Уведомления", level: 1 })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Производственный план", level: 1 })).toBeInTheDocument();
 });
 
 it("NAV-1: a block URL the principal cannot open falls back to home", async () => {
