@@ -187,6 +187,9 @@ _COUPLED_VALUES: dict[tuple[str, str], Any] = {
     # A разрешительный ПИН's hash goes with its date (0163_approval_pin): a seeded credential has none.
     ("identity_credentials", "approval_pin_hash"): None,
     ("identity_credentials", "approval_pin_set_at"): None,
+    # A plain journal event has no piece counts (0166_kb_progress).
+    **{("production_plan_events", f"progress_{name}"): None
+       for name in ("run", "started", "done", "qc", "passed")},
 }
 # Values the column-by-column fill would leave empty by a CHECK's «other value → NULL» branch, although the row takes
 # the one value that needs them: a seeded tech record is `tab = 'ter'` (the first literal of the БД.ТЕР card CHECKs,

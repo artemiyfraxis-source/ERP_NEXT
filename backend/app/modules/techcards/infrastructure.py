@@ -10,6 +10,7 @@ from sqlalchemy import JSON, CheckConstraint, Date, DateTime, ForeignKey, Index,
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
+from app.shared.advisory_lock import lock_project_run
 from app.shared.project_number import normalize_project_number
 
 from .harness_infrastructure import (
@@ -253,6 +254,7 @@ class SqlAlchemyTechcardRepository:
         return [self._domain(row) for row in rows if normalize_project_number(row.project) == key]
 
     def save(self, card: ProjectTechcard) -> None:
+        lock_project_run(self.session, card.project)
         row = self.session.get(ProjectTechcardRow, card.id)
         if row is None:
             row = ProjectTechcardRow(id=card.id)
@@ -295,6 +297,7 @@ class SqlAlchemyTechcardRepository:
 
     def delete_project(self, project: str) -> tuple[int, int]:
         """`erpProdDropCards_`: the project's cards go together with their revisions. → (cards, revisions)."""
+        lock_project_run(self.session, project)
         ids = list(self.session.scalars(select(ProjectTechcardRow.id).where(ProjectTechcardRow.project == project)))
         if not ids:
             return 0, 0

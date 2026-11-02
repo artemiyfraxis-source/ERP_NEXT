@@ -15,7 +15,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -152,6 +152,7 @@ def _kb_stage(stage) -> dict[str, Any]:
     return {
         "index": stage.item_index, "status": stage.status, "manual": stage.manual,
         "tc": stage.tc, "kit": stage.kit, "skipped": list(stage.skipped),
+        **({"progress": {"run": stage.progress.run, "counts": stage.progress.counts(), "warnings": list(stage.progress.warnings())}} if stage.progress is not None else {}),
         "review": None if stage.review is None else {
             "value": stage.review.value, "text": stage.review.text, "who": stage.review.who,
         },
@@ -592,6 +593,12 @@ class MarkPayload(BaseModel):
     preview_token: str = Field(default="", max_length=64)
 
 
+class KbProgressPayload(BaseModel):
+    counts: dict[str, StrictInt] = Field(min_length=1, max_length=4)
+    expected_sequence: StrictInt = Field(ge=0)
+    expected_run: StrictInt = Field(gt=0)
+
+
 def _stage_state(request: Request, kitset: Kitset, kb: str = "") -> flow.ProjectStageState:
     factory = production_factory(request)
     if factory is None:
@@ -616,6 +623,29 @@ def status_preview(
     итоги, `preview_token` для записи, нужна ли причина."""
     kitset = _kitset(request, project)
     return _run(lambda: flow.preview_project_stage(_stage_state(request, kitset, kb), value, kb))
+
+
+@router.get("/{project}/progress/{kb}")
+def kb_progress(
+    project: str, kb: str, request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> dict:
+    kitset = _kitset(request, project)
+    return _run(lambda: flow.preview_project_kb_progress(_stage_state(request, kitset, kb), kb))
+
+
+@router.post("/{project}/progress/{kb}")
+def save_kb_progress(
+    project: str, kb: str, payload: KbProgressPayload, request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    kitset = _kitset(request, project)
+    return _run(lambda: flow.save_project_kb_progress(
+        _stage_state(request, kitset, kb), kb=kb, changes=payload.counts,
+        expected_sequence=payload.expected_sequence, expected_run=payload.expected_run,
+        actor=principal.actor, now=now, uow_factory=production_factory(request),
+    ))
 
 
 @router.post("/{project}/marks")

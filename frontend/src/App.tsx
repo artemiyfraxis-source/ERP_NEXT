@@ -9,6 +9,7 @@ import {
   type Principal,
 } from "./api";
 import { DraftProvider, DraftStore } from "./formDrafts";
+import { setPersonalViewsUser } from "./personalViews";
 import {
   accessLevelOf,
   canAct,
@@ -94,6 +95,10 @@ function placeFromUrl(): Place {
 
 export function App() {
   const [principal, setPrincipal] = useState<Principal | null>(null);
+  function acceptPrincipal(next: Principal | null) {
+    setPersonalViewsUser(next?.user.id ?? null);
+    setPrincipal(next);
+  }
   const [loading, setLoading] = useState(true);
   const [place, setPlace] = useState<Place>(placeFromUrl);
   // The address bar changed under us (global search, back button): pages that read their start filter from it remount.
@@ -116,7 +121,7 @@ export function App() {
     setBootError("");
     identityApi
       .me()
-      .then(setPrincipal)
+      .then(acceptPrincipal)
       .catch((error) => {
         if (error instanceof ApiError && error.status === 401) return;
         setBootError(failureText(error, "ERP не ответила"));
@@ -134,7 +139,7 @@ export function App() {
 
   useEffect(() => {
     const requireLogin = () => {
-      if (principalRef.current) setExpired(true);
+      if (principalRef.current) { setPersonalViewsUser(null); setExpired(true); }
     };
     window.addEventListener(AUTH_REQUIRED_EVENT, requireLogin);
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, requireLogin);
@@ -190,7 +195,7 @@ export function App() {
     setSwitching(true);
     try {
       const next = await identityApi.adminMode(!principal.admin_mode);
-      setPrincipal(next);
+      acceptPrincipal(next);
       go({ section: "cabinet", block: null });
     } catch (error) {
       setShellError(error instanceof Error ? error.message : "Режим админа не переключён");
@@ -201,24 +206,37 @@ export function App() {
 
   // «Смотреть как сотрудник» (из своей карточки): весь ERP глазами выбранного — с главного экрана, как у него.
   async function startViewAs(employee: { id: string }) {
-    const viewed = await identityApi.viewAs(employee.id);
-    setPrincipal(viewed);
-    go({ section: "cabinet", block: null });
+    setPersonalViewsUser(null);
+    try {
+      const viewed = await identityApi.viewAs(employee.id);
+      acceptPrincipal(viewed);
+      go({ section: "cabinet", block: null });
+    } catch (error) {
+      setPersonalViewsUser(principal?.user.id ?? null);
+      throw error;
+    }
   }
   // «Вернуться к себе» — туда, откуда начали: своя карточка.
   async function exitViewAs() {
-    const own = await identityApi.stopViewAs();
-    setPrincipal(own);
-    go({ section: "card", block: null });
+    setPersonalViewsUser(null);
+    try {
+      const own = await identityApi.stopViewAs();
+      acceptPrincipal(own);
+      go({ section: "card", block: null });
+    } catch (error) {
+      setPersonalViewsUser(principal?.user.id ?? null);
+      throw error;
+    }
   }
 
   async function signOut() {
     setShellError("");
     const leaving = principal;
+    setPersonalViewsUser(null);
     const signedOut = () => {
       if (leaving) drafts.clearUser(leaving.user.id);
       setExpired(false);
-      setPrincipal(null);
+      acceptPrincipal(null);
     };
     try {
       await identityApi.logout();
@@ -233,6 +251,7 @@ export function App() {
           ? `Выход не выполнен: ${error.message}`
           : "Выход не выполнен: сервер недоступен",
       );
+      setPersonalViewsUser(leaving?.user.id ?? null);
     }
   }
 
@@ -240,7 +259,7 @@ export function App() {
   // (the `key` below), and the first user's unsent forms stay keyed to them, out of the newcomer's sight.
   function signInAgain(next: Principal) {
     setExpired(false);
-    setPrincipal(next);
+    acceptPrincipal(next);
   }
 
   if (loading) return <div className="screen-center muted">Загружаем ERP…</div>;
@@ -250,7 +269,7 @@ export function App() {
       <button className="primary" onClick={loadPrincipal}>Повторить</button>
     </div>;
   }
-  if (!principal) return place.tsd ? <TsdEntry onLogin={setPrincipal} /> : <LoginPage onLogin={setPrincipal} />;
+  if (!principal) return place.tsd ? <TsdEntry onLogin={acceptPrincipal} /> : <LoginPage onLogin={acceptPrincipal} />;
   // ТСД склада: its own full-screen frame and PIN sign-in; without the
   // warehouse section the screen hands over to the ordinary shell.
   if (place.tsd) {

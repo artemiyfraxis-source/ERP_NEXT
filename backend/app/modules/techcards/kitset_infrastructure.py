@@ -14,6 +14,7 @@ from sqlalchemy import JSON, CheckConstraint, DateTime, Index, Integer, LargeBin
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.persistence import Base
+from app.shared.advisory_lock import lock_project_run
 
 from .kitsets import KitAssembly, KitComponent, KitDocument, KitLot, Kitset, project_key
 
@@ -132,6 +133,7 @@ class SqlAlchemyKitsetRepository:
         return [self._domain(row) for row in self.session.scalars(select(KitsetRow).order_by(KitsetRow.project))]
 
     def save(self, kitset: Kitset) -> None:
+        lock_project_run(self.session, kitset.project)
         row = self.session.scalar(select(KitsetRow).where(KitsetRow.project_key == project_key(kitset.project)))
         if row is None:
             row = KitsetRow(project=kitset.project, project_key=project_key(kitset.project))
@@ -153,6 +155,7 @@ class SqlAlchemyKitsetRepository:
         row.updated_by = kitset.updated_by
 
     def delete(self, project: str) -> int:
+        lock_project_run(self.session, project)
         result = self.session.execute(delete(KitsetRow).where(KitsetRow.project_key == project_key(project)))
         return result.rowcount or 0
 

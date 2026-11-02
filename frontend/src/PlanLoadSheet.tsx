@@ -5,6 +5,8 @@ import { matchesWords } from "./DataTable";
 import { formatDate, formatDayMonth } from "./format";
 import { ProjectStatus, planStatusApi } from "./ProjectStatus";
 import { statusLabel, statusTone, type Tone } from "./statusTone";
+import { ColumnChooserMenu } from "./WarehouseColumns";
+import { loadPersonalViews, savePersonalView } from "./personalViews";
 
 /* Лист цеха «ЗАГРУЗ» в ERP (владелец 04.10: «тут вот такое представление я хочу»): строка — проект, слева
    закреплённые колонки листа, справа календарь по дням (или по неделям) с полосой плановых работ. Значения считает
@@ -260,7 +262,8 @@ const FOLD_ORDER = COLUMNS.filter((column) => column.fold).sort((a, b) => a.fold
 export const MIN_VISIBLE_DAYS = 35;
 /** То же в масштабе «Недели». */
 export const MIN_VISIBLE_WEEKS = 8;
-const COLUMNS_KEY = "erp-zg-columns";
+const PERSONAL_VIEW = "production-plan.load";
+const columnsKey = (userId: string) => `erp-zg-columns:user:${userId}`;
 const SCALE_KEY = "erp-zg-scale";
 const COLLAPSED_KEY = "erp-zg-collapsed";
 
@@ -298,8 +301,20 @@ function writeStored(key: string, value: unknown) {
   } catch { /* хранилище недоступно — выбор живёт до перезагрузки */ }
 }
 
-const readChosen = () => readStored<ColumnKey[]>(COLUMNS_KEY, (saved) => Array.isArray(saved)
-  ? saved.filter((key): key is ColumnKey => COLUMNS.some((column) => column.key === key)) : null);
+interface PersonalColumns { order: ColumnKey[]; hidden: ColumnKey[]; autoFit: boolean }
+const defaultColumns = (): PersonalColumns => ({ order: COLUMNS.map((column) => column.key), hidden: [], autoFit: true });
+function readColumns(saved: unknown): PersonalColumns | null {
+  if (!saved || typeof saved !== "object") return null;
+  const { order, hidden, autoFit } = saved as Partial<PersonalColumns>;
+  if (!Array.isArray(order) || !Array.isArray(hidden) || typeof autoFit !== "boolean") return null;
+  const known = (key: unknown): key is ColumnKey => COLUMNS.some((column) => column.key === key);
+  const keys = [...new Set(order.filter(known))].filter((key) => key !== "project");
+  return {
+    order: ["project", ...keys, ...COLUMNS.map((column) => column.key).filter((key) => key !== "project" && !keys.includes(key))],
+    hidden: [...new Set(hidden.filter(known))].filter((key) => key !== "project"), autoFit,
+  };
+}
+const readPersonalColumns = (userId: string) => readStored(columnsKey(userId), readColumns) ?? defaultColumns();
 const readCollapsed = () => readStored<string[]>(COLLAPSED_KEY, (saved) => Array.isArray(saved) ? saved.filter((item): item is string => typeof item === "string") : null) ?? [];
 const readScale = () => readStored<SheetScale>(SCALE_KEY, (saved) => saved === "week" ? "week" : null) ?? "day";
 
@@ -319,8 +334,8 @@ export function columnTitle(column: Pick<Column, "name" | "hint">) {
 /** Показанные колонки, их ширины и отступы слева для закрепления. */
 interface Layout { columns: Column[]; widths: number[]; lefts: number[]; width: number; hidden: Set<ColumnKey> }
 
-function sheetLayout(hidden: ColumnKey[], coarse: boolean, statusWidth: number): Layout {
-  const columns = COLUMNS.filter((column) => !hidden.includes(column.key));
+function sheetLayout(hidden: ColumnKey[], order: ColumnKey[], coarse: boolean, statusWidth: number): Layout {
+  const columns = order.map((key) => COLUMNS.find((column) => column.key === key)!).filter((column) => !hidden.includes(column.key));
   const lefts: number[] = [];
   const widths: number[] = [];
   let width = 0;
@@ -334,7 +349,12 @@ function sheetLayout(hidden: ColumnKey[], coarse: boolean, statusWidth: number):
 
 type Editing = { project: string; field: string; top: number; left: number };
 
-export function PlanLoadSheet({ rows, from, to, today, holidays, stages, suppliedValues, arrivalValues, canEdit, busy, onStatusChanged, onMark, onDeadline, onOpenProject, onOpenJournal, hasCard }: {
+export function PlanLoadSheet(props: PlanLoadSheetProps) {
+  return <PersonalPlanLoadSheet key={props.userId} {...props} />;
+}
+
+interface PlanLoadSheetProps {
+  userId: string;
   rows: ProductionPlanRow[];
   from: string;
   to: string;
@@ -354,14 +374,16 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, stages, supplie
   onOpenJournal: (row: ProductionPlanRow) => void;
   /** Есть ли у проекта карточка в «Проектах» (подсказка к №); по умолчанию — есть КБ. */
   hasCard?: (row: ProductionPlanRow) => boolean;
-}) {
+}
+
+function PersonalPlanLoadSheet({ userId, rows, from, to, today, holidays, stages, suppliedValues, arrivalValues, canEdit, busy, onStatusChanged, onMark, onDeadline, onOpenProject, onOpenJournal, hasCard }: PlanLoadSheetProps) {
   const [query, setQuery] = useState("");
   const [showClosed, setShowClosed] = useState(false);
   const [showShipped, setShowShipped] = useState(false);
   const [collapsed, setCollapsed] = useState<string[]>(readCollapsed);
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [choosing, setChoosing] = useState(false);
-  const [chosen, setChosen] = useState<ColumnKey[] | null>(readChosen);
+  const [columns, setColumns] = useState(() => readPersonalColumns(userId));
+  const columnEdits = useRef(0);
   const [scale, setScale] = useState<SheetScale>(readScale);
   const [space, setSpace] = useState({ available: 0, day: 0 });
   const [coarse] = useState(isCoarse);
@@ -371,9 +393,23 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, stages, supplie
   const months = useMemo(() => sheetMonths(scale === "week" ? weeks : days), [scale, weeks, days]);
   const groups = useMemo(() => groupSheetRows(rows, stages, query), [rows, stages, query]);
   const statusWidth = useMemo(() => statusColumnWidth(rows), [rows]);
-  const hidden = chosen ?? autoHiddenColumns(space.available, space.day, coarse, statusWidth, scale === "week" ? MIN_VISIBLE_WEEKS : MIN_VISIBLE_DAYS);
-  const layout = useMemo(() => sheetLayout(hidden, coarse, statusWidth), [hidden.join(","), coarse, statusWidth]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hidden = columns.autoFit ? autoHiddenColumns(space.available, space.day, coarse, statusWidth, scale === "week" ? MIN_VISIBLE_WEEKS : MIN_VISIBLE_DAYS) : columns.hidden;
+  const layout = useMemo(() => sheetLayout(hidden, columns.order, coarse, statusWidth), [hidden.join(","), columns.order, coarse, statusWidth]); // eslint-disable-line react-hooks/exhaustive-deps
   const units = scale === "week" ? weeks.length : days.length;
+
+  useEffect(() => {
+    let alive = true;
+    loadPersonalViews(userId).then((views) => {
+      // A late read must not replace a choice already made here, or the next person's screen.
+      if (!alive || columnEdits.current || !views) return;
+      const restored = readColumns(views[PERSONAL_VIEW]);
+      if (restored) {
+        setColumns(restored);
+        writeStored(columnsKey(userId), restored);
+      }
+    });
+    return () => { alive = false; };
+  }, [userId]);
 
   // Ширина листа решает, какие колонки скрыть по умолчанию; меряем до отрисовки, чтобы не мигало.
   useLayoutEffect(() => {
@@ -421,9 +457,21 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, stages, supplie
     await onMark({ project, field, value, text });
   }
 
-  function choose(next: ColumnKey[] | null) {
-    setChosen(next);
-    writeStored(COLUMNS_KEY, next);
+  function choose(next: PersonalColumns) {
+    columnEdits.current += 1;
+    setColumns(next);
+    writeStored(columnsKey(userId), next);
+    savePersonalView(PERSONAL_VIEW, next, undefined, userId);
+  }
+
+  function moveColumn(key: ColumnKey, target: ColumnKey) {
+    if (key === "project" || target === "project" || key === target) return;
+    const order = [...columns.order];
+    const from = order.indexOf(key);
+    const to = order.indexOf(target);
+    order.splice(from, 1);
+    order.splice(to, 0, key);
+    choose({ ...columns, order });
   }
 
   function pickScale(next: SheetScale) {
@@ -477,19 +525,16 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, stages, supplie
         <span role="listitem" title="Значение поставлено вручную поверх расчёта ERP"><i className="zg-key-manual" />вручную</span>
         {layout.hidden.has("comment") && <span role="listitem" title="У проекта есть комментарий — текст в подсказке к №"><i className="zg-key-note" />комментарий</span>}
       </span>
-      <button type="button" className={`secondary small zg-columns${layout.hidden.size ? " active" : ""}`} aria-expanded={choosing} onClick={() => setChoosing((current) => !current)}
-        title={layout.hidden.size ? `Скрыто: ${COLUMNS.filter((column) => layout.hidden.has(column.key)).map((column) => column.name).join(", ")}` : undefined}>
-        Колонки{layout.hidden.size ? ` · ${layout.columns.length} из ${COLUMNS.length}` : ""}
-      </button>
+      <ColumnChooserMenu keys={columns.order} hidden={hidden} requiredKey="project" fixedKey="project"
+        titleOf={(key) => {
+          const name = COLUMNS.find((column) => column.key === key)!.name;
+          return key === "kit_checked" || key === "test_sb" ? `${name} · ручная отметка`
+            : key === "tc_ready" || key === "kit_picked" ? `${name} · также в статусе` : name;
+        }}
+        onToggle={(key, shown) => choose({ ...columns, autoFit: false, hidden: shown ? hidden.filter((item) => item !== key) : [...hidden, key] })}
+        onMove={(key, step) => { const target = columns.order[columns.order.indexOf(key) + step]; if (target) moveColumn(key, target); }}
+        onDrop={moveColumn} onReset={() => choose(defaultColumns())} resetLabel="По ширине экрана" />
     </div>
-    {choosing && <div className="column-chooser zg-chooser" role="group" aria-label="Показывать колонки">
-      {COLUMNS.map((column) => <label key={column.key} className="check-inline" title={columnTitle(column)}>
-        <input type="checkbox" checked={!layout.hidden.has(column.key)} disabled={column.key === "project"}
-          onChange={(event) => choose(event.target.checked ? hidden.filter((key) => key !== column.key) : [...hidden, column.key])} />
-        {column.name}
-      </label>)}
-      <button type="button" className="link-button" disabled={!chosen} onClick={() => choose(null)}>По ширине экрана</button>
-    </div>}
     <div ref={wrapRef} className={`zg-wrap${shown ? "" : " zg-wrap-empty"}`}>
       <table className={`zg-table${scale === "week" ? " zg-weeks" : ""}`} aria-label="Загрузка цеха по проектам"
         style={{ width: `calc(${layout.width}px + ${units} * var(${scale === "week" ? "--zg-week" : "--zg-day"}))`, "--zg-frozen": `${layout.width}px` } as CSSProperties}>
