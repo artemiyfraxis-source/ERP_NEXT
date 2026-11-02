@@ -1,11 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ProductionPlanPage } from "./ProductionPlanPage";
 import {
   MIN_VISIBLE_DAYS, MIN_VISIBLE_WEEKS, autoHiddenColumns, deadlineSpan, groupSheetRows, markText, orderStatuses, periodWords, projectColor, sheetDays,
   sheetMonths, sheetWeeks, startLabels, statusColumnWidth, todayScrollLeft, weekMarks,
 } from "./PlanLoadSheet";
 import type { Principal, ProductionPlanResult } from "./api";
+import { forgetPersonalViews, setPersonalViewsUser } from "./personalViews";
 
 const principal: Principal = {
   user: { id: "1", email: "master@example.test", name: "Мастер", department: "Производство" },
@@ -53,7 +54,8 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-afterEach(() => { vi.restoreAllMocks(); window.localStorage.removeItem("erp-zg-columns"); window.history.replaceState({}, "", "/"); });
+beforeEach(() => setPersonalViewsUser("1"));
+afterEach(() => { vi.restoreAllMocks(); forgetPersonalViews(); window.localStorage.removeItem("erp-zg-columns"); window.localStorage.removeItem("erp-zg-columns:user:1"); window.history.replaceState({}, "", "/"); });
 
 function sheetRow(project: string) {
   return document.querySelector(`tr[data-project="${project}"]`) as HTMLTableRowElement;
@@ -175,15 +177,15 @@ it("lets the viewer choose the sheet columns, keeps the sheet order and returns 
   fireEvent.click(screen.getByLabelText("Рабочих дней до дедлайна"));
   fireEvent.click(screen.getByLabelText("Закуплено"));
   expect(labels()).toEqual(["Проект", "Заказчик", "Статус", "Готовность, %", "В плане", "Давальческое", "Приход комплектующих", "Комплект на складе", "Комплект проверен", "Техкарта выдана", "Комплект набран", "Тестовая сборка", "Дедлайн", "Комментарий"]);
-  expect(screen.getByRole("button", { name: "Колонки · 14 из 16" })).toBeInTheDocument();
-  expect(JSON.parse(window.localStorage.getItem("erp-zg-columns")!)).toEqual(["days_left", "zkp"]);
+  expect(screen.getByRole("button", { name: "Колонки" })).toBeInTheDocument();
+  expect(JSON.parse(window.localStorage.getItem("erp-zg-columns:user:1")!)).toMatchObject({ hidden: ["days_left", "zkp"], autoFit: false });
   // «Дн.» скрыта — светофор дедлайна переезжает в «Дедлайн».
   expect(sheetRow("708К.4").querySelector(".zg-col-deadline")?.className).toContain("zg-days ok");
   expect(sheetRow("708К.4").querySelectorAll("td.zg-freeze")).toHaveLength(14);
 
   fireEvent.click(screen.getByRole("button", { name: "По ширине экрана" }));
   expect(labels()).toHaveLength(16);
-  expect(window.localStorage.getItem("erp-zg-columns")).toBeNull();
+  expect(JSON.parse(window.localStorage.getItem("erp-zg-columns:user:1")!)).toMatchObject({ hidden: [], autoFit: true });
 });
 
 function row(overrides: Partial<ProductionPlanResult["rows"][number]>) {
@@ -559,7 +561,7 @@ it("falls back to the project card when the master board is closed to the viewer
 });
 
 it("hides the comment column first and shows a comment as a mark at the project number", async () => {
-  window.localStorage.setItem("erp-zg-columns", JSON.stringify(["comment"]));
+  window.localStorage.setItem("erp-zg-columns:user:1", JSON.stringify({ order: [], hidden: ["comment"], autoFit: false }));
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
   render(<ProductionPlanPage principal={principal} />);
   const number = await screen.findByRole("button", { name: "708К.4" });

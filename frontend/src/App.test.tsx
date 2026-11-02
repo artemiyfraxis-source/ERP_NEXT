@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import type { Principal } from "./api";
+import { forgetPersonalViews, loadPersonalViews, SAVE_DELAY, savePersonalView } from "./personalViews";
 
 const principal: Principal = {
   user: {
@@ -27,8 +28,33 @@ function json(body: unknown, status = 200) {
 }
 
 afterEach(() => {
+  forgetPersonalViews();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
+});
+
+it("binds personal settings to the authenticated account and cancels pending writes before logout changes the cookie", async () => {
+  let finishLogout!: (response: Response) => void;
+  const logout = new Promise<Response>((resolve) => { finishLogout = resolve; });
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json(principal);
+    if (path === "/api/auth/logout") return logout;
+    if (path === "/api/auth/login-staff") return json({ staff: [] });
+    if (path === "/api/auth/ui-settings") return json({ views: { plan: { hidden: [] } } });
+    return json({}, 404);
+  });
+  render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+  expect(await loadPersonalViews(principal.user.id)).toEqual({ plan: { hidden: [] } });
+  vi.useFakeTimers();
+  savePersonalView("plan", { hidden: ["customer"] }, SAVE_DELAY, principal.user.id);
+  fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
+  await act(() => vi.advanceTimersByTimeAsync(SAVE_DELAY));
+  expect(fetch.mock.calls.filter(([input, init]) => String(input).startsWith("/api/auth/ui-settings/") && init?.method === "PUT")).toHaveLength(0);
+  expect(await loadPersonalViews(principal.user.id)).toBeNull();
+  await act(async () => finishLogout(new Response(null, { status: 204 })));
 });
 
 it("returns to login when an active session is rejected", async () => {
