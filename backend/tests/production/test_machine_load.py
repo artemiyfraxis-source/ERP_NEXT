@@ -80,6 +80,45 @@ def work(start: datetime, seconds: int) -> datetime:
 CRIMP = {"code": "PRS", "stage": "Опрессовка терминалов", "prep": "1200", "op": "8", "machine_time": "6", "machine": "ОБ.027.1", "name": "Пресс"}
 
 
+def test_site_projection_uses_local_capacity_and_keeps_idle_and_unknown_machines():
+    from app.modules.production.machine_load import site_machine_load
+
+    first, steps = crimp_task(1, OperationShare(ANNA, None, at(9), at(10)))
+    second, more_steps = crimp_task(2, OperationShare(BORIS, None, at(9), at(10)))
+    items = task_occupancies(first, steps, NO_HOLIDAYS, DEFAULT_SHIFT) + task_occupancies(second, more_steps, NO_HOLIDAYS, DEFAULT_SHIFT)
+    rows = site_machine_load(
+        items, {("ЦАР", "ОБ.027"): 1, ("ЖУК", "ОБ.027"): 2, ("ЖУК", "ОБ.098"): 1},
+        {ANNA: "ЦАР", BORIS: "жук"}, {("ЖУК", "ОБ.098"): "ОБ.098 Резка"},
+        [MONDAY.date()], NO_HOLIDAYS, DEFAULT_SHIFT, None,
+    )
+    [tsar] = rows["ЦАР"]
+    zhuk, idle = rows["ЖУК"]
+    assert tsar.days[0].capacity_seconds * 2 == zhuk.days[0].capacity_seconds
+    assert tsar.days[0].busy_seconds == zhuk.days[0].busy_seconds
+    assert tsar.days[0].busy_seconds > 0
+    assert tsar.days[0].peak == zhuk.days[0].peak == 1
+    assert not tsar.over(tsar.days[0]) and not zhuk.over(zhuk.days[0])
+    assert idle.machine == "ОБ.098" and idle.label == "ОБ.098 Резка" and idle.days[0].busy_seconds == 0
+    assert rows[""] == ()
+
+    # A mixed brigade occupies the machine once, with no invented site/capacity.
+    mixed = replace(items[0], operator_ids=(ANNA, BORIS))
+    unknown = site_machine_load([mixed], {}, {ANNA: "ЦАР", BORIS: "ЖУК"}, {}, [MONDAY.date()], NO_HOLIDAYS, DEFAULT_SHIFT, None)
+    [row] = unknown[""]
+    assert unknown["ЦАР"] == unknown["ЖУК"] == ()
+    assert row.units == 0 and row.days[0].percent is None and row.days[0].capacity_seconds == 0
+    assert row.days[0].busy_seconds == tsar.days[0].busy_seconds and not row.over(row.days[0])
+
+    # A worker whose site or machine count is unknown never consumes another site's capacity.
+    local = site_machine_load([items[0]], {}, {ANNA: "ЦАР"}, {}, [MONDAY.date()], NO_HOLIDAYS, DEFAULT_SHIFT, None)
+    assert local["ЦАР"][0].units == 0 and not local["ЦАР"][0].over(local["ЦАР"][0].days[0])
+    missing = site_machine_load([items[0]], {}, {}, {}, [MONDAY.date()], NO_HOLIDAYS, DEFAULT_SHIFT, None)
+    assert len(missing[""]) == 1 and missing["ЦАР"] == ()
+    uncertain = site_machine_load([mixed], {("", "ОБ.027"): 5}, {ANNA: "ЦАР", BORIS: "ЖУК"}, {}, [MONDAY.date()], NO_HOLIDAYS, DEFAULT_SHIFT, None)
+    [row] = uncertain[""]
+    assert row.units == 0 and row.days[0].percent is None and not row.over(row.days[0])
+
+
 def crimp_task(number: int, *shares: OperationShare, quantity: int = 100):
     task = placed(make_task(number, [single(1, "PRS", "Опрессовка терминалов")], quantity), *shares)
     steps, warnings = task_steps(task, etk(CRIMP))

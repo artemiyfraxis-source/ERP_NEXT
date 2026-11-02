@@ -987,7 +987,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
 
   // Неделя монтажников. На странице — обзор (день — раскладка по часам); в окне операции — с выбранной операцией:
   // день и час ставят её монтажнику. Раскрытый день — в той сетке, где сейчас работают.
-  function renderWeek(inWindow: boolean) {
+  function renderWeek(inWindow: boolean, groupPeople = people) {
     const target = inWindow && task && operation ? { task, operation } : null;
     const active = inWindow === Boolean(task && operation);
     return <table className="mb-week">
@@ -999,7 +999,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           <b>{formatDay(day)}</b><span>{date.toLocaleDateString("ru-RU", { weekday: "short" })}</span>
         </th>;
       })}</tr></thead>
-      <tbody>{people.map((person) => {
+      <tbody>{groupPeople.map((person) => {
         const op = target?.operation;
         const on = Boolean(op?.operator_ids.includes(person.id));
         const skill = op?.code ? skills.find((item) => item.operator_id === person.id && item.operation_code === op.code) : undefined;
@@ -1023,6 +1023,18 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         </Fragment>;
       })}</tbody>
     </table>;
+  }
+
+  function renderSiteWeeks(inWindow: boolean) {
+    const siteOf = (person: ProductionOperator) => ["ЦАР", "ЖУК"].includes(person.site.trim().toUpperCase()) ? person.site.trim().toUpperCase() : "";
+    return ["ЦАР", "ЖУК", ""].filter((location) => site ? location === site : location || people.some((person) => !siteOf(person)))
+      .map((location) => {
+        const own = people.filter((person) => siteOf(person) === location);
+        return <section key={location} aria-label={`Монтажники · ${location || "Площадка не указана"}`}>
+          <div className="mb-head"><h3 style={{ margin: 0 }}>{location || "Площадка не указана"}</h3><span className="mb-count">{own.length}</span></div>
+          {own.length ? renderWeek(inWindow, own) : <div className="empty">Монтажники площадки {location} ещё не внесены</div>}
+        </section>;
+      });
   }
 
   function renderDay(person: ProductionOperator, expanded: string, target: { task: ProductionTask; operation: ProductionOperation } | null) {
@@ -1122,7 +1134,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       </div>}
       <section className="mb-people mb-window-week" aria-label="Монтажники на операцию">
         <div className="mb-head"><h3>Монтажники</h3>{canEdit && <span className="mb-count">нажмите на день — час и «Назначить»</span>}{weekNav}</div>
-        {renderWeek(true)}
+        {renderSiteWeeks(true)}
         <LoadLegend capacity={capacity} late={false} />
       </section>
     </div>;
@@ -1160,11 +1172,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         {weekNav}
       </div>
       <div className="mb-target muted">{canEdit ? "Назначить — в проекте: нажмите операцию. День у монтажника — раскладка по часам." : "Нажмите на день — раскладка по часам."}</div>
-      {renderWeek(false)}
+      {renderSiteWeeks(false)}
       <LoadLegend capacity={capacity} late={false} />
       <section className="mb-machines" aria-label="Загрузка станков" style={{ marginTop: 18 }}>
         <div className="mb-head"><h2>Загрузка станков</h2><span className="mb-count">процент смены всех единиц станка</span></div>
-        <MachineLoadGrid days={days} holidays={holidays} shift={workShift} refreshKey={planVersion} />
+        <MachineLoadGrid days={days} holidays={holidays} shift={workShift} refreshKey={planVersion} site={site} />
       </section>
     </aside>
     {shown && <PageWindow label={`Проект ${shown}`} width={1600} close={() => setOpenProject("")}>{renderProject(shown)}</PageWindow>}

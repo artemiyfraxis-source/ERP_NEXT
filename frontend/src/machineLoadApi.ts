@@ -43,6 +43,8 @@ export interface MachineLoad {
   date_from: string;
   date_to: string;
   machines: MachineLoadRow[];
+  /** Site-local capacity and occupancy; an empty site is explicitly unknown. */
+  sites?: Array<{ site: string; machines: MachineLoadRow[] }>;
   warnings: string[];
 }
 
