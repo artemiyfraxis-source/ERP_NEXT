@@ -5,7 +5,7 @@ and every ~2 minutes reports its version, the WIA scanners it sees right now (no
 the server adds the address it saw the agent from (`request.client.host`, the real one through Caddy's X-Forwarded-For).
 A button press queues only an explicit PC/scanner pair on a live agent running strict selection (2.2.0+). A missing,
 offline, outdated or incomplete choice returns «choose» / «no_agent» without a command; browser IP never proves a local
-PC. Existing untargeted jobs remain claimable by legacy agents, but no new untargeted scan is created here.
+PC. Incomplete legacy jobs expire without being claimed; no new untargeted scan is created here.
 `agent_list` and chooser responses carry PC/scanner identities, version and liveness for an honest selection.
 
 Install tokens (`issue_install` / `redeem_install`): an administrator issues a one-time secret (only its SHA-256 is

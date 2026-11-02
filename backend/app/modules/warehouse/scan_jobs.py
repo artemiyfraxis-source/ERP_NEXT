@@ -84,12 +84,12 @@ class ScanJobRow(Base):
     file_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("warehouse_receipt_files.id", ondelete="RESTRICT"), nullable=True,
     )
-    # «Сканер с любого ПК» (migration 0157): the agent the job was created for; NULL — any agent may claim it (legacy).
+    # The selected PC (migration 0157); NULL belongs to pre-strict jobs, which now expire without being claimed.
     target_machine_id: Mapped[str | None] = mapped_column(
         String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="RESTRICT"), nullable=True,
     )
     # «Своё устройство» (migration 0159): the scanner the person chose (WIA DeviceID or name, as the agent reported
-    # it); NULL — the agent scans with its first scanner. Only on a job with a target agent.
+    # it); NULL belongs to pre-strict jobs and no longer permits a first-scanner claim.
     target_scanner: Mapped[str | None] = mapped_column(String(SCANNER_MAX), nullable=True)
     error: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     result: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
@@ -143,8 +143,7 @@ def _read(session: Session, job_id: UUID) -> ScanJob:
 
 def create_job(uow, *, requested_by: str, now: datetime, target: str | None = None,
                scanner: str | None = None) -> ScanJob:
-    """«Отсканировать УПД»: one pending job for the agent `target` (None — any agent, an old one without an id), on its
-    scanner `scanner` (None — the agent's first one; kept only with a target)."""
+    """Create a pending job. Only a full `target` / `scanner` pair can be claimed; incomplete legacy rows expire."""
     scanner = (scanner or "").strip()[:SCANNER_MAX] or None
     with uow:
         session = _session(uow)
@@ -194,12 +193,12 @@ def cancel_job(uow, job_id: UUID, *, now: datetime) -> ScanJob:
 @dataclass(frozen=True)
 class Claimed:
     id: UUID
-    target_scanner: str | None  # the scanner the person chose; None — the agent's first one
+    target_scanner: str | None  # the scanner the person chose; claims now require a nonempty scanner
 
 
 def claim(uow, *, now: datetime, machine_id: str | None = None) -> Claimed | None:
-    """The oldest pending job (not overdue) for this agent — targeted to `machine_id` or untargeted — becomes claimed;
-    an old agent without an id (None) takes untargeted jobs only. Finished jobs past KEEP_FINISHED go."""
+    """Claim the oldest complete PC/scanner pair targeted to this agent. Incomplete pre-strict jobs expire normally;
+    no agent, including an old one without an id, may scan them. Finished jobs past KEEP_FINISHED go."""
     with uow:
         session = _session(uow)
         _expire(session, now)
@@ -207,8 +206,9 @@ def claim(uow, *, now: datetime, machine_id: str | None = None) -> Claimed | Non
             ScanJobRow.status.in_(FINISHED_STATUSES), ScanJobRow.finished_at < now - KEEP_FINISHED,
         ))
         claimed = None
-        mine = ScanJobRow.target_machine_id.is_(None) if machine_id is None else or_(
-            ScanJobRow.target_machine_id.is_(None), ScanJobRow.target_machine_id == machine_id)
+        mine = and_(ScanJobRow.target_machine_id.is_not(None), ScanJobRow.target_machine_id != "",
+                    ScanJobRow.target_scanner.is_not(None), ScanJobRow.target_scanner != "",
+                    ScanJobRow.target_machine_id == machine_id)
         for _attempt in range(5):  # another agent may take the same row between the read and the write
             candidate = session.execute(
                 select(ScanJobRow.id, ScanJobRow.target_scanner).where(ScanJobRow.status == PENDING, mine)
