@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, tzinfo
 from decimal import Decimal
 from math import ceil
@@ -103,7 +103,7 @@ class MachineRow:
 
     def over(self, day: MachineDay) -> bool:
         """Перегруз дня: занятых секунд больше, чем у всех единиц, или одновременно занятостей больше единиц."""
-        return day.peak > self.units or (day.capacity_seconds > 0 and day.busy_seconds > day.capacity_seconds)
+        return self.units > 0 and (day.peak > self.units or (day.capacity_seconds > 0 and day.busy_seconds > day.capacity_seconds))
 
 
 @dataclass(frozen=True)
@@ -267,12 +267,15 @@ def _machine_order(machine: str) -> tuple[int, str]:
 
 def machine_load(
     occupancies: Sequence[Occupancy], units: Mapping[str, int], days: Sequence[date],
-    holidays: frozenset[date], shift: WorkShift, tz: tzinfo | None,
+    holidays: frozenset[date], shift: WorkShift, tz: tzinfo | None, *, include_idle: bool = False,
 ) -> tuple[MachineRow, ...]:
     """Загрузка станков по дням периода: строка на каждый станок, который занимает хоть одна операция плана."""
     by_machine: dict[str, list[Occupancy]] = {}
     for item in occupancies:
         by_machine.setdefault(item.machine, []).append(item)
+    if include_idle:
+        for machine in units:
+            by_machine.setdefault(machine, [])
     bounds = [(day, datetime.combine(day, time.min, tz), datetime.combine(day + timedelta(days=1), time.min, tz)) for day in days]
     period = (bounds[0][1], bounds[-1][2]) if bounds else None
     rows: list[MachineRow] = []
@@ -293,6 +296,39 @@ def machine_load(
             machine in units, tuple(machine_days), shown,
         ))
     return tuple(rows)
+
+
+def normalized_site(value: object) -> str:
+    site = _text(value).upper()
+    return site if site in {"ЦАР", "ЖУК"} else ""
+
+
+def site_machine_load(
+    occupancies: Sequence[Occupancy], units: Mapping[tuple[str, str], int],
+    operator_sites: Mapping[UUID, str], idle_labels: Mapping[tuple[str, str], str], days: Sequence[date],
+    holidays: frozenset[date], shift: WorkShift, tz: tzinfo | None,
+) -> dict[str, tuple[MachineRow, ...]]:
+    """Local display projection; ambiguous brigades stay together in the unknown-site bucket."""
+    grouped: dict[str, list[Occupancy]] = {"ЦАР": [], "ЖУК": [], "": []}
+    for item in occupancies:
+        sites = {normalized_site(operator_sites.get(person)) for person in item.operator_ids}
+        site = next(iter(sites)) if len(sites) == 1 and "" not in sites else ""
+        grouped[site].append(item)
+    result: dict[str, tuple[MachineRow, ...]] = {}
+    for site, items in grouped.items():
+        active = {item.machine for item in items}
+        local_units = {
+            machine: count for (location, machine), count in units.items()
+            if location == site and (machine in active or (site, machine) in idle_labels)
+        }
+        rows = machine_load(items, local_units, days, holidays, shift, tz, include_idle=True)
+        result[site] = tuple(replace(
+            row,
+            label=idle_labels.get((site, row.machine), row.label) if not row.items else row.label,
+            units=row.units if site and row.known else 0,
+            days=row.days if site and row.known else tuple(replace(day, capacity_seconds=0) for day in row.days),
+        ) for row in rows)
+    return result
 
 
 def conflicts(
