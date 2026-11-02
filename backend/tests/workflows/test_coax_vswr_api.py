@@ -86,6 +86,36 @@ def _setup(client, norm=NORM):
     return card, _launch(client, card), _instrument(client)
 
 
+def test_unverified_instrument_cannot_record_vswr(production_api):  # noqa: F811
+    client, _ = production_api
+    _card_, task, _active = _setup(client)
+    with app.state.production_uow_factory() as uow:
+        serials_before = uow.serials.list_for_task(UUID(task["id"]))
+    response = client.post("/api/production/instruments", json={
+        "inventory_number": "TEST-CABLE.002", "name": "Тестовый прибор", "instrument_type": "Тестер",
+        "status": "Поверка не подтверждена",
+    })
+    assert response.status_code == 200, response.text
+    pending = response.json()["instrument"]
+    refused = client.post("/api/production/vswr", json=_body(task, pending, GOOD))
+    assert refused.status_code == 422 and "не подтверждена" in refused.json()["detail"]
+    with app.state.production_uow_factory() as uow:
+        assert uow.serials.list_for_task(UUID(task["id"])) == serials_before
+
+
+def test_passport_instrument_serializer_handles_unknown_verification():
+    from app.modules.production.traceability import InstrumentStatus, MeasurementInstrument
+    from app.workflows.coax_vswr_api import _instrument_result
+
+    pending = MeasurementInstrument(
+        id=uuid4(), version=1, inventory_number="TEST-CABLE.003", name="Тестовый прибор", instrument_type="Тестер",
+        verification_number=None, verified_at=None, verification_due=None, status=InstrumentStatus.UNVERIFIED,
+    )
+    result = _instrument_result(pending)
+    assert result["verification_number"] is None and result["verified_at"] is None and result["verification_due"] is None
+    assert result["inventory_number"] == pending.inventory_number
+
+
 def test_norm_comes_from_the_pinned_etk_revision_and_sets_the_verdict(production_api):  # noqa: F811
     client, _ = production_api
     card, task, instrument = _setup(client)

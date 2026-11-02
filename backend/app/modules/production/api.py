@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_FLOOR, Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
@@ -90,7 +90,7 @@ from .execution import (
     start_work,
     submit_work,
 )
-from .traceability import TAKEABLE_BOX, BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, ProductionOutput, WorkSession
+from .traceability import TAKEABLE_BOX, BoxStatus, DefectDisposition, DefectRecord, InstrumentStatus, MaterialInput, ProductionBox, ProductionOutput, WorkSession
 from .worklog import SUMMARY_KEYS, WorkTimeEntry, percent, time_fact
 from .quality import (
     DecideQcRejectionCommand,
@@ -256,9 +256,10 @@ class RegisterInstrumentPayload(BaseModel):
     inventory_number: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=255)
     instrument_type: str = Field(min_length=1, max_length=255)
-    verification_number: str = Field(min_length=1, max_length=255)
-    verified_at: datetime
-    verification_due: datetime
+    verification_number: str | None = Field(default=None, min_length=1, max_length=255)
+    verified_at: datetime | None = None
+    verification_due: datetime | None = None
+    status: Literal[InstrumentStatus.ACTIVE, InstrumentStatus.UNVERIFIED] = InstrumentStatus.ACTIVE
 
 
 class InspectBoxPayload(BoxVersionPayload):
@@ -1316,8 +1317,8 @@ def instruments(
         "inventory_number": item.inventory_number, "name": item.name,
         "instrument_type": item.instrument_type,
         "verification_number": item.verification_number,
-        "verified_at": item.verified_at.isoformat(),
-        "verification_due": item.verification_due.isoformat(),
+        "verified_at": item.verified_at.isoformat() if item.verified_at is not None else None,
+        "verification_due": item.verification_due.isoformat() if item.verification_due is not None else None,
         "status": item.status.value,
     } for item in rows]}
 
@@ -1337,8 +1338,8 @@ def create_instrument(
         "inventory_number": item.inventory_number, "name": item.name,
         "instrument_type": item.instrument_type,
         "verification_number": item.verification_number,
-        "verified_at": item.verified_at.isoformat(),
-        "verification_due": item.verification_due.isoformat(),
+        "verified_at": item.verified_at.isoformat() if item.verified_at is not None else None,
+        "verification_due": item.verification_due.isoformat() if item.verification_due is not None else None,
         "status": item.status.value,
     }}
 

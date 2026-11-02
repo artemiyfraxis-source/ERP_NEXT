@@ -48,6 +48,10 @@ const micrometer: ProductionInstrument = {
   instrument_type: "Микрометр", verification_number: "П-2026/118", verified_at: "2026-09-01T09:00:00",
   verification_due: "2027-09-01T09:00:00", status: "Действует",
 };
+const unverifiedInstrument: ProductionInstrument = {
+  ...micrometer, id: "unverified", inventory_number: "СИ-099", name: "Тестовый прибор",
+  status: "Поверка не подтверждена", verification_number: null, verified_at: null, verification_due: null,
+};
 
 const rejection = {
   id: "73000000-0000-0000-0000-000000000001", box_id: "74000000-0000-0000-0000-000000000001", box_number: "000002-4", item: "591K.3.КБ1",
@@ -193,7 +197,7 @@ it("returns a handed box to its fitter from the QC queue with a reason", async (
 it("accepts a box at QC against the registered instruments that are still valid", async () => {
   let payload: unknown;
   qualityFetch(
-    { boxes: [box("000003-4", 3, assembly)], instruments: [micrometer, { ...micrometer, id: "75000000-0000-0000-0000-000000000002", inventory_number: "СИ-015", name: "Штангенциркуль", status: "Выведено" }] },
+    { boxes: [box("000003-4", 3, assembly)], instruments: [micrometer, unverifiedInstrument, { ...micrometer, id: "75000000-0000-0000-0000-000000000002", inventory_number: "СИ-015", name: "Штангенциркуль", status: "Выведено" }] },
     (path, body) => { if (path.endsWith("/qc")) { payload = body; return json({ box: box("000003-4", 3, assembly), inspection_id: "1", defect_number: null, serials: [] }); } return null; },
   );
   render(<QualityPage principal={qc} />);
@@ -248,6 +252,32 @@ it("registers an instrument and closes the form", async () => {
     verification_number: "П-2026/118", verified_at: "2026-09-01T09:00", verification_due: "2027-09-01T09:00",
   }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Сохранить СИ" })).not.toBeInTheDocument());
+});
+
+it("registers unverified instruments without inventing verification data and resets the choice", async () => {
+  let payload: unknown;
+  qualityFetch({ instruments: [unverifiedInstrument] }, (path, body) => {
+    if (path === "/api/production/instruments") { payload = body; return json({ instrument: unverifiedInstrument }); }
+    return null;
+  });
+  render(<QualityPage principal={qc} />);
+  const row = (await screen.findByText("СИ-099")).closest("tr")!;
+  expect(within(row).getAllByText("—")).toHaveLength(3);
+  expect(within(row).getByText("Поверка не подтверждена")).toHaveAttribute("data-tone", "warning");
+  fireEvent.click(screen.getByRole("button", { name: "+ Добавить СИ" }));
+  const form = screen.getByRole("button", { name: "Сохранить СИ" }).closest(".instrument-form") as HTMLElement;
+  fireEvent.change(within(form).getByLabelText("Сведения о поверке"), { target: { value: "unverified" } });
+  expect(screen.getByRole("button", { name: "Сохранить СИ" })).toBeDisabled();
+  for (const [label, value] of [["Инв. №", "СИ-099"], ["Наименование", "Тестовый прибор"], ["Тип", "Тестер"]]) {
+    fireEvent.change(within(form).getByLabelText(label), { target: { value } });
+  }
+  expect(within(form).queryByLabelText("Поверено")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить СИ" }));
+  await waitFor(() => expect(payload).toEqual({ inventory_number: "СИ-099", name: "Тестовый прибор", instrument_type: "Тестер", status: "Поверка не подтверждена", verification_number: null, verified_at: null, verification_due: null }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Сохранить СИ" })).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "+ Добавить СИ" }));
+  expect(screen.getByLabelText("Сведения о поверке")).toHaveValue("verified");
+  expect(screen.getByLabelText("Поверено")).toHaveValue("");
 });
 
 it("records the master's append-only decision for a QC rejection and for a shop defect", async () => {
@@ -359,6 +389,14 @@ it("shows the vswr section: the norm line and a dense table of units with their 
   expect(within(table).getByText("Контролёр Иванов")).toBeInTheDocument();
   expect(within(table).getAllByRole("button", { name: "Загрузить замер" })).toHaveLength(2);
   expect(within(table).getByRole("link", { name: "Файл" })).toHaveAttribute("href", "/api/production/vswr/measurements/78000000-0000-0000-0000-000000000001/file");
+});
+
+it("does not offer an unverified instrument for VSWR measurements", async () => {
+  await openVswr(okNorm, null, { instruments: [unverifiedInstrument, vna] });
+  fireEvent.click((await screen.findAllByRole("button", { name: "Загрузить замер" }))[0]);
+  const picker = screen.getByLabelText("Прибор (средство измерения)");
+  expect(within(picker).queryByRole("option", { name: /Тестовый прибор/ })).not.toBeInTheDocument();
+  expect(within(picker).getByRole("option", { name: /Анализатор цепей/ })).toBeInTheDocument();
 });
 
 it("sample 1 of N: marks the units in and out of the sample, counts the required ones, still lets measure the rest", async () => {
