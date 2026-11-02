@@ -11,6 +11,7 @@ import { Due, ReadyForecast, overdue, projectsOf, readiness } from "./shippingCe
 import { DISPATCH_STAGES, projectDispatchStage, shipmentDispatchStage, stageLabel, stageRank, type DispatchStage } from "./dispatchStage";
 import { DispatchCard } from "./DispatchCard";
 import { canAct } from "./navigation";
+import { packable } from "./intakeStages";
 
 /* «Данные отправок» (владелец 28.10.2026, раздел «Менеджмент»): менеджер (Ульяна Ладутько) вносит данные для
    отгрузки — тип доставки, перевозчик, адрес, получателя, телефон, УПД. Кладовщик упаковывает, а без этих данных
@@ -63,14 +64,14 @@ function UpdCell({ shipment, link = true }: { shipment: Shipment | null; link?: 
   </span>;
 }
 
-/** Строка списка: отправка или проект, по которому живой отправки нет. `stage` — этап общей лестницы (у отменённой — null). */
+/** Строка списка: отправка или ещё не набранный остаток проекта. `stage` — этап общей лестницы (у отменённой — null). */
 export interface DataRow { id: string; kind: "shipment" | "project"; project: string; customer: string; shipment: Shipment | null; stage: DispatchStage | null }
 
 const deadlineOf = (row: DataRow) => row.shipment?.deadline ?? "9999";
 const num = (value: string) => Number.parseFloat(value.replace(",", ".")) || 0;
 const CANCELLED = "Отменена";
 
-/** Все отправки (отменённые только под «Все») и проекты из приёмки без живой отправки, по которым ещё есть что отгружать. */
+/** Все отправки (отменённые только под «Все») и проекты из приёмки с ещё не набранным остатком. */
 export function dataRows(shipments: Shipment[], intake: IntakeRow[] = []): DataRow[] {
   // Слово этапа проекта — самое раннее по его КБ (проект стоит там, где отстаёт последняя КБ).
   const projectWord = new Map<string, string>(), customers = new Map<string, string>(), open = new Set<string>();
@@ -88,9 +89,12 @@ export function dataRows(shipments: Shipment[], intake: IntakeRow[] = []): DataR
     return { id: shipment.id, kind: "shipment", project: projectsOf(shipment), customer: shipment.customer || shipment.receiver, shipment, stage };
   });
   const live = new Set(shipments.filter((shipment) => ACTIVE.includes(shipment.status)).flatMap((shipment) => shipment.lines.map((line) => line.project)));
+  // packed включает набранное в заявки: принятое сверх него ещё не представлено ни одной отправкой.
+  const unassigned = new Set(intake.filter((row) => packable(row) > 0).map((row) => row.project));
   for (const project of open) {
-    if (live.has(project)) continue;
-    rows.push({ id: `project:${project}`, kind: "project", project, customer: customers.get(project) ?? "", shipment: null, stage: projectDispatchStage(projectWord.get(project) ?? "") });
+    if (live.has(project) && !unassigned.has(project)) continue;
+    rows.push({ id: `project:${project}`, kind: "project", project, customer: customers.get(project) ?? "", shipment: null,
+      stage: unassigned.has(project) ? "accepted" : projectDispatchStage(projectWord.get(project) ?? "") });
   }
   return rows.sort((a, b) => deadlineOf(a) < deadlineOf(b) ? -1 : deadlineOf(a) > deadlineOf(b) ? 1 : (a.shipment?.number ?? a.project).localeCompare(b.shipment?.number ?? b.project));
 }

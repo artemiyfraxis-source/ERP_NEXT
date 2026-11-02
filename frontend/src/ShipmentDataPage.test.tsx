@@ -146,14 +146,48 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(stageOf("Отменена", "ОТК")).toBeNull();
   });
 
-  it("partly shipped project: the shipped shipment stays in «Отгружено», the rest shows as a project row; a live shipment covers it; a cancelled one frees it", () => {
-    const intake = [take("713К.4", "Принято складом", "10", "4")] as never;
-    const rows = (list: unknown[]) => dataRows(list as never, intake).map((row) => `${row.shipment?.number ?? row.project}:${row.stage}`);
-    expect(rows([shippedNoFile])).toEqual(["ОТГ-20261020-03:shipped", "713К.4:accepted"]);
-    expect(rows([shippedNoFile, base])).toEqual(["ОТГ-20261020-03:shipped", "ОТГ-20261028-01:packed"]);
-    expect(rows([shippedNoFile, base, working]).filter((row) => row.startsWith("ОТГ")).length).toBe(3);
+  it("partly shipped project: keeps shipment history and the uncovered accepted KB beside another KB's live shipment", () => {
+    const accepted = { ...take("713К.4", "Принято складом", "10", "4"), accepted: "10", packed: "4" };
+    const history = { ...shippedNoFile, lines: [{ ...base.lines[0], item_index: "КБ1", requested: "4", picked: "4" }] };
+    const live = { ...base, lines: [{ ...base.lines[0], item_index: "КБ1", requested: "6", picked: "6" }] };
+    const rows = (list: unknown[], packed = "4") => dataRows(list as never, [{ ...accepted, packed }] as never).map((row) => `${row.shipment?.number ?? row.project}:${row.stage}`);
+    expect(rows([history])).toEqual(["ОТГ-20261020-03:shipped", "713К.4:accepted"]);
+    expect(rows([history, live], "10")).toEqual(["ОТГ-20261020-03:shipped", "ОТГ-20261028-01:packed"]);
     expect(rows([cancelled]).sort()).toEqual(["713К.4:accepted", "ОТГ-20261001-07:null"].sort());
-    expect(dataRows([shippedNoFile] as never, [take("713К.4", "Отгружено", "10", "10")] as never).map((row) => row.kind)).toEqual(["shipment"]);
+    expect(dataRows([history] as never, [{ ...accepted, packed: "10", sent: "10" }] as never).map((row) => row.kind)).toEqual(["shipment"]);
+    const partial = { ...take("713К.4", "В работе", "500"), accepted: "24", remaining: "476", pack_decided: true };
+    const covered = { ...partial, item_index: "КБ2", accepted: "500", packed: "500", remaining: "0", stage: "Упаковано" };
+    const actual = dataRows([base] as never, [partial, covered] as never);
+    expect(actual.filter((row) => row.kind === "project").map((row) => [row.project, row.stage])).toEqual([["713К.4", "accepted"]]);
+  });
+
+  it("uses factual accepted residuals for 780К.1 and covers only picked quantities of each KB, including drafts", () => {
+    const accepted = (quantity: string) => ({ ...take("780К.1", "Упаковано", quantity), accepted: quantity, pack_decided: false });
+    const actual = ["15", "15", "50", "15"].map((quantity, index) => ({ ...accepted(quantity), item_index: `КБ${index + 1}` }));
+    expect(dataRows([], actual as never).map((row) => [row.project, row.stage])).toEqual([["780К.1", "accepted"]]);
+    const partial = { ...take("713К.4", "В работе", "500"), accepted: "24", remaining: "476" };
+    const packed = { ...partial, item_index: "КБ2", accepted: "500", packed: "500", remaining: "0" };
+    expect(dataRows([base] as never, [...actual, partial, packed] as never).filter((row) => row.kind === "project")
+      .map((row) => [row.project, row.stage])).toEqual([["713К.4", "accepted"], ["780К.1", "accepted"]]);
+    const draft = (picked: string) => ({ ...working, lines: [{ ...base.lines[0], project: "780К.1", item_index: "КБ1", requested: "100", picked }] });
+    for (const picked of ["0", "40"]) {
+      const rows = dataRows([draft(picked)] as never, [{ ...accepted("100"), packed: picked }] as never);
+      expect(rows.filter((row) => row.kind === "project").map((row) => row.stage)).toEqual(["accepted"]);
+    }
+    expect(dataRows([draft("100")] as never, [{ ...accepted("100"), packed: "100" }] as never).filter((row) => row.kind === "project")).toEqual([]);
+    expect(dataRows([{ ...draft("100"), status: "Отменена" }] as never, [accepted("100")] as never).filter((row) => row.kind === "project")).toHaveLength(1);
+  });
+
+  it("accepted project with no addressee still offers the packing decision", async () => {
+    stub([]);
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => String(input) === "/api/shipping/intake"
+      ? json({ rows: [{ ...take("780К.1", "Упаковано", "15"), accepted: "15" }] })
+      : String(input).startsWith("/api/shipping/project-addressee?") ? json({ addressee: null }) : original(input, init));
+    render(<ShipmentDataPage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Принято · 1" }));
+    fireEvent.click(await screen.findByText("780К.1"));
+    expect(await within(screen.getByRole("dialog")).findByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeEnabled();
   });
 
   it("window: «Адрес» block (address, receiver, phone) apart from «ТК и УПД»; the carrier only for a carrier delivery", async () => {

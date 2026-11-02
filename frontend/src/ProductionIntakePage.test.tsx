@@ -70,6 +70,82 @@ beforeEach(() => { intakeRows = ROWS; shipments = []; approvals = []; stub(); })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Приёмка с производства", () => {
+  it("780К.1: four fully accepted KBs show four real GRN rows and one packing control per KB", async () => {
+    intakeRows = ["15", "15", "50", "15"].map((quantity, index) => row({ project: "780К.1", item_index: `КБ${index + 1}`, stage: "Упаковано", project_stage: "Упаковано",
+      needed: quantity, accepted: quantity, packed: "0", sent: "0", remaining: "0", tasks: [],
+      acts: [{ grn: `ГП.26.000010${index}`, quantity, received_at: "2026-10-30", location: "" }] }));
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findByText("ГП.26.0000100");
+    const acceptedTab = screen.getByRole("tab", { name: /^Принято/ });
+    expect(acceptedTab).toHaveTextContent("Принято 4");
+    fireEvent.click(acceptedTab);
+    const lines = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.querySelector(".intake-kb"));
+    expect(lines).toHaveLength(4);
+    expect(lines.every((tr) => tr.classList.contains("intake-act-row"))).toBe(true);
+    for (let index = 1; index <= 4; index++) {
+      const button = screen.getByRole("button", { name: `Упаковать 780К.1 КБ${index}: ждёт решения менеджера` });
+      expect(button).toBeDisabled();
+      expect(button.closest("tr")).toHaveClass("intake-act-row");
+    }
+  });
+
+  it("multiple GRN lots keep one aggregate packing action on an accepted row and a real remainder of 27", async () => {
+    intakeRows = [row({ needed: "1000", accepted: "973", packed: "100", remaining: "27", pack_decided: true,
+      acts: [["ГП.26.0000200", "500"], ["ГП.26.0000201", "473"]].map(([grn, quantity]) => ({ grn, quantity, received_at: "2026-10-30", location: "" })) })];
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
+    const packing = screen.getAllByRole("button", { name: "Упаковать 591К.3 КБ1: упаковано 100, можно 873" });
+    expect(packing).toHaveLength(1);
+    expect(packing[0].closest("tr")).toHaveClass("intake-act-row");
+    expect(screen.getByRole("button", { name: "Принять 591К.3 КБ1: можно 27" })).toBeInTheDocument();
+    fireEvent.click(packing[0]);
+    expect(await screen.findByRole("dialog", { name: "Упаковка 591К.3" })).toBeInTheDocument();
+  });
+
+  it("actual 780К.1 and 713К.4 count five accepted KBs and display exactly five GRN rows", async () => {
+    const act = (grn: string, quantity: string) => [{ grn, quantity, received_at: "2026-10-30", location: "" }];
+    intakeRows = [
+      ...["15", "15", "50", "15"].map((quantity, index) => row({ project: "780К.1", item_index: `КБ${index + 1}`, stage: "Упаковано", project_stage: "Упаковано",
+        needed: quantity, accepted: quantity, remaining: "0", acts: act(`ГП.26.000030${index}`, quantity) })),
+      row({ project: "713К.4", needed: "500", accepted: "24", remaining: "476", pack_decided: true, acts: act("ГП.26.0000037", "24") }),
+      row({ project: "713К.4", item_index: "КБ2", stage: "Упаковано", needed: "500", accepted: "500", packed: "500", remaining: "0" }),
+    ];
+    shipments = [{ ...packedShipment, lines: [shipmentLine({ project: "713К.4", item_index: "КБ2", requested: "500", picked: "500" })] }];
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findByRole("button", { name: "Принять 713К.4 КБ1: можно 476" });
+    const accepted = screen.getByRole("tab", { name: /^Принято/ });
+    expect(accepted).toHaveTextContent("Принято 5");
+    fireEvent.click(accepted);
+    const lines = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.querySelector(".intake-kb"));
+    expect(lines).toHaveLength(5);
+    expect(lines.every((tr) => tr.classList.contains("intake-act-row"))).toBe(true);
+    expect(screen.getAllByRole("button", { name: /^Упаковать 713К.4 КБ1/ })).toHaveLength(1);
+  });
+
+  it("fully accepted GRN rows retain track and shipment actions once; documents remain in «Упаковано»", async () => {
+    intakeRows = [row({ needed: "4", accepted: "4", packed: "4", remaining: "0", acts: [
+      { grn: "ГП.26.0000400", quantity: "2", received_at: "2026-10-30", location: "" },
+      { grn: "ГП.26.0000401", quantity: "2", received_at: "2026-10-30", location: "" },
+    ] })];
+    shipments = [{ ...packedShipment, missing_data: [], missing_ship: ["трек-номер"], ready_for_track: true }];
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
+    await screen.findByText("ГП.26.0000400");
+    for (const name of ["Трек 591К.3 КБ1", "Отгрузка 591К.3 КБ1: отгружено 0"]) {
+      const buttons = screen.getAllByRole("button", { name });
+      expect(buttons).toHaveLength(1);
+      expect(buttons[0].closest("tr")).toHaveClass("intake-act-row");
+    }
+    expect(screen.getByRole("button", { name: "Трек 591К.3 КБ1" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Трек 591К.3 КБ1" }));
+    const dialog = await screen.findByRole("dialog", { name: "Трек 591К.3 КБ1" });
+    expect(within(dialog).getByRole("textbox", { name: "Трек-номер ОТГ-20261029-01" })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+    fireEvent.click(screen.getByRole("tab", { name: /^Упаковано/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Документы ОТГ-20261029-01" }));
+    expect(await screen.findByRole("dialog", { name: "Документы отправки ОТГ-20261029-01" })).toBeInTheDocument();
+  });
+
   it("число «Можно принять» — кнопка: окно с КБ, заказано/принято/остаток, количество по умолчанию — всё; уходит дата, место и строка", async () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findByText("Жгут");
@@ -232,7 +308,7 @@ describe("Приёмка с производства", () => {
     expect(document.querySelectorAll("tr.intake-act-row")).toHaveLength(4);
     const cells = (tr: Element) => [...tr.querySelectorAll("td")].map((td) => td.textContent);
     const ordered = [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Жгут акты")).map(cells);
-    expect(ordered).toHaveLength(3); // акт, акт, строка КБ
+    expect(ordered).toHaveLength(2); // только два акта; остаток — во «Все»
   });
 
   it("остаток по КБ при приёмке в несколько ГРН: 100+350+350+173 принято из 1000 — остаток 27 одной строкой", async () => {
@@ -245,7 +321,10 @@ describe("Приёмка с производства", () => {
     expect(rowsIn()).toHaveLength(1); // «Готово»: одна строка, «Можно принять» 27, без актов
     expect([...rowsIn()[0].querySelectorAll("td")][3]?.textContent).toBe("27");
     fireEvent.click(screen.getByRole("tab", { name: /^Принято/ }));
-    await waitFor(() => expect(rowsIn()).toHaveLength(5)); // четыре акта и строка КБ
+    await waitFor(() => expect(rowsIn()).toHaveLength(4)); // «Принято»: только четыре акта
+    fireEvent.click(screen.getByRole("tab", { name: /^Все/ }));
+    await waitFor(() => expect(rowsIn()).toHaveLength(5)); // «Все»: ещё фактический остаток
+    expect(screen.getByRole("button", { name: "Принять 533К.12 КБ1: можно 27" })).toBeInTheDocument();
   });
 
   it("«Печать этикетки» у ГРН ставит этикетку в очередь печати и показывает статус", async () => {
@@ -329,7 +408,7 @@ describe("Приёмка с производства: упаковка и отг
     expect(waiting).toHaveAttribute("title", "Упаковать можно после решения менеджера «упаковывать»");
     unmount();
 
-    // Под зелёной строкой акта у строки КБ «Принято» — прочерк, а упаковать всё равно можно всё принятое.
+    // На строке акта упаковка использует всё принятое по КБ.
     intakeRows = [row({ accepted: "6", remaining: "0", delivered: "6", tasks: [], pack_decided: true, acts: [{ grn: "ГП.26.0000001", quantity: "6", received_at: isoDay(new Date()), location: "" }] })];
     render(<ProductionIntakePage principal={principal} />);
     expect(await screen.findByRole("tab", { name: /^Принято/ })).toHaveAttribute("aria-selected", "true");
