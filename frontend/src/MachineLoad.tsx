@@ -105,7 +105,9 @@ export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeek
   const current = data && data.date_from === from && data.date_to === to ? data : null;
   const groups = current ? (current.sites ?? [
     { site: "ЦАР", machines: [] }, { site: "ЖУК", machines: [] }, { site: "", machines: current.machines ?? [] },
-  ]).filter((group) => site ? group.site === site : group.site || group.machines.length) : [];
+  ]).filter((group) => !site || group.site === site)
+    .map((group) => ({ ...group, machines: group.machines.filter((row) => row.days.some((day) => days.includes(day.day) && day.busy_seconds > 0)) }))
+    .filter((group) => group.machines.length > 0) : [];
   const rows = groups.flatMap((group) => group.machines);
   const weeks = Math.max(1, Math.round(days.length / 7));
   const detail = open ? groups.find((group) => group.site === open.site)?.machines.find((row) => row.machine === open.machine) : undefined;
@@ -123,11 +125,10 @@ export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeek
     {error ? <div className="error-banner" role="alert">{error}</div>
       : !current ? <div className="empty">Загрузка…</div>
       : <>
-        {!current.sites && !rows.length && <div className="empty">За {period} станки не заняты: в плане нет операций ЭТК со станком в «Оборудовании».</div>}
+        {!rows.length && <div className="empty">За {period} станки не заняты.</div>}
         {groups.map((group) => <section key={group.site} aria-label={`Станки · ${group.site || "Площадка не указана"}`}>
           <div className="mb-head"><h3 style={{ margin: 0 }}>{group.site || "Площадка не указана"}</h3><span className="mb-count">{group.machines.length}</span></div>
-          {!group.machines.length ? <div className="empty">Станки площадки {group.site} ещё не внесены</div>
-            : <table className={given?.length ? "mb-week machine-load" : "mb-week pl-table machine-load"}>
+          <table className={given?.length ? "mb-week machine-load" : "mb-week pl-table machine-load"}>
         <thead><tr>
           <th scope="col">Станок</th>
           {days.map((day) => {
@@ -157,7 +158,7 @@ export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeek
             })}
           </tr>;
         })}</tbody>
-      </table>}
+      </table>
         </section>)}
       </>}
     {open && detail && <MachineDay row={detail} day={open.day} onClose={() => setOpen(null)} />}
