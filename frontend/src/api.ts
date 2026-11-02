@@ -703,6 +703,7 @@ export interface FulfillmentPositionCandidates {
 }
 
 export interface FulfillmentLine {
+  links?: string[];
   id: string;
   requirement_id: string;
   article: string;

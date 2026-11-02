@@ -17,6 +17,53 @@ from app.shared.persistence import create_schema
 from tests.factories import Actor
 
 
+def test_list_enriches_existing_requests_by_page_for_view_only_without_changing_commands(fulfillment_api, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app.modules.techcards.kitsets import KitAssembly, KitComponent, Kitset
+
+    client, _, _ = fulfillment_api
+    created = []
+    for project in ("728К.2", "900К.1"):
+        response = client.post("/api/issues", headers={"Idempotency-Key": f"links-{len(created)}"}, json={
+            "purpose": f"{project} · КБ1", "deadline": "2026-11-03",
+            "lines": [{"article": "КД-1", "name": "Разъём", "unit": "шт", "requirement": "4"}],
+        })
+        assert response.status_code == 200, response.text
+        created.append(response.json()["request"])
+        assert "links" not in created[-1]["lines"][0]
+
+    now = datetime(2026, 11, 2)
+    cards = {project: Kitset(project, "", "", (KitAssembly("КБ1", "", Decimal("1"), (
+        KitComponent("КД-1", name="Разъём", link=f"https://supplier.test/{project}"),
+    )),), now, "Технолог", now) for project in ("728К.2", "900К.1")}
+    read = Mock(side_effect=lambda projects: {key: cards[key] for key in projects})
+    @contextmanager
+    def techcards():
+        yield SimpleNamespace(kitsets=SimpleNamespace(for_projects=read))
+    monkeypatch.setattr(app.state, "techcards_uow_factory", techcards, raising=False)
+    _as({"foreman"}, {"fulfillment": "view"})
+
+    first = client.get("/api/issues", params={"limit": 1})
+    assert first.status_code == 200, first.text
+    page = first.json()
+    row = page["requests"][0]
+    assert row["lines"][0]["links"] == [f"https://supplier.test/{row['project']}"]
+    assert row["lines"][0]["requirement"] == "4"
+    read.assert_called_once_with([row["project"]])
+    read.reset_mock()
+    second = client.get("/api/issues", params={"limit": 1, "after": page["next_cursor"]}).json()
+    assert second["next_cursor"] is None
+    assert second["requests"][0]["id"] != row["id"]
+    read.assert_called_once_with([second["requests"][0]["project"]])
+
+    read.reset_mock()
+    _as({"foreman"}, {})
+    assert client.get("/api/issues").status_code == 403
+    read.assert_not_called()
+
+
 @pytest.fixture()
 def fulfillment_api():
     engine = create_engine(
