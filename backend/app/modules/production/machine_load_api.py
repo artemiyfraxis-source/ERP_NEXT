@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_overview_principal
 from app.modules.references.domain import TechOperationTab
-from app.modules.references.equipment import type_of
 
 from .api import production_uow_factory, techcards_uow_factory
 from .application import UnitOfWork, _shift
@@ -76,7 +75,8 @@ def _site_equipment(factory: Callable[[], Any] | None) -> tuple[dict[tuple[str, 
         site = normalized_site(fields.get("расположение"))
         key = (site, machine)
         numbers.setdefault(key, set()).add(number)
-        if type_of(record.fields).casefold() in {"оборудование", "оборудование (пр)"}:
+        equipment_type = (str(fields.get("тип") or "").strip() or str(fields.get("obtype") or "").strip()).casefold()
+        if equipment_type in {"оборудование", "оборудование (пр)"}:
             name = str(fields.get("наименование") or fields.get("наменование") or "").strip()
             labels[key] = f"{machine} {name}".strip() if name else f"{machine} {record.display_text}".strip()
     return {key: len(values) for key, values in numbers.items()}, labels

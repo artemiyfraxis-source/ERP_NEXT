@@ -125,7 +125,7 @@ export function MachineLoadGrid({ holidays, shift, days: given, week = 0, onWeek
       : <>
         {!current.sites && !rows.length && <div className="empty">За {period} станки не заняты: в плане нет операций ЭТК со станком в «Оборудовании».</div>}
         {groups.map((group) => <section key={group.site} aria-label={`Станки · ${group.site || "Площадка не указана"}`}>
-          <div className="mb-head"><h3>{group.site || "Площадка не указана"}</h3><span className="mb-count">{group.machines.length}</span></div>
+          <div className="mb-head"><h3 style={{ margin: 0 }}>{group.site || "Площадка не указана"}</h3><span className="mb-count">{group.machines.length}</span></div>
           {!group.machines.length ? <div className="empty">Станки площадки {group.site} ещё не внесены</div>
             : <table className={given?.length ? "mb-week machine-load" : "mb-week pl-table machine-load"}>
         <thead><tr>

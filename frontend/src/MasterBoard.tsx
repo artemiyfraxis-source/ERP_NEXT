@@ -1031,7 +1031,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       .map((location) => {
         const own = people.filter((person) => siteOf(person) === location);
         return <section key={location} aria-label={`Монтажники · ${location || "Площадка не указана"}`}>
-          <div className="mb-head"><h3>{location || "Площадка не указана"}</h3><span className="mb-count">{own.length}</span></div>
+          <div className="mb-head"><h3 style={{ margin: 0 }}>{location || "Площадка не указана"}</h3><span className="mb-count">{own.length}</span></div>
           {own.length ? renderWeek(inWindow, own) : <div className="empty">Монтажники площадки {location} ещё не внесены</div>}
         </section>;
       });

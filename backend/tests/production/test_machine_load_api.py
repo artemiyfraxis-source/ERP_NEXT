@@ -3,6 +3,9 @@
 
 from datetime import datetime
 from dataclasses import replace
+from contextlib import nullcontext
+from types import SimpleNamespace
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
@@ -14,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
+from app.modules.production.machine_load_api import _site_equipment
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
@@ -202,7 +206,7 @@ def test_idle_machine_board_excludes_hand_tools_but_keeps_their_actual_occupancy
         for index, kind in enumerate(("Инструмент", "Матрицы", "Обжимной инструмент", "Оборудование (ПР)"), 91):
             references.tech_operations.save(TechOperationRecord.create(
                 tab=TechOperationTab.EQUIPMENT, display_text=kind, search_text=kind, source_sheet="БД.ОБ", sort_key=kind,
-                fields={"obType": kind, "inventoryNumber": f"ОБ.{index}.1", "Расположение": "ЦАР"},
+                fields={"Тип": " ", "obType": kind, "inventoryNumber": f"ОБ.{index}.1", "Расположение": "ЦАР"},
             ))
         references.commit()
     params = {"date_from": "2026-09-22", "date_to": "2026-09-22"}
@@ -215,3 +219,14 @@ def test_idle_machine_board_excludes_hand_tools_but_keeps_their_actual_occupancy
     press, idle = tsar["machines"]
     assert press["machine"] == "ОБ.027" and press["units"] == 2 and len(press["items"]) == 1
     assert idle["machine"] == "ОБ.94"
+
+
+def test_equipment_type_alias_survives_blank_legacy_type():
+    references = Mock()
+    references.tech_operations.list.return_value = [SimpleNamespace(
+        fields={"Тип": "   ", "obType": "Оборудование", "Инв. номер": "ОБ.027.1", "Расположение": "ЦАР"},
+        display_text="Пресс",
+    )]
+    units, labels = _site_equipment(lambda: nullcontext(references))
+    assert units == {("ЦАР", "ОБ.027"): 1}
+    assert labels == {("ЦАР", "ОБ.027"): "ОБ.027 Пресс"}
