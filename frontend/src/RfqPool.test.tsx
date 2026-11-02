@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PurchasingRfq } from "./PurchasingRfq";
-import { RfqPool } from "./RfqPool";
+import { RfqPool, SuggestionList } from "./RfqPool";
+import type { SupplierSuggestion } from "./purchasingRfqApi";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -140,6 +141,8 @@ it("preselects the suggested suppliers and creates the request with lines and su
   fireEvent.click(screen.getByRole("button", { name: "+ поставщик по названию" }));
   expect(await screen.findByLabelText("Спросить ООО Омега")).toBeChecked();
   fireEvent.change(screen.getByLabelText(/Название/), { target: { value: "Кабель" } });
+  fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по списку поставщиков" }), { target: { value: "Альфа" } });
+  expect(screen.queryByLabelText("Спросить ООО Омега")).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Создать запрос" }));
   await waitFor(() => expect(created).toHaveBeenCalledWith("r-new"));
@@ -168,6 +171,59 @@ async function openSuppliers(posts: { path: string; body: unknown }[] = []) {
 }
 
 const supplierRow = (name: string) => screen.getByRole("group", { name: `Поставщик ${name}` });
+
+it("filters suppliers without dropping hidden supplier positions from the final request", async () => {
+  const posts: { path: string; body: unknown }[] = [];
+  const created = await openSuppliers(posts);
+  const alfa = supplierRow("ООО Альфа");
+  fireEvent.click(within(alfa).getByRole("button", { name: /позиций: 1 из 2/ }));
+  fireEvent.click(within(alfa).getByLabelText("Запросить SM-b у ООО Альфа"));
+  const search = screen.getByRole("searchbox", { name: "Поиск по списку поставщиков" });
+  fireEvent.change(search, { target: { value: "  РоТаЦия  " } });
+  expect(screen.queryByLabelText("Спросить ООО Альфа")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Спросить ООО Ротация"));
+  fireEvent.change(search, { target: { value: "несуществующий" } });
+  expect(screen.getByText("По поиску поставщиков ничего не найдено. Измените или очистите поиск.")).toBeInTheDocument();
+  expect(screen.getByText("Показано 0 из 3 · выбрано 3")).toBeInTheDocument();
+  expect(posts).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Очистить поиск поставщиков" }));
+  expect(search).toHaveValue("");
+  expect(screen.getByLabelText("Запросить SM-b у ООО Альфа")).toBeChecked();
+  fireEvent.change(search, { target: { value: "s-rot" } });
+  expect(screen.getByLabelText("Спросить ООО Ротация")).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Создать запрос" }));
+  await waitFor(() => expect(created).toHaveBeenCalledWith("r-new"));
+  expect(posts).toEqual([{
+    path: "/api/purchasing/rfqs", body: {
+      line_ids: ["a", "b"], title: null, sent_on: null, declined_suggestions: [],
+      suppliers: [
+        { supplier_id: "s-al", reason: "items", line_ids: ["a", "b"] },
+        { name: "ИП Неизвестный", reason: "category_history", line_ids: ["a", "b"] },
+        { supplier_id: "s-rot", reason: "rotation", line_ids: ["b"] },
+      ],
+    },
+  }]);
+});
+
+it("searches the shared suggestion list without toggling checked or existing suppliers", () => {
+  const onToggle = vi.fn();
+  const items = suggestion.suggestions.map((item, index) => ({ ...item, in_rfq: index === 2 })) as SupplierSuggestion[];
+  render(<SuggestionList items={items} checked={new Set(["s-al", "name:ип неизвестный"])} onToggle={onToggle} />);
+  const search = screen.getByRole("searchbox", { name: "Поиск по списку поставщиков" });
+  fireEvent.change(search, { target: { value: "НЕИЗВЕСТНЫЙ ип" } });
+  expect(screen.getByLabelText("Спросить ИП Неизвестный")).toBeChecked();
+  expect(screen.queryByLabelText("Спросить ООО Альфа")).not.toBeInTheDocument();
+  fireEvent.change(search, { target: { value: "s-rot" } });
+  expect(screen.getByLabelText("Спросить ООО Ротация")).toBeChecked();
+  expect(screen.getByLabelText("Спросить ООО Ротация")).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Очистить поиск поставщиков" }));
+  expect(screen.getByLabelText("Спросить ООО Альфа")).toBeChecked();
+  expect(screen.getByText("Показано 3 из 3 · выбрано 3")).toBeInTheDocument();
+  fireEvent.change(search, { target: { value: "   " } });
+  expect(screen.getByText("Показано 3 из 3 · выбрано 3")).toBeInTheDocument();
+  expect(screen.queryByText(/По поиску поставщиков ничего не найдено/)).not.toBeInTheDocument();
+  expect(onToggle).not.toHaveBeenCalled();
+});
 
 it("a supplier row opens its positions with the reason of each", async () => {
   await openSuppliers();
