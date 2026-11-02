@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from "react";
-import { failureText, isAborted, latestRead, requestsApi, procurementApi, type ProcurementLine, type RequestRow } from "./api";
+import { failureText, isAborted, latestRead, requestsApi, type ProcurementLine, type RequestRow } from "./api";
 import { countLabel, formatDay, formatNumber, formatQty, NBSP, unitLabel } from "./format";
 import { projectLabel, useInternalProjects } from "./internalProjects";
 import { projectFromDesignation } from "./projectNumber";
@@ -19,8 +19,8 @@ import { PageWindow } from "./PageWindow";
 
 /* Roller_Buyer's «Заявки» (RequestsPage + RequestLinesTable) in «Лист закупки».
    Project → request (the lines of one batch, НАЗНАЧЕНИЕ) → lines; «Ход закупки» chips per project and per request;
-   lines grouped by type / plan from the calculation / last purchase; selection by group, Shift-range and drag (own new
-   and requote lines only); «Запросить КП» and «Отменить выбранные». Several buyers: «Мои» is one's own lines and the
+   lines grouped by type / plan from the calculation / last purchase; selection by group, Shift-range and drag (new
+   unclaimed, own desk and requote lines); «Запросить КП» and «Отменить выбранные». Several buyers: «Мои» is one's own lines and the
    unclaimed «Новый» ones, «Все» is read only. */
 
 const HANDOFF_LIMIT = 100; // как в реестре «Заявки»: столько заявок за один раз
@@ -417,8 +417,7 @@ function BatchRow({ batch, open, onToggle, lines, groupBy, onGroupBy, selected, 
         <td>{formatDay(batch.planned_date)}</td>
         <td className="num">
           {batch.lines}
-          {batch.selectable > 0 && <small className="rq-sub" title="Свои новые позиции и перезапрос — можно запросить КП"> к запросу {batch.selectable}</small>}
-          {batch.to_take > 0 && <small className="rq-sub" title="Неразобранные «Новый» — возьмите в работу"> взять {batch.to_take}</small>}
+          {batch.selectable > 0 && <small className="rq-sub" title="Новые позиции и перезапрос — можно запросить КП"> к запросу {batch.selectable}</small>}
         </td>
         <td><StatusChips counts={batch.counts} single={batch.lines === 1} /></td>
       </tr>
@@ -729,15 +728,6 @@ function LineRows({
         </td>
         <td className="rq-actions"><div className="rq-actions-in">
           {historyOpen && <button type="button" className="secondary small" onClick={() => historyOpen(line.id, line.legacy_id)}>История</button>}
-          {canAct && line.can_take && (
-            <button
-              type="button" className="secondary small" disabled={busy}
-              onClick={() => void act(async () => {
-                const result = await procurementApi.take([line.id]);
-                return result.skipped?.length ? `${line.legacy_id} уже взял другой закупщик` : `${line.legacy_id} взята в работу`;
-              })}
-            >Взять в работу</button>
-          )}
           {mine && line.can_split && <button type="button" className="secondary small" disabled={busy} onClick={() => onPanel("split")}>Разделить</button>}
           {canAct && line.can_cancel && <button type="button" className="secondary small" disabled={busy} onClick={onCancel}>
             {!line.mine && line.can_take ? "Отказать" : "Отменить"}

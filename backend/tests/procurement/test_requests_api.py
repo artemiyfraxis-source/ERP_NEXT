@@ -216,7 +216,7 @@ def test_refuse_unclaimed_new_line_claims_it_and_preserves_reason_and_history(ap
     summary = _view(client)
     batch = next(batch for batch in summary["batches"] if batch["designation"] == line.designation)
     row = _lines(client, batch["key"])[line.legacy_id]
-    assert row["can_take"] and row["can_cancel"] and not row["selectable"] and not row["mine"]
+    assert row["can_take"] and row["can_cancel"] and row["selectable"] and not row["mine"]
 
     body = {"lines": [{"id": str(line.id), "version": before}], "reason": "  Дубль заявки  "}
     result = client.post("/api/procurement/cancel-many", json=body)
