@@ -178,10 +178,28 @@ export function ColumnChooser({ keys, hidden, flat, onToggle, onMove, onReset }:
   onMove: (key: ColumnKey, step: -1 | 1) => void;
   onReset: () => void;
 }) {
+  return <ColumnChooserMenu keys={keys} hidden={hidden} titleOf={(key) => columnTitle(key, flat)} requiredKey="name"
+    onToggle={onToggle} onMove={onMove} onReset={onReset} />;
+}
+
+/** The stock chooser, also used by the project load sheet. Fixed keys cannot be moved past. */
+export function ColumnChooserMenu<K extends string>({ keys, hidden, titleOf, requiredKey, fixedKey, onToggle, onMove, onDrop, onReset, resetLabel = "По умолчанию" }: {
+  keys: K[];
+  hidden: K[];
+  titleOf: (key: K) => string;
+  requiredKey: K;
+  fixedKey?: K;
+  onToggle: (key: K, shown: boolean) => void;
+  onMove: (key: K, step: -1 | 1) => void;
+  onDrop?: (key: K, target: K) => void;
+  onReset: () => void;
+  resetLabel?: string;
+}) {
   const [open, setOpen] = useState(false);
+  const [dragging, setDragging] = useState<K | null>(null);
   const root = useRef<HTMLDivElement>(null);
   // After a step the focus stays on the same arrow (the list is re-ordered under it), or on the other one at the end.
-  const focusAfter = useRef<{ key: ColumnKey; step: -1 | 1 } | null>(null);
+  const focusAfter = useRef<{ key: K; step: -1 | 1 } | null>(null);
   useEffect(() => {
     if (!open) return;
     // A tap outside, or the focus leaving the list, closes it (the same as the menu «Ещё»).
@@ -214,16 +232,23 @@ export function ColumnChooser({ keys, hidden, flat, onToggle, onMove, onReset }:
     {open && <div className="column-popover" role="group" aria-label="Показывать колонки">
       <div className="column-popover-head">Показывать колонки</div>
       <ul>
-        {keys.map((key, index) => <li key={key} data-column={key}>
+        {keys.map((key, index) => <li key={key} data-column={key} className={dragging === key ? "dragging" : undefined}
+          onDragOver={(event) => { if (dragging && key !== fixedKey) event.preventDefault(); }}
+          onDrop={(event) => { event.preventDefault(); if (dragging && dragging !== key && key !== fixedKey) onDrop?.(dragging, key); setDragging(null); }}>
+          <span className="column-choice">
+            {onDrop && key !== fixedKey && <span className="column-grip" draggable aria-hidden="true" title="Перетащите, чтобы переставить"
+              onDragStart={(event) => { setDragging(key); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", key); }}
+              onDragEnd={() => setDragging(null)}>⠿</span>}
           <label className="check-inline">
-            <input type="checkbox" checked={key === "name" || !hidden.includes(key)} disabled={key === "name"} onChange={(event) => onToggle(key, event.target.checked)} />
-            {columnTitle(key, flat)}
+            <input type="checkbox" checked={key === requiredKey || !hidden.includes(key)} disabled={key === requiredKey} onChange={(event) => onToggle(key, event.target.checked)} />
+            {titleOf(key)}
           </label>
-          <button type="button" className="column-step" data-step="-1" aria-label={`Выше: ${columnTitle(key, flat)}`} title="Левее в таблице" disabled={index === 0} onClick={() => { focusAfter.current = { key, step: -1 }; onMove(key, -1); }}>↑</button>
-          <button type="button" className="column-step" data-step="1" aria-label={`Ниже: ${columnTitle(key, flat)}`} title="Правее в таблице" disabled={index === keys.length - 1} onClick={() => { focusAfter.current = { key, step: 1 }; onMove(key, 1); }}>↓</button>
+          </span>
+          <button type="button" className="column-step" data-step="-1" aria-label={`Выше: ${titleOf(key)}`} title="Левее в таблице" disabled={index === 0 || key === fixedKey || keys[index - 1] === fixedKey} onClick={() => { focusAfter.current = { key, step: -1 }; onMove(key, -1); }}>↑</button>
+          <button type="button" className="column-step" data-step="1" aria-label={`Ниже: ${titleOf(key)}`} title="Правее в таблице" disabled={index === keys.length - 1 || key === fixedKey || keys[index + 1] === fixedKey} onClick={() => { focusAfter.current = { key, step: 1 }; onMove(key, 1); }}>↓</button>
         </li>)}
       </ul>
-      <button type="button" className="link-button column-reset" onClick={onReset}>По умолчанию</button>
+      <button type="button" className="link-button column-reset" onClick={onReset}>{resetLabel}</button>
     </div>}
   </div>;
 }

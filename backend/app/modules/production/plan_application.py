@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Protocol, Sequence
+from typing import Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from app.shared.events import AuditEvent
@@ -17,6 +17,7 @@ from .plan import (
     PLAN_STAGE_AUTO,
     PROJECT_TERMINALS,
     PlanEvent,
+    KB_PROGRESS_FIELDS,
     PlanProjectSnapshot,
     StagePlan,
     kit_label,
@@ -24,6 +25,7 @@ from .plan import (
     plan_mark_value,
     stage_change_text,
     summarize_journal,
+    change_kb_progress as plan_kb_progress,
     validate_plan_note,
 )
 
@@ -35,10 +37,12 @@ class PlanProjectRepository(Protocol):
 
 class PlanEventRepository(Protocol):
     def list(self, project: str | None = None, limit: int = 10_000) -> Sequence[PlanEvent]: ...
+    def list_with_latest_progress(self) -> Sequence[PlanEvent]: ...
     def add(self, event: PlanEvent) -> PlanEvent: ...
     def of_project(self, project: str) -> Sequence[PlanEvent]: ...
     def delete_project(self, project: str) -> int: ...
     def last_sequence(self, project: str) -> int: ...
+    def latest_progress(self, project: str, kb: str) -> PlanEvent | None: ...
 
 
 class AppendOnlyRepository(Protocol):
@@ -169,6 +173,52 @@ def add_plan_event(command: AddPlanEventCommand, uow: PlanUnitOfWork) -> PlanEve
 
 class StageChangeConflict(Exception):
     """The project's journal moved between reading the stages and writing the change (409, not 422)."""
+
+
+class KbProgressUnitOfWork(PlanUnitOfWork, Protocol):
+    def current_run(self, project: str, kb: str) -> int | None:
+        """Lock the run sources and read them in the transaction that commits the event and audit."""
+        ...
+
+
+@dataclass(frozen=True)
+class ChangeKbProgressCommand:
+    project: str
+    kb: str
+    changes: Mapping[str, object]
+    expected_sequence: int
+    expected_run: int
+    actor: Actor
+    now: datetime
+
+
+def change_kb_progress(command: ChangeKbProgressCommand, uow: KbProgressUnitOfWork) -> tuple[PlanEvent, tuple[str, ...]]:
+    project = normalize_project_number(command.project)
+    kb = str(command.kb or "").strip().upper()
+    if not project or not kb:
+        raise ProductionValidationError("Проект и КБ обязательны.")
+    with uow:
+        run = uow.current_run(project, kb)
+        if run != command.expected_run:
+            raise StageChangeConflict("Тираж КБ изменился — обновите количества и повторите.")
+        if uow.plan_events.last_sequence(project) != command.expected_sequence:
+            raise StageChangeConflict("Журнал проекта изменился — обновите количества и повторите.")
+        current = uow.plan_events.latest_progress(project, kb)
+        progress, notices = plan_kb_progress(current.progress if current else None, command.changes, run)
+        text = " · ".join(f"{label}: {progress.counts()[name] if progress.counts()[name] is not None else '—'}"
+                          for name, label in KB_PROGRESS_FIELDS.items())
+        event = uow.plan_events.add(PlanEvent(
+            project=project, occurred_at=command.now, who=command.actor.name, kind=PLAN_KINDS["progress"],
+            item_index=kb, progress=progress, sequence=command.expected_sequence + 1,
+            text=" · ".join((text, *notices, *progress.warnings())),
+        ))
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=event.id, event_type="production.kb_progress_changed",
+            actor=command.actor, occurred_at=command.now,
+            details={"project": project, "kb": kb, "run": progress.run, "counts": progress.counts(), "notices": list(notices)},
+        ))
+        uow.commit()
+    return event, notices
 
 
 @dataclass(frozen=True)

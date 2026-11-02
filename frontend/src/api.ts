@@ -703,6 +703,7 @@ export interface FulfillmentPositionCandidates {
 }
 
 export interface FulfillmentLine {
+  links?: string[];
   id: string;
   requirement_id: string;
   article: string;
@@ -1121,6 +1122,21 @@ export interface ProductionFlow {
   norms: { techcard_id: string | null; revision: number | null; current_revision: number | null; outdated: boolean };
 }
 
+export type KbProgressField = "started" | "done" | "qc" | "passed";
+export type KbProgressCounts = Record<KbProgressField, number | null>;
+export type KbProgressChanges = Partial<Record<KbProgressField, number>>;
+
+export interface KbProgressState {
+  project: string;
+  kb: string;
+  run: number | null;
+  counts: KbProgressCounts;
+  sequence: number;
+  warnings: string[];
+  unavailable: string;
+  notices?: string[];
+}
+
 export interface ProductionPlanEvent {
   id: string;
   project: string;
@@ -1136,6 +1152,7 @@ export interface ProductionPlanEvent {
   field?: string;
   from_value?: string;
   reason?: string;
+  progress?: { run: number | null; counts: KbProgressCounts };
 }
 
 /** Ячейка листа «ЗАГРУЗ»: показанное значение, вычисленное ERP и признак ручной отметки поверх него. */
@@ -1171,6 +1188,7 @@ export interface ProductionPlanRow {
     manual: boolean;
     tc: boolean;
     kit: boolean;
+    progress?: { run: number | null; counts: KbProgressCounts; warnings: string[] };
     review: null | { value: string; text: string; who: string; occurred_at: string | null };
   }>;
   supply: null | {
@@ -1691,6 +1709,8 @@ export interface ShipmentBox {
 export interface ProjectAddressee {
   project: string;
   version: number;
+  /** Server-owned project-card gaps; does not certify an individual shipment. */
+  dispatch_gaps?: string[];
   receiver: string;
   shipping_point: string;
   contact: string;
@@ -3952,6 +3972,12 @@ export const productionApi = {
 
 export const productionPlanApi = {
   load: () => api<ProductionPlanResult>("/api/production/plan"),
+  kbProgress: (project: string, kb: string) =>
+    api<KbProgressState>(`/api/production/plan/kb-progress?project=${encodeURIComponent(project)}&kb=${encodeURIComponent(kb)}`),
+  saveKbProgress: (project: string, kb: string, counts: KbProgressChanges, expectedSequence: number, expectedRun: number) =>
+    api<KbProgressState>("/api/production/plan/kb-progress", {
+      method: "POST", body: JSON.stringify({ project, kb, counts, expected_sequence: expectedSequence, expected_run: expectedRun }),
+    }),
   stagePreview: (project: string, value: string, kb = "") =>
     api<StagePreview>(`/api/production/plan/stage-preview?project=${encodeURIComponent(project)}&value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   addEvent: (payload: {
@@ -4011,7 +4037,7 @@ export const shippingApi = {
     method: "PUT", body: JSON.stringify(payload),
   }),
   print: (shipmentId: string, document: "pl" | "dn") => api<{ forms: ShippingForm[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
-  addressees: () => api<{ addressees: ProjectAddressee[] }>("/api/shipping/project-addressees"),
+  addressees: (projects?: string[]) => api<{ addressees: ProjectAddressee[] }>(`/api/shipping/project-addressees${projects?.length ? `?${new URLSearchParams(projects.map((project) => ["project", project]))}` : ""}`),
   /** `portalShipUpdFile`: файл УПД к отправке; ссылка на него встаёт в отправку. */
   uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
     method: "POST", body: JSON.stringify({ shipment_id: shipmentId, version, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
@@ -4569,6 +4595,7 @@ export interface KitsetKbStage {
   review: { value: string; text: string; who: string } | null;
   /** Этапы, которые ручная смена перескочила (в порядке лестницы) — «пропущен» в карточке. */
   skipped?: string[];
+  progress?: { run: number | null; counts: KbProgressCounts; warnings: string[] };
 }
 
 /** Предпросмотр ручной смены этапа (GET …/status/preview и /api/production/plan/stage-preview). */
@@ -5001,6 +5028,12 @@ export const kitsetsApi = {
     api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
   stagePreview: (project: string, value: string, kb = "") =>
     api<StagePreview>(`${kitsetPath(project)}/status/preview?value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
+  kbProgress: (project: string, kb: string) =>
+    api<KbProgressState>(`${kitsetPath(project)}/progress/${encodeURIComponent(kb)}`),
+  saveKbProgress: (project: string, kb: string, counts: KbProgressChanges, expectedSequence: number, expectedRun: number) =>
+    api<KbProgressState>(`${kitsetPath(project)}/progress/${encodeURIComponent(kb)}`, {
+      method: "POST", body: JSON.stringify({ counts, expected_sequence: expectedSequence, expected_run: expectedRun }),
+    }),
   setStatus: (project: string, payload: ProjectStatusAction) =>
     api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify(payload) }),
   setMarker: (project: string, field: ProjectMarkerField, value: ProjectMarkerValue) =>

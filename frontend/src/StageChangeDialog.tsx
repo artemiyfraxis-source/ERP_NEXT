@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { StageCloseItem, StageKeepItem, StagePreview } from "./api";
+import type { KbProgressChanges, KbProgressField, KbProgressState, StageCloseItem, StageKeepItem, StagePreview } from "./api";
 import { AutoTextarea } from "./AutoTextarea";
 
 export const STAGE_AUTO = "авто";
@@ -57,7 +57,7 @@ function KeepPart({ items }: { items: StageKeepItem[] }) {
 /** Подтверждение ручной смены этапа — одно окно для карточки проекта, «Состава» и «Производственного плана».
  *  Сначала предпросмотр с сервера (по каждой КБ «было → станет», пропущенные этапы, что смена не трогает),
  *  потом запись; назад — только с причиной. */
-export function StageChangeDialog({ project, kb = "", current, value, loadPreview, apply, onClose }: {
+type StageDialogProps = {
   project: string;
   /** Пусто — весь проект, иначе одна КБ. */
   kb?: string;
@@ -68,7 +68,23 @@ export function StageChangeDialog({ project, kb = "", current, value, loadPrevie
   /** `previewToken` — из предпросмотра: изменилось закрываемое с тех пор → сервер ответит 409. */
   apply: (reason: string, previewToken: string) => Promise<void>;
   onClose: () => void;
-}) {
+  progressOnly?: false;
+};
+
+type KbProgressDialogProps = {
+  project: string;
+  kb: string;
+  progressOnly: true;
+  loadProgress: () => Promise<KbProgressState>;
+  applyProgress: (changes: KbProgressChanges, sequence: number, run: number) => Promise<KbProgressState>;
+  onClose: () => void;
+};
+
+export function StageChangeDialog(props: StageDialogProps | KbProgressDialogProps) {
+  return props.progressOnly ? <KbProgressDialog {...props} /> : <StageDialog {...props} />;
+}
+
+function StageDialog({ project, kb = "", current, value, loadPreview, apply, onClose }: StageDialogProps) {
   const [preview, setPreview] = useState<StagePreview | null>(null);
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
@@ -144,6 +160,106 @@ export function StageChangeDialog({ project, kb = "", current, value, loadPrevie
       <div className="move-actions page-actions">
         <button type="submit" className="primary" disabled={busy || blocked}>{forward && closeCount > 0 ? `Сменить этап и закрыть ${closeCount}` : "Сменить этап"}</button>
         <button type="button" className="secondary" onClick={onClose}>Отмена</button>
+      </div>
+    </form>
+  </div>, document.body);
+}
+
+const PROGRESS_FIELDS: Array<[KbProgressField, string]> = [["started", "Начато"], ["done", "Готово"], ["qc", "На ОТК"], ["passed", "ОТК прошло"]];
+
+function KbProgressDialog({ project, kb, loadProgress, applyProgress, onClose }: KbProgressDialogProps) {
+  const dialog = useRef<HTMLFormElement>(null);
+  const [state, setState] = useState<KbProgressState | null>(null);
+  const [inputs, setInputs] = useState<Record<KbProgressField, string>>({ started: "", done: "", qc: "", passed: "" });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const loader = useRef(loadProgress);
+  loader.current = loadProgress;
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog.current?.focus();
+    return () => { if (opener?.isConnected) opener.focus(); };
+  }, []);
+  function show(result: KbProgressState) {
+    setState(result);
+    setInputs({ started: String(result.counts.started ?? ""), done: String(result.counts.done ?? ""), qc: String(result.counts.qc ?? ""), passed: String(result.counts.passed ?? "") });
+  }
+  useEffect(() => {
+    let active = true;
+    setState(null); setError("");
+    loader.current().then((result) => { if (active) show(result); }).catch((reason) => {
+      if (active) setError(failure(reason, "Количества не получены"));
+    });
+    return () => { active = false; };
+  }, [project, kb]);
+
+  const changes: KbProgressChanges = {};
+  let validation = "";
+  for (const [field, label] of PROGRESS_FIELDS) {
+    const text = inputs[field].trim();
+    if (!text && state?.counts[field] == null) continue;
+    if (!/^\d+$/.test(text) || !Number.isSafeInteger(Number(text)) || state?.run == null || Number(text) > state.run) {
+      validation = `${label} — целое число от 0 до тиража КБ (${state?.run ?? "—"}).`;
+      break;
+    }
+    if (state && Number(text) !== state.counts[field]) changes[field] = Number(text);
+  }
+  const predicted = { ...state?.counts, ...changes };
+  const notices: string[] = [];
+  if (state && !validation) {
+    for (let index = PROGRESS_FIELDS.length - 1; index >= 0; index--) {
+      const [field] = PROGRESS_FIELDS[index], value = changes[field];
+      if (value == null || value <= (state.counts[field] ?? 0)) continue;
+      for (const [earlier, label] of PROGRESS_FIELDS.slice(0, index)) {
+        if (predicted[earlier] == null || predicted[earlier]! < value) {
+          notices.push(`${label}: ${predicted[earlier] ?? "—"} → ${value} (поднято автоматически).`);
+          predicted[earlier] = value;
+        }
+      }
+    }
+  }
+  const warnings: string[] = [];
+  const known = PROGRESS_FIELDS.filter(([field]) => predicted[field] != null);
+  for (let index = 1; index < known.length; index++) {
+    const [earlier, firstLabel] = known[index - 1], [later, secondLabel] = known[index];
+    if (predicted[later]! > predicted[earlier]!) warnings.push(`${secondLabel}: ${predicted[later]} больше «${firstLabel}»: ${predicted[earlier]}.`);
+  }
+  const changed = Object.keys(changes).length > 0;
+  const disabled = busy || !state || state.run == null || Boolean(state.unavailable || validation) || !changed;
+  async function submit() {
+    if (disabled || !state || state.run == null) return;
+    setBusy(true); setError("");
+    try { show(await applyProgress(changes, state.sequence, state.run)); }
+    catch (cause) {
+      setError(failure(cause, "Количества не сохранены"));
+      try { show(await loader.current()); }
+      catch (reloadError) { setError(`${failure(cause, "Количества не сохранены")} · ${failure(reloadError, "Не удалось обновить количества")}`); }
+    } finally { setBusy(false); }
+  }
+  const messages = [...new Set([...(state?.warnings ?? []), ...(changed ? notices : state?.notices ?? []), ...warnings])];
+  return createPortal(<div className="dialog-overlay" onKeyDown={(event) => {
+    if (event.key === "Escape") { event.stopPropagation(); onClose(); }
+  }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <form ref={dialog} tabIndex={-1} className="move-dialog stage-dialog panel" role="dialog" aria-modal="true" aria-label="Количества КБ"
+      onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <h2>Количества · {project} · {kb}</h2>
+      {!state && !error && <div className="empty">Загрузка…</div>}
+      {state && <div className="stage-dialog-body">
+        <div className="page-sub">Тираж КБ: {state.run ?? "—"}</div>
+        {state.unavailable && <div className="warning-inline">{state.unavailable}</div>}
+        <div className="form-grid">
+          {PROGRESS_FIELDS.map(([field, label]) => <label key={field}>{label}
+            <input aria-label={label} inputMode="numeric" value={inputs[field]} disabled={busy || Boolean(state.unavailable)}
+              onChange={(event) => setInputs({ ...inputs, [field]: event.target.value })} />
+          </label>)}
+        </div>
+        {messages.length > 0 && <div className="warning-inline" role="status"><ul>{messages.map((message) => <li key={message}>{message}</li>)}</ul></div>}
+        {validation && !state.unavailable && <div className="error-banner" role="alert">{validation}</div>}
+      </div>}
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="move-actions page-actions">
+        <button type="submit" className="primary" disabled={disabled}>Сохранить количества</button>
+        <button type="button" className="secondary" onClick={onClose}>Закрыть</button>
       </div>
     </form>
   </div>, document.body);

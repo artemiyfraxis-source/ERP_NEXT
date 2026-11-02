@@ -3,7 +3,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -46,6 +46,61 @@ def decide_pack(client, project: str = "591К.3") -> dict:
 def comment_notifications():
     with app.state.shipping_uow_factory() as uow:
         return [row.payload for row in uow.session.query(OutboxMessageRow) if "warehouse-comment" in row.idempotency_key]
+
+
+def test_bulk_project_card_readiness_includes_virtual_defaults_without_writes(shipping_api):
+    client = shipping_api
+    client.put("/api/shipping/project-addressee", json={"project": "PART", "receiver": "Получатель"})
+    client.put("/api/shipping/project-addressee", json={
+        "project": "PICKUP", "receiver": "Получатель", "phone": "+7", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО",
+    })
+    params = [("project", project) for project in ["EMPTY", "PART", "PICKUP", "EMPTY"]]
+    response = client.get("/api/shipping/project-addressees", params=params)
+    assert response.status_code == 200, response.text
+    cards = {card["project"]: card for card in response.json()["addressees"]}
+    assert len(response.json()["addressees"]) == 3
+    assert cards["EMPTY"]["version"] == 0
+    assert cards["EMPTY"]["dispatch_gaps"] == ["получатель", "адрес доставки", "телефон", "вариант УПД"]
+    assert cards["PART"]["dispatch_gaps"] == ["адрес доставки", "телефон", "вариант УПД"]
+    assert cards["PICKUP"]["dispatch_gaps"] == []
+    assert "ready_to_ship" not in cards["PICKUP"]
+    assert {card["project"] for card in client.get("/api/shipping/project-addressees").json()["addressees"]} == {"PART", "PICKUP"}
+    assert client.get("/api/shipping/project-addressee", params={"project": "EMPTY"}).json()["addressee"]["dispatch_gaps"] == cards["EMPTY"]["dispatch_gaps"]
+
+
+def test_project_card_readiness_is_not_shipment_readiness_or_pack_permission(shipping_api):
+    client = shipping_api
+    for carrier in ["Свой курьер", "Свой курьер до клиента", "Самовывоз"]:
+        project = carrier
+        card = client.put("/api/shipping/project-addressee", json={
+            "project": project, "receiver": "Получатель", "phone": "+7", "carrier": carrier, "upd_type": "БУМАГА",
+        }).json()["addressee"]
+        assert card["dispatch_gaps"] == (["файл бумажной УПД"] if carrier == "Самовывоз" else ["адрес доставки", "файл бумажной УПД"])
+        assert not card["pack_decided"]
+    decided = decide_pack(client, "EMPTY")
+    assert decided["pack_decided"] and decided["dispatch_gaps"]
+
+
+def test_bulk_project_cards_filter_in_sql_instead_of_reading_unrelated_cards(shipping_api):
+    from app.modules.shipping.domain import ProjectAddressee
+    with app.state.shipping_uow_factory() as uow:
+        for index in range(12):
+            uow.addressees.add(ProjectAddressee(project=f"P{index:02}", version=1))
+        uow.commit()
+        engine = uow.session.get_bind()
+    statements = []
+    def sql(_connection, _cursor, statement, parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "shipping_project_addressees" in statement:
+            statements.append((statement, parameters))
+    event.listen(engine, "before_cursor_execute", sql)
+    try:
+        response = shipping_api.get("/api/shipping/project-addressees", params=[("project", "P03"), ("project", "MISSING")])
+        assert response.status_code == 200
+        assert [card["project"] for card in response.json()["addressees"]] == ["P03", "MISSING"]
+        assert len(statements) == 1
+        assert set(statements[0][1]) == {"P03", "MISSING"}
+    finally:
+        event.remove(engine, "before_cursor_execute", sql)
 
 
 def test_project_warehouse_comment_notifies_storekeepers_once_per_change(shipping_api):

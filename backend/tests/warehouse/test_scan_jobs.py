@@ -180,6 +180,14 @@ def test_the_ci_seeder_fills_the_scan_queue_once_it_stands_one_revision_back(tmp
     finally:
         engine.dispose()
 
+    with sqlite3.connect(path) as connection:
+        events = connection.execute(
+            "SELECT kind, progress_run, progress_started, progress_done, progress_qc, progress_passed "
+            "FROM production_plan_events"
+        ).fetchall()
+    assert events
+    assert all(kind != "Количество КБ" and counts == [None] * 5 for kind, *counts in events)
+
 
 # --- the queue --------------------------------------------------------------------------------------------------
 

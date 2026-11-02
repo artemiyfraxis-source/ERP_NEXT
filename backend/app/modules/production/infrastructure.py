@@ -23,6 +23,7 @@ from .application import Absence, DuplicateLaunch, Operator
 from .domain import DEFAULT_SHIFT, MARKS_ISSUED_EVENT, MARKS_RELEASED_EVENT, RESTORED_EVENT, EtkOperation, FlowMode, MarkEvent, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
     KIT_STAGES, PLAN_BLOCKERS, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot,
+    KbProgress, KB_PROGRESS_FIELDS,
     blocker_alias,
     normalize_project_number,
     stage_alias,
@@ -335,6 +336,19 @@ PLAN_EVENT_CHECKS = {
     "ck_production_plan_events_blocker": f"{_sql_in('blocker', PLAN_BLOCKERS)} OR kind <> '{PLAN_KINDS['block']}'",
 }
 
+PROGRESS_CHECKS = {
+    "ck_production_plan_events_progress": (
+        "(kind <> 'Количество КБ' AND progress_run IS NULL AND "
+        + " AND ".join(f"progress_{name} IS NULL" for name in KB_PROGRESS_FIELDS)
+        + ") OR (kind = 'Количество КБ' AND item_index <> '' AND progress_run IS NOT NULL AND progress_run > 0 AND progress_run = CAST(progress_run AS INTEGER) AND ("
+        + " OR ".join(f"progress_{name} IS NOT NULL" for name in KB_PROGRESS_FIELDS) + ") AND "
+        + " AND ".join(
+            f"(progress_{name} IS NULL OR (progress_{name} >= 0 AND progress_{name} <= progress_run "
+            f"AND progress_{name} = CAST(progress_{name} AS INTEGER)))" for name in KB_PROGRESS_FIELDS
+        ) + ")"
+    ),
+}
+
 
 class ProductionPlanEventRow(Base):
     __tablename__ = "production_plan_events"
@@ -342,6 +356,7 @@ class ProductionPlanEventRow(Base):
         Index("ix_production_plan_events_project_time", "project", "occurred_at", "id"),
         Index("ux_production_plan_events_project_sequence", "project", "sequence", unique=True),
         *(CheckConstraint(sql, name=name) for name, sql in PLAN_EVENT_CHECKS.items()),
+        *(CheckConstraint(sql, name=name) for name, sql in PROGRESS_CHECKS.items()),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -358,6 +373,11 @@ class ProductionPlanEventRow(Base):
     field: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
     from_value: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     reason: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
+    progress_run: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_started: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_done: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_qc: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progress_passed: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class ProductionBoxRow(Base):
@@ -1183,6 +1203,9 @@ class SqlAlchemyPlanEventRepository:
             # Old «Этап КБ» rows keep their word (the journal is immutable); it reads as the current ladder stage.
             value=_read_word(row.kind, row.value),
             from_value=_read_word(row.kind, row.from_value),
+            progress=None if row.progress_run is None else KbProgress(run=row.progress_run, **{
+                name: getattr(row, f"progress_{name}") for name in KB_PROGRESS_FIELDS
+            }),
         )
 
     def last_sequence(self, project: str) -> int:
@@ -1199,6 +1222,32 @@ class SqlAlchemyPlanEventRepository:
             statement.order_by(ProductionPlanEventRow.project, ProductionPlanEventRow.sequence).limit(limit)
         )
         return [self._domain(row) for row in rows]
+
+    def latest_progress(self, project: str, kb: str) -> PlanEvent | None:
+        """The current snapshot of one KB, independent of the ordinary journal display limit."""
+        row = self.session.scalar(select(ProductionPlanEventRow).where(
+            ProductionPlanEventRow.project == normalize_project_number(project),
+            ProductionPlanEventRow.item_index == str(kb or "").strip().upper(),
+            ProductionPlanEventRow.kind == PLAN_KINDS["progress"],
+        ).order_by(ProductionPlanEventRow.sequence.desc()).limit(1))
+        return self._domain(row) if row is not None else None
+
+    def list_with_latest_progress(self) -> list[PlanEvent]:
+        """Capped journal plus at most one current quantity snapshot per project/KB, in two batch queries."""
+        latest = select(
+            ProductionPlanEventRow.project, ProductionPlanEventRow.item_index,
+            func.max(ProductionPlanEventRow.sequence).label("sequence"),
+        ).where(ProductionPlanEventRow.kind == PLAN_KINDS["progress"]).group_by(
+            ProductionPlanEventRow.project, ProductionPlanEventRow.item_index,
+        ).subquery()
+        events = {event.id: event for event in self.list()}
+        rows = self.session.scalars(select(ProductionPlanEventRow).join(latest, and_(
+            ProductionPlanEventRow.project == latest.c.project,
+            ProductionPlanEventRow.item_index == latest.c.item_index,
+            ProductionPlanEventRow.sequence == latest.c.sequence,
+        )))
+        events.update((row.id, self._domain(row)) for row in rows)
+        return sorted(events.values(), key=lambda event: (event.project, event.sequence))
 
     def _names(self, project: str) -> list[str]:
         """Names under which the journal holds the project: the rows keep the number as it was typed, readers
@@ -1226,13 +1275,20 @@ class SqlAlchemyPlanEventRepository:
         ).rowcount or 0
 
     def add(self, event: PlanEvent) -> PlanEvent:
-        stored = replace(event, sequence=self.last_sequence(event.project) + 1)
+        # Progress reserves the preview's next sequence. Never renumber it past a concurrent journal write:
+        # the unique index must reject that race, even if it happened after the application's version check.
+        sequence = event.sequence if event.kind == PLAN_KINDS["progress"] and event.sequence > 0 else self.last_sequence(event.project) + 1
+        stored = replace(event, sequence=sequence)
         self.session.add(ProductionPlanEventRow(
             id=stored.id, project=stored.project, sequence=stored.sequence,
             occurred_at=stored.occurred_at, who=stored.who, kind=stored.kind,
             blocker=stored.blocker, text=stored.text, deadline=stored.deadline,
             item_index=stored.item_index, value=stored.value, field=stored.field,
             from_value=stored.from_value, reason=stored.reason,
+            progress_run=stored.progress.run if stored.progress is not None else None,
+            **{f"progress_{name}": value for name, value in (
+                stored.progress.counts() if stored.progress is not None else dict.fromkeys(KB_PROGRESS_FIELDS)
+            ).items()},
         ))
         return stored
 

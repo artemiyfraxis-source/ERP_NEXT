@@ -27,6 +27,7 @@ from app.modules.requests.application import CalcSheetError
 from app.modules.requests.domain import ValidationError as CalcValidationError
 from app.shared.print_sheet import PrintSheet
 from app.workflows import issue_calc
+from app.workflows.fulfillment_links import links_for_requests
 from app.shared.warehouse_location import SHELF_LETTERS, configured_rack_layout, place_code
 
 from .application import (
@@ -266,6 +267,7 @@ def _run(operation) -> dict:
 
 @router.get("")
 def requests(
+    http_request: Request,
     _principal: Annotated[Principal, Depends(fulfillment_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
@@ -280,12 +282,18 @@ def requests(
         places = {
             request.id: handout_place(request, uow) for request in page if request.status is FulfillmentStatus.COMPLETE
         }
+    links = links_for_requests(page, getattr(http_request.app.state, "techcards_uow_factory", None))
+    results = []
+    for request in page:
+        result = _result(request)
+        for line in result["lines"]:
+            line["links"] = links.get(UUID(line["id"]), [])
+        if request.id in places:
+            result["handout_place"] = places[request.id]
+        results.append(result)
     layout = configured_rack_layout()
     return {
-        "requests": [
-            {**_result(request), "handout_place": places[request.id]} if request.id in places else _result(request)
-            for request in page
-        ],
+        "requests": results,
         "next_cursor": str(page[-1].id) if len(rows) > limit else None,
         # issueCardResp_ `places.config`: the rack layout for the handout address fields.
         "places": {

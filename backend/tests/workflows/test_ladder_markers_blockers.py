@@ -207,6 +207,8 @@ def test_upgrade_keeps_every_old_row_reports_them_and_reads_them_as_the_new_mode
     for line in ("«Этап КБ» = «ТК готова»: 1", "«Этап КБ» = «КБ набрана»: 1", "«Этап КБ» = «Распланировано»: 1",
                  "«Блокер» = «ХОЛД»: 1", "«Блокер» = «ПАУЗА»: 1"):
         assert line in out
+    # Current repositories read the current schema; the historical assertions above stay at 0161.
+    command.upgrade(_config(database), "head")
     engine = create_engine(f"sqlite+pysqlite:///{database.as_posix()}")
     try:
         with Session(engine) as session:
