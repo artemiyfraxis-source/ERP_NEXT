@@ -156,7 +156,7 @@ describe("the «Заявки» screen", () => {
   });
 
   const unclaimed = line("d", {
-    status: "Новый", mine: false, buyer: null, selectable: false, can_take: true,
+    status: "Новый", mine: false, buyer: null, selectable: true, can_take: true,
     can_split: false, can_cover: false,
   });
 
@@ -171,12 +171,12 @@ describe("the «Заявки» screen", () => {
     });
   }
 
-  it("offers refusal beside taking an unclaimed new line, without making it selectable", async () => {
+  it("offers refusal and selection for an unclaimed new line without manual taking", async () => {
     useLines([...lines, unclaimed]);
     const table = await openBatch();
     const row = within(table).getByText("Позиция d").closest("tr")!;
-    expect(within(row).getByRole("button", { name: "Взять в работу" })).toBeTruthy();
-    expect(within(row).queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Взять в работу" })).toBeNull();
+    expect(within(row).getByRole("checkbox")).toBeTruthy();
     fireEvent.click(within(row).getByRole("button", { name: "Отказать" }));
     const dialog = screen.getByRole("dialog", { name: "Отказать в закупке" });
     expect(within(dialog).getByText("Позиция d · SM-d")).toBeTruthy();
@@ -192,6 +192,39 @@ describe("the «Заявки» screen", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(calls.some((call) => call.path === "/api/procurement/cancel-many")).toBe(false);
+  });
+
+  it("selects a new line, returns from suggestions without writes, then creates the RFQ without taking first", async () => {
+    useLines([unclaimed]);
+    const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      if (String(input) === "/api/purchasing/rfqs") {
+        calls.push({ path: String(input), init });
+        return json({ id: "rfq-direct", number: "КП-2611-001", suppliers: 1 }, 201);
+      }
+      return base(input, init);
+    });
+    await openBatch();
+    expect(screen.queryByRole("button", { name: "Взять в работу" })).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Выбрать SM-d" }));
+    fireEvent.click(screen.getByRole("button", { name: "Запросить КП (1)" }));
+    await screen.findByText("Запрос КП по 1 строке");
+    await screen.findByText(/Подсказать некого/);
+    fireEvent.click(screen.getByRole("button", { name: "Назад" }));
+    expect(calls.filter((call) => call.init?.method === "POST")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Запросить КП (1)" }));
+    await screen.findByText(/Подсказать некого/);
+    fireEvent.change(screen.getByLabelText("Поставщик по названию"), { target: { value: "ООО Кабель" } });
+    fireEvent.click(screen.getByRole("button", { name: "+ поставщик по названию" }));
+    fireEvent.click(screen.getByRole("button", { name: "Создать запрос" }));
+    await waitFor(() => expect(window.location.search).toContain("rfq=rfq-direct"));
+    const posts = calls.filter((call) => call.init?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(posts[0].path).toBe("/api/purchasing/rfqs");
+    expect(JSON.parse(String(posts[0].init?.body))).toMatchObject({
+      line_ids: ["d"], suppliers: [{ name: "ООО Кабель", reason: "manual", line_ids: ["d"] }],
+    });
+    expect(calls.some((call) => call.path === "/api/procurement/take")).toBe(false);
   });
 
   it("keeps the reason on HTTP error, retries once and reports a skipped refusal honestly", async () => {

@@ -30,6 +30,7 @@ from app.modules.purchasing.suppliers import supplier_key
 from app.modules.requests.api import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
+from app.shared.persistence import AuditEventRow, OutboxMessageRow
 from tests.factories import Actor
 from tests.procurement.test_api import message
 
@@ -134,6 +135,40 @@ def _pool(stand) -> dict:
 
 def _lines(pool: dict) -> dict[str, dict]:
     return {line["id"]: line for group in pool["groups"] for line in group["lines"]}
+
+
+def test_new_unclaimed_line_is_in_pool_and_suggestions_without_claim_or_side_effects(stand):
+    fresh = stand.active("Кабель новый", status="Новый", buyer_id=None, buyer_name=None, buyer_department=None,
+                         actual_quantity=None, actual_unit=None, stock_covered=Decimal("0.5"))
+    stand.supplier("ООО Кабель", key=True, categories=["cable"])
+    with stand.sessions() as session:
+        before = session.scalar(select(func.count()).select_from(AuditEventRow))
+        outbox = session.scalar(select(func.count()).select_from(OutboxMessageRow))
+        version = session.get(ProcurementLineRow, fresh).version
+    assert _lines(_pool(stand))[str(fresh)]["quantity"] == "1.5"
+    response = stand.client.get(f"{BASE}/suggest", params={"line_ids": str(fresh)})
+    assert response.status_code == 200, response.text
+    assert response.json()["suggestions"][0]["name"] == "ООО Кабель"
+    # Re-reading after returning from the supplier step is equally read-only.
+    assert str(fresh) in _lines(_pool(stand))
+    with stand.sessions() as session:
+        row = session.get(ProcurementLineRow, fresh)
+        assert row.status == "Новый" and row.buyer_id is None and row.version == version
+        assert row.actual_quantity is None and row.actual_unit is None and row.stock_covered == Decimal("0.5")
+        assert session.scalar(select(func.count()).select_from(AuditEventRow)) == before
+        assert session.scalar(select(func.count()).select_from(OutboxMessageRow)) == outbox
+        assert session.scalar(select(func.count()).select_from(RfqRow)) == 0
+
+
+def test_pool_excludes_new_foreign_paid_backorder_closed_and_fully_covered_lines(stand):
+    common = {"status": "Новый", "buyer_id": None, "buyer_name": None, "buyer_department": None}
+    fresh = stand.active("Кабель доступный", **common)
+    stand.active("Кабель чужой", **{**common, "buyer_id": Actor(name="Иванов", department="Закупки").id, "buyer_name": "Иванов"})
+    stand.active("Кабель оплачен", **common, paid_at=NOW)
+    stand.active("Кабель дозавоз", **common, legacy_id="SM-99999-Д")
+    stand.active("Кабель закрыт", **{**common, "status": "Отменено"})
+    stand.active("Кабель покрыт", **common, stock_covered=Decimal("2"))
+    assert set(_lines(_pool(stand))) == {str(fresh)}
 
 
 def test_pool_groups_by_the_item_category_else_the_guess_with_the_original_suppliers(stand):

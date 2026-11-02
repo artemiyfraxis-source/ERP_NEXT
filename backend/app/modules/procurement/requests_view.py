@@ -194,12 +194,13 @@ def _project_result(project: LineProject) -> dict:
 
 
 def selectable(line: ViewLine, status: str, actor_id: UUID | None) -> bool:
-    """RB `selectable` for several buyers: one's own line on the desk, with something to buy, in no live request."""
+    """Owned desk lines and unclaimed new lines with something to buy, in no live request."""
     return (
         actor_id is not None
-        and line.buyer_id == actor_id
-        and line.status in {stage.value for stage in FACTS_EDITABLE}
+        and ((line.buyer_id == actor_id and line.status in {stage.value for stage in FACTS_EDITABLE})
+             or (line.buyer_id is None and line.status == ProcurementStatus.NEW.value))
         and status in RFQ_READY
+        and not line.paid and not line.backorder
         and line.to_buy > 0
     )
 
