@@ -60,8 +60,8 @@ it("shows machines by day in percent of all units, overload, the day's work and 
   expect(wednesday.closest("td")).toHaveClass("over");
   expect(wednesday.getAttribute("title")).toContain("одновременно 3 из 2 ед.");
 
-  const cutter = screen.getByText("ОБ.098 Автомат резки").closest("tr")!;
-  expect(within(cutter).getByText("1 ед. · нет в БД.ОБ · свободен")).toBeInTheDocument();
+  expect(screen.queryByText("ОБ.098 Автомат резки")).toBeNull();
+  expect(within(press).getByTitle("ОБ.027 Пресс, 20.10: занято 0 из 14 ч (0 %)").closest("td")).toHaveClass("free");
   expect(screen.getByRole("note")).toHaveTextContent("Станок ОБ.098 не найден в БД.ОБ — считаю, что он один");
 
   fireEvent.click(monday);
@@ -72,7 +72,7 @@ it("shows machines by day in percent of all units, overload, the day's work and 
 it("says when no machine is busy and shows a failure honestly", async () => {
   serve(() => json({ ...LOAD, machines: [], warnings: [] }));
   const { unmount } = render(<MachineLoadGrid holidays={[]} days={DAYS} />);
-  expect(await screen.findByText("За 19.10–21.10 станки не заняты: в плане нет операций ЭТК со станком в «Оборудовании».")).toBeInTheDocument();
+  expect(await screen.findByText("За 19.10–21.10 станки не заняты.")).toBeInTheDocument();
   unmount();
   vi.restoreAllMocks();
 
@@ -100,29 +100,68 @@ it("names a machine by its kind, the model goes to the second line", () => {
   expect(machineName({ machine: "ОБ.027", label: "ОБ.027 Пресс" })).toEqual({ title: "ОБ.027 Пресс", model: "" });
 });
 
-it("splits machines by site, shows empty ЖУК and new idle machines after refresh", async () => {
-  let added = false;
+it("shows only busy machines and site counts, then removes a machine and its detail when refresh makes it idle", async () => {
+  let idle = false;
   serve(() => json({ ...LOAD, sites: [
-    { site: "ЦАР", machines: [LOAD.machines[0]] },
-    { site: "ЖУК", machines: added ? [{ ...LOAD.machines[1], known: true }] : [] },
+    { site: "ЦАР", machines: [idle ? { ...LOAD.machines[0], days: DAYS.map((value) => day(value, 0)) } : LOAD.machines[0], LOAD.machines[1]] },
+    { site: "ЖУК", machines: [LOAD.machines[1]] },
     { site: "", machines: [] },
   ] }));
   const { rerender } = render(<MachineLoadGrid holidays={[]} days={DAYS} refreshKey="1" />);
   const tsar = await screen.findByRole("region", { name: "Станки · ЦАР" });
-  const zhuk = screen.getByRole("region", { name: "Станки · ЖУК" });
   expect(within(tsar).getByText("ОБ.027 Пресс")).toBeInTheDocument();
-  expect(within(zhuk).getByText("Станки площадки ЖУК ещё не внесены")).toBeInTheDocument();
-  expect(within(zhuk).queryByText("ОБ.027 Пресс")).toBeNull();
-  added = true;
+  expect(tsar.querySelector(".mb-count")).toHaveTextContent("1");
+  expect(screen.queryByRole("region", { name: "Станки · ЖУК" })).toBeNull();
+  expect(screen.queryByText("ОБ.098 Автомат резки")).toBeNull();
+  fireEvent.click(within(tsar).getByRole("button", { name: "Загрузка ОБ.027 19.10" }));
+  expect(screen.getByRole("group", { name: "Что на станке: ОБ.027, 19.10" })).toBeInTheDocument();
+  idle = true;
   rerender(<MachineLoadGrid holidays={[]} days={DAYS} refreshKey="2" />);
-  expect(await within(zhuk).findByText("ОБ.098 Автомат резки")).toBeInTheDocument();
-  expect(within(zhuk).queryByText(/ещё не внесены/)).toBeNull();
+  expect(await screen.findByText("За 19.10–21.10 станки не заняты.")).toBeInTheDocument();
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(screen.queryByRole("group", { name: "Что на станке: ОБ.027, 19.10" })).toBeNull();
+  expect(screen.queryByText(/ещё не внесены/)).toBeNull();
+  expect(screen.queryByText("свободен")).toBeNull();
+});
+
+it.each([false, true])("shows an honest empty period for idle machines (sites: %s)", async (sites) => {
+  serve(() => json({ ...LOAD, machines: [LOAD.machines[1]], ...(sites ? { sites: [
+    { site: "ЦАР", machines: [LOAD.machines[1]] }, { site: "ЖУК", machines: [] },
+  ] } : {}) }));
+  render(<MachineLoadGrid holidays={[]} days={DAYS} />);
+  expect(await screen.findByText("За 19.10–21.10 станки не заняты.")).toBeInTheDocument();
+  expect(screen.queryByRole("table")).toBeNull();
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(screen.queryByText(/ещё не внесены/)).toBeNull();
+});
+
+it("keeps site selection: an idle selected site is empty even when another site is busy", async () => {
+  serve(() => json({ ...LOAD, sites: [
+    { site: "ЦАР", machines: LOAD.machines }, { site: "ЖУК", machines: [LOAD.machines[1]] },
+  ] }));
+  const { rerender } = render(<MachineLoadGrid holidays={[]} days={DAYS} site="ЦАР" />);
+  expect(await screen.findByRole("region", { name: "Станки · ЦАР" })).toHaveTextContent("ОБ.027 Пресс");
+  expect(screen.queryByText("ОБ.098 Автомат резки")).toBeNull();
+  rerender(<MachineLoadGrid holidays={[]} days={DAYS} site="ЖУК" />);
+  expect(screen.getByText("За 19.10–21.10 станки не заняты.")).toBeInTheDocument();
+  expect(screen.queryByRole("region")).toBeNull();
+});
+
+it("uses positive seconds on displayed days, including rounded zero percent and unknown machines", async () => {
+  serve(() => json({ ...LOAD, machines: [
+    { ...LOAD.machines[0], days: [day("2026-10-18", 3600), ...DAYS.map((value) => day(value, 0))] },
+    { ...LOAD.machines[1], days: [day(DAYS[0], 1)] },
+  ] }));
+  render(<MachineLoadGrid holidays={[]} days={DAYS} />);
+  expect(await screen.findByText("ОБ.098 Автомат резки")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Загрузка ОБ.098 19.10" })).toHaveTextContent("0 %");
+  expect(screen.queryByText("ОБ.027 Пресс")).toBeNull();
 });
 
 it("shows unknown local capacity as hours without claiming overload or a percentage", async () => {
   serve(() => json({ ...LOAD, sites: [
     { site: "ЦАР", machines: [{ ...LOAD.machines[0], units: 0, known: false, days: [day(DAYS[0], 3600, 0)] }] },
-    { site: "ЖУК", machines: [] }, { site: "", machines: [LOAD.machines[1]] },
+    { site: "ЖУК", machines: [] }, { site: "", machines: [{ ...LOAD.machines[1], days: [day(DAYS[0], 1)] }] },
   ] }));
   render(<MachineLoadGrid holidays={[]} days={DAYS} />);
   const tsar = await screen.findByRole("region", { name: "Станки · ЦАР" });
