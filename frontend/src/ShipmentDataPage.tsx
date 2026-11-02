@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { failureText, shippingApi, type Principal, type ProjectForecast, type Shipment } from "./api";
+import { failureText, shippingApi, type Principal, type ProjectAddressee, type ProjectForecast, type Shipment } from "./api";
 import "./shipping.css";
 import { loadPersonalViews, savePersonalView } from "./personalViews";
 import { intakeApi, type IntakeRow } from "./productionIntakeApi";
@@ -7,7 +7,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { StatusChip } from "./StatusChip";
 import type { Tone } from "./statusTone";
 import { Readiness, ShipmentDataWindow, updLabel } from "./ShipmentData";
-import { ReadyForecast, projectsOf, readiness } from "./shippingCells";
+import { PackDecision, ReadyForecast, projectsOf, readiness } from "./shippingCells";
 import { formatDate } from "./format";
 import { useCanPrint } from "./rights";
 import { openShippingForms } from "./shippingPrint";
@@ -107,13 +107,15 @@ const STAGE_TONE: Record<DispatchStage, Tone> = { waiting: "neutral", production
 /** Проекты строки — по ним ищется прогноз готовности. */
 const projectNames = (row: DataRow) => row.shipment ? [...new Set(row.shipment.lines.map((line) => line.project))] : [row.project];
 
-const gapsOf = (row: DataRow) => row.shipment ? dataGaps(row.shipment) : [];
+const deciding = (row: DataRow) => !row.shipment && (row.stage === "ready" || row.stage === "accepted");
 
 export function ShipmentDataPage({ principal }: { principal: Principal }) {
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [intake, setIntake] = useState<IntakeRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
+  const [cards, setCards] = useState<Record<string, ProjectAddressee> | null>(null);
+  const [cardsError, setCardsError] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const [onlyGaps, setOnlyGaps] = useState(false);
   const [forecasts, setForecasts] = useState<Record<string, ProjectForecast>>({});
@@ -132,6 +134,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     savePersonalView(VIEW_KEY, { mode: next });
   };
   const canEdit = canAct(principal, "shipping") || canAct(principal, "shipping_goods");
+  const canDecide = canAct(principal, "shipping");
   const canPrint = useCanPrint();
   const printPl = async (shipment: Shipment) => {
     setError("");
@@ -155,6 +158,12 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     try {
       const [shipmentResult, intakeResult] = await Promise.all([shippingApi.shipments(), intakeApi.rows()]);
       setShipments(shipmentResult.shipments); setIntake(intakeResult.rows); setError("");
+      const projects = [...new Set(dataRows(shipmentResult.shipments, intakeResult.rows).filter((row) => !row.shipment).map((row) => row.project))];
+      setCards(null); setCardsError("");
+      try {
+        const result = projects.length ? await shippingApi.addressees(projects) : { addressees: [] };
+        setCards(Object.fromEntries(result.addressees.map((card) => [card.project, card])));
+      } catch (reason) { setCardsError(failureText(reason, "Не удалось загрузить данные проектов")); }
     } catch (reason) { setError(failureText(reason, "Не удалось загрузить отправки")); }
     finally { setLoaded(true); }
   };
@@ -162,9 +171,23 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   // Прогноз цеха — подсказка к сроку: не пришёл (нет связи, нет данных) — строки остаются без него.
   useEffect(() => { void shippingApi.forecast().then((answer) => setForecasts(answer?.projects ?? {}), () => undefined); }, []);
 
-  const rows = useMemo(() => dataRows(shipments, intake).filter((row) => !onlyGaps || gapsOf(row).length > 0), [shipments, intake, onlyGaps]);
+  const allRows = useMemo(() => dataRows(shipments, intake), [shipments, intake]);
+  const gapsOf = (row: DataRow) => row.shipment ? dataGaps(row.shipment) : cards?.[row.project]?.dispatch_gaps;
+  const rows = allRows.filter((row) => !onlyGaps || (row.shipment ? dataGaps(row.shipment).length > 0
+    : gapsOf(row) === undefined || Boolean(gapsOf(row)?.length) || (deciding(row) && !cards?.[row.project]?.pack_decided)));
   const current = open?.startsWith("project:") ? null : shipments.find((shipment) => shipment.id === open) ?? null;
-  const project = open?.startsWith("project:") ? rows.find((row) => row.id === open) ?? null : null;
+  const project = open?.startsWith("project:") ? allRows.find((row) => row.id === open) ?? null : null;
+  const decisionCell = (row: DataRow) => deciding(row) ? <PackDecision project={row.project} editable={canDecide}
+    card={cards?.[row.project] ?? null} onCard={(card) => setCards((old) => ({ ...old, [card.project]: card }))} onReload={reload} /> : null;
+  const dataCell = (row: DataRow) => {
+    if (!row.shipment) {
+      const gaps = gapsOf(row);
+      return <span className={gaps === undefined ? "muted" : gaps.length ? "tone-warn" : "muted"}>
+        {gaps === undefined ? "Данные проекта не загружены" : gaps.length ? `Не заполнено: ${gaps.join(", ")}` : "Данные получателя и УПД заполнены"}</span>;
+    }
+    return ACTIVE.includes(row.shipment.status) ? <Readiness source={row.shipment} gaps={dataGaps(row.shipment)} />
+      : <span className="muted">{SENT.includes(row.shipment.status) ? sentNote(row.shipment) || "—" : "—"}</span>;
+  };
   const forecastOf = (row: DataRow) => readiness(projectNames(row), forecasts, row.shipment?.deadline ?? null, row.shipment?.status ?? "Новая");
   const dueCell = (row: DataRow) => <>
     {row.shipment && <span className="muted ship-due">{formatDate(row.shipment.deadline) || "—"}</span>}
@@ -177,21 +200,20 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
       <StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{stageLabel(row.stage)}</StatusChip>
     </span>
     {row.customer && <span className="data-card-customer">{row.customer}</span>}
-    <span>{!row.shipment ? <span className="muted">внести заранее</span> : ACTIVE.includes(row.shipment.status) ? <Readiness source={row.shipment} gaps={gapsOf(row)} />
-      : <span className="muted">{SENT.includes(row.shipment.status) ? sentNote(row.shipment) || "—" : "—"}</span>}</span>
+    <span>{dataCell(row)}</span>
     {row.shipment && <span className="data-card-upd"><span className="muted">УПД</span><UpdCell shipment={row.shipment} link={false} /></span>}
     <span className="data-card-due"><span className="muted">Срок</span>{row.shipment ? <span className="muted ship-due">{formatDate(row.shipment.deadline) || "—"}</span> : <span className="muted">—</span>}
       <ReadyForecast forecast={forecastOf(row)} /></span>
     </button>
+    {decisionCell(row)}
     {row.shipment?.pl_number && <span className="data-card-upd"><span className="muted">ПЛ</span>{plCell(row.shipment)}</span>}
   </div>;
   const columns: DataColumn<DataRow>[] = [
     { key: "project", title: "Проект / КБ", value: (row) => row.project, render: projectCell, wrap: true, grow: true, minWidth: 280, maxWidth: 480 },
     { key: "customer", title: "Заказчик", value: (row) => row.customer, filter: true },
     { key: "status", title: "Статус", value: (row) => stageLabel(row.stage), filter: true, render: (row) => <StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{stageLabel(row.stage)}</StatusChip> },
-    { key: "gaps", title: "Данные", value: (row) => gapsOf(row).join(", ") || (row.shipment ? sentNote(row.shipment) : ""), hint: "Что внесено и чего не хватает; итог считает сервер", wrap: true, maxWidth: 520,
-      render: (row) => !row.shipment ? <span className="muted">внести заранее</span> : ACTIVE.includes(row.shipment.status) ? <Readiness source={row.shipment} gaps={gapsOf(row)} />
-        : SENT.includes(row.shipment.status) ? <span className="muted">{sentNote(row.shipment) || "—"}</span> : <span className="muted">—</span> },
+    { key: "gaps", title: "Данные", value: (row) => gapsOf(row)?.join(", ") || (row.shipment ? sentNote(row.shipment) : ""), hint: "Что внесено и чего не хватает; итог считает сервер", wrap: true, maxWidth: 520,
+      render: (row) => <div className="ship-data-readiness">{dataCell(row)}{decisionCell(row)}</div> },
     { key: "upd", title: "УПД", value: (row) => row.shipment ? updText(row.shipment) : "", filter: true, render: (row) => <UpdCell shipment={row.shipment} /> },
     { key: "pl", title: "ПЛ", value: (row) => row.shipment?.pl_number ?? "", render: (row) => plCell(row.shipment) },
     { key: "deadline", title: "Срок", value: (row) => row.shipment?.deadline ?? "", render: dueCell },
@@ -200,6 +222,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     <header className="page-head"><h1>Данные отправок</h1>
       <label className="inline-check"><input type="checkbox" checked={onlyGaps} onChange={(event) => setOnlyGaps(event.target.checked)} /> Только с недостающими данными</label></header>
     {error && <div className="error-banner" role="alert">{error}</div>}
+    {cardsError && <div className="error-banner" role="alert">{cardsError}</div>}
     {!loaded ? <div className="empty">Загрузка…</div>
       : <DataTable label="Данные отправок" storageKey={STORAGE_KEY} rows={rows} columns={columns} rowKey={(row) => row.id}
         onRowClick={(row) => setOpen(row.id)} exportName="Данные отправок" searchPlaceholder="Проект, КБ, наименование, ГРН или № отправки"

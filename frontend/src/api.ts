@@ -1691,6 +1691,8 @@ export interface ShipmentBox {
 export interface ProjectAddressee {
   project: string;
   version: number;
+  /** Server-owned project-card gaps; does not certify an individual shipment. */
+  dispatch_gaps?: string[];
   receiver: string;
   shipping_point: string;
   contact: string;
@@ -4011,7 +4013,7 @@ export const shippingApi = {
     method: "PUT", body: JSON.stringify(payload),
   }),
   print: (shipmentId: string, document: "pl" | "dn") => api<{ forms: ShippingForm[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
-  addressees: () => api<{ addressees: ProjectAddressee[] }>("/api/shipping/project-addressees"),
+  addressees: (projects?: string[]) => api<{ addressees: ProjectAddressee[] }>(`/api/shipping/project-addressees${projects?.length ? `?${new URLSearchParams(projects.map((project) => ["project", project]))}` : ""}`),
   /** `portalShipUpdFile`: файл УПД к отправке; ссылка на него встаёт в отправку. */
   uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
     method: "POST", body: JSON.stringify({ shipment_id: shipmentId, version, file_name: file.name, content_type: file.type, content_base64: file.base64 }),

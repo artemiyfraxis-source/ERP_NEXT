@@ -102,6 +102,12 @@ table.ship-lines.ship-lines-compact td.ship-name { width: auto; min-width: 260px
 .data-card-main .data-card-head { align-items: flex-start; }
 .data-card-main:focus-visible, .ship-pl:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
 .data-card-main .ship-data-project { min-width: 0; }
+.shipping-page .ship-data-readiness { display: flex; flex-direction: column; gap: 4px; }
+.shipping-page .ship-pack-decision { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; font-size: 13px; overflow-wrap: anywhere; }
+.shipping-page .ship-pack-decision input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (pointer: coarse) {
+  .shipping-page .ship-pack-decision .inline-check { min-height: 40px; }
+}
 .ship-pl { touch-action: manipulation; }
 @media (pointer: coarse) { .ship-pl { min-height: 40px; } }
 .ship-ready .ship-gaps-list { white-space: normal; }

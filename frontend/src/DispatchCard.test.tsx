@@ -135,4 +135,27 @@ describe("Данные отправки", () => {
     expect(screen.getByText(/решил Ульяна, 29\.10\.2026/)).toBeInTheDocument();
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body))).toEqual({ project: "591К.3", version: 2, decided: true });
   });
+
+  it("a decision conflict refreshes the parent and save version while preserving edits and refreshing untouched fields", async () => {
+    const onSaved = vi.fn();
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input) === "/api/shipping/project-pack-decision") {
+        stored = { ...card, version: 5, shipping_point: "Калуга", pack_decided: true };
+        return json({ detail: "Версия изменилась" }, 409);
+      }
+      return fallback(input, init);
+    });
+    render(<DispatchCard project="591К.3" stage="accepted" canEdit onSaved={onSaved} close={() => undefined} />);
+    await waitFor(() => expect(screen.getByLabelText("Получатель")).toHaveValue(card.receiver));
+    fireEvent.change(screen.getByLabelText("Телефон"), { target: { value: "+7 набрано" } });
+    fireEvent.click(screen.getByLabelText("Упаковывать 591К.3"));
+    await waitFor(() => expect(screen.getByLabelText("Упаковывать 591К.3")).toBeChecked());
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Телефон")).toHaveValue("+7 набрано");
+    expect(screen.getByLabelText("Адрес доставки")).toHaveValue("Калуга");
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await screen.findByText("Данные отправки сохранены");
+    expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 5, phone: "+7 набрано" });
+  });
 });

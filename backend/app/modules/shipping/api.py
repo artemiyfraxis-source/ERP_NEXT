@@ -288,6 +288,7 @@ def _addressee_result(addressee: ProjectAddressee) -> dict:
         # Решение «упаковывать» (0162): без него кладовщик не упаковывает.
         "pack_decided": addressee.pack_decided, "pack_decided_by": addressee.pack_decided_by,
         "pack_decided_at": addressee.pack_decided_at.isoformat() if addressee.pack_decided_at else None,
+        "dispatch_gaps": list(addressee.dispatch_gaps()),
     }
 
 
@@ -436,9 +437,17 @@ def project_addressee(
 def project_addressees(
     _principal: Annotated[Principal, Depends(shipping_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+    project: Annotated[list[str] | None, Query()] = None,
 ) -> dict:
     """All project cards at once, like `portalShipList` returns `projects` for the «Проекты» tab."""
-    with uow_factory() as uow: rows = uow.addressees.list()
+    names = list(dict.fromkeys(name.strip() for name in project)) if project is not None else None
+    if names is not None:
+        if any(not name or len(name) > 255 for name in names):
+            raise HTTPException(status_code=422, detail="Проект обязателен, не более 255 символов")
+    with uow_factory() as uow: rows = uow.addressees.list(names)
+    if names is not None:
+        stored = {row.project: row for row in rows}
+        rows = [stored.get(name) or ProjectAddressee(project=name) for name in names]
     return {"addressees": _addressee_results(rows, uow_factory)}
 
 

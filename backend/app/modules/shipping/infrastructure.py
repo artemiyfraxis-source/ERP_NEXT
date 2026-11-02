@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 from datetime import date, datetime
 from decimal import Decimal
@@ -545,10 +546,7 @@ class SqlAlchemyShipmentRepository:
 
 class SqlAlchemyProjectAddresseeRepository:
     def __init__(self, session: Session): self.session = session
-    def get(self, project: str) -> ProjectAddressee | None:
-        row = self.session.get(ProjectAddresseeRow, project)
-        if row is None:
-            return None
+    def _domain(self, row: ProjectAddresseeRow) -> ProjectAddressee:
         return ProjectAddressee(
             project=row.project, version=row.version, receiver=row.receiver,
             shipping_point=row.shipping_point, contact=row.contact, phone=row.phone,
@@ -560,8 +558,16 @@ class SqlAlchemyProjectAddresseeRepository:
             upd_number=row.upd_number or "", upd_date=row.upd_date,
             pack_decided_by=row.pack_decided_by or "", pack_decided_at=row.pack_decided_at,
         )
-    def list(self) -> list[ProjectAddressee]:
-        return [self.get(project) for project in self.session.scalars(select(ProjectAddresseeRow.project).order_by(ProjectAddresseeRow.project))]
+    def get(self, project: str) -> ProjectAddressee | None:
+        row = self.session.get(ProjectAddresseeRow, project)
+        return self._domain(row) if row is not None else None
+    def list(self, projects: Sequence[str] | None = None) -> list[ProjectAddressee]:
+        if projects is not None and not projects:
+            return []
+        query = select(ProjectAddresseeRow).order_by(ProjectAddresseeRow.project)
+        if projects is not None:
+            query = query.where(ProjectAddresseeRow.project.in_(projects))
+        return [self._domain(row) for row in self.session.scalars(query)]
     def add(self, addressee: ProjectAddressee) -> None:
         row = self.session.get(ProjectAddresseeRow, addressee.project)
         if row is None:
