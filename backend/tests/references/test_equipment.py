@@ -1,12 +1,16 @@
 """БД.ОБ: inventory numbers, «Ещё такой же», refusals, junk rows of the loader, «что обжимает» tokens and links."""
 
+from dataclasses import replace
+from pathlib import Path
+
 import pytest
 
-from app.modules.references.domain import ReferenceValidationError
+from app.modules.references.domain import ReferenceValidationError, TechOperationRecord, TechOperationTab
 from app.modules.references.equipment import (
-    add_code, has_code, next_instance_inventory, next_model_inventory, next_row_number, parse_inventory, remove_code, tokens,
+    add_code, has_code, next_instance_inventory, next_model_inventory, next_row_number, parse_inventory,
+    physical_equipment, remove_code, tokens,
 )
-from app.modules.references.technology import sheet_snapshot_records
+from app.modules.references.technology import parse_mirror_rows, sheet_snapshot_records
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
 
 BASE = "/api/references/tech-operations"
@@ -49,6 +53,85 @@ def test_next_instance_number_keeps_existing_records():
 
 def test_next_row_number():
     assert next_row_number([{"№": "5"}, {"№": "17"}, {"№": ""}]) == "18" and next_row_number([]) == "1"
+
+
+# --- physical equipment catalog ---
+
+def _machine(number="ОБ.099.1", *, name="Станок для обжима терминалов без зачистки", model="BZW-SF4040T", site="Цар", **extra):
+    return TechOperationRecord.create(
+        tab=TechOperationTab.EQUIPMENT, display_text=f"{model}/{name}", search_text="", source_sheet="БД.ОБ",
+        sort_key=number, fields={"Тип": "Оборудование", "Инв. номер": number, "Наменование": name,
+                                 "Артикул": model, "Расположение": site, **extra},
+    )
+
+
+def test_physical_catalog_keeps_actual_instances_and_models_from_reference_mirror():
+    source = Path(__file__).resolve().parents[2] / "data" / "reference-mirror" / "БД.ОБ.tsv"
+    sheet = parse_mirror_rows(source.read_text(encoding="utf-8"))
+    records = [TechOperationRecord.create(
+        tab=TechOperationTab.EQUIPMENT, display_text=str(index), search_text="", source_sheet="БД.ОБ",
+        sort_key=str(index), fields=dict(zip(sheet[1], row)),
+    ) for index, row in enumerate(sheet[2:])]
+    catalog = {item.inventory_number: item for item in physical_equipment(records)}
+    assert len(catalog) == 130
+    assert catalog["ОБ.044"].name == "Источник питания постоянного тока"
+    assert catalog["ОБ.044"].model == "APS3010H"
+    assert catalog["ОБ.027.1"].model == "EW-50A"
+    assert catalog["ОБ.027.4"].model == "WL-2.0ВТ"
+    assert {key for key in catalog if key.startswith("ОБ.099.")} == {"ОБ.099.1", "ОБ.099.2"}
+    assert {key for key in catalog if key.startswith("ОБ.100.")} == {"ОБ.100.1", "ОБ.100.2", "ОБ.100.3"}
+    assert {key for key in catalog if key.startswith("ОБ.070.")} == {f"ОБ.070.{i}" for i in range(1, 9)}
+    assert {item.site for item in catalog.values()} == {"ЦАР"}
+    assert not any(key.endswith(".X") for key in catalog)
+
+
+def test_physical_catalog_identity_survives_new_reference_uuids_and_deduplicates_full_numbers():
+    one, duplicate, two = _machine(), _machine(" об.099.1 "), _machine("ОБ.099.2", site="Жук")
+    assert one.id != duplicate.id
+    catalog = physical_equipment([two, duplicate, one])
+    assert [(item.id, item.inventory_number, item.site) for item in catalog] == [
+        ("ОБ.099.1", "ОБ.099.1", "ЦАР"), ("ОБ.099.2", "ОБ.099.2", "ЖУК"),
+    ]
+    assert physical_equipment([_machine(), _machine("ОБ.099.2", site="Жук")]) == catalog
+
+
+@pytest.mark.parametrize("site", ["", "Склад", "ЦАР / ЖУК"])
+def test_physical_catalog_keeps_valid_equipment_with_unknown_site(site):
+    (item,) = physical_equipment([_machine(site=site)])
+    assert item.inventory_number == "ОБ.099.1" and item.site == ""
+
+
+def test_physical_catalog_accepts_reference_field_aliases_and_retains_inventory_spelling():
+    record = replace(_machine(), fields={
+        "obType": "Оборудование (ПР)", "inventoryNumber": " OБ.79.01 ", " Наименование ": "Мини ПК",
+        " РАСПОЛОЖЕНИЕ ": " жУк ",
+    })
+    (item,) = physical_equipment([record])
+    assert item.id == "ОБ.79.01" and item.inventory_number == "ОБ.79.01"
+    assert item.name == "Мини ПК" and item.model == "" and item.site == "ЖУК"
+
+
+@pytest.mark.parametrize("record", [
+    _machine(""), _machine("пример"), _machine("ОБ.099.X"), _machine("ОБ.099.Х"),
+    _machine("ОБ.099.0"), _machine("ОБ.000"), _machine("ОБ.099.1.2"), _machine("ОСН.099.1"),
+    _machine(name=""), _machine(model="BZW-SF4040T(R)"),
+    _machine(**{"Тип": "Матрицы"}), _machine(**{"Тип": "Инструмент"}),
+    replace(_machine(), tab=TechOperationTab.OPERATION),
+])
+def test_physical_catalog_excludes_placeholders_models_without_inventory_and_invalid_rows(record):
+    assert physical_equipment([record]) == ()
+
+
+@pytest.mark.parametrize("difference", [{"site": "Жук"}, {"name": "Другой станок"}, {"model": "Другая модель"}])
+def test_physical_catalog_refuses_conflicting_duplicate_inventory(difference):
+    with pytest.raises(ReferenceValidationError, match="ОБ.099.1"):
+        physical_equipment([_machine(), _machine(**difference)])
+
+
+def test_physical_catalog_preserves_bare_single_unit_and_does_not_invent_units_for_missing_families():
+    (item,) = physical_equipment([_machine("ОБ.044", name="Блок питания", model="")])
+    assert item.id == "ОБ.044" and item.model == ""
+    assert physical_equipment([]) == ()
 
 
 # --- tokens ---
