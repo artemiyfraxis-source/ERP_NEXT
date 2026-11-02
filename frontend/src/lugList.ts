@@ -20,9 +20,10 @@ export function lugFamily(record: TechOperationRecord): string {
 }
 
 const mm2From = (record: TechOperationRecord) => firstNumber(value(record, fieldOf(Object.keys(record.fields), "от мм2", "mm2from")));
+const ARTICLE_KEYS = new Set(["артикул контакта (reel)", "артикул контакта (bag)", "артикул контакта", "terarticle", "terarticlebag"]);
+const articleFields = (fields: string[]) => fields.filter((field) => ARTICLE_KEYS.has(headerKey(field)));
 const article = (record: TechOperationRecord) => {
-  const fields = Object.keys(record.fields);
-  return value(record, fieldOf(fields, "артикул контакта (reel)", "terarticle")) || value(record, fieldOf(fields, "артикул контакта (bag)", "terarticlebag"));
+  return [...new Set(articleFields(Object.keys(record.fields)).map((field) => value(record, field)).filter(Boolean))].join(" / ");
 };
 
 /** Порядок по умолчанию: семейство по алфавиту («Без семейства» в конце), внутри — сечение «от», затем артикул. */
@@ -36,24 +37,22 @@ export function lugRows(records: TechOperationRecord[]): TechOperationRecord[] {
 
 const range = (from: string, to: string) => (from && to && from !== to ? `${from}–${to}` : from || to);
 
-/** Столбцы «Наконечников»: «От мм2 / До мм2» → «Сечение, мм²», «От AWG / До AWG» → «AWG» (исходные — в «Колонках»,
-    скрыты), сразу за артикулами; артикулы — «Артикул (катушка) / (пакет)», без слова «контакта». */
+/** Столбцы «Наконечников»: один «Артикул» со всеми разными значениями, затем «Сечение, мм²» и «AWG» от–до.
+    Исходные поля скрыты в «Колонках»; значения и пути их правки остаются прежними. */
 export function mergeLugColumns<T extends TechOperationRecord>(columns: DataColumn<T>[], fields: string[]): DataColumn<T>[] {
   const [mmFrom, mmTo] = [fieldOf(fields, "от мм2", "mm2from"), fieldOf(fields, "до мм2", "mm2to")];
   const [awgFrom, awgTo] = [fieldOf(fields, "от awg", "awgfrom"), fieldOf(fields, "до awg", "awgto")];
-  const reel = fieldOf(fields, "артикул контакта (reel)", "артикул контакта", "terarticle");
-  const bag = fieldOf(fields, "артикул контакта (bag)", "terarticlebag");
+  const articles = articleFields(fields);
   const sizeText = (record: T) => range(value(record, mmFrom), value(record, mmTo));
   const awgText = (record: T) => range(value(record, awgFrom), value(record, awgTo));
   const merged: DataColumn<T>[] = [
+    ...(articles.length ? [{ key: "__article", title: "Артикул", value: article, computed: true }] : []),
     ...(mmFrom || mmTo ? [{ key: "__mm2", title: "Сечение, мм²", value: sizeText, render: (record: T) => sizeText(record) || "—" }] : []),
     ...(awgFrom || awgTo ? [{ key: "__awg", title: "AWG", value: awgText, render: (record: T) => awgText(record) || "—" }] : []),
   ];
-  const folded = new Set([mmFrom, mmTo, awgFrom, awgTo].filter(Boolean) as string[]);
-  const rest = columns.map((column) => folded.has(column.key) ? { ...column, hidden: true }
-    : column.key === reel ? { ...column, title: "Артикул (катушка)" }
-    : column.key === bag ? { ...column, title: "Артикул (пакет)" } : column);
-  const anchor = Math.max(rest.findIndex((column) => column.key === reel), rest.findIndex((column) => column.key === bag));
+  const folded = new Set([...articles, mmFrom, mmTo, awgFrom, awgTo].filter(Boolean) as string[]);
+  const rest = columns.map((column) => folded.has(column.key) ? { ...column, hidden: true } : column);
+  const anchor = Math.max(-1, ...articles.map((field) => rest.findIndex((column) => column.key === field)));
   if (!merged.length) return rest;
   return anchor < 0 ? [...merged, ...rest] : [...rest.slice(0, anchor + 1), ...merged, ...rest.slice(anchor + 1)];
 }
