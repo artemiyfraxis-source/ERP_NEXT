@@ -6,7 +6,6 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from alembic.script import ScriptDirectory
 
 BACKEND = Path(__file__).resolve().parents[2]
 BEFORE, AFTER = "0165_split_lug_cable_tabs", "0166_kb_progress"
@@ -49,7 +48,7 @@ def test_upgrade_keeps_old_history_unknown_and_append_only(database):
         assert connection.execute("SELECT progress_run,progress_started,progress_done,progress_qc,progress_passed FROM production_plan_events").fetchone() == (None,) * 5
         with pytest.raises(sqlite3.DatabaseError, match="только дополняется"):
             connection.execute("UPDATE production_plan_events SET text = 'новое'")
-    assert ScriptDirectory.from_config(config(database)).get_heads() == [AFTER]
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchall() == [(AFTER,)]
 
 
 def test_progress_constraints_allow_lowering_inconsistency_but_refuse_junk(database):
