@@ -109,6 +109,12 @@ describe("Приёмка с производства", () => {
     const grn = await screen.findByRole("button", { name: "Печать этикетки ГП.26.0000042" });
     expect(grn).toHaveTextContent("ГП.26.0000042");
     expect(grn).not.toHaveTextContent("Печать");
+    for (const title of ["PL", "DN", "УПД", "Короба"]) expect(screen.getByRole("columnheader", { name: new RegExp(`^${title}( |$)`) })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /^Документы/ })).not.toBeInTheDocument();
+    expect(document.querySelector('td[data-label="PL"]')).toContainElement(screen.getByRole("button", { name: "Печать PL ОТГ-20261029-01" }));
+    expect(document.querySelector('td[data-label="DN"]')).toContainElement(screen.getByRole("button", { name: "Печать DN ОТГ-20261029-01" }));
+    expect(document.querySelector('td[data-label="УПД"]')).toContainElement(screen.getByRole("link", { name: /УПД.*485/ }));
+    expect(document.querySelector('td[data-label="Короба"]')).toContainElement(screen.getByRole("button", { name: "Документы ОТГ-20261029-01" }));
     expect(screen.getByRole("button", { name: "Печать PL ОТГ-20261029-01" })).toHaveTextContent("PL");
     expect(screen.getByRole("button", { name: "Печать DN ОТГ-20261029-01" })).toHaveTextContent("DN");
     expect(screen.getByRole("link", { name: /УПД.*485/ })).toHaveAttribute("href", "/api/shipping/files/upd485");
@@ -788,7 +794,7 @@ describe("Приёмка с производства: упаковка и отг
     shipments = [packedShipment, ready, gone];
     render(<ProductionIntakePage principal={admin} />);
     await screen.findByText("Жгут");
-    const headers = () => screen.getAllByRole("columnheader").map((cell) => (cell.textContent ?? "").replace(/[^А-Яа-яЁё ]/g, "").trim());
+    const headers = () => screen.getAllByRole("columnheader").map((cell) => (cell.textContent ?? "").replace(/[^А-Яа-яЁёA-Za-z ]/g, "").trim());
     const lineButtons = () => [...document.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Жгут") && !tr.textContent.includes("Данные отправки"))
       .flatMap((tr) => [...tr.querySelectorAll("button")].map((button) => button.getAttribute("aria-label") ?? button.textContent ?? ""));
     const expected: Array<[RegExp, string[], RegExp | null]> = [
@@ -796,8 +802,8 @@ describe("Приёмка с производства: упаковка и отг
       [/^В производстве/, ["КБ", "Наименование", "Заказано", "Запущено", "Можно принять", ...deliveryHeaders], /^Принять 591К\.3 КБ1/],
       [/^Готово/, ["КБ", "Наименование", "Заказано", "Можно принять", ...deliveryHeaders], /^Принять 591К\.3 КБ1/],
       [/^Принято/, ["КБ", "Наименование", "Принято", "Дата приёмки", "ГРН", "Упаковано", ...deliveryHeaders], /^Упаковать|^Упаковка|^Печать этикетки/],
-      [/^Упаковано/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "Документы"], /^(Трек|Без УПД) 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
-      [/^На отгрузку/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "Документы", "Отгрузка"], /^Отгрузить 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
+      [/^Упаковано/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "PL", "DN", "УПД", "Короба"], /^(Трек|Без УПД) 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
+      [/^На отгрузку/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "PL", "DN", "УПД", "Короба", "Отгрузка"], /^Отгрузить 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
       [/^Отгружено/, ["КБ", "Наименование", "ГРН", "Отгружено", ...deliveryHeaders, "Трек", "Дата отгрузки"], /^(Печать этикетки|Данные отправки)/],
     ];
     for (const [name, heads, action] of expected) {
@@ -821,9 +827,32 @@ describe("Приёмка с производства: упаковка и отг
     const form = await screen.findByRole("button", { name: "Сформировать отгрузочные ОТГ-20261029-01" });
     expect(screen.queryByRole("button", { name: /^Документы ОТГ/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Печать (PL|DN)/ })).not.toBeInTheDocument();
+    expect(document.querySelector('td[data-label="PL"]')).toHaveTextContent("не сформирован");
+    expect(document.querySelector('td[data-label="DN"]')).toHaveTextContent("не сформирован");
+    expect(document.querySelector('td[data-label="Короба"]')).toContainElement(form);
     fireEvent.click(form);
     const dialog = await screen.findByRole("dialog", { name: "Упаковка 591К.3" });
     expect(within(dialog).getByRole("button", { name: "Сформировать отгрузочные" })).toBeInTheDocument();
+  });
+
+  it("separate document columns retain shipment identity, UPD links before PL creation and print restrictions", async () => {
+    intakeRows = [row({ accepted: "8", packed: "8", remaining: "0", delivered: "8", tasks: [] })];
+    shipments = [
+      { ...packedShipment, upd_number: "111", upd_url: "/api/shipping/files/one" },
+      { ...packedShipment, id: "s2", number: "ОТГ-2", pl_number: "", dn_number: "", upd_number: "222", upd_url: "/api/shipping/files/two" },
+    ];
+    setRightsPrincipal({ ...viewer, permissions: { shipping: "view", print: "view" } });
+    render(<ProductionIntakePage principal={viewer} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
+    const pl = document.querySelector('td[data-label="PL"]')!;
+    const upd = document.querySelector('td[data-label="УПД"]')!;
+    expect(pl.querySelector('[data-shipment="s1"]')).toHaveTextContent("ОТГ-20261029-01");
+    expect(pl.querySelector('[data-shipment="s2"]')).toHaveTextContent("не сформирован");
+    expect(within(upd.querySelector('[data-shipment="s1"]') as HTMLElement).getByRole("link")).toHaveAttribute("href", "/api/shipping/files/one");
+    expect(within(upd.querySelector('[data-shipment="s2"]') as HTMLElement).getByRole("link")).toHaveAttribute("href", "/api/shipping/files/two");
+    expect(screen.queryByRole("button", { name: /^Печать (PL|DN)/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Сформировать отгрузочные/ })).not.toBeInTheDocument();
+    expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
   });
 
   it("«Документы»: сформировано — кнопка открывает окно, PL и DN печатаются там, УПД — тип, № и ссылка на файл", async () => {
