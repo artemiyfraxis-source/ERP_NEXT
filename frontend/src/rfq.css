@@ -24,6 +24,15 @@
 .rfq-card.nav-item.active .rfq-card-date,
 .rfq-card.nav-item.active .rfq-card-projects { color: var(--foreground); }
 
+/* Position identity stays readable in the fixed-width comparison column. */
+.rfq-position { overflow-wrap: anywhere; }
+.rfq-position-primary { font-size: 13px; font-weight: 600; color: var(--foreground); }
+.rfq-position-name { font-size: 13px; font-weight: 400; color: var(--foreground); }
+.rfq-position-context { display: flex; flex-wrap: wrap; gap: 0 8px; }
+.rfq-position-project, .rfq-position-date { font-size: 13px; font-weight: 400; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.rfq-position-project strong, .rfq-position-date strong { font-weight: 600; }
+.rfq-matrix .rfq-position-secondary { display: block; font-size: 12px; color: var(--muted-foreground); }
+
 /* «Внести КП» as a list under the matrix (Roller_Buyer QuoteEntryPanel), not a window. */
 .rfq-quote-entry { display: grid; gap: 8px; padding-top: 12px; border-top: 2px solid var(--primary); scroll-margin-top: 12px; }
 .rfq-quote-entry-head { display: flex; align-items: center; gap: 12px; }

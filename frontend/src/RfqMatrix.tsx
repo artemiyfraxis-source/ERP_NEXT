@@ -275,10 +275,10 @@ export function MatrixTable({ matrix, lines, editable, selectable = editable, pi
         <tbody>
           {lines.map((line) => {
             const hint = nobodyHint(matrix, line);
-            // The article repeats the name on most calc lines — shown only when it adds something (as in the pool).
-            const article = line.article && line.article.trim().toLowerCase() !== line.name.trim().toLowerCase() ? line.article : "";
-            const meta = [article, line.legacy_id, line.status, line.need_by ? `к ${formatDay(line.need_by)}` : ""].filter(Boolean).join(" · ");
-            const where = [project(line.project ?? null) || line.project, line.designation].filter(Boolean).join(" · ");
+            const article = line.article?.trim() ?? "";
+            const showName = article && article.toLocaleLowerCase("ru") !== line.name.trim().toLocaleLowerCase("ru");
+            const meta = [line.legacy_id, line.status].filter(Boolean).join(" · ");
+            const projectName = project(line.project ?? null) || line.project;
             return (
               <tr key={line.id} className={line.cancelled ? "rfq-row-cancelled" : picked.has(line.id) ? "rfq-row-picked" : undefined}>
                 {withCheck && (
@@ -288,11 +288,16 @@ export function MatrixTable({ matrix, lines, editable, selectable = editable, pi
                     )}
                   </td>
                 )}
-                <td style={sticky(at(0))}>
-                  <strong className={line.cancelled ? "rfq-struck" : undefined}>{line.name}</strong>
+                <td className="rfq-position" style={sticky(at(0))}>
+                  <strong className={`rfq-position-primary${line.cancelled ? " rfq-struck" : ""}`}>{article || line.name}</strong>
                   {line.cancelled && <span className="muted"> · отменена</span>}
-                  <small className="muted" style={{ display: "block" }}>{meta}</small>
-                  {where && <small className="muted" style={{ display: "block" }} title="Проект · назначение заявки">{where}</small>}
+                  {showName && <div className={`rfq-position-name${line.cancelled ? " rfq-struck" : ""}`}>{line.name}</div>}
+                  {(projectName || line.need_by) && <div className="rfq-position-context">
+                    {projectName && <span className="rfq-position-project">Проект <strong>{projectName}</strong></span>}
+                    {line.need_by && <time className="rfq-position-date" dateTime={line.need_by}>к <strong>{formatDay(line.need_by)}</strong></time>}
+                  </div>}
+                  <small className="rfq-position-secondary">{meta}</small>
+                  {line.designation && <small className="rfq-position-secondary" title="Назначение заявки">{line.designation}</small>}
                   {hint && <small className={hint.startsWith("ни у кого") ? "rfq-nobody" : "muted"} style={{ display: "block" }}>{hint}</small>}
                   {editable && actions.onSplit && !basket && !line.cancelled && !locked(line) && (
                     <button

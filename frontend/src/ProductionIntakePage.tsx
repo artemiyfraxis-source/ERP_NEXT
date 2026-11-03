@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { failureText, productionApi, shippingApi, type FinishedGood, type FinishedGoodsReadyBox, type Principal, type ProjectAddressee } from "./api";
+import { failureText, shippingApi, type Principal, type ProjectAddressee } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ShipmentDataWindow } from "./ShipmentData";
 import { DISPATCH_STAGES } from "./dispatchStage";
-import { FinishedGoodsHandoff } from "./FinishedGoodsHandoff";
 import { formatDay } from "./format";
 import { canPack, hasWork, kbKey, num, ofKb, ofProject, packable, permittedPack, round2, SHIPPED_DAYS, shippedOnlyRows, stagePieces, type Pieces, type Tab } from "./intakeStages";
 import { isPickup, termsText } from "./carriers";
@@ -106,8 +105,6 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [rows, setRows] = useState<IntakeRow[]>([]);
   const [shipments, setShipments] = useState<DispatchShipment[]>([]);
   const [addressees, setAddressees] = useState<ProjectAddressee[]>([]);
-  const [goods, setGoods] = useState<FinishedGood[]>([]);
-  const [boxes, setBoxes] = useState<FinishedGoodsReadyBox[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -122,16 +119,14 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
 
   async function reload() {
     try {
-      const [intakeResult, shipmentResult, goodsResult, boxesResult, addresseeResult] = await Promise.all([
+      const [intakeResult, shipmentResult, addresseeResult] = await Promise.all([
         intakeApi.rows(),
         intakeApi.shipments(),
-        canWarehouse ? shippingApi.goods() : Promise.resolve({ goods: [] as FinishedGood[] }),
-        canWarehouse ? productionApi.finishedGoodsReady() : Promise.resolve({ boxes: [] as FinishedGoodsReadyBox[] }),
         shippingApi.addressees(),
       ]);
       const loadedRows = intakeResult.rows ?? [];
       const loadedShipments = shipmentResult.shipments ?? [];
-      setRows(loadedRows); setShipments(loadedShipments); setGoods(goodsResult.goods ?? []); setBoxes(boxesResult.boxes ?? []); setError("");
+      setRows(loadedRows); setShipments(loadedShipments); setError("");
       setAddressees(addresseeResult.addressees ?? []);
       if (!tabChosen.current) {
         const all = [...loadedRows, ...shippedOnlyRows(loadedRows, loadedShipments)];
@@ -428,7 +423,6 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         rowClassName={(row) => row.act ? "intake-act-row" : tab === "all" && !DISPATCH_STAGES.some(([stage]) => hasWork(stage, row, piecesOf(row))) ? "ship-line-off" : ""}
         emptyText={allRows.length ? EMPTY[tab] : EMPTY.all} />
       {label && <div className="intake-print-status"><strong>Этикетка {label.grn}</strong><PrintOutcome result={label.result} error={label.error} /></div>}
-      {canWarehouse && boxes.length > 0 && <FinishedGoodsHandoff boxes={boxes} goods={goods} busy={busy} mutate={mutateBoxes} />}
     </>}
     {intake && <IntakeWindow rows={intake} close={() => setIntake(null)} onDone={accepted} />}
     {opened?.kind === "pack" && <PackWindow project={opened.project} rows={projectRows(opened.project)} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
