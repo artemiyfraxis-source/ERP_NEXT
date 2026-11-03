@@ -92,13 +92,17 @@ def _as(principal: Principal) -> None:
 
 
 def _without_upd(client) -> dict:
-    """Менеджер завела отправку «Без УПД» самовывозом (её отправка ставит решение «упаковывать»): всё есть, кроме УПД."""
+    """The manager explicitly permits this KB, then creates pickup without an UPD."""
     good = client.post("/api/shipping/goods", json={
         "project": PROJECT, "item_index": "КБ1", "customer": "Заказчик", "name": "Жгут", "ordered": "6", "unit": "шт",
     }).json()["good"]
     _as(STOREKEEPER)
     good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "6"}).json()["good"]
     _as(MANAGER)
+    permission = client.post("/api/shipping/project-pack-permissions", json={
+        "project": PROJECT, "lines": [{"item_index": "КБ1", "quantity": "6", "version": 0}],
+    })
+    assert permission.status_code == 200, permission.text
     made = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД",
         "lines": [{"good_id": good["id"], "quantity": "6"}],

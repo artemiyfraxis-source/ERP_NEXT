@@ -222,6 +222,10 @@ def test_project_status_follows_pieces_through_every_state_and_the_ladder_reads_
         actor=Actor(name="Администратор", department="ERP"), email="a@example.test", roles=frozenset({"admin"}), permissions={},
     )
     good = next(item for item in client.get("/api/shipping/goods").json()["goods"] if item["item_index"] == "КБ1")
+    permission = client.post("/api/shipping/project-pack-permissions", json={
+        "project": good["project"], "lines": [{"item_index": good["item_index"], "quantity": "24", "version": 0}],
+    })
+    assert permission.status_code == 200, permission.text
     shipment = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1",
         "lines": [{"good_id": good["id"], "quantity": "20"}],
