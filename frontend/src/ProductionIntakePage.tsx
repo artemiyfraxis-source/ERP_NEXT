@@ -43,7 +43,7 @@ const TAB_COLUMNS: Record<Exclude<Tab, "all">, string[]> = {
   // и в «Колонках».
   production: ["project", "kb", "name", "needed", "launched", "remaining"],
   ready: ["project", "kb", "name", "needed", "remaining"],
-  accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed", "sent", "free", "upd"],
+  accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed", "upd"],
   packed: ["project", "kb", "name", "grn", "packed", ...DELIVERY_COLUMNS, "track", "pl", "dn", "upd", "boxes"],
   to_ship: ["project", "kb", "name", "grn", "packed", "ship", ...DELIVERY_COLUMNS, "track", "pl", "dn", "upd", "boxes"],
   shipped: ["project", "kb", "name", "grn", "sent", ...DELIVERY_COLUMNS, "track", "shippedAt"],
@@ -72,7 +72,7 @@ function urlTab(): { tab: Tab | null; journal: boolean } {
 }
 
 /** Итог и действия относятся ко всей КБ; акты показывают только фактический приход по ГРН. */
-type IntakeLine = IntakeRow & { act?: IntakeAct; left: number; kbActions: boolean; total?: boolean };
+type IntakeLine = IntakeRow & { act?: IntakeAct; receipt?: IntakeAct; left: number; kbActions: boolean; total?: boolean };
 function expand(row: IntakeRow, withActs: boolean, withRemainder: boolean): IntakeLine[] {
   const acts = withActs ? row.acts ?? [] : [];
   const left = leftOf(row);
@@ -144,7 +144,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const { rows: allRows, pieces } = board;
   const piecesOf = (row: IntakeRow) => pieces.get(kbKey(row)) ?? stagePieces(row, shipments);
   const inTab = board.inTab;
-  const shown = useMemo(() => allRows.filter((row) => inTab(row, tab)).flatMap((row) => expand(row, ACT_TABS.includes(tab), tab === "all")),
+  const shown = useMemo(() => allRows.filter((row) => inTab(row, tab)).flatMap((row): IntakeLine[] => tab === "accepted"
+    ? [{ ...row, kbActions: true, left: 0, receipt: row.acts?.length === 1 ? row.acts[0] : undefined,
+      grn: row.acts?.length === 1 ? row.acts[0].grn : row.acts?.length ? null : row.grn }]
+    : expand(row, ACT_TABS.includes(tab), tab === "all")),
     [allRows, tab, pieces]); // eslint-disable-line react-hooks/exhaustive-deps
   const head = useMemo(() => {
     const byProject: Record<string, IntakeRow> = {};
@@ -239,12 +242,19 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     if (!line.kbActions) return dash;
     // «Упаковано» и «На отгрузку»: только число штук своего шага, действие — в соседней колонке.
     if (tab === "packed" || tab === "to_ship") return count(String(piecesOf(line)[tab]));
-    if (!canDispatch) return count(line.packed);
+    if (!canDispatch) return tab === "accepted" ? dash : count(line.packed);
     const row = source(line);
     const avail = packable(row);
     const open = kbShips(row).some((shipment) => ACTIVE.includes(shipment.status));
     const waitDecision = avail > 0 && !canPack(row);
     const openPack = () => setOpened({ kind: "pack", project: row.project });
+    if (tab === "accepted") return <span className="intake-pack-actions">
+        {canPack(row) && <button type="button" className="intake-take-btn" title={`Можно упаковать: ${permittedPack(row)}; не набрано: ${avail}`}
+          aria-label={`Упаковать ${who(row)}: упаковано ${num(row.packed)}, можно ${permittedPack(row)}`} onClick={openPack}>Упаковать · {permittedPack(row)}</button>}
+        {waitDecision && <span className="tone-warn">Нужно разрешение</span>}
+        {open && <button type="button" className="link-button" aria-label={`Упаковка ${who(row)}: упаковано ${num(row.packed)}`} onClick={openPack}>Открыть упаковку</button>}
+        {!canPack(row) && !waitDecision && !open && dash}
+      </span>;
     if (canPack(row)) return <button type="button" className="intake-take-btn" title={`Можно упаковать: ${permittedPack(row)}; на складе: ${avail}`}
       aria-label={`Упаковать ${who(row)}: упаковано ${num(row.packed)}, можно ${permittedPack(row)}`} onClick={openPack}>{line.total ? <>Упаковать остаток · {permittedPack(row)}</> : num(row.packed)}</button>;
     if (open) return <button type="button" className="intake-num-btn" title={waitDecision ? "Отправки проекта на упаковке; упаковать ещё — после решения менеджера «упаковывать»" : "Отправки проекта на упаковке: PL/DN, короба, этикетки"}
@@ -330,11 +340,12 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     { key: "project", title: "Проект", value: (row) => row.project, hidden: true },
     { key: "kb", title: "КБ", value: (row) => row.item_index, render: (row) => <span className="intake-kb">{row.item_index}</span> },
     // Строка — одна линия (владелец 15.10): длинное наименование обрезается «…», целиком — в подсказке.
-    { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <span className="intake-clip intake-name" title={row.name}>{row.total && <strong>Итого по КБ<br /></strong>}{row.name}</span> },
+    { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <><span className="intake-clip intake-name" title={row.name}>{row.total && <strong>Итого по КБ<br /></strong>}{row.name}</span>{tab === "accepted" && (row.acts?.length ?? 0) > 1 && <small className="muted intake-history-hint">История приёмки · {row.acts!.length}</small>}</> },
     { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true, render: (row) => row.act ? dash : row.needed },
     { key: "left", title: "Остаток", value: (row) => row.left, numeric: true, render: (row) => row.left > 0 ? row.left : dash },
     { key: "launched", title: "Запущено", value: (row) => num(row.launched), numeric: true, render: (row) => count(row.launched) },
-    { key: "accepted", title: "Принято", value: (row) => num(row.accepted), numeric: true, render: (row) => count(row.accepted) },
+    { key: "accepted", title: tab === "accepted" ? "К упаковке" : "Принято", value: (row) => tab === "accepted" ? piecesOf(row).accepted : num(row.accepted), numeric: true,
+      render: (row) => count(String(tab === "accepted" ? piecesOf(row).accepted : row.accepted)) },
     { key: "remaining", title: "Можно принять", value: (row) => row.act ? 0 : num(row.remaining), numeric: true,
       render: (row) => {
         if (row.act || !(num(row.remaining) > 0)) return dash;
@@ -342,7 +353,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         return <button type="button" className="intake-take-btn" title={tasksText(row) || "Принять на склад"} aria-label={`Принять ${who(row)}: можно ${row.remaining}`}
           onClick={() => setIntake([source(row)])}>{row.remaining}</button>;
       } },
-    { key: "packed", title: tab === "accepted" ? "Упаковать" : "Упаковано", value: (row) => num(row.packed), numeric: true, render: (row) => row.total ? count(row.packed) : packCell(row) },
+    { key: "packed", title: tab === "accepted" ? "Упаковать" : "Упаковано", value: (row) => tab === "accepted" ? permittedPack(source(row)) : num(row.packed), numeric: tab !== "accepted", render: (row) => row.total ? count(row.packed) : packCell(row) },
     { key: "free", title: "Не упаковано", value: (row) => row.kbActions ? packable(source(row)) : 0, numeric: true,
       render: (row) => row.kbActions ? <>{packable(source(row))}{row.total && <div>{packCell(row)}</div>}</> : dash },
     ...DELIVERY_COLUMNS.map((key): DataColumn<IntakeLine> => ({ key,
@@ -374,7 +385,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         onClick={() => setCard(shipment)}>{formatDay(shipment.shipped_at ?? "") || "Дата не указана"} · {shipment.number}</button>)}</span> : dash;
     } },
     { key: "sent", title: "Отгружено", value: (row) => num(row.sent), numeric: true, render: sentCell },
-    { key: "received", title: "Дата приёмки", value: (row) => row.act?.received_at ?? "", render: (row) => row.act ? formatDay(row.act.received_at) : dash },
+    { key: "received", title: "Дата приёмки", value: (row) => (row.act ?? row.receipt)?.received_at ?? "", render: (row) => (row.act ?? row.receipt) ? formatDay((row.act ?? row.receipt)!.received_at) : dash },
     { key: "grn", title: "ГРН", wrap: true, minWidth: 132, maxWidth: 132, value: (row) => grnGroups(row).map((group) => group.grns.join(", ")).join("; "), render: (row) => {
       const groups = grnGroups(row);
       if (!groups.some((group) => group.id || group.grns.length)) return dash;
@@ -441,6 +452,15 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       <p className="muted" title="Части одной КБ могут находиться на разных этапах; во «Все» КБ считается один раз. Поиск и фильтры таблицы не меняют счётчики.">{COUNTER_SCOPE}{shipments.length >= 200 ? " · Загружены последние 200 отправок" : ""}</p>
       <DataTable key={tab} label="Приёмка с производства" storageKey={tab === "all" ? "production-intake" : `production-intake:${tab}`} rows={shown} columns={visibleColumns} rowKey={lineKey}
         groupBy={(row) => row.project} groupLabel={groupLabel} exportName="Приёмка с производства"
+        rowTitle={tab === "accepted" ? () => "Открыть историю приёмки КБ" : undefined}
+        renderDetail={tab === "accepted" ? (row) => <section aria-label={`История приёмки ${who(row)}`}>
+          <h3>История приёмки · {row.item_index}</h3>
+          <p className="muted">Количество по актам — история прихода, не текущий остаток.</p>
+          {row.acts?.length ? <table className="intake-receipt-history"><thead><tr><th>Дата приёмки</th><th>ГРН</th><th>Принято по акту</th><th>Место</th></tr></thead>
+            <tbody>{row.acts.map((act, index) => <tr key={`${act.grn}:${index}`}><td>{formatDay(act.received_at)}</td><td>{canWarehouse
+              ? <button type="button" className="link-button" aria-label={`Печать этикетки ${act.grn}`} disabled={Boolean(label?.busy)} onClick={() => void printLabel({ ...row, grn: act.grn })}>{act.grn}</button> : act.grn}</td>
+              <td className="num">{act.quantity}</td><td>{act.location || "—"}</td></tr>)}</tbody></table> : <p>Акты приёмки не указаны.</p>}
+        </section> : undefined}
         searchPlaceholder="Проект, КБ, наименование или задание"
         rowClassName={(row) => row.act ? "intake-act-row" : tab === "all" && !DISPATCH_STAGES.some(([stage]) => hasWork(stage, row, piecesOf(row))) ? "ship-line-off" : ""}
         emptyText={allRows.length ? EMPTY[tab] : EMPTY.all} />
