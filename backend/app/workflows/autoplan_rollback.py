@@ -34,7 +34,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from app.modules.identity.infrastructure import IdentityUserRow
@@ -320,9 +320,11 @@ def _collect_existing(
             plan.kept.append(f"{what}: сдвинуто по факту в окне, «до» журнал не хранит — пересчитается следующим назначением")
 
 
-def execute(session: Session, plan: Plan, window: Window, now: datetime) -> None:
+def execute(session: Session, plan: Plan, window: Window, now: datetime, resources=None) -> None:
     """Откат по собранному плану в открытой транзакции сессии; фиксирует вызывающий."""
-    repository = SqlAlchemyProductionRepository(session)
+    if resources is not None:
+        resources.acquire()
+    repository = SqlAlchemyProductionRepository(session, resources)
     for task_id in plan.delete_tasks:
         session.execute(delete(ProductionPlanBaselineLineRow).where(ProductionPlanBaselineLineRow.task_id == task_id))
         repository.delete(task_id)
@@ -370,17 +372,24 @@ def report(plan: Plan, window: Window, *, applied: bool) -> str:
     return "\n".join(out)
 
 
-def run(sessions: Callable[[], Session], *, since: datetime, until: datetime, apply: bool, now: datetime) -> tuple[str, int]:
+def run(sessions: Callable[[], Session], *, since: datetime, until: datetime, apply: bool, now: datetime, resource_factory=None) -> tuple[str, int]:
     """Текст отчёта и код: 0 — проверено / откачено, 2 — неверные параметры."""
     if until <= since:
         return "Конец окна раньше начала", 2
     window = Window(since, until)
     with sessions() as session:
+        resources = resource_factory(session) if resource_factory is not None else None
+        if resources is not None:
+            if session.get_bind().dialect.name == "sqlite":
+                session.execute(text("BEGIN IMMEDIATE"))
+            resources.acquire()
         plan = collect(session, window)
         if not apply or plan.empty:
             session.rollback()
             return report(plan, window, applied=False), 0
-        execute(session, plan, window, now)
+        execute(session, plan, window, now, resources)
+        if resources is not None:
+            resources.flush()
         session.commit()
         return report(plan, window, applied=True), 0
 

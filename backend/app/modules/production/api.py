@@ -92,6 +92,8 @@ from .execution import (
 )
 from .traceability import TAKEABLE_BOX, BoxStatus, DefectDisposition, DefectRecord, InstrumentStatus, MaterialInput, ProductionBox, ProductionOutput, WorkSession
 from .worklog import SUMMARY_KEYS, WorkTimeEntry, percent, time_fact
+from .resource_assignments import MachineBinding
+from .resource_claims import ResourceConflict
 from .quality import (
     DecideQcRejectionCommand,
     InspectBoxCommand,
@@ -134,11 +136,17 @@ class TaskDonePayload(BaseModel):
     done: bool
 
 
+class MachineBindingPayload(BaseModel):
+    etk_position: int = Field(ge=1, strict=True)
+    machine_id: str = Field(min_length=1, max_length=128)
+
+
 class AssignPayload(BaseModel):
     version: int = Field(ge=1)
     operator_ids: list[UUID] = Field(max_length=100)
     requested_start: datetime | None = None
     dry: bool = False
+    machine_bindings: list[MachineBindingPayload] | None = Field(default=None, max_length=100)
 
 
 class SharePayload(BaseModel):
@@ -148,6 +156,7 @@ class SharePayload(BaseModel):
     quantity: int | None = Field(default=None, ge=1, le=1_000_000)
     requested_start: datetime | None = None
     remove: bool = False
+    machine_bindings: list[MachineBindingPayload] | None = Field(default=None, max_length=100)
 
 
 class HandOverPayload(BaseModel):
@@ -199,6 +208,7 @@ class AutoSchedulePayload(BaseModel):
 
 
 class ApplySchedulePayload(AutoSchedulePayload):
+    machine_bindings: dict[UUID, list[MachineBindingPayload]] = Field(default_factory=dict, max_length=5000)
     transfer_batch: int = Field(gt=0, le=1_000_000)
 
 
@@ -466,6 +476,8 @@ def _run(operation) -> dict:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ConcurrentProductionUpdate as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except ResourceConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (IntegrityError, StaleDataError) as error:
@@ -527,6 +539,8 @@ def _execution(operation):
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ConcurrentProductionUpdate as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except ResourceConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (IntegrityError, StaleDataError) as error:
@@ -551,6 +565,28 @@ def tasks(
         "tasks": [_result(task, facts, totals.get(task.id, 0)) for task in page],
         "next_cursor": str(page[-1].id) if len(rows) > limit else None,
     }
+
+
+@router.get("/tasks/{task_id}/operations/{operation_id}/resources")
+def operation_resources(
+    task_id: UUID,
+    operation_id: UUID,
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    operator_ids: Annotated[list[UUID] | None, Query(max_length=100)] = None,
+) -> dict:
+    with uow_factory() as uow:
+        task = uow.production.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Задание не найдено")
+        try:
+            task.operation(operation_id)
+        except (KeyError, ProductionValidationError) as error:
+            raise HTTPException(status_code=404, detail="Операция не найдена") from error
+        resources = getattr(uow, "resources", None)
+        if resources is None:
+            return {"enabled": False, "blocked_reason": "Общий учёт оборудования ещё не подключён"}
+        return resources.describe(task, operation_id, operator_ids)
 
 
 @router.get("/traceability")
@@ -1535,6 +1571,7 @@ def assign(
             task_id=task_id, expected_version=payload.version, operation_id=operation_id,
             operator_ids=tuple(payload.operator_ids), requested_start=payload.requested_start,
             actor=principal.actor, now=now, dry=payload.dry,
+            machine_bindings=tuple(MachineBinding(item.etk_position, item.machine_id) for item in payload.machine_bindings) if payload.machine_bindings is not None else None,
         ), uow_factory())
         result["warnings"] = list(plan.warnings)
         result["plan"] = {
@@ -1566,6 +1603,7 @@ def assign_operation_share(
             operator_id=payload.operator_id, quantity=payload.quantity,
             requested_start=payload.requested_start, remove=payload.remove,
             actor=principal.actor, now=now,
+            machine_bindings=tuple(MachineBinding(item.etk_position, item.machine_id) for item in payload.machine_bindings) if payload.machine_bindings is not None else None,
         ), uow_factory())
         result["plan"] = {
             "start": plan.start.isoformat() if plan.start else None,
@@ -1647,8 +1685,12 @@ def apply_schedule(
             task_id=task_id, expected_version=payload.version,
             replan=payload.replan, max_crew=payload.max_crew,
             actor=principal.actor, now=now,
+            machine_bindings=tuple((identifier, tuple(MachineBinding(item.etk_position, item.machine_id) for item in bindings))
+                for identifier, bindings in payload.machine_bindings.items()),
         ), payload.transfer_batch, uow_factory())
         return {"task": _result(task), "variant": _variant_result(variant)}
+    except ResourceConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except (ProductionValidationError, ConcurrentProductionUpdate) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except KeyError as error:

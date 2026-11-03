@@ -26,7 +26,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -336,17 +336,28 @@ class SqlAlchemyStageCascadeUnitOfWork:
     """The production journal, shop tasks, kit requests, warehouse lots, techcard reserves and finished goods over ONE
     SQLAlchemy session: the stage rows and everything they close commit or roll back together."""
 
-    def __init__(self, session_factory: Callable[[], Session]):
+    def __init__(self, session_factory: Callable[[], Session], resource_factory=None):
         self.session_factory = session_factory
+        self.resource_factory = resource_factory
         self.session: Session | None = None
         self.committed = False
 
     def __enter__(self) -> SqlAlchemyStageCascadeUnitOfWork:
         self.committed = False
         self.session = self.session_factory()
+        self.resources = self.resource_factory(self.session) if self.resource_factory is not None else None
+        if self.resources is not None:
+            try:
+                if self.session.get_bind().dialect.name == "sqlite":
+                    self.session.execute(text("BEGIN IMMEDIATE"))
+                self.resources.acquire()
+            except Exception:
+                self.session.rollback()
+                self.session.close()
+                raise
         self.plan_events = SqlAlchemyPlanEventRepository(self.session)
         self.plan_projects = SqlAlchemyPlanProjectRepository(self.session)
-        self.production = SqlAlchemyProductionRepository(self.session)
+        self.production = SqlAlchemyProductionRepository(self.session, self.resources)
         self.fulfillment = SqlAlchemyFulfillmentRepository(self.session)
         self.warehouse = SqlAlchemyWarehouseRepository(self.session)
         self.kit_reserves = SqlAlchemyKitReserveRepository(self.session)
@@ -373,6 +384,8 @@ class SqlAlchemyStageCascadeUnitOfWork:
         if self.session is None:
             raise RuntimeError("Unit of Work has not been entered")
         try:
+            if self.resources is not None:
+                self.resources.flush()
             self.session.commit()
         except StaleDataError as error:  # a version-guarded row (task, request, lot, reserve) changed meanwhile
             raise StageChangeConflict(CASCADE_CONFLICT) from error
@@ -384,10 +397,11 @@ def cascade_uow_factory(production_uow_factory) -> Callable[[], SqlAlchemyStageC
     not a SQLAlchemy unit of work (then a stage change writes journal rows only, as before)."""
     if production_uow_factory is None:
         return None
-    sessions = getattr(production_uow_factory(), "session_factory", None)
+    production = production_uow_factory()
+    sessions = getattr(production, "session_factory", None)
     if not callable(sessions):
         return None
-    return lambda: SqlAlchemyStageCascadeUnitOfWork(sessions)
+    return lambda: SqlAlchemyStageCascadeUnitOfWork(sessions, getattr(production, "resource_factory", None))
 
 
 def read_cascade_facts(uow, project: str, *, names: Iterable[str] = ()) -> CascadeFacts:
