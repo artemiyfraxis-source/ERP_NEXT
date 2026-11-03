@@ -193,6 +193,10 @@ jobs:
         working-directory: backend
       - name: Restore drill
         run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
           psql --version
           pg_dump --version
+          pg_restore --version
           bash test/deploy/restore-drill.test.sh
