@@ -29,6 +29,12 @@ class Recipes:
     def measurement(self, identifier):
         return self.measurements.get(identifier)
 
+    def list_versions(self, machine_id, *, limit, offset):
+        return tuple(item for item in self.versions.values() if item.machine_id == machine_id)[offset:offset + limit]
+
+    def trials(self, task_id, *, limit, offset):
+        return tuple(item for item in self.measurements.values() if item.task_id == task_id)[offset:offset + limit]
+
     def add_measurement(self, measurement):
         assert measurement.id not in self.measurements
         self.measurements[measurement.id] = measurement

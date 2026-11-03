@@ -80,6 +80,17 @@ class Context:
     def machine_ids_for_site(self, site):
         return tuple(item.id for item in self.machines.values() if item.site == site and site in {"ЦАР", "ЖУК"})
 
+    def machine_choices(self, *, site, eligible_ids=None, limit, offset):
+        from app.modules.equipment_setup.queries import MachineChoice
+        return tuple(MachineChoice(item.id, item.id, "", item.site) for item in sorted(self.machines.values(), key=lambda item: item.id)
+            if item.site in {"ЦАР", "ЖУК"} and (site is None or item.site == site)
+            and (eligible_ids is None or item.id in eligible_ids))[offset:offset + limit]
+
+    def executor_choices(self, *, site, own_id=None, limit, offset):
+        from app.modules.equipment_setup.queries import ExecutorChoice
+        return tuple(ExecutorChoice(item.actor.id, item.actor.name, item.site) for item in self.people.values()
+            if item.active and item.site == site and (own_id is None or item.actor.id == own_id))[offset:offset + limit]
+
     def recipe_exists(self, reference, machine_id):
         return (reference, machine_id) in self.recipes
 

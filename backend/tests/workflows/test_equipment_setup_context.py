@@ -54,3 +54,27 @@ def test_unresolved_or_fallback_operation_rejected(db, kind):
         "" if kind == "unknown_site" else "ЦАР", ("ОБ.027.2",))
     context = SqlAlchemySetupContext(db, resolve_issued_operation=lambda reference: value)
     assert context.issued_operation(reference) is None
+
+
+def test_executor_choices_filter_activity_site_and_identity_before_page(db):
+    ids = [uuid4() for _ in range(4)]
+    for index, (site, active) in enumerate((("ЦАР", True), ("ЖУК", True), ("ЦАР", False), ("ЦАР", True))):
+        db.add(IdentityUserRow(id=ids[index], login=f"test{index}", email=f"test{index}@example.test",
+            name=f"Сотрудник {index}", department="Цех", role="staff", site=site, active=active))
+    context = SqlAlchemySetupContext(db, resolve_issued_operation=lambda reference: None)
+    result = context.executor_choices(site="ЦАР", limit=1, offset=1)
+    assert [item.id for item in result] == [ids[3]]
+    assert not hasattr(result[0], "email")
+    assert context.executor_choices(site="", limit=100, offset=0) == ()
+    assert context.executor_choices(site="ЦАР", own_id=ids[1], limit=100, offset=0) == ()
+
+
+def test_machine_choices_filter_site_and_eligibility_before_page(db):
+    for index, site in enumerate(("ЖУК", "", "ЦАР", "ЦАР"), start=1):
+        db.add(TechOperationRecordRow(id=uuid4(), tab=TechOperationTab.EQUIPMENT.value, display_text="Станок", normalized_search="станок",
+            source_sheet="test", sort_key=str(index), fields={"Тип": "Оборудование", "Инв. номер": f"ОБ.027.{index}",
+            "Наименование": "Станок", "Расположение": site}))
+    context = SqlAlchemySetupContext(db, resolve_issued_operation=lambda reference: None)
+    assert [item.id for item in context.machine_choices(site="ЦАР", limit=1, offset=1)] == ["ОБ.027.4"]
+    assert [item.id for item in context.machine_choices(site=None, eligible_ids=("ОБ.027.4",), limit=1, offset=0)] == ["ОБ.027.4"]
+    assert len(context.machine_choices(site=None, limit=100, offset=0)) == 3

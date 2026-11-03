@@ -18,7 +18,7 @@ from .domain import IssuedOperationRef, RecipeVersionRef
 from .infrastructure import task_payload
 from .recipe_application import PublishRecipeCommand, RecordTrialCommand, publish_recipe, record_trial
 from .recipes import RecipeField
-from .queries import list_tasks, read_task
+from .queries import list_executors, list_machines, list_recipes, list_tasks, list_trials, read_recipe, read_task
 
 
 router = APIRouter(prefix="/api/production/equipment-setup", tags=["production"])
@@ -164,3 +164,57 @@ def get_tasks(principal: Annotated[Principal, Depends(authenticated_principal)],
               limit: Annotated[int, Query(ge=1, le=200)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
     return _perform(lambda: list_tasks(factory(), principal=principal, limit=limit, offset=offset),
         lambda items: {"items": [task_payload(item) for item in items], "limit": limit, "offset": offset})
+
+
+def _page_result(limit, offset, serialize=task_payload):
+    return lambda items: {"items": [serialize(item) for item in items], "limit": limit, "offset": offset}
+
+
+@router.get("/machines")
+def get_machines(principal: Annotated[Principal, Depends(authenticated_principal)],
+                 factory: Annotated[Callable, Depends(setup_uow_factory)],
+                 limit: Annotated[int, Query(ge=1, le=200)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
+    return _perform(lambda: list_machines(factory(), principal=principal, limit=limit, offset=offset), _page_result(limit, offset))
+
+
+@router.get("/assignment-context")
+def get_assignment_context(card_id: UUID, card_revision: Annotated[int, Query(ge=1)],
+                           production_task_id: UUID, production_operation_id: UUID, etk_position: Annotated[int, Query(ge=1)],
+                           principal: Annotated[Principal, Depends(authenticated_principal)],
+                           factory: Annotated[Callable, Depends(setup_uow_factory)],
+                           limit: Annotated[int, Query(ge=1, le=200)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
+    def run():
+        operation = IssuedOperationRef(card_id, card_revision, production_task_id, production_operation_id, etk_position)
+        return list_machines(factory(), principal=principal, limit=limit, offset=offset, operation=operation)
+    return _perform(run, _page_result(limit, offset))
+
+
+@router.get("/executors")
+def get_executors(machine_id: Annotated[str, Query(min_length=1, max_length=128)],
+                  principal: Annotated[Principal, Depends(authenticated_principal)],
+                  factory: Annotated[Callable, Depends(setup_uow_factory)],
+                  limit: Annotated[int, Query(ge=1, le=200)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
+    return _perform(lambda: list_executors(machine_id, factory(), principal=principal, limit=limit, offset=offset), _page_result(limit, offset))
+
+
+@router.get("/recipes")
+def get_recipes(machine_id: Annotated[str, Query(min_length=1, max_length=128)],
+                principal: Annotated[Principal, Depends(authenticated_principal)],
+                factory: Annotated[Callable, Depends(setup_uow_factory)],
+                limit: Annotated[int, Query(ge=1, le=200)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
+    return _perform(lambda: list_recipes(machine_id, factory(), principal=principal, limit=limit, offset=offset), _page_result(limit, offset))
+
+
+@router.get("/recipes/{recipe_id}/versions/{version}")
+def get_recipe(recipe_id: UUID, version: int,
+               principal: Annotated[Principal, Depends(authenticated_principal)],
+               factory: Annotated[Callable, Depends(setup_uow_factory)]):
+    return _perform(lambda: read_recipe(recipe_id, version, factory(), principal=principal))
+
+
+@router.get("/tasks/{task_id}/trials")
+def get_trials(task_id: UUID, principal: Annotated[Principal, Depends(authenticated_principal)],
+               factory: Annotated[Callable, Depends(setup_uow_factory)],
+               limit: Annotated[int, Query(ge=1, le=200)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
+    return _perform(lambda: list_trials(task_id, factory(), principal=principal, limit=limit, offset=offset),
+        _page_result(limit, offset, _trial_result))

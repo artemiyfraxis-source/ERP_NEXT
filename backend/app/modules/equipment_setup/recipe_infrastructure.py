@@ -89,6 +89,17 @@ class SqlAlchemyRecipes:
             source=value.source, created_by=value.created_by, created_at=value.created_at))
         self.session.flush()
 
+    def list_versions(self, machine_id: str, *, limit: int, offset: int):
+        rows = self.session.scalars(select(RecipeVersionRow).where(RecipeVersionRow.machine_id == machine_id)
+            .order_by(RecipeVersionRow.created_at.desc(), RecipeVersionRow.recipe_id, RecipeVersionRow.version.desc())
+            .offset(offset).limit(limit))
+        return tuple(self.get(row.recipe_id, row.version) for row in rows)
+
+    def trials(self, task_id: UUID, *, limit: int, offset: int):
+        rows = self.session.scalars(select(TrialMeasurementRow).where(TrialMeasurementRow.task_id == task_id)
+            .order_by(TrialMeasurementRow.measured_at.desc(), TrialMeasurementRow.id).offset(offset).limit(limit))
+        return tuple(self.measurement(row.id) for row in rows)
+
     def add_measurement(self, value: SetupTrialMeasurement):
         if self.get(value.recipe_id, value.recipe_version) is None:
             raise ValueError("Версия рецепта не найдена")

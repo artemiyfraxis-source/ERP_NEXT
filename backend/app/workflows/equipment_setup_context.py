@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.modules.equipment_setup.application import IssuedSetupOperation, SetupMachine, SetupPerson
 from app.modules.equipment_setup.recipe_infrastructure import SqlAlchemyRecipes
+from app.modules.equipment_setup.queries import ExecutorChoice, MachineChoice
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.references.domain import TechOperationTab
 from app.modules.references.equipment import physical_equipment
@@ -39,6 +40,22 @@ class SqlAlchemySetupContext:
         if site not in {"ЦАР", "ЖУК"}:
             return ()
         return tuple(machine.id for machine in self._machines() if machine.site == site)
+
+    def machine_choices(self, *, site, eligible_ids=None, limit, offset):
+        machines = (item for item in self._machines() if item.site in {"ЦАР", "ЖУК"}
+            and (site is None or item.site == site) and (eligible_ids is None or item.id in eligible_ids))
+        return tuple(MachineChoice(item.id, item.name, item.model, item.site)
+            for item in sorted(machines, key=lambda item: item.id)[offset:offset + limit])
+
+    def executor_choices(self, *, site, own_id=None, limit, offset):
+        if site not in {"ЦАР", "ЖУК"}:
+            return ()
+        statement = select(IdentityUserRow.id, IdentityUserRow.name, IdentityUserRow.site).where(
+            IdentityUserRow.active.is_(True), IdentityUserRow.site == site)
+        if own_id is not None:
+            statement = statement.where(IdentityUserRow.id == own_id)
+        rows = self.session.execute(statement.order_by(IdentityUserRow.name, IdentityUserRow.id).offset(offset).limit(limit))
+        return tuple(ExecutorChoice(row.id, row.name, row.site) for row in rows)
 
     def issued_operation(self, reference):
         result = self.resolve_issued_operation(reference)

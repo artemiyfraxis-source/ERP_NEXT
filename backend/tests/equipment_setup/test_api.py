@@ -121,3 +121,55 @@ def test_task_reads_are_site_and_assignee_scoped_and_view_as_read_only(client, e
     assert client.get(f"/api/production/equipment-setup/tasks/{task['id']}").status_code == 200
     assert client.post(f"/api/production/equipment-setup/tasks/{task['id']}/transition",
         json={"idempotency_key": "start", "expected_version": 1, "action": "start"}).status_code == 403
+
+
+def test_catalog_reads_are_bounded_minimal_and_current_site_scoped(client, env):
+    base = "/api/production/equipment-setup"
+    assert client.get(base + "/machines", params={"limit": 201}).status_code == 422
+    machines = client.get(base + "/machines").json()["items"]
+    assert machines == [{"id": "ОБ.027.2", "name": "ОБ.027.2", "model": "", "site": "ЦАР"}]
+    params = {"machine_id": "ОБ.027.2"}
+    executors = client.get(base + "/executors", params=params).json()["items"]
+    assert {item["id"] for item in executors} == {str(env[1].actor.id), str(env[2].actor.id)}
+    assert all(set(item) == {"id", "name", "site"} for item in executors)
+    client.app.state.test_principal = principal(env[2])
+    assert [item["id"] for item in client.get(base + "/executors", params=params).json()["items"]] == [str(env[2].actor.id)]
+    client.app.state.test_principal = principal(env[3])
+    assert client.get(base + "/machines").json()["items"] == []
+    assert client.get(base + "/executors", params=params).status_code == 403
+    assert client.get(base + "/recipes", params=params).status_code == 403
+
+
+def test_assignment_context_requires_exact_existing_issued_reference(client, env):
+    endpoint = "/api/production/equipment-setup/assignment-context"
+    params = jsonable_encoder(asdict(env[4].operation))
+    result = client.get(endpoint, params=params)
+    assert result.status_code == 200, result.text
+    assert result.json()["items"][0]["id"] == env[4].machine_id
+    params["card_revision"] += 1
+    assert client.get(endpoint, params=params).status_code == 404
+    params = jsonable_encoder(asdict(env[4].operation))
+    params["production_operation_id"] = str(uuid4())
+    assert client.get(endpoint, params=params).status_code == 404
+
+
+def test_recipe_version_and_trial_reads_follow_machine_and_task_rights(client, env):
+    base = "/api/production/equipment-setup"
+    recipe_id = uuid4()
+    data = {"expected_version": 0, "machine_id": "ОБ.027.2", "title": "Настройка",
+        "panel_settings": [{"label": "Панель", "value": "12"}], "source": "https://example.test/plain-text-only"}
+    recipe = client.post(f"{base}/recipes/{recipe_id}/versions", json=data).json()
+    assert client.get(base + "/recipes", params={"machine_id": "ОБ.027.2"}).json()["items"] == [recipe]
+    assert client.get(f"{base}/recipes/{recipe_id}/versions/1").json() == recipe
+    assert client.get(f"{base}/recipes/{recipe_id}/versions/2").status_code == 404
+    task = client.post(base + "/tasks", json=payload(env)).json()
+    assert client.get(f"{base}/tasks/{task['id']}/trials").json()["items"] == []
+    client.app.state.test_principal = principal(env[3])
+    assert client.get(f"{base}/recipes/{recipe_id}/versions/1").status_code == 403
+    assert client.get(f"{base}/tasks/{task['id']}/trials").status_code == 403
+
+
+@pytest.mark.parametrize("endpoint", ["/machines", "/executors?machine_id=ОБ.027.2", "/recipes?machine_id=ОБ.027.2"])
+def test_service_identity_cannot_read_setup_catalog(client, env, endpoint):
+    client.app.state.test_principal = replace(principal(env[1]), service=True)
+    assert client.get("/api/production/equipment-setup" + endpoint).status_code == 403

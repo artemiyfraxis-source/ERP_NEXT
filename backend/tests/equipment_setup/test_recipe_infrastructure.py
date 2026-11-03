@@ -59,3 +59,21 @@ def test_trials_are_separate_exact_values_and_rollback_with_recipe(db):
     db.rollback()
     assert list(db.scalars(select(RecipeVersionRow))) == []
     assert list(db.scalars(select(TrialMeasurementRow))) == []
+
+
+def test_recipe_and_trial_lists_filter_before_pagination(db):
+    store, first = SqlAlchemyRecipes(db), recipe()
+    store.append(first, expected_version=0)
+    second = replace(first, version=2)
+    store.append(second, expected_version=1)
+    other = replace(recipe(), machine_id="ОБ.027.3")
+    store.append(other, expected_version=0)
+    assert store.list_versions(first.machine_id, limit=1, offset=0) == (second,)
+    assert store.list_versions(first.machine_id, limit=1, offset=1) == (first,)
+    assert store.list_versions("missing", limit=10, offset=0) == ()
+    task_id = uuid4()
+    measurement = SetupTrialMeasurement(uuid4(), task_id, first.recipe_id, 1, "Диаметр", Decimal("2.0100"), "мм", uuid4(), datetime.now(UTC))
+    store.add_measurement(measurement)
+    store.add_measurement(replace(measurement, id=uuid4(), task_id=uuid4()))
+    assert store.trials(task_id, limit=10, offset=0) == (measurement,)
+    assert store.trials(task_id, limit=10, offset=1) == ()
