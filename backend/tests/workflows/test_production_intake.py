@@ -129,6 +129,10 @@ def intake_api():
         actor=Actor(name="Администратор", department="ERP"), email="a@example.test", roles=frozenset({"admin"}), permissions={},
     )
     good = next(item for item in client.get("/api/shipping/goods").json()["goods"] if item["item_index"] == "КБ4")
+    allowed = client.post("/api/shipping/project-pack-permissions", json={
+        "project": "708К.4", "lines": [{"item_index": "КБ4", "quantity": "6", "version": 0}],
+    })
+    assert allowed.status_code == 200, allowed.text
     shipment = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1",
         "lines": [{"good_id": good["id"], "quantity": "6"}],
@@ -194,8 +198,8 @@ def test_intake_lists_every_kb_of_open_projects_until_everything_is_sent(intake_
     done = by_kb[("708К.4", "КБ10")]
     # Задание «Выполнено», коробок у ОТК нет — производство закончено: «Готово» (владелец 29.10).
     assert (done["stage"], done["delivered"], done["remaining"]) == ("Готово", "5", "5")
-    # Решение «упаковывать» (0162): 708К.4 — его поставила отправка менеджера в фикстуре, у 709К.1 решения нет.
-    assert partly_accepted["pack_decided"] is True and partly_handed["pack_decided"] is True
+    # Permission for the shipped KB4 must not authorize other KBs of the same project.
+    assert partly_accepted["pack_decided"] is False and partly_handed["pack_decided"] is False
     assert by_kb[("709К.1", "КБ1")]["pack_decided"] is False
 
     for row in rows:  # в работе — до заказанного (или сданного, если сдано больше); не запущена — до сданного
