@@ -24,7 +24,7 @@ from app.shared.project_number import normalize_project_number
 from app.shared.advisory_lock import lock_key
 from .domain import (
     ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, AcceptanceAct, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
-    MoveKind, PackPermission, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, StoredFile, UpdType,
+    MoveKind, PackPermission, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, ShippingValidationError, StoredFile, UpdType,
     acceptance_act, balance_moves, roll_back_acts,
 )
 
@@ -480,11 +480,13 @@ class SqlAlchemyShipmentRepository:
         ]
     def open_for_project(self, project: str) -> list[Shipment]:
         """Незакрытые отправки проекта (проект отправки — по первой позиции, `shipHeadEff_`)."""
-        ids = select(ShipmentLineRow.shipment_id).where(ShipmentLineRow.project == project)
+        project_key = normalize_project_number(project)
+        ids = select(ShipmentLineRow.shipment_id).where(ShipmentLineRow.project_key == project_key)
         rows = self.session.scalars(select(ShipmentRow).where(
             ShipmentRow.id.in_(ids), ShipmentRow.status.not_in((ShipmentStatus.CLOSED.value, ShipmentStatus.CANCELLED.value)),
         ).order_by(ShipmentRow.created_at, ShipmentRow.id))
-        return [shipment for shipment in map(self._domain, rows) if shipment.lines and shipment.lines[0].project == project]
+        return [shipment for shipment in map(self._domain, rows)
+                if shipment.lines and normalize_project_number(shipment.lines[0].project) == project_key]
     def created_details(self, shipment_id: UUID) -> dict | None:
         """Подробности события «shipping.created» отправки: в них ключ повтора и отпечаток тела «Отгрузить»."""
         details = self.session.scalar(select(AuditEventRow.details).where(
@@ -613,14 +615,24 @@ class SqlAlchemyProjectAddresseeRepository:
             pack_decided_by=row.pack_decided_by or "", pack_decided_at=row.pack_decided_at,
         )
     def get(self, project: str) -> ProjectAddressee | None:
-        row = self.session.get(ProjectAddresseeRow, project)
+        project_key = normalize_project_number(project)
+        matches = [name for name in self.session.scalars(select(ProjectAddresseeRow.project))
+                   if normalize_project_number(name) == project_key]
+        if len(matches) > 1:
+            raise ShippingValidationError(f"У проекта {project} несколько адресных карточек: требуется сверка адресата")
+        row = self.session.get(ProjectAddresseeRow, matches[0]) if matches else None
         return self._domain(row) if row is not None else None
     def list(self, projects: Sequence[str] | None = None) -> list[ProjectAddressee]:
         if projects is not None and not projects:
             return []
         query = select(ProjectAddresseeRow).order_by(ProjectAddresseeRow.project)
         if projects is not None:
-            query = query.where(ProjectAddresseeRow.project.in_(projects))
+            keys = {normalize_project_number(project) for project in projects}
+            names = [name for name in self.session.scalars(select(ProjectAddresseeRow.project))
+                     if normalize_project_number(name) in keys]
+            if len({normalize_project_number(name) for name in names}) != len(names):
+                raise ShippingValidationError("У проекта несколько адресных карточек: требуется сверка адресата")
+            query = query.where(ProjectAddresseeRow.project.in_(names))
         return [self._domain(row) for row in self.session.scalars(query)]
     def add(self, addressee: ProjectAddressee) -> None:
         row = self.session.get(ProjectAddresseeRow, addressee.project)

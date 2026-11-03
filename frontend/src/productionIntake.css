@@ -87,10 +87,6 @@
 /* Each shipment keeps its document actions together; layout and reissue stay in the existing window. */
 .intake-docs { display: inline-flex; flex-direction: column; gap: 2px; }
 .intake-pack-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.intake-history-hint { display: block; margin-top: 4px; }
-.intake-receipt-history { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.intake-receipt-history th, .intake-receipt-history td { padding: 4px 8px; text-align: left; }
-.intake-receipt-history td.num { text-align: right; }
 .intake-docs-line { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; white-space: normal; }
 .intake-doc-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; max-width: 180px; }
 .intake-doc-action { font: inherit; text-align: left; padding: 0; }

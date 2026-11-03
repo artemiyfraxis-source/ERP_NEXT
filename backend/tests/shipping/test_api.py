@@ -108,8 +108,8 @@ def test_bulk_project_cards_filter_in_sql_instead_of_reading_unrelated_cards(shi
         response = shipping_api.get("/api/shipping/project-addressees", params=[("project", "P03"), ("project", "MISSING")])
         assert response.status_code == 200
         assert [card["project"] for card in response.json()["addressees"]] == ["P03", "MISSING"]
-        assert len(statements) == 1
-        assert set(statements[0][1]) == {"P03", "MISSING"}
+        assert len(statements) == 2
+        assert set(statements[1][1]) == {"P03"}
     finally:
         event.remove(engine, "before_cursor_execute", sql)
 

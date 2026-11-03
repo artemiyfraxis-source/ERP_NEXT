@@ -768,6 +768,7 @@ def _remember_addressees(shipment: Shipment, command: CreateShipmentCommand, uow
 
 def set_project_addressee(command: SetProjectAddresseeCommand, uow: UnitOfWork) -> ProjectAddressee:
     with uow:
+        uow.lock_projects([command.project])
         current, updated = _set_project_addressee(command, uow)
         if updated is not current:
             uow.commit()
@@ -1135,7 +1136,7 @@ def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
     project = str(command.project or "").strip()
     with uow:
         uow.lock_projects([project])
-        goods = {good.id: good for good in uow.goods.by_project(project)}
+        goods = {good.id: good for good in uow.goods.for_project(project)}
         addressee = uow.addressees.get(project)
         if not goods:
             raise ShippingValidationError(f"У проекта {project} нет строк готовой продукции.")
@@ -1272,7 +1273,7 @@ def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipRes
         requested: list[RequestedGood] = []
         for line in command.lines:
             good = _good(line.good_id, line.version, uow)
-            if good.project != project:
+            if normalize_project_number(good.project) != normalize_project_number(project):
                 raise ShippingValidationError(f"{good.item_index} не относится к проекту {project}")
             quantity = Decimal(line.quantity)
             if not quantity > 0:
@@ -1290,7 +1291,7 @@ def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipRes
                 project=project, fields=command.addressee_fields, expected_version=command.addressee_version,
                 actor=command.actor, now=command.now,
             ), uow)
-        customer = next((good.customer for good in uow.goods.by_project(project) if good.customer), "")
+        customer = next((good.customer for good in uow.goods.for_project(project) if good.customer), "")
         # Адресат не копируется, а наследуется: правка карточки дойдёт до отправки, пока она открыта.
         shipment = _create_shipment(CreateShipmentCommand(
             customer=customer, receiver="" if (addressee is not None and addressee.receiver) or customer else project,

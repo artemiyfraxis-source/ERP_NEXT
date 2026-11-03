@@ -99,6 +99,144 @@ def _snapshot(sessions) -> dict:
         }
 
 
+@pytest.mark.parametrize("endpoint", ["project-ship", "project-pack"])
+@pytest.mark.parametrize("stored_project,requested_project", [("780К", "780К.1"), ("780К.1", "780K")])
+def test_packing_accepts_canonical_project_alias_only_with_explicit_cap(env, endpoint, stored_project, requested_project):
+    client, sessions = env
+    good = client.post("/api/shipping/goods", json={
+        "project": stored_project, "item_index": "КБ1", "customer": "Заказчик", "name": "Жгут",
+        "ordered": "15", "unit": "шт",
+    }).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "15"}).json()["good"]
+    body = {"project": requested_project, "lines": [{"good_id": good["id"], "quantity": "15"}]}
+    if endpoint == "project-ship":
+        body.update(addressee_version=0, ship=False)
+        body["lines"][0]["version"] = good["version"]
+
+    def pack():
+        return client.post(f"/api/shipping/{endpoint}", json=body, headers={"Idempotency-Key": "alias-pack"})
+
+    _as(STOREKEEPER)
+    before = _snapshot(sessions)
+    assert pack().status_code == 422  # Canonical equality never grants an implicit allowance.
+    assert _snapshot(sessions) == before
+    _as(MANAGER)
+    granted = client.post("/api/shipping/project-pack-permissions", json={
+        "project": requested_project, "lines": [{"item_index": "КБ1", "quantity": "15", "version": 0}],
+    })
+    assert granted.status_code == 200, granted.text
+    assert granted.json()["permissions"][0]["remaining"] == "15"
+    _as(STOREKEEPER)
+    result = pack()
+    assert result.status_code == 200, result.text
+    assert result.json()["shipment"]["lines"][0]["project"] == stored_project
+    permission = client.get("/api/shipping/project-pack-permissions", params={"project": requested_project}).json()["permissions"][0]
+    assert (permission["quantity"], permission["consumed"], permission["remaining"]) == ("15", "15", "0")
+
+
+@pytest.mark.parametrize("endpoint", ["project-ship", "project-pack"])
+def test_packing_does_not_match_a_neighbor_project(env, endpoint):
+    client, sessions = env
+    good = _stock(client)
+    _decide(client)
+    body = {"project": "591К.30", "lines": [{"good_id": good["id"], "quantity": "1"}]}
+    if endpoint == "project-ship":
+        body.update(addressee_version=0, ship=False)
+        body["lines"][0]["version"] = good["version"]
+    before = _snapshot(sessions)
+    result = client.post(f"/api/shipping/{endpoint}", json=body, headers={"Idempotency-Key": "wrong-project"})
+    assert result.status_code == 422
+    assert _snapshot(sessions) == before
+
+
+def test_manager_alias_uses_one_card_for_cas_copy_and_later_follow(env):
+    client, sessions = env
+    good = _stock(client)
+    _decide(client)
+    alias = "591K.3"
+    card = client.put("/api/shipping/project-addressee", json={
+        "project": alias, "version": 0, "shipping_point": "Верный адрес", "phone": "+7 900",
+        "terms": "САМОВЫВОЗ",
+    }).json()["addressee"]
+    loaded = client.get("/api/shipping/project-addressee", params={"project": PROJECT})
+    assert loaded.status_code == 200 and loaded.json()["addressee"]["version"] == card["version"]
+    bulk = client.get("/api/shipping/project-addressees", params={"project": PROJECT})
+    assert bulk.status_code == 200 and bulk.json()["addressees"][0]["version"] == card["version"]
+    assert bulk.json()["addressees"][0]["project"] == PROJECT
+    _as(MANAGER)
+    before = _snapshot(sessions)
+    stale = _ship(client, {**_body([(good, "2")]), "project": alias,
+        "addressee": {"contact": "Не сохранять"}}, key="stale-alias")
+    assert stale.status_code == 409
+    assert _snapshot(sessions) == before
+    response = _ship(client, {**_body([(good, "2")], addressee_version=card["version"]),
+        "project": alias, "addressee": {"contact": "Иванов"}}, key="manager-alias")
+    assert response.status_code == 200, response.text
+    shipment = response.json()["shipment"]
+    assert shipment["lines"][0]["project"] == PROJECT
+    assert (shipment["shipping_point"], shipment["phone"], shipment["contact"]) == ("Верный адрес", "+7 900", "Иванов")
+    updated = client.put("/api/shipping/project-addressee", json={
+        "project": PROJECT, "version": card["version"] + 1, "shipping_point": "Новый адрес",
+    })
+    assert updated.status_code == 200, updated.text
+    with sessions() as session:
+        cards = list(session.scalars(select(ProjectAddresseeRow)))
+        assert len(cards) == 1 and cards[0].project == alias
+        stored = session.get(ShipmentRow, UUID(shipment["id"]))
+        assert stored.shipping_point == "Новый адрес"
+
+
+def test_card_alias_creation_locks_before_read_and_rejects_stale_creation(env, monkeypatch):
+    client, sessions = env
+    events = []
+    lock = SqlAlchemyShippingUnitOfWork.lock_projects
+    edit = application._set_project_addressee
+
+    def locked(uow, projects):
+        events.append("lock")
+        return lock(uow, projects)
+
+    def edited(*args, **kwargs):
+        assert events[-1] == "lock"
+        events.append("read")
+        return edit(*args, **kwargs)
+
+    monkeypatch.setattr(SqlAlchemyShippingUnitOfWork, "lock_projects", locked)
+    monkeypatch.setattr(application, "_set_project_addressee", edited)
+    first = client.put("/api/shipping/project-addressee", json={"project": PROJECT, "version": 0, "phone": "+7"})
+    assert first.status_code == 200
+    before = _snapshot(sessions)
+    second = client.put("/api/shipping/project-addressee", json={"project": "591K.3", "version": 0, "phone": "Другой"})
+    assert second.status_code == 409
+    assert events == ["lock", "read", "lock", "read"]
+    assert _snapshot(sessions) == before
+
+
+@pytest.mark.parametrize("endpoint", ["project-ship", "project-pack"])
+def test_alias_with_conflicting_address_cards_refuses_without_writes(env, endpoint):
+    client, sessions = env
+    good = _stock(client)
+    _decide(client)
+    _card(client, shipping_point="Первый адрес")
+    alias = "591K.3"
+    with sessions() as session:
+        original = session.get(ProjectAddresseeRow, PROJECT)
+        values = {column.name: getattr(original, column.name) for column in ProjectAddresseeRow.__table__.columns}
+        values.update(project=alias, shipping_point="Другой адрес")
+        session.add(ProjectAddresseeRow(**values))
+        session.commit()
+    before = _snapshot(sessions)
+    body = {**_body([(good, "2")], addressee_version=1), "project": alias}
+    if endpoint == "project-ship":
+        body["addressee"] = {"contact": "Не сохранять"}
+    response = client.post(f"/api/shipping/{endpoint}", json=body, headers={"Idempotency-Key": "conflicting-card"})
+    assert response.status_code == 422, response.text
+    assert "несколько адресных карточек" in response.json()["detail"]
+    assert client.get("/api/shipping/project-addressee", params={"project": alias}).status_code == 422
+    assert client.get("/api/shipping/project-addressees", params={"project": alias}).status_code == 422
+    assert _snapshot(sessions) == before
+
+
 def test_manager_with_warehouse_ships_card_change_documents_and_file_in_one_request(env):
     client, sessions = env
     good = _stock(client)

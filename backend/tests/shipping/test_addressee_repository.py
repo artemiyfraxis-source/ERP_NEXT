@@ -14,7 +14,7 @@ from app.shared.persistence import create_schema
     (["P03", "P01", "MISSING", "P03"], ["P01", "P03"]),
     ([], []),
 ])
-def test_addressee_list_reads_only_requested_rows_in_one_query(projects, expected):
+def test_addressee_list_loads_only_requested_rows_after_resolving_keys(projects, expected):
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     cards = {f"P{index:02}": ProjectAddressee(
@@ -44,7 +44,7 @@ def test_addressee_list_reads_only_requested_rows_in_one_query(projects, expecte
         assert [card.project for card in found] == expected
         assert found == [cards[project] for project in expected]
         assert loaded == expected
-        assert len(statements) == (1 if projects is None or projects else 0)
+        assert len(statements) == (1 if projects is None else 2 if projects else 0)
     finally:
         event.remove(engine, "before_cursor_execute", sql)
         event.remove(ProjectAddresseeRow, "load", load)

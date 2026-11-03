@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
+from app.shared.project_number import normalize_project_number
 from app.shared.http_auth import (
     Principal, require_full_access, require_section, section_allowed, shipping_manager_principal, shipping_view_principal,
     shipping_warehouse_principal,
@@ -465,7 +466,7 @@ def project_addressee(
     name = project.strip()
     if not name:
         raise HTTPException(status_code=422, detail="Проект обязателен")
-    with uow_factory() as uow: addressee = uow.addressees.get(name)
+    with uow_factory() as uow: addressee = _run(lambda: uow.addressees.get(name))
     return {"addressee": _addressee_results([addressee or ProjectAddressee(project=name)], uow_factory)[0]}
 
 
@@ -480,11 +481,15 @@ def project_addressees(
     if names is not None:
         if any(not name or len(name) > 255 for name in names):
             raise HTTPException(status_code=422, detail="Проект обязателен, не более 255 символов")
-    with uow_factory() as uow: rows = uow.addressees.list(names)
+    with uow_factory() as uow: rows = _run(lambda: uow.addressees.list(names))
     if names is not None:
-        stored = {row.project: row for row in rows}
-        rows = [stored.get(name) or ProjectAddressee(project=name) for name in names]
-    return {"addressees": _addressee_results(rows, uow_factory)}
+        stored = {normalize_project_number(row.project): row for row in rows}
+        rows = [stored.get(normalize_project_number(name)) or ProjectAddressee(project=name) for name in names]
+    results = _addressee_results(rows, uow_factory)
+    if names is not None:
+        for result, name in zip(results, names):
+            result["project"] = name
+    return {"addressees": results}
 
 
 @router.post("/project-pack")
@@ -789,7 +794,7 @@ def print_documents(
         packer = storekeeper_signature(packers, storekeeper_ids(uow.session, [actor for actor, _ in packers]))
         # Реквизиты формы 04.1 (заказ, договор, счёт, кто платит, адрес заказчика, время работы) — карточка проекта.
         project = next((line.project for line in shipment.lines if line.project), "")
-        card = uow.addressees.get(project) if project else None
+        card = _run(lambda: uow.addressees.get(project)) if project else None
     try:
         forms = build_packing_lists(shipment, packer) if document == "pl" else [build_delivery_note(shipment, customer, packer, card)]
     except ShippingValidationError as error:
