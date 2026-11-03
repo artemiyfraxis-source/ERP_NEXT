@@ -14,7 +14,7 @@ import { openShippingForms } from "./shippingPrint";
 import { DISPATCH_STAGES, projectDispatchStage, shipmentDispatchStage, stageLabel, type DispatchStage } from "./dispatchStage";
 import { DispatchCard } from "./DispatchCard";
 import { canAct, hasFullAccess } from "./navigation";
-import { kbKey, num, stagePieces } from "./intakeStages";
+import { COUNTER_SCOPE, dispatchBoard, kbKey, num, recentShipment, stagePieces, type Tab } from "./intakeStages";
 
 /* «Данные отправок» (владелец 28.10.2026, раздел «Менеджмент»): менеджер (Ульяна Ладутько) вносит данные для
    отгрузки — тип доставки, перевозчик, адрес, получателя, телефон, УПД. Кладовщик упаковывает, а без этих данных
@@ -74,6 +74,7 @@ export interface DataRow {
 }
 
 const deadlineOf = (row: DataRow) => row.shipment?.deadline ?? "9999";
+const rowStageLabel = (row: DataRow) => row.stage === null && row.shipment?.status !== "Отменена" ? "Не набрано" : stageLabel(row.stage);
 
 /** Все отправки (отменённые только под «Все») и проекты из приёмки с ещё не набранным остатком. */
 export function dataRows(shipments: Shipment[], intake: IntakeRow[] = []): DataRow[] {
@@ -82,7 +83,7 @@ export function dataRows(shipments: Shipment[], intake: IntakeRow[] = []): DataR
     const source = byKb.get(kbKey(line));
     const ownStage = source?.stage || source?.project_stage || "Принято складом";
     return { id: `${shipment.id}:${line.id}`, kind: "shipment" as const, project: line.project,
-      customer: shipment.customer || shipment.receiver, shipment, stage: shipmentDispatchStage(shipment, ownStage),
+      customer: shipment.customer || shipment.receiver, shipment, stage: num(line.picked) > 0 ? shipmentDispatchStage(shipment, "Принято складом") : null,
       item_index: line.item_index, name: line.name, quantity: num(line.picked), unit: line.unit, grn: line.grn || "", ownStage };
   }));
   for (const source of intake) {
@@ -115,6 +116,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   const [cardsError, setCardsError] = useState("");
   const [open, setOpen] = useState<{ id: string; row: DataRow } | null>(null);
   const [onlyGaps, setOnlyGaps] = useState(false);
+  const [tab, setTab] = useState<Tab>("packed");
   const [forecasts, setForecasts] = useState<Record<string, ProjectForecast>>({});
   const [view, setView] = useState<ListView>(() => localView() ?? "table");
   useEffect(() => {
@@ -175,9 +177,10 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
   useEffect(() => { void shippingApi.forecast().then((answer) => setForecasts(answer?.projects ?? {}), () => undefined); }, []);
 
   const allRows = useMemo(() => dataRows(shipments, intake), [shipments, intake]);
+  const board = useMemo(() => dispatchBoard(intake, shipments), [intake, shipments]);
   const gapsOf = (row: DataRow) => row.shipment ? dataGaps(row.shipment) : cards?.[row.project]?.dispatch_gaps;
-  const rows = allRows.filter((row) => !onlyGaps || (row.shipment ? dataGaps(row.shipment).length > 0
-    : gapsOf(row) === undefined || Boolean(gapsOf(row)?.length) || (deciding(row) && !intake.some((item) => kbKey(item) === kbKey(row) && num(item.pack_permission_remaining) > 0))));
+  const rows = allRows.filter((row) => (tab === "all" || (row.stage === tab && board.inTab(row, tab) && (tab !== "shipped" || Boolean(row.shipment && recentShipment(row.shipment))))) && (!onlyGaps || (row.shipment ? dataGaps(row.shipment).length > 0
+    : gapsOf(row) === undefined || Boolean(gapsOf(row)?.length) || (deciding(row) && !intake.some((item) => kbKey(item) === kbKey(row) && num(item.pack_permission_remaining) > 0)))));
   const current = open?.id.startsWith("project:") ? null : shipments.find((shipment) => shipment.id === open?.id) ?? null;
   const project = open?.id.startsWith("project:") ? open.row : null;
   const openRow = (row: DataRow) => setOpen({ id: row.shipment?.id ?? `project:${row.project}`, row });
@@ -201,7 +204,7 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     <button type="button" className="data-card-main" onClick={() => openRow(row)} aria-label={`Открыть: ${row.shipment?.number ?? row.project}`}>
     <span className="data-card-head">
       {projectCell(row)}
-      <StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{stageLabel(row.stage)}</StatusChip>
+      <StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{rowStageLabel(row)}</StatusChip>
     </span>
     {row.customer && <span className="data-card-customer">{row.customer}</span>}
     {row.shipment && <span>{dataCell(row)}</span>}
@@ -216,8 +219,8 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     { key: "name", title: "Наименование", value: (row) => row.name, grow: true, minWidth: 160, wrap: true,
       render: (row) => <span className="ship-position-name" title={row.name}>{row.name}</span> },
     { key: "quantity", title: "Количество", value: (row) => row.quantity, numeric: true, width: 88, render: (row) => row.quantity > 0 || row.shipment ? `${formatNumber(row.quantity)}${NBSP}${row.unit}` : "—" },
-    { key: "status", title: "Этап позиции", value: (row) => stageLabel(row.stage), filter: true, width: 112,
-      render: (row) => <span title={row.ownStage}><StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{stageLabel(row.stage)}</StatusChip></span> },
+    { key: "status", title: "Этап позиции", value: (row) => rowStageLabel(row), filter: true, width: 112,
+      render: (row) => <span title={row.ownStage}><StatusChip tone={row.stage ? STAGE_TONE[row.stage] : "neutral"}>{rowStageLabel(row)}</StatusChip></span> },
     { key: "grn", title: "ГРН", value: (row) => row.grn, width: 128, render: (row) => <span className="ship-position-grn">{row.grn || "—"}</span> },
     { key: "shipmentStatus", title: "Статус отправки", value: (row) => row.shipment?.status ?? "Не создана", width: 130, wrap: true, maxWidth: 160,
       render: (row) => <span className="ship-position-shipment"><span>{row.shipment?.status ?? "Не создана"}</span>{row.shipment && <span className="muted ship-sub">{row.shipment.number}</span>}</span> },
@@ -248,16 +251,18 @@ export function ShipmentDataPage({ principal }: { principal: Principal }) {
     {error && <div className="error-banner" role="alert">{error}</div>}
     {cardsError && <div className="error-banner" role="alert">{cardsError}</div>}
     {!loaded ? <div className="empty">Загрузка…</div>
-      : <DataTable label="Данные отправок" storageKey={STORAGE_KEY} rows={rows} columns={columns} rowKey={(row) => row.id}
+      : <><div className="seg-tabs" role="group" aria-label="Быстрый отбор">{[...DISPATCH_STAGES, ["all", "Все"] as const].map(([key, text]) =>
+        <button type="button" key={key} className={tab === key ? "on" : undefined} aria-pressed={tab === key} onClick={() => setTab(key)}>{text} · {board.counts[key]}</button>)}</div>
+      <p className="muted" title="Части одной КБ могут находиться на разных этапах; во «Все» КБ считается один раз. Поиск и фильтры таблицы не меняют счётчики.">{COUNTER_SCOPE}{shipments.length >= 200 ? " · Загружены последние 200 отправок" : ""}</p>
+      <DataTable label="Данные отправок" storageKey={STORAGE_KEY} rows={rows} columns={columns} rowKey={(row) => row.id}
         groupBy={(row) => row.project} groupLabel={groupLabel} groupCards
         onRowClick={openRow} exportName="Данные отправок" searchPlaceholder="Проект, КБ, наименование, ГРН или № отправки"
         searchText={(row) => [row.shipment?.number, row.name, row.grn, row.item_index]}
-        presets={DISPATCH_STAGES.map(([key, label]) => ({ label, test: (row: DataRow) => row.stage === key }))}
-        defaultPreset="Упаковано" allLast cards={view === "cards" ? card : undefined}
-        toolbar={<><span className="muted">Счётчики: позиции КБ</span><span className="view-switch" role="group" aria-label="Вид списка">
+        cards={view === "cards" ? card : undefined}
+        toolbar={<><span className="view-switch" role="group" aria-label="Вид списка">
           {VIEWS.map(([key, label]) => <button type="button" key={key} className="secondary small" aria-pressed={view === key} onClick={() => chooseView(key)}>{label}</button>)}
         </span></>}
-        emptyText="В этом разделе пусто — другие этапы под чипами выше." />}
+        emptyText="В этом разделе пусто — другие этапы под чипами выше." /></>}
     {current && <ShipmentDataWindow key={current.id} shipment={current} stage={open?.row.stage} canEdit={canEdit} canCorrectHistory={hasFullAccess(principal) && !principal.viewing} close={() => setOpen(null)} onSaved={reload} />}
     {project && <DispatchCard key={project.id} project={project.project} customer={project.customer} stage={project.stage ?? undefined} canEdit={canEdit} close={() => setOpen(null)} onSaved={() => void reload()} />}
   </section>;
