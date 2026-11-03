@@ -4,6 +4,7 @@ import { formatDateTime } from "./format";
 import { ProjectMarks, ProjectStatus } from "./ProjectStatus";
 import { StatusChip } from "./StatusChip";
 import type { Tone } from "./statusTone";
+import { projectColor } from "./projectColor";
 
 /** Сколько КБ с выданной ТК и сколько из них без отметки проверки — те же числа, что в строке «Проверка ТК». */
 export function tcProgress(item: KitsetTile) {
@@ -46,12 +47,12 @@ export function KitTile({ item, statuses, canEdit, open, extra, statusChanged, l
   const defects = reviews.find((group) => group.label === "с погрешностями")?.kbs ?? [];
   const lines = closed ? [] : [
     [
-      { text: "не выдана", label: "ТК не выдана", kbs: noTc, tone: "warning" },
-      { text: "не проверена", label: "ТК не проверена", kbs: unreviewed, tone: "warning" },
+      { text: "не выдана", label: "ТК не выдана", kbs: noTc, tone: "neutral" },
+      { text: "не проверена", label: "ТК не проверена", kbs: unreviewed, tone: "neutral" },
     ],
     [
       { text: "С погрешностями", label: "ТК с погрешностями", kbs: defects, tone: "danger" },
-      { text: "КБ не набрана", label: "КБ не набрана", kbs: notPicked, tone: "warning" },
+      { text: "КБ не набрана", label: "КБ не набрана", kbs: notPicked, tone: "neutral" },
     ],
   ].map((line) => line.filter((fact) => fact.kbs.length));
   const hasProblems = lines.some((line) => line.length);
@@ -75,6 +76,7 @@ export function KitTile({ item, statuses, canEdit, open, extra, statusChanged, l
     }}>
     <div className="tile-body">
       <div className="kit-tile-head">
+        <span className="kit-tile-project-color" aria-hidden="true" style={{ backgroundColor: `var(--zg-c${projectColor(item.project)})` }} />
         <strong className="t-h">{item.project}</strong>
       </div>
       <div className="kit-tile-customer" title={item.customer || undefined}>{item.customer || "—"}</div>
