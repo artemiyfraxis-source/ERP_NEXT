@@ -29,7 +29,15 @@ def seeded_head(tmp_path_factory):
 
 
 @pytest.fixture
-def database(seeded_head, tmp_path, monkeypatch):
+def guarded_head(monkeypatch):
+    # Exercise the historical 0169 contract even after later migrations become head.
+    scripts = Mock()
+    scripts.from_config.return_value.get_current_head.return_value = contract.GUARDED_REVISION
+    monkeypatch.setattr(contract, "ScriptDirectory", scripts)
+
+
+@pytest.fixture
+def database(seeded_head, tmp_path, monkeypatch, guarded_head):
     monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
     path = tmp_path / "copy.db"
     shutil.copyfile(seeded_head, path)
@@ -91,7 +99,7 @@ def test_other_heads_keep_the_seeded_roundtrip(database, monkeypatch):
     upgrade.assert_called_once_with(config, "head")
 
 
-def test_empty_0169_roundtrips_but_cannot_stand_in_for_seeded_guard(tmp_path, monkeypatch):
+def test_empty_0169_roundtrips_but_cannot_stand_in_for_seeded_guard(tmp_path, monkeypatch, guarded_head):
     monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
     config = _config(tmp_path / "empty.db")
     command.upgrade(config, contract.GUARDED_REVISION)
@@ -102,6 +110,21 @@ def test_empty_0169_roundtrips_but_cannot_stand_in_for_seeded_guard(tmp_path, mo
             contract.check(config, engine)
         command.downgrade(config, "-1")
         command.upgrade(config, contract.GUARDED_REVISION)
+        assert contract.evidence(engine) == before
+    finally:
+        engine.dispose()
+
+
+def test_current_head_roundtrips_over_seeded_permissions(seeded_head, tmp_path, monkeypatch):
+    monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
+    path = tmp_path / "current-head.db"
+    shutil.copyfile(seeded_head, path)
+    config = _config(path)
+    command.upgrade(config, "head")
+    engine = create_engine(config.get_main_option("sqlalchemy.url"))
+    try:
+        before = contract.evidence(engine)
+        assert contract.check(config, engine) == "seeded roundtrip passed"
         assert contract.evidence(engine) == before
     finally:
         engine.dispose()
