@@ -342,7 +342,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         return <button type="button" className="intake-take-btn" title={tasksText(row) || "Принять на склад"} aria-label={`Принять ${who(row)}: можно ${row.remaining}`}
           onClick={() => setIntake([source(row)])}>{row.remaining}</button>;
       } },
-    { key: "packed", title: "Упаковано", value: (row) => num(row.packed), numeric: true, render: (row) => row.total ? count(row.packed) : packCell(row) },
+    { key: "packed", title: tab === "accepted" ? "Упаковать" : "Упаковано", value: (row) => num(row.packed), numeric: true, render: (row) => row.total ? count(row.packed) : packCell(row) },
     { key: "free", title: "Не упаковано", value: (row) => row.kbActions ? packable(source(row)) : 0, numeric: true,
       render: (row) => row.kbActions ? <>{packable(source(row))}{row.total && <div>{packCell(row)}</div>}</> : dash },
     ...DELIVERY_COLUMNS.map((key): DataColumn<IntakeLine> => ({ key,
