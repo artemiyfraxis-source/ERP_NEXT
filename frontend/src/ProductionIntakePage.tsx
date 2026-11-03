@@ -43,7 +43,7 @@ const TAB_COLUMNS: Record<Exclude<Tab, "all">, string[]> = {
   // и в «Колонках».
   production: ["project", "kb", "name", "needed", "launched", "remaining"],
   ready: ["project", "kb", "name", "needed", "remaining"],
-  accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed", "upd"],
+  accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed", "sent", "free", "upd"],
   packed: ["project", "kb", "name", "grn", "packed", ...DELIVERY_COLUMNS, "track", "pl", "dn", "upd", "boxes"],
   to_ship: ["project", "kb", "name", "grn", "packed", ...DELIVERY_COLUMNS, "track", "pl", "dn", "upd", "boxes", "ship"],
   shipped: ["project", "kb", "name", "grn", "sent", ...DELIVERY_COLUMNS, "track", "shippedAt"],
@@ -71,18 +71,18 @@ function urlTab(): { tab: Tab | null; journal: boolean } {
   return { tab: TABS.some(([key]) => key === tab) ? tab as Tab : null, journal: false };
 }
 
-/** Акты остаются отдельными строками; первая несёт общие действия КБ. Ниже — только фактический остаток к приёмке. */
-type IntakeLine = IntakeRow & { act?: IntakeAct; left: number; kbActions: boolean };
+/** Итог и действия относятся ко всей КБ; акты показывают только фактический приход по ГРН. */
+type IntakeLine = IntakeRow & { act?: IntakeAct; left: number; kbActions: boolean; total?: boolean };
 function expand(row: IntakeRow, withActs: boolean, withRemainder: boolean): IntakeLine[] {
   const acts = withActs ? row.acts ?? [] : [];
   const left = leftOf(row);
-  const lines: IntakeLine[] = acts.map((act, index) => ({
-    ...row, act, kbActions: index === 0, left: 0, stage: "", launched: "0", delivered: "0", accepted: act.quantity, remaining: "0",
-    packed: index === 0 ? row.packed : "0", sent: index === 0 ? row.sent : "0",
+  const lines: IntakeLine[] = acts.map((act) => ({
+    ...row, act, kbActions: false, left: 0, stage: "", needed: "0", launched: "0", delivered: "0", accepted: act.quantity, remaining: "0",
+    packed: "0", sent: "0",
     grn: act.grn, location: act.location, tasks: [],
   }));
   if (!acts.length) lines.push({ ...row, left, kbActions: true });
-  else if (withRemainder && (left > 0 || num(row.remaining) > 0)) lines.push({ ...row, left, kbActions: false, accepted: "0", packed: "0", sent: "0", grn: null, location: "" });
+  else lines.unshift({ ...row, left: withRemainder ? left : 0, remaining: withRemainder ? row.remaining : "0", kbActions: true, total: true, grn: null });
   return lines;
 }
 
@@ -178,6 +178,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     return [...new Set([cardOf(row)?.note, data.note, "tk_note" in data ? data.tk_note : ""].map((text) => text?.trim()).filter(Boolean))].join("\n");
   };
   const deliveryCell = (row: IntakeLine, field: typeof DELIVERY_COLUMNS[number]) => {
+    if (row.act) return dash;
     const entries = deliveryOf(row);
     return <span className="intake-delivery-list">{entries.length ? entries.map((data, index) => {
       const text = deliveryText(row, field, data);
@@ -245,7 +246,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const waitDecision = avail > 0 && !canPack(row);
     const openPack = () => setOpened({ kind: "pack", project: row.project });
     if (canPack(row)) return <button type="button" className="intake-take-btn" title={`Можно упаковать: ${permittedPack(row)}; на складе: ${avail}`}
-      aria-label={`Упаковать ${who(row)}: упаковано ${num(row.packed)}, можно ${permittedPack(row)}`} onClick={openPack}>{num(row.packed)}</button>;
+      aria-label={`Упаковать ${who(row)}: упаковано ${num(row.packed)}, можно ${permittedPack(row)}`} onClick={openPack}>{line.total ? <>Упаковать остаток · {permittedPack(row)}</> : num(row.packed)}</button>;
     if (open) return <button type="button" className="intake-num-btn" title={waitDecision ? "Отправки проекта на упаковке; упаковать ещё — после решения менеджера «упаковывать»" : "Отправки проекта на упаковке: PL/DN, короба, этикетки"}
       aria-label={`Упаковка ${who(row)}: упаковано ${num(row.packed)}`} onClick={openPack}>{num(row.packed)}</button>;
     if (waitDecision) return <button type="button" className="intake-num-btn" disabled title="Упаковать можно после решения менеджера «упаковывать»"
@@ -329,8 +330,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     { key: "project", title: "Проект", value: (row) => row.project, hidden: true },
     { key: "kb", title: "КБ", value: (row) => row.item_index, render: (row) => <span className="intake-kb">{row.item_index}</span> },
     // Строка — одна линия (владелец 15.10): длинное наименование обрезается «…», целиком — в подсказке.
-    { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <span className="intake-clip intake-name" title={row.name}>{row.name}</span> },
-    { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true, render: (row) => row.needed },
+    { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <span className="intake-clip intake-name" title={row.name}>{row.total && <strong>Итого по КБ<br /></strong>}{row.name}</span> },
+    { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true, render: (row) => row.act ? dash : row.needed },
     { key: "left", title: "Остаток", value: (row) => row.left, numeric: true, render: (row) => row.left > 0 ? row.left : dash },
     { key: "launched", title: "Запущено", value: (row) => num(row.launched), numeric: true, render: (row) => count(row.launched) },
     { key: "accepted", title: "Принято", value: (row) => num(row.accepted), numeric: true, render: (row) => count(row.accepted) },
@@ -341,7 +342,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         return <button type="button" className="intake-take-btn" title={tasksText(row) || "Принять на склад"} aria-label={`Принять ${who(row)}: можно ${row.remaining}`}
           onClick={() => setIntake([source(row)])}>{row.remaining}</button>;
       } },
-    { key: "packed", title: "Упаковано", value: (row) => num(row.packed), numeric: true, render: packCell },
+    { key: "packed", title: "Упаковано", value: (row) => num(row.packed), numeric: true, render: (row) => row.total ? count(row.packed) : packCell(row) },
+    { key: "free", title: "Не упаковано", value: (row) => row.kbActions ? packable(source(row)) : 0, numeric: true,
+      render: (row) => row.kbActions ? <>{packable(source(row))}{row.total && <div>{packCell(row)}</div>}</> : dash },
     ...DELIVERY_COLUMNS.map((key): DataColumn<IntakeLine> => ({ key,
       title: ({ receiver: "Получатель", delivery: "Способ доставки", carrier: "Перевозчик", address: "Адрес", phone: "Телефон", warehouseNote: "Комментарий для склада" } as Record<string, string>)[key],
       value: (row) => deliveryOf(row).map((data) => deliveryText(row, key, data)).join("; "),
