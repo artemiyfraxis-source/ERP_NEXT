@@ -53,7 +53,8 @@ it("a cell reads how the seller sells it: the reel, the breaks, the break applie
   expect(row).toHaveTextContent("берём 100 м");
   expect(row).toHaveTextContent("берём 100 м = 2 × 50 м");
   expect(row).toHaveTextContent("+18 % к плану");
-  expect(row).toHaveTextContent("591К.3 · Опытная партия");
+  expect(within(row).getByText("591К.3").parentElement).toHaveClass("rfq-position-project");
+  expect(within(row).getByText("Опытная партия")).toHaveClass("rfq-position-secondary");
   expect(screen.getByRole("link", { name: "ООО План ↗" })).toHaveAttribute("href", "https://plan.example/x");
   expect(screen.getByText(/всё у него/).closest("span")).toHaveAttribute("title", expect.stringMatching(/1\s500,00 ₽/));
 });
@@ -85,4 +86,41 @@ it("in «Подбор» a click takes the offer instead of opening the decision"
   fireEvent.click(screen.getByRole("button", { name: "Разъём — Альфа" }));
   expect(onBasket).toHaveBeenCalledWith("a", "q1");
   expect(onOpen).not.toHaveBeenCalled();
+});
+
+it("promotes article, project and deadline while preserving secondary details and controls", () => {
+  const m = matrixOf([], [line("a", "Кабель контрольный", {}, {
+    article: "RG-316-EXTENDED-ARTICLE", project: "591К.3", designation: "Опытная партия", need_by: "2026-11-12",
+  })]);
+  render(<MatrixTable matrix={m} lines={m.lines} editable picked={new Set()} onPick={() => undefined} basket={null} actions={{ ...actions, onSplit: vi.fn() }} />);
+  const article = screen.getByText("RG-316-EXTENDED-ARTICLE");
+  expect(article).toHaveClass("rfq-position-primary");
+  expect(article.tagName).toBe("STRONG");
+  expect(screen.getByText("Кабель контрольный")).toHaveClass("rfq-position-name");
+  expect(screen.getByText("591К.3").tagName).toBe("STRONG");
+  expect(screen.getByText("591К.3").parentElement).toHaveClass("rfq-position-project");
+  expect(screen.getByText("12.11.2026").tagName).toBe("STRONG");
+  expect(screen.getByText("12.11.2026").parentElement).toHaveClass("rfq-position-date");
+  expect(screen.getByText("12.11.2026").parentElement).toHaveAttribute("datetime", "2026-11-12");
+  expect(screen.getByText("SM-a · В работе")).toHaveClass("rfq-position-secondary");
+  expect(screen.getByText("Опытная партия")).toBeInTheDocument();
+  expect(screen.getByLabelText("Выбрать SM-a")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Разделить SM-a" })).toBeInTheDocument();
+});
+
+it.each([null, "   "])("uses the name as the primary label when article is %s", (article) => {
+  const m = matrixOf([], [line("a", "Кабель без артикула", {}, { article })]);
+  render(<MatrixTable matrix={m} lines={m.lines} editable={false} picked={new Set()} onPick={() => undefined} basket={null} actions={actions} />);
+  expect(screen.getByText("Кабель без артикула")).toHaveClass("rfq-position-primary");
+  expect(document.querySelector(".rfq-position-name")).toBeNull();
+});
+
+it("does not repeat an article matching the name and keeps cancellation visible", () => {
+  const m = matrixOf([], [line("a", "rg-316", {}, { article: " RG-316 ", cancelled: true, status: "Отменена" })]);
+  render(<MatrixTable matrix={m} lines={m.lines} editable picked={new Set()} onPick={() => undefined} basket={null} actions={{ ...actions, onSplit: vi.fn() }} />);
+  expect(screen.getAllByText(/^rg-316$/i)).toHaveLength(1);
+  expect(screen.getByText("RG-316")).toHaveClass("rfq-position-primary", "rfq-struck");
+  expect(screen.getByText("· отменена")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Выбрать SM-a")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Разделить SM-a" })).not.toBeInTheDocument();
 });
