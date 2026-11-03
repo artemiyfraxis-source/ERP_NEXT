@@ -41,9 +41,43 @@ const open = async (canEdit = true) => {
 };
 
 describe("Данные отправки", () => {
+  it("не разрешает запись по выдуманной версии после ошибки загрузки", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({ detail: "Нет связи" }, 503));
+    render(<DispatchCard project="591К.3" stage="accepted" canEdit close={() => undefined} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи");
+    expect(screen.queryByRole("button", { name: "Сохранить" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Получатель")).not.toBeInTheDocument();
+  });
+  it("до упаковки сохраняет №, дату, файл ЭДО и адрес без создания отправки", async () => {
+    render(<DispatchCard project="591К.3" stage="accepted" canEdit close={() => undefined} />);
+    fireEvent.change(await screen.findByLabelText("№ УПД"), { target: { value: "523" } });
+    fireEvent.change(screen.getByLabelText("Дата УПД"), { target: { value: "2026-11-03" } });
+    fireEvent.change(screen.getByLabelText("Адрес доставки"), { target: { value: "Тула" } });
+    fireEvent.change(screen.getByLabelText("Получатель"), { target: { value: "ООО Получатель" } });
+    fireEvent.change(screen.getByLabelText("Приложить УПД"), { target: { files: [new File(["%PDF-1.4"], "УПД.pdf", { type: "application/pdf" })] } });
+    await screen.findByText("УПД приложена");
+    expect(screen.getByLabelText("УПД")).toHaveValue("ЭДО");
+    expect(screen.getByLabelText("№ УПД")).toHaveValue("523");
+    expect(screen.getByLabelText("Адрес доставки")).toHaveValue("Тула");
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await screen.findByText("Данные отправки сохранены");
+    expect(calls.filter((call) => call.method === "PUT").map((call) => call.body)).toEqual([
+      { project: "591К.3", version: 2, upd_url: "/api/shipping/files/f1", upd_type: "ЭДО" },
+      { project: "591К.3", version: 3, upd_number: "523", upd_date: "2026-11-03", shipping_point: "Тула", receiver: "ООО Получатель" },
+    ]);
+    expect(calls.some(({ url }) => /project-ship|finished-goods|\/shipments/.test(url))).toBe(false);
+  });
+  it("номер и дата УПД до упаковки доступны только для просмотра без edit", async () => {
+    stored = { ...card, upd_number: "523", upd_date: "2026-11-03" };
+    await open(false);
+    expect(screen.getByLabelText("№ УПД")).toHaveValue("523");
+    expect(screen.getByLabelText("№ УПД")).toBeDisabled();
+    expect(screen.getByLabelText("Дата УПД")).toBeDisabled();
+    expect(calls.every(({ method }) => method === "GET")).toBe(true);
+  });
   it("показывает адресата, доставку и комментарий для склада", async () => {
     const dialog = await open();
-    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон", "Комментарий для склада"]);
+    expect(within(dialog).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(["Получатель", "Адрес доставки", "Телефон", "№ УПД", "Комментарий для склада"]);
     expect(within(dialog).getAllByRole("combobox").map((input) => input.getAttribute("aria-label"))).toEqual(["Тип доставки", "Перевозчик", "УПД"]);
     for (const hidden of ["Контактное лицо", "Условия доставки", "Способ отгрузки / ТК", "Плановая дата отгрузки", "Комментарий"]) {
       expect(within(dialog).queryByLabelText(hidden)).not.toBeInTheDocument();
@@ -69,9 +103,9 @@ describe("Данные отправки", () => {
     expect(calls.find((call) => call.method === "PUT")!.body).toEqual({ project: "591К.3", version: 2, shipping_point: "Тула, ул. Ленина 1" });
   });
 
-  it("«Приложить УПД» — только у бумажной; файл загружается и встаёт в карточку", async () => {
+  it("файл УПД доступен для ЭДО и бумаги, но не для «Без УПД»", async () => {
     await open();
-    expect(screen.queryByLabelText("Приложить УПД")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Приложить УПД")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("УПД"), { target: { value: "БЕЗ УПД" } });
     expect(screen.queryByLabelText("Приложить УПД")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("УПД"), { target: { value: "БУМАГА" } });

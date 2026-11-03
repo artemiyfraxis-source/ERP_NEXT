@@ -78,6 +78,20 @@ beforeEach(() => { intakeRows = ROWS; shipments = []; addressees = []; approvals
 afterEach(() => { cleanup(); setRightsPrincipal(null); vi.unstubAllGlobals(); });
 
 describe("Приёмка с производства", () => {
+  it("принятое открывает данные проекта до упаковки без создания отправки", async () => {
+    intakeRows = [row({ accepted: "20", packed: "0", remaining: "0", tasks: [] })];
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Принято/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Данные отправки" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Данные отправки 591К.3" }));
+    expect(await dialog.findByLabelText("Получатель")).toBeEnabled();
+    fireEvent.change(dialog.getByLabelText("Тип доставки"), { target: { value: "ДОСТАВКА ТК" } });
+    expect(dialog.getByLabelText("Адрес доставки")).toBeEnabled();
+    fireEvent.change(dialog.getByLabelText("УПД"), { target: { value: "ЭДО" } });
+    expect(dialog.getByLabelText("№ УПД")).toBeEnabled();
+    expect(dialog.getByLabelText("Приложить УПД")).toBeEnabled();
+    expect(calls.every(({ method }) => method === "GET")).toBe(true);
+  });
   it("не загружает и не показывает старую приёмку коробок после ОТК", async () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findByText("Жгут");
@@ -801,7 +815,7 @@ describe("Приёмка с производства: упаковка и отг
       [/^В ожидании/, ["КБ", "Наименование", "Заказано"], null],
       [/^В производстве/, ["КБ", "Наименование", "Заказано", "Запущено", "Можно принять", ...deliveryHeaders], /^Принять 591К\.3 КБ1/],
       [/^Готово/, ["КБ", "Наименование", "Заказано", "Можно принять", ...deliveryHeaders], /^Принять 591К\.3 КБ1/],
-      [/^Принято/, ["КБ", "Наименование", "Принято", "Дата приёмки", "ГРН", "Упаковано", ...deliveryHeaders], /^Упаковать|^Упаковка|^Печать этикетки/],
+      [/^Принято/, ["КБ", "Наименование", "Принято", "Дата приёмки", "ГРН", "Упаковано", "УПД", ...deliveryHeaders], /^Упаковать|^Упаковка|^Печать этикетки|^Данные отправки/],
       [/^Упаковано/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "PL", "DN", "УПД", "Короба"], /^(Трек|Без УПД) 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
       [/^На отгрузку/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "PL", "DN", "УПД", "Короба", "Отгрузка"], /^Отгрузить 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
       [/^Отгружено/, ["КБ", "Наименование", "ГРН", "Отгружено", ...deliveryHeaders, "Трек", "Дата отгрузки"], /^(Печать этикетки|Данные отправки)/],

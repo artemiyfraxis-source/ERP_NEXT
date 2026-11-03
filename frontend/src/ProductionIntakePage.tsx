@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { failureText, shippingApi, type Principal, type ProjectAddressee } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ShipmentDataWindow } from "./ShipmentData";
+import { DispatchCard } from "./DispatchCard";
 import { DISPATCH_STAGES } from "./dispatchStage";
 import { formatDay } from "./format";
 import { canPack, hasWork, kbKey, num, ofKb, ofProject, packable, permittedPack, round2, SHIPPED_DAYS, shippedOnlyRows, stagePieces, type Pieces, type Tab } from "./intakeStages";
@@ -42,7 +43,7 @@ const TAB_COLUMNS: Record<Exclude<Tab, "all">, string[]> = {
   // и в «Колонках».
   production: ["project", "kb", "name", "needed", "launched", "remaining"],
   ready: ["project", "kb", "name", "needed", "remaining"],
-  accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed"],
+  accepted: ["project", "kb", "name", "accepted", "received", "grn", "packed", "upd"],
   packed: ["project", "kb", "name", "grn", "packed", ...DELIVERY_COLUMNS, "track", "pl", "dn", "upd", "boxes"],
   to_ship: ["project", "kb", "name", "grn", "packed", ...DELIVERY_COLUMNS, "track", "pl", "dn", "upd", "boxes", "ship"],
   shipped: ["project", "kb", "name", "grn", "sent", ...DELIVERY_COLUMNS, "track", "shippedAt"],
@@ -116,6 +117,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [header, setHeader] = useState<"journal" | "good" | "request" | null>(fromUrl.current.journal ? "journal" : null);
   const [label, setLabel] = useState<{ grn: string; result: PrintResult | null; error: string; busy: boolean } | null>(null);
   const [card, setCard] = useState<DispatchShipment | null>(null);
+  const [projectData, setProjectData] = useState<string | null>(null);
 
   async function reload() {
     try {
@@ -276,6 +278,13 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   /** Каждая отправка держит свои PL, DN и УПД; формирование и перевыпуск остаются явными действиями. */
   const docsShips = (row: IntakeLine) => row.kbActions ? shownShips(row).filter((shipment) => shipment.status === "Упакована") : [];
   const docsCell = (row: IntakeLine, kind: "pl" | "dn" | "upd" | "boxes") => {
+    if (kind === "upd" && tab === "accepted" && row.kbActions) {
+      const projectCard = cardOf(row);
+      return <button type="button" className="link-button intake-doc-action" aria-label={`Данные отправки ${row.project}`} onClick={() => setProjectData(row.project)}>
+        {projectCard?.upd_type === "БЕЗ УПД" ? "Без УПД" : <>{projectCard?.upd_number ? `УПД № ${projectCard.upd_number}` : "Внести УПД"}
+          {projectCard?.upd_url ? " · файл" : " · без файла"}</>}
+      </button>;
+    }
     const ships = docsShips(row);
     if (!ships.length) return dash;
     return <span className="intake-docs">{ships.map((shipment, index) => {
@@ -400,6 +409,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const ready = groupRows.filter((row) => !row.act && num(row.remaining) > 0);
     const total = round2(ready.reduce((sum, row) => sum + num(row.remaining), 0));
     return <span className="intake-group"><span className="intake-group-title">{title}</span>
+      {tab === "accepted" && <button type="button" className="secondary small" onClick={(event) => { event.stopPropagation(); setProjectData(project); }}>
+        Данные отправки</button>}
       {canWarehouse && (tab === "ready" || tab === "production" || tab === "all") && ready.length > 1 && <button type="button" className="primary small" onClick={(event) => { event.stopPropagation(); setIntake(ready.map(source)); }}>
         Принять всё: {ready.length} КБ · {total} шт</button>}
       </span>;
@@ -444,5 +455,6 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {header === "good" && <RegisterGoodWindow reload={reload} close={() => setHeader(null)} />}
     {header === "request" && <CreateShipmentWindow reload={reload} close={() => setHeader(null)} />}
     {card && <ShipmentDataWindow shipment={card} canEdit={canDispatch} canCorrectHistory={hasFullAccess(principal) && !principal.viewing} onSaved={reload} close={() => setCard(null)} />}
+    {projectData && <DispatchCard project={projectData} customer={head[projectData]?.customer} stage="accepted" canEdit={canDispatch} onSaved={() => void reload()} close={() => setProjectData(null)} />}
   </section>;
 }
