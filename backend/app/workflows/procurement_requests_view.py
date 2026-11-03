@@ -32,6 +32,13 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 
+def composition_projects(session: Session) -> list[dict]:
+    """Saved evidence stays discoverable even before a buyer creates any purchase intent."""
+    from app.modules.requests.infrastructure import CalcCompositionRow
+    return [{"key": project, "kind": "project", "value": project, "lines": 0, "counts": {}}
+            for project in session.scalars(select(CalcCompositionRow.project).order_by(CalcCompositionRow.project))]
+
+
 def saved_composition(session: Session, project: str) -> dict:
     """Read saved full source + exact recorded request relations. Never fetch Google or create obligations."""
     from app.modules.requests.infrastructure import SqlAlchemyCompositionRepository, RequestRow
@@ -86,7 +93,7 @@ def saved_composition(session: Session, project: str) -> dict:
             } for lot in matched],
         })
     return {
-        "project": snapshot.project, "state": "saved", "version": snapshot.version,
+        "project": snapshot.project, "snapshot_id": str(snapshot.id), "state": "saved", "version": snapshot.version,
         "coverage": "full_source", "valid": all(not row["issues"] for row in rows),
         "source": {
             "kind": "google_calc", "id": snapshot.source_id,
@@ -199,7 +206,8 @@ def last_purchases(
         known = result.get(line_id)
         if known is None or known.on < on:
             unit = next((line.unit for line in lines if line.id == line_id), None)
-            result[line_id] = LastPurchase(price=upd.price, on=on, supplier=upd.supplier or None, unit=unit, source="upd")
+            result[line_id] = LastPurchase(price=upd.price, on=on, supplier=upd.supplier or None, unit=unit, source="upd",
+                                           document_id=upd.document_id, document_number=upd.number)
     return result
 
 

@@ -5,7 +5,7 @@ Reads open for a viewer (ID-6), writes take `procurement_edit_principal` — so 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
+from app.workflows.procurement_composition_commands import materialize_composition
 from app.workflows.procurement_requests_view import (
     PurchasingRfqSplitter,
     free_stock,
@@ -22,6 +23,7 @@ from app.workflows.procurement_requests_view import (
     order_states,
     rfq_states,
     saved_composition,
+    composition_projects,
     refresh_composition,
     CompositionRefreshError,
 )
@@ -68,6 +70,34 @@ class CompositionRefreshInput(BaseModel):
     project: str = Field(min_length=1, max_length=128)
     url: str = Field(min_length=1, max_length=2000)
     expected_version: int = Field(ge=0)
+
+
+class CompositionMaterializeInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    project: str = Field(min_length=1, max_length=128)
+    snapshot_id: UUID
+    expected_version: int = Field(ge=1)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_rows: list[Annotated[int, Field(ge=1)]] = Field(min_length=1, max_length=300)
+    purpose: str | None = Field(default=None, min_length=1, max_length=128)
+    delivery_point: str | None = Field(default=None, min_length=1, max_length=512)
+    procurement_deadline: date | None = None
+    planned_date: date | None = None
+
+
+@router.post("/requests-composition/materialize")
+def requests_composition_materialize(
+    request: Request,
+    payload: CompositionMaterializeInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    if not callable(getattr(request.app.state, "uow_factory", None)):
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    try:
+        return materialize_composition(request.app.state, payload=payload, actor=principal.actor, now=now)
+    except CompositionRefreshError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
 
 
 @router.post("/requests-composition/refresh")
@@ -127,6 +157,10 @@ def requests_view(
         summary = build_summary(
             lines, purposes, states, actor_id, project=chosen_project, focus=line, orders=order_states(session, lines),
         )
+        known = {item["key"] for item in summary["projects"]}
+        summary["projects"].extend(item for item in composition_projects(session) if item["key"] not in known)
+        summary["projects"].sort(key=lambda item: ({"project": 0, "purpose": 1, "none": 2}.get(item["kind"], 3),
+                                                   item["value"].casefold()))
     total = len(summary["batches"])
     if chosen_project is None and total > BATCH_LIMIT:
         # Without a project only the newest requests (the focused one kept): a project shows all of its own.
