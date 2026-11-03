@@ -873,8 +873,6 @@ table.ship-lines td:first-child { width: 1%; }
 .ship-accept > strong { align-self: center; font-size: 14px; }
 .ship-accept label { gap: 4px; }
 .ship-accept input, .ship-accept select { padding: 7px 10px; }
-.ship-handoff { margin-bottom: 16px; }
-.ship-handoff > h2 { display: flex; gap: 8px; align-items: center; margin: 0 0 8px; font-size: 16px; }
 @media (max-width: 1100px) { .ship-docs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ship-accept { grid-template-columns: 1fr 1fr; } .ship-accept > strong { grid-column: 1 / -1; } }
 /* Приёмка «Из производства» (12.10): отметка и количество в одной ячейке, ошибка строки под ними. */
 .ship-tab-count.is-zero { background: transparent; color: var(--muted-foreground); font-weight: 500; }
