@@ -36,6 +36,11 @@ class Tasks:
     def get(self, task_id):
         return self.items.get(task_id)
 
+    def list(self, *, technician_id=None, machine_ids=None, limit=100, offset=0):
+        return tuple(task for task in self.items.values()
+            if (technician_id is None or task.technician_id == technician_id)
+            and (machine_ids is None or task.machine_id in machine_ids))[offset:offset+limit]
+
     def save(self, task, *, expected_version):
         previous = self.get(task.id)
         if self.fail_cas or (previous.version if previous else 0) != expected_version:
@@ -72,6 +77,9 @@ class Context:
     def machine(self, machine_id):
         return self.machines.get(machine_id)
 
+    def machine_ids_for_site(self, site):
+        return tuple(item.id for item in self.machines.values() if item.site == site and site in {"ЦАР", "ЖУК"})
+
     def recipe_exists(self, reference, machine_id):
         return (reference, machine_id) in self.recipes
 
@@ -95,6 +103,11 @@ class Reservations:
     def release(self, task):
         self.items.pop(task.id, None)
         self.calls.append(("release", task.id))
+
+    def block(self, task):
+        self.calls.append(("release_person", task.id))
+        if task.blocked_machine_available:
+            self.release(task)
 
 
 class Uow:
@@ -145,7 +158,7 @@ def env():
         uow.context.people[person.actor.id] = person
     operation = IssuedOperationRef(uuid4(), 3, uuid4(), uuid4(), 4)
     recipe = RecipeVersionRef(uuid4(), 2)
-    uow.context.operations[operation] = IssuedSetupOperation(operation, "ЦАР")
+    uow.context.operations[operation] = IssuedSetupOperation(operation, "ЦАР", ("ОБ.027.2",))
     uow.context.machines["ОБ.027.2"] = SetupMachine("ОБ.027.2", "ЦАР")
     uow.context.recipes.add((recipe, "ОБ.027.2"))
     command = AssignSetupCommand("assign-1", 0, operation, "ОБ.027.2", technician.actor.id,
@@ -217,7 +230,7 @@ def test_exact_server_context_required(env, part):
         uow.context.operations.clear()
     elif part in {"revision", "position"}:
         reference = replace(command.operation, **({"card_revision": 2} if part == "revision" else {"etk_position": 5}))
-        uow.context.operations[command.operation] = IssuedSetupOperation(reference, "ЦАР")
+        uow.context.operations[command.operation] = IssuedSetupOperation(reference, "ЦАР", ("ОБ.027.2",))
     elif part == "machine":
         uow.context.machines.clear()
     elif part == "machine_identity":
@@ -235,7 +248,7 @@ def test_exact_server_context_required(env, part):
 def test_cross_site_or_unknown_source_rejected_even_for_admin(env, part):
     uow, manager, technician, _, command = env
     if part.endswith("operation"):
-        uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "" if part.startswith("unknown") else "ЖУК")
+        uow.context.operations[command.operation] = IssuedSetupOperation(command.operation, "" if part.startswith("unknown") else "ЖУК", ("ОБ.027.2",))
     elif part.endswith("machine"):
         uow.context.machines[command.machine_id] = SetupMachine(command.machine_id, "" if part.startswith("unknown") else "ЖУК")
     else:
@@ -338,6 +351,7 @@ def test_block_release_depends_on_explicit_availability(env, available):
     task = change(env, task, SetupAction.BLOCK, reason="Проверка", machine_available=available)
     assert (task.id in uow.reservations.items) is not available
     assert task.blocked_machine_available is available
+    assert ("release_person", task.id) in uow.reservations.calls
 
 
 def test_resume_reacquires_released_reservation_and_conflict_rolls_back(env):
@@ -353,6 +367,34 @@ def test_resume_reacquires_released_reservation_and_conflict_rolls_back(env):
     uow.reservations.external_busy = False
     resumed = change(env, blocked, SetupAction.RESUME)
     assert resumed.id in uow.reservations.items
+
+
+def test_same_site_machine_not_eligible_for_issued_operation_rejected(env):
+    command = env[4]
+    env[0].context.operations[command.operation] = IssuedSetupOperation(command.operation, "ЦАР", ("ОБ.027.3",))
+    with pytest.raises(SetupValidationError, match="не подходит"):
+        assign(env)
+
+
+def test_assign_replay_requires_current_master_authority(env):
+    assign(env)
+    uow, manager, _, _, _ = env
+    before = effects(uow)
+    uow.context.people[manager.actor.id] = replace(manager, site_master=False)
+    with pytest.raises(SetupPermissionError):
+        assign(env)
+    assert effects(uow) == before
+
+
+def test_transition_replay_requires_current_assignee_site(env):
+    initial = assign(env)
+    change(env, initial, SetupAction.START, key="start-once")
+    uow, _, technician, _, _ = env
+    before = effects(uow)
+    uow.context.people[technician.actor.id] = replace(technician, site="ЖУК")
+    with pytest.raises(SetupPermissionError):
+        change(env, initial, SetupAction.START, key="start-once")
+    assert effects(uow) == before
 
 
 @pytest.mark.parametrize("action", [SetupAction.START, SetupAction.BLOCK, SetupAction.RESUME, SetupAction.READY])

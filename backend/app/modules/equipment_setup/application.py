@@ -44,6 +44,7 @@ class SetupPerson:
 class IssuedSetupOperation:
     operation: IssuedOperationRef
     site: str
+    eligible_machine_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,12 @@ class SetupReservations(Protocol):
 
     def reserve(self, task: SetupTask) -> None: ...
     def release(self, task: SetupTask) -> None: ...
+    def block(self, task: SetupTask) -> None:
+        """Release active technician; retain machine only when explicitly unavailable.
+
+        This is an execution transition, never a side effect of changing a planned window.
+        """
+        ...
 
 
 class SetupAction(str, Enum):
@@ -224,6 +231,8 @@ def _site(context: SetupContext, task: SetupTask, *, require_eligible_technician
     if operation.site not in {"ЦАР", "ЖУК"} or machine.site != operation.site:
         raise SetupPermissionError("Операция и станок должны быть с одной известной площадки")
     if require_eligible_technician:
+        if task.machine_id not in operation.eligible_machine_ids:
+            raise SetupValidationError("Станок не подходит выданной операции ЭТК")
         technician = context.person(task.technician_id)
         if technician is None or technician.actor.id != task.technician_id or not technician.active:
             raise SetupValidationError("Назначенный наладчик неактивен или не найден")
@@ -282,6 +291,8 @@ def assign_setup_task(command: AssignSetupCommand, uow: SetupUnitOfWork, *,
         person = _actor(principal, uow.context)
         prior, fingerprint = _replay(command, person.actor.id, uow)
         if prior is not None:
+            site = _site(uow.context, prior, require_eligible_technician=False)
+            _authorize(principal, person, site, manager=True, task=prior)
             return prior
         task = SetupTask.create(
             operation=command.operation, machine_id=command.machine_id, technician_id=command.technician_id,
@@ -311,6 +322,8 @@ def change_setup_task(command: ChangeSetupCommand, uow: SetupUnitOfWork, *,
         person = _actor(principal, uow.context)
         prior, fingerprint = _replay(command, person.actor.id, uow)
         if prior is not None:
+            site = _site(uow.context, prior, require_eligible_technician=False)
+            _authorize(principal, person, site, manager=command.action is SetupAction.CANCEL, task=prior)
             return prior
         task = uow.tasks.get(command.task_id)
         if task is None:
@@ -330,9 +343,9 @@ def change_setup_task(command: ChangeSetupCommand, uow: SetupUnitOfWork, *,
         )
         if command.action in {SetupAction.START, SetupAction.RESUME}:
             uow.reservations.reserve(updated)
-        elif target in {SetupStatus.READY, SetupStatus.CANCELLED} or (
-            target is SetupStatus.BLOCKED and command.machine_available is True
-        ):
+        elif target is SetupStatus.BLOCKED:
+            uow.reservations.block(updated)
+        elif target in {SetupStatus.READY, SetupStatus.CANCELLED}:
             uow.reservations.release(updated)
         uow.transitions.add(transition)
         return _save(updated, command, fingerprint, person, now, uow, command.action.value)
