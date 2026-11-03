@@ -956,3 +956,28 @@ def test_submit_returns_box_code_and_box_search_finds_it(production_api):
     assert [item["id"] for item in found.json()["boxes"]] == [box["id"]]
     assert found.json()["boxes"][0]["code"] == box["code"]
     assert missing.json()["boxes"] == []
+
+
+def test_retired_box_handoff_keeps_auth_and_never_opens_a_unit_of_work(production_api):
+    client, operator_id = production_api
+    from app.modules.production.api import production_uow_factory
+
+    def forbidden_factory():
+        pytest.fail("Старый маршрут приёмки не должен запрашивать UnitOfWork")
+
+    app.dependency_overrides[production_uow_factory] = forbidden_factory
+    body = {"version": 1, "finished_good_id": str(operator_id)}
+    path = f"/api/production/boxes/{operator_id}/handoff"
+    try:
+        assert client.post(path, json=body).status_code == 403
+        app.dependency_overrides[authenticated_principal] = lambda: Principal(
+            actor=Actor(id=operator_id, name="Кладовщик", department="Склад"),
+            email="warehouse@example.test", roles=frozenset({"foreman"}),
+            permissions={"shipping_goods": "edit"},
+        )
+        for _ in range(2):
+            response = client.post(path, json=body)
+            assert response.status_code == 410
+            assert "Приёмка с производства" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(production_uow_factory, None)

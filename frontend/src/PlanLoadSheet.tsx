@@ -7,6 +7,8 @@ import { ProjectStatus, planStatusApi } from "./ProjectStatus";
 import { statusLabel, statusTone, type Tone } from "./statusTone";
 import { ColumnChooserMenu } from "./WarehouseColumns";
 import { loadPersonalViews, savePersonalView } from "./personalViews";
+import { projectColor } from "./projectColor";
+export { projectColor } from "./projectColor";
 
 /* Лист цеха «ЗАГРУЗ» в ERP (владелец 04.10: «тут вот такое представление я хочу»): строка — проект, слева
    закреплённые колонки листа, справа календарь по дням (или по неделям) с полосой плановых работ. Значения считает
@@ -23,14 +25,6 @@ export type SheetScale = "day" | "week";
 const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 const MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
 const MONTHS_OF = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
-const PROJECT_COLORS = 12;
-
-/** Стабильный цвет проекта: хэш номера в палитру из 12 токенов (`--zg-c0…11`). */
-export function projectColor(project: string) {
-  let hash = 0;
-  for (const char of project) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
-  return hash % PROJECT_COLORS;
-}
 
 function pad(value: number) {
   return String(value).padStart(2, "0");

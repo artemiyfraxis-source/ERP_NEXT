@@ -873,8 +873,6 @@ table.ship-lines td:first-child { width: 1%; }
 .ship-accept > strong { align-self: center; font-size: 14px; }
 .ship-accept label { gap: 4px; }
 .ship-accept input, .ship-accept select { padding: 7px 10px; }
-.ship-handoff { margin-bottom: 16px; }
-.ship-handoff > h2 { display: flex; gap: 8px; align-items: center; margin: 0 0 8px; font-size: 16px; }
 @media (max-width: 1100px) { .ship-docs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ship-accept { grid-template-columns: 1fr 1fr; } .ship-accept > strong { grid-column: 1 / -1; } }
 /* Приёмка «Из производства» (12.10): отметка и количество в одной ячейке, ошибка строки под ними. */
 .ship-tab-count.is-zero { background: transparent; color: var(--muted-foreground); font-weight: 500; }
@@ -2707,15 +2705,16 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .kit-tiles .kit-tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .kit-tiles .tile-body { gap: 4px; grid-template-rows: 22px auto auto minmax(40px, auto); align-content: start; }
 .kit-tiles .t-h { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kit-tiles .kit-tile-project-color { width: 4px; height: 16px; flex: none; align-self: center; border-radius: 2px; }
 .kit-tiles .t-sub { font-size: 12px; }
 .kit-tiles .kit-tile-customer { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; color: var(--foreground); font-size: 14px; line-height: 20px; }
 .kit-tiles .kit-chips { align-content: start; align-items: start; }
 .kit-tiles .kit-tile-problems { min-width: 0; font-size: 13px; line-height: 20px; font-variant-numeric: tabular-nums; }
 .kit-tiles .kit-tile-problem-line { min-height: 20px; overflow-wrap: anywhere; }
 .kit-tiles .kit-tile-problem-line b { font-weight: 600; }
-.kit-tiles .kit-tile-problems [data-tone="warning"] { color: var(--chip-warning-fg); }
+.kit-tiles .kit-tile-problems [data-tone="neutral"] { color: var(--muted-foreground); }
 .kit-tiles .kit-tile-problems [data-tone="danger"] { color: var(--chip-danger-fg); }
-.kit-tiles .kit-tile-details, .kit-tiles .proj-mark:not(.manual) { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.kit-tiles .kit-tile-details { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .lot-card-passport { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.4; }
 /* «Документы» of a lot in its «Правка» window: read-only label | value rows. */
 .lot-docs { margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--accent); }

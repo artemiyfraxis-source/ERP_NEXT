@@ -55,7 +55,9 @@ function stub(acceptStatus = 200, acceptBody: unknown = { goods: [], replayed: f
     if (url === "/api/shipping/shipments" && method === "GET") return json({ shipments });
     if (url === "/api/shipping/goods") return json({ goods: [] });
     if (url === "/api/shipping/project-addressees") return json({ addressees });
-    if (url === "/api/production/finished-goods-ready") return json({ boxes: [] });
+    if (url === "/api/production/finished-goods-ready") return json({ boxes: [
+      { id: "old-box", number: "000044-8", quantity: "20", project: "591К.3", task_item: "КБ1", status: "Подтверждена", version: 1 },
+    ] });
     if (url === "/api/shipping/finished-goods/accept") return json(acceptBody, acceptStatus);
     if (url.startsWith("/api/shipping/intake/") && url.endsWith("/label")) return json({ status: "queued", reason: "В очереди принтера.", file: "j1", copies: 1, job_id: "j1" });
     if (url.startsWith("/api/shipping/project-addressee?")) return json({ addressee: dispatchCard });
@@ -76,6 +78,15 @@ beforeEach(() => { intakeRows = ROWS; shipments = []; addressees = []; approvals
 afterEach(() => { cleanup(); setRightsPrincipal(null); vi.unstubAllGlobals(); });
 
 describe("Приёмка с производства", () => {
+  it("не загружает и не показывает старую приёмку коробок после ОТК", async () => {
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findByText("Жгут");
+    expect(screen.queryByText(/Коробки из цеха после ОТК/)).not.toBeInTheDocument();
+    expect(screen.queryByText("000044-8")).not.toBeInTheDocument();
+    expect(calls.some(({ url }) => url === "/api/production/finished-goods-ready" || url === "/api/shipping/goods")).toBe(false);
+    expect(calls.filter(({ method }) => method !== "GET")).toEqual([]);
+  });
+
   it("показывает данные доставки и комментарий из одной пакетной загрузки без записи и срока проекта", async () => {
     addressees = [{ ...dispatchCard, receiver: "Получатель проекта", contact: "Анна", phone: "+7 111", carrier: "Самовывоз", note: "Позвонить до приезда" }];
     render(<ProductionIntakePage principal={principal} />);
