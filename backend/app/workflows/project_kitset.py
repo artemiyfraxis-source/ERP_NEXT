@@ -487,7 +487,10 @@ def create_kitset_requests(
     if existing:
         return KitsetRequestsResult(existing=existing)
     extract = extract_from_calc(command.url, reader())
-    items, skipped = [], []
+    from app.modules.requests.composition import composition_seed
+
+    composition = composition_seed(command.project, command.url, extract)
+    items, skipped, source_rows = [], [], []
     for item in extract.items:
         quantity = parse_calc_number(item.quantity)
         if quantity is None or quantity <= 0:
@@ -499,6 +502,7 @@ def create_kitset_requests(
             link=item.link or None, price=parse_calc_number(item.price),
             price_with_vat=parse_calc_number(item.price_with_vat),
         ))
+        source_rows.append(item.source_row)
     if not items:
         raise RequestValidationError("В листе ЗКП нет позиций с количеством")
     drafts = build_import_drafts(CalcImport(
@@ -509,6 +513,7 @@ def create_kitset_requests(
         creation_key=f"kitset-requests:{normalize_project_number(command.project)}",
         drafts=tuple(drafts), actor=command.actor, now=command.now,
         designation_base=command.project.strip(), source="import", to_procurement=True,
+        composition=composition, composition_source_rows=tuple(source_rows),
     ), requests_uow())
     return KitsetRequestsResult(created=len(created), skipped=tuple(skipped))
 

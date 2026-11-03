@@ -43,7 +43,8 @@ export type RqLine = {
   mine: boolean;
   source_request_id: string;
   plan: { price_with_vat: string | null; link: string | null; label: string } | null;
-  last: { price: string; date: string; supplier: string | null; unit: string | null; source: "procurement" | "upd" } | null;
+  last: { price: string; date: string; supplier: string | null; unit: string | null; source: "procurement" | "upd";
+    document_id?: string | null; document_number?: string | null; procurement_line_id?: string | null } | null;
   free_stock: string | null;
   rfq: { id: string; number: string } | null;
   requote_from: string | null;
@@ -69,6 +70,17 @@ export type RqView = {
 
 export type CancelManyResult = { cancelled: string[]; skipped: { id: string; reason: string }[] };
 
+export type CompositionRow = {
+  source_row: number; name: string; item_type: string; unit: string; quantity: string | null;
+  price: string | null; price_with_vat: string | null; link: string; country: string;
+  issues: string[]; relation: string; request_id: string | null; procurement_ids: string[];
+  lots: { id: string; grn: string; package: string; warehouse: string; balance: string; reserved: string; free: string; match_state: string }[];
+};
+export type RequestComposition = {
+  project: string; state: "missing" | "saved"; version: number; snapshot_id?: string; valid?: boolean;
+  source: { url: string; content_hash: string; imported_at: string } | null; rows: CompositionRow[];
+};
+
 function query(params: Record<string, string | undefined>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) if (value) search.set(key, value);
@@ -77,6 +89,13 @@ function query(params: Record<string, string | undefined>): string {
 }
 
 export const requestsViewApi = {
+  composition: (project: string) => api<RequestComposition>(`/api/procurement/requests-composition${query({ project })}`),
+  refreshComposition: (project: string, url: string, expected_version: number) => api<unknown>("/api/procurement/requests-composition/refresh", {
+    method: "POST", body: JSON.stringify({ project, url, expected_version }),
+  }),
+  materialize: (body: { project: string; snapshot_id: string; expected_version: number; content_hash: string; source_rows: number[];
+    purpose?: string; delivery_point?: string; procurement_deadline?: string; planned_date?: string }) =>
+    api<{ rows: { source_row: number; request_id: string; procurement_ids: string[] }[] }>("/api/procurement/requests-composition/materialize", { method: "POST", body: JSON.stringify(body) }),
   view: (params: { scope: RqScope; project?: string; line?: string }) =>
     api<RqView>(`/api/procurement/requests-view${query(params)}`),
   /** One request opened: only its lines. */
