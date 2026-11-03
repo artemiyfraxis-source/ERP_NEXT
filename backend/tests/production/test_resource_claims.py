@@ -40,7 +40,7 @@ def test_released_claim_never_conflicts_with_active_in_either_order():
     assert not active.conflicts(released)
 
 
-@pytest.mark.parametrize("key", ["", " ", "not-a-uuid", str(uuid4()).upper(), "00000000-0000-0000-0000-000000000000"])
+@pytest.mark.parametrize("key", ["", " ", "not-a-uuid", "A1234567-89AB-4CDE-8FAB-0123456789AB", "00000000-0000-0000-0000-000000000000"])
 def test_person_identity_must_be_canonical_uuid(key):
     with pytest.raises(ValueError):
         ResourceKey(ResourceKind.PERSON, key)
