@@ -18,7 +18,7 @@ from .domain import IssuedOperationRef, RecipeVersionRef
 from .infrastructure import task_payload
 from .recipe_application import PublishRecipeCommand, RecordTrialCommand, publish_recipe, record_trial
 from .recipes import RecipeField
-from .queries import list_executors, list_machines, list_recipes, list_tasks, list_trials, read_recipe, read_task
+from .queries import list_executors, list_machines, list_recipes, list_tasks, list_trials, read_recipe, read_task, read_viewer
 
 
 router = APIRouter(prefix="/api/production/equipment-setup", tags=["production"])
@@ -168,6 +168,12 @@ def get_tasks(principal: Annotated[Principal, Depends(authenticated_principal)],
 
 def _page_result(limit, offset, serialize=task_payload):
     return lambda items: {"items": [serialize(item) for item in items], "limit": limit, "offset": offset}
+
+
+@router.get("/viewer")
+def get_viewer(principal: Annotated[Principal, Depends(authenticated_principal)],
+               factory: Annotated[Callable, Depends(setup_uow_factory)]):
+    return _perform(lambda: read_viewer(factory(), principal=principal))
 
 
 @router.get("/machines")

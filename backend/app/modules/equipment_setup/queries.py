@@ -23,6 +23,21 @@ class ExecutorChoice:
     site: str
 
 
+@dataclass(frozen=True)
+class SetupViewer:
+    actor_id: UUID
+    site: str
+    can_assign: bool
+    writable: bool
+
+
+def read_viewer(uow, *, principal):
+    with uow:
+        person = _reader(principal, uow.context)
+        return SetupViewer(person.actor.id, person.site,
+            principal.full_access or (person.site_master and person.site in {"ЦАР", "ЖУК"}), principal.viewer is None)
+
+
 def _page(limit, offset):
     if type(limit) is not int or not 1 <= limit <= 200 or type(offset) is not int or offset < 0:
         raise ValueError("Неверные параметры страницы")

@@ -173,3 +173,12 @@ def test_recipe_version_and_trial_reads_follow_machine_and_task_rights(client, e
 def test_service_identity_cannot_read_setup_catalog(client, env, endpoint):
     client.app.state.test_principal = replace(principal(env[1]), service=True)
     assert client.get("/api/production/equipment-setup" + endpoint).status_code == 403
+
+
+def test_viewer_uses_current_site_master_and_view_as_not_role_guess(client, env):
+    endpoint = "/api/production/equipment-setup/viewer"
+    assert client.get(endpoint).json() == {"actor_id": str(env[1].actor.id), "site": "ЦАР", "can_assign": True, "writable": True}
+    env[0].context.people[env[1].actor.id] = replace(env[1], site_master=False)
+    assert client.get(endpoint).json()["can_assign"] is False
+    client.app.state.test_principal = replace(principal(env[2]), viewer=env[3].actor)
+    assert client.get(endpoint).json()["writable"] is False
