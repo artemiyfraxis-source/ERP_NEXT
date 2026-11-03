@@ -659,13 +659,13 @@ def shipping():
     print("  good sample:", json.dumps(g1, ensure_ascii=False)[:300])
     handed = False
     box = S.get("last_box2")
-    if box and g2:
-        h = wh.ok("POST", f"/api/production/boxes/{box['id']}/handoff", "handoffs",
-                 json={"version": box.get("version", 1), "finished_good_id": g2["id"]})
+    if box and g2 and box.get("status") == "Подтверждена":
+        h = wh.ok("POST", "/api/shipping/finished-goods/accept", "acceptances",
+                 json={"lines": [{"project": g2["project"], "item_index": g2["item_index"], "quantity": box["quantity"]}]})
         handed = bool(h)
-        print("  handoff:", handed)
-    # Склад ГП принимает только сданное цехом: КБ2 пришла передачей коробки после ОТК (39 из 40), КБ1 ещё в цеху
-    # (этапы 2–4) — её «принять» нечего (422 «принять можно ещё 0»). Обе отгрузки — из принятой КБ2.
+        print("  acceptance:", handed)
+    # Принимаем по КБ фактическое количество подтверждённой ОТК коробки (39 из 40), не весь заказ.
+    # КБ1 остаётся в цеху; обе демонстрационные отгрузки — из принятой КБ2.
     goods = {g["item_index"]: g for g in wh.ok("GET", "/api/shipping/goods")["goods"] if g["project"] == "614К.1"}
     g2 = goods.get("КБ2")
     print("  КБ2 accepted:", (g2 or {}).get("accepted"))

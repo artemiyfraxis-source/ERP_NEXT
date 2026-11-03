@@ -1328,11 +1328,6 @@ export interface ProductionMaterialSource {
   available: string;
 }
 
-export interface FinishedGoodsReadyBox extends ProductionBox {
-  project: string;
-  task_item: string;
-}
-
 export interface ProductionDefect {
   id: string;
   number: string;
@@ -3937,11 +3932,6 @@ export const productionApi = {
   returnBox: (boxId: string, version: number, reason: string) =>
     api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/return`, {
       method: "POST", body: JSON.stringify({ version, reason }),
-    }),
-  finishedGoodsReady: () => api<{ boxes: FinishedGoodsReadyBox[] }>("/api/production/finished-goods-ready"),
-  handoff: (boxId: string, version: number, finishedGoodId: string) =>
-    api<{ box: ProductionBox; finished_good: { id: string; version: number; grn: string; accepted: string; remaining: string }; receipt_id: string }>(`/api/production/boxes/${boxId}/handoff`, {
-      method: "POST", body: JSON.stringify({ version, finished_good_id: finishedGoodId }),
     }),
   defects: () => api<{ defects: ProductionDefect[] }>("/api/production/defects"),
   decideDefect: (defectId: string, version: number, disposition: "Доработка" | "Списание" | "Использовать как есть", actReference: string) =>
