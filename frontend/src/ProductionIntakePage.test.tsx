@@ -78,6 +78,28 @@ beforeEach(() => { intakeRows = ROWS; shipments = []; addressees = []; approvals
 afterEach(() => { cleanup(); setRightsPrincipal(null); vi.unstubAllGlobals(); });
 
 describe("Приёмка с производства", () => {
+  it("restores an active packed KB absent from intake without acceptance or packing writes", async () => {
+    intakeRows = [];
+    shipments = [{ ...packedShipment, ready_to_ship: true, missing_data: [], missing_ship: [], lines: [shipmentLine({ picked: "38", requested: "100" })] }];
+    render(<ProductionIntakePage principal={principal} />);
+    expect(await screen.findByRole("tab", { name: /^На отгрузку/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /^Все/ }).querySelector(".page-count")).toHaveTextContent("1");
+    expect(screen.queryByRole("button", { name: /^Принять/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Упаковать/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Отгрузить 591К.3 КБ1" }));
+    expect(await screen.findByRole("dialog", { name: /Отгрузка/ })).toBeInTheDocument();
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  });
+
+  it("restored packed KB does not grant dispatch rights to a viewer", async () => {
+    intakeRows = [];
+    shipments = [{ ...packedShipment, ready_to_ship: true, missing_data: [], missing_ship: [] }];
+    render(<ProductionIntakePage principal={viewer} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^На отгрузку/ }));
+    expect(screen.queryByRole("button", { name: /^Отгрузить/ })).not.toBeInTheDocument();
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  });
+
   it.each([[24, 476], [100, 186, 214]])("отделяет общий итог и действия КБ от актов приёмки %j", async (...amounts) => {
     const sent = amounts.length === 2 ? 24 : 286;
     intakeRows = [row({ accepted: "500", packed: String(sent), sent: String(sent), needed: "500", remaining: "0", pack_permission_remaining: String(500 - sent),
@@ -835,7 +857,7 @@ describe("Приёмка с производства: упаковка и отг
       [/^Готово/, ["КБ", "Наименование", "Заказано", "Можно принять", ...deliveryHeaders], /^Принять 591К\.3 КБ1/],
       [/^Принято/, ["КБ", "Наименование", "Принято", "Дата приёмки", "ГРН", "Упаковать", "Отгружено", "Не упаковано", "УПД", ...deliveryHeaders], /^Упаковать|^Упаковка|^Печать этикетки|^Данные отправки|^Отгрузка /],
       [/^Упаковано/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "PL", "DN", "УПД", "Короба"], /^(Трек|Без УПД) 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
-      [/^На отгрузку/, ["КБ", "Наименование", "ГРН", "Упаковано", ...deliveryHeaders, "Трек", "PL", "DN", "УПД", "Короба", "Отгрузка"], /^Отгрузить 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
+      [/^На отгрузку/, ["КБ", "Наименование", "ГРН", "Упаковано", "Отгрузка", ...deliveryHeaders, "Трек", "PL", "DN", "УПД", "Короба"], /^Отгрузить 591К\.3 КБ1|^Документы ОТГ-|^Печать (PL|DN|этикетки)|^Внести УПД/],
       [/^Отгружено/, ["КБ", "Наименование", "ГРН", "Отгружено", ...deliveryHeaders, "Трек", "Дата отгрузки"], /^(Печать этикетки|Данные отправки)/],
     ];
     for (const [name, heads, action] of expected) {
