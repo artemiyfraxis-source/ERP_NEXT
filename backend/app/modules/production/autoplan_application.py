@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
@@ -134,6 +134,7 @@ class AutoplanPreview:
     batches: dict[UUID, tuple[Batch, ...]]
     period: tuple[datetime, date]  # начало расчёта и последний день плана
     scope: tuple[int, int, int]  # заданий, новых КБ, монтажников в расчёте
+    resources: dict[UUID, dict] = field(default_factory=dict)
 
     @property
     def placements(self) -> tuple[Placement, ...]:
@@ -369,6 +370,12 @@ def _prepare(
         capacity=capacity, start=start, end=end, holidays=holidays, shift=shift, steps=steps,
     )
     result = plan(data)
+    all_tasks = {**tasks, **{task_id: item.task for task_id, item in scope.new_tasks.items()}}
+    resources = getattr(uow, "resources", None)
+    resource_options = {
+        item.operation_id: resources.describe(all_tasks[item.task_id], item.operation_id, (item.operator_id,))
+        for item in result.placements
+    } if resources is not None else {}
     fingerprint = _fingerprint({
         "mode": command.mode.value,
         "project": normalize_project_number(command.project) if command.mode is AutoplanMode.PROJECT else "",
@@ -389,8 +396,8 @@ def _prepare(
         "progress": sorted([str(key), str(value)] for key, value in progress.by_operation.items()),
         "cards": sorted(used_cards.items()), "units": sorted(units.items()),
         "resource_generation": uow.resources.claims.generation() if getattr(uow, "resources", None) is not None else None,
+        "resource_options": sorted((str(identifier), options) for identifier, options in resource_options.items()),
     })
-    all_tasks = {**tasks, **{task_id: item.task for task_id, item in scope.new_tasks.items()}}
     return AutoplanPreview(
         result=result,
         unplaced=(*unplaced, *result.unplaced),
@@ -403,6 +410,7 @@ def _prepare(
         batches=batches(result.placements),
         period=(start, _last_day(command, start, end, result.placements, [*scope.eligible, *(item.task for item in scope.new_tasks.values())])),
         scope=(len([task for task in scope.eligible if task.id in free_tasks]), len(scope.new_tasks), len(team)),
+        resources=resource_options,
     )
 
 
@@ -641,6 +649,7 @@ def describe(preview: AutoplanPreview) -> dict:
             "machine": item.key.machine_label, "setup_label": item.key.label,
             "changeover_seconds": item.changeover_seconds, "setup_seconds": item.setup_seconds,
             "batched": item.pulled,
+            "resources": preview.resources.get(item.operation_id),
         }
 
     result = preview.result
@@ -650,6 +659,7 @@ def describe(preview: AutoplanPreview) -> dict:
         "new_tasks": [{
             "task_id": str(task_id), "techcard_id": str(item.card.techcard_id), "project": item.card.project,
             "index": item.card.index, "name": item.card.name, "quantity": item.task.quantity,
+            "techcard_revision": item.task.techcard_revision,
             "deadline": item.card.deadline.isoformat() if item.card.deadline else None,
         } for task_id, item in sorted(preview.new_tasks.items(), key=lambda pair: (pair[1].card.project, pair[1].card.index))],
         "proposals": [placement(item) for item in result.placements],
