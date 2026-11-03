@@ -4,7 +4,7 @@ from collections.abc import Callable
 import os
 
 from fastapi import FastAPI
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from .modules.requests.application import UnitOfWork
@@ -49,6 +49,37 @@ from .shared.warehouse_location import set_rack_layout_loader
 # PostgreSQL's max_connections must cover workers × (pool + overflow) + the outbox worker + the CLIs
 # (deploy/docker-compose.yml; tests/test_deploy_capacity.py holds the sum). Unset → SQLAlchemy's 5 + 10.
 POOL_ENV = {"ERP_DB_POOL_SIZE": "pool_size", "ERP_DB_MAX_OVERFLOW": "max_overflow"}
+
+EQUIPMENT_RESOURCE_TABLES = frozenset({
+    "equipment_setup_recipe_versions", "equipment_setup_tasks", "equipment_setup_trial_measurements",
+    "equipment_setup_commands", "equipment_setup_transitions", "production_resource_reservations",
+    "production_active_resources", "production_resource_generation", "production_resource_allocations",
+    "production_resource_allocation_members", "production_resource_group_runs", "production_resource_session_members",
+})
+
+
+def equipment_setup_enabled() -> bool:
+    value = os.getenv("ERP_EQUIPMENT_SETUP_ENABLED", "0").strip()
+    if value not in {"0", "1"}:
+        raise RuntimeError("ERP_EQUIPMENT_SETUP_ENABLED must be 0 or 1")
+    return value == "1"
+
+
+def check_equipment_schema(engine: Engine, *, enabled: bool) -> None:
+    """No schema creation or silent switch to unprotected production writes."""
+    with engine.connect() as connection:
+        present = set(inspect(connection).get_table_names()) & EQUIPMENT_RESOURCE_TABLES
+        if enabled and present != EQUIPMENT_RESOURCE_TABLES:
+            raise RuntimeError("Equipment resources require migration 0170: missing " + ", ".join(sorted(EQUIPMENT_RESOURCE_TABLES - present)))
+        generation = connection.execute(text("SELECT id, version FROM production_resource_generation")).all() if "production_resource_generation" in present else []
+        if enabled and (len(generation) != 1 or generation[0][0] != 1 or generation[0][1] < 0):
+            raise RuntimeError("Equipment resource generation singleton is missing or invalid")
+        if not enabled:
+            used = any(row[1] != 0 for row in generation)
+            used = used or any(connection.execute(text(f'SELECT 1 FROM "{name}" LIMIT 1')).first() is not None
+                for name in sorted(present - {"production_resource_generation"}))
+            if used:
+                raise RuntimeError("Equipment resources have been used; stop writers instead of disabling accounting")
 
 
 def pool_options() -> dict[str, int]:
@@ -111,9 +142,10 @@ def build_fulfillment_uow_factory(engine: Engine) -> Callable[[], FulfillmentUni
     return lambda: SqlAlchemyFulfillmentUnitOfWork(sessions)
 
 
-def build_production_uow_factory(engine: Engine) -> Callable[[], ProductionUnitOfWork]:
+def build_production_uow_factory(engine: Engine, *, resources_enabled: bool = False) -> Callable[[], ProductionUnitOfWork]:
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
-    return lambda: SqlAlchemyProductionUnitOfWork(sessions)
+    from .workflows.production_resource_context import production_resources
+    return lambda: SqlAlchemyProductionUnitOfWork(sessions, production_resources if resources_enabled else None)
 
 
 def build_shipping_uow_factory(engine: Engine) -> Callable[[], ShippingUnitOfWork]:
@@ -142,8 +174,14 @@ def build_purchasing_uow_factory(engine: Engine) -> Callable[[], SqlAlchemyPurch
     return lambda: SqlAlchemyPurchasingUnitOfWork(sessions)
 
 
-def configure_database(app: FastAPI, database_url: str) -> Engine:
+def configure_database(app: FastAPI, database_url: str, *, equipment_enabled: bool | None = None) -> Engine:
+    enabled = equipment_setup_enabled() if equipment_enabled is None else equipment_enabled
     engine = build_engine(database_url)
+    try:
+        check_equipment_schema(engine, enabled=enabled)
+    except Exception:
+        engine.dispose()
+        raise
     app.state.database_engine = engine
     app.state.uow_factory = build_uow_factory(engine)
     app.state.procurement_uow_factory = build_procurement_uow_factory(engine)
@@ -152,7 +190,14 @@ def configure_database(app: FastAPI, database_url: str) -> Engine:
     app.state.receiving_uow_factory = build_receiving_uow_factory(engine)
     app.state.warehouse_uow_factory = build_warehouse_uow_factory(engine)
     app.state.fulfillment_uow_factory = build_fulfillment_uow_factory(engine)
-    app.state.production_uow_factory = build_production_uow_factory(engine)
+    app.state.production_uow_factory = build_production_uow_factory(engine, resources_enabled=enabled)
+    app.state.equipment_setup_enabled = enabled
+    if enabled:
+        from .workflows.equipment_setup_context import equipment_setup_uow_factory
+        app.state.equipment_setup_uow_factory = equipment_setup_uow_factory(
+            sessionmaker(bind=engine, expire_on_commit=False, class_=Session), integration_ready=True)
+    else:
+        app.state.equipment_setup_uow_factory = None
     app.state.shipping_uow_factory = build_shipping_uow_factory(engine)
     app.state.references_uow_factory = build_references_uow_factory(engine)
     app.state.operations_uow_factory = build_operations_uow_factory(engine)

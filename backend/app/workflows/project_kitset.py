@@ -751,7 +751,7 @@ class SqlAlchemyKbProgressUnitOfWork(SqlAlchemyProductionUnitOfWork):
             raise RuntimeError("Unit of Work has not been entered")
         # Called before the first read in this fresh session. SQLite needs a write transaction from the start;
         # PostgreSQL uses the same project lock as BOTH run-source repositories (including insert/delete).
-        if self.session.get_bind().dialect.name == "sqlite":
+        if self.session.get_bind().dialect.name == "sqlite" and self.resources is None:
             self.session.execute(text("BEGIN IMMEDIATE"))
         lock_project_run(self.session, project)
         kitset = SqlAlchemyKitsetRepository(self.session).get(project)
@@ -764,10 +764,11 @@ def save_project_kb_progress(
     actor: Actor, now: datetime, uow_factory: Callable[[], PlanUnitOfWork],
 ) -> dict[str, Any]:
     key = kit_stage_key(state.project, kb)
+    prototype = uow_factory()
     event, notices = change_kb_progress(ChangeKbProgressCommand(
         project=state.project, kb=kb, changes=changes, expected_sequence=expected_sequence,
         expected_run=expected_run, actor=actor, now=now,
-    ), SqlAlchemyKbProgressUnitOfWork(uow_factory().session_factory))
+    ), SqlAlchemyKbProgressUnitOfWork(prototype.session_factory, prototype.resource_factory))
     result = replace(state, sequence=event.sequence, progress={**state.progress, key: event.progress},
                      runs={**state.runs, key: event.progress.run})
     return preview_project_kb_progress(result, kb, notices)

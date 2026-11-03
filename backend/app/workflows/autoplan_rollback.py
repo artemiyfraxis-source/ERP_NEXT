@@ -420,13 +420,17 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 2
     from sqlalchemy.orm import sessionmaker
 
-    from app.database import build_engine
+    from app.database import build_engine, check_equipment_schema, equipment_setup_enabled
+    from app.workflows.production_resource_context import production_resources
 
     engine = build_engine(url)
     try:
+        enabled = equipment_setup_enabled()
+        check_equipment_schema(engine, enabled=enabled)
         text, code = run(
             sessionmaker(bind=engine, expire_on_commit=False, class_=Session),
             since=since, until=until, apply=args.apply, now=now,
+            resource_factory=production_resources if enabled else None,
         )
     finally:
         engine.dispose()
