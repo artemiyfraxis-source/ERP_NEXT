@@ -146,6 +146,6 @@ def last_paid_purchases(session: Session, lines: Sequence[ViewLine]) -> dict[UUI
             last = found[0]
             result[line.id] = LastPurchase(
                 price=last.price_with_vat, on=_day(last.paid_at), supplier=last.supplier, unit=last.unit,
-                source="procurement",
+                source="procurement", document_number=last.order_number, procurement_line_id=str(last.line_id),
             )
     return result

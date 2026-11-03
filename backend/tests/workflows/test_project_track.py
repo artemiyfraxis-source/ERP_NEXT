@@ -33,7 +33,7 @@ from app.modules.shipping.application import (
     create_shipment,
     register_good,
 )
-from app.modules.shipping.domain import ShipmentStatus
+from app.modules.shipping.domain import PackPermission, ShipmentStatus
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.modules.techcards.kitsets import KitAssembly, Kitset
@@ -158,6 +158,9 @@ def seed_shipping(erp, project=PROJECT):
         good_id=goods[0].id, expected_version=goods[0].version, quantity=Decimal("2"),
         received_at=date(2026, 9, 25), actor=ACTOR, now=at(25, 9),
     ), erp.shipping())
+    with erp.shipping() as uow:
+        uow.pack_permissions.add(PackPermission(project, "КБ1", Decimal("2"), 1, ACTOR.name, at(26, 9)))
+        uow.commit()
     shipment = create_shipment(CreateShipmentCommand(
         customer="ООО Заказчик", receiver="ООО Заказчик", shipping_point="Москва, склад 3", contact="", phone="",
         terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="", note="",

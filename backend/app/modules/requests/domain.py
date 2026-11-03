@@ -530,6 +530,8 @@ class CalcItem:
     link: str
     country: str
     unit: str
+    source_row: int | None = None  # Physical sheet row, not an identity across source revisions.
+    source_unit: str = ""  # Explicit source cell; legacy `unit` remains type-derived for request import.
 
 
 @dataclass(frozen=True)
@@ -625,6 +627,9 @@ def parse_zpk(grid: Sequence[Sequence[object]]) -> list[CalcItem]:
         "vat": _find_col(head, "С НДС"),
         "link": _find_col(head, "Ссылка"),
         "country": _find_col(head, "Место поставки"),
+        "unit": next((index for index, value in enumerate(head)
+                      if re.sub(r"[\s.]", "", str(value).casefold())
+                      in {"едизм", "единицаизмерения", "едизмерения", "ед"}), -1),
     }
 
     def cell(row: Sequence[object], key: str) -> str:
@@ -634,7 +639,7 @@ def parse_zpk(grid: Sequence[Sequence[object]]) -> list[CalcItem]:
         return str(row[index] if row[index] is not None else "")
 
     items: list[CalcItem] = []
-    for row in grid[header_row + 1 :]:
+    for source_row, row in enumerate(grid[header_row + 1 :], start=header_row + 2):
         name = cell(row, "name").strip()
         if not name:
             continue
@@ -649,6 +654,8 @@ def parse_zpk(grid: Sequence[Sequence[object]]) -> list[CalcItem]:
                 link=cell(row, "link"),
                 country=cell(row, "country"),
                 unit=unit_for_type(item_type),
+                source_row=source_row,
+                source_unit=cell(row, "unit"),
             )
         )
     return items

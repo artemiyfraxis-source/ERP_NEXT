@@ -34,13 +34,22 @@ def shipping_api():
 
 
 def decide_pack(client, project: str = "591К.3") -> dict:
-    """Менеджер решил «упаковывать» (0162): без этого склад проекта не набирает и не упаковывает."""
-    current = client.get("/api/shipping/project-addressee", params={"project": project}).json()["addressee"]
-    response = client.post("/api/shipping/project-pack-decision", json={
-        "project": project, "version": current["version"], "decided": True,
+    """Grant explicit ordered ceilings for the known fixture KBs, without changing stock."""
+    goods = [good for good in client.get("/api/shipping/goods").json()["goods"] if good["project"] == project]
+    assert goods, f"No fixture KBs for {project}"
+    current = client.get("/api/shipping/project-pack-permissions", params={"project": project}).json()["permissions"]
+    versions = {item["item_index"]: item["version"] for item in current}
+    response = client.post("/api/shipping/project-pack-permissions", json={
+        "project": project, "lines": [{"item_index": good["item_index"], "quantity": good["ordered"],
+                                       "version": versions.get(good["item_index"], 0)} for good in goods],
     })
     assert response.status_code == 200, response.text
-    return response.json()["addressee"]
+    return client.get("/api/shipping/project-addressee", params={"project": project}).json()["addressee"]
+
+
+def permit_fixture_goods(client):
+    for project in {good["project"] for good in client.get("/api/shipping/goods").json()["goods"]}:
+        decide_pack(client, project)
 
 
 def comment_notifications():
@@ -77,8 +86,10 @@ def test_project_card_readiness_is_not_shipment_readiness_or_pack_permission(shi
         }).json()["addressee"]
         assert card["dispatch_gaps"] == (["файл бумажной УПД"] if carrier == "Самовывоз" else ["адрес доставки", "файл бумажной УПД"])
         assert not card["pack_decided"]
-    decided = decide_pack(client, "EMPTY")
-    assert decided["pack_decided"] and decided["dispatch_gaps"]
+    refused = client.post("/api/shipping/project-pack-decision", json={"project": "EMPTY", "version": 0, "decided": True})
+    assert refused.status_code == 422
+    untouched = client.get("/api/shipping/project-addressee", params={"project": "EMPTY"}).json()["addressee"]
+    assert not untouched["pack_decided"] and untouched["dispatch_gaps"]
 
 
 def test_bulk_project_cards_filter_in_sql_instead_of_reading_unrelated_cards(shipping_api):
@@ -144,6 +155,7 @@ def _shipment_for_comment(client):
     good = client.post("/api/shipping/goods", json={
         "project": "591К.3", "item_index": "КБ1", "name": "Жгут", "ordered": "2", "unit": "шт",
     }).json()["good"]
+    permit_fixture_goods(client)
     response = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "lines": [{"good_id": good["id"], "quantity": "2"}],
     })
@@ -205,6 +217,7 @@ def test_shipping_api_track_required_and_dispatch_without_track(shipping_api, ca
         "project": "591К.3", "item_index": "КБ1", "name": "Жгут", "ordered": "2", "unit": "шт",
     }).json()["good"]
     good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "2"}).json()["good"]
+    permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "ДОСТАВКА ТК", "carrier": carrier,
         "upd_type": "ЭДО", "upd_number": "123", "upd_url": "https://files.example/upd.pdf", "lines": [{"good_id": good["id"], "quantity": "2"}],
@@ -229,6 +242,7 @@ def test_finished_good_partial_shipment_and_close_gates(shipping_api):
     good = created.json()["good"]
     accepted = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "6"})
     good = accepted.json()["good"]
+    permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "ДОСТАВКА ТК", "carrier": "СДЭК",
         "upd_type": "ЭДО", "lines": [{"good_id": good["id"], "quantity": "10"}],
@@ -275,6 +289,7 @@ def _stocked_good(client, item_index: str, quantity: str) -> dict:
 
 def _picked_shipment(client, lines: list[tuple[dict, str]]) -> dict:
     # SH-1: creation picks at once; no_docs stops at «Собрана», the state these tests start from.
+    permit_fixture_goods(client)
     shipment = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО",
         "upd_number": "УПД-1", "no_docs": True, "lines": [{"good_id": good["id"], "quantity": quantity} for good, quantity in lines],
@@ -393,6 +408,7 @@ def test_acceptance_notifies_about_missing_address_only_for_delivery(shipping_ap
 
 
 def _create(client, lines, **extra):
+    permit_fixture_goods(client)
     return client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ",
         "upd_type": "ЭДО", "upd_number": "УПД-1", "lines": lines, **extra,
@@ -495,6 +511,7 @@ def test_project_queue_is_idempotent_and_drop_keeps_goods_with_movement(shipping
     kb2 = goods["КБ2"]
     accepted = client.post(f"/api/shipping/goods/{kb2['id']}/accept", json={"version": kb2["version"], "quantity": "1"})
     assert accepted.status_code == 200, accepted.text
+    permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "terms": "САМОВЫВОЗ",
         "upd_type": "ЭДО", "lines": [{"good_id": goods["КБ3"]["id"], "quantity": "1"}],
@@ -522,6 +539,7 @@ def test_shipment_inherits_project_card_and_remembers_typed_contact(shipping_api
         "contact": "Иванов", "phone": "+7 900 000-00-00", "terms": "ДОСТАВКА ТК", "carrier": "ПЭК",
         "upd_type": "БУМАГА",
     })
+    permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
         "contact": "Петров", "upd_type": "ЭДО", "lines": [{"good_id": good["id"], "quantity": "5"}],
     })
@@ -542,8 +560,8 @@ def test_shipment_inherits_project_card_and_remembers_typed_contact(shipping_api
     assert stored["contact"] == "Петров"
     assert stored["shipping_point"] == "Москва, склад 1"
     assert stored["upd_type"] == "БУМАГА"
-    # +1 — запомненный контакт, +1 — решение «упаковывать», которое ставит отправка менеджера.
-    assert stored["version"] == 3 and stored["pack_decided"] is True and stored["pack_decided_by"] == "Администратор"
+    # Only the typed contact changes the card; shipment creation cannot grant packing.
+    assert stored["version"] == 2 and stored["pack_decided"] is False and stored["pack_decided_by"] == ""
 
 
 
@@ -551,6 +569,7 @@ def test_head_edit_sets_delivery_terms_and_carrier(shipping_api):
     """«Данные отправки» → «Тип доставки» падал с HTTP 500: перечисление теряло тип при обрезке пробелов (29.10)."""
     client = shipping_api
     good = _queued_good(client)
+    permit_fixture_goods(client)
     shipment = client.post("/api/shipping/shipments", json={"lines": [{"good_id": good["id"], "quantity": "5"}]}).json()["shipment"]
 
     edited = client.put(f"/api/shipping/shipments/{shipment['id']}/head", json={
@@ -568,12 +587,13 @@ def test_open_shipment_follows_project_card_until_closed_and_head_edit_overrides
     card = client.put("/api/shipping/project-addressee", json={
         "project": "591К.3", "shipping_point": "Москва", "contact": "Иванов", "terms": "САМОВЫВОЗ", "upd_type": "БУМАГА",
     }).json()["addressee"]
+    permit_fixture_goods(client)
     shipment = client.post("/api/shipping/shipments", json={
         "contact": "Петров", "lines": [{"good_id": good["id"], "quantity": "5"}],
     }).json()["shipment"]
     assert shipment["inherited"] == ["carrier", "phone", "receiver", "shipping_point", "terms", "upd_type"]
     card = client.put("/api/shipping/project-addressee", json={
-        "project": "591К.3", "version": card["version"] + 2, "shipping_point": "Тула", "contact": "Сидоров",
+        "project": "591К.3", "version": card["version"] + 1, "shipping_point": "Тула", "contact": "Сидоров",
         "terms": "ДОСТАВКА ТК", "carrier": "ПЭК", "upd_type": "ЭДО", "receiver": "АО Получатель",
     }).json()["addressee"]
     followed = _shipment(client, shipment["id"])
@@ -607,6 +627,7 @@ def test_closed_shipment_keeps_its_address_when_project_card_changes(shipping_ap
     client = shipping_api
     good = _stocked_good(client, "КБ1", "5")
     card = client.put("/api/shipping/project-addressee", json={"project": "591К.3", "shipping_point": "Москва", "upd_type": "ЭДО", "phone": "+7 900", "terms": "САМОВЫВОЗ"}).json()["addressee"]
+    permit_fixture_goods(client)
     shipment = client.post("/api/shipping/shipments", json={"lines": [{"good_id": good["id"], "quantity": "5"}]}).json()["shipment"]
     shipment = client.put(f"/api/shipping/shipments/{shipment['id']}/documents", json={
         "version": shipment["version"], "upd_number": "1", "upd_url": "https://files.example/upd.pdf",
@@ -628,8 +649,11 @@ def test_first_shipment_without_card_takes_no_point_and_seeds_card(shipping_api)
     client = shipping_api
     good = _queued_good(client)
     lines = [{"good_id": good["id"], "quantity": "1"}]
+    permit_fixture_goods(client)
     no_point = client.post("/api/shipping/shipments", json={"terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "lines": lines})
+    permit_fixture_goods(client)
     no_terms = client.post("/api/shipping/shipments", json={"shipping_point": "Москва", "upd_type": "ЭДО", "lines": lines})
+    permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
         "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "lines": lines,
     })
@@ -643,7 +667,7 @@ def test_first_shipment_without_card_takes_no_point_and_seeds_card(shipping_api)
     assert (no_terms.json()["shipment"]["terms"], no_terms.json()["shipment"]["upd_type"]) == (None, "ЭДО")
     assert made.status_code == 200
     assert made.json()["shipment"]["receiver"] == "Заказчик"
-    assert (card["shipping_point"], card["phone"], card["contact"], card["version"]) == ("Москва", "+7 900", "", 3)
+    assert (card["shipping_point"], card["phone"], card["contact"], card["version"]) == ("Москва", "+7 900", "", 2)
     assert card["terms"] is None
 
 
@@ -671,6 +695,7 @@ def test_other_project_card_is_not_used_and_bad_terms_are_rejected(shipping_api)
     client = shipping_api
     good = _queued_good(client, project="600")
     client.put("/api/shipping/project-addressee", json={"project": "591К.3", "shipping_point": "Москва", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО"})
+    permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={"lines": [{"good_id": good["id"], "quantity": "1"}]})
     bad = client.put("/api/shipping/project-addressee", json={"project": "600", "terms": "ПОЧТОЙ"})
 

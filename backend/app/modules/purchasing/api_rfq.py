@@ -108,12 +108,20 @@ class PickSupplierInput(AddSupplierInput):
     line_ids: list[UUID] | None = Field(default=None, max_length=200)
 
 
+class PlannedRfqLineInput(BaseModel):
+    model_config = {"extra": "forbid"}
+    id: UUID
+    expected_version: int = Field(ge=1)
+    planned_quantity: Amount
+
+
 class CreateRfqInput(BaseModel):
     line_ids: list[UUID] = Field(min_length=1, max_length=200)
     title: str | None = Field(default=None, max_length=255)
     suppliers: list[PickSupplierInput] = Field(default_factory=list, max_length=100)
     sent_on: date | None = None  # the request went out that day: every supplier is marked sent
     declined_suggestions: list[UUID] = Field(default_factory=list, max_length=20)  # rotation suggestions unticked
+    planned_lines: list[PlannedRfqLineInput] | None = Field(default=None, min_length=1, max_length=200)
 
 
 class SupplierLinesInput(BaseModel):
@@ -326,7 +334,10 @@ def rfq_create(payload: CreateRfqInput, principal: Edit, now: Now, uow: Uow, lin
         for item in payload.suppliers
     ]
     return _run(lambda: service.create_rfq(uow(), lines, principal.actor, now, payload.line_ids, payload.title, picks,
-                                           payload.sent_on, payload.declined_suggestions))
+                                           payload.sent_on, payload.declined_suggestions,
+                                           None if payload.planned_lines is None else [
+                                               service.PlannedLine(item.id, item.expected_version, item.planned_quantity)
+                                               for item in payload.planned_lines]))
 
 
 @router.get("/{rfq_id}")

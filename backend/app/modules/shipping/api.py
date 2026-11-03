@@ -20,11 +20,12 @@ from app.shared.stored_files import decode_upload, file_response
 
 from app.workflows.ship_no_upd import ApproveNoUpd, NoUpdRefused, approve_shipment_without_upd, client_key, no_upd_approvers
 from app.workflows.shipping_storekeeper import storekeeper_ids
+from app.workflows.shipping_packing import known_pack_items, pack_item_details
 
 from .application import (
     AttachCardUpdCommand, AttachUpdCommand, attach_upd_file, store_card_upd_file, UPD_FILE_URL_PREFIX, upd_file_url,
     ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand, HistoryCorrectionCommand,
-    LayOutCommand, PackDecisionCommand, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
+    LayOutCommand, PackDecisionCommand, PackPermissionChange, SetPackPermissionsCommand, set_pack_permissions, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
     RequestedGood, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
     ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
     close_shipment, correct_shipment_history, create_shipment, drop_project, edit_shipment_head, lay_out_shipment, mark_shipped, pack_project,
@@ -33,7 +34,7 @@ from .application import (
 )
 from .documents import build_box_labels, build_delivery_note, build_packing_lists, storekeeper_signature
 from .domain import (
-    ADDRESSEE_REQUISITE_FIELDS, DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment,
+    ADDRESSEE_REQUISITE_FIELDS, DeliveryTerms, FinishedGood, PackPermission, ProjectAddressee, ProjectAssembly, Shipment,
     ShippingValidationError, UpdType, shipping_gaps, total_gross,
 )
 
@@ -72,6 +73,19 @@ class ProjectQueuePayload(BaseModel):
 
 class ProjectDropPayload(BaseModel):
     project: str = Field(min_length=1, max_length=255)
+
+
+class PackPermissionLinePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_index: str = Field(min_length=1, max_length=255)
+    quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=6, allow_inf_nan=False)
+    version: int = Field(ge=0)
+
+
+class PackPermissionsPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str = Field(min_length=1, max_length=255)
+    lines: list[PackPermissionLinePayload] = Field(min_length=1, max_length=500)
 
 
 class ShipmentLinePayload(BaseModel):
@@ -495,12 +509,53 @@ def project_pack_decision(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
 ) -> dict:
-    """Менеджер решает «упаковывать» (кладовщикам — уведомление) или снимает решение, пока набранной отправки нет."""
-    addressee = _run(lambda: set_pack_decision(PackDecisionCommand(
-        project=payload.project, expected_version=payload.version, decided=payload.decided,
+    raise HTTPException(status_code=422, detail="Разрешите упаковку явно по КБ и количеству")
+
+
+def _pack_permissions_result(project: str, uow_factory) -> dict:
+    with uow_factory() as uow:
+        goods = uow.goods.for_project(project)
+        permissions = {item.item_index: item for item in uow.pack_permissions.for_project(project)}
+        details = pack_item_details(uow, project)
+        indexes = details.keys() | permissions.keys()
+        results = []
+        for item_index in sorted(indexes):
+            consumed = sum((good.shipped for good in goods if good.item_index == item_index), Decimal("0"))
+            physical = sum((good.remaining for good in goods if good.item_index == item_index), Decimal("0"))
+            permission = permissions.get(item_index) or PackPermission(project, item_index, quantity=consumed)
+            results.append({
+                "item_index": item_index, "quantity": _number(permission.quantity), "consumed": _number(consumed),
+                "name": details.get(item_index, {}).get("name", item_index),
+                "unit": details.get(item_index, {}).get("unit", ""),
+                "remaining": _number(permission.remaining(consumed)), "physical_remaining": _number(physical),
+                "version": permission.version, "updated_by": permission.updated_by,
+                "updated_at": permission.updated_at.isoformat() if permission.updated_at else None,
+            })
+        return {"project": project, "permissions": results}
+
+
+@router.get("/project-pack-permissions")
+def get_pack_permissions(
+    project: Annotated[str, Query(min_length=1, max_length=255)],
+    principal: Annotated[Principal, Depends(shipping_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    return _pack_permissions_result(project, uow_factory)
+
+
+@router.post("/project-pack-permissions")
+def change_pack_permissions(
+    payload: PackPermissionsPayload,
+    principal: Annotated[Principal, Depends(shipping_manager_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    _run(lambda: set_pack_permissions(SetPackPermissionsCommand(
+        project=payload.project,
+        lines=tuple(PackPermissionChange(line.item_index, line.quantity, line.version) for line in payload.lines),
         actor=principal.actor, now=now,
-    ), uow_factory()))
-    return {"addressee": _addressee_results([addressee], uow_factory)[0]}
+    ), uow_factory(), known_pack_items))
+    return _pack_permissions_result(payload.project, uow_factory)
 
 
 @router.post("/project-ship")

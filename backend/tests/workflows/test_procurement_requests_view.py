@@ -79,12 +79,13 @@ def test_last_purchase_is_the_newest_of_paid_lines_and_upds(sessions, monkeypatc
 
     monkeypatch.setattr(workflow, "_Nomenclature", Nomenclature)
     monkeypatch.setattr(line_purchases, "last_purchases", lambda session, wanted: {
-        wanted[0].key: line_purchases.UpdPurchase(Decimal("80.5"), "2026-09-20", "ООО УПД", "17"),
+        wanted[0].key: line_purchases.UpdPurchase(Decimal("80.5"), "2026-09-20", "ООО УПД", "17", "doc-17"),
         wanted[1].key: line_purchases.UpdPurchase(Decimal("40"), "2026-09-20", "ООО УПД", "18"),
     })
     with sessions() as session:
         merged = workflow.last_purchases(session, [older, newer], paid)
-    assert merged[older.id] == LastPurchase(Decimal("80.5"), date(2026, 9, 20), "ООО УПД", "шт", "upd")
+    assert merged[older.id] == LastPurchase(Decimal("80.5"), date(2026, 9, 20), "ООО УПД", "шт", "upd",
+                                           document_id="doc-17", document_number="17")
     assert merged[newer.id] == paid[newer.id]
 
 

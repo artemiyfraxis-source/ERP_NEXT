@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KitsetTile } from "./api";
 import { KitTile } from "./ProjectCard";
+import { projectColor } from "./projectColor";
+import { projectColor as planProjectColor } from "./PlanLoadSheet";
 
 const statuses = ["Новый", "ТК готова", "КБ набрана", "В работе", "ОТК", "Отгружено", "Отменён"];
 const kb = (index: number, changes: Partial<KitsetTile["kb_stages"][number]> = {}) => ({
@@ -47,6 +49,9 @@ describe("KitTile compact project card", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toHaveTextContent("ТК: не выдана 1 · не проверена 1");
     expect(lines[1]).toHaveTextContent("С погрешностями 1 · КБ не набрана 2");
+    expect(lines[0].querySelectorAll('[data-tone="neutral"]')).toHaveLength(2);
+    expect(lines[1].querySelector('[data-tone="danger"]')).toHaveTextContent("С погрешностями 1");
+    expect(lines[1].querySelector('[data-tone="neutral"]')).toHaveTextContent("КБ не набрана 2");
     const card = screen.getByRole("button", { name: "Открыть проект 708К.4" });
     expect(card).toHaveAccessibleDescription(/ТК не выдана: 1 КБ — КБ1/);
     expect(card).toHaveAccessibleDescription(/не проверена — КБ2/);
@@ -62,6 +67,34 @@ describe("KitTile compact project card", () => {
     expect(container.querySelectorAll(".proj-mark")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "Открыть проект 708К.4" })).toHaveAccessibleDescription(/КБ: —[\s\S]*обновлено —/);
     expect(container.textContent).not.toMatch(/undefined|NaN|Invalid Date/);
+  });
+
+  it("shows plan readiness tones separately from partial counters and blocker tones", () => {
+    const { container, rerender } = render(<div className="kit-tiles"><KitTile item={tile({
+      tc_ready: true, kit_picked: false, blocker: "ОЖИД КОМПЛ",
+      kb_stages: Array.from({ length: 40 }, (_, index) => kb(index + 1, { tc: true, kit: index < 4 })),
+    })} statuses={statuses} canEdit={false} open={vi.fn()} /></div>);
+    expect(screen.getByText("ТК готова")).toHaveAttribute("data-tone", "success");
+    expect(screen.getByText("КБ не набрана", { selector: ".proj-mark" })).toHaveAttribute("data-tone", "neutral");
+    expect(screen.getByText("ОЖИД КОМПЛ")).toHaveAttribute("data-tone", "warning");
+    expect(container.querySelector(".kit-tile-problems")).toHaveTextContent("не проверена 40КБ не набрана 36");
+    expect(container.querySelectorAll('.kit-tile-problems [data-tone="warning"]')).toHaveLength(0);
+    rerender(<div className="kit-tiles"><KitTile item={tile({ tc_ready: false, kit_picked: true, blocker: "СТОП" })}
+      statuses={statuses} canEdit={false} open={vi.fn()} statusChanged={vi.fn()} /></div>);
+    expect(screen.getByText("ТК не готова")).toHaveAttribute("data-tone", "neutral");
+    expect(screen.getByText("КБ набрана")).toHaveAttribute("data-tone", "success");
+    expect(screen.getByText("СТОП")).toHaveAttribute("data-tone", "danger");
+  });
+
+  it("uses the same stable color helper and palette token as the plan without coloring the whole card", () => {
+    expect(projectColor).toBe(planProjectColor);
+    const { container, rerender } = render(<KitTile item={tile()} statuses={statuses} canEdit={false} open={vi.fn()} />);
+    const marker = container.querySelector(".kit-tile-project-color");
+    expect(marker).toHaveAttribute("aria-hidden", "true");
+    expect(marker).toHaveStyle({ backgroundColor: `var(--zg-c${projectColor("708К.4")})` });
+    expect(container.querySelector(".kit-tile")).not.toHaveAttribute("style");
+    rerender(<KitTile item={tile({ status: "В работе", blocker: "СТОП", tc_ready: true })} statuses={statuses} canEdit={false} open={vi.fn()} />);
+    expect(marker).toHaveStyle({ backgroundColor: `var(--zg-c${projectColor("708К.4")})` });
   });
 
   it("keeps manual readiness marks and respects positive overrides without fabricating missing KBs", () => {

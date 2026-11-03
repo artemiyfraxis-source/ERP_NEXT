@@ -101,7 +101,8 @@ def test_lots_are_split_logged_and_restored(tmp_path, monkeypatch):
             "UPDATE fulfillment_kit_reserves SET lot_id = ?, article = 'XHP-4@JST' WHERE id = ?", (lots[0], reserve))
         other_requests = _rows(connection, "SELECT id, version FROM fulfillment_requests WHERE id NOT IN (?, ?)", free, kit)
 
-    command.upgrade(config, "head")
+    # Exercise this migration's reversible data transform, not every later revision's downgrade policy.
+    command.upgrade(config, REVISION)
     with sqlite3.connect(path) as connection:
         lot_rows = {
             row[0]: row[1:] for row in _rows(

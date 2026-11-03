@@ -221,7 +221,12 @@ const REASON_TONE: Record<string, Tone> = {
 export const suggestionKey = (item: SupplierSuggestion) => item.supplier_id ?? `name:${item.name.toLowerCase()}`;
 
 /** A line of the new request as the supplier step lists it. */
-export type ChosenLine = { id: string; name: string; legacy_id: string };
+export type ChosenLine = { id: string; name: string; legacy_id: string; version?: number; quantity?: string; unit?: string; demand?: string };
+
+export function plannedQuantity(value: string): string | null {
+  const normalized = value.trim().replace(",", ".");
+  return /^\d{1,12}(?:\.\d{1,6})?$/.test(normalized) && Number(normalized) > 0 && Number(normalized) < 1e12 ? normalized : null;
+}
 
 // Per line: why the supplier is suggested for it (the chip shows the best reason, the hint all of them).
 const LINE_REASON: Record<string, string> = {
@@ -453,6 +458,10 @@ export function SuggestPanel({ lineIds, lines, onBack, onCreated }: {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const canPlan = lines.length === lineIds.length && lines.every((line) => line.version && line.quantity !== undefined);
+  const quantityOf = (line: ChosenLine) => quantities[line.id] ?? line.quantity ?? "";
+
   useEffect(() => {
     rfqApi.suggestForLines(lineIds)
       .then((next) => {
@@ -479,11 +488,16 @@ export function SuggestPanel({ lineIds, lines, onBack, onCreated }: {
   }
 
   async function create() {
+    if (canPlan && lines.some((line) => !plannedQuantity(quantityOf(line)))) {
+      setError("План покупки должен быть больше нуля: до 12 цифр и 6 знаков после запятой.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
       const created = await rfqApi.create(lineIds, title.trim(), picks, {
         sent_on: sentOn || null, declined_suggestions: declinedRotation(items, picks),
+        ...(canPlan ? { planned_lines: lines.map((line) => ({ id: line.id, expected_version: line.version!, planned_quantity: plannedQuantity(quantityOf(line))! })) } : {}),
       });
       onCreated(created.id);
     } catch (reason) {
@@ -506,6 +520,15 @@ export function SuggestPanel({ lineIds, lines, onBack, onCreated }: {
         <input value={title} maxLength={255} onChange={(event) => setTitle(event.target.value)} placeholder="Например, разъёмы для RND.012" />
       </label>
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {canPlan && <div className="table-wrap"><table className="grid wide" aria-label="План покупки">
+        <thead><tr><th>Позиция</th><th className="num">Под проект</th><th className="num">Планируем купить</th></tr></thead>
+        <tbody>{lines.map((line) => <tr key={line.id}><td><strong>{line.name}</strong></td>
+          <td className="num">{formatQty(line.demand ?? line.quantity!, line.unit ?? "")}</td>
+          <td className="num"><input aria-label={`Планируем купить ${line.name}`} name={`quantity-${line.id}`} autoComplete="off" inputMode="decimal" value={quantityOf(line)} disabled={busy}
+            onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))} />
+            {Number(quantityOf(line).replace(",", ".")) > Number(line.demand ?? line.quantity) && <small className="warning-inline">Больше потребности проекта</small>}
+          </td></tr>)}</tbody>
+      </table><p className="page-sub">Это количество пойдёт поставщикам и в заказ. Остатки и резервы не меняются.</p></div>}
       {!result && !error && <div className="empty">Подбираю поставщиков…</div>}
       {result && items.length === 0 && (
         <div className="empty">Подсказать некого: истории закупок этих позиций нет, в строках поставщик не указан, у поставщиков справочника нет таких категорий. Добавьте поставщика по названию.</div>

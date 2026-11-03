@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.main import app
 from app.modules.shipping.domain import ProjectAddressee, UpdType
 from app.modules.shipping.infrastructure import ShippingFileRow
-from tests.shipping.test_api import decide_pack, shipping_api  # noqa: F401 — fixture
+from tests.shipping.test_api import permit_fixture_goods, decide_pack, shipping_api  # noqa: F401 — fixture
 from tests.shipping.test_dispatch_plan import _as
 from tests.shipping.test_documents_api import _stocked
 
@@ -104,9 +104,12 @@ def test_one_card_file_goes_to_one_shipment_and_back_after_cancel(shipping_api):
     good = _stocked(client, accepted="6")
     card = _paper_card(client)
     body = {"no_docs": True, "lines": [{"good_id": good["id"], "quantity": "1"}]}
+    permit_fixture_goods(client)
     first = client.post("/api/shipping/shipments", json=body).json()["shipment"]
+    permit_fixture_goods(client)
     second = client.post("/api/shipping/shipments", json=body).json()["shipment"]
     client.post(f"/api/shipping/shipments/{first['id']}/cancel", json={"version": first["version"]})
+    permit_fixture_goods(client)
     third = client.post("/api/shipping/shipments", json=body).json()["shipment"]
 
     assert first["upd_url"] == card["upd_url"]
@@ -119,7 +122,9 @@ def test_own_file_or_electronic_upd_of_a_shipment_is_not_replaced_by_the_card(sh
     good = _stocked(client, accepted="6")
     _paper_card(client)
     lines = [{"good_id": good["id"], "quantity": "1"}]
+    permit_fixture_goods(client)
     own = client.post("/api/shipping/shipments", json={"no_docs": True, "upd_url": "/api/shipping/files/своя", "lines": lines}).json()["shipment"]
+    permit_fixture_goods(client)
     electronic = client.post("/api/shipping/shipments", json={"no_docs": True, "upd_type": "ЭДО", "lines": lines}).json()["shipment"]
 
     assert own["upd_url"] == "/api/shipping/files/своя"

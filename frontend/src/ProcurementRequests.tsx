@@ -16,6 +16,7 @@ import { ProcurementStockPicker } from "./ProcurementStockPicker";
 import { SuggestPanel, type ChosenLine } from "./RfqPool";
 import { StatusChip } from "./StatusChip";
 import { PageWindow } from "./PageWindow";
+import { RequestComposition } from "./RequestComposition";
 
 /* Roller_Buyer's «Заявки» (RequestsPage + RequestLinesTable) in «Лист закупки».
    Project → request (the lines of one batch, НАЗНАЧЕНИЕ) → lines; «Ход закупки» chips per project and per request;
@@ -74,6 +75,8 @@ export function ProcurementRequests({ readOnly = false, canHandoff = false, open
   const focusLine = useRef<string | null>(urlParam("line") || null);
   const [highlight, setHighlight] = useState<string | null>(focusLine.current);
   const [view, setView] = useState<RqView | null>(null);
+  const [compositionSaved, setCompositionSaved] = useState(false);
+  const [compositionRefresh, setCompositionRefresh] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -119,6 +122,7 @@ export function ProcurementRequests({ readOnly = false, canHandoff = false, open
       if (done > 0) setNotice(`Передано в закупку: ${countLabel(done, ["заявка", "заявки", "заявок"])}`);
       setBusy(false);
       await Promise.all([loadNotHanded(), load()]);
+      setCompositionRefresh((value) => value + 1);
     }
   }
 
@@ -176,7 +180,7 @@ export function ProcurementRequests({ readOnly = false, canHandoff = false, open
   }, [known]);
 
   const chosen: ChosenLine[] = useMemo(
-    () => [...selected].map((id) => ({ id, name: known.get(id)?.name ?? id, legacy_id: known.get(id)?.legacy_id ?? "" })),
+    () => [...selected].map((id) => { const line = known.get(id); return { id, name: line?.name ?? id, legacy_id: line?.legacy_id ?? "", version: line?.version, quantity: line?.to_buy, demand: line?.quantity, unit: line?.unit }; }),
     [selected, known],
   );
   const chosenIds = useMemo(() => chosen.map((line) => line.id), [chosen]);
@@ -260,8 +264,12 @@ export function ProcurementRequests({ readOnly = false, canHandoff = false, open
       {scope === "all" && <p className="page-sub">{readOnly ? "Заявки открыты вам только на просмотр." : "Все закупщики — только посмотреть; выбирать и менять можно в «Мои»."}</p>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
+      {current?.kind === "project" && <RequestComposition key={`${project}:${scope}`} project={current.value} projectKey={project} scope={scope} canAct={canAct} onSaved={setCompositionSaved} refreshKey={compositionRefresh}
+        actions={(line, reload) => <RequestLinesTable lines={[line]} groupBy="none" onGroupBy={() => undefined} selected={new Set()} onSet={() => undefined}
+          canAct={canAct} showBuyer={scope === "all"} busy={busy} highlight={null} onHighlight={() => undefined}
+          historyOpen={history.enabled ? history.open : undefined} act={async (run) => { await act(run); await reload(); }} />} />}
       {!error && view === null && <div className="empty">Загружаю…</div>}
-      {view !== null && batches.length === 0 && newGroups.length === 0 && (
+      {view !== null && batches.length === 0 && newGroups.length === 0 && !(current?.kind === "project" && compositionSaved) && (
         <div className="empty">{scope === "mine" ? "Ваших позиций и неразобранных новых нет — посмотрите «Все» или оформите заявку." : "Заявок нет."}</div>
       )}
 
@@ -279,7 +287,7 @@ export function ProcurementRequests({ readOnly = false, canHandoff = false, open
       {view !== null && view.batches_total > batches.length && (
         <p className="page-sub">Показаны последние {batches.length} заявок из {view.batches_total} — выберите проект, чтобы увидеть все его заявки.</p>
       )}
-      {(batches.length > 0 || newGroups.length > 0) && (
+      {(newGroups.length > 0 || (!(current?.kind === "project" && compositionSaved) && batches.length > 0)) && (
         <div className="data-table">
           <div className="table-wrap">
             <table className="grid wide rq-batches" aria-label="Заявки">
@@ -302,7 +310,7 @@ export function ProcurementRequests({ readOnly = false, canHandoff = false, open
                     canHandoff={mayHandoff} busy={busy} onHandoff={() => void handoffGroup(group)}
                   />
                 ))}
-                {batches.map((batch) => (
+                {(!(current?.kind === "project" && compositionSaved) ? batches : []).map((batch) => (
                   <BatchRow
                     key={batch.key} batch={batch} open={open.has(batch.key)} onToggle={() => toggleBatch(batch.key)}
                     lines={linesOf[batch.key]} groupBy={groupBy} onGroupBy={setGroupBy}

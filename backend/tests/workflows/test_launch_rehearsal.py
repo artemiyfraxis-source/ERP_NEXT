@@ -49,6 +49,7 @@ from app.modules.warehouse.infrastructure import StockLotRow, WriteOffEntryRow
 from app.modules.warehouse.stock_export import read_stock_export
 from app.shared import warehouse_location
 from app.shared.clock import MOSCOW, moscow_now
+from app.shared.persistence import Base
 from app.workflows.issue_calc import fifo_key
 from tests.factories import Actor
 from tests.techcards.calc_sheets import FakeSheets, grid
@@ -583,12 +584,39 @@ def _rehearse(shop: Shop, export_dir: Path, *, synthetic: bool) -> None:
     handoff = {"version": last_box["version"], "finished_good_id": good["id"]}
     shop.fitter.refused("POST", f"/api/production/boxes/{last_box['id']}/handoff", json=handoff)
     shop.master.refused("POST", f"/api/production/boxes/{last_box['id']}/handoff", json=handoff)
-    handed = shop.storekeeper.ok("POST", f"/api/production/boxes/{last_box['id']}/handoff", json=handoff)
-    assert Decimal(handed["finished_good"]["accepted"]) == KITS
-    assert handed["finished_good"]["grn"].startswith("ГП.26.")
+    accepted = shop.storekeeper.ok(
+        "POST", "/api/shipping/finished-goods/accept", headers={"Idempotency-Key": "rehearsal:accept"},
+        json={"lines": [{"project": PROJECT, "item_index": ASSEMBLY, "quantity": last_box["quantity"]}]},
+    )
+    assert Decimal(accepted["goods"][0]["accepted"]) == KITS
+    assert accepted["goods"][0]["grn"].startswith("ГП.26.")
+
+    # Старый клиент не может оприходовать ту же коробку повторно или менять её родословную.
+    def intake_snapshot():
+        tables = (
+            "finished_goods", "finished_goods_moves", "finished_goods_acts", "shipping_sequences",
+            "production_boxes", "production_serials", "production_finished_goods_receipts",
+            "audit_events", "outbox_messages",
+        )
+        with shop.sessions() as session:
+            return {name: session.execute(select(Base.metadata.tables[name]).order_by(
+                *Base.metadata.tables[name].primary_key.columns,
+            )).all() for name in tables}
+
+    before_legacy = intake_snapshot()
+    for _ in range(2):
+        retired = shop.storekeeper.call("POST", f"/api/production/boxes/{last_box['id']}/handoff", json=handoff)
+        assert retired.status_code == 410
+        assert "Приёмка с производства" in retired.json()["detail"]
+        assert intake_snapshot() == before_legacy
 
     # Менеджер проекта оформляет отгрузку, склад упаковывает и отгружает.
     clock.tick(30)
+    permission_body = {"project": good["project"], "lines": [
+        {"item_index": good["item_index"], "quantity": str(KITS), "version": 0},
+    ]}
+    shop.storekeeper.refused("POST", "/api/shipping/project-pack-permissions", json=permission_body)
+    shop.pm.ok("POST", "/api/shipping/project-pack-permissions", json=permission_body)
     shipment_body = {"receiver": "ООО Репетиция", "shipping_point": "Москва, склад заказчика", "terms": "САМОВЫВОЗ", "phone": "+7 900",
                      "upd_type": "ЭДО", "upd_number": "1", "no_docs": True, "lines": [{"good_id": good["id"], "quantity": str(KITS)}]}
     shop.fitter.refused("POST", "/api/shipping/shipments", json=shipment_body)

@@ -1,0 +1,10 @@
+.rq-composition { min-width: 0; }
+.rq-composition h3 { margin: 0; }
+.rq-composition .grid { font-size: 13px; }
+.rq-composition .grid td { vertical-align: top; overflow-wrap: anywhere; }
+.rq-composition .grid th:nth-child(2) { width: 24%; }
+.rq-composition .grid small { display: block; font-size: 12px; }
+.rq-composition .grid .num { font-variant-numeric: tabular-nums; }
+.rq-composition-lot + .rq-composition-lot { margin-top: 8px; }
+.rq-composition tbody tr { content-visibility: auto; contain-intrinsic-size: auto 64px; }
+.rq-composition .filters input[type="url"] { min-width: 240px; flex: 1; }

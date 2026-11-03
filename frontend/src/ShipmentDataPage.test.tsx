@@ -45,6 +45,14 @@ const UPD_JOB = { id: "j1", status: "done", error: "", recognising: false, scan_
 const APPLIED = { ...base, version: 6, upd_type: "ЭДО", upd_number: "РЭ-0915", upd_date: "2026-09-15", upd_url: "/api/shipping/files/f9" };
 
 function json(body: unknown) { return new Response(JSON.stringify(body)); }
+const permission = (quantity = "0", version = 4) => ({ item_index: "КБ1", name: "Жгут", quantity, consumed: "0", remaining: quantity, physical_remaining: "10", version });
+async function savePermission(project: string, quantity = "6") {
+  const dialog = within(await screen.findByRole("dialog", { name: `Разрешения упаковки ${project}` }));
+  fireEvent.change(await dialog.findByLabelText("Общий лимит КБ1"), { target: { value: quantity } });
+  fireEvent.click(dialog.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
+  await dialog.findByText("Разрешения упаковки сохранены");
+  fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
+}
 function stub(shipments: unknown[]) {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -52,6 +60,7 @@ function stub(shipments: unknown[]) {
     if (url === "/api/shipping/shipments" && method === "GET") return json({ shipments });
     if (url === "/api/shipping/intake" && method === "GET") return json({ rows: INTAKE });
     if (url.startsWith("/api/shipping/project-addressees")) return json({ addressees: new URL(url, "http://localhost").searchParams.getAll("project").map((project) => ({ project, version: 0, pack_decided: false, dispatch_gaps: ["получатель", "адрес доставки", "телефон", "вариант УПД"] })) });
+    if (url.startsWith("/api/shipping/project-pack-permissions")) return json({ permissions: [permission()] });
     if (url.endsWith("/upd-scan/file")) return json(UPD_JOB);
     if (url.endsWith("/upd-scan/apply")) return json({ status: "applied", shipment: { ...APPLIED, version: JSON.parse(String(init?.body)).version + 1 }, invoice: "РЭ-777" });
     if (/\/head$/.test(url) || /\/documents$/.test(url)) return json({ shipment: { ...base, version: JSON.parse(String(init?.body)).version + 1 } });
@@ -76,130 +85,145 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
   });
 
   const acceptedCard = { project: "780К.1", version: 7, pack_decided: false, dispatch_gaps: ["телефон", "вариант УПД"] };
-  function projectStub(card = acceptedCard, status = 200, stage = "Принято складом") {
+  function projectStub(card = acceptedCard, status = 200, stage = "Принято складом", capQuantity = "0") {
     stub([]);
     const fallback = vi.mocked(fetch).getMockImplementation()!;
-    let current = card;
+    let cap = permission(capQuantity);
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const url = String(input);
-      if (url === "/api/shipping/intake") return json({ rows: [take("780К.1", stage)] });
-      if (url.startsWith("/api/shipping/project-addressees")) return status === 200 ? json({ addressees: [current] }) : new Response(JSON.stringify({ detail: "Нет связи с карточками" }), { status });
-      if (url.startsWith("/api/shipping/project-addressee?")) return json({ addressee: current });
-      if (url === "/api/shipping/project-pack-decision") {
-        current = { ...current, version: current.version + 1, pack_decided: JSON.parse(String(init?.body)).decided };
-        return json({ addressee: current });
+      if (url === "/api/shipping/intake") return json({ rows: [{ ...take("780К.1", stage), pack_permission_remaining: cap.remaining }] });
+      if (url.startsWith("/api/shipping/project-addressees")) return status === 200 ? json({ addressees: [card] }) : new Response(JSON.stringify({ detail: "Нет связи с карточками" }), { status });
+      if (url.startsWith("/api/shipping/project-addressee?")) return json({ addressee: card });
+      if (url.startsWith("/api/shipping/project-pack-permissions")) {
+        if (init?.method === "POST") cap = permission(JSON.parse(String(init.body)).lines[0].quantity, cap.version + 1);
+        return json({ permissions: [cap, { ...permission(), item_index: "КБ2", name: "Другая сборка" }] });
       }
       return fallback(input, init);
     });
   }
 
-  it.each(["ОТК", "Принято складом"])("%s: a missing stored card uses the server's virtual defaults and version zero", async (stage) => {
+  it.each(["ОТК", "Принято складом"])("%s: missing address defaults do not grant packing or replace the KB version", async (stage) => {
     projectStub({ ...acceptedCard, version: 0, dispatch_gaps: ["получатель", "адрес доставки", "телефон", "вариант УПД"] }, 200, stage);
     render(<ShipmentDataPage principal={principal} />);
     fireEvent.click(await screen.findByRole("button", { name: stage === "ОТК" ? /^Готово/ : /^Принято/ }));
     expect(await screen.findByText("Не заполнено: получатель, адрес доставки, телефон, вариант УПД")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Упаковывать 780К.1" }));
-    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeChecked());
-    expect(bodies("/project-pack-decision")).toEqual([{ project: "780К.1", version: 0, decided: true }]);
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Разрешить упаковку по КБ" }));
+    expect(await screen.findByLabelText("Изменить КБ1")).not.toBeChecked();
+    expect(screen.getByLabelText("Изменить КБ2")).not.toBeChecked();
+    expect(bodies("/project-pack-permissions")).toHaveLength(0);
+    await savePermission("780К.1");
+    expect(bodies("/project-pack-permissions")).toEqual([{ project: "780К.1", lines: [{ item_index: "КБ1", quantity: "6", version: 4 }] }]);
+    expect(bodies("/project-pack-decision")).toHaveLength(0);
   });
 
-  it.each(["table", "cards"])("%s: exposes server gaps and one version-aware packaging decision without opening a dialog", async (view) => {
+  it.each(["table", "cards"])("%s: shows server gaps and opens one explicit per-KB decision outside row navigation", async (view) => {
     window.localStorage.setItem("shipment-data.view", view);
     projectStub(); render(<ShipmentDataPage principal={principal} />);
     fireEvent.click(await screen.findByRole("button", { name: /^Принято/ }));
     expect(await screen.findByText("Не заполнено: телефон, вариант УПД")).toBeInTheDocument();
-    const toggle = await screen.findByRole("checkbox", { name: "Упаковывать 780К.1" });
-    expect(toggle).toBeEnabled();
-    if (view === "cards") expect(toggle.closest("button")).toBeNull();
-    fireEvent.click(toggle);
-    await waitFor(() => expect(toggle).toBeChecked());
-    expect(bodies("/project-pack-decision")).toEqual([{ project: "780К.1", version: 7, decided: true }]);
+    const action = await screen.findByRole("button", { name: "Разрешить упаковку по КБ" });
+    expect(action.parentElement?.closest("button")).toBeNull();
+    fireEvent.click(action);
+    await savePermission("780К.1");
+    expect(bodies("/project-pack-permissions")).toEqual([{ project: "780К.1", lines: [{ item_index: "КБ1", quantity: "6", version: 4 }] }]);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith("/api/shipping/project-addressee?"))).toHaveLength(0);
   });
 
-  it.each(["table", "cards"])("%s: read-only and warehouse-only viewers see the confirmed decision without manager privilege", async (view) => {
+  it.each(["table", "cards"])("%s: warehouse-only and read-only viewers cannot grant any KB quantity", async (view) => {
     for (const permissions of [{ shipping: "view" as const, shipping_goods: "view" as const }, { shipping: "view" as const, shipping_goods: "edit" as const }]) {
       window.localStorage.setItem("shipment-data.view", view);
-      projectStub({ ...acceptedCard, pack_decided: true });
+      projectStub(acceptedCard, 200, "Принято складом", "10");
       const page = render(<ShipmentDataPage principal={{ ...principal, permissions }} />);
       fireEvent.click(await screen.findByRole("button", { name: /^Принято/ }));
-      const toggle = await screen.findByRole("checkbox", { name: "Упаковывать 780К.1" });
-      expect(toggle).toBeChecked(); expect(toggle).toBeDisabled();
+      fireEvent.click(await screen.findByRole("button", { name: "Разрешения упаковки по КБ" }));
+      const dialog = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 780К.1" }));
+      expect(await dialog.findByLabelText("Изменить КБ1")).toBeDisabled();
+      expect(dialog.queryByLabelText("Общий лимит КБ1")).not.toBeInTheDocument();
+      expect(dialog.queryByRole("button", { name: /Сохранить разрешения/ })).not.toBeInTheDocument();
+      expect(bodies("/project-pack-permissions")).toHaveLength(0);
       expect(bodies("/project-pack-decision")).toHaveLength(0);
       page.unmount();
     }
   });
 
-  it("keeps missing-data and unresolved decisions in the filter; a confirmed decision removes a complete project", async () => {
-    projectStub({ ...acceptedCard, dispatch_gaps: [] }); render(<ShipmentDataPage principal={principal} />);
+  it("filters unresolved KB permissions, then reloads confirmed allowance after saving", async () => {
+    // A legacy project-wide flag must not authorize any KB under the new contract.
+    projectStub({ ...acceptedCard, pack_decided: true, dispatch_gaps: [] }); render(<ShipmentDataPage principal={principal} />);
     fireEvent.click(await screen.findByRole("button", { name: /^Принято/ }));
     expect(await screen.findByText("Данные получателя и УПД заполнены")).toBeInTheDocument();
     expect(screen.queryByText("Готова к отправке")).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Только с недостающими данными"));
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Упаковывать 780К.1" }));
-    await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Упаковывать 780К.1" })).not.toBeInTheDocument());
+    fireEvent.click(await screen.findByRole("button", { name: "Разрешить упаковку по КБ" }));
+    const permissions = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 780К.1" }));
+    fireEvent.change(await permissions.findByLabelText("Общий лимит КБ1"), { target: { value: "6" } });
+    fireEvent.click(permissions.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Разрешить упаковку по КБ" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(bodies("/project-pack-permissions")).toEqual([{ project: "780К.1", lines: [{ item_index: "КБ1", quantity: "6", version: 4 }] }]);
     fireEvent.click(screen.getByLabelText("Только с недостающими данными"));
-    expect(await screen.findByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeChecked();
+    expect(await screen.findByRole("button", { name: "Разрешить упаковку по КБ" })).toBeEnabled();
   });
 
-  it.each(["table", "cards"])("%s: modal decisions refresh the list and gaps filter in both directions without losing typed fields", async (view) => {
+  it.each(["table", "cards"])("%s: nested per-KB decisions preserve typed address fields in both directions", async (view) => {
     for (const initial of [false, true]) {
       window.localStorage.setItem("shipment-data.view", view);
-      projectStub({ ...acceptedCard, pack_decided: initial, dispatch_gaps: [] });
+      projectStub({ ...acceptedCard, dispatch_gaps: [] }, 200, "Принято складом", initial ? "10" : "0");
       const page = render(<ShipmentDataPage principal={principal} />);
       fireEvent.click(await screen.findByRole("button", { name: /^Принято/ }));
       if (view === "cards") fireEvent.click(await screen.findByRole("button", { name: "Открыть: 780К.1" }));
       else fireEvent.click(await screen.findByText("780К.1", { selector: "strong" }));
       const dialog = within(await screen.findByRole("dialog"));
-      const toggle = await dialog.findByRole("checkbox", { name: "Упаковывать 780К.1" });
-      if (initial) fireEvent.click(screen.getByLabelText("Только с недостающими данными"));
+      await dialog.findByLabelText("Телефон");
       fireEvent.change(dialog.getByLabelText("Телефон"), { target: { value: "+7 набрано" } });
-      fireEvent.click(toggle);
-      await waitFor(() => expect(toggle).toHaveProperty("checked", !initial));
+      fireEvent.click(dialog.getByRole("button", { name: "Разрешить упаковку по КБ" }));
+      await savePermission("780К.1", initial ? "0" : "6");
       expect(dialog.getByLabelText("Телефон")).toHaveValue("+7 набрано");
       await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith("/api/shipping/project-addressees"))).toHaveLength(2));
       fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
-      if (initial) expect(await screen.findByRole("checkbox", { name: "Упаковывать 780К.1" })).not.toBeChecked();
-      else {
-        expect(await screen.findByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeChecked();
-        fireEvent.click(screen.getByLabelText("Только с недостающими данными"));
-        await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Упаковывать 780К.1" })).not.toBeInTheDocument());
-      }
-      expect(bodies("/project-pack-decision")).toEqual([{ project: "780К.1", version: 7, decided: !initial }]);
+      fireEvent.click(screen.getByLabelText("Только с недостающими данными"));
+      if (initial) expect(await screen.findByRole("button", { name: "Разрешить упаковку по КБ" })).toBeEnabled();
+      else await waitFor(() => expect(screen.queryByRole("button", { name: "Разрешить упаковку по КБ" })).not.toBeInTheDocument());
+      expect(bodies("/project-pack-permissions")).toEqual([{ project: "780К.1", lines: [{ item_index: "КБ1", quantity: initial ? "0" : "6", version: 4 }] }]);
+      expect(bodies("/project-pack-decision")).toHaveLength(0);
       page.unmount(); forgetPersonalViews();
     }
   });
 
-  it("bulk card failures remain unknown and included in the gaps filter, never false-ready or false-undecided", async () => {
+  it("bulk address failures remain unknown and included in the gaps filter independently of packing permissions", async () => {
     projectStub(acceptedCard, 503); render(<ShipmentDataPage principal={principal} />);
     fireEvent.click(await screen.findByRole("button", { name: /^Принято/ }));
     expect(await screen.findByText("Данные проекта не загружены")).toBeInTheDocument();
-    expect(screen.getByText("Упаковывать — решение не загружено")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Упаковывать 780К.1" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/склад ждёт решения|Данные получателя и УПД заполнены/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Данные получателя и УПД заполнены/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Только с недостающими данными"));
     expect(screen.getByText("780К.1", { selector: "strong" })).toBeInTheDocument();
+    expect(bodies("/project-pack-permissions")).toHaveLength(0);
   });
 
-  it("409 reloads the server decision and never presents the rejected toggle as confirmed", async () => {
+  it("409 reloads per-KB versions while retaining the draft without reporting rejected allowance as saved", async () => {
     projectStub();
     const fallback = vi.mocked(fetch).getMockImplementation()!;
     let conflict = false;
     vi.mocked(fetch).mockImplementation(async (input, init) => {
-      if (String(input) === "/api/shipping/project-pack-decision") { conflict = true; return new Response(JSON.stringify({ detail: "Версия изменилась" }), { status: 409 }); }
-      if (conflict && String(input).startsWith("/api/shipping/project-addressees")) return json({ addressees: [{ ...acceptedCard, version: 9 }] });
+      if (String(input) === "/api/shipping/project-pack-permissions" && init?.method === "POST") { conflict = true; return new Response(JSON.stringify({ detail: "Версия изменилась" }), { status: 409 }); }
+      if (conflict && String(input).startsWith("/api/shipping/project-pack-permissions?")) return json({ permissions: [permission("2", 9)] });
       return fallback(input, init);
     });
     render(<ShipmentDataPage principal={principal} />);
     fireEvent.click(await screen.findByRole("button", { name: /^Принято/ }));
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Упаковывать 780К.1" }));
-    expect(await screen.findByText(/Данные проекта уже изменил другой сотрудник/)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeEnabled());
-    expect(screen.getByRole("checkbox", { name: "Упаковывать 780К.1" })).not.toBeChecked();
-    expect(bodies("/project-pack-decision")).toHaveLength(1);
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith("/api/shipping/project-addressees"))).toHaveLength(2);
+    fireEvent.click(await screen.findByRole("button", { name: "Разрешить упаковку по КБ" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 780К.1" }));
+    fireEvent.change(await dialog.findByLabelText("Общий лимит КБ1"), { target: { value: "6" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
+    expect(await dialog.findByRole("alert")).toHaveTextContent("Разрешения изменились");
+    await waitFor(() => expect(dialog.getByRole("button", { name: "Сохранить разрешения · 1 КБ" })).toBeEnabled());
+    expect(dialog.getByLabelText("Общий лимит КБ1")).toHaveValue(6);
+    expect(dialog.queryByText("Разрешения упаковки сохранены")).not.toBeInTheDocument();
+    expect(bodies("/project-pack-permissions")).toEqual([{ project: "780К.1", lines: [{ item_index: "КБ1", quantity: "6", version: 4 }] }]);
+    fireEvent.click(dialog.getByRole("button", { name: "Сохранить разрешения · 1 КБ" }));
+    await waitFor(() => expect(bodies("/project-pack-permissions")).toHaveLength(2));
+    expect(bodies("/project-pack-permissions")[1].lines[0].version).toBe(9);
   });
 
   it("renders twelve shipment positions as twelve rows under one project header", async () => {
@@ -248,7 +272,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(table.querySelectorAll("tbody tr:not(.group-row)")).toHaveLength(12);
     expect(table.querySelectorAll(".group-row")).toHaveLength(1);
     for (const line of lines) expect(within(table).getByText(line.name).closest("tr")).toHaveTextContent(line.item_index);
-    if (label === "Принято" || label === "Готово") expect(screen.getAllByRole("checkbox", { name: "Упаковывать 713К.4" })).toHaveLength(1);
+    if (label === "Принято" || label === "Готово") expect(screen.getAllByRole("button", { name: "Разрешить упаковку по КБ" })).toHaveLength(1);
     if (!actual) expect(within(table).getAllByText("Не создана")).toHaveLength(12);
     expect(screen.getByText("Счётчики: позиции КБ")).toBeInTheDocument();
   });
@@ -273,7 +297,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(bodies("/head")).toHaveLength(0); expect(bodies("/documents")).toHaveLength(0);
   });
 
-  it("groups twelve free KB cards under one project decision outside every card button", async () => {
+  it("groups twelve free KB cards under one per-KB permissions action outside every card button", async () => {
     window.localStorage.setItem("shipment-data.view", "cards");
     projectStub();
     const fallback = vi.mocked(fetch).getMockImplementation()!;
@@ -283,11 +307,11 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Принято · 12" }));
     expect(page.container.querySelectorAll(".data-card")).toHaveLength(12);
     expect(page.container.querySelectorAll(".dt-card-group-title")).toHaveLength(1);
-    const decision = screen.getByRole("checkbox", { name: "Упаковывать 780К.1" });
-    expect(decision.closest("button")).toBeNull();
+    const decision = screen.getByRole("button", { name: "Разрешить упаковку по КБ" });
+    expect(decision.parentElement?.closest("button")).toBeNull();
     fireEvent.click(decision);
-    await waitFor(() => expect(decision).toBeChecked());
-    expect(bodies("/project-pack-decision")).toEqual([{ project: "780К.1", version: 7, decided: true }]);
+    await savePermission("780К.1");
+    expect(bodies("/project-pack-permissions")).toEqual([{ project: "780К.1", lines: [{ item_index: "КБ1", quantity: "6", version: 4 }] }]);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -303,20 +327,20 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Принято · 1" }));
     fireEvent.click(view === "cards" ? screen.getByRole("button", { name: "Открыть: 780К.1" }) : screen.getByText("Смешанная позиция"));
     let dialog = within(await screen.findByRole("dialog"));
-    expect(await dialog.findByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeInTheDocument();
+    expect(await dialog.findByRole("button", { name: "Разрешить упаковку по КБ" })).toBeInTheDocument();
     expect(dialog.getByRole("combobox", { name: "УПД" })).toBeInTheDocument();
     fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
     fireEvent.click(screen.getByRole("button", { name: "В производстве · 1" }));
     fireEvent.click(view === "cards" ? screen.getByRole("button", { name: "Открыть: 780К.1" }) : screen.getByText("Смешанная позиция"));
     dialog = within(await screen.findByRole("dialog"));
     await dialog.findByRole("textbox", { name: "Телефон" });
-    expect(dialog.queryByRole("checkbox", { name: "Упаковывать 780К.1" })).not.toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Разрешить упаковку по КБ" })).not.toBeInTheDocument();
     expect(dialog.queryByRole("combobox", { name: "УПД" })).not.toBeInTheDocument();
     fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
     fireEvent.click(screen.getByRole("button", { name: "Все · 3" }));
     fireEvent.click(screen.getByRole("button", { name: "780К.1 · Заказчик 780К.1" }));
     dialog = within(await screen.findByRole("dialog"));
-    expect(await dialog.findByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeInTheDocument();
+    expect(await dialog.findByRole("button", { name: "Разрешить упаковку по КБ" })).toBeInTheDocument();
     expect(dialog.getByRole("combobox", { name: "УПД" })).toBeInTheDocument();
   });
 
@@ -333,7 +357,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Принято · 1" }));
     fireEvent.click(view === "cards" ? screen.getByRole("button", { name: `Открыть: ${mixed.number}` }) : screen.getByText("Часть 2"));
     const dialog = within(await screen.findByRole("dialog", { name: new RegExp(mixed.number) }));
-    expect(await dialog.findByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeInTheDocument();
+    expect(await dialog.findByRole("button", { name: "Разрешить упаковку по КБ" })).toBeInTheDocument();
     expect(dialog.getByRole("combobox", { name: "Тип УПД" })).toBeInTheDocument();
   });
 
@@ -538,7 +562,7 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     render(<ShipmentDataPage principal={principal} />);
     fireEvent.click(await screen.findByRole("button", { name: "Принято · 1" }));
     fireEvent.click(await screen.findByText("780К.1", { selector: "strong" }));
-    expect(await within(screen.getByRole("dialog")).findByRole("checkbox", { name: "Упаковывать 780К.1" })).toBeEnabled();
+    expect(await within(screen.getByRole("dialog")).findByRole("button", { name: "Разрешить упаковку по КБ" })).toBeEnabled();
   });
 
   it("window: «Адрес» block (address, receiver, phone) apart from «ТК и УПД»; the carrier only for a carrier delivery", async () => {
@@ -582,24 +606,24 @@ describe("ShipmentDataPage («Данные отправок»)", () => {
     expect(form.queryByText("трек: ждём склад")).not.toBeInTheDocument();
   });
 
-  it("window on «Готово»: «Упаковывать» toggle calls pack-decision; shipped has no address block and names who allowed «без УПД»", async () => {
+  it("window on «Готово» opens explicit KB permissions; shipped has no address block and names who allowed «без УПД»", async () => {
     stub([working, { ...shippedNoFile, upd_type: "БЕЗ УПД", missing_data: [], no_upd_approved_by: "Мастер Иванов", no_upd_approved_at: "2026-10-26T10:00:00" }]);
     const base0 = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.startsWith("/api/shipping/project-addressee?")) return json({ addressee: { project: "713К.4", version: 3, pack_decided: false } });
-      if (url === "/api/shipping/project-pack-decision") return json({ addressee: { project: "713К.4", version: 4, pack_decided: true, pack_decided_by: "Ульяна", pack_decided_at: "2026-10-29T09:00:00" } });
       return base0(input, init);
     });
     render(<ShipmentDataPage principal={principal} />);
     fireEvent.click(await screen.findByRole("button", { name: /^Готово/ }));
     fireEvent.click(await screen.findByText("ОТГ-20261027-06"));
     const form = within(screen.getByRole("dialog", { name: "Данные отправки ОТГ-20261027-06" }));
-    const toggle = await form.findByLabelText("Упаковывать 713К.4");
-    await waitFor(() => expect(toggle).toBeEnabled());
-    fireEvent.click(toggle);
-    await waitFor(() => expect(bodies("/project-pack-decision")).toEqual([{ project: "713К.4", version: 3, decided: true }]));
-    expect(await form.findByText(/решил Ульяна, 29\.10\.2026/)).toBeInTheDocument();
+    const action = await form.findByRole("button", { name: "Разрешить упаковку по КБ" });
+    fireEvent.click(action);
+    const permissions = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 713К.4" }));
+    expect(await permissions.findByLabelText("Изменить КБ1")).not.toBeChecked();
+    expect(bodies("/project-pack-decision")).toHaveLength(0);
+    fireEvent.click(permissions.getByRole("button", { name: "Закрыть" }));
     fireEvent.click(form.getByRole("button", { name: "Отмена" }));
     fireEvent.click(screen.getByRole("button", { name: /^Отгружено/ }));
     fireEvent.click(await screen.findByText("ОТГ-20261020-03"));

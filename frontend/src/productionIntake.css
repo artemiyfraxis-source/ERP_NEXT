@@ -7,7 +7,6 @@
 .intake-page .data-table .grid td { font-size: 13px; vertical-align: top; }
 .intake-page .data-table .grid th { font-size: 12px; }
 .intake-page .seg-tabs { margin-bottom: 10px; }
-.intake-page .ship-handoff { margin-top: 16px; }
 .ship-inline .intake-location { width: 170px; flex: none; padding: 4px 8px; }
 .intake-page .data-table .grid th, .intake-page .data-table .grid td { padding-left: 6px; padding-right: 6px; }
 .intake-page .ship-take .ship-qty { width: 68px; }

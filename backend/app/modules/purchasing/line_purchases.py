@@ -31,6 +31,7 @@ class UpdPurchase:
     date: str  # ISO date of the UPD
     supplier: str
     number: str
+    document_id: str | None = None
 
 
 def last_purchases(session: Session, wanted: Sequence[Wanted]) -> dict[Hashable, UpdPurchase]:
@@ -49,7 +50,7 @@ def last_purchases(session: Session, wanted: Sequence[Wanted]) -> dict[Hashable,
             if kopecks is not None:
                 result[item.key] = UpdPurchase(
                     price=Decimal(kopecks) / 100, date=purchase.date, supplier=purchase.supplier_name,
-                    number=purchase.number,
+                    number=purchase.number, document_id=purchase.document_id,
                 )
                 break
     return result

@@ -5,7 +5,7 @@ from uuid import UUID
 from app.main import app
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
-from tests.shipping.test_api import decide_pack, shipping_api  # noqa: F401 — fixture
+from tests.shipping.test_api import permit_fixture_goods, decide_pack, shipping_api  # noqa: F401 — fixture
 
 
 def _stocked(client, *, item_index="КБ1", ordered="40", accepted="6", project="591К.3"):
@@ -22,6 +22,7 @@ def _shipment(client, lines, **extra):
     body = {"receiver": "Получатель", "shipping_point": "Москва", "phone": "+7 900 000-00-00", "terms": "ДОСТАВКА ТК", "carrier": "СДЭК",
             "upd_type": "ЭДО", "upd_number": "УПД-1", "lines": lines}
     body.update(extra)
+    permit_fixture_goods(client)
     response = client.post("/api/shipping/shipments", json=body)
     assert response.status_code == 200, response.text
     return response.json()["shipment"]
@@ -128,7 +129,7 @@ def test_print_needs_documents_and_defaults_to_one_box(shipping_api):
     assert (default.json()["forms"][0]["place"], default.json()["forms"][0]["places"]) == ("1", "1")
 
 
-def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(shipping_api):
+def test_project_pack_requires_explicit_quantity_within_stock_and_permission(shipping_api):
     client = shipping_api
     good = _stocked(client, accepted="6")
     empty = _stocked(client, item_index="КБ2", accepted="")
@@ -138,11 +139,14 @@ def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(s
     undecided = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "9"}]})
     decide_pack(client)
     nothing = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": empty["id"], "quantity": "4"}]})
-    packed = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "9"}]})
+    excessive = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "9"}]})
+    assert excessive.status_code == 422 and "превышает остаток" in excessive.json()["detail"]
+    assert client.get("/api/shipping/shipments").json()["shipments"] == []
+    packed = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "6"}]})
     addressees = client.get("/api/shipping/project-addressees").json()["addressees"]
 
-    assert undecided.status_code == 422 and undecided.json()["detail"] == "Менеджер ещё не решил упаковывать"
-    assert nothing.status_code == 422 and "Упаковывать нечего" in nothing.json()["detail"]
+    assert undecided.status_code == 422 and "разреш" in undecided.json()["detail"]
+    assert nothing.status_code == 422 and "превышает остаток" in nothing.json()["detail"]
     shipment = packed.json()["shipment"]
     assert shipment["status"] == "Собрана" and shipment["pl_number"] == ""
     assert shipment["receiver"] == "Заказчик" and shipment["shipping_point"] == "Склад заказчика"

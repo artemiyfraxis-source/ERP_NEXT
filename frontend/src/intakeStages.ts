@@ -24,7 +24,8 @@ export const ofKb = (shipment: DispatchShipment, row: Kb) => shipment.lines.some
 /** Принято и ещё не набрано в отправки — столько можно упаковать. */
 export const packable = (row: IntakeRow) => round2(Math.max(num(row.accepted) - num(row.packed), 0));
 /** Упаковывать можно после решения менеджера «упаковывать» (владелец 29.10). */
-export const canPack = (row: IntakeRow) => row.pack_decided === true && packable(row) > 0;
+export const permittedPack = (row: IntakeRow) => Math.min(packable(row), Math.max(0, num(row.pack_permission_remaining)));
+export const canPack = (row: IntakeRow) => permittedPack(row) > 0;
 
 export type Pieces = Record<DispatchStage, number>;
 const zero = (): Pieces => ({ waiting: 0, production: 0, ready: 0, accepted: 0, packed: 0, to_ship: 0, shipped: 0 });

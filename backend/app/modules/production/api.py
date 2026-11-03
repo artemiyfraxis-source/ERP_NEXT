@@ -70,7 +70,6 @@ from .scheduling import ScheduleVariant
 from .execution import (
     CorrectBoxCommand,
     DecideDefectCommand,
-    HandoffBoxCommand,
     ManualOutputCommand,
     ReturnBoxCommand,
     SessionCommand,
@@ -79,7 +78,6 @@ from .execution import (
     cancel_work,
     correct_box,
     decide_defect,
-    handoff_box,
     input_stages,
     material_operation,
     operation_quantity,
@@ -1299,20 +1297,12 @@ def return_execution_box(box_id: UUID, payload: ReturnBoxPayload, principal: Ann
     return {"box": _box_result(box)}
 
 
-@router.post("/boxes/{box_id}/handoff")
-def handoff_execution_box(box_id: UUID, payload: HandoffBoxPayload, principal: Annotated[Principal, Depends(shipping_warehouse_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
-    box, good, receipt = _execution(lambda: handoff_box(HandoffBoxCommand(
-        box_id=box_id, expected_version=payload.version, actor=principal.actor,
-        now=now, finished_good_id=payload.finished_good_id,
-    ), uow_factory()))
-    return {
-        "box": _box_result(box),
-        "finished_good": {
-            "id": str(good.id), "version": good.version, "grn": good.grn,
-            "accepted": _number(good.accepted), "remaining": _number(good.remaining),
-        },
-        "receipt_id": str(receipt.id),
-    }
+@router.post("/boxes/{box_id}/handoff", deprecated=True)
+def handoff_execution_box(box_id: UUID, payload: HandoffBoxPayload, principal: Annotated[Principal, Depends(shipping_warehouse_principal)]) -> dict:
+    raise HTTPException(
+        status_code=410,
+        detail="Приёмка коробок отдельно отключена. Принимайте КБ через раздел «Приёмка с производства».",
+    )
 
 
 @router.get("/defects")
