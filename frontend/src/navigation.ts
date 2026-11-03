@@ -9,13 +9,17 @@ export type Section =
   | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement" | "purchasingrefs" | "primarydocs"
   | "receiving" | "stock" | "issues" | "handout" | "intake" | "shipdata"
-  | "prodplan" | "staff" | "access" | "notifications" | "operations";
+  | "prodplan" | "staff" | "access" | "notifications" | "operations" | "equipmentsetup";
+
+export type NavCapabilities = { equipmentSetup?: boolean };
 
 export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "docs" | "refs" | "admin";
 
 export interface NavItem {
   id: Section;
   label: string;
+  /** Availability confirmed by the server for this exact authenticated principal. */
+  capability?: keyof NavCapabilities;
   /** What the section is for — the line under the label on a section card. */
   sub?: string;
   permission?: string;
@@ -92,6 +96,7 @@ export const NAV: NavItem[] = [
   { id: "references", label: "База данных", sub: "операции · оборудование · терминалы · коаксиал · провода · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"], block: "refs" },
   { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "refs", within: "references" },
   { id: "production", label: "Ресурсное планирование", sub: "назначение операторов · автоплан · график", permission: "production", block: "prod" },
+  { id: "equipmentsetup", label: "Наладка оборудования", sub: "станки · рецепты · пробные измерения", capability: "equipmentSetup", block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
   // «ОТК»: очередь на проверку, брак цеха и ОТК, средства измерения; приёмку и реестр ведёт правка `quality`, решение по
   // браку — правка `production` (экран сам прячет то, что не открыто).
@@ -200,7 +205,8 @@ export function runsTheSystem(principal: Principal): boolean {
     .some(([section, mode]) => mode === "edit" && !OWN_WORK_SECTIONS.includes(section));
 }
 
-export function hasNavAccess(principal: Principal, item: NavItem) {
+export function hasNavAccess(principal: Principal, item: NavItem, capabilities: NavCapabilities = {}) {
+  if (item.capability) return capabilities[item.capability] === true;
   if (item.fullAccessOnly) return hasFullAccess(principal);
   if (hasFullAccess(principal)) return true;
   return (
@@ -217,13 +223,13 @@ export function isViewOnly(principal: Principal, item: NavItem): boolean {
   return modes.length > 0 && !modes.includes("edit");
 }
 
-export function visibleNav(principal: Principal) {
-  return NAV.filter((item) => hasNavAccess(principal, item));
+export function visibleNav(principal: Principal, capabilities: NavCapabilities = {}) {
+  return NAV.filter((item) => hasNavAccess(principal, item, capabilities));
 }
 
 /** Blocks with at least one section this principal may open, sections in block order. */
-export function visibleBlocks(principal: Principal) {
-  const items = visibleNav(principal);
+export function visibleBlocks(principal: Principal, capabilities: NavCapabilities = {}) {
+  const items = visibleNav(principal, capabilities);
   // A screen opened from another section is no menu item; one marked `menuWithoutParent` is, while that section is
   // closed to this person (a level with «Заявки» but no «Снабжение» keeps its way in).
   const inMenu = (item: NavItem) => !item.within || (item.menuWithoutParent && !items.some(({ id }) => id === item.within));
