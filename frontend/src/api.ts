@@ -3703,6 +3703,16 @@ export const fulfillmentApi = {
     }),
 };
 
+export interface ProductionMachineBinding { etk_position: number; machine_id: string }
+export interface ProductionResources {
+  enabled: boolean;
+  task_version?: number;
+  site?: string | null;
+  requirements?: Array<{ etk_position: number; family: string; machines: Array<{ id: string; name: string; model: string; site: string }> }>;
+  blocked_reason?: string | null;
+  occupancy_rule?: string;
+}
+
 export interface AutoplanProposal {
   task_id: string;
   task_version: number;
@@ -3722,6 +3732,7 @@ export interface AutoplanProposal {
   batched: boolean;
   /** Операция будущего задания: КБ с выданной техкартой без задания, задание создаст «Применить». */
   new?: boolean;
+  resources?: ProductionResources | null;
 }
 
 /** «Весь цех» — вся работа на всех монтажников; «По проекту» — работа проекта на выбранных людей. */
@@ -3778,9 +3789,9 @@ export interface BoardTask extends ProductionTask {
 }
 export interface BoardSkipped { techcard_id: string; techcard_version: number; project: string; index: string; name: string; reason: string }
 export interface BoardData { project: string; tasks: BoardTask[]; future: BoardTask[]; skipped: BoardSkipped[] }
-export type BoardAssignItem =
+export type BoardAssignItem = (
   | { task_id: string; task_version: number; operation_id: string }
-  | { techcard_id: string; techcard_version: number; position: number; quantity?: number; run?: number; launched?: number };
+  | { techcard_id: string; techcard_version: number; position: number; quantity?: number; run?: number; launched?: number }) & { machine_bindings?: ProductionMachineBinding[] };
 export interface BoardAssignResult {
   tasks: ProductionTask[];
   created: Array<{ id: string; number: string }>;
@@ -3794,6 +3805,8 @@ export const productionApi = {
   board: (project = "") => api<BoardData>(`/api/production/board${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   boardAssign: (payload: { operator_id: string; requested_start: string | null; items: BoardAssignItem[] }) =>
     api<BoardAssignResult>("/api/production/board/assign", { method: "POST", body: JSON.stringify(payload) }),
+  boardResources: (payload: { operator_id: string; items: BoardAssignItem[] }) =>
+    api<{ items: Array<{ index: number; resources: ProductionResources | null }> }>("/api/production/board/resources", { method: "POST", body: JSON.stringify(payload) }),
   /** «Уже сделано» по новому заданию КБ: задание (тираж run, по умолчанию весь остаток тиража КБ) и готовые штуки этапа — одной транзакцией. */
   boardOutput: (payload: { techcard_id: string; techcard_version: number; position: number; good_quantity: number; fill_inputs: boolean; run?: number; launched?: number }) =>
     api<{ task: ProductionTask; operation_id: string; box: ProductionBox; filled: ProductionBox[]; warnings: string[] }>("/api/production/board/manual-output", {
@@ -3807,7 +3820,7 @@ export const productionApi = {
     method: "POST",
     body: JSON.stringify(payload),
   }),
-  autoplanApply: (payload: AutoplanRequest & { items: Array<{ task_id: string; operation_id: string; operator_id: string }>; fingerprint: string }) =>
+  autoplanApply: (payload: AutoplanRequest & { items: Array<{ task_id: string; operation_id: string; operator_id: string; machine_bindings?: ProductionMachineBinding[] }>; fingerprint: string }) =>
     api<{ applied: number; tasks: Array<{ id: string; number: string; version: number }>; created: Array<{ id: string; number: string }> }>("/api/production/autoplan/apply", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -3838,18 +3851,19 @@ export const productionApi = {
     headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify(payload),
   }),
-  assign: (taskId: string, operationId: string, version: number, operatorIds: string[], requestedStart: string | null, dry = false) =>
+  resources: (taskId: string, operationId: string, operatorIds: string[]) => api<ProductionResources>(`/api/production/tasks/${taskId}/operations/${operationId}/resources?${new URLSearchParams(operatorIds.map((id) => ["operator_ids", id]))}`),
+  assign: (taskId: string, operationId: string, version: number, operatorIds: string[], requestedStart: string | null, dry = false, machineBindings?: ProductionMachineBinding[]) =>
     api<{ task: ProductionTask; warnings: string[]; plan: ProductionAssignPlan; dry: boolean }>(`/api/production/tasks/${taskId}/operations/${operationId}/assign`, {
       method: "POST",
-      body: JSON.stringify({ version, operator_ids: operatorIds, requested_start: requestedStart, dry }),
+      body: JSON.stringify({ version, operator_ids: operatorIds, requested_start: requestedStart, dry, ...(machineBindings !== undefined ? { machine_bindings: machineBindings } : {}) }),
     }),
   // Экран мастера: доля операции монтажнику (штуки, с какого момента) или снять её.
-  share: (taskId: string, operationId: string, version: number, operatorId: string, quantity: number | null, requestedStart: string | null, remove = false) =>
+  share: (taskId: string, operationId: string, version: number, operatorId: string, quantity: number | null, requestedStart: string | null, remove = false, machineBindings?: ProductionMachineBinding[]) =>
     api<{ task: ProductionTask; warnings: string[]; plan: { start: string | null; finish: string | null; warnings: string[] } }>(`/api/production/tasks/${taskId}/operations/${operationId}/share`, {
       method: "POST",
       body: JSON.stringify(remove
         ? { version, operator_id: operatorId, remove: true }
-        : { version, operator_id: operatorId, quantity, requested_start: requestedStart }),
+        : { version, operator_id: operatorId, quantity, requested_start: requestedStart, ...(machineBindings !== undefined ? { machine_bindings: machineBindings } : {}) }),
     }),
   // Ввод готовых мастером (владелец 20.10): штуки этапа мимо терминала; operatorId — чьи (пусто — без исполнителя);
   // fillInputs — пропущенные этапы-входы отбить готовыми.
@@ -3896,9 +3910,9 @@ export const productionApi = {
     api<{ variants: ProductionScheduleVariant[] }>(`/api/production/tasks/${taskId}/schedule`, {
       method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew }),
     }),
-  applySchedule: (taskId: string, version: number, replan: boolean, maxCrew: number, transferBatch: number) =>
+  applySchedule: (taskId: string, version: number, replan: boolean, maxCrew: number, transferBatch: number, machineBindings?: Record<string, ProductionMachineBinding[]>) =>
     api<{ task: ProductionTask; variant: ProductionScheduleVariant }>(`/api/production/tasks/${taskId}/schedule/apply`, {
-      method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew, transfer_batch: transferBatch }),
+      method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew, transfer_batch: transferBatch, ...(machineBindings !== undefined ? { machine_bindings: machineBindings } : {}) }),
     }),
   execution: (operatorId = "") => api<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>(`/api/production/my/execution${operatorId ? `?operator_id=${operatorId}` : ""}`),
   /** ЭТК операции для монтажника: выданная карта ПЗ и операция, на которой её открыть (не требует раздела техкарт). */
