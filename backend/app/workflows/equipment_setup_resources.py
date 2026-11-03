@@ -3,9 +3,23 @@
 Unregistered until production execution and planning use the same resource registry.
 """
 
+from functools import wraps
+
+from app.modules.equipment_setup.application import SetupResourceConflict
 from app.modules.equipment_setup.domain import SetupStatus, SetupTask
 from app.modules.production.resource_claims import ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow
 from app.modules.production.resource_infrastructure import SqlAlchemyResourceClaims
+
+
+def _setup_conflict(method):
+    """Translate the production-owned failure at the cross-module adapter boundary."""
+    @wraps(method)
+    def call(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except ResourceConflict as error:
+            raise SetupResourceConflict(str(error)) from error
+    return call
 
 
 class SetupResourceReservations:
@@ -14,6 +28,7 @@ class SetupResourceReservations:
         self.assert_legacy_available = assert_legacy_available
         self.integration_ready = integration_ready
 
+    @_setup_conflict
     def acquire(self):
         self._ready()
         self.claims.acquire()
@@ -30,6 +45,7 @@ class SetupResourceReservations:
     def _resources(task):
         return (ResourceKey(ResourceKind.MACHINE, task.machine_id), ResourceKey(ResourceKind.PERSON, str(task.technician_id)))
 
+    @_setup_conflict
     def reserve(self, task: SetupTask):
         self._ready()
         # The callback must use the same Session and reject unresolved legacy machine groups.
@@ -40,6 +56,7 @@ class SetupResourceReservations:
         if task.status is SetupStatus.IN_PROGRESS:
             self.claims.activate(self._owner(task), task.id, self._resources(task), task.updated_at)
 
+    @_setup_conflict
     def block(self, task: SetupTask):
         self._ready()
         if task.status is not SetupStatus.BLOCKED:
@@ -51,6 +68,7 @@ class SetupResourceReservations:
             self.claims.release_active(owner, task.id, kinds=(ResourceKind.MACHINE,))
             self.claims.release_plan(owner, kinds=(ResourceKind.MACHINE,))
 
+    @_setup_conflict
     def release(self, task: SetupTask):
         self._ready()
         if task.status not in {SetupStatus.READY, SetupStatus.CANCELLED}:

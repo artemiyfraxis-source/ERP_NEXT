@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.modules.equipment_setup.api import router
+from app.modules.equipment_setup.application import SetupResourceConflict
 from tests.equipment_setup.test_application import env, principal
 from tests.equipment_setup.test_recipe_application import Recipes
 
@@ -182,3 +183,14 @@ def test_viewer_uses_current_site_master_and_view_as_not_role_guess(client, env)
     assert client.get(endpoint).json()["can_assign"] is False
     client.app.state.test_principal = replace(principal(env[2]), viewer=env[3].actor)
     assert client.get(endpoint).json()["writable"] is False
+
+
+def test_setup_resource_port_conflict_returns_409_without_saving_task(client, env, monkeypatch):
+    def reject(self, task):
+        raise SetupResourceConflict("Станок занят производством")
+    monkeypatch.setattr(type(env[0].reservations), "reserve", reject)
+    response = client.post("/api/production/equipment-setup/tasks", json=payload(env))
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Станок занят производством"
+    assert not env[0].tasks.items
+    assert not env[0].audit.items

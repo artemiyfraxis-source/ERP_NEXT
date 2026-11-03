@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.modules.equipment_setup.domain import IssuedOperationRef, RecipeVersionRef, SetupStatus, SetupTask
+from app.modules.equipment_setup.application import SetupResourceConflict
 from app.modules.production.resource_claims import ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow
 from app.modules.production.resource_infrastructure import ActiveResourceRow, ResourceGenerationRow, ResourceReservationRow, SqlAlchemyResourceClaims
 from app.workflows.equipment_setup_resources import SetupResourceReservations
@@ -35,7 +36,7 @@ def task():
 
 def test_not_integrated_fails_closed(db):
     adapter = SetupResourceReservations(db, assert_legacy_available=lambda task: None)
-    with pytest.raises(ResourceConflict, match="не подключён"):
+    with pytest.raises(SetupResourceConflict, match="не подключён"):
         adapter.acquire()
 
 
@@ -62,8 +63,9 @@ def test_unknown_legacy_holder_rejected_before_any_reservation(db):
         raise ResourceConflict("Не выбран экземпляр у текущей работы")
     adapter = SetupResourceReservations(db, assert_legacy_available=reject, integration_ready=True)
     first = task()
-    with pytest.raises(ResourceConflict):
+    with pytest.raises(SetupResourceConflict) as captured:
         adapter.reserve(first)
+    assert isinstance(captured.value.__cause__, ResourceConflict)
     assert db.get(ResourceGenerationRow, 1).version == 0
 
 
@@ -81,7 +83,7 @@ def test_blocked_person_can_really_be_assigned_elsewhere_and_resume_conflicts(db
     claims.replace_plan(other, resources, ResourceWindow(NOW, NOW + timedelta(minutes=30)))
     claims.activate(other, uuid4(), resources, NOW)
     resumed, _ = blocked.transition(SetupStatus.IN_PROGRESS, actor_id=first.technician_id, now=NOW)
-    with pytest.raises(ResourceConflict):
+    with pytest.raises(SetupResourceConflict):
         adapter.reserve(resumed)
     assert db.get(ActiveResourceRow, ("machine", first.machine_id)).owner_id == first.id
 

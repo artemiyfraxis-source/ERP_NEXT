@@ -11,9 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
-from app.modules.production.resource_claims import ResourceConflict
 
-from .application import AssignSetupCommand, ChangeSetupCommand, ConcurrentSetupUpdate, SetupAction, SetupPermissionError, assign_setup_task, change_setup_task
+from .application import AssignSetupCommand, ChangeSetupCommand, ConcurrentSetupUpdate, SetupAction, SetupPermissionError, SetupResourceConflict, assign_setup_task, change_setup_task
 from .domain import IssuedOperationRef, RecipeVersionRef
 from .infrastructure import task_payload
 from .recipe_application import PublishRecipeCommand, RecordTrialCommand, publish_recipe, record_trial
@@ -94,7 +93,7 @@ def _perform(action, serialize=task_payload):
         return serialize(action())
     except SetupPermissionError as error:
         raise HTTPException(403, str(error)) from error
-    except (ConcurrentSetupUpdate, ResourceConflict) as error:
+    except (ConcurrentSetupUpdate, SetupResourceConflict) as error:
         raise HTTPException(409, str(error)) from error
     except KeyError as error:
         raise HTTPException(404, str(error.args[0])) from error

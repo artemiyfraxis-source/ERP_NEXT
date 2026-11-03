@@ -26,6 +26,12 @@ class ConcurrentSetupUpdate(RuntimeError):
     pass
 
 
+class SetupResourceConflict(RuntimeError):
+    """The shared production resource adapter rejected this setup command."""
+
+    pass
+
+
 class SetupCommandConflict(ConcurrentSetupUpdate):
     pass
 
