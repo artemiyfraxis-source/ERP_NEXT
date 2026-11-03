@@ -16,7 +16,8 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal
 from app.shared.project_number import normalize_project_number
 
-from .api import _box_result, _number, _result, closed_kbs, production_uow_factory, techcards_uow_factory
+from .api import MachineBindingPayload, _box_result, _number, _result, closed_kbs, production_uow_factory, techcards_uow_factory
+from .resource_assignments import MachineBinding
 from .application import UnitOfWork
 from .autoplan_api import _handle, _techcards, references_uow_factory
 from .board import (
@@ -25,6 +26,7 @@ from .board import (
     BoardOutputCommand,
     Equipment,
     assign_board,
+    board_resources,
     card_key,
     equipment_of,
     future_tasks,
@@ -55,6 +57,7 @@ class BoardItemPayload(BaseModel):
     run: int | None = Field(default=None, ge=1, le=1_000_000)
     # Сколько по КБ было запущено, когда доску читали (future.launched); запустили ещё — 409.
     launched: int | None = Field(default=None, ge=0)
+    machine_bindings: list[MachineBindingPayload] | None = Field(default=None, max_length=100)
 
     @model_validator(mode="after")
     def _reference(self) -> "BoardItemPayload":
@@ -84,6 +87,33 @@ class AssignPayload(BaseModel):
     operator_id: UUID
     requested_start: datetime | None = None
     items: list[BoardItemPayload] = Field(min_length=1, max_length=500)
+
+
+def _command(payload: AssignPayload, principal: Principal, now: datetime) -> BoardAssignCommand:
+    return BoardAssignCommand(
+        operator_id=payload.operator_id, requested_start=payload.requested_start,
+        items=tuple(BoardItem(
+            task_id=item.task_id, task_version=item.task_version, techcard_id=item.techcard_id,
+            techcard_version=item.techcard_version, operation_id=item.operation_id, position=item.position,
+            quantity=item.quantity, run=item.run, launched=item.launched,
+            machine_bindings=tuple(MachineBinding(binding.etk_position, binding.machine_id)
+                for binding in item.machine_bindings) if item.machine_bindings is not None else None,
+        ) for item in payload.items), actor=principal.actor, now=now,
+    )
+
+
+@router.post("/resources")
+def resources_preview(
+    payload: AssignPayload,
+    principal: Annotated[Principal, Depends(production_overview_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], Any] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    if techcards_factory is None and any(item.task_id is None for item in payload.items):
+        raise HTTPException(status_code=503, detail="База техкарт не настроена")
+    cards, ready = _techcards(techcards_factory)
+    return {"items": _handle(lambda: board_resources(_command(payload, principal, now), uow_factory(), cards, ready))}
 
 
 def _equipment(item: Equipment) -> dict:
@@ -200,15 +230,7 @@ def assign(
     if techcards_factory is None and any(item.task_id is None for item in payload.items):
         raise HTTPException(status_code=503, detail="База техкарт не настроена")
     cards, ready = _techcards(techcards_factory)
-    command = BoardAssignCommand(
-        operator_id=payload.operator_id, requested_start=payload.requested_start,
-        items=tuple(BoardItem(
-            task_id=item.task_id, task_version=item.task_version, techcard_id=item.techcard_id,
-            techcard_version=item.techcard_version, operation_id=item.operation_id, position=item.position,
-            quantity=item.quantity, run=item.run, launched=item.launched,
-        ) for item in payload.items),
-        actor=principal.actor, now=now,
-    )
+    command = _command(payload, principal, now)
     done = _handle(lambda: assign_board(command, uow_factory(), cards, ready))
     numbers = {task.id: task.number for task in done.tasks}
     warnings = [*done.warnings, *_machine_warnings(done, payload.operator_id, now, uow_factory, techcards_factory, references_factory)]
