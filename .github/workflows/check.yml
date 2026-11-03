@@ -160,7 +160,7 @@ jobs:
   # restored into an installation at head gives exactly the head-1 schema and rows; the newest daily keeps its checksum;
   # a pg_restore failing half-way leaves the database as it was.
   restore-drill:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       postgres:
