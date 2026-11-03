@@ -7,12 +7,13 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from hashlib import sha256
-from typing import Protocol, Sequence
+from typing import Callable, Protocol, Sequence
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from app.shared.events import AuditEvent
 from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
+from app.shared.project_number import normalize_project_number
 from app.shared.notifications import (
     PROJECT_MANAGER_AUDIENCE,
     STOREKEEPER_AUDIENCE,
@@ -22,7 +23,7 @@ from app.shared.notifications import (
 )
 
 from .domain import (
-    HISTORY_CORRECTION_LIMITS, PACK_NOT_DECIDED, AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    HISTORY_CORRECTION_LIMITS, PACK_NOT_DECIDED, AcceptanceAct, DeliveryTerms, FinishedGood, GoodMove, MoveContext, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
     ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
     plan_project_queue,
 )
@@ -77,6 +78,12 @@ class AppendOnlyRepository(Protocol):
     def add(self, item) -> None: ...
 
 
+class PackPermissionRepository(Protocol):
+    def get(self, project: str, item_index: str) -> PackPermission | None: ...
+    def for_project(self, project: str) -> Sequence[PackPermission]: ...
+    def add(self, permission: PackPermission) -> None: ...
+
+
 class UpdFileRepository(Protocol):
     def add(self, stored: StoredFile, content: bytes) -> None: ...
     def get(self, file_id: UUID) -> tuple[StoredFile, bytes] | None: ...
@@ -88,11 +95,13 @@ class UnitOfWork(Protocol):
     goods: FinishedGoodsRepository
     shipments: ShipmentRepository
     addressees: ProjectAddresseeRepository
+    pack_permissions: PackPermissionRepository
     audit: AppendOnlyRepository
     outbox: NotificationOutbox
     def __enter__(self): ...
     def __exit__(self, exc_type, exc, traceback): ...
     def commit(self) -> None: ...
+    def lock_projects(self, projects: Sequence[str]) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -302,6 +311,13 @@ def _shipment(shipment_id: UUID, version: int, uow: UnitOfWork) -> Shipment:
     return shipment
 
 
+def _packing_shipment(shipment_id: UUID, version: int, uow: UnitOfWork) -> Shipment:
+    shipment = _shipment(shipment_id, version, uow)
+    uow.lock_projects([line.project for line in shipment.lines])
+    # The discovery read may have preceded another packing transaction's commit.
+    return _shipment(shipment_id, version, uow)
+
+
 def register_good(command: RegisterGoodCommand, uow: UnitOfWork) -> FinishedGood:
     with uow:
         if uow.goods.by_key(command.project.strip(), command.item_index.strip()) is not None:
@@ -370,6 +386,7 @@ def drop_project(command: DropProjectCommand, uow: UnitOfWork) -> DropProjectRes
 def ship_before_erp(command: ShipBeforeErpCommand, uow: UnitOfWork) -> FinishedGood:
     """Отгруженное до ERP — в регистр ГП как пришедшее и уехавшее; повтор с тем же итогом ничего не меняет."""
     with uow:
+        uow.lock_projects([command.project])
         good = uow.goods.by_key(command.project.strip(), command.item_index.strip())
         if good is None:
             raise ShippingValidationError(f"В готовой продукции нет КБ {command.item_index} проекта {command.project}")
@@ -442,6 +459,8 @@ def _create_shipment(
     """Заведение отправки без фиксации: её фиксирует вызывающий вместе с остальными шагами."""
     if len({line.good_id for line in command.lines}) != len(command.lines):
         raise ShippingValidationError("Позиция готовой продукции указана дважды")
+    found = [uow.goods.get(line.good_id) for line in command.lines]
+    uow.lock_projects([good.project for good in found if good is not None])
     lines = []
     customers: list[str] = []
     for requested in command.lines:
@@ -453,9 +472,7 @@ def _create_shipment(
     if not lines:
         raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
     # The shipment's project is its first line's (`shipHeadEff_`).
-    if command.decide_pack:
-        for project in dict.fromkeys(line.project for line in lines):
-            _decide_pack(project, command.actor, command.now, uow)
+    # Creating a shipment, including a manager's command, never grants packing permission.
     card = uow.addressees.get(lines[0].project)
     address = effective_address(
         receiver=command.receiver, shipping_point=command.shipping_point, contact=command.contact,
@@ -550,11 +567,10 @@ def _notify_pack_decided(card: ProjectAddressee, actor: Actor, now: datetime, uo
 
 
 def _require_pack_decision(shipment: Shipment, uow: UnitOfWork) -> None:
-    """Без решения менеджера «упаковывать» склад проекта не набирает (владелец 29.10.2026)."""
-    for project in dict.fromkeys(line.project for line in shipment.lines):
-        card = uow.addressees.get(project)
-        if card is None or not card.pack_decided:
-            raise ShippingValidationError(PACK_NOT_DECIDED)
+    """Legacy project-wide flags are history only; each requested KB needs an explicit ceiling."""
+    for line in shipment.lines:
+        if line.shortage > 0 and uow.pack_permissions.get(line.project, line.item_index) is None:
+            raise ShippingValidationError(f"{line.item_index}: явно разрешите количество к упаковке")
 
 
 @dataclass(frozen=True)
@@ -566,6 +582,72 @@ class PackDecisionCommand:
     decided: bool
     actor: Actor
     now: datetime
+
+
+@dataclass(frozen=True)
+class PackPermissionChange:
+    item_index: str
+    quantity: Decimal
+    version: int
+
+
+@dataclass(frozen=True)
+class SetPackPermissionsCommand:
+    project: str
+    lines: tuple[PackPermissionChange, ...]
+    actor: Actor
+    now: datetime
+
+
+def set_pack_permissions(
+    command: SetPackPermissionsCommand, uow: UnitOfWork,
+    known_items: Callable[[UnitOfWork, str], set[str]],
+) -> tuple[PackPermission, ...]:
+    project = normalize_project_number(command.project)
+    if not project or not command.lines:
+        raise ShippingValidationError("Укажите проект и КБ с разрешённым количеством")
+    if len({line.item_index for line in command.lines}) != len(command.lines):
+        raise ShippingValidationError("КБ указана дважды")
+    with uow:
+        uow.lock_projects([project])
+        known = known_items(uow, project)
+        goods = uow.goods.for_project(project)
+        changes = []
+        for line in command.lines:
+            if line.item_index not in known:
+                raise ShippingValidationError(f"{line.item_index}: КБ не найдена в проекте")
+            consumed = sum((good.shipped for good in goods if good.item_index == line.item_index), Decimal("0"))
+            current = uow.pack_permissions.get(project, line.item_index) or PackPermission(
+                project, line.item_index, quantity=consumed,
+            )
+            if current.version != line.version:
+                raise ConcurrentShippingUpdate("Разрешение упаковки изменилось — обновите страницу")
+            updated = current.change(line.quantity, consumed, command.actor.name, command.now)
+            changes.append((current, updated))
+        for current, updated in changes:
+            if updated is current:
+                continue
+            uow.pack_permissions.add(updated)
+            _audit(uuid5(NAMESPACE_URL, f"erp-next:packing:{project}:{updated.item_index}"),
+                   "shipping.pack_permission_changed", command.actor, command.now, {
+                       "project": project, "item_index": updated.item_index,
+                       "before": str(current.quantity), "quantity": str(updated.quantity), "version": updated.version,
+                   }, uow)
+        changed = [updated for current, updated in changes if current is not updated]
+        if changed:
+            fingerprint = sha256(json.dumps(
+                [project, sorted((item.item_index, item.version) for item in changed)], ensure_ascii=False,
+            ).encode("utf-8")).hexdigest()
+            publish_notification(uow.outbox, notification_requested(
+                key=f"shipping:pack-permissions:{fingerprint}", now=command.now,
+                title=f"Разрешения упаковки: проект {project}",
+                body=(f"{command.actor.name}: изменены общие лимиты упаковки по КБ (включая уже упакованное и отгруженное):\n"
+                      + "\n".join(f"{item.item_index}: {format(item.quantity.normalize(), 'f')}" for item in changed)
+                      + "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."),
+                kind="ship", reference=project, audiences=(STOREKEEPER_AUDIENCE,),
+            ))
+            uow.commit()
+        return tuple(updated for _, updated in changes)
 
 
 PACK_DECISION_LOCKED = "Решение «упаковывать» не снять: по проекту уже есть набранная отправка"
@@ -614,13 +696,35 @@ def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
 
 
 def _pick(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> tuple[Shipment, dict[UUID, Decimal]]:
+    uow.lock_projects([line.project for line in shipment.lines])
     _require_pack_decision(shipment, uow)
     goods = {line.finished_good_id: uow.goods.get(line.finished_good_id) for line in shipment.lines}
     if any(good is None for good in goods.values()):
         raise ShippingValidationError("Позиция готовой продукции больше не существует")
     typed = {good_id: good for good_id, good in goods.items() if good is not None}
+    available = {}
+    budgets = {}
+    demand = {}
+    for line in shipment.lines:
+        key = (normalize_project_number(line.project), line.item_index)
+        demand[key] = demand.get(key, Decimal("0")) + line.shortage
+    for good_id, good in typed.items():
+        key = (normalize_project_number(good.project), good.item_index)
+        if key not in budgets:
+            permission = uow.pack_permissions.get(good.project, good.item_index)
+            consumed = sum((item.shipped for item in uow.goods.for_project(good.project)
+                            if item.item_index == good.item_index), Decimal("0"))
+            budgets[key] = permission.remaining(consumed) if permission else Decimal("0")
+            if demand[key] > budgets[key]:
+                raise ShippingValidationError(
+                    f"{good.item_index}: к упаковке разрешено ещё {format(budgets[key].normalize(), 'f')} {good.unit}; "
+                    "уменьшите количество или измените разрешение",
+                )
+        requested = sum((line.shortage for line in shipment.lines if line.finished_good_id == good_id), Decimal("0"))
+        available[good_id] = min(good.remaining, budgets[key], requested)
+        budgets[key] -= available[good_id]
     updated, taken = shipment.pick(
-        {good_id: good.remaining for good_id, good in typed.items()},
+        available,
         {good_id: good.grn or "" for good_id, good in typed.items()},
     )
     for good_id, quantity in taken.items():
@@ -734,7 +838,7 @@ def edit_shipment_head(command: EditHeadCommand, uow: UnitOfWork) -> Shipment:
 
 def pick_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
-        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow)
         updated, taken = _pick(shipment, command.actor, command.now, uow)
         if taken:
             uow.commit()
@@ -743,7 +847,7 @@ def pick_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
 
 def unpick_line(command: UnpickCommand, uow: UnitOfWork) -> Shipment:
     with uow:
-        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow)
         updated, good_id, quantity = shipment.unpick(command.line_id)
         good = uow.goods.get(good_id)
         if good is None:
@@ -1030,32 +1134,32 @@ def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
     """`shipPackProject_`: отмеченное количество, не больше остатка ГП, адресат — из карточки проекта."""
     project = str(command.project or "").strip()
     with uow:
+        uow.lock_projects([project])
         goods = {good.id: good for good in uow.goods.by_project(project)}
         addressee = uow.addressees.get(project)
-    if not goods:
-        raise ShippingValidationError(f"У проекта {project} нет строк готовой продукции.")
-    if addressee is None or not addressee.pack_decided:
-        raise ShippingValidationError(PACK_NOT_DECIDED)
-    remain = {good_id: good.remaining for good_id, good in goods.items()}
-    lines: list[RequestedGood] = []
-    for requested in command.lines:
-        if requested.good_id not in goods:
-            raise ShippingValidationError("Позиция не относится к проекту")
-        quantity = min(Decimal(requested.quantity), max(remain[requested.good_id], Decimal("0")))
-        if not quantity > 0:
-            continue
-        remain[requested.good_id] -= quantity
-        lines.append(RequestedGood(good_id=requested.good_id, quantity=quantity))
-    if not lines:
-        raise ShippingValidationError("Упаковывать нечего: на складе по отмеченным КБ пусто — сначала «Принять» от цеха.")
-    customer = next(iter(goods.values())).customer
-    # Адресат не копируется, а наследуется: правка карточки проекта дойдёт до этой отправки, пока она открыта.
-    return create_shipment(CreateShipmentCommand(
-        customer=customer, receiver="" if (addressee is not None and addressee.receiver) or customer else project,
-        shipping_point="", contact="", phone="",
-        terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="",
-        note="", lines=tuple(lines), actor=command.actor, now=command.now, no_docs=True,
-    ), uow)
+        if not goods:
+            raise ShippingValidationError(f"У проекта {project} нет строк готовой продукции.")
+        if not command.lines or len({line.good_id for line in command.lines}) != len(command.lines):
+            raise ShippingValidationError("Выберите КБ с количеством без повторов")
+        for requested in command.lines:
+            if requested.good_id not in goods:
+                raise ShippingValidationError("Позиция не относится к проекту")
+            good = goods[requested.good_id]
+            permission = uow.pack_permissions.get(project, good.item_index)
+            consumed = sum((item.shipped for item in uow.goods.for_project(project)
+                            if item.item_index == good.item_index), Decimal("0"))
+            allowed = permission.remaining(consumed) if permission else Decimal("0")
+            if requested.quantity <= 0 or requested.quantity > min(good.remaining, allowed):
+                raise ShippingValidationError(f"{good.item_index}: количество превышает остаток или разрешение упаковки")
+        customer = next(iter(goods.values())).customer
+        shipment = _create_shipment(CreateShipmentCommand(
+            customer=customer, receiver="" if (addressee is not None and addressee.receiver) or customer else project,
+            shipping_point="", contact="", phone="",
+            terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="",
+            note="", lines=command.lines, actor=command.actor, now=command.now, no_docs=True,
+        ), uow)
+        uow.commit()
+        return shipment
 
 
 @dataclass(frozen=True)
@@ -1153,6 +1257,7 @@ def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipRes
     fingerprint = project_ship_fingerprint(command)
     shipment_id = project_ship_id(key)
     with uow:
+        uow.lock_projects([project])
         existing = uow.shipments.get(shipment_id)
         if existing is not None:
             if (uow.shipments.created_details(shipment_id) or {}).get("fingerprint") != fingerprint:
@@ -1221,7 +1326,7 @@ def close_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
 
 def cancel_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
-        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        shipment = _packing_shipment(command.shipment_id, command.expected_version, uow)
         updated, released = shipment.cancel()
         for good_id, quantity in released.items():
             good = uow.goods.get(good_id)

@@ -46,8 +46,8 @@ from app.modules.production.plan import (
     summarize_kit_marks,
 )
 from app.modules.production.traceability import BoxStatus
-from app.modules.shipping.domain import AcceptanceAct, FinishedGood
-from app.modules.shipping.infrastructure import ProjectAddresseeRow, SqlAlchemyFinishedGoodsRepository
+from app.modules.shipping.domain import AcceptanceAct, FinishedGood, PackPermission
+from app.modules.shipping.infrastructure import PackPermissionRow, SqlAlchemyPackPermissionRepository, SqlAlchemyFinishedGoodsRepository
 from app.modules.techcards.infrastructure import ProjectTechcardRow
 from app.modules.techcards.kitset_infrastructure import SqlAlchemyKitsetRepository
 from app.modules.techcards.kitsets import Kitset
@@ -96,6 +96,9 @@ class IntakeRow:
     project_stage: str = ""  # низший этап по всем КБ проекта, отгруженные включены
     # Менеджер решил «упаковывать» (карточка проекта в Отгрузке, 0162): без этого склад не упаковывает.
     pack_decided: bool = False
+    pack_permission_quantity: Decimal = ZERO
+    pack_permission_remaining: Decimal = ZERO
+    pack_permission_version: int = 0
 
     @property
     def remaining(self) -> Decimal:
@@ -153,6 +156,7 @@ class IntakeFacts:
     worked: Collection[UUID] = frozenset()
     # Проекты (как записаны в карточке Отгрузки) с решением «упаковывать».
     pack_decided: Collection[str] = frozenset()
+    pack_permissions: Mapping[tuple[str, str], PackPermission] = field(default_factory=dict)
 
 
 def is_closed(snapshot: PlanProjectSnapshot, journal: ProjectJournal | None) -> bool:
@@ -184,6 +188,10 @@ def natural_key(text: str) -> tuple:
 def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
     """КБ открытых проектов, у которых ещё не всё заказанное уехало: по сроку проекта (без срока — в конце), проекту,
     КБ по номеру."""
+    consumed_by_key = {}
+    for good in facts.goods:
+        key = (normalize_project_number(good.project), good.item_index)
+        consumed_by_key[key] = consumed_by_key.get(key, ZERO) + good.shipped
     events = tuple(facts.events)
     projects = open_projects(facts.projects, events)
     journal = summarize_journal(events)
@@ -233,6 +241,9 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
             good, kb, assembly = goods.get(key), facts.production.get(key), assemblies.get(item_index)
             needed = good.ordered if good else (assembly.run if assembly and assembly.run > 0 else (kb.run if kb else ZERO))
             sent = good.sent if good else ZERO
+            permission = facts.pack_permissions.get((canon, item_index))
+            consumed = consumed_by_key.get((canon, item_index), ZERO)
+            pack_remaining = permission.remaining(consumed) if permission else ZERO
             # Всё заказанное уехало — КБ ушла из приёмки; КБ без известного тиража остаётся (решено агентом 14.10).
             if needed > 0 and sent >= needed:
                 continue
@@ -246,7 +257,10 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
                 needed=needed, launched=kb.run if kb else ZERO, delivered=kb.delivered if kb else ZERO,
                 accepted=good.accepted if good else ZERO, packed=good.shipped if good else ZERO, sent=sent,
                 good=good, tasks=kb.tasks if kb else (), project_stage=stage.status,
-                pack_decided=(good.project if good else snapshot.project) in facts.pack_decided,
+                pack_decided=pack_remaining > 0,
+                pack_permission_quantity=permission.quantity if permission else consumed,
+                pack_permission_remaining=pack_remaining,
+                pack_permission_version=permission.version if permission else 0,
                 acts=tuple(act for act in facts.acts.get(good.id, ()) if act.net > 0) if good else (),
             ))
     return sorted(rows, key=lambda row: (
@@ -314,11 +328,9 @@ class SqlAlchemyIntakeUnitOfWork:
         )
         return [KitRequestFact(purpose or "", FulfillmentStatus(status)) for purpose, status in found]
 
-    def pack_decided(self) -> frozenset[str]:
-        """Проекты карточек Отгрузки с решением «упаковывать»: проверка склада идёт по тому же № проекта."""
-        return frozenset(self._session().scalars(
-            select(ProjectAddresseeRow.project).where(ProjectAddresseeRow.pack_decided.is_(True))
-        ))
+    def pack_permissions(self) -> dict[tuple[str, str], PackPermission]:
+        return {(row.project_key, row.item_index): SqlAlchemyPackPermissionRepository._domain(row)
+                for row in self._session().scalars(select(PackPermissionRow))}
 
     def boxes(self, task_ids: Collection[UUID]) -> list[BoxFact]:
         if not task_ids:
@@ -365,7 +377,7 @@ def read_intake(uow) -> IntakeFacts:
         boxes=tuple(uow.boxes(task_ids)),
         inspected=frozenset(uow.qc.inspected_box_ids()),
         worked=frozenset(uow.production.worked(task_ids)),
-        pack_decided=uow.pack_decided(),
+        pack_permissions=uow.pack_permissions(),
     )
 
 

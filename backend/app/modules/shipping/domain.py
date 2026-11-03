@@ -61,6 +61,33 @@ LOCATION_MAX = 255
 
 
 @dataclass(frozen=True)
+class PackPermission:
+    """Absolute packing ceiling. Consumption is FinishedGood.shipped, including sent goods."""
+
+    project: str
+    item_index: str
+    quantity: Decimal = Decimal("0")
+    version: int = 0
+    updated_by: str = ""
+    updated_at: datetime | None = None
+
+    def remaining(self, consumed: Decimal) -> Decimal:
+        return max(self.quantity - consumed, Decimal("0"))
+
+    def change(self, quantity: Decimal, consumed: Decimal, actor: str, now: datetime) -> PackPermission:
+        quantity = Decimal(quantity)
+        if not quantity.is_finite() or quantity < 0 or quantity > Decimal("999999999999.999999"):
+            raise ShippingValidationError("Разрешённое количество должно быть неотрицательным числом")
+        if quantity.as_tuple().exponent < -6:
+            raise ShippingValidationError("Разрешённое количество: не более 6 знаков после запятой")
+        if quantity < consumed:
+            raise ShippingValidationError("Разрешение нельзя уменьшить ниже уже упакованного, включая отгруженное")
+        if self.version and quantity == self.quantity:
+            return self
+        return replace(self, quantity=quantity, version=self.version + 1, updated_by=actor, updated_at=now)
+
+
+@dataclass(frozen=True)
 class FinishedGood:
     id: UUID
     version: int
